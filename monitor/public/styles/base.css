@@ -1,0 +1,942 @@
+/* Component classes — light wrappers over Tailwind */
+
+/* ── Tier 3 — neue elevation/glass surfaces (§3.3, Tier 2 만 소비) ─────
+   .glass-surface 는 transient(모달 backdrop·flyout) 전용 — 상시 표면 금지(§6.3). */
+.glass-surface {
+	background: rgb(var(--glass-tint) / var(--material-glass-alpha));
+	backdrop-filter: blur(var(--glass-blur));
+	-webkit-backdrop-filter: blur(var(--glass-blur));
+	border: 1px solid rgb(var(--glass-border) / 0.15);
+}
+.card-raised {
+	background: rgb(var(--surface-raised));
+	box-shadow: var(--shadow-raised);
+	border: 1px solid rgb(var(--line));
+	border-radius: 12px;
+}
+.elev-overlay {
+	background: rgb(var(--surface-overlay));
+	box-shadow: var(--shadow-overlay);
+}
+/* glass 표면 솔리드 fallback (§9.3) — reduce 사용자에게 불투명 elev 복귀 */
+@media (prefers-reduced-transparency: reduce) {
+	.glass-surface {
+		background: rgb(var(--elev));
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+.card {
+	background: rgb(var(--elev));
+	border: 1px solid rgb(var(--line));
+	border-radius: 12px;
+	overflow: hidden;
+	box-shadow: var(--shadow-raised);
+}
+/* 상단 inset 하이라이트는 다크 전용 — 라이트 순백(255) 위 흰선 비가시(§7.1) */
+[data-theme="dark"] .card {
+	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
+}
+/* raised-2 (focused/hover) — 라이트=shadow step(인버전 회피), 다크=휘도 step + 보조 shadow.
+   선택형 카드 hover 시 적용. transform 없음 → reduced-motion 무관. */
+.card.raised-2:hover,
+.card.is-focused {
+	box-shadow: var(--shadow-raised-2);
+	border-color: rgb(var(--faint));
+	transition: border-color 0.12s, box-shadow 0.12s;
+}
+[data-theme="dark"] .card.raised-2:hover,
+[data-theme="dark"] .card.is-focused {
+	background: rgb(var(--surface-raised-2));
+	box-shadow: var(--shadow-raised-2), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
+}
+/* 카드 padding: head 16x20 / body 20px — 8px 리듬 정합 */
+.card-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 16px 20px;
+	border-bottom: 1px solid rgb(var(--line));
+}
+.card-title {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: -0.005em;
+}
+/* 카드 캡션/설명 공용 — 읽기용 산문이라 --dim(AA-clean) + Pretendard sans.
+   --faint + mono 는 timestamp/id 같은 진짜 메타데이터 전용 (이 클래스 대상 아님).
+   기본 1행 클램프(nowrap+ellipsis) → 전체 내용은 native title 툴팁으로 hover 노출. */
+.card-sub {
+	font-size: 14px;
+	color: rgb(var(--dim));
+	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
+	line-height: 1.5;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* 구조적/인터랙티브 card-sub(요약 토글·자식요소 블록 등)는 클램프 opt-out.
+   .card-sub 보다 specificity 가 높아 source order 무관. */
+.card-sub.is-wrap {
+	white-space: normal;
+	overflow: visible;
+	text-overflow: clip;
+}
+/* card-body 공통 max-height + 내부 스크롤 — 페이지 무한 길이 회피.
+   인라인 flex/overflow 또는 인라인 maxHeight 카드는 더 높은 specificity 로 본 규칙 override. */
+.card-body {
+	padding: 20px;
+	max-height: 70vh;
+	overflow-y: auto;
+}
+.card-body.flush {
+	padding: 0;
+}
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	font-weight: 500;
+	border: 1px solid rgb(var(--line));
+	background: rgb(var(--elev));
+	color: rgb(var(--ink));
+	transition:
+		background 0.12s,
+		border-color 0.12s;
+	cursor: pointer;
+}
+.btn:hover {
+	background: rgb(var(--sunken));
+}
+.btn.primary {
+	background: rgb(var(--ink));
+	color: rgb(var(--surface));
+	border-color: rgb(var(--ink));
+}
+.btn.danger {
+	background: rgb(var(--crit));
+	color: white;
+	border-color: rgb(var(--crit));
+}
+.btn.ghost {
+	border-color: transparent;
+	background: transparent;
+	color: rgb(var(--dim));
+}
+.btn.ghost:hover {
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+}
+.btn.sm {
+	padding: 4px 9px;
+	font-size: 11.5px;
+}
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 500;
+	border-radius: 999px;
+	background: rgb(var(--sunken));
+	color: rgb(var(--dim));
+	border: 1px solid rgb(var(--line));
+	font-family: "JetBrains Mono", monospace;
+	white-space: nowrap;
+}
+.pill.crit {
+	background: rgb(var(--crit) / 0.12);
+	color: rgb(var(--crit));
+	border-color: transparent;
+}
+.pill.warn {
+	background: rgb(var(--warn) / 0.12);
+	color: rgb(var(--warn));
+	border-color: transparent;
+}
+.pill.info {
+	background: rgb(var(--info) / 0.12);
+	color: rgb(var(--info));
+	border-color: transparent;
+}
+.pill.ok {
+	background: rgb(var(--ok) / 0.12);
+	color: rgb(var(--ok));
+	border-color: transparent;
+}
+/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). */
+.pill--absent {
+	background: transparent;
+	color: rgb(var(--faint));
+	border: 1px dashed rgb(var(--line));
+}
+/* Badge role 변형 — status 는 위 .pill(+tone) 그대로, metadata/count 는 작은 radius/font 의 neutral.
+   metadata: 서술 속성(상태 아님) · count: 순수 수량. 둘 다 톤 컬러 없음 (color=status 전용 규칙). */
+.pill--meta {
+	border-radius: 4px;
+	font-size: 10px;
+	padding: 1px 6px;
+	text-transform: lowercase;
+}
+.pill--count {
+	border-radius: 4px;
+	font-size: 10.5px;
+	padding: 1px 6px;
+}
+/* height-match variant — model-config MODEL ASSIGNMENT 메타 배지(SAVED TARGET fallback + ACTUAL)를
+   편집 가능 행의 <select>(.field) 박스와 동일 HEIGHT 로만 맞춰 세로 정렬.
+   너비/폰트/radius/lowercase 는 .pill--meta 의 content-hugging pill 그대로 유지 — 컬럼을 채우지 않음.
+   HEIGHT 만 --ctl-h 로 .field 와 공유(lockstep) · box-sizing:border-box 로 min-height 가 1px border 포함.
+   .pill--meta 뒤에 정의 → 같은 특이도에서 source order 우선 (이 인스턴스 전용, 공유 .pill--meta 불변). */
+.pill--ctl-h {
+	min-height: var(--ctl-h);
+	box-sizing: border-box;
+}
+
+/* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
+   발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
+   ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */
+.sub-card {
+	border-radius: 8px;
+	padding: 16px;
+	box-shadow: 0 0 0 1px rgb(var(--line));
+}
+[data-theme="dark"] .sub-card {
+	box-shadow: 0 0 0 1px rgb(var(--line)), inset 0 1px 0 rgb(var(--glass-border) / 0.04);
+}
+/* 섹션 라벨 — 대문자 --dim, multi-section 뷰의 구획 헤더 (10.5px, letter-spacing). */
+.sub-card-label,
+.section-label {
+	font-size: 10.5px;
+	font-weight: 600;
+	color: rgb(var(--dim));
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.sub-card-label { margin-bottom: 10px; }
+
+/* ── Spacing standard (W1-T3) — 16px 카드 채널 / 24px 섹션 채널 (8px 리듬 배수) ────────
+   카드 그리드/스택 간격은 16px, 독립 섹션 사이는 24px. Tailwind gap/space-y 와 병용 가능. */
+.gap-card { gap: 16px; }
+.gap-section { gap: 24px; }
+.space-cards > * + * { margin-top: 16px; }
+.space-sections > * + * { margin-top: 24px; }
+
+.tbl {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+.tbl th,
+.tbl td {
+	padding: 9px 14px;
+	text-align: left;
+	border-bottom: 1px solid rgb(var(--line));
+}
+.tbl th {
+	font-weight: 500;
+	color: rgb(var(--dim));
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	background: rgb(var(--sunken));
+}
+.tbl tbody tr {
+	cursor: pointer;
+}
+.tbl tbody tr:hover {
+	background: rgb(var(--sunken));
+}
+.tbl tbody tr:last-child td {
+	border-bottom: none;
+}
+.tbl td.num,
+.tbl th.num {
+	font-family: "JetBrains Mono", monospace;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.tabs {
+	display: inline-flex;
+	padding: 3px;
+	background: rgb(var(--sunken));
+	border: 1px solid rgb(var(--line));
+	border-radius: 7px;
+	gap: 2px;
+}
+.tab {
+	padding: 4px 11px;
+	font-size: 12px;
+	border: none;
+	background: none;
+	color: rgb(var(--dim));
+	border-radius: 5px;
+	font-weight: 500;
+	cursor: pointer;
+}
+.tab.active {
+	background: rgb(var(--elev));
+	color: rgb(var(--ink));
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.seg {
+	display: inline-flex;
+	border: 1px solid rgb(var(--line));
+	border-radius: 6px;
+	overflow: hidden;
+	background: rgb(var(--elev));
+}
+.seg button {
+	padding: 5px 10px;
+	font-size: 12px;
+	background: none;
+	border: none;
+	color: rgb(var(--dim));
+	border-right: 1px solid rgb(var(--line));
+	cursor: pointer;
+}
+.seg button:last-child {
+	border-right: none;
+}
+.seg button.active {
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+	font-weight: 500;
+}
+
+.kpi {
+	background: rgb(var(--elev));
+	border: 1px solid rgb(var(--line));
+	border-radius: 12px;
+	padding: 14px 16px;
+	position: relative;
+	cursor: pointer;
+	transition: border-color 0.12s;
+	min-height: 110px;
+	width: 100%;
+	text-align: left;
+}
+.kpi:hover {
+	border-color: rgb(var(--faint));
+}
+.kpi-label {
+	font-size: 11.5px;
+	color: rgb(var(--dim));
+	font-weight: 500;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+.kpi-hint {
+	line-height: 1.45;
+	margin-top: 2px;
+}
+.kpi-value {
+	font-size: 28px;
+	line-height: 1.15;
+	font-weight: 600;
+	letter-spacing: -0.025em;
+	margin-top: 6px;
+	font-family: "JetBrains Mono", monospace;
+}
+.kpi-value .unit {
+	font-size: 14px;
+	color: rgb(var(--dim));
+	font-weight: 500;
+	margin-left: 3px;
+	font-family: "Pretendard Variable", sans-serif;
+}
+.kpi-delta {
+	font-size: 11.5px;
+	font-family: "JetBrains Mono", monospace;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 4px;
+}
+.kpi-delta.up {
+	color: rgb(var(--crit));
+}
+.kpi-delta.down {
+	color: rgb(var(--ok));
+}
+.kpi-delta.flat {
+	color: rgb(var(--faint));
+}
+.kpi-spark {
+	position: absolute;
+	right: 12px;
+	bottom: 10px;
+	opacity: 0.85;
+	pointer-events: none;
+}
+
+.nav-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 10px;
+	border-radius: 6px;
+	color: rgb(var(--dim));
+	font-size: 13px;
+	cursor: pointer;
+	border: none;
+	background: none;
+	text-align: left;
+	width: 100%;
+	white-space: nowrap;
+}
+.nav-item:hover {
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+}
+.nav-item.active {
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+	font-weight: 500;
+}
+.nav-num {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10.5px;
+	color: rgb(var(--faint));
+	width: 20px;
+	flex-shrink: 0;
+}
+.nav-item.active .nav-num {
+	color: rgb(var(--dim));
+}
+.nav-badge {
+	margin-left: auto;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10.5px;
+	background: rgb(var(--sunken));
+	border: 1px solid rgb(var(--line));
+	padding: 1px 6px;
+	border-radius: 999px;
+	color: rgb(var(--dim));
+}
+.nav-badge.crit {
+	background: rgb(var(--crit) / 0.15);
+	color: rgb(var(--crit));
+	border-color: transparent;
+}
+.nav-badge.warn {
+	background: rgb(var(--warn) / 0.15);
+	color: rgb(var(--warn));
+	border-color: transparent;
+}
+.nav-badge.info {
+	background: rgb(var(--info) / 0.15);
+	color: rgb(var(--info));
+	border-color: transparent;
+}
+
+.alert-row {
+	display: grid;
+	grid-template-columns: 4px 1fr auto;
+	gap: 14px;
+	padding: 12px 16px;
+	border-bottom: 1px solid rgb(var(--line));
+	align-items: center;
+	cursor: pointer;
+}
+.alert-row:hover {
+	background: rgb(var(--sunken));
+}
+.alert-row:last-child {
+	border-bottom: none;
+}
+.alert-row.acked {
+	opacity: 0.5;
+}
+
+.modal-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.42); /* 솔리드 scrim 기본 (§9.3 fallback-first) */
+	z-index: var(--z-overlay);
+	display: grid;
+	place-items: center;
+}
+/* "smoke" glass — transient backdrop 1장만 합성 (§6.3 ALLOW · §9.2 ≤2 예산).
+   reduce 사용자/미지원 브라우저는 위 솔리드 0.42 유지. */
+@supports (backdrop-filter: blur(1px)) {
+	@media (prefers-reduced-transparency: no-preference) {
+		.modal-backdrop {
+			background: rgb(0 0 0 / 0.35);
+			backdrop-filter: blur(8px);
+			-webkit-backdrop-filter: blur(8px);
+		}
+	}
+}
+.modal {
+	background: rgb(var(--surface-overlay)); /* 오버레이 불투명 면 (텍스트 4.5:1 보장, §7.8) */
+	border-radius: 12px;
+	width: min(560px, 92vw);
+	max-height: 86vh;
+	box-shadow: var(--shadow-overlay);
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+.modal-head {
+	padding: 14px 20px;
+	border-bottom: 1px solid rgb(var(--line));
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.modal-body {
+	padding: 18px 20px;
+	overflow-y: auto;
+}
+.modal-foot {
+	padding: 12px 20px;
+	border-top: 1px solid rgb(var(--line));
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	background: rgb(var(--sunken));
+}
+
+/* ── DetailSurface — 공용 오버레이 (variant: drawer/fullscreen/confirm) ──────
+   backdrop 는 .modal-backdrop 재사용 (별도 색 미발명). overlay 는 fixed 전면
+   스크림 + variant 별 배치/모션. 면 색상·그림자·라인은 tokens.css 재참조. */
+.detail-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.42); /* .modal-backdrop 와 동일 scrim (단일 색) */
+	z-index: var(--z-overlay);
+	display: flex;
+}
+@supports (backdrop-filter: blur(1px)) {
+	@media (prefers-reduced-transparency: no-preference) {
+		.detail-overlay {
+			background: rgb(0 0 0 / 0.35);
+			backdrop-filter: blur(8px);
+			-webkit-backdrop-filter: blur(8px);
+		}
+	}
+}
+/* drawer = 우측 정렬 슬라이드인 · fullscreen = 중앙 충만 · confirm = 중앙 소형 */
+.detail-drawer { justify-content: flex-end; }
+.detail-fullscreen { align-items: stretch; justify-content: center; }
+.detail-confirm { align-items: center; justify-content: center; }
+/* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
+.detail-overlay.detail-confirm { z-index: var(--z-confirm); }
+
+.detail-panel {
+	background: rgb(var(--overlay-surface)); /* 불투명 오버레이 면 (텍스트 대비 보장) */
+	box-shadow: var(--shadow-overlay);
+	border: 1px solid rgb(var(--line));
+	display: flex;
+	flex-direction: column;
+	max-height: 100%;
+	overflow: hidden;
+}
+.detail-drawer .detail-panel {
+	width: min(720px, 92vw);
+	height: 100%;
+	max-height: 100%;
+	border-top: none;
+	border-bottom: none;
+	border-right: none;
+	border-radius: 0;
+	animation: detailDrawerSlide 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.detail-fullscreen .detail-panel {
+	width: 100%;
+	height: 100%;
+	max-width: 980px;
+	border: none;
+	border-radius: 0;
+	animation: detailFade 180ms ease-out;
+}
+.detail-confirm .detail-panel {
+	width: min(560px, 92vw);
+	max-height: 86vh;
+	border-radius: 12px;
+	animation: detailPop 180ms ease-out;
+}
+
+.detail-head {
+	padding: 14px 20px;
+	border-bottom: 1px solid rgb(var(--line));
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	flex-shrink: 0;
+}
+.detail-title { font-weight: 600; font-size: var(--fs-title, 13px); color: rgb(var(--ink)); }
+.detail-sub { margin-top: 2px; font-size: var(--fs-meta, 11px); color: rgb(var(--faint)); }
+.detail-body { padding: 18px 20px; overflow-y: auto; flex: 1 1 auto; }
+/* bare — children 이 자체 header/close 소유 시 padding 만 제거 (overflow/flex 스크롤 거동 유지) */
+.detail-body--bare { padding: 0; }
+.detail-foot {
+	padding: 12px 20px;
+	border-top: 1px solid rgb(var(--line));
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: rgb(var(--sunken));
+	flex-shrink: 0;
+}
+.detail-nav { display: flex; gap: 8px; margin-right: auto; }
+
+/* drawer slide keyframes — improvement.jsx drawerSlideI 를 공용 규칙으로 승격. */
+@keyframes detailDrawerSlide { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes detailFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes detailPop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+
+/* 모바일 ~640px — drawer 가 전면 시트로 전환 (width 100vw). close 타깃 ≥24×24. */
+@media (max-width: 640px) {
+	.detail-drawer .detail-panel { width: 100vw; max-width: 100vw; }
+	.detail-head .btn { min-width: 24px; min-height: 24px; }
+}
+
+/* reduced-motion 가드 — 모든 variant 진입 모션 정지. */
+@media (prefers-reduced-motion: reduce) {
+	.detail-drawer .detail-panel,
+	.detail-fullscreen .detail-panel,
+	.detail-confirm .detail-panel { animation-duration: 0.01ms !important; }
+}
+
+.placeholder {
+	padding: 28px;
+	border: 1px dashed rgb(var(--faint) / 0.5);
+	border-radius: 8px;
+	color: rgb(var(--faint));
+	text-align: center;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px;
+}
+
+.grid-cols-30 {
+	grid-template-columns: repeat(30, minmax(0, 1fr));
+}
+
+.alert-detail {
+	font-size: 12.5px;
+}
+.alert-detail .detail-row {
+	margin-bottom: 8px;
+}
+.alert-detail .detail-row-label {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10.5px;
+	color: rgb(var(--faint));
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.alert-detail .detail-row-value {
+	margin-top: 2px;
+}
+
+.agent-table-minibars {
+	/* DOM marker */
+}
+.agent-radar {
+	/* DOM marker */
+}
+.latency-bars {
+	/* DOM marker */
+}
+.agent-detail-panel {
+	/* DOM marker */
+}
+.agent-detail-classification {
+	/* DOM marker — "키워드 근사 분류" 라벨. .pill.warn 재사용. */
+}
+
+.console-log-viewer {
+	/* DOM marker — 스타일은 Tailwind h-[260px] overflow-y-auto font-mono bg-sunken. */
+}
+.run-result-grid {
+	/* DOM marker — 2개 자식 cell (status / 응답시간). */
+}
+
+.health-card-grid {
+	/* DOM marker — 자식 .card 6개 (라이브). */
+}
+
+/* ConfBar tone: conf>=90 ok / >=80 info / <80 warn.
+   conf 값은 core.learning_log 에 conf 컬럼 부재 → frequency 기반 근사 도출 (log 정규화). */
+.bp-learning-table-confbar {
+	/* DOM marker */
+}
+.conf-bar {
+	/* DOM marker — tone 클래스 ok/info/warn 추가. */
+}
+.bp-learning-detail {
+	/* DOM marker — ConfBar(large) + 검증 근거 KV. */
+}
+
+.bp-kpi-spark-autoagent {
+	/* DOM marker — .kpi 자식 4개 + .kpi-spark inline SVG. */
+}
+.bp-proposal-table {
+	/* DOM marker — .tbl 6컬럼 + risk/impact Pill. */
+}
+.bp-proposal-detail-codeblock {
+	/* DOM marker — .code-block + 효과 KV + 버튼 2개. */
+}
+
+/* ── Motion — data-change 신호 (§8.2) ──────────────────────────────
+   값 갱신 시 .updated 토글 → 0.35s flash 후 --ink 복귀. persistent 루프 아님(§8). */
+@keyframes valueFlash {
+	0% {
+		color: rgb(var(--ok));
+	}
+	100% {
+		color: rgb(var(--ink));
+	}
+}
+.kpi-value.updated {
+	animation: valueFlash 0.35s ease-out;
+}
+
+/* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.
+   브라우저/OS 가 자동 반영. transform 기반 enter/reorder 는 transition 제거로 즉시 적용. */
+@media (prefers-reduced-motion: reduce) {
+	.live-dot {
+		animation: none;
+		opacity: 0.8;
+	}
+	.pulse-ring::after {
+		animation: none;
+	}
+	.kpi-value.updated,
+	[class*="valueFlash"] {
+		animation: none;
+	}
+	.card.raised-2:hover,
+	.card.is-focused {
+		transition: none;
+	}
+}
+
+/* ── Shared form controls (R1 subtle polish) ─────────────────────────────────
+   Chrome 정합: .btn(radius 6px·1px line border·elev fill·0.12s transition·
+   disabled opacity 0.5) + .seg/.kpi(elev resting fill) + .doc-filter-input:focus
+   (accent border + 2px accent/0.2 ring) 미러. 신규 토큰 없음 — 전부 tokens.css 재참조.
+   높이 ~30px = padding 5px+5px + font 12.5px(line ~17.5) + 1px×2 border ≈ 29.5px. */
+
+/* 폼컨트롤 박스 치수 SoT — .field(<select>)와 .pill--ctl-h(height-match 배지)가 공유.
+   한 곳만 바꾸면 SAVED TARGET <select> 와 MODEL ASSIGNMENT 메타 배지가 같은 높이로 움직임(lockstep).
+   --ctl-h = .field 외곽 박스 높이(border-box): font×line + pad-y×2 + border 2px ≈ 29.5px. */
+:root {
+	--ctl-pad-y: 5px;
+	--ctl-pad-x: 9px;
+	--ctl-font: 12.5px;
+	--ctl-line: 1.4;
+	--ctl-radius: 6px;
+	--ctl-h: calc(var(--ctl-font) * var(--ctl-line) + var(--ctl-pad-y) * 2 + 2px);
+}
+
+.field {
+	width: 100%;
+	box-sizing: border-box;
+	padding: var(--ctl-pad-y) var(--ctl-pad-x);
+	font-size: var(--ctl-font);        /* .btn 본문과 동일 — fs-body 계열 */
+	line-height: var(--ctl-line);
+	color: rgb(var(--ink));
+	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
+	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+	-webkit-appearance: none;
+	appearance: none;
+}
+.field::placeholder { color: rgb(var(--faint)); }
+
+/* mono variant — model id / 예산 숫자 입력 (기존 font-mono w-full / w-24 text-right 대체용) */
+.field--mono {
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-feature-settings: "tnum" 1;
+}
+
+/* hover — line→faint 한 단계 (.kpi:hover / .card .raised-2 와 동일 강조 단계) */
+.field:hover:not(:disabled):not(:focus-visible) {
+	border-color: rgb(var(--faint));
+}
+
+/* focus-visible — accent border + 2px accent/0.2 ring (doc-filter-input:focus 미러).
+   :focus-visible 사용 → 마우스 클릭 시 ring 억제, 키보드 탐색 시 노출 (접근성). */
+.field:focus-visible,
+.field:focus {
+	outline: none;
+	border-color: rgb(var(--accent));
+	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
+}
+
+/* disabled — .btn:disabled 정합 */
+.field:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* error — ring/​border hue 만 --crit 으로 교체 (모양·높이 불변, dual-encoding 은
+   기존 fs-meta text-crit 메시지가 담당). focus 시에도 crit 유지. */
+.field.is-error {
+	border-color: rgb(var(--crit));
+}
+.field.is-error:focus-visible,
+.field.is-error:focus {
+	border-color: rgb(var(--crit));
+	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
+}
+
+/* ── select — native <select> 유지 + 토큰 색 chevron ─────────────────────────
+   appearance:none 으로 OS 기본 화살표 제거 후, currentColor 대신 --faint 고정색
+   인라인 SVG data-uri 를 우측에 배치 → 다크/라이트 양쪽 동일 톤. 우측 padding 으로
+   chevron 자리 확보. background 는 fill(elev) + chevron 2겹 합성. */
+.field-select {
+	padding-right: 28px;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23706a65' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 9px center;
+	background-size: 12px 12px;
+	cursor: pointer;
+}
+/* 다크 테마 chevron — --faint(dark)=160 154 150 톤으로 교체해 어두운 면에서 가시화 */
+[data-theme="dark"] .field-select {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+}
+.field-select:focus-visible,
+.field-select:focus {
+	background-position: right 9px center; /* focus 시 ring 추가돼도 chevron 고정 */
+}
+/* 옵션 목록은 OS 네이티브 렌더 — 다크 일관성은 [data-theme] 무관(브라우저 소관) */
+
+/* ── inline-affix wrapper — 예산 "$" 등 ($ 가 input 높이 안에서 정렬, 높이 불변) ──
+   wrapper 가 border/radius/fill/focus-ring 을 소유, 내부 input 은 borderless 투명.
+   기존 "<span>$</span> + <input w-24 text-right>" 패턴 대체 — 높이/baseline 일관. */
+.field-affix {
+	display: inline-flex;
+	align-items: center;
+	box-sizing: border-box;
+	background: rgb(var(--elev));
+	border: 1px solid rgb(var(--line));
+	border-radius: 6px;
+	transition: border-color 0.12s, box-shadow 0.12s;
+	padding-left: 9px;                 /* affix 좌측 gutter — input 자체 좌패딩은 제거 */
+}
+.field-affix:hover:not(:focus-within) { border-color: rgb(var(--faint)); }
+.field-affix:focus-within {
+	border-color: rgb(var(--accent));
+	box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2);
+}
+.field-affix__sym {
+	font-size: 12.5px;
+	color: rgb(var(--dim));            /* 기존 "$" span 의 text-dim 정합 */
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	user-select: none;
+	flex-shrink: 0;
+}
+/* wrapper 안의 input — 테두리/배경 제거, focus ring 은 wrapper 가 소유 */
+.field-affix .field {
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	padding-left: 4px;                 /* sym 과 값 사이 간격 */
+	width: 100%;
+}
+.field-affix .field:focus-visible,
+.field-affix .field:focus { box-shadow: none; border: none; }
+/* affix error — wrapper hue 교체 (input 은 그대로 borderless) */
+.field-affix.is-error { border-color: rgb(var(--crit)); }
+.field-affix.is-error:focus-within {
+	border-color: rgb(var(--crit));
+	box-shadow: 0 0 0 2px rgb(var(--crit) / 0.2);
+}
+
+/* reduced-motion — transition 제거 (base.css §8.4 계약 정합). 색 변화는 즉시 적용. */
+@media (prefers-reduced-motion: reduce) {
+	.field, .field-affix { transition: none; }
+}
+
+/* ── Diff line (improvement S8) — 2색 git-diff 행. severity 색 단독 금지(§4.2):
+   +/− glyph 가 비색(non-color) 1차 신호, 색은 보조. mono+pre 로 코드 정렬 유지.
+   add/del fill 은 --ok/--crit 의 옅은 alpha (상시 표면, blur 없음). */
+.diff-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-feature-settings: "tnum" 1;
+	font-size: 12px;
+	line-height: 1.5;
+	padding: 1px 8px;
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: rgb(var(--ink));
+}
+/* glyph span — 색이 빠져도 +/− 부호만으로 add/del 판독 (dual-encode). */
+.diff-line__glyph {
+	flex-shrink: 0;
+	width: 1ch;
+	text-align: center;
+	user-select: none;
+	font-weight: 600;
+}
+.diff-line--add { background: rgb(var(--ok) / 0.10); }
+.diff-line--add .diff-line__glyph { color: rgb(var(--ok)); }
+.diff-line--del { background: rgb(var(--crit) / 0.10); }
+.diff-line--del .diff-line__glyph { color: rgb(var(--crit)); }
+
+/* ── Save banner (model-config S9) — sticky 하단 dirty-state 바.
+   상시(permanent) 표면이라 불투명 --elev fill (reduced-transparency safe, blur 없음).
+   상단 1px --line 경계 + 위로 향한 --shadow-overlay 로 콘텐츠 위에 떠 있음을 표현. */
+.save-banner {
+	position: sticky;
+	bottom: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 20px;
+	background: rgb(var(--elev));
+	border-top: 1px solid rgb(var(--line));
+	box-shadow: var(--shadow-overlay);
+}
+.save-banner__actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+/* ── Toast (S9 success / clauded-docs) — 최상위 transient 알림, --z-toast 스택.
+   shared SoT: clauded-docs + model-config 가 동일 클래스 소비 (screen-local 중복 제거).
+   transient 오버레이라 --shadow-overlay 토큰 사용 (기존 하드코딩 rgba drift 해소). */
+.doc-toast {
+	position: fixed;
+	bottom: 24px;
+	right: 24px;
+	padding: 10px 14px;
+	border-radius: 8px;
+	font-size: var(--fs-body, 13px);
+	box-shadow: var(--shadow-overlay);
+	z-index: var(--z-toast);
+	max-width: 480px;
+	border: 1px solid;
+}
+.doc-toast.info { background: rgb(var(--info) / 0.14); border-color: rgb(var(--info) / 0.4); color: rgb(var(--info)); }
+.doc-toast.ok   { background: rgb(var(--ok)   / 0.14); border-color: rgb(var(--ok)   / 0.4); color: rgb(var(--ok));   }
+.doc-toast.warn { background: rgb(var(--warn) / 0.14); border-color: rgb(var(--warn) / 0.4); color: rgb(var(--warn)); }
+.doc-toast.crit { background: rgb(var(--crit) / 0.14); border-color: rgb(var(--crit) / 0.4); color: rgb(var(--crit)); }

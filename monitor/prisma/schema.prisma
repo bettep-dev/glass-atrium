@@ -1,0 +1,850 @@
+// SoT for the monitor web app's typed PG client.
+// Hooks (bash/python) bypass Prisma and write to PG directly.
+// Connection: Unix socket only via DATABASE_URL host=/tmp.
+
+// `output` REQUIRED on prisma-client provider — client emits to ../src/generated/prisma.
+// `postgresqlExtensions` is validator-enforced Preview in 7.8.0.
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// No `url` here — CLI reads it from prisma.config.ts; runtime uses @prisma/adapter-pg via process.env.
+datasource db {
+  provider   = "postgresql"
+  schemas    = ["core", "wiki", "monitor"]
+  extensions = [pg_trgm(schema: "wiki"), btree_gin(schema: "wiki")]
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+/// daily-restart 데몬이 05:00 KST wiki 세션 context reset 담당.
+/// daemon_runs PK (run_date, daemon_name) 공유로 autoagent/wiki 양 역할 행이 같은
+/// 'daily-restart' 이름으로 상호 덮어씀 → 역할 한정 2종으로 식별 분리 (구 값은 과거 행 전용).
+enum DaemonType {
+  autoagent
+  wiki
+  daily_restart           @map("daily-restart")
+  daily_restart_autoagent @map("daily-restart-autoagent")
+  daily_restart_wiki      @map("daily-restart-wiki")
+
+  @@schema("core")
+}
+
+enum DaemonStatus {
+  ok
+  partial
+  error
+  missing
+  stale
+  /// Claude Max quota 소진으로 daemon prompt 호출 실패 — user-domain 이므로 alert 억제 대상
+  quota_exceeded
+
+  @@schema("core")
+}
+
+enum CostGuardState {
+  ok
+  warn
+  block
+  /// 401/credential 인증 실패 등 인프라 결함 — usage/spend 가 아닌 fault 신호이므로
+  /// 'warn'(사용량 알림)과 분리 (오분류 차단: auth 실패를 'Spending guard'로 표시 금지).
+  infra_fault
+
+  @@schema("core")
+}
+
+/// Canonical 9-type contract — SoT = rules/core-outcome-record.md "task_type set".
+/// Additive expand (5→9): 4 non-code types added (review/diagnosis/doc/cleanup).
+/// All 4 new values are plain identifiers (no hyphen) → no @map needed (only the
+/// legacy `bug-fix` wire form requires @map, matching the file's existing style).
+enum TaskType {
+  bug_fix  @map("bug-fix")
+  feature
+  refactor
+  research
+  plan
+  review
+  diagnosis
+  doc
+  cleanup
+
+  @@schema("core")
+}
+
+/// Deterministic 3-state grader signal (track-outcome.sh) — SEPARATE column from
+/// metric_pass, advisory only (NEVER overwrites the writer self-report). SoT =
+/// rules/core-outcome-record.md Field Input Guide → grader_verdict.
+enum GraderVerdict {
+  verified_pass
+  unverified
+  verified_fail
+
+  @@schema("core")
+}
+
+/// Provenance of how a graded outcome arose, recorded alongside grader_verdict.
+/// SoT = rules/core-outcome-record.md Field Input Guide → downgrade_origin.
+enum DowngradeOrigin {
+  writer_true_downgraded
+  writer_false
+  synthesized
+
+  @@schema("core")
+}
+
+enum OutcomeResult {
+  done
+  done_with_concerns
+  blocked
+  needs_context
+  fail
+
+  @@schema("core")
+}
+
+enum Confidence {
+  high
+  medium
+  low
+
+  @@schema("core")
+}
+
+enum LearningStatus {
+  identified
+  proposed
+  approved
+  applied
+  rejected
+
+  @@schema("core")
+}
+
+enum ApprovalTier {
+  auto
+  llm
+  user_pending @map("user-pending")
+  user
+
+  @@schema("core")
+}
+
+enum ProposalClassification {
+  apply
+  reject
+
+  @@schema("core")
+}
+
+enum ProposalStatus {
+  pending
+  approved
+  rejected
+  applied
+  snoozed
+
+  @@schema("core")
+}
+
+enum HookErrorKind {
+  connection_refused
+  timeout
+  constraint_violation
+  unknown
+  identifier_rejected
+
+  @@schema("core")
+}
+
+// 2026-05-19 (wave-alert-removal): AlertSeverity enum 제거 — alert subsystem 폐기.
+
+/// Source: plan §3.4 audit_log.result_code enum
+enum AuditResultCode {
+  success
+  blocked
+  error
+
+  @@schema("monitor")
+}
+
+/// Source: plan §3.4 autoagent_decisions.decision enum (Const-13)
+enum AutoagentDecision {
+  approved
+  rejected
+  snoozed
+
+  @@schema("monitor")
+}
+
+/// Phase A (CID 2026-05-22T1135_doc-mgmt-enhance_a1b2) — 2-value workflow gate (사용자 directive 4).
+/// doc_type (4-value lifecycle) 와 의미축 다름:
+///   - doc_status = "현재 작업 상태" (workflow — 사용자 직접 토글 · group cascade 대상)
+///   - doc_type = "lifecycle 분류" (analytic — supersedes_id chain 과 짝 · Phase 1b)
+/// Mapping (migration backfill): draft → progress · final/archived/superseded → done
+enum DocStatus {
+  progress
+  done
+
+  @@schema("monitor")
+}
+
+// ============================================================================
+// Schema: core (system operational data — hook + daemon + learning signals)
+// ============================================================================
+
+/// Source: cost-tracker.sh Stop hook (per plan §3.2 cost_events)
+/// Token-collection-completeness fix (CID 2026-06-05T1734_token-collect_b2c3):
+///   - kind ('turn'|'subagent') — row provenance discriminator. 'turn' = a main
+///     per-turn aggregate (carries stop_reason/num_turns/model — turn-stats SoT);
+///     'subagent' = one Task/workflow agent file's token total (MUST be excluded
+///     from turn-stats so it does not pollute stop_reason distribution / num_turns).
+///   - dedupKey — STABLE per-row identifier replacing the old time-based
+///     (session_id, event_date, event_time) dedup. A re-scan of the same turn or
+///     subagent UPSERTs the SAME row instead of inserting a duplicate, so the
+///     Stop multi-fire / full-file re-aggregation no longer double-counts (RC2).
+///       * kind='turn'     → dedupKey = turn-boundary real-user message uuid
+///                           (1 user-uuid = exactly 1 turn; validated unique on
+///                            the sample session — 125 uuids, 125 distinct).
+///       * kind='subagent' → dedupKey = agent file id from agent-<id>.jsonl
+///                           (validated unique — 162 files, 162 distinct ids).
+model CostEvent {
+  id                  BigInt   @id @default(autoincrement())
+  eventDate           DateTime @map("event_date") @db.Date
+  eventTime           DateTime @map("event_time") @db.Time(6)
+  sessionId           String   @map("session_id")
+  // Row provenance — see model doc. NOT NULL DEFAULT 'turn': every legacy row is
+  // a main per-turn row, so 'turn' is the semantically-correct backfill value and
+  // keeps the existing turn-stats/by-model reads unchanged for historical data.
+  kind                String   @default("turn") @db.VarChar(16)
+  // Stable dedup identifier — see model doc. NULLABLE so the backfill can
+  // populate it idempotently for legacy rows (legacy rows lacking a derivable
+  // turn-uuid get a deterministic synthetic key; see migration). New writes from
+  // the upgraded hook + backfill ALWAYS supply a non-NULL dedupKey.
+  dedupKey            String?  @map("dedup_key")
+  inputTokens         BigInt   @map("input_tokens")
+  outputTokens        BigInt   @map("output_tokens")
+  cacheReadTokens     BigInt   @map("cache_read_tokens")
+  cacheCreationTokens BigInt   @map("cache_creation_tokens")
+  costUsd             Decimal  @map("cost_usd") @db.Decimal(12, 6)
+  durationMs          BigInt   @map("duration_ms")
+  numTurns            Int      @map("num_turns")
+  stopReason          String?  @map("stop_reason") @db.VarChar(64)
+  model               String?  @db.VarChar(128)
+  parseError          Boolean  @map("parse_error")
+  rawInput            String?  @map("raw_input") @db.VarChar(500)
+  insertedAt          DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
+
+  // Stable-key dedup — replaces the old time-based cost_events_dedup. ON CONFLICT
+  // target for the hook + backfill UPSERT. (session_id, dedup_key) is the conflict
+  // arbiter: re-scanning a turn/subagent UPDATEs the matching row in place.
+  @@unique([sessionId, dedupKey], map: "cost_events_session_dedup_key")
+  @@index([eventDate, eventTime], map: "cost_events_date_time_idx")
+  @@index([sessionId], map: "cost_events_session_idx")
+  @@index([model], map: "cost_events_model_idx")
+  // Turn-stats / by-model reads filter kind='turn'; partial index keeps those
+  // scans off subagent rows (declared in migration SQL — Prisma 7 cannot express
+  // WHERE predicates; plain @@index would drop the partial predicate on diff).
+  @@map("cost_events")
+  @@schema("core")
+}
+
+/// Source: agent-tracker.sh SubagentStart/Stop hook (per plan §3.2 agent_events)
+model AgentEvent {
+  id        BigInt   @id @default(autoincrement())
+  eventTs   DateTime @map("event_ts") @db.Timestamptz(6)
+  eventName String   @map("event_name") @db.VarChar(64)
+  agentId   String   @map("agent_id")
+  agentType String   @map("agent_type") @db.VarChar(64)
+
+  @@unique([eventTs, agentId, eventName], map: "agent_events_dedup")
+  @@index([eventTs], map: "agent_events_ts_idx")
+  @@index([agentType, eventTs], map: "agent_events_type_ts_idx")
+  @@map("agent_events")
+  @@schema("core")
+}
+
+/// Source: outcome-record.sh frontmatter (per plan §3.2 outcomes — all flat columns,
+/// concerns as TEXT[] per revision 2 normalization)
+model Outcome {
+  id                BigInt        @id @default(autoincrement())
+  recordTs          DateTime      @map("record_ts") @db.Timestamptz(6)
+  agent             String        @db.VarChar(64)
+  taskType          TaskType      @map("task_type")
+  result            OutcomeResult
+  confidence        Confidence?
+  metricPass        Boolean?      @map("metric_pass")
+  metricType        String?       @map("metric_type") @db.VarChar(32)
+  revisionCount     Int           @default(0) @map("revision_count")
+  evaluativeSignal  Int?          @map("evaluative_signal")
+  directiveHint     String?       @map("directive_hint")
+  lesson            String?
+  concerns          String[]      @default([]) @db.Text
+  filesModified     String[]      @default([]) @map("files_modified") @db.Text
+  correlationId     String?       @map("correlation_id") @db.VarChar(96)
+  cid               String?       @db.VarChar(96)
+  // Wave 15 fix: outcome-record.sh:373-417 computes attribution provenance
+  // (agent-id-missing / cron-derived / completion-missing / etc.) — persistence
+  // wire-up was missing → learning-aggregator.py:374-389 always saw empty string.
+  // Wave 2026-05-14 (plan doc 1012 P2) → 2026-05-29 (e5f3) — CHECK constraint NOT VALID, 8종 캐노니컬:
+  //   - hook-input             : default — happy path
+  //   - cron-derived           : autoagent-cron / wiki-daily-compile 등 5개 cron
+  //   - agent-id-missing       : Python label-clarification 분기
+  //   - subagent-stop-missing  : R1 인스트루멘테이션 라벨
+  //   - completion-missing     : [COMPLETION] block 부재 감지 (관측 라벨)
+  //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (95.1% 노이즈 식별)
+  //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
+  //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
+  // String? 유지 (Prisma enum 미도입) — CHECK 가 DB-side 보호. Nullable: historical rows
+  // pre-2026-05-09 legitimately have NULL (NOT VALID 가 면제).
+  attributionSource String?       @map("attribution_source")
+  summary           String
+  reviewFlag        Boolean       @default(false) @map("review_flag")
+  bodyMd            String?       @map("body_md")
+  // Cycle 3.3.a (2026-05-20): plan AC-B4 backing data — DEV-agent Project Convention
+  // Probe telemetry. Path-or-'greenfield' literal emitted by outcome-record.sh L1098/
+  // L1114 (Cycle 3.2). NULL = pre-Cycle-3.2 row OR v1.0 OPTIONAL silent omit. v1.1
+  // MANDATORY graduation (per plan ADR-2) requires emission ≥ 50% AND fake_rate < 10%.
+  styleRef          String?       @map("style_ref")
+  // Set by future write-back from hooks/style-ref-verify.sh (currently stderr WARN only —
+  // DB UPDATE path is downstream Cycle 3.3.c). TRUE = path matched session Read history;
+  // FALSE = Gaming-the-Judge candidate (R2-06); NULL = verify hook not wired OR
+  // style_ref is 'greenfield'/NULL itself (verify is structurally not applicable).
+  styleRefVerified  Boolean?      @map("style_ref_verified")
+  // Phase 1 P1.3.2 (2026-05-24): 3-Tier Eval Grader rollout marker (plan doc 1779).
+  // TRUE = row predates 3-Tier wire-in AND metric_pass=NULL (legacy EMPTY backfill,
+  // 1223 author-side rows · agent NOT IN orchestrator/subagent_stop_missing/unknown).
+  // NULL = post-wire-in row OR infra-attribution agent (out-of-scope per ADR-4 / AC-3).
+  // Partial index outcomes_baseline_pre_3tier_idx WHERE baseline_pre_3tier IS NOT NULL
+  // (migration raw SQL only — Prisma 7 schema cannot declare partial-index predicates).
+  baselinePre3tier  Boolean?      @map("baseline_pre_3tier")
+  // outcome-grading root fix (CID 2026-06-06T1600_metric-rootfix_c3d9) — additive,
+  // legacy-safe expand. Both grader-populated (track-outcome.sh), writer never fills.
+  //   - grader_verdict: deterministic 3-state advisory, SEPARATE from metric_pass
+  //     (never overwrites the writer self-report — disagreement surfaces via review_flag).
+  //   - downgrade_origin: provenance of how the graded outcome arose.
+  // BOTH nullable: legacy rows (~2407 pre-fix) stay NULL = "not yet graded". The
+  // task_type membership CHECK reuses the documented NOT VALID precedent (see the
+  // attribution_source / baseline_pre_3tier comments above) — existing rows exempt,
+  // VALIDATE deferred to post-verify gated on a zero-out-of-set audit (migration SQL).
+  graderVerdict     GraderVerdict?   @map("grader_verdict")
+  downgradeOrigin   DowngradeOrigin? @map("downgrade_origin")
+  // TRUE = 오염 윈도우 격리 행 (2026-05-24 .. 2026-06-06 18:04 KST · metric_pass=false ·
+  // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
+  // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.
+  poisonedWindow    Boolean       @default(false) @map("poisoned_window")
+  insertedAt        DateTime      @default(now()) @map("inserted_at") @db.Timestamptz(6)
+
+  correctionSignals CorrectionSignal[]
+
+  @@unique([recordTs, agent, taskType], map: "outcomes_dedup")
+  @@index([recordTs], map: "outcomes_ts_idx")
+  @@index([agent, recordTs], map: "outcomes_agent_ts_idx")
+  @@index([taskType, recordTs], map: "outcomes_task_ts_idx")
+  // Partial index: review_flag = true only — used by §4.4 mismatch panel
+  @@index([reviewFlag], map: "outcomes_review_flag_idx")
+  // Cycle 3.3.a (2026-05-20): partial index `WHERE style_ref IS NOT NULL` on
+  // (agent, record_ts DESC) — supports plan AC-B4 (c) 7-day rolling per-agent
+  // aggregation during v1.0 OPTIONAL sparse-emission phase. Prisma 7 schema cannot
+  // declare partial-index predicates → migration raw SQL only (see
+  // 20260520144800_add_style_ref_to_outcomes/migration.sql CreateIndex block).
+  // Index name: outcomes_style_ref_agent_ts_idx (NOT mirrored here intentionally —
+  // declaring as plain @@index would cause prisma migrate diff to drop the partial
+  // predicate and recreate as full index).
+  @@map("outcomes")
+  @@schema("core")
+}
+
+/// Source: outcome-record.sh stage1/stage2 capture (per plan §3.2 correction_signals)
+model CorrectionSignal {
+  id                 BigInt   @id @default(autoincrement())
+  eventTs            DateTime @map("event_ts") @db.Timestamptz(6)
+  taskType           String   @map("task_type") @db.VarChar(32)
+  stage1Matched      Boolean  @map("stage1_matched")
+  stage2Matched      Boolean  @map("stage2_matched")
+  finalDetected      Boolean  @map("final_detected")
+  revisionCountDelta Int      @map("revision_count_delta")
+  outcomeId          BigInt?  @map("outcome_id")
+
+  outcome Outcome? @relation(fields: [outcomeId], references: [id], onDelete: SetNull)
+
+  @@unique([eventTs, taskType, outcomeId], map: "correction_signals_dedup")
+  @@index([eventTs], map: "correction_signals_ts_idx")
+  @@index([outcomeId], map: "correction_signals_outcome_idx")
+  @@map("correction_signals")
+  @@schema("core")
+}
+
+/// Source: learning-aggregator.py output (per plan §3.2 learning_log)
+model LearningLog {
+  id                   BigInt         @id @default(autoincrement())
+  discoveredDate       DateTime       @map("discovered_date") @db.Date
+  patternSignature     String         @map("pattern_signature")
+  frequency            Int
+  agent                String?        @db.VarChar(64)
+  status               LearningStatus
+  approvalTier         ApprovalTier   @map("approval_tier")
+  lastUpdated          DateTime       @map("last_updated") @db.Timestamptz(6)
+  /// 2026-05-04 #26-pre: status 전이 audit 컬럼. PATCH /api/learning/patterns/:id/status 활성화 (사용자 명시 §8 권한 가드).
+  lastTransitionAt     DateTime?      @map("last_transition_at") @db.Timestamptz(6)
+  lastTransitionReason String?        @map("last_transition_reason") @db.VarChar(500)
+
+  @@unique([patternSignature], map: "learning_log_pattern_uniq")
+  @@index([discoveredDate], map: "learning_log_date_idx")
+  @@index([status, approvalTier], map: "learning_log_status_tier_idx")
+  @@index([status, lastTransitionAt(sort: Desc)], map: "learning_log_status_transition_idx")
+  @@map("learning_log")
+  @@schema("core")
+}
+
+/// Source: autoagent + wiki + launchd 4-job daemons (per plan §3.2 daemon_runs,
+/// revision 2 — flat statistics columns; PK = (run_date, daemon_name))
+model DaemonRun {
+  runDate            DateTime        @map("run_date") @db.Date
+  daemonName         DaemonType      @map("daemon_name")
+  startedAt          DateTime        @map("started_at") @db.Timestamptz(6)
+  endedAt            DateTime?       @map("ended_at") @db.Timestamptz(6)
+  status             DaemonStatus
+  costGuardState     CostGuardState? @map("cost_guard_state")
+  patchesCount       Int?            @map("patches_count")
+  patchesApplyCount  Int?            @map("patches_apply_count")
+  patchesRejectCount Int?            @map("patches_reject_count")
+  deadlinksCount     Int?            @map("deadlinks_count")
+  dedupCount         Int?            @map("dedup_count")
+  // 위키 일일 컴파일 사이클 결과 — 04:00 wiki-daily-compile.sh 가 기록,
+  // 04:30 _pg_push_wiki_cycle.py upsert 시 미포함 → NULL 보존 (partial-upsert 안전)
+  compiledCount      Int?            @map("compiled_count")
+  compiledTotal      Int?            @map("compiled_total")
+  compileMs          BigInt?         @map("compile_ms")
+  notes              String?
+  insertedAt         DateTime        @default(now()) @map("inserted_at") @db.Timestamptz(6)
+
+  payload DaemonRunPayload?
+  // Note: autoagent_proposals.cycle_date is a logical FK (plan §3.2) — no Prisma
+  // back-relation possible because daemon_runs PK is composite.
+
+  @@id([runDate, daemonName], map: "daemon_runs_pkey")
+  // Composite index for §4.9 daemon card latest-first listing
+  @@index([daemonName, runDate(sort: Desc)], map: "daemon_runs_name_date_idx")
+  // Partial index — abnormal cycles only (status <> 'ok')
+  @@index([status, runDate(sort: Desc)], map: "daemon_runs_status_date_idx")
+  @@map("daemon_runs")
+  @@schema("core")
+}
+
+/// Source: daemon-reports/*.json raw view storage (per plan §3.2 daemon_run_payload,
+/// revision 2 — separated from daemon_runs to avoid scan inflation)
+model DaemonRunPayload {
+  runDate          DateTime   @map("run_date") @db.Date
+  daemonName       DaemonType @map("daemon_name")
+  payload          Json       @db.JsonB
+  payloadSizeBytes Int        @map("payload_size_bytes")
+
+  daemonRun DaemonRun @relation(fields: [runDate, daemonName], references: [runDate, daemonName], onDelete: Cascade)
+
+  @@id([runDate, daemonName], map: "daemon_run_payload_pkey")
+  @@map("daemon_run_payload")
+  @@schema("core")
+}
+
+/// Source: autoagent daemon patch proposals (per plan §3.2 autoagent_proposals,
+/// revision 2 — promoted from SQLite to PG normalized table)
+model AutoagentProposal {
+  id              BigInt                 @id @default(autoincrement())
+  cycleDate       DateTime               @map("cycle_date") @db.Date
+  patternLabel    String                 @map("pattern_label") @db.VarChar(256)
+  targetFile      String                 @map("target_file")
+  targetAgent     String?                @map("target_agent") @db.VarChar(64)
+  classification  ProposalClassification
+  rationale       String?
+  haikuStatus     String?                @map("haiku_status") @db.VarChar(32)
+  approvalTier    ApprovalTier           @map("approval_tier")
+  status          ProposalStatus
+  proposedDiff    String?                @map("proposed_diff")
+  costGuardState  String?                @map("cost_guard_state") @db.VarChar(16)
+  reviewedAt      DateTime?              @map("reviewed_at") @db.Timestamptz(6)
+  reviewedBy      String?                @map("reviewed_by") @db.VarChar(64)
+  auditLogId      BigInt?                @map("audit_log_id")
+  sourceFile      String                 @map("source_file")
+  sourceFileMtime BigInt                 @map("source_file_mtime")
+  indexedAt       DateTime               @default(now()) @map("indexed_at") @db.Timestamptz(6)
+
+  // Phase 3 (2026-05-02 ADR R2 step 1) — pre-verify 4-axis verdict snapshot.
+  // Mirrors PreVerifyResult fields in autoagent/daemon_cycle.py (C1=compliance-matrix,
+  // C2=GLOBAL_RULES, C3=scope-*, C4=self-consistency). All nullable: existing rows
+  // backfill to NULL; rows older than 2026-05-02 cycle were never pre-verified.
+  // Why JSONB for axes: 4-key bool object preserves per-axis traceability for the
+  // monitor UI's reject-reason panel without forcing 4 additional bool columns.
+  preVerifyPassed    Boolean? @map("pre_verify_passed")
+  preVerifyStatus    String?  @map("pre_verify_status") @db.VarChar(64)
+  preVerifyRationale String?  @map("pre_verify_rationale")
+  preVerifyAxes      Json?    @map("pre_verify_axes") @db.JsonB
+
+  // Phase 2 (plan doc 1782 ADR-6) — confidence-weighted instinct learning loop.
+  // Per-pattern AGGREGATE columns (not per-event → NOT on core.outcomes).
+  // All nullable + forward-looking: daemon fills on next cycle, existing rows NULL.
+  //   confidenceObserved — Beta posterior mean from empirical tuple (revision_count
+  //     + result + evaluative_signal), NOT writer self-report (lib/confidence.py P2.3).
+  //   projectKey — 12-char hex isolation key (lib/project_key.py 3-tier resolver P2.2).
+  //   promotionTier — ladder state: mention/candidate/proposal/instruction-edit/skill-candidate (P3).
+  confidenceObserved Float?  @map("confidence_observed") @db.Real
+  projectKey         String? @map("project_key")
+  promotionTier      String? @map("promotion_tier")
+
+  // T12b backlog-drain — per-row cross-cycle stale counter. daemon-apply.sh's
+  // stale-drain CTE increments this each consecutive stale re-selection and, at
+  // STALE_DRAIN_THRESHOLD, flips status → 'snoozed' so the fossil stops cycling.
+  // NOT NULL DEFAULT 0 (vs the sibling NULLable Phase columns): a stale counter
+  // has a meaningful zero — every existing row starts at 0 attempts, no "unset".
+  staleAttemptCount Int @default(0) @map("stale_attempt_count")
+
+  // cycle_date references core.daemon_runs(run_date) WHERE daemon_name='autoagent'
+  // — physical FK to composite PK omitted; relation is logical (per plan §3.2 note),
+  // enforced by app-layer query (cycle_date + filter daemon_name='autoagent').
+  // No Prisma `@relation` here because daemon_runs PK is composite (run_date, daemon_name).
+
+  decisions AutoagentDecisionRecord[]
+
+  // Dedup key for daemon UPSERT — _pg_dual_write_daemon.py:310 relies on this
+  // ON CONFLICT (cycle_date, pattern_label, target_file). DB index pre-existed;
+  // declared here in 20260509220000 to close Prisma↔DB schema drift.
+  @@unique([cycleDate, patternLabel, targetFile], map: "autoagent_proposals_cycle_pattern_target_key")
+  @@index([cycleDate], map: "autoagent_proposals_cycle_idx")
+  // Partial index: pending review only
+  @@index([status, approvalTier], map: "autoagent_proposals_status_tier_idx")
+  @@index([targetAgent, cycleDate], map: "autoagent_proposals_agent_cycle_idx")
+  // Phase 2 partial index autoagent_proposals_confidence_idx ON (confidence_observed)
+  // WHERE confidence_observed IS NOT NULL (migration 20260524133000 raw SQL only —
+  // Prisma 7 schema cannot declare partial-index predicates; plain @@index would make
+  // migrate diff drop the partial predicate and regenerate a full mostly-NULL index).
+  @@map("autoagent_proposals")
+  @@schema("core")
+}
+
+/// Source: autoagent-loop.jsonl (per plan §3.2 autoagent_loop_events)
+model AutoagentLoopEvent {
+  id             BigInt   @id @default(autoincrement())
+  eventTs        DateTime @map("event_ts") @db.Timestamptz(6)
+  agent          String   @db.VarChar(64)
+  rice           Decimal? @db.Decimal(8, 3)
+  evalResult     String   @map("eval_result") @db.VarChar(32)
+  changesAdded   Int      @map("changes_added")
+  changesRemoved Int      @map("changes_removed")
+
+  @@unique([eventTs, agent, evalResult], map: "autoagent_loop_events_dedup")
+  @@index([eventTs], map: "autoagent_loop_events_ts_idx")
+  @@index([agent, eventTs], map: "autoagent_loop_events_agent_ts_idx")
+  @@map("autoagent_loop_events")
+  @@schema("core")
+}
+
+/// Source: outcomes-audit-queue.txt etc. (per plan §3.2 audit_queue —
+/// learning-exclusion paths)
+model AuditQueueEntry {
+  id           BigInt   @id @default(autoincrement())
+  excludedPath String   @map("excluded_path")
+  reason       String
+  excludedAt   DateTime @map("excluded_at") @db.Timestamptz(6)
+
+  @@index([excludedAt], map: "audit_queue_ts_idx")
+  @@map("audit_queue")
+  @@schema("core")
+}
+
+/// Source: locks/ filesystem mutex (per plan §3.2 locks — advisory lock metadata)
+model LockHolder {
+  lockName   String    @id @map("lock_name") @db.VarChar(128)
+  acquiredAt DateTime  @map("acquired_at") @db.Timestamptz(6)
+  holder     String    @db.VarChar(128)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  @@map("locks")
+  @@schema("core")
+}
+
+/// Source: learning-aggregator state watermark (per plan §3.2 aggregator_state —
+/// single-row state per name)
+model AggregatorState {
+  name            String   @id @db.VarChar(64)
+  lastProcessedTs DateTime @map("last_processed_ts") @db.Timestamptz(6)
+  lagSeconds      Int?     @map("lag_seconds")
+
+  @@map("aggregator_state")
+  @@schema("core")
+}
+
+/// Source: hook DB write failure best-effort counter (per plan §3.2 hook_failures
+/// + §7.3 fail-loud-and-skip policy)
+model HookFailure {
+  id             BigInt        @id @default(autoincrement())
+  failureTs      DateTime      @map("failure_ts") @db.Timestamptz(6)
+  hookName       String        @map("hook_name") @db.VarChar(64)
+  targetTable    String        @map("target_table") @db.VarChar(96)
+  errorKind      HookErrorKind @map("error_kind")
+  payloadRef     String?       @map("payload_ref") @db.VarChar(128)
+  retryAttempted Boolean       @map("retry_attempted")
+
+  @@index([failureTs], map: "hook_failures_ts_idx")
+  @@index([hookName, failureTs], map: "hook_failures_hook_ts_idx")
+  @@map("hook_failures")
+  @@schema("core")
+}
+
+// ============================================================================
+// Schema: wiki (notes index + dirty signal)
+// ============================================================================
+
+/// Source: wiki SQLite notes table (per plan §3.3 wiki.notes —
+/// tsvector + pg_trgm dual-index R3 strategy from §5.1)
+/// Note: tsvector `ts` column + GIN indexes (notes_ts_gin, notes_*_trgm) are
+/// added via raw SQL migration step (see prisma/migrations/*_wiki_fts/) —
+/// Prisma cannot natively model GENERATED tsvector + gin_trgm_ops indexes.
+model WikiNote {
+  id        BigInt @id @default(autoincrement())
+  path      String @unique
+  title     String
+  tags      String
+  noteType  String @map("note_type") @db.VarChar(64)
+  sourceUrl String @map("source_url")
+  content   String
+  mtime     BigInt
+  indexedAt BigInt @map("indexed_at")
+
+  @@index([noteType], map: "notes_type_idx")
+  @@index([tags], map: "notes_tags_idx")
+  @@index([mtime], map: "notes_mtime_idx")
+  @@map("notes")
+  @@schema("wiki")
+}
+
+/// Source: wiki master-index regeneration signal (per plan §3.3 wiki.dirty_flag —
+/// 1-row enforced via PK CHECK = 1)
+model WikiDirtyFlag {
+  id        Int     @id
+  dirty     Boolean
+  lastDirty BigInt  @map("last_dirty")
+
+  @@map("dirty_flag")
+  @@schema("wiki")
+}
+
+// ============================================================================
+// Schema: monitor (web app's own state — audit, decisions, documents)
+// 2026-05-19 (wave-alert-removal): Alert · AlertInhibition · AlertArchive ·
+// AlertRule · AlertCadenceState 5개 model 제거 — alert subsystem 폐기.
+// ============================================================================
+
+/// Source: monitor web write actions (per plan §3.4 monitor.audit_log —
+/// only intentional JSON column per revision 2 normalization)
+model AuditLog {
+  id          BigInt          @id @default(autoincrement())
+  eventTs     DateTime        @map("event_ts") @db.Timestamptz(6)
+  actor       String          @db.VarChar(64)
+  actionKind  String          @map("action_kind") @db.VarChar(64)
+  targetTable String?         @map("target_table") @db.VarChar(96)
+  targetId    BigInt?         @map("target_id")
+  payload     Json?           @db.JsonB
+  resultCode  AuditResultCode @map("result_code")
+
+  @@index([eventTs], map: "audit_log_ts_idx")
+  @@index([actor, eventTs], map: "audit_log_actor_ts_idx")
+  @@index([actionKind, eventTs], map: "audit_log_action_ts_idx")
+  @@map("audit_log")
+  @@schema("monitor")
+}
+
+/// Source: weekly-clear rotation per Const-10 — audit_log > 180d → here
+/// (per plan §3.4 monitor.audit_log_archive)
+model AuditLogArchive {
+  id          BigInt          @id @default(autoincrement())
+  eventTs     DateTime        @map("event_ts") @db.Timestamptz(6)
+  actor       String          @db.VarChar(64)
+  actionKind  String          @map("action_kind") @db.VarChar(64)
+  targetTable String?         @map("target_table") @db.VarChar(96)
+  targetId    BigInt?         @map("target_id")
+  payload     Json?           @db.JsonB
+  resultCode  AuditResultCode @map("result_code")
+  archivedAt  DateTime        @map("archived_at") @db.Timestamptz(6)
+
+  @@index([archivedAt], map: "audit_log_archive_archived_at_idx")
+  @@index([eventTs], map: "audit_log_archive_event_ts_idx")
+  @@map("audit_log_archive")
+  @@schema("monitor")
+}
+
+/// Source: autoagent patch user decisions (per plan §3.4 monitor.autoagent_decisions —
+/// Const-13 normalized table; append-only — no race)
+model AutoagentDecisionRecord {
+  id         BigInt            @id @default(autoincrement())
+  proposalId BigInt            @map("proposal_id")
+  decision   AutoagentDecision
+  reviewedAt DateTime          @map("reviewed_at") @db.Timestamptz(6)
+  reviewedBy String            @map("reviewed_by") @db.VarChar(64)
+  auditLogId BigInt            @map("audit_log_id")
+  notes      String?
+
+  proposal AutoagentProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([proposalId], map: "autoagent_decisions_proposal_idx")
+  @@index([reviewedAt(sort: Desc)], map: "autoagent_decisions_reviewed_at_idx")
+  @@map("autoagent_decisions")
+  @@schema("monitor")
+}
+
+/// 책임 단위:
+///   - 메타 = DB · 본문 = FS (ADR-1 하이브리드) — html_path 만 저장 · body blob 없음
+///   - HTML SoT (ADR-3) — content_hash 는 SHA256(HTML 본문) · last_synced_at = 사본 재생성 시각
+///   - 검색 인덱스 = tsvector(GIN) + pg_trgm(wiki.gin_trgm_ops 재사용 · monitor 스키마 한정 인덱스)
+///   - indexable_text = 앱 레이어가 HTML→plaintext 추출 후 채움 (Postgres GENERATED 불가 — 변환은 app 책임)
+///
+/// Note: tsvector `ts` 칼럼 + GIN 인덱스(`monitor_documents_ts_gin`,
+/// `monitor_documents_*_trgm`) 는 raw SQL appendix 로 추가됨
+/// (wiki.notes 와 동일 패턴 — Prisma DSL 은 GENERATED tsvector + gin_trgm_ops 를 표현 못 함).
+model ClaudedDoc {
+  id            BigInt    @id @default(autoincrement())
+  // 폐기된 prefix 분류의 잔존 데이터 — 앱이 더 이상 읽거나 쓰지 않음 (기존 행 backfill 보존 · 신규 행 NULL)
+  legacyPrefix  String?   @map("legacy_prefix")
+  title         String
+  author        String    @db.VarChar(64)
+  createdAt     DateTime  @map("created_at") @db.Timestamptz(6)
+  // Wave 3-2a follow-up (CID 2026-05-22T1135_doc-mgmt-enhance_a1b2) —
+  //   doc_type 컬럼 DROP (선행 migration) + DocType enum DROP (본 sub-cycle)
+  //   server route 의 60+ doc_type / DocTypeLiteral reference 전량 제거 후 enum 안전 DROP
+  // SHA256(HTML 본문) — ADR-3 SoT 무결성 검증 키 · 64자 hex
+  contentHash   String    @map("content_hash") @db.VarChar(64)
+  // ADR-1 하이브리드 — monitor/data/documents/{id}.html 형식 절대 경로
+  htmlPath      String    @map("html_path")
+  // 폐기된 사본 경로의 잔존 컬럼 — 항상 NULL · 계약 호환성 위해 보존 (앱이 더 이상 읽거나 쓰지 않음)
+  mdCopyPath    String?   @map("md_copy_path")
+  // ADR-2 검색 인덱스 원천 — title + HTML 태그 제거 plaintext (앱 레이어 채움)
+  indexableText String    @map("indexable_text")
+  // ADR-3 사본 정합성 — html_path 기준 마지막 사본 생성 시각 · 사본 없으면 NULL
+  lastSyncedAt  DateTime? @map("last_synced_at") @db.Timestamptz(6)
+  // 노출 비트 — 'exposed'/'hidden' 으로 목록·검색 노출 여부만 결정 · NULL = 미지정(read 시 exposed fallback)
+  //   - 레거시 값(public·ops → exposed · agent-only → hidden)은 backfill 없이 read-time 정규화
+  audience      String?   @db.VarChar(16)
+  // 행 입력 시각 — created_at 과 분리(에이전트 작성일 ≠ DB 적재일 가능성)
+  insertedAt    DateTime  @default(now()) @map("inserted_at") @db.Timestamptz(6)
+  // Phase 1b (plan doc#1789 rev2 ADR-4 R1): 본 문서가 대체(supersede)한 이전 버전 ID.
+  //   - NULL = chain root (전임자 없음 — 신규 작성본 또는 최초 버전)
+  //   - 값 존재 = 본 행이 supersedes_id 가 가리키는 행의 후속 버전 (Phase 2 에서 채택 시점 transition)
+  //   - Wave 3-2a follow-up — DocType.superseded enum 폐지 후 transition target = doc_status='done'
+  supersedesId  BigInt?   @map("supersedes_id")
+  // Phase A (CID 2026-05-22T1135_doc-mgmt-enhance_a1b2 · 사용자 directive 4) — 2-value workflow gate.
+  //   - DocStatus enum (progress | done) · NOT NULL DEFAULT progress
+  //   - draft → progress · final/archived/superseded → done (migration backfill)
+  //   - Phase B handleUpdate: same folder_id 행 cascade (app-layer single-statement CTE — DB trigger 미채택)
+  docStatus     DocStatus @default(progress) @map("doc_status")
+  // Phase A (사용자 directive 1·3·4) — 그룹 식별자 (NULL = ungrouped).
+  //   - 같은 folder_id 값 보유 행 = 같은 그룹 · 대제목 = 그룹 내 MAX(created_at) 행의 title
+  //   - 50 group/page pagination (CTE/window function — Part 2 §1 채택 D-pattern UNION ALL)
+  //   - 자기참조 FK (group root 행의 id 를 가리키는 패턴 — 별도 group 테이블 미생성, surface area 최소)
+  //   - onDelete: SetNull (group root 삭제 시 그룹 단절 · NOT CASCADE — silent 그룹 전체 삭제 위험 차단)
+  folderId      BigInt?   @map("folder_id")
+  // Group display order (CID 2026-06-01T1145_group-order-db_b1a2) — 그룹 내 명시적 정렬 순서.
+  //   - NULLABLE: NULL = 미설정 (callers fall back to created_at 정렬) · 값 = 0-based 그룹 내 순서
+  //   - ungrouped 행(folder_id IS NULL)은 항상 NULL — 단일 멤버 그룹은 순서 개념 무의미
+  //   - drag-and-drop reorder UI/API 가 후속 cycle 에서 본 컬럼에 explicit 값 기록 (본 cycle = DB layer only)
+  //   - backfill: 기존 그룹 행을 folder_id 별 created_at ASC 0-based 채움 (현재 시각 순서 보존)
+  displayOrder  Int?      @map("display_order")
+
+  // 자기참조 양방향 named relation — "DocRevisionChain" (전임/후임 관계 단일 의미축)
+  //   - predecessor: 본 행이 대체한 이전 버전 (0..1 — supersedes_id 가 가리키는 행)
+  //   - successors: 본 행을 대체하는 후속 버전 목록 (0..N — 본 행의 id 를 supersedes_id 로 갖는 행들)
+  //   - onDelete: SetNull (전임 삭제 시 chain 단절 · NOT CASCADE — silent 다중 삭제 위험 차단)
+  //   - onUpdate: Cascade (BigInt PK 변경은 통상 발생하지 않으나 안전망)
+  predecessor   ClaudedDoc?  @relation("DocRevisionChain", fields: [supersedesId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  successors    ClaudedDoc[] @relation("DocRevisionChain")
+  // Phase A — folder 자기참조 양방향 named relation ("DocFolderGroup")
+  //   - folderParent: 본 행이 속한 그룹의 root (0..1 — folder_id 가 가리키는 행)
+  //   - folderMembers: 본 행을 root 로 가리키는 멤버 행들 (0..N — 본 행의 id 를 folder_id 로 갖는 행들)
+  //   - 의미축 분리: DocRevisionChain 은 lifecycle 직렬 · DocFolderGroup 은 동일 작업 묶음 병렬
+  folderParent  ClaudedDoc?  @relation("DocFolderGroup", fields: [folderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  folderMembers ClaudedDoc[] @relation("DocFolderGroup")
+
+  // 단일 콘텐츠 1행 — 동일 SHA256 본문 중복 적재 차단 (멱등성)
+  @@unique([contentHash], map: "monitor_documents_hash_uniq")
+  // 목록 화면 작성일 역순 정렬 — 폐기된 (prefix, created_at) 복합 인덱스의 정렬 기능 대체
+  @@index([createdAt(sort: Desc)], map: "monitor_documents_created_idx")
+  // 작성자 facet
+  @@index([author, createdAt(sort: Desc)], map: "monitor_documents_author_created_idx")
+  // Wave 3C — monitor_documents_type_created_idx DROP (docType 컬럼 제거 의존 cascade)
+  // Phase 1b partial index — revision chain 조회 (NULL 다수 → partial 로 storage + write cost 절감,
+  // outcomes_style_ref_agent_ts_idx 선례 동일 패턴).
+  // Note: Prisma DSL 은 WHERE 절 partial index 미지원 → migration SQL 에서만 정의
+  // (plain @@index 선언 시 migrate diff 가 partial predicate 를 drop 하고 full index 로 재생성).
+  // Phase A partial indexes (migration 20260522165155):
+  //   - monitor_documents_folder_id_idx ON (folder_id) WHERE folder_id IS NOT NULL
+  //     → Phase B handleUpdate cascade WHERE folder_id = $1 (EXPLAIN: Index Scan, 0.146 ms)
+  //   - monitor_documents_folder_created_idx ON (folder_id, created_at DESC, id DESC)
+  //     WHERE folder_id IS NOT NULL
+  //     → Phase B handleList group-page (Part 2 §1 D-pattern split-path UNION ALL · 1.912 ms @5000 rows)
+  //   - 두 인덱스 동일 partial predicate · 첫 번째는 cascade UPDATE 의 lightweight lookup, 두 번째는
+  //     list query 의 sort-aware covering — 분리 정당 (composite 단독으로 leading column equality 가능
+  //     하나 Postgres planner 가 cascade UPDATE 의 단순 lookup 에는 단일 컬럼 index 우선 선택).
+  // group-order partial index (migration 20260601114500 · CID 2026-06-01T1145_group-order-db_b1a2):
+  //   - monitor_documents_folder_order_idx ON (folder_id, display_order) WHERE folder_id IS NOT NULL
+  //     → 후속 reorder API 의 group-member explicit-order 조회 (ORDER BY folder_id, display_order)
+  //   - 동일 partial predicate (folder_id IS NOT NULL) — 위 두 인덱스와 동일 convention
+  //   - Prisma DSL WHERE-절 partial 미지원 → @@index 미선언 · migration SQL 에서만 정의 (위 Note 동일).
+  @@map("documents")
+  @@schema("monitor")
+}
+
+/// Source: monitor settings screen "Models & budgets" (per model-config spec doc 36166 D1 — key-value store)
+/// 1행 = 도메인별 모델 지정('model.*') 또는 daemon per-call hard-cap budget('budget.*').
+///   - DB = UI SoT — daemon-config.json 은 PUT write-through 로 렌더되는 소비자 뷰 (D2)
+///   - budget.* 값은 trailing-zero 보존 문자열 ('0.50' ≠ 0.5 — daemon-config.json loader 계약 ·
+///     daemon_cycle 이 `claude -p --max-budget-usd <value>` 로 verbatim 전달)
+///   - 'inherit' = 해당 surface 에 명시 모델 없음 (frontmatter model 라인 / REPL 키 부재·제거)
+///   - settings.json 쓰기 경로 없음 — orchestrator 도메인 = display-only (D5 harness-path 보호)
+model ModelConfig {
+  configKey   String   @id @map("config_key") @db.VarChar(64)
+  configValue String   @map("config_value")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedBy   String   @map("updated_by") @db.VarChar(64)
+
+  @@map("model_config")
+  @@schema("monitor")
+}
+
+// ============================================================================
+// Wave 2 — Telemetry baseline (계획: clauded-docs/370 v2 후보 F)
+//   F = SkillActivation — agent activation 분포 측정 (Wave m9z3 cleanup 이전 skill+agent
+//       통합이었으나, Claude Code framework 가 Skill activation event 미지원 확인 →
+//       skill_name 컬럼·인덱스 drop · agent activation 단일 sink 로 좁힘. 1703 row 중
+//       skill_name nonempty 단 1건 (smoke-test) — 회귀 영향 없음).
+//   적재 빈도 가정 ≈ 100+ rows/hour → BigInt id · 시간축 + 이름축 + 필터축 index 의무.
+// ============================================================================
+
+/// Source: orchestrator/subagent agent activation telemetry (plan clauded-docs/370 v2 후보 F)
+/// selected=false 행은 후보 제시 후 미선택 케이스 (false-positive activation 측정 신호).
+/// match_score 는 0.000–1.000 정밀도.
+/// 테이블명 `skill_activations` 는 Wave 2 origin 유지 (rename = R2 별도 cycle 결정 후보).
+model SkillActivation {
+  id            BigInt   @id @default(autoincrement())
+  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  /// 'orchestrator' | 'subagent' | 'hook' | 'manual' — free-form (enum 화는 사용 패턴 누적 후 검토)
+  source        String   @db.VarChar(32)
+  /// 활성화된 agent (e.g., 'reporter') — Wave m9z3 cleanup 이후 NOT NULL 의도 (route 가 강제)
+  agentName     String?  @map("agent_name") @db.VarChar(64)
+  /// 매칭된 트리거 문구 또는 task description 요약 (≤ 500자 권장)
+  triggerPhrase String?  @map("trigger_phrase")
+  /// true = 실제 사용 · false = 후보 제시 후 미선택 (false-positive 신호)
+  selected      Boolean
+  /// 0.000 – 1.000 confidence · optional (소스가 score 미제공 시 NULL)
+  matchScore    Decimal? @map("match_score") @db.Decimal(4, 3)
+  /// 위임 추적 ID (orchestrator-role.md CID 포맷 — YYYY-MM-DDTHHMM_slug_xxxx)
+  cid           String?  @db.VarChar(96)
+  /// 자유 형식 (e.g., user intent summary, fallback reason)
+  metadata      Json?    @db.JsonB
+
+  @@index([occurredAt], map: "skill_activations_ts_idx")
+  @@index([agentName, occurredAt], map: "skill_activations_agent_ts_idx")
+  @@index([selected, occurredAt], map: "skill_activations_selected_ts_idx")
+  @@map("skill_activations")
+  @@schema("core")
+}

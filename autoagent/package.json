@@ -1,0 +1,16 @@
+{
+  "name": "@claude/autoagent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AutoAgent ultra-minimal experiment runner",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "lint": "echo 'no lint configured yet'"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "private": true
+}

@@ -1,0 +1,193 @@
+# =============================================================================
+# Glass Atrium monorepo — consolidated root .gitignore
+# Single .git at repo root; per-subdir .gitignore files folded in here with
+# path prefixes. Edit ignore rules ONLY in this file (single source of truth).
+# =============================================================================
+
+# === global: dependency trees / regenerable artifacts ===
+node_modules/
+
+# === global: transient backup cruft (.bak / .bak-* basenames) ===
+# scoped to .bak basenames so kept-history (-pre- named under tracked archive/)
+# stays governed by the scripts/ archive rule, not blanket-ignored
+*.bak
+*.bak-*
+
+# === global: logs / OS cruft / secrets ===
+*.log
+.DS_Store
+.DS_Store?
+._*
+*.swp
+*.swo
+*.swn
+*~
+.env
+
+# === global: rendered config (template config.toml.example stays tracked) ===
+# config.toml is the install-time RENDER OUTPUT of config.toml.example (${HOME}
+# expanded) and carries machine-local absolute paths → kept out of git
+/config.toml
+
+# === global: rendered launchd plists (render-launchd-plists.sh output) ===
+# render outputs of config.toml — carry machine-local absolute user paths
+/rendered/
+
+# === global: rendered secrets (render-claude-auth.sh output — 0600) ===
+# headless CLAUDE_CODE_OAUTH_TOKEN for launchd-spawned daemons; machine-local
+# secret, MUST never enter git. Path-specific entry (not relying on the global
+# `.env` rule above) so the protection is explicit even if the suffix changes.
+/secrets/
+
+# === global: python caches ===
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# === banner prompt ===
+docs/assets/banner-prompt.md
+
+# =============================================================================
+# monitor/  (folded from monitor/.gitignore — security-first policy)
+# patterns scoped under monitor/ to preserve original (monitor-local) semantics
+# bare-dir patterns use monitor/**/ so nested matches (e.g. public/dist) hold
+# =============================================================================
+
+# --- monitor: 보안 민감정보 (절대 업로드 금지) ---
+monitor/.env
+monitor/.env.*
+!monitor/.env.example
+monitor/**/*.env.local
+monitor/**/*.env.production
+monitor/**/*.env.development
+monitor/**/*.pem
+monitor/**/*.key
+monitor/**/*.crt
+monitor/**/*.p12
+monitor/**/*.pfx
+monitor/**/*.cer
+monitor/**/*.gpg
+monitor/**/*.asc
+monitor/**/id_rsa
+monitor/**/id_rsa.*
+monitor/**/id_ed25519
+monitor/**/id_ed25519.*
+monitor/**/known_hosts
+monitor/**/*credentials*
+monitor/**/*secret*
+monitor/**/*.secrets.json
+monitor/**/*.secrets.yml
+monitor/**/*.secrets.yaml
+monitor/**/secrets/
+
+# --- monitor: API 키 / 토큰 / 인증 정보 ---
+monitor/**/*.token
+monitor/**/*.tokens
+monitor/**/auth.json
+monitor/**/authorization.json
+monitor/**/service-account*.json
+monitor/**/firebase-adminsdk-*.json
+monitor/**/google-services.json
+monitor/**/gcp-key-*.json
+monitor/**/aws-credentials*
+
+# --- monitor: Node / npm / pnpm / yarn ---
+monitor/**/npm-debug.log*
+monitor/**/yarn-debug.log*
+monitor/**/yarn-error.log*
+monitor/**/pnpm-debug.log*
+monitor/**/.pnp.*
+monitor/**/.pnpm-store/
+monitor/.yarn/cache
+monitor/.yarn/unplugged
+monitor/.yarn/build-state.yml
+monitor/.yarn/install-state.gz
+
+# --- monitor: TypeScript / 빌드 산출물 ---
+monitor/**/dist/
+monitor/**/build/
+monitor/**/out/
+monitor/**/*.tsbuildinfo
+monitor/**/.turbo/
+monitor/**/.next/
+monitor/**/.cache/
+monitor/**/.parcel-cache/
+monitor/**/.swc/
+
+# --- monitor: Prisma 자동 생성 코드 ---
+monitor/src/generated/
+monitor/**/prisma/.cache/
+
+# --- monitor: OS / IDE 메타데이터 ---
+monitor/**/.Spotlight-V100
+monitor/**/.Trashes
+monitor/**/ehthumbs.db
+monitor/**/Thumbs.db
+monitor/**/.vscode/
+monitor/**/.idea/
+monitor/**/.project
+monitor/**/.classpath
+monitor/**/.settings/
+
+# --- monitor: 로그 / 임시 파일 ---
+monitor/**/logs/
+monitor/**/tmp/
+monitor/**/temp/
+monitor/**/.tmp/
+monitor/**/.temp/
+
+# --- monitor: 테스트 / 커버리지 ---
+monitor/**/coverage/
+monitor/**/.nyc_output/
+monitor/**/*.lcov
+monitor/**/.jest-cache/
+monitor/**/test-results/
+monitor/**/playwright-report/
+
+# --- monitor: 데이터 / runtime artifacts (keep folder via .gitkeep) ---
+monitor/data/*
+!monitor/data/.gitkeep
+
+# --- monitor: 모니터링 dump / 백업 ---
+monitor/**/*.dump
+monitor/**/*.sql.gz
+monitor/**/*.tar.gz
+monitor/**/*.tgz
+monitor/**/*.zip
+monitor/**/*.7z
+monitor/**/compact-backups/
+
+# =============================================================================
+# autoagent/  (folded from autoagent/.gitignore)
+# node_modules already global; *.bak / *.pyc already global; archive/ stays
+# TRACKED (canonical archived script versions — NOT ignored)
+# =============================================================================
+autoagent/**/*.pyo
+autoagent/experiments/
+autoagent/results/
+autoagent/package-lock.json
+
+# =============================================================================
+# scripts/  (folded from scripts/.gitignore)
+# __pycache__ / *.pyc / *.bak already global; archive/ here IS ignored
+# (dormant pre-2mode snapshots — only active scripts tracked)
+# =============================================================================
+scripts/archive/
+
+# =============================================================================
+# hooks/  (folded from hooks/.gitignore)
+# __pycache__ / *.pyc / .DS_Store already global; *.pyo added below
+# NOTE: hooks/archive, hooks/test/archive, hooks/lib/archive are TRACKED —
+# deliberately NOT ignored (unlike scripts/archive/)
+# =============================================================================
+hooks/**/*.pyo
+
+# =============================================================================
+# wiki/  (live wiki data store — relocated from the Obsidian Vault)
+# raw sources + compiled notes + SQLite FTS index; large + runtime-mutated,
+# managed by the wiki daemon, NOT a code artifact → kept out of git
+# =============================================================================
+wiki/

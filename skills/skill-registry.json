@@ -1,0 +1,261 @@
+{
+  "version": "2.0",
+  "updated": "2026-05-18",
+  "schema_v2_changes": "v2 (2026-05-18): added per-skill triggers field, mirrored from SKILL.md frontmatter. Backfill via P3 follow-up wave-51.",
+  "skills": {
+    "glass-atrium-ops-token-audit": {
+      "type": "directory",
+      "path": "skills/glass-atrium-ops-token-audit/SKILL.md",
+      "description": "Static token-cost audit for ~/.claude/ ecosystem (agents/rules/skills/MCP). Use when token-budget pressure investigation, before agent description compression sprint, or after major rule cascade.",
+      "triggers": [
+        "context budget audit",
+        "token cost audit",
+        "ecosystem token measurement",
+        "MCP server token scan"
+      ],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "verify"
+    },
+    "glass-atrium-dev-naming": {
+      "type": "directory",
+      "path": "skills/glass-atrium-dev-naming/SKILL.md",
+      "description": "Naming conventions for DEV agents — 5 conciseness principles, variables (scope-proportional, collections, maps), booleans (stative-first), functions (inverse-scope, layer-specific, 17-category verb taxonomy), classes/types, enums/constants, greppability, anti-pattern prohibition",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [
+        "dev-angular",
+        "dev-rag",
+        "dev-gsap",
+        "dev-node",
+        "dev-nestjs",
+        "dev-android",
+        "dev-shell",
+        "dev-front",
+        "dev-db",
+        "dev-react",
+        "qa-debugger",
+        "qa-code-reviewer",
+        "dev-animator"
+      ],
+      "phase": "build"
+    },
+    "glass-atrium-dev-patterns": {
+      "type": "directory",
+      "path": "skills/glass-atrium-dev-patterns/SKILL.md",
+      "description": "Code structure (member ordering, section separation, Stepdown), function design (SLAP, CQS, complexity), type design (Union, Branded, Narrowing, DTO/Entity), module structure (barrel, import direction, cycle prevention), cohesion/coupling (LCOM4, ISP, DI warnings) for DEV agents",
+      "triggers": [],
+      "depends_on": [
+        "glass-atrium-dev-naming"
+      ],
+      "used_by": [
+        "dev-angular",
+        "dev-rag",
+        "dev-gsap",
+        "dev-node",
+        "dev-nestjs",
+        "dev-android",
+        "dev-shell",
+        "dev-front",
+        "dev-db",
+        "dev-react",
+        "dev-animator"
+      ],
+      "phase": "build"
+    },
+    "glass-atrium-core-iron-laws": {
+      "type": "directory",
+      "path": "skills/glass-atrium-core-iron-laws/SKILL.md",
+      "description": "Iron Law (no fix without investigation) and debugging escalation rules — shared by DEV and ORCHESTRATOR agents",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [
+        "dev-angular",
+        "dev-rag",
+        "dev-gsap",
+        "dev-node",
+        "dev-nestjs",
+        "dev-android",
+        "dev-shell",
+        "dev-front",
+        "dev-db",
+        "dev-react",
+        "qa-debugger",
+        "qa-code-reviewer",
+        "dev-animator"
+      ],
+      "phase": "build"
+    },
+    "glass-atrium-ops-orchestrator": {
+      "type": "standalone",
+      "path": "skills/glass-atrium-ops-orchestrator.md",
+      "description": "Orchestrator-specific rules — delegation enforcement, team composition, delegation communication, Wave Execution, Agent Teams, cost optimization, quality gates, entropy management, performance metrics, consensus protocol, experimental features",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "meta_note": "main-session only — used_by intentionally empty (consumed by the global session agent, not a named subagent)",
+      "phase": "plan"
+    },
+    "glass-atrium-ops-reconcile-inject": {
+      "type": "directory",
+      "path": "skills/glass-atrium-ops-reconcile-inject/SKILL.md",
+      "description": "Bidirectionally reconcile the three inject-scope-rules.sh bash arrays (INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS) with the DEV/QA roster — INSERTING every newly registered agent missing from an array AND REMOVING every stale name of a deleted agent — so each array matches the live roster and a new agent loads its scope-rule injection blocks. Runs the tested agent_lifecycle sync-inject CLI subcommand (transactional, .bak backup, atomic write, rollback), never an in-session hook edit. Use when you just registered OR deleted a DEV agent from the monitor flow, when the add-result or delete-result card shows the \"skill-execution request\" badge naming this skill, when finishing integrating or removing an agent, when asked to sync inject-scope-rules.sh, when a newly added agent loads no scope rules, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or non-DEV/QA agents.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "ship"
+    },
+    "glass-atrium-ops-model-config": {
+      "type": "directory",
+      "path": "skills/glass-atrium-ops-model-config/SKILL.md",
+      "description": "Close the monitor \"Models & budgets\" Save→apply gap. Reads GET /api/model-config, finds model/budget drift, and applies only the two surfaces the monitor cannot auto-write — the orchestrator model in ~/.claude/settings.json (Harness Path Protection) and the autoagent/wiki daemon models in their tmux REPL (needs restart). Reports next-spawn/next-cycle domains that auto-apply. Use when the user pressed Save on the Models & budgets screen and the main session or daemon model did not change, asks to apply model config / reconcile model drift / make the saved model take effect, or types /glass-atrium-ops-model-config. Do NOT use for editing the monitor screen, the daemon-config.json budget caps (those auto-apply next cycle), or dev/research agent frontmatter (auto-applies next spawn).",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "ship"
+    },
+    "glass-atrium-intel-defuddle": {
+      "type": "directory",
+      "path": "skills/glass-atrium-intel-defuddle/SKILL.md",
+      "description": "Extract clean markdown content from web pages using Defuddle CLI, removing clutter and navigation to save tokens. Use instead of WebFetch for standard web pages.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [
+        "intel-researcher"
+      ],
+      "phase": "define"
+    },
+    "glass-atrium-ops-verify-gate": {
+      "type": "directory",
+      "path": "skills/glass-atrium-ops-verify-gate/SKILL.md",
+      "description": "Pre-commit 6-stage sequential verification covering build, types, lint, tests, console cleanup, and git audit. Invoke with /verify.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "verify"
+    },
+    "glass-atrium-ops-verify-arch": {
+      "type": "directory",
+      "path": "skills/glass-atrium-ops-verify-arch/SKILL.md",
+      "description": "On-demand audit-and-fix for the Atrium architecture diagrams (diagrams-source.ts) against the live filesystem. Runs the deterministic computeArchDrift() count, adds LLM semantic-completeness checks the machine cannot do (orphan nodes, prose-vs-behavior mismatch, new agent missing from the team graph, broken cross-refs), and emits an actionable fix report; then, on a deliberate human invocation, immediately APPLIES the fixes via a foreground dev-node delegation (count writes to arch-invariants.ts, semantic edits to diagrams-source.ts, build-gated launchctl restart, re-verify). Use this before a release, when the monitor's \"최신화 필요\" drift badge appears, or after adding/removing an agent/hook/rule/launchd job/skill. Pass --dry-run to report only, applying nothing. Excludes runtime daemon-health checks; apply happens only on human invocation, only via foreground dev-node delegation, never silently or from a daemon.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "verify"
+    },
+    "glass-atrium-wiki-compiler": {
+      "type": "directory",
+      "path": "skills/glass-atrium-wiki-compiler/SKILL.md",
+      "description": "Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [
+        "wiki-curator"
+      ],
+      "phase": "build"
+    },
+    "glass-atrium-meta-authoring": {
+      "type": "directory",
+      "path": "skills/glass-atrium-meta-authoring/SKILL.md",
+      "description": "Quality standards, structural conventions, CSO (description optimization), and TDD guidelines for writing new skills. Use when writing new skills, improving existing skills, skill quality review, creating SKILL.md.",
+      "triggers": [],
+      "depends_on": [],
+      "used_by": [],
+      "phase": "define"
+    },
+    "glass-atrium-design-anti-slop": {
+      "type": "directory",
+      "path": "skills/glass-atrium-design-anti-slop/SKILL.md",
+      "description": "Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ qa-code-reviewer), motion/animation review (→ dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).",
+      "triggers": [
+        "anti-slop check",
+        "AI slop audit",
+        "design originality review",
+        "anti-slop scan"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "design-designer",
+        "dev-front",
+        "dev-react",
+        "dev-angular",
+        "dev-android",
+        "qa-code-reviewer"
+      ],
+      "phase": "verify"
+    },
+    "glass-atrium-design-5-axis-critique": {
+      "type": "directory",
+      "path": "skills/glass-atrium-design-5-axis-critique/SKILL.md",
+      "description": "Applies design-designer.md Pre-Emit 5-Axis self-critique rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) with 0-10 banded scoring as machine-checkable pre-emit gate. Use when design-designer or dev-front / dev-react / dev-gsap artifact needs pre-emit gate scoring before canvas / motion-philosophy / DESIGN.md / HTML primary deliverable emit. Do NOT use for qa-code-reviewer external-judge scope (→ scope-qa.md LLM-as-Judge 4-Dimensions), post-emit design quality scoring (→ design-designer.md Design Evaluation 4-Axis), or non-design code review.",
+      "triggers": [
+        "design 5-axis",
+        "pre-emit critique",
+        "design-designer self-score",
+        "5-axis self-critique"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "design-designer",
+        "dev-front"
+      ],
+      "phase": "verify"
+    },
+    "glass-atrium-design-contrast-check": {
+      "type": "directory",
+      "path": "skills/glass-atrium-design-contrast-check/SKILL.md",
+      "description": "Verifies WCAG 2.2 AA / AAA contrast ratios (4.5:1 normal text AA, 3:1 large text + UI components AA, 7:1 AAA) for color pairs in DESIGN.md palettes / HTML / CSS artifacts using mechanical luminance computation. Use before any design emit OR during code review when color pairs are introduced. Do NOT use for design originality scoring (→ glass-atrium-design-5-axis-critique), AI-slop catalog audit (→ glass-atrium-design-anti-slop), or motion / animation review.",
+      "triggers": [
+        "WCAG contrast",
+        "color contrast check",
+        "AA contrast verify",
+        "contrast ratio"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "design-designer",
+        "dev-front",
+        "qa-code-reviewer",
+        "dev-react",
+        "dev-angular",
+        "dev-android"
+      ],
+      "phase": "verify"
+    },
+    "glass-atrium-design-md-lint": {
+      "type": "directory",
+      "path": "skills/glass-atrium-design-md-lint/SKILL.md",
+      "description": "Machine-checkable structural lint of a DESIGN.md token graph (Base/Semantic/Component alias tiers + `var(--token)` CSS custom properties + `{tier.token.path}` DTCG brace aliases) — flags broken alias references (blocking), orphaned base tokens (warning, multi-mode-aware), and out-of-canonical-order sections (warning). Use before a design-system DESIGN.md emit OR during code review when token aliases / DESIGN.md sections change, to prove every alias resolves. Do NOT use for WCAG contrast ratio checks (→ glass-atrium-design-contrast-check), AI-slop visual pattern audit (→ glass-atrium-design-anti-slop), or design originality scoring (→ glass-atrium-design-5-axis-critique).",
+      "triggers": [
+        "DESIGN.md lint",
+        "token graph check",
+        "broken token reference",
+        "design token alias verify"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "design-designer",
+        "dev-front",
+        "dev-react",
+        "dev-angular",
+        "dev-android",
+        "qa-code-reviewer"
+      ],
+      "phase": "verify"
+    }
+  },
+  "notes": {
+    "skills_lacking_frontmatter_triggers": [
+      "glass-atrium-dev-naming",
+      "glass-atrium-dev-patterns",
+      "glass-atrium-core-iron-laws",
+      "glass-atrium-ops-orchestrator",
+      "glass-atrium-ops-reconcile-inject",
+      "glass-atrium-intel-defuddle",
+      "glass-atrium-ops-verify-gate",
+      "glass-atrium-wiki-compiler",
+      "glass-atrium-meta-authoring"
+    ],
+    "action": "P3 wave-51 follow-up: backfill triggers in each SKILL.md frontmatter; registry will mirror on next sync."
+  }
+}

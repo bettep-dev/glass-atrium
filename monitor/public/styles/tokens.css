@@ -1,0 +1,135 @@
+/* Design tokens — light + dark, RGB triplets for tailwind alpha */
+:root {
+  --surface: 250 250 249;
+  --elev:    255 255 255;
+  --sunken:  245 245 244;
+  --line:    231 229 228;
+  --ink:      28  25  23;
+  --dim:      87  83  78;
+  --faint:   112 106 101;
+  --accent:   37  99 235;
+  --crit:    220  38  38;
+  --warn:    217 119   6;
+  --ok:        5 150 105;
+  /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
+  --info:      8 145 178;
+  /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
+  --cat-1:   124  58 237;
+  --cat-2:    13 148 136;
+  --cat-3:    37  99 235;
+  --cat-4:   219  39 119;
+
+  /* ── Tier 2 — Elevation (신규 · additive, §3.2) ─────────────────── */
+  --elev-2: 252 252 251;          /* kind A primitive: 다크 전용 raised-2 fill (라이트는 elev 255 천장이라 미사용) */
+  --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
+
+  /* surface elevation semantic aliases (primitive 재참조 — 의미 명명) */
+  --surface-sunken:   var(--sunken);
+  --surface-base:     var(--surface);
+  --surface-raised:   var(--elev);
+  --surface-raised-2: var(--elev);            /* 라이트=elev 순백 유지(떠오름은 shadow/ring); 다크는 아래 elev-2 override */
+  --surface-overlay:  var(--overlay-surface);
+
+  /* ── Tier 2 — Glass / material (신규, §3.2) ─────────────────────── */
+  --glass-tint:    255 255 255;   /* kind A: 라이트 화이트 틴트 유리 베이스 */
+  --glass-border:  255 255 255;   /* kind A: 유리 엣지 하이라이트 (alpha 는 사용처) */
+  --glass-blur:    12px;          /* kind B: production blur radius cap */
+  --material-glass-alpha: 0.75;   /* kind B: 라이트 모드 유리 fill 불투명도 */
+
+  /* ── Tier 2 — Shadow / depth (신규 합성 그림자, kind B box-shadow) ─ */
+  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
+  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+
+  /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
+     overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
+     confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그
+                    (.detail-overlay.detail-confirm) — overlay 위 레이어 확보
+     toast(200)   = 최상위 알림 (.doc-toast) — 모든 오버레이 위
+     theme 무관 — z 순서는 단일 스택 컨텍스트 정렬이라 다크 override 불필요. */
+  --z-overlay: 100;
+  --z-confirm: 150;
+  --z-toast:   200;
+}
+[data-theme="dark"] {
+  --surface:  12  10   9;
+  --elev:     28  25  23;
+  --sunken:   24  20  17;
+  --line:     41  37  36;
+  --ink:     250 250 249;
+  --dim:     214 211 209;
+  --faint:   160 154 150;
+  --accent:   96 165 250;
+  --crit:    248 113 113;
+  --warn:    251 191  36;
+  --ok:       52 211 153;
+  /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
+  --info:     34 211 238;
+  /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
+  --cat-1:   167 139 250;
+  --cat-2:    45 212 191;
+  --cat-3:    96 165 250;
+  --cat-4:   244 114 182;
+
+  /* ── Tier 2 dark overrides (신규 · additive, §3.2) ─────────────── */
+  --elev-2: 36 32 30;             /* 다크: elev(28 25 23) 위 한 휘도 step ↑ */
+  --overlay-surface: 28 25 23;    /* 다크: 불투명 모달 면 */
+
+  --surface-raised-2: var(--elev-2); /* 다크 raised-2: 휘도 step 으로 떠오름 (36 > 28) */
+
+  --glass-tint:    28 25 23;      /* 다크: warm-dark 틴트 유리 베이스 */
+  --glass-border:  255 255 255;   /* 다크: 화이트 엣지 (낮은 alpha 로 가시화) */
+  --material-glass-alpha: 0.82;   /* 다크: fill 불투명도 ↑ (washed-out 방지) */
+
+  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* 다크 raised-2 보조 (주채널은 휘도 step) */
+  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+}
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  -webkit-font-smoothing: antialiased;
+}
+.font-mono, code, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-feature-settings: 'tnum' 1; }
+
+/* Scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 6px; border: 2px solid rgb(var(--surface)); }
+*::-webkit-scrollbar-thumb:hover { background: rgb(var(--faint)); }
+
+/* Reusable atoms (used across screens) */
+.kbd {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  background: rgb(var(--elev)); border: 1px solid rgb(var(--line));
+  padding: 1px 5px; border-radius: 4px; color: rgb(var(--faint));
+}
+.heat-cell { aspect-ratio: 1; border-radius: 2px; cursor: pointer; transition: outline 80ms; }
+.heat-cell:hover { outline: 1.5px solid rgb(var(--ink)); outline-offset: 1px; }
+.live-dot { animation: liveBlink 1.6s infinite; }
+@keyframes liveBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Severity bar (used in alert rows) */
+.sev-bar { width: 3px; border-radius: 2px; align-self: stretch; }
+.sev-bar.crit { background: rgb(var(--crit)); }
+.sev-bar.warn { background: rgb(var(--warn)); }
+.sev-bar.info { background: rgb(var(--info)); }
+.sev-bar.ok   { background: rgb(var(--ok)); }
+
+/* Code block */
+.code-block {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  background: rgb(var(--sunken)); border: 1px solid rgb(var(--line));
+  border-radius: 6px; padding: 10px 12px;
+  white-space: pre-wrap; word-break: break-all;
+  color: rgb(var(--ink));
+}
+
+/* Pulse for live updates */
+.pulse-ring { position: relative; }
+.pulse-ring::after {
+  content: ''; position: absolute; inset: -4px; border-radius: inherit;
+  border: 2px solid rgb(var(--ok)); opacity: 0;
+  animation: pulseRing 1.6s infinite;
+}
+@keyframes pulseRing { 0% { opacity: 0.4; transform: scale(0.95); } 100% { opacity: 0; transform: scale(1.15); } }

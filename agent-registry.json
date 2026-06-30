@@ -1,0 +1,598 @@
+{
+  "$schema": "agent-registry",
+  "version": "1.1",
+  "dual_phase_definition": "true = agent has a distinct PLAN phase followed by an EXECUTE phase (e.g., reads codebase, proposes approach, then implements). false = agent is single-phase execution: it receives a task and executes directly without an internal plan-then-act split. Agents without explicit internal planning (pure analysis, pure retrieval, pure review) are false.",
+  "compatibility_schema": "v1: optional free-form string per agent declaring runtime preconditions (e.g., 'Requires monitor running at 127.0.0.1:7842 for HTML primary emission'). Absent/null/undefined → agent is always available (backwards-compatible default). Orchestrator Compatibility Probe checks this field pre-delegation and halts with remediation hint when preconditions are unmet. Frontmatter `compatibility:` on the agent .md is the per-agent canonical source; registry entries mirror it for routing-time lookup.",
+  "phases": {
+    "research": 1,
+    "analysis": 2,
+    "planning": 3,
+    "implementation": 4,
+    "review": 5,
+    "report": 6
+  },
+  "agents": {
+    "dev-android": {
+      "domains": [
+        "jetpack-compose",
+        "kotlin",
+        "mvvm",
+        "clean-architecture",
+        "hilt",
+        "room-db",
+        "coroutines",
+        "flow",
+        "android-permissions",
+        "android-services",
+        "broadcast-receiver",
+        "gradle"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "dev-angular": {
+      "domains": [
+        "angular",
+        "standalone-components",
+        "signals",
+        "rxjs",
+        "angular-ssr",
+        "functional-guards",
+        "functional-interceptors",
+        "ngrx",
+        "signal-store",
+        "angular-testing"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "dev-animator": {
+      "domains": [
+        "canvas-2d",
+        "game-camera",
+        "cinematic-sequence",
+        "easing-animation",
+        "spring-animation",
+        "camera-shake",
+        "parallax-layers",
+        "framerate-independent-smoothing",
+        "phase-state-machine"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "compatibility": "Scope: Canvas 2D game animation (camera, cinematic sequences, easing/spring physics, phase state machines). Not for: React (→dev-react), GSAP (→dev-gsap), CSS (→dev-front), 3D/WebGL, planning (→intel-planner), reports (→intel-reporter). Capability Probe routes mis-fits.",
+      "origin": "user"
+    },
+    "qa-code-reviewer": {
+      "domains": [
+        "code-review",
+        "change-verification",
+        "quality-gate",
+        "pr-review",
+        "code-convention",
+        "review"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "phase": "review",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-db": {
+      "domains": [
+        "postgresql",
+        "mysql",
+        "schema-design",
+        "explain-analyze",
+        "query-optimization",
+        "index-strategy",
+        "transaction-management",
+        "prisma-migration",
+        "pgvector",
+        "partitioning",
+        "deadlock-analysis",
+        "prisma"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "qa-debugger": {
+      "domains": [
+        "debugging",
+        "root-cause-analysis",
+        "bug-reproduction",
+        "hypothesis-disproof",
+        "stack-trace-analysis",
+        "bug"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "phase": "review",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "design-designer": {
+      "domains": [
+        "design-philosophy",
+        "canvas-artwork",
+        "branding",
+        "brand-guidelines",
+        "color-design",
+        "font-design",
+        "theme-design",
+        "ui-ux-direction",
+        "motion-philosophy"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "WebSearch",
+        "WebFetch"
+      ],
+      "phase": "analysis",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-front": {
+      "domains": [
+        "design-tokens",
+        "css",
+        "tailwind",
+        "responsive-layout",
+        "accessibility",
+        "mobile-ux",
+        "design-thinking",
+        "anti-ai-slop"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "dev-gsap": {
+      "domains": [
+        "gsap",
+        "scrolltrigger",
+        "scroll-storytelling",
+        "react-gsap",
+        "use-gsap",
+        "split-text",
+        "interaction-motion",
+        "timeline-animation"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "meta-agent": {
+      "domains": [
+        "agent-rewrite",
+        "instruction-replacement",
+        "autoagent-loop",
+        "full-file-replacement",
+        "signal-based-rewrite",
+        "editable-section-respect",
+        "minimal-delta-rewrite"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "analysis",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-nestjs": {
+      "domains": [
+        "nestjs",
+        "typescript",
+        "rest-api",
+        "prisma",
+        "typeorm",
+        "jwt",
+        "passport",
+        "swagger",
+        "jest",
+        "ddd",
+        "cqrs",
+        "langchain-integration",
+        "graphql"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "dev-node": {
+      "domains": [
+        "nodejs",
+        "cli",
+        "npm-package",
+        "mcp-server",
+        "esm",
+        "async-stream",
+        "pipeline",
+        "filesystem",
+        "process-management"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "intel-planner": {
+      "domains": [
+        "prd",
+        "technical-design",
+        "task-decomposition",
+        "roadmap",
+        "adr",
+        "requirements",
+        "spec-driven-development",
+        "rice-prioritization"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "planning",
+      "dual_phase": false,
+      "compatibility": "Requires monitor running at 127.0.0.1:7842 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "origin": "shipped"
+    },
+    "meta-prompt-engineer": {
+      "domains": [
+        "prompt-design",
+        "agent-instructions",
+        "prompt-compression",
+        "token-optimization",
+        "skill-structure",
+        "crisp-framework"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "WebSearch",
+        "WebFetch"
+      ],
+      "phase": "analysis",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-python": {
+      "domains": [
+        "python",
+        "fastapi",
+        "litestar",
+        "django",
+        "pytest",
+        "pytest-asyncio",
+        "hypothesis",
+        "uv",
+        "ruff",
+        "pyright",
+        "mypy",
+        "pydantic",
+        "asyncio",
+        "anyio",
+        "task-group",
+        "polars",
+        "pandas",
+        "numpy",
+        "pyproject-toml",
+        "type-hints",
+        "pep-695",
+        "python-cli",
+        "typer",
+        "click",
+        "python-packaging",
+        "langchain-python",
+        "llamaindex-python"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "dev-rag": {
+      "domains": [
+        "rag",
+        "embedding-model",
+        "hybrid-search",
+        "bm25",
+        "vector-search",
+        "query-rewriting",
+        "re-ranking",
+        "agentic-rag",
+        "chunking-strategy"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "WebSearch",
+        "WebFetch"
+      ],
+      "phase": "implementation",
+      "dual_phase": false,
+      "dual_phase_rationale": "RAG pipeline is a sequential single-phase execution chain: query rewrite → embedding → hybrid search (BM25+vector) → RRF rerank → return. Each step is a direct transformation with no internal plan-then-execute split. Unlike dev-android or dev-nestjs that must read architecture and design an approach before coding, dev-rag receives a retrieval task and immediately executes code changes to the retrieval module — no separate planning phase exists.",
+      "origin": "user"
+    },
+    "dev-react": {
+      "domains": [
+        "react",
+        "nextjs",
+        "server-components",
+        "client-components",
+        "zustand",
+        "context-api",
+        "server-action",
+        "zod-form-validation",
+        "react-hooks",
+        "vitest",
+        "jest"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "intel-reporter": {
+      "domains": [
+        "report-writing",
+        "data-synthesis",
+        "progressive-disclosure",
+        "self-refine",
+        "markdown-report",
+        "plan-documentation",
+        "rag-domain-report",
+        "search-domain-report",
+        "embedding-domain-report"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash",
+        "WebSearch",
+        "WebFetch"
+      ],
+      "phase": "report",
+      "dual_phase": false,
+      "compatibility": "Requires monitor running at 127.0.0.1:7842 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "origin": "shipped"
+    },
+    "intel-researcher": {
+      "domains": [
+        "research",
+        "web-search",
+        "literature-review",
+        "trend-analysis",
+        "market-research",
+        "competitive-analysis",
+        "codebase-exploration"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "WebSearch",
+        "WebFetch",
+        "Write"
+      ],
+      "phase": "research",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "sec-guard": {
+      "domains": [
+        "security-verification",
+        "url-data-validation",
+        "sensitive-file-protection",
+        "input-sanitization",
+        "owasp",
+        "prompt-injection-detection",
+        "credential-exposure-check",
+        "security",
+        "injection"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep"
+      ],
+      "phase": "analysis",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-shell": {
+      "domains": [
+        "bash",
+        "shell-script",
+        "zsh",
+        "claude-hooks",
+        "claude-scripts",
+        "shellcheck",
+        "shfmt",
+        "bats",
+        "set-euo-pipefail",
+        "trap-cleanup",
+        "posix-portability",
+        "macos-bsd-gnu",
+        "idempotency",
+        "hook-lifecycle"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    },
+    "wiki-curator": {
+      "domains": [
+        "wiki-compilation",
+        "wiki-indexing",
+        "wiki-health-check",
+        "wiki-quality",
+        "raw-ingestion",
+        "obsidian-wikilinks",
+        "knowledge-base-maintenance",
+        "category-governance",
+        "zettelkasten",
+        "evergreen-notes"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Write",
+        "Edit",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": false,
+      "origin": "shipped"
+    },
+    "dev-swift": {
+      "domains": [
+        "swift",
+        "swiftui",
+        "appkit",
+        "uikit",
+        "macos-app",
+        "ios-app",
+        "xcode",
+        "swift-package-manager",
+        "swift-concurrency",
+        "swiftdata",
+        "app-sandbox",
+        "codesigning-notarization",
+        "swift-testing"
+      ],
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+        "Bash"
+      ],
+      "phase": "implementation",
+      "dual_phase": true,
+      "origin": "user"
+    }
+  }
+}

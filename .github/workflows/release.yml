@@ -1,0 +1,74 @@
+# Glass Atrium release publishing — fires on a pushed `v*` tag.
+#
+# SCAFFOLD (E1/T04). This workflow creates a GitHub Release carrying the two
+# update-system assets — manifest.json (version + per-file SHA-256) and the
+# hashed file bundle — over the authenticated GitHub host. The update badge +
+# skill read the release `manifest.json` over HTTPS; integrity is per-file
+# SHA-256 (never raw `main`, no git remote on the consumer).
+#
+# No repo URL is hardcoded: `${{ github.repository }}` and `${{ github.token }}`
+# resolve at runtime. Nothing fires until a user pushes the first `v*` tag —
+# this scaffold creates no remote and no tag on its own.
+#
+#   TODO (PENDING USER STEP): the GitHub repo does not exist yet. Once the user
+#   creates the repo + remote and pushes tag `v<manifest.version>`, this runs.
+
+name: release
+
+# Quoted `on` avoids the YAML 1.1 bareword→boolean coercion (matches ci.yml).
+"on":
+  push:
+    tags: ["v*"]
+
+# Least privilege: only the write scope a Release needs.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish GitHub Release (manifest + hashed bundle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Refuse a stale manifest: version + per-file hashes + file list must match
+      # the tracked tree (generate-manifest.sh --check, exit 1 on any drift).
+      - name: Verify manifest integrity (--check)
+        run: ./scripts/generate-manifest.sh --check
+
+      # The pushed tag MUST equal v<manifest.version> so the release version of
+      # record cannot drift from the asset it ships.
+      - name: Assert tag matches manifest version
+        run: |
+          manifest_version="$(jq -r '.version' manifest.json)"
+          expected="v${manifest_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} != manifest version tag ${expected}" >&2
+            exit 1
+          fi
+          echo "ok: ${GITHUB_REF_NAME} == ${expected}"
+
+      # Stage manifest.json + the hashed bundle into a runner temp dir.
+      - name: Build release assets
+        run: ./scripts/publish-release.sh build --out "${RUNNER_TEMP}/release"
+
+      # Upload both assets to a Release for the pushed tag. gh resolves
+      # owner/repo from the github context — no URL hardcoded.
+      - name: Create GitHub Release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          manifest_version="$(jq -r '.version' manifest.json)"
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Glass Atrium ${manifest_version}" \
+            --notes "Glass Atrium release ${manifest_version} (manifest + hashed bundle)." \
+            "${RUNNER_TEMP}/release/manifest.json" \
+            "${RUNNER_TEMP}/release/glass-atrium-bundle-${manifest_version}.tar.gz"

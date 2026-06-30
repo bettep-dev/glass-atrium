@@ -1,0 +1,92 @@
+# Glass Atrium — declarative configuration SoT.
+#
+# Single upper SoT. Downstream artifacts (daemon-config.json / .env / launchd
+# plists) are RENDER OUTPUTS of this file — edit here, re-render downstream.
+#
+# Dead-key removal: keys with zero consumers are NOT exposed. `budget.max_turns`
+# is dropped — it is not wired to any `claude -p` call site. Do NOT re-add it.
+#
+# NOT externalized here: the PostgreSQL socket DATABASE_URL. It is a Unix-socket
+# peer-auth connection (host=/tmp, owner=bettep, no password) bound to the local
+# PG data dir — an environment fact, not a tunable knob. Leave it in monitor/.env.
+
+[meta]
+# user-exposed brand — system = Glass Atrium, monitor web = Atrium Monitor
+project = "glass-atrium"
+# IANA tz — all daemon schedules + log timestamps resolve against this.
+# 'auto' (the default) detects the host zone at render time from the TZ-immune
+# /etc/localtime symlink (macOS /var/db/timezone/zoneinfo/, Linux
+# /usr/share/zoneinfo/), falling back to node Intl then Asia/Seoul. An explicit
+# IANA name (e.g. "America/New_York") is used verbatim and round-trips, with a
+# render-time warning when it differs from the detected host zone.
+timezone = "auto"
+
+[ports]
+# Atrium Monitor web app — single fixed port
+monitor = 7842
+
+[paths]
+# Glass Atrium root project (real-file SoT, single git repo)
+root = "/Users/bettep/.glass-atrium"
+# install target home — symlink farm is created under here (default ~/.claude).
+# Overridable at install/uninstall time via the GA_TARGET_HOME env var so a
+# sandbox can point at a throwaway dir instead of the real harness.
+target_home = "/Users/bettep/.claude"
+# monitor full-migration target — fixed under root, NOT symlinked back
+monitor = "/Users/bettep/.glass-atrium/monitor"
+# clauded-docs HTML primary root — rendered to CLAUDED_DOCS_HTML_ROOT in
+# monitor/.env. storage.ts getHtmlRoot() reads that env (else falls back to the
+# pre-migration ~/.claude path → "path escapes root" 500). On a deploy machine
+# this is `<root>/monitor/data/documents` (OSS-repoint target, same as the other
+# path literals). NOTE: CLAUDED_DOCS_MD_ROOT (Obsidian vault, legacy read-only)
+# is NOT rendered here — its built-in default is correct.
+monitor_docs_html_root = "/Users/bettep/.glass-atrium/monitor/data/documents"
+# OSS-portability repoint targets — on a deploy machine these are re-detected
+# (`which node`, $HOME); on this machine they stay as the live literals.
+node_bin = "/opt/homebrew/bin/node"
+# claude CLI — consumers (wiki-daily-compile.sh) fall back to `command -v
+# claude` → /opt/homebrew/bin → /usr/local/bin when the key is absent or the
+# configured path is not executable
+claude_bin = "/opt/homebrew/bin/claude"
+# log + backup roots stay under the target home (logs/ + backups/ are outside
+# the relocate allowlist), never folded under monitor/
+log_root = "/Users/bettep/.claude/logs"
+backup_dir = "/Users/bettep/.claude/backups/postgres"
+
+[budget]
+# Per-call USD ceilings passed VERBATIM to `claude -p --max-budget-usd <value>`.
+# STRING values (not TOML floats) — a float 0.5 serializes without the trailing
+# zero and drifts from the validated "0.50" literal (round-trip preservation).
+haiku_max_budget_usd = "0.50"
+pre_verify_max_budget_usd = "0.50"
+# Haiku model id (daemon LLM tier) — tracks settings.json model aliasing
+haiku_model = "claude-haiku-4-5"
+
+# --- daemon schedules (8 launchd jobs, com.glass-atrium.* namespace) ---
+# `time = "HH:MM"`  → StartCalendarInterval (fires once daily at that wall time)
+# `mode = "keepalive"` → resident job (RunAtLoad + KeepAlive, no fixed wall time)
+# All wall times resolve against [meta].timezone.
+
+[daemon.monitor]
+mode = "keepalive"
+
+[daemon.autoagent-daemon]
+mode = "keepalive"
+
+[daemon.wiki-daemon]
+mode = "keepalive"
+
+[daemon.monitor-log-rotate]
+time = "02:30"
+
+[daemon.pg-backup]
+time = "02:30"
+
+[daemon.autoagent-cycle]
+time = "04:30"
+
+[daemon.wiki-compile]
+time = "04:50"
+
+[daemon.daemon-daily-restart]
+time = "05:30"

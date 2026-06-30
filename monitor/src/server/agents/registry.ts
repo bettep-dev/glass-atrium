@@ -1,0 +1,250 @@
+// agent-registry.json loader → agent name → AgentRegistryEntry Map (singleton cache).
+// SoT: `~/.claude/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
+// singleton 이유: static 파일이라 per-request fs read + JSON.parse 회피 → /api/agents/summary p95 budget 보호.
+
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+import yaml from "js-yaml";
+
+/**
+ * Single agent's registry entry — only metadata surfaceable in monitor responses.
+ *
+ * - `domains`: capability hint (orchestrator routing)
+ * - `phase`: lifecycle phase (`implementation` / `review` / `report` etc.)
+ * - `dual_phase`: registry flag — agent participates in two lifecycle phases.
+ *   Non-boolean / undeclared → false.
+ * - `compatibility`: runtime precondition (e.g. "monitor running at 127.0.0.1:7842");
+ *   undeclared or non-string → null. Orthogonal to agent frontmatter `tools:` array.
+ * - `description`: 1-line role description sourced from the agent `.md` frontmatter
+ *   (the `.md` is the description SoT). null when the `.md` is missing or its
+ *   frontmatter carries no usable description.
+ */
+export interface AgentRegistryEntry {
+  domains: string[];
+  phase: string;
+  dual_phase: boolean;
+  compatibility: string | null;
+  description: string | null;
+  // Provenance — "user" (created via ADD) or "shipped" (built-in baseline). The
+  // delete affordance gates on origin === "user". null when undeclared.
+  origin: string | null;
+}
+
+// Raw JSON shape — unknown before validation.
+interface RawRegistryRoot {
+  agents?: Record<string, unknown>;
+  version?: string;
+}
+
+let cachedEntries: Map<string, AgentRegistryEntry> | null = null;
+
+// warn once — corrupt registry 가 매 요청마다 stderr 범람하는 것 방지
+let warnedOnce = false;
+
+/**
+ * Reads agent-registry.json into an entry Map (cached result preferred).
+ *
+ * On failure → empty Map (must not block startup) + one-time stderr warn.
+ * Callers may read size === 0 as "no registry".
+ */
+export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntry>> {
+  if (cachedEntries !== null) {
+    return cachedEntries;
+  }
+  const path = resolveRegistryPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    emitWarnOnce(`agent-registry read failed (${path}): ${describeError(error)}`);
+    cachedEntries = new Map();
+    return cachedEntries;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    emitWarnOnce(`agent-registry JSON parse failed (${path}): ${describeError(error)}`);
+    cachedEntries = new Map();
+    return cachedEntries;
+  }
+  const entries = normalizeRegistry(parsed);
+  // Enrich with the `.md` role description (the `.md` is the description SoT).
+  // One-time per-agent fs read folded into the singleton cache — preserves the
+  // /api/agents/summary p95 budget (no per-request re-read).
+  await enrichDescriptions(entries);
+  cachedEntries = entries;
+  return cachedEntries;
+}
+
+/** Test hook — resets cache + warn flag. Do not call from production code. */
+export function resetAgentRegistryCache(): void {
+  cachedEntries = null;
+  warnedOnce = false;
+}
+
+// env override → defaults to `~/.claude/agent-registry.json` (user home).
+function resolveRegistryPath(): string {
+  const override = process.env.AGENT_REGISTRY_PATH;
+  if (typeof override === "string" && override.length > 0) {
+    return override;
+  }
+  return join(homedir(), ".claude", "agent-registry.json");
+}
+
+// raw JSON → AgentRegistryEntry Map (defensive normalize).
+function normalizeRegistry(parsed: unknown): Map<string, AgentRegistryEntry> {
+  const out = new Map<string, AgentRegistryEntry>();
+  if (!isPlainObject(parsed)) {
+    return out;
+  }
+  const root = parsed as RawRegistryRoot;
+  const agents = root.agents;
+  if (!isPlainObject(agents)) {
+    return out;
+  }
+  for (const [name, rawEntry] of Object.entries(agents)) {
+    if (!isPlainObject(rawEntry)) {
+      continue;
+    }
+    const entry = rawEntry as Record<string, unknown>;
+    const domains = normalizeDomains(entry.domains);
+    const phase = typeof entry.phase === "string" ? entry.phase : "";
+    const dualPhase = entry.dual_phase === true;
+    const compatibility = normalizeCompatibility(entry.compatibility);
+    const origin = typeof entry.origin === "string" ? entry.origin : null;
+    // description filled later by enrichDescriptions (reads the agent `.md`).
+    out.set(name, {
+      domains,
+      phase,
+      dual_phase: dualPhase,
+      compatibility,
+      description: null,
+      origin,
+    });
+  }
+  return out;
+}
+
+// Per-agent `.md` description enrichment — reads each `<name>.md` once (parallel,
+// defensive). A missing/odd `.md` leaves description = null; one read never blocks
+// the others (Promise.allSettled). All reads off the cached-singleton path.
+async function enrichDescriptions(entries: Map<string, AgentRegistryEntry>): Promise<void> {
+  const dir = resolveAgentMdDir();
+  await Promise.allSettled(
+    [...entries.entries()].map(async ([name, entry]) => {
+      entry.description = await readAgentDescription(join(dir, `${name}.md`));
+    }),
+  );
+}
+
+// `~/.claude/agents/` — derived from the registry path's directory so an
+// AGENT_REGISTRY_PATH override (tests) co-locates the `.md` fixtures with the JSON.
+function resolveAgentMdDir(): string {
+  const override = process.env.AGENT_REGISTRY_PATH;
+  if (typeof override === "string" && override.length > 0) {
+    return join(dirname(override), "agents");
+  }
+  return join(homedir(), ".claude", "agents");
+}
+
+// Defensive `.md` description read — graceful on missing file / odd frontmatter.
+// Returns a single-line role description, or null when nothing usable is present.
+async function readAgentDescription(path: string): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
+  const frontmatter = extractFrontmatter(raw);
+  if (frontmatter === null) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    // FAILSAFE_SCHEMA — constructs only plain strings/maps/lists, never typed
+    // objects via tags (defense-in-depth; treats the `.md` as untrusted input).
+    parsed = yaml.load(frontmatter, { schema: yaml.FAILSAFE_SCHEMA });
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) {
+    return null;
+  }
+  const description = (parsed as Record<string, unknown>).description;
+  if (typeof description !== "string") {
+    return null;
+  }
+  return toRoleLine(description);
+}
+
+// Pull the YAML block between the leading `---` fence and the next `---` line.
+// null when no opening fence (no frontmatter).
+function extractFrontmatter(raw: string): string | null {
+  const lines = raw.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") {
+    return null;
+  }
+  const body: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i]?.trim() === "---") {
+      return body.join("\n");
+    }
+    body.push(lines[i] ?? "");
+  }
+  // No closing fence — treat as malformed, no frontmatter.
+  return null;
+}
+
+// Collapse a (possibly folded multi-line) description to one line, then take the
+// first sentence as the role line — Identity wants a concise role, not the full
+// "Use when / Do NOT use for" frontmatter prose.
+function toRoleLine(description: string): string | null {
+  const collapsed = description.replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) {
+    return null;
+  }
+  const sentenceEnd = collapsed.indexOf(". ");
+  return sentenceEnd === -1 ? collapsed : collapsed.slice(0, sentenceEnd + 1);
+}
+
+// compatibility normalize — non-empty string 만 허용, 그 외 → null (미선언 + 손상값 모두 null 로 일관)
+function normalizeCompatibility(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  if (value.length === 0) {
+    return null;
+  }
+  return value;
+}
+
+function normalizeDomains(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((v): v is string => typeof v === "string");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+// Direct stderr — diagnosable without a fastify logger injection. Once only.
+function emitWarnOnce(msg: string): void {
+  if (warnedOnce) {
+    return;
+  }
+  warnedOnce = true;
+  process.stderr.write(`[agent-registry] ${msg}\n`);
+}

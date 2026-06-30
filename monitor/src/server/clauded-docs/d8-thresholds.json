@@ -1,0 +1,12 @@
+{
+  "comparisonTable": {
+    "maxColumns": 5
+  },
+  "contrast": {
+    "textMinRatio": 4.5,
+    "uiMinRatio": 3.0
+  },
+  "typography": {
+    "maxLevels": 3
+  }
+}

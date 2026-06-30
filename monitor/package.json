@@ -1,0 +1,55 @@
+{
+  "name": "claude-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/main.ts",
+    "build:jsx": "esbuild public/src/app.jsx public/src/tweaks-panel.jsx public/src/ui.jsx public/src/screens/dashboard.jsx public/src/screens/cost.jsx public/src/screens/agents.jsx public/src/screens/outcomes.jsx public/src/screens/improvement.jsx public/src/screens/health.jsx public/src/screens/wiki.jsx public/src/screens/architecture.jsx public/src/screens/clauded-docs.jsx public/src/screens/model-config.jsx --loader:.jsx=jsx --jsx=transform --jsx-factory=React.createElement --jsx-fragment=React.Fragment --target=es2022 --format=iife --outdir=public/dist --log-level=warning",
+    "build:client": "npm run build:jsx",
+    "build:assets": "node --eval \"const{cpSync}=require('node:fs');cpSync('src','dist',{recursive:true,filter:(s)=>require('node:fs').statSync(s).isDirectory()||s.endsWith('.json')});\"",
+    "build": "tsc && npm run build:assets && npm run build:client",
+    "start": "node dist/server/main.js",
+    "postinstall": "playwright install chromium",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:status": "prisma migrate status",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@fastify/static": "^9.1.3",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "archiver": "^8.0.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "isomorphic-dompurify": "^3.12.0",
+    "js-yaml": "^4.1.0",
+    "mermaid": "11.15.0",
+    "node-html-parser": "^7.1.0",
+    "pg": "^8.20.0",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.12.2",
+    "@types/pg": "^8.20.0",
+    "esbuild": "^0.28.1",
+    "prisma": "^7.8.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "fast-uri": "^3.1.2",
+    "brace-expansion": "^5.0.6",
+    "@prisma/dev": "0.24.14"
+  }
+}

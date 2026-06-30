@@ -1,0 +1,127 @@
+# Outcome Record Rules (Cross-Cutting Concern)
+
+Applies to all agents. [ALL]
+
+## Core
+
+Mandatory result recording on task completion (regardless of result type). For teams, orchestrator consolidates records.
+
+**Location**: `~/.claude/data/outcomes/YYYY-MM-DD-HHMM_{agent}_{task_type}.md`
+
+**Required 3 fields**: agent · task_type (9-type set: code types `bug-fix`/`feature`/`refactor` · evidence types `research`/`plan` · non-code types `review`/`diagnosis`/`doc`/`cleanup`) · result (done/done_with_concerns/blocked/needs_context/fail)
+
+**task_type set (canonical 9-type contract — SoT)**: the writer self-selects WITHIN its role allowlist (see Role → Allowed task_types table below); selection is a CONSTRAINED derivation, never a free choice. No non-code agent is ever instructed to emit a code task_type it structurally cannot satisfy.
+- `bug-fix` — failing-test → passing-test code change
+- `feature` — new capability code change (new test expected)
+- `refactor` — behavior-preserving code change
+- `research` — investigation synthesizing cited sources
+- `plan` — task decomposition + dependency DAG
+- `review` — code/design/security review verdict, no code change authored (qa-code-reviewer; sec-guard security verdict; design-designer design-review)
+- `diagnosis` — root-cause analysis without code change (qa-debugger — read-only by iron-law, can NEVER write tests; sec-guard)
+- `doc` — document/report/plan-doc/wiki/design-doc deliverable (intel-reporter, intel-planner document deliverables, wiki-curator, design-designer DESIGN docs)
+- `cleanup` — config/import/dependency hygiene with no test obligation (also meta-prompt-engineer prompt-compression)
+
+**result values**: `done` (complete) · `done_with_concerns` (complete + review needed → concerns field) · `blocked` (technical impediment → not escalation target) · `needs_context` (insufficient info → user response needed, not escalation target) · `fail` (failure → qa-debugger escalation target)
+
+**Additional fields**: files_modified (path array) · revision_count (modification request count) · confidence (high/medium/low) · concerns (string array) · evaluative_signal (+1/-1/0) · directive_hint (user correction verbatim) · lesson (discovered pattern/know-how) · metric_pass (writer self-reported boolean — NEVER force-overwritten by the grader) · metric_type (matches the 9-type task_type set: `bug-fix`/`feature`/`refactor`/`research`/`plan`/`review`/`diagnosis`/`doc`/`cleanup`) · grader_verdict (deterministic 3-state: `verified_pass`/`unverified`/`verified_fail` — separate column, advisory) · downgrade_origin (provenance: `writer_true_downgraded`/`writer_false`/`synthesized`) · correlation_id (delegation tracking ID assigned by orchestrator)
+
+**Role → Allowed task_types (derivation map — constrained, not free choice)**: each agent self-selects ONLY within its role's allowlist. This is the single authority the three downstream consumers (`guess_task_type`, the grader unknown-case branch, and the dual-write `_norm_task_type` helper) MUST agree on — divergence is a defect.
+
+| Agent role | Allowed task_types |
+|------------|--------------------|
+| DEV agents (dev-*) | `bug-fix`, `feature`, `refactor`, `cleanup`, `research`, `plan` (as applicable to the work performed) |
+| qa-code-reviewer | `review` |
+| qa-debugger | `diagnosis` (read-only by iron-law — can NEVER author tests, so NEVER `bug-fix`) |
+| intel-planner | `plan`, `doc` |
+| intel-reporter | `doc` |
+| wiki-curator | `doc` |
+| design-designer | `doc`, `review` (design-review maps to `review`) |
+| sec-guard | `review`, `diagnosis` (verdict-only, maxTurns 3) |
+| meta-prompt-engineer | `doc`, `cleanup`; plus code-adjacent `refactor` ONLY when it edits prompt/code files |
+
+**Edge-role consistency (verifier note — downstream consumers MUST NOT diverge)**: sec-guard is verdict-only (maxTurns 3) → its `review`/`diagnosis` task_types correctly grade to `unverified` (no test artifact expected). meta-prompt-engineer may legitimately emit a code-adjacent type (`refactor`/`cleanup`) ONLY when it actually edits prompt/code files; otherwise its deliverable is `doc`. The three consumers — `guess_task_type` (inference default), the grader unknown-case branch, and the dual-write `_norm_task_type` normalizer — MUST resolve these edge cases identically to this table.
+
+**Auto-generation obligation**: If no Outcome Record exists at session end, record minimum 3 fields (agent, task_type, result)
+
+**Language invariant (internal records are English)**: every Outcome Record and `[COMPLETION]` field VALUE is system-internal / LLM-facing data — emit it in English. This covers `summary`, `lesson`, `directive_hint`, `concerns`, and every other field value. All harness-generated record + log data (track-outcome.sh, hook emit/error text, learning-aggregator) is likewise English. This is orthogonal to the user-facing reply, which still follows the user's language (GLOBAL_RULES "All responses in Korean").
+
+## Completion Report Output Obligation
+
+The final response on task completion MUST include the block below. track-outcome.sh parses this block to auto-generate the Outcome Record. (Channel scope — main/orchestrator session: the block is a machine-facing record artifact; summarize outcomes in prose and do NOT print the raw block in user-facing replies. Subagents emit it in their user-invisible final tool-result message, which is the recorded path. See `### Emit Boundary` → Channel asymmetry.)
+
+```
+[COMPLETION]
+result: done|done_with_concerns|blocked|needs_context|fail
+task_type: bug-fix|feature|refactor|research|plan|review|diagnosis|doc|cleanup  # self-select WITHIN your role allowlist (Role → Allowed task_types table)
+metric_pass: true|false                                  # REQUIRED, blank forbidden; writer self-report — grader NEVER overwrites it
+confidence: high|medium|low                              # REQUIRED, blank forbidden
+revision_count: 0                                        # OPTIONAL, integer (default 0); set to N when user requested rework N times
+evaluative_signal: 0                                     # OPTIONAL, -1|0|+1; emit -1 when the user corrected/rejected/asked-to-redo this work
+directive_hint: one-line distilled English summary       # OPTIONAL, emit ONLY with evaluative_signal:-1; distilled (never verbatim), English-only
+files: changed_file1, changed_file2                      # omit if no file changes
+summary: 1-line summary                                  # REQUIRED
+lesson: discovered pattern or know-how (1-2 sentences)   # RECOMMENDED, core signal for AutoAgent self-improvement loop
+token_usage: input=N, output=N                           # OPTIONAL, OTel gen_ai.usage.* mapping
+agent_version: 1.0.0                                     # OPTIONAL, instruction-version tracking
+qa_score: cov=N,ins=N,instr=N,clar=N                     # OPTIONAL, QA review only — coverage/insight/instruction-following/clarity (each 1-5)
+style_ref: relative/path/to/sibling.ts                   # OPTIONAL (v1.0 staged rollout), populated by Project Convention Probe — see Field Input Guide
+confidence_observed: 0.0-1.0                              # OPTIONAL (Phase 2), daemon-populated empirical posterior — writer does NOT fill; see Field Input Guide
+grader_verdict: verified_pass|unverified|verified_fail   # OPTIONAL, grader-populated — writer does NOT fill; advisory, never overwrites metric_pass
+downgrade_origin: writer_true_downgraded|writer_false|synthesized  # OPTIONAL, grader-populated — writer does NOT fill; see Field Input Guide
+cid: correlation_id from orchestrator                    # OPTIONAL, omit if not delegated
+[/COMPLETION]
+```
+
+- metric_pass criteria: See Field Input Guide → `metric_pass` for per-task-type conditions
+- **Correction-emission rule (agent owns the boolean "a correction happened")**: when the user's latest message corrected, rejected, or asked to redo this work — judged SEMANTICALLY in ANY language (the harness no longer keyword-matches the user message) — the agent MUST emit all three: `revision_count` ≥ 1 + `evaluative_signal: -1` + `directive_hint: <one-line distilled English summary>` (never raw verbatim, never Korean). These fields are the TRIGGER that populates `core.correction_signals`; the hook derives the authoritative numeric delta itself (prior-outcome accumulation), so an agent-emitted `revision_count` does NOT override the hook's cross-outcome count — it only signals that a correction occurred. A bare `revision_count: 0` or `evaluative_signal: +1`/`0` MUST NOT be treated as a correction (no suppression of the legacy regex fallback). `evaluative_signal: 0` and an absent field are distinct — emit `0` only when you mean a neutral signal, omit the field when you have no signal. **Continuation/urging/retry/status utterances are NOT corrections** — a request to merely resume or push the SAME work forward (e.g. `진행해` / `이어서 진행해` / `계속` / `다시 이어서` / `resume` / `continue` / `try again to continue` / a status check) MUST NOT emit `evaluative_signal: -1` + `revision_count` + `directive_hint`; these are episodic one-off signals (per `core-learning-log.md` → Correction Signal Capture), not directive corrections of the work's content.
+- If block is missing, track-outcome.sh falls back to keyword inference (reduced accuracy)
+- Backward compatibility: Outcome Records without `cid` are processed normally — missing CID is silently ignored
+- Body of outcome record MUST contain a `## Summary` section — track-outcome.sh auto-copies the `summary` field into it. Agents only need to fill the [COMPLETION] `summary` field faithfully.
+
+### Emit Boundary (Mandatory / Exempt / Gray-zone)
+
+`[COMPLETION]` block emit scope spec — emitting on every turn produces noise, omitting on every turn loses the learning signal. Terminal-turn-only emit + keyword fallback blocks the `result=done, confidence=high` mis-record pattern.
+
+- **Mandatory**: 1+ `tool_use` occurred AND that tool_use contributed to a deliverable → file write/edit · code change · research synthesis · document creation · decision artifact · externally observable state change · referenceable output produced
+- **Exempt**: conversation only (0 tool_use) · context-gathering-only tool_use (e.g., a single Read with no downstream artifact) · mid-task status/heartbeat on long tasks · clarification question / simple confirmation response
+- **Gray-zone**: when judgment is ambiguous, emit → false-positive emit < false-negative non-emit (asymmetric cost)
+- **Hook safety net**: the `hooks/track-outcome.sh` Tier-3 `attribution_source="conversation-only"` skip path auto-handles exempt turns → the agent is responsible only for accurately emitting on the mandatory condition, with no obligation to compensate for exempt turns
+- **Closing-turn discipline (prevention layer)**: emit the `[COMPLETION]` block as a DEDICATED FINAL assistant turn AFTER the last tool action — never end the run on a tool-result turn assuming the work is done. The closing inference turn carrying the block is its own turn. Root cause of omissions: runs ending at a tool boundary skip the block · the SubagentStop transcript-synthesis net is the deterministic backstop, this discipline is the prevention complement.
+- **Channel asymmetry (subagent vs. main/orchestrator) — the block is a MACHINE-FACING record artifact, not user-facing prose**: track-outcome.sh captures the block from the SubagentStop channel. A SUBAGENT's final message is returned to the orchestrator as a tool result (user-invisible) — subagents emit the raw block there UNCHANGED (no obligation change; this is the recorded path). The MAIN/ORCHESTRATOR session's final message IS user-visible, so it MUST NOT print the raw `[COMPLETION]` block in user-facing replies — it summarizes outcomes in prose instead (Korean user-facing reply rule unchanged). Real-work recording is preserved via the subagent path; an orchestrator coordination turn is already covered by the Exempt rule above (0 tool_use / context-gathering / status), so it has no record to lose.
+
+### Field Input Guide
+
+| Field | Required | Blank fallback | Criteria |
+|-------|----------|----------------|----------|
+| `confidence` | Yes | use `low` | `high` = all steps verified + expected behavior + no side effects · `medium` = core works but some edge cases unverified or worked around · `low` = guess-based or only partially working |
+| `metric_pass` | Yes | use `false` (empty triggers `review_flag`) | **Writer self-reported boolean — AUTHORITATIVE for its own column; the grader NEVER force-overwrites it.** This is the writer's honest claim that the per-task-type completion bar was met · `bug-fix`: failing test → passing test (exit code 0 required) · `feature`: new test added + all tests passing · `refactor`: behavior unchanged + existing test suite passes · `research`: 3+ sources cited with cross-verification · `plan`: task decomposition + valid dependency DAG · the 4 non-code types (`review`/`diagnosis`/`doc`/`cleanup`) have no test bar — `metric_pass=true` means the deliverable (verdict / diagnosis / document / hygiene change) was produced. **Grader relationship (advisory, separate column)**: the deterministic Code-Based grader (`track-outcome.sh`) emits `grader_verdict` (3-state: `verified_pass`/`unverified`/`verified_fail`) into its OWN column and records `downgrade_origin` provenance — it does NOT mutate `metric_pass`. A grader/writer disagreement is surfaced via `review_flag`, never by silently rewriting the writer value. **Tier role** = Code-Based deterministic grader (author-side outcomes only — infra attribution failures out-of-scope); Model-Based (LLM-as-Judge) + Human-Based (`done_with_concerns` escalation) layers stack on top via `track-outcome.sh` |
+| `grader_verdict` | Optional (grader-populated — **writer does NOT fill manually**) | omit (absent → not yet graded) | Deterministic 3-state signal computed by `track-outcome.sh`, carried in a SEPARATE column from `metric_pass` (advisory, never overwrites it). **Input-surface invariant (the SINGLE reconciled contract — code and grader MUST NOT drift)**: the grader sees ONLY the [COMPLETION]-block-resident text + `files:` paths, NEVER the off-surface deliverable (a plan/research doc lives in `monitor.ClaudedDoc`; a diff/test file lives in the repo — both invisible to the grader). Therefore a verdict keys ONLY on block-resident structured signal; ABSENCE of an off-surface artifact is NOT failure evidence. **Per-task-type grader behavior** — `verified_fail` requires zero-evidence-of-ANY-kind, NOT the mere absence of a document heading: <br>• `bug-fix` → block-resident `(test\|spec)` + `(pass\|green\|exit 0)` phrasing present → `verified_pass`; absent → `unverified` (NOT fail). <br>• `feature` → a test/spec FILE path in `files:` → `verified_pass`; absent → `unverified` (the historical-row `files:` empty case defaults here — acknowledged data loss, not a fail). <br>• `refactor` → **no reliable block-resident structured signal exists for "behavior preserved"** → `unverified` by DEFAULT (the gameable free-text `existing tests pass` / `no behavioral change` check is DROPPED — Gaming-the-Judge avoidance); `verified_fail` only on zero-evidence. <br>• `plan` / `research` → off-surface by NATURE (markers `## Phase` / `## Acceptance Criteria` / `Sources:` / cited URLs live in the separate doc) → `unverified` by task_type ALONE; `verified_fail` only on zero-evidence. <br>• 4 non-code types (`review`/`diagnosis`/`doc`/`cleanup`) → **explicit skip → `unverified`** (no test artifact expected). **LLM09 misinformation guard (narrow, the ONLY `verified_fail` path)**: `result=done` + `metric_pass=true` + ZERO deliverable evidence of ANY kind (no `files:`, no sources, no block body) → `grader_verdict=verified_fail` + `review_flag=true`, STILL advisory — `metric_pass` is not overwritten. Gate every check on a structured field; arbitrary magic-phrase prose is FORBIDDEN as a pass/fail signal |
+| `downgrade_origin` | Optional (grader-populated — **writer does NOT fill manually**) | omit | Provenance of how the graded outcome arose, recorded alongside `grader_verdict`: `writer_true_downgraded` = writer claimed `metric_pass=true` but the grader's evidence check returned `verified_fail`/`unverified` (the historical mis-measurement case — now logged, not silently force-flipped) · `writer_false` = writer self-reported `metric_pass=false` (honest negative) · `synthesized` = outcome assembled by the SubagentStop transcript-synthesis backstop (no writer-emitted block) |
+| `confidence_observed` | Optional (daemon-populated — **writer does NOT fill manually**) | omit (empty is valid, NOT a `review_flag` trigger) | Empirical posterior confidence (float `0.0`-`1.0`) derived from the EMPIRICAL signal tuple (`revision_count` + `result` + `evaluative_signal`) — **NOT** the writer self-report `confidence` enum. Beta-Binomial posterior mean computed by the daemon; storage column lives on the `core.autoagent_proposals` per-pattern aggregate (the parser only RECOGNIZES the field, does not yet persist it). **Distinct from the writer-side `confidence` enum (high/medium/low)** — the empirical correction for the systematically inflated self-report. Parser recognizes the field passively (backward-compat: absent → silently ignored); writer rarely emits this |
+| `lesson` | Recommended | omit | 1-2 sentences — discoveries that save time on future tasks (e.g., "X must go through Y — direct call forbidden"). **Core signal the AutoAgent self-improvement loop learns from** |
+| `revision_count` | Optional (integer, default 0) | 0 | Record N when the user had to request rework on the same task N times (first-try complete=0, one correction=1, two=2) · missing or non-integer input → track-outcome.sh auto-falls-back to 0 · the hook's prior-outcome accumulation (prior+1) is the AUTHORITATIVE numeric delta — an agent value signals "a correction occurred" but does not override the hook count · learning-aggregator tags this as a "high revision-request frequency" pattern when task_type average exceeds 2 (see core-learning-log.md) |
+| `evaluative_signal` | Optional (-1/0/+1) | omit | Emit `-1` ONLY when the user corrected/rejected/asked-to-redo this work (judged semantically, any language). Emit `+1` for explicit praise/acceptance, `0` for an explicitly neutral signal. Omit the field entirely when you have no signal — absent and `0` are DISTINCT (the parser preserves the raw value; do not collapse `0`↔absent). A `-1` (with `revision_count` ≥ 1 + `directive_hint`) is the correction TRIGGER that populates `core.correction_signals`; `+1`/`0` MUST NOT trigger a correction signal |
+| `directive_hint` | Optional (emit only with `evaluative_signal: -1`) | omit | One-line DISTILLED summary of what the user wanted changed — English-only, NEVER raw verbatim, NEVER Korean (e.g., `User wanted the API gate moved, not the regex removed`). This is the persisted correction lesson, not a transcript quote. Without a co-emitted `evaluative_signal: -1`, a stray `directive_hint` still trips the correction trigger — so emit it only on an actual correction |
+| `token_usage` | Optional | omit | Record when cost tracking is needed; pairs with OTel `gen_ai.usage.*` for external integration |
+| `agent_version` | Optional | omit | Instruction file version (e.g., from frontmatter) — enables before/after performance comparison across instruction edits |
+| `qa_score` | Optional (QA-only) | omit | Format `cov=N,ins=N,instr=N,clar=N` (each 1-5, sum 4-20). Sum < 12 → auto-recommend `result: done_with_concerns`. Reserved for QA agents (qa-code-reviewer / qa-debugger) reviewing other agents' outputs. **Self-emitted Model-Based signal, NOT a deterministic verdict**: this is the LLM evaluator's own score, layered ABOVE the Code-Based grader — it does not override `metric_pass` (which is the writer's own self-report; no signal overwrites it). Evaluator-independence caveat: see `scope-qa.md` "Deliverable Quantitative Evaluation" |
+| `style_ref` | Optional (staged rollout) | omit (greenfield only); non-greenfield omission → `review_flag: true` (parser logic: `~/.claude/hooks/lib/style-ref-consts.sh::style_ref_compute_review_flag` — the task_type allowlist is the function's internal authority, single SoT for production hook + Bats test) | Relative path to the sibling file used as convention reference during Project Convention Probe (see `scope-dev.md` → Pre-Execution Verification → Project Convention Probe) / Step 2 Read (see `shared-search-first.md` → Pattern recognition → Step 2 Read / Step 3 Mirror). Value MUST be a path actually Read in the current turn — on SubagentStop, `track-outcome.sh` cross-verifies the emitted `style_ref` against the session transcript's Read tool_use history and records the verdict in `style_ref_verified` (boolean column; `true`=path found in Read history, `false`=Gaming-the-Judge candidate, `null`=greenfield/absent → verification N/A). Greenfield task (no sibling found in first-touch directory AND no AGENTS.md/CLAUDE.md anchor) → emit literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 Assumptions line. 7-day rolling-window aggregation per agent (`GROUP BY agent` primary, `GROUP BY agent, task_type` secondary cross-tab) via monitor `/api/improvement`. Mandatory graduation (emission ≥ 50% AND fake_rate < 10% across the DEV agents) is a separate future cycle requiring user approval |
+
+> Note on evaluative_signal: current values are -1/0/+1 ternary. Migration to 1-5 ordinal scale is under evaluation for OPRO-style solution-history sorting; no breaking change before explicit migration plan.
+
+- **Blank value policy**: Leaving `confidence` / `metric_pass` blank degrades the self-improvement loop's learning signal. When judgment is impossible, explicitly write `low` / `false` instead of leaving blank. `revision_count` may be omitted (default-0 fallback), but explicit integer input is recommended whenever user correction occurred.
+
+## Automatic Verification Criteria
+
+> See also: `shared-testing.md` Mechanical Success Metrics section for detailed verification by metric_type
+
+**Mismatch Review Trigger**: when any of the following holds, the Outcome Record is auto-tagged `review_flag: true` → the learning-aggregator signal (NOT a metric_pass mutation — `review_flag` flags an outcome for learning-log aggregation; it never rewrites the writer's `metric_pass`). The polar-mismatch computation runs on the WRITER's own values (`confidence` + `metric_pass`), unchanged.
+
+- **Polar mismatch (overconfidence)**: `confidence=high + metric_pass=false`
+- **Polar mismatch (underconfidence)**: `confidence=low + metric_pass=true`
+- **Empty signal**: `metric_pass=EMPTY` (any confidence value) — writer-side self-assessment omission is treated as an instruction-ambiguity signal.
+- **Grader disagreement (advisory)**: `metric_pass=true` + `grader_verdict=verified_fail` → `review_flag: true` for aggregation; `downgrade_origin=writer_true_downgraded` records the disagreement. Under the reconciled single-contract grader, `verified_fail` arises ONLY from the narrow LLM09 zero-evidence-of-any-kind guard — so this disagreement now fires only on a genuinely empty deliverable, not on off-surface (plan/research/feature/refactor) evidence. `grader_verdict=unverified` (the 4 non-code types AND every off-surface or absent-structured-signal code-type row) is NOT a mismatch and does NOT set `review_flag`.
+
+> Rationale: EMPTY is not an evaluation failure but a "writer cannot self-judge their result" signal = instruction ambiguity, so it is included in the learning target. A grader/writer disagreement is surfaced for review, never resolved by overwriting the writer value.
+
+**Git Memory (Commit-Before-Verify)**: WIP commit before verification → Regular commit on verification success / Revert on failure + preserve failure record

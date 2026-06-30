@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+# apply-spine.sh — the deterministic safe-apply spine for the Glass Atrium
+# update system (plan E3 / design C). Pure, sourced library: function
+# definitions ONLY, no top-level side effects, no executable entry point —
+# the same convention as scripts/lib/atrium-config.sh and daemon-lock.sh.
+#
+# IMPORTANT — strict mode is the CALLER's responsibility (sourced-lib convention)
+# This file deliberately does NOT run `set -Eeuo pipefail`: a sourced file must
+# not mutate the caller's shell options (it would surprise interactive sources
+# and break re-sourcing). Every function here is written to be SAFE under a
+# caller that has already set `set -Eeuo pipefail` + `IFS=$'\n\t'` (separated
+# local declarations, explicit `|| true` where a non-zero status is expected,
+# bash-3.2-safe `"${arr[@]:-}"` array expansions for the macOS stock shell).
+# The bats suite sources this lib under full strict mode to prove that.
+#
+# Scope (the three E3 capabilities this lib provides):
+#   T13  spine_find_changed_files   — non-agent hash-diff change selection
+#   T11  spine_stage_and_verify     — stage + per-file SHA-256 verify (no swap)
+#        spine_commit_staged        — snapshot + swap + rollback on failure
+#        spine_apply                — T11 transaction (verify-all, then commit)
+#   T14  spine_set_baseline         — capture the applied manifest as base@install
+#        spine_get_baseline         — read the stored base@install anchor path
+#
+# Manifest schema consumed (produced by scripts/generate-manifest.sh, v1.0.0):
+#   { "version": "1.0.0", "files": ["agents/foo.md", …],
+#     "hashes": { "agents/foo.md": "<64-hex sha256>", … } }
+# A path's expected content hash is hashes[path] (O(1) lookup).
+#
+# Atomicity caveat (named accurately, per the plan): the apply is STAGED and
+# ROLLBACK-GUARDED, NOT a single atomic transaction across many files. Each file
+# is swapped with a plain copy (open-truncate-write — not atomic in isolation);
+# a failure mid-swap restores every file already swapped from a pre-swap
+# snapshot. There is NO cross-file all-or-nothing kernel primitive here.
+#
+# Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): every
+# verification mismatch, missing source, or missing manifest hash returns
+# non-zero with an explicit stderr line — never a silent skip.
+#
+# Portability: SHA-256 via `shasum -a 256` (macOS / perl-backed) with a
+# `sha256sum` (GNU coreutils) fallback — same precedence as generate-manifest.sh.
+# jq is the manifest reader (already a hard dependency of the update system).
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+# Loud-fail when a required external tool is absent. Args: tool names.
+spine_require_tools() {
+  local tool missing=0
+  for tool in "$@"; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+      printf 'apply-spine: required tool not found: %s\n' "${tool}" >&2
+      missing=1
+    fi
+  done
+  [[ "${missing}" -eq 0 ]]
+}
+
+# Echo the lowercase 64-hex SHA-256 of a single file. BSD/GNU portable: prefer
+# shasum (macOS), fall back to sha256sum (Linux). The hash is the first
+# whitespace-delimited field; `${out%% *}` drops the trailing filename column
+# without forking awk.
+spine_sha256_of() {
+  local file="$1" out
+  if command -v shasum >/dev/null 2>&1; then
+    out="$(shasum -a 256 -- "${file}")" || return 1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    out="$(sha256sum -- "${file}")" || return 1
+  else
+    printf 'apply-spine: no sha256 tool (shasum/sha256sum)\n' >&2
+    return 1
+  fi
+  printf '%s\n' "${out%% *}"
+}
+
+# Echo the expected hash for a path from the manifest's hashes map; empty when
+# the path carries no recorded hash.
+spine_get_manifest_hash() {
+  local manifest="$1" path="$2"
+  jq -r --arg p "${path}" '.hashes[$p] // empty' -- "${manifest}"
+}
+
+# Predicate: is this manifest path EXCLUDED from the deterministic non-agent
+# sync? Returns 0 (excluded) / 1 (included). Exclusions (T13 CRITICAL):
+#   * agents/**/*.md     — resolved by the SEPARATE E4 agent three-anchor merge
+#                          path (base@install / vendor / local), never here
+#   * *.local.md         — learned local-overlay files (never vendor-owned)
+#   * config.toml        — rendered, git-ignored runtime config (user-owned)
+spine_is_excluded_path() {
+  local path="$1"
+  # any markdown anywhere under agents/ → E4 merge path
+  if [[ "${path}" == agents/* && "${path}" == *.md ]]; then
+    return 0
+  fi
+  if [[ "${path}" == *.local.md ]]; then
+    return 0
+  fi
+  case "${path}" in
+    config.toml | */config.toml) return 0 ;;
+  esac
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# T13 — non-agent hash-diff change selection
+# ---------------------------------------------------------------------------
+
+# Emit (one relative path per line) the NON-AGENT files whose live content
+# differs from the staged new-release manifest, with the agent/overlay/config
+# exclusions applied. A path absent from the live install is reported as changed
+# (it must be installed). Args: $1 = new-release manifest.json · $2 = live
+# install root. Loud-fails (rc 1) on a manifest path that carries no hash.
+spine_find_changed_files() {
+  local manifest="$1" install_root="$2"
+  local path want live target
+  spine_require_tools jq || return 1
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if spine_is_excluded_path "${path}"; then
+      continue
+    fi
+    want="$(spine_get_manifest_hash "${manifest}" "${path}")"
+    if [[ -z "${want}" ]]; then
+      printf 'apply-spine: manifest has no hash for %s\n' "${path}" >&2
+      return 1
+    fi
+    target="${install_root}/${path}"
+    if [[ ! -f "${target}" ]]; then
+      printf '%s\n' "${path}" # missing locally → must be installed
+      continue
+    fi
+    live="$(spine_sha256_of "${target}")" || return 1
+    if [[ "${live}" != "${want}" ]]; then
+      printf '%s\n' "${path}"
+    fi
+  done < <(jq -r '.files[]' -- "${manifest}")
+}
+
+# ---------------------------------------------------------------------------
+# T11 — staged apply + rollback
+# ---------------------------------------------------------------------------
+
+# Phase 1: copy each changed file from the new-release tree into a staging dir
+# and verify the staged copy's SHA-256 equals the manifest hashes[path]. Reads
+# the change set (one relative path per line) from STDIN. Touches ONLY the
+# staging dir — the live install is never modified here, so any mismatch is a
+# clean loud-fail (rc 1) with zero rollback needed. Args: $1 = new-release tree
+# root · $2 = manifest.json · $3 = staging dir.
+spine_stage_and_verify() {
+  local new_dir="$1" manifest="$2" staging="$3"
+  local path src dst want got
+  spine_require_tools jq || return 1
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    src="${new_dir}/${path}"
+    if [[ ! -f "${src}" ]]; then
+      printf 'apply-spine: staged source missing: %s\n' "${src}" >&2
+      return 1
+    fi
+    want="$(spine_get_manifest_hash "${manifest}" "${path}")"
+    if [[ -z "${want}" ]]; then
+      printf 'apply-spine: manifest has no hash for %s\n' "${path}" >&2
+      return 1
+    fi
+    dst="${staging}/${path}"
+    mkdir -p -- "$(dirname -- "${dst}")"
+    cp -p -- "${src}" "${dst}"
+    got="$(spine_sha256_of "${dst}")" || return 1
+    if [[ "${got}" != "${want}" ]]; then
+      printf 'apply-spine: hash mismatch staging %s (want=%s got=%s)\n' \
+        "${path}" "${want}" "${got}" >&2
+      return 1
+    fi
+  done
+}
+
+# Restore the live install to its pre-swap state from the snapshot dir. For each
+# touched path: a snapshot copy exists → restore it; no snapshot → the file was
+# newly created by the swap → remove it. Args: $1 = install root · $2 = snapshot
+# dir · $3.. = touched relative paths. Best-effort: a failed restore is reported
+# but does not abort the remaining restores (partial-recovery beats no recovery).
+spine_rollback() {
+  local install_root="$1" snapshot="$2"
+  shift 2
+  local path snap dst
+  for path in "$@"; do
+    [[ -n "${path}" ]] || continue
+    snap="${snapshot}/${path}"
+    dst="${install_root}/${path}"
+    if [[ -f "${snap}" ]]; then
+      cp -p -- "${snap}" "${dst}" \
+        || printf 'apply-spine: rollback restore FAILED: %s\n' "${path}" >&2
+    else
+      rm -f -- "${dst}" \
+        || printf 'apply-spine: rollback remove FAILED: %s\n' "${path}" >&2
+    fi
+  done
+}
+
+# Phase 2: snapshot then swap each staged file into the live install, rolling
+# back on ANY failure mid-swap. Reads the change set (one relative path per line)
+# from STDIN. Processing order, per file: snapshot the live target (if it
+# exists) → mark it touched → copy the staged file into place. On the first
+# failure, every touched file is rolled back to its pre-swap state and rc 1 is
+# returned. Args: $1 = staging dir · $2 = install root · $3 = snapshot dir.
+spine_commit_staged() {
+  local staging="$1" install_root="$2" snapshot="$3"
+  local -a paths=() touched=()
+  local path src dst snap rc=0 failed=""
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] && paths+=("${path}")
+  done
+  for path in "${paths[@]:-}"; do
+    [[ -n "${path}" ]] || continue
+    src="${staging}/${path}"
+    dst="${install_root}/${path}"
+    snap="${snapshot}/${path}"
+    if [[ ! -f "${src}" ]]; then
+      failed="${path}"
+      rc=1
+      break
+    fi
+    # snapshot the pre-swap live file BEFORE marking touched / overwriting.
+    if [[ -f "${dst}" ]]; then
+      mkdir -p -- "$(dirname -- "${snap}")"
+      if ! cp -p -- "${dst}" "${snap}"; then
+        failed="${path}"
+        rc=1
+        break
+      fi
+    fi
+    touched+=("${path}")
+    mkdir -p -- "$(dirname -- "${dst}")"
+    if ! cp -p -- "${src}" "${dst}"; then
+      failed="${path}"
+      rc=1
+      break
+    fi
+  done
+  if [[ "${rc}" -ne 0 ]]; then
+    printf 'apply-spine: commit FAILED at %s — rolling back %s touched file(s)\n' \
+      "${failed}" "${#touched[@]}" >&2
+    spine_rollback "${install_root}" "${snapshot}" "${touched[@]:-}"
+    return 1
+  fi
+}
+
+# T11 transaction: verify the ENTIRE change set first (no install mutation),
+# then commit with rollback. Reads the change set (one relative path per line)
+# from STDIN. A staging/verify failure aborts before the install is touched at
+# all; a commit failure rolls back. Args: $1 = new-release tree root · $2 =
+# manifest.json · $3 = install root · $4 = work dir (staging/ + snapshot/ are
+# created beneath it). Returns 0 only when every changed file is committed.
+spine_apply() {
+  local new_dir="$1" manifest="$2" install_root="$3" work_dir="$4"
+  local staging="${work_dir}/staging" snapshot="${work_dir}/snapshot"
+  local -a paths=()
+  local path
+  spine_require_tools jq || return 1
+  mkdir -p -- "${staging}" "${snapshot}"
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] && paths+=("${path}")
+  done
+  # Phase 1 — stage + verify ALL (loud-fail leaves the install untouched).
+  printf '%s\n' "${paths[@]:-}" \
+    | spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" || return 1
+  # Phase 2 — snapshot + swap with rollback on any mid-swap failure.
+  printf '%s\n' "${paths[@]:-}" \
+    | spine_commit_staged "${staging}" "${install_root}" "${snapshot}" || return 1
+}
+
+# ---------------------------------------------------------------------------
+# T14 — baseline (base@install) anchor capture + read
+# ---------------------------------------------------------------------------
+
+# Resolve the update-state directory holding the baseline anchor. Precedence:
+# $1 arg → ATRIUM_UPDATE_STATE_DIR env → ${HOME}/.claude/data/update (the same
+# ~/.claude/data/<subdir> runtime-state convention as the daemon's
+# AUTOAGENT_REPORTS_DIR default).
+spine_baseline_dir() {
+  printf '%s\n' "${1:-${ATRIUM_UPDATE_STATE_DIR:-${HOME}/.claude/data/update}}"
+}
+
+# Echo the resolved baseline-manifest path (file need not exist). Arg: $1 =
+# optional state-dir override.
+spine_baseline_path() {
+  printf '%s\n' "$(spine_baseline_dir "${1:-}")/baseline-manifest.json"
+}
+
+# Capture (store) the just-applied manifest as the base@install baseline anchor —
+# the PRIMARY 3-anchor base (prior-release hashes) for the next update. Written
+# atomically (temp + mv). Echoes the stored path. Args: $1 = applied
+# manifest.json · $2 = optional state-dir override. Loud-fails (rc 1) when the
+# source manifest is missing.
+spine_set_baseline() {
+  local manifest="$1" dir dst tmp
+  if [[ ! -f "${manifest}" ]]; then
+    printf 'apply-spine: baseline source manifest missing: %s\n' "${manifest}" >&2
+    return 1
+  fi
+  dir="$(spine_baseline_dir "${2:-}")"
+  mkdir -p -- "${dir}"
+  dst="${dir}/baseline-manifest.json"
+  tmp="${dst}.tmp.$$"
+  cp -p -- "${manifest}" "${tmp}"
+  mv -f -- "${tmp}" "${dst}"
+  printf '%s\n' "${dst}"
+}
+
+# Read the stored base@install anchor: echo its path and return 0 when present,
+# else return 1 (the `get` contract — absence is a normal non-error result the
+# caller branches on, NOT a thrown failure). Arg: $1 = optional state-dir
+# override.
+spine_get_baseline() {
+  local dst
+  dst="$(spine_baseline_path "${1:-}")"
+  if [[ -f "${dst}" ]]; then
+    printf '%s\n' "${dst}"
+    return 0
+  fi
+  return 1
+}

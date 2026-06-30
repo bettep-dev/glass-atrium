@@ -1,0 +1,17 @@
+# Glass Atrium — Python runtime dependencies (the SoT for the bootstrap's
+# python-libs step in lib/ga-deps.sh / the glass-atrium entry point).
+#
+# Installed by the dependency-bootstrap preflight via:
+#   python3 -m pip install --user -r requirements.txt
+# On a PEP-668 externally-managed-environment failure, the preflight retries
+# (with consent) by appending --break-system-packages.
+#
+# Two psycopg generations are intentionally BOTH present — they are NOT redundant:
+#   * psycopg2-binary — psycopg v2, imported as `import psycopg2`
+#                       (hooks/_pg-write.py uses the v2 API).
+#   * psycopg         — psycopg v3, imported as `import psycopg`
+#                       (the autoagent / monitor daemons use the v3 API).
+# Removing either breaks one consumer; keep both pinned.
+psycopg
+psycopg2-binary
+PyYAML

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Atrium Monitor</title>
+<!-- Bulldog favicon set (served from public/assets/) -->
+<link rel="icon" type="image/x-icon" href="/assets/favicon/favicon.ico" />
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon/favicon-16x16.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/favicon/favicon-48x48.png" />
+<link rel="apple-touch-icon" href="/assets/favicon/apple-touch-icon.png" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<!-- Tailwind CDN (JIT) — viewer R6 path (clauded-docs.jsx L20) 가 React 가 렌더한 className 을 런타임 스캔 후 utility CSS 생성. PostCSS build 로 대체 시 R6 의 runtime utility class silent regression 위험 → 보존. -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: ['class', '[data-theme="dark"]'],
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ["Pretendard Variable", "Pretendard", "ui-sans-serif", "system-ui"],
+          mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        },
+        colors: {
+          surface: { DEFAULT: "rgb(var(--surface) / <alpha-value>)" },
+          elev:    { DEFAULT: "rgb(var(--elev) / <alpha-value>)" },
+          sunken:  { DEFAULT: "rgb(var(--sunken) / <alpha-value>)" },
+          line:    { DEFAULT: "rgb(var(--line) / <alpha-value>)" },
+          ink:     { DEFAULT: "rgb(var(--ink) / <alpha-value>)" },
+          dim:     { DEFAULT: "rgb(var(--dim) / <alpha-value>)" },
+          faint:   { DEFAULT: "rgb(var(--faint) / <alpha-value>)" },
+          accent:  { DEFAULT: "rgb(var(--accent) / <alpha-value>)" },
+          crit:    { DEFAULT: "rgb(var(--crit) / <alpha-value>)" },
+          warn:    { DEFAULT: "rgb(var(--warn) / <alpha-value>)" },
+          ok:      { DEFAULT: "rgb(var(--ok) / <alpha-value>)" },
+          info:    { DEFAULT: "rgb(var(--info) / <alpha-value>)" },
+          'cat-1': { DEFAULT: "rgb(var(--cat-1) / <alpha-value>)" },
+          'cat-2': { DEFAULT: "rgb(var(--cat-2) / <alpha-value>)" },
+          'cat-3': { DEFAULT: "rgb(var(--cat-3) / <alpha-value>)" },
+          'cat-4': { DEFAULT: "rgb(var(--cat-4) / <alpha-value>)" },
+        },
+        boxShadow: {
+          card: "0 1px 2px rgba(0,0,0,0.04)",
+          float: "0 10px 24px -8px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.04)",
+        },
+      },
+    },
+  };
+</script>
+<link rel="stylesheet" href="styles/tokens.css?v=6" />
+<link rel="stylesheet" href="styles/base.css?v=9" />
+<!-- Mermaid 11 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<!-- svg-pan-zoom 3.6.2 — Mermaid 가 생성한 SVG 에 휠 zoom + 드래그 pan + 더블클릭 zoom-in + 컨트롤 아이콘 부여. window.svgPanZoom 으로 노출. -->
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js"></script>
+<script>
+  // dark theme + 폰트 + 전체 너비 fit. startOnLoad:false → architecture.jsx 가 탭 변경 시 수동 render.
+  // securityLevel:'loose' — mermaid_source 는 백엔드가 옵시디언 vault 에서 직접 읽은 internal source (외부 사용자 입력 아님).
+  window.mermaid?.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    themeVariables: {
+      // 다크 가독성 — theme:'dark' 의 type-specific 텍스트 기본값이 "calculated"/"black" 으로 남아
+      //   #0a0a0a 위 dark-on-dark 불가시 발생 (mindmap 중심노드·무색노드, pie/journey/timeline 라벨).
+      //   → 진단(2026-06-01): primaryTextColor 는 flowchart node 만 커버, 타입별 변수는 미설정 fallback.
+      //   변수명 전부 mermaid@11 번들 grep 으로 실측 검증 (context7 미가용 → CDN 번들 직접 대조).
+      darkMode: true,
+      background: '#0a0a0a',
+      primaryColor: '#1e3a8a',
+      primaryTextColor: '#e5e7eb',
+      lineColor: '#94a3b8',
+      fontSize: '14px',
+      fontFamily: 'Pretendard, system-ui, -apple-system, sans-serif',
+
+      // 전역 텍스트 — labelTextColor→actorTextColor / textColor→primaryTextColor 체인의 dark 기본값이
+      //   "black"/"calculated" → 명시 light 고정. taskTextColor·actorTextColor 도 이 체인 의존.
+      textColor: '#e5e7eb',
+      nodeTextColor: '#e5e7eb',
+      labelTextColor: '#e5e7eb',
+      titleColor: '#f1f5f9',
+      noteTextColor: '#0a0a0a',     // noteBkg 가 밝은 황색 → 노트 텍스트는 어둡게(대비 확보)
+      noteBkgColor: '#fde68a',
+
+      // 노드/섹션 fill — light 텍스트가 얹히도록 어두운 면색 표준화 (자동 cScale 밝은 fill 회피).
+      mainBkg: '#1e293b',
+      secondaryColor: '#334155',
+      tertiaryColor: '#475569',
+      secondaryTextColor: '#e5e7eb',
+      tertiaryTextColor: '#e5e7eb',
+
+      // pie — title/section/legend 텍스트는 raw 기본값 미할당(→ 종종 검정) → 전부 light, stroke 는 line 톤.
+      pieTitleTextColor: '#f1f5f9',
+      pieSectionTextColor: '#e5e7eb',
+      pieLegendTextColor: '#e5e7eb',
+      pieStrokeColor: '#0a0a0a',
+      pieOuterStrokeColor: '#94a3b8',
+
+      // journey — actor/task/label 텍스트 + label 박스 배경 (dark 기본 actorTextColor="black" 보정).
+      actorTextColor: '#e5e7eb',
+      taskTextColor: '#e5e7eb',
+      labelBoxBkgColor: '#1e293b',
+      // section 타이틀 텍스트(.section-type-N)는 fillType0..7 사용 → 기본값 primaryColor(#1e3a8a) 라
+      //   #0a0a0a 위 1.9:1 불가시(실측 검출). 8개 전부 light 명시로 보정.
+      fillType0: '#e5e7eb', fillType1: '#e5e7eb', fillType2: '#e5e7eb', fillType3: '#e5e7eb',
+      fillType4: '#e5e7eb', fillType5: '#e5e7eb', fillType6: '#e5e7eb', fillType7: '#e5e7eb',
+
+      // stateDiagram-v2 — 상태 라벨 + 복합 상태 타이틀 배경.
+      labelColor: '#e5e7eb',
+      stateLabelColor: '#e5e7eb',
+      compositeTitleBackground: '#1e293b',
+
+      // mindmap — 라벨색은 cScaleLabel0..11 사용(cScaleLabel = Ge(labelTextColor) invert 체인) →
+      //   무색노드/중심노드 dark-on-dark 의 직접 원인. 12개 전부 light 명시로 fallback invert 차단.
+      cScaleLabel0: '#e5e7eb', cScaleLabel1: '#e5e7eb', cScaleLabel2: '#e5e7eb',
+      cScaleLabel3: '#e5e7eb', cScaleLabel4: '#e5e7eb', cScaleLabel5: '#e5e7eb',
+      cScaleLabel6: '#e5e7eb', cScaleLabel7: '#e5e7eb', cScaleLabel8: '#e5e7eb',
+      cScaleLabel9: '#e5e7eb', cScaleLabel10: '#e5e7eb', cScaleLabel11: '#e5e7eb',
+    },
+    flowchart: {
+      htmlLabels: true,
+      curve: 'basis',
+      padding: 12,
+      nodeSpacing: 50,
+      rankSpacing: 60,
+      useMaxWidth: true,
+    },
+    securityLevel: 'loose',
+  });
+</script>
+</head>
+<body class="bg-surface text-ink antialiased">
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<!-- Babel standalone (in-browser JSX 변환) 폐기 — esbuild precompile 경로 (npm run build:jsx) 로 전환. public/dist/*.js 가 빌드 산출물. -->
+<!-- prop-types is a peer dep of recharts UMD; without it window.Recharts fails to register. -->
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
+<!-- recharts 2.15.4 — 2.13.0 release migrated XAxis/YAxis off React.defaultProps to JS default params (function-component deprecation 해소, issue #3615). 2.15.4 = 마지막 2.x patch (3.0 이전), API 무변경 (LineChart/AreaChart/BarChart/ComposedChart/* 동일). React 18.3.1 호환 — react-is override 불필요 (R19 한정 요구). -->
+<script src="https://unpkg.com/recharts@2.15.4/umd/Recharts.js"></script>
+<!-- highlight.js 11 — agent-only YAML/JSON 본문 syntax highlighting (Wave 48 4-format viewer · screen 11 clauded-docs). -->
+<!-- TXT 는 highlight 불요 (plain monospace). MD primary 는 marked 가 처리. github-dark 테마 — Wave 44 dark base 정합. -->
+<!-- cdnjs 의 UMD 빌드 사용 — jsDelivr 의 lib/*.min.js 는 순수 CommonJS (`module.exports`) 라 브라우저에서 ReferenceError 발생. -->
+<!--   · highlight.min.js — UMD guard (`typeof exports/module`) 후 window.hljs 등록 -->
+<!--   · languages/*.min.js — IIFE 로 hljs.registerLanguage 직접 호출 (module reference 없음) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+<!-- Markdown rendering deps for Outcome 탐색기 (screen 04). marked = parser; DOMPurify = sanitizer (both required, missing one falls back to plain pre). -->
+<script src="https://cdn.jsdelivr.net/npm/marked@13.0.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<!-- Tweaks panel module — exposes window.useTweaks/TweaksPanel/Section/Radio/Color before app.jsx consumes them. MUST load before ui.jsx so app.jsx (loaded last) sees the globals. -->
+<!-- esbuild precompile 산출물 (public/dist/*.js) — npm run build:jsx 로 생성. 로드 순서 (tweaks-panel → ui → screens → app) 는 window-globals 의존성 유지. -->
+<script src="dist/tweaks-panel.js"></script>
+<script src="dist/ui.js"></script>
+<!-- Static token unit-price catalog (TOKEN_RATES) — plan §B ADR-4 G5. MUST load before cost.jsx; exposes window.TOKEN_RATES / TOKEN_CATEGORY_RATES. Plain JS, no Babel. -->
+<script src="src/data/pricing.js"></script>
+<!-- 헬스 카드/KPI 순수 모델 (window.HealthModel) — dashboard/health 데몬 카드 + F02 KPI 불변식 공용. ui.js 이후·screens 이전 로드. Plain JS, no Babel. -->
+<script src="src/data/health-model.js"></script>
+<script src="dist/screens/dashboard.js"></script>
+<script src="dist/screens/cost.js"></script>
+<script src="dist/screens/agents.js"></script>
+<script src="dist/screens/outcomes.js"></script>
+<!-- Wave 42 — legacy learning/autoagent 제거 (Wave 32 ADR-11 R1 채택 후 Wave 35 안정). #improvement single source of truth. -->
+<script src="dist/screens/improvement.js"></script>
+<script src="dist/screens/health.js"></script>
+<script src="dist/screens/wiki.js"></script>
+<!-- 2026-05-19 alert subsystem 제거 — screens/alerts.jsx 폐기. -->
+<script src="dist/screens/architecture.js"></script>
+<script src="dist/screens/clauded-docs.js"></script>
+<script src="dist/screens/model-config.js"></script>
+<script src="dist/app.js"></script>
+</body>
+</html>

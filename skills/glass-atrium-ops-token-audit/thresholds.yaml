@@ -1,0 +1,42 @@
+# glass-atrium-ops-token-audit thresholds
+# Computed from Phase 1 baseline: /tmp/context-budget-audit-2026-05-21.json
+# Snapshot date: 2026-05-21 (24 agents / 24 rules / 15 skills / 159,310 ecosystem tokens)
+# Derivation: warn = round(mean + 1σ), alert = round(mean + 2σ) per Phase 4 ADR-4
+# (ECC C4 hardcoded numbers 30w/300l NOT used — 22/24 agents already >30w, would alert-flood)
+# Re-compute when baseline ages > 90 days OR major cascade lands; see SKILL.md
+
+agent_description_words:
+  # population: 23 agents w/ description (GLOBAL_RULES excluded — 0 words)
+  # mean=74.3 sigma=22.3 max=117 (dev-shell) min=14 (meta-prompt-engineer)
+  warn: 97
+  alert: 119
+
+agent_total_tokens:
+  # population: 24 agents · mean=3238.6 sigma=1882.9
+  # max=8868 (design-designer) min=1290 (sec-guard)
+  warn: 5121
+  alert: 7004
+
+rule_line_count:
+  # population: 24 rules · mean=70.4 sigma=47.4
+  # max=176 (scope-report) min=16 (type-safety)
+  warn: 118
+  alert: 165
+
+mcp_server_total_tokens:
+  # Re-anchored Phase-3 P5 (2026-05-27) — measured per-server token estimates via mcp-scan.sh
+  # Source: claude mcp list (14 servers, 6 connected); est = tool_count * 500 tok/tool (ECC C4 baseline)
+  # population: 6 connected servers · values=[1000,3000,4000,10500,12500,13000]
+  # mean=7333.3 sigma(pop)=4810.3 · max=13000 (chrome-devtools) min=1000 (context7)
+  # Derivation: warn = round(mean + 1σ), alert = round(mean + 2σ) — matches agent_total_tokens convention
+  # Semantic: compares the WORST single connected server's est_tokens (per-server, not sum)
+  # (NOT the prior un-measured placeholder 5000/10000 · NOT ECC hardcoded 30w/300l)
+  # Re-compute when connected-server set changes materially OR baseline ages > 90 days
+  warn: 12144
+  alert: 16954
+
+ecosystem_total_tokens:
+  # Phase 1 baseline = 159,310
+  # warn = 25% headroom (≈200K) · alert = 57% headroom (≈250K, soft ceiling)
+  warn: 200000
+  alert: 250000

@@ -1,0 +1,249 @@
+# Glass Atrium CI — clean-runner install + test proof.
+#
+# Honest-skip contract (what CANNOT run on a hosted runner, and why):
+#   * macOS launchd bootstrap (launchctl bootout/bootstrap/kickstart) is a
+#     manual user step by design — the E2E (test/oss-e2e-bootstrap.sh) already
+#     STATIC-verifies rendered plists only and never invokes launchctl, so CI
+#     inherits that contract. No launchctl call appears anywhere below.
+#   * The live `claude` CLI is optional (README Prerequisites) and metered;
+#     autoagents-eval.sh / claude-driven daemon cycles are NOT exercised in CI.
+#     glass-atrium's post-install `claude --doctor` is advisory and is reached
+#     ONLY via `install`, never via the read-only `doctor` subcommand run here.
+#   * The full sandboxed E2E (oss-e2e-bootstrap.sh) needs Unix-socket PEER-auth
+#     Postgres on /tmp. Hosted runners give that ONLY via a natively-installed
+#     cluster reconfigured to listen on /tmp (the `services:` Docker Postgres is
+#     TCP/password auth — incompatible with the host=/tmp peer-auth contract).
+#     The monitor-tests + e2e jobs install Postgres natively for exactly this.
+#
+# What DOES run: monitor typecheck + node:test (live DB + real chromium),
+# autoagent unittest suites, the bats hook/script/installer suites, the
+# read-only glass-atrium doctor preflight, and the sandboxed E2E bootstrap.
+
+name: ci
+
+# Quoted to avoid the YAML 1.1 bareword `on` → boolean coercion (GitHub's
+# parser is fine either way; quoting keeps third-party YAML linters honest).
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Monitor: typecheck + node:test. Both need a LIVE peer-auth Postgres on the
+  # /tmp socket (Prisma $queryRaw oracles) AND real chromium (browser-pool /
+  # html/pdf export tests use Playwright with no mock — see browser-pool.ts).
+  # ---------------------------------------------------------------------------
+  monitor-tests:
+    name: monitor typecheck + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node (from monitor/.nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: monitor/.nvmrc
+
+      # Native Postgres so the runner user is a peer-auth superuser via the
+      # local socket, reconfigured to /tmp to satisfy the host=/tmp contract
+      # baked into .env.example + oss-db-setup.sh (PG_SOCKET=/tmp).
+      - name: Install and start Postgres (peer auth on /tmp socket)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-contrib
+          sudo sed -i "s|^#\?unix_socket_directories.*|unix_socket_directories = '/tmp'|" \
+            /etc/postgresql/*/main/postgresql.conf
+          sudo systemctl restart postgresql
+          # peer auth: create a superuser role matching the runner OS user so
+          # `psql -h /tmp -d postgres` connects with no password.
+          sudo -u postgres psql -c "CREATE ROLE \"$(id -un)\" LOGIN SUPERUSER;"
+
+      - name: Verify peer-auth socket reachability
+        run: psql -h /tmp -d postgres -tAc 'SELECT 1'
+
+      # oss-db-setup.sh runs `npm ci` + renders monitor/.env + createdb (main +
+      # shadow) + `prisma generate` + `prisma migrate deploy`. Idempotent.
+      - name: Bootstrap monitor DB (renders .env, migrates schema)
+        working-directory: monitor
+        run: bash scripts/oss-db-setup.sh
+
+      # Real chromium for the browser-pool / export test boundary (no mock).
+      # postinstall already ran `playwright install chromium` during npm ci, but
+      # --with-deps pulls the shared libs a hosted runner lacks.
+      - name: Install Playwright chromium with system deps
+        working-directory: monitor
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        working-directory: monitor
+        run: npm run typecheck
+
+      - name: Test (node:test via tsx, live DB + chromium)
+        working-directory: monitor
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # AutoAgent self-improvement loop: Python stdlib `unittest` suites. No DB,
+  # no third-party deps, no `claude` CLI — pure-stdlib by design.
+  # ---------------------------------------------------------------------------
+  autoagent-tests:
+    name: autoagent unittest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run autoagent unittest suites
+        run: python3 -m unittest discover -s autoagent/test -p 'test_*.py' -v
+
+  # ---------------------------------------------------------------------------
+  # Bats suites for hooks, operational scripts, and the installer. Every suite
+  # is hermetic (mktemp sandboxes + PATH-prepended stub binaries for
+  # psql/createdb/launchctl/tmux/claude) — none touches a live host service,
+  # so this job needs neither Postgres nor launchd nor the claude CLI.
+  # ---------------------------------------------------------------------------
+  bats-suites:
+    name: bats (hooks · scripts · installer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      # Single source of truth for the bats suite paths — both the existence
+      # smoke step and the bats invocation read $BATS_SUITES, so a dropped or
+      # mistyped path can never drift between the two.
+      - name: Resolve bats suite paths
+        id: suites
+        run: |
+          {
+            echo 'paths<<EOF'
+            cat <<'SUITES'
+          test/wire-hooks-merge.bats
+          test/doctor-hook-bindings.bats
+          test/render-launchd-plists.bats
+          test/oss-db-setup.bats
+          test/install-bootstrap-subcommand.bats
+          hooks/test/cost-tracker-pricing-advisory.bats
+          hooks/test/code-based-grader.bats
+          scripts/test/atrium-config.bats
+          scripts/test/pii-scan.bats
+          scripts/test/wiki-source-raw.bats
+          scripts/test/daemon-bootstrap-supervise.bats
+          scripts/test/render-monitor-env.bats
+          scripts/test/daemon-daily-restart.bats
+          SUITES
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+
+      # Smoke gate: fail FAST with a precise message if any listed suite file is
+      # missing, instead of an opaque bats "no such file" runtime error. Catches
+      # a renamed/deleted/typo'd path that local runs would otherwise miss.
+      # The path list is passed via env (not inline ${{ }} into the shell body)
+      # to keep the run: script free of expression interpolation.
+      - name: Assert every listed bats suite exists
+        env:
+          BATS_SUITES: ${{ steps.suites.outputs.paths }}
+        run: |
+          missing=0
+          while IFS= read -r suite; do
+            [[ -z "${suite}" ]] && continue
+            if [[ -f "${suite}" ]]; then
+              echo "ok   ${suite}"
+            else
+              echo "MISS ${suite}" >&2
+              missing=$((missing + 1))
+            fi
+          done <<< "${BATS_SUITES}"
+          if [[ "${missing}" -ne 0 ]]; then
+            echo "FATAL: ${missing} CI-listed bats suite path(s) do not exist" >&2
+            exit 1
+          fi
+
+      - name: Run bats suites
+        env:
+          BATS_SUITES: ${{ steps.suites.outputs.paths }}
+        run: |
+          mapfile -t suites <<< "${BATS_SUITES}"
+          bats "${suites[@]}"
+
+  # ---------------------------------------------------------------------------
+  # Installer read-only preflight. `glass-atrium doctor` is mutation-free: it
+  # checks GA root, a writable throwaway target home (GA_TARGET_HOME), same
+  # device, manifest integrity, and hook bindings (binding gaps WARN, never
+  # FAIL on a fresh tree). It NEVER writes settings.json and never reaches the
+  # advisory `claude --doctor` post-check (that path is `install`-only).
+  # ---------------------------------------------------------------------------
+  install-doctor:
+    name: glass-atrium doctor preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run doctor against a throwaway target home
+        run: |
+          GA_TARGET_HOME="$(mktemp -d)" ./glass-atrium doctor
+
+  # ---------------------------------------------------------------------------
+  # Full sandboxed E2E bootstrap proof: clones the repo into a fake HOME, runs
+  # the FULL install path (config + plist render + symlink farm + wire_hooks +
+  # DB bootstrap) against a THROWAWAY db, starts the monitor directly (no
+  # launchd), smoke-checks /api/health, asserts uninstall parity, and tears
+  # down. launchd is STATIC-verified only (the script never calls launchctl).
+  # Needs the same peer-auth /tmp Postgres as monitor-tests.
+  # ---------------------------------------------------------------------------
+  e2e-bootstrap:
+    name: sandboxed E2E bootstrap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node (from monitor/.nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: monitor/.nvmrc
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install and start Postgres (peer auth on /tmp socket)
+        run: |
+          sudo apt-get install -y postgresql postgresql-contrib
+          sudo sed -i "s|^#\?unix_socket_directories.*|unix_socket_directories = '/tmp'|" \
+            /etc/postgresql/*/main/postgresql.conf
+          sudo systemctl restart postgresql
+          sudo -u postgres psql -c "CREATE ROLE \"$(id -un)\" LOGIN SUPERUSER;"
+
+      - name: Verify peer-auth socket reachability
+        run: psql -h /tmp -d postgres -tAc 'SELECT 1'
+
+      # The script clones THIS repo, so the live `glass_atrium` DB it diffs against in
+      # parity checks does not exist on the runner — provide an empty one so the
+      # before/after migration-count oracles have a stable baseline.
+      - name: Create baseline glass_atrium DB (E2E parity oracle)
+        run: createdb -h /tmp glass_atrium
+
+      - name: Install Playwright chromium with system deps
+        working-directory: monitor
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run sandboxed E2E bootstrap
+        run: bash test/oss-e2e-bootstrap.sh
