@@ -10,7 +10,7 @@ the release never touched a region the local content is kept byte-identical.
 This module builds the merge CANDIDATE only. It is import-driven (T19 wires it
 into the daemon's hardened ``git_txn_apply`` transaction; the deterministic
 non-agent file sync is a separate concern). It does NOT edit
-``skills/glass-atrium-update/`` (T20) nor ``lib/ga-core.sh`` (E5).
+``scripts/update.sh`` (T20) nor ``lib/ga-core.sh`` (E5).
 
 Reuse (NOT re-implemented here — imported from the daemon):
   * ``daemon_cycle._editable_spans``  — the canonical EDITABLE marker pairing.
@@ -372,11 +372,8 @@ def resolve_file(
 
     # Overall verdict = the worst-case region verdict (severity order).
     severity = [MERGE_CONFLICT, GATED_2WAY, MERGE_CLEAN, TAKE_RELEASE, KEEP_LOCAL]
-    overall = KEEP_LOCAL
-    for level in severity:
-        if any(r.verdict == level for r in resolutions):
-            overall = level
-            break
+    present = {r.verdict for r in resolutions}
+    overall = next((level for level in severity if level in present), KEEP_LOCAL)
     if candidate == local_text and not needs_llm:
         overall = NO_OP
 

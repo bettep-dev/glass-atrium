@@ -3,6 +3,16 @@
 
 set -Eeuo pipefail
 
+# Source shared hook utilities for hook_path_safe_key — the agent_id → path-safe counter-key
+# transform advisory-subagent-budget.sh uses to locate its per-agent tool_use counter. Reused
+# (NOT reinvented) so the budget-truncation detector below keys the counter file identically;
+# a divergent transform would silently mis-locate it. Sourced BEFORE this file's own emit_error
+# so the richer 7-param emit_error below intentionally overrides the utils 5-param one (last
+# definition wins). Guarded so a missing sibling never crashes this fail-open hook — the detector
+# fails open when hook_path_safe_key is unavailable.
+# shellcheck source=hook-utils.sh
+[[ -r "${BASH_SOURCE%/*}/hook-utils.sh" ]] && source "${BASH_SOURCE%/*}/hook-utils.sh"
+
 emit_error() {
   local code="${1}" severity="${2}" msg_en="${3}" msg_ko="${4}" suggest_en="${5}" suggest_ko="${6}" ctx="${7:-"{}"}"
   printf '{"code":"%s","severity":"%s","hook":"%s","message_en":"%s","message_ko":"%s","suggestion_en":"%s","suggestion_ko":"%s","context":%s}\n' \
@@ -556,6 +566,41 @@ out_wide('grader_files', _grader_files_robust(), GRADER_BODY_MAX)
 out('c_cid', completion.get('cid', ''))
 out('c_style_ref', completion.get('style_ref', ''))
 
+# _resolve_subagent_transcript — resolve the SUBAGENT's OWN transcript
+# (agent-<id>.jsonl) so style_ref verification cross-checks the subagent's own Read
+# history, NOT the parent/session-root transcript. On SubagentStop the payload
+# transcript_path points at the PARENT transcript, which produced systematic
+# style_ref FALSE NEGATIVES (the subagent's Read of the sibling never appears in the
+# parent's Read history). Mirrors the session_id+agent_id bounded glob in
+# recover_agent_type_from_sidecar (two layouts: the flat subagents/ dir + the
+# workflow-nested subagents/workflows/wf_*/ location). Returns the first matching
+# per-agent transcript, or '' when none is found (caller then falls back to the
+# payload transcript_path — the main-session / non-subagent / pre-existing-row case).
+# glob + isfile do not raise; any residual error is absorbed by the caller's existing
+# try/except (fail-open → '').
+def _resolve_subagent_transcript(payload_d):
+    import os as _os
+    import glob as _glob
+    agent_id_val = payload_d.get('agent_id', '') or ''
+    session_val = payload_d.get('session_id', '') or ''
+    if not agent_id_val or not session_val:
+        return ''
+    filename = f'agent-{agent_id_val}.jsonl'
+    patterns = (
+        _os.path.expanduser(
+            f'~/.claude/projects/*/{session_val}/subagents/{filename}'
+        ),
+        _os.path.expanduser(
+            f'~/.claude/projects/*/{session_val}/subagents/workflows/wf_*/{filename}'
+        ),
+    )
+    for pattern in patterns:
+        for match in _glob.glob(pattern):
+            if _os.path.isfile(match):
+                return match
+    return ''
+
+
 # style_ref_verified: cross-verify the emitted style_ref against the session's
 # Read tool_use history (single SoT matcher in lib/style_ref_match.py, shared with
 # style-ref-verify.sh — no rule divergence). Emitted as a 3-state token:
@@ -573,10 +618,13 @@ def _compute_style_ref_verified(completion_d, payload_d):
     lib_path = _os.environ.get('STYLE_REF_MATCH_LIB', '')
     if not lib_path or not _os.path.isfile(lib_path):
         return ''
-    tpath = payload_d.get('transcript_path', '') or ''
-    if not isinstance(tpath, str) or not tpath or not _os.path.isfile(tpath):
-        return ''
     try:
+        # Cross-check against the SUBAGENT's OWN transcript, not the parent
+        # (payload transcript_path). Fall back to the payload transcript only when
+        # no per-agent transcript is found (main-session / non-subagent / old rows).
+        tpath = _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
+        if not isinstance(tpath, str) or not tpath or not _os.path.isfile(tpath):
+            return ''
         with open(lib_path, 'r', encoding='utf-8') as _lf:
             _lib_src = _lf.read()
         _ns = {}
@@ -861,13 +909,63 @@ if [ "${PARSE_TIER}" = "3" ] \
   exit 0
 fi
 
+# detect_budget_truncation — PRIMARY hard-kill discriminator for the completion-synthesized branch.
+# A [COMPLETION]-absent, tool_use≥1 turn whose cumulative per-agent_id tool_use counter (persisted
+# by advisory-subagent-budget.sh) sits at/over the SUBAGENT_TOOL_BUDGET threshold is a budget/turn
+# HARD-KILL — the agent was killed at its cap mid-work — NOT a "forgot the [COMPLETION] block"
+# completion. Reads the counter with the SAME hook_path_safe_key transform + env contract
+# advisory-subagent-budget.sh uses (single SoT; a divergent key mis-locates the file). Returns
+# 0 = budget-truncation · 1 = fail-open (not a budget kill, OR any signal absent/unreadable, OR
+# advisory disabled). NEVER errors — every failure mode returns 1, so the caller keeps
+# completion-synthesized. Origin discriminator (hook_is_subagent contract): agent_id present ⇒
+# nested sub-worker; absent ⇒ main-session orchestrator, which carries no per-agent tool budget.
+detect_budget_truncation() {
+  # Kill-switch parity: advisory disabled ⇒ the counter is not maintained ⇒ no reliable signal.
+  [[ -n "${SUBAGENT_TOOL_BUDGET_OFF:-}" ]] && return 1
+  # agent_id = the counter key AND the sub-worker-origin signal; absent ⇒ main-session origin.
+  [[ -z "${AGENT_ID:-}" ]] && return 1
+  # hook_path_safe_key unavailable (utils source failed) ⇒ fail-open, never error.
+  command -v hook_path_safe_key >/dev/null 2>&1 || return 1
+  local agent_key
+  agent_key="$(hook_path_safe_key "${AGENT_ID}")"
+  [[ -z "${agent_key}" ]] && return 1
+  local budget_dir counter_file
+  budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${HOME}/.claude/data/agent-tool-budget}"
+  counter_file="${budget_dir}/${agent_key}"
+  [[ -f "${counter_file}" && -r "${counter_file}" ]] || return 1
+  local count
+  # Strip to digits — a corrupt/racing/non-integer file degrades to empty (→ fail-open), never errors.
+  count="$(tr -cd '0-9' <"${counter_file}" 2>/dev/null || true)"
+  [[ -z "${count}" ]] && return 1
+  # Budget threshold — same default (40) + env var as advisory-subagent-budget.sh. A non-integer or
+  # zero override degrades to the default; force base-10 so a leading-zero value is not mis-read as
+  # octal (the advisory-subagent-budget.sh precedent for the counter/budget arithmetic).
+  local budget="${SUBAGENT_TOOL_BUDGET:-40}"
+  if [[ ! "${budget}" =~ ^[0-9]+$ ]] || ((10#${budget} == 0)); then
+    budget=40
+  fi
+  # At/over the full budget = the hard-kill threshold (the 70/80% advisories already fired earlier;
+  # reaching the budget itself is the observed 40-52 tool_use truncation band's lower edge).
+  ((10#${count} >= 10#${budget}))
+}
+
 # completion-synthesized path: [COMPLETION] absent + tool_use≥1 (passed the conversation-only
 # skip) = a deliverable-producing turn. Synthesize the record from the transcript instead of
-# keyword inference; attribution_source=completion-synthesized is the daemon's identifying signal.
-if [ "${HAS_STRUCTURED}" != "true" ]; then
-  ATTRIBUTION_SOURCE="completion-synthesized"
-  printf '[outcome-record] synthesize: parse_tier=%s, tool_use_count=%s, has_writes=%s, agent=%s\n' \
-    "${PARSE_TIER}" "${TOOL_USE_COUNT}" "${SYNTH_HAS_WRITES}" "${AGENT_TYPE}" >&2
+# keyword inference. Two distinguishable attribution values arise here:
+#   budget-truncation      — the on-disk tool_use counter confirms a budget/turn HARD-KILL
+#   completion-synthesized — the default: work delivered, [COMPLETION] simply absent (daemon signal)
+if [[ "${HAS_STRUCTURED}" != "true" ]]; then
+  # PRIMARY signal first: a counter at/over budget ⇒ budget-truncation, distinct from a plain
+  # synthesized row (and from the parse_tier==2 truncated_completion complementary detector above).
+  # if/else keeps the two labels mutually exclusive by construction — no path before this block sets
+  # budget-truncation, so completion-synthesized can never clobber a just-assigned budget kill.
+  if detect_budget_truncation; then
+    ATTRIBUTION_SOURCE="budget-truncation"
+  else
+    ATTRIBUTION_SOURCE="completion-synthesized"
+  fi
+  printf '[outcome-record] synthesize: parse_tier=%s, tool_use_count=%s, has_writes=%s, attribution=%s, agent=%s\n' \
+    "${PARSE_TIER}" "${TOOL_USE_COUNT}" "${SYNTH_HAS_WRITES}" "${ATTRIBUTION_SOURCE}" "${AGENT_TYPE}" >&2
 fi
 
 if [ "$HAS_STRUCTURED" = "true" ]; then
