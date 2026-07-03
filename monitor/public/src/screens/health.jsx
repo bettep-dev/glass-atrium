@@ -64,7 +64,7 @@ function ScreenHealth() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col">
       {/* 공유 타입스케일(.fs-* / --fs-*) 마운트 — health 화면 ad-hoc 폰트 토큰화 소비처. */}
       <TypeScaleStyle/>
       <style>{`
@@ -76,44 +76,49 @@ function ScreenHealth() {
         .h-card-note { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; min-height: calc(var(--fs-meta) * 1.4); line-height: 1.4; word-break: break-all; }
       `}</style>
 
-      <PageHeader
-        title="System health"
-        sub="Daemon & system health"
-        right={
-          <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh system health">
-            <Icon name="refresh" size={14}/>
-            Refresh
-          </button>
-        }
-      />
+      <div className="flex-shrink-0">
+        <PageHeader
+          title="System health"
+          sub="Daemon & system health"
+          right={
+            <button className="btn ghost sm" onClick={triggerRefresh} aria-label="Refresh system health">
+              <Icon name="refresh" size={14}/>
+              Refresh
+            </button>
+          }
+        />
+      </div>
 
-      {/* KPI×3 — 컴포넌트 카드 facts 와 동일 출처 집계 (window.HealthModel) */}
-      <HealthOverviewKpiRow
-        daemonState={daemonState}
-        pgState={pgState}
-        hookState={hookState}
-        hookFailState={hookFailState}
-      />
+      {/* 콘텐츠 카드 채널 16px — 헤더→콘텐츠는 PageHeader mb-4 단독(agents/outcomes 정상 화면 동일) · 카드 간 gap-4 유지. */}
+      <div className="flex flex-col gap-4">
+        {/* KPI×3 — 컴포넌트 카드 facts 와 동일 출처 집계 (window.HealthModel) */}
+        <HealthOverviewKpiRow
+          daemonState={daemonState}
+          pgState={pgState}
+          hookState={hookState}
+          hookFailState={hookFailState}
+        />
 
-      {/* 컴포넌트 헬스 카드 그리드 — lg 3-col / md 2-col 반응형 */}
-      <HealthCardGrid
-        daemonState={daemonState}
-        pgState={pgState}
-        hookState={hookState}
-        hookFailState={hookFailState}
-        onRetry={triggerRefresh}
-      />
+        {/* 컴포넌트 헬스 카드 그리드 — lg 3-col / md 2-col 반응형 */}
+        <HealthCardGrid
+          daemonState={daemonState}
+          pgState={pgState}
+          hookState={hookState}
+          hookFailState={hookFailState}
+          onRetry={triggerRefresh}
+        />
 
-      {/* 데몬 실행 페이로드 드릴다운 — 선택 데몬의 최근 실행 payload(JSONB) collapsible */}
-      <DaemonPayloadCard
-        state={payloadState}
-        daemon={payloadDaemon}
-        onChangeDaemon={setPayloadDaemon}
-        onRetry={triggerRefresh}
-      />
+        {/* 데몬 실행 페이로드 드릴다운 — 선택 데몬의 최근 실행 payload(JSONB) collapsible */}
+        <DaemonPayloadCard
+          state={payloadState}
+          daemon={payloadDaemon}
+          onChangeDaemon={setPayloadDaemon}
+          onRetry={triggerRefresh}
+        />
 
-      {/* 훅 실패 로그 — 전 훅 raw 실패 이벤트 테이블, error_kind 듀얼인코딩 */}
-      <HookFailureCard state={hookFailState} onRetry={triggerRefresh}/>
+        {/* 훅 실패 로그 — 전 훅 raw 실패 이벤트 테이블, error_kind 듀얼인코딩 */}
+        <HookFailureCard state={hookFailState} onRetry={triggerRefresh}/>
+      </div>
     </div>
   );
 }

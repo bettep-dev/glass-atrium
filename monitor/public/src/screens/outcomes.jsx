@@ -1532,7 +1532,9 @@ function LoopEventsBody({ state, onRetry }) {
   const dist     = Array.isArray(state.data?.result_distribution) ? state.data.result_distribution : [];
 
   if (total === 0 || events.length === 0) {
-    return <EmptyStateO message="No run events recorded yet."/>;
+    // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
+    // 'Task results' 레퍼런스(card-body 기본 20px)와 간격 일치. populated 테이블은 padding:0 유지.
+    return <div style={{ padding: 20 }}><EmptyStateO message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
