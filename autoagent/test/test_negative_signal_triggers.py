@@ -126,6 +126,37 @@ class TestNegativeSignalPredicate(unittest.TestCase):
         )
 
 
+@unittest.skipIf(pgdw is None, f"import failed: {_IMPORT_ERROR}")
+class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
+    """The measurement-gap carve-out suppresses completion-synthesized rows ONLY;
+    budget-truncation is a sibling synthesized provenance that stays clusterable."""
+
+    def test_when_completion_synthesized_dwc_then_not_clusterable(self) -> None:
+        # Pure measurement gap (agent emitted no [COMPLETION]) → ZERO negative hits;
+        # its done_with_concerns is a synthesis default, not an agent-emitted signal.
+        row = _row(
+            result="done_with_concerns",
+            attribution_source="completion-synthesized",
+        )
+        self.assertTrue(pgdw._is_synthesized_measurement_gap(row))
+        self.assertEqual(pgdw.negative_signal_hits(row), ())
+        self.assertFalse(pgdw.is_negative_signal_outcome(row))
+
+    def test_when_budget_truncation_dwc_then_clusterable(self) -> None:
+        # A budget-kill IS an agent-relevant negative — it must NOT be swept into
+        # the measurement-gap carve-out; its done_with_concerns still counts.
+        row = _row(
+            result="done_with_concerns",
+            attribution_source="budget-truncation",
+        )
+        self.assertFalse(pgdw._is_synthesized_measurement_gap(row))
+        self.assertIn("result=done_with_concerns", pgdw.negative_signal_hits(row))
+        self.assertTrue(pgdw.is_negative_signal_outcome(row))
+
+    def test_when_budget_truncation_constant_then_literal(self) -> None:
+        self.assertEqual(pgdw.ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
+
+
 @unittest.skipIf(agg is None, f"import failed: {_IMPORT_ERROR}")
 class _AggregatorRunFixture(unittest.TestCase):
     """Run aggregator main() against synthetic rows; record upserts, no PG."""
