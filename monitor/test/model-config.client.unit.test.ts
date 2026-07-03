@@ -2,8 +2,11 @@
 // (validateFormMC / diffFormMC / modelOptionsMC / buildFormMC / sortDomainsMC /
 // sortBudgetsMC). The server PUT contract is covered by model-config.route.test.ts;
 // this brings the BROWSER half under regression coverage — a drift in the client
-// mirror constants (KNOWN_MODEL_IDS_MC / BUDGET_RE_MC / bounds) or a regression in
-// the partial-PUT payload builder would otherwise ship undetected.
+// mirror constants (BUDGET_RE_MC / bounds / free-text regex) or a regression in
+// the partial-PUT payload builder would otherwise ship undetected. The known-model
+// roster is NO LONGER a client mirror constant — options are API-driven from the
+// GET `known_models` list (server derives it from the pricing SoT, P6/P7), so the
+// option tests inject a fixture roster and assert options derive from it.
 //
 // Runner: npx tsx --test test/model-config.client.unit.test.ts
 //
@@ -12,7 +15,8 @@
 // it as a plain script whose top-level `function` declarations land on the vm context
 // global. The test evaluates the ACTUAL shipped source in a node:vm sandbox with minimal
 // React/window stubs, then exercises the real helpers — not a drift-prone copy. It also
-// cross-verifies the client constant mirror against the server SoT (model-config-consts).
+// cross-verifies the surviving client constant mirrors against the server SoT
+// (model-config-consts: free-text regex + budget regex/bounds).
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,8 +26,6 @@ import { dirname, resolve } from "node:path";
 import esbuild from "esbuild";
 
 import {
-  KNOWN_MODEL_IDS,
-  FRONTMATTER_MODEL_ALIASES,
   FREE_TEXT_MODEL_PATTERN,
   BUDGET_VALUE_PATTERN,
   BUDGET_MIN_USD,
@@ -38,9 +40,9 @@ interface McForm {
   budgets: Record<string, string>;
 }
 interface McHelpers {
-  validateFormMC: (form: McForm) => Record<string, string>;
+  validateFormMC: (form: McForm, knownModels: string[]) => Record<string, string>;
   diffFormMC: (baseline: McForm, form: McForm) => unknown;
-  modelOptionsMC: (domain: string) => string[];
+  modelOptionsMC: (domain: string, knownModels: string[]) => string[];
   buildFormMC: (data: unknown) => McForm;
   sortDomainsMC: (domains: { domain: string }[]) => { domain: string }[];
   sortBudgetsMC: (budgets: { domain: string }[]) => { domain: string }[];
@@ -48,9 +50,10 @@ interface McHelpers {
 
 // Module-level `const` declarations (the client constant mirror) stay lexically
 // scoped inside the evaluated script — they never become vm-context-global
-// properties, so they cannot be read directly. The mirror is instead verified
-// BEHAVIORALLY: the helpers that close over those consts (validateFormMC /
-// modelOptionsMC) are cross-checked against the server SoT validators below.
+// properties, so they cannot be read directly. The surviving mirrors are instead
+// verified BEHAVIORALLY: the helper that closes over them (validateFormMC —
+// free-text regex + budget regex/bounds) is cross-checked against the server SoT
+// validators below.
 
 // Build once, evaluate in a sandbox — the real top-level helper declarations.
 async function loadMc(): Promise<McHelpers> {
@@ -106,46 +109,32 @@ const mc = await loadMc();
 // into this realm before deep-equality (cross-realm prototype mismatch otherwise).
 const sameRealm = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
-// Server SoT materialized as same-realm sorted arrays for cross-check assertions.
-const SERVER_KNOWN_IDS = [...KNOWN_MODEL_IDS].sort();
-const SERVER_ALIASES = [...FRONTMATTER_MODEL_ALIASES].sort();
+// GET known_models fixture — the server derives the real list from the pricing SoT
+// `models` keys (P6); the client consumes whatever the API returns VERBATIM, so an
+// arbitrary roster proves the options are API-driven, not a baked-in mirror.
+const KNOWN_MODELS_FIXTURE = [
+  "claude-fable-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
+];
 
-// --- constant-mirror drift guard (BEHAVIORAL) ---
-// The client mirror consts (KNOWN_MODEL_IDS_MC / FRONTMATTER_ALIASES_MC / regex / bounds)
-// are top-level `const` declarations → lexically scoped inside the evaluated module, so
-// they are NOT reachable as vm-context globals (unlike the `function` helpers). The drift
-// guard therefore exercises the helpers that CLOSE OVER those consts — modelOptionsMC
-// (KNOWN_MODEL_IDS_MC + FRONTMATTER_ALIASES_MC) and validateFormMC (regex + bounds) — and
+// --- surviving constant-mirror drift guard (BEHAVIORAL) ---
+// The client mirror consts (FREE_TEXT_MODEL_RE_MC / BUDGET_RE_MC / bounds) are
+// top-level `const` declarations → lexically scoped inside the evaluated module, so
+// they are NOT reachable as vm-context globals (unlike the `function` helpers). The
+// drift guard therefore exercises validateFormMC (which closes over them) and
 // cross-checks the observable behavior against the server SoT.
-
-test("client known-id mirror matches server KNOWN_MODEL_IDS (via modelOptionsMC)", () => {
-  // orchestrator domain emits concrete ids only (no inherit/alias) → exactly the known-id set.
-  const opts = sameRealm(mc.modelOptionsMC("model.orchestrator"));
-  assert.deepStrictEqual([...opts].sort(), SERVER_KNOWN_IDS);
-});
-
-test("client alias mirror matches server FRONTMATTER_MODEL_ALIASES (via dev modelOptionsMC)", () => {
-  // dev opts = known ids + inherit + aliases; the alias remainder must equal the server set.
-  const opts = sameRealm(mc.modelOptionsMC("model.dev"));
-  const aliasRemainder = opts
-    .filter((o) => o !== "inherit" && !SERVER_KNOWN_IDS.includes(o))
-    .sort();
-  assert.deepStrictEqual(aliasRemainder, SERVER_ALIASES);
-});
 
 test("client model-format regex mirror matches server FREE_TEXT_MODEL_PATTERN (via validateFormMC)", () => {
   // The client validate path uses FREE_TEXT_MODEL_RE_MC for free-text ids; assert the client
   // verdict agrees with the server FREE_TEXT_MODEL_PATTERN on a discriminating sample set.
+  // (None of the samples sits in the injected roster → the free-text branch decides.)
   const cases = ["claude-fable-5[1m]", "valid-custom.id", "Bad-Upper", "white space", "ok123"];
   for (const value of cases) {
-    const clientErr = !!sameRealm(mc.validateFormMC({ models: { "model.dev": value }, budgets: {} }))[
-      "model.dev"
-    ];
-    // server-equivalent verdict for a non-known, non-alias free-text id on a frontmatter domain.
-    const serverOk =
-      FREE_TEXT_MODEL_PATTERN.test(value) ||
-      SERVER_KNOWN_IDS.includes(value) ||
-      SERVER_ALIASES.includes(value);
+    const clientErr = !!sameRealm(
+      mc.validateFormMC({ models: { "model.dev": value }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+    )["model.dev"];
+    const serverOk = FREE_TEXT_MODEL_PATTERN.test(value);
     assert.strictEqual(clientErr, !serverOk, `client/server agree on '${value}'`);
   }
 });
@@ -154,7 +143,9 @@ test("client budget regex + bound mirrors match server SoT (via validateFormMC)"
   const key = "budget.haiku_max_usd";
   // regex: exactly-2-decimal contract.
   for (const value of ["0.50", "12.34", "0.5", "1", "0.500", "abc"]) {
-    const clientErr = !!sameRealm(mc.validateFormMC({ models: {}, budgets: { [key]: value } }))[key];
+    const clientErr = !!sameRealm(mc.validateFormMC({ models: {}, budgets: { [key]: value } }, []))[
+      key
+    ];
     assert.strictEqual(clientErr, !BUDGET_VALUE_PATTERN.test(value), `regex verdict for '${value}'`);
   }
   // bounds: client floor/ceiling must equal the server BUDGET_MIN_USD / BUDGET_MAX_USD.
@@ -163,70 +154,91 @@ test("client budget regex + bound mirrors match server SoT (via validateFormMC)"
   const belowFloor = (BUDGET_MIN_USD - 0.01).toFixed(2);
   const aboveCeil = (BUDGET_MAX_USD + 0.01).toFixed(2);
   const errAt = (v: string): boolean =>
-    !!sameRealm(mc.validateFormMC({ models: {}, budgets: { [key]: v } }))[key];
+    !!sameRealm(mc.validateFormMC({ models: {}, budgets: { [key]: v } }, []))[key];
   assert.ok(!errAt(floorStr), `client floor ${floorStr} accepted (matches BUDGET_MIN_USD)`);
   assert.ok(!errAt(ceilStr), `client ceiling ${ceilStr} accepted (matches BUDGET_MAX_USD)`);
   assert.ok(errAt(belowFloor), `client rejects below floor ${belowFloor}`);
   assert.ok(errAt(aboveCeil), `client rejects above ceiling ${aboveCeil}`);
 });
 
-// --- modelOptionsMC: option assembly per domain (inherit/alias inclusion) ---
+// --- modelOptionsMC: API-driven option assembly per domain (P7 AC: exactly the GET
+// known_models + inherit where the domain allows; no bare alias option) ---
 
-test("modelOptionsMC: orchestrator excludes inherit + aliases (concrete ids only)", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.orchestrator"));
-  assert.ok(!opts.includes("inherit"), "orchestrator has no inherit");
-  assert.ok(!opts.includes("opus"), "orchestrator has no aliases");
-  for (const id of SERVER_KNOWN_IDS) assert.ok(opts.includes(id), `orchestrator includes ${id}`);
+test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected known_models (no inherit)", () => {
+  const opts = sameRealm(mc.modelOptionsMC("model.future_unknown", KNOWN_MODELS_FIXTURE));
+  assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
 });
 
-test("modelOptionsMC: dev includes inherit + aliases + known ids", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.dev"));
-  assert.ok(opts.includes("inherit"));
-  for (const a of SERVER_ALIASES) assert.ok(opts.includes(a), `dev has alias ${a}`);
-  for (const id of SERVER_KNOWN_IDS) assert.ok(opts.includes(id), `dev includes ${id}`);
+test("modelOptionsMC: dev = inherit + known_models verbatim, no bare alias option", () => {
+  const opts = sameRealm(mc.modelOptionsMC("model.dev", KNOWN_MODELS_FIXTURE));
+  assert.deepStrictEqual(opts, ["inherit", ...KNOWN_MODELS_FIXTURE]);
+  for (const alias of ["opus", "sonnet", "haiku"]) {
+    assert.ok(!opts.includes(alias), `dev has no bare alias '${alias}'`);
+  }
 });
 
-test("modelOptionsMC: daemon_cycle_haiku — no inherit, no aliases (concrete id only)", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku"));
+test("modelOptionsMC: research = inherit + known_models verbatim, no bare alias option", () => {
+  const opts = sameRealm(mc.modelOptionsMC("model.research", KNOWN_MODELS_FIXTURE));
+  assert.deepStrictEqual(opts, ["inherit", ...KNOWN_MODELS_FIXTURE]);
+  for (const alias of ["opus", "sonnet", "haiku"]) {
+    assert.ok(!opts.includes(alias), `research has no bare alias '${alias}'`);
+  }
+});
+
+test("modelOptionsMC: daemon_cycle_haiku — no inherit (concrete id only)", () => {
+  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", KNOWN_MODELS_FIXTURE));
+  assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
   assert.ok(!opts.includes("inherit"), "daemon cycle helper does not inherit");
-  assert.ok(!opts.includes("opus"), "daemon cycle helper needs concrete id, no alias");
+});
+
+test("modelOptionsMC: options track the injected roster, not a baked-in mirror", () => {
+  const altRoster = ["some-brand-new-model", "another-id"];
+  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", altRoster));
+  assert.deepStrictEqual(opts, altRoster, "a different roster yields different options");
+});
+
+test("modelOptionsMC: empty known_models (SoT fail-open, D3) → inherit-only where allowed", () => {
+  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.dev", [])), ["inherit"]);
+  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.daemon_cycle_haiku", [])), []);
 });
 
 // --- validateFormMC: client mirror of the server PUT contract ---
+// NOTE: no client-side bare-alias reject mirror — the server is the validation
+// authority for the alias 400 (plan Non-Goals); covered by model-config.route.test.ts.
 
 test("validateFormMC: a valid known id + valid 2-decimal budget → no errors", () => {
   const errors = sameRealm(
-    mc.validateFormMC({
-      models: { "model.dev": "claude-opus-4-8" },
-      budgets: { "budget.haiku_max_usd": "0.50" },
-    }),
+    mc.validateFormMC(
+      {
+        models: { "model.dev": "claude-opus-4-8" },
+        budgets: { "budget.haiku_max_usd": "0.50" },
+      },
+      KNOWN_MODELS_FIXTURE,
+    ),
   );
   assert.deepStrictEqual(errors, {});
 });
 
 test("validateFormMC: empty model value → 'Enter a model id'", () => {
-  const errors = sameRealm(mc.validateFormMC({ models: { "model.dev": "" }, budgets: {} }));
+  const errors = sameRealm(
+    mc.validateFormMC({ models: { "model.dev": "" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+  );
   assert.ok(errors["model.dev"], "empty model flagged");
 });
 
 test("validateFormMC: uppercase free-text model → format error (mirrors FREE_TEXT regex)", () => {
   const errors = sameRealm(
-    mc.validateFormMC({ models: { "model.dev": "Claude-Custom" }, budgets: {} }),
+    mc.validateFormMC({ models: { "model.dev": "Claude-Custom" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
   );
   assert.ok(errors["model.dev"], "uppercase rejected by client regex");
   // server agrees (drift guard): the same value fails the server pattern too.
   assert.ok(!FREE_TEXT_MODEL_PATTERN.test("Claude-Custom"));
 });
 
-test("validateFormMC: alias on the dev domain is accepted (frontmatter domain)", () => {
-  const errors = sameRealm(mc.validateFormMC({ models: { "model.dev": "opus" }, budgets: {} }));
-  assert.deepStrictEqual(errors, {});
-});
-
 test("validateFormMC: budget without exactly 2 decimals → error", () => {
   for (const bad of ["0.5", "1", "0.500", "1.2.3", "abc"]) {
     const errors = sameRealm(
-      mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": bad } }),
+      mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": bad } }, []),
     );
     assert.ok(errors["budget.haiku_max_usd"], `'${bad}' rejected`);
     assert.ok(!BUDGET_VALUE_PATTERN.test(bad), `server pattern also rejects '${bad}'`);
@@ -235,18 +247,21 @@ test("validateFormMC: budget without exactly 2 decimals → error", () => {
 
 test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds → ok", () => {
   const below = sameRealm(
-    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "0.04" } }),
+    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "0.04" } }, []),
   );
   assert.ok(below["budget.haiku_max_usd"], "below floor flagged");
   const above = sameRealm(
-    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "50.01" } }),
+    mc.validateFormMC({ models: {}, budgets: { "budget.haiku_max_usd": "50.01" } }, []),
   );
   assert.ok(above["budget.haiku_max_usd"], "above ceiling flagged");
   const edge = sameRealm(
-    mc.validateFormMC({
-      models: {},
-      budgets: { "budget.haiku_max_usd": "0.05", "budget.pre_verify_max_usd": "50.00" },
-    }),
+    mc.validateFormMC(
+      {
+        models: {},
+        budgets: { "budget.haiku_max_usd": "0.05", "budget.pre_verify_max_usd": "50.00" },
+      },
+      [],
+    ),
   );
   assert.deepStrictEqual(edge, {}, "exact bounds accepted");
 });
@@ -292,15 +307,16 @@ test("buildFormMC: maps domains/budgets desired into the form buffer", () => {
 
 test("sortDomainsMC: canonical order applied, an unknown domain is appended (never dropped)", () => {
   const input = [
-    { domain: "model.dev" },
+    { domain: "model.research" },
     { domain: "model.future_unknown" },
-    { domain: "model.orchestrator" },
+    { domain: "model.dev" },
   ];
   const sorted = sameRealm(mc.sortDomainsMC(input)).map((d) => d.domain);
-  assert.strictEqual(sorted[0], "model.orchestrator", "orchestrator sorts first");
-  assert.ok(sorted.indexOf("model.dev") < sorted.indexOf("model.future_unknown"));
-  assert.ok(sorted.includes("model.future_unknown"), "unknown domain preserved, not dropped");
-  assert.strictEqual(sorted.length, 3);
+  assert.deepStrictEqual(
+    sorted,
+    ["model.dev", "model.research", "model.future_unknown"],
+    "reduced DOMAIN_ORDER_MC order applied, unknown appended last (never dropped)",
+  );
 });
 
 test("sortBudgetsMC: known order first, unknown budget appended (never dropped)", () => {

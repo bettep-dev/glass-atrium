@@ -5,11 +5,9 @@ export type ApplyMode =
   | "next-spawn"
   | "next-cycle"
   | "tmux-restart"
-  | "session-restart-manual"
   | "immediate";
 
 export type ModelDomainKey =
-  | "model.orchestrator"
   | "model.dev"
   | "model.research"
   | "model.daemon_cycle_haiku";
@@ -36,8 +34,6 @@ export interface DomainStatus {
   apply_mode: ApplyMode;
   editable: boolean;
   pricing_known: boolean;
-  // Orchestrator only — the second (and last) settings.json key the API may expose (D5).
-  effort_level?: string | null;
   // Dev only — per-file actuals so a 'mixed' state stays diagnosable.
   files?: DomainFileModel[];
 }
@@ -54,6 +50,9 @@ export interface BudgetDomainStatus {
 
 export interface ModelConfigGetResponse {
   fetched_at: string;
+  // SoT-derived roster (pricing.json `models` keys) — the client's dropdown source.
+  // [] when the SoT is unreadable (D3 fail-open; GET still 200s).
+  known_models: string[];
   domains: DomainStatus[];
   budgets: BudgetDomainStatus[];
   daemon_config_sync: DaemonConfigSyncState;
@@ -66,7 +65,7 @@ export interface SurfaceFileResult {
 }
 
 export interface SurfaceResult {
-  surface: "daemon-config.json" | "settings.json" | "frontmatter-dev" | "frontmatter-research";
+  surface: "daemon-config.json" | "frontmatter-dev" | "frontmatter-research";
   status: "ok" | "skipped" | "failed";
   reason?: string;
   files?: SurfaceFileResult[];
