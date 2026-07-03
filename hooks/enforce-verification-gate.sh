@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
-# Two distinct surfaces on a DEV subagent spawn:
+# Three distinct surfaces on a DEV subagent spawn:
 #   1) reviewer-advisory (STDERR + exit 0) — a plan-referencing DEV spawn with no qa-code-reviewer
 #      recorded this session, surfacing the missing Stage-2 gate. ADVISORY-ONLY (complex/simple plan
 #      judgment is the orchestrator's) → never blocks.
-#   2) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
-#      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). This is the ONLY
-#      blocking branch; the [ENTRY-CLASS] simple-task token is the escape hatch for legitimate small
-#      DEV work. Non-DEV / plan-bearing / token-bearing spawns all exit 0 (zero false-block).
+#   2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — an ORCHESTRATOR-ORIGIN DEV
+#      spawn (agent_id absent) carrying NO [SIZE-EST] self-attestation token. The [SIZE-EST] contract
+#      applies to EVERY DEV spawn (orchestrator-role.md ### Spawn Budget), so this fires even for a
+#      plan-bearing spawn — the former "plan-bearing → zero false-block" guarantee is REVOKED for this
+#      [SIZE-EST] dimension. GUARDED by hook_is_subagent: a nested sub-worker origin (agent_id present)
+#      does NOT load the token-defining rules → never blocked (directionally fail-safe: misread ⇒
+#      skipped block, never a false-block). Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
+#   3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
+#      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The [ENTRY-CLASS]
+#      simple-task token is the escape hatch for legitimate small DEV work. Non-DEV spawns exit 0;
+#      plan-bearing / token-bearing spawns clear THIS branch (but still face surface 2 above).
 #
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
 #   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
@@ -143,6 +150,17 @@ has_simple_task_token() {
   printf '%s' "${text}" | grep -qF '[ENTRY-CLASS] simple-task' 2>/dev/null
 }
 
+# [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
+# EVERY DEV spawn (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, orchestrator-role.md
+# ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
+# structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
+# existence-only boundary as the [ENTRY-CLASS] entry tokens).
+has_size_est_token() {
+  local text="${1}"
+  [[ -z "${text}" ]] && return 1
+  printf '%s' "${text}" | grep -qF '[SIZE-EST]' 2>/dev/null
+}
+
 # 1. READ-BEFORE-STAMP — snapshot reviewer-present state from PRIOR invocations BEFORE this spawn
 # appends its own type. Sequential reviewer→DEV: reviewer's completed PreToolUse durably commits the
 # qa-code-reviewer line → DEV read observes it → pass. Same-batch parallel reviewer+DEV: reviewer
@@ -203,6 +221,24 @@ if ! is_dev_agent "${subagent_type}"; then
   exit 0
 fi
 
+# 3a. [SIZE-EST] presence gate — EVERY orchestrator DEV spawn MUST carry a [SIZE-EST] self-attestation
+# token (T1 contract, orchestrator-role.md ### Spawn Budget). Placed BEFORE the entry-decision branch
+# so a plan-bearing orchestrator spawn is STILL size-checked — revoking the header's former
+# plan-bearing zero-false-block guarantee for this dimension. GUARDED by hook_is_subagent (reused
+# VERBATIM from hook-utils.sh, as enforce-delegation.sh / advisory-subagent-budget.sh do): block ONLY
+# when agent_id is ABSENT (main-session/orchestrator origin, which loads the token-defining rules); a
+# nested sub-worker origin (agent_id present) does NOT load those rules → never blocked. Directionally
+# fail-safe — a misread ⇒ skipped block, never a false-block — inheriting the fail-open ERR trap above.
+# SC2310: hook_is_subagent/has_size_est_token are pure predicates — set -e disable under `if` intended.
+# shellcheck disable=SC2310
+if ! hook_is_subagent "${input}" && ! has_size_est_token "${prompt_full}"; then
+  size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (orchestrator-role.md ### Spawn Budget)."
+  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. Under-estimating is the DANGEROUS error — round UP on a borderline count."
+  emit_error "VGATE-SIZE-001" "block" "${size_reason}" "${size_fix}" \
+    "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}"
+  exit 2
+fi
+
 # Entry-decision branch — three mutually exclusive paths:
 #   plan-ref present       → task entered the flow → fall through to the reviewer check (advisory).
 #   [ENTRY-CLASS] token    → orchestrator consciously classified it simple → exit 0 silent.
@@ -235,7 +271,7 @@ fi
 # PreToolUse block surface — mirrors block-doc-routing-leak.sh. The fail-open ERR trap above still
 # governs the hook's OWN errors → an internal failure never reaches this block.
 entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: <reason> in the prompt to silence this gate."
+entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: this entry token is ONE of TWO required per DEV spawn — you must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001)."
 emit_error "VGATE-ENTRY-001" "block" "${entry_reason}" "${entry_fix}" \
   "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}"
 exit 2

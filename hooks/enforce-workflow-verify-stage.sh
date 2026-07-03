@@ -29,9 +29,9 @@
 #   - ASYMMETRIC SCAN (P0): only spawn/agentType tokens (qa-code-reviewer, dev-*, doc-agent) and the
 #     leak TRIGGER (local Target shape) scan the comment-stripped source — a commented spawn/target is
 #     not a real one (this is the anti-gaming property the strip exists for). The author
-#     self-attestation / suppressor tokens ([ENTRY-CLASS], plan-ref, monitor-POST routing note) scan
-#     RAW src instead, matching the manual gate's raw grep: their evidentiary weight is identical in a
-#     comment or a string, so stripping them only false-BLOCKs a legitimate workflow.
+#     self-attestation / suppressor tokens ([ENTRY-CLASS], [SIZE-EST], plan-ref, monitor-POST routing
+#     note) scan RAW src instead, matching the manual gate's raw grep: their evidentiary weight is
+#     identical in a comment or a string, so stripping them only false-BLOCKs a legitimate workflow.
 #   - BEST-EFFORT ordering: the reviewer verify-spawn must appear BEFORE the first DEV
 #     implementation spawn; a reviewer appearing ONLY after the DEV spawn is treated as missing.
 #   - The gate enforces ONLY when a DEV agentType is actually spawned (no DEV impl → exempt).
@@ -47,8 +47,9 @@
 #     NOT a check that the DEV emitted a `feasible` verdict (that value does not exist statically).
 # It still does NOT validate gating-expression correctness or DEV-verdict presence — those remain
 # the orchestrator's authoring obligation. Scoped to clear violations + fail-OPEN DOMINANT on ANY
-# ambiguity (python3 absent · helper error · non-"BLOCK" output → exit 0): a false-block of a
-# legitimate workflow is worse than a missed bypass, so every uncertainty resolves to allow.
+# ambiguity (python3 absent · helper error · output outside the enumerated BLOCK_* tokens → exit 0):
+# a false-block of a legitimate workflow is worse than a missed bypass, so every uncertainty
+# resolves to allow.
 #
 # CONDITIONAL ACTIVATION (unverified binding): whether the harness fires PreToolUse(Workflow) with
 # tool_input.script exposed is NOT empirically confirmed. This
@@ -57,7 +58,10 @@
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation that reaches the Workflow-tool
 # decision point, a one-line trace is appended to ${HOME}/.claude/data/workflow-gate-fired.log
-# (timestamp · tool_name · verdict · script-length). The orchestrator cannot trigger a Workflow
+# (timestamp · tool_name · verdict · script-length). Trace verdict tags: pass · pass-noscript
+# (empty/undecodable-script fail-open) · block-norev / block-noverifydev / block-order (verify-stage
+# cause split) · block-docroute · block-entry · block-sizeest; the python3-absent and helper-error fallbacks still
+# emit bare "pass" (deliberately outside the pass-noscript split). The orchestrator cannot trigger a Workflow
 # call (no ultracode opt-in), so this is a passive probe: the NEXT real ultracode workflow run
 # self-records firing. Two honest interpretation branches of the log:
 #   (a) a trace line APPEARS after a real workflow run → PreToolUse(Workflow) DOES fire with
@@ -71,11 +75,14 @@
 # The trace is fail-SAFE — an unwritable log dir / any logging error NEVER changes the verdict or
 # the exit code (the verdict is decided first, the trace is best-effort and swallowed).
 #
-# Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. Three independent exit-2 verdicts share the
+# Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. Four independent exit-2 verdicts share the
 #   block channel: missing-verify-stage (clear case) · doc-routing leak (weakest, string heuristic) ·
 #   entry-miss (DEV spawn with NO plan-ref AND NO [ENTRY-CLASS] simple-task token — the ultracode
 #   equivalent of enforce-verification-gate.sh's entry-miss block; decoupled from the verify-stage
-#   verdict, never fires when a plan-ref/token is present or on a non-DEV workflow).
+#   verdict, never fires when a plan-ref/token is present or on a non-DEV workflow) · size-attestation-miss
+#   (a would-be-PASS DEV spawn under ENTRY_OK carrying NO [SIZE-EST] delegation-size token in the RAW
+#   source — DEV-gated AND ENTRY_OK-gated so entry-miss keeps priority, and decoupled from the
+#   verify-stage verdict exactly like entry-miss; never fires on a non-DEV workflow).
 # Channel: STDERR for the block reason (PreToolUse block surface) · exit 2 signals the block.
 # fail-open: script absent/empty/unparseable · no DEV spawn (simple workflow, Stage-2 exempt) ·
 #            qa-code-reviewer present · wrong tool_name · any internal error → exit 0.
@@ -145,16 +152,20 @@ emit_trace() {
 }
 
 # block_and_exit REASON TRACE_TAG — terminal block: stderr reason + firing trace + exit 2. Shared by
-# all three exit-2 verdicts (entry-miss · doc-routing leak · missing-verify-stage) — only the reason
-# text and the trace tag differ. ${script_len} is read from the global set after the script decode.
+# every exit-2 verdict (entry-miss · doc-routing leak · size-attestation-miss · the three
+# missing-verify-stage cause tags) — only the reason text and the trace tag differ. ${script_len} is
+# read from the global set after the script decode.
 #
 # CENTRALIZED ENTRY ADDENDUM (message-only; was the inline F1 block on the verify-stage path) — when
-# the block is one that SUPPRESSES the dedicated entry-miss nudge (both the verify-stage "block" and
-# the docroute "block-docroute" verdicts pre-empt the entry-miss block) AND the entry signal is
+# the block is one that SUPPRESSES the dedicated entry-miss nudge (the verify-stage cause tags and
+# the docroute "block-docroute" verdict all pre-empt the entry-miss block) AND the entry signal is
 # missing (${entry_marker:-} == ENTRY_ADVISORY), append the entry-format requirement to the SAME
-# message so the author resolves both needs in one pass. ALLOWLIST gate (ADR-2): only "block" and
-# "block-docroute" carry the addendum; "block-entry" is EXCLUDED (it already prints full entry
-# guidance), and a future 4th block path must opt IN deliberately (fail-safe vs silent scope-creep).
+# message so the author resolves both needs in one pass. ALLOWLIST gate (ADR-2): explicit
+# enumeration block-norev | block-noverifydev | block-order | block-docroute — NO block-* glob;
+# "block-entry" is EXCLUDED (it already prints full entry guidance) and "block-sizeest" is EXCLUDED
+# (deliberate ADR-2 opt-OUT: block-sizeest fires ONLY under ENTRY_OK — the entry-miss block above has
+# already exited on ENTRY_ADVISORY — so the entry addendum is structurally inert on it), and a future
+# block path must opt IN deliberately (fail-safe vs silent scope-creep).
 # Reads the GLOBAL entry_marker via ${entry_marker:-} — NO `local entry_marker` (a local would shadow
 # the global with an empty value and silently disable the addendum on every path); the :- default is
 # mandatory for set -u safety because this function runs under the line-87 fail-open ERR trap (an
@@ -163,16 +174,58 @@ emit_trace() {
 # conditions, the exit code (always 2), and emit_trace tag semantics are all unchanged.
 block_and_exit() {
   local reason="${1}"
-  if [[ "${2}" == "block" || "${2}" == "block-docroute" ]] && [[ "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
+  local addendum_allowed
+  case "${2}" in
+    block-norev | block-noverifydev | block-order | block-docroute) addendum_allowed=true ;;
+    *) addendum_allowed=false ;;
+  esac
+  if [[ "${addendum_allowed}" == true && "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
     reason="${reason}"$'\n\n'"$(
       cat <<'EOF'
-ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — so once the issue above is fixed it will STILL be blocked for a missing entry signal. Resolve BOTH in one pass. Two ways to supply the entry signal: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
+ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — so once the issue above is fixed it will STILL be blocked for a missing entry signal. Resolve BOTH in one pass. Two ways to supply the entry signal: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
 EOF
     )"
   fi
   printf '%s\n' "${reason}" >&2
   emit_trace "${2}" "${script_len}"
   exit 2
+}
+
+# emit_resilience_advisory — ADVISORY-ONLY (exit 0, stderr, NEVER blocks). A schema-mode workflow
+# agent() returns bare null on truncation with NO engine-layer salvage, so every schema-mode agent()
+# MUST be wrapped in the robustAgent retry-once-on-null / isolated-failure idiom (copy-verbatim
+# skeleton: skills/glass-atrium-ops-orchestrator.md "### Resilient Workflow Authoring"). A per-call-site
+# "absence of convention" scan is NOT soundly decidable (unbounded valid idioms) AND a BLOCK would
+# violate this file's fail-open-DOMINANT posture — so this is a decidable WHOLE-SCRIPT token-presence
+# nudge: a DEV-spawning script carrying a 'schema' token but ZERO 'robustAgent'/'catch' tokens anywhere
+# → one-line stderr advisory. It reads the GLOBAL script_src + DEV_SET, emits nothing out of scope, and
+# NEVER exits / NEVER alters the verdict — the block/pass decisions below own the exit code. DECOUPLED
+# from the [SIZE-EST] / entry / verify-stage / docroute verdicts (a separate, purely additive check).
+emit_resilience_advisory() {
+  # DEV-spawn gate — only a script referencing a dev-* agentType is in scope (mirrors the entry / size
+  # attestation DEV-gating). local IFS=' ' splits the space-separated DEV_SET; the file-global IFS is
+  # $'\n\t', which would NOT split on space, so the local override is load-bearing (restored on return).
+  local dev_tok found_dev=false
+  local IFS=' '
+  for dev_tok in ${DEV_SET}; do
+    if [[ "${script_src}" == *"${dev_tok}"* ]]; then
+      found_dev=true
+      break
+    fi
+  done
+  if [[ "${found_dev}" != true ]]; then
+    return 0
+  fi
+  # No schema-mode agent() → no null-on-truncation risk → nothing to advise.
+  if [[ "${script_src}" != *schema* ]]; then
+    return 0
+  fi
+  # Resilience idiom already present (robustAgent wrapper OR any .catch) → compliant → stay quiet.
+  if [[ "${script_src}" == *robustAgent* || "${script_src}" == *catch* ]]; then
+    return 0
+  fi
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() but contains NO robustAgent / .catch() retry-on-null wrapper. A schema-mode agent() returns bare null on truncation with NO engine-layer salvage — wrap every schema-mode agent() in the robustAgent retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). ADVISORY ONLY — this check NEVER blocks." >&2
+  return 0
 }
 
 # stdin non-interactive → drain once, otherwise fail-open.
@@ -202,7 +255,7 @@ tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || tr
 script_b64=""
 script_b64="$(printf '%s' "${input}" | jq -r '(.tool_input.script // "") | @base64' 2>/dev/null || true)" || script_b64=""
 if [[ -z "${script_b64}" ]]; then
-  emit_trace "pass" "0"
+  emit_trace "pass-noscript" "0"
   exit 0
 fi
 
@@ -210,12 +263,17 @@ script_src=""
 script_src="$(printf '%s' "${script_b64}" | base64 --decode 2>/dev/null)" || script_src=""
 # Empty/unparseable script → nothing to inspect → fail-open.
 if [[ -z "${script_src}" ]]; then
-  emit_trace "pass" "0"
+  emit_trace "pass-noscript" "0"
   exit 0
 fi
 
 # Script body is known from here — length feeds the trace's script_len field.
 script_len="${#script_src}"
+
+# RESILIENCE ADVISORY (fail-open, stderr-only) — runs BEFORE the verdict dispatch and NEVER changes
+# the exit code. Emits a one-line nudge when a DEV workflow spawns a schema-mode agent() with no
+# robustAgent / .catch resilience idiom; silent otherwise. Decoupled from every block/pass verdict.
+emit_resilience_advisory
 
 # F3 hardened heuristic (string-aware, fail-open dominant)
 # Three adversarially-confirmed bypasses of the prior presence-only scan are closed:
@@ -268,12 +326,15 @@ script_len="${#script_src}"
 # itself remains the orchestrator's honor-system authoring obligation.
 #
 # The detection + comment-strip + co-location + ordering runs in ONE python3 helper that emits a
-# single verdict token (BLOCK | PASS) on stdout. CRITICAL — FAIL-OPEN DOMINANT: python3 absent,
-# the helper erroring, OR any stdout that is not exactly "BLOCK" → treated as PASS (exit 0). This
-# is a heuristic backstop; a false-BLOCK on a legitimate workflow is worse than a missed bypass,
-# so every uncertainty resolves to allow. Only a confident "BLOCK" (DEV spawned AND no non-comment
-# qa-code-reviewer anywhere, OR reviewer present but NO co-located dev-* verifier, OR an
-# implementation dev-* the reviewer does not precede) blocks.
+# cause-split verdict token
+# (BLOCK_NOREV | BLOCK_NOVERIFYDEV | BLOCK_ORDER | BLOCK_DOCROUTE | BLOCK_SIZEEST | PASS) on stdout.
+# CRITICAL — FAIL-OPEN DOMINANT: python3 absent, the helper erroring, OR any stdout outside the
+# enumerated BLOCK_* tokens → treated as PASS (exit 0). This is a heuristic backstop; a false-BLOCK
+# on a legitimate workflow is worse than a missed bypass, so every uncertainty resolves to allow.
+# Only a confident cause token blocks: BLOCK_NOREV (DEV spawned AND no non-comment qa-code-reviewer
+# anywhere) · BLOCK_NOVERIFYDEV (reviewer present but NO co-located / co-grouped dev-* verifier) ·
+# BLOCK_ORDER (an implementation dev-* the reviewer does not precede) · BLOCK_SIZEEST (a would-be-PASS
+# DEV workflow under ENTRY_OK carrying NO [SIZE-EST] delegation-size token in the RAW source).
 #
 # String-awareness rationale: a naive `//` strip would corrupt a URL inside a goal string
 # (`'http://x'`) and could erase a real reviewer token sharing that line → false BLOCK. The
@@ -313,6 +374,40 @@ PLAN_REF_RE = re.compile(
 # Entry-classification literal — the orchestrator's conscious "this DEV task is simple/exempt" signal.
 # Anchored bracketed literal (substring, not a bare 'simple') — mirrors has_simple_task_token().
 ENTRY_CLASS_LITERAL = "[ENTRY-CLASS] simple-task"
+# Delegation-size self-attestation literal — the SIBLING of ENTRY_CLASS_LITERAL. Same P0 attestation
+# class (author self-attestation — identical evidentiary weight in a comment or a string) so it is
+# raw-scanned on attestation_src, NOT the comment-stripped source. Bracketed anchor only (presence-only,
+# per the existence-only contract — the bundles=/tool_uses~= estimate CORRECTNESS is never checked, same
+# boundary as [ENTRY-CLASS]): any [SIZE-EST] token counts. Canonical form:
+# log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'); contract SoT: orchestrator-role.md ### Spawn
+# Budget -> Delegation-size discipline [SIZE-EST] bullet.
+SIZE_EST_LITERAL = "[SIZE-EST]"
+
+# Doc-routing local-destination attestation literal — the sanctioned carrier of the "user explicitly
+# requested a local destination" exception (new file OR an edit of an existing user file). Canonical
+# stamped form: log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>'). Same P0
+# attestation class as ENTRY_CLASS_LITERAL / MONITOR_POST_RE (author self-attestation — identical
+# evidentiary weight in a comment or a string) → raw-scanned on attestation_src.
+DOC_ROUTE_LOCAL_LITERAL = "[DOC-ROUTE] user-requested-local:"
+# Shared local-FS path SHAPE — single source for the four path-shape sites (TOKEN_LINE_RE +
+# LOCAL_TARGET_RE A4a/A4b/A4c). A3 deliberately diverges (looser legacy charclass — see the A3 line).
+LOCAL_PATH_SHAPE = r"(?:~|\$HOME|\$\{HOME\}|/)[A-Za-z0-9_./-]*"
+# Shared left-boundary lookbehind (A3 + A4a): an inner slash of a RELATIVE path must not anchor a match.
+LEFT_BOUNDARY = r"(?<![A-Za-z0-9_.-])"
+# Stamped-path extractor for the [DOC-ROUTE] suppressor. A CONCRETE file path including a
+# dot-extension is REQUIRED after the colon (no capture → nothing suppressed — a bare stamp never
+# clears the gate; a bare tilde, a bare slash, or an extensionless directory extracts nothing,
+# because a degenerate short capture would substring-match every tilde/slash scan line and
+# reintroduce the forbidden blanket suppression through the capture group). Path/line-scoping safety
+# semantics (what a stamp may and may not clear) live at the detect_docroute_leak suppressor comment.
+# Honor-system limit (accepted, same class as [ENTRY-CLASS] / plan-ref): an honest and a dishonest
+# stamp of the same path are statically indistinguishable. NOTE bash-3.2 $(...)-scan constraint:
+# comments in this heredoc must keep quote chars in immediate balanced pairs (no bare apostrophes)
+# or the outer command substitution mis-parses on stock macOS bash.
+TOKEN_LINE_RE = re.compile(
+    re.escape(DOC_ROUTE_LOCAL_LITERAL)
+    + r"\s*(" + LOCAL_PATH_SHAPE + r"\.[A-Za-z0-9]+)"
+)
 
 # Document-authoring agentTypes whose Workflow spawn prompts route to the monitor clauded-docs store
 # by default. A hardcoded local FS Target in one of these spawns, with no monitor-POST instruction,
@@ -321,20 +416,42 @@ ENTRY_CLASS_LITERAL = "[ENTRY-CLASS] simple-task"
 DOC_AGENT_SET = ("intel-reporter", "intel-planner")
 
 # Generic local-FS-path SHAPE signals — username-agnostic by construction (NO baked-in user dir).
-# A doc-routing leak hardcodes a local path as the deliverable destination; these match the SHAPE,
+# A doc-routing leak hardcodes a local path as the deliverable DESTINATION; these match the SHAPE,
 # never a specific username. Run on the comment-stripped source so a path inside a comment does not
-# trip the heuristic.
-#   - "Target file:" / "target file" — the forensic leak phrasing ("Target file: WRITE the report
-#     to <abs path>").
-#   - mkdir-then-Write — the "mkdir -p <dir> && Write" / "mkdir -p ... then Write" leak shape.
-#   - a $HOME / ~ / leading-slash absolute path ending in a doc extension used as a write target.
-# Each alternative is deliberately broad on the SHAPE and narrow on intent (a doc extension or an
-# explicit Target/WRITE verb must accompany the path) so a bare URL or arg path does not match.
+# trip the heuristic. DESTINATION-GATED: a mere MENTION of a local doc path (an edit-existing target,
+# a read-context reference) is NOT a leak — a bare-path .md alternative flags any mention, so every
+# .md alternative requires destination framing (verb+preposition or a noun header).
+#   - A1 "Target file:" — the forensic leak phrasing, SINGULAR ONLY: the plural "Target files:" is
+#     the standard 6-element edit-delegation header of the orchestrator and stays a non-match.
+#   - A2 mkdir-then-Write — the "mkdir -p <dir> && Write" / "mkdir -p ... then Write" leak shape.
+#   - A3 write/output + "to" + local path, any doc ext. "output" is gated HERE (verb + "to"), NOT as
+#     a bare A4a verb: output-as-noun is read-context vocabulary ("follow the Output Format Routing
+#     in <path>") and must not anchor a match without the "to" preposition.
+#   - A4a destination verb (save|deliver|store|persist) + preposition (to|into|under|as) + .md path.
+#     EXCLUDED verbs — "target": the plural-header FP above (A1 stays singular-only for the same
+#     reason) · "emit"/"place": harness-standard delegation vocabulary ("emit StructuredOutput" /
+#     "edit in place"). EXCLUDED prepositions — "at"/"in": reference-mention framings ("the document
+#     at <path>" / "Routing in <path>") whose inclusion would re-block the edit-existing + wiki-store
+#     cases. Left-boundary lookbehind (?<![A-Za-z0-9_.-]) on A3 + A4a: an inner slash of a RELATIVE
+#     path no longer anchors a match, so the GLOBAL_RULES-mandated checkpoint phrasing "save/write
+#     your progress notes to memory/progress-x.md" passes. Preposition-less "save <path>" is an accepted
+#     static FN — the runtime Write hook (block-doc-routing-leak.sh) is the primary guard for .md.
+#   - A4b bare local path, .html/.markdown ONLY — deliberately lookbehind-FREE and verb-free (full
+#     bare-path static strength). LAYER COUPLING: block-doc-routing-leak.sh covers only
+#     {.md,.yaml,.yml,.json,.txt}, so .html/.markdown are runtime-BLIND. A4b may be narrowed to a
+#     verb gate ONLY after that runtime extension set is widened to include .html/.markdown (the
+#     deferred T4 ticket) — until then, narrowing static .html detection removes the sole mechanical
+#     net for HTML document leaks. Known residual FP: an edit-existing MENTION of a .html/.markdown
+#     path still blocks (relief: the [DOC-ROUTE] token when user-requested, else T4).
+#   - A4c verb-free noun-header destination framing ("Deliverable:" / "Destination:" /
+#     "final location:") + local .md path — html/markdown noun-headers ride the A4b bare-path match.
 LOCAL_TARGET_RE = re.compile(
-    r"target\s+file\s*:"                                  # "Target file:" destination phrasing
-    r"|mkdir\s+-p[^\n]{0,200}?(?:&&|;|then)[^\n]{0,80}?\bwrite\b"  # mkdir -p ... && Write shape
-    r"|\bwrite\b[^\n]{0,80}?\bto\b[^\n]{0,80}?(?:~|\$HOME|/)[^\s'\"]*\.(?:md|markdown|html|yaml|yml|json|txt)"  # WRITE ... to <local path>.<doc ext>
-    r"|(?:~|\$HOME|\$\{HOME\}|/)[A-Za-z0-9_./-]*\.(?:md|markdown|html)\b",  # bare local doc path (md/markdown/html)
+    r"target\s+file\s*:"                                  # A1 — "Target file:" (singular only)
+    + r"|mkdir\s+-p[^\n]{0,200}?(?:&&|;|then)[^\n]{0,80}?\bwrite\b"  # A2 — mkdir -p ... && Write shape
+    + r"|\b(?:write|output)\b[^\n]{0,80}?\bto\b[^\n]{0,80}?" + LEFT_BOUNDARY + r"(?:~|\$HOME|/)[^\s'\"]*\.(?:md|markdown|html|yaml|yml|json|txt)"  # A3 — write/output ... to <local path>.<doc ext>; deliberate looser charclass, NOT LOCAL_PATH_SHAPE — do not unify
+    + r"|\b(?:save|deliver|store|persist)\b[^\n]{0,80}?\b(?:to|into|under|as)\b[^\n]{0,60}?" + LEFT_BOUNDARY + LOCAL_PATH_SHAPE + r"\.md\b"  # A4a — destination verb+prep, .md
+    + r"|" + LOCAL_PATH_SHAPE + r"\.(?:html|markdown)\b"  # A4b — bare path, runtime-blind exts
+    + r"|\b(?:deliverable|destination|final\s+location)\s*:[^\n]{0,120}?" + LOCAL_PATH_SHAPE + r"\.md\b",  # A4c — noun-header destination, .md only
     re.IGNORECASE,
 )
 
@@ -355,6 +472,8 @@ MONITOR_POST_RE = re.compile(
 def strip_comments(src):
     # String-aware removal of // line comments and /* */ block comments. Tracks single/double/
     # backtick string state with backslash escapes so a // or /* inside a string is preserved.
+    # Newlines are preserved inside BOTH comment kinds so the output keeps source-line identity
+    # (the [DOC-ROUTE] suppressor is line-scoped and must never see two source lines merged).
     out = []
     i, n = 0, len(src)
     in_str = None          # active string quote char, or None
@@ -374,6 +493,8 @@ def strip_comments(src):
                 in_block_c = False
                 i += 2
                 continue
+            if c == '\n':
+                out.append(c)
             i += 1
             continue
         if in_str is not None:
@@ -479,8 +600,10 @@ def detect_docroute_leak(antigaming_src, attestation_src):
     # defs. Returns True ONLY when ALL hold:
     #   (1) an intel-reporter / intel-planner spawn token is present (antigaming_src),
     #   (2) a hardcoded local-FS-path SHAPE used as a Target/destination is present (antigaming_src;
-    #       username-agnostic — LOCAL_TARGET_RE matches the shape, never a specific user dir), AND
-    #   (3) NO monitor-POST / clauded-docs routing signal anywhere (attestation_src suppressor).
+    #       username-agnostic — LOCAL_TARGET_RE matches the shape, never a specific user dir),
+    #   (3) NO monitor-POST / clauded-docs routing signal anywhere (attestation_src suppressor), AND
+    #   (4) the leak line is NOT covered by a [DOC-ROUTE] user-requested-local: <path> stamp
+    #       (attestation_src, path/line-scoped — see TOKEN_LINE_RE).
     # FAIL-OPEN DOMINANT: any one condition unmet → False (PASS). A monitor-POST signal suppresses the
     # flag (the local path is then a staging buffer, not a leak — the intel-planner /tmp-then-curl
     # normal pattern). STRING HEURISTIC, defense-in-depth NOT a confidence anchor — the runtime
@@ -493,15 +616,34 @@ def detect_docroute_leak(antigaming_src, attestation_src):
         return False                       # no doc-agent spawn → out of scope → PASS
     if MONITOR_POST_RE.search(attestation_src):
         return False                       # monitor routing instructed (raw) → local path is staging → PASS
-    if not LOCAL_TARGET_RE.search(antigaming_src):
-        return False                       # no hardcoded local Target shape → PASS
+    # [DOC-ROUTE] attestation suppressor — path/line-scoped, NEVER a blanket early-return: one stamp
+    # must not clear the leak of a DIFFERENT spawn. Stamped paths are extracted from RAW attestation_src
+    # (author self-attestation class — see alias defs); ONLY the scan-source lines carrying a stamped
+    # path are dropped, then LOCAL_TARGET_RE re-runs on the residual. A bare stamp with no path after
+    # the colon extracts nothing and suppresses nothing. Line identity holds: strip_comments preserves
+    # newlines inside BOTH comment kinds, so splitlines() below maps 1:1 to source lines — a /* */
+    # comment spanning from a stamped line onto a DIFFERENT spawn leak line can never merge them.
+    # The min-length filter excludes the 3-char anchor-only captures the regex still admits
+    # (e.g. ~.x); TOKEN_LINE_RE already guarantees a non-empty dotted capture, so length is the sole
+    # residual constraint.
+    scan_src = antigaming_src
+    stamped_paths = [p for p in TOKEN_LINE_RE.findall(attestation_src) if len(p) >= 4]
+    if stamped_paths:
+        scan_src = "\n".join(
+            line
+            for line in antigaming_src.splitlines()
+            if not any(p in line for p in stamped_paths)
+        )
+    if not LOCAL_TARGET_RE.search(scan_src):
+        return False                       # no local destination shape on the residual → PASS
     return True
 
-# Two-line output contract: line 1 = the verdict token (BLOCK|BLOCK_DOCROUTE|BLOCK_ENTRY|PASS),
-# consumed by the bash side for the exit code. line 2 = the entry marker (ENTRY_OK|ENTRY_ADVISORY),
-# read by the bash side ONLY for the STDERR entry-advisory text selection on non-block paths — it
-# NEVER influences the exit code (the verdict token is the sole exit driver). Both are emitted once
-# at the end so the verdict line is always first.
+# Two-line output contract: line 1 = the verdict token
+# (BLOCK_NOREV|BLOCK_NOVERIFYDEV|BLOCK_ORDER|BLOCK_DOCROUTE|BLOCK_SIZEEST|PASS) — this helper NEVER
+# emits a BLOCK_ENTRY; the entry-miss block is promoted BASH-side from line 2. line 2 = the entry marker
+# (ENTRY_OK|ENTRY_ADVISORY): on a PASS verdict it drives the bash entry-miss promotion (block-entry,
+# exit 2); on a BLOCK_* verdict it only selects the entry addendum text (allowlisted trace tags).
+# Both are emitted once at the end so the verdict line is always first.
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
@@ -545,6 +687,22 @@ try:
     entry_ok = (not dev_present) or plan_ref_found or entry_token_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
 
+    # Delegation-size self-attestation (attestation_src RAW — same P0 author-self-attestation class as
+    # [ENTRY-CLASS] / plan-ref: identical evidentiary weight in a comment or a string, so a commented
+    # [SIZE-EST] token counts too). size_est_missing gates the BLOCK_SIZEEST promotion at the would-be
+    # PASS emits below. THREE conjuncts:
+    #   dev_present     — DEV-gated: a non-DEV (doc-only) workflow can never miss a delegation-size
+    #                     token, so it is never block-sizeest;
+    #   entry_ok        — ENTRY_OK-gated so entry-miss keeps PRIORITY: an entry-missing DEV script has
+    #                     entry_ok False here, so it is NOT promoted to BLOCK_SIZEEST — it falls through
+    #                     to PASS and the bash entry-miss block claims it (block-entry, not block-sizeest);
+    #   SIZE-EST absent — the [SIZE-EST] delegation-size token is not in the RAW source.
+    # Presence-only per the existence-only contract — the bundles=/tool_uses~= estimate CORRECTNESS is
+    # never checked, same boundary as [ENTRY-CLASS]. Promotion happens ONLY on a would-be PASS
+    # (decoupled from the verify-stage verdict exactly like the bash entry-miss block), so a
+    # verify-stage BLOCK always keeps priority over block-sizeest.
+    size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
+
     # SECOND detection pass (doc-routing leak) — INDEPENDENT of the verify-stage check below and run
     # FIRST so it can fire on a doc-only workflow that spawns no DEV agent. A leak emits its OWN
     # verdict token (BLOCK_DOCROUTE) so the bash side prints a distinct stderr reason while keeping
@@ -560,7 +718,7 @@ try:
     if not rev_matches:
         # DEV spawn present, NO non-comment qa-code-reviewer anywhere → clear omission → block.
         # ZERO-REVIEWER HARD GUARANTEE — preserved verbatim across the FP fix.
-        emit("BLOCK", entry_marker)
+        emit("BLOCK_NOREV", entry_marker)
     # Span of EVERY reviewer token (finditer, not the first match only). Keying on all reviewers is
     # what kills the multi-reviewer FP — a leading audit/Phase-1 qa-code-reviewer no longer decides
     # the verdict for a genuine {qa,dev} pair that appears later in the script.
@@ -594,18 +752,22 @@ try:
         # Reviewer(s) present but NO co-located / co-grouped dev-* verifier → reviewer is alone → DEV
         # hard-gate absent → block. This is the case the red-team bypass (stray audit reviewer + 2+
         # scattered impl devs, NO genuine parallel(qa,dev) pair) lands in → BLOCK, no phantom absorb.
-        emit("BLOCK", entry_marker)
+        emit("BLOCK_NOVERIFYDEV", entry_marker)
     if not impl_dev_starts:
         # Every dev-* is a verify-DEV (verify-only, no separate implementation dev) → nothing to gate
-        # → pass (fail-open; finer gating correctness stays an author obligation).
-        emit("PASS", entry_marker)
+        # → would-be PASS (fail-open; finer gating correctness stays an author obligation). The
+        # size-est promotion still applies: a DEV workflow under ENTRY_OK with no [SIZE-EST] token
+        # blocks here (BLOCK_SIZEEST), matching every other would-be-PASS DEV path.
+        emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
     # Ordering on the IMPLEMENTATION dev-* (NOT the verify-DEV): SOME reviewer verify-spawn must
     # precede the first implementation dev-*. Order-independent within the verify parallel block —
     # parallel(reviewer, dev) and parallel(dev, reviewer) both pass because the verify-DEV is excluded
     # from impl_dev_starts. An implementation dev-* that NO reviewer precedes ran un-gated → block.
     if min(rev_starts) < min(impl_dev_starts):
-        emit("PASS", entry_marker)
-    emit("BLOCK", entry_marker)
+        # Valid verify-stage ordering → would-be PASS, subject to the size-est promotion (DEV +
+        # ENTRY_OK + no [SIZE-EST] → BLOCK_SIZEEST; otherwise PASS).
+        emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
+    emit("BLOCK_ORDER", entry_marker)
 except SystemExit:
     raise
 except Exception:
@@ -616,7 +778,8 @@ except Exception:
 PY
 )"
 
-# Run the helper. It prints TWO lines: line 1 = verdict token (BLOCK|PASS), line 2 = entry marker
+# Run the helper. It prints TWO lines: line 1 = verdict token
+# (BLOCK_NOREV|BLOCK_NOVERIFYDEV|BLOCK_ORDER|BLOCK_DOCROUTE|BLOCK_SIZEEST|PASS), line 2 = entry marker
 # (ENTRY_OK|ENTRY_ADVISORY). A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK).
 helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK'
 
@@ -631,13 +794,13 @@ entry_marker="${helper_out#*$'\n'}"
 [[ "${entry_marker}" == "${helper_out}" ]] && entry_marker="ENTRY_OK"
 
 # ENTRY-MISS BLOCK (channel-a: stderr reason + exit 2) — promoted from the former advisory. Fires
-# ONLY when the verify-stage verdict is NOT already a BLOCK of either kind (fully DECOUPLED — when a
-# verify-stage / docroute BLOCK already holds, that block's own stderr + exit 2 below subsumes this)
-# AND the entry signal is ENTRY_ADVISORY (DEV spawn with no plan-ref AND no [ENTRY-CLASS] token). It
-# can NEVER fire when entry_ok holds: ENTRY_OK (non-DEV / plan-ref / token) never reaches here. The
-# fail-open posture is preserved — any python helper error yields PASS + ENTRY_OK (the except clause),
-# so an internal error never produces a spurious entry-block.
-if [[ "${verdict}" != "BLOCK" && "${verdict}" != "BLOCK_DOCROUTE" && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
+# ONLY when the verify-stage verdict is NOT already a BLOCK_* of any kind (unquoted BLOCK* glob —
+# fully DECOUPLED: when a verify-stage / docroute BLOCK already holds, that block's own stderr +
+# exit 2 below subsumes this) AND the entry signal is ENTRY_ADVISORY (DEV spawn with no plan-ref AND
+# no [ENTRY-CLASS] token). It can NEVER fire when entry_ok holds: ENTRY_OK (non-DEV / plan-ref /
+# token) never reaches here. The fail-open posture is preserved — any python helper error yields
+# PASS + ENTRY_OK (the except clause), so an internal error never produces a spurious entry-block.
+if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
   entry_reason="$(
     cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). INLINE-PLAN note: a plan authored INLINE in this script (a one-shot author+verify+implement workflow) does NOT clear this gate, and the right fix is to PERSIST the plan first — not to widen the gate — because (i) this is a STATIC pre-execution scan that can NEVER see a runtime-minted clauded-docs id, so an inline one-shot plan is structurally invisible to the gate; (ii) the downstream Document-Driven lifecycle (plan↔implementation coverage reconciliation; doc_status completion) NEEDS the persisted plan artifact; (iii) the Stage-2 revision loop requires plan/implementation SEPARATION that a one-shot author+verify+implement workflow defeats. Two ways to clear this gate: (1) PERSIST the inline plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple — i.e. NONE of these sizable criteria hold (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) — record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script (canonical form: a string, e.g. log('[ENTRY-CLASS] simple-task: <reason>'), or in meta.description). CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — that is a NEW 편법 (a fresh loophole, not a fix); persist a REAL plan. Placement is not enforced (the entry / plan tokens are raw-scanned), so a commented token also satisfies this gate.
@@ -654,7 +817,7 @@ COPY-PASTE SCAFFOLD (the compliant path is fewer keystrokes than overriding — 
   log('plan-ref: clauded-docs/<DOC_ID>');
 
   --- path (2): genuinely simple, none of the sizable criteria hold ---
-  log('[ENTRY-CLASS] simple-task: <one-line reason none of the sizable criteria hold>');
+  log('[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line>');
 EOF
   )"
   block_and_exit "${entry_reason}" "block-entry"
@@ -671,21 +834,65 @@ if [[ "${verdict}" == "BLOCK_DOCROUTE" ]]; then
     cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (doc-routing leak): this Workflow script spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. A document deliverable defaults to the monitor clauded-docs store (POST /api/clauded-docs) unless the user explicitly requested a local/other format — do NOT frame "Write-then-StructuredOutput to <local path>" as the deliverable. Route the document to the monitor clauded-docs API instead; if a local path is only a /tmp staging buffer cat-piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing.
 
+USER-REQUESTED LOCAL DESTINATION (escape hatch): when the USER explicitly requested this local destination — a NEW file OR an EDIT of an existing user file — stamp the workflow script with the canonical attestation form log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>'). The stamp is path/line-scoped: it clears ONLY the lines carrying the stamped path, and a bare stamp without a path clears nothing; the stamped path must be a CONCRETE file path including a dot-extension (a bare tilde, a bare slash, or an extensionless directory clears nothing). CAUTION: stamp ONLY when the user explicitly requested the local destination — stamping to silence this gate is a violation; the runtime Write hook (block-doc-routing-leak.sh) and Monitoring-phase verification remain in force; the token clears THIS STATIC GATE only.
+
 HONEST LIMIT — this is a STRING HEURISTIC (the WEAKEST of the defense-in-depth layers), NOT the primary guard: the runtime PreToolUse(Write) hook (block-doc-routing-leak.sh) is the mechanical write-time backstop. A path-shape match cannot prove intent, and this scan fail-opens on any uncertainty (no doc-agent spawn / no hardcoded path shape / any monitor-POST signal present). Do NOT treat the absence of this block as proof the routing is correct.
 EOF
   )"
   block_and_exit "${docroute_reason}" "block-docroute"
 fi
 
-if [[ "${verdict}" != "BLOCK" ]]; then
-  emit_trace "pass" "${script_len}"
-  exit 0
+# SIZE-ATTESTATION MISS (block-sizeest): a would-be-PASS DEV workflow under ENTRY_OK (the helper
+# already cleared entry-miss via a plan-ref / [ENTRY-CLASS] token) that carries NO [SIZE-EST]
+# delegation-size self-attestation token in the RAW source. DEV-gated + ENTRY_OK-gated + decoupled
+# from the verify-stage verdict inside the helper (promoted only at a would-be PASS emit, so a
+# verify-stage BLOCK keeps priority). Its OWN distinct remediation reason (mirrors the docroute
+# dedicated block, NOT the shared verify-stage cause-split base reason), SAME exit-2 block channel;
+# checked BEFORE the cause-split so BLOCK_SIZEEST never falls through to exit 0. The block_and_exit
+# addendum is structurally inert here (block-sizeest fires only under ENTRY_OK, so entry_marker is
+# never ENTRY_ADVISORY) — see the block_and_exit ADR-2 allowlist comment.
+if [[ "${verdict}" == "BLOCK_SIZEEST" ]]; then
+  sizeest_reason="$(
+    cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow script spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. The orchestrator MUST record its own pre-spawn size estimate at EVERY DEV spawn so an oversized single delegation cannot slip past the split discipline (a truncation-then-no-[COMPLETION] failure). Add the token (canonical home: a top-of-script log() string or meta.description):
+
+  log('[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>');
+
+where bundles = count of {implement, write-tests, run-full-suite, report-consolidation} categories packed into THIS delegation, and tool_uses~=N = your rough pre-spawn tool_use estimate. HONESTY (orchestrator-role.md Spawn Budget): under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline) — on a borderline count, round UP and prefer the split-leaning call. Placement is not enforced (the token is raw-scanned), so a commented token also satisfies this gate. Existence-only contract: only presence is recorded; the estimate CORRECTNESS is never checked (same boundary as [ENTRY-CLASS]).
+EOF
+  )"
+  block_and_exit "${sizeest_reason}" "block-sizeest"
 fi
 
+# Cause-split dispatch — map each verify-stage cause token → its trace tag + ONE PREPENDED cause
+# line (the shared base reason below is NEVER rewritten; downstream asserts key on it). Case
+# default = strict enumerated fail-open: any verdict outside the enumerated BLOCK_* tokens (PASS,
+# unknown/future tokens) → emit_trace "pass" + exit 0. BLOCK_DOCROUTE never reaches here (handled
+# above).
+trace_tag=""
+cause=""
+case "${verdict}" in
+  BLOCK_NOREV)
+    trace_tag="block-norev"
+    cause="no non-comment qa-code-reviewer token anywhere"
+    ;;
+  BLOCK_NOVERIFYDEV)
+    trace_tag="block-noverifydev"
+    cause="reviewer present but no dev-* verifier either co-located (within ~1000 comment-stripped chars) OR sharing a parallel() group with a reviewer — add the DEV verifier to the verify parallel()"
+    ;;
+  BLOCK_ORDER)
+    trace_tag="block-order"
+    cause="an implementation dev-* precedes every reviewer — move the verify parallel() before it"
+    ;;
+  *)
+    emit_trace "pass" "${script_len}"
+    exit 0
+    ;;
+esac
+
 # VIOLATION (clear case): DEV-implementation spawn present AND the {qa-code-reviewer, DEV} verify
-# team is incomplete — no qa-code-reviewer anywhere, OR a reviewer with NO co-located dev-*
-# verifier (DEV hard-gate omitted), OR an implementation dev-* the reviewer does not precede
-# (verify stage does not gate that implementation). All are missing-verify-stage omissions.
+# team is incomplete — the cause token above names which omission. All are missing-verify-stage
+# omissions sharing this base reason.
 reason="$(
   cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED: this Workflow script spawns DEV-implementation agent(s) (agentType dev-*) but is missing its mandatory {qa-code-reviewer, DEV} verify-stage — either NO qa-code-reviewer verify-spawn precedes the first DEV implementation, OR a qa-code-reviewer is present but has NO co-located dev-* verifier (the DEV hard-gate half of the verify team is absent). A complex-plan workflow MUST encode a {qa-code-reviewer, DEV} Plan Direction Verification stage BEFORE the first DEV implementation stage, with implementation gated on the combined pass+feasible verdict (orchestrator-role.md Stage-2 gate; skills/glass-atrium-ops-orchestrator.md "In-script verify-stage" skeleton). Note: this is a presence/co-location HEURISTIC, not DEV-verdict enforcement.
@@ -705,4 +912,4 @@ If this is a SIMPLE workflow (typo/import/config — no real implementation), th
 EOF
 )"
 
-block_and_exit "${reason}" "block"
+block_and_exit "[enforce-workflow-verify-stage] CAUSE (${trace_tag}): ${cause}"$'\n'"${reason}" "${trace_tag}"
