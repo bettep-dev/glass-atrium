@@ -1076,7 +1076,7 @@ update_plist_env_path() {
         exit
       }
       /<key>PATH<\/key>/ { matched = 1 }
-    ' -- "${plist}"
+    ' "${plist}"
   fi
 }
 

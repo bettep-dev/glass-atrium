@@ -499,7 +499,7 @@ seed_baseline() {
   [[ "$output" != *"ROSTER CHANGE DETECTED"* ]]               # gate stayed silent
   [[ "$output" != *"remove dev-custom"* ]]                    # no false removal
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]   # content update applied
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "old agent body" ]] # agent md E4-excluded
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "new agent body" ]] # agent md merged via the git-free E4 path
   # the user's local-only agent is preserved on every layer
   [[ -f "${INSTALL}/agents/dev-custom.md" ]]
   run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
