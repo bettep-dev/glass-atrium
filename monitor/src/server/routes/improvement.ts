@@ -27,7 +27,11 @@ import { promisify } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
-import { loadAgentRegistry } from "../agents/registry.js";
+import {
+  buildAgentMembershipFilter,
+  buildAgentMembershipFragment,
+  loadCanonicalAgentKeys,
+} from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { parseIdParam } from "../route-params.js";
@@ -102,11 +106,6 @@ const STYLE_REF_WINDOW_DAYS = 7;
 // `window` param so cohort attribution stays comparable across panel refreshes
 // (post-wire-in cohort needs ~30d to accumulate signal).
 const TIER_BREAKDOWN_WINDOW_DAYS = 30;
-
-// Infra-attribution agents excluded from the 3-Tier cohort split — the migration
-// backfill UPDATE applies the same exclusion, so the API row count matches the
-// actual backfilled population.
-const TIER_BREAKDOWN_INFRA_AGENTS = ['orchestrator', 'subagent_stop_missing', 'unknown'] as const;
 
 // Cross-layer SoT for the greenfield sentinel string, mirrored verbatim in:
 //   - bash:    ~/.claude/hooks/lib/style-ref-consts.sh      STYLE_REF_GREENFIELD
@@ -297,10 +296,16 @@ export async function registerImprovementRoutes(app: FastifyInstance): Promise<v
   app.get("/api/improvement/learning-log", handleLearningLog);
   app.get("/api/improvement/loop-events", handleLoopEvents);
   // Interactive approval UI terminal-state writers. approve shells out to
-  // daemon-apply.sh (high-impact, git-reversible); reject is a status-only,
-  // low-risk transition to 'rejected'.
+  // daemon-apply.sh (high-impact; an unwanted apply is recoverable via the
+  // agents-bak before-image restore below, within the retention window). reject
+  // is a status-only, low-risk transition to 'rejected'.
   app.post("/api/improvement/:id/approve", handleApprove);
   app.post("/api/improvement/:id/reject", handleReject);
+  // Git-free recovery for an applied proposal: rolls the touched agent .md files
+  // back from the agents-bak before-image snapshot captured at apply time
+  // (handleRestore → scripts/update.sh --restore-agents). Replaces the retired
+  // VCS rollback path — the git-free daemon keeps no in-repo history to lean on.
+  app.post("/api/improvement/:id/restore", handleRestore);
 }
 
 // GET /api/improvement
@@ -310,6 +315,17 @@ interface ImprovementQuerystring {
   tier?: string;
   agent?: string;
 }
+
+// Fastify does not strip/reject unrecognized querystring keys without a route
+// schema — a misspelled or legacy key (e.g. `window_days`) previously fell
+// through silently, leaving the `window` default in effect with no error.
+// parseImprovementQuery rejects any key outside this set so misuse is loud.
+const IMPROVEMENT_QUERY_KEYS: ReadonlySet<string> = new Set([
+  "limit",
+  "window",
+  "tier",
+  "agent",
+]);
 
 async function handleImprovement(
   request: FastifyRequest<{ Querystring: ImprovementQuerystring }>,
@@ -323,26 +339,39 @@ async function handleImprovement(
   }
   const { limit, windowDays, tier, agent } = parsed.value;
 
-  const proposalWhere = buildProposalWhere(windowDays, tier, agent);
+  // Registry load hoisted above the WHERE builders: T8 gates the proposal +
+  // actionable feeds on target_agent registry-membership, T9 gates the
+  // tier_breakdown cohort, and the style_ref DEV subset below derives from the
+  // same cached entries. Cached singleton, so the early load adds no cost.
+  const canonicalKeys = await loadCanonicalAgentKeys();
+
+  const proposalWhere = buildProposalWhere(windowDays, tier, agent, canonicalKeys);
   // Actionable feed WHERE — status ∈ pending/snoozed AND safety-tier only
   // (auto-tier is terminal by construction → no auto actionable surface). `agent`
   // filter preserved (FE drill-down consistency); recency window dropped so
   // actionable rows are never crowded out of the safety column by the
   // recent-terminal slice.
-  const actionableWhere = buildActionableProposalWhere(agent);
-  const outcomeWhere = buildOutcomeWhere(windowDays, agent);
+  const actionableWhere = buildActionableProposalWhere(agent, canonicalKeys);
+  // Registry-membership scope for outcome_summary + join_meta.linked_agent_count
+  // — closes the gap T8/T9/T10 deliberately left open. buildOutcomeWhere now
+  // takes canonicalKeys directly (in-builder gate, mirrors
+  // buildProposalWhere/buildActionableProposalWhere) — the external
+  // buildAgentMembershipFilter concatenation this call site used to bolt on is
+  // gone.
+  const outcomeWhere = buildOutcomeWhere(windowDays, agent, canonicalKeys);
   // style_ref telemetry window fixed at 7 days, independent of `windowDays`.
   // Agent filter still applies so the per-agent drill-down stays consistent.
-  // DEV-subset gate appended to THIS where var ALONE — the shared
-  // buildOutcomeWhere is untouched (it also feeds outcome_summary all-agent
-  // buckets). DEV keys derived at runtime from the registry ('dev-' prefix).
-  // Fail-soft: an empty DEV set skips the predicate (fail-open) — Prisma.join([])
-  // is invalid SQL.
-  const registryEntries = await loadAgentRegistry();
-  const devAgents = [...registryEntries.keys()].filter((name) =>
+  // canonicalKeys now applies to THIS base too (safe — devAgents below is
+  // already a registry subset, so no double-gating concern). DEV-subset gate
+  // appended to THIS where var ALONE, over its OWN buildOutcomeWhere(...) call
+  // (not the outcomeWhere above) — unaffected by the registry-membership
+  // scoping on outcomeWhere. DEV keys derived at runtime from the registry
+  // ('dev-' prefix). Fail-soft: an empty DEV set skips the predicate
+  // (fail-open) — Prisma.join([]) is invalid SQL.
+  const devAgents = canonicalKeys.filter((name) =>
     name.startsWith(DEV_AGENT_PREFIX),
   );
-  const baseStyleRefWhere = buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent);
+  const baseStyleRefWhere = buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys);
   const styleRefWhere =
     devAgents.length === 0
       ? baseStyleRefWhere
@@ -363,7 +392,7 @@ async function handleImprovement(
       prisma.$queryRaw<TierCountDbRow[]>`
         SELECT approval_tier::text AS approval_tier, COUNT(*)::bigint AS count
         FROM core.autoagent_proposals
-        ${buildProposalWhere(windowDays, null, agent)}
+        ${buildProposalWhere(windowDays, null, agent, canonicalKeys)}
         GROUP BY approval_tier
       `,
       // proposals — limit-bounded paginated rows, including the rationale +
@@ -465,7 +494,7 @@ async function handleImprovement(
           AND EXISTS (
             SELECT 1
             FROM core.autoagent_proposals p
-            ${buildProposalWhere(windowDays, null, null)}
+            ${buildProposalWhere(windowDays, null, null, canonicalKeys)}
               AND p.target_agent = o.agent
           )
       `,
@@ -515,11 +544,15 @@ async function handleImprovement(
       // 3-Tier baseline cohort split — fixed 30d window
       // (TIER_BREAKDOWN_WINDOW_DAYS, independent of the `windowDays` user filter).
       // 3 parallel COUNT() FILTER aggregates in one SELECT (single-row return,
-      // folded by foldTierBreakdownRow). Excludes the infra-attribution agents to
-      // match the migration backfill WHERE clause, so the API counts match the
-      // actual backfilled population. poisoned_window rows excluded — they are
-      // metric_pass=false mis-measurements that would inflate code_based_fail_30d
-      // (mirrors the baseline_pre_3tier exclusion style above).
+      // folded by foldTierBreakdownRow). T9 — scoped to the positive registry
+      // allowlist (agent IN loadAgentRegistry()) instead of the former 3-item
+      // infra denylist; the registry excludes those infra tokens (orchestrator /
+      // subagent_stop_missing / unknown) AND every other non-registry noise agent,
+      // so the allowlist subsumes the retired denylist. Fail-open on an empty
+      // registry (buildAgentMembershipFilter → Prisma.empty → predicate skipped).
+      // poisoned_window rows excluded — they are metric_pass=false mis-measurements
+      // that would inflate code_based_fail_30d (mirrors the baseline_pre_3tier
+      // exclusion style above).
       //
       // Index usage: outcomes_baseline_pre_3tier_idx (partial, predicate
       // `WHERE baseline_pre_3tier IS NOT NULL`) supports pre_3tier_baseline_count
@@ -532,7 +565,7 @@ async function handleImprovement(
           COUNT(*) FILTER (WHERE baseline_pre_3tier = TRUE)::bigint AS pre_3tier_baseline_count
         FROM core.outcomes
         WHERE record_ts > NOW() - (${TIER_BREAKDOWN_WINDOW_DAYS}::int * INTERVAL '1 day')
-          AND agent NOT IN (${Prisma.join(TIER_BREAKDOWN_INFRA_AGENTS.map((a) => Prisma.sql`${a}`))})
+          ${buildAgentMembershipFilter(canonicalKeys)}
           AND poisoned_window = FALSE
       `,
       // confidence_observed × promotion_tier distribution — isolated in the same
@@ -693,6 +726,16 @@ async function handleImprovementStats(
 
   const prisma = getPrisma();
   try {
+    const canonicalKeys = await loadCanonicalAgentKeys();
+    // Registry allowlist for THIS card's own tier_distribution query — separate
+    // from the main /api/improvement handler's windowed tierRows query (which T9
+    // already gates via buildProposalWhere). Bare fragment because this query
+    // carries NO WHERE at all today (unlike buildProposalWhere/
+    // buildActionableProposalWhere, which always have >=1 predicate to join
+    // against); wrap manually and omit entirely on an empty registry (fail-open —
+    // never emit a bare `WHERE`).
+    const tierDistMembership = buildAgentMembershipFragment(canonicalKeys, Prisma.sql`target_agent`);
+    const tierDistWhere = toBareWhere(tierDistMembership);
     const last7dWhere = Prisma.sql`WHERE cycle_date >= CURRENT_DATE - INTERVAL '7 days'`;
     // poisoned_window exclusion matches buildOutcomeWhere — stats and main
     // endpoint must report the same review_flag population.
@@ -705,10 +748,11 @@ async function handleImprovementStats(
     const [tierRows, appliedRows, rejectedRows, reviewFlagRows, cycleRows, lifetimeRows] =
       await Promise.all([
       // tier_distribution — across all proposals (not windowed) so the card stays
-      // representative of the steady state.
+      // representative of the steady state; registry-scoped via tierDistWhere.
       prisma.$queryRaw<TierCountDbRow[]>`
         SELECT approval_tier::text AS approval_tier, COUNT(*)::bigint AS count
         FROM core.autoagent_proposals
+        ${tierDistWhere}
         GROUP BY approval_tier
       `,
       prisma.$queryRaw<BigintRow[]>`
@@ -848,13 +892,30 @@ async function handleLearningLog(
 
   const prisma = getPrisma();
   try {
+    // T10 — registry-membership gate (columnRef default `agent`) applied
+    // CONSISTENTLY across total + status-distribution + list, so the KPI totals
+    // agree with the registry-scoped list (a list-only gate would leave
+    // total_patterns counting noise while the list shows registry-only). NULL-agent
+    // learning_log rows are correctly excluded (a NULL-agent pattern is not a
+    // registry agent). Fail-open: an empty registry skips the predicate (never
+    // emit a bare WHERE / invalid IN ()).
+    const canonicalKeys = await loadCanonicalAgentKeys();
+    const agentFragment = buildAgentMembershipFragment(canonicalKeys);
+    // No-WHERE queries (total + status-dist) → bare fragment prefixed with their
+    // own WHERE, omitted entirely on an empty registry.
+    const agentWhere = toBareWhere(agentFragment);
+    // The list query already carries a WHERE (discovered_date window) → append the
+    // AND-prefixed form to it.
+    const agentAndFilter = buildAgentMembershipFilter(canonicalKeys);
+
     const [totalRows, statusRows, patternRows] = await Promise.all([
       prisma.$queryRaw<BigintRow[]>`
-        SELECT COUNT(*)::bigint AS total FROM core.learning_log
+        SELECT COUNT(*)::bigint AS total FROM core.learning_log ${agentWhere}
       `,
       prisma.$queryRaw<LearningLogStatusDbRow[]>`
         SELECT status::text AS status, approval_tier::text AS approval_tier, COUNT(*)::bigint AS count
         FROM core.learning_log
+        ${agentWhere}
         GROUP BY status, approval_tier
         ORDER BY count DESC
       `,
@@ -864,6 +925,7 @@ async function handleLearningLog(
                discovered_date, last_updated, last_transition_at, last_transition_reason
         FROM core.learning_log
         WHERE discovered_date >= CURRENT_DATE - 7
+          ${agentAndFilter}
         ORDER BY discovered_date DESC NULLS LAST, last_updated DESC, id DESC
         LIMIT ${limit}
       `,
@@ -907,14 +969,25 @@ async function handleLoopEvents(
 
   const prisma = getPrisma();
   try {
+    // T10 — registry-membership gate (columnRef default `agent`). All three
+    // loop-events queries are no-WHERE, so the bare fragment is prefixed with its
+    // own WHERE (omitted on an empty registry — fail-open). Gated consistently
+    // (agg + result-distribution + event-list) so the KPI totals agree with the
+    // registry-scoped event list. AutoagentLoopEvent.agent is NOT NULL.
+    const canonicalKeys = await loadCanonicalAgentKeys();
+    const agentFragment = buildAgentMembershipFragment(canonicalKeys);
+    const agentWhere = toBareWhere(agentFragment);
+
     const [aggRows, resultRows, eventRows] = await Promise.all([
       prisma.$queryRaw<LoopEventAggDbRow[]>`
         SELECT COUNT(*)::bigint AS total, MAX(event_ts) AS latest_event_ts
         FROM core.autoagent_loop_events
+        ${agentWhere}
       `,
       prisma.$queryRaw<LoopEventResultDbRow[]>`
         SELECT eval_result, COUNT(*)::bigint AS count
         FROM core.autoagent_loop_events
+        ${agentWhere}
         GROUP BY eval_result
         ORDER BY count DESC
       `,
@@ -922,6 +995,7 @@ async function handleLoopEvents(
       prisma.$queryRaw<LoopEventDbRow[]>`
         SELECT id, event_ts, agent, rice::float8 AS rice, eval_result, changes_added, changes_removed
         FROM core.autoagent_loop_events
+        ${agentWhere}
         ORDER BY event_ts DESC
         LIMIT ${limit}
       `,
@@ -992,12 +1066,17 @@ const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 // SECURITY (LLM06 — Excessive Agency / human-in-the-loop): approve mutates the
 // agent .md files via daemon-apply.sh. High-impact, but (1) gated behind an
 // explicit user button-click in the local 127.0.0.1 monitor UI (the click IS the
-// human-in-the-loop decision), and (2) git-reversible — daemon-apply wraps every
-// apply in a commit sandwich + stash, so any unwanted apply is recoverable via
-// `git revert`. The script bypasses the auto-tier + pre_verify gates precisely
-// because the user explicitly approved. `id` is validated to a positive integer
-// before it reaches execFile, and the script path is a fixed home-dir constant —
-// no request-derived shell input.
+// human-in-the-loop decision), and (2) recoverable — daemon-apply is git-free, so
+// BEFORE applying it captures a per-proposal before-image copy of each touched
+// file under agents-bak/<cycle_date>_p<id>; an unwanted apply is rolled back by
+// restoring that snapshot via POST :id/restore (handleRestore →
+// scripts/update.sh --restore-agents), within the 14-day retention window. The DB
+// holds only the forward proposedDiff (no before-image bytes), so a VCS-based
+// rollback is unavailable — the agents-bak before-image is the sole recovery
+// anchor. The script bypasses the auto-tier + pre_verify gates precisely because
+// the user explicitly approved. `id` is validated to a positive integer before it
+// reaches execFile, and the script path is a fixed home-dir constant — no
+// request-derived shell input.
 async function handleApprove(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply,
@@ -1197,6 +1276,163 @@ async function handleReject(
   return { id, status: "rejected", reviewed_at: row.reviewed_at.toISOString() };
 }
 
+// POST /api/improvement/:id/restore
+
+// Resolves scripts/update.sh — P3-T2's git-free recovery entry point. Its
+// --restore-agents <cycle-id> mode rolls the touched agent .md files back from the
+// agents-bak before-image, and acquires the shared pause + .apply-lock itself, so
+// this route does NOT double-lock (weakening the serialization invariant). Fixed
+// home-dir install path — never request-derived, so this execFile is not a
+// shell-injection / SSRF surface. ATRIUM_UPDATE_SCRIPT is a server-startup testing
+// seam (process-env, never request-derived), mirroring resolveApplyScript's
+// AUTOAGENT_APPLY_SCRIPT.
+function resolveRestoreScript(): string {
+  const override = process.env.ATRIUM_UPDATE_SCRIPT;
+  if (typeof override === "string" && override.length > 0) {
+    return override;
+  }
+  return path.join(homedir(), ".glass-atrium", "scripts", "update.sh");
+}
+
+// scripts/update.sh --restore-agents <cycle-id> exit-code contract (P3-T2):
+//   0  = restored (touched agent .md files rolled back from the before-image)
+//   10 = restore failed — no agents-bak snapshot for the cycle-id (pruned past the
+//        14-day retention window OR the proposal never landed via the git-free
+//        transaction) OR a per-file write failure; update.sh loud-fails the reason.
+//   2 (bad arg — the route always passes a cycle-id) / other (lock held / no
+//        python3 / spawn ENOENT) fold into the infra-class default → 500.
+const RESTORE_EXIT_OK = 0;
+const RESTORE_EXIT_FAILED = 10;
+
+// Restore (200) — the applied proposal's touched agent .md files rolled back from
+// its agents-bak before-image snapshot (git-free recovery; see the SECURITY note
+// above handleApprove).
+interface RestoreProposalResponse {
+  id: number;
+  status: "restored";
+  cycle_id: string; // the agents-bak <cycle_date>_p<id> snapshot restored from
+}
+
+// Restore-specific mutation errors. The invalid_param (400) + internal (500) DB
+// failure cases reuse the shared ImprovementMutationErrorBody discriminator; the
+// rest stay local rather than widening the approve/reject union in
+// types/improvement.ts (not this route file's concern).
+type RestoreErrorBody =
+  | { status: "not_found"; id: number }
+  | { status: "not_restorable"; id: number; reason: string }
+  | { status: "restore_failed"; id: number; reason: string }
+  | { status: "restore_error"; id: number; reason: string };
+
+interface ProposalRestoreRow {
+  status: string;
+  cycle_id: string;
+}
+
+// The recovery net the approve SECURITY note promises: undo an applied proposal by
+// restoring the before-image snapshot daemon-apply captured under
+// agents-bak/<cycle_date>_p<id>. Only an 'applied' proposal has a snapshot, so the
+// route gates on status before shelling out. The cycle-id is built server-side
+// from the validated integer id + the row's DB-rendered cycle_date (never request
+// text) and passed as a discrete execFile argv element — no shell, no
+// request-derived path.
+async function handleRestore(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply,
+): Promise<RestoreProposalResponse | ImprovementMutationErrorBody | RestoreErrorBody> {
+  const start = Date.now();
+  const id = parseIdParam(request.params.id);
+  if (id === null) {
+    reply.code(400);
+    return { status: "invalid_param", param: "id" };
+  }
+
+  const prisma = getPrisma();
+  // Derive the agents-bak cycle-id (<cycle_date>_p<id>) directly in SQL, matching
+  // daemon-apply.sh's `${patch_cycle}_p${patch_id}` sink naming. to_char pins the
+  // date text to the psql rendering the daemon used (no JS-side TZ drift).
+  let rows: ProposalRestoreRow[];
+  try {
+    rows = await prisma.$queryRaw<ProposalRestoreRow[]>`
+      SELECT status::text AS status,
+             to_char(cycle_date, 'YYYY-MM-DD') || '_p' || id::text AS cycle_id
+      FROM core.autoagent_proposals
+      WHERE id = ${BigInt(id)}
+    `;
+  } catch (error) {
+    return failWithDbMutation(request, reply, "/api/improvement/:id/restore", id, error);
+  }
+
+  const row = rows[0];
+  const logBase = { route: "/api/improvement/:id/restore", id, durationMs: Date.now() - start };
+  if (row === undefined) {
+    request.log.warn(logBase, "restore no-op (proposal id not found)");
+    reply.code(404);
+    return { status: "not_found", id };
+  }
+  if (row.status !== "applied") {
+    // Only an applied proposal has a captured before-image: pending/snoozed never
+    // touched a file, rejected/approved never landed a diff → nothing to roll back.
+    request.log.warn(
+      { ...logBase, status: row.status },
+      "restore no-op (proposal not applied — no before-image)",
+    );
+    reply.code(409);
+    return {
+      status: "not_restorable",
+      id,
+      reason: `proposal status '${row.status}' has no agents-bak before-image (only 'applied' is restorable)`,
+    };
+  }
+
+  const cycleId = row.cycle_id;
+  let exitCode: number;
+  let stderr: string;
+  try {
+    // execFile (not exec) — argv array, no shell interpolation. cycleId is a
+    // server-derived <date>_p<int> token; update.sh independently rejects path
+    // separators in it (defense-in-depth atop the int + DB-date derivation).
+    await execFileAsync(resolveRestoreScript(), ["--restore-agents", cycleId]);
+    exitCode = RESTORE_EXIT_OK;
+    stderr = "";
+  } catch (error) {
+    const parsed = parseExecFileError(error);
+    exitCode = parsed.code;
+    stderr = parsed.stderr;
+  }
+
+  if (exitCode === RESTORE_EXIT_OK) {
+    request.log.info({ ...logBase, cycleId }, "proposal restored from agents-bak before-image");
+    return { id, status: "restored", cycle_id: cycleId };
+  }
+  if (exitCode === RESTORE_EXIT_FAILED) {
+    // No snapshot (pruned past retention / never applied via the txn) OR a per-file
+    // write failure — update.sh already loud-failed the specific reason to stderr.
+    request.log.warn(
+      { ...logBase, cycleId, stderr },
+      "restore failed (no before-image snapshot or write failure)",
+    );
+    reply.code(422);
+    return {
+      status: "restore_failed",
+      id,
+      reason: `no restorable before-image for cycle-id ${cycleId}: ${truncateStderr(stderr)}`,
+    };
+  }
+
+  // Infra-class failure (exit 2 bad-arg / lock held / missing python3 / spawn
+  // ENOENT). Nothing was restored — surface the cause and let the user retry.
+  request.log.error(
+    { ...logBase, cycleId, exitCode, stderr },
+    "restore failed — update.sh infra error (nothing restored)",
+  );
+  reply.code(500);
+  return {
+    status: "restore_error",
+    id,
+    reason: `update.sh --restore-agents exited ${exitCode}: ${truncateStderr(stderr)}`,
+  };
+}
+
 interface ParsedImprovementQuery {
   limit: number;
   windowDays: number;
@@ -1208,7 +1444,24 @@ type ParseResult =
   | { kind: "ok"; value: ParsedImprovementQuery }
   | { kind: "error"; body: ImprovementErrorBody };
 
+// Object.keys(q) reflects the ACTUAL keys Fastify parsed off the wire,
+// regardless of the ImprovementQuerystring TS shape (which only documents the
+// known/accepted subset) — so this correctly catches a key the type never
+// declared.
+function findUnknownQueryKey(q: ImprovementQuerystring): string | null {
+  for (const key of Object.keys(q)) {
+    if (!IMPROVEMENT_QUERY_KEYS.has(key)) {
+      return key;
+    }
+  }
+  return null;
+}
+
 function parseImprovementQuery(q: ImprovementQuerystring): ParseResult {
+  const unknownKey = findUnknownQueryKey(q);
+  if (unknownKey !== null) {
+    return { kind: "error", body: invalidParam(unknownKey) };
+  }
   const limit = parseLimit(q.limit);
   if (limit === null) {
     return { kind: "error", body: invalidParam("limit") };
@@ -1270,16 +1523,49 @@ function parseWindow(raw: string | undefined): number | null {
   return parsed;
 }
 
+// Pushes the target_agent registry-membership fragment onto `fragments` only
+// when non-empty (fail-open — an empty registry never contributes a stray
+// predicate). Shared by buildProposalWhere/buildActionableProposalWhere,
+// whose T8 gate was previously duplicated verbatim at each call site.
+function pushMembershipFragment(
+  fragments: Prisma.Sql[],
+  canonicalKeys: ReadonlyArray<string>,
+  columnRef: Prisma.Sql = Prisma.sql`target_agent`,
+): void {
+  const membership = buildAgentMembershipFragment(canonicalKeys, columnRef);
+  if (membership !== Prisma.empty) {
+    fragments.push(membership);
+  }
+}
+
+// Turns a bare membership fragment into a full WHERE clause, or a no-op when
+// the fragment is empty (fail-open on an empty registry — never emit a bare
+// `WHERE`). Shared by the no-WHERE-base queries (handleImprovementStats,
+// handleLearningLog, handleLoopEvents), whose ternary was previously
+// duplicated verbatim at each call site.
+function toBareWhere(fragment: Prisma.Sql): Prisma.Sql {
+  return fragment === Prisma.empty ? Prisma.empty : Prisma.sql`WHERE ${fragment}`;
+}
+
 function buildProposalWhere(
   windowDays: number,
   tier: ImprovementTier | null,
   agent: string | null,
+  canonicalKeys: ReadonlyArray<string>,
 ): Prisma.Sql {
   // PG INTERVAL bind via Prisma — windowDays is integer-validated, so the
   // multiplication is parameter-safe.
   const fragments: Prisma.Sql[] = [
     Prisma.sql`cycle_date >= CURRENT_DATE - (${windowDays}::int * INTERVAL '1 day')`,
   ];
+  // T8 — registry-membership gate on target_agent. Display SoT is
+  // loadAgentRegistry() (agent-registry.json), NOT the daemon's fail-open
+  // _agent_roster glob; the monitor deliberately uses the registry as the display
+  // source of truth regardless of upstream roster divergence. Bare fragment
+  // (this builder ends in Prisma.join(fragments, " AND ", "WHERE ") — an
+  // AND-prefixed form would inject a stray leading AND). Fail-open: an empty
+  // registry yields Prisma.empty → the predicate is skipped (never emit IN ()).
+  pushMembershipFragment(fragments, canonicalKeys);
   if (tier === "auto") {
     fragments.push(Prisma.sql`approval_tier = 'auto'::core."ApprovalTier"`);
   } else if (tier === "safety") {
@@ -1307,20 +1593,31 @@ function buildProposalWhere(
 // no longer routes this feed (auto has no actionable surface); only `agent`
 // filters, preserving FE drill-down consistency with `proposals`. No recency
 // window, so actionable rows surface regardless of age.
-function buildActionableProposalWhere(agent: string | null): Prisma.Sql {
+function buildActionableProposalWhere(
+  agent: string | null,
+  canonicalKeys: ReadonlyArray<string>,
+): Prisma.Sql {
   const fragments: Prisma.Sql[] = [
     Prisma.sql`status IN ('pending'::core."ProposalStatus", 'snoozed'::core."ProposalStatus")`,
     // 'user' + 'user-pending' + legacy 'llm' fold into the 'safety' public bucket
     // (mirrors buildProposalWhere + foldTierCounts — same 3-value safety filter set).
     Prisma.sql`approval_tier IN ('user'::core."ApprovalTier", 'user-pending'::core."ApprovalTier", 'llm'::core."ApprovalTier")`,
   ];
+  // T8 — same target_agent registry gate as buildProposalWhere (display SoT =
+  // loadAgentRegistry(), not the daemon _agent_roster). Bare fragment, fail-open
+  // on an empty registry.
+  pushMembershipFragment(fragments, canonicalKeys);
   if (agent !== null) {
     fragments.push(Prisma.sql`target_agent = ${agent}`);
   }
   return Prisma.join(fragments, " AND ", "WHERE ");
 }
 
-function buildOutcomeWhere(windowDays: number, agent: string | null): Prisma.Sql {
+function buildOutcomeWhere(
+  windowDays: number,
+  agent: string | null,
+  canonicalKeys: ReadonlyArray<string> = [],
+): Prisma.Sql {
   const fragments: Prisma.Sql[] = [
     Prisma.sql`record_ts > NOW() - (${windowDays}::int * INTERVAL '1 day')`,
     // Rows flagged poisoned_window carry unreliable learning signal — excluded
@@ -1329,6 +1626,11 @@ function buildOutcomeWhere(windowDays: number, agent: string | null): Prisma.Sql
     // hooks/_pg_learning_dualwrite.py).
     Prisma.sql`poisoned_window = FALSE`,
   ];
+  // T8/T9/T10 registry-membership gate, brought in-builder (mirrors
+  // buildProposalWhere/buildActionableProposalWhere) — replaces the external
+  // buildAgentMembershipFilter concatenation previously bolted on at the
+  // outcomeWhere call site only, and now applies uniformly to every caller.
+  pushMembershipFragment(fragments, canonicalKeys, Prisma.sql`agent`);
   if (agent !== null) {
     fragments.push(Prisma.sql`agent = ${agent}`);
   }

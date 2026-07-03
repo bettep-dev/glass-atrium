@@ -1,17 +1,23 @@
 #!/usr/bin/env bats
 # glass-atrium-update suite — pins the E3 T09 update-skill adapter contract:
 #   * resolution helpers      — GA_ROOT / reports-dir / .apply-lock / release slug
-#   * update_head_is_wip      — refuses a mid-apply [WIP-AUTO] HEAD, allows clean
+#   * .apply-lock serialize    — a mid-apply daemon is signalled by .apply-lock
+#                               CONTENTION (the retired update_head_is_wip /
+#                               [WIP-AUTO]-HEAD detector is gone): a stale/dead lock
+#                               is reclaimed, a live one blocks
 #   * update_partition_sensitive — clean vs sensitive split, fail-CLOSED on error
 #   * update_serialize_begin / update_cleanup — pause flag set + lock acquired,
-#                               lock contention loud-fails, trap unwinds both
+#                               lock contention loud-fails, stale lock reclaimed,
+#                               trap unwinds both
 #   * end-to-end run via the ATRIUM_UPDATE_SRC_DIR test seam — verify → confirm →
 #     deterministic non-agent sync → baseline; decline writes nothing
 #   * boundary asserts        — NOT a merge engine (agent md excluded), NEVER
 #                               writes core.autoagent_proposals
 #
 # Run via: bats scripts/test/glass-atrium-update.bats
-# Requires: bats >= 1.5.0, jq, git, python3, diff, shasum/sha256sum
+# Requires: bats >= 1.5.0, jq, python3, diff, shasum/sha256sum
+# (git deliberately NOT required — the flow under test is git-free end to end,
+# and this suite must prove it runs on a git-less no-.git consumer host.)
 #
 # Hermetic strategy: every test runs inside a per-test mktemp sandbox with
 # GA_ROOT / AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR
@@ -22,17 +28,18 @@
 
 bats_require_minimum_version 1.5.0
 
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+
 # Exported so the `declare -f load_skill`-injected helper resolves them inside the
 # fresh `bash -c` children that tests 4-6 spawn: a non-exported var is unbound
 # under the strict-mode `set -u` load_skill enables → spurious rc1.
-export SKILL="${HOME}/.glass-atrium/skills/glass-atrium-update/update.sh"
-export REAL_LIB_ROOT="${HOME}/.glass-atrium"
-export GEN_MANIFEST="${HOME}/.glass-atrium/scripts/generate-manifest.sh"
+export SKILL="${GA}/scripts/update.sh"
+export REAL_LIB_ROOT="${GA}"
+export GEN_MANIFEST="${GA}/scripts/generate-manifest.sh"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  command -v git >/dev/null 2>&1 || skip "git required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v diff >/dev/null 2>&1 || skip "diff required"
   WORK="$(cd -- "$(mktemp -d -t ga-update-bats.XXXXXX)" && pwd -P)"
@@ -43,7 +50,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.
@@ -97,6 +104,11 @@ load_skill() {
   source "${REAL_LIB_ROOT}/scripts/lib/apply-gate.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/sensitive-refusal.sh"
+  # The git-free serialize path (update_serialize_begin / update_cleanup) resolves
+  # apply_lock_acquire / apply_lock_release from this lib; update_main sources it at
+  # runtime, so the function-only test seam must source it here too.
+  # shellcheck source=/dev/null
+  source "${REAL_LIB_ROOT}/scripts/lib/apply-lock.sh"
 }
 
 # --- resolution helpers ----------------------------------------------------
@@ -120,23 +132,6 @@ load_skill() {
   '
   [ "$status" -eq 0 ]
   [[ "$output" == "owner/repo" ]]
-}
-
-# --- WIP HEAD refusal ------------------------------------------------------
-
-@test "update_head_is_wip refuses a [WIP-AUTO] HEAD and allows a clean one" {
-  git -C "${INSTALL}" init -q
-  git -C "${INSTALL}" config user.email t@t.t
-  git -C "${INSTALL}" config user.name t
-  seed_file "${INSTALL}" "f.txt" "a"
-  git -C "${INSTALL}" add f.txt
-  git -C "${INSTALL}" commit -qm "clean commit"
-  run bash -c 'source "'"${SKILL}"'"; GA_ROOT="'"${INSTALL}"'" update_head_is_wip'
-  [ "$status" -eq 1 ] # clean HEAD → not WIP
-
-  git -C "${INSTALL}" commit -q --allow-empty -m "[WIP-AUTO] snapshot"
-  run bash -c 'source "'"${SKILL}"'"; GA_ROOT="'"${INSTALL}"'" update_head_is_wip'
-  [ "$status" -eq 0 ] # WIP HEAD → refuse
 }
 
 # --- sensitive partition (fail-closed) -------------------------------------
@@ -213,6 +208,32 @@ load_skill() {
   '
   [ "$status" -eq 1 ]
   [[ "$output" == *"another apply is in progress"* ]]
+}
+
+@test "serialize_begin RECLAIMS a stale dead .apply-lock (retired [WIP-AUTO] mid-apply detector)" {
+  # The OLD mid-apply-daemon signal (update_head_is_wip / a [WIP-AUTO] HEAD) is
+  # DELETED; a mid-apply daemon is now signalled by .apply-lock CONTENTION. A daemon
+  # that was SIGKILLed leaves a stranded lock (no EXIT trap) — the shared stale-reclaim
+  # acquire must let the updater PROCEED (reclaim) rather than loud-fail forever, so
+  # this is the git-free replacement for the retired WIP-HEAD detector.
+  mkdir -p "${STATE}/daemon-reports/.apply-lock" # stranded lock, no pid = not-live
+  # Backdate the lock dir mtime well past the (tiny) TTL so it reads as crashed
+  # residue, not a fresh mid-acquire racer (mtime via python3 os.utime — the portable
+  # idiom, never BSD/GNU-divergent stat -f / stat -c).
+  python3 -c 'import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1], (t, t))' \
+    "${STATE}/daemon-reports/.apply-lock"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    export ATRIUM_APPLY_LOCK_TTL_SECS=1
+    load_skill
+    update_serialize_begin && echo "ACQUIRED"
+    update_cleanup && echo "RELEASED"
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ACQUIRED"* ]]                  # reclaimed the stale lock (no permanent wedge)
+  [[ "$output" == *"RELEASED"* ]]
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]] # cleanup released the reclaimed lock
 }
 
 # --- end-to-end apply via the test seam ------------------------------------
@@ -314,8 +335,13 @@ load_skill() {
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] # non-agent synced
-  [[ "$(cat "${INSTALL}/agents/foo.md")" == "old agent" ]]  # agent md untouched (E4 path)
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] # non-agent → deterministic sync
+  # agents/*.md is EXCLUDED from the deterministic sync (spine_is_excluded_path); it
+  # flows through the SEPARATE git-free E4 merge instead, which take-releases this
+  # region-less vendor file. The distinct "agent merged + applied" log line proves it
+  # went through the E4 path, not the tar sync (whose diff lists only scripts/tool.sh).
+  [[ "$output" == *"agent merged + applied: agents/foo.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/foo.md")" == "new agent" ]]
 }
 
 # --- roster-migration gate (T20 / gate G8) --------------------------------
@@ -413,7 +439,7 @@ seed_baseline() {
 @test "roster gate PASSES THROUGH a content-only edit (same roster both sides)" {
   # dev-a is present on BOTH sides (a content EDIT, not a roster change) and a
   # plain non-agent file changes. The gate must NOT fire; the non-agent sync runs
-  # and the agent md stays untouched (E4 path).
+  # and the agent md is merged via the SEPARATE git-free E4 path.
   seed_file "${INSTALL}" "agents/dev-a.md" "old agent body"
   seed_file "${NEWSRC}" "agents/dev-a.md" "new agent body"
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
@@ -434,7 +460,7 @@ seed_baseline() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"ROSTER CHANGE DETECTED"* ]]      # gate stayed silent
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]   # non-agent synced
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "old agent body" ]] # agent md untouched
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "new agent body" ]] # agent md merged via the git-free E4 path
 }
 
 @test "roster gate PASSES a content update on a CUSTOMIZED install (T20 fix: user-local agent does NOT block)" {
@@ -577,32 +603,36 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [[ ! -f "${INSTALL}/agents/dev-new.md" ]]                  # agent md still E4-excluded
 }
 
-@test "boundary: the skill performs no DB writes (no psql / no SQL DML)" {
-  # The adapter swaps files only — it must never touch core.autoagent_proposals or
-  # any DB surface. Assert there is no psql invocation and no SQL DML in the script
-  # (a documentation mention of the table name in a comment is allowed).
-  run grep -nE 'psql|INSERT[[:space:]]+INTO|UPDATE[[:space:]]+[a-z_.]+[[:space:]]+SET|DELETE[[:space:]]+FROM' "${SKILL}"
+@test "boundary: the skill NEVER writes core.autoagent_proposals (only core.update_job)" {
+  # P3 gave the headless path a DB surface: core.update_job status tracking. That
+  # is the ONLY table the adapter may touch — core.autoagent_proposals belongs to
+  # the autoagent self-improvement loop and MUST stay off-limits. Assert (a) no SQL
+  # statement (INSERT/UPDATE/DELETE/SELECT ... FROM) targets autoagent_proposals —
+  # a bare prose mention of the table name in a header comment is allowed — and (b)
+  # every DML statement targets core.update_job (the single allowed write surface).
+  run grep -nE '(INTO|UPDATE|FROM|TABLE)[[:space:]]+(core\.)?autoagent_proposals' "${SKILL}"
   [ "$status" -ne 0 ] # grep finds nothing → exit 1
   [[ -z "${output}" ]]
+  # Every INSERT INTO / UPDATE ... SET / DELETE FROM must name core.update_job.
+  run grep -nE 'INSERT[[:space:]]+INTO[[:space:]]+(core\.)?[a-z_]+|DELETE[[:space:]]+FROM[[:space:]]+(core\.)?[a-z_]+' "${SKILL}"
+  local line
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+    [[ "${line}" == *"core.update_job"* ]] || {
+      echo "unexpected DML target: ${line}"
+      return 1
+    }
+  done <<<"${output}"
 }
 
 # --- agent EDITABLE-region merge (E4 / T19) --------------------------------
 #
 # These pin the LIVE merge integration: each changed agents/<name>.md flows
 # through editable_merge `plan` → the SAME T12 confirm gate → git_txn_apply. The
-# merge is git-sandboxed, so unlike the earlier non-git fixtures (where it
-# loud-skips) these init a real git repo in the INSTALL sandbox so the
-# WIP-snapshot → apply → verify → commit transaction actually runs.
-
-# Init a git repo at the INSTALL sandbox + commit whatever is already seeded, so
-# git_txn_apply has a clean tracked worktree to transact against.
-git_init_install() {
-  git -C "${INSTALL}" init -q
-  git -C "${INSTALL}" config user.email t@t.t
-  git -C "${INSTALL}" config user.name t
-  git -C "${INSTALL}" add -A
-  git -C "${INSTALL}" commit -qm "seed" || true
-}
+# transaction is git-FREE (before-image copy → apply → verify → atomic restore on
+# fail; no git repo, no rev-parse — proven by autoagent/test/git-txn-gitfree.bats),
+# so these fixtures run in a plain NON-git INSTALL sandbox and the merge PROCEEDS
+# and applies whether or not a .git repo is present (no git_init needed).
 
 # Seed the base@install body for agents/<name>.md into the base-content store
 # (basename-keyed at <state>/base-agents/<name>.md) — the provenance the resolver
@@ -657,7 +687,6 @@ run_update() {
   # changed → take-release structure. needs_llm=False → no Haiku call in verify.
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
-  git_init_install
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
@@ -667,15 +696,15 @@ run_update() {
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" != *"base goal"* ]]
-  # the merge committed an [AUTO] apply commit in the install worktree
-  run git -C "${INSTALL}" log -1 --format=%s
-  [[ "$output" == *"[AUTO] glass-atrium-update EDITABLE-region merge: agents/dev-a.md"* ]]
+  # git-free transaction: git_txn_apply applies via a before-image copy + verify and
+  # runs NO git op, so the on-disk content above IS the applied-state proof. The merge
+  # created no repo — a plain non-git INSTALL sandbox stays git-free end to end.
+  [[ ! -d "${INSTALL}/.git" ]]
 }
 
 @test "T19: a declined confirm leaves the agent file unmerged (zero writes)" {
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
-  git_init_install
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
@@ -700,7 +729,6 @@ region two
 region one vendor
 <!-- EDITABLE:END -->'
   seed_file "${INSTALL}" "agents/dev-a.md" "${two_region}"
-  git_init_install
   seed_file "${NEWSRC}" "agents/dev-a.md" "${one_region}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
@@ -724,7 +752,6 @@ safe local line
 rm -rf /tmp/everything
 <!-- EDITABLE:END -->'
   seed_file "${INSTALL}" "agents/dev-a.md" "${local_body}"
-  git_init_install
   seed_file "${NEWSRC}" "agents/dev-a.md" "${danger_body}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
@@ -734,9 +761,11 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${local_body}" ]] # untouched
 }
 
-@test "T19: non-git install loud-skips the agent merge (transaction needs git)" {
-  # No git init → git_txn cannot run; the merge must LOUD-SKIP (Precondition
-  # Loud-Fail) rather than silently corrupt or silently no-op a learned region.
+@test "T19: non-git install still MERGES the agent file (git-free transaction, no SKIP)" {
+  # No git repo in the INSTALL sandbox. Post-P2-T2 the merge is git-FREE (git_txn_apply
+  # captures a before-image copy + restores atomically — proven by git-txn-gitfree.bats),
+  # so it PROCEEDS and applies the region rather than loud-skipping. Regression guard for
+  # the retired update_git_root "requires git" premise (the DC-1 review finding).
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
@@ -744,9 +773,11 @@ rm -rf /tmp/everything
 
   run_update y
   [ "$status" -eq 0 ]
-  [[ "$output" == *"not a git repo"* ]]
-  [[ "$output" == *"SKIPPED"* ]]
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # unmerged
+  [[ "$output" != *"not a git repo"* ]]                                 # no SKIP path
+  [[ "$output" != *"SKIPPED"* ]]
+  [[ ! -d "${INSTALL}/.git" ]]                                          # stayed git-free
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
 }
 
 @test "T19: agent merge coexists with the non-agent sync (both apply on one confirm)" {
@@ -755,7 +786,6 @@ rm -rf /tmp/everything
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
-  git_init_install
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "scripts/tool.sh"
@@ -765,4 +795,545 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]            # non-agent synced
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
+}
+
+@test "T19/P2-T2: the pre-merge local body lands in the PERSISTENT agents-bak (single authoritative before-image)" {
+  # The transaction's before-image is the SAME per-run agents-bak copy that
+  # --restore-agents reads AND that the merge verify anchors on — no ephemeral
+  # merge-dir localbak duplicate exists anymore (P2-T2 AC3).
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ]
+  # the merge applied — proof the verify PASSED while anchored on the agents-bak copy
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]
+  # the persistent per-run before-image holds the pre-merge local body byte-for-byte
+  # (glob over the <cycle_date>_update-<version> dir — date computed in the child)
+  local bak
+  bak="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/dev-a.md.bak" | head -1)"
+  [[ -f "${bak}" ]]
+  [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
+}
+
+@test "T19: a failed per-file transaction summarizes as rolled-back/unapplied, NOT declined (rc-collision fix)" {
+  # A CONFIRMED run whose single agent transaction fails (read-only target → the
+  # apply cp cannot write → GIT_TXN_APPLY_FAIL) must surface the distinct rc-3
+  # summary. Before the fix the commit callback returned 1, colliding with the
+  # gate's own 1=declined — a confirmed-but-failed run was mislabeled "declined"
+  # and the rolled-back summary branch was unreachable.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+  chmod a-w "${INSTALL}/agents/dev-a.md" # plan/diff still read it; the apply cp loud-fails
+
+  run_update y
+  [ "$status" -eq 0 ] # the agent merge stays best-effort / non-fatal
+  [[ "$output" == *"rolled-back or unapplied file(s)"* ]]
+  [[ "$output" != *"merge declined"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
+}
+
+# --- P3-T2: headless / web-triggered orchestration ------------------------------
+#
+# These pin the P3 headless layer added ON TOP of the E3 interactive flow:
+#   * core.update_job DB status tracking (in-progress → heartbeat → completed/failed)
+#     via the ATRIUM_UPDATE_PSQL seam — a mock psql that logs argv+SQL and returns a
+#     RETURNING id, so NO live Postgres is touched
+#   * single-active enforcement (partial unique index violation → loud-fail exit 8)
+#   * heartbeat + pause-flag mtime refresh on a long-stage tick
+#   * the EXIT-trap in-progress→failed marking (abort/crash recovery) + WHERE-guarded
+#     terminal writes (a stale-swept row is never resurrected)
+#   * confirm-seam fail-closed (a blank token declines, zero writes)
+#   * install-parity post-step (mock npm build + launchctl kickstart/bootstrap probe)
+#   * the decoupled one-shot launchd plist render
+#   * the claude -p precondition (resolve ok / unresolvable → exit 7 / plist PATH miss)
+#   * agents-bak restore mode (--restore-agents) + 14-day retention prune
+#
+# All external effects are seamed to mocks (ATRIUM_UPDATE_PSQL / _NPM / _LAUNCHCTL /
+# _CLAUDE_BIN / _MONITOR_DIR / _RENDER_*): no real build, launchctl, claude, or DB.
+
+# A mock psql: logs "$*" + the stdin SQL to $PSQL_LOG, returns a fake RETURNING id,
+# and (when $PSQL_FAIL=unique|dberr) simulates a unique-violation / connection error.
+write_mock_psql() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+sql="$(cat)"
+{ printf 'ARGS:%s\n' "$*"; printf 'SQL:%s\n' "${sql}"; } >>"${PSQL_LOG:-/dev/null}"
+case "${PSQL_FAIL:-}" in
+  unique) printf 'ERROR: duplicate key value violates unique constraint "update_job_single_active_uniq"\n' >&2; exit 1 ;;
+  dberr) printf 'ERROR: could not connect to server\n' >&2; exit 2 ;;
+esac
+[[ "${sql}" == *"RETURNING id"* ]] && printf '42\n'
+exit 0
+MOCK
+  chmod +x "$1"
+}
+
+# A mock npm: logs "$*" to $NPM_LOG, exits $NPM_RC (default 0).
+write_mock_npm() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${NPM_LOG:-/dev/null}"
+exit "${NPM_RC:-0}"
+MOCK
+  chmod +x "$1"
+}
+
+# A mock launchctl: logs "$*" to $LAUNCHCTL_LOG. `print` returns 0 when
+# $LAUNCHCTL_LOADED=1 (loaded) else non-zero — driving the kickstart-vs-bootstrap probe.
+write_mock_launchctl() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${LAUNCHCTL_LOG:-/dev/null}"
+if [[ "$1" == "print" ]]; then
+  [[ "${LAUNCHCTL_LOADED:-1}" == "1" ]] && exit 0 || exit 1
+fi
+exit 0
+MOCK
+  chmod +x "$1"
+}
+
+# A mock claude binary — presence + executability is all the precondition checks.
+write_mock_claude() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+  chmod +x "$1"
+}
+
+# A minimal, plutil-parseable launchd plist whose EnvironmentVariables.PATH = $2.
+write_plist_path() {
+  cat >"$1" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$2</string>
+	</dict>
+</dict>
+</plist>
+PLIST
+}
+
+@test "P3 headless: update_job transitions in-progress INSERT → heartbeat → completed (psql seam)" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    update_job_begin
+    echo "ID=${_update_job_id}"
+    update_job_heartbeat
+    update_job_complete
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ID=42"* ]] # RETURNING id captured from the INSERT
+  grep -q "INSERT INTO core.update_job" "${WORK}/psql.log"
+  grep -q "status = 'completed'" "${WORK}/psql.log"
+  grep -q "heartbeat_at = now()" "${WORK}/psql.log"
+  # heartbeat + completion are WHERE-guarded on the in-progress row
+  grep -q "status = 'in-progress'" "${WORK}/psql.log"
+}
+
+@test "P3 headless: update_job_fail records status='failed' + failure_reason (WHERE-guarded)" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    _update_job_id=42
+    update_job_fail "boom reason"
+  '
+  [ "$status" -eq 0 ]
+  grep -q "status = 'failed'" "${WORK}/psql.log"
+  grep -q "failure_reason = :'fr'" "${WORK}/psql.log" # bound, not concatenated (injection-safe)
+  grep -q "fr=boom reason" "${WORK}/psql.log"         # the reason rides a psql -v bind
+  grep -q "status = 'in-progress'" "${WORK}/psql.log" # WHERE-guard (never clobber a swept row)
+}
+
+@test "P3 headless: a 2nd concurrent in-progress INSERT (partial unique index violation) loud-fails exit 8" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    export PSQL_FAIL=unique
+    _update_headless=1
+    update_job_begin
+  '
+  [ "$status" -eq 8 ] # single-active DB guard → named exit 8
+  [[ "$output" == *"another update is already in-progress"* ]]
+}
+
+@test "P3 headless: ATRIUM_UPDATE_JOB_ID adopts the route-created row (no INSERT, heartbeat only)" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    export ATRIUM_UPDATE_JOB_ID=777
+    _update_headless=1
+    update_job_begin
+    echo "ID=${_update_job_id}"
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ID=777"* ]]                              # adopted the pre-created row id
+  ! grep -q "INSERT INTO core.update_job" "${WORK}/psql.log" # adopted, never re-INSERTed
+  grep -q "heartbeat_at = now()" "${WORK}/psql.log"          # heartbeated the adopted row
+}
+
+@test "P3: ATRIUM_UPDATE_DB=off (and interactive mode) performs ZERO psql calls" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    export ATRIUM_UPDATE_DB=off
+    _update_headless=1
+    update_job_begin; update_job_heartbeat; update_job_complete
+    _update_headless=0
+    update_job_begin # interactive path never touches the DB
+  '
+  [ "$status" -eq 0 ]
+  [[ ! -s "${WORK}/psql.log" ]] # no psql process was ever invoked
+}
+
+@test "P3 headless: update_heartbeat refreshes BOTH the pause-flag mtime and the DB heartbeat" {
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    update_serialize_begin # sets the pause flag (_update_pause_created=1) + lock
+    flag="$(update_pause_flag_path)"
+    _update_job_id=42
+    # backdate the flag past the 1800s TTL so a genuine refresh is observable
+    python3 -c "import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1],(t,t))" "${flag}"
+    aged="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 0)"
+    update_heartbeat # long-stage tick: refresh flag mtime + DB heartbeat
+    fresh="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 999)"
+    if [[ "${aged}" -ge 1800 && "${fresh}" -lt 60 ]]; then echo "PAUSE_REFRESHED"; fi
+    update_cleanup
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PAUSE_REFRESHED"* ]]           # mtime advanced from 3600s to near-0
+  grep -q "heartbeat_at = now()" "${WORK}/psql.log" # DB heartbeat fired on the same tick
+}
+
+@test "P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)" {
+  # A headless run that dies mid-flight (update_die, a declined gate, a crash caught by
+  # the trap) leaves an in-progress row → update_cleanup marks it 'failed' with the exit
+  # code so the P3-T3 stale sweep + the web UI never see a phantom-active job.
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    _update_job_id=42
+    _update_job_final=0 # not yet completed → the trap must fail it
+    update_cleanup      # simulates the EXIT trap firing on an abnormal exit
+  '
+  [ "$status" -eq 0 ]
+  grep -q "status = 'failed'" "${WORK}/psql.log"
+  grep -q "fr=aborted (exit=" "${WORK}/psql.log" # failure_reason carries the exit code
+}
+
+@test "P3 headless: terminal writes are WHERE-guarded (a stale-swept row is never resurrected)" {
+  # complete + fail both carry `WHERE ... status = 'in-progress'`, so a P3-T3 stale
+  # sweep that already flipped the row to 'failed' can never be clobbered back by a
+  # late terminal write from the (crashed) running process.
+  write_mock_psql "${WORK}/psql"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export PSQL_LOG="'"${WORK}"'/psql.log"
+    export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
+    _update_headless=1
+    _update_job_id=42
+    update_job_complete
+    _update_job_final=0
+    update_job_fail "late"
+  '
+  [ "$status" -eq 0 ]
+  run grep -c "AND status = 'in-progress'" "${WORK}/psql.log"
+  [ "$output" -ge 2 ] # both terminal writes name the in-progress guard
+}
+
+@test "P3 headless: a blank confirm token is fail-closed (declines, writes nothing)" {
+  # The web commit injects ATRIUM_UPDATE_CONFIRM_ANSWER=yes; ANY other value — including
+  # the empty string that a missing token / no-TTY both resolve to — declines via the
+  # gate's `case "" ) …decline` branch. DB disabled + a stubbed claude keep the run
+  # hermetic; the assertion is that a headless apply with a blank token writes ZERO files.
+  local claude="${WORK}/claude"
+  write_mock_claude "${claude}"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_DB=off \
+    ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/nonexistent-oneshot.plist" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="" \
+    bash "${SKILL}" --headless
+
+  [ "$status" -ne 0 ] # declined → non-zero
+  [[ "$output" == *"declined"* ]]
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] # zero writes
+  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
+  # trap unwound the pause flag + lock on the fail-closed exit
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
+}
+
+@test "P3 headless: a confirmed apply drives in-progress→completed and runs the install-parity post-step" {
+  # Full headless success e2e with every external effect seamed to a mock: psql (DB
+  # tracking), claude (precondition), npm (monitor rebuild), launchctl (launchd refresh).
+  # No real build/restart/claude/DB is touched; the monitor stays live.
+  local claude="${WORK}/claude"
+  write_mock_claude "${claude}"
+  write_mock_psql "${WORK}/psql"
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${WORK}/monitor" # a monitor dir so the build step runs
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="yes" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    PSQL_LOG="${WORK}/psql.log" \
+    ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist" \
+    ATRIUM_UPDATE_MONITOR_DIR="${WORK}/monitor" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    NPM_LOG="${WORK}/npm.log" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    LAUNCHCTL_LOADED=1 \
+    ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/nonexistent-render-launchd.sh" \
+    ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/nonexistent-render-env.sh" \
+    bash "${SKILL}" --headless
+
+  [ "$status" -eq 0 ]
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]       # applied
+  grep -q "INSERT INTO core.update_job" "${WORK}/psql.log"           # opened in-progress
+  grep -q "status = 'completed'" "${WORK}/psql.log"                  # closed completed
+  grep -q "run build" "${WORK}/npm.log"                              # monitor rebuilt (npm run build)
+  grep -q "kickstart -k" "${WORK}/launchctl.log"                     # loaded → kickstart -k
+  [[ -f "${WORK}/oneshot.plist" ]]                                   # one-shot plist rendered
+  grep -q "com.glass-atrium.update-oneshot" "${WORK}/oneshot.plist"  # correct decoupled label
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]            # trap unwound
+}
+
+@test "P3: install-parity post-step is idempotent (loaded→kickstart -k, unloaded→bootstrap; mock npm/launchctl)" {
+  write_mock_npm "${WORK}/npm"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${WORK}/monitor"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export NPM_LOG="'"${WORK}"'/npm.log" LAUNCHCTL_LOG="'"${WORK}"'/lc.log"
+    export ATRIUM_UPDATE_NPM="'"${WORK}"'/npm" ATRIUM_UPDATE_LAUNCHCTL="'"${WORK}"'/launchctl"
+    export ATRIUM_UPDATE_MONITOR_DIR="'"${WORK}"'/monitor"
+    export ATRIUM_UPDATE_MONITOR_PLIST="'"${WORK}"'/mon.plist"
+    # loaded: the print probe returns 0 → kickstart -k, run twice (idempotent verb)
+    export LAUNCHCTL_LOADED=1
+    update_build_monitor && echo "BUILD_OK"
+    update_refresh_monitor_launchd
+    update_refresh_monitor_launchd
+    # unloaded: the print probe returns non-zero → bootstrap (kickstart -k is
+    # non-idempotent when unloaded, so the probe picks the correct verb)
+    export LAUNCHCTL_LOADED=0
+    update_refresh_monitor_launchd
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"BUILD_OK"* ]]
+  grep -q "run build" "${WORK}/npm.log"                            # build ran through the npm seam
+  [[ "$(grep -c 'kickstart -k' "${WORK}/lc.log")" -eq 2 ]]         # loaded → kickstart -k, both times
+  grep -q "bootstrap" "${WORK}/lc.log"                            # unloaded → bootstrap
+}
+
+@test "P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args" {
+  local claude="${WORK}/bin/claude"
+  mkdir -p "${WORK}/bin"
+  write_mock_claude "${claude}"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_CLAUDE_BIN="'"${claude}"'"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    out="$(update_render_oneshot_plist)"
+    echo "OUT=${out}"
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OUT=${WORK}/oneshot.plist"* ]]
+  [[ -f "${WORK}/oneshot.plist" ]]
+  grep -q "<string>com.glass-atrium.update-oneshot</string>" "${WORK}/oneshot.plist"
+  grep -q "<string>--headless</string>" "${WORK}/oneshot.plist" # runs headless update.sh
+  grep -q "<key>RunAtLoad</key>" "${WORK}/oneshot.plist"        # one-shot: runs on bootstrap
+  if command -v plutil >/dev/null 2>&1; then
+    run plutil -lint -s "${WORK}/oneshot.plist"
+    [ "$status" -eq 0 ] # the rendered plist is valid
+  fi
+}
+
+@test "P3 headless: claude precondition PASSES when the binary resolves and each plist PATH contains it" {
+  local claude="${WORK}/bin/claude"
+  mkdir -p "${WORK}/bin"
+  write_mock_claude "${claude}"
+  write_plist_path "${WORK}/ok.plist" "${WORK}/bin:/usr/bin:/bin"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_CLAUDE_BIN="'"${claude}"'"
+    update_verify_claude_precondition "'"${WORK}"'/ok.plist" && echo "PRECOND_OK"
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PRECOND_OK"* ]]
+  [[ "$output" == *"claude precondition ok"* ]]
+}
+
+@test "P3 headless: claude precondition LOUD-FAILS exit 7 when the binary is unresolvable" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    # a bogus BASENAME resolves nowhere (not on PATH, not in the common install dirs)
+    export ATRIUM_UPDATE_CLAUDE_BIN="claude-nonexistent-xyztest"
+    update_verify_claude_precondition
+  '
+  [ "$status" -eq 7 ] # named loud-fail exit 7 (the merge stage would fail)
+  [[ "$output" == *"claude binary NOT resolvable"* ]]
+}
+
+@test "P3 headless: claude precondition LOUD-FAILS exit 7 when a plist PATH omits claude" {
+  local claude="${WORK}/bin/claude"
+  mkdir -p "${WORK}/bin"
+  write_mock_claude "${claude}"
+  write_plist_path "${WORK}/bad.plist" "/usr/bin:/bin" # PATH lacks the claude dir
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_CLAUDE_BIN="'"${claude}"'" # resolves in the process env
+    update_verify_claude_precondition "'"${WORK}"'/bad.plist"
+  '
+  [ "$status" -eq 7 ]
+  [[ "$output" == *"claude NOT resolvable on the launchd plist PATH"* ]]
+}
+
+@test "P3: --restore-agents restores agent bodies from the agents-bak before-image (git-revert replacement)" {
+  local cyc="2026-07-01_update-1.0.0"
+  mkdir -p "${WORK}/agents-bak/${cyc}"
+  printf 'BEFORE IMAGE BODY' >"${WORK}/agents-bak/${cyc}/dev-a.md.bak"
+  seed_file "${INSTALL}" "agents/dev-a.md" "corrupted-by-a-bad-update"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
+    bash "${SKILL}" --restore-agents "${cyc}"
+
+  [ "$status" -eq 0 ]
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "BEFORE IMAGE BODY" ]] # reverted to the before-image
+  [[ "$output" == *"agents-bak restore complete"* ]]
+  # the restore serializes via the same pause+lock; the trap unwinds both
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
+}
+
+@test "P3: --restore-agents rejects a cycle-id with path separators / traversal (exit 10)" {
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
+    bash "${SKILL}" --restore-agents "../etc/evil"
+  [ "$status" -eq 10 ] # SECURITY: request-supplied id cannot escape the base dir
+  [[ "$output" == *"invalid cycle-id"* ]]
+}
+
+@test "P3: --restore-agents loud-fails (exit 10) on a missing snapshot dir" {
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
+    bash "${SKILL}" --restore-agents "2099-01-01_update-9.9.9"
+  [ "$status" -eq 10 ]
+  [[ "$output" == *"no agents-bak snapshot"* ]]
+}
+
+@test "P3: agents-bak retention prune drops before-image dirs past the 14-day window, keeps fresh ones" {
+  mkdir -p "${WORK}/agents-bak/old_cycle" "${WORK}/agents-bak/fresh_cycle"
+  printf 'x' >"${WORK}/agents-bak/old_cycle/dev-a.md.bak"
+  printf 'x' >"${WORK}/agents-bak/fresh_cycle/dev-a.md.bak"
+  # backdate the old dir 20 days (> the 14-day retention); fresh stays at now
+  python3 -c 'import os,sys,time; t=time.time()-20*86400; os.utime(sys.argv[1],(t,t))' \
+    "${WORK}/agents-bak/old_cycle"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export AUTOAGENT_BACKUP_DIR="'"${WORK}"'/agents-bak"
+    update_prune_agents_bak
+  '
+  [ "$status" -eq 0 ]
+  [[ ! -d "${WORK}/agents-bak/old_cycle" ]] # pruned (aged past 14d)
+  [[ -d "${WORK}/agents-bak/fresh_cycle" ]] # kept (within retention)
 }

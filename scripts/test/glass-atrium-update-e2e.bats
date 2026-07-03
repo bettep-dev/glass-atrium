@@ -13,7 +13,9 @@
 # then CLEARED on exit, and the daemon .apply-lock is released.
 #
 # Run via: bats scripts/test/glass-atrium-update-e2e.bats
-# Requires: bats >= 1.5.0, jq, git, python3, diff, shasum/sha256sum
+# Requires: bats >= 1.5.0, jq, python3, diff, shasum/sha256sum — git is NOT
+# required: the whole flow (spine sync + git-free git_txn_apply merge) runs
+# without any git invocation, by design (no-.git consumer install, P2-T2).
 #
 # Hermetic strategy (identical to glass-atrium-update.bats): a per-test mktemp
 # sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR /
@@ -26,13 +28,13 @@
 
 bats_require_minimum_version 1.5.0
 
-export SKILL="${HOME}/.glass-atrium/skills/glass-atrium-update/update.sh"
-export REAL_LIB_ROOT="${HOME}/.glass-atrium"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+export SKILL="${GA}/scripts/update.sh"
+export REAL_LIB_ROOT="${GA}"
 
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  command -v git >/dev/null 2>&1 || skip "git required"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v diff >/dev/null 2>&1 || skip "diff required"
   WORK="$(cd -- "$(mktemp -d -t ga-update-e2e.XXXXXX)" && pwd -P)"
@@ -43,7 +45,11 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  # Reap a straggler updater from the SIGTERM test if an assertion aborted that
+  # test between spawn and its bounded reap (best-effort; pid is our own child).
+  [[ -n "${UPDATE_PID:-}" ]] && kill -9 "${UPDATE_PID}" 2>/dev/null || true
+  UPDATE_PID=""
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.
@@ -72,16 +78,6 @@ write_manifest() {
   done
   printf '{"version":"1.0.0","files":[%s],"hashes":{%s}}\n' \
     "${files%,}" "${hashes%,}" >"${out}"
-}
-
-# Init a git repo at the INSTALL sandbox + commit whatever is already seeded, so
-# the agent EDITABLE-region merge's git_txn_apply has a clean tracked worktree.
-git_init_install() {
-  git -C "${INSTALL}" init -q
-  git -C "${INSTALL}" config user.email t@t.t
-  git -C "${INSTALL}" config user.name t
-  git -C "${INSTALL}" add -A
-  git -C "${INSTALL}" commit -qm "seed" || true
 }
 
 # Seed the base@install body for agents/<name> into the base-content store
@@ -137,19 +133,18 @@ vendor NEW rules'
 
 @test "E2E (T23): one release combining a non-agent change, an only-vendor merge, a both-changed merge, and a roster add" {
   # --- install (the live tree being updated) -------------------------------
-  seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"         # (a)
-  seed_file "${INSTALL}" "agents/dev-vendor.md" "${VENDOR_BASE}"      # (b) local == base
-  seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"         # (c) local learned
-  seed_base_store "dev-vendor.md" "${VENDOR_BASE}"                     # (b) base anchor
-  seed_base_store "dev-both.md" "${BOTH_BASE}"                         # (c) base anchor
-  git_init_install # the agent merge transaction requires a git worktree
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"    # (a)
+  seed_file "${INSTALL}" "agents/dev-vendor.md" "${VENDOR_BASE}" # (b) local == base
+  seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"    # (c) local learned
+  seed_base_store "dev-vendor.md" "${VENDOR_BASE}"               # (b) base anchor
+  seed_base_store "dev-both.md" "${BOTH_BASE}"                   # (c) base anchor
 
   # --- new release tree (the test-seam source) -----------------------------
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"          # (a)
-  seed_file "${NEWSRC}" "agents/dev-vendor.md" "${VENDOR_RELEASE}"    # (b)
-  seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"        # (c)
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"       # (a)
+  seed_file "${NEWSRC}" "agents/dev-vendor.md" "${VENDOR_RELEASE}" # (b)
+  seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"     # (c)
   seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
-brand new vendor agent"                                                # (d) roster ADD
+brand new vendor agent" # (d) roster ADD
   write_manifest "${WORK}/manifest.json" \
     "scripts/tool.sh" "agents/dev-vendor.md" "agents/dev-both.md" "agents/dev-new.md"
 
@@ -207,12 +202,93 @@ STUB
 
   # cross-cutting: the pause flag was SET during the run (the claude stub observed
   # it held) THEN CLEARED on exit; the daemon .apply-lock was released
-  [[ -e "${WORK}/pause-witness" ]]                                     # set-during-run
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]             # cleared on exit
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]                    # lock released
+  [[ -e "${WORK}/pause-witness" ]]                        # set-during-run
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]] # cleared on exit
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock released
 
   # the successful non-agent sync anchored the next update's base (baseline +
   # base-content store both captured)
   [[ -f "${STATE}/update-state/baseline-manifest.json" ]]
   [[ -f "${STATE}/update-state/base-agents/dev-vendor.md" ]]
+}
+
+# ---------------------------------------------------------------------------
+# SIGTERM mid-run → update_cleanup (the EXIT INT TERM trap) releases the
+# .apply-lock and clears the pause flag — no stranded writer-serialization
+# ---------------------------------------------------------------------------
+
+@test "SIGTERM mid-merge releases the .apply-lock and clears the pause flag (trap path)" {
+  # Minimal fixture that reaches the both-changed Haiku verify: one non-agent
+  # change (drives the confirmed spine sync) + the both-changed agent (the
+  # claude call site — the updater is INSIDE the merge, lock + pause flag held).
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"
+  seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"
+  seed_base_store "dev-both.md" "${BOTH_BASE}"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"
+  seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" "agents/dev-both.md"
+
+  # Handshake claude stub: READY appears once update.sh is INSIDE the merge
+  # verify (mid-run, lock + flag held); RESUME lets it finish, because bash
+  # DEFERS a trapped signal until the foreground child tree exits. The RESUME
+  # wait is BOUNDED so an aborted test can never strand a spinning stub.
+  cat >"${WORK}/fake-claude.sh" <<'STUB'
+#!/usr/bin/env bash
+[[ -n "${UPD_CLAUDE_READY:-}" ]] && : >"${UPD_CLAUDE_READY}"
+j=0
+while [[ ! -e "${UPD_CLAUDE_RESUME:-}" && "${j}" -lt 100 ]]; do
+  sleep 0.1
+  j=$((j + 1))
+done
+exit 1
+STUB
+  chmod +x "${WORK}/fake-claude.sh"
+
+  env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    AUTOAGENT_CLAUDE_BIN="${WORK}/fake-claude.sh" \
+    UPD_CLAUDE_READY="${WORK}/claude.ready" \
+    UPD_CLAUDE_RESUME="${WORK}/claude.resume" \
+    bash "${SKILL}" </dev/null >"${WORK}/update.log" 2>&1 3>&- &
+  UPDATE_PID=$!
+
+  # Bounded wait for the mid-merge handshake (≤10s), then pin the mid-run state.
+  local i=0
+  while [[ ! -e "${WORK}/claude.ready" && "${i}" -lt 100 ]]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [[ -e "${WORK}/claude.ready" ]]                       # updater reached the verify
+  [[ -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock held mid-run
+  [[ -e "${STATE}/update-state/autoagent-pause.flag" ]] # pause flag held mid-run
+
+  kill -TERM "${UPDATE_PID}" # delivered NOW, pending while the stub is in flight
+  : >"${WORK}/claude.resume" # unblock the verify so the deferred trap can fire
+
+  # Bounded reap. Regression pin: if TERM ever drops out of the trap list the
+  # updater dies trap-LESS (EXIT traps do NOT run on an untrapped fatal signal),
+  # stranding the lock dir + pause flag asserted gone below.
+  i=0
+  while kill -0 "${UPDATE_PID}" 2>/dev/null && [[ "${i}" -lt 100 ]]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "${UPDATE_PID}" 2>/dev/null; then
+    kill -9 "${UPDATE_PID}" 2>/dev/null || true
+    wait "${UPDATE_PID}" 2>/dev/null || true
+    UPDATE_PID=""
+    false # updater failed to exit after SIGTERM + resume
+  fi
+  wait "${UPDATE_PID}" 2>/dev/null || true
+  UPDATE_PID=""
+
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock released by the trap
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]] # pause flag cleared
 }

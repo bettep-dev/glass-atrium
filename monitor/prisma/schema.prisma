@@ -150,6 +150,19 @@ enum ProposalStatus {
   @@schema("core")
 }
 
+/// Source: P3 git-free self-update pipeline — core.update_job lifecycle.
+/// `in-progress` carries a hyphen (invalid Prisma identifier) → @map to the
+/// DB literal, mirroring ApprovalTier.user_pending / DaemonType.daily_restart.
+/// The DB-stored value 'in-progress' is what the raw-SQL partial UNIQUE INDEX
+/// predicate (WHERE status = 'in-progress') keys on — keep them in lockstep.
+enum UpdateJobStatus {
+  in_progress @map("in-progress")
+  failed
+  completed
+
+  @@schema("core")
+}
+
 enum HookErrorKind {
   connection_refused
   timeout
@@ -289,7 +302,7 @@ model Outcome {
   // Wave 15 fix: outcome-record.sh:373-417 computes attribution provenance
   // (agent-id-missing / cron-derived / completion-missing / etc.) — persistence
   // wire-up was missing → learning-aggregator.py:374-389 always saw empty string.
-  // Wave 2026-05-14 (plan doc 1012 P2) → 2026-05-29 (e5f3) — CHECK constraint NOT VALID, 8종 캐노니컬:
+  // Wave 2026-05-14 (plan doc 1012 P2) → 2026-05-29 (e5f3) — CHECK constraint NOT VALID, 9종 캐노니컬:
   //   - hook-input             : default — happy path
   //   - cron-derived           : autoagent-cron / wiki-daily-compile 등 5개 cron
   //   - agent-id-missing       : Python label-clarification 분기
@@ -298,8 +311,10 @@ model Outcome {
   //   - conversation-only      : Tier-3 fallback — turn 0 tool_use (95.1% 노이즈 식별)
   //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
   //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
-  // String? 유지 (Prisma enum 미도입) — CHECK 가 DB-side 보호. Nullable: historical rows
-  // pre-2026-05-09 legitimately have NULL (NOT VALID 가 면제).
+  //   - budget-truncation      : subagent 예산 초과 truncation 라벨 (dual-write source · 9번째 값)
+  // String? 유지 (Prisma enum 미도입). CHECK 는 migration 이 아닌 oss-db-setup.sh post-deploy
+  // raw-SQL 로 DB-side 적용 (applied baseline SQL 수정 시 checksum drift → 회피). Nullable:
+  // historical rows pre-2026-05-09 legitimately have NULL (NOT VALID 가 면제).
   attributionSource String?       @map("attribution_source")
   summary           String
   reviewFlag        Boolean       @default(false) @map("review_flag")
@@ -521,6 +536,39 @@ model AutoagentProposal {
   // Prisma 7 schema cannot declare partial-index predicates; plain @@index would make
   // migrate diff drop the partial predicate and regenerate a full mostly-NULL index).
   @@map("autoagent_proposals")
+  @@schema("core")
+}
+
+/// Source: P3 git-free self-update pipeline — single-active-job tracker for the
+/// route-enqueued updater. A crashed updater leaves a detectably-stale row
+/// (heartbeat_at frozen), swept via the status index. Single-active-job is NOT
+/// modeled here as @@unique: it is enforced by a hand-written raw-SQL PARTIAL
+/// UNIQUE INDEX (WHERE status = 'in-progress') in this model's migration.sql.
+model UpdateJob {
+  id            BigInt          @id @default(autoincrement())
+  status        UpdateJobStatus
+  startedAt     DateTime        @map("started_at") @db.Timestamptz(6)
+  // REQUIRED (non-null): the updater advances heartbeat_at while alive, so a
+  // crash freezes it → the in-progress row is detectably stale to the sweep
+  // (age(now(), heartbeat_at) filtered by status). A NULLable column would let
+  // a crashed job masquerade as "never heartbeated" and evade the sweep.
+  heartbeatAt   DateTime        @map("heartbeat_at") @db.Timestamptz(6)
+  targetVersion String          @map("target_version")
+  failureReason String?         @map("failure_reason")
+  // Restart-resilient preview-nonce store — survives the updater self-restart.
+  // NOT a before-image: rollback recovery uses the agents-bak snapshot, so no
+  // pre_change/before-image column exists here (state-tracking only).
+  previewNonce  String?         @map("preview_nonce")
+
+  // Stale-sweep support (age(now(), heartbeat_at) filtered by status).
+  // Single-active-job is enforced by the raw-SQL partial UNIQUE INDEX
+  // update_job_single_active_uniq (WHERE status = 'in-progress') in the
+  // migration — deliberately NOT mirrored as @@unique here: Prisma 7 cannot
+  // express a partial predicate, so migrate diff would drop the WHERE clause
+  // and regenerate a full unique index. Mirrors the intentional
+  // outcomes_style_ref_agent_ts_idx / autoagent_proposals_confidence_idx pattern.
+  @@index([status], map: "update_job_status_idx")
+  @@map("update_job")
   @@schema("core")
 }
 
