@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# generate-manifest.sh suite — pins the v1.0.0 manifest contract:
-#   * regenerate stamps a top-level version == 1.0.0
+# generate-manifest.sh suite — pins the manifest contract:
+#   * regenerate stamps the top-level version from the ATRIUM_VERSION SoT
 #   * every files[] path carries a 64-hex sha256 in the parallel hashes map
 #     (hashes count == files count; recorded hash == a direct shasum)
 #   * files[] stays an array of STRINGS (installer/doctor backward-compat)
@@ -52,10 +52,15 @@ seed_manifest_doc() {
     >"${MANIFEST}"
 }
 
-@test "generate: stamps top-level version == 1.0.0" {
+@test "generate: stamps top-level version matching ATRIUM_VERSION" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r '.version' "${MANIFEST}")" == "1.0.0" ]]
+  # Derive the expected version from the SCRIPT copy's ATRIUM_VERSION SoT so the
+  # assertion tracks a version bump instead of pinning a literal.
+  local expected
+  expected="$(sed -n 's/^readonly ATRIUM_VERSION="\([^"]*\)".*/\1/p' "${SCRIPT}")"
+  [[ -n "${expected}" ]]
+  [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
 @test "generate: top-level key order is version, _doc_settings_json, files, hashes" {
