@@ -113,10 +113,14 @@ async function seedConfidenceRows(): Promise<void> {
   for (let n = 0; n < HIGH_CONF_NON_POISONED; n++) await insertHighConfidence();
 }
 
+// include_all=1 lifts the O2 registry-membership gate (default-scoped since the
+// FIX-RB1 sibling change) — this suite's seed agents (conf-null-agent-*/
+// conf-high-agent-*) are synthetic non-registry names, and this test's concern
+// (confidence=null filter idempotency) is orthogonal to registry membership.
 async function fetchCrossAnalysisNullConfidence(): Promise<OutcomeCrossAnalysisResponse> {
   const res = await app.inject({
     method: "GET",
-    url: `/api/outcomes/cross-analysis?days=all&confidence=null&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/cross-analysis?days=all&confidence=null&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(res.statusCode, 200, "/cross-analysis must be 200");
   return res.json() as OutcomeCrossAnalysisResponse;

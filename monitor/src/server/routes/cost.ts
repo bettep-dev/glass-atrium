@@ -5,6 +5,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
+import { buildAgentMembershipFilter, loadCanonicalAgentKeys } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
@@ -516,6 +517,11 @@ async function handleCostKpi(
   const start = Date.now();
   const prisma = getPrisma();
   try {
+    // Registry-membership scope for done_count_7d — this KPI feeds the derived
+    // cost_per_done_usd ratio, so a non-registry-agent row (noise) would both
+    // inflate the numerator's implied population and skew the ratio. AND-prefixed
+    // helper appended after the sub-select's existing complete WHERE.
+    const agentMembership = buildAgentMembershipFilter(await loadCanonicalAgentKeys());
     const rows = await prisma.$queryRaw<CostKpiDbRow[]>`
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM core.cost_events
@@ -528,7 +534,8 @@ async function handleCostKpi(
         (SELECT COUNT(*) FROM core.outcomes
           WHERE result = 'done'
             AND (record_ts AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)::date
-                  >= (NOW() AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)::date - 6) AS done_count_7d
+                  >= (NOW() AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)::date - 6
+            ${agentMembership}) AS done_count_7d
     `;
     const row = rows[0];
     if (row === undefined) {

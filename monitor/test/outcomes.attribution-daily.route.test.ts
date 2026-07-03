@@ -33,14 +33,22 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { registerOutcomesRoutes } from "../src/server/routes/outcomes.js";
+import {
+  categorizeAttributionSource,
+  pivotAttributionDaily,
+  registerOutcomesRoutes,
+} from "../src/server/routes/outcomes.js";
 import type {
   AttributionDailyResponse,
   OutcomesErrorBody,
@@ -81,7 +89,50 @@ const EXPECTED_SEED_DELTA: Readonly<Record<Category, number>> & { total: number 
   total: 8,
 };
 
+// Registry-membership scope was added to the route's outer query — this suite's
+// seeded agent literals are synthetic (not real registered agents), so a
+// hermetic AGENT_REGISTRY_PATH fixture registers every literal this file seeds
+// as a canonical member; otherwise the real registry would exclude them all and
+// collapse every delta in this suite to 0. Closed, enumerable set: the two
+// index-templated batches (0..CANONICAL_SOURCE_CATEGORY.length-1) plus the 5
+// fixed literals used by the NULL-row and genuine/phantom/sentinel-backing tests.
+const TEMPLATED_AGENT_NAMES = Array.from(
+  { length: CANONICAL_SOURCE_CATEGORY.length },
+  (_, i) => `attr-daily-agent-${i}`,
+).concat(
+  Array.from({ length: CANONICAL_SOURCE_CATEGORY.length }, (_, i) => `attr-daily-b2-agent-${i}`),
+);
+const FIXTURE_AGENT_NAMES = [
+  ...TEMPLATED_AGENT_NAMES,
+  "attr-daily-agent-null",
+  "attr-daily-b2-agent-null",
+  "attr-daily-genuine-agent",
+  "attr-daily-phantom-agent",
+  "attr-daily-sentinel-agent",
+  // literal_omission_breakdown route test (h/i) seed agents.
+  "attr-daily-brk-agent-a",
+  "attr-daily-brk-agent-b",
+];
+const REGISTRY_FIXTURE = {
+  $schema: "agent-registry",
+  version: "1.1",
+  agents: Object.fromEntries(
+    FIXTURE_AGENT_NAMES.map((name) => [
+      name,
+      { domains: ["test"], phase: "implementation", dual_phase: false },
+    ]),
+  ),
+};
+
+let tmpRoot: string;
+
 before(async () => {
+  tmpRoot = await mkdtemp(join(tmpdir(), "attr-daily-registry-"));
+  const registryPath = join(tmpRoot, "agent-registry.json");
+  await writeFile(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+
   app = Fastify({ logger: false });
   await registerOutcomesRoutes(app);
   await app.ready();
@@ -108,6 +159,9 @@ after(async () => {
     console.error("[attr-daily-test cleanup] DB scrub failed:", error);
   }
   await disconnectPrisma();
+  delete process.env.AGENT_REGISTRY_PATH;
+  resetAgentRegistryCache();
+  await rm(tmpRoot, { recursive: true, force: true });
 });
 
 // Window summary fetch helper — endpoint 의 7일 window summary 를 읽어 delta 측정.
@@ -450,3 +504,140 @@ async function seedGenuineAndPhantomLoss(): Promise<void> {
        'subagent_stop_missing')
   `;
 }
+
+// (f) budget-truncation categorization (T4 consumer contract) — a subagent
+// hard-killed at its tool_use budget ceiling emits attribution_source
+// 'budget-truncation'; it MUST bucket into 'literal_omission' (a named cause of a
+// truncated completion), NOT the generic 'synthesized' catch-all, so budget-kills
+// stay distinguishable + countable rather than indistinguishable from ordinary
+// completion-synthesized rows.
+//
+// Verified at the pure-fn level (not a route seed) by necessity: the
+// outcomes_attribution_source_check CHECK (NOT VALID, 8 canonical values) does not
+// yet admit 'budget-truncation', so an INSERT would violate the constraint. The
+// constraint expansion is a sibling DB task; this pins the consumer-side
+// categorization regardless of the constraint's current state.
+test("budget-truncation → literal_omission (not the synthesized catch-all)", () => {
+  assert.strictEqual(
+    categorizeAttributionSource("budget-truncation"),
+    "literal_omission",
+    "budget-truncation must be a distinguishable literal_omission, not synthesized",
+  );
+});
+
+// Regression guard — the budget-truncation addition must not perturb the existing
+// named-source mappings, and an unlisted value must still fold to the catch-all
+// (sum-completeness preserved). subagent-stop-missing is omitted here: its category
+// is query-qualified against agent_events backing (covered by the (e) route test).
+test("existing named sources keep categories; unknown still → synthesized", () => {
+  assert.strictEqual(categorizeAttributionSource("hook-input"), "healthy");
+  assert.strictEqual(categorizeAttributionSource("truncated_completion"), "literal_omission");
+  assert.strictEqual(categorizeAttributionSource("completion-missing"), "literal_omission");
+  assert.strictEqual(categorizeAttributionSource("completion-synthesized"), "synthesized");
+  assert.strictEqual(categorizeAttributionSource("conversation-only"), "synthesized");
+  assert.strictEqual(categorizeAttributionSource("cron-derived"), "synthesized");
+  assert.strictEqual(categorizeAttributionSource("agent-id-missing"), "synthesized");
+  assert.strictEqual(categorizeAttributionSource("some-future-unknown-source"), "synthesized");
+});
+
+// (g) literal_omission_breakdown split — pure-fn (pivot) level. A budget-truncation
+// row increments ONLY the budget_truncation sub-count (never truncated_completion /
+// completion_missing), and the three sub-counts SUM to the literal_omission total.
+// Pure-fn by necessity: outcomes_attribution_source_check rejects a
+// 'budget-truncation' INSERT (constraint expansion is a sibling DB task), so a
+// route seed of that value is impossible — this pins the consumer-side split
+// regardless of the live constraint state (same rationale as test (f)).
+test("pivot breakdown: budget-truncation increments budget_truncation only; sub-counts sum to literal_omission", () => {
+  const { totals, breakdown } = pivotAttributionDaily([
+    { day: "2026-07-01", attribution_source: "budget-truncation", cnt: 3n },
+    { day: "2026-07-01", attribution_source: "truncated_completion", cnt: 2n },
+    { day: "2026-07-01", attribution_source: "completion-missing", cnt: 1n },
+    { day: "2026-07-01", attribution_source: "hook-input", cnt: 5n },
+  ]);
+  assert.strictEqual(breakdown.budget_truncation, 3, "budget-truncation rows land in budget_truncation");
+  assert.strictEqual(
+    breakdown.truncated_completion,
+    2,
+    "truncated_completion sub-count unperturbed by budget-truncation",
+  );
+  assert.strictEqual(
+    breakdown.completion_missing,
+    1,
+    "completion_missing sub-count unperturbed by budget-truncation",
+  );
+  const sum = breakdown.truncated_completion + breakdown.completion_missing + breakdown.budget_truncation;
+  assert.strictEqual(sum, totals.literal_omission, "breakdown sub-counts sum to the literal_omission total");
+  assert.strictEqual(totals.literal_omission, 6, "literal_omission = 3 + 2 + 1 (hook-input not counted)");
+});
+
+// literal_omission_breakdown route seed — 2 truncated_completion + 1
+// completion-missing, all admitted by outcomes_attribution_source_check. distinct
+// record_ts/agent/cid → no dedup collision; 30..32min ago → inside the 7-day window.
+async function seedBreakdownRows(): Promise<void> {
+  const prisma = getPrisma();
+  const rows: ReadonlyArray<readonly [string, string]> = [
+    ["attr-daily-brk-agent-a", "truncated_completion"],
+    ["attr-daily-brk-agent-a", "truncated_completion"],
+    ["attr-daily-brk-agent-b", "completion-missing"],
+  ];
+  for (let i = 0; i < rows.length; i++) {
+    const entry = rows[i];
+    if (entry === undefined) continue;
+    const [agent, source] = entry;
+    await prisma.$executeRaw`
+      INSERT INTO core.outcomes
+        (record_ts, agent, task_type, result, summary, attribution_source, cid)
+      VALUES
+        (NOW() - (${i + 30}::int * INTERVAL '1 minute'),
+         ${agent},
+         'feature'::core."TaskType",
+         'done'::core."OutcomeResult",
+         'attribution-daily breakdown seed',
+         ${source},
+         ${`${SUITE_MARKER}-brk-${i}`})
+    `;
+  }
+}
+
+// (h) route literal_omission_breakdown — window_summary carries the raw-literal
+// split of the literal_omission category. Regression lock: the sub-count deltas
+// SUM to the literal_omission category delta, so literal_omission_rate is
+// unperturbed by the additive breakdown field. budget_truncation stays 0 (no
+// admitted row exists). Delta-measured (concurrent rows cancel).
+test("route literal_omission_breakdown sub-counts sum to the literal_omission delta (regression lock)", async () => {
+  const before = await fetchWindowSummary();
+  await seedBreakdownRows();
+  const after = await fetchWindowSummary();
+
+  const loDelta = sumCategories(after).literal_omission - sumCategories(before).literal_omission;
+
+  const b = before.window_summary.literal_omission_breakdown;
+  const a = after.window_summary.literal_omission_breakdown;
+  const tcDelta = a.truncated_completion - b.truncated_completion;
+  const cmDelta = a.completion_missing - b.completion_missing;
+  const btDelta = a.budget_truncation - b.budget_truncation;
+
+  assert.strictEqual(tcDelta, 2, "2 truncated_completion rows increment truncated_completion");
+  assert.strictEqual(cmDelta, 1, "1 completion-missing row increments completion_missing");
+  assert.strictEqual(btDelta, 0, "no budget-truncation row admitted → budget_truncation unchanged");
+  // Regression lock: the breakdown is a pure decomposition — the sub-count deltas
+  // sum to the literal_omission category delta, so the existing total/rate is intact.
+  assert.strictEqual(tcDelta + cmDelta + btDelta, loDelta, "breakdown deltas sum to the literal_omission delta");
+  assert.strictEqual(loDelta, 3, "literal_omission increased by exactly the 3 seeded rows");
+});
+
+// (i) budget_truncation_by_agent — array contract. Live grouping data is
+// unreachable until outcomes_attribution_source_check admits 'budget-truncation'
+// (sibling DB task); with no such row in the window the group is [] and MUST NOT
+// surface any seeded literal_omission agent (they are not budget-truncation).
+test("budget_truncation_by_agent is an array, empty of non-budget-truncation agents", async () => {
+  const body = await fetchWindowSummary();
+  const byAgent = body.window_summary.budget_truncation_by_agent;
+  assert.ok(Array.isArray(byAgent), "budget_truncation_by_agent is an array");
+  for (const seededAgent of ["attr-daily-brk-agent-a", "attr-daily-brk-agent-b"]) {
+    assert.ok(
+      !byAgent.some((r) => r.agent === seededAgent),
+      `${seededAgent} (a literal_omission agent) must not appear in budget_truncation_by_agent`,
+    );
+  }
+});
