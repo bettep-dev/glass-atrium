@@ -1,11 +1,11 @@
--- OSS fresh-install baseline — schema.prisma 전체를 단일 init 으로 재생성한 마이그레이션.
--- 사유: 과거 마이그레이션 묶음은 의도적으로 삭제됨(이력 정리) — fresh DB 는 본 baseline
---   하나로 현행 스키마에 도달한다. 기존(라이브) DB 는 install.sh 의 presence-probe 가
---   bootstrap 을 skip 하므로 영향 없음. 라이브 DB 에서 `install.sh db-setup` 을 직접 실행할
---   때만 1회 `prisma migrate resolve --applied 20260611000000_init_oss_baseline` 필요.
--- 생성: `prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`
---   + 수기 부록(아래) — Prisma DSL 은 GENERATED tsvector 칼럼과 gin_trgm_ops /
---   gin_bigm_ops 인덱스를 표현하지 못함 (wiki_fts · clauded_doc_mgmt 부록 패턴 승계).
+-- OSS fresh-install baseline (squashed) — 7개 마이그레이션을 단일 init 으로 접음.
+-- 소스: 20260611000000_init_oss_baseline + add_model_config(seed) +
+--   add_identifier_rejected_error_kind + add_infra_fault_cost_guard_state +
+--   drop_api_response_metrics + widen_autoagent_pattern_label + add_update_job.
+-- pre-release 초기상태 기준 이력 정리 — 적용 결과 스키마는 7개 순차적용과 byte-identical.
+-- 접기 규칙: enum ADD VALUE→CREATE TYPE 인라인(끝에 append, enumsortorder 보존) ·
+--   drop_api_response_metrics→테이블/인덱스 미생성 · widen→pattern_label VARCHAR(256) 직접.
+-- Prisma DSL 미표현분(GENERATED tsvector · gin_trgm/bigm · partial unique)은 raw 부록 유지.
 
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "core";
@@ -29,7 +29,7 @@ CREATE TYPE "core"."DaemonType" AS ENUM ('autoagent', 'wiki', 'daily-restart', '
 CREATE TYPE "core"."DaemonStatus" AS ENUM ('ok', 'partial', 'error', 'missing', 'stale', 'quota_exceeded');
 
 -- CreateEnum
-CREATE TYPE "core"."CostGuardState" AS ENUM ('ok', 'warn', 'block');
+CREATE TYPE "core"."CostGuardState" AS ENUM ('ok', 'warn', 'block', 'infra_fault');
 
 -- CreateEnum
 CREATE TYPE "core"."TaskType" AS ENUM ('bug-fix', 'feature', 'refactor', 'research', 'plan', 'review', 'diagnosis', 'doc', 'cleanup');
@@ -59,7 +59,10 @@ CREATE TYPE "core"."ProposalClassification" AS ENUM ('apply', 'reject');
 CREATE TYPE "core"."ProposalStatus" AS ENUM ('pending', 'approved', 'rejected', 'applied', 'snoozed');
 
 -- CreateEnum
-CREATE TYPE "core"."HookErrorKind" AS ENUM ('connection_refused', 'timeout', 'constraint_violation', 'unknown');
+CREATE TYPE "core"."HookErrorKind" AS ENUM ('connection_refused', 'timeout', 'constraint_violation', 'unknown', 'identifier_rejected');
+
+-- CreateEnum
+CREATE TYPE "core"."UpdateJobStatus" AS ENUM ('in-progress', 'failed', 'completed');
 
 -- CreateEnum
 CREATE TYPE "monitor"."AuditResultCode" AS ENUM ('success', 'blocked', 'error');
@@ -204,7 +207,7 @@ CREATE TABLE "core"."daemon_run_payload" (
 CREATE TABLE "core"."autoagent_proposals" (
     "id" BIGSERIAL NOT NULL,
     "cycle_date" DATE NOT NULL,
-    "pattern_label" VARCHAR(128) NOT NULL,
+    "pattern_label" VARCHAR(256) NOT NULL,
     "target_file" TEXT NOT NULL,
     "target_agent" VARCHAR(64),
     "classification" "core"."ProposalClassification" NOT NULL,
@@ -376,6 +379,16 @@ CREATE TABLE "monitor"."documents" (
 );
 
 -- CreateTable
+CREATE TABLE "monitor"."model_config" (
+    "config_key" VARCHAR(64) NOT NULL,
+    "config_value" TEXT NOT NULL,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_by" VARCHAR(64) NOT NULL,
+
+    CONSTRAINT "model_config_pkey" PRIMARY KEY ("config_key")
+);
+
+-- CreateTable
 CREATE TABLE "core"."skill_activations" (
     "id" BIGSERIAL NOT NULL,
     "occurred_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -391,19 +404,16 @@ CREATE TABLE "core"."skill_activations" (
 );
 
 -- CreateTable
-CREATE TABLE "core"."api_response_metrics" (
+CREATE TABLE "core"."update_job" (
     "id" BIGSERIAL NOT NULL,
-    "occurred_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "route" VARCHAR(96) NOT NULL,
-    "level" INTEGER,
-    "response_bytes" INTEGER NOT NULL,
-    "response_tokens_estimate" INTEGER,
-    "duration_ms" INTEGER NOT NULL,
-    "status_code" INTEGER NOT NULL,
-    "cid" VARCHAR(96),
-    "metadata" JSONB,
+    "status" "core"."UpdateJobStatus" NOT NULL,
+    "started_at" TIMESTAMPTZ(6) NOT NULL,
+    "heartbeat_at" TIMESTAMPTZ(6) NOT NULL,
+    "target_version" TEXT NOT NULL,
+    "failure_reason" TEXT,
+    "preview_nonce" TEXT,
 
-    CONSTRAINT "api_response_metrics_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "update_job_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -551,10 +561,7 @@ CREATE INDEX "skill_activations_agent_ts_idx" ON "core"."skill_activations"("age
 CREATE INDEX "skill_activations_selected_ts_idx" ON "core"."skill_activations"("selected", "occurred_at");
 
 -- CreateIndex
-CREATE INDEX "api_response_metrics_route_ts_idx" ON "core"."api_response_metrics"("route", "occurred_at");
-
--- CreateIndex
-CREATE INDEX "api_response_metrics_level_route_idx" ON "core"."api_response_metrics"("level", "route");
+CREATE INDEX "update_job_status_idx" ON "core"."update_job"("status");
 
 -- AddForeignKey
 ALTER TABLE "core"."correction_signals" ADD CONSTRAINT "correction_signals_outcome_id_fkey" FOREIGN KEY ("outcome_id") REFERENCES "core"."outcomes"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -635,3 +642,26 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ----------------------------------------------------------------------------
+-- Raw SQL appendix 4 — update_job single-active-job PARTIAL UNIQUE INDEX
+-- Prisma 7 은 partial predicate 를 표현 못 함 → raw SQL 로 유지 (20260702024018 승계).
+-- ----------------------------------------------------------------------------
+CREATE UNIQUE INDEX "update_job_single_active_uniq"
+    ON "core"."update_job" ("status")
+    WHERE "status" = 'in-progress';
+
+-- ----------------------------------------------------------------------------
+-- Seed appendix — monitor.model_config 최종 검증값 7행 (20260613060000 승계).
+-- add→rework→live-defaults 누적을 pre-release 초기상태로 접은 단일 seed.
+-- ON CONFLICT DO NOTHING: 라이브 수동적용 후 재실행 시 사용자 Save 값 미덮어쓰기.
+-- ----------------------------------------------------------------------------
+INSERT INTO "monitor"."model_config" ("config_key", "config_value", "updated_by") VALUES
+    ('model.dev',                'inherit',            'seed'),
+    ('model.research',           'claude-sonnet-5',    'seed'),
+    ('model.autoagent_daemon',   'inherit',            'seed'),
+    ('model.wiki_daemon',        'inherit',            'seed'),
+    ('model.daemon_cycle_haiku', 'claude-haiku-4-5',   'seed'),
+    ('budget.haiku_max_usd',     '10.00',              'seed'),
+    ('budget.pre_verify_max_usd', '10.00',             'seed')
+ON CONFLICT ("config_key") DO NOTHING;
