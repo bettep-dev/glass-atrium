@@ -122,20 +122,27 @@ async function seedNineTaskTypes(): Promise<void> {
   }
 }
 
-// seed 후 ?q=SUITE_MARKER 로 seed 집합만 조회하는 헬퍼.
+// seed 후 ?q=SUITE_MARKER 로 seed 집합만 조회하는 헬퍼. include_all=1 로 O2 레지스트리
+// 게이트를 해제 — 이 스위트의 seed agent 는 합성 비-레지스트리 이름(grader-metrics-agent-*)
+// 이라, 기본(레지스트리-스코프) /search 는 전부 숨긴다. 이 테스트의 관심사(flatMap guard /
+// grader 컬럼 / poisoned_window 필드)는 레지스트리 게이트와 직교하므로 forensic 뷰가 정답.
 async function fetchSearchSeed(): Promise<OutcomeSearchResponse> {
   const res = await app.inject({
     method: "GET",
-    url: `/api/outcomes/search?days=all&limit=200&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/search?days=all&limit=200&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(res.statusCode, 200, "/search must be 200");
   return res.json() as OutcomeSearchResponse;
 }
 
+// include_all=1 lifts the O2 registry-membership gate (default-scoped since the
+// FIX-RB1 sibling change) — this suite's seed agents (grader-metrics-agent-*)
+// are synthetic non-registry names, and this suite's concern (grader_verdict
+// breakdown / task_type crosstab) is orthogonal to registry membership.
 async function fetchCrossAnalysisSeed(): Promise<OutcomeCrossAnalysisResponse> {
   const res = await app.inject({
     method: "GET",
-    url: `/api/outcomes/cross-analysis?days=all&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/cross-analysis?days=all&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(res.statusCode, 200, "/cross-analysis must be 200");
   return res.json() as OutcomeCrossAnalysisResponse;
@@ -244,9 +251,10 @@ test("/cross-analysis grader_breakdown excludes NULL rows from graded_total + ra
 
 test("/cross-analysis grader_breakdown rates are null when no graded rows match", async () => {
   // task_type=doc 로 좁히되 q 로 seed 한정 → doc seed 1행은 NULL grader_verdict.
+  // include_all=1 — synthetic non-registry seed agent, orthogonal to the O2 gate.
   const res = await app.inject({
     method: "GET",
-    url: `/api/outcomes/cross-analysis?days=all&task_type=doc&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/cross-analysis?days=all&task_type=doc&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as OutcomeCrossAnalysisResponse;
@@ -272,10 +280,11 @@ test("/search rows carry poisoned_window; /cross-analysis excludes poisoned rows
        ${`${SUITE_MARKER}-poisoned`})
   `;
 
-  // /search — poisoned 행도 가시 (row badge 소스); boolean 필드 전 행 존재.
+  // /search — poisoned 행도 가시 (row badge 소스); boolean 필드 전 행 존재. include_all=1
+  // 로 O2 게이트 해제 — 합성 비-레지스트리 seed agent 를 forensic 뷰에서 유지(위 헬퍼와 동일).
   const searchRes = await app.inject({
     method: "GET",
-    url: `/api/outcomes/search?days=all&limit=200&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/search?days=all&limit=200&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(searchRes.statusCode, 200);
   const searchBody = searchRes.json() as OutcomeSearchResponse;
@@ -286,9 +295,10 @@ test("/search rows carry poisoned_window; /cross-analysis excludes poisoned rows
   assert.strictEqual(poisonedRows.length, 1, "poisoned seed row visible in /search");
 
   // /cross-analysis — total 은 poisoned 제외 9, excluded_poisoned_count 는 1.
+  // include_all=1 — synthetic non-registry seed agents, orthogonal to the O2 gate.
   const crossRes = await app.inject({
     method: "GET",
-    url: `/api/outcomes/cross-analysis?days=all&q=${encodeURIComponent(SUITE_MARKER)}`,
+    url: `/api/outcomes/cross-analysis?days=all&include_all=1&q=${encodeURIComponent(SUITE_MARKER)}`,
   });
   assert.strictEqual(crossRes.statusCode, 200);
   const crossBody = crossRes.json() as OutcomeCrossAnalysisResponse;

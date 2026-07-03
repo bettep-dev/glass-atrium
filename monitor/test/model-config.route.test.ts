@@ -5,9 +5,10 @@
 // Test infra:
 //   - DB: real Postgres (DATABASE_URL from .env). monitor.model_config rows are
 //     snapshotted in before() and restored byte-for-byte in after() (updated_at included).
-//   - External surfaces (settings.json / daemon-config.json / agents dir / apply-lock)
+//   - External surfaces (daemon-config.json / agents dir / apply-lock)
 //     are tmpdir fixtures injected via the MODEL_CONFIG_* env seams — the live harness
-//     files are never touched.
+//     files are never touched. The pricing SoT roster is a tmpdir fixture too
+//     (PRICING_SOT_PATH seam; the roster is read per request, no server-side cache).
 //   - Audit single-writer (AC-9): the real audit-log middleware is registered on the
 //     test app; rows are scrubbed by target_table in after().
 
@@ -30,6 +31,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { registerModelConfigRoutes } from "../src/server/routes/model-config.js";
 import type {
@@ -40,22 +42,23 @@ import type {
   SurfaceResult,
 } from "../src/server/types/model-config.js";
 
-const ENV_SENTINEL = "sentinel-env-value-must-not-leak";
-
-// Baseline = migration seed values; every test starts from (or restores toward) this state.
+// Suite baseline — every test starts from (or restores toward) this state. Mirrors the
+// migration seed's shipped defaults exactly: model.research seeds the concrete id
+// 'claude-sonnet-5' (the legacy 'sonnet' alias is rejected on current code, D2), so no
+// per-key workaround is needed here; the legacy-alias display path keeps its own scoped
+// fixture in the tolerance test below.
 const BASELINE: ReadonlyArray<[string, string]> = [
-  ["model.orchestrator", "claude-fable-5[1m]"],
   ["model.dev", "inherit"],
-  ["model.research", "sonnet"],
+  ["model.research", "claude-sonnet-5"],
   ["model.daemon_cycle_haiku", "claude-haiku-4-5"],
-  ["budget.haiku_max_usd", "0.50"],
-  ["budget.pre_verify_max_usd", "0.50"],
+  ["budget.haiku_max_usd", "10.00"],
+  ["budget.pre_verify_max_usd", "10.00"],
 ];
 
 const DAEMON_CONFIG_FIXTURE = {
   _comment: "fixture comment — must survive every render",
-  haiku_max_budget_usd: "0.50",
-  pre_verify_max_budget_usd: "0.50",
+  haiku_max_budget_usd: "10.00",
+  pre_verify_max_budget_usd: "10.00",
   haiku_model: "claude-haiku-4-5",
   // Deprecated aggregate-limit keys the monitor no longer manages — renderDaemonConfig
   // must strip these so a live file still carrying them self-heals on the next PUT.
@@ -63,13 +66,39 @@ const DAEMON_CONFIG_FIXTURE = {
   cost_monthly_limit_usd: "300.00",
 };
 
+// pricing SoT fixture (PRICING_SOT_PATH seam) — known_models must derive from THIS
+// file's `models` key set, never a hardcoded server mirror (deleted in the SoT rework).
+const PRICING_SOT_FIXTURE = {
+  schema_version: 1,
+  models: {
+    "claude-fable-5": { input: 10.0, output: 50.0, cache_read: 1.0, cache_creation: 12.5 },
+    "claude-opus-4-8": { input: 5.0, output: 25.0, cache_read: 0.5, cache_creation: 6.25 },
+    "claude-sonnet-5": { input: 3.0, output: 15.0, cache_read: 0.3, cache_creation: 3.75 },
+    "claude-sonnet-4-6": { input: 3.0, output: 15.0, cache_read: 0.3, cache_creation: 3.75 },
+    "claude-haiku-4-5": { input: 1.0, output: 5.0, cache_read: 0.1, cache_creation: 1.25 },
+  },
+};
+
 let app: FastifyInstance;
 let fixtureDir: string;
-let settingsPath: string;
 let daemonConfigPath: string;
 let agentsDir: string;
 let realAgentsDir: string;
 let applyLockPath: string;
+let registryPath: string;
+let pricingSotPath: string;
+
+// Registry fixture — the on-disk dev agents that ARE registered. dev-ghost.md is
+// deliberately omitted so the T12 intersection excludes it (de-registered/archived).
+const REGISTRY_FIXTURE = {
+  $schema: "agent-registry",
+  version: "1.1",
+  agents: {
+    "dev-alpha": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "dev-beta": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "dev-broken": { domains: ["test"], phase: "implementation", dual_phase: false },
+  },
+};
 
 interface SavedConfigRow {
   config_key: string;
@@ -124,20 +153,19 @@ function surfaceOf(body: ModelConfigPutResponse, name: SurfaceResult["surface"])
 
 before(async () => {
   fixtureDir = mkdtempSync(path.join(tmpdir(), "model-config-test-"));
-  settingsPath = path.join(fixtureDir, "settings.json");
   daemonConfigPath = path.join(fixtureDir, "daemon-config.json");
   agentsDir = path.join(fixtureDir, "agents");
   realAgentsDir = path.join(fixtureDir, "agents-real");
   applyLockPath = path.join(fixtureDir, ".apply-lock");
+  registryPath = path.join(fixtureDir, "agent-registry.json");
+  pricingSotPath = path.join(fixtureDir, "pricing.json");
   mkdirSync(agentsDir);
   mkdirSync(realAgentsDir);
 
-  // settings fixture carries a dummy env key — AC-1 asserts it never reaches a response.
-  writeFileSync(
-    settingsPath,
-    `${JSON.stringify({ model: "claude-fable-5[1m]", effortLevel: "high", env: { SENTINEL_KEY: ENV_SENTINEL } }, null, 2)}\n`,
-    "utf8",
-  );
+  // SoT roster seam: the fixture pricing.json feeds known_models + pricing_known.
+  writeFileSync(pricingSotPath, `${JSON.stringify(PRICING_SOT_FIXTURE, null, 2)}\n`, "utf8");
+  process.env.PRICING_SOT_PATH = pricingSotPath;
+
   writeDaemonConfigFixture();
 
   // dev-alpha is reached through a symlink — mirrors the live ~/.claude/agents layout.
@@ -145,13 +173,21 @@ before(async () => {
   symlinkSync(path.join(realAgentsDir, "dev-alpha.md"), path.join(agentsDir, "dev-alpha.md"));
   writeFileSync(path.join(agentsDir, "dev-beta.md"), agentMarkdown("dev-beta"), "utf8");
   writeFileSync(path.join(agentsDir, "dev-broken.md"), "no frontmatter here\njust text\n", "utf8");
+  // dev-ghost.md is present on disk but absent from the registry fixture — T12 must exclude it.
+  writeFileSync(path.join(agentsDir, "dev-ghost.md"), agentMarkdown("dev-ghost"), "utf8");
   writeFileSync(
     path.join(agentsDir, "intel-researcher.md"),
-    agentMarkdown("intel-researcher", ["model: sonnet"]),
+    agentMarkdown("intel-researcher", ["model: claude-sonnet-5"]),
     "utf8",
   );
 
-  process.env.MODEL_CONFIG_SETTINGS_PATH = settingsPath;
+  // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
+  // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only dev-alpha/beta/broken are
+  // registered → the on-disk dev-ghost.md is filtered out of every dev-file surface.
+  writeFileSync(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+
   process.env.MODEL_CONFIG_DAEMON_CONFIG_PATH = daemonConfigPath;
   process.env.MODEL_CONFIG_AGENTS_DIR = agentsDir;
   process.env.MODEL_CONFIG_APPLY_LOCK_PATH = applyLockPath;
@@ -169,10 +205,12 @@ before(async () => {
 });
 
 after(async () => {
-  delete process.env.MODEL_CONFIG_SETTINGS_PATH;
   delete process.env.MODEL_CONFIG_DAEMON_CONFIG_PATH;
   delete process.env.MODEL_CONFIG_AGENTS_DIR;
   delete process.env.MODEL_CONFIG_APPLY_LOCK_PATH;
+  delete process.env.AGENT_REGISTRY_PATH;
+  delete process.env.PRICING_SOT_PATH;
+  resetAgentRegistryCache();
   try {
     await app.close();
   } catch {
@@ -207,16 +245,16 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigGetResponse;
 
-  assert.strictEqual(body.domains.length, 4);
+  assert.strictEqual(body.domains.length, 3);
   assert.strictEqual(typeof body.fetched_at, "string");
 
-  const orchestrator = domainOf(body, "model.orchestrator");
-  assert.strictEqual(orchestrator.editable, false);
-  assert.strictEqual(orchestrator.apply_mode, "session-restart-manual");
-  assert.strictEqual(orchestrator.actual, "claude-fable-5[1m]");
-  assert.strictEqual(orchestrator.drift, false);
-  assert.strictEqual(orchestrator.effort_level, "high");
-  assert.strictEqual(orchestrator.pricing_known, true);
+  // known_models = the SoT fixture's `models` key set (order-agnostic set equality).
+  assert.ok(Array.isArray(body.known_models), "known_models present");
+  assert.deepStrictEqual(
+    [...body.known_models].sort(),
+    Object.keys(PRICING_SOT_FIXTURE.models).sort(),
+    "known_models derives from the pricing SoT",
+  );
 
   const dev = domainOf(body, "model.dev");
   assert.strictEqual(dev.apply_mode, "next-spawn");
@@ -228,7 +266,7 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   );
 
   const research = domainOf(body, "model.research");
-  assert.strictEqual(research.actual, "sonnet");
+  assert.strictEqual(research.actual, "claude-sonnet-5");
   assert.strictEqual(research.drift, false);
 
   const haiku = domainOf(body, "model.daemon_cycle_haiku");
@@ -239,39 +277,107 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   // Per-call hard-cap budgets mirror the daemon-config.json fixture (no drift on baseline).
   assert.strictEqual(body.budgets.length, 2);
   const haikuBudget = budgetOf(body, "budget.haiku_max_usd");
-  assert.strictEqual(haikuBudget.desired, "0.50");
-  assert.strictEqual(haikuBudget.actual, "0.50");
+  assert.strictEqual(haikuBudget.desired, "10.00");
+  assert.strictEqual(haikuBudget.actual, "10.00");
   assert.strictEqual(haikuBudget.drift, false);
   assert.strictEqual(haikuBudget.apply_mode, "next-cycle");
   const preVerifyBudget = budgetOf(body, "budget.pre_verify_max_usd");
-  assert.strictEqual(preVerifyBudget.desired, "0.50");
-  assert.strictEqual(preVerifyBudget.actual, "0.50");
+  assert.strictEqual(preVerifyBudget.desired, "10.00");
+  assert.strictEqual(preVerifyBudget.actual, "10.00");
   assert.strictEqual(preVerifyBudget.drift, false);
 
   assert.strictEqual(body.daemon_config_sync, "ok");
 });
 
-test("AC-1: settings.json env block never serialized into the response", async () => {
+test("T12: de-registered on-disk dev-*.md (dev-ghost) excluded from the model table", async () => {
   const res = await app.inject({ method: "GET", url: "/api/model-config" });
   assert.strictEqual(res.statusCode, 200);
-  assert.ok(!res.payload.includes(ENV_SENTINEL), "env value must not leak");
-  assert.ok(!res.payload.includes("SENTINEL_KEY"), "env key must not leak");
-  assert.ok(!res.payload.includes('"env"'), "env block must not leak");
+  const body = res.json() as ModelConfigGetResponse;
+
+  const dev = domainOf(body, "model.dev");
+  const files = dev.files?.map((f) => f.file) ?? [];
+  // dev-ghost.md exists on disk but is absent from the registry → intersection drops it.
+  assert.ok(!files.includes("dev-ghost.md"), "unregistered dev-ghost.md must be excluded");
+  // The registered dev agents survive the intersection (registry-scoped, not blanked).
+  assert.deepStrictEqual(files, ["dev-alpha.md", "dev-beta.md", "dev-broken.md"]);
 });
 
-test("D5: drift compare is variant-suffix-normalized ('claude-fable-5' == 'claude-fable-5[1m]')", async () => {
+test("D5: drift compare is variant-suffix-normalized ('claude-sonnet-5[1m]' == 'claude-sonnet-5')", async () => {
+  // Anchored on the research frontmatter surface: the fixture pins 'claude-sonnet-5',
+  // so a bracket-variant desired must compare equal after normalization.
   const prisma = getPrisma();
   await prisma.modelConfig.update({
-    where: { configKey: "model.orchestrator" },
-    data: { configValue: "claude-fable-5" },
+    where: { configKey: "model.research" },
+    data: { configValue: "claude-sonnet-5[1m]" },
   });
-  const res = await app.inject({ method: "GET", url: "/api/model-config" });
-  const body = res.json() as ModelConfigGetResponse;
-  assert.strictEqual(domainOf(body, "model.orchestrator").drift, false);
+  try {
+    const res = await app.inject({ method: "GET", url: "/api/model-config" });
+    const body = res.json() as ModelConfigGetResponse;
+    assert.strictEqual(domainOf(body, "model.research").drift, false);
+  } finally {
+    await prisma.modelConfig.update({
+      where: { configKey: "model.research" },
+      data: { configValue: "claude-sonnet-5" },
+    });
+  }
+});
+
+test("GET tolerates a legacy alias on DB/frontmatter surfaces — display only, never validated", async () => {
+  // Scoped fixture: an alias PUT 400s (D2), so the legacy state a live install may still
+  // carry is installed out-of-band (direct prisma + frontmatter rewrite) and restored in
+  // finally — GET must render it verbatim, not 500/blank it.
+  const prisma = getPrisma();
+  const researchFile = path.join(agentsDir, "intel-researcher.md");
   await prisma.modelConfig.update({
-    where: { configKey: "model.orchestrator" },
-    data: { configValue: "claude-fable-5[1m]" },
+    where: { configKey: "model.research" },
+    data: { configValue: "sonnet" },
   });
+  writeFileSync(researchFile, agentMarkdown("intel-researcher", ["model: sonnet"]), "utf8");
+  try {
+    const res = await app.inject({ method: "GET", url: "/api/model-config" });
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.json() as ModelConfigGetResponse;
+    const research = domainOf(body, "model.research");
+    assert.strictEqual(research.desired, "sonnet");
+    assert.strictEqual(research.actual, "sonnet");
+    assert.strictEqual(research.drift, false);
+    // Alias resolution branch removed — a bare alias is no longer pricing-known.
+    assert.strictEqual(research.pricing_known, false);
+  } finally {
+    await prisma.modelConfig.update({
+      where: { configKey: "model.research" },
+      data: { configValue: "claude-sonnet-5" },
+    });
+    writeFileSync(researchFile, agentMarkdown("intel-researcher", ["model: claude-sonnet-5"]), "utf8");
+  }
+});
+
+test("D3 fail-open: missing pricing SoT → GET 200 with known_models [] — next GET recovers", async () => {
+  // The roster is read per request — pointing the seam at a nonexistent file breaks
+  // the very next GET, and restoring it heals the one after (no cache to reset).
+  process.env.PRICING_SOT_PATH = path.join(fixtureDir, "missing-pricing.json");
+  try {
+    const res = await app.inject({ method: "GET", url: "/api/model-config" });
+    assert.strictEqual(res.statusCode, 200, "unreadable SoT must degrade, never 500");
+    const body = res.json() as ModelConfigGetResponse;
+    assert.deepStrictEqual(body.known_models, [], "roster degrades to []");
+    // A concrete SoT id is unknown against the empty roster…
+    assert.strictEqual(domainOf(body, "model.research").pricing_known, false);
+    // …while 'inherit' stays pricing-known (roster-independent branch).
+    assert.strictEqual(domainOf(body, "model.dev").pricing_known, true);
+  } finally {
+    process.env.PRICING_SOT_PATH = pricingSotPath;
+  }
+
+  // Transient-error recovery: the next GET retries the read and serves the fixture
+  // roster — this assertion also guards against a reintroduced roster cache.
+  const res2 = await app.inject({ method: "GET", url: "/api/model-config" });
+  assert.strictEqual(res2.statusCode, 200);
+  assert.deepStrictEqual(
+    [...(res2.json() as ModelConfigGetResponse).known_models].sort(),
+    Object.keys(PRICING_SOT_FIXTURE.models).sort(),
+    "roster recovers on the next GET once the SoT is readable again",
+  );
 });
 
 // ----- PUT validation (AC-2 / AC-3) -------------------------------------------------
@@ -295,14 +401,29 @@ test("AC-2: invalid model value → 400 field-level error + zero writes", async 
   assert.strictEqual(readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8"), betaBefore, "frontmatter untouched");
 });
 
-test("aliases are frontmatter-only: alias on a daemon domain → 400", async () => {
-  const res = await app.inject({
-    method: "PUT",
-    url: "/api/model-config",
-    payload: { models: { "model.daemon_cycle_haiku": "sonnet" } },
-  });
-  assert.strictEqual(res.statusCode, 400);
-  assert.strictEqual((res.json() as { field: string }).field, "models.model.daemon_cycle_haiku");
+test("D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/research too)", async () => {
+  // The words still match FREE_TEXT_MODEL_PATTERN — only the explicit reject-list
+  // stands between a bare alias and a silent free-text 200.
+  for (const [domain, value] of [
+    ["model.dev", "sonnet"],
+    ["model.dev", "opus"],
+    ["model.research", "haiku"],
+    ["model.research", "sonnet"],
+    ["model.daemon_cycle_haiku", "sonnet"],
+  ] as const) {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/model-config",
+      payload: { models: { [domain]: value } },
+    });
+    assert.strictEqual(res.statusCode, 400, `${domain}=${value} must 400`);
+    const body = res.json() as { error: string; field: string; reason: string };
+    assert.strictEqual(body.error, "invalid_body");
+    assert.strictEqual(body.field, `models.${domain}`);
+    assert.ok(body.reason.includes("use a concrete id"), "remediation message present");
+  }
+  assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB unchanged after rejects");
+  assert.strictEqual(await getDbValue("model.research"), "claude-sonnet-5", "DB unchanged after rejects");
 });
 
 test("unknown domain key → 400", async () => {
@@ -333,7 +454,7 @@ test("AC-3: per-call budget format → 400 atomic (no cross-field invariant)", a
     assert.strictEqual(res.statusCode, 400, `budget.haiku_max_usd=${value} (${label}) must 400`);
     assert.strictEqual((res.json() as { field: string }).field, "budgets.budget.haiku_max_usd");
   }
-  assert.strictEqual(await getDbValue("budget.haiku_max_usd"), "0.50", "DB unchanged after rejects");
+  assert.strictEqual(await getDbValue("budget.haiku_max_usd"), "10.00", "DB unchanged after rejects");
 });
 
 // ----- PUT render: daemon-config.json (AC-4) ----------------------------------------
@@ -359,7 +480,7 @@ test("AC-4: daemon-key change rewrites daemon-config.json — unknown keys + bud
   assert.strictEqual(rendered.haiku_model, "claude-sonnet-4-6");
   // The per-call cap renders verbatim under the real key daemon_config.py reads.
   assert.strictEqual(rendered.haiku_max_budget_usd, "1.50");
-  assert.strictEqual(rendered.pre_verify_max_budget_usd, "0.50", "untouched budget key preserved");
+  assert.strictEqual(rendered.pre_verify_max_budget_usd, "10.00", "untouched budget key preserved");
   assert.strictEqual(rendered._comment, DAEMON_CONFIG_FIXTURE._comment, "_comment preserved");
   // Deprecated aggregate-limit keys the monitor dropped are stripped on render → live file self-heals.
   assert.ok(!("cost_daily_limit_usd" in rendered), "deprecated cost_daily_limit_usd stripped");
@@ -400,7 +521,7 @@ test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unp
     "unparseable file untouched",
   );
   assert.ok(
-    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: sonnet\n"),
+    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-5\n"),
     "research file untouched by a dev pin",
   );
 
@@ -422,42 +543,17 @@ test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unp
   assert.ok(!readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8").includes("model:"));
 });
 
-// ----- orchestrator read-only (AC-6) -------------------------------------------------
-
-test("AC-6: orchestrator PUT is DB-only — settings.json untouched", async () => {
-  const settingsBefore = readFileSync(settingsPath, "utf8");
-  const res = await app.inject({
-    method: "PUT",
-    url: "/api/model-config",
-    payload: { models: { "model.orchestrator": "claude-opus-4-8" } },
-  });
-  assert.strictEqual(res.statusCode, 200);
-  const body = res.json() as ModelConfigPutResponse;
-
-  assert.strictEqual(await getDbValue("model.orchestrator"), "claude-opus-4-8");
-  assert.strictEqual(readFileSync(settingsPath, "utf8"), settingsBefore, "settings.json byte-identical");
-  const surface = surfaceOf(body, "settings.json");
-  assert.strictEqual(surface.status, "skipped");
-  const orchestrator = domainOf(body, "model.orchestrator");
-  assert.strictEqual(orchestrator.apply_mode, "session-restart-manual");
-  assert.strictEqual(orchestrator.drift, true, "desired opus vs actual fable → drift");
-
-  await getPrisma().modelConfig.update({
-    where: { configKey: "model.orchestrator" },
-    data: { configValue: "claude-fable-5[1m]" },
-  });
-});
-
 // ----- daemon-apply concurrency guard ------------------------------------------------
 
 test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT passes", async () => {
   mkdirSync(applyLockPath, { recursive: true });
   try {
     const betaBefore = readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8");
+    // Concrete id — an alias value would 400 at validation before reaching the lock path.
     const res = await app.inject({
       method: "PUT",
       url: "/api/model-config",
-      payload: { models: { "model.dev": "haiku" } },
+      payload: { models: { "model.dev": "claude-opus-4-8" } },
     });
     assert.strictEqual(res.statusCode, 409);
     assert.strictEqual((res.json() as { error: string }).error, "daemon_apply_in_progress");
@@ -479,14 +575,16 @@ test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT 
 // ----- audit single-writer (AC-9) ----------------------------------------------------
 
 test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old→new payload", async () => {
+  // Baseline model.research is now the concrete id 'claude-sonnet-5', so the mutation MUST target
+  // a different concrete id (an equal-value PUT is a no-op → no audit row → poll timeout).
   const res = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.research": "haiku" } },
+    payload: { models: { "model.research": "claude-sonnet-4-6" } },
   });
   assert.strictEqual(res.statusCode, 200);
   assert.ok(
-    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: haiku\n"),
+    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-4-6\n"),
     "research frontmatter line replaced",
   );
 
@@ -513,17 +611,20 @@ test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old
   }
   assert.strictEqual(rows.length, 1, "exactly 1 audit row for this PUT");
   assert.strictEqual(rows[0].action_kind, "model-config.update");
+  // `old` anchors to the suite BASELINE (concrete id — see the BASELINE note).
   assert.deepStrictEqual(rows[0].payload.change?.changes?.["model.research"], {
-    old: "sonnet",
-    new: "haiku",
+    old: "claude-sonnet-5",
+    new: "claude-sonnet-4-6",
   });
 
-  const res2 = await app.inject({
+  // Restore round-trips through the route — DB row + research frontmatter both return
+  // to the suite baseline under the invariants the route enforces.
+  const restore = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.research": "sonnet" } },
+    payload: { models: { "model.research": "claude-sonnet-5" } },
   });
-  assert.strictEqual(res2.statusCode, 200);
+  assert.strictEqual(restore.statusCode, 200);
 });
 
 // ----- daemon_config_sync states ------------------------------------------------------

@@ -349,11 +349,11 @@ export const DIAGRAMS = [
     to_monitor[Monitoring verification → orchestration graph]
 
     subgraph doc_team["Document team"]
-        intel-researcher[intel-researcher (gathers sources)]
-        planner_d[intel-planner (plans the doc)]
-        design-designer[design-designer (advises on visuals)]
-        domain[domain agents (fill in content)]
-        intel-reporter[intel-reporter (writes the doc)]
+        intel-researcher["intel-researcher (gathers sources)"]
+        planner_d["intel-planner (plans the doc)"]
+        design-designer["design-designer (advises on visuals)"]
+        domain["domain agents (fill in content)"]
+        intel-reporter["intel-reporter (writes the doc)"]
     end
 
     subgraph clauded_routes["Document API"]

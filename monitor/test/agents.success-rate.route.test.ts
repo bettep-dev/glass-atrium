@@ -8,6 +8,9 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
@@ -15,6 +18,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import {
   SUCCESS_RATE_LIMIT,
   registerAgentsRoutes,
@@ -24,9 +28,33 @@ import type { AgentSuccessRateResponse } from "../src/server/types/agents.js";
 
 // SUITE_MARKER — agent(응답 필터 키) + cid(cleanup 키) 양쪽에 삽입.
 const SUITE_MARKER = `sr-matrix-test-${randomUUID().slice(0, 8)}`;
+// window-boundary probe seeds a second agent — 얘도 registry gate 를 통과해야 함.
+const BOUNDARY_AGENT = `${SUITE_MARKER}-win`;
+
+// Registry fixture — 두 seed agent 를 멤버로 넣어, 정규 membership gate
+// (loadAgentRegistry → buildAgentMembershipFilter)가 실제 ~/.claude 레지스트리
+// 대신 이 fixture 를 기준으로 seed 행을 보존하게 만든다(hermeticity).
+const REGISTRY_FIXTURE = {
+  $schema: "agent-registry",
+  version: "1.1",
+  agents: {
+    [SUITE_MARKER]: { domains: ["test"], phase: "implementation", dual_phase: false },
+    [BOUNDARY_AGENT]: { domains: ["test"], phase: "implementation", dual_phase: false },
+  },
+};
+
 let app: FastifyInstance;
+let tmpRoot: string;
 
 before(async () => {
+  // Hermetic registry — gate 를 fixture 로 향하게 하고, loadAgentRegistry 가
+  // ambient ~/.claude 레지스트리가 아닌 fixture 를 캐시하도록 route 등록 이전에 설정.
+  tmpRoot = await mkdtemp(join(tmpdir(), "sr-matrix-registry-"));
+  const registryPath = join(tmpRoot, "agent-registry.json");
+  await writeFile(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
+  process.env.AGENT_REGISTRY_PATH = registryPath;
+  resetAgentRegistryCache();
+
   app = Fastify({ logger: false });
   await registerAgentsRoutes(app);
   await app.ready();
@@ -49,6 +77,9 @@ after(async () => {
     console.error("[success-rate-test cleanup] DB scrub failed:", error);
   }
   await disconnectPrisma();
+  delete process.env.AGENT_REGISTRY_PATH;
+  resetAgentRegistryCache();
+  await rm(tmpRoot, { recursive: true, force: true });
 });
 
 // 9 행 적재 — 단일 seed agent × 9 task_type 각 1행(done) → 매트릭스 한 행에 9 셀.
@@ -146,7 +177,7 @@ test("success-rate: days=7 윈도우 day-set 경계 — 오늘 포함 정확히 
   // buildWindowLowerBound 경계 probe — 경계일(today-6) 자정 행 포함 ·
   // 윈도우 밖(today-7 일자) 행 제외. cost.ts SoT 의미론(오늘 포함 N 일력일) 검증.
   const prisma = getPrisma();
-  const boundaryAgent = `${SUITE_MARKER}-win`;
+  const boundaryAgent = BOUNDARY_AGENT;
   await prisma.$executeRaw`
     INSERT INTO core.outcomes
       (record_ts, agent, task_type, result, summary, cid)
