@@ -2319,13 +2319,16 @@ build_step_plan() {
   case "${action}" in
     install)
       # run_install body (doctor gate → render → farm → wire → DB → repoint →
-      # post-check) then run_bootstrap's build + health gate, THEN the 11th step that
-      # registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads launchd via
-      # menu_load_launchd_jobs, opt-out GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd). The
-      # load step runs LAST — post-health-gate by position, so a loaded job always tracks
-      # a verified build. dry-run/repoint/etc. honour the lib flag vars (load is a dry-run
-      # report under --dry-run). The three arrays are a PARALLEL-array contract — they MUST
-      # stay equal-length (11 each) and in this order; run_plan iterates [0, #STEP_FN).
+      # post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
+      # 12th step that registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads
+      # launchd via menu_load_launchd_jobs, opt-out GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
+      # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
+      # a verified build. baseline capture is run_install's final body step (capture_install_
+      # baseline — snapshots the base@install anchor + seeds the base-content store), so the
+      # TUI plan must include it or a menu install never anchors its first editable_merge.
+      # dry-run/repoint/etc. honour the lib flag vars (load + baseline capture are dry-run
+      # reports under --dry-run). The three arrays are a PARALLEL-array contract — they MUST
+      # stay equal-length (12 each) and in this order; run_plan iterates [0, #STEP_FN).
       STEP_LABEL=(
         "Doctor preflight"
         "Render config.toml"
@@ -2335,6 +2338,7 @@ build_step_plan() {
         "Database bootstrap"
         "launchd repoint"
         "claude liveness (advisory)"
+        "Capture install baseline"
         "Monitor build"
         "Monitor health gate"
         "Load launchd jobs"
@@ -2348,6 +2352,7 @@ build_step_plan() {
         "Bootstrapping database…"
         "Repointing launchd…"
         "Checking claude liveness…"
+        "Capturing install baseline…"
         "Building monitor…"
         "Gating monitor health…"
         "Loading launchd jobs…"
@@ -2361,6 +2366,7 @@ build_step_plan() {
         "setup_database"
         "repoint_launchd"
         "doctor_postcheck"
+        "capture_install_baseline"
         "build_monitor"
         "bootstrap_health_gate"
         "menu_load_launchd_jobs"
@@ -2368,20 +2374,25 @@ build_step_plan() {
       ;;
     uninstall)
       # run_uninstall body: launchd teardown → DB drop → node_modules removal →
-      # manifest-link removal → orphan sweep → hook un-wire. launchd teardown runs
+      # manifest-link removal → orphan sweep → empty-dir cleanup → update-state
+      # teardown → hook un-wire → shell-rc PATH-line removal. launchd teardown runs
       # FIRST so the daemons stop (connections drain) before the DB is dropped and
       # before their symlinked files are removed. The DB drop has NO backup/restore
-      # by design — reinstall recreates a fresh, consistent DB. The config purge is
-      # a SEPARATE confirmed step in dispatch_action (it runs only after a second
-      # typed confirmation), so it is not in this base plan. The three arrays below
-      # are a PARALLEL-array contract — keep them equal-length and in run_uninstall
-      # order.
+      # by design — reinstall recreates a fresh, consistent DB. empty-dir cleanup +
+      # update-state teardown mirror run_uninstall's STEP4/T26 (rmdir-only empty
+      # skeletons + non-symlink pause-flag/baseline teardown) so the TUI matches the
+      # CLI. The config purge is a SEPARATE confirmed step in dispatch_action (it
+      # runs only after a second typed confirmation), so it is not in this base plan.
+      # The three arrays below are a PARALLEL-array contract — keep them equal-length
+      # and in run_uninstall order.
       STEP_LABEL=(
         "Tear down launchd jobs"
         "Drop databases"
         "Remove node_modules"
         "Remove manifest symlinks"
         "Sweep orphan symlinks"
+        "Remove empty directories"
+        "Tear down update state"
         "Un-wire hooks (settings.json)"
         "Remove shell rc PATH lines"
       )
@@ -2391,6 +2402,8 @@ build_step_plan() {
         "Removing node_modules…"
         "Removing manifest symlinks…"
         "Sweeping orphan symlinks…"
+        "Removing empty directories…"
+        "Tearing down update state…"
         "Un-wiring hooks…"
         "Removing shell rc PATH lines…"
       )
@@ -2400,6 +2413,8 @@ build_step_plan() {
         "remove_node_modules"
         "remove_manifest_links"
         "sweep_orphans"
+        "remove_empty_dirs"
+        "teardown_update_state"
         "unwire_hooks"
         "remove_rc_lines"
       )
