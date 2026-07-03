@@ -152,11 +152,6 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 两种格式都会出现在 Atrium Monitor 的**文档管理**界面中。
 
-示例：
-
-- 「把这次变更整理成一份回顾报告」→ 仅智能体可见的记录（默认值）。
-- 「做成一份团队共享用的 HTML 报告」→ HTML 文档。
-
 即便你没有明确请求文档，只要系统判断某内容值得留存，也可能会留下一份仅智能体可见的记录。
 
 ### 添加开发智能体
