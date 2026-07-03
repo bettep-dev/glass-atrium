@@ -228,6 +228,35 @@ class TestPartitionPredicate(unittest.TestCase):
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
+    """completion-synthesized done_with_concerns is a measurement gap (carved out of
+    FAILURE polarity); budget-truncation is a sibling synthesized provenance that
+    stays on the clusterable FAILURE side."""
+
+    def test_when_completion_synthesized_dwc_then_not_failure(self) -> None:
+        o = _outcome(
+            dc,
+            result="done_with_concerns",
+            attribution_source="completion-synthesized",
+        )
+        self.assertTrue(dc._is_synthesized_measurement_gap(o))
+        self.assertFalse(dc._is_failure_outcome(o))
+
+    def test_when_budget_truncation_dwc_then_failure(self) -> None:
+        # A budget-kill is a REAL negative — not swept into the measurement gap.
+        o = _outcome(
+            dc,
+            result="done_with_concerns",
+            attribution_source="budget-truncation",
+        )
+        self.assertFalse(dc._is_synthesized_measurement_gap(o))
+        self.assertTrue(dc._is_failure_outcome(o))
+
+    def test_when_budget_truncation_constant_then_literal(self) -> None:
+        self.assertEqual(dc._ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestRenderDistinctSections(unittest.TestCase):
     """(d) _render_generation_outcomes_block emits distinct FAILURE vs SUCCESS."""
 

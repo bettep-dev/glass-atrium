@@ -28,6 +28,10 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import {
+  buildAgentMembershipFilter,
+  loadCanonicalAgentKeys,
+} from "../src/server/agents/registry.js";
+import {
   __resetImprovementStatsCacheForTests,
   registerImprovementRoutes,
   rowToProposalSummary,
@@ -295,15 +299,26 @@ interface NonPoisonedCounts {
 
 async function countNonPoisoned30d(): Promise<NonPoisonedCounts> {
   const prisma = getPrisma();
+  // T9 — the tier_breakdown cohort scopes to the POSITIVE registry allowlist
+  // (agent IN loadAgentRegistry()) rather than the retired 3-item infra denylist.
+  // outcome_summary (total / review_flagged) is now ALSO registry-scoped by
+  // default — the outcomeWhere AND-tail added alongside T9 closes the gap this
+  // helper's comment used to describe as intentionally ungated — so every bucket
+  // here mirrors the API by reusing the same shared helper + keys (fixed 30d
+  // window, poisoned_window=FALSE).
+  const agentAllowlist = buildAgentMembershipFilter(await loadCanonicalAgentKeys());
   const rows = await prisma.$queryRaw<
     Array<{ total: bigint; review_flagged: bigint; code_fail_30d: bigint }>
   >`
     SELECT
-      COUNT(*) FILTER (WHERE poisoned_window = FALSE)::bigint AS total,
-      COUNT(*) FILTER (WHERE poisoned_window = FALSE AND review_flag = TRUE)::bigint AS review_flagged,
+      COUNT(*) FILTER (WHERE poisoned_window = FALSE ${agentAllowlist})::bigint AS total,
+      COUNT(*) FILTER (
+        WHERE poisoned_window = FALSE AND review_flag = TRUE
+          ${agentAllowlist}
+      )::bigint AS review_flagged,
       COUNT(*) FILTER (
         WHERE poisoned_window = FALSE AND metric_pass = FALSE AND baseline_pre_3tier IS NULL
-          AND agent NOT IN ('orchestrator', 'subagent_stop_missing', 'unknown')
+          ${agentAllowlist}
       )::bigint AS code_fail_30d
     FROM core.outcomes
     WHERE record_ts > NOW() - INTERVAL '30 days'
@@ -376,6 +391,29 @@ test("GET /api/improvement?window=999: 400 invalid_param (over cap)", async () =
   assert.strictEqual(res.statusCode, 400);
   const body = res.json() as { error: string; param: string };
   assert.strictEqual(body.param, "window");
+});
+
+// findUnknownQueryKey / IMPROVEMENT_QUERY_KEYS — an unrecognized querystring key
+// (e.g. a misspelled or legacy `window_days`) must be rejected loudly rather
+// than silently falling through with the `window` default in effect.
+test("GET /api/improvement?window_days=30: 400 invalid_param naming the unknown key", async () => {
+  const res = await app.inject({ method: "GET", url: "/api/improvement?window_days=30" });
+  assert.strictEqual(res.statusCode, 400);
+  const body = res.json() as { error: string; param: string };
+  assert.strictEqual(body.error, "invalid_param");
+  assert.strictEqual(body.param, "window_days");
+});
+
+// Happy-path regression guard — the 4 accepted keys together must never trip
+// the unknown-key rejection just added above.
+test("GET /api/improvement?limit&window&tier&agent: accepted keys still parse — 200", async () => {
+  const res = await app.inject({
+    method: "GET",
+    url: "/api/improvement?limit=5&window=30d&tier=safety&agent=dev-node",
+  });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as { window_days: number };
+  assert.strictEqual(body.window_days, 30);
 });
 
 // GET /api/improvement/stats

@@ -59,10 +59,13 @@ add_pattern() {
 }
 
 collect_patterns() {
-  local email host local_host
+  local email host local_host user
+  # USER 미설정 환경(루트 컨테이너/cron/launchd/bash -lc)에서 set -u 중단 방지 —
+  #   USER 우선, 없으면 id -un 으로 1회 유도해 두 패턴에 동일 적용.
+  user="${USER:-$(id -un)}"
   add_pattern "${HOME}" ""
-  add_pattern "/Users/${USER}" ""
-  add_pattern "${USER}" "w"
+  add_pattern "/Users/${user}" ""
+  add_pattern "${user}" "w"
   email="$(git -C "${GA_ROOT}" config user.email 2>/dev/null || true)"
   if [[ -n "${email}" ]]; then
     add_pattern "${email}" ""

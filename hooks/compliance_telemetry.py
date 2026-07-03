@@ -77,10 +77,14 @@ def insufficient_data_rate(*, source: object = None) -> dict[str, object]:
 
 # Durable, append-only gate trace written per gate encounter by
 # hooks/enforce-workflow-verify-stage.sh::emit_trace. TAB-delimited columns:
-#   ts \t tool_name=Workflow \t verdict=pass|block|block-docroute|block-entry \t script_len=N
-# This is the ONLY durable compliance event store today, so it supplies the
-# denominator (all rows) and the trip numerator (verdict=block*). Env-overridable
-# for tests. NOTE: a 'block' verdict is a TRIP (the gate fired), not an override.
+#   ts \t tool_name=Workflow \t verdict=<tag> \t script_len=N
+# where <tag> ∈ pass | pass-noscript | block-norev | block-noverifydev |
+# block-order | block-docroute | block-entry (historical rows may carry the
+# legacy bare 'block'; the python3-absent + helper-error fallbacks still emit
+# bare 'pass'). This is the ONLY durable compliance event store today, so it
+# supplies the denominator (all rows) and the trip numerator (verdict=block*).
+# Env-overridable for tests. NOTE: a block* verdict is a TRIP (the gate fired),
+# not an override.
 _DEFAULT_GATE_LOG = str(_HOME / ".claude" / "data" / "workflow-gate-fired.log")
 WORKFLOW_GATE_LOG_FILE = Path(
     os.environ.get("WORKFLOW_GATE_LOG_FILE", _DEFAULT_GATE_LOG)
@@ -91,7 +95,9 @@ def _resolve_gate_log_file() -> Path:
     return _resolve("WORKFLOW_GATE_LOG_FILE", WORKFLOW_GATE_LOG_FILE)
 
 # A verdict whose value starts with this token is a TRIP (gate blocked / fired):
-# block / block-docroute / block-entry. Everything else (pass) is compliant.
+# block-norev / block-noverifydev / block-order / block-docroute / block-entry
+# (+ legacy bare 'block'). A pass-prefixed verdict (pass / pass-noscript) is
+# compliant.
 _TRIP_VERDICT_PREFIX = "block"
 _PASS_VERDICT = "pass"
 
@@ -131,7 +137,10 @@ def parse_gate_log(log_file: Path | None = None) -> dict[str, int | None]:
         total += 1
         if verdict.startswith(_TRIP_VERDICT_PREFIX):
             trip_count += 1
-        elif verdict == _PASS_VERDICT:
+        elif verdict.startswith(_PASS_VERDICT):
+            # startswith counts pass-noscript (and future pass-* refinements) as
+            # pass; safe because the block-prefix trip check above runs FIRST,
+            # so no block* row can reach this branch.
             pass_count += 1
         # An unknown non-block, non-pass verdict still counts toward total but is
         # neither pass nor trip (defensive — future verdict values are visible in

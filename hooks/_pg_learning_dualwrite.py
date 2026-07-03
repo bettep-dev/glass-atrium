@@ -699,6 +699,15 @@ NEGATIVE_SIGNAL_RESULTS = frozenset({"fail", "blocked", "done_with_concerns"})
 # turn (the SubagentStop synthesis path). A synthesized row's result is itself
 # synthesized, so its result polarity is NOT an agent-emitted signal.
 ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
+# Sibling synthesized-provenance marker track-outcome.sh stamps when a subagent is
+# hard-killed at its tool_use/turn budget ceiling BEFORE emitting [COMPLETION]. A
+# budget-kill IS an agent-relevant negative (the truncated subagent's own
+# instructions should improve), so — unlike the pure measurement gap above — it is
+# DELIBERATELY left on the CLUSTERABLE side of _is_synthesized_measurement_gap.
+# Accepted-scope REACHABILITY limit: pattern-1 clustering needs 3+ same-agent
+# negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
+# pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
+ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
 NEGATIVE_REVISION_MIN = 2
@@ -743,7 +752,13 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
     synthesis DEFAULT, not an agent-emitted signal, so it must contribute ZERO
     negative hits. Scoped to done_with_concerns ONLY — a synthesized fail/blocked
     (should not occur from this path) is left to normal evaluation. Tolerates
-    missing keys (synthetic test rows)."""
+    missing keys (synthetic test rows).
+
+    budget-truncation shares the synthesized provenance but is a real negative, not
+    a measurement gap — the explicit guard keeps it clusterable and holds that
+    invariant even if the completion-synthesized match is ever broadened."""
+    if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
+        return False
     return (
         (row.get("attribution_source") or "") == ATTRIBUTION_SYNTHESIZED
         and (row.get("result") or "") == "done_with_concerns"

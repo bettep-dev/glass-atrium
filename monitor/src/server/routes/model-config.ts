@@ -1,8 +1,7 @@
 // Model-config API (spec doc 36166): GET/PUT /api/model-config — per-domain model
 // assignment + per-call budget hard caps. DB (monitor.model_config) = UI SoT;
 // daemon-config.json is the write-through-rendered consumer view; agent frontmatter is the
-// harness-consumed surface for dev/research pins. settings.json has NO write path here
-// (D5 — read-only extraction of model + effortLevel, env block never serialized).
+// harness-consumed surface for dev/research pins.
 
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import { promises as fs } from "node:fs";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { loadAgentRegistry } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
@@ -19,6 +19,7 @@ import {
   INHERIT_VALUE,
   MODEL_DOMAINS,
   isPricingKnown,
+  loadKnownModelIds,
   normalizeModelId,
   validateBudgetValue,
   validateModelValue,
@@ -52,10 +53,6 @@ const DEV_AGENT_FILE_PATTERN = /^dev-[a-z0-9-]+\.md$/;
 const INHERIT_SETTINGS_LABEL = "inherit (settings.json)";
 
 // ----- external-surface path resolution (env overrides = test seams) ----------
-
-function getSettingsPath(): string {
-  return process.env.MODEL_CONFIG_SETTINGS_PATH ?? path.join(os.homedir(), ".claude", "settings.json");
-}
 
 function getDaemonConfigPath(): string {
   return (
@@ -104,20 +101,16 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   const rows = await prisma.modelConfig.findMany();
   const desired = new Map<string, string>(rows.map((r) => [r.configKey, r.configValue]));
 
-  const [settings, daemonConfig, devFiles, researchModel] = await Promise.all([
-    readSettingsModel(),
+  const [daemonConfig, devFiles, researchModel, knownModelIds] = await Promise.all([
     readDaemonConfig(),
     readDevAgentModels(),
-    readResearchModel(),
+    readFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), undefined),
+    loadKnownModelIds(),
   ]);
+  const surfaces: ActualSurfaces = { daemonConfig, devFiles, researchModel, knownModelIds };
 
   const domains: DomainStatus[] = MODEL_DOMAINS.map((def) =>
-    buildDomainStatus(def, desired.get(def.key) ?? null, {
-      settings,
-      daemonConfig,
-      devFiles,
-      researchModel,
-    }),
+    buildDomainStatus(def, desired.get(def.key) ?? null, surfaces),
   );
 
   const budgets: BudgetDomainStatus[] = BUDGET_DOMAINS.map((def) =>
@@ -126,6 +119,7 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
 
   return {
     fetched_at: new Date().toISOString(),
+    known_models: [...knownModelIds],
     domains,
     budgets,
     daemon_config_sync: computeDaemonConfigSync(desired, daemonConfig),
@@ -150,11 +144,13 @@ function buildBudgetStatus(
   };
 }
 
+// One read-once snapshot per GET — every file-derived input rides here, never as a
+// loose positional arg.
 interface ActualSurfaces {
-  settings: { model: string | null; effortLevel: string | null };
   daemonConfig: Record<string, unknown> | null;
   devFiles: DomainFileModel[];
   researchModel: string | null | undefined; // undefined = unparseable/unreadable
+  knownModelIds: ReadonlySet<string>;
 }
 
 function buildDomainStatus(
@@ -164,13 +160,8 @@ function buildDomainStatus(
 ): DomainStatus {
   let actual: string | null;
   let files: DomainFileModel[] | undefined;
-  let effortLevel: string | null | undefined;
 
   switch (def.surface) {
-    case "settings":
-      actual = surfaces.settings.model;
-      effortLevel = surfaces.settings.effortLevel;
-      break;
     case "frontmatter-dev": {
       files = surfaces.devFiles;
       const states = files.map((f) => f.model ?? INHERIT_VALUE);
@@ -195,11 +186,8 @@ function buildDomainStatus(
     drift: computeDrift(desired, actual),
     apply_mode: def.applyMode,
     editable: def.editable,
-    pricing_known: isPricingKnown(desired),
+    pricing_known: isPricingKnown(desired, surfaces.knownModelIds),
   };
-  if (effortLevel !== undefined) {
-    status.effort_level = effortLevel;
-  }
   if (files !== undefined) {
     status.files = files;
   }
@@ -378,13 +366,6 @@ async function handlePut(
     if (modelChanges.has("model.research")) {
       surfaces.push(await renderResearchFrontmatter(modelChanges.get("model.research") as string));
     }
-    if (modelChanges.has("model.orchestrator")) {
-      surfaces.push({
-        surface: "settings.json",
-        status: "skipped",
-        reason: "read-only — apply by manual settings.json edit + session restart (D5)",
-      });
-    }
 
     const getShape = await buildGetResponse();
     const responseBody: ModelConfigPutResponse = { ...getShape, surfaces };
@@ -404,23 +385,6 @@ async function handlePut(
 
 // ----- surface readers -----------------------------------------------------------
 
-/**
- * Extract ONLY model + effortLevel from settings.json (D5 secret-leak guard) — the
- * parsed object is never spread/serialized, so the env block cannot reach a response.
- */
-async function readSettingsModel(): Promise<{ model: string | null; effortLevel: string | null }> {
-  try {
-    const raw = await fs.readFile(getSettingsPath(), "utf8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      model: typeof parsed.model === "string" ? parsed.model : null,
-      effortLevel: typeof parsed.effortLevel === "string" ? parsed.effortLevel : null,
-    };
-  } catch {
-    return { model: null, effortLevel: null };
-  }
-}
-
 /** null = missing or unparseable (GET degrades to 'file-missing' / drift-safe nulls). */
 async function readDaemonConfig(): Promise<Record<string, unknown> | null> {
   try {
@@ -436,12 +400,26 @@ async function readDaemonConfig(): Promise<Record<string, unknown> | null> {
 }
 
 async function listDevAgentFiles(): Promise<string[]> {
+  let onDisk: string[];
   try {
     const entries = await fs.readdir(getAgentsDir());
-    return entries.filter((name) => DEV_AGENT_FILE_PATTERN.test(name)).sort();
+    onDisk = entries.filter((name) => DEV_AGENT_FILE_PATTERN.test(name)).sort();
   } catch {
     return [];
   }
+  // Intersect the on-disk dev-*.md set with the canonical registry's dev-* keys so a
+  // de-registered/archived dev-*.md file no longer surfaces in the model table (nor
+  // receives a frontmatter write). Fail-open: an empty/corrupt registry (size 0)
+  // skips the intersection and returns the full on-disk set — mirrors the SQL gates'
+  // fail-open contract so a registry read failure never blanks the dev table.
+  const registry = await loadAgentRegistry();
+  if (registry.size === 0) {
+    return onDisk;
+  }
+  const registeredDevKeys = new Set(
+    [...registry.keys()].filter((key) => key.startsWith("dev-")),
+  );
+  return onDisk.filter((name) => registeredDevKeys.has(name.replace(/\.md$/, "")));
 }
 
 async function readDevAgentModels(): Promise<DomainFileModel[]> {
@@ -449,35 +427,31 @@ async function readDevAgentModels(): Promise<DomainFileModel[]> {
   return Promise.all(
     names.map(async (name) => ({
       file: name,
-      model: await readFrontmatterModelOfFile(path.join(getAgentsDir(), name)),
+      model: await readFrontmatterModel(path.join(getAgentsDir(), name), null),
     })),
   );
 }
 
-async function readResearchModel(): Promise<string | null | undefined> {
-  const filePath = path.join(getAgentsDir(), RESEARCH_AGENT_FILE);
+/**
+ * Read one agent file's `model:` frontmatter value; `missing` is the caller-chosen
+ * sentinel for an unreadable file or absent `---` block. Research passes `undefined` to
+ * keep an unreadable surface distinct from a present-but-model-less block (extractModelLine's
+ * null → drift-safe INHERIT in buildDomainStatus); the dev per-file surface passes `null`,
+ * conflating both.
+ */
+async function readFrontmatterModel<T extends null | undefined>(
+  filePath: string,
+  missing: T,
+): Promise<string | null | T> {
   try {
     const text = await fs.readFile(filePath, "utf8");
     const fm = locateFrontmatter(text);
     if (fm === null) {
-      return undefined;
+      return missing;
     }
     return extractModelLine(text.slice(fm.start, fm.end));
   } catch {
-    return undefined;
-  }
-}
-
-async function readFrontmatterModelOfFile(filePath: string): Promise<string | null> {
-  try {
-    const text = await fs.readFile(filePath, "utf8");
-    const fm = locateFrontmatter(text);
-    if (fm === null) {
-      return null;
-    }
-    return extractModelLine(text.slice(fm.start, fm.end));
-  } catch {
-    return null;
+    return missing;
   }
 }
 

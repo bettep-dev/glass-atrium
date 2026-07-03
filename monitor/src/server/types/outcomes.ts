@@ -67,6 +67,8 @@ export interface OutcomeSearchFilterEcho {
   metric_pass: boolean | null | "unset";
   review_flag: boolean | null;
   q: string | null;
+  // Exact-match attribution_source filter; null when no filter applied.
+  attribution_source: string | null;
   sort: OutcomeSortToken;
   limit: number;
   offset: number;
@@ -102,6 +104,9 @@ export interface OutcomeSearchRow {
   // True when the row sits in a poisoned measurement window — analytics
   // aggregates exclude such rows; search keeps them visible (row badge).
   poisoned_window: boolean;
+  // Raw core.outcomes.attribution_source (verbatim, NOT re-categorized). NULL for
+  // legacy rows predating attribution tracking. FE badges truncation causes.
+  attribution_source: string | null;
 }
 
 export interface OutcomeSearchResponse {
@@ -292,7 +297,7 @@ export interface OutcomeHeatmapResponse {
 //   healthy          ← hook-input                         (normal sidecar path)
 //   attribution_loss ← subagent-stop-missing, GENUINE-ONLY (real SubagentStop
 //                      agent_event backing within ±5min of record_ts)
-//   literal_omission ← truncated_completion, completion-missing
+//   literal_omission ← truncated_completion, completion-missing, budget-truncation
 //   synthesized      ← completion-synthesized, conversation-only, cron-derived,
 //                      agent-id-missing, subagent-stop-phantom, + else→catch-all
 //                      (any future canonical value folds here so total stays
@@ -316,6 +321,22 @@ export interface AttributionDailyPoint {
   total: number;
 }
 
+// Integer sub-counts of the literal_omission window count — the three raw
+// attribution_source literals that fold into 'literal_omission'. Invariant:
+// truncated_completion + completion_missing + budget_truncation === the window's
+// literal_omission total (so literal_omission_rate is unaffected by this split).
+export interface LiteralOmissionBreakdown {
+  truncated_completion: number;
+  completion_missing: number;
+  budget_truncation: number;
+}
+
+// One (agent, count) group for budget-truncation rows over the window.
+export interface BudgetTruncationAgentCount {
+  agent: string;
+  count: number;
+}
+
 // Window-level summary over the whole [days] window (single SoT for the
 // improvement.jsx pointer tile). Rates are fractions of total_attributed;
 // null when total_attributed is 0 (no attributed rows in window → no rate).
@@ -326,6 +347,11 @@ export interface AttributionDailySummary {
   synthesized_rate: number | null;
   // Live windowed IS-NOT-NULL count (no frozen magic number).
   total_attributed: number;
+  // Sub-counts of the literal_omission window total (sum-invariant, see above).
+  literal_omission_breakdown: LiteralOmissionBreakdown;
+  // budget-truncation rows grouped by agent over the window, sorted count DESC.
+  // [] when the window holds no budget-truncation rows.
+  budget_truncation_by_agent: BudgetTruncationAgentCount[];
 }
 
 export interface AttributionDailyResponse {

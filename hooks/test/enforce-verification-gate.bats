@@ -1,11 +1,15 @@
 #!/usr/bin/env bats
 # enforce-verification-gate.bats — Bats suite for the PreToolUse(Agent) verification-gate hook.
-#   Two distinct surfaces, asserted independently:
+#   Three distinct surfaces, asserted independently:
 #     1) reviewer-advisory (STDERR + exit 0) — plan-ref DEV spawn, no qa-code-reviewer recorded.
-#     2) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — DEV spawn with NEITHER a
-#        plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). This is the
-#        ONLY blocking branch; the token is the escape hatch.
-#   Every non-entry-miss path (non-DEV, plan-bearing, token-bearing) exits 0 (zero false-block).
+#     2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — ORCHESTRATOR-ORIGIN DEV
+#        spawn (agent_id absent) with NO [SIZE-EST] token. Guarded by hook_is_subagent: a nested
+#        sub-worker origin (agent_id present) is NEVER blocked. Applies to every DEV spawn, plan-ref
+#        included — so the DEV-spawn fixtures below all carry a [SIZE-EST] token to clear this gate.
+#     3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — DEV spawn with NEITHER a
+#        plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The token is
+#        the escape hatch.
+#   Non-DEV / plan-bearing / token-bearing spawns exit 0 (zero false-block for the entry-miss branch).
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
 #
 # Decision channel: surface 1 = STDERR advisory + exit 0; surface 2 = STDERR JSON + exit 2. bats
@@ -37,6 +41,17 @@ run_hook() {
     stype="$1"; prompt="$2"; hook="$3"; data="$4"
     payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" \
       '\''{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" bash "${hook}"
+  ' _ "${1}" "${2}" "${HOOK_SH}" "${DATA_DIR}"
+}
+
+# Drive the hook as a NESTED sub-worker spawn (top-level agent_id present → hook_is_subagent true).
+# Same envelope as run_hook plus an agent_id, so the [SIZE-EST] guard sees a non-orchestrator origin.
+run_hook_subagent() {
+  run bash -c '
+    stype="$1"; prompt="$2"; hook="$3"; data="$4"
+    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" --arg aid "agent-nested-001" \
+      '\''{tool_name:"Agent",session_id:$sid,agent_id:$aid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
     printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" bash "${hook}"
   ' _ "${1}" "${2}" "${HOOK_SH}" "${DATA_DIR}"
 }
@@ -74,15 +89,15 @@ assert_empty() {
 
 # --- (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2) ---
 
-@test "dev spawn, no plan-ref, no token → entry-miss BLOCK (exit 2 + stderr JSON)" {
-  run_hook "dev-nestjs" "implement the auth refactor across the service layer"
+@test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2 + stderr JSON)" {
+  run_hook "dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
   assert_status 2
   assert_contains "VGATE-ENTRY-001"
   assert_contains "entry-miss"
 }
 
-@test "different dev-* agent, no plan-ref, no token → entry-miss BLOCK (exit 2)" {
-  run_hook "dev-android" "wire up the new settings screen across modules"
+@test "different dev-* agent, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
+  run_hook "dev-android" "wire up the new settings screen across modules [SIZE-EST] bundles=2 tool_uses~=25 — settings screen wiring"
   assert_status 2
   assert_contains "entry-miss"
 }
@@ -93,8 +108,8 @@ assert_empty() {
 # add/delete + `sync-gate-roster`). This case fails RED if dev-swift is ever dropped from DEV_SET,
 # confirming the gate actually reads the synced list rather than a stale hand-edited copy. ---
 
-@test "synced member dev-swift, no plan-ref, no token → entry-miss BLOCK (exit 2)" {
-  run_hook "dev-swift" "implement the SwiftUI settings flow across modules"
+@test "synced member dev-swift, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
+  run_hook "dev-swift" "implement the SwiftUI settings flow across modules [SIZE-EST] bundles=2 tool_uses~=22 — swiftui settings flow"
   assert_status 2
   assert_contains "entry-miss"
 }
@@ -107,33 +122,64 @@ assert_empty() {
 
 # --- (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked) ---
 
-@test "dev spawn with plan-ref, no reviewer → reviewer advisory + exit 0 (NOT entry-miss block)" {
-  run_hook "dev-react" "implement per plan clauded-docs/1234"
+@test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer advisory + exit 0 (NOT entry-miss block)" {
+  run_hook "dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "entry-miss"
 }
 
-@test "dev spawn with plan-ref AND reviewer present → silent, exit 0, no output" {
+@test "dev spawn with plan-ref (SIZE-EST present) AND reviewer present → silent, exit 0, no output" {
   seed_reviewer
-  run_hook "dev-python" "implement per plan clauded-docs/9999"
+  run_hook "dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_empty
 }
 
 # --- (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch) ---
 
-@test "dev spawn with [ENTRY-CLASS] simple-task token → silent, exit 0, no output" {
-  run_hook "dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none)"
+@test "dev spawn with [ENTRY-CLASS] simple-task token (SIZE-EST present) → silent, exit 0, no output" {
+  run_hook "dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
   assert_status 0
   assert_empty
 }
 
-@test "token present AND plan-ref → reviewer branch wins (plan-ref checked first), exit 0" {
-  run_hook "dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise"
+@test "token present AND plan-ref (SIZE-EST present) → reviewer branch wins (plan-ref checked first), exit 0" {
+  run_hook "dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "entry-miss"
+}
+
+# --- (c') SIZE-EST gate: orchestrator-origin DEV spawn MUST carry a [SIZE-EST] token; guarded by
+# hook_is_subagent so a nested sub-worker origin (agent_id present) is never blocked. ---
+
+@test "orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2, size gate reachable for plan-bearing spawns)" {
+  run_hook "dev-react" "implement per plan clauded-docs/1234"
+  assert_status 2
+  assert_contains "VGATE-SIZE-001"
+  assert_contains "size-est-miss"
+  assert_not_contains "entry-miss"
+}
+
+@test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2)" {
+  run_hook "dev-nestjs" "implement the auth refactor across the service layer"
+  assert_status 2
+  assert_contains "VGATE-SIZE-001"
+  assert_contains "size-est-miss"
+}
+
+@test "nested sub-worker (agent_id present), same plan-ref NO-[SIZE-EST] prompt → size guard SKIPPED, exit 0 (NOT VGATE-SIZE-001)" {
+  run_hook_subagent "dev-react" "implement per plan clauded-docs/1234"
+  assert_status 0
+  assert_contains "no qa-code-reviewer recorded"
+  assert_not_contains "VGATE-SIZE-001"
+}
+
+@test "orchestrator DEV with [SIZE-EST] token + simple-task token → size gate satisfied, exit 0" {
+  run_hook "dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  assert_status 0
+  assert_empty
 }
 
 # --- (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV) ---

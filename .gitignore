@@ -12,6 +12,9 @@ node_modules/
 # stays governed by the scripts/ archive rule, not blanket-ignored
 *.bak
 *.bak-*
+# root-anchored agents-bak before-image dir — belt-and-suspenders alongside
+# *.bak so the whole rollback-anchor tree never enters git ls-files scope
+/agents-bak/
 
 # === global: logs / OS cruft / secrets ===
 *.log
@@ -184,6 +187,9 @@ scripts/archive/
 # deliberately NOT ignored (unlike scripts/archive/)
 # =============================================================================
 hooks/**/*.pyo
+# hooks: runtime state — pricing remote-overlay cache written by
+# pricing_loader.py (dir auto-created on first write, no .gitkeep needed)
+hooks/data/
 
 # =============================================================================
 # wiki/  (live wiki data store — relocated from the Obsidian Vault)

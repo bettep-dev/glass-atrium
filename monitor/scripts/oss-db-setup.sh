@@ -23,6 +23,7 @@ set -euo pipefail
 #   7 = GA_DB_NAME override mismatch (bad name, or disagrees with existing .env)
 #   8 = recreate safety-guard violation (live 'glass_atrium' target, or backup/drop fail)
 #   9 = retry after P3009 baseline resolve still failed (manual intervention needed)
+#  10 = post-deploy attribution_source CHECK constraint apply failed
 EXIT_BAD_CWD=3
 EXIT_MISSING_CLI=4
 EXIT_CREATEDB=5
@@ -30,6 +31,7 @@ EXIT_PRISMA=6
 EXIT_DB_OVERRIDE=7
 EXIT_RECREATE=8
 EXIT_P3009=9
+EXIT_POSTSQL=10
 
 # Squash baseline migration name — the P3009 target guard's known-name allowlist
 # (only this migration's failure is resolve-eligible). Never edit the applied
@@ -314,6 +316,22 @@ if [[ "${deploy_rc}" -ne 0 ]]; then
     || fail "${EXIT_P3009}" "resolve 후 migrate deploy 재시도도 실패 — 수동 개입 필요 (DB 상태 점검)"
   log "P3009: resolve + deploy 재시도 성공 — pre-squash baseline 정상 복구"
 fi
+
+# --- step 6: attribution_source CHECK constraint (idempotent · post-deploy raw SQL) ---
+# init_oss_baseline defines core.outcomes.attribution_source as plain TEXT (no CHECK),
+# so the canonical value allowlist is applied out-of-band HERE rather than via a
+# migration — editing the applied baseline SQL drifts existing-DB checksums (see the
+# SQUASH_BASELINE_MIGRATION note). DROP IF EXISTS + ADD → safe to re-run and to widen
+# the set. NOT VALID skips the full-table scan (pre-existing rows trusted); new writes
+# are still checked. The 9-value set MUST byte-match the dual-write producers
+# (track-outcome.sh / outcomes.ts / daemon_cycle.py / _pg_*_dualwrite.py) — a missing
+# value makes a dual-write hit constraint_violation → the row is silently dropped from PG.
+# core.outcomes lives only in the main DB (created by migrate deploy) — shadow excluded.
+log "attribution_source CHECK 제약 적용 (9종 캐노니컬 · idempotent · NOT VALID)"
+psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
+  -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
+  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation']::text[]))) NOT VALID" \
+  || fail "${EXIT_POSTSQL}" "attribution_source CHECK 제약 적용 실패 (DB '${DB_NAME}') — core.outcomes 존재 + peer auth 권한 확인"
 
 # --- no seed step --------------------------------------------------------------
 # The empty schema is functional on its own (0 required seeds) — stated so the installer

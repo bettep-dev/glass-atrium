@@ -1304,6 +1304,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 }
 
 function FlowList({ title, items, nodeIndex }) {
+	const { Icon } = window.UI;
 	return (
 		<div>
 			<div className="fs-meta font-mono text-dim mb-0.5">{title}</div>
@@ -1319,8 +1320,8 @@ function FlowList({ title, items, nodeIndex }) {
 							<span style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
 								●
 							</span>{" "}
-							<span className="text-faint">[{f.edge_type}]</span> {fromLabel} →{" "}
-							{toLabel}
+							<span className="text-faint">[{f.edge_type}]</span> {fromLabel}{" "}
+							<Icon name="arrow-right" size={11} /> {toLabel}
 							{f.label && <span className="text-faint"> · {f.label}</span>}
 						</div>
 					);
@@ -1375,7 +1376,7 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 // 설계도 카운트 드리프트 배너 — role=alert 재사용 · info-tone(구조 정합성 nudge)으로 daemon-down crit/warn(런타임 헬스)과 시각 분리.
 // diffs = [{ key, claimed, actual }] — mismatch 항목별 주장↔실측 노출.
 function DriftBannerAR({ diffs }) {
-	const { Icon } = window.UI;
+	const { Icon, Badge } = window.UI;
 	const items = diffs || [];
 	return (
 		<div
@@ -1398,17 +1399,9 @@ function DriftBannerAR({ diffs }) {
 				{items.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 mt-2">
 						{items.map((d) => (
-							<span
-								key={d.key}
-								className="fs-micro font-mono text-info"
-								style={{
-									background: "rgb(var(--info) / 0.12)",
-									padding: "1px 7px",
-									borderRadius: 999,
-								}}
-							>
+							<Badge key={d.key} role="status" tone="info" glyph={false}>
 								{`${d.key} ${d.claimed}→${d.actual}`}
-							</span>
+							</Badge>
 						))}
 					</div>
 				)}

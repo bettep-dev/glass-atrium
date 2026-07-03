@@ -136,8 +136,9 @@ mkdir -p "${FAKE_HOME}"
 git clone --quiet --no-hardlinks "${GA}" "${CLONE}" \
   || die "git clone failed: ${GA} -> ${CLONE}"
 ok "clone @HEAD created at ${CLONE}"
-# install.sh derives GA_ROOT via `pwd -P` (symlinks resolved), so every farm
-# symlink it writes targets the PHYSICAL clone path. On macOS mktemp returns a
+# `glass-atrium install` (STEP 2, NOT install.sh) derives GA_ROOT via `pwd -P`
+# (symlinks resolved), so every farm symlink it writes targets the PHYSICAL
+# clone path. On macOS mktemp returns a
 # /var/folders symlink whose realpath is /private/var/folders — the `-lname`
 # glob below MUST use the resolved path or it matches zero links (false FAIL).
 CLONE_REAL="$(cd -- "${CLONE}" && pwd -P)"
@@ -163,6 +164,13 @@ fi
 
 # =============================================================================
 hdr "STEP 2 — install.sh full path (config + plists + farm + hooks + THROWAWAY DB)"
+# NOTE: STEP 2 exercises `glass-atrium install` (the in-process engine), NOT the
+# install.sh bundle bootstrap — install.sh now downloads+extracts a release
+# bundle (no .git) and hands off here; this E2E seeds the tree via git clone.
+# install.sh's bundle download+extract path is covered hermetically by
+# scripts/test/glass-atrium-install.bats (drives the
+# GA_INSTALL_SRC_BUNDLE/GA_INSTALL_SRC_MANIFEST seam: fresh install, preserve-set
+# merge, idempotency, per-file SHA-256 reject, release-scope exclusion).
 # fresh-machine precondition: ~/.claude exists (Claude Code creates it)
 mkdir -p "${FAKE_HOME}/.claude"
 declare -a SBX_ENV=(
@@ -235,7 +243,8 @@ else
   no "config.toml not rendered"
 fi
 # symlink farm: pristine fake home → links == manifest entry count. The glob
-# uses CLONE_REAL (physical path) to match the pwd -P targets install.sh writes.
+# uses CLONE_REAL (physical path) to match the pwd -P targets `glass-atrium
+# install` writes.
 FARM_EXPECT="$(jq '.files | length' "${CLONE}/manifest.json")"
 FARM_LINKS="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${FARM_LINKS}" -eq "${FARM_EXPECT}" ]] \
@@ -245,7 +254,10 @@ FARM_LINKS="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/de
 # =============================================================================
 hdr "STEP 3 — T20 config chain: non-default port -> render-monitor-env -> .env"
 # runbook step: the operator sets [ports].monitor in the rendered config
-sed -i '' -e "s/^monitor = 7842\$/monitor = ${E2E_PORT}/" "${CLONE}/config.toml"
+# portable in-place edit: BSD `sed -i ''` (2-arg) and GNU `sed -i` (1-arg) are
+# mutually incompatible, so use the temp-file + mv idiom that works on both.
+sed -e "s/^monitor = 7842\$/monitor = ${E2E_PORT}/" "${CLONE}/config.toml" \
+  >"${CLONE}/config.toml.tmp" && mv "${CLONE}/config.toml.tmp" "${CLONE}/config.toml"
 grep -q "^monitor = ${E2E_PORT}\$" "${CLONE}/config.toml" \
   && ok "[ports].monitor set to ${E2E_PORT} in sandbox config.toml" \
   || no "failed to set [ports].monitor in sandbox config.toml"
@@ -408,14 +420,33 @@ PLIST_COUNT="$(find "${PLIST_DIR}" -name 'com.glass-atrium.*.plist' 2>/dev/null 
 [[ "${PLIST_COUNT}" -eq 8 ]] \
   && ok "8 plists rendered by install (file-write only)" \
   || no "expected 8 rendered plists, found ${PLIST_COUNT}"
+# plist validation must STILL validate on the Linux CI runner, where plutil
+# (macOS-only) is absent. Preference order, first available wins:
+#   1. xmllint --noout   — XML well-formedness (libxml2; present on most CI)
+#   2. python3 plistlib  — full plist parse, stdlib-only (strictest portable)
+#   3. plutil -lint -s   — macOS fallback when neither of the above exists
+# A no-validator SKIP is the last resort (returns 0) so a missing toolchain does
+# not spuriously fail the run; real validation is preferred whenever possible.
+plist_validate() {
+  local pf="$1"
+  if command -v xmllint >/dev/null 2>&1; then
+    xmllint --noout "${pf}" >/dev/null 2>&1
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import plistlib,sys; plistlib.load(open(sys.argv[1],"rb"))' "${pf}" >/dev/null 2>&1
+  elif command -v plutil >/dev/null 2>&1; then
+    plutil -lint -s "${pf}" >/dev/null 2>&1
+  else
+    return 0
+  fi
+}
 LINT_FAIL=0
 for f in "${PLIST_DIR}"/com.glass-atrium.*.plist; do
   [[ -e "${f}" ]] || continue
-  plutil -lint -s "${f}" >/dev/null 2>&1 || LINT_FAIL=$((LINT_FAIL + 1))
+  plist_validate "${f}" || LINT_FAIL=$((LINT_FAIL + 1))
 done
 [[ "${LINT_FAIL}" -eq 0 ]] \
-  && ok "all rendered plists pass plutil -lint" \
-  || no "${LINT_FAIL} plists fail plutil -lint"
+  && ok "all rendered plists pass plist validation (xmllint/plistlib/plutil)" \
+  || no "${LINT_FAIL} plists fail plist validation"
 # leak scan: no real-GA-root or real-target-home literals in rendered plists
 # (trailing slash on the .claude literal keeps ~/.claude-work from matching)
 if grep -RFq -e "${GA}" -e "${REAL_HOME}/.claude/" "${PLIST_DIR}" 2>/dev/null; then

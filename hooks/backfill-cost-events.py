@@ -29,9 +29,12 @@ idempotent (DO UPDATE refreshes in place) and the re-derived REAL uuids/agent-id
 never collide with the migration's 'legacy:' placeholder keys.
 
 LOGIC FIDELITY — this module reproduces cost-tracker.sh's is_real_user /
-accumulate_usage / calc_cost / subagent-scan semantics VERBATIM. The hook embeds
-that logic inline in a bash heredoc (not importable), so it is mirrored here. Any
-change to one MUST be mirrored in the other (cross-ref both file headers).
+accumulate_usage / subagent-scan semantics VERBATIM. The hook embeds that logic
+inline in a bash heredoc (not importable), so it is mirrored here. Any change to
+one MUST be mirrored in the other (cross-ref both file headers). Pricing is NOT
+mirrored anymore: both consumers import the shared pricing_loader over the
+pricing.json SoT (CID 2026-07-02T1055_pricing-sot_e7b2), so a rate change is a
+single-file edit — the former PRICING lockstep contract is retired.
 
 ORDERING DEPENDENCY (hard)
 --------------------------
@@ -53,9 +56,10 @@ USAGE
   python3 backfill-cost-events.py --apply
 
   # REPRICE (writes) — recompute cost_usd from the STORED token columns for
-  # rows whose model resolves in PRICING; transcript-independent, so it repairs
-  # mispriced rows whose source transcripts were deleted (--apply cannot reach
-  # those). Take a cost_usd backup table first.
+  # rows whose model is_known in the pricing SoT (pricing.json);
+  # transcript-independent, so it repairs mispriced rows whose source
+  # transcripts were deleted (--apply cannot reach those). Take a cost_usd
+  # backup table first.
   python3 backfill-cost-events.py --reprice
 
 Security: psycopg over the Unix socket only (`psycopg.connect("dbname=glass_atrium")`),
@@ -70,100 +74,52 @@ import argparse
 import glob
 import json
 import os
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-# --------------------------------------------------------------------------- #
-#  Pricing — VERBATIM mirror of cost-tracker.sh PRICING / FALLBACK_RATE.       #
-#  Keep in lockstep with the hook; a drift here mis-prices the backfilled cost #
-#  (token totals are unaffected — only cost_usd).                              #
-# --------------------------------------------------------------------------- #
-PRICING = {
-    "claude-opus-4-8": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.5,
-        "cache_creation": 18.75,
-    },
-    "claude-opus-4-7": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.5,
-        "cache_creation": 18.75,
-    },
-    "claude-opus-4-6": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.5,
-        "cache_creation": 18.75,
-    },
-    "claude-opus-4-5": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.5,
-        "cache_creation": 18.75,
-    },
-    "claude-fable-5": {
-        "input": 10.0,
-        "output": 50.0,
-        "cache_read": 1.0,
-        "cache_creation": 12.5,
-    },
-    "claude-sonnet-4-6": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.3,
-        "cache_creation": 3.75,
-    },
-    "claude-sonnet-4-5": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.3,
-        "cache_creation": 3.75,
-    },
-    "claude-haiku-4-5": {
-        "input": 1.0,
-        "output": 5.0,
-        "cache_read": 0.1,
-        "cache_creation": 1.25,
-    },
-}
-# Fallback: opus-4-8 — deliberately the most expensive row (conservative cost reporting).
-FALLBACK_RATE = PRICING["claude-opus-4-8"]
+# Shared pricing loader (single SoT: hooks/pricing.json) — sibling lib/ dir.
+# The sys.path seam must precede the import, hence the E402 placement.
+sys.path.insert(0, str(Path(__file__).parent / "lib"))
+import pricing_loader  # noqa: E402
+
+# Batch remote posture: deterministic network-free backfill by DEFAULT — unknown
+# rows resolve family_latest/fallback quietly instead of hanging on a remote
+# fetch. setdefault keeps the operator opt-in (PRICING_REMOTE_DISABLE=0
+# re-enables the remote step, capped at ONE timeout by the loader's per-process
+# failed-fetch memo).
+os.environ.setdefault("PRICING_REMOTE_DISABLE", "1")
 
 PROJECTS_ROOT = Path(os.path.expanduser("~/.claude/projects"))
 COMMIT_BATCH = 500  # rows per DB transaction commit (apply mode)
 
 
 # --------------------------------------------------------------------------- #
-#  Aggregation primitives — VERBATIM mirror of cost-tracker.sh.                #
+#  Aggregation primitives — is_real_user / accumulate_usage / safe_int are     #
+#  VERBATIM mirrors of cost-tracker.sh; calc_cost delegates to the shared      #
+#  pricing_loader (no mirror).                                                 #
 # --------------------------------------------------------------------------- #
-def normalize_model_key(model_key):
-    """Strip a trailing context-variant suffix (e.g. "[1m]") and a trailing
-    -YYYYMMDD snapshot-date suffix so variant model ids resolve to their base
-    PRICING row. The 1M context window does NOT change the per-1M token rate
-    (the bracket is a routing marker, not a price tier), and dated ids like
-    "claude-haiku-4-5-20251001" are snapshot aliases of the same base rate.
-    Idempotent for keys carrying neither suffix."""
-    if not model_key:
-        return model_key
-    base = model_key.split("[", 1)[0]
-    base = re.sub(r"-\d{8}$", "", base)
-    return base or model_key
-
-
-def calc_cost(it, ot, cr, cc, model_key):
-    """USD cost from per-1M token rates. Unknown model → opus fallback rate
-    (conservative), matching the hook (no stderr spam here — backfill is batch)."""
-    rate = PRICING.get(normalize_model_key(model_key)) or FALLBACK_RATE
-    return (
-        it * rate["input"]
-        + ot * rate["output"]
-        + cr * rate["cache_read"]
-        + cc * rate["cache_creation"]
-    ) / 1_000_000.0
+def calc_cost(it, ot, cr, cc, model_key, event_date=None):
+    """USD cost from the per-MTok rate resolved by pricing_loader.rate_for,
+    keyed on the row's OWN event_date — historically faithful repricing (the
+    live hook keys on its effective "today" instead). Windowed tiers (e.g. the
+    sonnet-5 intro rate through 2026-08-31) are selected inside the loader by
+    that date. event_date accepts an ISO str or datetime.date; absent selects
+    the base (standard) rate row via pricing_loader.BASE_RATE — never the live
+    clock (a malformed date degrades to the same base row inside the loader).
+    Zero-cost allowlist mirrors the hook's calc_cost: "<synthetic>" (harness
+    marker) and empty/None (no-LLM turn / usage-less subagent file) are
+    legitimate zero-cost events whose rows verifiably carry 0 tokens — they
+    return a clean $0 without walking the resolution chain.
+    Batch-quiet: the loader emits no per-model advisory and neither does the
+    backfill (surfacing is the reprice is_known guard); an unknown model still
+    ALWAYS prices via the loader's overlay/family_latest/fallback chain (remote
+    disabled by default — see the PRICING_REMOTE_DISABLE setdefault above)."""
+    if not model_key or model_key == "<synthetic>":
+        return 0.0
+    eff = event_date if event_date is not None else pricing_loader.BASE_RATE
+    record = pricing_loader.rate_for(model_key, effective_date=eff)
+    return pricing_loader.cost_usd(record["rate"], it, ot, cr, cc)
 
 
 def safe_int(value):
@@ -316,7 +272,7 @@ def derive_session_rows(main_jsonl: Path):
             cur_date or "0000-00-00",
             cur_time or "00:00:00",
         )
-        cost = calc_cost(acc[0], acc[1], acc[2], acc[3], acc[5]) if acc[4] else 0.0
+        cost = calc_cost(acc[0], acc[1], acc[2], acc[3], acc[5], cur_date) if acc[4] else 0.0
         rows.append(
             {
                 "event_date": cur_date or "1970-01-01",
@@ -412,7 +368,7 @@ def derive_session_rows(main_jsonl: Path):
                     "output_tokens": a[1],
                     "cache_read_tokens": a[2],
                     "cache_creation_tokens": a[3],
-                    "cost_usd": calc_cost(a[0], a[1], a[2], a[3], a[5]),
+                    "cost_usd": calc_cost(a[0], a[1], a[2], a[3], a[5], a_date),
                     "duration_ms": 0,
                     "num_turns": 0,
                     "stop_reason": None,
@@ -488,11 +444,12 @@ def _build_upsert_sql():
 
 def reprice_stored_rows():
     """Recompute cost_usd from the STORED token columns for every row whose
-    model resolves in PRICING (after normalize_model_key). Transcript-independent
-    — repairs mispriced rows whose source transcripts were deleted (--apply
-    re-derivation cannot reach those). Rows whose model does NOT resolve (NULL /
-    '<synthetic>' / a genuinely unknown id) are left untouched: without a known
-    rate a recompute would only re-bake the fallback guess into history.
+    model is_known in the pricing SoT (pricing_loader.is_known — SoT membership
+    after normalize_model_key). Transcript-independent — repairs mispriced rows
+    whose source transcripts were deleted (--apply re-derivation cannot reach
+    those). Rows whose model is NOT known (NULL / '<synthetic>' / a genuinely
+    unknown id) are left untouched: without a SoT rate a recompute would only
+    re-bake a fallback/family guess into history.
     Idempotent. Returns (scanned, repriced, sum_old, sum_new) over the repriced
     rows."""
     try:
@@ -509,19 +466,19 @@ def reprice_stored_rows():
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, input_tokens, output_tokens, cache_read_tokens, "
-                "cache_creation_tokens, model, cost_usd "
+                "cache_creation_tokens, model, event_date, cost_usd "
                 "FROM core.cost_events "
                 "WHERE parse_error = false AND model IS NOT NULL"
             )
             rows = cur.fetchall()
             pending = 0
-            for row_id, it, ot, cr, cc, model, old_cost in rows:
+            for row_id, it, ot, cr, cc, model, event_date, old_cost in rows:
                 scanned += 1
-                if normalize_model_key(model) not in PRICING:
+                if not pricing_loader.is_known(model):
                     continue
                 # cost_usd is numeric(12,6) — compare at storage resolution or
                 # every sub-micro-dollar rounding re-flags as a change forever.
-                new_cost = round(calc_cost(it, ot, cr, cc, model), 6)
+                new_cost = round(calc_cost(it, ot, cr, cc, model, event_date), 6)
                 old_cost = float(old_cost)
                 if abs(old_cost - new_cost) < 1e-9:
                     continue
@@ -636,7 +593,7 @@ def main():
         "--reprice",
         action="store_true",
         help="recompute cost_usd from STORED token columns for rows whose model "
-        "resolves in PRICING (transcript-independent; take a cost backup first)",
+        "is_known in the pricing SoT (transcript-independent; take a cost backup first)",
     )
     parser.add_argument(
         "--session",

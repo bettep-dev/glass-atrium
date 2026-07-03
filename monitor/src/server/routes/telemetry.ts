@@ -4,7 +4,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
-import { loadAgentRegistry } from "../agents/registry.js";
+import { buildAgentMembershipFilter, loadCanonicalAgentKeys } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import type {
   ActivationFalsePositiveRow,
@@ -422,17 +422,18 @@ async function handleList(
   }
   const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`;
 
-  // Canonical-membership gate for the FP-distribution sub-query ONLY (its own
-  // WHERE + top-N FP_DIMENSION_LIMIT). Shows only Atrium-system agents (registry
-  // SoT). NOT applied to the shared whereClause (list/summary totals +
-  // overall_false_positive_rate MUST stay all-agent). Fail-soft: an empty
-  // registry skips the predicate (fail-open) — Prisma.join([]) is invalid SQL.
-  const registryEntries = await loadAgentRegistry();
-  const canonicalAgents = [...registryEntries.keys()];
-  const fpAgentMembershipFilter =
-    canonicalAgents.length === 0
-      ? Prisma.empty
-      : Prisma.sql`AND agent_name IN (${Prisma.join(canonicalAgents)})`;
+  // Canonical-membership gate (registry SoT — only Atrium-system agents) for the
+  // two RENDERED agent-dimensioned surfaces: the raw activations LIST (rows) and
+  // the FP-distribution sub-query (its own WHERE + top-N FP_DIMENSION_LIMIT).
+  // Deliberately NOT applied to the shared summary whereClause — the list/summary
+  // TOTALS + overall_false_positive_rate MUST stay all-agent (documented
+  // invariant). Fail-soft: an empty registry skips the predicate (fail-open) —
+  // Prisma.join([]) would be invalid SQL.
+  const canonicalAgents = await loadCanonicalAgentKeys();
+  const agentNameMembershipFilter = buildAgentMembershipFilter(
+    canonicalAgents,
+    Prisma.sql`agent_name`,
+  );
 
   const prisma = getPrisma();
   try {
@@ -452,6 +453,7 @@ async function handleList(
           metadata
         FROM core.skill_activations
         ${whereClause}
+        ${agentNameMembershipFilter}
         ORDER BY occurred_at DESC
         LIMIT ${parsed.limit}
         OFFSET ${parsed.offset}
@@ -477,7 +479,7 @@ async function handleList(
           FROM core.skill_activations
           ${whereClause}
           AND agent_name IS NOT NULL
-          ${fpAgentMembershipFilter}
+          ${agentNameMembershipFilter}
           GROUP BY agent_name
         ) AS combined
         WHERE total > 0

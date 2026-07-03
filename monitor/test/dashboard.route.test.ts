@@ -9,6 +9,10 @@ import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+import {
+  buildAgentMembershipFilter,
+  loadCanonicalAgentKeys,
+} from "../src/server/agents/registry.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerDashboardRoutes } from "../src/server/routes/dashboard.js";
 import { DAY_BUCKET_TIMEZONE } from "../src/server/timezone.js";
@@ -99,6 +103,11 @@ test("GET /api/dashboard/kpi: yesterday_session_count mirrors the yesterday day-
 
 test("GET /api/dashboard/kpi: 24h fail/blocked split matches DB ground truth", async () => {
   const prisma = getPrisma();
+  // Oracle binds the same registry-membership scope handleKpi applies to its
+  // fail/blocked band. Concurrent membership-gate suites seed non-registry rows
+  // into the shared 24h window the scoped route excludes → an unscoped oracle
+  // would over-count against the route.
+  const agentMembership = buildAgentMembershipFilter(await loadCanonicalAgentKeys());
   const oracle = await prisma.$queryRaw<Array<{ fails: bigint; blocked: bigint }>>`
     SELECT
       COUNT(*) FILTER (WHERE result = 'fail')::bigint    AS fails,
@@ -106,6 +115,7 @@ test("GET /api/dashboard/kpi: 24h fail/blocked split matches DB ground truth", a
     FROM core.outcomes
     WHERE result IN ('blocked', 'fail')
       AND record_ts > NOW() - INTERVAL '24 hours'
+      ${agentMembership}
   `;
   const expectedFails = Number(oracle[0]?.fails ?? 0n);
   const expectedBlocked = Number(oracle[0]?.blocked ?? 0n);
@@ -123,11 +133,14 @@ test("GET /api/dashboard/kpi: last_1h_fail_count counts fail-only, excluding blo
   // blocked row inside the window must NOT inflate the fail counter. Oracle
   // applies the same fail-only predicate so a fail+blocked merge would diverge.
   const prisma = getPrisma();
+  // Same registry-membership scope as the 24h oracle and handleKpi's band.
+  const agentMembership = buildAgentMembershipFilter(await loadCanonicalAgentKeys());
   const oracle = await prisma.$queryRaw<Array<{ fails: bigint }>>`
     SELECT COUNT(*) FILTER (WHERE result = 'fail')::bigint AS fails
     FROM core.outcomes
     WHERE result IN ('blocked', 'fail')
       AND record_ts > NOW() - INTERVAL '1 hour'
+      ${agentMembership}
   `;
   const expectedFails = Number(oracle[0]?.fails ?? 0n);
 

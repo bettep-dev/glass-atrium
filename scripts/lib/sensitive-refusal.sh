@@ -61,26 +61,30 @@ sensitive_preflight() {
   return 0
 }
 
+# Shared invocation: preflight, resolve the interpreter + helper, then run the
+# helper in the requested mode. Args: $1 = helper mode (path|diff) · $2 = subject
+# (a path, or '-' for stdin). Propagates the helper's exit-code contract verbatim
+# (0 CLEAN · 3 SENSITIVE · 2 USAGE), or rc 4 (ENV) on a preflight failure.
+sensitive_invoke() {
+  local mode="$1" subject="$2" py helper
+  sensitive_preflight || return 4
+  py="$(sensitive_python_bin)"
+  helper="$(sensitive_helper_path)"
+  "${py}" "${helper}" "${mode}" "${subject}"
+}
+
 # Test a single file PATH. Args: $1 = path.
 # rc 0   → CLEAN (safe to sync)
 # rc 3   → SENSITIVE (refuse — helper printed the matched pattern + reason)
 # rc 2/4 → USAGE / ENV (loud-fail; treat as refuse — never sync on uncertainty)
 sensitive_check_path() {
-  local path="$1" py helper
-  sensitive_preflight || return 4
-  py="$(sensitive_python_bin)"
-  helper="$(sensitive_helper_path)"
-  "${py}" "${helper}" path "${path}"
+  sensitive_invoke path "$1"
 }
 
 # Test a unified DIFF. Args: $1 = diff file path; omit or '-' → read stdin.
 # Same rc contract as sensitive_check_path.
 sensitive_check_diff() {
-  local source="${1:--}" py helper
-  sensitive_preflight || return 4
-  py="$(sensitive_python_bin)"
-  helper="$(sensitive_helper_path)"
-  "${py}" "${helper}" diff "${source}"
+  sensitive_invoke diff "${1:--}"
 }
 
 # Higher-order guard: returns 0 ONLY when the path is provably CLEAN. ANY other
@@ -88,12 +92,12 @@ sensitive_check_diff() {
 # caller `if sensitive_path_ok "$p"; then sync; fi` fails CLOSED — an unchecked
 # or refused path is NEVER synced.
 sensitive_path_ok() {
-  sensitive_check_path "$1"
-  [[ "$?" -eq 0 ]]
+  sensitive_check_path "$1" && return 0
+  return 1
 }
 
 # Higher-order guard for diffs — fail-closed twin of sensitive_path_ok.
 sensitive_diff_ok() {
-  sensitive_check_diff "${1:--}"
-  [[ "$?" -eq 0 ]]
+  sensitive_check_diff "${1:--}" && return 0
+  return 1
 }

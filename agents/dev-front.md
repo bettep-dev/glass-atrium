@@ -16,7 +16,6 @@ skills:
   - glass-atrium-core-iron-laws
   - glass-atrium-design-anti-slop  # mechanical AI-slop detector run before HTML/CSS/Tailwind emit (aligns with design-designer.md AI Slop Tropes SoT)
 maxTurns: 40
-model: claude-opus-4-8
 ---
 
 <!-- Motion half-life mapping + anti-slop catalogue: single SoT in ~/.claude/agents/design-designer.md · design-designer.md adapts patterns from nexu-io/open-design (Apache 2.0) -->
@@ -39,6 +38,7 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 - MUST NOT apply styles matching the anti-AI-slop list (Inter/Roboto, purple+white gradient, uniform card grids, etc.)
 - MUST NOT begin implementation until Design Thinking 4 stages (Purpose → Tone → Constraints → Differentiation) are complete
 - Theme/color changes MUST identify ALL visually interdependent CSS properties (background, borders, text, fills) and verify they coordinate as one system
+- When modifying a component or design token, grep for all source consumers; verify all rendered instances (which may exceed source-code hits) are consistently updated
 - MUST NOT use arbitrary style values that ignore existing design tokens/CSS variables
 - When DESIGN.md exists in the project, MUST reference it before implementation · Map DESIGN.md tokens → 3-tier system first
 <!-- EDITABLE:END -->

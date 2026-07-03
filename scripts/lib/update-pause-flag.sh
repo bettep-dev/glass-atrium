@@ -48,15 +48,8 @@
 # default resolve to the SAME physical path, so updater (GA_ROOT set) and daemon
 # (GA_ROOT unset) agree.
 update_pause_state_dir() {
-  if [[ -n "${1:-}" ]]; then
-    printf '%s\n' "$1"
-    return 0
-  fi
-  if [[ -n "${ATRIUM_PAUSE_STATE_DIR:-}" ]]; then
-    printf '%s\n' "${ATRIUM_PAUSE_STATE_DIR}"
-    return 0
-  fi
-  printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}/.update-state"
+  printf '%s\n' \
+    "${1:-${ATRIUM_PAUSE_STATE_DIR:-${GA_ROOT:-${HOME}/.glass-atrium}/.update-state}}"
 }
 
 # Echo the canonical pause-flag path (file need not exist). Arg: $1 = optional

@@ -13,16 +13,37 @@
 #     Postgres on /tmp. Hosted runners give that ONLY via a natively-installed
 #     cluster reconfigured to listen on /tmp (the `services:` Docker Postgres is
 #     TCP/password auth — incompatible with the host=/tmp peer-auth contract).
-#     The monitor-tests + e2e jobs install Postgres natively for exactly this.
+#     The test-monitor + test-e2e jobs install Postgres natively for exactly this.
 #
 # What DOES run: monitor typecheck + node:test (live DB + real chromium),
 # autoagent unittest suites, the bats hook/script/installer suites, the
 # read-only glass-atrium doctor preflight, and the sandboxed E2E bootstrap.
+#
+# Job naming (consistent STAGE-PREFIX scheme): fast-gate jobs carry a `gate-`
+# prefix, language + E2E jobs a `test-` prefix, change detection is `detect-`,
+# and the single required aggregate keeps its historical `ci-pass` key.
+#
+# Job graph (4-stage gated DAG, not a flat parallel fan-out):
+#   Stage 1  fast-gate (no services): gate-lint · gate-typecheck · gate-doctor
+#   Stage 2  language jobs (gated on fast-gate + per-stack `detect-changes` filter):
+#            test-bash · test-python · test-monitor (the sole Postgres+chromium job)
+#   Stage 3  test-e2e (advisory / PR-optional, continue-on-error)
+#   Stage 4  ci-pass — the SINGLE required status check; aggregates the gate.
 
 name: ci
 
 # Quoted to avoid the YAML 1.1 bareword `on` → boolean coercion (GitHub's
 # parser is fine either way; quoting keeps third-party YAML linters honest).
+#
+# SECURITY (audited-safe by design): this uses `pull_request`, NOT
+# `pull_request_target`. `pull_request` runs the workflow in the FORK's context
+# with a READ-ONLY GITHUB_TOKEN and NO access to repo secrets — so a malicious
+# PR from a fork cannot exfiltrate secrets or gain write scope even while
+# executing untrusted PR code. `pull_request_target` (which runs in the BASE
+# repo context with a writable token + secret access against unreviewed fork
+# code) is the classic privilege-escalation footgun and is deliberately NOT
+# used. Combined with the deny-all `permissions: {}` default below, the CI
+# attack surface for fork PRs is minimal.
 "on":
   push:
     branches: [main]
@@ -34,42 +55,373 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+# Deny-all at the workflow level (least privilege): NO job here writes with the
+# GITHUB_TOKEN — the language/gate jobs only READ the tree, and upload-artifact
+# uses the runtime artifact token (NOT a `permissions` scope). Each job re-grants
+# exactly `contents: read` at the job level. This deny-all is scoped to ci.yml
+# ONLY — release.yml keeps its own `contents: write` (gh release create needs it).
+#
+# SECURITY (audited-safe): no OIDC (`id-token: write`) block is needed. OIDC
+# only earns its keep when a job must mint a short-lived cloud credential
+# (AWS/GCP/Azure federation) — CI here never talks to an external cloud. Every
+# authenticated call uses the ambient, keyless `github.token`/GITHUB_TOKEN,
+# which requires no OIDC exchange, so omitting `id-token` is correct (adding it
+# would only widen the token surface for zero benefit). `harden-runner` runs in
+# `egress-policy: audit` on the heavy jobs precisely to confirm this — a first
+# real run's egress baseline should show no external-cloud auth traffic.
+permissions: {}
 
 jobs:
+  # ===========================================================================
+  # STAGE 1 — fast-gate: cheap, service-free checks that fail early. Nothing
+  # here needs Postgres or chromium; all three run in parallel with no `needs`.
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Lint the workflow files themselves (rhysd/actionlint). Catches expression
+  # typos, invalid `needs`, shellcheck issues in run: blocks — before any of the
+  # heavier jobs spend runner minutes.
+  # ---------------------------------------------------------------------------
+  gate-lint:
+    name: "gate: lint workflows (actionlint)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+  # ---------------------------------------------------------------------------
+  # Monitor typecheck WITHOUT a live database. `tsc --noEmit` needs the
+  # generated Prisma client (git-ignored at monitor/src/generated/prisma, so
+  # ABSENT on a fresh checkout) — but `prisma generate` does NOT need a live
+  # DB: Prisma 7's `env()` is lazy (evaluated only by connecting commands), so
+  # generate exits 0 with a harmless dummy DATABASE_URL (or even unset). This
+  # keeps the fast-gate service-free. Sequence is load-bearing:
+  #   npm ci  →  npx prisma generate  →  npm run typecheck
+  # npm ci first so the prisma CLI + generated-client deps exist; generate lands
+  # the client at src/generated/prisma; then tsc consumes it.
+  # ---------------------------------------------------------------------------
+  gate-typecheck:
+    name: "gate: monitor typecheck (no DB)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # Node toolchain (monitor/.nvmrc) + npm cache + Playwright browser cache.
+      - name: Set up monitor Node
+        uses: ./.github/actions/setup-monitor-node
+
+      # npm ci first: without it the prisma CLI and generated-client deps are
+      # absent, so the next `prisma generate` would fail.
+      - name: Install monitor deps
+        working-directory: monitor
+        run: npm ci
+
+      # Generate the Prisma client offline. The dummy DATABASE_URL is
+      # belt-and-suspenders (env() is lazy → generate exits 0 even unset) and
+      # is never dereferenced, since no connecting command runs in this job.
+      - name: Generate Prisma client (no DB)
+        working-directory: monitor
+        env:
+          DATABASE_URL: postgresql://dummy@localhost/dummy?host=/tmp
+        run: npx prisma generate
+
+      - name: Typecheck
+        working-directory: monitor
+        run: npm run typecheck
+
+  # ---------------------------------------------------------------------------
+  # Installer read-only preflight. `glass-atrium doctor` is mutation-free: it
+  # checks GA root, a writable throwaway target home (GA_TARGET_HOME), same
+  # device, manifest integrity, and hook bindings (binding gaps WARN, never
+  # FAIL on a fresh tree). It NEVER writes settings.json and never reaches the
+  # advisory `claude --doctor` post-check (that path is `install`-only).
+  # jq is required — doctor's manifest-integrity check shells out to jq.
+  # ---------------------------------------------------------------------------
+  gate-doctor:
+    name: "gate: glass-atrium doctor preflight"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run doctor against a throwaway target home
+        run: |
+          GA_TARGET_HOME="$(mktemp -d)" ./glass-atrium doctor
+
+  # ===========================================================================
+  # STAGE 2 — language jobs. Gated on the fast-gate passing AND on a per-stack
+  # `detect-changes` path filter so an unrelated diff skips the irrelevant
+  # stacks. A skipped job counts as OK at ci-pass (see stage 4).
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Per-stack change detection (dorny/paths-filter). Each output is consumed by
+  # the matching language job's `if:`. IMPORTANT push-event safety: on a first
+  # push / force-push / brand-new branch the before-SHA can be all-zeros, which
+  # would make the filter skip EVERY language job while ci-pass (always()) still
+  # turns green with zero real testing. `predicate-quantifier: every` +
+  # explicit all-true fallback on a missing base prevents that false-green: when
+  # paths-filter cannot diff a base, we force every stack to run.
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    name: detect changed stacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor]
+    outputs:
+      bash: ${{ steps.filter.outputs.bash }}
+      python: ${{ steps.filter.outputs.python }}
+      monitor: ${{ steps.filter.outputs.monitor }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          # No `base:`/`ref:` override → on a pull_request the action diffs the
+          # PR base; on a push it diffs against the before-SHA. When that base
+          # is unresolvable (all-zeros before-SHA on a new-branch/force push),
+          # the action reports every filter as changed — which is exactly the
+          # fail-safe we want (run everything rather than false-green).
+          filters: |
+            bash:
+              - 'hooks/**'
+              - 'scripts/**'
+              - 'test/**'
+              - 'autoagent/test/**'
+              - '**/*.sh'
+              - '**/*.bats'
+            python:
+              - 'autoagent/**'
+              - '**/*.py'
+            monitor:
+              - 'monitor/**'
+              - '**/*.ts'
+              - 'package.json'
+              - 'package-lock.json'
+
+  # ---------------------------------------------------------------------------
+  # Bats suites for hooks, operational scripts, the installer, AND the autoagent
+  # git-txn / daemon-apply suites. `bats --recursive` over the 4 test roots
+  # picks up ALL 32 suites (8 test/ + 6 hooks/test/ + 14 scripts/test/ +
+  # 4 autoagent/test/) — a strict coverage increase over the old flat job's 13
+  # explicit paths, which silently omitted 19 suites. Every suite is hermetic
+  # (mktemp sandboxes + PATH-prepended stub binaries for
+  # psql/createdb/launchctl/tmux/claude), so this job needs neither Postgres nor
+  # launchd nor the claude CLI. None of the suites load bats-support/bats-assert
+  # helper libraries, so a plain bats-core install suffices (no BATS_LIB_PATH).
+  # ---------------------------------------------------------------------------
+  test-bash:
+    name: "test: bats (hooks · scripts · installer · autoagent)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # mikepenz/action-junit-report posts inline PR annotations via a check-run
+      # → it needs `checks: write` on top of the deny-all baseline. This is the
+      # ONE scope the reporter adds; nothing else in this job writes a token.
+      checks: write
+    needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
+    if: needs.detect-changes.outputs.bash == 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+
+      # bats `-o/--output <dir>` requires the directory to ALREADY EXIST (per
+      # `bats --help`: "Directory to write report files (must exist)"), so we
+      # mkdir it first. `--report-formatter junit` KEEPS the pretty console
+      # output AND writes a junit report.xml (NOT `--formatter junit`, which
+      # would replace the readable console log with raw XML). We do NOT wrap the
+      # bats call in `|| true`: the reporter step below runs on if:always() and
+      # the ci-pass gate must still observe a real bats failure exit code.
+      - name: Run bats suites (recursive over the 4 roots)
+        run: |
+          mkdir -p reports/bats
+          bats --recursive \
+            --report-formatter junit --output reports/bats \
+            test/ hooks/test/ scripts/test/ autoagent/test/
+
+      # Inline PR annotations from the junit report. Separate step, if:always()
+      # so annotations post even when bats failed — but this step does NOT
+      # swallow the bats exit code (that already propagated from the step above),
+      # and fail_on_failure stays false so the reporter never masks a green/red
+      # verdict the ci-pass gate already derives from bats itself.
+      - name: Annotate bats results (junit → inline PR)
+        if: always()
+        uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
+        with:
+          report_paths: reports/bats/report.xml
+          check_name: bats results
+          fail_on_failure: false
+          require_tests: false
+
+      # GITHUB_STEP_SUMMARY aggregate. Parses the junit report.xml (tests /
+      # failures / errors / skipped counts live on the <testsuite(s)> element)
+      # into a one-line pass/fail summary. Honest-skip visibility: this ALSO
+      # surfaces IN-JOB skipped bats tests (junit `skipped=` count) as a visible
+      # line — path-filter JOB skips are out of scope here (a skipped job runs
+      # zero steps; those are surfaced by ci-pass's skip=OK semantics instead).
+      - name: Summarize bats results
+        if: always()
+        run: |
+          report="reports/bats/report.xml"
+          if [[ ! -f "${report}" ]]; then
+            echo "## bats — no junit report produced (suite did not run)" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          # Sum the attributes across all <testsuite> elements. grep -o keeps
+          # this dependency-free (no xmllint); awk sums the extracted integers.
+          extract_sum() {
+            grep -oE "$1=\"[0-9]+\"" "${report}" | grep -oE '[0-9]+' \
+              | awk '{ s += $1 } END { print s + 0 }'
+          }
+          tests="$(extract_sum tests)"
+          failures="$(extract_sum failures)"
+          errors="$(extract_sum errors)"
+          skipped="$(extract_sum skipped)"
+          passed="$(( tests - failures - errors - skipped ))"
+          {
+            echo "## bats results"
+            echo ""
+            echo "| total | passed | failed | errors | skipped |"
+            echo "|------:|-------:|-------:|-------:|--------:|"
+            echo "| ${tests} | ${passed} | ${failures} | ${errors} | ${skipped} |"
+            if [[ "${skipped}" -gt 0 ]]; then
+              echo ""
+              echo "> ⚠️ ${skipped} in-job test(s) SKIPPED — see the annotated run for the skip reason (e.g. the metered \`claude\` CLI path, per the honest-skip contract in the workflow header)."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # ---------------------------------------------------------------------------
+  # AutoAgent self-improvement loop: Python stdlib `unittest` suites. No DB, no
+  # third-party deps, no `claude` CLI — pure-stdlib by design, so the 3.11/3.12
+  # matrix carries no dependency-install risk. fail-fast:false so one version's
+  # failure does not cancel the other.
+  # ---------------------------------------------------------------------------
+  test-python:
+    name: "test: autoagent unittest"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
+    if: needs.detect-changes.outputs.python == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # unittest prints its "Ran N tests ... OK/FAILED (...)" trailer to STDERR.
+      # We tee that stream to a file, then emit a GITHUB_STEP_SUMMARY aggregate
+      # line — WITHOUT swallowing the exit code: `set -o pipefail` makes the
+      # pipeline exit non-zero when unittest fails, and the summary step below
+      # is guarded by if:always() so it runs on both pass and fail. No `|| true`
+      # anywhere → a real test failure still reddens the job + the ci-pass gate.
+      - name: Run autoagent unittest suites
+        id: unittest
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s autoagent/test -p 'test_*.py' -v \
+            2>&1 | tee "unittest-${{ matrix.python-version }}.log"
+
+      - name: Summarize autoagent unittest results
+        if: always()
+        run: |
+          log="unittest-${{ matrix.python-version }}.log"
+          {
+            echo "## autoagent unittest (Python ${{ matrix.python-version }})"
+            echo ""
+            if [[ ! -f "${log}" ]]; then
+              echo "> no unittest output captured (suite did not run)"
+              exit 0
+            fi
+            # "Ran N tests in Xs" + the trailing OK / FAILED(...) verdict line.
+            ran="$(grep -E '^Ran [0-9]+ test' "${log}" | tail -n1)"
+            verdict="$(grep -E '^(OK|FAILED)' "${log}" | tail -n1)"
+            echo "- ${ran:-Ran ? tests}"
+            echo "- result: ${verdict:-unknown}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   # ---------------------------------------------------------------------------
   # Monitor: typecheck + node:test. Both need a LIVE peer-auth Postgres on the
   # /tmp socket (Prisma $queryRaw oracles) AND real chromium (browser-pool /
   # html/pdf export tests use Playwright with no mock — see browser-pool.ts).
+  # This is the ONLY stage-2 job that provisions Postgres + chromium.
+  # oss-db-setup.sh runs `npm ci` + renders .env + createdb (main + shadow) +
+  # `prisma generate` + `prisma migrate deploy`, so the full DB path lives here
+  # (the fast-gate typecheck job runs only the offline generate).
   # ---------------------------------------------------------------------------
-  monitor-tests:
-    name: monitor typecheck + tests
+  test-monitor:
+    name: "test: monitor typecheck + tests (live DB)"
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
+    if: needs.detect-changes.outputs.monitor == 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node (from monitor/.nvmrc)
-        uses: actions/setup-node@v4
+      # STAGED egress hardening. AUDIT mode only — it INSTRUMENTS (never blocks)
+      # outbound network so a first real CI run produces a StepSecurity egress
+      # baseline. MUST be the literal FIRST step (before checkout + the
+      # setup-monitor-node / setup-postgres-peer-auth composites) so the apt /
+      # npm-ci / playwright-download egress is captured. Promote audit -> block
+      # only AFTER reviewing that baseline and pinning the derived allowlist;
+      # the allowlist cannot be derived offline, so block is deferred by design.
+      - name: Harden runner (egress audit — STAGED, not blocking)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          node-version-file: monitor/.nvmrc
+          egress-policy: audit
 
-      # Native Postgres so the runner user is a peer-auth superuser via the
-      # local socket, reconfigured to /tmp to satisfy the host=/tmp contract
-      # baked into .env.example + oss-db-setup.sh (PG_SOCKET=/tmp).
-      - name: Install and start Postgres (peer auth on /tmp socket)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql postgresql-contrib
-          sudo sed -i "s|^#\?unix_socket_directories.*|unix_socket_directories = '/tmp'|" \
-            /etc/postgresql/*/main/postgresql.conf
-          sudo systemctl restart postgresql
-          # peer auth: create a superuser role matching the runner OS user so
-          # `psql -h /tmp -d postgres` connects with no password.
-          sudo -u postgres psql -c "CREATE ROLE \"$(id -un)\" LOGIN SUPERUSER;"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - name: Verify peer-auth socket reachability
-        run: psql -h /tmp -d postgres -tAc 'SELECT 1'
+      # Node toolchain (monitor/.nvmrc) + npm cache + Playwright browser cache.
+      - name: Set up monitor Node
+        uses: ./.github/actions/setup-monitor-node
+
+      # Native peer-auth Postgres on the /tmp socket (host=/tmp contract baked
+      # into .env.example + oss-db-setup.sh, PG_SOCKET=/tmp). The composite also
+      # replaces the old single-shot psql probe with a pg_isready retry loop.
+      - name: Set up peer-auth Postgres on /tmp socket
+        uses: ./.github/actions/setup-postgres-peer-auth
 
       # oss-db-setup.sh runs `npm ci` + renders monitor/.env + createdb (main +
       # shadow) + `prisma generate` + `prisma migrate deploy`. Idempotent.
@@ -92,115 +444,11 @@ jobs:
         working-directory: monitor
         run: npm test
 
-  # ---------------------------------------------------------------------------
-  # AutoAgent self-improvement loop: Python stdlib `unittest` suites. No DB,
-  # no third-party deps, no `claude` CLI — pure-stdlib by design.
-  # ---------------------------------------------------------------------------
-  autoagent-tests:
-    name: autoagent unittest
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run autoagent unittest suites
-        run: python3 -m unittest discover -s autoagent/test -p 'test_*.py' -v
-
-  # ---------------------------------------------------------------------------
-  # Bats suites for hooks, operational scripts, and the installer. Every suite
-  # is hermetic (mktemp sandboxes + PATH-prepended stub binaries for
-  # psql/createdb/launchctl/tmux/claude) — none touches a live host service,
-  # so this job needs neither Postgres nor launchd nor the claude CLI.
-  # ---------------------------------------------------------------------------
-  bats-suites:
-    name: bats (hooks · scripts · installer)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install bats
-        run: sudo apt-get update && sudo apt-get install -y bats
-
-      # Single source of truth for the bats suite paths — both the existence
-      # smoke step and the bats invocation read $BATS_SUITES, so a dropped or
-      # mistyped path can never drift between the two.
-      - name: Resolve bats suite paths
-        id: suites
-        run: |
-          {
-            echo 'paths<<EOF'
-            cat <<'SUITES'
-          test/wire-hooks-merge.bats
-          test/doctor-hook-bindings.bats
-          test/render-launchd-plists.bats
-          test/oss-db-setup.bats
-          test/install-bootstrap-subcommand.bats
-          hooks/test/cost-tracker-pricing-advisory.bats
-          hooks/test/code-based-grader.bats
-          scripts/test/atrium-config.bats
-          scripts/test/pii-scan.bats
-          scripts/test/wiki-source-raw.bats
-          scripts/test/daemon-bootstrap-supervise.bats
-          scripts/test/render-monitor-env.bats
-          scripts/test/daemon-daily-restart.bats
-          SUITES
-            echo EOF
-          } >>"$GITHUB_OUTPUT"
-
-      # Smoke gate: fail FAST with a precise message if any listed suite file is
-      # missing, instead of an opaque bats "no such file" runtime error. Catches
-      # a renamed/deleted/typo'd path that local runs would otherwise miss.
-      # The path list is passed via env (not inline ${{ }} into the shell body)
-      # to keep the run: script free of expression interpolation.
-      - name: Assert every listed bats suite exists
-        env:
-          BATS_SUITES: ${{ steps.suites.outputs.paths }}
-        run: |
-          missing=0
-          while IFS= read -r suite; do
-            [[ -z "${suite}" ]] && continue
-            if [[ -f "${suite}" ]]; then
-              echo "ok   ${suite}"
-            else
-              echo "MISS ${suite}" >&2
-              missing=$((missing + 1))
-            fi
-          done <<< "${BATS_SUITES}"
-          if [[ "${missing}" -ne 0 ]]; then
-            echo "FATAL: ${missing} CI-listed bats suite path(s) do not exist" >&2
-            exit 1
-          fi
-
-      - name: Run bats suites
-        env:
-          BATS_SUITES: ${{ steps.suites.outputs.paths }}
-        run: |
-          mapfile -t suites <<< "${BATS_SUITES}"
-          bats "${suites[@]}"
-
-  # ---------------------------------------------------------------------------
-  # Installer read-only preflight. `glass-atrium doctor` is mutation-free: it
-  # checks GA root, a writable throwaway target home (GA_TARGET_HOME), same
-  # device, manifest integrity, and hook bindings (binding gaps WARN, never
-  # FAIL on a fresh tree). It NEVER writes settings.json and never reaches the
-  # advisory `claude --doctor` post-check (that path is `install`-only).
-  # ---------------------------------------------------------------------------
-  install-doctor:
-    name: glass-atrium doctor preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run doctor against a throwaway target home
-        run: |
-          GA_TARGET_HOME="$(mktemp -d)" ./glass-atrium doctor
+  # ===========================================================================
+  # STAGE 3 — E2E. Advisory / PR-optional: job-level continue-on-error so a slow
+  # e2e flake surfaces as its own non-blocking check and NEVER gates ci-pass
+  # (it is deliberately excluded from ci-pass's `needs`).
+  # ===========================================================================
 
   # ---------------------------------------------------------------------------
   # Full sandboxed E2E bootstrap proof: clones the repo into a fake HOME, runs
@@ -208,42 +456,128 @@ jobs:
   # DB bootstrap) against a THROWAWAY db, starts the monitor directly (no
   # launchd), smoke-checks /api/health, asserts uninstall parity, and tears
   # down. launchd is STATIC-verified only (the script never calls launchctl).
-  # Needs the same peer-auth /tmp Postgres as monitor-tests.
+  # Needs the same peer-auth /tmp Postgres as test-monitor, plus jq (script
+  # preflight demands it) and `npm ci` (the fake-HOME clone has no node_modules
+  # until installed) + playwright chromium.
   # ---------------------------------------------------------------------------
-  e2e-bootstrap:
-    name: sandboxed E2E bootstrap
+  test-e2e:
+    name: "test: sandboxed E2E bootstrap (advisory)"
     runs-on: ubuntu-latest
+    # detect-changes is listed alongside test-monitor because this job's `if:`
+    # reads needs.detect-changes.outputs.monitor — a job can only read outputs of
+    # jobs in its own needs list, even though test-monitor already transitively
+    # needs it.
+    needs: [detect-changes, test-monitor]
+    if: needs.detect-changes.outputs.monitor == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # Advisory / PR-optional: shows as its own non-blocking check and is
+    # excluded from ci-pass's failure gate.
+    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node (from monitor/.nvmrc)
-        uses: actions/setup-node@v4
+      # STAGED egress hardening. AUDIT mode only — instruments (never blocks)
+      # outbound network to produce a first-run StepSecurity egress baseline.
+      # MUST be the literal FIRST step (before checkout + composites) so the
+      # apt / npm-ci / playwright-download egress is captured. Promote audit ->
+      # block only AFTER reviewing that baseline; the allowlist cannot be derived
+      # offline, so block is deferred by design.
+      - name: Harden runner (egress audit — STAGED, not blocking)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          node-version-file: monitor/.nvmrc
+          egress-policy: audit
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # Node toolchain (monitor/.nvmrc) + npm cache + Playwright browser cache.
+      - name: Set up monitor Node
+        uses: ./.github/actions/setup-monitor-node
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Install and start Postgres (peer auth on /tmp socket)
-        run: |
-          sudo apt-get install -y postgresql postgresql-contrib
-          sudo sed -i "s|^#\?unix_socket_directories.*|unix_socket_directories = '/tmp'|" \
-            /etc/postgresql/*/main/postgresql.conf
-          sudo systemctl restart postgresql
-          sudo -u postgres psql -c "CREATE ROLE \"$(id -un)\" LOGIN SUPERUSER;"
+      # Native peer-auth Postgres on the /tmp socket — same contract as
+      # test-monitor; the composite replaces the single-shot psql probe with a
+      # pg_isready retry loop.
+      - name: Set up peer-auth Postgres on /tmp socket
+        uses: ./.github/actions/setup-postgres-peer-auth
 
-      - name: Verify peer-auth socket reachability
-        run: psql -h /tmp -d postgres -tAc 'SELECT 1'
-
-      # The script clones THIS repo, so the live `glass_atrium` DB it diffs against in
-      # parity checks does not exist on the runner — provide an empty one so the
-      # before/after migration-count oracles have a stable baseline.
+      # The script clones THIS repo, so the live `glass_atrium` DB it diffs
+      # against in parity checks does not exist on the runner — provide an empty
+      # one so the before/after migration-count oracles have a stable baseline.
       - name: Create baseline glass_atrium DB (E2E parity oracle)
         run: createdb -h /tmp glass_atrium
 
+      # npm ci is required: the fake-HOME clone has no node_modules, and the
+      # script's preflight + playwright cache reuse depend on the installed deps.
       - name: Install Playwright chromium with system deps
         working-directory: monitor
+        timeout-minutes: 12
         run: npm ci && npx playwright install --with-deps chromium
 
       - name: Run sandboxed E2E bootstrap
         run: bash test/oss-e2e-bootstrap.sh
+
+      # Preserve E2E diagnostics on failure for post-mortem.
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-bootstrap-logs
+          path: |
+            /tmp/glass-atrium-e2e-*.log
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # STAGE 4 — ci-pass: the SINGLE required status check. Runs with always() so
+  # it observes every upstream result, then asserts the gate in a bash STEP
+  # (not a job-level if:), so a real upstream failure yields a non-zero job exit
+  # the branch protection observes. test-e2e is deliberately NOT in `needs`
+  # (it is advisory/continue-on-error). A SKIPPED upstream (path-filter miss)
+  # counts as OK; only 'failure' or 'cancelled' fails the gate.
+  # ===========================================================================
+  ci-pass:
+    name: ci-pass (required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # ci-pass runs no checkout and never uses the token — it only reads upstream
+    # job results via the `needs` context (an expression, not a token call). The
+    # deny-all workflow default already covers it; contents: read is stated for
+    # per-job uniformity with the other gate jobs and grants nothing extra.
+    permissions:
+      contents: read
+    if: always()
+    needs:
+      - gate-lint
+      - gate-typecheck
+      - gate-doctor
+      - test-bash
+      - test-python
+      - test-monitor
+    steps:
+      # SECURITY (audited-safe — expression-injection avoidance): the `${{ }}`
+      # results are bound to ENV VARS (HAS_FAILURE / HAS_CANCELLED) and the run:
+      # body dereferences only the shell vars "${HAS_FAILURE}" — the GitHub
+      # expression is NEVER interpolated directly into the script text. This is
+      # the same env-var INDIRECTION pattern the composites use for their
+      # `${{ inputs.* }}` values (setup-postgres-peer-auth SOCKET_DIR/PG_DATABASE)
+      # and the test-python / summarize steps use for `${{ matrix.* }}`: binding
+      # an expression to an env var and quoting the shell var closes the classic
+      # `run:`-block expression-injection hole (a crafted context value being
+      # spliced into the executed command). Here the values are booleans/results
+      # (not attacker-controllable), but the indirection is applied uniformly so
+      # the pattern is never the weak link. actionlint enforces this shape.
+      - name: Assert no upstream failure or cancellation
+        env:
+          HAS_FAILURE: ${{ contains(needs.*.result, 'failure') }}
+          HAS_CANCELLED: ${{ contains(needs.*.result, 'cancelled') }}
+        run: |
+          if [[ "${HAS_FAILURE}" == "true" || "${HAS_CANCELLED}" == "true" ]]; then
+            echo "FATAL: a required upstream job failed or was cancelled" >&2
+            echo "  failure present:   ${HAS_FAILURE}" >&2
+            echo "  cancelled present: ${HAS_CANCELLED}" >&2
+            exit 1
+          fi
+          echo "ci-pass: all required upstream jobs succeeded or were skipped"

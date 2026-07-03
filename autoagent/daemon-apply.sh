@@ -32,9 +32,11 @@
 #   - approval_tier == ""       → reject (auto-rejected upstream, no row reaches
 #                                 the apply stage)
 #
-# Each apply is sandwiched between a [WIP-AUTO] snapshot commit (capturing any
-# orphan diff) and an [AUTO] apply commit, so a single git revert can roll
-# back exactly one patch.
+# Each apply runs as a git-FREE file-copy transaction (lib/git-txn.sh): a
+# before-image copy of the single target is captured into a per-proposal
+# agents-bak backup dir BEFORE apply, and a verify failure atomically restores
+# the target from that before-image. The persistent before-image is the
+# post-hoc rollback anchor (one before-image = one patch); no VCS commit/revert.
 #
 # A JSONL log of applied patches is appended to:
 #     ~/.claude/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
@@ -50,7 +52,7 @@
 # Usage:
 #     daemon-apply.sh                 # drain the ENTIRE auto-tier pending
 #                                     # backlog oldest-first (no processing cap)
-#     daemon-apply.sh --dry-run       # simulate; log to /tmp/, no git commits
+#     daemon-apply.sh --dry-run       # simulate; log to /tmp/, no file writes
 #     daemon-apply.sh --limit 5       # OPTIONAL manual cap for ad-hoc operator
 #                                     # use; 0 (default) = unbounded process-all
 #     daemon-apply.sh --report PATH   # explicit JSON path (fallback / testing)
@@ -91,7 +93,7 @@
 #                            land → exit 11.
 #        - already_applied → the change is already in the file (no diff); mark
 #                            the row applied via the existing PG status-flip path
-#                            (NO new commit) → exit 12.
+#                            (no bytes to land) → exit 12.
 #        - invalid         → re-derived but 4-axis pre-verify FAILED; leave
 #                            pending, surface failing axes (loud-fail) → exit 13.
 #        - unrecoverable   → no landable diff (or daemon_cycle error); leave
@@ -105,7 +107,8 @@
 #     2 — argument / config error
 #     3 — required tool missing
 #     4 — lock contention (another apply already running)
-#     5 — git precondition: agents-dir is not a git repository
+#     5 — apply-lock lib missing / source failed (FATAL: the shared
+#         stale-reclaim helper is absent — writers cannot be serialized)
 #     6 — DB status transition failed on a backlog/single-sourced patch
 #         (loud-fail: prevents silent re-application next cycle)
 #     7 — backlog anomaly: eligible-pending count exceeds ANOMALY_THRESHOLD
@@ -124,12 +127,12 @@
 # Codes 10-14 do NOT collide with the 0/2/3/4/5/6/7/8/9 map above:
 #     10 — regenerated + RE-APPLIED: daemon_cycle regenerated a fresh validity-
 #          gated diff (action=regenerated, preverify PASS) AND the re-attempt
-#          landed it → row flipped applied, [WIP-AUTO]/[AUTO] commit sandwich.
+#          landed it → row flipped applied (git-free before-image transaction).
 #     11 — regenerated but STILL won't land: fresh diff produced + re-attempt
 #          again hit needs_regen/error → row left pending (regen-still-failed).
 #     12 — already_applied: the change is already present in the file (no diff
-#          to land) → row marked applied via the PG status-flip path, NO new
-#          commit (the change was committed earlier). Scriptable "already there".
+#          to land) → row marked applied via the PG status-flip path, no bytes
+#          written (the change landed on an earlier cycle). Scriptable "already there".
 #     13 — invalid: daemon_cycle re-derived a diff but the 4-axis pre-verify
 #          FAILED (action=invalid) → row left pending, failing axes logged.
 #     14 — unrecoverable: no landable diff after re-derive (action=unrecoverable)
@@ -145,34 +148,72 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# -- Reusable git transaction (shared with the glass-atrium-update E4 path) ----
-# The WIP-snapshot -> apply -> verify -> (commit | soft-reset rollback) scaffold
-# is factored into lib/git-txn.sh so the update skill's agent EDITABLE-region
-# merge path (T18/T19) can reuse the SAME hardened machinery instead of a
-# parallel merge engine. apply_patch_rows below is its first caller; it injects
-# apply_diff + verify_patched as the apply/verify callbacks and maps the
-# structured GIT_TXN_RC outcome back to its own counter buckets + emit_log.
+# -- Required tooling ------------------------------------------------------
+# Hoisted ABOVE the self-path resolution below: ga_realpath's first call is the
+# SCRIPT_DIR assignment, so a missing python3 must die as the friendly exit-3
+# FATAL here, not as a raw set -e command-substitution error mid-assignment.
+
+for tool in git python3 jq; do
+    # jq is preferred for robust JSON; fall back to python if missing.
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        if [[ "${tool}" == "jq" ]]; then
+            continue # jq optional — python fallback below
+        fi
+        printf '[daemon-apply] FATAL: %s not found on PATH\n' "${tool}" >&2
+        exit 3
+    fi
+done
+
+# ga_realpath — resolve a (possibly facade-symlink) path to its real GA path.
+# Two consumers: (a) PG stores facade paths (~/.claude/agents/X.md → symlink);
+# the git-free transaction captures the before-image of, and atomically restores,
+# the REAL file (~/.glass-atrium/agents/X.md), so the loop resolves the symlink
+# first. (b) SELF-path resolution (SCRIPT_DIR below). In a standalone repo (no
+# symlink) realpath is an identity, so this is a no-op there. python3
+# os.path.realpath is the portable idiom — realpath(1)/readlink -f are not on
+# the stock-macOS baseline.
+ga_realpath() {
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
+# -- Self-path resolution (facade-safe) -------------------------------------
+# launchd invokes this script THROUGH the ~/.claude per-file symlink facade
+# (~/.claude/autoagent/daemon-apply.sh → this file). bash never dereferences a
+# file-level symlink in BASH_SOURCE, so dirname(BASH_SOURCE) is the FACADE dir —
+# a REAL directory (pwd -P cannot help) whose siblings exist only where a mirror
+# symlink was hand-created. Realpath the FILE first, then dirname, so every
+# sibling resource (lib/git-txn.sh, daemon_cycle.py, ../scripts/lib/apply-lock.sh)
+# resolves into the REAL tree regardless of how the script was invoked.
+# (Incident 2026-07-02: the missing apply-lock.sh mirror FATALed every cycle.)
+SCRIPT_DIR="$(dirname -- "$(ga_realpath "${BASH_SOURCE[0]}")")"
+
+# -- Reusable git-free transaction (shared with the glass-atrium-update E4 path) --
+# The before-image -> apply -> verify -> (leave | atomic restore) scaffold is
+# factored into lib/git-txn.sh so the update skill's agent EDITABLE-region merge
+# path (T18/T19) can reuse the SAME hardened machinery instead of a parallel
+# merge engine. apply_patch_rows below is its first caller; it injects apply_diff
+# + verify_patched as the apply/verify callbacks and maps the structured
+# GIT_TXN_RC outcome back to its own counter buckets + emit_log.
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/git-txn.sh
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/git-txn.sh"
+source "${SCRIPT_DIR}/lib/git-txn.sh"
 
 # -- Constants -------------------------------------------------------------
 
 REPORTS_DIR="${AUTOAGENT_REPORTS_DIR:-${HOME}/.claude/data/daemon-reports}"
 # Glass Atrium (GA) single-monorepo target:
 #   ~/.claude/{agents,rules,...} are facade dirs whose FILES are symlinks →
-#   ~/.glass-atrium/<dir>/<file>. The loop MUST commit into the GA monorepo
-#   (~/.glass-atrium/.git), NOT the orphaned per-subdir facade repos (which
-#   show every entry as a regular→symlink typechange + accumulated [AUTO]
-#   commits in the wrong place). Defaults point at GA; env-overridable for tests.
-#   - AGENTS_DIR  = patch-target + verify root (real GA agents/ dir).
-#   - GIT_ROOT    = the monorepo worktree root for ALL git ops (commits land here).
-#   - GIT_PATHSPEC = stash/status scope (relative to GIT_ROOT). The monorepo holds
-#                    monitor/, scripts/, etc.; an UNSCOPED `git stash push -u`
-#                    would stash ALL uncommitted GA changes — too broad/dangerous.
-#                    Scoping to agents/ stashes ONLY what the loop edits.
+#   ~/.glass-atrium/<dir>/<file>. The transaction is git-FREE (before-image copy
+#   + atomic restore), so the loop no longer needs a git worktree. The ONLY
+#   surviving git call is `git apply --recount`, which lands the unified diff and
+#   works OUTSIDE a git repo. It needs a working dir + a pathspec, both derived as
+#   PLAIN PATHS from AGENTS_DIR (dirname/basename) after CLI parse — NO rev-parse.
+#   - AGENTS_DIR   = patch-target + verify root (real GA agents/ dir).
+#   - GIT_ROOT     = plain `git apply -C` working dir = dirname(AGENTS_DIR).
+#   - GIT_PATHSPEC = `git apply --directory` subdir = basename(AGENTS_DIR)/, so a
+#                    bare-basename diff header resolves to AGENTS_DIR/<file>.md.
+#                    <GIT_ROOT>/<GIT_PATHSPEC> == AGENTS_DIR by construction.
 AGENTS_DIR_DEFAULT="${AUTOAGENT_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
-GIT_ROOT_DEFAULT="${AUTOAGENT_GIT_ROOT:-${HOME}/.glass-atrium}"
-GIT_PATHSPEC_DEFAULT="${AUTOAGENT_GIT_PATHSPEC:-agents/}"
 LOCK_DIR="${REPORTS_DIR}/.apply-lock"
 # Processing cap: 0 = UNBOUNDED (drain the entire auto-tier pending backlog every
 # cycle). --limit N (N>0) is an OPTIONAL manual override for ad-hoc operator use;
@@ -196,7 +237,8 @@ ANOMALY_THRESHOLD="${AUTOAGENT_ANOMALY_THRESHOLD:-100}"
 # The row stays recoverable via the explicit --proposal-id path (which still selects
 # snoozed). Override via AUTOAGENT_STALE_DRAIN_THRESHOLD.
 STALE_DRAIN_THRESHOLD="${AUTOAGENT_STALE_DRAIN_THRESHOLD:-3}"
-WIP_PREFIX="[WIP-AUTO]"
+# Applied-log description prefix (carried as the applied-JSONL "commit_message"
+# field for backward-compat with existing report consumers — no commit exists).
 APPLY_PREFIX="[AUTO]"
 
 # -- CLI parse -------------------------------------------------------------
@@ -205,14 +247,10 @@ DRY_RUN=0
 LIMIT="${DEFAULT_LIMIT}"
 REPORT_PATH=""
 AGENTS_DIR="${AGENTS_DIR_DEFAULT}"
-# Git operation root + stash/status scope. Defaults target the GA monorepo; both
-# are RE-DERIVED from AGENTS_DIR after CLI parse (so an explicit --agents-dir, the
-# test/legacy path, auto-resolves its own toplevel + relative pathspec instead of
-# wrongly inheriting the GA root). See the post-precondition derivation below.
-GIT_ROOT="${GIT_ROOT_DEFAULT}"
-GIT_PATHSPEC="${GIT_PATHSPEC_DEFAULT}"
-# Set to 1 when --agents-dir was passed explicitly (re-derive GIT_ROOT/PATHSPEC).
-AGENTS_DIR_EXPLICIT=0
+# GIT_ROOT (git-apply working dir), GIT_PATHSPEC (git-apply --directory subdir),
+# and BACKUP_DIR (before-image root) are all DERIVED from AGENTS_DIR as plain
+# paths after CLI parse (so an explicit --agents-dir resolves its own dirname/
+# basename). See the post-parse plain-path derivation below.
 # Single-proposal mode: empty = batch backlog (default); a numeric id selects
 # exactly that one proposal (explicit user-approval path — see header).
 PROPOSAL_ID=""
@@ -220,7 +258,8 @@ PROPOSAL_ID=""
 # re-apply on the stale/needs_regen path). Only meaningful with --proposal-id.
 AUTO_REGEN=0
 # daemon_cycle.py path for the regen call (env-overridable for test isolation).
-DAEMON_CYCLE_PY="${AUTOAGENT_DAEMON_CYCLE_PY:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/daemon_cycle.py}"
+# Default is facade-safe: SCRIPT_DIR is the realpathed self dir (real tree).
+DAEMON_CYCLE_PY="${AUTOAGENT_DAEMON_CYCLE_PY:-${SCRIPT_DIR}/daemon_cycle.py}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -258,12 +297,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --agents-dir)
             AGENTS_DIR="${2:?--agents-dir requires a value}"
-            AGENTS_DIR_EXPLICIT=1
             shift 2
             ;;
         --agents-dir=*)
             AGENTS_DIR="${1#--agents-dir=}"
-            AGENTS_DIR_EXPLICIT=1
             shift
             ;;
         -h|--help)
@@ -304,101 +341,78 @@ if ! [[ "${ANOMALY_THRESHOLD}" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-# -- Git precondition -------------------------------------------------------
-# Fast-fail (no silent fail): a non-git AGENTS_DIR makes stash/commit fail →
-# loud exit 5.
-if ! git -C "${AGENTS_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf '[daemon-apply] FATAL: %s is not a git repository (cannot proceed)\n' "${AGENTS_DIR}" >&2
-    exit 5
+# -- Git-apply target resolution (plain-path, git-FREE) --------------------
+# The transaction is git-free (lib/git-txn.sh: before-image copy + atomic
+# restore); the ONLY surviving git call is `git apply --recount`, which lands
+# the unified diff and works OUTSIDE a git repo. NO rev-parse, NO worktree
+# precondition. Both apply args are PLAIN PATHS derived from AGENTS_DIR:
+#   GIT_ROOT     = `git apply -C` working dir = dirname(AGENTS_DIR).
+#   GIT_PATHSPEC = `git apply --directory` subdir = basename(AGENTS_DIR)/, so a
+#                  bare-basename diff header ('--- a/<file>.md') resolves to
+#                  <GIT_ROOT>/<GIT_PATHSPEC>/<file>.md.
+# <GIT_ROOT>/<GIT_PATHSPEC> == AGENTS_DIR by construction, so the apply targets
+# the agents dir whether or not it lives inside a git repo. dirname/basename
+# handle a trailing slash correctly (parameter expansion would not).
+GIT_ROOT="$(dirname -- "${AGENTS_DIR}")"
+GIT_PATHSPEC="$(basename -- "${AGENTS_DIR}")/"
+
+# _APPLY_DIR_ARGS — `--directory=<subdir>` for `git apply`. GIT_PATHSPEC is
+# always non-empty (basename of a real dir), but keep the bash 3.2 array-guard
+# idiom (`${arr[@]+"${arr[@]}"}`) at the call site so an empty array never
+# raises "unbound variable" under set -u.
+_APPLY_DIR_ARGS=("--directory=${GIT_PATHSPEC%/}")
+
+# -- Before-image backup dir (git-free rollback anchor) --------------------
+# Per-proposal before-images live under a ROOT-SIBLING agents-bak dir (NOT
+# inside agents/, NOT under ~/.claude). install-safe: gitignored (*.bak +
+# /agents-bak/) so `git ls-files` never lists it, and tar merge-extract never
+# clobbers it. Retention/prune (below) is the daemon's responsibility; git-txn.sh
+# only writes into the per-proposal subdir the loop hands it.
+BACKUP_DIR="${AUTOAGENT_BACKUP_DIR:-${GIT_ROOT}/agents-bak}"
+# TTL for the retention prune, in days (env-overridable). Doubles as the post-hoc
+# rollback window (a before-image older than this is pruned). Invalid → 14 + WARN.
+BACKUP_TTL_DAYS="${AUTOAGENT_BACKUP_TTL_DAYS:-14}"
+if ! [[ "${BACKUP_TTL_DAYS}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '[daemon-apply] WARN: AUTOAGENT_BACKUP_TTL_DAYS must be a positive integer (got %s) — using 14\n' \
+        "${BACKUP_TTL_DAYS}" >&2
+    BACKUP_TTL_DAYS=14
 fi
 
-# -- Git target resolution (GA monorepo aware) -----------------------------
-# Derive the git worktree ROOT + the stash/status PATHSPEC from AGENTS_DIR.
-# Two cases, both handled by `rev-parse --show-toplevel` + `--show-prefix`:
-#   (1) GA monorepo (default): AGENTS_DIR=~/.glass-atrium/agents → toplevel
-#       ~/.glass-atrium, prefix agents/ → commits land in GA, stash scoped to
-#       agents/ (monitor/, scripts/, etc. never stashed).
-#   (2) Standalone repo (explicit --agents-dir, the bats/legacy path): the dir
-#       IS the repo root → toplevel == AGENTS_DIR, prefix empty → GIT_PATHSPEC
-#       empty = whole-repo scope (byte-identical to the pre-GA per-subdir
-#       behavior, so the existing tests pass unchanged).
-# When --agents-dir was NOT passed, keep the GA env defaults but still re-derive
-# from the actual repo so a relocated GA root resolves correctly.
-if [[ "${AGENTS_DIR_EXPLICIT}" -eq 1 ]] || [[ -z "${AUTOAGENT_GIT_ROOT:-}" ]]; then
-    _git_toplevel="$(git -C "${AGENTS_DIR}" rev-parse --show-toplevel 2>/dev/null || true)"
-    _git_prefix="$(git -C "${AGENTS_DIR}" rev-parse --show-prefix 2>/dev/null || true)"
-    if [[ -n "${_git_toplevel}" ]]; then
-        GIT_ROOT="${_git_toplevel}"
-        # --show-prefix yields the path of AGENTS_DIR relative to the repo root
-        # with a trailing slash (empty when AGENTS_DIR IS the root). That is
-        # exactly the stash/status pathspec we want.
-        GIT_PATHSPEC="${_git_prefix}"
+# prune_backup_retention — housekeeping: drop whole <cycle-id> before-image
+# subdirs older than BACKUP_TTL_DAYS, but NEVER the newest one (protects the
+# most-recent rollback anchor even if the daemon has been idle past the TTL and
+# every dir is technically stale). Best-effort + loud on error — a prune failure
+# is a WARN, never a daemon abort (housekeeping, not a precondition). rm is
+# permitted here: a before-image is a regenerable, path-validated snapshot.
+prune_backup_retention() {
+    # SECURITY: hard path guard BEFORE any rm — refuse unless BACKUP_DIR is
+    # non-empty AND ends in /agents-bak (blocks an env-override mishap from
+    # rm-rf'ing an unrelated tree).
+    if [[ -z "${BACKUP_DIR}" || "${BACKUP_DIR}" != */agents-bak ]]; then
+        printf '[daemon-apply] WARN: backup retention prune SKIPPED — BACKUP_DIR failed path guard (%s)\n' \
+            "${BACKUP_DIR}" >&2
+        return 0
     fi
-fi
-
-# -- Git scope helpers (GA monorepo pathspec scoping) ----------------------
-# GIT_PATHSPEC is immutable after the resolution block above, so derive both
-# scope-arg arrays ONCE under its single non-empty guard (not per call):
-#   _PS_ARGS         — trailing `-- <pathspec>` for stash/status.
-#   _APPLY_DIR_ARGS  — `--directory=<pathspec>` for `git apply`, so a bare-
-#                      basename diff header ('--- a/<file>.md') resolves to its
-#                      real GA location (<GIT_ROOT>/agents/<file>.md).
-# Empty GIT_PATHSPEC (standalone repo) → both stay zero-arg → byte-identical
-# legacy invocation. bash 3.2 (macOS default): an empty array expanded as
-# `"${arr[@]}"` under `set -u` raises "unbound variable", so callers MUST use
-# the `${arr[@]+"${arr[@]}"}` guard idiom (zero args when empty).
-_PS_ARGS=()
-_APPLY_DIR_ARGS=()
-if [[ -n "${GIT_PATHSPEC}" ]]; then
-    _PS_ARGS=("--" "${GIT_PATHSPEC}")
-    _APPLY_DIR_ARGS=("--directory=${GIT_PATHSPEC%/}")
-fi
-
-# ga_realpath — resolve a (possibly facade-symlink) target path to its real GA
-# path so `git -C GIT_ROOT add/checkout` references a file INSIDE the worktree.
-# PG stores facade paths (~/.claude/agents/X.md → symlink); git rejects those as
-# "outside repository". realpath follows the symlink to ~/.glass-atrium/agents/X.md.
-ga_realpath() {
-    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
+    [[ -d "${BACKUP_DIR}" ]] || return 0
+    # Find the newest cycle subdir by mtime (bash `-nt`, no external stat/ls) so
+    # it can be excluded from the prune.
+    local newest="" d
+    while IFS= read -r -d '' d; do
+        if [[ -z "${newest}" || "${d}" -nt "${newest}" ]]; then
+            newest="${d}"
+        fi
+    done < <(find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -print0)
+    [[ -n "${newest}" ]] || return 0
+    if ! find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d \
+        -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -exec rm -rf {} +; then
+        printf '[daemon-apply] WARN: backup retention prune hit errors (BACKUP_DIR=%s)\n' \
+            "${BACKUP_DIR}" >&2
+    fi
 }
 
-# -- Stash restore state (stash-and-restore wrap) --------------------------
-# STASHED — per-patch state flag read by _restore_stash_on_exit on signal exit.
-# 0 = no stash / clean pop done · 1 = just pushed.
-STASHED=0
-STASH_MSG=""
-
-# shellcheck disable=SC2329  # invoked indirectly via trap registration below
-_restore_stash_on_exit() {
-    # Protect a leftover stash on signal exit — one best-effort pop, preserve the
-    # entry on conflict.
-    local rc=$?
-    if [[ "${STASHED:-0}" == "1" ]]; then
-        if ! git -C "${GIT_ROOT}" stash pop --quiet 2>/dev/null; then
-            printf '[daemon-apply] WARN: signal-exit stash retained: %s\n' "${STASH_MSG}" >&2
-        fi
-        STASHED=0
-    fi
-    exit "${rc}"
-}
-
-# Signal trap, registered before the LOCK_DIR EXIT trap (below). bash's single-
-# handler-per-signal model means the LOCK_DIR trap does its own lock cleanup on
-# EXIT, so this handler does not touch the lock.
-trap '_restore_stash_on_exit' INT TERM
-
-# -- Required tooling ------------------------------------------------------
-
-for tool in git python3 jq; do
-    # jq is preferred for robust JSON; fall back to python if missing.
-    if ! command -v "${tool}" >/dev/null 2>&1; then
-        if [[ "${tool}" == "jq" ]]; then
-            continue  # jq optional — python fallback below
-        fi
-        printf '[daemon-apply] FATAL: %s not found on PATH\n' "${tool}" >&2
-        exit 3
-    fi
-done
+# NOTE: ga_realpath + the required-tooling check formerly lived here; both are
+# HOISTED to the top of the script (above the lib/git-txn.sh source) because the
+# facade-safe SCRIPT_DIR resolution needs them before the first sibling source.
 
 # -- Regen-JSON parsers (python3 fallback when jq absent) ------------------
 # Captured as literal source constants (NOT inline `<<'PY'` inside $(...) — that
@@ -621,7 +635,7 @@ else
 fi
 
 # -- Cooperative update pause-flag gate (T10) ------------------------------
-# The apply stage is the daemon's WRITER (it swaps agent-file content + commits),
+# The apply stage is the daemon's WRITER (it swaps agent-file content in place),
 # so honor the update pause flag here too (defense in depth beyond
 # daemon-cycle.sh): a cron OR explicit apply must never write while a Glass
 # Atrium update is swapping files. A STALE flag (crashed updater) is TTL-cleared
@@ -640,27 +654,57 @@ else
         "${PAUSE_FLAG_LIB}" >&2
 fi
 
-# -- Lock acquisition (mkdir is atomic on POSIX) ---------------------------
+# -- Shared apply-lock helper (stale-reclaim guard) ------------------------
+# The .apply-lock stale-reclaim logic is SHARED with the updater (update.sh) via
+# ONE lib so the two writers cannot drift a divergent reclaim (a race hazard).
+# Load-bearing: unlike the pause-flag gate (defense-in-depth), a missing lock lib
+# is FATAL — writers cannot be serialized without it (Precondition Loud-Fail).
+# Facade-safe default: SCRIPT_DIR is the realpathed self dir, so the lib resolves
+# to <real-tree>/scripts/lib/apply-lock.sh even when invoked via the ~/.claude
+# facade (which has NO apply-lock.sh mirror — the 2026-07-02 exit-5 incident).
+APPLY_LOCK_LIB="${ATRIUM_APPLY_LOCK_LIB:-${SCRIPT_DIR}/../scripts/lib/apply-lock.sh}"
+if [[ ! -f "${APPLY_LOCK_LIB}" ]]; then
+    printf '[daemon-apply] FATAL: apply-lock lib missing (%s)\n' "${APPLY_LOCK_LIB}" >&2
+    exit 5
+fi
+# A static source directive (resolved relative to this script's own dir) lets
+# ShellCheck follow the lib under --external-sources and SEE apply_lock_acquired
+# assigned (silences SC2154 the way the git-txn source below does).
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../scripts/lib/apply-lock.sh
+. "${APPLY_LOCK_LIB}"
+
+# -- Lock acquisition (mkdir is atomic on POSIX; stale-reclaim via the lib) -
 # Skip lock entirely in dry-run so parallel test runs don't collide.
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
     mkdir -p "${REPORTS_DIR}"
-    if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+    # A crashed/SIGKILLed prior holder (no EXIT trap) left a stranded lock; the
+    # lib reclaims it only when the holder is BOTH not-live AND aged past the TTL.
+    # A genuinely LIVE holder still blocks here (mutual exclusion preserved).
+    apply_lock_acquire "${LOCK_DIR}"
+    if [[ "${apply_lock_acquired}" != true ]]; then
         printf '[daemon-apply] FATAL: another apply in progress (%s)\n' \
             "${LOCK_DIR}" >&2
         exit 4
     fi
-    # Exit trap: restore the stash first, then release the lock. INT/TERM share
-    # this handler (one trap per signal).
+    # Exit trap: release the lock dir (only if we STILL own it — a reclaimer may
+    # have taken over). The transaction is git-free (before-image copy + atomic
+    # restore), so there is no stash to pop on exit — only the lock dir to
+    # reclaim. rm -rf (via the lib), not rmdir, because the dir now holds the
+    # holder pid file.
     # shellcheck disable=SC2064
-    trap "
-        if [[ \"\${STASHED:-0}\" == \"1\" ]]; then
-            git -C '${GIT_ROOT}' stash pop --quiet 2>/dev/null || \
-                printf '[daemon-apply] WARN: signal-exit stash retained: %s\n' \"\${STASH_MSG}\" >&2
-            STASHED=0
-        fi
-        rmdir '${LOCK_DIR}' 2>/dev/null || true
-    " EXIT INT TERM
+    trap "apply_lock_release '${LOCK_DIR}'" EXIT
+    # INT/TERM MUST TERMINATE (release → exit 128+signal). A shared
+    # EXIT/INT/TERM handler released the lock but bash then RESUMED execution
+    # after the handler returned — the daemon kept mutating agent files with NO
+    # mutual exclusion until natural completion. Release exactly once: clear the
+    # EXIT trap BEFORE exiting so the handler chain cannot double-release
+    # (release is ownership-gated/idempotent, but single-release is cleaner).
+    # shellcheck disable=SC2064
+    trap "apply_lock_release '${LOCK_DIR}'; trap - EXIT; exit 130" INT
+    # shellcheck disable=SC2064
+    trap "apply_lock_release '${LOCK_DIR}'; trap - EXIT; exit 143" TERM
 fi
 
 # -- Helpers ---------------------------------------------------------------
@@ -1054,9 +1098,11 @@ verify_target_in_agents() {
     local target="$1"
     local agents_root
     agents_root="$(cd "${AGENTS_DIR}" && pwd)"
+    # Resolve via the shared ga_realpath helper (readlink -f is GNU-only; the
+    # helper's python realpath is the same symlink resolution the git-free
+    # transaction target uses at GIT_TARGET).
     local target_real
-    # readlink -f is GNU-only; use python for cross-platform realpath.
-    target_real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${target}")"
+    target_real="$(ga_realpath "${target}")"
     case "${target_real}" in
         "${agents_root}"/*) return 0 ;;
         *) return 1 ;;
@@ -1128,16 +1174,6 @@ assert_diff_in_editable_region() {
         "$(printf '%s' "${label}" | json_escape)" \
         "$(printf '%s' "${diff_target:-${target}}" | json_escape)")"
     return 1
-}
-
-# tree_clean — return 0 if the SCOPED git tree (GIT_PATHSPEC under GIT_ROOT) has
-# no uncommitted changes. GA monorepo: scoped to agents/ so unrelated GA dirtiness
-# (monitor/, scripts/) does NOT force a stash. Standalone repo: empty pathspec =
-# whole-repo scope (legacy behavior).
-tree_clean() {
-    local status
-    status="$(git -C "${GIT_ROOT}" status --porcelain ${_PS_ARGS[@]+"${_PS_ARGS[@]}"} 2>/dev/null)"
-    [[ -z "${status}" ]]
 }
 
 # apply_diff — write proposal patch to a tempfile and apply.
@@ -1604,26 +1640,6 @@ emit_stale_drain() {
     return 0
 }
 
-# pop_stash_if_any — restore the per-patch stash at end-of-patch. Called from the
-# normal-completion path AND every rollback path. On pop conflict, preserve the
-# entry (no auto-resolve) + emit a WARN.
-pop_stash_if_any() {
-    if [[ "${STASHED:-0}" != "1" ]]; then
-        return 0
-    fi
-    if git -C "${GIT_ROOT}" stash pop --quiet 2>/dev/null; then
-        STASHED=0
-        return 0
-    fi
-    # Conflict → preserve for user review (no auto-resolve).
-    printf '[daemon-apply] WARN: stash entry retained: %s\n' "${STASH_MSG}" >&2
-    emit_log "$(printf '{"ts":%s,"status":"warn","reason":"stash_pop_conflict","stash_msg":%s}' \
-        "$(ts_now_json)" \
-        "$(printf '%s' "${STASH_MSG}" | json_escape)")"
-    STASHED=0
-    return 1
-}
-
 # -- Main loop -------------------------------------------------------------
 
 PROCESSED=0
@@ -1773,34 +1789,13 @@ PY
         continue
     fi
 
-    # -- Resolve git-facing target (GA real path) -------------------------
-    # PG stores facade paths (~/.claude/agents/X.md = symlink → GA). `git add`/
-    # `checkout` from GIT_ROOT reject an outside-worktree path, so resolve the
-    # symlink to the GA real file (~/.glass-atrium/agents/X.md) for git ops. In a
-    # standalone repo (no symlink) realpath is an identity, so this is a no-op there.
+    # -- Resolve the real (GA) target path --------------------------------
+    # PG stores facade paths (~/.claude/agents/X.md = symlink → GA). The git-free
+    # transaction captures the before-image of, and atomically restores, the REAL
+    # file, and `git apply --recount` lands the diff on it — so resolve the symlink
+    # to the GA real file (~/.glass-atrium/agents/X.md) first. In a standalone
+    # layout (no symlink) realpath is an identity, so this is a no-op there.
     GIT_TARGET="$(ga_realpath "${PATCH_TARGET}")"
-
-    # -- Sanity 3: dirty tree → stash-and-restore wrap --------------------
-    # Isolate the dirty tree via stash, apply, then auto-restore on exit. Skip
-    # only when stash push itself fails (no usable path after a drop).
-    STASHED=0
-    STASH_MSG=""
-    if ! tree_clean; then
-        STASH_MSG="daemon-apply pre-cycle ${timestamp} ${PATCH_LABEL}"
-        # GA monorepo: scope the stash to GIT_PATHSPEC (agents/) so unrelated GA
-        # working-tree changes (monitor/, scripts/, etc.) are NEVER stashed/popped.
-        # Standalone repo: empty pathspec → whole-repo stash (legacy behavior).
-        if git -C "${GIT_ROOT}" stash push -u --quiet -m "${STASH_MSG}" ${_PS_ARGS[@]+"${_PS_ARGS[@]}"} >/dev/null 2>&1; then
-            STASHED=1
-        else
-            ERRORS=$((ERRORS + 1))
-            emit_log "$(printf '{"ts":%s,"status":"skip","reason":"stash_push_failed","pattern_label":%s,"target_file":%s}' \
-                "$(printf '%s' "${timestamp}" | json_escape)" \
-                "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
-                "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
-            continue
-        fi
-    fi
 
     # -- Dry-run short-circuit --------------------------------------------
     if [[ "${DRY_RUN}" -eq 1 ]]; then
@@ -1810,21 +1805,19 @@ PY
             "$(printf '%s' "${PATCH_AGENT}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
         APPLIED=$((APPLIED + 1))
-        pop_stash_if_any
         continue
     fi
 
-    # -- Sanity 4: landing-zone guard (pre-mutation) ----------------------
-    # BEFORE any tree mutation (WIP commit / apply): confirm the diff lands inside
-    # an editable region of the CURRENT target file. Pre-verify checks the diff in
-    # isolation, not its landing zone, so a pre-verified diff can still land in a
-    # protected rule section. Read the GA real path (GIT_TARGET) — the file git
-    # apply touches. A READ-ONLY validation (no git state touched), so it joins the
-    # pre-mutation Sanity checks above. Fail-closed: a non-ok verdict (no marker /
-    # out of region / header-less Strategy-B fragment / read error) counts ERRORS,
-    # drives the bounded-retry stale-drain (so a permanently out_of_region row
-    # cannot re-select forever), then pops the stash (if one was taken) and leaves
-    # the row pending. No WIP commit exists yet → no reset --soft needed. assert_*
+    # -- Sanity 4: landing-zone guard (pre-apply) -------------------------
+    # BEFORE the apply: confirm the diff lands inside an editable region of the
+    # CURRENT target file. Pre-verify checks the diff in isolation, not its landing
+    # zone, so a pre-verified diff can still land in a protected rule section. Read
+    # the GA real path (GIT_TARGET) — the file `git apply` touches. A READ-ONLY
+    # validation (nothing on disk mutated), so it joins the pre-apply Sanity checks
+    # above. Fail-closed: a non-ok verdict (no marker / out of region / header-less
+    # Strategy-B fragment / read error) counts ERRORS, drives the bounded-retry
+    # stale-drain (so a permanently out_of_region row cannot re-select forever), and
+    # leaves the row pending. No bytes were written → nothing to restore. assert_*
     # already emitted the loud named landing_zone_reject log.
     if ! assert_diff_in_editable_region "${GIT_TARGET}" "${PATCH_DIFF}" "${PATCH_LABEL}" "${PATCH_TARGET}"; then
         # COUNTER CLASSIFICATION (EXPLICIT, DOCUMENTED decision — NOT a silent change):
@@ -1841,54 +1834,54 @@ PY
         # called from the apply_rc==3 path below). WITHOUT this call an out_of_region row
         # (e.g. proposal 1022) re-selects every cycle FOREVER — stale_attempt_count stays
         # 0 because ONLY the apply_rc==3 path drained. The helper owns the gate, the
-        # enforce=1 loud-fail, and the verdict handling. The call is placed STRICTLY
-        # BEFORE pop_stash_if_any (tree-mutation safety). This site runs PRE-WIP-commit
-        # (no commit exists yet) so — unlike apply_rc==3 — there is NO git reset --soft,
-        # NO second pop, NO early continue: the single trailing `continue` stays the sole
-        # exit. AUTO_REGEN -ne 1 edge (gated inside the helper): a single + --auto-regen +
-        # out_of_region row is neither drained nor regenerated (regen owns its fate),
-        # matching the apply_rc==3 behavior.
+        # enforce=1 loud-fail, and the verdict handling. This site runs BEFORE any apply
+        # (no bytes written, nothing to restore) so — unlike apply_rc==3 — the single
+        # trailing `continue` is the sole exit. AUTO_REGEN -ne 1 edge (gated inside the
+        # helper): a single + --auto-regen + out_of_region row is neither drained nor
+        # regenerated (regen owns its fate), matching the apply_rc==3 behavior.
         emit_stale_drain "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" "${patch_id}" "${timestamp}"
 
-        pop_stash_if_any
         continue
     fi
 
-    # -- Transaction: WIP-snapshot -> apply -> verify -> (commit | rollback) ---
-    # git_txn_apply (lib/git-txn.sh) owns the WIP snapshot commit, the apply +
-    # verify steps, the apply commit, and ALL soft-reset / checkout rollback
-    # mechanics; it reports the structured outcome in GIT_TXN_RC. apply_diff +
-    # verify_patched are injected as the apply/verify callbacks — SAME calls, SAME
-    # rc contract (0 / 3 / other) as the former inline version. The counter
-    # buckets (ERRORS/NEEDS_REGEN/APPLIED), emit_log reasons, emit_stale_drain,
-    # update_db_status, and pop_stash_if_any STAY HERE: the lib is the shared
-    # mechanism, this block is the daemon policy that maps each outcome to its
-    # bucket. apply_msg is built BEFORE the call (so the committed message and the
-    # applied JSONL agree) exactly as the inline version did.
+    # -- Transaction: capture before-image -> apply -> verify -> (keep | restore) ---
+    # git_txn_apply (lib/git-txn.sh) owns the before-image capture, the apply +
+    # verify steps, and the atomic restore-from-before-image on verify failure; it
+    # reports the structured outcome in GIT_TXN_RC. apply_diff + verify_patched are
+    # injected as the apply/verify callbacks — SAME calls, SAME rc contract
+    # (0 / 3 / other) as the former inline version. The counter buckets
+    # (ERRORS/NEEDS_REGEN/APPLIED), emit_log reasons, emit_stale_drain, and
+    # update_db_status STAY HERE: the lib is the shared mechanism, this block is the
+    # daemon policy that maps each outcome to its bucket. apply_msg is built BEFORE
+    # the call so it is recorded in the applied JSONL commit_message field.
+    #
+    # backup_subdir: a PER-PROPOSAL dir under BACKUP_DIR (agents-bak/<cycle>_p<id>)
+    # so each patch's before-image is isolated and the daemon's retention prune can
+    # drop whole per-cycle subdirs by age. git_txn_apply mkdir -p's it on capture.
     short="$(short_label "${PATCH_LABEL}")"
     apply_msg="${APPLY_PREFIX} T7 patch: ${PATCH_AGENT} ${short}"
+    backup_subdir="${BACKUP_DIR}/${patch_cycle}_p${patch_id}"
     # Invoked BARE (never `|| rc=$?`) — see git-txn.sh "set -e contract": bare
-    # invocation keeps set -e active inside the function so the deliberately-bare
-    # `git add` still propagates on failure, preserving the original behavior.
+    # invocation keeps set -e active inside the function, so a contract violation
+    # (wrong arity / bad callback) loud-fails the daemon instead of being masked.
     git_txn_apply \
         "${GIT_ROOT}" "${PATCH_TARGET}" "${GIT_TARGET}" "${PATCH_DIFF}" \
-        "${WIP_PREFIX} pre-change snapshot ${timestamp}" "${apply_msg}" \
+        "${backup_subdir}" \
         apply_diff verify_patched "${PATCH_LABEL}" "${PATCH_TARGET}"
 
-    if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_SNAPSHOT_FAIL}" ]]; then
-        # WIP snapshot commit failed — nothing was committed, nothing to roll back.
+    if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_BACKUP_CAPTURE_FAIL}" ]]; then
+        # Before-image capture failed — nothing was applied, nothing to restore.
         ERRORS=$((ERRORS + 1))
-        emit_log "$(printf '{"ts":%s,"status":"error","reason":"wip_commit_failed","pattern_label":%s,"target_file":%s}' \
+        emit_log "$(printf '{"ts":%s,"status":"error","reason":"backup_capture_failed","pattern_label":%s,"target_file":%s}' \
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
-        pop_stash_if_any
         continue
     fi
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_APPLY_REGEN}" ]]; then
         # apply_diff rc 3 — a located diff that would not land. apply_diff already
-        # logged the distinct needs_regen reason + wrote NO bytes; git_txn_apply
-        # already rolled back the empty WIP commit. Leave the PG row pending (NO
+        # logged the distinct needs_regen reason + wrote NO bytes, so the live file
+        # is untouched (nothing to restore). Leave the PG row pending (NO
         # update_db_status), do NOT count as applied — a deferred-regen skip
         # tracked separately from errors.
         NEEDS_REGEN=$((NEEDS_REGEN + 1))
@@ -1902,66 +1895,49 @@ PY
         # fossilize).
         emit_stale_drain "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" "${patch_id}" "${timestamp}"
 
-        pop_stash_if_any
         continue
     fi
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_APPLY_FAIL}" ]]; then
-        # apply_diff malformed (rc != 0,3). git_txn_apply already rolled back the
-        # WIP commit so the tree returns to its pre-attempt state.
+        # apply_diff malformed (rc != 0,3) — it wrote NO bytes, so the live file is
+        # untouched (nothing to restore).
         ERRORS=$((ERRORS + 1))
         emit_log "$(printf '{"ts":%s,"status":"error","reason":"patch_apply_failed","pattern_label":%s,"target_file":%s}' \
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
-        pop_stash_if_any
         continue
     fi
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_VERIFY_FAIL}" ]]; then
-        # verify_patched failed. git_txn_apply already restored the working tree
-        # (checkout GIT_TARGET, the GA real path) + dropped the WIP commit.
+        # verify_patched failed. git_txn_apply already ATOMICALLY restored the
+        # target (GIT_TARGET, the GA real path) from its before-image.
         ERRORS=$((ERRORS + 1))
         emit_log "$(printf '{"ts":%s,"status":"error","reason":"verify_failed","pattern_label":%s,"target_file":%s}' \
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
-        pop_stash_if_any
-        continue
-    fi
-    if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_COMMIT_FAIL}" ]]; then
-        # apply commit failed. git_txn_apply already rolled back the WIP commit to
-        # prevent an orphan pre-change snapshot.
-        ERRORS=$((ERRORS + 1))
-        emit_log "$(printf '{"ts":%s,"status":"error","reason":"apply_commit_failed","pattern_label":%s,"target_file":%s}' \
-            "$(printf '%s' "${timestamp}" | json_escape)" \
-            "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
-            "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
-        pop_stash_if_any
         continue
     fi
 
-    # GIT_TXN_RC == GIT_TXN_OK: apply commit at HEAD, WIP snapshot at HEAD~1.
+    # GIT_TXN_RC == GIT_TXN_OK: the applied bytes are in place; the before-image
+    # stays in the backup dir as the post-hoc rollback anchor until retention prunes.
 
     APPLIED=$((APPLIED + 1))
-    apply_hash="$(git -C "${GIT_ROOT}" rev-parse HEAD)"
-    wip_hash="$(git -C "${GIT_ROOT}" rev-parse HEAD~1)"
 
     # applied row carries cycle_date + proposal_id so a future drain's
     # already_applied can match the full 4-tuple (and skip ONLY a true re-attempt
     # of this exact proposal, not other distinct-cycle proposals for the agent).
-    emit_log "$(printf '{"ts":%s,"status":"applied","pattern_label":%s,"pattern_agent":%s,"target_file":%s,"cycle_date":%s,"proposal_id":%s,"wip_hash":%s,"apply_hash":%s,"commit_message":%s}' \
+    emit_log "$(printf '{"ts":%s,"status":"applied","pattern_label":%s,"pattern_agent":%s,"target_file":%s,"cycle_date":%s,"proposal_id":%s,"commit_message":%s}' \
         "$(printf '%s' "${timestamp}" | json_escape)" \
         "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
         "$(printf '%s' "${PATCH_AGENT}" | json_escape)" \
         "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
         "$(printf '%s' "${patch_cycle}" | json_escape)" \
         "$(printf '%s' "${patch_id}" | json_escape)" \
-        "$(printf '%s' "${wip_hash}" | json_escape)" \
-        "$(printf '%s' "${apply_hash}" | json_escape)" \
         "$(printf '%s' "${apply_msg}" | json_escape)")"
 
     # -- DB status sync (idempotency gate) --------------------------------
     # Transition core.autoagent_proposals.status: pending/snoozed → 'applied'.
-    # Runs AFTER git commit + JSONL write (both canonical) so SQL failure
+    # Runs AFTER the file apply + JSONL write (both canonical) so SQL failure
     # cannot orphan the file-side success. This flip is what removes the row
     # from the next cycle's pending-backlog selection (cross-cycle idempotency).
     # Backlog AND single sources → enforce=1 (loud-fail exit 6 if the flip
@@ -1972,9 +1948,6 @@ PY
     else
         update_db_status "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" 0 "${patch_id}"
     fi
-
-    # -- Stash restore — restore the dirty diff after a successful apply ---
-    pop_stash_if_any
 done
 }
 
@@ -2026,6 +1999,14 @@ run_regen_for_single() {
     printf '%s\t%s\n' "${action}" "${axes}"
     return 0
 }
+
+# -- Retention prune (once per real cycle) ---------------------------------
+# Housekeeping: drop age-expired before-image subdirs under BACKUP_DIR (the newest
+# anchor is always protected). Skip in dry-run — it deletes real backup dirs.
+# Best-effort + loud inside the helper: a prune failure never aborts the cycle.
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+    prune_backup_retention
+fi
 
 # -- Drain (extracted apply loop) ------------------------------------------
 apply_patch_rows

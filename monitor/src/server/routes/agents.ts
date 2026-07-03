@@ -10,7 +10,11 @@ import { promisify } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
-import { loadAgentRegistry } from "../agents/registry.js";
+import {
+  buildAgentMembershipFilter,
+  loadAgentRegistry,
+  loadCanonicalAgentKeys,
+} from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { TASK_TYPES } from "../task-types.js";
@@ -262,14 +266,11 @@ async function handleSuccessRate(
     // Canonical-membership gate — show only Atrium-system agents (registry SoT).
     // Applied SQL-SIDE (not a post-query JS filter) because the query carries a
     // LIMIT + truncation flag: non-canonical rows must not consume the LIMIT
-    // budget or skew `truncated`. Fail-soft: an empty registry skips the
-    // predicate (fail-open) — and Prisma.join([]) would emit invalid SQL.
-    const registryEntries = await loadAgentRegistry();
-    const canonicalAgents = [...registryEntries.keys()];
-    const agentMembershipFilter =
-      canonicalAgents.length === 0
-        ? Prisma.empty
-        : Prisma.sql`AND agent IN (${Prisma.join(canonicalAgents)})`;
+    // budget or skew `truncated`. buildAgentMembershipFilter is the shared SoT
+    // for this gate and fail-opens on an empty registry (skips the predicate).
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+    );
 
     // Date bucket uses server-local TZ (`record_ts::date`) — matches cost.ts and
     // dashboard.ts conventions where derived day-buckets follow PG server TZ
@@ -372,6 +373,15 @@ async function handleRevisionDistribution(
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
+    // Canonical-membership gate (registry SoT) — this is the MASTER set driving
+    // the Top-N "improve first" ranking, so it must not fold in non-registry
+    // noise (orchestrator/main-session token, cron:* parents, sentinels like
+    // subagent_stop_missing, one-off correlation-id strings). Shares the same
+    // gate builder as the sibling per-agent endpoints; fail-opens on an empty
+    // registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+    );
     // CASE folds revision_count >= 4 into a single '4+' bucket per spec, leaving
     // 0/1/2/3 as exact buckets. The inner query also computes a `sort_key` numeric
     // column ('4+' → 4) so the outer ORDER BY can render buckets in numeric order
@@ -392,6 +402,7 @@ async function handleRevisionDistribution(
           COUNT(*)::bigint                                             AS occurrence_count
         FROM core.outcomes
         WHERE record_ts >= ${windowLowerBound}
+          ${agentMembershipFilter}
         GROUP BY agent, revision_bucket, sort_key
       ) buckets
       ORDER BY agent ASC, sort_key ASC
@@ -451,6 +462,16 @@ async function handleReviewFlagTimeseries(
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
+    // Canonical-membership gate (registry SoT) — excludes non-registry noise
+    // from the daily review-flag series. Uses the `o.agent` column ref so the
+    // predicate lands INSIDE the LEFT JOIN ... ON clause below (a top-level
+    // WHERE on o.agent would collapse the LEFT JOIN into an inner join and drop
+    // the generate_series gap-fill days, breaking continuous chart coverage).
+    // Fail-opens on an empty registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+      Prisma.sql`o.agent`,
+    );
     const rows = await prisma.$queryRaw<ReviewFlagTimeseriesDbRow[]>`
       SELECT
         d::date                                                        AS event_date,
@@ -483,6 +504,7 @@ async function handleReviewFlagTimeseries(
       LEFT JOIN core.outcomes o
         ON o.record_ts >= d::date
         AND o.record_ts <  (d::date + INTERVAL '1 day')
+        ${agentMembershipFilter}
       GROUP BY d
       ORDER BY d ASC
     `;
@@ -534,6 +556,13 @@ async function handleReviewFlagByAgent(
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
+    // Canonical-membership gate (registry SoT) — the FE Health Index joins these
+    // per-agent rows by `agent`, so non-registry noise would surface phantom
+    // agents in the ranking. Shares the same gate builder; fail-opens on an
+    // empty registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+    );
     // GROUP BY agent over the window — same record_ts >= CURRENT_DATE - INTERVAL
     // bound as success-rate/failure-patterns. Denominator excludes only
     // needs_context (matches the success-rate result-set convention: keeps
@@ -571,6 +600,7 @@ async function handleReviewFlagByAgent(
         END                                                          AS review_flag_ratio
       FROM core.outcomes
       WHERE record_ts >= ${windowLowerBound}
+        ${agentMembershipFilter}
       GROUP BY agent
       ORDER BY total_count DESC, agent ASC
     `;
@@ -618,6 +648,20 @@ async function handleFailurePatterns(
     //   ranked_concerns: unnest concerns from breakage rows, rank top 5 per agent.
     // array_agg ORDER BY concern_rank yields the top_concerns array in rank order.
     // The outer LEFT JOIN keeps agents whose breakage rows had empty `concerns`.
+    // Canonical-membership gate (registry SoT) — applied to the breakage-ranking
+    // source CTEs so non-registry noise (Claude Code built-ins, plugin/cron
+    // parents, sentinels, one-off cids) can't occupy a top-N ranking slot or skew
+    // the fail_rate denominator. `breakages` drives ORDER BY + LIMIT, so gating it
+    // is essential; `agent_totals` (fail_rate denominator) and `ranked_concerns`
+    // (top_concerns) are gated too for a consistent registry-only picture. The
+    // aliased ranked_concerns read takes the o.agent column ref. Fail-opens on an
+    // empty registry.
+    const canonicalAgentKeys = await loadCanonicalAgentKeys();
+    const agentMembershipFilter = buildAgentMembershipFilter(canonicalAgentKeys);
+    const agentMembershipFilterO = buildAgentMembershipFilter(
+      canonicalAgentKeys,
+      Prisma.sql`o.agent`,
+    );
     const rows = await prisma.$queryRaw<FailurePatternsDbRow[]>`
       WITH breakages AS (
         SELECT
@@ -629,6 +673,7 @@ async function handleFailurePatterns(
         FROM core.outcomes
         WHERE record_ts >= ${windowLowerBound}
           AND result::text IN ('fail', 'blocked')
+          ${agentMembershipFilter}
         GROUP BY agent
       ),
       agent_totals AS (
@@ -637,6 +682,7 @@ async function handleFailurePatterns(
           COUNT(*)::bigint AS total_outcomes
         FROM core.outcomes
         WHERE record_ts >= ${windowLowerBound}
+          ${agentMembershipFilter}
         GROUP BY agent
       ),
       ranked_concerns AS (
@@ -657,6 +703,7 @@ async function handleFailurePatterns(
             AND o.result::text IN ('fail', 'blocked')
             AND o.concerns IS NOT NULL
             AND array_length(o.concerns, 1) > 0
+            ${agentMembershipFilterO}
           GROUP BY o.agent, concern
         ) per_concern
       ),
@@ -736,6 +783,18 @@ async function handleLifecycleStats(
     //   Final SELECT joins the two for per-agent_type roll-up.
     // PERCENTILE_CONT(0.95) returns double precision; cast to numeric for the
     // shared decimalToNumber helper.
+    // Canonical-membership gate (registry SoT) — applied to BOTH source CTEs that
+    // read raw core.agent_events (per_agent_id feeds the duration percentiles,
+    // per_type_counts feeds start_count/stop_count) so start_count cannot diverge
+    // from the duration stats. The derived per_type_durations inherits the gate
+    // (reads FROM per_agent_id) and the final `LEFT JOIN per_type_durations d ON
+    // d.agent_type = c.agent_type` stays ungated (a safe roll-up — a predicate in
+    // that ON clause is not needed). columnRef = agent_type; fail-opens on an
+    // empty registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+      Prisma.sql`agent_type`,
+    );
     const rows = await prisma.$queryRaw<LifecycleStatsDbRow[]>`
       WITH per_agent_id AS (
         SELECT
@@ -747,6 +806,7 @@ async function handleLifecycleStats(
           )) AS duration_sec
         FROM core.agent_events
         WHERE event_ts >= ${windowLowerBound}
+          ${agentMembershipFilter}
         GROUP BY agent_type, agent_id
         HAVING
           MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart') IS NOT NULL
@@ -759,6 +819,7 @@ async function handleLifecycleStats(
           COUNT(*) FILTER (WHERE event_name = 'SubagentStop')::bigint  AS stop_count
         FROM core.agent_events
         WHERE event_ts >= ${windowLowerBound}
+          ${agentMembershipFilter}
         GROUP BY agent_type
       ),
       per_type_durations AS (
@@ -1149,6 +1210,15 @@ async function handleLatency(
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
+    // Canonical-membership gate (registry SoT) — filter raw core.agent_events by
+    // agent_type BEFORE the Start↔Stop pairing so non-registry spawn noise
+    // (general-purpose, Explore, plugin agents, sentinels) cannot skew the
+    // percentile buckets. Single gate point — the outer SELECT ... FROM paired
+    // needs no predicate. columnRef = agent_type; fail-opens on an empty registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+      Prisma.sql`agent_type`,
+    );
     // Pairing CTE same as lifecycle-stats — but now compute three percentiles
     // in one pass. duration_ms is float (epoch * 1000); cast to numeric so the
     // shared decimalToNumber helper applies without precision loss.
@@ -1162,6 +1232,7 @@ async function handleLatency(
           )) * 1000.0 AS duration_ms
         FROM core.agent_events
         WHERE event_ts >= ${windowLowerBound}
+          ${agentMembershipFilter}
         GROUP BY agent_type, agent_id
         HAVING
           MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart') IS NOT NULL
@@ -1265,6 +1336,12 @@ async function handleFailureReasons(
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
+    // Canonical-membership gate (registry SoT) — a non-registry `agent` query
+    // param yields an empty breakdown, so the cause analysis is registry-only.
+    // columnRef = default `agent`; fail-opens on an empty registry.
+    const agentMembershipFilter = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+    );
     // Pull the classification-signal columns — classification is JS-side because
     // the keyword catalog lives there. result filter is parameterized to the
     // allowlist-validated resultType (fail | blocked) — Prisma binds it as a
@@ -1275,6 +1352,7 @@ async function handleFailureReasons(
       WHERE record_ts >= ${windowLowerBound}
         AND result::text = ${resultType}
         AND agent = ${agent}
+        ${agentMembershipFilter}
     `;
 
     // Breakage count for the requested result-type — denominator for pct.
@@ -1399,6 +1477,14 @@ function parseDaysParam(raw: string | undefined): AgentsWindowDays | null {
 function buildWindowLowerBound(days: number): Prisma.Sql {
   return Prisma.raw(`CURRENT_DATE - INTERVAL '${days - 1} days'`);
 }
+
+// buildAgentMembershipFilter now lives in the shared `agents/registry.js` module
+// (co-located with loadAgentRegistry) as the canonical-membership gate SoT — see
+// its doc there. Re-exported (of the imported local binding) from this route
+// module so the LIVE import surface consumed by
+// test/agents.membership-filter.unit.test.ts (imports it from routes/agents.js)
+// stays resolvable after the relocation.
+export { buildAgentMembershipFilter };
 
 function bigintToNumber(value: bigint): number {
   // PG SUM/COUNT returns bigint; values realistic for this app fit in safe-int range.

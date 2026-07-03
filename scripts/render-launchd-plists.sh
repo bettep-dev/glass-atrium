@@ -21,6 +21,14 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# bash 5.2+ turns patsub_replacement ON by default, making a bare '&' in a
+# ${var//pat/repl} REPLACEMENT expand to the matched text — that corrupts
+# xml_escape's entity strings (e.g. ${s//</&lt;} → '<lt;', dropping the '&').
+# Disable it so '&' is a literal replacement char on every bash. Guarded so
+# bash 3.2 (which has no such option) is a harmless no-op — NOT '\&' escaping,
+# which bash 3.2 would emit literally.
+shopt -u patsub_replacement 2>/dev/null || true
+
 # GA root = parent of this script's scripts/ dir (portable, same idiom as the engine)
 GA_ROOT_DEFAULT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 readonly GA_ROOT="${GA_ROOT:-${GA_ROOT_DEFAULT}}"

@@ -62,7 +62,7 @@ _PATH_CORPUS: tuple[str, ...] = (
     "agents/dev-python.md",
     "rules/scope-dev.md",
     "scripts/lib/apply-spine.sh",
-    "skills/glass-atrium-update/SKILL.md",
+    "scripts/update.sh",
     "config.toml",
     "rules/security-notes.md",  # not exactly security.md
     "envoy.md",  # not .env

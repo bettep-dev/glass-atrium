@@ -26,6 +26,8 @@ Governs how the orchestrator agent delegates tasks, composes agent teams, manage
 
 **Task Decomposition**: Decompose the request into sub-tasks. When verb/conjunction structure has 2+ elements (e.g., "do A and also B" / "find the cause and fix it" / "research and turn it into a report"), treat as compound and do not short-circuit to a single agent.
 
+**Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
+
 **Capability Consultation** (hints only, no forced match):
 - **`domains` array** (`~/.claude/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
 - **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment
@@ -116,8 +118,6 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 - Sub-agents cannot create sub-agents (nesting forbidden)
 - Initialization token cost: 5K-50K/agent — avoid unnecessary sub-agent proliferation
 
-**Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
-
 #### Declarative Team Definition
 
 Same input = same team composition (reproducibility guaranteed). YAML structure: `team.name` · `agents[].{role, scope, tasks}` · `constraints.{file_ownership, parallel}`
@@ -136,7 +136,7 @@ Delegation required elements: **Goal · Target files/paths · Constraints · Com
 
 | Field | Meaning | Default |
 |-------|---------|---------|
-| `tool_budget` | Max total tool uses; hitting ceiling → stop + emit status | intel-researcher ~15, intel-planner ~12, qa-code-reviewer ~14, DEV task-scoped |
+| `tool_budget` | Max total tool uses; hitting ceiling → stop + emit status | intel-researcher ~15, intel-planner ~12, qa-code-reviewer ~14, DEV: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin [default, adjustable]; reads not estimable (exploration-heavy/unfamiliar surface) → floor reads = 2×(files to edit); declare as tool_budget; est ≳40 or borderline-with-unknown-reads → SPLIT (→ orchestrator-role.md Spawn Budget → Delegation-size discipline) |
 | `checkpoint_rule` | Every N tool uses → emit 3-5 line partial summary (current / next / remaining) before next tool call | intel-researcher every 5, intel-planner every 4, reviewer every 4 |
 | `output_cap` | Max final-output size | 1500 KR chars or equivalent |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
@@ -246,6 +246,8 @@ const findings = (await parallel(items.map((i) => robustAgent('qa-code-reviewer'
   .filter(Boolean); // dropped nulls = surfaced-incomplete items, re-delegable in a follow-up
 ```
 
+**Prevention-by-construction + fail-open advisory backstop**: the copy-verbatim verify-stage skeleton in `#### Pipeline Acceptance Criteria` (and the entry-class skeleton) embed this `robustAgent` helper INLINE and route EVERY stage through it, so a pasted DEV workflow carries the resilience idiom by construction (do NOT strip it back to bare `agent()`). As a secondary, fail-open backstop, `enforce-workflow-verify-stage.sh` emits a NON-blocking stderr advisory (exit 0 — NEVER exit 2) when a DEV-spawning workflow script contains a `schema` token but ZERO `robustAgent`/`catch` tokens anywhere. It is a decidable WHOLE-SCRIPT presence check: a per-call-site "absence of convention" scan is not soundly decidable (unbounded valid idioms), and a BLOCK would violate that gate's fail-open-DOMINANT posture — so the prevention (present-by-construction skeleton) is PRIMARY and the advisory only nudges when the idiom is wholly absent.
+
 #### Parallel Execution (Wave Execution) [ORCHESTRATOR]
 
 **Rollout stages**:
@@ -286,22 +288,45 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
 - **In-script verify-stage (ultracode — MANDATORY authoring obligation, honor-system PRIMARY, heuristically backstopped)** — *canonical skeleton; `orchestrator-role.md` cross-links here*: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook does NOT fire for engine `agent()` spawns (`orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`), but a `PreToolUse(Workflow)` static-scan heuristic gate now backstops the gross case: `enforce-workflow-verify-stage.sh` (wired in `settings.json`, firing-evidenced) statically scans the workflow `script` and BLOCKS (exit 2) a DEV-spawning script that lacks a `qa-code-reviewer` verify-stage token. That gate enforces a hardened F3+R5 contract (a token mention is NOT enough on its own): (1) JS comments are STRIPPED string-aware before the scan, so a comment-only `qa-code-reviewer` token does NOT satisfy the gate — it FAILS; (2) the reviewer's straight-quoted agentType token MUST appear BEFORE the first `dev-*` implementation spawn (ordering-aware); (3) a co-located `dev-*` verifier MUST sit within ~1000 chars of the reviewer token in the SAME `parallel()` verify block (the R5 co-location heuristic — the DEV hard-gate half). The co-location distance is measured on the COMMENT-STRIPPED script, so a long `//` or `/* */` comment placed between the reviewer and the impl DEV does NOT separate them (comments are removed before the distance is measured — do NOT pad with comments to fake co-location, and do NOT assume a comment gap pushes a real impl DEV out of range). The gate is still preview-fragile and still does NOT validate DEV-verdict correctness (the `feasible` value does not exist at static-scan time), so it does NOT replace the authoring obligation — the orchestrator MUST still encode an explicit in-script verify-stage that PRECEDES the first DEV implementation stage and gates it on a combined `pass`+`feasible` verdict. "MANDATORY" binds the AUTHOR (you MUST write it); the heuristic gate stops the gross violations (no reviewer, comment-only reviewer, reviewer-after-dev, reviewer with no co-located DEV verifier) but does not verify DEV-verdict correctness or gating-expression soundness. The authoring obligation + the Missing-verify-stage Red Flag self-check (`## Red Flags`) remain the PRIMARY discipline, now complemented by the hardened gate. Copyable shape (engine-agnostic vocabulary — `agent()`/`parallel()`/`pipeline()` are the Workflow primitives; do NOT hardcode preview-specific field names per the Non-brittleness caveat):
 
   ```js
-  // HOOK-PASSING SHAPE — copy verbatim, do not paraphrase. The qa-code-reviewer and its
-  // primary-domain DEV verifier sit CO-LOCATED inside the SAME parallel() verify block (within
-  // ~1000 comment-stripped chars), the reviewer precedes the LATER implementation dev-*, and every
-  // agentType is a literal straight-quoted token (a variable/concatenated agentType fail-opens past
-  // the gate but defeats the verify-stage).
-  // complex-plan workflow — verify stage gates DEV implementation
+  // HOOK-PASSING SHAPE — copy verbatim, do not paraphrase. Carries the robustAgent resilience
+  // wrapper (### Resilient Workflow Authoring) INLINE, so every schema-mode agent() is
+  // retry-once-on-null / isolated-failure BY CONSTRUCTION — a bare agent() returns null on
+  // truncation with NO engine-layer salvage. The qa-code-reviewer and its primary-domain DEV
+  // verifier sit CO-LOCATED inside the SAME parallel() verify block (within ~1000 comment-stripped
+  // chars), the reviewer precedes the LATER implementation dev-*, and every agentType is a literal
+  // straight-quoted token (a variable/concatenated agentType fail-opens past the gate but defeats
+  // the verify-stage).
+
+  // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow. MANDATORY wrapper
+  // for every schema-mode agent() (rationale: ### Resilient Workflow Authoring). Copied inline here so
+  // the compliant idiom is present the moment this skeleton is pasted — do NOT strip it back to bare
+  // agent() calls.
+  async function robustAgent(agentType, opts) {
+    const run = (extra) =>
+      agent(agentType, { ...opts, ...extra }).catch(() => null); // isolate: never rejects
+    let result = await run();
+    if (result == null) {
+      // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
+      result = await run({
+        goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; emit partial-but-complete before the working ceiling, never end on prose.`,
+      });
+    }
+    return result; // may still be null → caller .filter(Boolean)s it out, surfaces as incomplete
+  }
+
+  // complex-plan workflow — verify stage gates DEV implementation. Every stage goes through
+  // robustAgent (never bare agent()) so a truncated schema-mode spawn self-recovers instead of
+  // returning an unsalvageable null.
   pipeline(
-    agent('intel-planner', { goal: 'author plan', /* ...delegation fields... */ }),
+    robustAgent('intel-planner', { goal: 'author plan', /* ...delegation fields... */ }),
     // verify stage: qa-code-reviewer + primary-domain DEV in parallel (independent verdicts)
     parallel(
-      agent('qa-code-reviewer', { goal: 'judge implementation-feasibility + test-feasibility → pass|revise' }),
-      agent('dev-nestjs',    { goal: 'judge technical validity + approach soundness → feasible|infeasible' }),
+      robustAgent('qa-code-reviewer', { goal: 'judge implementation-feasibility + test-feasibility → pass|revise' }),
+      robustAgent('dev-nestjs',    { goal: 'judge technical validity + approach soundness → feasible|infeasible' }),
     ),
     // implementation stage runs ONLY when reviewer=pass AND DEV=feasible;
     // any revise/infeasible → intel-planner revision (max 1) then re-verify, else escalate
-    agent('dev-nestjs', { goal: 'implement per verified plan', /* gated on verify verdict */ }),
+    robustAgent('dev-nestjs', { goal: 'implement per verified plan', /* gated on verify verdict */ }),
   )
   ```
 
@@ -311,15 +336,19 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
 
   ```js
   // entry token in canonical home (raw-scanned — placement is convention). dev-* STILL needs the verify-stage.
-  const meta = { description: '[ENTRY-CLASS] simple-task: single-file config-value edit' };
+  // robustAgent = the retry-once-on-null / isolated-failure wrapper (### Resilient Workflow Authoring;
+  // full helper inline in the verify-stage skeleton above) — mandatory for every schema-mode agent().
+  const meta = { description: '[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — single-file config-value edit' };
   pipeline(
     parallel(
-      agent('qa-code-reviewer', { goal: 'judge feasibility → pass|revise' }),
-      agent('dev-python',       { goal: 'judge technical validity → feasible|infeasible' }),
+      robustAgent('qa-code-reviewer', { goal: 'judge feasibility → pass|revise' }),
+      robustAgent('dev-python',       { goal: 'judge technical validity → feasible|infeasible' }),
     ),
-    agent('dev-python', { goal: 'edit the config value' /* gated on verify verdict */ }),
+    robustAgent('dev-python', { goal: 'edit the config value' /* gated on verify verdict */ }),
   );
   ```
+
+**[DOC-ROUTE] token placement (ultracode — user-requested local destination)** — when the USER explicitly requested a local destination for a deliverable (new file OR edit of an existing user file), the workflow records the canonical stamped form `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')` — the ONE sanctioned carrier of the explicit-redirect exception to POST-only routing (rule SoT: `scope-report.md` Output Format Routing "Delegation phrasing does NOT override this routing", mirrored in `scope-planning.md`; orchestrator carve-out: `orchestrator-role.md` → Delegation Criteria). Same raw-scan convention as `[ENTRY-CLASS]` above (any placement passes), and the stamp MUST carry the actual `<path>` after the colon — a bare stamp clears nothing; path-scoping + mechanics live in `enforce-workflow-verify-stage.sh` (pointer only, do not restate). NEVER stamp without an actual explicit user request — stamping to silence the doc-routing gate is a violation (self-check: `## Red Flags`).
 
 **Before intel-reporter entry (domain agents output)**:
 - Assigned sections completed · Domain-specific accuracy verified · No placeholder/TODO in content
@@ -478,15 +507,17 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 - Single Wave spawning more sub-agents than `spawn_budget` — split into sequential Waves instead of parallel overflow
 - Routing decision made via keyword/alias match instead of `domains` semantic match (capability-based routing is the only legitimate path)
 - Subagent spawned despite an unmet `compatibility` precondition (e.g., intel-reporter dispatched for user-requested HTML emission while monitor daemon at 127.0.0.1:7842 is down) — Compatibility Probe MUST halt delegation pre-spawn rather than absorb the failure as a `result: blocked` post-spawn
-- **Missing-verify-stage guard (ultracode) — honor-system self-check, PRIMARY discipline complemented by a heuristic gate**: a complex-plan ultracode workflow authored WITHOUT a `{qa-code-reviewer, DEV}` verify-stage preceding the first DEV implementation stage (implementation NOT gated on the combined `pass`+`feasible` verdict) → **halt and re-author**. Under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook is BYPASSED (no PreToolUse(Agent) event fires for engine spawns), but a `PreToolUse(Workflow)` static-scan heuristic gate — `enforce-workflow-verify-stage.sh` (wired, firing-evidenced) — BLOCKS (exit 2) a DEV-spawning workflow script lacking a hardened `qa-code-reviewer` verify-stage. That gate enforces a hardened F3+R5 contract (a token mention is NOT enough on its own): (1) comments are STRIPPED string-aware before the scan, so a comment-only `qa-code-reviewer` token does NOT satisfy it; (2) the reviewer token MUST appear BEFORE the first `dev-*` implementation spawn (ordering-aware); (3) a co-located `dev-*` verifier MUST sit within ~1000 comment-stripped chars of the reviewer in the SAME `parallel()` block (the DEV hard-gate half). It still does NOT validate DEV-verdict correctness or gating-expression soundness, so this authoring-time self-check (run it before submitting any DEV-spawning workflow script) remains the PRIMARY surface for those subtle cases the gate cannot see. It catches those only if the orchestrator actually performs the check — honor-system, not a runtime guarantee.
+- **Missing-verify-stage guard (ultracode)**: a DEV-spawning workflow authored without a `{qa-code-reviewer, DEV}` verify-stage preceding the first DEV implementation stage, gated on the combined `pass`+`feasible` verdict → **halt and re-author**. Honor-system self-check PRIMARY; the `enforce-workflow-verify-stage.sh` static-scan gate backstops gross omissions only. Hardened contract + skeleton (canonical): `### Pipeline Acceptance Criteria` → "In-script verify-stage".
 
-  **Pre-submit self-check (run before submitting ANY DEV-spawning Workflow script — the three hardened conditions the gate enforces, plus the verdict-gating the gate cannot see)**:
+  **Pre-submit self-check (run before submitting ANY DEV-spawning Workflow script — the gate's DEV-relevant block branches — entry gate + three hardened verify conditions; the doc-routing leak is a separate gate branch with its own stderr — plus the verdict-gating the gate cannot see)**:
+  0. **entry gate** — the script carries a plan-ref OR `[ENTRY-CLASS] simple-task: <reason>` token (raw-scanned, any placement; canonical home: top-of-script `log()` or `meta.description`) — a DEV-spawning script missing BOTH → entry-miss BLOCK (exit 2);
   1. a **non-comment** `qa-code-reviewer` straight-quoted token is present (a token only inside a `//` or `/* */` comment FAILS the gate — comments are stripped first);
   2. it **precedes the first `dev-*` implementation spawn** (a reviewer appearing only after the impl DEV does not gate it → BLOCK);
-  3. a **`dev-*` verifier is co-located** within ~1000 comment-stripped chars of the reviewer in the SAME `parallel()` block (a reviewer with no co-located DEV verifier = DEV hard-gate absent → BLOCK; note the distance is measured AFTER comment-stripping, so do NOT pad with comments to fake co-location);
+  3. a **`dev-*` verifier is co-located** within ~1000 comment-stripped chars of the reviewer in the SAME `parallel()` block (a reviewer with no co-located DEV verifier = DEV hard-gate absent → BLOCK; note the distance is measured AFTER comment-stripping, so do NOT pad with comments to fake co-location — and newlines inside `/* */` block comments now SURVIVE stripping (line identity preserved), so comment padding still cannot shrink distances but no longer merges lines);
   4. (gate cannot verify — your obligation) implementation is **gated on the combined `pass`+`feasible` verdict**, and the DEV verdict is genuinely a hard gate (no pass without `feasible`).
 
   Copyable skeleton: `### Pipeline Acceptance Criteria` → "In-script verify-stage". Simple-plan workflows are exempt (inherit the Stage-2 simple-task carve-out).
+- **Reflexive [DOC-ROUTE] stamping guard**: a `[DOC-ROUTE] user-requested-local:` token stamped WITHOUT an actual explicit user request for that local destination (new file OR edit of an existing user file) → violation — the token carries a real user redirect, never silences the doc-routing gate. Halt, remove the stamp, route the deliverable per `scope-report.md` Output Format Routing. Canonical form + placement: `### Pipeline Acceptance Criteria` → "[DOC-ROUTE] token placement".
 - **Generic-subagent guard [LLM06/LLM01/LLM07]**: a workflow `agent()` call invoked WITHOUT an agentType matching the routing decision → spawns a GENERIC subagent that receives only its own system prompt and does NOT inherit the parent system prompt — stripping this project's Tier-2 scope rules + Tier-3 cross-cutting rules + the `inject-scope-rules.sh` SubagentStart injection + the per-agent `tools:` allowlist. **FORBIDDEN.** The capability-based routing decision MUST flow into `agentType` (typed invocation) on every spawn — manual Agent-tool path and workflow path alike. Untyped spawn = OWASP LLM06 Excessive Agency (primary, least-privilege tool allowlist lost) + LLM01 (scope-rule input-trust guards lost) + LLM07 (system-prompt-leakage guard lost) + LLM10 (budget/turn ceiling lost).
 
 ## Verification

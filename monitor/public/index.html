@@ -154,6 +154,8 @@
 <!-- Markdown rendering deps for Outcome 탐색기 (screen 04). marked = parser; DOMPurify = sanitizer (both required, missing one falls back to plain pre). -->
 <script src="https://cdn.jsdelivr.net/npm/marked@13.0.0/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<!-- Lucide 0.469.0 (ISC) — 전체 아이콘 카탈로그를 이름으로 소비 (손수 복사하던 inline SVG path 제거). window.lucide 로 노출, icons[PascalName] = [tag, attrs, children] IconNode. window.UI.Icon(dist/ui.js)이 소비하므로 반드시 dist/ui.js 보다 먼저 로드. -->
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
 <!-- Tweaks panel module — exposes window.useTweaks/TweaksPanel/Section/Radio/Color before app.jsx consumes them. MUST load before ui.jsx so app.jsx (loaded last) sees the globals. -->
 <!-- esbuild precompile 산출물 (public/dist/*.js) — npm run build:jsx 로 생성. 로드 순서 (tweaks-panel → ui → screens → app) 는 window-globals 의존성 유지. -->
 <script src="dist/tweaks-panel.js"></script>

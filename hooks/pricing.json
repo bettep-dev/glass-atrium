@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "_comment": "F3 self-refresh: the loader atomically replaces this WHOLE file with the own-repo copy when that copy's last_verified is strictly newer (bounded to today+1d). Manual local edits MUST bump last_verified — a newer repo copy overwrites uncommitted local edits by design.",
+  "last_verified": "2026-07-02",
+  "stale_after_days": 90,
+  "currency": "USD",
+  "unit": "per_mtok",
+  "fallback_model": "claude-fable-5",
+  "remote_sources": [
+    {
+      "name": "own-repo",
+      "url": "https://raw.githubusercontent.com/bettep-dev/glass-atrium/main/hooks/pricing.json",
+      "format": "sot",
+      "timeout_seconds": 3
+    },
+    {
+      "name": "litellm",
+      "url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+      "format": "litellm",
+      "timeout_seconds": 3
+    }
+  ],
+  "overlay_cache_path": "data/pricing-remote-overlay.json",
+  "overlay_ttl_hours": 24,
+  "models": {
+    "claude-opus-4-8":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "claude-opus-4-7":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "claude-opus-4-6":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "claude-opus-4-5":   {"input": 5.0,  "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "claude-fable-5":    {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5},
+    "claude-sonnet-5":   {
+      "input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75,
+      "tiers": [
+        {"until": "2026-08-31", "input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
+      ]
+    },
+    "claude-sonnet-4-6": {"input": 3.0,  "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75},
+    "claude-sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75},
+    "claude-haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_read": 0.1, "cache_creation": 1.25}
+  }
+}

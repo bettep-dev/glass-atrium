@@ -41,6 +41,10 @@ CONFIG_PATH = _HOME / ".claude" / "data" / "daemon-config.json"
 # Defensive fallback literals — MUST mirror the current in-code constants so a
 # missing/unreadable config file preserves the validated behavior exactly.
 # 0.10 is too low (triggers immediate CLI exit 1); 0.50 is the validated ceiling.
+# NOTE: '0.50' here is the absent-file safety floor (used only when daemon-config.json
+#   is missing/unreadable), NOT the shipped DB default — the monitor.model_config seed
+#   now defaults budget.haiku_max_usd / budget.pre_verify_max_usd to '10.00'. A fresh
+#   install runs on this floor only until the first monitor Save writes the config file.
 # Single declaration site per value — inlined into the dict (single-SoT intent).
 _FALLBACK: dict[str, str] = {
     "haiku_max_budget_usd": "0.50",

@@ -142,67 +142,68 @@
 	cursor: not-allowed;
 }
 
+/* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
+   window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
+   neutral(--sunken/--dim/--line) · min-height 22px + padding 3/8(border-box, 폼요소 패밀리 호흡) · --radius-badge · --fs-micro · weight 500.
+   tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
-	padding: 2px 8px;
-	font-size: 11px;
+	gap: 4px;
+	box-sizing: border-box;
+	min-height: 22px;
+	padding: 3px 8px;
+	font-size: var(--fs-micro, 11px);
 	font-weight: 500;
-	border-radius: 999px;
+	line-height: 1;
+	border-radius: var(--radius-badge);
 	background: rgb(var(--sunken));
 	color: rgb(var(--dim));
 	border: 1px solid rgb(var(--line));
 	font-family: "JetBrains Mono", monospace;
 	white-space: nowrap;
 }
-.pill.crit {
-	background: rgb(var(--crit) / 0.12);
-	color: rgb(var(--crit));
-	border-color: transparent;
-}
-.pill.warn {
-	background: rgb(var(--warn) / 0.12);
-	color: rgb(var(--warn));
-	border-color: transparent;
-}
-.pill.info {
-	background: rgb(var(--info) / 0.12);
-	color: rgb(var(--info));
-	border-color: transparent;
-}
-.pill.ok {
-	background: rgb(var(--ok) / 0.12);
-	color: rgb(var(--ok));
-	border-color: transparent;
-}
-/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). */
+/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). canonical FORM 상속. */
 .pill--absent {
 	background: transparent;
 	color: rgb(var(--faint));
 	border: 1px dashed rgb(var(--line));
 }
-/* Badge role 변형 — status 는 위 .pill(+tone) 그대로, metadata/count 는 작은 radius/font 의 neutral.
-   metadata: 서술 속성(상태 아님) · count: 순수 수량. 둘 다 톤 컬러 없음 (color=status 전용 규칙). */
+/* metadata / count role — neutral(톤 없음), canonical FORM 상속(radius/height/font/weight 공유).
+   divergent radius/font-size/weight 제거 · 유일한 role 구분만 남긴다: meta=소문자 서술 속성 · count=tabular-nums 수량. */
 .pill--meta {
-	border-radius: 4px;
-	font-size: 10px;
-	padding: 1px 6px;
 	text-transform: lowercase;
 }
 .pill--count {
-	border-radius: 4px;
-	font-size: 10.5px;
-	padding: 1px 6px;
+	font-variant-numeric: tabular-nums;
 }
-/* height-match variant — model-config MODEL ASSIGNMENT 메타 배지(SAVED TARGET fallback + ACTUAL)를
-   편집 가능 행의 <select>(.field) 박스와 동일 HEIGHT 로만 맞춰 세로 정렬.
-   너비/폰트/radius/lowercase 는 .pill--meta 의 content-hugging pill 그대로 유지 — 컬럼을 채우지 않음.
-   HEIGHT 만 --ctl-h 로 .field 와 공유(lockstep) · box-sizing:border-box 로 min-height 가 1px border 포함.
-   .pill--meta 뒤에 정의 → 같은 특이도에서 source order 우선 (이 인스턴스 전용, 공유 .pill--meta 불변). */
+/* height-match variant — model-config MODEL ASSIGNMENT 메타 배지를 편집 행 <select>(.field) 와 동일 HEIGHT 로 세로 정렬.
+   canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 22px 를 지배.
+   box-sizing 은 base .pill 의 border-box 상속. */
 .pill--ctl-h {
+	height: auto;
 	min-height: var(--ctl-h);
-	box-sizing: border-box;
+}
+/* interactive variant — Badge interactive=true 시 <button> 렌더. min-height 27px 로 .btn 패밀리와 정합(height rhythm)
+   · min-width 24px 는 WCAG 2.2 §2.5.8 최소 타깃 유지 + UA button reset(appearance/margin) + focus-visible ring
+   (ring-offset 은 surface 색 2px gap). canonical FORM 유지. */
+.pill--interactive {
+	height: auto;
+	min-height: 27px;
+	min-width: 24px;
+	appearance: none;
+	margin: 0;
+	cursor: pointer;
+}
+.pill--interactive:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px rgb(var(--surface)), 0 0 0 4px rgb(var(--accent));
+}
+/* icon-only variant — 정사각(label 텍스트 부재), glyph 중앙 정렬. 의미는 aria-label/title 로 운반(absent-text 규칙). */
+.pill--icon-only {
+	justify-content: center;
+	padding: 0;
+	aspect-ratio: 1;
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────

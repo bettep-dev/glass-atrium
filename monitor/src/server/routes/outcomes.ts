@@ -4,6 +4,11 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
+import {
+  buildAgentMembershipFilter,
+  buildAgentMembershipFragment,
+  loadCanonicalAgentKeys,
+} from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
@@ -13,6 +18,8 @@ import type {
   AttributionDailyPoint,
   AttributionDailyResponse,
   AttributionDailyWindowDays,
+  BudgetTruncationAgentCount,
+  LiteralOmissionBreakdown,
   OutcomeConfidenceLiteral,
   OutcomeCrossAnalysisByAgent,
   OutcomeCrossAnalysisByResult,
@@ -125,10 +132,26 @@ const SENTINEL_AGENT_TYPES: readonly string[] = [
   "agent_id_missing",
   "unknown",
 ];
+// budget-truncation: a subagent hard-killed at its tool_use budget ceiling before
+// emitting [COMPLETION] — a named cause of a literally-truncated completion, so it
+// buckets with truncated_completion here (NOT the 'synthesized' catch-all) to stay
+// distinguishable + countable rather than folding into completion-synthesized noise.
+// Single-SoT literal so the raw value stays byte-identical with track-outcome.sh.
+const BUDGET_TRUNCATION_SOURCE = "budget-truncation";
 const LITERAL_OMISSION_SOURCES: ReadonlySet<string> = new Set<string>([
   "truncated_completion",
   "completion-missing",
+  BUDGET_TRUNCATION_SOURCE,
 ]);
+// Raw literal_omission attribution_source → breakdown-field key. The set of keys
+// here MUST equal LITERAL_OMISSION_SOURCES so the breakdown sub-counts sum to the
+// literal_omission total. Raw literals use hyphens; DTO fields use underscores.
+const LITERAL_OMISSION_BREAKDOWN_KEYS: ReadonlyMap<string, keyof LiteralOmissionBreakdown> =
+  new Map<string, keyof LiteralOmissionBreakdown>([
+    ["truncated_completion", "truncated_completion"],
+    ["completion-missing", "completion_missing"],
+    [BUDGET_TRUNCATION_SOURCE, "budget_truncation"],
+  ]);
 // completion-synthesized (recovery artifact) + conversation-only + cron-derived
 // + agent-id-missing + subagent-stop-phantom (query-derived noise sentinel) are
 // explicit synthesized members; the else-branch catch-all covers any future
@@ -163,6 +186,8 @@ interface OutcomeSearchDbRow {
   cid: string | null;
   has_body_md: boolean;
   poisoned_window: boolean;
+  // Raw attribution_source, selected verbatim (no ::text cast — column is text).
+  attribution_source: string | null;
 }
 
 interface OutcomeDetailDbRow {
@@ -258,6 +283,12 @@ interface SearchQuerystring {
   limit?: string;
   offset?: string;
   sort?: string;
+  // Exact-match filter on the raw attribution_source column (e.g.
+  // attribution_source=budget-truncation). /search-only per contract.
+  attribution_source?: string;
+  // O2 forensic toggle — truthy lifts the default registry-membership gate on
+  // /search so de-registered / sentinel / noise agents reappear (T7 / AC-2).
+  include_all?: string;
 }
 
 interface CrossAnalysisQuerystring {
@@ -269,6 +300,11 @@ interface CrossAnalysisQuerystring {
   metric_pass?: string;
   review_flag?: string;
   q?: string;
+  // Mirrors /search's forensic show-all toggle (parseIncludeAll) — lifts the
+  // registry-membership default so the cross-tab/by-result/grader distributions
+  // (siblings of by_agent_top_10, which stays independently gated regardless of
+  // this toggle) can be inspected un-scoped.
+  include_all?: string;
 }
 
 // Parsed filter set shared by /search and /cross-analysis. metric_pass is a
@@ -285,6 +321,10 @@ interface ParsedFilters {
   metric_pass: boolean | null | undefined;
   review_flag: boolean | null;
   q: string | null;
+  // Exact-match filter on attribution_source; null = no filter. /search-only —
+  // /cross-analysis never supplies the key, so it stays null there (behavior
+  // unchanged for that endpoint).
+  attribution_source: string | null;
 }
 
 // registration
@@ -330,7 +370,17 @@ async function handleSearch(
     } satisfies OutcomesErrorBody);
   }
 
-  const whereClause = buildWhereClause(filters);
+  // T7 (O2) — default-scope /search to the canonical registry so de-registered /
+  // sentinel / one-off-cid noise is hidden from the record-log; a truthy
+  // include_all lifts the gate for the forensic all-records view (AC-2). Keys load
+  // once and gate BOTH the rows and count queries (consistent total). On an empty
+  // registry loadCanonicalAgentKeys() → [] → the predicate is skipped (fail-open).
+  // The two cross-analysis callers pass NO scopeAgentKeys, so buildWhereClause
+  // stays behavior-unchanged there — the by-agent dimension is gated at its own
+  // call site (T6), never inside the shared builder.
+  const includeAll = parseIncludeAll(request.query.include_all);
+  const scopeAgentKeys = includeAll ? undefined : await loadCanonicalAgentKeys();
+  const whereClause = buildWhereClause(filters, { scopeAgentKeys });
   const sortFragment = getSortFragment(sort);
 
   const prisma = getPrisma();
@@ -356,7 +406,8 @@ async function handleSearch(
           files_modified,
           cid,
           (body_md IS NOT NULL)          AS has_body_md,
-          poisoned_window
+          poisoned_window,
+          attribution_source
         FROM core.outcomes
         ${whereClause}
         ${sortFragment}
@@ -406,6 +457,7 @@ async function handleSearch(
           cid: row.cid,
           has_body_md: row.has_body_md,
           poisoned_window: row.poisoned_window,
+          attribution_source: row.attribution_source,
         },
       ];
     });
@@ -545,10 +597,34 @@ async function handleCrossAnalysis(
     return reply.code(400).send(filtersResult.error);
   }
   const filters = filtersResult.filters;
-  const whereClause = buildWhereClause(filters);
+  // Registry-scoped by default (closes the by_result/cross-tab/grader gap — the
+  // original 65/605 `done_with_concerns` cross-analysis miscount included
+  // non-fleet agents like general-purpose/Explore); `include_all=1` lifts the
+  // gate for a forensic all-population view, mirroring /search's `include_all`
+  // (T7) convention. Applied to BOTH whereClause and analyticsWhere so their
+  // delta (excluded_poisoned_count) isolates ONLY the poisoned-window exclusion,
+  // never a mix of poisoned + registry exclusion.
+  const includeAll = parseIncludeAll(request.query.include_all);
+  const canonicalKeys = await loadCanonicalAgentKeys();
+  const scopeAgentKeys = includeAll ? undefined : canonicalKeys;
+  const whereClause = buildWhereClause(filters, { scopeAgentKeys });
   // Aggregates run on the poisoned-excluded population; the base-count query
   // (whereClause) only sizes the exclusion for the on-screen disclosure chip.
-  const analyticsWhere = buildWhereClause(filters, { excludePoisoned: true });
+  const analyticsWhere = buildWhereClause(filters, { excludePoisoned: true, scopeAgentKeys });
+
+  // T6 — by-agent-ONLY registry gate, UNCONDITIONAL (independent of the
+  // include_all toggle above — by_agent_top_10 stays registry-scoped even under
+  // a forensic all-population request). Scopes the by_agent_top_10 dimension
+  // (AgentStackedBar + KPI sparkline) to the canonical registry so orchestrator /
+  // cron / sentinel / one-off-cid noise cannot occupy a ranking slot. Applied at
+  // THIS call site (appended to the byAgentRows query below) — redundant-but-
+  // harmless when analyticsWhere already carries scopeAgentKeys, and the ONLY
+  // gate on by_agent_top_10 when include_all lifts analyticsWhere's scope.
+  // analyticsWhere always emits a complete WHERE (excludePoisoned pushes
+  // poisoned_window = FALSE), so the AND-prefixed helper is the correct
+  // connector; Prisma.empty on an empty registry → the tail renders as no-op
+  // (fail-open).
+  const byAgentMembership = buildAgentMembershipFilter(canonicalKeys);
 
   const prisma = getPrisma();
   try {
@@ -590,6 +666,7 @@ async function handleCrossAnalysis(
             COUNT(*)::bigint AS count
           FROM core.outcomes
           ${analyticsWhere}
+          ${byAgentMembership}
           GROUP BY agent
           ORDER BY count DESC, agent ASC
           LIMIT ${TOP_AGENTS_LIMIT}
@@ -737,6 +814,10 @@ async function handleHeatmap(
   // Build the result-filter clause. `all` → no extra predicate; the day-window
   // clause below carries the only WHERE term in that case.
   const resultClause = buildHeatmapResultClause(resultFilter);
+  // Registry-membership scope — no `agent` querystring param exists on this
+  // endpoint, so ad-hoc/non-fleet agents would otherwise pollute the DOW×Hour
+  // activity grid. AND-prefixed helper appended after the day-window WHERE.
+  const agentMembership = buildAgentMembershipFilter(await loadCanonicalAgentKeys());
   // Day-window literal — `days` came through the integer-range gate, no user
   // string reaches SQL.
   const intervalLiteral = Prisma.raw(`INTERVAL '${days} days'`);
@@ -760,6 +841,7 @@ async function handleHeatmap(
       WHERE record_ts >= CURRENT_DATE - ${intervalLiteral}
         AND poisoned_window = FALSE
         ${resultClause}
+        ${agentMembership}
       GROUP BY 1, 2
     `;
 
@@ -907,6 +989,15 @@ async function handleAttributionDaily(
     // attribution_source seq-scan is sub-1ms at current scale (partial index
     // deferred to a >50K-row future migration). `days` is parameter-bound (clean int).
     //
+    // Registry-membership scope on the OUTER query only — appended to
+    // `o.attribution_source`'s WHERE below. Deliberately NOT applied inside the
+    // internal EXISTS sub-select (the ae.agent_type sentinel check a few lines
+    // down): that check is a genuine-vs-phantom-loss VALIDATION query, not an
+    // agent-dimensioned display field, so it is out of scope for this gate.
+    const agentMembership = buildAgentMembershipFilter(
+      await loadCanonicalAgentKeys(),
+      Prisma.sql`o.agent`,
+    );
     // The raw `subagent-stop-missing` sentinel is NOT genuine loss — its
     // population is mostly harness phantom + mislabeled main-session Stops, with
     // near-zero real subagent failures. A GENUINE attribution loss requires a
@@ -941,11 +1032,29 @@ async function handleAttributionDaily(
       FROM core.outcomes o
       WHERE o.attribution_source IS NOT NULL
         AND o.record_ts > NOW() - (${days}::int * INTERVAL '1 day')
+        ${agentMembership}
       GROUP BY date_trunc('day', o.record_ts), 2
       ORDER BY date_trunc('day', o.record_ts) ASC
     `;
 
-    const { series, totals } = pivotAttributionDaily(rows);
+    const { series, totals, breakdown } = pivotAttributionDaily(rows);
+
+    // budget-truncation rows grouped by agent over the SAME window + membership
+    // scope as the main series, so the by-agent counts reconcile with the
+    // breakdown.budget_truncation sub-count. count DESC, agent ASC tiebreak.
+    const byAgentRows = await prisma.$queryRaw<ByAgentDbRow[]>`
+      SELECT o.agent AS agent, COUNT(*)::bigint AS count
+      FROM core.outcomes o
+      WHERE o.attribution_source = ${BUDGET_TRUNCATION_SOURCE}
+        AND o.record_ts > NOW() - (${days}::int * INTERVAL '1 day')
+        ${agentMembership}
+      GROUP BY o.agent
+      ORDER BY COUNT(*) DESC, o.agent ASC
+    `;
+    const budgetTruncationByAgent: BudgetTruncationAgentCount[] = byAgentRows.map((r) => ({
+      agent: r.agent,
+      count: bigintToNumber(r.count),
+    }));
 
     const totalAttributed =
       totals.healthy + totals.attribution_loss + totals.literal_omission + totals.synthesized;
@@ -971,6 +1080,8 @@ async function handleAttributionDaily(
         literal_omission_rate: ratioOrNull(totals.literal_omission, totalAttributed),
         synthesized_rate: ratioOrNull(totals.synthesized, totalAttributed),
         total_attributed: totalAttributed,
+        literal_omission_breakdown: breakdown,
+        budget_truncation_by_agent: budgetTruncationByAgent,
       },
     };
   } catch (error) {
@@ -1005,9 +1116,14 @@ interface AttributionCategoryTotals {
 // window totals. Sum-complete by construction: every source maps to exactly one
 // of the 4 categories (unknown → synthesized), so the per-day `total` always
 // equals healthy+attribution_loss+literal_omission+synthesized.
-function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
+//
+// Exported for the literal_omission_breakdown unit test — the budget-truncation
+// split cannot be route-seeded (outcomes_attribution_source_check rejects the
+// value on INSERT), so its breakdown increment is verified at the pure-fn level.
+export function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
   series: AttributionDailyPoint[];
   totals: AttributionCategoryTotals;
+  breakdown: LiteralOmissionBreakdown;
 } {
   // Map keyed by day → accumulating point. Insertion order preserves the ASC
   // day ordering from the SQL ORDER BY (Map iterates in insertion order).
@@ -1017,6 +1133,13 @@ function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
     attribution_loss: 0,
     literal_omission: 0,
     synthesized: 0,
+  };
+  // Sub-counts of the literal_omission total, keyed off the RAW literal (not
+  // categorizeAttributionSource) so they sum exactly to totals.literal_omission.
+  const breakdown: LiteralOmissionBreakdown = {
+    truncated_completion: 0,
+    completion_missing: 0,
+    budget_truncation: 0,
   };
 
   for (const row of rows) {
@@ -1038,9 +1161,17 @@ function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
     point[category] += count;
     point.total += count;
     totals[category] += count;
+
+    // Raw-literal split of literal_omission. The breakdown key map shares its
+    // key set with LITERAL_OMISSION_SOURCES, so every row that lands in the
+    // literal_omission category increments exactly one breakdown field.
+    const breakdownKey = LITERAL_OMISSION_BREAKDOWN_KEYS.get(row.attribution_source);
+    if (breakdownKey !== undefined) {
+      breakdown[breakdownKey] += count;
+    }
   }
 
-  return { series: Array.from(byDay.values()), totals };
+  return { series: Array.from(byDay.values()), totals, breakdown };
 }
 
 // Map an attribution_source value to its semantic category. The else-branch
@@ -1053,7 +1184,7 @@ function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
 // ATTRIBUTION_LOSS_SOURCE is the genuine-loss subset (real agent_events backing);
 // the phantom/mislabeled majority arrives as ATTRIBUTION_LOSS_PHANTOM_SOURCE and
 // is classified 'synthesized' via SYNTHESIZED_SOURCES.
-function categorizeAttributionSource(
+export function categorizeAttributionSource(
   source: string,
 ): keyof AttributionCategoryTotals {
   if (source === HEALTHY_SOURCE) return "healthy";
@@ -1312,6 +1443,16 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
   const q =
     typeof qRaw === "string" && qRaw.length > 0 ? qRaw.slice(0, Q_MAX_LENGTH) : null;
 
+  // attribution_source: exact-match equality filter, /search-only. The `in`
+  // guard keeps /cross-analysis (whose querystring lacks the key) at null, so
+  // that endpoint's WHERE is unchanged. Bound as a parameter in buildWhereClause.
+  const attributionSourceRaw =
+    "attribution_source" in query ? query.attribution_source : undefined;
+  const attributionSource =
+    typeof attributionSourceRaw === "string" && attributionSourceRaw.length > 0
+      ? attributionSourceRaw
+      : null;
+
   const filters: ParsedFilters = {
     days,
     agent,
@@ -1321,6 +1462,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
     metric_pass: metricPass,
     review_flag: reviewFlag,
     q,
+    attribution_source: attributionSource,
   };
 
   return { filters, error: null };
@@ -1328,7 +1470,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
 
 function buildWhereClause(
   filters: ParsedFilters,
-  options?: { excludePoisoned?: boolean },
+  options?: { excludePoisoned?: boolean; scopeAgentKeys?: string[] },
 ): Prisma.Sql {
   const fragments: Prisma.Sql[] = [];
 
@@ -1386,6 +1528,22 @@ function buildWhereClause(
     fragments.push(
       Prisma.sql`(summary ILIKE ${pattern} OR lesson ILIKE ${pattern} OR EXISTS (SELECT 1 FROM unnest(concerns) c WHERE c ILIKE ${pattern}))`,
     );
+  }
+
+  // Exact-match attribution_source equality — parameter-bound (no cast: column
+  // is text). null = no filter (the /cross-analysis path always lands here).
+  if (filters.attribution_source !== null) {
+    fragments.push(Prisma.sql`attribution_source = ${filters.attribution_source}`);
+  }
+
+  // T7 (O2) — caller-opt-in registry gate. Fires ONLY when a caller supplies a
+  // non-empty scopeAgentKeys (handleSearch does, UNLESS include_all); the two
+  // cross-analysis callers omit it → this builder stays behavior-unchanged for
+  // cross-analysis. BARE fragment (no leading AND) because it joins into the
+  // fragments array via the Prisma.join separator below. Empty keys → skip
+  // (fail-open; never push an empty fragment / never emit IN ()).
+  if (options?.scopeAgentKeys !== undefined && options.scopeAgentKeys.length > 0) {
+    fragments.push(buildAgentMembershipFragment(options.scopeAgentKeys));
   }
 
   if (fragments.length === 0) {
@@ -1462,6 +1620,16 @@ function parseSortParam(raw: string | undefined): OutcomeSortToken | null {
   return raw as OutcomeSortToken;
 }
 
+// O2 show-all (forensic) toggle for /search. Lenient truthy parse — only '1' /
+// 'true' lift the registry gate; any other value (absent / '0' / 'false' /
+// garbage) falls back to the SAFE registry-scoped default rather than a 400 (a
+// display toggle should never hard-fail a search). Pure + idempotent: no
+// side-channel state (the confidence=null WeakSet delete-on-read regression is
+// the anti-pattern this avoids).
+function parseIncludeAll(raw: string | undefined): boolean {
+  return raw === "1" || raw === "true";
+}
+
 // filter echo builders
 
 function toSearchFilterEcho(
@@ -1481,6 +1649,7 @@ function toSearchFilterEcho(
     metric_pass: filters.metric_pass === undefined ? "unset" : filters.metric_pass,
     review_flag: filters.review_flag,
     q: filters.q,
+    attribution_source: filters.attribution_source,
     sort,
     limit,
     offset,
@@ -1512,6 +1681,7 @@ function emptyFilters(): ParsedFilters {
     metric_pass: undefined,
     review_flag: null,
     q: null,
+    attribution_source: null,
   };
 }
 

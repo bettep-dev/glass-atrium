@@ -40,7 +40,7 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 	scoped: 16,
 	scopedScope: 9,
 	scopedShared: 7,
-	skills: 16,
+	skills: 15,
 	uniqueHookBasename: 47,
 	hooks: {
 		PreToolUse: 20,

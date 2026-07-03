@@ -31,6 +31,11 @@ run_hook() {
   ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
 }
 
+# Shared docroute assertion tails (section q) — status + "doc-routing leak" stderr pair.
+# Test-specific EXTRA asserts (stamped-form teaching line, the A1 plural/singular pair) stay inline.
+assert_docroute_pass() { [[ "${status}" -eq 0 ]] && [[ ! "${output}" =~ "doc-routing leak" ]]; }
+assert_docroute_block() { [[ "${status}" -eq 2 ]] && [[ "${output}" =~ "doc-routing leak" ]]; }
+
 # A run of N real (non-comment) filler agent() calls — used to push a lone impl-DEV
 # outside the co-location window with REAL code (comment-stripping cannot shrink it).
 filler() {
@@ -43,50 +48,63 @@ filler() {
 # plan-ref, so co-location fixtures embed one to ISOLATE the co-location behavior from BLOCK_ENTRY.
 PLAN_REF="clauded-docs/100"
 
+# A recognized [SIZE-EST] delegation-size self-attestation token — the SIBLING of PLAN_REF for the
+# block-sizeest gate. block-sizeest promotes a would-be-PASS DEV workflow under ENTRY_OK that carries
+# NO [SIZE-EST] token to exit 2 (raw-scanned, DEV-gated + ENTRY_OK-gated). So every DEV verify-stage
+# PASS fixture must embed BOTH ${PLAN_REF} (isolate from BLOCK_ENTRY) AND ${SIZE_EST} (isolate from
+# BLOCK_SIZEEST) to keep the co-location / ordering / resilience behavior under test isolated.
+SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
+
 # --- (a) reviewer + DEV-verifier both present before the first impl dev-* → PASS ---
 
 @test "verify stage parallel(reviewer, dev) then impl dev → PASS (exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "reviewer adjacent to dev verifier, far impl dev → PASS (co-located DEV present)" {
   local f
   f="$(filler 20)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f},agent('dev-react',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f},agent('dev-react',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # --- DEV-verifier present, both parallel orderings → PASS (R5 false-BLOCK fix) ---
 
 @test "parallel(dev, reviewer) dev-first ordering then impl dev → PASS (order-independent)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "long multi-sentence reviewer goal (~560 chars) with co-located dev → PASS" {
   local g
   g="judge $(python3 -c "print('x'*560)")"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # --- (b) reviewer present but DEV-verifier absent → BLOCK (exit 2) ---
 
-@test "reviewer present, lone impl dev separated by real code > window → BLOCK (exit 2)" {
+@test "reviewer present, lone impl dev separated by real code > window → BLOCK_NOVERIFYDEV (exit 2)" {
   local f
   f="$(filler 45)"
   run_hook "pipeline(agent('qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f},agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
+  # H1 cause split: token-specific PREPENDED cause line + base reason intact
+  [[ "${output}" == *"CAUSE (block-noverifydev): reviewer present but no dev-* verifier"* ]]
+  [[ "${output}" == *"missing its mandatory"* ]]
 }
 
 # --- implementation dev that the reviewer does not precede → BLOCK (ordering) ---
 
-@test "separate impl dev runs far BEFORE the verify pair → BLOCK (reviewer does not gate it)" {
+@test "separate impl dev runs far BEFORE the verify pair → BLOCK_ORDER (reviewer does not gate it)" {
   local f
   f="$(filler 45)"
   run_hook "pipeline(agent('dev-nestjs',{goal:'impl early'}),${f},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})))"
   [[ "${status}" -eq 2 ]]
+  # H1 cause split: token-specific PREPENDED cause line + base reason intact
+  [[ "${output}" == *"CAUSE (block-order): an implementation dev-* precedes every reviewer"* ]]
+  [[ "${output}" == *"missing its mandatory"* ]]
 }
 
 # --- (c) a comment-only DEV-verifier token is NOT counted ---
@@ -120,15 +138,18 @@ PLAN_REF="clauded-docs/100"
 }
 
 @test "url inside a goal string (//) does not false-strip the reviewer line → PASS" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # --- (e) regression: pre-existing reviewer-only checks unchanged ---
 
-@test "regression: DEV present, NO reviewer anywhere → BLOCK (exit 2)" {
+@test "regression: DEV present, NO reviewer anywhere → BLOCK_NOREV (exit 2)" {
   run_hook "pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
+  # H1 cause split: token-specific PREPENDED cause line + base reason intact
+  [[ "${output}" == *"CAUSE (block-norev): no non-comment qa-code-reviewer token anywhere"* ]]
+  [[ "${output}" == *"missing its mandatory"* ]]
 }
 
 @test "regression: no DEV spawn at all → PASS (Stage-2 exempt)" {
@@ -140,7 +161,7 @@ PLAN_REF="clauded-docs/100"
 # indistinguishable from a verify-only stage with the dev listed first — so it fail-opens to PASS
 # (the co-located dev is read as the verify-DEV, leaving no implementation dev to gate).
 @test "lone dev then adjacent reviewer, no impl after → PASS (ambiguous, fail-open)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -161,13 +182,13 @@ PLAN_REF="clauded-docs/100"
 }
 
 @test "entry: [ENTRY-CLASS] simple-task token present → no entry-miss block (exit 0)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge [ENTRY-CLASS] simple-task: trivial config edit'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge [ENTRY-CLASS] simple-task: trivial config edit'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
 
 @test "entry: plan-reference present → no entry-miss block (exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'see clauded-docs/4821 for the plan'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'see clauded-docs/4821 for the plan ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -176,7 +197,7 @@ PLAN_REF="clauded-docs/100"
 # comment SILENCES entry-miss (matching the manual gate's raw grep). Pre-P0 this asserted a BLOCK;
 # the contract is now reversed. The deeper P0 coverage lives in section (j).
 @test "entry: [ENTRY-CLASS] token inside a comment now SILENCES entry-miss → PASS (P0 raw-scan)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), /* [ENTRY-CLASS] simple-task: hidden in a comment */ agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), /* [ENTRY-CLASS] simple-task: hidden in a comment */ agent('dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -202,18 +223,18 @@ PLAN_REF="clauded-docs/100"
 
   # Each entry: "<expected_status>::<script>" — mirrors the current suite fixtures + their statuses.
   local cases=(
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f20},agent('dev-react',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f20},agent('dev-react',{goal:'implement'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
     "2::pipeline(agent('qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f45},agent('dev-nestjs',{goal:'implement'}))"
     "2::pipeline(agent('dev-nestjs',{goal:'impl early'}),${f45},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})))"
     "2::pipeline(agent('qa-code-reviewer',{goal:'judge'}), /* verify with agent('dev-nestjs') goes here */ ${f45}, agent('dev-nestjs',{goal:'implement'}))"
     "0::"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
     "2::pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
     "0::pipeline(agent('intel-reporter',{goal:'doc'}), agent('qa-code-reviewer',{goal:'review'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
+    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
     "2::pipeline(/* should add agent('qa-code-reviewer') */ agent('dev-nestjs',{goal:'implement'}))"
     "2::pipeline(agent('intel-planner',{goal:'author the plan inline now'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
   )
@@ -292,7 +313,7 @@ PLAN_REF="clauded-docs/100"
 @test "coloc: leading audit reviewer + later parallel(qa,dev) + impl → PASS (finditer)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),agent('dev-react',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),agent('dev-react',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -302,14 +323,14 @@ PLAN_REF="clauded-docs/100"
 @test "coloc: parallel(qa,<1100-char goal>,dev) + impl → PASS (parallel-group-bounds)" {
   local big
   big="$(python3 -c "print('x'*1100)")"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),parallel(agent('qa-code-reviewer',{goal:'${big}'}),agent('dev-python',{goal:'feasible'})),agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${big}'}),agent('dev-python',{goal:'feasible'})),agent('dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # Zero-reviewer hard guarantee — DEV impl with NO qa-code-reviewer token anywhere → BLOCK. Preserved
 # verbatim across the FP fix (the fix may only WIDEN the PASS set for genuine verify pairs).
 @test "coloc: DEV impl, NO qa-code-reviewer anywhere → BLOCK (zero-reviewer guarantee)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -321,7 +342,7 @@ PLAN_REF="clauded-docs/100"
 @test "coloc: stray audit reviewer + 2+ scattered impl devs, NO parallel pair → BLOCK (bypass closed)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('dev-nestjs',{goal:'impl1'}),${f},agent('dev-react',{goal:'impl2'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('dev-nestjs',{goal:'impl1'}),${f},agent('dev-react',{goal:'impl2'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -331,7 +352,7 @@ PLAN_REF="clauded-docs/100"
 @test "coloc: reviewer + lone impl dev beyond window, no pair → BLOCK" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF}'}),agent('qa-code-reviewer',{goal:'judge feasibility'}),${f},agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'judge feasibility'}),${f},agent('dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -346,7 +367,7 @@ PLAN_REF="clauded-docs/100"
 # EOL), faithfully reproducing the `// [ENTRY-CLASS]` incident shape.
 @test "P0(a): //-line [ENTRY-CLASS] + verify-stage + impl, no plan-ref → PASS (incident regression-lock)" {
   run_hook "pipeline(// [ENTRY-CLASS] simple-task: one-line config fix
-parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasible'})), agent('dev-shell',{goal:'implement'}))"
+parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasible'})), agent('dev-shell',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -354,7 +375,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # (b) sibling false-BLOCK (FM-FB2): a commented plan-ref + a valid verify-stage + an impl dev, NO
 # [ENTRY-CLASS] token → entry-miss SILENCED → PASS.
 @test "P0(b): commented plan-ref + verify-stage + impl → PASS (entry silenced)" {
-  run_hook "pipeline(/* Plan: clauded-docs/123 */ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})), agent('dev-react',{goal:'implement'}))"
+  run_hook "pipeline(/* Plan: clauded-docs/123 */ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})), agent('dev-react',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -491,8 +512,9 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 }
 
 # --- (n) T1 DOCROUTE-PATH GENERALIZATION — the centralized entry addendum (formerly inline on the
-# verify-stage "block" path only) now ALSO rides the docroute "block-docroute" verdict via
-# block_and_exit's ALLOWLIST gate ($2 == "block" || $2 == "block-docroute"). A doc-routing leak that
+# verify-stage path only) now ALSO rides the docroute "block-docroute" verdict via block_and_exit's
+# ALLOWLIST gate (explicit enumeration block-norev|block-noverifydev|block-order|block-docroute,
+# NO block-* glob — block-entry stays excluded). A doc-routing leak that
 # ALSO spawns a DEV agent with no plan-ref/token lands on BLOCK_DOCROUTE with entry_marker ==
 # ENTRY_ADVISORY → the SAME entry-format addendum appends, closing the two-round-trip gap on the
 # docroute path. FIXTURE PURITY (HARD): NO `clauded-docs` token and NO plan-ref — MONITOR_POST_RE
@@ -555,8 +577,8 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
   # path (1) persisted-plan stub: the POST curl + the minted-id plan-ref log line
   [[ "${output}" == *"POST http://127.0.0.1:7842/api/clauded-docs"* ]]
   [[ "${output}" == *"log('plan-ref: clauded-docs/<DOC_ID>')"* ]]
-  # path (2) simple-task stub: the ready-to-fill [ENTRY-CLASS] log line
-  [[ "${output}" == *"log('[ENTRY-CLASS] simple-task: <one-line reason"* ]]
+  # path (2) simple-task stub: the ready-to-fill [ENTRY-CLASS] log line (E1 criterion-negation form)
+  [[ "${output}" == *"log('[ENTRY-CLASS] simple-task: multi-file=no"* ]]
 }
 
 # (b) byte-for-byte preservation of the pre-existing exit-2 entry-miss verdict — the scaffold is purely
@@ -569,4 +591,340 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
   [[ "${output}" =~ "entry-miss" ]]
   # the base entry-miss reason is intact alongside the new scaffold (no text was replaced)
   [[ "${output}" == *"NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification"* ]]
+}
+
+# --- (p) H1/T1 CAUSE-SPLIT + TRACE OBSERVABILITY — the verify-stage BLOCK verdict is cause-split
+# into three tokens (BLOCK_NOREV / BLOCK_NOVERIFYDEV / BLOCK_ORDER; token-specific cause-line asserts
+# live inline on the retagged fixtures above). The bash side dispatches on an EXACT-token case whose
+# default is the strict enumerated fail-open (any unknown/future helper token → PASS, exit 0), and
+# the empty-script fail-open branches now emit the distinct pass-noscript trace tag (verdict/exit
+# unchanged — observability only). ---
+
+# H1 fail-open: an UNKNOWN helper verdict token must fall through the case default to exit 0. A stub
+# python3 (prepended to PATH) forces the helper output, isolating the bash dispatch from the real
+# helper logic. ENTRY_OK on line 2 keeps the entry promotion quiet (verdict dispatch isolated).
+@test "H1 fail-open: unknown helper verdict token → PASS (exit 0, enumerated-case default)" {
+  local stub_dir
+  stub_dir="${BATS_TEST_TMPDIR}/stub-bin"
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nprintf "BLOCK_FUTURE\\nENTRY_OK\\n"\n' >"${stub_dir}/python3"
+  chmod +x "${stub_dir}/python3"
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"; stub="$4"
+    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
+    printf "%s" "${payload}" | PATH="${stub}:${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}"
+  ' _ "pipeline(agent('dev-nestjs',{goal:'implement'}))" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
+  [[ "${status}" -eq 0 ]]
+}
+
+# T1 trace: the empty-script fail-open branch emits the distinct pass-noscript tag (not bare pass),
+# so telemetry can separate "nothing to scan" from a real scanned pass.
+@test "T1 trace: empty script fail-open emits verdict=pass-noscript to the firing trace" {
+  run_hook ""
+  [[ "${status}" -eq 0 ]]
+  grep -q "verdict=pass-noscript" "${TRACE_LOG}"
+}
+
+# --- (q) T1 DOCROUTE DESTINATION-GATE + [DOC-ROUTE] TOKEN — regex + stamp-suppressor semantics
+# live at the hook's LOCAL_TARGET_RE / TOKEN_LINE_RE comments (enforce-workflow-verify-stage.sh).
+# FIXTURE PURITY (HARD): token fixtures carry NO clauded-docs / monitor substrings —
+# MONITOR_POST_RE would independently suppress and silently un-test the token arm.
+# Accepted static FNs, comment-documented NOT asserted (runtime Write hook = primary .md guard):
+# preposition-less "save <path>" · verb-evasion (put/drop) · "the deliverable is <path>". Accepted
+# residual FPs, comment-documented NOT asserted: .html/.markdown edit-existing MENTIONS still block
+# by design until T4 (relief: the [DOC-ROUTE] token when user-requested). ---
+
+@test "docroute-gate: edit-existing .md mention ('at' framing) → PASS" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: read-context .md reference, StructuredOutput deliverable → PASS" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'read ~/.glass-atrium/scoped/scope-dev.md for background; deliverable is StructuredOutput'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: plural 'Target files:' 6-element edit-delegation header → PASS (A11 companion)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'Target files: ~/.glass-atrium/rules/x.md
+Constraints: edit in place
+Completion criteria: emit StructuredOutput'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: memory/progress checkpoint phrasings → PASS (A3/A4a left-boundary lookbehind)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save your progress notes to memory/progress-x.md'}))"
+  assert_docroute_pass
+  run_hook "pipeline(agent('intel-reporter',{goal:'write your progress notes to memory/progress-x.md'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: 'emit StructuredOutput summarizing <path>.md' → PASS (emit not a destination verb)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'emit StructuredOutput summarizing ~/.glass-atrium/rules/x.md'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: output-as-noun 'Output Format Routing in <path>.md' → PASS ('in' excluded)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'follow the Output Format Routing in ~/.glass-atrium/scoped/scope-report.md'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: 'revise and save <path>.md in place' → PASS (no destination preposition)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'revise and save ~/.glass-atrium/rules/x.md in place'}))"
+  assert_docroute_pass
+}
+
+@test "docroute-gate: 'Persist nothing. Read <path>.md for context' → PASS (persist without destination)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Persist nothing. Read ~/.glass-atrium/rules/x.md for context'}))"
+  assert_docroute_pass
+}
+
+# token-present PASS — each carries a REAL leak trigger (a vacuous no-trigger suppression test is
+# FORBIDDEN); the stamp is the ONLY suppressor in scope (fixture purity above).
+
+@test "docroute-token: raw .md stamp suppresses its stamped-path leak line → PASS" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy')"
+  assert_docroute_pass
+}
+
+@test "docroute-token: stamped form inside a /* */ comment still suppresses (raw-scan) → PASS" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+/* [DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy */"
+  assert_docroute_pass
+}
+
+@test "docroute-token: raw .html stamp suppresses the A4b bare-path line → PASS" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'deliver the dashboard into ~/exports/dash.html'}))
+log('[DOC-ROUTE] user-requested-local: ~/exports/dash.html — user asked for a local dashboard file')"
+  assert_docroute_pass
+}
+
+@test "docroute-token: 'Revise and save the doc to ~/project/README.md' + stamp → PASS (adapted A19c)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/project/README.md — user asked to revise the repo README')"
+  assert_docroute_pass
+}
+
+# BLOCK matrix — destination-framed leaks stay blocked; the stderr teaches the canonical stamp.
+
+@test "docroute-gate: 'save the finished report to <path>.md' → BLOCK (A4a 'to') + stamp taught" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))"
+  assert_docroute_block
+  # A16: the BLOCK stderr teaches the canonical stamped form (user-explicit-request-only scope)
+  [[ "${output}" == *"log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')"* ]]
+}
+
+@test "docroute-gate: 'save the report as <path>.md' → BLOCK (A4a 'as')" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report as ~/reports/q3.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: 'store results under <path>.md' → BLOCK (A4a 'under')" {
+  run_hook "pipeline(agent('intel-planner',{goal:'store results under ~/reports/summary.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: 'deliver the final HTML into <path>.html' → BLOCK (A4b bare-path strength)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'deliver the final HTML into ~/exports/report.html'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: verb-free 'Deliverable: <path>.html' noun header → BLOCK (A4b bare-path — .html noun-headers ride A4b)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Deliverable: ~/reports/dash.html'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: verb-free 'Deliverable: <path>.md' noun header → BLOCK (A4c .md branch)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Deliverable: ~/reports/q3.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: passive 'should end up at <path>.html' → BLOCK (A4b)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'the dashboard should end up at ~/reports/dash.html'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: 'store the final deliverable at <path>.html' → BLOCK (A4b — former accepted FN, now TP)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'store the final deliverable at ~/reports/final.html'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: 'Target files: write everything to ~/x.md' → BLOCK (A3 residual catch under plural header)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'Target files: write everything to ~/x.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: 'Revise and save the doc to ~/project/README.md' WITHOUT token → BLOCK (adapted A19c)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-token: stamp for a DIFFERENT path never clears a separate leak → BLOCK (path-scoped)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file')"
+  assert_docroute_block
+}
+
+@test "docroute-token: bare stamp without a path + real leak → BLOCK (path-after-colon required)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))
+log('[DOC-ROUTE] user-requested-local: — no path stamped')"
+  assert_docroute_block
+}
+
+@test "docroute-token: the degenerate '~' stamp + real leak on another line → BLOCK (concrete path required)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~ — user asked')"
+  assert_docroute_block
+}
+
+@test "docroute-token: the degenerate '/' stamp + real leak on another line → BLOCK (concrete path required)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: / — root stamp')"
+  assert_docroute_block
+}
+
+@test "docroute-token: the extensionless dir stamp '~/reports' + leak inside that dir → BLOCK (dot-extension required)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/reports — user asked for the reports dir')"
+  assert_docroute_block
+}
+
+# A /* */ block comment spanning from the stamp line onto a DIFFERENT spawn's leak line must NOT
+# merge the two source lines (strip_comments preserves newlines inside block comments) — the
+# line-scoped stamp suppressor may drop only its own line, so the second spawn's leak still BLOCKs.
+@test "docroute-token: block comment spans stamp line onto a different spawn's leak line → BLOCK (line identity)" {
+  run_hook "log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file') /* span
+continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))"
+  assert_docroute_block
+}
+
+@test "docroute-gate: A11 unit pair — singular 'Target file:' BLOCKs (A1), plural 'Target files:' PASSes" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: ~/x.md'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" =~ "doc-routing leak" ]]
+  run_hook "pipeline(agent('intel-reporter',{goal:'Target files: ~/x.md'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ ! "${output}" =~ "doc-routing leak" ]]
+}
+
+# --- (r) RESILIENCE ADVISORY (T7) — ADVISORY-ONLY (exit 0, stderr, NEVER exit 2). A DEV-spawning
+# workflow with a schema-mode agent() but ZERO robustAgent/.catch resilience idiom gets a NON-blocking
+# stderr nudge; robustAgent OR .catch anywhere suppresses it; no schema token or a non-DEV workflow is
+# out of scope. Whole-script token presence (decidable + fail-open-consistent). bats `run` merges
+# STDERR into $output; the `== *"..."*` form keeps the '(' in the needle literal. Fixtures carry a
+# plan-ref so C4's BLOCK_ENTRY never preempts the PASS cases under test. ---
+
+# FIRE + non-blocking: valid verify-stage DEV workflow + plan-ref + a 'schema' token, NO robustAgent/
+# .catch → exit 0 (the advisory NEVER blocks) AND the resilience advisory is emitted on stderr.
+@test "resilience: schema-mode DEV workflow, no robustAgent/catch → PASS (exit 0) + advisory fires" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge with a schema-bound verdict'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"ADVISORY (resilience"* ]]
+}
+
+# SUPPRESS (robustAgent present anywhere) → no advisory, exit 0. Wrapping the agent() calls in
+# robustAgent leaves the quoted agentType tokens intact, so the verify-stage still PASSes.
+@test "resilience: robustAgent wrapper present → PASS (exit 0), NO advisory" {
+  run_hook "pipeline(robustAgent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(robustAgent('qa-code-reviewer',{goal:'judge with schema'}),robustAgent('dev-nestjs',{goal:'feasible'})),robustAgent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"ADVISORY (resilience"* ]]
+}
+
+# SUPPRESS (a bare .catch present, no robustAgent) → no advisory, exit 0. Either resilience token
+# anywhere silences the nudge.
+@test "resilience: bare .catch present (no robustAgent) → PASS (exit 0), NO advisory" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"ADVISORY (resilience"* ]]
+}
+
+# SCHEMA-GATED: a DEV workflow with NO 'schema' token → out of scope → no advisory (exit 0).
+@test "resilience: DEV workflow with NO schema token → PASS (exit 0), NO advisory (schema-gated)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"ADVISORY (resilience"* ]]
+}
+
+# DEV-GATED: a non-DEV (doc-only) workflow with a schema token and no resilience idiom → out of scope
+# → no advisory (exit 0). The advisory only fires on DEV-spawning workflows.
+@test "resilience: non-DEV doc workflow with schema, no catch → PASS (exit 0), NO advisory (DEV-gated)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize with a schema-shaped output'}), agent('qa-code-reviewer',{goal:'review'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"ADVISORY (resilience"* ]]
+}
+
+# DECOUPLING: a schema-no-catch DEV workflow that ALSO omits its verify-stage → exit 2 from the
+# verify-stage BLOCK (block-norev), NOT from the advisory. The advisory rides alongside on stderr but
+# is never the cause of the exit-2 — proving the advisory neither blocks nor suppresses a real block.
+@test "resilience: schema-no-catch DEV workflow missing verify-stage → BLOCK (exit 2, block-norev) + advisory rides along" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), agent('dev-nestjs',{goal:'implement with a schema output'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-norev)"* ]]
+  [[ "${output}" == *"ADVISORY (resilience"* ]]
+}
+
+# --- (s) BLOCK_SIZEEST — a would-be-PASS DEV workflow under ENTRY_OK carrying NO [SIZE-EST]
+# delegation-size self-attestation token in the RAW source is promoted to exit 2 (distinct
+# "size-attestation miss" stderr, trace tag block-sizeest). DEV-gated + ENTRY_OK-gated + decoupled
+# from the verify-stage verdict (promoted only at a would-be PASS, so a verify-stage BLOCK and the
+# entry-miss block both keep priority). The token is raw-scanned (a commented [SIZE-EST] still
+# counts), mirroring the [ENTRY-CLASS] / plan-ref P0 asymmetric-scan policy. Fixtures use LITERAL
+# plan-refs (not ${PLAN_REF}) so the presence/absence of ${SIZE_EST} is unambiguous. bats `run`
+# merges STDERR into $output; `== *"..."*` keeps the [], () in the needle literal. ---
+
+# MISS: valid verify-stage + literal plan-ref (ENTRY_OK) but NO [SIZE-EST] → BLOCK_SIZEEST (exit 2)
+# with the size-attestation remediation message + the block-sizeest firing trace. The entry addendum
+# stays absent (structurally inert on block-sizeest — ENTRY_OK-only), as does the entry-miss tag.
+@test "sizeest: DEV verify-stage under ENTRY_OK, NO [SIZE-EST] → BLOCK_SIZEEST (exit 2)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"size-attestation miss"* ]]
+  [[ "${output}" == *"[SIZE-EST] bundles=N tool_uses~=N"* ]]
+  # entry addendum + dedicated entry-miss tag both absent (block-sizeest fires only under ENTRY_OK)
+  [[ ! "${output}" =~ "entry-miss" ]]
+  [[ "${output}" != *"entry classification / plan-reference also required"* ]]
+  grep -q "verdict=block-sizeest" "${TRACE_LOG}"
+}
+
+# PRESENT: same fixture WITH a [SIZE-EST] token → PASS (exit 0), no size-attestation block.
+@test "sizeest: DEV verify-stage under ENTRY_OK WITH [SIZE-EST] present → PASS (exit 0)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55 ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"size-attestation miss"* ]]
+}
+
+# RAW-SCAN: a [SIZE-EST] token inside a /* */ comment still counts (raw attestation_src scan) → PASS.
+@test "sizeest: [SIZE-EST] token inside a comment still counts → PASS (raw-scan, exit 0)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}), /* [SIZE-EST] bundles=3 tool_uses~=30 */ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"size-attestation miss"* ]]
+}
+
+# PRIORITY: an entry-missing DEV script (no plan-ref/token, no [SIZE-EST]) → BLOCK_ENTRY, NOT
+# block-sizeest. block-sizeest is ENTRY_OK-gated, so it never fires under ENTRY_ADVISORY — entry-miss
+# claims the block. Proves entry-miss keeps priority.
+@test "sizeest: entry-missing DEV → BLOCK_ENTRY not block-sizeest (entry-miss priority)" {
+  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" =~ "entry-miss" ]]
+  [[ "${output}" != *"size-attestation miss"* ]]
+  grep -q "verdict=block-entry" "${TRACE_LOG}"
+}
+
+# DEV-GATED: a non-DEV (doc-only) workflow with NO [SIZE-EST] → PASS (exit 0). block-sizeest only
+# fires on DEV-spawning workflows.
+@test "sizeest: non-DEV doc workflow with NO [SIZE-EST] → PASS (DEV-gated, exit 0)" {
+  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize the findings'}), agent('qa-code-reviewer',{goal:'review'}))"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" != *"size-attestation miss"* ]]
+}
+
+# PRIORITY (verify-stage): a DEV workflow under ENTRY_OK with NO reviewer AND no [SIZE-EST] →
+# BLOCK_NOREV (verify-stage verdict), NOT block-sizeest. block-sizeest is promoted only at a would-be
+# PASS emit, so a verify-stage BLOCK always keeps priority — proves the decoupling.
+@test "sizeest: missing verify-stage keeps priority over block-sizeest (BLOCK_NOREV, not size)" {
+  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}),agent('dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-norev)"* ]]
+  [[ "${output}" != *"size-attestation miss"* ]]
 }

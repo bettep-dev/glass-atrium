@@ -1367,7 +1367,7 @@ function ParseErrorCard({ state, days, onRetry }) {
 }
 
 function ParseErrorBody({ state, days, onRetry }) {
-  const { Pill, Icon } = window.UI;
+  const { Badge } = window.UI;
 
   if (state.status === 'loading') {
     return <ChartSkeletonC height={220} aria-label="Loading parse_error trend"/>;
@@ -1426,10 +1426,9 @@ function ParseErrorBody({ state, days, onRetry }) {
         <>
           {critDays > 0 && (
             <div className="mb-2">
-              <Pill tone="crit">
-                <Icon name="warn" size={11} stroke={2.4}/>
+              <Badge role="status" tone="crit" icon={true}>
                 {critDays} days over threshold
-              </Pill>
+              </Badge>
             </div>
           )}
           <div style={{ width: '100%', height: 200 }}>
@@ -1559,7 +1558,7 @@ function AnomalyCostBody({ state, days, onRetry }) {
 }
 
 function AnomalyCostChart({ rows, anomalyCount, totalCovered, days }) {
-  const { Pill, Icon } = window.UI;
+  const { Badge } = window.UI;
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceDot } = window.Recharts;
 
   // 마지막 일자 anomaly 시 strong signal — 우측 KPI Pill 노출.
@@ -1577,10 +1576,9 @@ function AnomalyCostChart({ rows, anomalyCount, totalCovered, days }) {
           </div>
         </div>
         {isLatestAnomaly && (
-          <Pill tone="crit">
-            <Icon name="warn" size={11} stroke={2.4}/>
+          <Badge role="status" tone="crit" icon={true}>
             latest day outside band
-          </Pill>
+          </Badge>
         )}
       </div>
       <div style={{ width: '100%', height: 240 }}>
@@ -1663,6 +1661,7 @@ function AnomalyCostChart({ rows, anomalyCount, totalCovered, days }) {
 }
 
 function AnomalyTooltipC({ active, payload }) {
+  const { Icon } = window.UI;
   if (!active || !payload || payload.length === 0) {
     return null;
   }
@@ -1685,8 +1684,9 @@ function AnomalyTooltipC({ active, payload }) {
             Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
           </div>
           {row.isAnomaly && (
-            <div style={{ color: 'rgb(var(--crit))', marginTop: 4, fontWeight: 600 }}>
-              ⚠ Unusual spike
+            <div className="inline-flex items-center gap-1" style={{ color: 'rgb(var(--crit))', marginTop: 4, fontWeight: 600 }}>
+              <Icon name="warn" size={11} stroke={2.4}/>
+              Unusual spike
             </div>
           )}
         </>

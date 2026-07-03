@@ -8,6 +8,8 @@ import { dirname, join } from "node:path";
 
 import yaml from "js-yaml";
 
+import { Prisma } from "../../generated/prisma/client.js";
+
 /**
  * Single agent's registry entry — only metadata surfaceable in monitor responses.
  *
@@ -83,6 +85,85 @@ export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntr
 export function resetAgentRegistryCache(): void {
   cachedEntries = null;
   warnedOnce = false;
+}
+
+/**
+ * Convenience — the canonical agent-key array (registry SoT) the membership
+ * gates bind against. Folds the repeated `[...entries.keys()]` spread every
+ * gated call site otherwise duplicates. Empty array on an empty/corrupt registry
+ * → the gate builders below fail-open on it (predicate skipped).
+ */
+export async function loadCanonicalAgentKeys(): Promise<string[]> {
+  const entries = await loadAgentRegistry();
+  return [...entries.keys()];
+}
+
+// Bare membership fragment core — `<columnRef> IN (?..)`, or Prisma.empty on an
+// empty registry. Single SoT for the LLM05 parameter-binding contract: the agent
+// names are BOUND via Prisma.join (never string-concatenated into the SQL text),
+// and fail-open is authored once here — Prisma.join([]) would emit a
+// syntactically broken `IN ()`, so the length===0 guard skips the predicate.
+// `columnRef` is inlined as raw SQL (a Prisma.Sql fragment, not a bound value),
+// so callers pass a trusted column literal (`agent`, `o.agent`, `agent_type`,
+// `agent_name`, `target_agent`), never user input.
+function buildMembershipInList(
+  canonicalAgents: ReadonlyArray<string>,
+  columnRef: Prisma.Sql,
+): Prisma.Sql {
+  if (canonicalAgents.length === 0) {
+    return Prisma.empty;
+  }
+  return Prisma.sql`${columnRef} IN (${Prisma.join([...canonicalAgents])})`;
+}
+
+/**
+ * Canonical-membership gate — the shared SoT for the "show only Atrium-system
+ * agents (registry SoT)" predicate across every agent-dimensioned surface.
+ * Centralized here (co-located with `loadAgentRegistry`) so the gated/ungated
+ * drift — some surfaces applied it, others folded in orchestrator/cron/sentinel/
+ * one-off-cid noise — cannot recur.
+ *
+ * AND-PREFIXED shape: emits `AND <columnRef> IN (?..)` for APPEND-AFTER-A-
+ * COMPLETE-WHERE call sites. Fail-open by design: an empty registry (read/parse
+ * failure) returns `Prisma.empty` so the predicate is skipped rather than
+ * emitting invalid SQL.
+ *
+ * `columnRef` defaults to the bare `agent` column; pass a qualified fragment
+ * (e.g. `Prisma.sql`o.agent``) when the query aliases the source table so the
+ * predicate can live inside a LEFT JOIN ... ON clause (a top-level WHERE on the
+ * aliased column would collapse the LEFT JOIN into an inner join and drop
+ * generate_series gap-fill days).
+ */
+export function buildAgentMembershipFilter(
+  canonicalAgents: ReadonlyArray<string>,
+  columnRef: Prisma.Sql = Prisma.sql`agent`,
+): Prisma.Sql {
+  const fragment = buildMembershipInList(canonicalAgents, columnRef);
+  // Preserve the Prisma.empty singleton on fail-open (callers strict-compare it).
+  if (fragment === Prisma.empty) {
+    return Prisma.empty;
+  }
+  return Prisma.sql`AND ${fragment}`;
+}
+
+/**
+ * Canonical-membership gate — BARE-FRAGMENT companion to
+ * `buildAgentMembershipFilter`, over the SAME fail-open + parameter-binding core.
+ *
+ * BARE shape: emits `<columnRef> IN (?..)` WITHOUT a leading `AND`, for the two
+ * families the AND-prefixed form cannot serve: fragments-array builders that
+ * end in `Prisma.join(fragments, " AND ", "WHERE ")` (a stray `AND` would break
+ * the join) and no-WHERE call sites that prefix the fragment with their own
+ * `WHERE `. Omitted-on-empty: returns `Prisma.empty` on an empty registry so the
+ * caller pushes nothing / emits no `WHERE` (fail-open).
+ *
+ * `columnRef` semantics identical to `buildAgentMembershipFilter`.
+ */
+export function buildAgentMembershipFragment(
+  canonicalAgents: ReadonlyArray<string>,
+  columnRef: Prisma.Sql = Prisma.sql`agent`,
+): Prisma.Sql {
+  return buildMembershipInList(canonicalAgents, columnRef);
 }
 
 // env override → defaults to `~/.claude/agent-registry.json` (user home).

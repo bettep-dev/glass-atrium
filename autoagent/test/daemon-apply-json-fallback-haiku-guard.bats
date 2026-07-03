@@ -9,8 +9,9 @@
 # Plus regression guards: an 'ok'/'ok:retried' status is still admitted by default
 # (the gate is not over-blocking — startswith('ok') == the SELECT's LIKE 'ok%').
 #
-# One-off verification artifact (agent-test-files-disposable): NOT committed.
-# Run: bats /Users/bettep/.claude-work/jobs/c61f4fc8/tmp/daemon-apply-json-fallback-haiku-guard.bats
+# Originated as a disposable verification artifact (agent-test-files-disposable);
+# now retained in-repo under autoagent/test/.
+# Run via: bats autoagent/test/daemon-apply-json-fallback-haiku-guard.bats
 #
 # Strategy: extract ONLY the function under test into a sourceable file and call
 # it directly — no full-script side effects (no CLI parse / git precondition /
@@ -18,7 +19,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_SCRIPT="${HOME}/.glass-atrium/autoagent/daemon-apply.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
@@ -34,7 +36,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # write_report — one-patch cycle report fixture. $1 = haiku_status value, or the

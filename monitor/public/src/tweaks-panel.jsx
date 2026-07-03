@@ -190,6 +190,8 @@ function TweaksPanel({ title = 'Tweaks', children }) {
   };
 
   if (!open) return null;
+  // window.UI 는 ui.js 로드 후 정의 — 패널은 edit-mode 활성화(로드 후) 시점에만 렌더되므로 render-time 참조는 안전
+  const { Icon } = window.UI;
   return (
     <>
       <style>{__TWEAKS_STYLE}</style>
@@ -197,9 +199,9 @@ function TweaksPanel({ title = 'Tweaks', children }) {
            style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}>
         <div className="twk-hd" onMouseDown={onDragStart}>
           <b>{title}</b>
-          <button className="twk-x" aria-label="Close tweaks"
+          <button className="twk-x inline-flex items-center justify-center" aria-label="Close tweaks"
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={dismiss}>✕</button>
+                  onClick={dismiss}><Icon name="x" size={13} /></button>
         </div>
         <div className="twk-body">{children}</div>
       </div>

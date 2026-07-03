@@ -12,9 +12,10 @@
 # REAL renderer at a mktemp sandbox — the real config.toml and rendered/ dir
 # are never touched.
 
-REAL_RENDERER="${HOME}/.glass-atrium/scripts/render-launchd-plists.sh"
-REAL_GA="${HOME}/.glass-atrium/glass-atrium"
-TEMPLATE="${HOME}/.glass-atrium/config.toml.example"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+REAL_RENDERER="${GA}/scripts/render-launchd-plists.sh"
+REAL_GA="${GA}/glass-atrium"
+TEMPLATE="${GA}/config.toml.example"
 FAKE_HOME="/Users/ga-fake-user"
 
 setup() {
@@ -24,12 +25,18 @@ setup() {
   SANDBOX="$(mktemp -d -t ga-plist-bats.XXXXXX)"
   FAKE_CONFIG="${SANDBOX}/config.toml"
   OUT="${SANDBOX}/launchd"
-  # same substitution glass-atrium render_config performs, against the fake home
-  sed "s|\${HOME}|${FAKE_HOME}|g" "${TEMPLATE}" >"${FAKE_CONFIG}"
+  # same substitution glass-atrium render_config performs, against the fake home.
+  # Pin [meta].timezone to an EXPLICIT zone (template default is 'auto', which
+  # resolves via the host — Asia/Seoul on a KST dev box but Etc/UTC on CI). An
+  # explicit value round-trips verbatim through atrium_resolve_timezone, so the
+  # TZ assertion below is deterministic on any host.
+  sed -e "s|\${HOME}|${FAKE_HOME}|g" \
+    -e 's|^timezone = .*|timezone = "Asia/Seoul"|' \
+    "${TEMPLATE}" >"${FAKE_CONFIG}"
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
 run_render() {

@@ -49,8 +49,8 @@
 #   1 = unrecoverable error (bad role, bootstrap fail, post-healthcheck fail)
 #   6 = bootstrap timeout backstop fired (run_with_timeout rc 124/137) — an
 #       anomaly path: return mode normally exits within entry-injection time.
-#   7 = concurrent instance detected (single-flight pgrep guard, or the
-#       restart-window lock is held by a live sibling)
+#   7 = concurrent restart window: the restart-window lock (lib/daemon-lock.sh)
+#       is held by a live sibling — the single-flight authority for double-fire
 # Note: healthcheck timeout falls through to the attempt 1/2/3 cascade → fatal()
 # → exit 1; it has no dedicated exit code (the cascade is authoritative).
 set -Eeuo pipefail
@@ -111,11 +111,15 @@ readonly HEALTHCHECK_TIMEOUT_SEC=240
 readonly BOOTSTRAP_RETRY_MAX
 readonly BOOTSTRAP_RETRY_BACKOFF_SEC
 
-# Single-flight guard: a launchd double-fire could spawn two concurrent
-# kill-session + bootstrap sequences, producing orphan tmux servers + race-
-# condition pg_write_run rows. The check (further down) excludes our own PID so
-# it matches only ANOTHER instance running with the same role. Exit code 7
-# surfaces in launchd stderr + log file for monitor alerting.
+# Single-flight / double-fire protection: a launchd double-fire could spawn two
+# concurrent kill-session + bootstrap sequences (orphan tmux servers + racing
+# pg_write_run rows). The authority is the ATOMIC restart-window symlink lock
+# acquired at step 3.7 (lib/daemon-lock.sh) — `ln -s` is atomic, so exactly one
+# instance wins and the loser loud-fails (exit 7) BEFORE any destructive step.
+# A cmdline `pgrep` guard formerly sat here but was removed: it matched this
+# script's own command-substitution subshells (which inherit the full argv but
+# carry a different PID than $$), a process-table false positive that aborted
+# hermetic CI runs. The atomic lock is immune to process-table noise.
 
 usage() {
   printf 'usage: %s {autoagent|wiki}\n' "${0##*/}" >&2
@@ -347,20 +351,10 @@ if ! verify_claude_runnable; then
   fatal "claude missing or not runnable (dangling symlink?) — aborting before kill-session, session left untouched"
 fi
 
-# Single-flight guard: another instance running with the SAME role → loud-fail
-# (exit 7 + stderr + log). Excludes own PID so it matches only siblings. No
-# 2>/dev/null on the pgrep result — failures (e.g., pgrep missing) MUST surface.
-own_pid=$$
-script_basename="${0##*/}"
-# pgrep -f matches full command line; pattern includes role arg to scope match.
-# || true tolerates pgrep exit 1 (no match = healthy single-flight state).
-sibling_pids="$(pgrep -fl "${script_basename} ${ROLE}" | awk -v own="${own_pid}" '$1 != own {print $1}' || true)"
-if [[ -n "${sibling_pids}" ]]; then
-  log "FATAL: concurrent instance detected for role=${ROLE} (sibling PIDs: ${sibling_pids//$'\n'/ }) — skipping this run to avoid double-fire"
-  printf 'FATAL: concurrent %s run already in progress for role=%s (PIDs: %s)\n' \
-    "${script_basename}" "${ROLE}" "${sibling_pids//$'\n'/ }" >&2
-  exit 7
-fi
+# NOTE: single-flight double-fire protection is the ATOMIC restart-window lock
+# acquired at step 3.7 below, NOT a startup pgrep guard (see the rationale block
+# above the usage() function). The kill→recreate sequence is gated on that lock,
+# so no destructive step runs before single-flight is decided.
 
 log "starting daily restart for session=${SESSION}"
 
@@ -437,12 +431,14 @@ if tmux has-session -t "${SESSION}" 2>/dev/null && detect_quota_in_pane "${SESSI
   fi
 fi
 
-# 3.7 Restart-window lock. Complements the pgrep single-flight guard above
-# (same-script siblings at startup): the symlink lock marks the kill→recreate
-# window for the OTHER side — a launchd-respawned supervise bootstrap (the
-# supervisor exits 3 the moment the session below is killed) waits on this lock
-# instead of duplicate-racing the return-mode recreate. EXIT trap releases on
-# every path; a SIGKILLed run leaves a stale link reclaimed at next acquire.
+# 3.7 Restart-window lock — the single-flight authority for double-fire. It
+# serializes two overlapping cases: (a) two daily-restart siblings (a launchd
+# double-fire) race on `ln -s`; exactly one wins, the loser loud-fails (exit 7)
+# before any kill; (b) the lock marks the kill→recreate window for the OTHER
+# side — a launchd-respawned supervise bootstrap (the supervisor exits 3 the
+# moment the session below is killed) waits on this lock instead of duplicate-
+# racing the return-mode recreate. EXIT trap releases on every path; a SIGKILLed
+# run leaves a stale link reclaimed at next acquire.
 daemon_lock_acquire "${DAEMON_RESTART_LOCK}" "$$"
 if [[ "${daemon_lock_acquired}" != "true" ]]; then
   log "FATAL: restart lock ${DAEMON_RESTART_LOCK} held by live pid ${daemon_lock_holder} — concurrent restart window, skipping this run"

@@ -99,6 +99,30 @@ run_setup() {
   [[ "$(diff "${FAKE_ROOT}/.env" "${FAKE_ROOT}/.env.example" | grep -c '^[<>]')" -eq 6 ]]
 }
 
+@test "post-deploy step applies the 9-value attribution_source CHECK constraint (incl budget-truncation)" {
+  # record every psql invocation's args; still answer existence probes with "1" so the
+  # createdb branch is skipped and the run reaches the post-deploy constraint step.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\necho 1\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 0 ]]
+  # the idempotent DROP-then-ADD pair on the canonical constraint name was issued
+  grep -q 'DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check' "${SANDBOX}/psql-args"
+  grep -q 'ADD CONSTRAINT outcomes_attribution_source_check' "${SANDBOX}/psql-args"
+  grep -q 'NOT VALID' "${SANDBOX}/psql-args"
+  # the 9th canonical value is present alongside all 8 pre-existing ones
+  local v
+  for v in hook-input cron-derived agent-id-missing subagent-stop-missing \
+           completion-missing conversation-only truncated_completion \
+           completion-synthesized budget-truncation; do
+    grep -qF "${v}" "${SANDBOX}/psql-args" || {
+      echo "missing canonical value: ${v}" >&2
+      return 1
+    }
+  done
+}
+
 @test "no literal \${HOME} token survives the render" {
   run_setup ""
   [[ "${status}" -eq 0 ]]
@@ -190,12 +214,18 @@ run_recreate() {
 }
 
 @test "GA_DB_RECREATE backs up BEFORE dropping (order proven by call markers)" {
-  # probe: target db exists (so recreate engages). pg_dump writes a non-empty
-  # file + records its order; dropdb records its order; createdb re-creates.
-  printf '#!/bin/bash\necho 1\n' >"${STUB_BIN}/psql"
+  # State-aware probe: the main target db reports 'exists' UNTIL dropdb clears its
+  # sentinel, so recreate engages (exists) and the post-drop create_db_if_absent
+  # probe then sees 'absent' and legitimately invokes createdb (the `create`
+  # marker). The shadow db is never dropped, so its probe always reports 'exists'
+  # (skipped — no shadow create). pg_dump writes a non-empty file + records order;
+  # dropdb records order + clears the main sentinel; createdb records the re-create.
+  : >"${SANDBOX}/main-present"
+  printf '#!/bin/bash\ncase "$*" in\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nprintf "dump\\n" >>"%s/order"\n# emit a non-empty dump at the -f path arg\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/pg_dump"
-  printf '#!/bin/bash\nprintf "drop\\n" >>"%s/order"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
+  printf '#!/bin/bash\nprintf "drop\\n" >>"%s/order"\nrm -f "%s/main-present"\nexit 0\n' "${SANDBOX}" "${SANDBOX}" >"${STUB_BIN}/dropdb"
   printf '#!/bin/bash\nprintf "create\\n" >>"%s/order"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/createdb"
   chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
   run_recreate "claude_oss_e2e"
@@ -223,11 +253,14 @@ run_recreate() {
 
 @test "GA_DB_RECREATE with target absent skips recreate (fresh createdb path)" {
   # probe says target db does NOT exist -> recreate_database returns early, no
-  # dropdb, createdb proceeds to fresh-create.
+  # dropdb. The absent-target path then falls through to the fresh createdb, so the
+  # setup() abort stub (touch createdb-called; exit 1) MUST be overridden with a
+  # passing createdb here — otherwise the legitimate fresh-create dies EXIT_CREATEDB=5.
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/psql"
   printf '#!/bin/bash\ntouch "%s/dropdb-called"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/pg_dump"
-  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/dropdb" "${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/dropdb" "${STUB_BIN}/pg_dump" "${STUB_BIN}/createdb"
   run_recreate "claude_oss_e2e"
   [[ "${status}" -eq 0 ]]
   [[ ! -e "${SANDBOX}/dropdb-called" ]]

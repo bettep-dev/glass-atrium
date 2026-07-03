@@ -26,7 +26,9 @@ dataclasses, typing). Python 3.12+ idioms.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
+import io
 import json
 import os
 import random
@@ -64,25 +66,42 @@ DEFAULT_REPORTS_DIR = HOME / ".claude" / "data" / "daemon-reports"
 # pattern intake has NO file fallback (PG is the intake SoT — a stale MD read
 # would regenerate proposals from fossil signals) → 0 patterns + loud WARN.
 _PG_HOOKS_DIR = HOME / ".claude" / "hooks"
-if str(_PG_HOOKS_DIR) not in sys.path:
-    sys.path.insert(0, str(_PG_HOOKS_DIR))
+# Repo-relative hooks dir resolved from THIS file's own location — lets
+# daemon_config (+ _pg_learning_dualwrite) self-locate in a CI checkout (repo at
+# $GITHUB_WORKSPACE, no ~/.claude present) regardless of $HOME / install location.
+# Repo-relative is inserted last so it lands FIRST (priority); the $HOME entry is
+# retained as an author-install fallback. In a ~/.claude install the two paths
+# coincide → the not-in-path guard dedups them (no double entry, no behavior change).
+_REPO_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
+    if str(_hooks_dir) not in sys.path:
+        sys.path.insert(0, str(_hooks_dir))
+# Optional-dependency import degradation is CAPTURED here, NOT written to stderr
+# at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
+# shells out and imports it purely to reach the compiled refusal patterns) MUST
+# stay silent — the CliExitContract clean path asserts stderr == "". The PG helper
+# itself writes a JSON `import_error` line to stderr AND re-raises on missing
+# psycopg, so the redirect_stderr below swallows THAT import-time line too; it is
+# scoped to this single import (stderr is restored on block exit — never globally
+# silenced). The daemon re-surfaces the degradation LOUDLY at runtime instead
+# (run_cycle() start + read_user_pending_patterns pattern-intake WARN), so a real
+# daemon is never silently broken (shared-self-improve-hygiene Precondition Loud-Fail).
+_PG_OUTCOME_IMPORT_EXC: Exception | None = None
 try:
-    from _pg_learning_dualwrite import (
-        count_outcomes_since as _pg_count_outcomes_since,
-        read_outcomes_since as _pg_read_outcomes_since,
-        read_pending_learning_patterns as _pg_read_pending_patterns,
-        reject_learning_pattern as _pg_reject_learning_pattern,
-        is_negative_signal_outcome as _pg_is_negative_signal_outcome,
-    )
+    with contextlib.redirect_stderr(io.StringIO()):
+        from _pg_learning_dualwrite import (
+            count_outcomes_since as _pg_count_outcomes_since,
+            read_outcomes_since as _pg_read_outcomes_since,
+            read_pending_learning_patterns as _pg_read_pending_patterns,
+            reject_learning_pattern as _pg_reject_learning_pattern,
+            is_negative_signal_outcome as _pg_is_negative_signal_outcome,
+        )
     HAS_PG_OUTCOME_READ = True
     HAS_PG_PATTERN_READ = True
 except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     HAS_PG_OUTCOME_READ = False
     HAS_PG_PATTERN_READ = False
-    sys.stderr.write(
-        f"[daemon-cycle] WARN: PG outcome read disabled (import failed): "
-        f"{type(_pg_import_exc).__name__}: {_pg_import_exc}\n"
-    )
+    _PG_OUTCOME_IMPORT_EXC = _pg_import_exc
 
 # PG outcome lookback window — PG is the single sink, so 90 days yields enough
 # history to sample 100+ rows per agent (cost: WHERE record_ts > now()-N index
@@ -101,20 +120,35 @@ EVAL_RESULT_MAX_LEN = 32
 # Module import — same pattern as the _pg_learning_dualwrite peer. Missing psycopg /
 # helper import failure → HAS_PG_LOOP_WRITE=False → automatic subprocess fallback.
 _PG_SCRIPTS_DIR = HOME / ".claude" / "scripts"
-if str(_PG_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_PG_SCRIPTS_DIR))
+# Repo-relative scripts dir — same self-location rationale as the hooks dir above.
+# Lets _pg_dual_write_daemon resolve in a CI checkout (no ~/.claude) so the
+# loop-event write path imports cleanly instead of emitting a loud degradation WARN
+# to stderr — that WARN would otherwise break the silent-clean CLI exit-contract
+# test (test_path_clean_exits_0_silent shells out to the helper, which imports this
+# module). Repo-relative inserted last → priority; $HOME retained as fallback; the
+# not-in-path guard dedups when the two coincide in a ~/.claude install.
+_REPO_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+for _scripts_dir in (_PG_SCRIPTS_DIR, _REPO_SCRIPTS_DIR):
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+# Same optional-dependency policy as the _pg_learning_dualwrite peer above: this
+# helper ALSO writes a JSON `import_error` line to stderr and re-raises on missing
+# psycopg, so redirect_stderr swallows that import-time line (scoped to this one
+# import — stderr restored on block exit, never globally silenced). Stay SILENT at
+# import time (CLI clean-path contract); surface the degradation LOUDLY at daemon
+# runtime — run_cycle() start plus the emit_loop_events path=subprocess marker
+# (Precondition Loud-Fail).
+_PG_LOOP_IMPORT_EXC: Exception | None = None
 try:
-    from _pg_dual_write_daemon import (
-        _connect as _pg_connect,
-        write_autoagent_loop_event as _pg_write_loop_event,
-    )
+    with contextlib.redirect_stderr(io.StringIO()):
+        from _pg_dual_write_daemon import (
+            _connect as _pg_connect,
+            write_autoagent_loop_event as _pg_write_loop_event,
+        )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
     HAS_PG_LOOP_WRITE = False
-    sys.stderr.write(
-        f"[daemon-cycle] WARN: PG loop-event write disabled (import failed): "
-        f"{type(_pg_loop_import_exc).__name__}: {_pg_loop_import_exc}\n"
-    )
+    _PG_LOOP_IMPORT_EXC = _pg_loop_import_exc
 
 # CLI binary — overridable for tests
 CLAUDE_BIN = os.environ.get("AUTOAGENT_CLAUDE_BIN", "claude")
@@ -132,7 +166,7 @@ HAIKU_TIMEOUT_SEC = 90
 # modules import at collection time). Live-verified: 0.10 is too low (immediate
 # EXIT 1); 0.50 passes (Anthropic minimum call cost ~$0.02-0.10). Cost ceiling:
 # agents-per-cycle × 0.50.
-from daemon_config import (  # noqa: E402 — hooks dir inserted at line 60
+from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-relative + $HOME)
     HAIKU_MAX_BUDGET_USD,
     HAIKU_MODEL,
     PRE_VERIFY_MAX_BUDGET_USD,
@@ -2847,12 +2881,26 @@ _FALLBACK_NEGATIVE_REVISION_MIN = 2
 # _is_synthesized_measurement_gap; named locally so the FALLBACK branch (psycopg
 # absent) carves it out too, not only the imported-helper branch.
 _ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
+# Budget-truncation shares the synthesized-provenance lineage (subagent hard-killed
+# at its tool_use/turn budget ceiling BEFORE emitting [COMPLETION]) but is a REAL
+# agent-relevant negative — the truncated subagent's own instructions should improve
+# — so it is DELIBERATELY kept on the CLUSTERABLE side, never carved out.
+# Accepted-scope REACHABILITY limit: pattern-1 clustering needs 3+ same-agent
+# negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
+# pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
+_ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 
 
 def _is_synthesized_measurement_gap(o: Outcome) -> bool:
     """True for a completion-synthesized done_with_concerns Outcome — the synthesis
     DEFAULT result, not an agent-emitted failure signal. Scoped to that exact
-    provenance+result pair so a real agent's done_with_concerns still counts."""
+    provenance+result pair so a real agent's done_with_concerns still counts.
+
+    budget-truncation is a sibling synthesized-provenance attribution but a real
+    negative, not a measurement gap — the explicit guard keeps it clusterable and
+    holds that invariant even if the completion-synthesized match is broadened."""
+    if o.attribution_source == _ATTRIBUTION_BUDGET_TRUNCATION:
+        return False
     return (
         o.attribution_source == _ATTRIBUTION_SYNTHESIZED
         and o.result == "done_with_concerns"
@@ -6884,6 +6932,34 @@ def _consolidated_pattern_label(agent: str, patterns: list[Pattern]) -> str:
 # -- Top-level cycle --------------------------------------------------------
 
 
+def _pg_import_degradation_lines() -> list[str]:
+    """Loud degradation notices for any optional-PG import that failed at load.
+
+    Returns one WARN line per failed optional import (empty list when both
+    imported cleanly). Emitted once at run_cycle() start — the daemon's real
+    entry — so a degraded PG layer is reported LOUDLY where it matters
+    (Precondition Loud-Fail), while a bare CLI import of this module (which never
+    calls run_cycle) stays silent per the CliExitContract clean-path contract.
+    The captured exception carries the cause (e.g. missing psycopg) that the
+    removed import-time stderr writes used to surface.
+    """
+    lines: list[str] = []
+    if _PG_OUTCOME_IMPORT_EXC is not None:
+        exc = _PG_OUTCOME_IMPORT_EXC
+        lines.append(
+            "[daemon-cycle] WARN: PG outcome/pattern read disabled (optional "
+            f"dependency import failed): {type(exc).__name__}: {exc}\n"
+        )
+    if _PG_LOOP_IMPORT_EXC is not None:
+        exc = _PG_LOOP_IMPORT_EXC
+        lines.append(
+            "[daemon-cycle] WARN: PG loop-event write disabled (optional "
+            "dependency import failed; falling back to subprocess): "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+    return lines
+
+
 def run_cycle(
     *,
     limit: int = DEFAULT_PATTERN_LIMIT,
@@ -6906,6 +6982,12 @@ def run_cycle(
     pending queue without needing its own LLM call.
     """
     now = datetime.now(timezone.utc)
+    # Optional-PG import degradation — surfaced LOUDLY once at daemon-cycle start
+    # (Precondition Loud-Fail). The import-time stderr writes were removed so a
+    # bare CLI import of this module stays silent; run_cycle() is the daemon's
+    # real entry, so a degraded PG layer is reported here, before the first PG op.
+    for _warn_line in _pg_import_degradation_lines():
+        sys.stderr.write(_warn_line)
     # GENERATION window = previous calendar day (LOCAL tz), shared by all agents in
     # the cycle — computed once outside the loop (cycle-invariant). Distinct from
     # the promotion-stats window.

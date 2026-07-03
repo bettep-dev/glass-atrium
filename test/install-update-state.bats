@@ -31,7 +31,7 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_GA_DIR="${HOME}/.glass-atrium"
+REAL_GA_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${REAL_GA_DIR}/glass-atrium"
 
 setup() {
@@ -79,7 +79,7 @@ RUNNER
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
 # write a v1.0.0 manifest whose .files is the given relative-path list, with a

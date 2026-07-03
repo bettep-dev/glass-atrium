@@ -1,7 +1,6 @@
 // Screen 12 — Models & budgets (/api/model-config GET 단일 fetch + 명시 Save PUT).
 // 카드: config-sync KPI → 모델 도메인 테이블 → per-call 예산 상한 카드.
-// DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2/D5).
-// orchestrator 도메인은 read-only — settings.json 은 어떤 코드 경로도 쓰지 않음 (Harness Path Protection).
+// DB(saved target) = UI SoT · actual = 소비 지점 실측 — 차이는 drift 배지로 공시 (spec doc 36166 D2).
 // 예산 = per-call HARD CAP (claude -p --max-budget-usd) — OAuth 구독이라 월 청구 상한이 아님 (단일 폭주 호출 차단).
 // Hooks MC-suffix aliased — window-scope 충돌 방지.
 const {
@@ -16,14 +15,8 @@ const {
 const TOAST_DURATION_MS_MC = 2000;
 
 // 검증 상수 — 서버 SoT(routes/model-config.ts consts 모듈) 의 클라이언트 미러. 변경 시 동기화 필수.
-const KNOWN_MODEL_IDS_MC = [
-	"claude-fable-5",
-	"claude-opus-4-8",
-	"claude-sonnet-4-6",
-	"claude-haiku-4-5",
-];
-// alias 는 frontmatter 도메인(dev/research) 전용 — harness 가 frontmatter 의 축약 표기를 그대로 해석.
-const FRONTMATTER_ALIASES_MC = ["opus", "sonnet", "haiku"];
+// known-model 목록은 상수 미러가 아니라 GET known_models(서버가 pricing.json SoT 에서 파생)를
+// 그대로 소비 — 하드코딩 미러 + bare alias(opus/sonnet/haiku) 옵션 제거 (P7).
 // free-text escape hatch — 소문자 alnum + dot/hyphen/bracket ≤128 (PUT 검증 계약).
 const FREE_TEXT_MODEL_RE_MC = /^[a-z0-9.\-[\]]{1,128}$/;
 // per-call 예산 = 정확히 2-decimal 문자열 — daemon_config.py 가 --max-budget-usd 로 verbatim 전달,
@@ -38,31 +31,20 @@ const CUSTOM_OPTION_MC = "__custom__";
 const MODEL_CAP_MC = {
 	"claude-fable-5": "Highest capability — deep reasoning, long-horizon agents",
 	"claude-opus-4-8": "Strong default — implementation, review, design",
+	"claude-sonnet-5": "Sonnet tier — balanced speed/cost",
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
 	inherit: "Falls back to whatever settings.json resolves to",
-	opus: "Frontmatter alias — resolves to the current Opus model",
-	sonnet: "Frontmatter alias — resolves to the current Sonnet model",
-	haiku: "Frontmatter alias — resolves to the current Haiku model",
 };
 // 도메인 표시 메타 — 라벨/평이 설명/옵션 구성. enforcement = spec D3 class 컬럼의 클라이언트 표기
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
-	"model.orchestrator": {
-		label: "Main session",
-		desc: "The model your interactive Claude Code session runs on",
-		enforcement: "display-only",
-		editable: false,
-		inherit: false,
-		aliases: false,
-	},
 	"model.dev": {
 		label: "Dev agents",
 		desc: "Written into the dev-*.md agent files; picked up when an agent next starts",
 		enforcement: "applied",
 		editable: true,
 		inherit: true,
-		aliases: true,
 	},
 	"model.research": {
 		label: "Research agent",
@@ -70,7 +52,6 @@ const DOMAIN_META_MC = {
 		enforcement: "applied",
 		editable: true,
 		inherit: true,
-		aliases: true,
 	},
 	"model.daemon_cycle_haiku": {
 		label: "Daemon cycle helper",
@@ -78,30 +59,22 @@ const DOMAIN_META_MC = {
 		enforcement: "applied",
 		editable: true,
 		inherit: false,
-		aliases: false,
-		advanced: true,
 	},
 };
 
 // 테이블 행 순서 — 미지의 도메인(서버가 먼저 확장된 경우)은 뒤에 그대로 덧붙임 (silent drop 금지).
 const DOMAIN_ORDER_MC = [
-	"model.orchestrator",
 	"model.dev",
 	"model.research",
 	"model.daemon_cycle_haiku",
 ];
 
-// enforcement class 칩 — 정직 공시: applied=저장이 실제 소비 지점에 반영 · display-only=표시만.
+// enforcement class 칩 — 정직 공시: applied=저장이 실제 소비 지점에 반영.
 const ENFORCEMENT_META_MC = {
 	applied: {
 		label: "Applied",
 		tone: "ok",
 		desc: "Saving here changes the real consumed value",
-	},
-	"display-only": {
-		label: "Display only",
-		tone: "neutral",
-		desc: "Shown for reference — saving never writes the real file",
 	},
 };
 
@@ -141,7 +114,6 @@ const BUDGET_ORDER_MC = ["budget.haiku_max_usd", "budget.pre_verify_max_usd"];
 
 // 추천 preset — form 채움만 수행, 저장은 명시 Save 버튼 (spec P3).
 const PRESET_MODELS_MC = {
-	"model.orchestrator": "claude-fable-5",
 	"model.dev": "claude-opus-4-8",
 };
 
@@ -207,7 +179,17 @@ function ScreenModelConfig() {
 		[configState],
 	);
 
-	const errors = useMemoMC(() => (form ? validateFormMC(form) : {}), [form]);
+	// GET known_models = 드롭다운/검증 옵션 SoT — 서버가 pricing.json 에서 파생 (P7).
+	// SoT unreadable fail-open 시 [] (D3) — 옵션은 inherit/custom 만 남고 free-text 로 입력 가능.
+	const knownModels = useMemoMC(
+		() => configState.data?.known_models ?? [],
+		[configState],
+	);
+
+	const errors = useMemoMC(
+		() => (form ? validateFormMC(form, knownModels) : {}),
+		[form, knownModels],
+	);
 	const payload = baseline && form ? diffFormMC(baseline, form) : null;
 	const hasErrors = Object.keys(errors).length > 0;
 	// dirty = 저장할 변경분 존재 — save-banner 노출 + beforeunload 경고 게이트.
@@ -297,18 +279,10 @@ function ScreenModelConfig() {
 								className="btn ghost sm"
 								onClick={applyPreset}
 								disabled={!ready || saving}
-								title="Fills the recommended values into the form (main session claude-fable-5 · dev agents claude-opus-4-8). Nothing is saved until you press Save."
+								title="Fills the recommended values into the form (dev agents claude-opus-4-8). Nothing is saved until you press Save in the banner below."
 								aria-label="Fill recommended preset"
 							>
 								Fill preset
-							</button>
-							<button
-								className="btn primary sm"
-								onClick={save}
-								disabled={!ready || hasErrors || saving}
-								aria-label="Save model and budget changes"
-							>
-								{saving ? "Saving…" : "Save changes"}
 							</button>
 							<button
 								className="btn ghost sm"
@@ -360,6 +334,7 @@ function ScreenModelConfig() {
 					<SyncStatusRowMC sync={data.daemon_config_sync} />
 					<DomainsSectionMC
 						domains={data.domains}
+						knownModels={knownModels}
 						form={form}
 						baseline={baseline}
 						errors={errors}
@@ -371,13 +346,6 @@ function ScreenModelConfig() {
 						baseline={baseline}
 						errors={errors}
 						onBudgetChange={setBudget}
-					/>
-					<AdvancedSectionMC
-						domains={data.domains}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onModelChange={setModel}
 					/>
 				</>
 			)}
@@ -441,7 +409,7 @@ function ScreenModelConfig() {
 }
 
 // daemon-config.json 동기화 상태 — 표준 status Badge 1개로 공시 (W3-T2 (b): 26px KPI 값으로 띄우던
-// 거대 "In sync" 헤딩을 표준 status pill 로 강등 — 색+TONE_GLYPH 듀얼 인코딩). 지출/청구 KPI 는 없음
+// 거대 "In sync" 헤딩을 표준 status pill 로 강등 — 색+TONE_ICON 듀얼 인코딩). 지출/청구 KPI 는 없음
 // (OAuth 구독 = metered 청구 없음, GET 에 spend 데이터 없음 · per-call 캡이라 누적 소진 게이지 개념 없음).
 function SyncStatusRowMC({ sync }) {
 	const { Badge } = window.UI;
@@ -456,7 +424,7 @@ function SyncStatusRowMC({ sync }) {
 		<div className="flex items-center gap-2 mb-4">
 			<span className="section-label">Config file sync</span>
 			<span title={syncMeta.desc}>
-				<Badge role="status" tone={syncMeta.tone}>
+				<Badge role="status" tone={syncMeta.tone} icon={true}>
 					{syncMeta.label}
 				</Badge>
 			</span>
@@ -482,12 +450,14 @@ function SectionHeadMC({ label, sub, right }) {
 }
 
 // 모델 도메인 섹션 — Saved target(편집) vs Actual(실측) + apply/enforcement 칩.
-// advanced 도메인(daemon helper)은 AdvancedSectionMC 로 분리 — 여기선 1차 도메인만.
-function DomainsSectionMC({ domains, form, baseline, errors, onModelChange }) {
-	const rows = sortDomainsMC(
-		(domains || []).filter((d) => !DOMAIN_META_MC[d.domain]?.advanced),
-	);
-
+function DomainsSectionMC({
+	domains,
+	knownModels,
+	form,
+	baseline,
+	errors,
+	onModelChange,
+}) {
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
@@ -502,10 +472,11 @@ function DomainsSectionMC({ domains, form, baseline, errors, onModelChange }) {
 					</tr>
 				</thead>
 				<tbody>
-					{rows.map((d) => (
+					{domains.map((d) => (
 						<DomainRowMC
 							key={d.domain}
 							domain={d}
+							knownModels={knownModels}
 							value={form.models[d.domain] ?? ""}
 							defaultValue={baseline?.models[d.domain] ?? ""}
 							error={errors[d.domain]}
@@ -514,54 +485,37 @@ function DomainsSectionMC({ domains, form, baseline, errors, onModelChange }) {
 					))}
 				</tbody>
 			</table>
-			<OrchestratorHowToMC />
 		</div>
 	);
 }
 
-// Advanced 섹션 — daemon helper 류 advanced 도메인을 기본 접힘 <details> 로 (T-MDL-2).
-function AdvancedSectionMC({ domains, form, baseline, errors, onModelChange }) {
-	const rows = sortDomainsMC(
-		(domains || []).filter((d) => DOMAIN_META_MC[d.domain]?.advanced),
-	);
-	if (rows.length === 0) return null;
-
-	return (
-		<details className="mb-4 border-t border-line pt-4">
-			<summary className="section-label cursor-pointer">Advanced</summary>
-			{/* is-wrap: standalone warning paragraph meant to be read in full, not a clamped caption. */}
-			<div className="card-sub is-wrap mt-1 mb-3">
-				Background daemon model — only change this if you know how the
-				self-improve and wiki cycles consume it
-			</div>
-			<table className="tbl">
-				<thead>
-					<tr>
-						<th>Target</th>
-						<th>Saved target</th>
-						<th>Actual</th>
-						<th>Sync</th>
-						<th>Enforcement</th>
-					</tr>
-				</thead>
-				<tbody>
-					{rows.map((d) => (
-						<DomainRowMC
-							key={d.domain}
-							domain={d}
-							value={form.models[d.domain] ?? ""}
-							defaultValue={baseline?.models[d.domain] ?? ""}
-							error={errors[d.domain]}
-							onChange={(v) => onModelChange(d.domain, v)}
-						/>
-					))}
-				</tbody>
-			</table>
-		</details>
+// drift/in-sync 상태 배지 — actual↔saved(또는 daemon-config) 정합성 공시. DomainRowMC/BudgetRowMC 공용
+// (드리프트 소스 boolean + title 문구만 상이 — span[title]>Badge 구조는 동일).
+function DriftBadgeMC({ drift, driftTitle, syncTitle }) {
+	const { Badge } = window.UI;
+	return drift ? (
+		<span title={driftTitle}>
+			<Badge role="status" tone="warn" icon={true}>
+				drift
+			</Badge>
+		</span>
+	) : (
+		<span title={syncTitle}>
+			<Badge role="status" tone="ok" icon={true}>
+				in sync
+			</Badge>
+		</span>
 	);
 }
 
-function DomainRowMC({ domain: d, value, defaultValue, error, onChange }) {
+function DomainRowMC({
+	domain: d,
+	knownModels,
+	value,
+	defaultValue,
+	error,
+	onChange,
+}) {
 	const { Badge } = window.UI;
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
@@ -586,32 +540,22 @@ function DomainRowMC({ domain: d, value, defaultValue, error, onChange }) {
 						{meta.label}
 					</span>
 				</div>
-				{meta.desc &&
-					(meta.advanced ? (
-						// 긴 advanced 설명은 기존 details 패턴으로 접어 행 높이 폭주 방지.
-						<details className="mt-1">
-							{/* is-wrap: interactive <details> toggle, not a clamped caption. */}
-							<summary className="card-sub is-wrap cursor-pointer">
-								What this controls
-							</summary>
-							{/* is-wrap: expanded details body — multi-line desc by design. */}
-							<div className="card-sub is-wrap mt-1">{meta.desc}</div>
-						</details>
-					) : (
-						// auto table-layout: card-sub clamp widens the cell unless capped — bound to the column so the ellipsis engages.
-						<div
-							className="card-sub mt-1"
-							style={{ maxWidth: 280 }}
-							title={window.UI.titleOf(meta.desc)}
-						>
-							{meta.desc}
-						</div>
-					))}
+				{meta.desc && (
+					// auto table-layout: card-sub clamp widens the cell unless capped — bound to the column so the ellipsis engages.
+					<div
+						className="card-sub mt-1"
+						style={{ maxWidth: 280 }}
+						title={window.UI.titleOf(meta.desc)}
+					>
+						{meta.desc}
+					</div>
+				)}
 			</td>
 			<td style={{ ...cellPad, minWidth: 220 }}>
 				{editable ? (
 					<ModelSelectMC
 						domain={d.domain}
+						knownModels={knownModels}
 						value={value}
 						defaultValue={defaultValue}
 						error={error}
@@ -619,81 +563,46 @@ function DomainRowMC({ domain: d, value, defaultValue, error, onChange }) {
 						onChange={onChange}
 					/>
 				) : (
-					// fallback 배지도 편집 행 <select> 와 같은 높이로 (content-width pill 유지, pill--ctl-h = HEIGHT 만 매치).
-					<Badge role="metadata" className="pill--ctl-h">
-						{value || d.desired || "—"}
-					</Badge>
+					// read-only fallback 배지 — 표시 전용 칩이므로 표준 22px .pill (편집 행 <select> 높이 매치 안 함: 컬럼 인접일 뿐 인라인 컨트롤 그룹 아님).
+					<Badge role="metadata">{value || d.desired || "—"}</Badge>
 				)}
 			</td>
 			<td style={cellPad}>
-				{/* ACTUAL 배지를 SAVED TARGET <select>(.field) 와 같은 HEIGHT 로만 정렬 — pill--ctl-h 가 --ctl-h 공유(lockstep), 너비/폰트/radius 는 배지 그대로(컬럼 미충전). */}
-				<Badge role="metadata" className="pill--ctl-h">
-					{d.actual ?? "—"}
-				</Badge>
-				{/* orchestrator 전용 effort 표시 — GET status.effort_level (model-config.ts) 파생값, 다른 도메인엔 없음. */}
-				{d.effort_level && (
-					<div className="fs-micro text-faint mt-0.5">
-						effort: {d.effort_level}
-					</div>
-				)}
+				{/* ACTUAL 모델명은 read-only 표시 배지 → 표준 22px .pill 로 status 배지와 높이 통일. <select> height-match 안 함: 읽기 전용 셀/컬럼 인접이지 인라인 컨트롤 그룹 아님. */}
+				<Badge role="metadata">{d.actual ?? "—"}</Badge>
 			</td>
 			<td style={cellPad}>
-				{d.drift ? (
-					<span title="Actual differs from saved target">
-						<PillGlyphMC tone="warn">drift</PillGlyphMC>
-					</span>
-				) : (
-					<span title="Actual matches saved target">
-						<PillGlyphMC tone="ok">in sync</PillGlyphMC>
-					</span>
-				)}
+				<DriftBadgeMC
+					drift={d.drift}
+					driftTitle="Actual differs from saved target"
+					syncTitle="Actual matches saved target"
+				/>
 			</td>
 			<td style={cellPad}>
 				<span title={enforceMeta.desc}>
-					<PillGlyphMC tone={enforceMeta.tone} noGlyph>
+					<Badge role="status" tone={enforceMeta.tone} glyph={false}>
 						{enforceMeta.label}
-					</PillGlyphMC>
+					</Badge>
 				</span>
 			</td>
 		</tr>
 	);
 }
 
-// orchestrator read-only 안내 — settings.json 은 harness 보호 경로라 모니터가 절대 쓰지 않음.
-// /glass-atrium-ops-model-config 스킬이 settings.json 쓰기 + 데몬 재시작을 대신 수행.
-function OrchestratorHowToMC() {
-	const { Icon } = window.UI;
-	return (
-		<div className="px-4 py-3 border-t border-line flex items-start gap-2">
-			<Icon name="info" size={14} className="text-dim mt-0.5 shrink-0" />
-			<div className="fs-meta text-dim">
-				<span className="font-medium text-ink">
-					How to change the main session model:
-				</span>{" "}
-				the monitor never writes{" "}
-				<span className="font-mono">~/.claude/settings.json</span> (it is a
-				protected harness file). Run{" "}
-				<span className="font-mono">/glass-atrium-ops-model-config</span> in
-				your Claude Code session — it writes settings.json for you and restarts
-				the autoagent and wiki daemons.
-			</div>
-		</div>
-	);
-}
-
 // 모델 선택 = 컴팩트 native <select>(.field-select) + 선택 옵션의 capability descriptor 1줄 +
 // custom free-text escape hatch. 목록 외 값(빈 문자열 포함) = custom 모드 → CUSTOM_OPTION_MC 표시값.
-// 9 preset 규모라 세로 카드 스택 대신 1행 콤보가 적합 (옵션 多 → dropdown 패턴).
+// 옵션 = GET known_models (+ inherit) 규모라 세로 카드 스택 대신 1행 콤보가 적합 (옵션 多 → dropdown 패턴).
 // ghost default + reset (T-MDL-6): 저장된 baseline 과 다르면 ghost 라벨 + 되돌리기 링크.
 function ModelSelectMC({
 	domain,
+	knownModels,
 	value,
 	defaultValue,
 	error,
 	pricingKnown,
 	onChange,
 }) {
-	const options = modelOptionsMC(domain);
+	const options = modelOptionsMC(domain, knownModels);
 	const isListed = options.includes(value);
 	const isCustom = !isListed;
 	const meta = DOMAIN_META_MC[domain];
@@ -745,7 +654,7 @@ function ModelSelectMC({
 			)}
 			{pricingKnown === false && (
 				<div className="fs-meta text-warn mt-1">
-					No price listed — billed at Opus fallback rate
+					No price listed — billed at the conservative fallback rate
 				</div>
 			)}
 			<GhostResetMC
@@ -869,15 +778,11 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 				</span>
 			</td>
 			<td>
-				{b.drift ? (
-					<span title="daemon-config.json differs from saved target — press Save">
-						<PillGlyphMC tone="warn">drift</PillGlyphMC>
-					</span>
-				) : (
-					<span title="daemon-config.json matches saved target">
-						<PillGlyphMC tone="ok">in sync</PillGlyphMC>
-					</span>
-				)}
+				<DriftBadgeMC
+					drift={b.drift}
+					driftTitle="daemon-config.json differs from saved target — press Save"
+					syncTitle="daemon-config.json matches saved target"
+				/>
 			</td>
 		</tr>
 	);
@@ -885,7 +790,7 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 
 // Save 의 per-surface 결과 공시 — frontmatter per-file ok/skipped/failed 등 (silent skip 금지, AC-5).
 function SurfaceResultsCardMC({ results, onDismiss }) {
-	const { CardHead, Icon } = window.UI;
+	const { CardHead, Icon, Badge } = window.UI;
 
 	const rows = Array.isArray(results) ? results : [];
 	if (rows.length === 0) return null;
@@ -913,7 +818,9 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 						key={i}
 						className="flex items-center gap-2 fs-meta font-mono py-1 border-b border-line last:border-0"
 					>
-						<PillGlyphMC tone={toneOf(r.status)}>{r.status || "—"}</PillGlyphMC>
+						<Badge role="status" tone={toneOf(r.status)} icon={true}>
+							{r.status || "—"}
+						</Badge>
 						<span className="text-dim truncate">
 							{r.surface ?? r.target ?? r.file ?? r.domain ?? "—"}
 						</span>
@@ -958,17 +865,6 @@ function DriftBannerMC({ sync, domains }) {
 				)}
 			</div>
 		</div>
-	);
-}
-
-// 톤 + 표준 glyph 듀얼 인코딩 Pill (A2 — 색상 단독 인코딩 금지). noGlyph = 텍스트가 이미 의미 전달.
-function PillGlyphMC({ tone, noGlyph, children }) {
-	const { Pill, TONE_GLYPH } = window.UI;
-	return (
-		<Pill tone={tone}>
-			{!noGlyph && TONE_GLYPH[tone] ? `${TONE_GLYPH[tone]} ` : ""}
-			{children}
-		</Pill>
 	);
 }
 
@@ -1109,11 +1005,12 @@ function diffFormMC(baseline, form) {
 }
 
 // 클라이언트 측 사전 검증 — 서버 400 의 UX 미러일 뿐 권위는 서버 (validate-all-first 계약).
-function validateFormMC(form) {
+// bare alias(opus/sonnet/haiku) reject 는 클라 미러 없음 — 서버가 검증 권위 (plan Non-Goals).
+function validateFormMC(form, knownModels) {
 	const errors = {};
 
 	for (const [domain, value] of Object.entries(form.models)) {
-		if (modelOptionsMC(domain).includes(value)) continue;
+		if (modelOptionsMC(domain, knownModels).includes(value)) continue;
 		if (value === "") {
 			errors[domain] = "Enter a model id";
 		} else if (!FREE_TEXT_MODEL_RE_MC.test(value)) {
@@ -1139,12 +1036,12 @@ function validateFormMC(form) {
 	return errors;
 }
 
-function modelOptionsMC(domain) {
+// 옵션 = GET known_models 그대로 (+ inherit 허용 도메인만) — bare alias 옵션 없음 (P7 AC).
+function modelOptionsMC(domain, knownModels) {
 	const meta = DOMAIN_META_MC[domain] || {};
 	const opts = [];
 	if (meta.inherit) opts.push("inherit");
-	opts.push(...KNOWN_MODEL_IDS_MC);
-	if (meta.aliases) opts.push(...FRONTMATTER_ALIASES_MC);
+	opts.push(...(knownModels || []));
 	return opts;
 }
 

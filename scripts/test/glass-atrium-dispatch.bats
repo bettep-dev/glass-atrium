@@ -8,8 +8,8 @@
 #     installer flag parser, which loud-dies on an unknown flag)
 #   * a missing / non-executable updater loud-fails (die → rc 1, no silent absorb)
 #   * manifest-hash consistency (doctor §8): the tracked manifest hash for
-#     `glass-atrium` equals the live file sha256, the new skill is listed, and
-#     generate-manifest --check reports no source-vs-manifest drift
+#     `glass-atrium` equals the live file sha256, the update.sh script is listed at
+#     its post-P1-T0 scripts/ path, and generate-manifest --check reports no drift
 #
 # Run via: bats scripts/test/glass-atrium-dispatch.bats
 # Requires: bats >= 1.5.0, jq, git, shasum/sha256sum
@@ -20,9 +20,10 @@
 
 bats_require_minimum_version 1.5.0
 
-BIN="${HOME}/.glass-atrium/glass-atrium"
-MANIFEST="${HOME}/.glass-atrium/manifest.json"
-GEN_MANIFEST="${HOME}/.glass-atrium/scripts/generate-manifest.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+BIN="${GA}/glass-atrium"
+MANIFEST="${GA}/manifest.json"
+GEN_MANIFEST="${GA}/scripts/generate-manifest.sh"
 
 setup() {
   [[ -f "${BIN}" ]] || skip "glass-atrium binary not found: ${BIN}"
@@ -30,7 +31,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # shasum (macOS / CI) preferred, coreutils sha256sum as the Linux fallback.
@@ -100,10 +101,17 @@ EOF
   [[ "${manifest_hash}" == "${actual_hash}" ]]
 }
 
-@test "manifest lists the glass-atrium-update skill (subcommand target is deployed)" {
+@test "manifest lists update.sh at its scripts/ path (moved from the skill dir; subcommand target deployed)" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
+  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/. The manifest
+  # must list the NEW path and no longer carry the retired skill-dir path.
+  # NOTE: this test goes GREEN only AFTER the PHASE-end manifest regen
+  # (generate-manifest.sh) — until then the tracked manifest still carries the old
+  # skill path, so BOTH assertions below are expected RED in a pre-regen run.
+  run jq -e '.files | index("scripts/update.sh")' "${MANIFEST}"
+  [ "$status" -eq 0 ]                                                  # new path present
   run jq -e '.files | index("skills/glass-atrium-update/update.sh")' "${MANIFEST}"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]                                                  # retired skill path absent
 }
 
 @test "generate-manifest --check reports no source-vs-manifest drift (doctor §8 clean)" {

@@ -12,6 +12,9 @@ const {
   useMemo: useMemoO,
 } = React;
 
+// budget-truncation attribution_source 리터럴 — track-outcome.sh + 서버 3파일과 byte-identical (rename 금지).
+const ATTRIBUTION_SOURCE_BUDGET_TRUNCATION = 'budget-truncation';
+
 // 기간 선택 — 전체 칩은 wire sentinel 'all' 전송 (route parseDaysParam 가 {7,30,90,'all'} 만 허용).
 // filter.days 는 number {7,30,90} | 'all' 의 tri-state → buildSearchUrlO 의 String(filter.days) 가 그대로 직렬화.
 const OUTCOME_ALL_PERIOD = 'all';
@@ -70,31 +73,47 @@ const REVIEW_FLAG_OPTIONS = [
   { value: 'false', label: 'Clear'   },
 ];
 
+// attribution_source exact-match 필터 (선택) — raw source 는 오픈 enum 이라 관심 신호 1종(budget-truncation)만 노출.
+const ATTRIBUTION_SOURCE_OPTIONS = [
+  { value: '',                                   label: 'All'         },
+  { value: ATTRIBUTION_SOURCE_BUDGET_TRUNCATION, label: 'budget-kill' },
+];
+
 // grader_verdict (측정 신호) — 결정론적 grader 산출 (writer self-report metric_pass 와 분리, 색맹 안전 듀얼인코딩).
 //   verified_pass = 측정 통과 · unverified = 미측정(중립, 실패 아님) · verified_fail = 측정 실패 · NULL = 레거시(grader 도입 전).
 //   unverified/NULL 은 crit(빨강) 절대 금지 — "측정 안 됨" 중립 muted.
+// icon = window.UI.Icon 이름(렌더 경로 전용, FIX-D 중앙화) · symbol = 문자열 폴백(레거시/비-Icon 컨텍스트).
+//   ✓→check · ○→circle(측정 안 됨 중립) · ✕→x · –→minus(레거시 dash). crit 회귀 차단 톤은 colorVar 가 담당.
 const GRADER_VERDICT_META = {
-  verified_pass: { label: 'Check passed', symbol: '✓', colorVar: '--ok'   },
-  unverified:    { label: 'Auto-check N/A',  symbol: '○', colorVar: '--dim'  },
-  verified_fail: { label: 'Check failed', symbol: '✕', colorVar: '--crit' },
+  verified_pass: { label: 'Check passed', symbol: '✓', icon: 'check',  colorVar: '--ok'   },
+  unverified:    { label: 'Auto-check N/A',  symbol: '○', icon: 'circle', colorVar: '--dim'  },
+  verified_fail: { label: 'Check failed', symbol: '✕', icon: 'x',      colorVar: '--crit' },
 };
 
 // NULL grader_verdict (레거시 un-graded 행) — unverified 와 구분해 명시적 "Pre-grader (legacy)" 표기.
-const GRADER_VERDICT_NULL_META = { label: 'Pre-grader (legacy)', symbol: '–', colorVar: '--faint' };
+const GRADER_VERDICT_NULL_META = { label: 'Pre-grader (legacy)', symbol: '–', icon: 'minus', colorVar: '--faint' };
 
 // 측정 분포 카드 버킷 순서 + 메타 — cross-analysis grader_breakdown 소비 (verified_pass/unverified/verified_fail + not_measured).
 const GRADER_BREAKDOWN_ORDER = ['verified_pass', 'unverified', 'verified_fail', 'not_measured'];
 const GRADER_BREAKDOWN_META = {
-  verified_pass: { label: 'Check passed',             symbol: '✓', colorVar: '--ok'    },
-  unverified:    { label: 'Auto-check N/A',           symbol: '○', colorVar: '--dim'   },
-  verified_fail: { label: 'Check failed',             symbol: '✕', colorVar: '--crit'  },
-  not_measured:  { label: 'Pre-grader (legacy)',      symbol: '–', colorVar: '--faint' },
+  verified_pass: { label: 'Check passed',             symbol: '✓', icon: 'check',  colorVar: '--ok'    },
+  unverified:    { label: 'Auto-check N/A',           symbol: '○', icon: 'circle', colorVar: '--dim'   },
+  verified_fail: { label: 'Check failed',             symbol: '✕', icon: 'x',      colorVar: '--crit'  },
+  not_measured:  { label: 'Pre-grader (legacy)',      symbol: '–', icon: 'minus',  colorVar: '--faint' },
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
 function graderVerdictMetaO(verdict) {
   if (verdict == null) return GRADER_VERDICT_NULL_META;
   return GRADER_VERDICT_META[verdict] || GRADER_VERDICT_NULL_META;
+}
+
+// 렌더 심볼 SoT (FIX-D 중앙화) — 화면 로컬 meta.icon(Icon 이름)을 window.UI.Icon 으로 렌더.
+//   aria-hidden 기본 장식 + stroke=currentColor → 감싸는 span 의 tone 색 상속(색+기호+텍스트 3중 인코딩 보존).
+//   name 부재 시 미렌더 (드리프트 방어). 색은 호출부 wrapping 이 style={{color}} 로 공급.
+function GlyphO({ name, size = 12, className = '' }) {
+  const { Icon } = window.UI;
+  return name ? <Icon name={name} size={size} className={className} /> : null;
 }
 
 // Pagination — 테이블 응답성 보존.
@@ -126,6 +145,13 @@ function resultColorVarO(result) {
   return RESULT_COLOR_VAR[tone] || '--dim';
 }
 
+// colorVar(--ok/--warn/--crit/--info) → canonical Badge tone 이름. 비-tone(--dim/--faint/--accent) → 'neutral'.
+//   ad-hoc tone-fill 배지를 canonical Badge(role=status)로 접을 때 tone prop 공급 — shell 은 neutral 유지, 색은 내부 Icon 이 운반.
+function toneFromColorVarO(colorVar) {
+  const t = String(colorVar || '').replace(/^--/, '');
+  return (t === 'ok' || t === 'warn' || t === 'crit' || t === 'info') ? t : 'neutral';
+}
+
 // KPI 4 버킷 — 라벨/색/기호는 RESULT_META SoT 에서 파생 (로컬 중복 맵 제거, T-OUT-1).
 const ANALYTICS_KPI_ORDER = ['done', 'done_with_concerns', 'blocked', 'fail'];
 
@@ -140,17 +166,17 @@ function kpiMetaO(result) {
 // 의미: literal_omission = actionable 위생 신호 · attribution_loss = 잔존 버그 신호(감소 모니터) · synthesized = 복구 산물(실패 아님).
 const ATTRIBUTION_CATEGORY_ORDER = ['healthy', 'attribution_loss', 'literal_omission', 'synthesized'];
 const ATTRIBUTION_CATEGORY_META = {
-  healthy:          { label: 'Recorded properly', symbol: '✓', colorVar: '--ok'   },
-  attribution_loss: { label: 'Untraceable',       symbol: 'ℹ', colorVar: '--info' },
-  literal_omission: { label: 'Missing report',    symbol: '✕', colorVar: '--crit' },
-  synthesized:      { label: 'Reconstructed',     symbol: '⚠', colorVar: '--warn' },
+  healthy:          { label: 'Recorded properly', symbol: '✓', icon: 'check', colorVar: '--ok'   },
+  attribution_loss: { label: 'Untraceable',       symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+  literal_omission: { label: 'Missing report',    symbol: '✕', icon: 'x',     colorVar: '--crit' },
+  synthesized:      { label: 'Reconstructed',     symbol: '⚠', icon: 'warn',  colorVar: '--warn' },
 };
 
 // literal_omission 선택 기간 비율 → 심각도 밴드 (분모 = 선택 기간 전체 창).
 const ATTRIBUTION_OMISSION_BANDS = [
-  { max: 0.03, symbol: '✓', colorVar: '--ok',   label: 'OK'          },
-  { max: 0.08, symbol: '⚠', colorVar: '--warn', label: 'Watch'       },
-  { max: Infinity, symbol: '✕', colorVar: '--crit', label: 'Investigate' },
+  { max: 0.03, symbol: '✓', icon: 'check', colorVar: '--ok',   label: 'OK'          },
+  { max: 0.08, symbol: '⚠', icon: 'warn',  colorVar: '--warn', label: 'Watch'       },
+  { max: Infinity, symbol: '✕', icon: 'x', colorVar: '--crit', label: 'Investigate' },
 ];
 
 // attribution_loss 노트 컨텍스트 (정적 문구 — 건수·비율은 window_summary 에서 라이브 산출).
@@ -165,6 +191,40 @@ function buildAttributionLossNoteO(lossRate, totalAttributed) {
   const rate  = Number(lossRate);
   const count = Math.round(rate * (Number(totalAttributed) || 0));
   return `${formatIntO(count)} (~${(rate * 100).toFixed(1)}%) ${ATTRIBUTION_LOSS_CONTEXT}`;
+}
+
+// literal_omission_breakdown → 'Missing report' 세부 3-분해 (budget-kill / truncated / missing).
+//   세 값 합 = literal_omission window count (budget_truncation = attribution_source=='budget-truncation' 행).
+//   'Missing report' 총계·비율은 불변 → 이 sub-line 은 그 count 의 내역만 표기 (rate 미변경).
+//   부재/전-필드(레거시) 행 → null → sub-line 미렌더 (수치 fabrication 회피).
+function buildLiteralOmissionBreakdownO(breakdown) {
+  if (!breakdown || typeof breakdown !== 'object') return null;
+  const budget    = Number(breakdown.budget_truncation)    || 0;
+  const truncated = Number(breakdown.truncated_completion) || 0;
+  const missing   = Number(breakdown.completion_missing)   || 0;
+  if (budget + truncated + missing <= 0) return null;
+  return { budget, truncated, missing };
+}
+
+// budget_truncation_by_agent → 'Budget-killed subagents (7d)' 컴팩트 미니리스트 (agent → count, 서버가 count DESC 정렬).
+//   빈 배열/부재 → null (저볼륨 신호라 non-empty 일 때만 노출 · 빈-상태 clutter 회피).
+function AttributionBudgetKillListO({ rows }) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return (
+    <div className="mt-3 pt-3 border-t border-line">
+      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+        Budget-killed subagents (7d)
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {rows.map((r) => (
+          <div key={r.agent} className="flex items-center justify-between fs-micro font-mono">
+            <span className="text-dim truncate" style={{ maxWidth: 220 }} title={r.agent}>{r.agent}</span>
+            <span className="text-ink font-semibold tabular-nums">{formatIntO(r.count)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // 일별 그리드 막대 수 — 비활성일은 series 누락 → FE 가 0-fill (활동일만 backend 전송).
@@ -197,18 +257,30 @@ const LOOP_EVENTS_URL = '/api/improvement/loop-events?limit=50';
 // daemon eval_result → dual-encoded 배지 (색 + 기호 + 라벨, 색맹 안전).
 //   verified=✓ ok · reject/fail=✕ crit · *_dryrun=⚠ warn(드라이런 — 미적용) · 기타 fallback ℹ info.
 function loopResultMetaO(result) {
-  if (result === 'verified') return { tone: 'ok', symbol: '✓', label: 'Passed' };
-  if (result === 'reject' || result === 'fail') return { tone: 'crit', symbol: '✕', label: result === 'fail' ? 'Failed' : 'Declined' };
-  if (typeof result === 'string' && result.endsWith('_dryrun')) return { tone: 'warn', symbol: '⚠', label: 'Dry run' };
-  return { tone: 'info', symbol: 'ℹ', label: result || '—' };
+  if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
+  if (result === 'reject' || result === 'fail') return { tone: 'crit', symbol: '✕', icon: 'x', label: result === 'fail' ? 'Failed' : 'Declined' };
+  if (typeof result === 'string' && result.endsWith('_dryrun')) return { tone: 'warn', symbol: '⚠', icon: 'warn', label: 'Dry run' };
+  return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || '—' };
 }
 
 // AgentStackedBar 카드 상한 — 컨테이너 가독성 / cross-analysis 의 by_agent_top_10 캡과 일관.
 const AGENT_STACK_TOP_N = 8;
 
 // 비-actionable pseudo-agent ID — attribution-fallback 버킷 (실 agent 아님).
-// agents.jsx NON_ACTIONABLE_AGENT_IDS 와 동일 집합 → AgentStackedBar 에서 시각 표식 분리.
-const NON_ACTIONABLE_AGENT_IDS_O = new Set(['unknown', 'subagent_stop_missing']);
+// agents.jsx NON_ACTIONABLE_AGENT_IDS 와 동일 집합 (named-token 정합, T14).
+// 서버가 registry 게이트(T7)하므로 canonical agent 는 이 집합에 절대 없음 → 집합은
+// O2 include_all 포렌식 뷰 + 빈-레지스트리 fail-open 에서 sentinel 이 표면화될 때만 적용.
+const UNKNOWN_AGENT_ID_O = 'unknown';
+const SYNTHETIC_SENTINEL_AGENT_ID_O = 'subagent_stop_missing';
+const NON_ACTIONABLE_AGENT_IDS_O = new Set([UNKNOWN_AGENT_ID_O, SYNTHETIC_SENTINEL_AGENT_ID_O]);
+
+// T14 double-filter guard — 서버 registry 게이트(T7) 이후, 이 클라이언트 시각 집합은
+// canonical agent 에는 절대 매칭되지 않으므로 "정말 non-actionable 인 sentinel 만" 표식.
+// Pure: agent id + 시각 집합 → non-actionable 여부. 두 화면(agents.jsx 미러)이 동일
+// 게이트를 균일 적용하도록 인라인 `.has` 를 중앙화 (uneven cross-screen application 제거).
+function isNonActionableAgentO(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS_O) {
+  return visualSet.has(agentId);
+}
 
 // Polar-mismatch cross-tab 상수 — /api/outcomes/cross-analysis cells[] (행=confidence × 열=metric_pass, 서버가 is_polar_mismatch 계산).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) = core-outcome-record.md Mismatch Review Trigger → ⚠ 기호 표식.
@@ -289,6 +361,12 @@ function ScreenOutcomes({ onNav }) {
 
   const [refreshTick, setRefreshTick] = useStateO(0);
 
+  // T13 (O2) — canonical agent facet 소스 (registry 게이트된 /api/agents/summary).
+  const [canonicalAgentsState, setCanonicalAgentsState] = useStateO({ status: 'loading', data: null, error: null });
+
+  // T7 (O2) — forensic 'show all' 토글: include_all 파라미터로 서버 registry 게이트 해제.
+  const [includeAll, setIncludeAll] = useStateO(false);
+
   const filterAbortRef = useRefO(null);
   const detailAbortRef = useRefO(null);
 
@@ -317,6 +395,7 @@ function ScreenOutcomes({ onNav }) {
     setKeywordInput('');
     setSort('record_ts:desc');
     setPage(0);
+    setIncludeAll(false);
   }, []);
 
   // 탐색기 fetch — filter / sort / page / refresh 변경 시 재실행.
@@ -327,7 +406,7 @@ function ScreenOutcomes({ onNav }) {
 
     setSearchState({ status: 'loading', data: null, error: null });
 
-    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT);
+    const searchUrl = buildSearchUrlO(filter, sort, page, PAGE_LIMIT_DEFAULT, includeAll);
 
     fetchJsonO(searchUrl, ctrl.signal)
       .then((data) => {
@@ -337,7 +416,7 @@ function ScreenOutcomes({ onNav }) {
       .catch((err) => handleSearchErrorO(err, setSearchState, firstFailAtRef));
 
     return () => ctrl.abort();
-  }, [filter, sort, page, refreshTick]);
+  }, [filter, sort, page, refreshTick, includeAll]);
 
   // 분석 fetch — period 또는 heatmap 필터 변경 시 재실행.
   // 병렬 6 fetch: cross-analysis x5 (overall + per-result 4) + heatmap x1.
@@ -404,6 +483,20 @@ function ScreenOutcomes({ onNav }) {
     return () => ctrl.abort();
   }, [refreshTick]);
 
+  // T13 (O2) — canonical agent facet 소스 fetch. 레코드 로그는 서버가 registry 로
+  // 게이트(T7)하므로 agent facet 은 registry 집합을 나열 (페이지 rows 아님). 소스는
+  // /api/agents/summary (registry 게이트 · 활동 스코프) — 넓은 90d 창 + 최대 limit 으로
+  // 활성 registry 를 커버. 실패 → 빈 facet (graceful · 'All' 옵션은 항상 유지).
+  // explorer 필터와 독립 → 페이지네이션·기간 변경에도 안정.
+  useEffectO(() => {
+    const ctrl = new AbortController();
+    fetchJsonO('/api/agents/summary?days=90&order=runs&limit=50', ctrl.signal)
+      .then((data) => setCanonicalAgentsState({ status: 'ready', data, error: null }))
+      .catch((err) => handleErrorO(err, setCanonicalAgentsState));
+
+    return () => ctrl.abort();
+  }, [refreshTick]);
+
   // Detail fetch — modal open / nav 시 active row 변경에 반응.
   useEffectO(() => {
     if (!detailRow) {
@@ -432,8 +525,13 @@ function ScreenOutcomes({ onNav }) {
   const rows         = searchState.status === 'ready' ? (searchState.data?.rows ?? [])           : [];
   const totalMatched = searchState.status === 'ready' ? (Number(searchState.data?.total) || 0)   : 0;
 
-  // 현재 페이지 행 기준 distinct agents (filter 변경 시 갱신).
-  const distinctAgents = useMemoO(() => collectDistinctAgentsO(rows), [rows]);
+  // T13 (O2) — facet 옵션을 현재 페이지 rows 대신 canonical registry 집합에서 생성
+  // (페이지네이션 안정). registry 소스는 /api/agents/summary 응답의 agent_id 들.
+  const canonicalAgentKeys = useMemoO(
+    () => extractCanonicalAgentIdsO(canonicalAgentsState.status === 'ready' ? canonicalAgentsState.data : null),
+    [canonicalAgentsState],
+  );
+  const distinctAgents = useMemoO(() => buildAgentFacetOptionsO(canonicalAgentKeys), [canonicalAgentKeys]);
 
   // Modal navigation — 현재 페이지 내 prev/next 만 지원. cross-page (TODO MON-OUTCOMES-NAV-PERSIST):
   // 가장자리 진입 시 page hop + index 복원이 필요해 v1 에서는 페이지네이션으로 더 로드 후 재선택.
@@ -489,9 +587,11 @@ function ScreenOutcomes({ onNav }) {
           filter={filter}
           keywordInput={keywordInput}
           distinctAgents={distinctAgents}
+          includeAll={includeAll}
           sort={sort}
           onPatchFilter={(patch) => { setFilter((p) => ({ ...p, ...patch })); setPage(0); }}
           onKeywordChange={setKeywordInput}
+          onToggleIncludeAll={(v) => { setIncludeAll(v); setPage(0); }}
           onSortChange={(v) => { setSort(v); setPage(0); }}
           onReset={resetFilter}
         />
@@ -814,7 +914,7 @@ function AgentStackedBarBody({ state, onRetry }) {
       {/* per-result top-10 4개 독립 리스트 stitch → cutoff(#11↓) 기여 누락 가능 = 비권위 근사치 고지. */}
       <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
-          <span style={{ color: 'rgb(var(--dim))' }}>◇</span> = placeholder bucket (not a real agent)
+          <GlyphO name="diamond" className="text-dim"/> = placeholder bucket (not a real agent)
         </span>
       </div>
     </div>
@@ -826,7 +926,7 @@ function AgentStackedBarRow({ row }) {
   const total = row.total;
 
   // pseudo-agent (subagent_stop_missing 등) → ◇ 표식 + dim 처리로 실 agent 와 구분.
-  const isPseudoAgent = NON_ACTIONABLE_AGENT_IDS_O.has(row.agent);
+  const isPseudoAgent = isNonActionableAgentO(row.agent);
 
   // 0% 셀은 width 0 → 자동 제외.
   return (
@@ -836,7 +936,7 @@ function AgentStackedBarRow({ row }) {
         <span
           className={`flex-1 font-medium truncate ${isPseudoAgent ? 'text-dim italic' : ''}`}
           title={isPseudoAgent ? `${row.agent} (placeholder bucket — not a real agent)` : row.agent}>
-          {isPseudoAgent && <span aria-hidden="true" className="mr-1">◇</span>}
+          {isPseudoAgent && <GlyphO name="diamond" className="mr-1"/>}
           {row.agent}
         </span>
         <span className="font-mono text-dim fs-meta">{formatIntO(total)}</span>
@@ -903,7 +1003,7 @@ function KpiSkeletonO() {
 // NULL attribution_source 행은 backend 가 제외 (귀속 추적 이전 행) → 모든 비율 분모 = total_attributed.
 
 function AttributionHealthCard({ state, period, onRetry }) {
-  const { CardHead } = window.UI;
+  const { CardHead, Badge } = window.UI;
 
   const summary = state.status === 'ready' ? state.data?.window_summary : null;
   const omissionRate = summary ? summary.literal_omission_rate : null;
@@ -915,16 +1015,13 @@ function AttributionHealthCard({ state, period, onRetry }) {
         title="Reporting health"
         sub=""
         right={
-          <span
-            className="fs-meta font-mono px-2 py-0.5 rounded inline-flex items-center gap-1"
-            style={{
-              color: `rgb(var(${badge.colorVar}))`,
-              background: `rgb(var(${badge.colorVar}) / 0.12)`,
-            }}
+          <Badge
+            role="status"
+            tone={toneFromColorVarO(badge.colorVar)}
+            icon
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
-            <span aria-hidden="true">{badge.symbol}</span>
             Missing reports, {period} days: {badge.text}
-          </span>
+          </Badge>
         }
       />
       <div className="card-body">
@@ -962,36 +1059,51 @@ function AttributionHealthBody({ state, onRetry }) {
       <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
-            {ATTRIBUTION_CATEGORY_META.attribution_loss.symbol}
+            <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
           </span>
           Untraceable: {buildAttributionLossNoteO(summary?.attribution_loss_rate, totalAttributed)}
         </span>
       </div>
+      <AttributionBudgetKillListO rows={summary?.budget_truncation_by_agent}/>
     </div>
   );
 }
 
 // window 요약 4-tile — 카테고리별 비율 (분모 = total_attributed).
+//   'Missing report'(literal_omission) tile 아래 세부 sub-line 추가 — budget-kill/truncated/missing 내역.
+//   tile/rate 렌더는 불변 · sub-line 은 count 내역만 (총계·비율 미변경).
 function AttributionSummaryRow({ summary, totalAttributed }) {
+  const omissionBreakdown = buildLiteralOmissionBreakdownO(summary?.literal_omission_breakdown);
+  const omissionMeta = ATTRIBUTION_CATEGORY_META.literal_omission;
   return (
-    <div className="grid grid-cols-4 gap-2 mb-4">
-      {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
-        const meta = ATTRIBUTION_CATEGORY_META[key];
-        const rate = summary ? summary[`${key}_rate`] : null;
-        const count = Math.round((Number(rate) || 0) * totalAttributed);
-        return (
-          <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
-            <div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.2em]">
-              <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true">{meta.symbol}</span>
-              <span style={{ color: `rgb(var(${meta.colorVar}))` }}>{meta.label}</span>
+    <div className="mb-4">
+      <div className="grid grid-cols-4 gap-2">
+        {ATTRIBUTION_CATEGORY_ORDER.map((key) => {
+          const meta = ATTRIBUTION_CATEGORY_META[key];
+          const rate = summary ? summary[`${key}_rate`] : null;
+          const count = Math.round((Number(rate) || 0) * totalAttributed);
+          return (
+            <div key={key} className="bg-elev rounded-md p-2.5 border border-line">
+              <div className="flex items-start gap-1.5 fs-micro font-mono min-h-[2.2em]">
+                <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+                <span style={{ color: `rgb(var(${meta.colorVar}))` }}>{meta.label}</span>
+              </div>
+              <div className="fs-stat font-semibold text-ink mt-1 font-mono">
+                {formatRateO(rate)}
+              </div>
+              <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(count)}</div>
             </div>
-            <div className="fs-stat font-semibold text-ink mt-1 font-mono">
-              {formatRateO(rate)}
-            </div>
-            <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(count)}</div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {omissionBreakdown && (
+        <div
+          className="fs-micro font-mono text-dim mt-1.5 leading-relaxed"
+          title={`Missing report breakdown — budget kill ${formatIntO(omissionBreakdown.budget)}, truncated completion ${formatIntO(omissionBreakdown.truncated)}, completion missing ${formatIntO(omissionBreakdown.missing)} (sums to the Missing report count; the rate is unchanged)`}>
+          <span style={{ color: `rgb(var(${omissionMeta.colorVar}))` }} className="mr-1">{omissionMeta.label}:</span>
+          budget-kill {formatIntO(omissionBreakdown.budget)} · truncated {formatIntO(omissionBreakdown.truncated)} · missing {formatIntO(omissionBreakdown.missing)}
+        </div>
+      )}
     </div>
   );
 }
@@ -1082,7 +1194,7 @@ function AttributionLegend() {
               className="w-2 h-2 rounded-sm inline-flex items-center justify-center"
               style={{ background: `rgb(var(${meta.colorVar}))` }}
               aria-hidden="true"/>
-            <span aria-hidden="true" style={{ color: `rgb(var(${meta.colorVar}))` }}>{meta.symbol}</span>
+            <span aria-hidden="true" style={{ color: `rgb(var(${meta.colorVar}))` }}><GlyphO name={meta.icon}/></span>
             {meta.label}
           </span>
         );
@@ -1097,7 +1209,7 @@ function AttributionLegend() {
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
 function GraderBreakdownCard({ state, period, onRetry }) {
-  const { CardHead } = window.UI;
+  const { CardHead, Badge } = window.UI;
 
   const breakdown   = state.status === 'ready' ? state.data?.overall?.grader_breakdown : null;
   const gradedTotal = breakdown ? (Number(breakdown.graded_total) || 0) : 0;
@@ -1109,11 +1221,7 @@ function GraderBreakdownCard({ state, period, onRetry }) {
         sub=""
         right={
           state.status === 'ready' && breakdown && (
-            <span
-              className="fs-meta font-mono px-2 py-0.5 rounded inline-flex items-center gap-1"
-              style={{ color: 'rgb(var(--dim))', background: 'rgb(var(--dim) / 0.1)' }}>
-              Checked records: {formatIntO(gradedTotal)}
-            </span>
+            <Badge role="metadata">Checked records: {formatIntO(gradedTotal)}</Badge>
           )
         }
       />
@@ -1157,7 +1265,7 @@ function GraderBreakdownBody({ state, onRetry }) {
               }}
               title={`${meta.label}: ${formatIntO(count)}${pct != null ? ` (${pct.toFixed(1)}%)` : ' (legacy — not in share denominator)'}`}>
               <div className="inline-flex items-start gap-1 fs-micro uppercase tracking-wider min-h-[2.2em]" style={{ color: `rgb(var(${meta.colorVar}))` }}>
-                <span aria-hidden="true">{meta.symbol}</span>
+                <GlyphO name={meta.icon}/>
                 {meta.label}
               </div>
               <div className="mt-1 font-mono fs-title text-ink">{formatIntO(count)}</div>
@@ -1245,7 +1353,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
 function CrosstabCard({ state, period, onRetry }) {
-  const { CardHead } = window.UI;
+  const { CardHead, Badge } = window.UI;
 
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
@@ -1258,12 +1366,9 @@ function CrosstabCard({ state, period, onRetry }) {
         sub=""
         right={
           state.status === 'ready' && (
-            <span
-              className="fs-meta font-mono px-2 py-0.5 rounded inline-flex items-center gap-1"
-              style={{ color: 'rgb(var(--warn))', background: 'rgb(var(--warn) / 0.12)' }}>
-              <span aria-hidden="true">⚠</span>
+            <Badge role="status" tone="warn" icon>
               Mismatches: {formatIntO(polarTotal)} ({polarPct.toFixed(1)}%)
-            </span>
+            </Badge>
           )
         }
       />
@@ -1316,7 +1421,7 @@ function CrosstabBody({ state, onRetry }) {
       </div>
       <div className="flex flex-wrap items-center gap-3 fs-micro text-faint pt-3 border-t border-line mt-3">
         <span className="inline-flex items-center gap-1">
-          <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}>⚠</span>
+          <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
           polar mismatch (overconfidence high+fail · underconfidence low+pass)
         </span>
       </div>
@@ -1356,7 +1461,7 @@ function CrosstabCell({ cell, max, rowLabel, colLabel }) {
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-1 justify-center">
-        {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}>⚠</span>}
+        {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
       </span>
     </td>
@@ -1435,19 +1540,19 @@ function LoopEventsBody({ state, onRetry }) {
   const verifiedCnt = distMap.verified || 0;
   const rejectCnt   = distMap.reject || 0;
 
-  // 요약 = 카테고리(symbol+tone+label) dual-encode + 수량 neutral count Badge (color≠count 규칙).
+  // 요약 = 카테고리(icon+tone+label) dual-encode + 수량 neutral count Badge (color≠count 규칙).
   const summary = [
-    ['ok',   '✓', 'Runs applied',  verifiedCnt],
-    ['crit', '✕', 'Runs declined', rejectCnt],
-    ['info', 'ℹ', 'All events',    total],
+    ['ok',   'check', 'Runs applied',  verifiedCnt],
+    ['crit', 'x',     'Runs declined', rejectCnt],
+    ['info', 'info',  'All events',    total],
   ];
 
   return (
     <div className="p-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-3">
-        {summary.map(([tone, sym, label, count]) => (
+        {summary.map(([tone, iconName, label, count]) => (
           <span key={label} className="fs-body inline-flex items-center gap-1.5">
-            <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true">{sym}</span>
+            <span style={{ color: `rgb(var(--${tone}))` }} aria-hidden="true"><GlyphO name={iconName}/></span>
             <span className="text-dim">{label}</span>
             <Badge role="count">{formatIntO(count)}</Badge>
           </span>
@@ -1478,7 +1583,7 @@ function LoopEventsBody({ state, onRetry }) {
                     {e.agent || '—'}
                   </td>
                   <td className="text-left px-2 py-1.5 border-b border-line" title={String(e.eval_result || '')}>
-                    <Badge role="status" tone={meta.tone}>{meta.label}</Badge>
+                    <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
                   </td>
                   <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">+{formatIntO(Number(e.changes_added ?? 0))}</td>
                   <td className="text-right text-dim font-mono px-2 py-1.5 border-b border-line">-{formatIntO(Number(e.changes_removed ?? 0))}</td>
@@ -1501,11 +1606,12 @@ const CHIP_FILTER_AXES = [
   { axis: 'confidence',  label: 'confidence',  options: CONFIDENCE_OPTIONS  },
   { axis: 'metric_pass', label: 'metric_pass', options: METRIC_PASS_OPTIONS },
   { axis: 'review_flag', label: 'review_flag', options: REVIEW_FLAG_OPTIONS },
+  { axis: 'attribution_source', label: 'attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
 
 function FilterSidebar({
-  filter, keywordInput, distinctAgents, sort,
-  onPatchFilter, onKeywordChange, onSortChange, onReset,
+  filter, keywordInput, distinctAgents, includeAll, sort,
+  onPatchFilter, onKeywordChange, onToggleIncludeAll, onSortChange, onReset,
 }) {
   const { CardHead, Badge } = window.UI;
 
@@ -1545,6 +1651,20 @@ function FilterSidebar({
               <option key={a} value={a}>{a}</option>
             ))}
           </select>
+        </FilterAxisGroup>
+
+        {/* T7/O2 forensic 'show all' — include_all=1 로 서버 registry 게이트 해제 (비-registry / de-registered 노출). */}
+        <FilterAxisGroup label="Record scope">
+          <label className="flex items-center gap-2 fs-meta cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={includeAll}
+              onChange={(e) => onToggleIncludeAll(e.target.checked)}
+              aria-label="Show all records including non-registry and de-registered agents"/>
+            <span className={includeAll ? 'text-ink' : 'text-dim'}>
+              Show all (incl. non-registry)
+            </span>
+          </label>
         </FilterAxisGroup>
 
         {CHIP_FILTER_AXES.map(({ axis, label, options }) => (
@@ -1698,8 +1818,16 @@ function buildActiveFilterChipsO(filter) {
   if (filter.confidence)   chips.push(`conf=${filter.confidence}`);
   if (filter.metric_pass)  chips.push(`metric=${filter.metric_pass}`);
   if (filter.review_flag)  chips.push(`review=${filter.review_flag}`);
+  if (filter.attribution_source) chips.push(`attr=${filter.attribution_source}`);
   if (filter.q)            chips.push(`q="${truncateO(filter.q, 18)}"`);
   return chips;
+}
+
+// 활성 필터 칩 배지 렌더 — 헤더 칩(ActiveFilterChips) + 빈-상태 echo(ResultTableZeroStateO) 공용.
+//   래퍼 div 는 정렬 관례가 호출부마다 달라 각 호출부가 소유 → 공용은 배지 map 만.
+function FilterChipsO({ chips }) {
+  const { Badge } = window.UI;
+  return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
 }
 
 function ActiveFilterChips({ filter }) {
@@ -1708,14 +1836,7 @@ function ActiveFilterChips({ filter }) {
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      {chips.map((c) => (
-        <span
-          key={c}
-          className="fs-micro font-mono px-1.5 py-0.5 rounded"
-          style={{ background: 'rgb(var(--accent) / 0.1)', color: 'rgb(var(--accent))' }}>
-          {c}
-        </span>
-      ))}
+      <FilterChipsO chips={chips}/>
     </div>
   );
 }
@@ -1750,14 +1871,7 @@ function ResultTableZeroStateO({ filter, onResetFilter }) {
       {chips.length > 0 && (
         <div className="flex items-center gap-1 flex-wrap justify-center mt-2">
           <span className="fs-micro text-faint font-mono">active:</span>
-          {chips.map((c) => (
-            <span
-              key={c}
-              className="fs-micro font-mono px-1.5 py-0.5 rounded"
-              style={{ background: 'rgb(var(--accent) / 0.1)', color: 'rgb(var(--accent))' }}>
-              {c}
-            </span>
-          ))}
+          <FilterChipsO chips={chips}/>
         </div>
       )}
       <div className="mt-3">
@@ -1818,9 +1932,9 @@ function ResultTable({ rows, sort, onSortChange, onRowClick }) {
   );
 }
 
-function getSortArrow(isActive, dir) {
+function getSortArrowIcon(isActive, dir) {
   if (!isActive) return '';
-  return dir === 'asc' ? '↑' : '↓';
+  return dir === 'asc' ? 'arrow-up' : 'arrow-down';
 }
 
 function getAriaSort(isActive, dir) {
@@ -1831,7 +1945,7 @@ function getAriaSort(isActive, dir) {
 function SortableHeader({ label, sortKey, currentSort, onSortChange, align, width, descOnly }) {
   const [field, dir] = currentSort.split(':');
   const isActive = field === sortKey;
-  const arrow = getSortArrow(isActive, dir);
+  const arrowIcon = getSortArrowIcon(isActive, dir);
 
   // descOnly (e.g. revision_count) → backend allowlist 가 desc 만 허용. 활성 상태에서 클릭하면 방향 토글.
   const handleClick = () => {
@@ -1851,7 +1965,7 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
       onClick={handleClick}
       aria-sort={getAriaSort(isActive, dir)}>
       {label}
-      {arrow && <span className="ml-1 text-accent">{arrow}</span>}
+      {arrowIcon && <GlyphO name={arrowIcon} className="ml-1 text-accent"/>}
     </th>
   );
 }
@@ -1896,15 +2010,15 @@ function ConfidenceChipO({ confidence }) {
 //   true=✓ muted · false/null=– muted (self-report false 도 응급 신호 아님).
 function MetricPassMarkO({ metricPass }) {
   const isPass = metricPass === true;
-  const symbol = isPass ? '✓' : '–';
+  const iconName = isPass ? 'check' : 'minus';
   const label  = metricPass === true ? 'pass (self-reported)' : metricPass === false ? 'fail (self-reported)' : 'not reported';
   return (
     <span
-      className="fs-meta font-mono"
+      className="fs-meta font-mono inline-flex items-center align-middle"
       style={{ color: isPass ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
       role="img"
       aria-label={`metric_pass ${label}`}>
-      {symbol}
+      <GlyphO name={iconName}/>
     </span>
   );
 }
@@ -1971,8 +2085,8 @@ function ResultTableRow({ row, onRowClick }) {
   const summary  = truncateO(row.summary || '', 60);
   const cidShort = truncateO(row.cid || '', 12);
   const grader   = graderVerdictMetaO(row.grader_verdict);
-  // result tone/glyph/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
-  const resultMeta  = window.UI.RESULT_META[row.result] || { glyph: 'ℹ', label: row.result };
+  // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
+  const resultMeta  = window.UI.RESULT_META[row.result] || { icon: 'info', label: row.result };
   const resultColor = `rgb(var(${resultColorVarO(row.result)}))`;
 
   return (
@@ -1997,7 +2111,7 @@ function ResultTableRow({ row, onRowClick }) {
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
-          <span aria-hidden="true">{resultMeta.glyph}</span>
+          <GlyphO name={resultMeta.icon}/>
           {row.result}
         </span>
       </td>
@@ -2021,7 +2135,7 @@ function ResultTableRow({ row, onRowClick }) {
             : ''
         }`}>
         <span className="inline-flex items-center gap-1 justify-center" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
-          <span aria-hidden="true">{grader.symbol}</span>
+          <GlyphO name={grader.icon}/>
           {grader.label}
         </span>
       </td>
@@ -2031,6 +2145,7 @@ function ResultTableRow({ row, onRowClick }) {
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
         <PoisonedBadgeO row={row}/>
         {isReview && <ReviewReasonBadgeO row={row}/>}
+        <AttributionSourceBadgeO row={row}/>
         {summary}
       </td>
       <td className="text-left text-faint font-mono px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 110 }} title={row.cid || ''}>
@@ -2047,26 +2162,28 @@ function ReviewReasonBadgeO({ row }) {
   if (reasons.length === 0) return null;
   const text = reasons.map((r) => r.label).join('·');
   const title = `Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`;
+  const { Badge } = window.UI;
   return (
-    <span
-      className="fs-micro font-mono px-1 py-0.5 rounded mr-1.5 inline-flex items-center gap-0.5 align-middle"
-      style={{ color: 'rgb(var(--warn))', background: 'rgb(var(--warn) / 0.12)' }}
-      title={title}>
-      <span aria-hidden="true">⚠</span>{text}
-    </span>
+    <Badge role="status" tone="warn" icon title={title} className="mr-1.5">{text}</Badge>
   );
 }
 
 // poisoned_window 행 배지 — 분석 집계 제외 행 표식 (탐색기에는 그대로 노출 · 'Quarantined: N excluded' 칩과 정합).
 function PoisonedBadgeO({ row }) {
   if (!row || row.poisoned_window !== true) return null;
+  const { Badge } = window.UI;
   return (
-    <span
-      className="fs-micro font-mono px-1 py-0.5 rounded mr-1.5 inline-flex items-center gap-0.5 align-middle"
-      style={{ color: 'rgb(var(--warn))', background: 'rgb(var(--warn) / 0.12)', border: '1px solid rgb(var(--warn) / 0.35)' }}
-      title="Quarantined row — excluded from analysis stats.">
-      <span aria-hidden="true">⚠</span>Quarantined
-    </span>
+    <Badge role="status" tone="warn" icon title="Quarantined row — excluded from analysis stats." className="mr-1.5">Quarantined</Badge>
+  );
+}
+
+// attribution_source == 'budget-truncation' 행 표식 — 예산 상한 초과로 completion 미방출된 subagent (info-tone, 에러 아님).
+//   그 외 source 는 미렌더 — raw source 전량 노출 = 테이블 clutter · 관심 신호(budget-kill)만 표면화.
+function AttributionSourceBadgeO({ row }) {
+  if (!row || row.attribution_source !== ATTRIBUTION_SOURCE_BUDGET_TRUNCATION) return null;
+  const { Badge } = window.UI;
+  return (
+    <Badge role="status" tone="info" icon title="attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block." className="mr-1.5">budget-kill</Badge>
   );
 }
 
@@ -2127,6 +2244,7 @@ function reviewFlagLabel(flag) {
 function DetailMetadata({ row, detail }) {
   // defensive guard — row undefined 에서 React batching edge case 회피 (내부 optional chaining 도 이중 안전망).
   if (!row) return null;
+  const { Badge } = window.UI;
 
   // concerns/files_modified 는 전 표본 빈 배열 → length>0 게이트 영구 미렌더 (dead UI 제거).
   // 데이터 미채움 자체는 쓰기 파이프라인 결함 가능성 → 모니터 범위 밖, 시스템 트랙 에스컬레이션.
@@ -2145,7 +2263,7 @@ function DetailMetadata({ row, detail }) {
       <div>
         <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
         <div className="inline-flex items-center gap-1" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
-          <span aria-hidden="true">{grader.symbol}</span>
+          <GlyphO name={grader.icon}/>
           {grader.label}
         </div>
       </div>
@@ -2155,13 +2273,7 @@ function DetailMetadata({ row, detail }) {
         <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
           {reviewFlagLabel(row?.review_flag)}
           {row?.review_flag === true && window.UI.reviewFlagReasons(row).map((r) => (
-            <span
-              key={r.key}
-              className="fs-micro font-mono px-1 py-0.5 rounded"
-              style={{ color: 'rgb(var(--warn))', background: 'rgb(var(--warn) / 0.12)' }}
-              title={r.title}>
-              <span aria-hidden="true">⚠</span> {r.label}
-            </span>
+            <Badge key={r.key} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
           ))}
         </div>
       </div>
@@ -2388,12 +2500,13 @@ function defaultFilterO() {
     confidence: '',
     metric_pass: '',
     review_flag: '',
+    attribution_source: '',
     q: '',
   };
 }
 
 // 선택 가능한 faceted 축 — 'N of M active' 카운터 분모. period(days)는 항상-설정 기본축이라 제외.
-const FACET_AXES = ['agent', 'task_type', 'result', 'confidence', 'metric_pass', 'review_flag', 'q'];
+const FACET_AXES = ['agent', 'task_type', 'result', 'confidence', 'metric_pass', 'review_flag', 'attribution_source', 'q'];
 
 // 활성 facet 수 (기본값이 아닌 축) — period 는 30 기본과 다를 때만 1 카운트.
 function countActiveFacetsO(filter) {
@@ -2429,6 +2542,7 @@ function readFilterFromHashO() {
     confidence:  params.get('confidence')  || '',
     metric_pass: params.get('metric_pass') || '',
     review_flag: params.get('review_flag') || '',
+    attribution_source: params.get('attribution_source') || '',
     q:           params.get('q')           || '',
   };
 }
@@ -2442,7 +2556,7 @@ function readSortFromHashO() {
 }
 
 // filter 객체에서 빈 값을 제외하고 URLSearchParams 에 set 하는 공통 옵셔널 축 목록.
-const OPTIONAL_FILTER_AXES = ['agent', 'task_type', 'result', 'confidence', 'metric_pass', 'review_flag', 'q'];
+const OPTIONAL_FILTER_AXES = ['agent', 'task_type', 'result', 'confidence', 'metric_pass', 'review_flag', 'attribution_source', 'q'];
 
 function setOptionalAxesO(params, filter) {
   for (const axis of OPTIONAL_FILTER_AXES) {
@@ -2470,22 +2584,48 @@ function writeFilterToHashO(filter, sort) {
   } catch (_e) { /* hash sync best-effort */ }
 }
 
-function buildSearchUrlO(filter, sort, page, limit) {
+// T7 (O2) forensic 'show all' — include_all=1 은 서버 registry 게이트를 해제해 전체
+// all-records 뷰(de-registered / sentinel 포함)를 반환. Pure param setter
+// (setOptionalAxesO 미러): 토글 on 일 때만 set, idempotent, side-channel state 없음.
+// off → param 생략 → 서버가 기본 registry 게이트 적용.
+function setIncludeAllParamO(params, includeAll) {
+  if (includeAll) params.set('include_all', '1');
+  return params;
+}
+
+function buildSearchUrlO(filter, sort, page, limit, includeAll) {
   const params = new URLSearchParams();
   params.set('days',   String(filter.days));
   params.set('limit',  String(limit));
   params.set('offset', String(page * limit));
   params.set('sort',   sort);
   setOptionalAxesO(params, filter);
+  setIncludeAllParamO(params, includeAll);
   return `/api/outcomes/search?${params.toString()}`;
 }
 
-function collectDistinctAgentsO(rows) {
+// T13 (O2) — agent facet 옵션을 canonical registry 집합에서 생성 (현재 페이지 rows
+// 파생 아님 · 구 collectDistinctAgentsO 는 페이지 스코프라 페이지네이션마다 드롭다운이
+// 흔들렸다). Pure: canonical keys in → 정렬·중복제거된 non-empty 옵션값 out.
+// 빈/부재 입력 → [] (facet 은 'All' 만 노출).
+function buildAgentFacetOptionsO(canonicalKeys) {
+  if (!Array.isArray(canonicalKeys)) return [];
   const set = new Set();
-  for (const r of rows) {
-    if (r && r.agent) set.add(r.agent);
+  for (const key of canonicalKeys) {
+    if (typeof key === 'string' && key) set.add(key);
   }
   return Array.from(set).sort();
+}
+
+// /api/agents/summary 응답 → canonical agent-id 배열 (서버가 registry 게이트).
+// facet 소스가 페이지 rows 대신 registry 집합이 되도록 summary rows 의 agent_id 만 추출.
+function extractCanonicalAgentIdsO(summaryData) {
+  const agents = summaryData && Array.isArray(summaryData.agents) ? summaryData.agents : [];
+  const out = [];
+  for (const a of agents) {
+    if (a && typeof a.agent_id === 'string' && a.agent_id) out.push(a.agent_id);
+  }
+  return out;
 }
 
 async function fetchJsonO(url, signal) {
@@ -2549,11 +2689,11 @@ function formatRateO(rate) {
 // literal-omission 선택 기간 비율 → 심각도 밴드 배지. null → ℹ '—' (데이터 부재).
 function attributionOmissionBadgeO(rate) {
   if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
-    return { symbol: 'ℹ', colorVar: '--info', text: '—' };
+    return { symbol: 'ℹ', icon: 'info', colorVar: '--info', text: '—' };
   }
   const value = Number(rate);
   const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { symbol: band.symbol, colorVar: band.colorVar, text: `${(value * 100).toFixed(2)}% ${band.label}` };
+  return { symbol: band.symbol, icon: band.icon, colorVar: band.colorVar, text: `${(value * 100).toFixed(2)}% ${band.label}` };
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.

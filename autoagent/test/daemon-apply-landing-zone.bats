@@ -1,69 +1,142 @@
 #!/usr/bin/env bats
-# daemon-apply.sh apply-time LANDING-ZONE guard suite — pins assert_diff_in_editable_region:
-#   * in-region edit       → ACCEPT (apply commit lands, file changed)
-#   * out-of-region edit   → REJECT + rollback intact (WIP commit gone, tree clean,
-#                            row left as an error, file unchanged)
-#   * no-marker target      → REJECT (fail-closed)
+# daemon-apply.sh apply-time LANDING-ZONE guard suite (git-FREE, P1-T4) — pins
+# assert_diff_in_editable_region:
+#   * in-region edit       → ACCEPT (bytes land, applied-log status=applied)
+#   * out-of-region edit   → REJECT + target byte-unchanged (guard runs pre-apply)
+#   * no-marker target      → REJECT (fail-closed) + byte-unchanged
 #   * multi-region file      → one hunk per disjoint region → ACCEPT
-#   * header-less fragment   → REJECT (Strategy-B EOF append lands outside) + rollback
-#   * unreadable target      → read_error verdict → REJECT (fail-closed) + rollback
+#   * header-less fragment   → REJECT (Strategy-B EOF append lands outside) + unchanged
+#   * unreadable target      → read_error verdict → REJECT (fail-closed) + unchanged
 #   * mixed-hunk diff        → one in-region + one out-of-region hunk → REJECT the
-#                            WHOLE diff (no partial apply) + rollback intact
+#                            WHOLE diff (no partial apply) + byte-unchanged
+#
+# GIT-FREE MODEL (P1-T2): the daemon no longer wraps applies in git commits. The
+# transaction is a before-image copy + `git apply --recount` (which lands a unified
+# diff OUTSIDE any git repo) + verify + atomic restore-from-.bak. Consequences for
+# THIS suite: the AGENTS dir is a PLAIN directory (no `git init`); a landing-zone
+# REJECT writes NO bytes (the guard runs BEFORE the apply, nothing to restore); and
+# "rollback intact" is asserted as the target staying BYTE-IDENTICAL to a pre-apply
+# pristine snapshot — NOT via HEAD/tree rev-parse (there are no commits to inspect).
 #
 # Run via: bats autoagent/test/daemon-apply-landing-zone.bats
-# Requires: bats >= 1.5.0 (brew install bats-core), bash 3.2+, git, python3
+# Requires: bats >= 1.5.0 (brew install bats-core), bash 3.2+, git (for `git apply`
+# only), python3
 #
-# Hermetic strategy: a per-test standalone git repo fixture under a realpath-
-# resolved temp root (pwd -P so the macOS /var -> /private/var symlink does not
-# trip verify_target_in_agents). The PG backlog path is masked by pointing PATH
-# at a stub bin of REAL-binary symlinks (built with `type -P`) that deliberately
-# OMITS psql — so backlog_source_available() is false and daemon-apply takes the
-# JSON-report fallback, exercising the full apply_patch_rows → guard → rollback
-# flow against the report-sourced patch. No PG, no live agents/ dir is touched.
+# Hermetic strategy: the PG backlog path is masked by pointing PATH at a stub bin
+# that MIRRORS every real command EXCEPT psql (whole-PATH mirror — robust to the
+# git-free daemon's shifting command set, where a hand-maintained allowlist would
+# silently 127 on a newly-used binary like basename/mv/stat). backlog_source_
+# available() (command -v psql) is therefore false and daemon-apply takes the
+# deterministic JSON-report fallback, exercising the full apply_patch_rows → guard →
+# (apply | reject) flow against the report-sourced patch. No PG, no live agents/
+# dir, no git repo is touched. git is NOT mirrored: the stub carries an
+# allow-only-apply git shim (precedent: git-txn-gitfree.bats) that delegates
+# `git [-C <dir>] apply` to the real git and HARD-FAILS every other subcommand —
+# a suppressed non-apply git call inside the daemon can never pass unnoticed at
+# runtime.
 
 bats_require_minimum_version 1.5.0
 
-REAL_SCRIPT="${HOME}/.glass-atrium/autoagent/daemon-apply.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+
+# build_psql_masked_stub — symlink every real command into $1 EXCEPT psql. The
+# whole-PATH mirror (vs a hand-maintained allowlist) is deliberate: the git-free
+# daemon + its sourced libs (git-txn.sh / apply-lock.sh) call a broad, evolving set
+# of coreutils (basename/dirname/mv/stat/cp/…); an allowlist that misses one makes
+# the daemon exit 127 mid-run and every test fail opaquely. Mirroring the whole
+# PATH keeps psql the ONLY thing masked, so command -v psql fails under the
+# stub-only PATH → the deterministic report-fallback path is taken.
+build_psql_masked_stub() {
+  local stub="$1" d f name
+  local IFS=:
+  for d in ${PATH}; do
+    [[ -d "${d}" ]] || continue
+    for f in "${d}"/*; do
+      [[ -x "${f}" && ! -d "${f}" ]] || continue
+      name="${f##*/}"
+      # psql masked (forces the report fallback); git replaced by the
+      # allow-only-apply shim build_git_apply_shim writes into the stub.
+      [[ "${name}" == "psql" || "${name}" == "git" ]] && continue
+      [[ -e "${stub}/${name}" ]] || ln -sf "${f}" "${stub}/${name}"
+    done
+  done
+}
+
+# build_git_apply_shim — write an allow-only-apply `git` into the stub dir:
+# `git [-C <dir>] apply …` execs the REAL git; EVERY other subcommand hard-fails
+# to stderr + rc 97 (precedent: git-txn-gitfree.bats). This closes the runtime
+# gap the whole-PATH mirror left open — a suppressed non-apply git call inside
+# the daemon now breaks its test loudly instead of silently succeeding. The
+# LZ_GIT_APPLY_READY / LZ_GIT_APPLY_RESUME seam lets the SIGTERM test below hold
+# the daemon INSIDE an in-flight apply (both env vars unset → plain
+# pass-through; the RESUME wait is BOUNDED so an aborted test can never strand
+# a spinning shim).
+build_git_apply_shim() {
+  local stub="$1" real_git
+  real_git="$(command -v git)"
+  cat >"${stub}/git" <<EOF
+#!/usr/bin/env bash
+sub="\${1:-}"
+[[ "\${sub}" == "-C" ]] && sub="\${3:-}"
+if [[ "\${sub}" == "apply" ]]; then
+  if [[ -n "\${LZ_GIT_APPLY_READY:-}" ]]; then
+    : >"\${LZ_GIT_APPLY_READY}"
+    j=0
+    while [[ ! -e "\${LZ_GIT_APPLY_RESUME:-}" && "\${j}" -lt 100 ]]; do
+      sleep 0.1
+      j=\$((j + 1))
+    done
+  fi
+  exec "${real_git}" "\$@"
+fi
+printf 'git-shim: BLOCKED non-apply git subcommand: %s\n' "\${sub:-\${1:-}}" >&2
+exit 97
+EOF
+  chmod +x "${stub}/git"
+}
+
+# setup_file — build the psql-masked stub + git shim ONCE (read-only, shared
+# across tests). Per-test setup only creates the mutable agents/reports dirs.
+# `skip` is illegal here; a missing daemon-apply.sh is handled by the per-test
+# setup skip below.
+setup_file() {
+  STUB="${BATS_FILE_TMPDIR}/bin"
+  mkdir -p -- "${STUB}"
+  if [[ -f "${GA}/autoagent/daemon-apply.sh" ]]; then
+    build_psql_masked_stub "${STUB}"
+    build_git_apply_shim "${STUB}"
+  fi
+  export STUB
+}
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
   # pwd -P resolves /var -> /private/var so the realpath containment check passes.
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-lz-bats.XXXXXX)" && pwd -P)"
-  STUB="${WORK}/bin"
-  AGENTS="${WORK}/agents"
+  AGENTS="${WORK}/agents" # PLAIN dir — the git-free daemon needs NO repo here.
   REPORTS="${WORK}/reports"
-  mkdir -p "${STUB}" "${AGENTS}" "${REPORTS}"
-
-  # Stub bin = real-binary symlinks via `type -P` (ignores shell functions /
-  # aliases that bare `command -v` would return), psql DELIBERATELY omitted so
-  # the report fallback is taken. Run the loop inside bash for `type -P`.
-  bash -c '
-    stub="$1"; shift
-    for t in "$@"; do
-      p="$(type -P "${t}" 2>/dev/null)" || true
-      [[ -n "${p}" ]] && ln -sf "${p}" "${stub}/${t}"
-    done
-  ' _ "${STUB}" \
-    git python3 jq date mktemp tail head wc tr cut grep sed awk cat \
-    rmdir mkdir rm bash sh dirname xargs find sort
-
-  git -C "${AGENTS}" init -q
-  git -C "${AGENTS}" config user.email bats@test.local
-  git -C "${AGENTS}" config user.name bats
+  mkdir -p "${AGENTS}" "${REPORTS}"
 }
 
 teardown() {
-  # Restore traversable perms across the tree first: the read_error test
-  # chmod 000's a target's PARENT dir to force the guard's open() to fail, and
-  # `rm -rf` cannot recurse into a 000 dir. u+rwX is a no-op for the other tests.
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  # Reap a straggler daemon from the SIGTERM test if an assertion aborted that
+  # test between spawn and its bounded reap (best-effort; pid is our own child).
+  [[ -n "${DAEMON_PID:-}" ]] && kill -9 "${DAEMON_PID}" 2>/dev/null || true
+  DAEMON_PID=""
+  # Restore traversable perms across the tree first: the read_error test chmod
+  # 000's a target's PARENT dir to force the guard's open() to fail, and `rm -rf`
+  # cannot recurse into a 000 dir. u+rwX is a no-op for the other tests.
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# commit_agents — stage + commit the current agents/ tree (initial fixture state).
-commit_agents() {
-  git -C "${AGENTS}" add -A
-  git -C "${AGENTS}" commit -qm "fixture"
+# snapshot_pristine — capture a byte-for-byte pre-apply baseline of the target.
+# git-free rollback assertion: a REJECTED diff writes NO bytes (the landing-zone
+# guard runs BEFORE the apply), so the target must stay identical to this snapshot.
+snapshot_pristine() {
+  PRISTINE_SNAPSHOT="${WORK}/pristine.snapshot"
+  cp -p -- "$1" "${PRISTINE_SNAPSHOT}"
 }
 
 # write_report — emit a one-patch JSON report (report-fallback shape) selecting
@@ -96,8 +169,8 @@ print(
 PY
 }
 
-# run_apply — invoke daemon-apply.sh on the report fixture with the stub PATH
-# (psql masked → report fallback) and the standalone agents repo.
+# run_apply — invoke daemon-apply.sh on the report fixture with the psql-masked
+# stub PATH (report fallback) and the plain agents dir (no git repo).
 run_apply() {
   run env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
@@ -112,15 +185,12 @@ applied_log_path() {
 # (a) in-region edit → ACCEPT
 # ---------------------------------------------------------------------------
 
-@test "in-region edit lands (apply commit, file changed)" {
+@test "in-region edit lands (bytes applied, status=applied logged)" {
   printf '%s\n' \
     '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
     '## Goal' '<!-- EDITABLE:BEGIN -->' \
     'editable goal line one' 'editable goal line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
 
   local diff='--- a/probe.md
 +++ b/probe.md
@@ -133,26 +203,22 @@ applied_log_path() {
 
   [[ "${status}" -eq 0 ]]
   grep -q 'inserted editable line' "${AGENTS}/probe.md"
-  # A new [AUTO] commit landed (HEAD advanced).
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" != "${head_before}" ]]
+  # git-free: no commit — the applied-log status is the landing record.
   grep -q '"status":"applied"' "$(applied_log_path)"
 }
 
 # ---------------------------------------------------------------------------
-# (b) out-of-region edit → REJECT + rollback intact
+# (b) out-of-region edit → REJECT + target byte-unchanged
 # ---------------------------------------------------------------------------
 
-@test "out-of-region edit is rejected and the tree is fully rolled back" {
+@test "out-of-region edit is rejected and the target is byte-unchanged (no apply)" {
   printf '%s\n' \
     '# Probe Agent' '' '## Absolute Rules' '' \
     '- MUST NOT do the dangerous thing' '- protected rule line alpha' '' \
     '## Goal' '<!-- EDITABLE:BEGIN -->' \
     'editable goal line one' 'editable goal line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before tree_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
-  tree_before="$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')"
+  snapshot_pristine "${AGENTS}/probe.md"
 
   # Diff anchored on the PROTECTED Absolute-Rules lines (outside any region).
   local diff='--- a/probe.md
@@ -167,14 +233,13 @@ applied_log_path() {
   # Loud reject reason recorded.
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
   grep -q '"verdict":"out_of_region"' "$(applied_log_path)"
-  # File NOT changed (grep finds nothing → non-zero; assert the absence explicitly,
-  # NOT a bare `! grep` which Bats does not treat as a failing assertion — SC2314).
+  # git-free rollback: the target is byte-identical to the pre-apply snapshot
+  # (the guard rejected BEFORE any apply, so NOTHING was written).
+  cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md"
+  # And the injected line never reached the file (SC2314-safe negative assertion:
+  # run grep + status check, NOT a bare `! grep` which Bats ignores).
   run grep -q 'injected protected rule' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
-  # Rollback intact: HEAD unchanged (no orphan WIP commit) + working tree clean.
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" == "${head_before}" ]]
-  [[ "$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')" == "${tree_before}" ]]
-  [[ -z "$(git -C "${AGENTS}" status --porcelain)" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -186,9 +251,7 @@ applied_log_path() {
     '# Probe Agent' '' '## Goal' '' \
     'plain unmarked body line one' 'plain unmarked body line two' \
     >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
+  snapshot_pristine "${AGENTS}/probe.md"
 
   local diff='--- a/probe.md
 +++ b/probe.md
@@ -201,10 +264,9 @@ applied_log_path() {
 
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
   grep -q '"verdict":"no_marker"' "$(applied_log_path)"
+  cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md"
   run grep -q 'inserted line' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" == "${head_before}" ]]
-  [[ -z "$(git -C "${AGENTS}" status --porcelain)" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -221,9 +283,6 @@ applied_log_path() {
     '## Work Rules' '<!-- EDITABLE:BEGIN -->' \
     'work editable line one' 'work editable line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
 
   # Two hunks: one into the first (Goal) region, one into the second (Work Rules).
   local diff='--- a/probe.md
@@ -242,7 +301,6 @@ applied_log_path() {
   [[ "${status}" -eq 0 ]]
   grep -q 'inserted into goal region' "${AGENTS}/probe.md"
   grep -q 'inserted into work region' "${AGENTS}/probe.md"
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" != "${head_before}" ]]
   grep -q '"status":"applied"' "$(applied_log_path)"
 }
 
@@ -250,16 +308,13 @@ applied_log_path() {
 # (e) header-less Strategy-B EOF-append fragment → REJECT (fail-closed)
 # ---------------------------------------------------------------------------
 
-@test "header-less Strategy-B fragment is rejected and the tree is fully rolled back" {
+@test "header-less Strategy-B fragment is rejected and the target is byte-unchanged" {
   printf '%s\n' \
     '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
     '## Goal' '<!-- EDITABLE:BEGIN -->' \
     'editable goal line one' 'editable goal line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before tree_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
-  tree_before="$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')"
+  snapshot_pristine "${AGENTS}/probe.md"
 
   # No '--- '/'+++ ' headers: a Strategy-B append-only fragment whose only valid
   # placement is EOF, which by construction lands OUTSIDE any editable region.
@@ -270,34 +325,27 @@ applied_log_path() {
 
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
   grep -q '"verdict":"header_less"' "$(applied_log_path)"
+  cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md"
   run grep -q 'appended fragment line one' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
-  # Rollback intact: HEAD unchanged (no orphan WIP commit) + working tree clean.
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" == "${head_before}" ]]
-  [[ "$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')" == "${tree_before}" ]]
-  [[ -z "$(git -C "${AGENTS}" status --porcelain)" ]]
 }
 
 # ---------------------------------------------------------------------------
-# (f) unreadable target → read_error verdict → REJECT (fail-closed) + rollback
+# (f) unreadable target → read_error verdict → REJECT (fail-closed) + unchanged
 # ---------------------------------------------------------------------------
 
-@test "unreadable target yields read_error and the tree is fully rolled back" {
-  # The marker-bearing target lives in a SUBDIR of the repo so we can revoke
-  # traversal on the PARENT (chmod 000 on a tracked FILE flips git's stored mode
-  # 100644->100000 = a tracked change that would dirty the tree and trigger the
-  # stash path, which restores the file readable before the guard reads it; a
-  # DIRECTORY mode is NOT git-tracked, so the tree stays clean + the file stays
-  # genuinely unreadable). The guard's open() then raises OSError → read_error.
+@test "unreadable target yields read_error and the target is byte-unchanged" {
+  # The marker-bearing target lives in a SUBDIR so we can revoke traversal on its
+  # PARENT dir (chmod 000). git-free simplifies the old rationale: there is NO git
+  # tree/stash, so a chmod cannot dirty a worktree or trip a stash-restore path —
+  # the parent-dir 000 simply makes the guard's python open() raise OSError, which
+  # the fail-closed guard maps to the read_error verdict and rejects (no bytes).
   mkdir -p "${AGENTS}/locked"
   printf '%s\n' \
     '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
     'editable goal line one' 'editable goal line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/locked/probe.md"
-  commit_agents
-  local head_before tree_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
-  tree_before="$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')"
+  snapshot_pristine "${AGENTS}/locked/probe.md"
 
   # A diff that would be perfectly valid (in-region) IF the target were readable —
   # so the ONLY thing that can reject it is the read_error fail-closed branch.
@@ -313,37 +361,30 @@ applied_log_path() {
   # teardown restores perms (chmod -R u+rwX) before rm -rf.
   chmod 000 "${AGENTS}/locked"
   run_apply
-  # Restore immediately so the assertion git/grep calls below can read the file.
+  # Restore immediately so the assertion grep/cmp calls below can read the file.
   chmod 755 "${AGENTS}/locked"
 
   # Loud read_error reject reason recorded.
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
   grep -q '"verdict":"read_error"' "$(applied_log_path)"
-  # File NOT changed (SC2314-safe negative assertion: run grep + status check, not `! grep`).
+  # Target byte-unchanged + the insert never landed (SC2314-safe negative check).
+  cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/locked/probe.md"
   run grep -q 'inserted editable line' "${AGENTS}/locked/probe.md"
   [[ "${status}" -ne 0 ]]
-  # Rollback intact: HEAD unchanged (no orphan WIP commit), tree hash unchanged,
-  # working tree clean.
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" == "${head_before}" ]]
-  [[ "$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')" == "${tree_before}" ]]
-  [[ -z "$(git -C "${AGENTS}" status --porcelain)" ]]
 }
 
 # ---------------------------------------------------------------------------
 # (g) mixed-hunk diff (one in-region + one out-of-region) → REJECT WHOLE diff
 # ---------------------------------------------------------------------------
 
-@test "mixed-hunk diff with one out-of-region hunk rejects the whole diff and rolls back" {
+@test "mixed-hunk diff with one out-of-region hunk rejects the whole diff (byte-unchanged)" {
   printf '%s\n' \
     '# Probe Agent' '' '## Absolute Rules' '' \
     '- MUST NOT do the dangerous thing' '- protected rule line alpha' '' \
     '## Goal' '<!-- EDITABLE:BEGIN -->' \
     'editable goal line one' 'editable goal line two' \
     '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
-  commit_agents
-  local head_before tree_before
-  head_before="$(git -C "${AGENTS}" rev-parse HEAD)"
-  tree_before="$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')"
+  snapshot_pristine "${AGENTS}/probe.md"
 
   # ONE diff, TWO hunks against the SAME target:
   #   hunk 1 → anchors on the EDITABLE Goal lines  (lands INSIDE a region — valid)
@@ -366,14 +407,87 @@ applied_log_path() {
   # Loud out_of_region reject reason recorded (the protected hunk is the trigger).
   grep -q '"reason":"landing_zone_reject"' "$(applied_log_path)"
   grep -q '"verdict":"out_of_region"' "$(applied_log_path)"
-  # NEITHER hunk applied — assert the in-region one was NOT partially applied
-  # (SC2314-safe negative assertion via run grep + status check).
+  # git-free: NEITHER hunk applied — the target is byte-identical to the snapshot
+  # (no partial apply, nothing written).
+  cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md"
   run grep -q 'inserted into editable region' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
   run grep -q 'injected protected rule' "${AGENTS}/probe.md"
   [[ "${status}" -ne 0 ]]
-  # Rollback intact: HEAD unchanged, tree hash unchanged, working tree clean.
-  [[ "$(git -C "${AGENTS}" rev-parse HEAD)" == "${head_before}" ]]
-  [[ "$(git -C "${AGENTS}" rev-parse 'HEAD^{tree}')" == "${tree_before}" ]]
-  [[ -z "$(git -C "${AGENTS}" status --porcelain)" ]]
+}
+
+# ---------------------------------------------------------------------------
+# (h) SIGTERM mid-apply → the TERM trap releases the .apply-lock AND terminates
+#     the daemon (exit 143, no post-signal mutations)
+# ---------------------------------------------------------------------------
+
+@test "SIGTERM mid-apply releases the .apply-lock and terminates (exit 143, no post-signal work)" {
+  printf '%s\n' \
+    '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+    'editable goal line one' 'editable goal line two' \
+    '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+
+  local diff='--- a/probe.md
++++ b/probe.md
+@@ -5,2 +5,3 @@
+ editable goal line one
++inserted editable line
+ editable goal line two'
+  write_report "${AGENTS}/probe.md" "probe-sigterm" "${diff}"
+
+  # Handshake seam (git shim): READY appears once the daemon is INSIDE the
+  # in-flight `git apply` — i.e. mid-run, .apply-lock held; RESUME lets the
+  # apply finish, because bash DEFERS a trapped signal until the foreground
+  # child exits (the TERM trap cannot run while git is still in flight).
+  local ready="${WORK}/git-apply.ready" resume="${WORK}/git-apply.resume"
+
+  env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    LZ_GIT_APPLY_READY="${ready}" LZ_GIT_APPLY_RESUME="${resume}" \
+    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}" \
+    </dev/null >"${WORK}/daemon.log" 2>&1 3>&- &
+  DAEMON_PID=$!
+
+  # Bounded wait for the mid-apply handshake (≤10s), then pin the mid-run state.
+  local i=0
+  while [[ ! -e "${ready}" && "${i}" -lt 100 ]]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [[ -e "${ready}" ]]               # daemon reached the apply (not a startup fail)
+  [[ -d "${REPORTS}/.apply-lock" ]] # the lock IS held at SIGTERM-delivery time
+
+  kill -TERM "${DAEMON_PID}" # delivered NOW, pending while git is in flight
+  : >"${resume}"             # unblock the apply so the deferred trap can fire
+
+  # Bounded reap. Regression pin: if TERM ever drops out of the trap list the
+  # daemon dies trap-LESS (EXIT traps do NOT run on an untrapped fatal signal)
+  # and the lock-gone assertion below catches the stranded dir.
+  i=0
+  while kill -0 "${DAEMON_PID}" 2>/dev/null && [[ "${i}" -lt 100 ]]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "${DAEMON_PID}" 2>/dev/null; then
+    kill -9 "${DAEMON_PID}" 2>/dev/null || true
+    wait "${DAEMON_PID}" 2>/dev/null || true
+    DAEMON_PID=""
+    false # daemon failed to exit after SIGTERM + resume
+  fi
+  local daemon_rc=0
+  wait "${DAEMON_PID}" 2>/dev/null || daemon_rc=$?
+  DAEMON_PID=""
+
+  [[ ! -d "${REPORTS}/.apply-lock" ]] # trap released the lock — nothing stranded
+
+  # Regression pin (signal-exit defect): the TERM handler must TERMINATE the
+  # daemon with 128+SIGTERM=143. Pre-fix, bash RESUMED execution after the
+  # shared handler released the lock, so the daemon ran to natural completion
+  # (exit 0) — mutating agent files with NO mutual exclusion post-signal.
+  [[ "${daemon_rc}" -eq 143 ]]
+
+  # No post-signal mutations: the handler exits BEFORE verify/emit_log, so the
+  # applied log must NOT record an applied row for this run (SC2314-safe
+  # negative assertion: run grep + status check, not a bare `! grep`).
+  run grep -q '"status":"applied"' "$(applied_log_path)"
+  [[ "${status}" -ne 0 ]]
 }

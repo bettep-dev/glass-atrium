@@ -1,0 +1,19 @@
+# Dependabot: keep the SHA-pinned GitHub Actions current.
+#
+# Every `uses:` in the workflows + composite actions is pinned to a full
+# 40-char commit SHA (supply-chain hardening — a mutable @vN tag can be
+# force-moved to malicious code). SHA pins do NOT auto-update, so Dependabot
+# watches the github-actions ecosystem and opens weekly PRs that bump each pin
+# to the newest release SHA while preserving the trailing `# vX.Y.Z` comment.
+#
+# `directory: /` covers BOTH the workflow files under .github/workflows/ AND
+# the local composite actions under .github/actions/** — Dependabot's
+# github-actions ecosystem scans the whole .github tree from the repo root.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"

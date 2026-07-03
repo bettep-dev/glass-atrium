@@ -22,11 +22,32 @@
 # UNCHANGED. The hashes map adds integrity without breaking those consumers and
 # gives downstream a direct hashes[path] lookup.
 #
-# Deploy-scope policy (codified HERE — the single authority):
-#   INCLUDE  git-TRACKED files under the harness component dirs the engine
-#            symlinks into ~/.claude — agents/ autoagent/ hooks/ rules/ scoped/
+# Deploy-scope policy (codified HERE — the single authority). manifest.files is
+# BOTH the release-bundle member list (publish-release.sh tars exactly this set)
+# AND the ~/.claude symlink-farm source — so it now carries TWO categories:
+#   INCLUDE-A  SYMLINKED harness components — git-TRACKED files under the dirs the
+#            engine farms into ~/.claude: agents/ autoagent/ hooks/ rules/ scoped/
 #            scripts/ skills/ — plus the top-level agent-registry.json and the
 #            top-level glass-atrium launcher (deployed to ~/.claude/glass-atrium).
+#   INCLUDE-B  INSTALL-INTERNAL runtime — BUNDLED + per-file hash-verified like
+#            everything else, but consumed IN PLACE from ~/.glass-atrium and thus
+#            NEVER symlinked into ~/.claude (lib/ga-core.sh::is_symlink_excluded
+#            filters them out of the farm). Members:
+#              * lib/ (ga-core.sh + ga-deps.sh, the install/uninstall/update
+#                ENGINE the launcher SOURCES from its own resolved dir),
+#              * config.toml.example (render_config template),
+#              * requirements.txt (python deps), and
+#              * monitor/ (the dashboard app the one-stop bootstrap BUILDS with
+#                `cd monitor && npm run build` + runs in-place as
+#                `node dist/server/main.js`, and whose scripts/oss-db-setup.sh the
+#                DB bootstrap runs — `npm ci` there regenerates node_modules from
+#                the bundled package-lock.json). Its gitignored data/* contents,
+#                node_modules, and dist/ are auto-excluded by git ls-files; its
+#                test tree (monitor/test/*) is dropped by EXCLUDE_RE below.
+#            Before this set was added, a fresh no-.git bundle install was
+#            dead-on-arrival: the launcher's `source ${GA_DIR}/lib/ga-core.sh` had
+#            no bundled target, and the bootstrap's monitor build/run (exit 20)
+#            had no monitor/ source.
 #   EXCLUDE  dev-only artifacts that must never deploy to ~/.claude:
 #            */test/* trees + test_*.py / *.bats / *.test.js basenames (bats,
 #            pytest, and node test suites run from the repo checkout, nothing
@@ -70,9 +91,12 @@ GA_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -
 readonly GA_ROOT
 readonly MANIFEST="${GA_ROOT}/manifest.json"
 
-# Deploy scope — the component paths the engine farms into ~/.claude. A new
-# top-level component dir must be added here DELIBERATELY (policy change),
-# never inferred.
+# Manifest scope — the paths hashed + bundled + integrity-verified. A new
+# top-level entry must be added here DELIBERATELY (policy change), never inferred.
+# The first block is the SYMLINKED harness set (INCLUDE-A); the second block is
+# the install-internal runtime (INCLUDE-B) that is bundled + verified but excluded
+# from the ~/.claude symlink farm (ga-core.sh::is_symlink_excluded). See the
+# Deploy-scope policy note above.
 readonly -a SCOPE_PATHS=(
   "agent-registry.json"
   "agents"
@@ -83,6 +107,11 @@ readonly -a SCOPE_PATHS=(
   "scoped"
   "scripts"
   "skills"
+  # INCLUDE-B — install-internal runtime (bundled + verified, NEVER symlinked)
+  "config.toml.example"
+  "lib"
+  "monitor"
+  "requirements.txt"
 )
 
 # Dev-only exclusions (test trees, test-file basenames, archive snapshots).
@@ -265,6 +294,39 @@ run_generate() {
 
   mv -f -- "${tmp}" "${MANIFEST}"
   echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes)"
+  refresh_deployed_farm
+}
+
+# --- deployed-facade refresh (maintainer flow — incident #58325) -------------
+# A dev-added file enters the regenerated manifest above, but nothing re-ran
+# the ~/.claude symlink farm — the facade drifted until the next incidental
+# agent add/delete (the doctor only REPORTS undeployed entries). When THIS repo
+# root is a live deployment (its launcher exists AND the facade already holds
+# symlinks pointing into this root), refresh the farm via the shared lib ->
+# canonical `glass-atrium agents-only` (idempotent). A fixture/CI checkout has
+# no launcher (and its facade holds no links into it) -> the cheap gates skip
+# before any facade scan. Best-effort + loud: the manifest write above already
+# succeeded — a farm hiccup WARNs with a manual remediation hint instead of
+# failing the regeneration (agent_lifecycle rolls its chain back on non-zero
+# and runs its own farm step right after this script).
+refresh_deployed_farm() {
+  local farm_lib="${GA_ROOT}/scripts/lib/mirror-farm.sh" home linked rc=0
+  [[ -x "${GA_ROOT}/glass-atrium" ]] || return 0 # not a deployable root
+  [[ -f "${farm_lib}" ]] || return 0             # lib not shipped here
+  # shellcheck source=/dev/null
+  source "${farm_lib}"
+  home="$(farm_target_home)"
+  # stdout-verdict helper (always exits 0) — the $( ) masking is its contract.
+  # shellcheck disable=SC2311,SC2312
+  linked="$(farm_has_ga_links "${home}" "${GA_ROOT}")"
+  [[ "${linked}" == "yes" ]] || return 0 # facade not deployed from this root
+  # rc 3 = clean skip (logged by the lib) · rc 1 = farm failed -> loud WARN.
+  # shellcheck disable=SC2310
+  farm_refresh "${GA_ROOT}" || rc=$?
+  if [[ "${rc}" -ne 0 && "${rc}" -ne 3 ]]; then
+    echo "generate-manifest: WARN: mirror-farm refresh failed — run '${GA_ROOT}/glass-atrium agents-only' manually" >&2
+  fi
+  return 0
 }
 
 case "${1:-}" in
