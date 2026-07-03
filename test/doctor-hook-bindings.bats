@@ -35,27 +35,60 @@ write_full_settings() {
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-prompt.sh" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-cost.sh" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-budget.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-context-budget.sh" } ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-budget.sh" } ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-cost.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-subagent-budget.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-dangerous-commands.sh" } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-doc-routing-leak.sh" } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-md-creation.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-no-verify.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-commit-guard.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-config-protection.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
-      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-subagent-budget.sh" } ] }
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-prompt.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-scope-drift.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] }
     ],
     "PostToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/detect-secret-file-write.sh" } ] },
+      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-format.sh" } ] },
+      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-outcome-sync.sh" } ] },
+      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] },
+      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-large-diff.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-output.sh" } ] },
-      { "matcher": "WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-tool-response.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/detect-secret-file-write.sh" } ] }
+      { "matcher": "WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-tool-response.sh" } ] }
     ],
     "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-session-context.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] }
+    ],
+    "SubagentStart": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/agent-tracker.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-scope-rules.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/agent-tracker.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/track-outcome.sh" } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/pre-compact.sh" } ] }
     ]
   }
 }
@@ -149,11 +182,15 @@ run_doctor_sandbox() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # 15 expected bindings (validate-secret-scan binds under BOTH Write|Edit AND
-  # Bash; enforce-workflow-verify-stage binds under Workflow; detect-secret-file-write
-  # binds under PostToolUse Bash; advisory-subagent-budget binds matcher-less
-  # under PreToolUse) → 15 dormant
-  [[ "${output}" == *"15 dormant hook binding(s)"* ]]
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 42-binding set across all 7 events
+  # (PreToolUse 20 / PostToolUse 7 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # SubagentStop 4 / PreCompact 1). The total is counted per FLATTENED matcher-leaf,
+  # NOT per unique hook basename: validate-secret-scan.sh binds under TWO matchers
+  # (Write|Edit AND Bash), and several hooks recur across events (agent-tracker.sh,
+  # post-edit-typecheck.sh, telemetry-activation.sh, advisory-preedit-facts.sh) — each
+  # occurrence is a distinct leaf. With settings.json absent, every leaf is unwired,
+  # so all 42 report dormant.
+  [[ "${output}" == *"42 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

@@ -144,7 +144,8 @@ ga_init_env() {
 
   # expected hook->event bindings the user MUST register in settings.json for the
   # deployed hooks to actually fire. Each entry = "<event>\t<hook-basename>\t<matcher>".
-  # Format: PreToolUse / PostToolUse / SessionStart / Stop. Each row is matched
+  # Format: PreToolUse / PostToolUse / SessionStart / Stop / SubagentStart /
+  # SubagentStop / PreCompact. Each row is matched
   # against the live settings.json .hooks[<event>][].hooks[].command field by
   # basename, SCOPED to its matcher (command-WITHIN-matcher — the doctor binding
   # check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the
@@ -158,21 +159,48 @@ ga_init_env() {
   # This is the SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
   EXPECTED_HOOK_BINDINGS=(
-    "PreToolUse	enforce-delegation.sh	Write|Edit"
-    "PreToolUse	enforce-verification-gate.sh	Agent"
-    "PreToolUse	validate-secret-scan.sh	Write|Edit"
-    "PreToolUse	validate-secret-scan.sh	Bash"
-    "PreToolUse	validate-prompt.sh	Write|Edit"
-    "PreToolUse	advisory-spawn-cost.sh	Agent"
-    "PreToolUse	advisory-spawn-budget.sh	Agent"
     "PreToolUse	advisory-context-budget.sh	Agent"
-    "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
+    "PreToolUse	advisory-spawn-budget.sh	Agent"
+    "PreToolUse	advisory-spawn-cost.sh	Agent"
     "PreToolUse	advisory-subagent-budget.sh	"
+    "PreToolUse	block-dangerous-commands.sh	Bash"
+    "PreToolUse	block-doc-routing-leak.sh	Write"
+    "PreToolUse	block-md-creation.sh	Write"
+    "PreToolUse	block-no-verify.sh	Bash"
+    "PreToolUse	enforce-commit-guard.sh	Bash"
+    "PreToolUse	enforce-config-protection.sh	Write|Edit"
+    "PreToolUse	enforce-delegation.sh	Write|Edit"
+    "PreToolUse	enforce-foreground-harness.sh	Agent"
+    "PreToolUse	enforce-verification-gate.sh	Agent"
+    "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
+    "PreToolUse	telemetry-activation.sh	Agent"
+    "PreToolUse	validate-pre-write-raw.sh	Write"
+    "PreToolUse	validate-prompt.sh	Write|Edit"
+    "PreToolUse	validate-scope-drift.sh	Write|Edit"
+    "PreToolUse	validate-secret-scan.sh	Bash"
+    "PreToolUse	validate-secret-scan.sh	Write|Edit"
+    "PostToolUse	detect-secret-file-write.sh	Bash"
+    "PostToolUse	post-edit-format.sh	Edit|Write"
+    "PostToolUse	post-edit-outcome-sync.sh	Write"
+    "PostToolUse	post-edit-typecheck.sh	Edit|Write"
+    "PostToolUse	validate-large-diff.sh	Edit|Write"
     "PostToolUse	validate-output.sh	"
     "PostToolUse	validate-tool-response.sh	WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*"
-    "PostToolUse	detect-secret-file-write.sh	Bash"
+    "SessionStart	inject-session-context.sh	"
+    "SessionStart	prune-security-warnings-state.sh	"
+    "SessionStart	prune-session-spawns.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
+    "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
+    "Stop	post-edit-typecheck.sh	"
+    "SubagentStart	agent-tracker.sh	"
+    "SubagentStart	inject-scope-rules.sh	"
+    "SubagentStart	telemetry-activation.sh	"
+    "SubagentStop	advisory-preedit-facts.sh	"
+    "SubagentStop	agent-tracker.sh	"
+    "SubagentStop	post-edit-typecheck.sh	"
+    "SubagentStop	track-outcome.sh	"
+    "PreCompact	pre-compact.sh	"
   )
   readonly EXPECTED_HOOK_BINDINGS
 
@@ -1249,8 +1277,10 @@ read_manifest_dirs() {
 # Removes EVERY hook-group in settings.json whose command resolves into the
 # Atrium hooks directory (~/.claude/hooks), across ALL events. This is
 # DELIBERATELY independent of the EXPECTED_HOOK_BINDINGS enumeration: that array
-# lists only the install-wired bindings (15 entries), whereas the deployed
-# symlink farm can carry many more (36+) — iterating the array would leave the
+# lists the complete install-wired binding set (42 entries), whereas the deployed
+# symlink farm can carry bindings outside that set (a user may hand-wire an Atrium
+# hook, or the array may drift from the physically deployed set) — iterating the
+# array would leave the
 # surplus bound (dead links after uninstall). ~/.claude/hooks IS the Atrium-
 # managed symlink farm (removed on uninstall), so ANY binding pointing there is
 # Atrium's and becomes a dead link — it must go.
