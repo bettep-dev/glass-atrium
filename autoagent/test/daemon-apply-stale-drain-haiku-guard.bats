@@ -4,7 +4,9 @@
 #
 #   P1a — landing_zone_reject now WIRES the bounded-retry stale-drain. An
 #         out_of_region single/backlog row drives mark_stale_attempt (enforce=1)
-#         BEFORE pop_stash_if_any, emits a needs_regen/stale_drain_<verdict> log,
+#         BEFORE the trailing `continue` leaves the row pending (git-free: the
+#         reject runs before any apply, so no bytes were written and there is
+#         nothing to restore), emits a needs_regen/stale_drain_<verdict> log,
 #         and prints the drained / no_column operator WARN. Gated on
 #         AUTO_REGEN -ne 1 && PATCH_SOURCE in {backlog,single}. DRY_RUN reaches
 #         NO DB write (short-circuits before the guard).
@@ -29,7 +31,26 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_SCRIPT="${HOME}/.glass-atrium/autoagent/daemon-apply.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
+
+# build_full_stub — symlink every real command into $1 EXCEPT psql. The whole-PATH
+# mirror (vs a hand-maintained allowlist) keeps the fixture robust as the git-free
+# daemon's command set shifts; psql is skipped so install_psql_stub can drop its
+# faithful PG stand-in in cleanly (a fresh file, not a symlink onto real psql).
+build_full_stub() {
+  local stub="$1" d f name
+  local IFS=:
+  for d in ${PATH}; do
+    [[ -d "${d}" ]] || continue
+    for f in "${d}"/*; do
+      [[ -x "${f}" && ! -d "${f}" ]] || continue
+      name="${f##*/}"
+      [[ "${name}" == "psql" ]] && continue
+      [[ -e "${stub}/${name}" ]] || ln -sf "${f}" "${stub}/${name}"
+    done
+  done
+}
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
@@ -40,17 +61,15 @@ setup() {
   PSQL_LOG="${WORK}/psql-invocations.log"
   mkdir -p "${STUB}" "${AGENTS}" "${REPORTS}"
 
-  # Stub bin = real-binary symlinks (psql is OVERRIDDEN by the stand-in below).
-  bash -c '
-    stub="$1"; shift
-    for t in "$@"; do
-      p="$(type -P "${t}" 2>/dev/null)" || true
-      [[ -n "${p}" ]] && ln -sf "${p}" "${stub}/${t}"
-    done
-  ' _ "${STUB}" \
-    git python3 jq date mktemp tail head wc tr cut grep sed awk cat \
-    rmdir mkdir rm bash sh dirname xargs find sort base64
-
+  # Stub bin = a whole-PATH mirror of every real command EXCEPT psql (which the
+  # faithful stand-in below supplies). The mirror replaces the former hand-
+  # maintained allowlist: the git-free daemon + its sourced libs (git-txn.sh /
+  # apply-lock.sh) call a broad, evolving coreutils set (basename/mv/stat/cp/…),
+  # and an allowlist that misses one makes the daemon exit 127 before the guard,
+  # failing every test opaquely. psql is skipped (never mirrored) so the install_
+  # psql_stub `cat >` below writes a FRESH file rather than following a symlink
+  # onto the real psql binary.
+  build_full_stub "${STUB}"
   install_psql_stub
 
   git -C "${AGENTS}" init -q
@@ -59,8 +78,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && chmod -R u+rwX -- "${WORK}" 2>/dev/null || true
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # install_psql_stub — write the faithful PG stand-in into the stub bin.
