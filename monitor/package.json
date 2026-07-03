@@ -15,7 +15,7 @@
     "start": "node dist/server/main.js",
     "postinstall": "playwright install chromium",
     "typecheck": "tsc --noEmit",
-    "pretest": "node --eval \"require('node:fs').mkdirSync(require('node:path').dirname(process.env.JUNIT_OUT||'test-results/monitor-unit.xml'),{recursive:true})\"",
+    "pretest": "npm run build:client && node --eval \"require('node:fs').mkdirSync(require('node:path').dirname(process.env.JUNIT_OUT||'test-results/monitor-unit.xml'),{recursive:true})\"",
     "test": "tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=${JUNIT_OUT:-test-results/monitor-unit.xml} test/*.test.ts",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
