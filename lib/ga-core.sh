@@ -1138,19 +1138,145 @@ sweep_orphans() {
   "${SCAN_ONLY}" || log "orphan sweep: ${removed} extra GA symlink(s) removed"
 }
 
-# --- settings.json un-wire (remove ONLY the Atrium hook bindings) ----------
-# Removes each EXPECTED_HOOK_BINDINGS entry from settings.json — matcher-scoped,
-# command-path-scoped to the Atrium "$HOME/.claude/hooks/<basename>" form.
+# --- GA-created empty-directory cleanup (install/uninstall symmetry) ---------
+# INVERSE of the symlink farm's per-file `mkdir -p` (swap_symlink): once the
+# symlink-removal passes (remove_manifest_links + sweep_orphans) have unlinked
+# every GA symlink, the DIRECTORY skeletons the farm created (agents/, hooks/,
+# skills/<name>/, agents/references/, ...) are left behind EMPTY. This removes
+# exactly those — and ONLY when empty — so a clean uninstall leaves NO orphan GA
+# dir skeletons, matching the install side that creates each one.
+#
+# SAFETY INVARIANT (why this can NEVER delete user content):
+#   * `rmdir` removes ONLY an EMPTY directory — a dir still holding ANY user file
+#     makes rmdir FAIL (non-zero), so a user file dropped into a GA dir keeps that
+#     dir alive. This is the whole safety story; NEVER `rm -rf` (which would
+#     recurse into user content) — see the dev-shell rm-rf guardrail.
+#   * the candidate set is DERIVED from the manifest (read_manifest_dirs: the
+#     ancestor dirs of every FARMED file), so only dirs the farm itself created
+#     are ever considered — never an arbitrary target subtree.
+#   * DEEPEST-FIRST order (read_manifest_dirs lists a descendant before its
+#     ancestor) so a parent is attempted only AFTER its children were removed —
+#     an emptied parent then rmdirs too, a still-occupied one fails safely.
+#   * TARGET_HOME itself is NEVER a candidate (top-level manifest files map to the
+#     boundary and are dropped by read_manifest_dirs); the never-touch guard is a
+#     second line of defense.
+# Honors DRY_RUN (report-only). Mirrors remove_manifest_links/sweep_orphans style.
+remove_empty_dirs() {
+  command -v jq >/dev/null 2>&1 || die "jq required to parse ${MANIFEST}"
+  [[ -f "${MANIFEST}" ]] || {
+    log "manifest absent (${MANIFEST}) — skipping empty-dir cleanup"
+    return 0
+  }
+  [[ -d "${TARGET_HOME}" ]] || return 0
+
+  local reldir abs removed=0 kept=0
+  # read_manifest_dirs streams deepest-first via process substitution → the loop
+  # stays in the current shell (counter-safe). SC2312: its exit is masked but
+  # benign (it dies on its own precondition failure).
+  # shellcheck disable=SC2312
+  while IFS= read -r reldir; do
+    [[ -n "${reldir}" ]] || continue
+    # never-touch guard (defense in depth — a manifest dir should never be one).
+    # is_never_touch is a stdout verdict (always exits 0) → SC2311 masking is
+    # intentional (no file-scope set -e in this sourced lib).
+    # shellcheck disable=SC2310,SC2311,SC2312
+    if [[ "$(is_never_touch "${reldir}")" == "yes" ]]; then
+      log "skip (never-touch dir): ${reldir}"
+      continue
+    fi
+    abs="${TARGET_HOME}/${reldir}"
+    # a REAL directory only — never a symlink-to-dir (`! -L`), never an absent path
+    [[ -d "${abs}" && ! -L "${abs}" ]] || continue
+    if "${DRY_RUN}"; then
+      log "dry-run: would rmdir GA dir if empty: ${reldir}"
+      continue
+    fi
+    # rmdir removes ONLY an empty dir; a non-empty (user content) dir makes it fail
+    # → SAFE skip. The `if` condition masks BOTH set -e and the ERR trap for that
+    # expected non-zero, so no set +e/trap bracketing is needed here.
+    if rmdir -- "${abs}" 2>/dev/null; then
+      log "removed empty GA dir: ${reldir}"
+      removed=$((removed + 1))
+    else
+      kept=$((kept + 1))
+    fi
+  done < <(read_manifest_dirs)
+
+  if "${DRY_RUN}"; then
+    log "empty-dir cleanup: dry-run — reported candidate GA dirs (no rmdir performed)"
+  else
+    log "empty-dir cleanup: ${removed} empty GA dir(s) removed, ${kept} kept (non-empty/user content)"
+  fi
+}
+
+# --- manifest-derived directory set (deepest-first) — callee of remove_empty_dirs
+# Emit every ANCESTOR directory (TARGET_HOME-relative) of every FARMED manifest
+# file — i.e. the dirs swap_symlink's `mkdir -p` created — DEEPEST-FIRST and
+# deduped, so the caller can rmdir children before parents.
+#   * install-internal entries (is_symlink_excluded: lib/, monitor/, ...) are
+#     skipped — they are never symlinked in, so their dirs are never GA-created.
+#   * a top-level file (no '/') contributes NOTHING: its only parent IS
+#     TARGET_HOME, the boundary this must never emit (safety).
+# Deepest-first == reverse byte-order sort: an ancestor is always a proper string
+# prefix of its descendant, so a reverse `LC_ALL=C sort` lists every descendant
+# before its ancestor — the exact rmdir-children-before-parents invariant.
+read_manifest_dirs() {
+  local rel dir
+  # read_manifest_files dies on its own precondition failure → masked exit benign;
+  # the pipe subshell only emits to stdout (no vars read after) so it is var-safe.
+  # shellcheck disable=SC2312
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    # install-internal payload → dir never GA-created. is_symlink_excluded is a
+    # stdout verdict (exits 0) → SC2311 masking intentional (no file-scope set -e).
+    # shellcheck disable=SC2310,SC2311,SC2312
+    if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
+      continue
+    fi
+    # no '/' → top-level file: only parent is TARGET_HOME (boundary) → emit nothing
+    [[ "${rel}" == */* ]] || continue
+    dir="${rel%/*}"
+    # walk the ancestor chain up to (never including) TARGET_HOME
+    while [[ -n "${dir}" && "${dir}" != "." ]]; do
+      printf '%s\n' "${dir}"
+      [[ "${dir}" == */* ]] || break
+      dir="${dir%/*}"
+    done
+  done < <(read_manifest_files) | LC_ALL=C sort -ru
+}
+
+# --- settings.json un-wire (remove ALL Atrium hook bindings) ----------------
+# Removes EVERY hook-group in settings.json whose command resolves into the
+# Atrium hooks directory (~/.claude/hooks), across ALL events. This is
+# DELIBERATELY independent of the EXPECTED_HOOK_BINDINGS enumeration: that array
+# lists only the install-wired bindings (15 entries), whereas the deployed
+# symlink farm can carry many more (36+) — iterating the array would leave the
+# surplus bound (dead links after uninstall). ~/.claude/hooks IS the Atrium-
+# managed symlink farm (removed on uninstall), so ANY binding pointing there is
+# Atrium's and becomes a dead link — it must go.
+#
+# PATH-TOLERANT match (mirrors the doctor check's tilde-vs-absolute tolerance):
+# a command matches when, after normalizing a leading '~' to $HOME, it carries
+# the "$HOME/.claude/hooks/" prefix. So the tilde form ('~/.claude/hooks/<x>',
+# the shape real settings.json stores), the ${HOME}-expanded absolute form, and
+# the literal absolute form ALL match, while a user hook elsewhere (e.g.
+# '~/my-hooks/x.sh') is preserved. Basename-independent — it keys on the hooks
+# DIR, not on the (stale/partial) list of expected basenames.
 #
 # SAFETY CONTRACT (why this cannot remove user config):
-#   * SCOPED removal — a hook-group is deleted ONLY when its matcher EQUALS the
-#     Atrium matcher AND it contains a command whose basename EQUALS the Atrium
-#     hook AND that command points at the Atrium hooks dir. A user's own hook
-#     entry (different path, or different matcher) is never matched.
+#   * SCOPED removal — a hook-group is deleted ONLY when it holds a command that
+#     resolves into the Atrium hooks dir. A user's own hook entry (ANY other
+#     path, e.g. ~/my-hooks/x.sh) is never matched, so it survives.
 #   * BACKED UP — settings.json is copied to a timestamped backup before the
 #     FIRST mutation; the backup path is printed for rollback.
-#   * ATOMIC — each removal writes a temp file, is re-validated with `jq .`, then
-#     mv-renamed over settings.json (never a half-written file).
+#   * ATOMIC — each per-event edit writes a temp file, is re-validated with
+#     `jq .`, then mv-renamed over settings.json (never a half-written file).
+#   * KEY-PRUNE symmetry — wire_hooks CREATES an event key via `.hooks[$ev] //= []`,
+#     so un-wire prunes a key IT emptied (before>0 && after==0) to restore the
+#     user's original byte-identically; a pre-existing user-owned empty array
+#     (before==0) is left untouched.
+#   * INJECTION-SAFE — event/dir/home flow through --arg only; no value is ever
+#     interpolated into the jq program.
 #   * LOUD-FAIL — a malformed (unparseable) settings.json ABORTS rather than
 #     risk corrupting user config; an absent settings.json is a no-op.
 #   * IDEMPOTENT — a re-run after a clean un-wire removes nothing (no-op).
@@ -1178,49 +1304,51 @@ unwire_hooks() {
   cp -p -- "${SETTINGS_JSON}" "${backup}"
   log "unwire_hooks: backed up settings.json -> ${backup}"
 
-  local binding event hook matcher cmd removed=0 absent=0
-  for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
-    IFS=$'\t' read -r event hook matcher <<<"${binding}"
-    cmd="${HOME}/.claude/hooks/${hook}"
+  # Atrium hooks dir (absolute, current $HOME). Any binding whose command resolves
+  # here is Atrium's — matched path-tolerantly (a leading '~' is normalized to
+  # $HOME below, so tilde + absolute forms both match).
+  local hooks_dir="${HOME}/.claude/hooks/"
+
+  # iterate EVERY event under .hooks (SoT-INDEPENDENT — NOT EXPECTED_HOOK_BINDINGS)
+  # so all deployed + future Atrium hooks are covered. The key list is snapshotted
+  # from the pre-mutation file; we only ever DELETE keys, so it stays a valid
+  # superset as the loop mutates settings.json (a pruned key is simply never
+  # revisited). Non-object/absent .hooks yields no keys (safe no-op).
+  local removed=0 event
+  # jq output streamed via process substitution → loop stays in the current shell.
+  # shellcheck disable=SC2312
+  while IFS= read -r event; do
+    [[ -n "${event}" ]] || continue
 
     local tmp
     tmp="${SETTINGS_JSON}.ga-unwire.$$"
-    # Delete from .hooks[event] every group whose matcher matches AND which holds
-    # a command at the Atrium path. --arg everywhere → no value is interpolated
-    # into the jq program (injection-safe). An absent/empty matcher is normalized
-    # to "" so unmatched events (SessionStart/Stop) compare correctly.
-    # `del(...)` over an absent .hooks[event] is a safe no-op (jq returns input).
-    if [[ -n "${matcher}" ]]; then
-      jq --arg ev "${event}" --arg m "${matcher}" --arg c "${cmd}" '
-        if (.hooks[$ev] | type) == "array" then
-          .hooks[$ev] |= map(
-            select(
-              ((.matcher // "") == $m
-               and ([ (.hooks // [])[]? | .command ] | any(. == $c))) | not
-            )
+    # DROP every hook-group under this event that holds a command resolving into
+    # the Atrium hooks dir. into_hooksdir normalizes a leading '~' to $HOME (via
+    # string slicing — never regex, so a $HOME with regex/replacement metachars is
+    # byte-safe), then tests the "$HOME/.claude/hooks/" prefix. A user hook at any
+    # other path fails the prefix and is preserved. --arg everywhere → no value is
+    # interpolated into the jq program (injection-safe). Editing over an absent /
+    # non-array .hooks[event] is a safe no-op (the `else .` branch returns input).
+    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg home "${HOME}" '
+      def into_hooksdir:
+        (. // "")
+        | (if startswith("~/") then $home + .[1:] else . end)
+        | startswith($dir);
+      if (.hooks[$ev] | type) == "array" then
+        .hooks[$ev] |= map(
+          select(
+            ([ (.hooks // [])[]? | .command | into_hooksdir ] | any) | not
           )
-        else . end
-      ' -- "${SETTINGS_JSON}" >"${tmp}"
-    else
-      jq --arg ev "${event}" --arg c "${cmd}" '
-        if (.hooks[$ev] | type) == "array" then
-          .hooks[$ev] |= map(
-            select(
-              ((.matcher // "") == ""
-               and ([ (.hooks // [])[]? | .command ] | any(. == $c))) | not
-            )
-          )
-        else . end
-      ' -- "${SETTINGS_JSON}" >"${tmp}"
-    fi
+        )
+      else . end
+    ' -- "${SETTINGS_JSON}" >"${tmp}"
 
     if ! jq -e . -- "${tmp}" >/dev/null 2>&1; then
       rm -f -- "${tmp}"
-      die "unwire_hooks: edit produced invalid JSON for ${event} -> ${hook} — backup preserved at ${backup}"
+      die "unwire_hooks: edit produced invalid JSON for event ${event} — backup preserved at ${backup}"
     fi
 
-    # only count a real removal — compare the group count before/after for this
-    # event so an already-absent binding logs "absent" rather than "removed".
+    # count real removals — group count before/after for this event.
     local before after
     before="$(jq --arg ev "${event}" '(.hooks[$ev] // []) | length' -- "${SETTINGS_JSON}")"
     after="$(jq --arg ev "${event}" '(.hooks[$ev] // []) | length' -- "${tmp}")"
@@ -1236,22 +1364,20 @@ unwire_hooks() {
       jq --arg ev "${event}" 'del(.hooks[$ev])' -- "${tmp}" >"${pruned}"
       if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
         rm -f -- "${pruned}" "${tmp}"
-        die "unwire_hooks: prune produced invalid JSON for ${event} — backup preserved at ${backup}"
+        die "unwire_hooks: prune produced invalid JSON for event ${event} — backup preserved at ${backup}"
       fi
       mv -f -- "${pruned}" "${tmp}"
     fi
 
     mv -f -- "${tmp}" "${SETTINGS_JSON}"
-    if [[ "${after}" -lt "${before}" ]]; then
-      log "  un-wired: ${event} -> ${hook} (matcher=${matcher:-<none>})"
-      removed=$((removed + 1))
-    else
-      log "  skip (not bound): ${event} -> ${hook} (matcher=${matcher:-<none>})"
-      absent=$((absent + 1))
+    local delta=$((before - after))
+    if [[ "${delta}" -gt 0 ]]; then
+      log "  un-wired: ${event} — ${delta} Atrium binding-group(s) removed"
+      removed=$((removed + delta))
     fi
-  done
+  done < <(jq -r 'if (.hooks | type) == "object" then (.hooks | keys[]) else empty end' -- "${SETTINGS_JSON}")
 
-  log "unwire_hooks: ${removed} binding(s) removed, ${absent} already absent (backup: ${backup})"
+  log "unwire_hooks: ${removed} Atrium binding-group(s) removed across all events (backup: ${backup})"
 }
 
 # --- config.toml purge (opt-in, mv-to-Trash — never rm a config) -----------
@@ -2494,7 +2620,8 @@ run_bootstrap() {
 # --orphan-scan are mutually-exclusive standalone modes the launcher dispatches
 # before reaching here; run_uninstall is the default removal path. Order:
 # launchd teardown → DB drop → node_modules removal → manifest-link removal →
-# orphan sweep → hook un-wire → shell-rc PATH-line removal → (opt-in config purge).
+# orphan sweep → empty-dir cleanup → hook un-wire → shell-rc PATH-line removal →
+# (opt-in config purge).
 # launchd teardown runs FIRST so the daemons stop (connections drain) before the DB
 # is dropped and before their symlinked files vanish.
 run_uninstall() {
@@ -2509,6 +2636,13 @@ run_uninstall() {
   remove_node_modules
   remove_manifest_links
   sweep_orphans
+
+  # STEP4 — INSTALL/UNINSTALL DIRECTORY SYMMETRY: the symlink passes above unlink
+  # FILES but leave behind the empty DIRECTORY skeletons swap_symlink's `mkdir -p`
+  # created (agents/, hooks/, skills/<name>/, ...). Runs AFTER both symlink passes
+  # so those dirs are actually empty; rmdir-only (never rm -rf) so any dir holding
+  # a user file survives untouched.
+  remove_empty_dirs
 
   # T26 — explicit NON-SYMLINK update-state teardown. remove_manifest_links +
   # sweep_orphans only reach SYMLINKS, so the update system's plain-file runtime
