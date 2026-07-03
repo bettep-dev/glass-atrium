@@ -43,6 +43,7 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/clauded-docs/:id/move-group", "clauded-docs-group"],
   ["/api/improvement/:id/approve", "improvement"],
   ["/api/improvement/:id/reject", "improvement"],
+  ["/api/improvement/:id/restore", "improvement"],
   ["/api/model-config", "model-config"],
 ]);
 

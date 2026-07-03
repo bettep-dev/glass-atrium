@@ -205,10 +205,21 @@ run_recreate() {
 }
 
 @test "GA_DB_RECREATE missing pg_dump/dropdb loud-fails (exit 4) before any drop" {
-  # recreate requires pg_dump + dropdb; absence is a named CLI failure.
+  # recreate requires pg_dump + dropdb; absence is a named CLI failure. Curated PATH
+  # of STUB_BIN ONLY (no /usr/bin:/bin) so pg_dump/dropdb are unresolvable on EVERY
+  # host — a usrmerged Linux /bin→/usr/bin would otherwise re-expose the real pg_dump
+  # and skip the exit-4 branch (the run_recreate helper's STUB_BIN:/usr/bin:/bin PATH
+  # only kept them unreachable on macOS, where they live in /opt/homebrew/bin).
+  # bash + id must resolve under the curated PATH: bash execs the script, id backs
+  # DB_USER="$(id -un)" at script top (before the exit-4 CLI check). The real id
+  # yields a username passing the script's user charset guard (^[A-Za-z0-9._-]+$).
+  ln -s "$(command -v bash)" "${STUB_BIN}/bash"
+  ln -s "$(command -v id)" "${STUB_BIN}/id"
   # remove the dropdb/pg_dump stubs from the stub bin (createdb/psql remain).
   rm -f "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
-  run_recreate "claude_oss_e2e"
+  run env GA_DB_RECREATE=1 GA_DB_NAME=claude_oss_e2e \
+    GA_DB_BACKUP_DIR="${SANDBOX}/backups" PATH="${STUB_BIN}" \
+    bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
   [[ "${status}" -eq 4 ]]
   [[ "${output}" == *"recreate 필수 CLI 부재"* ]]
 }

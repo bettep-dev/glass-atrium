@@ -152,11 +152,6 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 두 형식 모두 Atrium Monitor의 **문서 관리** 화면에 나타납니다.
 
-예시:
-
-- "이번 변경 회고 보고서로 정리해" → 에이전트 전용 기록(기본값).
-- "팀 공유용 HTML 보고서로 만들어" → HTML 문서.
-
 문서를 따로 요청하지 않더라도, 기록해 둘 만하다고 판단되면 에이전트 전용 기록이 남을 수 있습니다.
 
 ### 개발 에이전트 추가

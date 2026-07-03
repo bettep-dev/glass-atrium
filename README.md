@@ -152,11 +152,6 @@ Which format you get **is determined by the wording of your request**:
 
 Both formats appear on the Atrium Monitor's **Documents** screen.
 
-Examples:
-
-- "Write up a retrospective report on this change" → an agent-only record (the default).
-- "Make it an HTML report for the team to share" → an HTML document.
-
 Even when you do not explicitly request a document, an agent-only record may be left behind if it is judged worth recording.
 
 ### Adding a dev agent

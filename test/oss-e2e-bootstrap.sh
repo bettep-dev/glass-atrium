@@ -242,14 +242,20 @@ if [[ -f "${CLONE}/config.toml" ]]; then
 else
   no "config.toml not rendered"
 fi
-# symlink farm: pristine fake home → links == manifest entry count. The glob
-# uses CLONE_REAL (physical path) to match the pwd -P targets `glass-atrium
-# install` writes.
-FARM_EXPECT="$(jq '.files | length' "${CLONE}/manifest.json")"
+# symlink farm: pristine fake home → links == the INCLUDE-A (symlinked) manifest
+# subset, NOT the full manifest. The manifest also bundles INCLUDE-B files
+# (prefixes lib/ + monitor/, exact config.toml.example + requirements.txt) that
+# deploy to ~/.glass-atrium but are NEVER symlinked into ~/.claude, so the farm is
+# legitimately smaller than the manifest. Derive the expectation from the manifest
+# via the SAME exclusion filter the installer applies — lib/ga-core.sh
+# SYMLINK_EXCLUDE_PREFIXES / SYMLINK_EXCLUDE_EXACT / is_symlink_excluded is the SoT
+# (mirrored inline here) — so it stays in sync as the manifest grows. The glob uses
+# CLONE_REAL (physical path) to match the pwd -P targets `glass-atrium install` writes.
+FARM_EXPECT="$(jq '[.files[] | select((startswith("lib/") or startswith("monitor/") or . == "config.toml.example" or . == "requirements.txt") | not)] | length' "${CLONE}/manifest.json")"
 FARM_LINKS="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${FARM_LINKS}" -eq "${FARM_EXPECT}" ]] \
-  && ok "symlink farm complete (${FARM_LINKS}/${FARM_EXPECT})" \
-  || no "symlink farm ${FARM_LINKS} != manifest ${FARM_EXPECT}"
+  && ok "symlink farm complete — INCLUDE-A subset (${FARM_LINKS}/${FARM_EXPECT})" \
+  || no "symlink farm ${FARM_LINKS} != INCLUDE-A manifest subset ${FARM_EXPECT}"
 
 # =============================================================================
 hdr "STEP 3 — T20 config chain: non-default port -> render-monitor-env -> .env"
@@ -382,9 +388,12 @@ REAL_MIG_POST_REFUSAL="$(psql -h "${PG_SOCKET}" -d glass_atrium -tAc \
   || no "live glass_atrium db changed during refusal: ${REAL_MIG_PRE_REFUSAL} -> ${REAL_MIG_POST_REFUSAL}"
 
 # =============================================================================
-hdr "STEP 5 — uninstall parity (symlinks/bindings gone, db preserved)"
+hdr "STEP 5 — uninstall parity (symlinks/bindings gone, throwaway db dropped)"
+# --yes: the launcher requires explicit consent for the destructive headless
+# uninstall (glass-atrium consent gate dies rc=1 before run_uninstall without it),
+# mirroring STEP 4b's --recreate-yes precedent. Do NOT weaken that gate.
 env -u GA_TARGET_HOME -u GA_CONFIG_TOML -u GA_MANIFEST "${SBX_ENV[@]}" \
-  bash "${CLONE}/glass-atrium" uninstall >"${SANDBOX}/uninstall.log" 2>&1
+  bash "${CLONE}/glass-atrium" uninstall --yes >"${SANDBOX}/uninstall.log" 2>&1
 UNINST_RC=$?
 [[ "${UNINST_RC}" -eq 0 ]] \
   && ok "glass-atrium uninstall rc=0" \
@@ -407,11 +416,14 @@ VC_RC=$?
     no "uninstall --verify-clean rc=${VC_RC}"
     tail -8 "${SANDBOX}/verify-clean.log"
   }
+# uninstall's run_uninstall STEP2 drop_databases intentionally DROPS the throwaway
+# db + its shadow (no keep-db mode; only --dry-run skips the drop). Expect the
+# throwaway db GONE post-uninstall, matching the engine's designed teardown.
 DB_AFTER_UNINST="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
   "SELECT 1 FROM pg_database WHERE datname='${E2E_DB}'" 2>/dev/null || true)"
-[[ "${DB_AFTER_UNINST}" == "1" ]] \
-  && ok "db preserved through uninstall (T33 parity: data intact)" \
-  || no "db ${E2E_DB} vanished during uninstall (must be preserved)"
+[[ "${DB_AFTER_UNINST}" != "1" ]] \
+  && ok "throwaway db ${E2E_DB} dropped by uninstall as designed (drop_databases teardown)" \
+  || no "throwaway db ${E2E_DB} still present after uninstall (drop_databases should have dropped it)"
 
 # =============================================================================
 hdr "STEP 6 — launchd STATIC verify (rendered plists only — launchctl never run)"
