@@ -10,7 +10,11 @@ GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # Single entry point — install/uninstall both dispatch through `glass-atrium
 # <subcommand>` (the in-process engine passthrough), so the same binary drives
 # every exec site below; the `install` / `uninstall` subcommand token selects
-# the path the retired install.sh / uninstall.sh shims used to own.
+# the in-process engine path. install.sh is NOT a retired shim — it is the
+# ACTIVE one-line bundle bootstrap (curl|bash downloads+extracts the release
+# bundle, no .git, then hands off to `glass-atrium install`, the engine this
+# test drives directly). uninstall.sh IS retired; `glass-atrium uninstall` now
+# owns its former path.
 GA_BIN="${GA}/glass-atrium"
 RENDER_ENV="${GA}/scripts/render-monitor-env.sh"
 REAL_CLAUDE="${HOME}/.claude"

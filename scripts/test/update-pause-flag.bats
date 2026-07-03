@@ -20,7 +20,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_LIB="${HOME}/.glass-atrium/scripts/lib/update-pause-flag.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_LIB="${GA}/scripts/lib/update-pause-flag.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "update-pause-flag.sh not found: ${REAL_LIB}"
@@ -32,7 +33,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # source the lib under strict mode (proves strict-mode safety)
@@ -181,8 +182,21 @@ load_lib() {
 
 # --- daemon honor wiring (daemon-cycle.sh / daemon-apply.sh) ---------------
 
+# DELIBERATELY HOME-anchored (NOT ${GA}-relative): the BEHAVIOR tests below
+# EXECUTE daemon-cycle.sh, which resolves its OWN pause-flag lib from
+# ${HOME}/.glass-atrium/scripts/lib (a script-side anchor). Pointing these at the
+# ${GA} checkout would let the behavior tests RUN but then FAIL when the canonical
+# install is absent (the daemon degrades to "proceeding without update-pause gate"
+# instead of the asserted skip/STALE path). Keeping the HOME anchor lets the
+# `[[ -f "${CYCLE_SH}" ]] || skip` guards cleanly skip the daemon-integration tests
+# off a canonical install (CI checkout), while the 15 hermetic lib tests above —
+# anchored on ${GA} via REAL_LIB — always run.
 CYCLE_SH="${HOME}/.glass-atrium/autoagent/daemon-cycle.sh"
-APPLY_SH="${HOME}/.glass-atrium/autoagent/daemon-apply.sh"
+# daemon-apply.sh's writer-serialization lock is being redesigned (bare git mkdir-lock
+# -> the shared stale-reclaim apply_lock_acquire); the INSTALLED copy lags until the
+# update lands, so anchor the ordering assertion on the SOURCE tree (${GA}) — the same
+# source-under-test anchor the hermetic lib tests use — not on ${HOME}.
+APPLY_SH="${GA}/autoagent/daemon-apply.sh"
 
 @test "daemon-cycle.sh sources the pause lib and gates on update_pause_is_active" {
   [[ -f "${CYCLE_SH}" ]] || skip "daemon-cycle.sh missing"
@@ -197,10 +211,11 @@ APPLY_SH="${HOME}/.glass-atrium/autoagent/daemon-apply.sh"
   grep -q 'update-pause-flag.sh' "${APPLY_SH}"
   grep -q 'update_pause_is_active' "${APPLY_SH}"
   # the pause gate must precede the .apply-lock acquisition (writer-serialization
-  # honor happens at the decision-to-run, before any work)
+  # honor happens at the decision-to-run, before any work). The lock is now taken via
+  # the shared stale-reclaim apply_lock_acquire (git-free), NOT a bare mkdir "${LOCK_DIR}".
   local pause_line lock_line
   pause_line="$(grep -n 'update_pause_is_active' "${APPLY_SH}" | head -1 | cut -d: -f1)"
-  lock_line="$(grep -n 'mkdir "${LOCK_DIR}"' "${APPLY_SH}" | head -1 | cut -d: -f1)"
+  lock_line="$(grep -n 'apply_lock_acquire' "${APPLY_SH}" | head -1 | cut -d: -f1)"
   [ -n "${pause_line}" ]
   [ -n "${lock_line}" ]
   [ "${pause_line}" -lt "${lock_line}" ]

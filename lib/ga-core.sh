@@ -95,6 +95,31 @@ ga_init_env() {
   )
   readonly COLLISION_SCOPE_PREFIXES
 
+  # symlink-farm exclusion — INSTALL-INTERNAL manifest entries that are BUNDLED
+  # + per-file hash-verified (they ship in the release + doctor §4 checks their
+  # presence) yet are NEVER symlinked into ~/.claude, because they are consumed
+  # IN PLACE from ~/.glass-atrium: lib/ga-core.sh + lib/ga-deps.sh are SOURCED by
+  # the launcher from its own resolved dir, config.toml.example is the
+  # render_config template, requirements.txt is the python-deps source, and
+  # monitor/ is the dashboard app the bootstrap BUILDS (`cd monitor && npm run
+  # build`) and RUNS in place (`node dist/server/main.js`, launchd-repointed to
+  # ${GA_ROOT}/monitor) — a ~/.claude/monitor link would be wrong (the daemon
+  # runs from ~/.glass-atrium/monitor, not ~/.claude). A ~/.claude/lib link is
+  # equally wrong (nothing there sources it) — so the farm (create + remove)
+  # skips all of these while the manifest still bundles + verifies them. Prefix
+  # globs + exact basenames, TARGET_HOME-relative (mirrors the
+  # COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).
+  SYMLINK_EXCLUDE_PREFIXES=(
+    "lib/"
+    "monitor/"
+  )
+  readonly SYMLINK_EXCLUDE_PREFIXES
+  SYMLINK_EXCLUDE_EXACT=(
+    "config.toml.example"
+    "requirements.txt"
+  )
+  readonly SYMLINK_EXCLUDE_EXACT
+
   # never-touch user-owned paths (relative to TARGET_HOME) — exact basenames +
   # prefix globs. These are NEVER read/moved/symlinked-over/deleted (spec §6-1).
   NEVER_TOUCH_EXACT=(
@@ -261,10 +286,61 @@ is_never_touch() {
   esac
 }
 
+# --- OS-portable stat accessors (BSD/macOS `stat -f` vs GNU/Linux `stat -c`) -
+# BSD and GNU stat diverge on BOTH the flag (-f vs -c) AND the per-field format
+# specifier, so a blind -f→-c swap silently returns WRONG values on GNU (it does
+# not understand %Lp/%m). Detect the flavor ONCE (uname -s, memoized) and route
+# each PURPOSE through its own accessor carrying the correct flag+specifier.
+# Mirrors resolve_self()'s BSD/GNU readlink -f portability split in the entry point.
+#   dev   (st_dev) : BSD %d  == GNU %d   (specifier matches)
+#   perms (octal)  : BSD %Lp -> GNU %a   (specifier DIFFERS)
+#   mtime (epoch)  : BSD %m  -> GNU %Y   (specifier DIFFERS)
+# __GA_STAT_IS_BSD is set on first use (1 = BSD/Darwin stat -f, 0 = GNU stat -c).
+__ga_detect_stat_os() {
+  [[ -n "${__GA_STAT_IS_BSD:-}" ]] && return 0
+  local os
+  os="$(uname -s 2>/dev/null || printf 'unknown')"
+  if [[ "${os}" == "Darwin" ]]; then
+    __GA_STAT_IS_BSD=1
+  else
+    __GA_STAT_IS_BSD=0
+  fi
+}
+
+# stat_dev <path> — numeric st_dev (same %d specifier on both flavors).
+stat_dev() {
+  __ga_detect_stat_os
+  if [[ "${__GA_STAT_IS_BSD}" -eq 1 ]]; then
+    stat -f '%d' -- "$1"
+  else
+    stat -c '%d' -- "$1"
+  fi
+}
+
+# stat_perms <path> — octal permission bits (BSD %Lp vs GNU %a).
+stat_perms() {
+  __ga_detect_stat_os
+  if [[ "${__GA_STAT_IS_BSD}" -eq 1 ]]; then
+    stat -f '%Lp' -- "$1"
+  else
+    stat -c '%a' -- "$1"
+  fi
+}
+
+# stat_mtime <path> — epoch mtime seconds (BSD %m vs GNU %Y).
+stat_mtime() {
+  __ga_detect_stat_os
+  if [[ "${__GA_STAT_IS_BSD}" -eq 1 ]]; then
+    stat -f '%m' -- "$1"
+  else
+    stat -c '%Y' -- "$1"
+  fi
+}
+
 # --- device id (doctor same-device advisory helper) ------------------------
-# stat -f %d → numeric st_dev of a path (BSD/macOS stat). Caller must pass an
+# Numeric st_dev of a path via the OS-portable accessor. Caller must pass an
 # existing path.
-dev_of() { stat -f '%d' -- "$1"; }
+dev_of() { stat_dev "$1"; }
 
 # --- manifest parsing ------------------------------------------------------
 # manifest.json shape: { "files": ["agents/foo.md", "rules/bar.md", ...] }
@@ -346,6 +422,36 @@ is_collision_scope() {
         ;;
       *) ;; # not this prefix — keep scanning
     esac
+  done
+  printf 'no\n'
+}
+
+# --- symlink-farm exclusion query ------------------------------------------
+# Echo "yes" when a manifest-relative path is INSTALL-INTERNAL — bundled + hash-
+# verified but consumed in place from ~/.glass-atrium and therefore never
+# symlinked into ~/.claude (SYMLINK_EXCLUDE_PREFIXES / SYMLINK_EXCLUDE_EXACT).
+# Else "no". Stdout-verdict (always exits 0) so the ERR trap never fires,
+# mirroring is_never_touch / is_collision_scope. Applied at every symlink-farm
+# WRITE site (run_symlink_farm create, remove_manifest_links remove); the doctor
+# §4 source-presence check deliberately does NOT use it (it still verifies the
+# bundle actually shipped lib/ etc.).
+is_symlink_excluded() {
+  local rel="$1"
+  local prefix exact
+  for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
+    case "${rel}" in
+      "${prefix}"*)
+        printf 'yes\n'
+        return 0
+        ;;
+      *) ;; # not this prefix — keep scanning
+    esac
+  done
+  for exact in "${SYMLINK_EXCLUDE_EXACT[@]}"; do
+    if [[ "${rel}" == "${exact}" ]]; then
+      printf 'yes\n'
+      return 0
+    fi
   done
   printf 'no\n'
 }
@@ -985,6 +1091,13 @@ remove_manifest_links() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
+    # install-internal payload was never symlinked (see run_symlink_farm) → there
+    # is nothing to remove; skip it symmetrically so the removed-count stays
+    # accurate. (stdout verdict, always exits 0 → SC2311 masking intentional.)
+    # shellcheck disable=SC2310,SC2311,SC2312
+    if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
+      continue
+    fi
     # A return 1 from remove_if_ga_link is a SAFE SKIP, not an error, so set -e
     # must not abort on it. Bracket the single call with set +e/set -e (the
     # SC2310-clean idiom) and capture rc, then branch. Also suspend the ERR trap
@@ -1307,19 +1420,43 @@ run_doctor() {
   #    shared-self-improve-hygiene.md Precondition Loud-Fail Principle: surface
   #    every miss so a partial/stale deploy (e.g. a newly added skill or script
   #    never run through `glass-atrium agents-only`) cannot fossilize silently.
+  local undeployed_fresh=0
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" && -d "${TARGET_HOME}" ]] \
     && jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
-    # preflight context downgrades §7 from FAIL to a note: a fresh install has
-    # not deployed yet (run_symlink_farm runs after this preflight), so an
-    # undeployed entry is expected, not a fault. Standalone doctor keeps FAIL.
-    local sev="FAIL"
-    [[ "${mode}" == "preflight" ]] && sev="note"
-    local rel undeployed=0 dst cur
+    # Two contexts downgrade §7 from hard-FAIL to an advisory:
+    #   (a) preflight — run_symlink_farm runs AFTER this preflight, so a fresh
+    #       install legitimately has 0 deployed entries (existing behavior).
+    #   (b) FULLY-FRESH standalone target — a brand-new empty target home with NO
+    #       GA-pointing symlinks at all is the SAME not-yet-deployed case, not
+    #       drift: 0/N deployed because nothing was ever installed here. ga_links
+    #       (the §5 find idiom) counts GA-pointing symlinks under TARGET_HOME;
+    #       zero such links ⇒ nothing is deployed ⇒ every manifest entry reports
+    #       undeployed. The hard-FAIL is RESERVED for genuine PARTIAL drift (some
+    #       entries deployed, some missing) on an established install.
+    local ga_links=0 lk
+    # find ends with `|| true` → masked exit is benign; process substitution
+    # keeps the loop in the current shell (var-safe).
+    # shellcheck disable=SC2312
+    while IFS= read -r lk; do
+      [[ -n "${lk}" ]] || continue
+      ga_links=$((ga_links + 1))
+    done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+
+    local sev="FAIL" fresh=0
+    if [[ "${mode}" == "preflight" ]]; then
+      sev="note"
+    elif [[ "${ga_links}" -eq 0 ]]; then
+      # fully-fresh standalone target — relabel per-entry lines + summary as warn.
+      sev="warn"
+      fresh=1
+    fi
+    local rel total=0 undeployed=0 dst cur
     # read_manifest_files dies on its own failure → masked exit is benign;
     # process substitution keeps the loop in the current shell (var-safe).
     # shellcheck disable=SC2312
     while IFS= read -r rel; do
       [[ -n "${rel}" ]] || continue
+      total=$((total + 1))
       dst="${TARGET_HOME}/${rel}"
       if [[ -L "${dst}" ]]; then
         cur="$(readlink -- "${dst}")"
@@ -1337,6 +1474,11 @@ run_doctor() {
       log "  ok   : all manifest entries deployed to target (symlinks into GA root)"
     elif [[ "${mode}" == "preflight" ]]; then
       log "  note : ${undeployed} manifest entr(y/ies) not yet deployed to ${TARGET_HOME} — deploy step runs next (preflight advisory)"
+    elif [[ "${fresh}" -eq 1 && "${undeployed}" -eq "${total}" ]]; then
+      # FULLY-FRESH target: no GA symlinks present + 0/N deployed = a brand-new
+      # empty target home, NOT a drifted install. WARN (advisory), never hard-FAIL.
+      log "  ---- ${undeployed}/${total} manifest entr(y/ies) not yet deployed to ${TARGET_HOME} (fresh target — no GA symlinks present; run 'glass-atrium agents-only' to deploy) ----"
+      undeployed_fresh="${undeployed}"
     else
       log "  ---- ${undeployed} manifest entr(y/ies) not deployed to ${TARGET_HOME} ----"
       fail=1
@@ -1456,11 +1598,11 @@ run_doctor() {
   fi
 
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed warning(s) — see above) =="
     fi
     return 0
   fi
@@ -1550,6 +1692,15 @@ run_symlink_farm() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
+    # install-internal payload (lib/ engine, config template, requirements) is
+    # bundled + hash-verified but consumed in place from GA_ROOT — never a
+    # ~/.claude symlink. Skip it here (is_symlink_excluded is a stdout verdict,
+    # always exits 0 → SC2311 masking is intentional; no file-scope set -e).
+    # shellcheck disable=SC2310,SC2311,SC2312
+    if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
+      log "skip (install-internal, not symlinked): ${rel}"
+      continue
+    fi
     # swap_symlink returns 2 on a collision SKIP (a safe non-error outcome), so
     # set -e must not abort. Bracket the single call with set +e/set -e (the
     # SC2310-clean idiom) and branch on rc. Also suspend the ERR trap for the
@@ -2077,7 +2228,7 @@ run_install() {
   # T24 — snapshot the just-installed manifest as the base@install baseline anchor.
   # Runs LAST (after the symlink farm + doctor postcheck) so the baseline reflects
   # the fully-installed tree. The post-APPLY baseline refresh is a SEPARATE seam
-  # owned by the glass-atrium-update skill (update_capture_baseline) — NOT merged
+  # owned by the updater (scripts/update.sh update_capture_baseline) — NOT merged
   # here; this is install-time capture only.
   capture_install_baseline
 }
@@ -2128,8 +2279,8 @@ capture_install_baseline() {
 # one update-state root). WITH this store the next update resolves an EDITABLE
 # region via a real 3-anchor diff3; WITHOUT it editable_merge degrades
 # safety-conservatively to the gated-2-way fallback (more human gating, never a
-# silent corrupt). The glass-atrium-update skill (A1) re-seeds the SAME store
-# post-apply; install seeds it first.
+# silent corrupt). The updater (scripts/update.sh update_capture_base_content)
+# re-seeds the SAME store post-apply; install seeds it first.
 #
 # Source bodies come from ${GA_ROOT}/<rel> (the real release files the symlink farm
 # points at), NOT the installed target symlinks. Only agents/*.md carry EDITABLE
@@ -2440,8 +2591,8 @@ teardown_update_state() {
 
 # --- update orchestration (T08 dispatcher → T09 updater flow) ---------------
 # run_update — the `glass-atrium update` subcommand handler. It DISPATCHES to the
-# glass-atrium-update updater (skills/glass-atrium-update/update.sh, the T09 entry
-# point) and propagates its exit code verbatim.
+# updater script (scripts/update.sh, the T09 entry point) and propagates its exit
+# code verbatim.
 #
 # WHY a SUBPROCESS, never a source: the updater is its OWN executable entry point —
 # it sets `set -Eeuo pipefail` + arms `trap update_cleanup EXIT INT TERM` (the T10
@@ -2455,16 +2606,16 @@ teardown_update_state() {
 # installer's flag parser, which loud-dies on the updater's --help).
 #
 # Resolution: GA_ROOT-anchored (the running install's OWN tree — the binary
-# resolves through the symlink farm to its real repo, so the skill sits beside it),
+# resolves through the symlink farm to its real repo, so the updater sits beside it),
 # overridable via ATRIUM_UPDATE_SCRIPT for a sandbox/CI layout (mirrors the GA_*
 # override pattern). Loud-fail (die) when the updater is absent or non-executable —
 # no silent absorption of a missing entry point (Precondition Loud-Fail).
 run_update() {
-  local updater="${ATRIUM_UPDATE_SCRIPT:-${GA_ROOT}/skills/glass-atrium-update/update.sh}"
+  local updater="${ATRIUM_UPDATE_SCRIPT:-${GA_ROOT}/scripts/update.sh}"
   [[ -f "${updater}" ]] \
-    || die "updater not found: ${updater} (the glass-atrium-update skill is missing from this install)"
+    || die "updater not found: ${updater} (the updater script is missing from this install)"
   [[ -x "${updater}" ]] \
-    || die "updater not executable: ${updater} (chmod +x the glass-atrium-update skill)"
+    || die "updater not executable: ${updater} (chmod +x the updater script)"
   # Run as a child so the updater's strict mode + EXIT/INT/TERM trap own their own
   # shell; the exit code propagates (0 ok · 1 die/decline · 2 usage). The caller
   # (passthrough) captures it via `|| rc=$?` so set -e never aborts on a non-zero.
