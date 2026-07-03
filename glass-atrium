@@ -3529,7 +3529,7 @@ doctor_headless_auth_advisory() {
   # 1. secrets file present + exactly 0600.
   if [[ -f "${secrets_file}" ]]; then
     local perms
-    perms="$(stat -f '%Lp' "${secrets_file}" 2>/dev/null || true)"
+    perms="$(stat_perms "${secrets_file}" 2>/dev/null || true)"
     if [[ "${perms}" == "600" ]]; then
       log "  ok   : headless secrets file present + 0600 (${secrets_file})"
     else
@@ -3575,7 +3575,7 @@ doctor_headless_auth_advisory() {
       fi
     done < <(find "${reports_dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
       | while IFS= read -r f; do
-        printf '%s\t%s\n' "$(stat -f '%m' "${f}" 2>/dev/null || printf '0')" "${f}"
+        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
       done | sort -rn | cut -f2-)
     if [[ "${hit}" -eq 1 ]]; then
       log "  warn : a recent daemon report shows an auth-failure / infra_fault / haiku-exit-1 — run the install auth step / 'claude setup-token'"
@@ -3894,24 +3894,47 @@ ga_parse_args() {
 # function's named exit codes propagate through (set -e off via `|| status=$?`
 # is NOT used — we WANT the engine's exit/die to set our exit status directly).
 passthrough() {
-  local sub="$1"
-  shift
-
   # The `update` subcommand (T08) forwards its args VERBATIM to the glass-atrium-update
-  # updater (T09), which owns its own argv parsing (--help). It MUST be dispatched
-  # BEFORE ga_parse_args — the installer's flag parser loud-dies on the updater's
-  # --help. Capture the rc via `|| rc=$?` so set -e never aborts on a non-zero engine
-  # exit, then `exit` it directly (the bootstrap branch's terminal idiom): a non-zero
-  # `return` would trip the ERR trap, whereas `exit` propagates the updater's code
-  # cleanly and cleanup() (EXIT trap) still restores the terminal + sweeps temps.
-  if [[ "${sub}" == "update" ]]; then
+  # updater (T09), which owns its own argv parsing (--help, positionals). It MUST stay
+  # FIRST-token + verbatim-forward (the installer's flag parser loud-dies on the
+  # updater's own tokens), so it is detected on the RAW first token BEFORE the
+  # position-independent split below — the split's extra-arg guard must never touch the
+  # updater's private argv. Capture the rc via `|| rc=$?` so set -e never aborts on a
+  # non-zero engine exit, then `exit` it directly (the bootstrap branch's terminal
+  # idiom): a non-zero `return` would trip the ERR trap, whereas `exit` propagates the
+  # updater's code cleanly and cleanup() (EXIT trap) still restores the terminal.
+  if [[ "$1" == "update" ]]; then
+    shift
     local update_rc=0
     run_update "$@" || update_rc=$?
     exit "${update_rc}"
   fi
 
-  # parse the remaining flag tokens into the lib's run-mode vars.
-  ga_parse_args "$@"
+  # Position-independent token split (non-update engine subcommands): the SUBCOMMAND is
+  # the first NON-flag token (anything not matching -*), every other token is a flag
+  # routed to ga_parse_args. This accepts both `prune` and the natural flag-first
+  # ordering `--dry-run prune` (install-prune.bats test 5) as well as `prune --dry-run`
+  # — the subcommand may sit anywhere in argv relative to its flags. bash-3.2 safe (no
+  # getopt long-opt support): a manual single pass builds the flag list + captures the
+  # lone subcommand.
+  local sub="" pt_flags=() tok
+  for tok in "$@"; do
+    if [[ "${tok}" == -* ]]; then
+      pt_flags+=("${tok}")
+    elif [[ -z "${sub}" ]]; then
+      sub="${tok}"
+    else
+      # A second non-flag token has no meaning in the subcommand contract (one engine
+      # function per invocation) — loud-fail rather than silently dropping it.
+      die "unexpected extra argument: ${tok}"
+    fi
+  done
+  [[ -n "${sub}" ]] || die "no subcommand given"
+
+  # parse the peeled flag tokens into the lib's run-mode vars. The `${arr[@]+"${arr[@]}"}`
+  # guard is the bash-3.2-safe empty-array expansion under set -u (a bare "${pt_flags[@]}"
+  # trips nounset when the array is empty, e.g. the flagless `prune` path).
+  ga_parse_args ${pt_flags[@]+"${pt_flags[@]}"}
 
   case "${sub}" in
     bootstrap)

@@ -13,6 +13,16 @@ SCANNER="${BATS_TEST_DIRNAME}/../pii-scan.sh"
 
 setup() {
   [[ -f "${SCANNER}" ]] || skip "pii-scan.sh not found: ${SCANNER}"
+  # 호스트 독립 합성 USER (P0 Wave 3): 스캐너는 PII 패턴 #3 을 $USER(단어 경계)에서
+  #   유도한다. CI 호스트의 사용자명이 추적 소스(ci.yml/문서)에 등장하는 토큰이면
+  #   worktree-clean 오탐 FAIL 을 유발한다. 고정 합성 토큰을 주입해 유도 패턴을
+  #   결정적으로 만들고 어떤 호스트(CI/개발기)에서도 실제 저장소 내용과 매치되지
+  #   않게 한다. 아래 fixture 도 동일한 $USER 로 dirty 내용을 합성하므로 dir 모드
+  #   단어 경계 테스트가 정렬된다. 확장값이 이 추적 파일에 연속 리터럴로 등장하지
+  #   않도록 조각으로 조립한다 — 그렇지 않으면 tracked 모드 스캔이 fixture 이름을
+  #   자기 매치해 제거하려던 FAIL 을 다시 유발한다.
+  local u_head="ga-fixture" u_tail="user"
+  export USER="${u_head}-${u_tail}"
   WORK="$(mktemp -d -t pii-scan-bats.XXXXXX)"
 }
 

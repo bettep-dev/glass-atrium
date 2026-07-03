@@ -1,0 +1,45 @@
+# Composite action: monitor Node toolchain + Playwright browser cache.
+#
+# De-dups the "Set up Node (from monitor/.nvmrc)" step shared by test-monitor
+# and test-e2e. Bundles three concerns that always travel together:
+#   1. actions/setup-node pinned to monitor/.nvmrc (single Node-version SoT).
+#   2. npm cache keyed on monitor/package-lock.json (workspace lockfile).
+#   3. actions/cache for ~/.cache/ms-playwright — the chromium download that
+#      postinstall's `playwright install chromium` pulls; caching it on the
+#      lockfile hash avoids re-downloading the browser on unchanged deps.
+#
+# Behavior-identical to the inline steps it replaces; this is a pure de-dup.
+name: Set up monitor Node
+description: >-
+  Install the monitor's Node toolchain (version from monitor/.nvmrc) with npm
+  dependency caching plus a Playwright chromium browser-download cache.
+
+inputs:
+  playwright-cache-key-prefix:
+    description: Cache-key prefix for the Playwright browser download cache.
+    required: false
+    default: ms-playwright
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node (from monitor/.nvmrc)
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version-file: monitor/.nvmrc
+        cache: npm
+        cache-dependency-path: monitor/package-lock.json
+
+    # Cache the chromium binary Playwright downloads (postinstall / --with-deps
+    # only pulls system libs when this is a hit). Keyed on the workspace lockfile
+    # so a dependency bump — which can bump the pinned Playwright version — busts
+    # the browser cache in lockstep.
+    - name: Cache Playwright browsers
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: >-
+          ${{ inputs.playwright-cache-key-prefix }}-${{ runner.os }}-${{
+          hashFiles('monitor/package-lock.json') }}
+        restore-keys: |
+          ${{ inputs.playwright-cache-key-prefix }}-${{ runner.os }}-

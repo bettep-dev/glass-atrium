@@ -27,11 +27,12 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_WIKI_BOOTSTRAP="${HOME}/.glass-atrium/scripts/wiki-daemon-bootstrap.sh"
-REAL_AUTOAGENT_BOOTSTRAP="${HOME}/.glass-atrium/scripts/autoagent-daemon-bootstrap.sh"
-REAL_BOOTSTRAP_LIB="${HOME}/.glass-atrium/scripts/lib/daemon-bootstrap-common.sh"
-REAL_LOCK_LIB="${HOME}/.glass-atrium/scripts/lib/daemon-lock.sh"
-REAL_CONFIG_LIB="${HOME}/.glass-atrium/scripts/lib/atrium-config.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_WIKI_BOOTSTRAP="${GA}/scripts/wiki-daemon-bootstrap.sh"
+REAL_AUTOAGENT_BOOTSTRAP="${GA}/scripts/autoagent-daemon-bootstrap.sh"
+REAL_BOOTSTRAP_LIB="${GA}/scripts/lib/daemon-bootstrap-common.sh"
+REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
+REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 
 setup() {
   [[ -f "${REAL_BOOTSTRAP_LIB}" ]] || skip "daemon-bootstrap-common.sh not found"
@@ -101,7 +102,7 @@ teardown() {
       wait "${pid}" 2>/dev/null || true
     done <"${BOOT_PIDS}"
   fi
-  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}"
+  [[ -n "${TMPROOT:-}" && -d "${TMPROOT}" ]] && rm -rf -- "${TMPROOT}" || true
 }
 
 # Copy the live wrapper + both shared libs into the sandbox so the wrapper's

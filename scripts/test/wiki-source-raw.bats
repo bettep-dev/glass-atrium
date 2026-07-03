@@ -19,7 +19,8 @@
 # — the one global the functions read — is pointed at a throwaway temp dir, so the
 # real functions run against crafted fixtures without touching the live wiki store.
 
-REAL_SCRIPT="${HOME}/.glass-atrium/scripts/wiki-daily-compile.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "wiki-daily-compile.sh not found: ${REAL_SCRIPT}"
@@ -47,7 +48,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # Write bytes verbatim (no trailing-newline coercion) so CRLF / lone-CR fixtures
@@ -55,6 +56,16 @@ teardown() {
 write_raw_bytes() {
   printf '%b' "$2" >"$1"
 }
+
+# Portable file checksum — macOS ships `md5 -q`, Linux/CI ships `md5sum`. Only
+# equality of two checksums matters here, so any stable hash works; kept as md5
+# to preserve intent. The tool is selected once at load time so each call skips
+# the repeated PATH search.
+if command -v md5 >/dev/null 2>&1; then
+  _file_md5() { md5 -q "$1"; }
+else
+  _file_md5() { md5sum "$1" | awk '{print $1}'; }
+fi
 
 # ---------------------------------------------------------------------------
 # _extract_source_raw — byte-parity with _extract_source_url
@@ -185,9 +196,9 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   write_raw_bytes "${NOTES_DIR}/note.md" '---\ntitle: t\n---\nbody\n'
   _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
   local first_sum
-  first_sum="$(md5 -q "${NOTES_DIR}/note.md")"
+  first_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
   _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
-  [[ "$(md5 -q "${NOTES_DIR}/note.md")" == "${first_sum}" ]]
+  [[ "$(_file_md5 "${NOTES_DIR}/note.md")" == "${first_sum}" ]]
 }
 
 @test "_inject_source_raw: the injected source_raw line is readable back after stamping" {
@@ -215,9 +226,9 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
 @test "_inject_source_raw: a file with no opening delimiter is left unchanged (no-op)" {
   write_raw_bytes "${NOTES_DIR}/note.md" 'title: t\nbody\n'
   local before_sum
-  before_sum="$(md5 -q "${NOTES_DIR}/note.md")"
+  before_sum="$(_file_md5 "${NOTES_DIR}/note.md")"
   _inject_source_raw "${NOTES_DIR}/note.md" "the-raw.md" "http://u"
-  [[ "$(md5 -q "${NOTES_DIR}/note.md")" == "${before_sum}" ]]
+  [[ "$(_file_md5 "${NOTES_DIR}/note.md")" == "${before_sum}" ]]
 }
 
 @test "_inject_source_raw: an already-present source_raw is NOT overwritten with a different value" {

@@ -21,7 +21,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_LIB="${HOME}/.glass-atrium/lib/ga-core.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+REAL_LIB="${GA}/lib/ga-core.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "lib/ga-core.sh not found: ${REAL_LIB}"
@@ -40,15 +41,15 @@ setup() {
   # ("E5 lib missing") when they are absent. Provision them into the sandbox so
   # ga_init_env succeeds (the bootstrap path itself does not exercise them — this
   # is a SOURCE-time dependency of init, not of run_bootstrap).
-  cp "${HOME}/.glass-atrium/scripts/lib/atrium-config.sh" \
-    "${HOME}/.glass-atrium/scripts/lib/apply-spine.sh" \
-    "${HOME}/.glass-atrium/scripts/lib/update-pause-flag.sh" \
+  cp "${GA}/scripts/lib/atrium-config.sh" \
+    "${GA}/scripts/lib/apply-spine.sh" \
+    "${GA}/scripts/lib/update-pause-flag.sh" \
     "${GA_SBX}/scripts/lib/"
   install_stubs
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
 }
 
 # --- PATH stubs (behavior keyed on marker env vars, exported into the run) -----

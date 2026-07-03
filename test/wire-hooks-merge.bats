@@ -16,7 +16,8 @@
 # <target>/settings.json) at a throwaway temp dir, so the test drives the REAL
 # wire_hooks against a synthetic settings.json WITHOUT touching ~/.claude.
 
-REAL_GA="${HOME}/.glass-atrium/glass-atrium"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+REAL_GA="${GA}/glass-atrium"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -26,7 +27,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}"
+  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
 }
 
 # Run the real wire-hooks subcommand against the sandboxed target.

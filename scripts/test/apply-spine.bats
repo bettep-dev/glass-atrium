@@ -22,7 +22,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_LIB="${HOME}/.glass-atrium/scripts/lib/apply-spine.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_LIB="${GA}/scripts/lib/apply-spine.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "apply-spine.sh not found: ${REAL_LIB}"
@@ -38,7 +39,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # --- helpers ---------------------------------------------------------------

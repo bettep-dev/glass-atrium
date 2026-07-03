@@ -19,7 +19,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_SCRIPT="${HOME}/.glass-atrium/scripts/generate-manifest.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
@@ -41,7 +42,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # Seed a minimal manifest carrying ONLY the _doc_settings_json contract key the

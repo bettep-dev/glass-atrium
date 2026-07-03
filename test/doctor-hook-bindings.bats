@@ -14,7 +14,8 @@
 # run_doctor against a synthetic settings.json without touching ~/.claude. We
 # assert ONLY on the §6 binding lines; §1-5 verdicts are out of scope here.
 
-REAL_GA="${HOME}/.glass-atrium/glass-atrium"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+REAL_GA="${GA}/glass-atrium"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -24,7 +25,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}"
+  [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
 }
 
 # settings.json with every EXPECTED_HOOK_BINDINGS entry wired under its event.
@@ -136,7 +137,7 @@ run_doctor_sandbox() {
     "${SETTINGS}" >"${SETTINGS}.new"
   mv -f "${SETTINGS}.new" "${SETTINGS}"
   run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (DORMANT"* ]]
+  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT"* ]]
   [[ "${output}" == *"dormant hook binding(s)"* ]]
   # a still-wired hook continues to report ok (no false-positive warn)
   [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-delegation.sh"* ]]
@@ -177,6 +178,6 @@ run_doctor_sandbox() {
     "${SETTINGS}" >"${SETTINGS}.new"
   mv -f "${SETTINGS}.new" "${SETTINGS}"
   run_doctor_sandbox
-  [[ "${output}" == *"installer does NOT write settings.json"* ]]
+  [[ "${output}" == *"never writes settings.json"* ]]
   [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh"* ]]
 }

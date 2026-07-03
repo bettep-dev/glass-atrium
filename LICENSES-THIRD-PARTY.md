@@ -25,7 +25,7 @@ artifact and this verdict must be re-evaluated.
 - **Manifests audited**: `monitor/package.json` (versions pinned by the tracked
   `monitor/package-lock.json`), `autoagent/package.json` (lockfile untracked — versions
   read from the installed tree), and Python third-party imports enumerated across all
-  60 tracked `*.py` files (no `requirements.txt` / `pyproject.toml` exists in the repo).
+  71 tracked `*.py` files (no `requirements.txt` / `pyproject.toml` exists in the repo).
 - **License sources**: installed `node_modules/*/package.json` `license` fields; bundled
   LICENSE texts where the field is absent; npm registry metadata (`npm view`) for unmet
   optional placeholders; Python `importlib.metadata` for installed distributions.
@@ -119,8 +119,8 @@ Import sites (tracked files):
 - `psycopg` (v3) — 9 production files: `hooks/_pg_dual_write.py`,
   `hooks/_pg_learning_dualwrite.py`, `hooks/_pg_outcome_dualwrite.py`,
   `hooks/backfill-cost-events.py`, `hooks/cost-summary.py`,
-  `monitor/maintenance/fossil-pattern-retire/05-extend-apply.py`,
   `scripts/_pg_archive_rotate.py`, `scripts/_pg_dual_write_daemon.py`,
+  `scripts/agent_lifecycle/db_utils.py`,
   `scripts/autoagent-status-backfill.py` — plus 6 autoagent test files
   (`autoagent/test/test_all_reject_alert_e2e.py`,
   `test_negative_signal_triggers.py`,
@@ -131,7 +131,7 @@ Import sites (tracked files):
 - autoagent production Python (`daemon_cycle.py`, `lib/confidence.py`,
   `lib/project_key.py`) is **stdlib-only**.
 
-All other imports across the 60 tracked `*.py` files are Python standard library or
+All other imports across the 71 tracked `*.py` files are Python standard library or
 repo-local modules.
 
 ## monitor — devDependencies (build-time only, not distributed)

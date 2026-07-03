@@ -22,8 +22,8 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_GA="${HOME}/.glass-atrium/glass-atrium"
-GA_ROOT_DIR="${HOME}/.glass-atrium"
+GA_ROOT_DIR="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+REAL_GA="${GA_ROOT_DIR}/glass-atrium"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -40,8 +40,8 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
-  [[ -n "${GA_SCRATCH:-}" && -d "${GA_SCRATCH}" ]] && rm -rf -- "${GA_SCRATCH}"
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  [[ -n "${GA_SCRATCH:-}" && -d "${GA_SCRATCH}" ]] && rm -rf -- "${GA_SCRATCH}" || true
 }
 
 # write a manifest.json whose .files is the given relative-path list.

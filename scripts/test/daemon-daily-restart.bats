@@ -27,9 +27,10 @@
 
 bats_require_minimum_version 1.5.0
 
-REAL_SCRIPT="${HOME}/.glass-atrium/scripts/daemon-daily-restart.sh"
-REAL_LOCK_LIB="${HOME}/.glass-atrium/scripts/lib/daemon-lock.sh"
-REAL_CONFIG_LIB="${HOME}/.glass-atrium/scripts/lib/atrium-config.sh"
+GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
+REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
+REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${REAL_SCRIPT}"
@@ -37,7 +38,7 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}"
+  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
 # Extract one top-level function (start pattern → first column-0 brace) into a

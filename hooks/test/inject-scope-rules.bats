@@ -11,7 +11,8 @@
 #   is agent-agnostic and would otherwise add noise to every run). The 3 OTHER scope sources
 #   (comment-logging / style_ref / minimalism) are pointed at /nonexistent by DEFAULT so a "naming
 #   present" assertion proves the naming block specifically, not an accidental match in a sibling
-#   block. The naming source defaults to the real symlinked SKILL.md unless a test overrides it.
+#   block. The naming source defaults to a HERMETIC in-sandbox fixture built in setup() (NOT the
+#   HOME-anchored real SKILL.md, which is absent under a CI checkout) unless a test overrides it.
 #
 # BATS GATING NOTE: this bats version runs @test bodies WITHOUT `set -e`, so only the LAST command
 #   gates pass/fail — a non-final failing `[[ ]]` is silently ignored. Every assertion below is
@@ -23,17 +24,37 @@ HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"
 # The marker string the naming block is uniquely identified by (its first line in the SKILL.md core).
 NAMING_NEEDLE="Naming delta-core"
 
+# The NAMING block markers the hermetic fixture must carry (mirror hooks/inject-scope-rules.sh anchors).
+NAMING_MARKER_START='<!-- AGENT-INJECT:NAMING:START -->'
+NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "inject-scope-rules.sh not found: ${HOOK_SH}"
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
+
+  # Hermetic NAMING source fixture — the hook's default naming source is the HOME-anchored real
+  # SKILL.md (${HOME}/.claude/skills/...), absent in a CI checkout → the naming block would be
+  # empty and the positive-injection assertions would falsely fail. Build a self-contained fixture
+  # carrying the NAMING markers + the NAMING_NEEDLE first line, and point run_hook at it by DEFAULT.
+  # Tests that deliberately pass their own naming_src (fail-open cases) still override this.
+  NAMING_FIXTURE="${BATS_TEST_TMPDIR}/naming-skill.md"
+  printf '%s\n' \
+    'skill preamble (must not reach the child)' \
+    "${NAMING_MARKER_START}" \
+    "**${NAMING_NEEDLE} (auto-injected for DEV + qa-code-reviewer)**" \
+    'NAMING-CORE-BODY' \
+    "${NAMING_MARKER_END}" \
+    'skill trailer (must not reach the child)' >"${NAMING_FIXTURE}"
 }
 
 # Drive the hook with a SubagentStart envelope wrapping $1 (agent_type). The 3 non-naming scope
 # sources + AGENTS_DIR are sandboxed to /nonexistent and the meter is off, isolating the naming
-# block. $2 (optional) overrides INJECT_SCOPE_RULES_NAMING_SRC (fail-open / absent-marker tests).
+# block. The naming source defaults to the hermetic fixture built in setup() (so the positive
+# assertions do not depend on the HOME-anchored real SKILL.md, absent in CI); $2 (optional)
+# overrides INJECT_SCOPE_RULES_NAMING_SRC for the fail-open / absent-marker tests.
 run_hook() {
-  local agent="${1}" naming_src="${2:-}"
+  local agent="${1}" naming_src="${2:-${NAMING_FIXTURE}}"
   run bash -c '
     agent="$1"; hook="$2"; naming_src="$3"
     payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"

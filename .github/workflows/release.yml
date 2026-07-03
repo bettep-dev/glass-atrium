@@ -20,7 +20,19 @@ name: release
   push:
     tags: ["v*"]
 
-# Least privilege: only the write scope a Release needs.
+# Least privilege: only the write scope a Release needs. `contents: write` is
+# REQUIRED here (unlike ci.yml's deny-all) because `gh release create` creates a
+# Release object + uploads assets — a read-only token would 403. This is scoped
+# to release.yml alone; ci.yml keeps its own `permissions: {}` deny-all.
+#
+# SECURITY (audited-safe): no OIDC (`id-token: write`) block — this workflow
+# authenticates to GitHub itself via the ambient, keyless `github.token`, which
+# needs no OIDC exchange. OIDC would only matter if a step federated into an
+# external cloud (none does). Omitting `id-token` keeps the token surface tight.
+# The GH_TOKEN is NOT declared at the workflow/job level: it is set STEP-SCOPED
+# (see the two `env: GH_TOKEN:` blocks below) so only the two steps that
+# actually call `gh` see it — the manifest-verify / tag-assert / build steps run
+# with no GH_TOKEN in their environment (least-privilege token exposure).
 permissions:
   contents: write
 
@@ -33,7 +45,60 @@ jobs:
     name: publish GitHub Release (manifest + hashed bundle)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # CI-green preflight. ci.yml has NO tag trigger, so a `v*` tag push never
+      # runs CI itself — and `on: workflow_run: [ci]` would never fire for this
+      # tag (and would lose the tag ref the version assertion below needs). So we
+      # keep the `on: push: tags` trigger and instead PROVE that CI already
+      # concluded success for this exact commit (github.sha) — the tagged commit
+      # is expected to be one already merged to main, which ci.yml gates. We poll
+      # the required `ci-pass (required)` check-run for github.sha and refuse to
+      # publish unless it concluded success. gh's built-in --jq needs no jq
+      # install (this step runs before the jq install below).
+      # STEP-SCOPED GH_TOKEN (audited-safe): the token is exposed only to this
+      # step's env, not the workflow/job env — the manifest-verify / tag-assert /
+      # build steps below run without it. `github.token` is the keyless ambient
+      # token (no OIDC, no PAT); the CI-green check-run READ it performs is
+      # covered by the default read grant of that token.
+      - name: Require CI green for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          required_check="ci-pass (required)"
+          # Retry: the tag push may arrive before the main-branch CI run for the
+          # same SHA has finished; poll a bounded number of times.
+          attempts=20
+          sleep_seconds=30
+          for ((i = 1; i <= attempts; i++)); do
+            conclusion="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+                --paginate \
+                --jq "([.check_runs[] | select(.name == \"${required_check}\")]
+                       | sort_by(.started_at) | last | .conclusion) // \"pending\""
+            )"
+            case "${conclusion}" in
+              success)
+                echo "ok: ${required_check} concluded success for ${GITHUB_SHA}"
+                exit 0
+                ;;
+              pending | "" | null)
+                echo "attempt ${i}/${attempts}: ${required_check} still pending for ${GITHUB_SHA}"
+                ;;
+              *)
+                echo "FATAL: ${required_check} concluded '${conclusion}' (not success) for ${GITHUB_SHA}" >&2
+                exit 1
+                ;;
+            esac
+            if [[ "${i}" -lt "${attempts}" ]]; then
+              sleep "${sleep_seconds}"
+            fi
+          done
+          echo "FATAL: ${required_check} did not conclude success for ${GITHUB_SHA} within the poll window" >&2
+          exit 1
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq

@@ -1,0 +1,81 @@
+# Composite action: native peer-auth Postgres on a Unix socket.
+#
+# Encapsulates the 5-step native-cluster setup that test-monitor and
+# test-e2e both need: apt-install postgresql+contrib -> point
+# unix_socket_directories at the socket dir -> restart -> create a
+# superuser role matching the runner OS user (peer auth = no password) ->
+# verify reachability. Extracted verbatim from the two jobs' inline blocks
+# so the flat jobs stay behavior-identical; the ONLY behavior change is the
+# reachability probe, which is now a bounded pg_isready RETRY LOOP replacing
+# the single-shot `psql -tAc 'SELECT 1'` (removes the restart start-race —
+# research item C2).
+name: Set up peer-auth Postgres on a Unix socket
+description: >-
+  Install a native Postgres cluster, reconfigure it to listen on the given
+  Unix socket directory, create a peer-auth superuser role for the runner OS
+  user, and wait (retry loop) until the socket accepts connections.
+
+inputs:
+  socket-dir:
+    description: Unix socket directory Postgres should listen on (host=/tmp contract).
+    required: false
+    default: /tmp
+  database:
+    description: Database used for the readiness probe (must already exist post-install).
+    required: false
+    default: postgres
+  retries:
+    description: Maximum pg_isready attempts before the final hard check.
+    required: false
+    default: "30"
+  retry-interval:
+    description: Seconds to sleep between pg_isready attempts.
+    required: false
+    default: "2"
+
+runs:
+  using: composite
+  steps:
+    # Native Postgres so the runner user is a peer-auth superuser via the
+    # local socket, reconfigured to the socket dir to satisfy the
+    # host=<socket-dir> contract baked into .env.example + oss-db-setup.sh
+    # (PG_SOCKET=/tmp).
+    - name: Install and start Postgres (peer auth on socket)
+      shell: bash
+      env:
+        SOCKET_DIR: ${{ inputs.socket-dir }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql postgresql-contrib
+        sudo sed -i "s|^#\?unix_socket_directories.*|unix_socket_directories = '${SOCKET_DIR}'|" \
+          /etc/postgresql/*/main/postgresql.conf
+        sudo systemctl restart postgresql
+        # peer auth: create a superuser role matching the runner OS user so
+        # `psql -h <socket-dir> -d postgres` connects with no password.
+        sudo -u postgres psql -c "CREATE ROLE \"$(id -un)\" LOGIN SUPERUSER;"
+
+    # Retry loop replaces the old single-shot `psql -tAc 'SELECT 1'`: after a
+    # `systemctl restart` the socket can briefly refuse connections, so poll
+    # pg_isready until it reports ready, then do one final HARD pg_isready that
+    # fails the step (non-zero) if the cluster never came up.
+    - name: Wait for peer-auth socket reachability (pg_isready retry loop)
+      shell: bash
+      env:
+        SOCKET_DIR: ${{ inputs.socket-dir }}
+        PG_DATABASE: ${{ inputs.database }}
+        RETRIES: ${{ inputs.retries }}
+        RETRY_INTERVAL: ${{ inputs.retry-interval }}
+      run: |
+        attempt=1
+        until pg_isready -h "${SOCKET_DIR}" -d "${PG_DATABASE}" -q; do
+          if [[ "${attempt}" -ge "${RETRIES}" ]]; then
+            echo "pg_isready did not report ready after ${RETRIES} attempts" >&2
+            break
+          fi
+          echo "pg_isready attempt ${attempt}/${RETRIES}: not ready, retrying in ${RETRY_INTERVAL}s" >&2
+          attempt=$((attempt + 1))
+          sleep "${RETRY_INTERVAL}"
+        done
+        # Final hard check: this is the authoritative gate — a non-zero exit
+        # here fails the step (and the job) so a dead cluster never slips past.
+        pg_isready -h "${SOCKET_DIR}" -d "${PG_DATABASE}"
