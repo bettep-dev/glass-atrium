@@ -4,60 +4,106 @@ const { useEffect, useRef } = React;
 // 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
-function Icon({ name, size=16, className='', stroke=1.6 }) {
-  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className };
-  const paths = {
-    dashboard: <><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></>,
-    coin:      <><circle cx="12" cy="12" r="9"/><path d="M9 9h4.5a2 2 0 010 4H9m0 0h5"/></>,
-    bot:       <><rect x="4" y="7" width="16" height="13" rx="2"/><path d="M12 2v5M9 13h.01M15 13h.01M9 17h6"/></>,
-    target:    <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></>,
-    brain:     <><path d="M8 4a3 3 0 00-3 3v2a3 3 0 00-2 3 3 3 0 002 3v2a3 3 0 003 3 3 3 0 002.5-1.5"/><path d="M16 4a3 3 0 013 3v2a3 3 0 012 3 3 3 0 01-2 3v2a3 3 0 01-3 3 3 3 0 01-2.5-1.5"/><path d="M12 4v16"/></>,
-    spark:     <><path d="M12 3l1.8 5.5L19 10l-5.2 1.5L12 17l-1.8-5.5L5 10l5.2-1.5z"/></>,
-    terminal:  <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></>,
-    bell:      <><path d="M6 8a6 6 0 1112 0v5l1.5 2H4.5L6 13z"/><path d="M10 19a2 2 0 004 0"/></>,
-    pulse:     <><path d="M3 12h4l2-7 4 14 2-7h6"/></>,
-    chevR:     <><path d="M9 6l6 6-6 6"/></>,
-    chevD:     <><path d="M6 9l6 6 6-6"/></>,
-    arrowU:    <><path d="M12 19V5M5 12l7-7 7 7"/></>,
-    arrowD:    <><path d="M12 5v14M5 12l7 7 7-7"/></>,
-    arrowR:    <><path d="M5 12h14M13 5l7 7-7 7"/></>,
-    minus:     <><path d="M5 12h14"/></>,
-    check:     <><path d="M5 12l5 5L20 7"/></>,
-    x:         <><path d="M6 6l12 12M6 18L18 6"/></>,
-    play:      <><path d="M6 4l13 8-13 8z" fill="currentColor"/></>,
-    refresh:   <><path d="M3 12a9 9 0 0114-7.5L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 01-14 7.5L3 16"/><path d="M3 21v-5h5"/></>,
-    download:  <><path d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></>,
-    filter:    <><path d="M4 5h16l-6 8v6l-4-2v-4z"/></>,
-    search:    <><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></>,
-    moon:      <><path d="M21 13a9 9 0 11-10-10 7 7 0 0010 10z"/></>,
-    sun:       <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>,
-    cog:       <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3h0a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8v0a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></>,
-    info:      <><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></>,
-    warn:      <><path d="M10.3 3.9l-8 14A2 2 0 004 21h16a2 2 0 001.7-3.1l-8-14a2 2 0 00-3.4 0z"/><path d="M12 9v5M12 17h.01"/></>,
-    crit:      <><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></>,
-    user:      <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></>,
-    db:        <><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></>,
-    chip:      <><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></>,
-    git:       <><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6 8v4a4 4 0 004 4h4a4 4 0 004-4V8"/></>,
-    flame:     <><path d="M12 3c2 4 6 5 6 10a6 6 0 11-12 0c0-3 2-5 3-7 1 2 2 3 3 3 0-2 0-4 0-6z"/></>,
-  };
-  return <svg {...props}>{paths[name] || null}</svg>;
+// 짧은 별칭(레거시 call-site 이름) → Lucide UMD PascalCase 키. 손수 관리하던 36개 글리프의 모든
+//   호출 이름을 Lucide 정식 이름으로 매핑 → 기존 <Icon name>/SymI/TONE_ICON 호출 전부 무회귀 +
+//   전체 카탈로그를 이름만으로 개방. warn→TriangleAlert · crit→CircleAlert 은 Lucide 의
+//   alert-triangle→triangle-alert / alert-circle→circle-alert 리네임 반영.
+//   arrow-right 는 kebab call-site(getLucideKey 구분자-대문자화)로 해석 → 별도 별칭 불필요.
+const LUCIDE_ALIAS = {
+  dashboard: 'LayoutDashboard', coin: 'CircleDollarSign', bot: 'Bot', target: 'Target', brain: 'Brain',
+  spark: 'Sparkles', terminal: 'Terminal', bell: 'Bell', pulse: 'Activity', chevR: 'ChevronRight',
+  chevD: 'ChevronDown', arrowU: 'ArrowUp', arrowD: 'ArrowDown', minus: 'Minus',
+  check: 'Check', x: 'X', play: 'Play', refresh: 'RefreshCw', download: 'Download', filter: 'Filter',
+  search: 'Search', moon: 'Moon', sun: 'Sun', cog: 'Settings', info: 'Info', warn: 'TriangleAlert',
+  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', git: 'GitFork', flame: 'Flame',
+  ban: 'Ban', pause: 'Pause', plus: 'Plus', circle: 'Circle',
+};
+
+// 임의 표기(별칭/kebab/snake/camel/Pascal)를 Lucide PascalCase 키로 정규화.
+//   별칭 우선 → 없으면 맨앞/구분자(-,_) 뒤 소문자를 대문자화 (arrow-up·arrow_up·arrowUp → ArrowUp).
+function getLucideKey(name) {
+  if (LUCIDE_ALIAS[name]) return LUCIDE_ALIAS[name];
+  return String(name).replace(/(^|[-_])([a-z])/g, (_, __, c) => c.toUpperCase());
 }
 
-// 단일 배지 SoT — 3 role 로 의미 구분, .pill CSS family 위에 렌더 (.pill = styling layer).
-//   status   = 사용자가 반응해야 할 lifecycle/health 상태 → 톤 컬러(ok/warn/crit/info) + 선행 TONE_GLYPH.
-//   metadata = 상태 아닌 서술 속성(agent-only, md, model-id) → neutral 고정(--sunken/--dim/--line), glyph 없음.
+// Lucide IconNode 자식 attrs → React attrs (kebab → camel). 현재 핀 버전 자식 데이터엔 kebab attr 이
+//   없지만(kebab 은 부모 default attrs 에만 존재하고 여기선 자체 svg attrs 로 대체) 향후 버전 안전차원.
+function getReactAttrs(attrs) {
+  const out = {};
+  for (const k in attrs) out[k.includes('-') ? k.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) : k] = attrs[k];
+  return out;
+}
+
+// 해결된 Lucide 키 → 사전 변환된 자식 React-element 배열 캐시. name 은 사실상 컴파일타임 상수라
+//   정규화+카탈로그 조회+자식 attr 변환을 매 렌더 반복하던 것을 최초 1회로 축소(폴링 재렌더 누적 비용 제거).
+//   성공 해석만 저장 — 미로드(Lucide CDN async) 케이스는 캐시 금지해 이후 로드가 정상 채워지게(무회귀).
+//   자식 element 만 캐시(부모 svg props=size/stroke/className/aria 는 매번 새로 조립) → 거동 불변.
+const ICON_CHILDREN_CACHE = new Map();
+
+function getIconChildren(key, node) {
+  let children = ICON_CHILDREN_CACHE.get(key);
+  if (!children) {
+    children = node[2].map(([tag, attrs], i) => React.createElement(tag, { ...getReactAttrs(attrs), key: i }));
+    ICON_CHILDREN_CACHE.set(key, children);
+  }
+  return children;
+}
+
+// ariaHidden 기본 true — 아이콘은 장식(decorative)이고 의미는 인접 텍스트 라벨이 운반한다(색+기호+텍스트 3중 인코딩 유지).
+// stroke='currentColor' 보존 → 자체(className=text-{tone}) 또는 상위 tone 컬러 클래스가 세팅한 color 를 그대로 상속(색 인코딩 무퇴행).
+// 내부 구현: Lucide UMD 전역(window.lucide) 단일 소스에서 이름으로 IconNode 를 조회해 자식만 렌더 —
+//   미해결/미로드 시 null-safe 빈 svg (손수 복사 path fallback 없음). 공개 API(name/size/className/stroke/ariaHidden)·수직정렬·currentColor 보존.
+function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
+  // 인라인(비-flex) 텍스트 옆 svg 를 텍스트와 수직 중앙 정렬하는 전역 additive 기본값.
+  //   · className 에 명시 정렬(align-*/vertical-align)이 있으면 양보 — inline style 가 class 를 이기므로 조건부로만 적용(SymI 의 align-middle 무회귀).
+  //   · inline-flex 컨테이너(.pill 등)에선 vertical-align 이 무시되므로 보드 배지에 무해.
+  const alignStyle = /align-|vertical-align/.test(className) ? undefined : { verticalAlign: '-0.125em' };
+  const props = { width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', strokeWidth:stroke, strokeLinecap:'round', strokeLinejoin:'round', className, style: alignStyle, 'aria-hidden': ariaHidden || undefined };
+  // falsy name(예: HOOK_ERROR_KIND_MODEL 의 icon:null) → 빈 svg (기존 paths[null] 동작 보존, throw 금지).
+  if (!name) return <svg {...props} />;
+  // 1차: Lucide UMD 전역에서 조회 (전체 카탈로그). icons[key] 우선, top-level 키 폴백. IconNode = [tag, attrs, children].
+  const lucide = typeof window !== 'undefined' ? window.lucide : undefined;
+  const key = getLucideKey(name);
+  const node = lucide && ((lucide.icons && lucide.icons[key]) || lucide[key]);
+  if (Array.isArray(node) && Array.isArray(node[2])) {
+    return <svg {...props}>{getIconChildren(key, node)}</svg>;
+  }
+  // Lucide 미해결/미로드 → null-safe 빈 svg (throw 금지). 손수 복사한 path fallback 제거 — Lucide UMD 가 유일 소스.
+  return <svg {...props} />;
+}
+
+// 단일 배지 SoT (canonical) — 전 screen 이 window.UI.Badge 로만 배지를 렌더 (screen-local 배지 JSX/CSS 금지).
+//   .pill CSS family = styling layer (neutral shell SoT). 3 role 로 의미 구분:
+//   status   = 사용자가 반응해야 할 lifecycle/health 상태 → 선행 tone 심볼(Icon/glyph)이 톤 운반.
+//   metadata = 상태 아닌 서술 속성(agent-only, md, model-id) → neutral, glyph 없음.
 //   count    = 순수 수량(+1, 27 agents) → neutral, glyph 없음, 가장 작게.
-// 하드 규칙: 컬러 = status 전용. metadata/count 는 톤을 받아도 항상 neutral 로 렌더 (color≠metadata/count).
-//   absent=true → .pill--absent (dashed/faint). glyph 는 status 만 사용 (TONE_GLYPH SoT 재참조).
-function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, className='' }) {
+// 하드 규칙 (DESIGN.md §4.2/§7.3 neutral-shell 진화):
+//   · shell 은 모든 tone 에서 neutral(--sunken/--dim/--line) — tone-fill 을 .pill 껍데기에 칠하지 않는다.
+//   · tone 은 내부 심볼(Icon/glyph)에 text-{tone} 으로만 적용 → dual-encode = shape(글리프)+color+인접 label(DESIGN.md §8).
+//   · label 텍스트는 --dim 유지(AA-safe: --sunken 위 warn/ok/info tone 은 11px 3:1 sub-AA). 단 선행 심볼이 없으면(glyph=false status)
+//     tone 을 label 이 운반(유일 carrier) — shell 은 여전히 neutral.
+//   · metadata/count 는 톤을 받아도 항상 neutral (color≠metadata/count).
+// 변형: absent=true → .pill--absent(dashed/faint) · interactive=true → <button>+.pill--interactive(WCAG 2.2 §2.5.8 타깃)
+function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
   const isStatus = role === 'status';
-  const toneClass = isStatus && tone !== 'neutral' ? tone : '';
+  const hasTone = isStatus && tone !== 'neutral';
+  const toneTextClass = hasTone ? `text-${tone}` : '';   // tone → 내부 심볼/텍스트 color (shell 아님)
   const sizeClass = role === 'metadata' ? 'pill--meta' : role === 'count' ? 'pill--count' : '';
-  const leadGlyph = isStatus && glyph ? TONE_GLYPH[tone] : null;
-  // className passthrough — 호출부가 .pill 변형(예: .pill--ctl-h)을 이 인스턴스에만 덧붙이게 (공유 .pill--meta 전역 변경 회피).
-  const cls = ['pill', toneClass, sizeClass, absent ? 'pill--absent' : '', className].filter(Boolean).join(' ');
-  return <span className={cls}>{leadGlyph ? `${leadGlyph} ` : ''}{children}</span>;
+  const showLead = isStatus && glyph;
+  // 선행 심볼이 tone 을 운반 — icon=true → <Icon>(TONE_ICON), 아니면 TONE_GLYPH 문자열. 둘 다 text-{tone} 으로 자기 color 명시
+  //   (shell 이 --dim 이라 상속으론 tone 이 안 옴). aria-hidden 장식, 의미는 인접 label.
+  const leadIcon = showLead && icon ? <Icon name={TONE_ICON[tone]} size={12} className={toneTextClass} /> : null;
+  const leadGlyph = showLead && !icon ? <span className={toneTextClass}>{TONE_GLYPH[tone]} </span> : null;
+  // 심볼이 없는 status(glyph=false) 는 label 이 유일 tone carrier → children 을 text-{tone} span 으로 감싼다(shell neutral 유지).
+  //   심볼이 있으면 label 은 --dim 유지 (tone 은 심볼 담당, AA-safe).
+  const body = hasTone && !showLead ? <span className={toneTextClass}>{children}</span> : children;
+  // className passthrough — 호출부가 일회성 .pill 변형을 이 인스턴스에만 덧붙이게 (현재 상시 소비자 없음).
+  const cls = ['pill', sizeClass, absent ? 'pill--absent' : '', interactive ? 'pill--interactive' : '', className].filter(Boolean).join(' ');
+  const a11y = title ? { title } : {};
+  const content = <>{leadIcon}{leadGlyph}{body}</>;
+  return interactive
+    ? <button type="button" className={cls} onClick={onClick} {...a11y}>{content}</button>
+    : <span className={cls} {...a11y}>{content}</span>;
 }
 
 // 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
@@ -568,12 +614,14 @@ function formatTokenCompact(value) {
 
 // outcome result enum → tone/glyph SoT (A2) — 전 화면 동일 매핑 강제 (blocked 는 실패 아님 · info).
 // needs_context 는 성공률 분모 제외 + 별도 카운트 노출 대상 (neutral).
+// glyph = 문자열 SoT(deferred 소비부 유지) · icon = Icon 이름(신규, 중앙화 — 개별 사이트 편집 회피, FIX-D).
+// icon 은 tone 별 severity 표준과 정합: done→check · caveats→warn · fail→x(DESIGN.md §4.2 crit=✕) · blocked/needs_context→info.
 const RESULT_META = {
-  done:               { tone: 'ok',      glyph: '✓', label: 'Done'              },
-  done_with_concerns: { tone: 'warn',    glyph: '⚠', label: 'Done with caveats' },
-  fail:               { tone: 'crit',    glyph: '✕', label: 'Failed'            },
-  blocked:            { tone: 'info',    glyph: 'ℹ', label: 'Blocked'           },
-  needs_context:      { tone: 'neutral', glyph: 'ℹ', label: 'Needs info'        },
+  done:               { tone: 'ok',      glyph: '✓', icon: 'check', label: 'Done'              },
+  done_with_concerns: { tone: 'warn',    glyph: '⚠', icon: 'warn',  label: 'Done with caveats' },
+  fail:               { tone: 'crit',    glyph: '✕', icon: 'x',     label: 'Failed'            },
+  blocked:            { tone: 'info',    glyph: 'ℹ', icon: 'info',  label: 'Blocked'           },
+  needs_context:      { tone: 'neutral', glyph: 'ℹ', icon: 'info',  label: 'Needs info'        },
 };
 
 // 비율 표본 임계 (A5) — n < 30 이면 muted/italic + '(n=N)' 표기 대상.
@@ -588,7 +636,15 @@ function formatPctWithDenominator(numerator, denominator) {
 }
 
 // tone → 표준 glyph (A2 듀얼인코딩 — 색상 단독 인코딩 금지) · 캐논 셋 ✓/⚠/✕/ℹ 한정 (A7).
+// ⚠ 불변 SoT: Badge 기본(icon=false) 경로가 이 문자열을 그대로 소비하므로(예: health.jsx status Badge)
+// 아이콘/객체로 바꾸지 않는다 — 바꾸면 런타임에 "[object Object]" 렌더(transpile-only build:jsx 미검출).
+// (model-config.jsx · clauded-docs.jsx 는 <Icon name={TONE_ICON[tone]}/> 로 이관됨 — 더는 문자열 직접 소비부 아님.)
 const TONE_GLYPH = { ok: '✓', warn: '⚠', crit: '✕', info: 'ℹ', neutral: 'ℹ' };
+
+// tone → Icon 이름 lookup (신규) — Badge/보드의 Icon 렌더 경로 전용. TONE_GLYPH(문자열 SoT)와 병존:
+// 문자열 직접 소비부는 TONE_GLYPH 를 그대로 쓰고, Icon 렌더 경로만 여기서 아이콘명을 얻는다(FIX-A 분리).
+// crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
+const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info' };
 
 // 불투명 sticky thead 스타일 SoT (S1) — 다수 화면(.tbl)이 미러하므로 단일 출처화.
 // 불투명 --elev fill 유지(§7.5 row blur 금지) — 스크롤 시 헤더가 본문 위에 떠도 가려지지 않음.
@@ -631,5 +687,5 @@ window.UI = {
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER,
+  TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER,
 };

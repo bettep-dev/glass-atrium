@@ -402,6 +402,8 @@ function WikiThroughputCard({ state, onRetry }) {
 }
 
 function WikiThroughputBody({ state, model, onRetry }) {
+	const { Icon } = window.UI;
+
 	if (state.status === "loading") {
 		return <ChartSkeletonW height={180} />;
 	}
@@ -431,7 +433,11 @@ function WikiThroughputBody({ state, model, onRetry }) {
 				</div>
 				{model.dominant ? (
 					<div className="flex items-center gap-2 fs-meta font-mono">
-						<span className={`text-${model.dominant.tone}`}>●</span>
+						<Icon
+							name="circle"
+							size={9}
+							className={`text-${model.dominant.tone}`}
+						/>
 						<span className="text-ink font-medium">
 							{model.dominant.label} {model.dominant.pct}%
 						</span>
@@ -474,20 +480,17 @@ function WikiThroughputBody({ state, model, onRetry }) {
 							/>
 						</div>
 						<div className="flex flex-wrap gap-x-3 gap-y-1 fs-micro font-mono text-faint mt-1.5">
-							<span>
-								<span className="text-ok">●</span> Healthy {model.mix.ok}%
-							</span>
-							<span>
-								<span className="text-warn">●</span> Warning {model.mix.partial}
-								%
-							</span>
-							<span>
-								<span className="text-crit">●</span> Down {model.mix.error}%
-							</span>
-							<span>
-								<span className="text-faint">●</span> Usage limit{" "}
-								{model.mix.quota}%
-							</span>
+							{/* 레전드 = STATUS_CHIP_META 단일 SoT (dominant 칩과 tone/label 공유). 배열 순서 = 위 바 셀 순서. */}
+							{["ok", "partial", "error", "quota"].map((k) => (
+								<span key={k} className="inline-flex items-center gap-1">
+									<Icon
+										name="circle"
+										size={9}
+										className={`text-${STATUS_CHIP_META[k].tone}`}
+									/>
+									{STATUS_CHIP_META[k].label} {model.mix[k]}%
+								</span>
+							))}
 						</div>
 					</>
 				)}
@@ -800,6 +803,8 @@ function MergeSuggestions({ count, proposals }) {
 }
 
 function MergeSuggestionItem({ proposal }) {
+	const { Icon } = window.UI;
+
 	const target = proposal.target_slug || "—";
 	const sources = Array.isArray(proposal.source_slugs)
 		? proposal.source_slugs.join(", ")
@@ -817,7 +822,9 @@ function MergeSuggestionItem({ proposal }) {
 				<span className="text-ink font-medium truncate" title={target}>
 					{target}
 				</span>
-				<span className="text-faint">←</span>
+				<span className="inline-flex items-center text-faint">
+					<Icon name="arrow-left" size={12} />
+				</span>
 				<span className="text-dim truncate" title={sources}>
 					{sources}
 				</span>
@@ -1003,7 +1010,7 @@ function WikiIndexHealthBody({
 				{/* 12px→fs-body(12). master-index label + DIRTY/CLEAN status pill. */}
 				<span className="inline-flex items-center gap-3 flex-wrap min-w-0">
 					<span className="fs-body font-mono text-faint">master-index</span>
-					<Badge role="status" tone={model.dirty ? "warn" : "ok"}>
+					<Badge role="status" tone={model.dirty ? "warn" : "ok"} icon>
 						{model.dirty ? "DIRTY" : "CLEAN"}
 					</Badge>
 				</span>
@@ -1167,7 +1174,7 @@ function WikiReportRow({ report, Badge }) {
 				</span>
 			</td>
 			<td>
-				<Badge role="status" tone={tone}>
+				<Badge role="status" tone={tone} icon>
 					{wikiStatusLabelW(report.status)}
 				</Badge>
 			</td>

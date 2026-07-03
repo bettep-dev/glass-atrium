@@ -103,6 +103,14 @@ const SYNTHETIC_SENTINEL_TITLE =
 // 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 const NON_ACTIONABLE_AGENT_IDS = new Set([UNKNOWN_AGENT_ID, SYNTHETIC_SENTINEL_AGENT_ID]);
 
+// T14 double-filter guard (outcomes.jsx isNonActionableAgentO 미러) — /api/agents/* 는
+// 이제 서버가 registry 게이트하므로 이 클라이언트 시각 집합은 정말 non-actionable 인
+// sentinel(빈-레지스트리 fail-open)에만 매칭. Pure: agent id + 집합 → non-actionable 여부.
+// 두 화면이 집합을 균일 적용하도록 인라인 `.has` 를 중앙화 (uneven cross-screen application 제거).
+function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
+  return visualSet.has(agentId);
+}
+
 // 카드 본문 flex 컨테이너 + 스크롤 + skeleton pulse — inline style 으로 빼두면 JSX 노이즈가 큼.
 // .ag-density-compact = 행 패딩만 좁히는 밀도 토글 (T-AGT-2) — 정렬/색/sev-bar 는 그대로, padding 만 축소.
 const AGENTS_INLINE_CSS = '@keyframes skelPulseAg { 0%,100%{opacity:.7} 50%{opacity:.35} } '
@@ -576,10 +584,10 @@ function AgentSummaryTable({ agents, days, totalRuns, selectedAgent, onSelect, t
 }
 
 function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, failure }) {
-  const { AgentBadge, StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, TONE_GLYPH } = window.UI;
+  const { AgentBadge, StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
-  const isUnknownAgent = NON_ACTIONABLE_AGENT_IDS.has(agent.agent_id);
+  const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
   const nonActionableLabel = isSyntheticAgent ? SYNTHETIC_SENTINEL_LABEL : UNKNOWN_AGENT_LABEL;
   const nonActionableTitle = isSyntheticAgent ? SYNTHETIC_SENTINEL_TITLE : UNKNOWN_AGENT_TITLE;
   const runs = Number(agent.runs) || 0;
@@ -692,10 +700,16 @@ function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, 
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
             글리프는 옆 초 수치(스크린리더 가독)를 강화하는 장식 → aria-hidden. 측정 불가(null)면 미렌더. */}
-        {p95Sec != null && (
-          <span className={`${p95Tone || 'text-ok'} mr-1`} aria-hidden="true">{TONE_GLYPH[p95Glyph]}</span>
+        {p95Sec != null ? (
+          <span className="inline-flex items-center justify-end gap-1">
+            <span className={p95Tone || 'text-ok'} aria-hidden="true">
+              <Icon name={TONE_ICON[p95Glyph]} size={13}/>
+            </span>
+            <span className={p95Tone}>{`${p95Sec.toFixed(1)}s`}</span>
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
         )}
-        <span className={p95Tone}>{p95Sec == null ? '—' : `${p95Sec.toFixed(1)}s`}</span>
       </td>
       <td>
         {hasTrend ? (
@@ -714,19 +728,17 @@ function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, 
 
 function CompatibilityBadge({ compatibility }) {
   if (!compatibility) return null;
-  const { Icon } = window.UI;
+  const { Badge } = window.UI;
   const text = String(compatibility);
   const truncated = text.length > COMPATIBILITY_TRUNCATE_LENGTH
     ? `${text.slice(0, COMPATIBILITY_TRUNCATE_LENGTH)}…`
     : text;
+  // 단일 Badge SoT 로 통합 — info tone 은 .pill shell(neutral 유지)이 아니라 선행 Icon 이 운반
+  //   (icon=true → TONE_ICON.info). title 이 full 텍스트를 보존(트렁케이트 라벨 보완).
   return (
-    <span
-      className="pill info agent-compatibility-badge"
-      title={`Requires: ${text}`}
-      aria-label={`Requires: ${text}`}>
-      <Icon name="info" size={11} stroke={2}/>
-      <span>{truncated}</span>
-    </span>
+    <Badge role="status" tone="info" icon title={`Requires: ${text}`} className="agent-compatibility-badge">
+      {truncated}
+    </Badge>
   );
 }
 
@@ -1129,7 +1141,7 @@ function DrawerInfoRow({ label, value, title }) {
 // success-rate 는 패널 전체에서 단 한 번 (Performance 의 중복 박스 폐지) · 비용/모델 disclaimer 는 섹션 끝으로 후퇴.
 // health index 는 buildQualityHealthRanking(공식 1−(0.6×min(1,revision÷0.5)+0.4×review_flag)) — peer-independent 절대 척도.
 function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState, reviewByAgentState, onRetry }) {
-  const { formatPctWithDenominator, LOW_N_MIN, Pill, BulletBar } = window.UI;
+  const { formatPctWithDenominator, LOW_N_MIN, Pill, BulletBar, Badge } = window.UI;
 
   // health entry 는 revision/review fetch 페어 — summary 와 독립 degrade. summary 에러는 hero 자체를 막음.
   const ranking = useMemoAg(
@@ -1207,7 +1219,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         {agent.origin ? (
           <Pill tone="neutral">origin: {agent.origin}</Pill>
         ) : (
-          <span className="pill pill--absent" title="Agent origin (agent-registry.json) — not recorded">origin: unknown</span>
+          <Badge role="metadata" absent title="Agent origin (agent-registry.json) — not recorded">origin: unknown</Badge>
         )}
       </div>
     </div>
@@ -1556,6 +1568,7 @@ function RecentActivityRow({ row }) {
 // 실패/차단 통합 sub-section — fail/blocked 2 fetch 를 카테고리 단위로 client merge.
 // 비율 분모 = fail+blocked 합산 (per-fetch pct 는 합산 후 무의미 → count 로 재계산).
 function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
+  const { Icon } = window.UI;
   const merged = useMemoAg(
     () => mergeBreakageReasons(readyData(detailState), readyData(blockedState)),
     [detailState, blockedState],
@@ -1567,9 +1580,10 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
   return (
     <div>
       <div
-        className="fs-meta font-mono text-faint mb-2"
+        className="fs-meta font-mono text-faint mb-2 flex items-center gap-1"
         title="Combined result IN ('fail','blocked') — same scope as the summary Breakages column (needs_context excluded)">
-        ✕ Why tasks failed · fail+blocked ({days}d)
+        <Icon name="x" size={12}/>
+        Why tasks failed · fail+blocked ({days}d)
       </div>
       {isLoading ? (
         <div aria-busy="true" className="space-y-2">
@@ -1587,6 +1601,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
 }
 
 function MergedBreakageBody({ merged, days }) {
+  const { Icon } = window.UI;
   if (!merged || merged.total === 0) {
     return (
       <div className="rounded-md border border-dashed border-ok/40 px-3 py-3 fs-meta font-mono text-dim">
@@ -1598,7 +1613,7 @@ function MergedBreakageBody({ merged, days }) {
   return (
     <div>
       <div className="fs-micro font-mono text-dim mb-2">
-        Total {formatIntAg(merged.total)} = <span className="text-crit">✕ fail {formatIntAg(merged.failTotal)}</span> + <span className="text-info">ℹ blocked {formatIntAg(merged.blockedTotal)}</span>
+        Total {formatIntAg(merged.total)} = <span className="text-crit inline-flex items-center gap-1"><Icon name="x" size={11}/>fail {formatIntAg(merged.failTotal)}</span> + <span className="text-info inline-flex items-center gap-1"><Icon name="info" size={11}/>blocked {formatIntAg(merged.blockedTotal)}</span>
       </div>
       <div className="space-y-2">
         {merged.reasons.map((r) => {

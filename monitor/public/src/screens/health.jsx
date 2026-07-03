@@ -243,13 +243,18 @@ function HealthComponentCard({ def, daemonState, pgState, hookState, hookFailSta
             <div className="flex items-start gap-2 flex-wrap">
               {/* 1줄 클램프+높이예약 — 긴 식별자 카드 높이 점프 차단. */}
               <span className="fs-title font-medium h-card-name min-w-0 flex-1" title={def.name}>{def.name}</span>
-              {/* 상태 Badge(status, 선행 TONE_GLYPH) + (autoagent 한정) 비용가드 칩 — 제목 우측 동일 행 묶음. */}
+              {/* 상태 Badge(status, 선행 TONE_ICON Lucide) + (autoagent 한정) 비용가드 칩 — 제목 우측 동일 행 묶음. */}
               <span className="ml-auto flex items-center gap-2">
-                <Badge role="status" tone={card.tone}>{card.pillLabel}</Badge>
+                <Badge role="status" tone={card.tone} icon>{card.pillLabel}</Badge>
                 {card.costGuard && (
-                  /* costGuard 는 자체 symbol 보유 → glyph=false (이중 글리프 방지) · title prop 미전달 → tooltip 은 wrapper span 바인딩. */
+                  /* costGuard 는 자체 아이콘 보유 → glyph=false (이중 글리프 방지) · title prop 미전달 → tooltip 은 wrapper span 바인딩. */
                   <span title={card.costGuard.titleHint}>
-                    <Badge role="status" tone={card.costGuard.tone} glyph={false}>{card.costGuard.symbol} {card.costGuard.prefix}{card.costGuard.label}</Badge>
+                    <Badge role="status" tone={card.costGuard.tone} glyph={false}>
+                      <span className="inline-flex items-center gap-1">
+                        {card.costGuard.icon && <Icon name={card.costGuard.icon} size={14}/>}
+                        <span>{card.costGuard.prefix}{card.costGuard.label}</span>
+                      </span>
+                    </Badge>
                   </span>
                 )}
               </span>
@@ -514,13 +519,14 @@ function stringifyPayloadH(payload) {
 
 // error_kind → 듀얼인코딩 톤/심볼/라벨. 미정의 종류 → unknown 폴백 (가짜 'ok' 금지).
 const HOOK_ERROR_KIND_MODEL = {
-  connection_refused:   { tone: 'crit',    symbol: '✕', label: 'Connection refused' },
-  timeout:              { tone: 'warn',    symbol: '⚠', label: 'Timed out' },
-  constraint_violation: { tone: 'warn',    symbol: '⚠', label: 'Data conflict' },
-  unknown:              { tone: 'neutral', symbol: '·', label: 'Unknown' },
+  connection_refused:   { tone: 'crit',    icon: 'x',    label: 'Connection refused' },
+  timeout:              { tone: 'warn',    icon: 'warn', label: 'Timed out' },
+  constraint_violation: { tone: 'warn',    icon: 'warn', label: 'Data conflict' },
+  // '·' 은 상태 글리프가 아닌 중립 플레이스홀더 → 아이콘 변환 대상 아님 (텍스트 유지).
+  unknown:              { tone: 'neutral', icon: null,   symbol: '·', label: 'Unknown' },
 };
 function hookErrorKindModelH(kind) {
-  return HOOK_ERROR_KIND_MODEL[kind] || { tone: 'info', symbol: 'ℹ', label: String(kind || '—') };
+  return HOOK_ERROR_KIND_MODEL[kind] || { tone: 'info', icon: 'info', label: String(kind || '—') };
 }
 
 // 동일 실패(hook+table+error_kind+retry) 그룹핑 — 입력 순서(시간 역순) 보존, 첫 등장이 대표 행.
@@ -563,6 +569,8 @@ function HookFailureCard({ state, onRetry }) {
 }
 
 function HookFailureBody({ state, onRetry }) {
+  const { Icon } = window.UI;
+
   if (state.status === 'loading') {
     return <ChartSkeletonH height={180}/>;
   }
@@ -607,16 +615,27 @@ function HookFailureBody({ state, onRetry }) {
                 <td className="py-2 px-2 text-dim truncate max-w-[140px]" title={f.target_table}>{f.target_table}</td>
                 <td className={`py-2 px-2 whitespace-nowrap text-${kind.tone === 'ok' ? 'dim' : kind.tone}`}
                   title={f.error_kind}>
-                  {kind.symbol} {kind.label}
+                  <span className="inline-flex items-center gap-1">
+                    {kind.icon ? <Icon name={kind.icon} size={14}/> : kind.symbol}
+                    {kind.label}
+                  </span>
                 </td>
-                <td className="py-2 pl-2 text-center text-dim">{f.retry_attempted ? '↻' : '·'}</td>
+                <td className="py-2 pl-2 text-center text-dim">
+                  {f.retry_attempted
+                    ? <span className="inline-flex items-center justify-center"><Icon name="refresh" size={14}/></span>
+                    : '·'}
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
       <div className="fs-micro font-mono text-faint mt-2 leading-tight">
-        retry: ↻ retried
+        <span className="inline-flex items-center gap-1">
+          <span>retry:</span>
+          <Icon name="refresh" size={12}/>
+          <span>retried</span>
+        </span>
       </div>
     </div>
   );
@@ -713,23 +732,23 @@ function handleErrorH(err, setter) {
   setter({ status: 'error', data: null, error: err && err.message ? err.message : String(err) });
 }
 
-// cost_guard_state → 듀얼인코딩 칩 모델 (symbol + label + tone, 색맹 안전).
+// cost_guard_state → 듀얼인코딩 칩 모델 (icon + label + tone, 색맹 안전).
 // null/미반환(autoagent 외 데몬) → null 반환 → 칩 미렌더 (가짜 'ok' 표시 금지).
 // warn = Claude 사용 한도 감지 정보 신호 (차단 아님 · 시간 경과 시 회복) → 'neutral' 회색 (비차단 신호 과장 차단).
 // prefix = 칩 라벨 접두 (data-driven) — spend 상태는 'Spending guard ', infra_fault 는 ''
 //   (auth 결함은 usage/spend 가 아니므로 'Spending guard' 접두 금지 — 오분류 표시 차단).
 const COST_GUARD_MODEL = {
-  ok:             { tone: 'ok',      symbol: '✓', label: 'OK',            prefix: 'Spending guard ', titleHint: 'Spending guard OK' },
-  warn:           { tone: 'neutral', symbol: 'ℹ', label: 'Limit notice',  prefix: 'Spending guard ', titleHint: 'Usage limit detected — not blocking, recovers with time' },
-  block:          { tone: 'crit',    symbol: '✕', label: 'Blocked',       prefix: 'Spending guard ', titleHint: 'Spending guard blocked — runs stopped (spend ceiling reached)' },
-  infra_fault:    { tone: 'crit',    symbol: '✕', label: 'Auth fault',    prefix: '',                titleHint: 'Auth fault — daemon login expired (HTTP 401 / credential), NOT a usage limit · re-auth required' },
-  limited:        { tone: 'warn',    symbol: '⚠', label: 'Restricted',    prefix: 'Spending guard ', titleHint: 'Spending guard restricted — some work held back this run' },
-  quota_exceeded: { tone: 'neutral', symbol: 'ℹ', label: 'Limit reached', prefix: 'Spending guard ', titleHint: 'Spending guard limit reached — not a fault (external usage cap · recovers with time)' },
-  paused:         { tone: 'crit',    symbol: '✕', label: 'Paused',        prefix: 'Spending guard ', titleHint: 'Spending guard paused — runs temporarily stopped' },
+  ok:             { tone: 'ok',      icon: 'check', label: 'OK',            prefix: 'Spending guard ', titleHint: 'Spending guard OK' },
+  warn:           { tone: 'neutral', icon: 'info',  label: 'Limit notice',  prefix: 'Spending guard ', titleHint: 'Usage limit detected — not blocking, recovers with time' },
+  block:          { tone: 'crit',    icon: 'x',     label: 'Blocked',       prefix: 'Spending guard ', titleHint: 'Spending guard blocked — runs stopped (spend ceiling reached)' },
+  infra_fault:    { tone: 'crit',    icon: 'x',     label: 'Auth fault',    prefix: '',                titleHint: 'Auth fault — daemon login expired (HTTP 401 / credential), NOT a usage limit · re-auth required' },
+  limited:        { tone: 'warn',    icon: 'warn',  label: 'Restricted',    prefix: 'Spending guard ', titleHint: 'Spending guard restricted — some work held back this run' },
+  quota_exceeded: { tone: 'neutral', icon: 'info',  label: 'Limit reached', prefix: 'Spending guard ', titleHint: 'Spending guard limit reached — not a fault (external usage cap · recovers with time)' },
+  paused:         { tone: 'crit',    icon: 'x',     label: 'Paused',        prefix: 'Spending guard ', titleHint: 'Spending guard paused — runs temporarily stopped' },
 };
 function costGuardModelH(state) {
   if (state == null) return null;
-  return COST_GUARD_MODEL[state] || { tone: 'info', symbol: 'ℹ', label: String(state), prefix: 'Spending guard ', titleHint: `Spending guard state: ${String(state)}` };
+  return COST_GUARD_MODEL[state] || { tone: 'info', icon: 'info', label: String(state), prefix: 'Spending guard ', titleHint: `Spending guard state: ${String(state)}` };
 }
 
 // UTC ISO 실순간(last_run_at·source_mtime·started_at) → KST "MM/DD HH:mm".

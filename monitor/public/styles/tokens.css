@@ -41,6 +41,9 @@
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 
+  /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
+  --radius-badge: 6px;
+
   /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
      overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
      confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그

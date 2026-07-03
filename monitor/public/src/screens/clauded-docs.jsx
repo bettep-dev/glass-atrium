@@ -851,21 +851,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-editor-input:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
         .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: 10px 12px; font-size: 12.5px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 6px; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
         .doc-editor-textarea:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.2); }
-        /* format status badge — dual-encoding (--info 색 + 'H' symbol) · WCAG AA 대비 검증. */
-        .doc-adr8-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; font-size: var(--fs-micro); font-weight: 600; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em; background: rgb(var(--info) / 0.14); color: rgb(var(--info)); border: 1px solid rgb(var(--info) / 0.32); border-radius: 3px; line-height: 1.5; vertical-align: middle; }
-        .doc-adr8-badge > span[aria-hidden="true"] { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; font-size: 9px; font-weight: 700; background: rgb(var(--info) / 0.22); color: rgb(var(--info)); border-radius: 2px; }
-        /* agent-only audience badge — dual-encoding (--warn 색 + 🤖 + 텍스트).
-           --warn 선택 사유: --info 는 'H' format 배지와 의미 충돌 (HTML 변종 vs 대상 정책) — 의미 분리. */
-        .doc-audience-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; font-size: var(--fs-micro); font-weight: 600; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em; background: rgb(var(--warn) / 0.14); color: rgb(var(--warn)); border: 1px solid rgb(var(--warn) / 0.32); border-radius: 3px; line-height: 1.5; vertical-align: middle; margin-left: 6px; }
-        .doc-audience-badge > span[aria-hidden="true"] { font-size: 11px; line-height: 1; }
-        /* list-row format 식별 배지 — HTML vs agent-only(md/yaml/json/txt) 시각 분리.
-           dual-encoding: 색상 + format glyph + aria/title 텍스트 라벨 (글리프 단독 아님).
-           · html → 중립 --dim (주류 산출물 — 시각 노이즈 최소) · 비-html → --info 강조 (agent-only 변종 주목). */
-        .doc-format-row-badge { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 6px; font-size: 9px; font-weight: 700; font-family: 'JetBrains Mono', monospace; background: rgb(var(--dim) / 0.16); color: rgb(var(--dim)); border: 1px solid rgb(var(--dim) / 0.30); border-radius: 3px; line-height: 1; vertical-align: middle; }
-        .doc-format-row-badge.is-agent { background: rgb(var(--info) / 0.16); color: rgb(var(--info)); border-color: rgb(var(--info) / 0.32); }
-        /* revision-chain 배지 — supersedes_id 보유 행 = 이전 revision 대체 문서 (F34).
-           dual-encoding: ↻ 글리프 + 'rev' 텍스트 + title 라벨 · --info (format 'H' 배지와 동일 hue 이나 텍스트로 구분). */
-        .doc-chain-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; margin-left: 6px; font-size: var(--fs-micro); font-weight: 600; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em; background: rgb(var(--info) / 0.14); color: rgb(var(--info)); border: 1px solid rgb(var(--info) / 0.32); border-radius: 3px; line-height: 1.5; vertical-align: middle; }
+        /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history (T-DOC-3) — base.css .acked 는 .alert-row 스코프라 div 미적용 → predecessor 전용 dim 룰.
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. summary chevron 은 native 유지. */
         .doc-revision-predecessor.acked { opacity: 0.5; }
@@ -921,11 +907,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
         button.doc-chip-badge { min-height: 24px; min-width: 24px; }
-        /* status badge — span/button 양쪽 공용 chrome (인라인 font shorthand 가 longhand clobber 하던 회귀 차단).
-           색 triad (background/color/border) 만 인라인 (--ok/--warn CSS var 가 docStatus 별 분기). */
-        .doc-status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; font-size: var(--fs-micro); font-weight: 600; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em; border-radius: 3px; line-height: 1.5; vertical-align: middle; white-space: nowrap; }
-        /* WCAG 2.2 §2.5.8 (AA) 24×24 floor + UA button reset (appearance/margin/cursor) — span 와 시각 동등. */
-        button.doc-status-badge { min-height: 24px; min-width: 24px; appearance: none; margin: 0; cursor: pointer; }
+        /* (retired) .doc-status-badge — DocStatusBadgeCD 가 canonical Badge(role=status, interactive) 로 이전, screen-local FORM 제거. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
@@ -1243,7 +1225,7 @@ function DocListCardCD({
 							}}
 							role="note"
 						>
-							<span aria-hidden="true">⚠</span>
+							<Icon name="warn" size={14} />
 							<span style={{ color: "rgb(var(--dim))" }}>
 								Search matches whole words only (Korean partial-word matching unavailable).
 							</span>
@@ -1430,18 +1412,7 @@ function DocListCardCD({
 																}
 																title={isExpanded ? "Collapse group" : "Expand group"}
 															>
-																<svg
-																	className="chevron"
-																	width="10"
-																	height="10"
-																	viewBox="0 0 10 10"
-																	aria-hidden="true"
-																>
-																	<path
-																		d="M3 1 L7 5 L3 9 Z"
-																		fill="currentColor"
-																	/>
-																</svg>
+																<Icon name="chevron-right" className="chevron" size={10} />
 															</button>
 														)}
 													</span>
@@ -1665,7 +1636,7 @@ function GroupMembersRowsCD({
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
-	const { Badge } = window.UI;
+	const { Badge, Icon } = window.UI;
 	const [memberState, setMemberState] = useStateCD({
 		status: "loading",
 		data: null,
@@ -1928,7 +1899,7 @@ function GroupMembersRowsCD({
 									title="Drag to reorder"
 									onClick={(e) => e.stopPropagation()}
 								>
-									⠿
+									<Icon name="grip-vertical" size={12} />
 								</span>
 							)}
 						</span>
@@ -1988,7 +1959,7 @@ function ViewerPanelCD({
 	onNavigate,
 	showToast,
 }) {
-	const { CardHead } = window.UI;
+	const { CardHead, Icon } = window.UI;
 	const isReady = state.status === "ready";
 	return (
 		<div className="h-full flex flex-col min-h-0">
@@ -2016,7 +1987,7 @@ function ViewerPanelCD({
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
 			{isReady && state.data.superseded_by_id != null && (
 				<div className="doc-superseded-banner" role="status">
-					<span aria-hidden="true">⚠</span>
+					<Icon name="warn" size={14} />
 					<span>A newer version exists — you're viewing an old revision</span>
 					<button
 						type="button"
@@ -2538,11 +2509,11 @@ function DocMetaPanelCD({
 //   · onToggle 미제공 → 기존 <span> read-only fallback (backwards-compat — 호출 사이트 점진 마이그레이션 안전).
 //   · onToggle 제공 → 시맨틱 <button> + aria-label 동작 명시 + aria-busy in-flight 표시.
 //     · 키보드 활성화 (Enter / Space) 는 native button 이 자동 처리 — 별도 핸들러 불필요.
-//     · dual-encoding — TONE_GLYPH(✓/⚠) + 텍스트 라벨 (In progress/Done) 2중 채널 (Badge status SoT).
+//     · dual-encoding — TONE_ICON Lucide(check/warn) + 텍스트 라벨 (In progress/Done) 2중 채널 (Badge status SoT).
 //     · pending 상태 → 라벨 'Changing…' + 투명도 0.65 (색상 회전 회피 — 새 의미 카테고리 시사 차단).
 //     · prefers-reduced-motion 자동 정합 — transition 미사용 (instant swap).
 function DocStatusBadgeCD({ docStatus, onToggle, isToggling }) {
-	const { Badge, TONE_GLYPH } = window.UI;
+	const { Badge } = window.UI;
 	if (!docStatus) return null;
 	// lifecycle 상태 = status role: progress→warn(in-flight) / done→ok(완료).
 	const tone =
@@ -2558,42 +2529,36 @@ function DocStatusBadgeCD({ docStatus, onToggle, isToggling }) {
 	if (typeof onToggle !== "function") {
 		return (
 			<span title={`Status — ${label}`}>
-				<Badge role="status" tone={tone}>
+				<Badge role="status" tone={tone} icon>
 					{label}
 				</Badge>
 			</span>
 		);
 	}
 
-	// Interactive button — 클릭 시 onToggle 호출 (호출자가 PUT + optimistic 처리).
-	//   · status pill 시각(.pill+tone+선행 TONE_GLYPH)을 button 으로 재현 — Badge 는 span 이라 interactive case 직접 사용 불가.
-	//   · aria-label 양식: "Status {현재} — click to mark {반대}" — frontend-design 사양 정합.
-	//   · pending 시 disabled (중복 클릭 차단) · 라벨 'Changing…' + opacity 0.65 로 표시.
+	// Interactive — 캐노니컬 window.UI.Badge(role=status)를 interactive 로 렌더 → read-only <Badge role=status> 와 동일 FORM.
+	//   · Badge 가 <button className="pill pill--interactive"> + 선행 tone glyph(status role)을 생성 — screen-local .doc-status-badge 폐기.
+	//   · dedup: pending(isToggling) 중 onClick 을 no-op 가드 (disabled attr 없이 중복 PUT 차단).
+	//   · pending 상태는 라벨 'Changing…'(button 접근 이름) + title 이 운반 → 상태/동작 접근성 유지.
+	//   · focus-visible ring 은 .pill--interactive(base.css) 이 담당 (인라인 tailwind ring 유틸 제거).
 	const oppositeLabel = docStatus === "progress" ? "Done" : "In progress";
-	const ariaLabel = isToggling
-		? "Changing status…"
-		: `Status ${label} — click to mark ${oppositeLabel}`;
 	const displayLabel = isToggling ? "Changing…" : label;
 
 	return (
-		<button
-			type="button"
-			className={`pill ${tone} doc-status-badge focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent))] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgb(var(--surface))]`}
-			title={
-				isToggling ? "Changing status…" : `Click to mark ${oppositeLabel}`
-			}
-			aria-label={ariaLabel}
-			aria-busy={isToggling ? "true" : undefined}
-			disabled={isToggling}
+		<Badge
+			role="status"
+			tone={tone}
+			icon
+			interactive
+			title={isToggling ? "Changing status…" : `Click to mark ${oppositeLabel}`}
 			onClick={(e) => {
 				// row click bubble 차단 — DocListCardCD onClick 이 viewer fullscreen 진입 트리거 (의도 충돌).
 				e.stopPropagation();
-				onToggle();
+				if (!isToggling) onToggle();   // pending 중 중복 PUT 차단 (disabled attr 대체 가드)
 			}}
-			style={{ cursor: isToggling ? "wait" : "pointer", opacity: isToggling ? 0.65 : 1 }}
 		>
-			{TONE_GLYPH[tone]} {displayLabel}
-		</button>
+			{displayLabel}
+		</Badge>
 	);
 }
 
@@ -2619,6 +2584,7 @@ function DocCheckboxCD({
 	ariaLabel,
 	onClick,
 }) {
+	const { Icon } = window.UI;
 	const inputRef = useRefCD(null);
 
 	// indeterminate 는 HTML attribute 가 아닌 DOM property — ref + useEffect 로 React state 동기화.
@@ -2645,40 +2611,11 @@ function DocCheckboxCD({
 			/>
 			{/* check SVG — checked 단독 시 표시 (indeterminate 우선) */}
 			{checked && !indeterminate && (
-				<svg
-					className="pointer-events-none absolute"
-					width="12"
-					height="12"
-					viewBox="0 0 16 16"
-					aria-hidden="true"
-				>
-					<path
-						d="M3 8L7 12L13 4"
-						fill="none"
-						stroke="white"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-				</svg>
+				<Icon name="check" size={12} stroke={3} className="pointer-events-none absolute text-white" />
 			)}
 			{/* minus SVG — indeterminate 시 표시 (체크박스 자체는 checked attribute 무시) */}
 			{indeterminate && (
-				<svg
-					className="pointer-events-none absolute"
-					width="12"
-					height="12"
-					viewBox="0 0 16 16"
-					aria-hidden="true"
-				>
-					<path
-						d="M4 8H12"
-						fill="none"
-						stroke="white"
-						strokeWidth="2"
-						strokeLinecap="round"
-					/>
-				</svg>
+				<Icon name="minus" size={12} stroke={3} className="pointer-events-none absolute text-white" />
 			)}
 		</span>
 	);
