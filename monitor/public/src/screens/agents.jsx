@@ -1933,7 +1933,7 @@ function TopNFailingAgentsCard({ state, days, onRetry, failureByAgent }) {
 }
 
 function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) {
-  const { Pill, Icon } = window.UI;
+  const { Badge } = window.UI;
 
   if (state.status === 'loading') {
     return <ChartSkeletonAg height={200} aria-label="Loading most-failing pairs"/>;
@@ -1944,10 +1944,9 @@ function TopNFailingAgentsBody({ state, days, onRetry, pairs, failureByAgent }) 
   if (pairs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
-        <Pill tone="ok">
-          <Icon name="check" size={11} stroke={2.4}/>
+        <Badge role="status" tone="ok" icon>
           Every (agent, task_type) success_rate ≥ {(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%
-        </Pill>
+        </Badge>
         <div className="fs-meta text-faint mt-3 font-mono">
           Nothing under the threshold in the last {days} days
         </div>

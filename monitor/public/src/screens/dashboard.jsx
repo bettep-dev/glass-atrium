@@ -166,8 +166,8 @@ function ScreenDashboard({ onNav }) {
       </div>
 
       {/* 섹션 채널 24px(.space-sections) — 카드 그룹 사이를 16px 카드 채널보다 한 단 넓게 분리(W1-T3).
-          mt-2(8px) — PageHeader 내부 mb-4(16px)와 합산 24px 로 의도적 타이트 헤더 간격(앱 셸 p-6 미변경). */}
-      <div className="space-sections mt-2">
+          헤더→콘텐츠 간격은 PageHeader 내부 mb-4(16px) 단독 — agents/outcomes 등 정상 화면과 동일(앱 셸 p-6 미변경). */}
+      <div className="space-sections">
         <UpdateBanner
           availabilityState={updateState}
           jobState={updateJobState}
@@ -811,7 +811,9 @@ function AgentActivityBody({ state, onNav, onRetry }) {
   }
   const agents = state.data.agents || [];
   if (agents.length === 0) {
-    return <EmptyState message="No agents ran in the last 7 days."/>;
+    // 카드 card-body 는 flush(populated 리스트의 full-width divider 용) → empty 브랜치만 별도 패딩으로
+    // 'Task results' 레퍼런스(card-body 기본 20px)와 간격 일치. populated 리스트는 flush 유지.
+    return <div style={{ padding: 20 }}><EmptyState message="No agents ran in the last 7 days."/></div>;
   }
   // 서버 limit=5 요청이지만 방어적 슬라이스 보강.
   const top5 = agents.slice(0, 5);

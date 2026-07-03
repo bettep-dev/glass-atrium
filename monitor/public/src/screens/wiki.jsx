@@ -67,7 +67,7 @@ function ScreenWiki() {
 	}, [refreshTick, reportDays]);
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col">
 			{/* 공유 타입스케일(.fs-* / --fs-*) 마운트 — wiki 화면 폰트 토큰 소비처. */}
 			<TypeScaleStyle />
 			<style>{`
@@ -79,58 +79,62 @@ function ScreenWiki() {
         .w-report-tbl tbody tr:hover { background: transparent; }
       `}</style>
 
-			<PageHeader
-				title="Wiki"
-				sub="Wiki knowledge base"
-				right={
-					<>
-						<button
-							className="btn ghost sm"
-							onClick={triggerRefresh}
-							aria-label="Refresh wiki"
-						>
-							<Icon name="refresh" size={14} />
-							Refresh
-						</button>
-					</>
-				}
-			/>
+			<div className="flex-shrink-0">
+				<PageHeader
+					title="Wiki"
+					sub="Wiki knowledge base"
+					right={
+						<>
+							<button
+								className="btn ghost sm"
+								onClick={triggerRefresh}
+								aria-label="Refresh wiki"
+							>
+								<Icon name="refresh" size={14} />
+								Refresh
+							</button>
+						</>
+					}
+				/>
+			</div>
 
-			{/* 1. 개요 KPI×3 + 최근 사이클 헬스 (cycles → KPI 인라인 스파크라인 추세) */}
-			<WikiOverviewSection
-				state={summaryState}
-				cyclesState={cyclesState}
-				onRetry={triggerRefresh}
-			/>
-
-			{/* 보조 카드 — 2열 그리드(좁은 뷰포트 1열). 짧은 카드가 전폭을 점유하던 세로 공백 절감 (A5).
-          누적 현황(Library totals)은 by_type 중복 → Index health 로 병합 (A3). */}
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-				{/* 일별 컴파일 throughput + status mix */}
-				<WikiThroughputCard state={cyclesState} onRetry={triggerRefresh} />
-
-				{/* 관리 백로그 — deadlinks/dedup 추세 + 최신 proposals explorer */}
-				<WikiBacklogCard
+			<div className="flex flex-col gap-4">
+				{/* 1. 개요 KPI×3 + 최근 사이클 헬스 (cycles → KPI 인라인 스파크라인 추세) */}
+				<WikiOverviewSection
+					state={summaryState}
 					cyclesState={cyclesState}
-					backlogState={backlogState}
 					onRetry={triggerRefresh}
 				/>
 
-				{/* 인덱스 헬스 — Library totals(raw/summary/backlog) 병합 + by_type 카운트 + master-index freshness */}
-				<WikiIndexHealthCard
-					state={indexState}
-					summaryState={summaryState}
-					backlogState={backlogState}
-					onRetry={triggerRefresh}
-				/>
+				{/* 보조 카드 — 2열 그리드(좁은 뷰포트 1열). 짧은 카드가 전폭을 점유하던 세로 공백 절감 (A5).
+	          누적 현황(Library totals)은 by_type 중복 → Index health 로 병합 (A3). */}
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					{/* 일별 컴파일 throughput + status mix */}
+					<WikiThroughputCard state={cyclesState} onRetry={triggerRefresh} />
 
-				{/* 일일 보고 — 사이클별 deadlinks/dedup 백로그 + per-run 보고 표(전폭 유지). */}
-				<WikiReportsCard
-					state={reportState}
-					days={reportDays}
-					onChangeDays={setReportDays}
-					onRetry={triggerRefresh}
-				/>
+					{/* 관리 백로그 — deadlinks/dedup 추세 + 최신 proposals explorer */}
+					<WikiBacklogCard
+						cyclesState={cyclesState}
+						backlogState={backlogState}
+						onRetry={triggerRefresh}
+					/>
+
+					{/* 인덱스 헬스 — Library totals(raw/summary/backlog) 병합 + by_type 카운트 + master-index freshness */}
+					<WikiIndexHealthCard
+						state={indexState}
+						summaryState={summaryState}
+						backlogState={backlogState}
+						onRetry={triggerRefresh}
+					/>
+
+					{/* 일일 보고 — 사이클별 deadlinks/dedup 백로그 + per-run 보고 표(전폭 유지). */}
+					<WikiReportsCard
+						state={reportState}
+						days={reportDays}
+						onChangeDays={setReportDays}
+						onRetry={triggerRefresh}
+					/>
+				</div>
 			</div>
 		</div>
 	);
