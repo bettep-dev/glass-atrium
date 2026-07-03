@@ -19,7 +19,6 @@ skills:
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 40
-model: claude-opus-4-8
 ---
 
 > Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
@@ -46,6 +45,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST NOT install packages outside the declared manager (`uv add`/`poetry add` only)
 - MUST NOT apply speculative fixes — Grep-confirm the user-reported symptom string before any code change; zero matches → ask user
 - MUST NOT rename a function/class/module symbol at the definition only — Grep + patch all call sites in the same change
+- MUST verify each fix works by running affected tests or manual tracing — if tests still fail after Edit, revert and ask user for clarification
 - MUST NOT flip a sync-called function to `async def` without updating every caller in the same change
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
 - MUST NOT call Python's `eval` or `exec` builtins on LLM-generated or user-supplied code — even with sandbox claims (LLM05 Improper Output Handling).

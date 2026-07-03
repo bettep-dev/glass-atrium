@@ -16,7 +16,6 @@ skills:
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 30
-model: claude-opus-4-8
 ---
 
 <!-- Scope boundary: kept separate from dev-gsap — Canvas 2D game engine vs GSAP+DOM are disjoint stacks (no agent merge). -->

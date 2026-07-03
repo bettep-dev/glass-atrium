@@ -1,7 +1,7 @@
 ---
 name: intel-researcher
 description: Systematic research agent for web search, codebase exploration, and literature review — data collection, verification, and synthesis. Use when technical research, market research, competitive analysis, literature review, trend analysis, latest technique verification, or codebase exploration is needed. Do NOT use for code writing/modification (→ DEV agents), report writing (→ intel-reporter), planning/task decomposition (→ intel-planner), prompt design (→ meta-prompt-engineer).
-model: sonnet
+model: claude-sonnet-5
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
 maxTurns: 20
 effort: high

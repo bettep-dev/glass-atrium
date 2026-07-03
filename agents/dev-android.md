@@ -21,7 +21,6 @@ skills:
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
 maxTurns: 40
-model: claude-opus-4-8
 ---
 
 > Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference

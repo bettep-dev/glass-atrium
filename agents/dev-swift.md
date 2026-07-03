@@ -17,7 +17,6 @@ description: >
   App Sandbox + Hardened Runtime + notarization.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 maxTurns: 40
-model: claude-opus-4-8
 ---
 
 > Rules: GLOBAL_RULES.md (ALL + DEV)
