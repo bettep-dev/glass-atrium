@@ -4,8 +4,9 @@
 # Stop hook stdin payload only carries {session_id, transcript_path, cwd,
 # permission_mode, hook_event_name} per Claude Code's official spec — it does
 # NOT carry token usage. This hook opens transcript_path and aggregates usage
-# directly from the transcript jsonl. Pricing is computed inline from a static
-# Anthropic public-pricing dict.
+# directly from the transcript jsonl. Pricing is resolved through the shared
+# pricing_loader (lib/pricing_loader.py) over the pricing.json SoT — the hook
+# owns advisory emission keyed on the loader's resolution label.
 #
 # Token-collection-completeness model:
 #   * MAIN turn row — the CURRENT turn only (the segment between this Stop and
@@ -26,6 +27,18 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+
+# Shared pricing loader import seam: __file__ is absent under `python3 -c`, so
+# the parser heredoc locates hooks/lib through this env var (sys.path insert)
+# instead. Exported into the parser env below; the .bats _parser_body runner
+# sets the same variable (plus a fixture PRICING_SOT_PATH + remote kill-switch).
+# BASH_SOURCE MUST be canonicalized first: production invokes this hook via the
+# ~/.claude/hooks/cost-tracker.sh symlink, and the unresolved dirname points at
+# ~/.claude/hooks/lib — a real dir WITHOUT pricing_loader.py → import crash
+# (DATA-184 on every Stop). Same realpath discipline as the monitor.
+COST_TRACKER_REAL="$(readlink -f -- "${BASH_SOURCE[0]}")"
+PRICING_LIB_DIR="${COST_TRACKER_REAL%/*}/lib"
+export PRICING_LIB_DIR
 
 mkdir -p "${HOOK_LOG_DIR}"
 
@@ -60,9 +73,9 @@ MTIME_CACHE_DIR="${HOOK_LOG_DIR}/cost-subagent-mtime"
 MTIME_CACHE_FILE="${MTIME_CACHE_DIR}/${SAFE_SID}.json"
 
 # Parser stderr goes to a temp file (not /dev/null) so the intentional pricing
-# advisories — unknown-model fallback, multi-model, and pricing-staleness — are
-# RELAYED to real stderr below instead of being silently discarded. Fail-open:
-# trap cleans up the temp file on any exit.
+# advisories — non-sot resolution (unknown model), multi-model, and
+# pricing-staleness — are RELAYED to real stderr below instead of being
+# silently discarded. Fail-open: trap cleans up the temp file on any exit.
 PARSER_STDERR=$(mktemp "${TMPDIR:-/tmp}/cost-tracker-stderr.XXXXXX")
 trap 'rm -f "${PARSER_STDERR}"' EXIT INT TERM
 
@@ -72,19 +85,43 @@ trap 'rm -f "${PARSER_STDERR}"' EXIT INT TERM
 #   * exactly one MAIN row (kind='turn' on success, OR a parse_error / zero row);
 #   * zero or more SUBAGENT rows (kind='subagent'), one per scanned agent file.
 # The bash dual-write loop below feeds each emitted line to the PG writer.
+# Guarded capture: a non-zero parser exit (uncaught PricingSotError on a
+# corrupt/missing pricing.json SoT is the reachable trigger) inside a bare
+# command-substitution assignment would abort the hook under set -e BEFORE
+# the stderr relay below, and the EXIT trap would delete PARSER_STDERR —
+# destroying the loud-fail diagnostic. `|| PARSER_STATUS=$?` preserves the
+# exact exit code + any partial stdout so execution continues to the relay
+# and the DATA-184 loud-fail branch. The failure signal is PARSER_STATUS,
+# NOT PARSED emptiness (a late crash leaves partial valid JSON lines —
+# python flushes stdout at shutdown).
 # SC2016: the python body is single-quoted ON PURPOSE — values cross via
 # os.environ, never shell expansion (SC2259 + injection-hardening pattern).
+PARSER_STATUS=0
 # shellcheck disable=SC2016
 PARSED=$(DATE="${DATE}" TIME="${TIME}" SESSION_ID="${SESSION_ID}" \
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH}" \
   MTIME_CACHE_FILE="${MTIME_CACHE_FILE}" \
   COST_TRACKER_TODAY="${COST_TRACKER_TODAY:-}" \
+  PRICING_LIB_DIR="${PRICING_LIB_DIR}" \
   python3 -c '
+import datetime
 import json
 import os
-import re
 import sys
 import glob
+
+# Shared pricing loader (single SoT: hooks/pricing.json). __file__ is absent
+# under python3 -c, so the lib dir arrives via PRICING_LIB_DIR (set by the
+# hook shell above and by the .bats runner). Loud-fail on a missing seam —
+# pricing must never silently degrade (Precondition Loud-Fail).
+_pricing_lib_dir = os.environ.get("PRICING_LIB_DIR", "")
+if not _pricing_lib_dir:
+    sys.stderr.write(
+        "[cost-tracker] PRICING_LIB_DIR env missing — cannot import pricing_loader\n"
+    )
+    sys.exit(1)
+sys.path.insert(0, _pricing_lib_dir)
+import pricing_loader
 
 date_v = os.environ["DATE"]
 time_v = os.environ["TIME"]
@@ -112,97 +149,71 @@ def fail(reason, raw_hint=""):
     })
 
 
-# Anthropic public pricing — USD per 1M tokens. When a new model appears, add it
-# here AND in the daemon-reports view if model-broken-down totals are needed.
-# PRICING_LAST_VERIFIED — machine-readable (ISO YYYY-MM-DD) baseline marker. The
-# dict is a STATIC snapshot; it drifts silently when Anthropic changes a rate.
-# Bump it whenever the rates are re-checked. PRICING_STALE_DAYS is the staleness
-# window: a stderr advisory fires when the snapshot is older (advisory only —
-# cost math is unaffected). 90 days (one quarter) avoids routine-refresh noise
-# yet surfaces a genuine drift within one billing quarter.
-PRICING_LAST_VERIFIED = "2026-06-10"
-PRICING_STALE_DAYS = 90
-PRICING = {
-    "claude-opus-4-8":   {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_creation": 18.75},
-    "claude-opus-4-7":   {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_creation": 18.75},
-    "claude-opus-4-6":   {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_creation": 18.75},
-    "claude-opus-4-5":   {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_creation": 18.75},
-    "claude-fable-5":    {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5},
-    "claude-sonnet-4-6": {"input": 3.0,  "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75},
-    "claude-sonnet-4-5": {"input": 3.0,  "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75},
-    "claude-haiku-4-5":  {"input": 1.0,  "output": 5.0,  "cache_read": 0.1, "cache_creation": 1.25},
-}
-# Fallback: opus-4-8 — deliberately the most expensive row (conservative cost reporting).
-FALLBACK_RATE = PRICING["claude-opus-4-8"]
-
-
 def warn_if_pricing_stale():
-    """Emit a stderr advisory when the static PRICING snapshot is older than
-    PRICING_STALE_DAYS. Advisory only — does NOT alter cost math. Fail-open: any
-    parse problem on the baseline date is swallowed (never blocks the hook).
-    COST_TRACKER_TODAY (env, ISO YYYY-MM-DD) overrides the reference date for
-    deterministic testing; absent uses the real wall-clock date."""
-    import datetime
-
-    try:
-        today_raw = os.environ.get("COST_TRACKER_TODAY", "")
-        if today_raw:
-            today = datetime.date.fromisoformat(today_raw)
-        else:
-            today = datetime.date.today()
-        verified = datetime.date.fromisoformat(PRICING_LAST_VERIFIED)
-    except ValueError:
-        # Malformed baseline/override date — fail-open, no advisory.
-        return
-    age_days = (today - verified).days
-    if age_days > PRICING_STALE_DAYS:
+    """Emit a stderr advisory when the pricing.json SoT last_verified stamp is
+    older than the SoT stale_after_days window. Advisory only — does NOT alter
+    cost math. Keyed on get_today() (honors COST_TRACKER_TODAY), same date
+    injection the bats suite uses for clock-independent runs. A malformed
+    last_verified fails loudly at load_pricing (SoT validation), never here."""
+    sot = pricing_loader.load_pricing()
+    age_days = pricing_loader.staleness_days(today=get_today())
+    if age_days > sot["stale_after_days"]:
         sys.stderr.write(
             "[cost-tracker] pricing baseline stale: last-verified=%s is %d days "
-            "old (window=%d) — re-verify the PRICING dict against Anthropic "
-            "public rates; cost figures may have drifted\n"
-            % (PRICING_LAST_VERIFIED, age_days, PRICING_STALE_DAYS)
+            "old (window=%d) — re-verify pricing.json rates against Anthropic "
+            "public rates, then bump last_verified; cost figures may have drifted\n"
+            % (sot["last_verified"], age_days, sot["stale_after_days"])
         )
 
 
-def normalize_model_key(model_key):
-    """Strip a trailing context-variant suffix (e.g. "[1m]") and a trailing
-    -YYYYMMDD snapshot-date suffix so variant model ids resolve to their base
-    PRICING row. The 1M context window does NOT change the per-1M token rate
-    (the bracket is a routing marker, not a price tier), and dated ids like
-    "claude-haiku-4-5-20251001" are snapshot aliases of the same base rate.
-    Idempotent for keys carrying neither suffix."""
-    if not model_key:
-        return model_key
-    base = model_key.split("[", 1)[0]
-    base = re.sub(r"-\d{8}$", "", base)
-    return base or model_key
+def get_today():
+    """Effective "today" for date-dependent rate selection. COST_TRACKER_TODAY
+    (env, ISO YYYY-MM-DD) overrides for deterministic testing — the same
+    injection warn_if_pricing_stale honors; absent or malformed falls open to
+    the real wall-clock date."""
+    today_raw = os.environ.get("COST_TRACKER_TODAY", "")
+    if today_raw:
+        try:
+            return datetime.date.fromisoformat(today_raw)
+        except ValueError:
+            pass
+    return datetime.date.today()
 
 
 def calc_cost(it, ot, cr, cc, model_key):
-    """Compute USD cost from per-1M token rates. Unknown model → opus rates
-    (conservative) AND log a stderr warning so we notice new models.
-    Advisory allowlist — "<synthetic>" and empty/None are legitimate zero-cost
+    """Compute USD cost from the per-MTok rate resolved by
+    pricing_loader.rate_for, keyed on the effective "today" (get_today, honors
+    COST_TRACKER_TODAY so the bats suite stays clock-independent). Windowed
+    tiers (e.g. the sonnet-5 intro rate through 2026-08-31) are selected
+    inside the loader by that date.
+    Advisory contract (caller-owned): resolution label "sot" is silent; EVERY
+    non-sot label (overlay / remote / family_latest / fallback) means the SoT
+    lacks a row for this model — emit the stderr advisory so an operator adds
+    one. "model=unknown:<id>" is the DATA-183 grep anchor (preserved verbatim,
+    raw model_key); "resolution=<label>" is appended for triage. family_latest
+    in particular may UNDER-price a newer model at the older family rate —
+    silent family pricing is forbidden.
+    Zero-cost allowlist — "<synthetic>" and empty/None are legitimate zero-cost
     events, NOT pricing failures, so they MUST stay out of the stderr advisory
     + DATA-183 hook-failure channel (loud-fail pollution): "<synthetic>" is the
     harness marker on self-synthesized assistant notices (all-zero usage in the
     transcript), empty/None means a no-LLM turn or usage-less subagent file.
-    Verified 2026-06-10 against core.cost_events — every empty-model (2,295)
-    and "<synthetic>" (437) row carries 0 tokens with parse_error=false. Cost
-    math is unchanged: the fallback rate still applies (0 tokens → $0)."""
-    rate = PRICING.get(normalize_model_key(model_key))
-    if rate is None:
-        if model_key and model_key != "<synthetic>":
-            sys.stderr.write(
-                "[cost-tracker] model=unknown:%s — applying opus fallback rate\n"
-                % model_key
-            )
-        rate = FALLBACK_RATE
-    return (
-        it * rate["input"]
-        + ot * rate["output"]
-        + cr * rate["cache_read"]
-        + cc * rate["cache_creation"]
-    ) / 1_000_000.0
+    They return a clean $0 without walking the resolution chain (whose remote
+    step could cost a network round-trip — pointless for a known zero-cost
+    row). Verified 2026-06-10 against core.cost_events — every empty-model
+    (2,295) and "<synthetic>" (437) row carries 0 tokens with
+    parse_error=false, so the $0 is value-identical to the former
+    fallback-rate-times-zero math."""
+    if not model_key or model_key == "<synthetic>":
+        return 0.0
+    record = pricing_loader.rate_for(model_key, effective_date=get_today())
+    if record["resolution"] != "sot":
+        sys.stderr.write(
+            "[cost-tracker] model=unknown:%s resolution=%s — priced via %s; "
+            "add a models row to pricing.json\n"
+            % (model_key, record["resolution"], record["matched_model"])
+        )
+    return pricing_loader.cost_usd(record["rate"], it, ot, cr, cc)
 
 
 def safe_int(value):
@@ -372,7 +383,7 @@ else:
 
     # Staleness advisory fires only on a real priced turn (after the zero-row /
     # parse-error early exits), so a stale baseline is surfaced exactly when the
-    # static rates are actually being applied. Advisory only.
+    # SoT rates are actually being applied. Advisory only.
     warn_if_pricing_stale()
 
     cost_usd = calc_cost(acc[0], acc[1], acc[2], acc[3], last_model)
@@ -502,13 +513,32 @@ if cache_dirty and mtime_cache_file:
         os.replace(tmp, mtime_cache_file)
     except OSError:
         pass
-' 2>"${PARSER_STDERR}")
+' 2>"${PARSER_STDERR}") || PARSER_STATUS=$?
 
 # Relay the parser's stderr (pricing advisories: unknown-model / multi-model /
-# staleness / subagent-read warnings) to real stderr so they surface on the
-# dashboard + logs. Empty file → no-op.
+# staleness / subagent-read warnings — and, on a crash, the PricingSotError
+# traceback) to real stderr so they surface on the dashboard + logs. Empty
+# file → no-op. MUST precede the crash branch below: the diagnostic reaches
+# real stderr before any non-zero exit.
 if [[ -s "${PARSER_STDERR}" ]]; then
   cat -- "${PARSER_STDERR}" >&2
+fi
+
+# Parser crash → loud-fail on a DISTINCT persisted class. DATA-184 = "parser
+# crashed / pricing SoT invalid" (DATA-182 = python3-fallback empty output,
+# DATA-183 keys on model=unknown — different classes), so a pricing.json typo
+# is distinguishable on the monitor. Partial stdout is DISCARDED (a crashed
+# parser's row set is untrustworthy; the next successful fire re-emits
+# idempotently via the (session_id, dedup_key) UPSERT) and replaced by ONE
+# synthesized parse_error row with a crash-distinct dedup key so the failure
+# still reaches core.cost_events. The non-zero exit happens at the END of the
+# hook (never 2 — Stop-hook exit 2 has blocking semantics).
+if [[ "${PARSER_STATUS}" -ne 0 ]]; then
+  emit_error "DATA-184" "warn" \
+    "cost-tracker parser crashed (exit ${PARSER_STATUS}) — pricing SoT invalid/unreadable or loader import failed; PricingSotError detail relayed on stderr" \
+    "Validate hooks/pricing.json (JSON syntax + schema) and PRICING_LIB_DIR, then re-fire; cost recording resumes on the next Stop" \
+    "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\",\"parser_exit\":${PARSER_STATUS}}"
+  PARSED="{\"date\":\"${DATE}\",\"time\":\"${TIME}\",\"session_id\":\"${SESSION_ID}\",\"kind\":\"turn\",\"dedup_key\":\"parser_crash:${SESSION_ID}@${DATE}T${TIME}\",\"parse_error\":true,\"raw_input\":\"parser_crash:exit=${PARSER_STATUS}\"}"
 fi
 
 # Unknown-model advisory → persisted hook-failure path. stderr alone is
@@ -524,8 +554,8 @@ if [[ -s "${PARSER_STDERR}" ]]; then
 fi
 if [[ -n "${UNKNOWN_MODELS}" ]]; then
   emit_error "DATA-183" "warn" \
-    "cost-tracker unknown model id priced at opus fallback rate" \
-    "Add the model to PRICING in cost-tracker.sh AND backfill-cost-events.py (lockstep contract), then bump PRICING_LAST_VERIFIED" \
+    "cost-tracker model id absent from pricing SoT — priced via a non-sot resolution (see resolution= label in stderr)" \
+    "Add the model to the models map in pricing.json (hooks/pricing.json), then bump last_verified" \
     "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\",\"models\":\"${UNKNOWN_MODELS}\"}"
   # core.hook_failures is written via hardcoded SQL only (it is deliberately
   # absent from _pg_dual_write.py's dynamic-target allowlist). Best-effort:
@@ -558,22 +588,26 @@ fi
 # observability signals, not file sinks. The parser emits one JSON object PER
 # LINE (one main turn row + N subagent rows); we surface a parse-error / fallback
 # advisory based on the FIRST line (the main row), matching the prior contract.
-FIRST_LINE=""
-if [[ -n "${PARSED}" ]]; then
-  FIRST_LINE="${PARSED%%$'\n'*}"
-fi
-if [[ -n "${FIRST_LINE}" ]]; then
-  if [[ "${FIRST_LINE}" == *'"parse_error": true'* ]]; then
-    emit_error "DATA-181" "warn" \
-      "cost-tracker JSON parse failed; raw input recorded" \
-      "Inspect core.cost_events.raw_input column for the failing payload to debug the Stop event" \
+# The DATA-181/182 signals key on a SUCCESSFUL parser run's output shape — a
+# crash is already classified DATA-184 above (never double-signaled here).
+if [[ "${PARSER_STATUS}" -eq 0 ]]; then
+  FIRST_LINE=""
+  if [[ -n "${PARSED}" ]]; then
+    FIRST_LINE="${PARSED%%$'\n'*}"
+  fi
+  if [[ -n "${FIRST_LINE}" ]]; then
+    if [[ "${FIRST_LINE}" == *'"parse_error": true'* ]]; then
+      emit_error "DATA-181" "warn" \
+        "cost-tracker JSON parse failed; raw input recorded" \
+        "Inspect core.cost_events.raw_input column for the failing payload to debug the Stop event" \
+        "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\"}"
+    fi
+  else
+    emit_error "DATA-182" "warn" \
+      "cost-tracker python3 fallback used; only minimal event recorded" \
+      "Verify python3 availability and the JSON shape of the Stop hook input" \
       "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\"}"
   fi
-else
-  emit_error "DATA-182" "warn" \
-    "cost-tracker python3 fallback used; only minimal event recorded" \
-    "Verify python3 availability and the JSON shape of the Stop hook input" \
-    "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\"}"
 fi
 
 # PHASE1-DUALWRITE-BEGIN
@@ -693,5 +727,12 @@ for raw_line in lines.splitlines():
 sys.exit(0)
 ' >&2 || true
 # PHASE1-DUALWRITE-END
+
+# A parser crash surfaces as a non-zero, NON-2 exit (Stop-hook exit 2 has
+# blocking semantics) — by this point the diagnostic is on real stderr, the
+# DATA-184 signal is emitted, and the synthesized parse_error row is written.
+if [[ "${PARSER_STATUS}" -ne 0 ]]; then
+  exit 1
+fi
 
 exit 0

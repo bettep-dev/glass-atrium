@@ -2,24 +2,62 @@
 // (spec doc 36166). Consumed by routes/model-config.ts (GET/PUT validation + render) —
 // duplicating any of these sets in a consumer is a defect.
 
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type {
   ApplyMode,
   BudgetDomainKey,
   ModelDomainKey,
 } from "./types/model-config.js";
 
-// Validated concrete ids — must stay in lockstep with hooks/cost-tracker.sh PRICING rows
-// (all four verified present); a new id without a PRICING row meters at the opus fallback rate.
-export const KNOWN_MODEL_IDS: ReadonlySet<string> = new Set([
-  "claude-fable-5",
-  "claude-opus-4-8",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5",
-]);
+// ----- SoT-derived known-model roster (pricing.json, D3) ---------------------------
 
-// Harness shorthand aliases — valid ONLY on frontmatter domains (dev/research); the
-// daemon REPL model lands verbatim in a `claude --model <value>` exec, concrete ids only.
-export const FRONTMATTER_MODEL_ALIASES: ReadonlySet<string> = new Set(["sonnet", "haiku", "opus"]);
+// env override = test seam; default = the hooks-side pricing SoT the cost stack reads.
+function resolvePricingSotPath(): string {
+  const override = process.env.PRICING_SOT_PATH;
+  if (typeof override === "string" && override.length > 0) {
+    return override;
+  }
+  return join(homedir(), ".glass-atrium", "hooks", "pricing.json");
+}
+
+/**
+ * Known-model roster derived from the pricing SoT's `models` key set — the former
+ * hardcoded KNOWN_MODEL_IDS mirror is deleted, so no lockstep copy survives (D3).
+ * Read fresh per call, no cache: the SoT self-mutates out-of-band (pricing_loader F3
+ * refresh + operator edits), and the sibling GET surfaces (settings.json /
+ * daemon-config.json / frontmatter) are already read uncached per request — a ~1KB
+ * read on a low-frequency config GET is cheaper than serving a stale roster until
+ * restart. Fail-open: an unreadable/malformed SoT logs loudly and degrades THIS call
+ * to an empty roster — known_models: [] + pricing_known: false — a config screen must
+ * not hard-crash (500) on a missing committed file; the next call simply retries.
+ */
+export async function loadKnownModelIds(): Promise<ReadonlySet<string>> {
+  const sotPath = resolvePricingSotPath();
+  try {
+    const parsed: unknown = JSON.parse(await readFile(sotPath, "utf8"));
+    const models = (parsed as { models?: unknown }).models;
+    if (models === null || typeof models !== "object" || Array.isArray(models)) {
+      throw new Error("SoT carries no 'models' object");
+    }
+    return new Set(Object.keys(models));
+  } catch (error) {
+    process.stderr.write(
+      `[model-config] pricing SoT unreadable (${sotPath}) — known-model roster degrades to []: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+    return new Set();
+  }
+}
+
+// Legacy harness shorthand aliases — REMOVED as accepted values. Kept only as an
+// explicit reject-list (D2): the bare words still match FREE_TEXT_MODEL_PATTERN, so
+// dropping the accept branch alone would silently 200 them as free-text ids; this
+// guard turns them into a remediation 400 instead.
+export const REJECTED_ALIAS_VALUES: ReadonlySet<string> = new Set(["sonnet", "haiku", "opus"]);
 
 // 'inherit' = no explicit model on the surface (frontmatter line removed / REPL key removed
 // → settings.json model governs).
@@ -46,33 +84,22 @@ export const BUDGET_MAX_USD = 50.0;
 export interface ModelDomainDef {
   key: ModelDomainKey;
   applyMode: ApplyMode;
-  // false = no enforced write surface (orchestrator: DB-only desired + manual how-to panel).
+  // false = no enforced write surface.
   editable: boolean;
-  surface: "settings" | "frontmatter-dev" | "frontmatter-research" | "daemon-config";
+  surface: "frontmatter-dev" | "frontmatter-research" | "daemon-config";
   // daemon-config.json key this domain renders to (write-through target), null otherwise.
   daemonConfigKey: string | null;
-  allowAliases: boolean;
   allowInherit: boolean;
 }
 
 // D3 domain→consumable matrix. Order = GET response render order.
 export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
   {
-    key: "model.orchestrator",
-    applyMode: "session-restart-manual",
-    editable: false,
-    surface: "settings",
-    daemonConfigKey: null,
-    allowAliases: false,
-    allowInherit: false,
-  },
-  {
     key: "model.dev",
     applyMode: "next-spawn",
     editable: true,
     surface: "frontmatter-dev",
     daemonConfigKey: null,
-    allowAliases: true,
     allowInherit: true,
   },
   {
@@ -81,7 +108,6 @@ export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
     editable: true,
     surface: "frontmatter-research",
     daemonConfigKey: null,
-    allowAliases: true,
     allowInherit: true,
   },
   {
@@ -90,7 +116,6 @@ export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
     editable: true,
     surface: "daemon-config",
     daemonConfigKey: "haiku_model",
-    allowAliases: false,
     allowInherit: false,
   },
 ];
@@ -140,21 +165,27 @@ export function normalizeModelId(value: string): string {
 }
 
 /**
- * pricing_known: cost-tracker has a PRICING row for the value (after normalization),
- * or the value resolves through a known family (alias) or the inherited settings model.
- * Free-text ids → false (metered at opus fallback rate — advisory warning in UI).
+ * pricing_known: the pricing SoT carries a row for the value (after normalization),
+ * or the value inherits the settings model. Anything else — bare aliases included,
+ * the alias resolution branch is removed — → false (metered at the conservative
+ * fallback rate — advisory warning in UI). Caller supplies the SoT roster
+ * (loadKnownModelIds) so this stays a sync pure predicate.
  */
-export function isPricingKnown(value: string | null): boolean {
+export function isPricingKnown(value: string | null, knownModelIds: ReadonlySet<string>): boolean {
   if (value === null) {
     return false;
   }
-  if (value === INHERIT_VALUE || FRONTMATTER_MODEL_ALIASES.has(value)) {
+  if (value === INHERIT_VALUE) {
     return true;
   }
-  return KNOWN_MODEL_IDS.has(normalizeModelId(value));
+  return knownModelIds.has(normalizeModelId(value));
 }
 
-/** Validation reason for a model value on a domain, or null when valid. */
+/**
+ * Validation reason for a model value on a domain, or null when valid. Deliberately
+ * roster-independent: any concrete id passing FREE_TEXT_MODEL_PATTERN is accepted —
+ * SoT membership drives pricing_known/known_models display, never write validation.
+ */
 export function validateModelValue(def: ModelDomainDef, value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0) {
     return "must be a non-empty string";
@@ -162,14 +193,12 @@ export function validateModelValue(def: ModelDomainDef, value: unknown): string 
   if (value === INHERIT_VALUE) {
     return def.allowInherit ? null : `'${INHERIT_VALUE}' is not valid for this domain`;
   }
-  if (FRONTMATTER_MODEL_ALIASES.has(value)) {
-    return def.allowAliases ? null : "aliases (sonnet/haiku/opus) are valid only for frontmatter domains";
-  }
-  if (KNOWN_MODEL_IDS.has(value)) {
-    return null;
+  // D2: checked BEFORE the free-text pattern — the bare words would otherwise match it.
+  if (REJECTED_ALIAS_VALUES.has(value)) {
+    return "bare aliases removed — use a concrete id, e.g. claude-sonnet-5";
   }
   if (!FREE_TEXT_MODEL_PATTERN.test(value)) {
-    return "must be a known model id, an allowed alias, or lowercase alnum/dot/hyphen/bracket (max 128)";
+    return "must be a concrete model id — lowercase alnum/dot/hyphen/bracket (max 128)";
   }
   return null;
 }
