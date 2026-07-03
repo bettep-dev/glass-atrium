@@ -4,14 +4,14 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 
 ## Working Tree Hygiene Contract [ORCHESTRATOR+DEV]
 
-- On a dirty `~/.claude/agents/` tree, `daemon-apply.sh`'s stash-and-restore wrap auto-does stash → apply → restore → 100% user-edit preservation. Assumes a serial daemon (no BlockingScheduler / asyncio / parallel-for) → a single stash slot is safe.
-- On stash-pop failure, preserve the stash entry for user inspection — automatic resolution FORBIDDEN · manual `git stash list` check + drop required
+- Each apply runs as a git-FREE file-copy transaction (`autoagent/lib/git-txn.sh`): a before-image copy of the single target is captured into a per-proposal `agents-bak` subdir BEFORE apply → verify failure atomically restores the target from it → 100% user-edit preservation on the target. The serial-writer assumption is enforced by the shared `.apply-lock` — both writers (daemon-apply.sh + update.sh) acquire via `scripts/lib/apply-lock.sh` (pid liveness + TTL stale-reclaim; a live holder always blocks).
+- On a restore-stage failure, the before-image is preserved in `agents-bak` for user inspection — automatic resolution FORBIDDEN · manual recovery from the per-proposal before-image required. Retention prune (default 14 days, `AUTOAGENT_BACKUP_TTL_DAYS`) never removes the newest cycle subdir.
 - On a multi-file cascade → meaning-unit commit obligation (aligns with `core-git-workflow.md`); the loop is trustworthy only from an accumulated dirty state. Autonomous mode (user absent): orchestrator auto-commit + per-file diff record · interactive sessions prefer manual user commit.
 
 ## Precondition Loud-Fail Principle [DEV+ORCHESTRATOR]
 
 - Pipeline stage entry conditions (git repo exists / TCC permission / launchd active / API endpoint reachability, etc.) → silent-fail absorption patterns (`2>/dev/null` / `|| true` / `|| return 0`) FORBIDDEN
-- When a precondition is unmet → named exit code (e.g., daemon-apply.sh exit 5 = "not a git repo") + explicit stderr message + automatic log-aggregator surface
+- When a precondition is unmet → named exit code (e.g., daemon-apply.sh exit 5 = "apply-lock lib missing", exit 4 = "another apply in progress") + explicit stderr message + automatic log-aggregator surface
 - Exit-code semantics spec required — the wrapper script can branch on it + automatically triggers monitor dashboard alerting
 - Cascade cost: on the launchd 1-day unattended cycle, a lost first-failure visibility fossilizes into a multi-day `status=pending` backlog amplified across days × N-agents — the loud-fail cost-benefit asymmetry
 
@@ -21,10 +21,10 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 
 ## Apply-Side Rollback Contract [DEV]
 
-- `apply_commit_failed` path → run `git reset --soft HEAD~1` first, then emit_log → prevents orphan WIP commits
-- Verification failure after commit → soft reset restores the staged state + preserves the working tree → keeps a user-retryable state
-- hard reset FORBIDDEN — risk of losing unsaved user work (aligns with `core-git-workflow.md` dangerous commands)
-- Bats test coverage required for the apply / rollback / stash-pop-conflict branches
+- `backup_capture_failed` path (`GIT_TXN_BACKUP_CAPTURE_FAIL`) → hard PRE-apply abort + emit_log — nothing was applied, so there is nothing to restore
+- Verification failure after apply (`GIT_TXN_VERIFY_FAIL`) → atomic restore of the target from the `agents-bak` before-image (sibling temp + `mv -f` rename, same-FS) → keeps a user-retryable state
+- In-place `cp` restore FORBIDDEN — a crash mid-copy truncates the target; only the atomic temp+rename swap is permitted
+- Bats test coverage required for the apply / atomic-restore / lock-reclaim branches (`autoagent/test/git-txn-gitfree.bats`)
 
 ## Harness Git Track Status
 

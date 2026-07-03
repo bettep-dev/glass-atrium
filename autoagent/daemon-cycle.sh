@@ -126,8 +126,25 @@ export AUTOAGENT_GIT_ROOT="${AUTOAGENT_GIT_ROOT:-${HOME}/.glass-atrium}"
 export AUTOAGENT_GIT_PATHSPEC="${AUTOAGENT_GIT_PATHSPEC:-agents/}"
 
 # -- Resolve script + module paths -----------------------------------------
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Facade-safe self-resolution: launchd invokes this script THROUGH the ~/.claude
+# per-file symlink facade (~/.claude/autoagent/daemon-cycle.sh → this file).
+# bash never dereferences a file-level symlink in BASH_SOURCE, so a bare
+# dirname(BASH_SOURCE) is the FACADE dir — a real directory whose siblings
+# (daemon_cycle.py, daemon-apply.sh) exist only where a mirror symlink was
+# hand-created (the missing-mirror class behind the 2026-07-02 apply FATAL).
+# Walk the symlink chain in pure bash (readlink -f is GNU-only; python3 is not
+# verified until later in this script — exit-3 check). Precedent: glass-atrium
+# resolve_self.
+resolve_self() {
+    local src="${BASH_SOURCE[0]}" dir
+    while [[ -L "${src}" ]]; do
+        dir="$(cd -- "$(dirname -- "${src}")" >/dev/null 2>&1 && pwd -P)"
+        src="$(readlink -- "${src}")"
+        [[ "${src}" != /* ]] && src="${dir}/${src}"
+    done
+    cd -- "$(dirname -- "${src}")" >/dev/null 2>&1 && pwd -P
+}
+SCRIPT_DIR="$(resolve_self)"
 PY_MODULE="${SCRIPT_DIR}/daemon_cycle.py"
 APPLY_SH="${SCRIPT_DIR}/daemon-apply.sh"
 # DEPRECATED: daemon-regression.sh archived. Variable kept for backward-compat
