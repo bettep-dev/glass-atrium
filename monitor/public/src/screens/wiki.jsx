@@ -1257,7 +1257,7 @@ function SparseTrendW({ label, series, stat, w, h, tone }) {
 			<div className="card-sub mb-1.5">{label}</div>
 			{sparse ? (
 				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 flex items-baseline justify-between gap-3">
-					<span className="font-mono fs-stat font-semibold text-dim">
+					<span className="font-mono fs-body text-dim">
 						{stat}
 					</span>
 					<span className="fs-micro font-mono text-faint">
