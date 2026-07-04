@@ -814,10 +814,85 @@ swap_symlink() {
   log "linked: ${rel}"
 }
 
+# --- wire repoint primitive: migrate old-dir hook commands to the new dir ------
+# An EXISTING install wired its hooks under ${HOME}/.claude/hooks/<hook>. After
+# the command-template repoint (wire_hooks now emits ${HOME}/.glass-atrium/hooks),
+# is_hook_bound() still matches those stale bindings BY BASENAME, so the wire
+# add-loop would treat them as already-wired and SKIP → the repoint would be a
+# silent no-op on an established install. This pass REWRITES every hook command
+# resolving under the OLD Atrium hooks dir to the NEW one (basename + any suffix
+# preserved), so the repoint actually lands before the idempotency check runs.
+#
+# DATA-SAFETY — same "only Atrium commands" property as unwire_hooks: only a
+# command whose (tilde-normalized) path startswith ${HOME}/.claude/hooks/ is
+# rewritten; a foreign user hook at any other path fails the prefix and is
+# preserved byte-for-byte. MERGE (every other key flows through `.`), ATOMIC
+# (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct
+# suffix so it never clobbers wire_hooks' own backup), injection-safe (--arg
+# everywhere → no path value ever reaches the jq program text).
+rewrite_hook_paths() {
+  local old_dir="${HOME}/.claude/hooks/"
+  local new_dir="${HOME}/.glass-atrium/hooks/"
+
+  # count commands currently resolving under the old dir (tilde-aware). jq failure
+  # (malformed json already ruled out by the caller) → 0 → clean no-op.
+  local pending
+  pending="$(
+    jq -r --arg old "${old_dir}" --arg home "${HOME}" '
+      def norm:
+        (. // "")
+        | (if startswith("~/") then $home + .[1:] else . end);
+      [ (.hooks // {}) | to_entries[] | .value[]? | (.hooks // [])[]? | .command | norm
+        | select(startswith($old)) ] | length
+    ' -- "${SETTINGS_JSON}" 2>/dev/null || printf '0'
+  )"
+  [[ -z "${pending}" ]] && pending=0
+  if [[ "${pending}" -eq 0 ]]; then
+    return 0
+  fi
+
+  # back up ONCE before the rewrite — distinct suffix from wire_hooks' backup so a
+  # same-second wire backup cannot overwrite this pre-rewrite image.
+  local backup
+  backup="${SETTINGS_JSON}.ga-repoint-backup.$(date +%Y%m%d-%H%M%S)"
+  cp -p -- "${SETTINGS_JSON}" "${backup}"
+  log "rewrite_hook_paths: backed up settings.json -> ${backup}"
+
+  RENDER_TMP="${SETTINGS_JSON}.ga-repoint.$$"
+  jq --arg old "${old_dir}" --arg new "${new_dir}" --arg home "${HOME}" '
+    def repoint:
+      (. // "") as $c
+      | (if ($c | startswith("~/")) then $home + $c[1:] else $c end) as $abs
+      | (if ($abs | startswith($old)) then $new + $abs[($old | length):] else $c end);
+    if (.hooks | type) == "object" then
+      .hooks |= map_values(
+        if type == "array" then
+          map(
+            if (.hooks | type) == "array" then
+              .hooks |= map(
+                if (.command | type) == "string" then .command |= repoint else . end
+              )
+            else . end
+          )
+        else . end
+      )
+    else . end
+  ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
+
+  if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
+    rm -f -- "${RENDER_TMP}"
+    RENDER_TMP=""
+    die "rewrite_hook_paths: repoint produced invalid JSON — backup preserved at ${backup}"
+  fi
+  mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
+  RENDER_TMP=""
+  log "rewrite_hook_paths: repointed ${pending} hook command(s) ${old_dir} -> ${new_dir} (backup: ${backup})"
+}
+
 # --- settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium
 #     hook commands, never any other key) -------------------------------------
 # Upserts each EXPECTED_HOOK_BINDINGS entry into settings.json under its event,
-# attaching the declared matcher + the "$HOME/.claude/hooks/<basename>" command.
+# attaching the declared matcher + the "$HOME/.glass-atrium/hooks/<basename>" command.
 #
 # SAFETY CONTRACT (why this cannot clobber user config):
 #   * MERGE not overwrite — the jq transform reads the FULL existing object and
@@ -853,6 +928,14 @@ wire_hooks() {
     die "wire_hooks: ${SETTINGS_JSON} is not valid JSON — refusing to merge (fix or restore it first)"
   fi
 
+  # REPOINT existing bindings BEFORE the idempotency loop. is_hook_bound compares
+  # by BASENAME, so an established install whose commands still point at the OLD
+  # ${HOME}/.claude/hooks dir would be seen as "already wired" and the add-loop
+  # would SKIP them → the template repoint below would be a silent no-op. The
+  # rewrite pass first migrates any old-dir command to the new dir so a repoint
+  # actually lands (see rewrite_hook_paths).
+  rewrite_hook_paths
+
   # back up ONCE before the FIRST mutation — timestamped, user-recoverable. Taken
   # lazily (only when a binding is actually about to be written) so a fully-wired
   # re-run stays a true no-op (zero filesystem writes), not an accumulating backup.
@@ -861,7 +944,9 @@ wire_hooks() {
   local binding event hook matcher cmd added=0 already=0
   for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
     IFS=$'\t' read -r event hook matcher <<<"${binding}"
-    cmd="${HOME}/.claude/hooks/${hook}"
+    # command template repointed to the in-place ~/.glass-atrium/hooks consumer
+    # (the ~/.claude/hooks farm is dropped; hooks fire from the install root).
+    cmd="${HOME}/.glass-atrium/hooks/${hook}"
 
     # idempotency: already bound under this event+matcher (command-within-matcher
     # compare) → no-op. Matcher-scoped so the same hook can be wired under two
@@ -1361,10 +1446,14 @@ unwire_hooks() {
   cp -p -- "${SETTINGS_JSON}" "${backup}"
   log "unwire_hooks: backed up settings.json -> ${backup}"
 
-  # Atrium hooks dir (absolute, current $HOME). Any binding whose command resolves
-  # here is Atrium's — matched path-tolerantly (a leading '~' is normalized to
-  # $HOME below, so tilde + absolute forms both match).
+  # Atrium hooks dirs (absolute, current $HOME) — DUAL: the legacy farm dir
+  # (${HOME}/.claude/hooks/) AND the in-place consumer dir (${HOME}/.glass-atrium/
+  # hooks/) that the repointed wire template now emits. Any binding whose command
+  # resolves under EITHER is Atrium-owned — matched path-tolerantly (a leading '~'
+  # is normalized to $HOME below, so tilde + absolute forms both match). Both
+  # prefixes are Atrium-owned, so the "foreign user hooks survive" property holds.
   local hooks_dir="${HOME}/.claude/hooks/"
+  local hooks_dir_new="${HOME}/.glass-atrium/hooks/"
 
   # iterate EVERY event under .hooks (SoT-INDEPENDENT — NOT EXPECTED_HOOK_BINDINGS)
   # so all deployed + future Atrium hooks are covered. The key list is snapshotted
@@ -1380,17 +1469,18 @@ unwire_hooks() {
     local tmp
     tmp="${SETTINGS_JSON}.ga-unwire.$$"
     # DROP every hook-group under this event that holds a command resolving into
-    # the Atrium hooks dir. into_hooksdir normalizes a leading '~' to $HOME (via
+    # EITHER Atrium hooks dir. into_hooksdir normalizes a leading '~' to $HOME (via
     # string slicing — never regex, so a $HOME with regex/replacement metachars is
-    # byte-safe), then tests the "$HOME/.claude/hooks/" prefix. A user hook at any
-    # other path fails the prefix and is preserved. --arg everywhere → no value is
-    # interpolated into the jq program (injection-safe). Editing over an absent /
-    # non-array .hooks[event] is a safe no-op (the `else .` branch returns input).
-    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg home "${HOME}" '
+    # byte-safe), then tests the "$HOME/.claude/hooks/" AND "$HOME/.glass-atrium/
+    # hooks/" prefixes. A user hook at any other path fails both and is preserved.
+    # --arg everywhere → no value is interpolated into the jq program (injection-
+    # safe). Editing over an absent / non-array .hooks[event] is a safe no-op (the
+    # `else .` branch returns input).
+    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg dir2 "${hooks_dir_new}" --arg home "${HOME}" '
       def into_hooksdir:
         (. // "")
         | (if startswith("~/") then $home + .[1:] else . end)
-        | startswith($dir);
+        | (startswith($dir) or startswith($dir2));
       if (.hooks[$ev] | type) == "array" then
         .hooks[$ev] |= map(
           select(
@@ -1590,7 +1680,7 @@ run_doctor() {
   fi
   if [[ "${unbound}" -gt 0 ]]; then
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
-    log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.claude/hooks/<hook>.sh\"}]}"
+    log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
     log "       NOTE: this doctor check is read-only and never writes settings.json. To apply these bindings, run 'glass-atrium install' — wire_hooks performs an idempotent, timestamped-backup MERGE of ONLY the Atrium hook bindings (it never deletes/overwrites user-owned keys; 'agents-only' skips it). You may also add them by hand."
   fi
 
@@ -1818,31 +1908,35 @@ verify_clean() {
     fail=1
   fi
 
-  # 2. zero Atrium hook bindings in settings.json
+  # 2. zero Atrium hook bindings in settings.json — DUAL-DIR, prefix-based.
+  #    An EXACT-cmd literal keyed on the OLD ${HOME}/.claude/hooks path would, after
+  #    the wire-template repoint, assert a never-wired path and always PASS — a
+  #    residual ${HOME}/.glass-atrium/hooks binding would slip through undetected.
+  #    Mirror unwire_hooks' dir-prefix approach instead: FAIL on ANY command that
+  #    (tilde-normalized) resolves under EITHER Atrium hooks dir, so no residual
+  #    Atrium binding under either prefix escapes the post-uninstall assertion.
   if [[ -f "${SETTINGS_JSON}" ]] && command -v jq >/dev/null 2>&1; then
     if ! jq -e . -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
       log "  FAIL : settings.json is not valid JSON (${SETTINGS_JSON})"
       fail=1
     else
-      local binding event hook matcher cmd bound=0
-      for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
-        IFS=$'\t' read -r event hook matcher <<<"${binding}"
-        cmd="${HOME}/.claude/hooks/${hook}"
-        local present
-        present="$(
-          jq -r --arg ev "${event}" --arg c "${cmd}" '
-            [ (.hooks[$ev] // [])[] | (.hooks // [])[]? | .command | select(. == $c) ] | length
-          ' -- "${SETTINGS_JSON}"
-        )"
-        if [[ "${present}" -gt 0 ]]; then
-          log "  FAIL : Atrium hook still bound — ${event} -> ${hook} (matcher=${matcher:-<none>})"
-          bound=$((bound + 1))
-        fi
-      done
-      if [[ "${bound}" -eq 0 ]]; then
-        log "  ok   : zero Atrium hook bindings in settings.json"
-      else
+      local old_dir="${HOME}/.claude/hooks/" new_dir="${HOME}/.glass-atrium/hooks/"
+      local residual
+      residual="$(
+        jq -r --arg d1 "${old_dir}" --arg d2 "${new_dir}" --arg home "${HOME}" '
+          def norm:
+            (. // "")
+            | (if startswith("~/") then $home + .[1:] else . end);
+          [ (.hooks // {}) | to_entries[] | .value[]? | (.hooks // [])[]? | .command | norm
+            | select(startswith($d1) or startswith($d2)) ] | length
+        ' -- "${SETTINGS_JSON}"
+      )"
+      [[ -z "${residual}" ]] && residual=0
+      if [[ "${residual}" -gt 0 ]]; then
+        log "  FAIL : ${residual} Atrium hook binding(s) still present in settings.json (under ~/.claude/hooks or ~/.glass-atrium/hooks)"
         fail=1
+      else
+        log "  ok   : zero Atrium hook bindings in settings.json"
       fi
     fi
   else
