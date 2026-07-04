@@ -167,6 +167,47 @@ JSON
   [[ ! -f "${SETTINGS}" ]]
 }
 
+# A settings.json where a user command SHARES the matcher VALUE "Shared" with an
+# Atrium hook in TWO distinct shapes: (i) a SEPARATE group object (user-only) and
+# (ii) the SAME group object that also bears an Atrium command. unwire drops at the
+# hook-GROUP-OBJECT granularity (`map(select(... | any | not))`), so the two shapes
+# diverge — this pins BOTH so the P2 dual-dir predicate change is characterized.
+write_group_sharing_sample() {
+  cat >"${SETTINGS}" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Shared", "hooks": [
+        { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" },
+        { "type": "command", "command": "~/user-hooks/inside-atrium-group.sh" }
+      ] },
+      { "matcher": "Shared", "hooks": [
+        { "type": "command", "command": "~/user-hooks/separate-group.sh" }
+      ] }
+    ]
+  }
+}
+JSON
+}
+
+@test "unwire drops the whole group OBJECT: user cmd in a SEPARATE group survives, user cmd INSIDE the Atrium group is collaterally removed" {
+  write_group_sharing_sample
+  run_unwire_sandbox
+  [[ "${status}" -eq 0 ]]
+  jq -e . "${SETTINGS}" >/dev/null
+  # the Atrium hook is gone (the whole group object holding it was dropped)
+  [[ "$(count_cmd '.claude/hooks/enforce-delegation.sh')" -eq 0 ]]
+  # CHARACTERIZED CURRENT BEHAVIOR: a user command PHYSICALLY INSIDE the same
+  # group object as the Atrium command is COLLATERALLY removed (group-granular
+  # deletion). This documents the actual semantics — NOT an assertion that it is
+  # desirable — precisely at the map(select()) site the P2 predicate mutates.
+  [[ "$(count_cmd 'inside-atrium-group.sh')" -eq 0 ]]
+  # the user command in a SEPARATE group object (same matcher VALUE) is PRESERVED
+  [[ "$(count_cmd 'separate-group.sh')" -eq 1 ]]
+  # PreToolUse survives with exactly the one surviving user-only group
+  [[ "$(jq -r '.hooks.PreToolUse | length' "${SETTINGS}")" -eq 1 ]]
+}
+
 @test "dry-run -> no mutation, no backup (reports intent only)" {
   write_sample
   local before

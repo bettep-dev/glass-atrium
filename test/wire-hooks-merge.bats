@@ -231,6 +231,43 @@ JSON
   [[ "$(cat "${SETTINGS}")" == '{ this is not json' ]]
 }
 
+@test "settings.json IS a symlink (dotfiles) -> converted to a regular file, link severed, target preserved, backup taken" {
+  # RISKY EDGE (a): a dotfiles-managed settings.json is a SYMLINK into an external
+  # store. wire_hooks `cp -p` FOLLOWS the symlink into the backup (backup = target
+  # content), then `mv -f RENDER_TMP SETTINGS_JSON` REPLACES the symlink NAME with
+  # a regular file — SEVERING the dotfiles link while leaving the original target
+  # file byte-untouched. This pins all four current-behavior facts so a later
+  # hook-repoint change cannot worsen the severance unnoticed.
+  local store="${TARGET}/dotfiles-store"
+  mkdir -p "${store}"
+  local target_file="${store}/real-settings.json"
+  cat >"${target_file}" <<'JSON'
+{ "model": "dotfiles-pinned", "hooks": {} }
+JSON
+  local before_target
+  before_target="$(jq -cS . "${target_file}")"
+  ln -s "${target_file}" "${SETTINGS}"
+  [[ -L "${SETTINGS}" ]] # precondition: settings.json starts as a symlink
+
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]]
+
+  # FACT 1 — settings.json is now a REGULAR file (no longer a symlink)
+  [[ -f "${SETTINGS}" && ! -L "${SETTINGS}" ]]
+  # FACT 2 — the dotfiles link is SEVERED: the new regular file is a distinct inode
+  # from the store target (mutating settings.json no longer writes through).
+  [[ "$(count_bound advisory-spawn-budget.sh)" -eq 1 ]] # merge landed on the new file
+  # FACT 3 — the original target file is byte-preserved (never written through)
+  [[ "$(jq -cS . "${target_file}")" == "${before_target}" ]]
+  [[ "$(jq -r '.hooks | has("PreToolUse")' "${target_file}")" == "false" ]]
+  # FACT 4 — a timestamped backup exists, and it holds the pre-merge (followed) content
+  [[ "${output}" == *"backed up settings.json -> ${SETTINGS}.ga-backup."* ]]
+  local backup
+  backup="$(find "${TARGET}" -name 'settings.json.ga-backup.*' | head -1)"
+  [[ -n "${backup}" ]]
+  [[ "$(jq -r '.model' "${backup}")" == "dotfiles-pinned" ]]
+}
+
 @test "doctor reports 0 dormant after wire-hooks (reconciliation)" {
   # bare skeleton → wire → doctor must report no dormant bindings
   printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
