@@ -90,7 +90,7 @@ while IFS= read -r -d '' link; do
   case "${tgt}" in
     "${SRC_ROOT}/"*)
       # equivalent path inside the new tree
-      rel_inside="${tgt#"${SRC_ROOT}/"}" # e.g. agents/GLOBAL_RULES.md
+      rel_inside="${tgt#"${SRC_ROOT}/"}" # e.g. agents/GLASS_ATRIUM_GLOBAL_RULES.md
       new_abs="${DEST_ROOT}/${rel_inside}"
       link_dir=""
       link_dir="$(cd -- "$(dirname -- "${link}")" && pwd)"
@@ -149,7 +149,7 @@ git -C "${DEST_ROOT}" add -A
 git -C "${DEST_ROOT}" commit -q -m "초기 Glass Atrium 루트 프로젝트 이관
 
 ~/.claude 하니스 실파일(8-item allowlist)을 ~/.glass-atrium 단일 git 루트로
-비파괴 복사 · 중첩 .git 6개 제외 · GLOBAL_RULES 심링크 트리내 상대링크 재타깃"
+비파괴 복사 · 중첩 .git 6개 제외 · GLASS_ATRIUM_GLOBAL_RULES 심링크 트리내 상대링크 재타깃"
 
 # --- step 4: verify --------------------------------------------------------
 echo "[4/4] verify"
@@ -167,7 +167,7 @@ done < <(find "${DEST_ROOT}" -name .git -print0 2>/dev/null || true)
 echo "  nested .git (excluding root): ${nested_git}"
 
 # confirm GLOBAL_RULES link resolves within the tree (link is relative now)
-gr_link="${DEST_ROOT}/rules/GLOBAL_RULES.md"
+gr_link="${DEST_ROOT}/rules/GLASS_ATRIUM_GLOBAL_RULES.md"
 gr_ok="no"
 if [[ -L "${gr_link}" ]]; then
   gr_tgt=""
