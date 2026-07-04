@@ -114,13 +114,13 @@ fi
 read -r -d '' AUDIT_SQL <<SQL || true
 WITH grp AS (
   SELECT coalesce(cid, correlation_id) AS gid,
-         bool_or(agent = 'intel-planner') AS has_planner,
+         bool_or(agent = 'glass-atrium-intel-planner') AS has_planner,
          bool_or(task_type = 'plan') AS has_plan_task,
-         bool_or(agent = 'qa-code-reviewer') AS has_reviewer,
+         bool_or(agent = 'glass-atrium-qa-code-reviewer') AS has_reviewer,
          bool_or(agent IN (
-           'dev-front','dev-react','dev-angular','dev-gsap','dev-android',
-           'dev-nestjs','dev-node','dev-python','dev-db','dev-rag',
-           'dev-animator','dev-shell','dev-swift'
+           'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
+           'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
          )) AS has_dev,
          count(*) AS n,
          min(record_ts) AS first_ts
@@ -143,13 +143,13 @@ SQL
 read -r -d '' SUMMARY_SQL <<SQL || true
 WITH grp AS (
   SELECT coalesce(cid, correlation_id) AS gid,
-         bool_or(agent = 'intel-planner') AS has_planner,
+         bool_or(agent = 'glass-atrium-intel-planner') AS has_planner,
          bool_or(task_type = 'plan') AS has_plan_task,
-         bool_or(agent = 'qa-code-reviewer') AS has_reviewer,
+         bool_or(agent = 'glass-atrium-qa-code-reviewer') AS has_reviewer,
          bool_or(agent IN (
-           'dev-front','dev-react','dev-angular','dev-gsap','dev-android',
-           'dev-nestjs','dev-node','dev-python','dev-db','dev-rag',
-           'dev-animator','dev-shell','dev-swift'
+           'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
+           'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
          )) AS has_dev
   FROM core.outcomes
   WHERE coalesce(cid, correlation_id) IS NOT NULL

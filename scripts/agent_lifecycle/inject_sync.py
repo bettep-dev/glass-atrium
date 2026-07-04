@@ -43,16 +43,16 @@ from .paths import StorePaths
 
 # QA names INJECT_AGENTS carries over the DEV roster (the same split orphan_scan
 # models). Kept local so inject_sync owns its own expected-membership rule.
-_QA_NAMES: frozenset[str] = frozenset({"qa-code-reviewer", "qa-debugger"})
+_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"})
 
 # NAMING_AGENTS carries qa-code-reviewer ONLY (the review-enforcement surface),
 # NEVER qa-debugger. Dedicated single-name set so the naming predicate cannot
 # reuse _QA_NAMES (which includes qa-debugger).
-_NAMING_QA_NAMES: frozenset[str] = frozenset({"qa-code-reviewer"})
+_NAMING_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer"})
 
 # dev-swift is the one DEV roster member NAMING_AGENTS excludes (native SwiftUI,
 # not the web naming-convention surface the delta-core targets).
-_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"dev-swift"})
+_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"glass-atrium-dev-swift"})
 
 # The 4 arrays keyed by their bash variable name -> the compiled assignment regex.
 _ARRAY_RES = {

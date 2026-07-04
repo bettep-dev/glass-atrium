@@ -82,13 +82,13 @@ readonly NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
 
 # Comment-logging scope-match — DEV + QA (core-compliance-matrix.md Scope Legend SoT).
 # Space-padded to block partial matches. Update when DEV/QA agents are added.
-readonly INJECT_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell qa-code-reviewer qa-debugger dev-swift "
+readonly INJECT_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-dev-swift "
 
 # style_ref scope-match — DEV ONLY (style_ref is DEV-scoped; QA excluded). Space-padded.
-readonly STYLEREF_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift "
+readonly STYLEREF_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
 # minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
-readonly MINIMALISM_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift "
+readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
 # naming scope-match — the 13 agents whose frontmatter declares glass-atrium-dev-naming: DEV(12,
 # EXCLUDING dev-swift) + qa-code-reviewer. Space-padded. DELIBERATELY NOT INJECT_AGENTS: that set
@@ -97,7 +97,7 @@ readonly MINIMALISM_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-androi
 # tracked array (it parses all 4 named arrays, naming included) — a new DEV agent is wired in
 # automatically; the narrower roster is enforced by a dedicated naming membership predicate
 # (dev_roster − {dev-swift} ∪ {qa-code-reviewer}), NOT the generic DEV/QA rosters.
-readonly NAMING_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell qa-code-reviewer "
+readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
