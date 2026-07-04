@@ -2380,8 +2380,9 @@ build_step_plan() {
       # manifest-link removal → orphan sweep → empty-dir cleanup → update-state
       # teardown → hook un-wire → shell-rc PATH-line removal. launchd teardown runs
       # FIRST so the daemons stop (connections drain) before the DB is dropped and
-      # before their symlinked files are removed. The DB drop has NO backup/restore
-      # by design — reinstall recreates a fresh, consistent DB. empty-dir cleanup +
+      # before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
+      # fail-closed per DB (a failed/empty pre-drop pg_dump skips that DB's drop —
+      # lib drop_databases) — reinstall recreates a fresh, consistent DB. empty-dir cleanup +
       # update-state teardown mirror run_uninstall's STEP4/T26 (rmdir-only empty
       # skeletons + non-symlink pause-flag/baseline teardown) so the TUI matches the
       # CLI. The config purge is a SEPARATE confirmed step in dispatch_action (it
@@ -2832,7 +2833,7 @@ dispatch_action_uninstall_panel() {
   local status=0
   # PRE-gate: the "remove" typed confirm in cooked mode (drop alt-screen for the prompt,
   # then re-enter for the box). _confirm_pregate handles the rmcup/smcup + stty toggle.
-  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, IRREVERSIBLY DROPS the glass_atrium + shadow DBs (no backup), and deletes monitor/node_modules."; then
+  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, DROPS the glass_atrium + shadow DBs (pre-drop pg_dump backup kept in ~/.claude/backups/postgres), and deletes monitor/node_modules."; then
     # Cancelled: a brief done line, then back to nav.
     status_line 0 "Uninstall cancelled" 0 0
     IFS= read -rsn1 _ <"${TTY}" || true

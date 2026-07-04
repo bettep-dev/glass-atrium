@@ -2251,43 +2251,87 @@ unload_launchd_jobs() {
   return 0
 }
 
-# drop_databases — uninstall teardown: DROP the GA PostgreSQL databases (primary
-# ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a reinstall recreates a fresh,
-# consistent DB. NO backup / NO restore BY DESIGN: the dev-agent roster + schema
-# drift across installs, so a restored snapshot would be inconsistent with the
-# rebuilt system — a clean drop + fresh `createdb` + `prisma migrate deploy` on
-# reinstall (oss-db-setup.sh, idempotent) is the correct, consistent behaviour.
-# SECURITY: peer-auth Unix socket ONLY (-h ${PG_SOCKET}), never a host/port +
-# credentials, never reads/echoes a secret. IDEMPOTENT (--if-exists → clean no-op
-# on an already-dropped DB). GRACEFUL: a missing dropdb binary or an unreachable
+# drop_databases — uninstall teardown: pre-drop BACKUP, then DROP, of the GA
+# PostgreSQL databases (primary ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a
+# reinstall recreates a fresh, consistent DB while the dropped data stays
+# RECOVERABLE. The fresh-DB intent stands (dev-agent roster + schema drift across
+# installs → no auto-restore) — but the drop is gated on a verified backup:
+# BACKUP-BEFORE-DROP, FAIL-CLOSED per database. Each EXISTING database is
+# pg_dump'ed (custom -F c, pg_restore-compatible) to
+#   ${HOME}/.claude/backups/postgres/<db>-pre-uninstall-<ts>.dump
+# (pg-backup.sh's dir + timestamp convention; GA_DB_BACKUP_DIR sandbox override,
+# mirroring oss-db-setup.sh). A dump that FAILS or is EMPTY (non-empty gate =
+# oss-db-setup.sh backup_db_to_file precedent) SKIPS the drop for THAT database —
+# loud log, data preserved, uninstall continues. Applied uniformly (the shadow DB
+# may legitimately dump near-empty; the same gate still governs it).
+# Pre-uninstall dumps are KEEP-FOREVER safety artifacts: no rotation here, and
+# pg-backup.sh's 14-dump keep-window never trashes them ('pre-' sorts above every
+# dated glass_atrium-* name in its DESCENDING keep-window — load-bearing ordering,
+# do not rename without re-checking that glob). An absent database skips both dump
+# and drop silently (--if-exists semantics). SECURITY: peer-auth Unix socket ONLY
+# (-h ${PG_SOCKET}), never a host/port + credentials, never reads/echoes a secret.
+# IDEMPOTENT (absent DB → clean no-op). GRACEFUL: a missing binary or unreachable
 # server logs a warning and returns 0 so the rest of uninstall still completes —
-# a drop failure is NEVER fatal. This is a DELIBERATE, user-requested path that
-# drops the LIVE DB; it is DISTINCT from recreate_db_gate (which refuses the live
-# DB from the installer's --recreate-db path). That guard is for a different path
-# and is intentionally NOT reused or weakened here.
+# never fatal, and EVERY failure path lands on the data-PRESERVING side (skip the
+# drop, keep the DB). This is a DELIBERATE, user-requested path that drops the
+# LIVE DB; it is DISTINCT from recreate_db_gate (which refuses the live DB from
+# the installer's --recreate-db path). That guard is for a different path and is
+# intentionally NOT reused or weakened here.
 drop_databases() {
   if "${DRY_RUN}"; then
-    log "dry-run: skipping DB drop (${DB_NAME}, ${DB_NAME}_shadow)"
+    log "dry-run: skipping DB backup + drop (${DB_NAME}, ${DB_NAME}_shadow)"
     return 0
   fi
   if ! command -v dropdb >/dev/null 2>&1; then
     log "uninstall: dropdb not found — skipping DB drop (advisory; reinstall recreates the DB)"
     return 0
   fi
-  local db dropped=0
-  log "uninstall: dropping GA databases via peer-auth socket (${PG_SOCKET})"
+  # BACKUP-BEFORE-DROP hard precondition: without pg_dump nothing can be backed
+  # up, so nothing may be dropped (fail-closed, data preserved, still exit 0).
+  if ! command -v pg_dump >/dev/null 2>&1; then
+    log "uninstall: pg_dump not found — SKIPPING DB drop entirely (backup-before-drop is mandatory; data preserved)"
+    return 0
+  fi
+  local backup_dir="${GA_DB_BACKUP_DIR:-${HOME}/.claude/backups/postgres}"
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  if ! mkdir -p -- "${backup_dir}"; then
+    log "uninstall: cannot create backup dir ${backup_dir} — SKIPPING DB drop entirely (data preserved)"
+    return 0
+  fi
+  local db probe dump dropped=0
+  log "uninstall: backing up + dropping GA databases via peer-auth socket (${PG_SOCKET})"
   # Scope is EXACTLY the two GA databases — never a wildcard, never "drop all".
   for db in "${DB_NAME}" "${DB_NAME}_shadow"; do
-    # --if-exists: clean no-op on an already-dropped DB. --force (PG 13+): terminate
-    # residual connections (daemons were booted out above, but stay defensive).
+    # Absent DB → skip dump AND drop silently. A FAILED probe (server unreachable)
+    # also lands on the data-preserving side: no dump, no drop, loud warn.
+    if ! probe="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname='${db}'" 2>/dev/null)"; then
+      log "  warn: existence probe for '${db}' failed (server unreachable?) — drop skipped (data preserved)"
+      continue
+    fi
+    if [[ "${probe}" != "1" ]]; then
+      log "  skip: ${db} absent — nothing to back up or drop"
+      continue
+    fi
+    # FAIL-CLOSED dump gate: dump must complete AND be non-empty, or THIS
+    # database's drop is skipped. pg_dump stderr flows through (loud-fail aid).
+    dump="${backup_dir}/${db}-pre-uninstall-${ts}.dump"
+    if ! pg_dump -h "${PG_SOCKET}" -d "${db}" -F c -f "${dump}" || [[ ! -s "${dump}" ]]; then
+      log "  SKIP-DROP: pre-drop backup of '${db}' failed or empty (${dump}) — '${db}' NOT dropped (data preserved)"
+      continue
+    fi
+    log "  backup: ${db} → ${dump}"
+    # --if-exists: drop-race tolerance. --force (PG 13+): terminate residual
+    # connections (daemons were booted out above, but stay defensive).
     if dropdb -h "${PG_SOCKET}" --if-exists --force "${db}" >/dev/null 2>&1; then
       dropped=$((dropped + 1))
-      log "  drop: ${db} dropped (or already absent)"
+      log "  drop: ${db} dropped (backup: ${dump})"
     else
       log "  warn: dropdb '${db}' failed (server unreachable?) — skipped (advisory)"
     fi
   done
-  log "uninstall: DB drop done (${dropped}/2 dropdb calls ok)"
+  log "uninstall: DB drop done (${dropped}/2 dropped — skipped DBs preserved)"
   return 0
 }
 
@@ -2917,8 +2961,10 @@ run_uninstall() {
   # STEP1 — stop + deregister the com.glass-atrium.* launchd jobs before the
   # symlinks they depend on are swept (bootout the daemons first).
   unload_launchd_jobs
-  # STEP2 — drop the GA databases (connections now drained). No backup/restore by
-  # design — reinstall recreates a fresh, consistent DB. Graceful-on-failure.
+  # STEP2 — back up, then drop, the GA databases (connections now drained).
+  # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips
+  # that DB's drop (data preserved) — reinstall recreates a fresh, consistent DB.
+  # Graceful-on-failure.
   drop_databases
   # STEP3 — reclaim disk: remove the regenerable monitor/node_modules.
   remove_node_modules
