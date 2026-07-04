@@ -344,6 +344,132 @@ load_skill() {
   [[ "$(cat "${INSTALL}/agents/foo.md")" == "new agent" ]]
 }
 
+# --- post-apply hook-binding reconciliation (wire-hooks) ------------------
+#
+# ROOT FIX: update_run applied the new FILES + refreshed the ~/.claude mirror
+# farm but never ran wire_hooks, so a release that added/changed a hook binding
+# left settings.json pinned to the OLD binding set (the new hook shipped DORMANT
+# until the next full install). update_run now shells out to the canonical
+# `glass-atrium wire-hooks` subcommand AFTER the verified apply + farm refresh —
+# the SAME idempotent, timestamped-backup MERGE install uses. These tests pin (1)
+# the post-apply invocation + install-parity ordering, (2) the loud-fail exit 12
+# contract with NO rollback of the applied files, and (3) the real end-to-end
+# merge: a settings.json missing the bindings gains them through the update path.
+
+# Install a stub glass-atrium launcher at <root> that appends each invocation's
+# argv (one line per call) to <calls> and exits 0 — lets a full update_run prove
+# WHICH post-apply subcommands it shelled out to (agents-only + wire-hooks)
+# without the real 209KB launcher's side effects. The `wire-hooks` line is the
+# one under test; `agents-only` (farm) proves the ordering.
+seed_stub_launcher() {
+  local root="$1" calls="$2"
+  cat >"${root}/glass-atrium" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${calls}"
+exit 0
+STUB
+  chmod +x "${root}/glass-atrium"
+}
+
+@test "post-apply: update_run invokes 'glass-atrium wire-hooks' AFTER a confirmed apply + farm refresh (install parity)" {
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+  mkdir -p "${WORK}/facade" # a present facade home so the farm actually shells out
+  seed_stub_launcher "${INSTALL}" "${WORK}/launcher-calls.log"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    GA_TARGET_HOME="${WORK}/facade" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ]
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] # apply happened first
+  [[ -f "${WORK}/launcher-calls.log" ]]
+  # wire-hooks was invoked, and it ran AFTER the farm's agents-only (install
+  # ordering: run_symlink_farm -> wire_hooks). The LAST recorded call is wire-hooks.
+  [[ "$(grep -c '^wire-hooks$' "${WORK}/launcher-calls.log")" -ge 1 ]]
+  [[ "$(grep -c '^agents-only$' "${WORK}/launcher-calls.log")" -ge 1 ]]
+  [[ "$(tail -n 1 "${WORK}/launcher-calls.log")" == "wire-hooks" ]]
+}
+
+@test "post-apply: a FAILING wire-hooks loud-fails exit 12 and does NOT roll back the applied files" {
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+  mkdir -p "${WORK}/facade"
+  # stub that succeeds for the farm (agents-only / prune) but FAILS on wire-hooks
+  cat >"${INSTALL}/glass-atrium" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  *wire-hooks*) exit 3 ;;
+  *) exit 0 ;;
+esac
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    GA_TARGET_HOME="${WORK}/facade" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 12 ]                                          # named loud-fail code
+  [[ "$output" == *"hook-binding wiring failed"* ]]
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]  # files APPLIED, not rolled back
+  # the trap still released the writer-serialization state on the failure path
+  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
+}
+
+@test "post-apply: the wire step MERGES the new bindings into a settings.json that lacks them (real launcher)" {
+  # Real glass-atrium launcher at the sandbox GA_ROOT; GA_TARGET_HOME points
+  # SETTINGS_JSON at a throwaway target. update_wire_hooks_post_apply shells out to
+  # the canonical `wire-hooks`, so a settings.json MISSING the Atrium bindings gains
+  # them through the update path — the end-to-end proof of the root fix.
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  # The launcher's `wire-hooks` passthrough is a fresh subprocess that self-resolves
+  # its own dir (INSTALL) and sources its engine libs from beside itself + scripts/lib
+  # (ga-core.sh -> the E5 libs). A real update applies that whole tree into GA_ROOT, so
+  # the sandbox must mirror it or the launcher dies before ever reaching wire_hooks.
+  mkdir -p "${INSTALL}/scripts"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  mkdir -p "${WORK}/target"
+  printf '%s\n' '{ "hooks": {} }' >"${WORK}/target/settings.json"
+
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    export GA_TARGET_HOME="'"${WORK}"'/target"
+    load_skill
+    update_wire_hooks_post_apply
+  '
+  [ "$status" -eq 0 ]
+  # settings.json is still valid JSON and now carries a known Atrium binding it lacked
+  jq -e . "${WORK}/target/settings.json" >/dev/null
+  run jq '[ .hooks // {} | to_entries[] | .value[]? | .hooks[]? | .command
+           | select(endswith("/advisory-spawn-budget.sh")) ] | length' \
+    "${WORK}/target/settings.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" -ge 1 ]]
+}
+
 # --- roster-migration gate (T20 / gate G8) --------------------------------
 
 # Seed a minimal agent-registry.json at $1 listing the agent keys $2.. so the

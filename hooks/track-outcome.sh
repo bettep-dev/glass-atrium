@@ -140,6 +140,112 @@ try:
 except Exception:
     sys.exit(0)
 
+
+# --------------------------------------------------------------------------
+# T1 transcript-source helpers. last_assistant_message was dropped from the
+# SubagentStop payload in recent Claude Code (2.1.199+); gating the whole
+# [COMPLETION] parse + tool_use count on that one volatile platform field made
+# every completion fall through to parse_tier=3 → conversation-only skip → 0
+# records. The subagent's OWN transcript (agent-<id>.jsonl) is the durable
+# source. Defined here (before the msg assignment below) so the parse and the
+# tool_use / write-target counters all reuse one resolution point.
+# --------------------------------------------------------------------------
+def _resolve_subagent_transcript(payload_d):
+    # Resolve the SUBAGENT's OWN transcript. On SubagentStop the payload
+    # transcript_path points at the PARENT, so a subagent's own Read history /
+    # terminal [COMPLETION] never appears there. Mirrors the session_id+agent_id
+    # bounded glob in recover_agent_type_from_sidecar (two layouts: the flat
+    # subagents/ dir + the workflow-nested subagents/workflows/wf_*/ location).
+    # Returns the first matching per-agent transcript, or '' when none is found
+    # (caller then falls back to the payload transcript_path — the main-session /
+    # non-subagent / pre-existing-row case). glob + isfile do not raise.
+    import os as _os
+    import glob as _glob
+    agent_id_val = payload_d.get('agent_id', '') or ''
+    session_val = payload_d.get('session_id', '') or ''
+    if not agent_id_val or not session_val:
+        return ''
+    filename = f'agent-{agent_id_val}.jsonl'
+    patterns = (
+        _os.path.expanduser(
+            f'~/.claude/projects/*/{session_val}/subagents/{filename}'
+        ),
+        _os.path.expanduser(
+            f'~/.claude/projects/*/{session_val}/subagents/workflows/wf_*/{filename}'
+        ),
+    )
+    for pattern in patterns:
+        for match in _glob.glob(pattern):
+            if _os.path.isfile(match):
+                return match
+    return ''
+
+
+def _effective_transcript_path(payload_d):
+    # The subagent's OWN transcript when resolvable, else the payload
+    # transcript_path. Single resolution point reused by the [COMPLETION] parse,
+    # the tool_use count, and the write-target collection so all three read the
+    # same (subagent) source rather than the parent transcript.
+    return _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
+
+
+def _last_assistant_text_from_transcript(transcript_path):
+    # Reconstruct the terminal assistant message text from a transcript jsonl.
+    # Each assistant text/tool_use lands in its own entry, so the terminal
+    # [COMPLETION] block lives in the last assistant *text* entry. Prefer the last
+    # assistant text carrying a [COMPLETION] marker; else the last assistant text
+    # of any kind. Returns '' on any failure (fail-open — caller keeps its input).
+    import os as _os
+    if not isinstance(transcript_path, str) or not transcript_path \
+            or not _os.path.isfile(transcript_path):
+        return ''
+    try:
+        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as _f:
+            _lines = _f.readlines()
+    except (OSError, IOError):
+        return ''
+
+    def _assistant_text(entry):
+        if not isinstance(entry, dict):
+            return ''
+        msg_obj = entry.get('message')
+        if isinstance(msg_obj, dict):
+            role = msg_obj.get('role') or entry.get('type') or ''
+            content = msg_obj.get('content')
+        else:
+            role = entry.get('role') or entry.get('type') or ''
+            content = entry.get('content')
+        if role != 'assistant':
+            return ''
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return '\n'.join(
+                str(c.get('text', '')) for c in content
+                if isinstance(c, dict) and c.get('type') == 'text'
+            )
+        return ''
+
+    _parsed = []
+    for _line in _lines:
+        _line = _line.strip()
+        if not _line:
+            continue
+        try:
+            _parsed.append(json.loads(_line))
+        except (ValueError, json.JSONDecodeError):
+            continue
+    for _entry in reversed(_parsed):
+        _txt = _assistant_text(_entry)
+        if _txt and '[COMPLETION]' in _txt:
+            return _txt
+    for _entry in reversed(_parsed):
+        _txt = _assistant_text(_entry)
+        if _txt.strip():
+            return _txt
+    return ''
+
+
 # Main-session hooks (Stop/PreCompact/SessionStart) lack agent_type by nature → label
 # 'orchestrator' (a real attribution signal). Subagent events keep their own gap labels.
 hook_event = d.get('hook_event_name', '') or d.get('hook_event', '')
@@ -230,6 +336,18 @@ else:
 session_id = d.get('session_id', 'unknown')
 cwd = d.get('cwd', '')
 msg = d.get('last_assistant_message', '') or ''
+
+# T1 — prefer last_assistant_message when present (backward compatible); else source the
+# terminal assistant text (carrying the [COMPLETION] block) from the subagent's OWN
+# transcript. Without this, a payload lacking last_assistant_message (CC 2.1.199+) makes
+# EVERY completion fall through to parse_tier=3 → conversation-only skip → 0 records.
+if not msg.strip():
+    _fallback_tpath = _effective_transcript_path(d)
+    if _fallback_tpath:
+        _recovered_msg = _last_assistant_text_from_transcript(_fallback_tpath)
+        if _recovered_msg.strip():
+            msg = _recovered_msg
+            diag('msg sourced from transcript fallback (last_assistant_message absent/empty)')
 
 # 3-tier [COMPLETION] parsing — line anchors (^/$ + MULTILINE) reject inline prose mentions
 parse_tier = 0
@@ -384,15 +502,36 @@ _pred_transcript = _transcript_readable(d.get('transcript_path', ''))
 _pred_summary = not _is_stub_summary(summary)
 real_agent = '1' if (_pred_recovered or _pred_transcript or _pred_summary) else '0'
 
+# Current-turn item window scanned by the two collectors below. A subagent's OWN
+# transcript is its whole single run AND its tool_result entries appear as role=user,
+# so an "after the last non-meta user message" window would land past the final
+# tool_result and either undercount tool_use to 0 or drop earlier Write/Edit targets —
+# scan the whole run instead. The inline-messages path keeps the original current-turn
+# window (after the last non-meta user message).
+def _current_turn_window(items, from_transcript):
+    if from_transcript:
+        return items
+    last_user_idx = -1
+    for i, it in enumerate(items):
+        if isinstance(it, dict) and (it.get('role') or it.get('type')) == 'user' and not it.get('isMeta'):
+            last_user_idx = i
+    return items[last_user_idx + 1:] if last_user_idx >= 0 else items
+
+
 # Current-turn tool_use count — feeds the Tier-3 conversation-only skip.
 # Count content.type=='tool_use' after the last non-meta user message (inline → transcript fallback).
 def count_tool_use_current_turn(d):
     import os as _os
     items = next((d[k] for k in ('messages', 'transcript', 'conversation')
                   if isinstance(d.get(k), list) and d.get(k)), [])
+    # No inline messages → read the SUBAGENT's OWN transcript (agent-<id>.jsonl) and flag
+    # from_transcript so _current_turn_window scans the whole run (see there for why an
+    # after-last-user window would undercount a subagent transcript).
+    from_transcript = False
     if not items:
-        tpath = d.get('transcript_path') or ''
+        tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
+            from_transcript = True
             try:
                 with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
                     for _line in _f:
@@ -407,12 +546,9 @@ def count_tool_use_current_turn(d):
                 return 0
     if not items:
         return 0
-    last_user_idx = -1
-    for i, it in enumerate(items):
-        if isinstance(it, dict) and (it.get('role') or it.get('type')) == 'user' and not it.get('isMeta'):
-            last_user_idx = i
+    window = _current_turn_window(items, from_transcript)
     count = 0
-    for it in items[last_user_idx + 1:] if last_user_idx >= 0 else items:
+    for it in window:
         if not isinstance(it, dict):
             continue
         content = it.get('content')
@@ -433,9 +569,14 @@ def collect_write_targets_current_turn(d):
     import os as _os
     items = next((d[k] for k in ('messages', 'transcript', 'conversation')
                   if isinstance(d.get(k), list) and d.get(k)), [])
+    # No inline messages → read the subagent's OWN transcript and flag from_transcript so
+    # _current_turn_window scans the whole run (see there — an after-last-user window would
+    # drop earlier Write/Edit targets on a subagent transcript).
+    from_transcript = False
     if not items:
-        tpath = d.get('transcript_path') or ''
+        tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
+            from_transcript = True
             try:
                 with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
                     for _line in _f:
@@ -450,14 +591,11 @@ def collect_write_targets_current_turn(d):
                 return []
     if not items:
         return []
-    last_user_idx = -1
-    for i, it in enumerate(items):
-        if isinstance(it, dict) and (it.get('role') or it.get('type')) == 'user' and not it.get('isMeta'):
-            last_user_idx = i
+    window = _current_turn_window(items, from_transcript)
     write_tools = {'Write', 'Edit', 'MultiEdit'}
     paths = []
     seen = set()
-    for it in items[last_user_idx + 1:] if last_user_idx >= 0 else items:
+    for it in window:
         if not isinstance(it, dict):
             continue
         content = it.get('content')
@@ -499,6 +637,9 @@ out('agent_type', agent_type)
 out('agent_id', agent_id)
 out('session_id', session_id)
 out('cwd', cwd)
+# hook_event: lets the shell side gate the T2 loud-fail marker on SubagentStop (a real
+# subagent yielding 0 records) vs a quiet main-session conversational skip.
+out('hook_event', hook_event)
 out('c_result', completion.get('result', ''))
 # c_task_type: writer self-selected task_type from the [COMPLETION] block (a KNOWN_FIELD, so it
 # does not corrupt the preceding result value). A valid value wins over guess_task_type.
@@ -566,39 +707,9 @@ out_wide('grader_files', _grader_files_robust(), GRADER_BODY_MAX)
 out('c_cid', completion.get('cid', ''))
 out('c_style_ref', completion.get('style_ref', ''))
 
-# _resolve_subagent_transcript — resolve the SUBAGENT's OWN transcript
-# (agent-<id>.jsonl) so style_ref verification cross-checks the subagent's own Read
-# history, NOT the parent/session-root transcript. On SubagentStop the payload
-# transcript_path points at the PARENT transcript, which produced systematic
-# style_ref FALSE NEGATIVES (the subagent's Read of the sibling never appears in the
-# parent's Read history). Mirrors the session_id+agent_id bounded glob in
-# recover_agent_type_from_sidecar (two layouts: the flat subagents/ dir + the
-# workflow-nested subagents/workflows/wf_*/ location). Returns the first matching
-# per-agent transcript, or '' when none is found (caller then falls back to the
-# payload transcript_path — the main-session / non-subagent / pre-existing-row case).
-# glob + isfile do not raise; any residual error is absorbed by the caller's existing
-# try/except (fail-open → '').
-def _resolve_subagent_transcript(payload_d):
-    import os as _os
-    import glob as _glob
-    agent_id_val = payload_d.get('agent_id', '') or ''
-    session_val = payload_d.get('session_id', '') or ''
-    if not agent_id_val or not session_val:
-        return ''
-    filename = f'agent-{agent_id_val}.jsonl'
-    patterns = (
-        _os.path.expanduser(
-            f'~/.claude/projects/*/{session_val}/subagents/{filename}'
-        ),
-        _os.path.expanduser(
-            f'~/.claude/projects/*/{session_val}/subagents/workflows/wf_*/{filename}'
-        ),
-    )
-    for pattern in patterns:
-        for match in _glob.glob(pattern):
-            if _os.path.isfile(match):
-                return match
-    return ''
+# _resolve_subagent_transcript is defined once, near the top (T1 helper block) — it
+# resolves the SUBAGENT's OWN transcript (agent-<id>.jsonl) so both the [COMPLETION] parse
+# and style_ref verification cross-check the subagent's own transcript, not the parent.
 
 
 # style_ref_verified: cross-verify the emitted style_ref against the session's
@@ -668,6 +779,8 @@ AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
 CWD=$(extract_field cwd)
+# HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
+HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
 # '' and literal 'unknown' both treated as "agent_type absent". case avoids the ||/&& precedence trap.
 case "${AGENT_TYPE:-}" in
@@ -898,14 +1011,32 @@ if [ "${PARSE_TIER}" = "3" ] \
   && [ "${TOOL_USE_COUNT}" -eq 0 ] \
   && [ "${HAS_STRUCTURED}" != "true" ]; then
   ATTRIBUTION_SOURCE="conversation-only"
-  printf '[outcome-record] skip: parse_tier=3, tool_use_count=0, agent=%s\n' \
-    "${AGENT_TYPE}" >&2
-  emit_error "DATA-075" "info" \
-    "Outcome record skipped: conversation-only turn (parse_tier=3, tool_use=0)" \
-    "Outcome record skipped: conversation-only turn (parse_tier=3, tool_use=0)" \
-    "Agent emitted no tool_use and no [COMPLETION] — likely conversational reply" \
-    "Agent emitted neither tool_use nor [COMPLETION] — classified as a conversational reply" \
-    "{\"agent\":\"${AGENT_TYPE}\",\"session_id\":\"${SESSION_ID}\"}"
+  # T2 loud-fail (shared-self-improve-hygiene "Precondition Loud-Fail Principle"): a real
+  # SubagentStop that yields ZERO recorded outcomes is the payload-drift regression signature
+  # — the subagent ran but neither its [COMPLETION] block nor any tool_use could be sourced
+  # (e.g. the transcript-source fallback failed to resolve agent-<id>.jsonl). Surface it as a
+  # VISIBLE warn marker rather than silently absorbing it. A genuine main-session conversational
+  # turn (Stop/PreCompact/SessionStart) is NOT a SubagentStop → stays the quiet info skip.
+  # Exit stays 0: this is observability, not a blocking gate (hook non-blocking contract).
+  if [ "${HOOK_EVENT}" = "SubagentStop" ]; then
+    printf '[outcome-record] LOUD-FAIL: SubagentStop yielded 0 records (parse_tier=3, tool_use=0, no [COMPLETION] sourced from transcript) agent=%s session=%s agent_id=%s\n' \
+      "${AGENT_TYPE}" "${SESSION_ID}" "${AGENT_ID}" >&2
+    emit_error "DATA-077" "warn" \
+      "Outcome record LOUD-FAIL: SubagentStop recorded 0 outcomes (parse_tier=3, tool_use=0) — likely [COMPLETION]/transcript-source drift" \
+      "Outcome record LOUD-FAIL: SubagentStop recorded 0 outcomes (parse_tier=3, tool_use=0) — likely [COMPLETION]/transcript-source drift" \
+      "Verify the subagent transcript (agent-<id>.jsonl) carries a terminal [COMPLETION] block and that _resolve_subagent_transcript() resolves it" \
+      "Verify the subagent transcript (agent-<id>.jsonl) carries a terminal [COMPLETION] block and that _resolve_subagent_transcript() resolves it" \
+      "{\"agent\":\"${AGENT_TYPE}\",\"session_id\":\"${SESSION_ID}\",\"agent_id\":\"${AGENT_ID}\"}"
+  else
+    printf '[outcome-record] skip: parse_tier=3, tool_use_count=0, agent=%s\n' \
+      "${AGENT_TYPE}" >&2
+    emit_error "DATA-075" "info" \
+      "Outcome record skipped: conversation-only turn (parse_tier=3, tool_use=0)" \
+      "Outcome record skipped: conversation-only turn (parse_tier=3, tool_use=0)" \
+      "Agent emitted no tool_use and no [COMPLETION] — likely conversational reply" \
+      "Agent emitted neither tool_use nor [COMPLETION] — classified as a conversational reply" \
+      "{\"agent\":\"${AGENT_TYPE}\",\"session_id\":\"${SESSION_ID}\"}"
+  fi
   exit 0
 fi
 
