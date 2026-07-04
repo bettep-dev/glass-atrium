@@ -35,7 +35,8 @@ export interface ArchDriftResult {
 const HOME = homedir();
 const ATRIUM_ROOT = join(HOME, ".glass-atrium");
 
-// 아트리움 훅 디렉터리 — `~/.claude/hooks/` 는 glass-atrium 으로의 per-file 심볼릭 미러.
+// 아트리움 훅 디렉터리 — 훅은 `~/.glass-atrium/hooks/` 에서 in-place 소비 (primary).
+// `~/.claude/hooks/` 는 farm 에서 드롭됨 → fail-open fallback (부재 시 0 카운트).
 // settings.json 명령 경로가 둘 중 하나 하위면 아트리움 소유로 카운트.
 const ATRIUM_HOOK_DIRS: readonly string[] = [
 	join(ATRIUM_ROOT, "hooks"),
