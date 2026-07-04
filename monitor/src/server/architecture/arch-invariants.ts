@@ -13,11 +13,11 @@ export interface HookEventCounts {
 
 // 라이브 비교 타깃 — 각 필드 = 카운트 대상 파일시스템 글롭.
 export interface ArchInvariants {
-	// `~/.glass-atrium/agents/*.md` − GLOBAL_RULES.md.
+	// `~/.glass-atrium/agents/*.md` − GLASS_ATRIUM_GLOBAL_RULES.md.
 	agents: number;
 	// `~/Library/LaunchAgents/com.glass-atrium.*.plist`.
 	launchd: number;
-	// `~/.glass-atrium/rules/*.md` (GLOBAL_RULES.md 동거 포함 — 현 SoT 결정).
+	// `~/.glass-atrium/rules/*.md` (GLASS_ATRIUM_GLOBAL_RULES.md 동거 포함 — 현 SoT 결정).
 	rules: number;
 	// `~/.glass-atrium/scoped/*.md` 전체 (scope-*.md + shared-*.md).
 	scoped: number;

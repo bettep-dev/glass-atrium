@@ -199,7 +199,7 @@ async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 	] = await Promise.all([
 		countDirEntries(
 			agentsDir,
-			(name) => isMd(name) && name !== "GLOBAL_RULES.md",
+			(name) => isMd(name) && name !== "GLASS_ATRIUM_GLOBAL_RULES.md",
 			log,
 		),
 		countDirEntries(
@@ -207,7 +207,7 @@ async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 			(name) => name.startsWith("com.glass-atrium.") && name.endsWith(".plist"),
 			log,
 		),
-		// rules — GLOBAL_RULES.md 동거 포함 (현 SoT 결정 · agents 와 달리 미제외).
+		// rules — GLASS_ATRIUM_GLOBAL_RULES.md 동거 포함 (현 SoT 결정 · agents 와 달리 미제외).
 		countDirEntries(rulesDir, (name) => isMd(name), log),
 		countDirEntries(scopedDir, (name) => isMd(name), log),
 		countDirEntries(
