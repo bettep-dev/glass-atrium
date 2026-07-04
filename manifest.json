@@ -615,7 +615,7 @@
     "scripts/render-launchd-plists.sh": "178f31ea273daabea91e12fa37e91573aa96bf3388639b5ca5b698fc8d996c58",
     "scripts/render-monitor-env.sh": "8398b0bc11143f616f79a32476562f4b5fa715d9934c96bf24ed7c2f5f7b6d1a",
     "scripts/sync-registry-tools.sh": "80219d0edc680264e6a5da0b90fb5bdf0f796f8f363b86e98c1dd5fd34137b77",
-    "scripts/update.sh": "6e098209883c73232d5e845e18aa7205d5994941b57813cf8cf39e927bb2cde2",
+    "scripts/update.sh": "e9ba85da7b3abb92136703b9d401cb0861552bb6e503dc1a6b6386ab44da49ae",
     "scripts/wiki-daemon-bootstrap.sh": "9a219621fa78835d8818b7a8aef168b0650c3c3daf0459159a5821498a5b6f88",
     "scripts/wiki-daemon-cycle.sh": "034779928a6ae1be7bdd3b5faf3a9d5f0fffa01a8ddeab0bae4401de03333f16",
     "scripts/wiki-daemon-entry-prompt.md": "4f355fcaa21f6abf1b5fa2f72e1f67940622b6febfcb982256555ff952a1286d",

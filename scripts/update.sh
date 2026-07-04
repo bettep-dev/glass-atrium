@@ -81,7 +81,10 @@
 # stage would fail) · 8 another update already in-progress (single-active DB guard)
 # · 9 install-parity post-step failed · 10 agents-bak restore failed · 11
 # mirror-farm refresh failed (files APPLIED, but the ~/.claude facade mirror was
-# not refreshed — run `glass-atrium agents-only`; no rollback of applied files).
+# not refreshed — run `glass-atrium agents-only`; no rollback of applied files) ·
+# 12 hook-binding wiring failed (files APPLIED + mirror refreshed, but the
+# settings.json event->hook bindings were NOT reconciled to the new release — run
+# `glass-atrium wire-hooks`; no rollback of applied files).
 #
 # DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
 # the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
@@ -884,6 +887,62 @@ update_refresh_mirror_farm() {
 }
 
 # ---------------------------------------------------------------------------
+# Post-apply hook-binding reconciliation — settings.json wire (install-parity)
+# ---------------------------------------------------------------------------
+#
+# The file apply + mirror-farm refresh (above) deploy the new release's hook
+# FILES and their ~/.claude mirrors, but the EVENT->HOOK BINDINGS live ONLY in
+# settings.json — which the deterministic spine NEVER writes (settings.json is
+# user-owned + sensitive-partitioned). Pre-wiring, an update that ADDED or
+# CHANGED a hook binding shipped the new hook file yet left settings.json pinned
+# to the OLD binding set, so the new hook stayed DORMANT until the next full
+# install (the "update completes but the bindings stay stale" class). Install
+# wires them (run_install: run_symlink_farm -> wire_hooks); update_run never did.
+#
+# Fix: after a VERIFIED apply + farm refresh, reconcile settings.json to the
+# JUST-APPLIED hook binding set via the canonical `glass-atrium wire-hooks`
+# subcommand — the SAME idempotent, timestamped-backup MERGE install uses (adds
+# only MISSING Atrium bindings, preserves every user-owned key, backs up
+# settings.json before mutating, LOUD-FAILS on a malformed settings.json). The
+# bindings come from the just-applied launcher's embedded ga-core.sh
+# EXPECTED_HOOK_BINDINGS, so a release that adds a binding gets it wired.
+#
+# Subprocess by design (the update_refresh_mirror_farm / mirror-farm.sh
+# precedent): sourcing ga-core.sh in-process would collide with this caller on
+# readonly GA_ROOT/TARGET_HOME + the bare log()/die() names. Runs in EVERY entry
+# mode (interactive TTY, headless launchd, web button) — placed on the shared
+# update_run path, NOT the headless-only finalize, so the DECOUPLED launchd
+# update reconciles bindings too. Ordering is load-bearing: it runs ONLY after
+# the confirmed apply + farm refresh SUCCEEDED, so the atomic-restore/rollback
+# contract stays intact (a declined/failed apply exits before ever reaching here)
+# and the hook FILES the new bindings point at already exist on disk.
+#
+# Precondition (loud, no silent absorption): the just-applied launcher must be
+# present + executable. A missing/non-executable launcher is a WARN skip
+# (mirrors farm_refresh's launcher-missing return 3 — nothing to invoke; the
+# read-only doctor §6 check still surfaces the dormant bindings). A launcher that
+# IS present but whose wire_hooks FAILS (malformed settings.json, unwritable
+# target) is a loud NAMED exit 12 — never `2>/dev/null` / `|| true` absorbed. No
+# rollback of the already-applied files (the mirror-farm exit-11 precedent:
+# post-apply steps report their OWN failure; they never unwind the apply). Arg:
+# none (resolves the launcher under update_ga_root, same as the farm refresh).
+update_wire_hooks_post_apply() {
+  local root launcher rc=0
+  root="$(update_ga_root)"
+  launcher="${root}/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing or not executable (${launcher}) — settings.json hook bindings were NOT reconciled; run '${launcher} wire-hooks' after repairing the install"
+    return 0
+  fi
+  update_log "reconciling settings.json hook bindings (install-parity): ${launcher} wire-hooks"
+  "${launcher}" wire-hooks || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    update_die_code 12 "hook-binding wiring failed (rc=${rc}) — update files applied + mirror refreshed, but the settings.json event->hook bindings were NOT reconciled to the new release; run '${launcher} wire-hooks' manually"
+  fi
+  update_log "settings.json hook bindings reconciled to the applied release"
+}
+
+# ---------------------------------------------------------------------------
 # P3 — headless update_job DB tracking (psql; daemon-apply.sh idiom)
 # ---------------------------------------------------------------------------
 #
@@ -1484,9 +1543,10 @@ Usage:
 
 Flow: pause the autoagent daemon → acquire the apply-lock → download + verify the
 release → foreground diff/confirm → deterministic non-agent sync → agent
-EDITABLE-region merge (E4) → capture the baseline. Headless additionally tracks the
-core.update_job row and runs the install-parity post-step. Sensitive harness files
-are never auto-synced (reported for manual review).
+EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
+farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
+tracks the core.update_job row and runs the install-parity post-step. Sensitive
+harness files are never auto-synced (reported for manual review).
 USAGE
 }
 
@@ -1619,6 +1679,15 @@ update_run() {
   # gains its ~/.claude mirror — in EVERY entry mode (interactive TTY, headless
   # launchd, web button), NOT only the headless post-step.
   update_refresh_mirror_farm "${manifest}"
+
+  # Step 8 — reconcile settings.json hook BINDINGS to the just-applied release
+  # (install-parity: run_install wires them via wire_hooks; the spine never
+  # touches user-owned settings.json). Idempotent MERGE via the canonical
+  # `glass-atrium wire-hooks` subcommand; a release that adds/changes a binding
+  # gets it wired here instead of staying dormant until the next full install.
+  # Runs AFTER the verified apply + farm refresh so the atomic-restore/rollback
+  # contract is intact and the hook files the bindings point at already exist.
+  update_wire_hooks_post_apply
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
   # refresh) then mark the update_job row completed. Interactive mode no-ops both.
