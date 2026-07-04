@@ -7,7 +7,7 @@ const HEALTH_CARD_DEFS = [
   { id: 'pg',            name: 'PostgreSQL',      icon: 'db',       kind: 'pg' },
   { id: 'browser',       name: 'Chromium Export', icon: 'download', kind: 'browser' },
   { id: 'daemon-cycle',  name: 'autoagent',       icon: 'spark',    kind: 'daemon', daemonName: 'autoagent' },
-  { id: 'wiki-curator',  name: 'wiki-curator',    icon: 'brain',    kind: 'daemon', daemonName: 'wiki' },
+  { id: 'glass-atrium-wiki-curator',  name: 'glass-atrium-wiki-curator',    icon: 'brain',    kind: 'daemon', daemonName: 'wiki' },
   { id: 'daily-restart-autoagent', name: 'daily-restart-autoagent', icon: 'refresh', kind: 'daemon', daemonName: 'daily-restart-autoagent' },
   { id: 'daily-restart-wiki',      name: 'daily-restart-wiki',      icon: 'refresh', kind: 'daemon', daemonName: 'daily-restart-wiki' },
   { id: 'hook-chain',    name: 'Hook Chain',      icon: 'pulse',    kind: 'hook' },

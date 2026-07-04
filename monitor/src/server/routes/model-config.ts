@@ -45,8 +45,8 @@ import type {
 // middleware/audit-log.ts AUDIT_ACTOR).
 const UPDATED_BY = "monitor-web";
 
-const RESEARCH_AGENT_FILE = "intel-researcher.md";
-const DEV_AGENT_FILE_PATTERN = /^dev-[a-z0-9-]+\.md$/;
+const RESEARCH_AGENT_FILE = "glass-atrium-intel-researcher.md";
+const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
 // flag, so the tmux session inherits the settings.json model (D3).
@@ -407,8 +407,9 @@ async function listDevAgentFiles(): Promise<string[]> {
   } catch {
     return [];
   }
-  // Intersect the on-disk dev-*.md set with the canonical registry's dev-* keys so a
-  // de-registered/archived dev-*.md file no longer surfaces in the model table (nor
+  // Intersect the on-disk glass-atrium-dev-*.md set with the canonical registry's
+  // glass-atrium-dev-* keys so a
+  // de-registered/archived glass-atrium-dev-*.md file no longer surfaces in the model table (nor
   // receives a frontmatter write). Fail-open: an empty/corrupt registry (size 0)
   // skips the intersection and returns the full on-disk set — mirrors the SQL gates'
   // fail-open contract so a registry read failure never blanks the dev table.
@@ -417,7 +418,7 @@ async function listDevAgentFiles(): Promise<string[]> {
     return onDisk;
   }
   const registeredDevKeys = new Set(
-    [...registry.keys()].filter((key) => key.startsWith("dev-")),
+    [...registry.keys()].filter((key) => key.startsWith("glass-atrium-dev-")),
   );
   return onDisk.filter((name) => registeredDevKeys.has(name.replace(/\.md$/, "")));
 }

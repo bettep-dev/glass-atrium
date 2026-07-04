@@ -48,7 +48,7 @@ const DOMAIN_META_MC = {
 	},
 	"model.research": {
 		label: "Research agent",
-		desc: "Written into intel-researcher.md; picked up when the agent next starts",
+		desc: "Written into glass-atrium-intel-researcher.md; picked up when the agent next starts",
 		enforcement: "applied",
 		editable: true,
 		inherit: true,

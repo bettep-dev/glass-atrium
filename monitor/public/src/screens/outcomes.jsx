@@ -2520,7 +2520,7 @@ function countActiveFacetsO(filter) {
 // faceted 분모 = 선택 가능 축 총수 (period 포함 → FACET_AXES + 1).
 const FACET_AXIS_TOTAL = FACET_AXES.length + 1;
 
-// URL hash format: #outcomes?days=30&agent=dev-react&q=phase&sort=record_ts:desc
+// URL hash format: #outcomes?days=30&agent=glass-atrium-dev-react&q=phase&sort=record_ts:desc
 // 'outcomes' prefix 는 app.jsx 라우팅 소유, '?' 이후만 파싱. RFC 3986 fragment 내 ':' 안전.
 function getHashSearchParams() {
   try {
