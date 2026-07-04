@@ -10,8 +10,9 @@ These tests pin the SINGLE-SOURCE invariant:
   * the python helper imports the daemon's compiled matchers (object identity);
   * the helper, the daemon's ``classify_safety_tier`` (path-only patch), and the
     daemon's bare ``match_sensitive_path`` refuse the EXACT SAME path corpus;
-  * GLOBAL_RULES / security scope rules / .env / launchd plist are refused with
-    a loud, non-zero CLI verdict; ordinary agent files are CLEAN;
+  * GLASS_ATRIUM_GLOBAL_RULES / security scope rules / .env / launchd plist are
+    refused with a loud, non-zero CLI verdict; ordinary agent files (including
+    the pre-rename GLOBAL_RULES.md basenames) are CLEAN;
   * the CLI exit-code contract (0 clean / 3 sensitive / 2 usage / 4 env) holds.
 
 Run with either runner:
@@ -49,9 +50,9 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 # A path corpus spanning every sensitive class + plausible CLEAN siblings.
 _PATH_CORPUS: tuple[str, ...] = (
     # sensitive
-    "rules/GLOBAL_RULES.md",
-    "agents/GLOBAL_RULES.md",
-    "GLOBAL_RULES.md",
+    "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
+    "GLASS_ATRIUM_GLOBAL_RULES.md",
     "rules/security.md",
     "scoped/scope-security.md",
     "project/.env",
@@ -66,6 +67,11 @@ _PATH_CORPUS: tuple[str, ...] = (
     "config.toml",
     "rules/security-notes.md",  # not exactly security.md
     "envoy.md",  # not .env
+    # clean — pre-rename charter basenames lock in the GLASS_ATRIUM_ rename:
+    # the refusal SoT matches ONLY the new name, so the old forms are ordinary.
+    "rules/GLOBAL_RULES.md",
+    "agents/GLOBAL_RULES.md",
+    "GLOBAL_RULES.md",
 )
 
 # Diff bodies spanning every sensitive diff class + CLEAN near-misses. Tokens
@@ -143,7 +149,7 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
 
     def test_known_sensitive_paths_all_refused(self) -> None:
         for path in (
-            "rules/GLOBAL_RULES.md",
+            "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
             "rules/security.md",
             "scoped/scope-security.md",
             "project/.env",
@@ -154,7 +160,14 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
             )
 
     def test_ordinary_agent_files_clean(self) -> None:
-        for path in ("agents/dev-python.md", "rules/scope-dev.md", "config.toml"):
+        # includes the pre-rename charter basenames — CLEAN post-rename siblings.
+        for path in (
+            "agents/dev-python.md",
+            "rules/scope-dev.md",
+            "config.toml",
+            "rules/GLOBAL_RULES.md",
+            "GLOBAL_RULES.md",
+        ):
             self.assertIsNone(
                 sp.is_sensitive_path(path), msg=f"unexpected refusal for {path!r}"
             )
@@ -185,10 +198,10 @@ class CliExitContract(unittest.TestCase):
         )
 
     def test_path_sensitive_exits_3_with_loud_message(self) -> None:
-        res = self._run(["path", "rules/GLOBAL_RULES.md"])
+        res = self._run(["path", "rules/GLASS_ATRIUM_GLOBAL_RULES.md"])
         self.assertEqual(res.returncode, sp.EXIT_SENSITIVE)
         self.assertIn("REFUSED", res.stderr)
-        self.assertIn("GLOBAL_RULES", res.stderr)
+        self.assertIn("GLASS_ATRIUM_GLOBAL_RULES", res.stderr)
 
     def test_path_clean_exits_0_silent(self) -> None:
         res = self._run(["path", "agents/dev-python.md"])

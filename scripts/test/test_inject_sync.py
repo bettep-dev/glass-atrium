@@ -56,25 +56,25 @@ from agent_lifecycle.readers import (  # noqa: E402
 # The DEV roster the live scope-dev.md brace list carries; INJECT also
 # carries the two QA names. The fixture builder appends extra names per test.
 _DEV_ROSTER = [
-    "dev-front",
-    "dev-react",
-    "dev-angular",
-    "dev-gsap",
-    "dev-android",
-    "dev-nestjs",
-    "dev-node",
-    "dev-python",
-    "dev-db",
-    "dev-rag",
-    "dev-animator",
-    "dev-shell",
+    "glass-atrium-dev-front",
+    "glass-atrium-dev-react",
+    "glass-atrium-dev-angular",
+    "glass-atrium-dev-gsap",
+    "glass-atrium-dev-android",
+    "glass-atrium-dev-nestjs",
+    "glass-atrium-dev-node",
+    "glass-atrium-dev-python",
+    "glass-atrium-dev-db",
+    "glass-atrium-dev-rag",
+    "glass-atrium-dev-animator",
+    "glass-atrium-dev-shell",
 ]
-_QA_NAMES = ["qa-code-reviewer", "qa-debugger"]
-# NAMING_AGENTS is the narrower 4th array: the DEV roster MINUS dev-swift, PLUS
-# qa-code-reviewer, and EXCLUDING qa-debugger. The fixture _DEV_ROSTER above does
-# NOT include dev-swift, so the in-sync naming list is just _DEV_ROSTER plus the
+_QA_NAMES = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
+# NAMING_AGENTS is the narrower 4th array: the DEV roster MINUS glass-atrium-dev-swift, PLUS
+# glass-atrium-qa-code-reviewer, and EXCLUDING glass-atrium-qa-debugger. The fixture _DEV_ROSTER above does
+# NOT include glass-atrium-dev-swift, so the in-sync naming list is just _DEV_ROSTER plus the
 # review name. Tests append extra names per scenario.
-_NAMING_QA_NAME = "qa-code-reviewer"
+_NAMING_QA_NAME = "glass-atrium-qa-code-reviewer"
 
 
 def _array_line(var: str, names: list[str]) -> str:
@@ -165,7 +165,7 @@ def _write_gate_sites(paths: StorePaths, names: list[str]) -> None:
 def test_insert_when_missing_dev_lands_in_all_three_arrays(tmp_path: Path) -> None:
     """A roster DEV name absent from every array is inserted into all 4 (AC1).
 
-    dev-newkid is a non-swift DEV name, so it is expected in NAMING_AGENTS too.
+    glass-atrium-dev-newkid is a non-swift DEV name, so it is expected in NAMING_AGENTS too.
     """
     paths = _write_fixture(
         tmp_path,
@@ -173,29 +173,29 @@ def test_insert_when_missing_dev_lands_in_all_three_arrays(tmp_path: Path) -> No
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     result = inject_sync.apply(paths)
 
     assert result.changed
     hook = paths.inject_scope_rules
-    assert "dev-newkid" in _members(hook, "INJECT_AGENTS")
-    assert "dev-newkid" in _members(hook, "STYLEREF_AGENTS")
-    assert "dev-newkid" in _members(hook, "MINIMALISM_AGENTS")
-    assert "dev-newkid" in _members(hook, "NAMING_AGENTS")
-    assert result.inserted["INJECT_AGENTS"] == ["dev-newkid"]
-    assert result.inserted["STYLEREF_AGENTS"] == ["dev-newkid"]
-    assert result.inserted["MINIMALISM_AGENTS"] == ["dev-newkid"]
-    assert result.inserted["NAMING_AGENTS"] == ["dev-newkid"]
+    assert "glass-atrium-dev-newkid" in _members(hook, "INJECT_AGENTS")
+    assert "glass-atrium-dev-newkid" in _members(hook, "STYLEREF_AGENTS")
+    assert "glass-atrium-dev-newkid" in _members(hook, "MINIMALISM_AGENTS")
+    assert "glass-atrium-dev-newkid" in _members(hook, "NAMING_AGENTS")
+    assert result.inserted["INJECT_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.inserted["STYLEREF_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.inserted["MINIMALISM_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.inserted["NAMING_AGENTS"] == ["glass-atrium-dev-newkid"]
 
 
 def test_insert_when_missing_qa_lands_in_inject_only(tmp_path: Path) -> None:
     """A missing QA name goes into INJECT only — STYLEREF/MINIMALISM/NAMING never
-    take qa-debugger (NAMING carries qa-code-reviewer only) (AC1)."""
+    take glass-atrium-qa-debugger (NAMING carries glass-atrium-qa-code-reviewer only) (AC1)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + ["qa-code-reviewer"],  # qa-debugger missing from INJECT
+        inject=_DEV_ROSTER + ["glass-atrium-qa-code-reviewer"],  # glass-atrium-qa-debugger missing from INJECT
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
@@ -205,11 +205,11 @@ def test_insert_when_missing_qa_lands_in_inject_only(tmp_path: Path) -> None:
     result = inject_sync.apply(paths)
 
     hook = paths.inject_scope_rules
-    assert "qa-debugger" in _members(hook, "INJECT_AGENTS")
-    assert "qa-debugger" not in _members(hook, "STYLEREF_AGENTS")
-    assert "qa-debugger" not in _members(hook, "MINIMALISM_AGENTS")
-    assert "qa-debugger" not in _members(hook, "NAMING_AGENTS")
-    assert result.inserted["INJECT_AGENTS"] == ["qa-debugger"]
+    assert "glass-atrium-qa-debugger" in _members(hook, "INJECT_AGENTS")
+    assert "glass-atrium-qa-debugger" not in _members(hook, "STYLEREF_AGENTS")
+    assert "glass-atrium-qa-debugger" not in _members(hook, "MINIMALISM_AGENTS")
+    assert "glass-atrium-qa-debugger" not in _members(hook, "NAMING_AGENTS")
+    assert result.inserted["INJECT_AGENTS"] == ["glass-atrium-qa-debugger"]
     assert result.inserted["STYLEREF_AGENTS"] == []
     assert result.inserted["MINIMALISM_AGENTS"] == []
     assert result.inserted["NAMING_AGENTS"] == []
@@ -245,7 +245,7 @@ def test_minimalism_specifically_detected_and_fixed(tmp_path: Path) -> None:
         tmp_path,
         inject=_DEV_ROSTER + _QA_NAMES,
         styleref=_DEV_ROSTER,
-        minimalism=_DEV_ROSTER[:-1],  # only MINIMALISM is missing dev-shell
+        minimalism=_DEV_ROSTER[:-1],  # only MINIMALISM is missing glass-atrium-dev-shell
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
         roster=_DEV_ROSTER,
     )
@@ -254,18 +254,18 @@ def test_minimalism_specifically_detected_and_fixed(tmp_path: Path) -> None:
     report = run_scan(paths, ["inject-list-mismatch"])
     findings = report.by_mode("inject-list-mismatch")
     assert any(
-        f.name == "dev-shell" and "MINIMALISM_AGENTS" in f.detail for f in findings
+        f.name == "glass-atrium-dev-shell" and "MINIMALISM_AGENTS" in f.detail for f in findings
     ), (
-        f"expected a MINIMALISM dev-shell miss, got {[(f.name, f.detail) for f in findings]}"
+        f"expected a MINIMALISM glass-atrium-dev-shell miss, got {[(f.name, f.detail) for f in findings]}"
     )
 
     # Fix: only MINIMALISM changes; INJECT/STYLEREF/NAMING were already in sync.
     result = inject_sync.apply(paths)
-    assert result.inserted["MINIMALISM_AGENTS"] == ["dev-shell"]
+    assert result.inserted["MINIMALISM_AGENTS"] == ["glass-atrium-dev-shell"]
     assert result.inserted["INJECT_AGENTS"] == []
     assert result.inserted["STYLEREF_AGENTS"] == []
     assert result.inserted["NAMING_AGENTS"] == []
-    assert "dev-shell" in _members(paths.inject_scope_rules, "MINIMALISM_AGENTS")
+    assert "glass-atrium-dev-shell" in _members(paths.inject_scope_rules, "MINIMALISM_AGENTS")
 
 
 def test_round_trip_rejects_when_array_missing() -> None:
@@ -288,7 +288,7 @@ def test_round_trip_rejects_a_corrupting_write(
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     hook = paths.inject_scope_rules
     original_bytes = hook.read_bytes()
@@ -321,7 +321,7 @@ def test_rollback_restores_from_bak(
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     hook = paths.inject_scope_rules
     original_bytes = hook.read_bytes()
@@ -350,7 +350,7 @@ def test_rollback_maps_to_exit_tx_failed(
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     def _boom(*_args: object, **_kwargs: object) -> None:
@@ -366,30 +366,30 @@ def test_plan_removes_flags_stale_array_names(tmp_path: Path) -> None:
     """plan_removes returns names present in an array but absent from the roster."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["dev-gone"],
-        styleref=_DEV_ROSTER + ["dev-gone"],
-        minimalism=_DEV_ROSTER + ["dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "dev-gone"],
-        roster=_DEV_ROSTER,  # dev-gone NOT in the roster -> stale in all 4 arrays
+        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
+        styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
+        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in all 4 arrays
     )
     text = paths.inject_scope_rules.read_text(encoding="utf-8")
 
     removes = inject_sync.plan_removes(text, set(_DEV_ROSTER))
 
-    assert removes["INJECT_AGENTS"] == ["dev-gone"]
-    assert removes["STYLEREF_AGENTS"] == ["dev-gone"]
-    assert removes["MINIMALISM_AGENTS"] == ["dev-gone"]
-    assert removes["NAMING_AGENTS"] == ["dev-gone"]
+    assert removes["INJECT_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert removes["STYLEREF_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert removes["MINIMALISM_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert removes["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
 
 
 def test_apply_removes_stale_dev_name_from_all_four_arrays(tmp_path: Path) -> None:
     """A name absent from the roster is pruned from every array it sits in (AC7/AC12)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["dev-gone"],
-        styleref=_DEV_ROSTER + ["dev-gone"],
-        minimalism=_DEV_ROSTER + ["dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "dev-gone"],
+        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
+        styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
 
@@ -397,42 +397,42 @@ def test_apply_removes_stale_dev_name_from_all_four_arrays(tmp_path: Path) -> No
 
     assert result.changed
     hook = paths.inject_scope_rules
-    assert "dev-gone" not in _members(hook, "INJECT_AGENTS")
-    assert "dev-gone" not in _members(hook, "STYLEREF_AGENTS")
-    assert "dev-gone" not in _members(hook, "MINIMALISM_AGENTS")
-    assert "dev-gone" not in _members(hook, "NAMING_AGENTS")
-    assert result.removed["INJECT_AGENTS"] == ["dev-gone"]
-    assert result.removed["STYLEREF_AGENTS"] == ["dev-gone"]
-    assert result.removed["MINIMALISM_AGENTS"] == ["dev-gone"]
-    assert result.removed["NAMING_AGENTS"] == ["dev-gone"]
+    assert "glass-atrium-dev-gone" not in _members(hook, "INJECT_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "STYLEREF_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "MINIMALISM_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "NAMING_AGENTS")
+    assert result.removed["INJECT_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert result.removed["STYLEREF_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert result.removed["MINIMALISM_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert result.removed["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
     # roster members survive — only the stale name left.
-    assert "dev-shell" in _members(hook, "STYLEREF_AGENTS")
+    assert "glass-atrium-dev-shell" in _members(hook, "STYLEREF_AGENTS")
 
 
 def test_apply_inserts_and_removes_in_one_transaction(tmp_path: Path) -> None:
     """A single apply() both inserts a missing member AND removes a stale one (AC7)."""
     paths = _write_fixture(
         tmp_path,
-        # dev-newkid missing everywhere; dev-gone stale everywhere.
-        inject=_DEV_ROSTER + _QA_NAMES + ["dev-gone"],
-        styleref=_DEV_ROSTER + ["dev-gone"],
-        minimalism=_DEV_ROSTER + ["dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "dev-gone"],
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        # glass-atrium-dev-newkid missing everywhere; glass-atrium-dev-gone stale everywhere.
+        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
+        styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     result = inject_sync.apply(paths)
 
     hook = paths.inject_scope_rules
-    assert "dev-newkid" in _members(hook, "STYLEREF_AGENTS")
-    assert "dev-gone" not in _members(hook, "STYLEREF_AGENTS")
-    assert result.inserted["STYLEREF_AGENTS"] == ["dev-newkid"]
-    assert result.removed["STYLEREF_AGENTS"] == ["dev-gone"]
+    assert "glass-atrium-dev-newkid" in _members(hook, "STYLEREF_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "STYLEREF_AGENTS")
+    assert result.inserted["STYLEREF_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.removed["STYLEREF_AGENTS"] == ["glass-atrium-dev-gone"]
     # NAMING (the narrower 4th array) reconciles in the same transaction.
-    assert "dev-newkid" in _members(hook, "NAMING_AGENTS")
-    assert "dev-gone" not in _members(hook, "NAMING_AGENTS")
-    assert result.inserted["NAMING_AGENTS"] == ["dev-newkid"]
-    assert result.removed["NAMING_AGENTS"] == ["dev-gone"]
+    assert "glass-atrium-dev-newkid" in _members(hook, "NAMING_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "NAMING_AGENTS")
+    assert result.inserted["NAMING_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.removed["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
     # one transaction -> one backup.
     assert result.backup_path is not None
     assert result.backup_path.exists()
@@ -467,10 +467,10 @@ def test_apply_remove_rollback_restores_byte_identical(
     """A forced failure on a remove-only plan restores the file byte-identically (AC7)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["dev-gone"],
-        styleref=_DEV_ROSTER + ["dev-gone"],
-        minimalism=_DEV_ROSTER + ["dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "dev-gone"],
+        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
+        styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -493,10 +493,10 @@ def test_revalidate_rejects_a_write_that_kept_a_removed_name(
     """apply()'s round-trip rejects a write where a planned-removed name lingers (AC7)."""
     paths = _write_fixture(
         tmp_path,
-        inject=_DEV_ROSTER + _QA_NAMES + ["dev-gone"],
-        styleref=_DEV_ROSTER + ["dev-gone"],
-        minimalism=_DEV_ROSTER + ["dev-gone"],
-        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "dev-gone"],
+        inject=_DEV_ROSTER + _QA_NAMES + ["glass-atrium-dev-gone"],
+        styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
     hook = paths.inject_scope_rules
@@ -526,7 +526,7 @@ def test_run_delete_prunes_scope_dev_roster_stanza(
     from agent_lifecycle import delete as delete_mod
     from agent_lifecycle.delete import DeleteRequest, run_delete
 
-    target = "dev-doomed"
+    target = "glass-atrium-dev-doomed"
     roster = _DEV_ROSTER + [target]
     paths = _write_fixture(
         tmp_path,
@@ -615,7 +615,7 @@ def test_run_delete_auto_wires_gate_roster_sync(
     from agent_lifecycle import delete as delete_mod
     from agent_lifecycle.delete import DeleteRequest, run_delete
 
-    target = "dev-doomed"
+    target = "glass-atrium-dev-doomed"
     roster = _DEV_ROSTER + [target]
     paths = _write_fixture(
         tmp_path,
