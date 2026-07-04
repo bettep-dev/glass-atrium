@@ -122,13 +122,13 @@ assert_no_json_emitted() {
 # --- (a) a NAMING_AGENTS DEV member (dev-react) receives the naming block ---
 
 @test "dev-react (NAMING_AGENTS member) → naming block injected, exit 0" {
-  run_hook "dev-react"
+  run_hook "glass-atrium-dev-react"
   assert_status 0
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
 
 @test "dev-shell (NAMING_AGENTS member) → naming block injected, exit 0" {
-  run_hook "dev-shell"
+  run_hook "glass-atrium-dev-shell"
   assert_status 0
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
@@ -136,7 +136,7 @@ assert_no_json_emitted() {
 # --- (b) qa-code-reviewer (the QA enforcement surface) receives the naming block ---
 
 @test "qa-code-reviewer (NAMING_AGENTS member) → naming block injected, exit 0" {
-  run_hook "qa-code-reviewer"
+  run_hook "glass-atrium-qa-code-reviewer"
   assert_status 0
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
@@ -144,13 +144,13 @@ assert_no_json_emitted() {
 # --- (c) qa-debugger AND dev-swift do NOT receive it (deliberately absent from NAMING_AGENTS) ---
 
 @test "qa-debugger (NOT in NAMING_AGENTS) → no naming block, exit 0" {
-  run_hook "qa-debugger"
+  run_hook "glass-atrium-qa-debugger"
   assert_status 0
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
 @test "dev-swift (NOT in NAMING_AGENTS) → no naming block, exit 0" {
-  run_hook "dev-swift"
+  run_hook "glass-atrium-dev-swift"
   assert_status 0
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
@@ -158,7 +158,7 @@ assert_no_json_emitted() {
 # With every other source sandboxed to /nonexistent and the meter off, a non-naming agent has NO
 # injectable block at all → the hook fail-opens with no JSON emitted (exit 0).
 @test "qa-debugger with all other sources absent → no JSON emitted (fail-open, exit 0)" {
-  run_hook "qa-debugger"
+  run_hook "glass-atrium-qa-debugger"
   assert_status 0
   assert_no_json_emitted
 }
@@ -187,7 +187,7 @@ assert_no_json_emitted() {
       INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
       INJECT_SCOPE_RULES_NAMING_SRC="${naming_src}" \
       bash "${hook}"
-  ' _ "dev-react" "${HOOK_SH}" "${naming_src}" "${comment_src}"
+  ' _ "glass-atrium-dev-react" "${HOOK_SH}" "${naming_src}" "${comment_src}"
 
   assert_status 0
   assert_ctx_contains "COMMENT-LOGGING-CORE-BODY"
@@ -200,7 +200,7 @@ assert_no_json_emitted() {
 }
 
 @test "naming source file absent entirely → fail-open exit 0, naming omitted, no hard error" {
-  run_hook "dev-react" "/nonexistent/naming.md"
+  run_hook "glass-atrium-dev-react" "/nonexistent/naming.md"
   assert_status 0
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
