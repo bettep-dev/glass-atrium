@@ -73,7 +73,12 @@ if agent:
         conn.commit()
 PY
   fi
-  [[ -n "${TS_TMP:-}" && -d "${TS_TMP}" ]] && rm -rf "${TS_TMP}"
+  # `if` (not `[[ ]] && cmd`) so a false guard returns 0 — otherwise a setup-skip
+  # (TS_TMP unset) makes this final statement teardown's non-zero exit → bats turns
+  # the clean skip into `not ok`.
+  if [[ -n "${TS_TMP:-}" && -d "${TS_TMP}" ]]; then
+    rm -rf "${TS_TMP}"
+  fi
 }
 
 # Write the synthetic subagent transcript: delegation(user) → assistant text → assistant

@@ -1,10 +1,11 @@
 // Unit tests for the client-side pure logic in public/src/screens/dashboard.jsx
-// (deriveUpdateView / classifyDiffLine — the P3-T4 update-control state machine +
-// unified-diff line classifier). The server preview/commit contract is covered by
-// dashboard.update.route.test.ts; this brings the BROWSER half of the interactive
-// Update button under regression coverage — a drift in the view precedence (local
-// interaction phase over poll), the stale/recency windows, the dismissed-reservation
-// suppression, or the +/− diff dual-encode split would otherwise ship undetected.
+// (deriveUpdateView — the UpdateBadge state machine, 5 kinds: hidden | available |
+// updating | current | failed). The server update contract is covered by
+// dashboard.update.route.test.ts; this brings the BROWSER half of the Update button
+// under regression coverage — a drift in the precedence (actionError → optimistic
+// 'working' phase → job poll → availability → hidden), the stale in-progress
+// degrade-to-failed, or the completed→current sticky (no age gate, no revert to a
+// stale update-available) would otherwise ship undetected.
 //
 // Runner: npx tsx --test test/dashboard.client.unit.test.ts
 //
@@ -26,11 +27,6 @@ import esbuild from "esbuild";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
 
-interface DiffLine {
-  variant: "add" | "del" | "hunk" | "ctx";
-  glyph: string;
-  text: string;
-}
 interface UpdateView {
   kind: string;
 }
@@ -39,15 +35,12 @@ interface DeriveArgs {
   availabilityData: unknown;
   job: unknown;
   phase: string;
-  preview: unknown;
   actionError: unknown;
-  dismissedJobId: number | null;
   now: number;
   staleMs: number;
 }
 interface DashHelpers {
   deriveUpdateView: (args: DeriveArgs) => UpdateView;
-  classifyDiffLine: (line: string) => DiffLine;
 }
 
 // Build once, evaluate in a sandbox — the real top-level helper declarations.
@@ -101,7 +94,6 @@ async function loadDash(): Promise<DashHelpers> {
 
   const h = ctx as unknown as DashHelpers;
   assert.strictEqual(typeof h.deriveUpdateView, "function", "deriveUpdateView must be reachable");
-  assert.strictEqual(typeof h.classifyDiffLine, "function", "classifyDiffLine must be reachable");
   return h;
 }
 
@@ -117,9 +109,7 @@ function derive(overrides: Partial<DeriveArgs>): UpdateView {
     availabilityData: { status: "current" },
     job: null,
     phase: "idle",
-    preview: null,
     actionError: null,
-    dismissedJobId: null,
     now: NOW,
     staleMs: STALE_MS,
     ...overrides,
@@ -136,88 +126,54 @@ const jobAt = (status: string, heartbeatMsAgo: number, extra: Record<string, unk
   ...extra,
 });
 
-// --- local interaction phase precedence (over poll) ---
+// --- top precedence: actionError, then optimistic 'working' phase ---
 
-test("actionError overrides everything → error", () => {
+test("actionError → failed (overrides 'working' phase and a completed job)", () => {
   assert.strictEqual(
-    derive({ actionError: { message: "boom" }, phase: "reviewing", job: jobAt("in-progress", 0) }).kind,
-    "error",
+    derive({ actionError: { message: "boom" }, phase: "working", job: jobAt("completed", 0) }).kind,
+    "failed",
   );
 });
 
-test("phase committing → committing (even with a fresh job)", () => {
-  assert.strictEqual(derive({ phase: "committing", job: jobAt("in-progress", 0) }).kind, "committing");
+test("phase 'working' → updating (optimistic, overrides a completed job poll)", () => {
+  assert.strictEqual(derive({ phase: "working", job: jobAt("completed", 0) }).kind, "updating");
 });
 
-test("phase previewing → previewing", () => {
-  assert.strictEqual(derive({ phase: "previewing" }).kind, "previewing");
+// --- job poll consumption ---
+
+test("job completed → current (sticky — no age gate, current even past staleMs)", () => {
+  assert.strictEqual(derive({ job: jobAt("completed", STALE_MS + 1) }).kind, "current");
 });
 
-test("phase reviewing with ready preview + files → reviewing (poll in-progress suppressed)", () => {
-  const preview = { status: "ready", job_id: 42, nonce: "n", target_version: "v1.2.3", files: [{ path: "a", diff: "", is_new: false }] };
-  // The preview reserved an in_progress row; local reviewing MUST win over the poll.
-  assert.strictEqual(derive({ phase: "reviewing", preview, job: jobAt("in-progress", 0) }).kind, "reviewing");
+test("job failed → failed", () => {
+  assert.strictEqual(derive({ job: jobAt("failed", 0, { failure_reason: "x" }) }).kind, "failed");
 });
 
-test("phase reviewing with up_to_date preview → up-to-date", () => {
-  assert.strictEqual(derive({ phase: "reviewing", preview: { status: "up_to_date", files: [] } }).kind, "up-to-date");
+test("job in-progress with fresh heartbeat → updating", () => {
+  assert.strictEqual(derive({ job: jobAt("in-progress", 5_000) }).kind, "updating");
 });
 
-test("phase reviewing with ready-but-empty files → up-to-date", () => {
-  assert.strictEqual(derive({ phase: "reviewing", preview: { status: "ready", files: [] } }).kind, "up-to-date");
+test("job in-progress with stale heartbeat (age > staleMs) → failed (stalled degrade)", () => {
+  assert.strictEqual(derive({ job: jobAt("in-progress", STALE_MS + 1) }).kind, "failed");
 });
 
-// --- idle: job poll consumption ---
-
-test("idle in-progress with fresh heartbeat → in-progress", () => {
-  assert.strictEqual(derive({ job: jobAt("in-progress", 5_000) }).kind, "in-progress");
+test("job in-progress with unparseable heartbeat → failed (Infinity age, never a stuck spinner)", () => {
+  assert.strictEqual(derive({ job: jobAt("in-progress", 0, { heartbeat_at: "not-a-date" }) }).kind, "failed");
 });
 
-test("idle in-progress with stale heartbeat → stale (no infinite spinner)", () => {
-  assert.strictEqual(derive({ job: jobAt("in-progress", STALE_MS + 1) }).kind, "stale");
+// --- availability consumption (no job) ---
+
+test("no job + ready + update-available → available", () => {
+  assert.strictEqual(derive({ job: null, availabilityData: { status: "update-available" } }).kind, "available");
 });
 
-test("idle completed within recency window → completed", () => {
-  assert.strictEqual(derive({ job: jobAt("completed", 60_000) }).kind, "completed");
+test("no job + ready + current → current (resting)", () => {
+  assert.strictEqual(derive({ job: null, availabilityData: { status: "current" } }).kind, "current");
 });
 
-test("idle completed past recency window → falls through (no permanent nag)", () => {
-  // availability current → hidden; nothing lingers forever.
-  assert.strictEqual(derive({ job: jobAt("completed", STALE_MS + 1) }).kind, "hidden");
-});
-
-test("idle failed within recency window → failed", () => {
-  assert.strictEqual(derive({ job: jobAt("failed", 60_000, { failure_reason: "x" }) }).kind, "failed");
-});
-
-test("idle failed past recency window → falls through to hidden", () => {
-  assert.strictEqual(derive({ job: jobAt("failed", STALE_MS + 1) }).kind, "hidden");
-});
-
-test("dismissed reservation is suppressed → shows availability instead", () => {
-  const job = jobAt("in-progress", 0); // id 42, our own reserved-but-dismissed row
-  assert.strictEqual(
-    derive({ job, dismissedJobId: 42, availabilityData: { status: "update-available" } }).kind,
-    "available",
-  );
-});
-
-// --- availability + precedence + signal-free ---
-
-test("no job + update-available → available", () => {
-  assert.strictEqual(derive({ availabilityData: { status: "update-available" } }).kind, "available");
-});
-
-test("job in-progress takes precedence over update-available availability", () => {
-  assert.strictEqual(
-    derive({ job: jobAt("in-progress", 0), availabilityData: { status: "update-available" } }).kind,
-    "in-progress",
-  );
-});
-
-test("non-update-available verdict with no job → hidden (signal-free)", () => {
-  for (const status of ["current", "unknown", "source-dev"]) {
-    assert.strictEqual(derive({ availabilityData: { status } }).kind, "hidden", `verdict ${status}`);
+test("no job + ready + non-actionable verdict → hidden (signal-free)", () => {
+  for (const status of ["unknown", "source-dev", "error"]) {
+    assert.strictEqual(derive({ job: null, availabilityData: { status } }).kind, "hidden", `verdict ${status}`);
   }
 });
 
@@ -225,38 +181,22 @@ test("availability not ready (loading) + no job → hidden", () => {
   assert.strictEqual(derive({ availabilityStatus: "loading", availabilityData: null }).kind, "hidden");
 });
 
-test("job with unparseable heartbeat in-progress → stale (Infinity age, never a stuck spinner)", () => {
-  assert.strictEqual(derive({ job: jobAt("in-progress", 0, { heartbeat_at: "not-a-date" }) }).kind, "stale");
+test("availability ready but null data + no job → hidden", () => {
+  assert.strictEqual(derive({ availabilityStatus: "ready", availabilityData: null }).kind, "hidden");
 });
 
-// --- classifyDiffLine: +/− dual-encode split ---
+// --- precedence: job wins over availability ---
 
-test("addition line → add variant, + glyph, leading char stripped", () => {
-  const c = dash.classifyDiffLine("+const x = 1;");
-  assert.deepStrictEqual({ variant: c.variant, glyph: c.glyph, text: c.text }, { variant: "add", glyph: "+", text: "const x = 1;" });
+test("in-progress job (fresh) takes precedence over update-available availability → updating", () => {
+  assert.strictEqual(
+    derive({ job: jobAt("in-progress", 5_000), availabilityData: { status: "update-available" } }).kind,
+    "updating",
+  );
 });
 
-test("deletion line → del variant, − glyph, leading char stripped", () => {
-  const c = dash.classifyDiffLine("-const x = 1;");
-  assert.deepStrictEqual({ variant: c.variant, glyph: c.glyph, text: c.text }, { variant: "del", glyph: "−", text: "const x = 1;" });
-});
-
-test("hunk header @@ → hunk variant, no glyph, full text", () => {
-  const c = dash.classifyDiffLine("@@ -1,4 +1,6 @@");
-  assert.deepStrictEqual({ variant: c.variant, glyph: c.glyph, text: c.text }, { variant: "hunk", glyph: "", text: "@@ -1,4 +1,6 @@" });
-});
-
-test("file headers +++/--- → hunk variant (not add/del)", () => {
-  assert.strictEqual(dash.classifyDiffLine("+++ b/file.ts").variant, "hunk");
-  assert.strictEqual(dash.classifyDiffLine("--- a/file.ts").variant, "hunk");
-});
-
-test("context line (leading space) → ctx, leading space stripped", () => {
-  const c = dash.classifyDiffLine(" unchanged");
-  assert.deepStrictEqual({ variant: c.variant, glyph: c.glyph, text: c.text }, { variant: "ctx", glyph: "", text: "unchanged" });
-});
-
-test("bare line (no prefix) → ctx, unchanged text", () => {
-  const c = dash.classifyDiffLine("bare");
-  assert.deepStrictEqual({ variant: c.variant, glyph: c.glyph, text: c.text }, { variant: "ctx", glyph: "", text: "bare" });
+test("completed job is sticky over update-available availability → current (no revert to available)", () => {
+  assert.strictEqual(
+    derive({ job: jobAt("completed", STALE_MS + 1), availabilityData: { status: "update-available" } }).kind,
+    "current",
+  );
 });
