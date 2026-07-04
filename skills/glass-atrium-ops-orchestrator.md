@@ -223,8 +223,9 @@ A workflow `agent({schema})` returns **null** when the subagent finishes WITHOUT
 - **Retry on null**: wrap every schema-mode `agent()` in a retry helper — on null, re-spawn ONCE with a tightened "reserve budget + you MUST emit StructuredOutput" re-prompt (optionally a higher-turn `agentType`).
 - **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure can NEVER reject/crash the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
 - **Self-recover, never hard-stop**: never terminate the run on a missing result — a mis-sized or failed delegation MUST self-recover (re-delegate / continue), never end the run with lost work.
+- **Print-block-then-emit (record honesty — every schema-mode delegation prompt MUST carry it)**: instruct the agent to print a full `[COMPLETION]` text block as a dedicated assistant TEXT turn immediately BEFORE its StructuredOutput call (contract SoT: `GLASS_ATRIUM_GLOBAL_RULES.md` → Emit-before-cap). Parser guarantee: `track-outcome.sh` `_last_assistant_text_from_transcript()` reverse-scans the whole transcript and PREFERS the last `[COMPLETION]`-bearing assistant text (:238-241) — the trailing StructuredOutput tool_use does not shadow the block. Without it, SubagentStop synthesis blanket-records `done_with_concerns` + `confidence=low` + `metric_pass=false` (`downgrade_origin=synthesized`), permanently losing the writer signal the self-improvement loop feeds on.
 
-EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-once on null, isolate each agent's failure via `.catch(() => null)` + `.filter(Boolean)`, and self-recover rather than hard-stop. Copyable helper (engine-agnostic vocabulary per the Non-brittleness caveat — `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`):
+EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-once on null, isolate each agent's failure via `.catch(() => null)` + `.filter(Boolean)`, self-recover rather than hard-stop, and shall carry the print-block-then-emit instruction in every schema-mode delegation prompt. Copyable helper (engine-agnostic vocabulary per the Non-brittleness caveat — `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`):
 
 ```js
 // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow
@@ -235,7 +236,7 @@ async function robustAgent(agentType, opts) {
   if (result == null) {
     // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
     result = await run({
-      goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; emit partial-but-complete before the working ceiling, never end on prose.`,
+      goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; print your full [COMPLETION] text block as a dedicated text turn immediately BEFORE the StructuredOutput call, then emit partial-but-complete before the working ceiling, never end on prose.`,
     });
   }
   return result; // may still be null → caller .filter(Boolean)s it out, surfaces as incomplete
@@ -295,7 +296,9 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
   // verifier sit CO-LOCATED inside the SAME parallel() verify block (within ~1000 comment-stripped
   // chars), the reviewer precedes the LATER implementation dev-*, and every agentType is a literal
   // straight-quoted token (a variable/concatenated agentType fail-opens past the gate but defeats
-  // the verify-stage).
+  // the verify-stage). Every stage goal MUST also carry the print-block-then-emit instruction
+  // (### Resilient Workflow Authoring): print a full [COMPLETION] text block as a dedicated
+  // text turn immediately BEFORE the StructuredOutput call.
 
   // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow. MANDATORY wrapper
   // for every schema-mode agent() (rationale: ### Resilient Workflow Authoring). Copied inline here so
@@ -308,7 +311,7 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
     if (result == null) {
       // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
       result = await run({
-        goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; emit partial-but-complete before the working ceiling, never end on prose.`,
+        goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; print your full [COMPLETION] text block as a dedicated text turn immediately BEFORE the StructuredOutput call, then emit partial-but-complete before the working ceiling, never end on prose.`,
       });
     }
     return result; // may still be null → caller .filter(Boolean)s it out, surfaces as incomplete
