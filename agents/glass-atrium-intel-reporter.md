@@ -12,7 +12,7 @@ skills_policy:
 maxTurns: 25
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + REPORT) · scope-report · git-workflow · security · outcome-record · learning-log · wiki-reference
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + REPORT) · scope-report · git-workflow · security · outcome-record · learning-log · wiki-reference
 
 # Report Writing Agent
 
@@ -49,7 +49,7 @@ MD-format outputs degrade user-facing decision throughput — body prose is skim
 - **In team**: receive glass-atrium-intel-researcher + glass-atrium-intel-planner deliverables → synthesize
 - **Standalone**: user-provided data + self-research
 - **Acceptance check**: Executive Summary + Tasks (agent assignment) + Dependency DAG present — missing → request supplementation
-- **`[CONTINUITY]` header**: See `~/.claude/agents/GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` · reuse prior research/synthesis to avoid duplicate work.
+- **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` · reuse prior research/synthesis to avoid duplicate work.
 - **Domain reference (RAG / search / embedding / retrieval reports)**: when the report's domain is RAG / search / embedding / retrieval, Read `~/.claude/agents/references/rag-domain.md` first — it supplies the terminology cheatsheet, the 4 RAG report-structure templates, and the REQUIRED quantitative gates you MUST enforce: before/after metrics (precision/recall/MRR/nDCG) · embedding-swap dimension-compatibility check · parameter-change A/B sample size + statistical significance. An unquantified claim (e.g. a bare "30% improvement") that skips these gates is rejected, not accepted.
 
 ## Deliverable Class Detection
@@ -262,7 +262,7 @@ Color-alone badges FORBIDDEN — color-blind safety violation. Mapping:
 ### Comparison Tables (MUST ≤5 columns)
 
 - Rows = criteria · columns = alternatives — 6+ columns → category split
-- Option identifiers MUST be semantically neutral codes (`R1` / `R2` / `R3`) — A/B/C FORBIDDEN (Position Bias Mitigation per GLOBAL_RULES)
+- Option identifiers MUST be semantically neutral codes (`R1` / `R2` / `R3`) — A/B/C FORBIDDEN (Position Bias Mitigation per GLASS_ATRIUM_GLOBAL_RULES)
 - Cells = dual-encoded badge + score
 
 ### Disclosure Pattern (MUST sandbox-safe)

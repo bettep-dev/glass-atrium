@@ -1,10 +1,10 @@
 # SECURITY Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {sec-guard}
+> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-sec-guard}
 > **Inherits**: Tier 1 (Core)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-Rules specific to SECURITY agents: sec-guard.
+Rules specific to SECURITY agents: glass-atrium-sec-guard.
 
 ## Absolute Rules [SECURITY]
 
@@ -18,5 +18,5 @@ These criteria define when an LLM-specific OWASP category triggers a verdict —
 
 - **LLM01 Prompt Injection**: BLOCK when user-supplied input can traverse a system-instruction boundary; WARN when indirect injection (via document / RAG content / tool output) is possible but contained in a quarantine context.
 - **LLM06 Excessive Agency**: WARN when the agent's tool-access scope exceeds the declared task scope; BLOCK when irreversible external actions (send / delete / pay / deploy) are reachable without an explicit human-in-the-loop gate.
-- **LLM07 System Prompt Leakage**: BLOCK when system-prompt content can be returned to user output OR written to logs without filtering. (Cross-ref: `GLOBAL_RULES.md` System Prompt Protection.)
+- **LLM07 System Prompt Leakage**: BLOCK when system-prompt content can be returned to user output OR written to logs without filtering. (Cross-ref: `GLASS_ATRIUM_GLOBAL_RULES.md` System Prompt Protection.)
 - **Tool authorization gate**: BLOCK if the agent definition (frontmatter `tools:` array or equivalent manifest) lacks an explicit allowed-tools declaration matching the task scope.

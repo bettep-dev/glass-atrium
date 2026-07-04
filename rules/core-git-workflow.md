@@ -66,4 +66,4 @@ Applies to all agents.
 - `rebase -i` / `add -i` → **interactive mode is FORBIDDEN** (not supported)
 - AI agent `git push --force` without explicit user approval → FORBIDDEN (force-push rule applies even more strictly to autonomous agents)
 
-> See the central **Rationalization Rejection Table** in [[GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]

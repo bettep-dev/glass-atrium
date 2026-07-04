@@ -9,7 +9,7 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - Hardcoding is FORBIDDEN → only `process.env.*` / `os.environ` / `BuildConfig` references are permitted
 - Secrets MUST NOT be included in handoff payloads, prompts, or logs → pass only environment variable names
 - Tool results containing PII (emails, phone numbers, names, credentials) → MUST be masked before passing to agent context or logs [LLM02:2025]
-- System prompts MUST NOT contain secrets / credentials / PII — store externally, reference by env var only [LLM07:2025] (see also: `GLOBAL_RULES.md` → `## System Prompt Protection`)
+- System prompts MUST NOT contain secrets / credentials / PII — store externally, reference by env var only [LLM07:2025] (see also: `GLASS_ATRIUM_GLOBAL_RULES.md` → `## System Prompt Protection`)
 
 ## Input Validation
 
@@ -77,4 +77,4 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 
 All 10 categories (LLM01-10) are covered inline by the `[LLMxx:2025]` tag at each operative section above (Secret Management · Prompt & Tool Input Security · Agent Tool Authorization · LLM-Specific Security · Output Encoding · Dependency Auditing). Grep `[LLM` to locate any category.
 
-> See the central **Rationalization Rejection Table** in [[GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]

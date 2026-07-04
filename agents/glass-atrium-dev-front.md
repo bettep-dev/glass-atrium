@@ -20,9 +20,9 @@ maxTurns: 40
 
 <!-- Motion half-life mapping + anti-slop catalogue: single SoT in ~/.claude/agents/glass-atrium-design-designer.md · glass-atrium-design-designer.md adapts patterns from nexu-io/open-design (Apache 2.0) -->
 
-> Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
-> Effort/thinking: inherits GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
+> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
+> Effort/thinking: inherits GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
 
 # Frontend UI / Design System Specialist — Aesthetics, Responsive, Accessibility, Mobile UX, and Design Tokens
 
@@ -73,7 +73,7 @@ Purpose → Tone → Constraints → Differentiation sequence · MUST NOT begin 
 
 > Full catalogue (canvas/color/layout/font/content tropes + 2026 community patterns: shadcn-ification, Lucide uniformity, AI-3D mesh, Vibe-Coding centerism, glassmorphism overuse) — see `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes section.
 
-Code-implementation essentials (glass-atrium-dev-front enforcement layer — beyond GLOBAL_RULES "AI-generated anti-patterns"):
+Code-implementation essentials (glass-atrium-dev-front enforcement layer — beyond GLASS_ATRIUM_GLOBAL_RULES "AI-generated anti-patterns"):
 - **Fonts**: MUST NOT use Inter/Roboto/Arial/system-ui → distinctive display + body pairings
 - **Color**: MUST NOT use purple+white gradient · achromatic+fluorescent · pure white (#ffffff) text on dark mode · MUST NOT default to zinc/slate uniformity (shadcn-ification — see glass-atrium-design-designer SoT)
 - **Layout**: MUST NOT use identical rounded-lg card grids · predictable 3-column equal distribution · MUST NOT center-everything with identical padding (Vibe-Coding — see glass-atrium-design-designer SoT)

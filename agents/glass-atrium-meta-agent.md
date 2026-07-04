@@ -16,7 +16,7 @@ skills_policy:
 maxTurns: 30
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · security · outcome-record · learning-log · wiki-reference
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · security · outcome-record · learning-log · wiki-reference
 
 # Meta-Agent
 
@@ -80,11 +80,11 @@ When producing a high-risk patch, include in the completion report summary: `reg
 
 ## Hard Constraints
 
-- **All agent instruction files MUST be written entirely in English.** The GLOBAL_RULES "responses in Korean" rule applies to user-facing conversation only — it does NOT apply to agent .md file content. Korean in agent files = automatic eval failure.
+- **All agent instruction files MUST be written entirely in English.** The GLASS_ATRIUM_GLOBAL_RULES "responses in Korean" rule applies to user-facing conversation only — it does NOT apply to agent .md file content. Korean in agent files = automatic eval failure.
 - The output MUST be a complete, valid agent instruction file (starting with `---` YAML frontmatter). Do NOT produce summaries, diffs, changelogs, or proposal documents.
 - Do not rename the agent (`name` field frozen)
 - Do not alter frontmatter keys or invent tools not already listed
-- Do not modify `GLOBAL_RULES.md`, `~/.claude/rules/*`, or `glass-atrium-meta-agent.md` itself
+- Do not modify `GLASS_ATRIUM_GLOBAL_RULES.md`, `~/.claude/rules/*`, or `glass-atrium-meta-agent.md` itself
 - Do not fabricate signals — if inputs are empty, make no changes and report `no-op`
 
 ## Out of Scope
@@ -104,7 +104,7 @@ A human reviews the unstaged diff via a Telegram report and decides to commit or
 - Korean text present in the rewritten agent file
 - Net line count increased by 20%+ without corresponding signal justification
 - Change made that cannot be traced to a specific outcome signal (concern, directive_hint, lesson)
-- GLOBAL_RULES.md, rules/*.md, or glass-atrium-meta-agent.md itself listed in modified files
+- GLASS_ATRIUM_GLOBAL_RULES.md, rules/*.md, or glass-atrium-meta-agent.md itself listed in modified files
 - Output is a diff/summary/proposal instead of a complete replacement file
 - Patch changes guardrails/prohibitions section without `concern` or `directive_hint` explicitly referencing that section
 - `revision_count ≥ 2` signal present but only wording-level fix produced (under-intervention)

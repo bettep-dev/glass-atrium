@@ -16,12 +16,12 @@ Mandatory result recording on task completion (regardless of result type). For t
 - `refactor` — behavior-preserving code change
 - `research` — investigation synthesizing cited sources
 - `plan` — task decomposition + dependency DAG
-- `review` — code/design/security review verdict, no code change authored (qa-code-reviewer; sec-guard security verdict; design-designer design-review)
-- `diagnosis` — root-cause analysis without code change (qa-debugger — read-only by iron-law, can NEVER write tests; sec-guard)
-- `doc` — document/report/plan-doc/wiki/design-doc deliverable (intel-reporter, intel-planner document deliverables, wiki-curator, design-designer DESIGN docs)
-- `cleanup` — config/import/dependency hygiene with no test obligation (also meta-prompt-engineer prompt-compression)
+- `review` — code/design/security review verdict, no code change authored (glass-atrium-qa-code-reviewer; glass-atrium-sec-guard security verdict; glass-atrium-design-designer design-review)
+- `diagnosis` — root-cause analysis without code change (glass-atrium-qa-debugger — read-only by iron-law, can NEVER write tests; glass-atrium-sec-guard)
+- `doc` — document/report/plan-doc/wiki/design-doc deliverable (glass-atrium-intel-reporter, glass-atrium-intel-planner document deliverables, glass-atrium-wiki-curator, glass-atrium-design-designer DESIGN docs)
+- `cleanup` — config/import/dependency hygiene with no test obligation (also glass-atrium-meta-prompt-engineer prompt-compression)
 
-**result values**: `done` (complete) · `done_with_concerns` (complete + review needed → concerns field) · `blocked` (technical impediment → not escalation target) · `needs_context` (insufficient info → user response needed, not escalation target) · `fail` (failure → qa-debugger escalation target)
+**result values**: `done` (complete) · `done_with_concerns` (complete + review needed → concerns field) · `blocked` (technical impediment → not escalation target) · `needs_context` (insufficient info → user response needed, not escalation target) · `fail` (failure → glass-atrium-qa-debugger escalation target)
 
 **Additional fields**: files_modified (path array) · revision_count (modification request count) · confidence (high/medium/low) · concerns (string array) · evaluative_signal (+1/-1/0) · directive_hint (user correction verbatim) · lesson (discovered pattern/know-how) · metric_pass (writer self-reported boolean — NEVER force-overwritten by the grader) · metric_type (matches the 9-type task_type set: `bug-fix`/`feature`/`refactor`/`research`/`plan`/`review`/`diagnosis`/`doc`/`cleanup`) · grader_verdict (deterministic 3-state: `verified_pass`/`unverified`/`verified_fail` — separate column, advisory) · downgrade_origin (provenance: `writer_true_downgraded`/`writer_false`/`synthesized`) · correlation_id (delegation tracking ID assigned by orchestrator)
 
@@ -30,20 +30,20 @@ Mandatory result recording on task completion (regardless of result type). For t
 | Agent role | Allowed task_types |
 |------------|--------------------|
 | DEV agents (dev-*) | `bug-fix`, `feature`, `refactor`, `cleanup`, `research`, `plan` (as applicable to the work performed) |
-| qa-code-reviewer | `review` |
-| qa-debugger | `diagnosis` (read-only by iron-law — can NEVER author tests, so NEVER `bug-fix`) |
-| intel-planner | `plan`, `doc` |
-| intel-reporter | `doc` |
-| wiki-curator | `doc` |
-| design-designer | `doc`, `review` (design-review maps to `review`) |
-| sec-guard | `review`, `diagnosis` (verdict-only, maxTurns 3) |
-| meta-prompt-engineer | `doc`, `cleanup`; plus code-adjacent `refactor` ONLY when it edits prompt/code files |
+| glass-atrium-qa-code-reviewer | `review` |
+| glass-atrium-qa-debugger | `diagnosis` (read-only by iron-law — can NEVER author tests, so NEVER `bug-fix`) |
+| glass-atrium-intel-planner | `plan`, `doc` |
+| glass-atrium-intel-reporter | `doc` |
+| glass-atrium-wiki-curator | `doc` |
+| glass-atrium-design-designer | `doc`, `review` (design-review maps to `review`) |
+| glass-atrium-sec-guard | `review`, `diagnosis` (verdict-only, maxTurns 3) |
+| glass-atrium-meta-prompt-engineer | `doc`, `cleanup`; plus code-adjacent `refactor` ONLY when it edits prompt/code files |
 
-**Edge-role consistency (verifier note — downstream consumers MUST NOT diverge)**: sec-guard is verdict-only (maxTurns 3) → its `review`/`diagnosis` task_types correctly grade to `unverified` (no test artifact expected). meta-prompt-engineer may legitimately emit a code-adjacent type (`refactor`/`cleanup`) ONLY when it actually edits prompt/code files; otherwise its deliverable is `doc`. The three consumers — `guess_task_type` (inference default), the grader unknown-case branch, and the dual-write `_norm_task_type` normalizer — MUST resolve these edge cases identically to this table.
+**Edge-role consistency (verifier note — downstream consumers MUST NOT diverge)**: glass-atrium-sec-guard is verdict-only (maxTurns 3) → its `review`/`diagnosis` task_types correctly grade to `unverified` (no test artifact expected). glass-atrium-meta-prompt-engineer may legitimately emit a code-adjacent type (`refactor`/`cleanup`) ONLY when it actually edits prompt/code files; otherwise its deliverable is `doc`. The three consumers — `guess_task_type` (inference default), the grader unknown-case branch, and the dual-write `_norm_task_type` normalizer — MUST resolve these edge cases identically to this table.
 
 **Auto-generation obligation**: If no Outcome Record exists at session end, record minimum 3 fields (agent, task_type, result)
 
-**Language invariant (internal records are English)**: every Outcome Record and `[COMPLETION]` field VALUE is system-internal / LLM-facing data — emit it in English. This covers `summary`, `lesson`, `directive_hint`, `concerns`, and every other field value. All harness-generated record + log data (track-outcome.sh, hook emit/error text, learning-aggregator) is likewise English. This is orthogonal to the user-facing reply, which still follows the user's language (GLOBAL_RULES "All responses in Korean").
+**Language invariant (internal records are English)**: every Outcome Record and `[COMPLETION]` field VALUE is system-internal / LLM-facing data — emit it in English. This covers `summary`, `lesson`, `directive_hint`, `concerns`, and every other field value. All harness-generated record + log data (track-outcome.sh, hook emit/error text, learning-aggregator) is likewise English. This is orthogonal to the user-facing reply, which still follows the user's language (GLASS_ATRIUM_GLOBAL_RULES "All responses in Korean").
 
 ## Completion Report Output Obligation
 
@@ -104,7 +104,7 @@ cid: correlation_id from orchestrator                    # OPTIONAL, omit if not
 | `directive_hint` | Optional (emit only with `evaluative_signal: -1`) | omit | One-line DISTILLED summary of what the user wanted changed — English-only, NEVER raw verbatim, NEVER Korean (e.g., `User wanted the API gate moved, not the regex removed`). This is the persisted correction lesson, not a transcript quote. Without a co-emitted `evaluative_signal: -1`, a stray `directive_hint` still trips the correction trigger — so emit it only on an actual correction |
 | `token_usage` | Optional | omit | Record when cost tracking is needed; pairs with OTel `gen_ai.usage.*` for external integration |
 | `agent_version` | Optional | omit | Instruction file version (e.g., from frontmatter) — enables before/after performance comparison across instruction edits |
-| `qa_score` | Optional (QA-only) | omit | Format `cov=N,ins=N,instr=N,clar=N` (each 1-5, sum 4-20). Sum < 12 → auto-recommend `result: done_with_concerns`. Reserved for QA agents (qa-code-reviewer / qa-debugger) reviewing other agents' outputs. **Self-emitted Model-Based signal, NOT a deterministic verdict**: this is the LLM evaluator's own score, layered ABOVE the Code-Based grader — it does not override `metric_pass` (which is the writer's own self-report; no signal overwrites it). Evaluator-independence caveat: see `scope-qa.md` "Deliverable Quantitative Evaluation" |
+| `qa_score` | Optional (QA-only) | omit | Format `cov=N,ins=N,instr=N,clar=N` (each 1-5, sum 4-20). Sum < 12 → auto-recommend `result: done_with_concerns`. Reserved for QA agents (glass-atrium-qa-code-reviewer / glass-atrium-qa-debugger) reviewing other agents' outputs. **Self-emitted Model-Based signal, NOT a deterministic verdict**: this is the LLM evaluator's own score, layered ABOVE the Code-Based grader — it does not override `metric_pass` (which is the writer's own self-report; no signal overwrites it). Evaluator-independence caveat: see `scope-qa.md` "Deliverable Quantitative Evaluation" |
 | `style_ref` | Optional (staged rollout) | omit (greenfield only); non-greenfield omission → `review_flag: true` (parser logic: `~/.claude/hooks/lib/style-ref-consts.sh::style_ref_compute_review_flag` — the task_type allowlist is the function's internal authority, single SoT for production hook + Bats test) | Relative path to the sibling file used as convention reference during Project Convention Probe (see `scope-dev.md` → Pre-Execution Verification → Project Convention Probe) / Step 2 Read (see `shared-search-first.md` → Pattern recognition → Step 2 Read / Step 3 Mirror). Value MUST be a path actually Read in the current turn — on SubagentStop, `track-outcome.sh` cross-verifies the emitted `style_ref` against the session transcript's Read tool_use history and records the verdict in `style_ref_verified` (boolean column; `true`=path found in Read history, `false`=Gaming-the-Judge candidate, `null`=greenfield/absent → verification N/A). Greenfield task (no sibling found in first-touch directory AND no AGENTS.md/CLAUDE.md anchor) → emit literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 Assumptions line. 7-day rolling-window aggregation per agent (`GROUP BY agent` primary, `GROUP BY agent, task_type` secondary cross-tab) via monitor `/api/improvement`. Mandatory graduation (emission ≥ 50% AND fake_rate < 10% across the DEV agents) is a separate future cycle requiring user approval |
 
 > Note on evaluative_signal: current values are -1/0/+1 ternary. Migration to 1-5 ordinal scale is under evaluation for OPRO-style solution-history sorting; no breaking change before explicit migration plan.

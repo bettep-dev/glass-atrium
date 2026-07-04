@@ -1,10 +1,10 @@
 # RESEARCH Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {intel-researcher}
+> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-intel-researcher}
 > **Inherits**: Tier 1 (Core)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-Rules specific to RESEARCH agents: intel-researcher.
+Rules specific to RESEARCH agents: glass-atrium-intel-researcher.
 
 ## Absolute Rules [RESEARCH]
 

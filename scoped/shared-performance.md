@@ -27,4 +27,4 @@ Applies to all DEV agents.
 - **Lazy loading**: defer loading of modules/data not needed for initial render
 - **Pagination**: infinite loading of large datasets is FORBIDDEN · prefer cursor-based pagination
 
-> See the central **Rationalization Rejection Table** in [[GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
