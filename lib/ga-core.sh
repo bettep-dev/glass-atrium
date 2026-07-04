@@ -1386,20 +1386,23 @@ read_manifest_dirs() {
 }
 
 # --- settings.json un-wire (remove ALL Atrium hook bindings) ----------------
-# Removes EVERY hook-group in settings.json whose command resolves into the
-# Atrium hooks directory (~/.claude/hooks), across ALL events. This is
+# Removes EVERY hook-group in settings.json whose command resolves into EITHER
+# Atrium hooks directory — the legacy farm dir (~/.claude/hooks) or the in-place
+# consumer dir (~/.glass-atrium/hooks) — across ALL events. This is
 # DELIBERATELY independent of the EXPECTED_HOOK_BINDINGS enumeration: that array
 # lists the complete install-wired binding set (42 entries), whereas the deployed
 # symlink farm can carry bindings outside that set (a user may hand-wire an Atrium
 # hook, or the array may drift from the physically deployed set) — iterating the
 # array would leave the
-# surplus bound (dead links after uninstall). ~/.claude/hooks IS the Atrium-
-# managed symlink farm (removed on uninstall), so ANY binding pointing there is
-# Atrium's and becomes a dead link — it must go.
+# surplus bound (dead links after uninstall). Both dirs are Atrium-owned —
+# ~/.claude/hooks IS the Atrium-managed legacy symlink farm (removed on
+# uninstall) and ~/.glass-atrium/hooks IS the release tree the repointed wire
+# template binds — so ANY binding pointing into either becomes dead: it must go.
 #
 # PATH-TOLERANT match (mirrors the doctor check's tilde-vs-absolute tolerance):
 # a command matches when, after normalizing a leading '~' to $HOME, it carries
-# the "$HOME/.claude/hooks/" prefix. So the tilde form ('~/.claude/hooks/<x>',
+# the "$HOME/.claude/hooks/" OR "$HOME/.glass-atrium/hooks/" prefix. So the
+# tilde form ('~/.claude/hooks/<x>',
 # the shape real settings.json stores), the ${HOME}-expanded absolute form, and
 # the literal absolute form ALL match, while a user hook elsewhere (e.g.
 # '~/my-hooks/x.sh') is preserved. Basename-independent — it keys on the hooks
@@ -2487,6 +2490,12 @@ run_install() {
   # dry-run (mutation-free staging).
   wire_hooks
 
+  # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
+  # settings.json bindings above already point at the in-place hooks dir, so
+  # dropping the legacy bare-name-farm symlinks opens no hook-blackout window.
+  # GA-link-guarded + idempotent (fresh install = clean no-op); honors DRY_RUN.
+  migrate_layout
+
   # DB bootstrap BEFORE the launchd repoint — a (re)bootstrapped monitor daemon
   # needs the schema in place at first start. Skipped in dry-run; fast-path
   # no-op when the DB already exists (see setup_database).
@@ -2738,13 +2747,13 @@ run_prune() {
 # link sits at depth 2, never re-matched by the maxdepth-1 scan), so it is a
 # clean no-op. Honors DRY_RUN (report-only, zero mutation).
 #
-# CALL-SITE (DEFERRED — cross-unit sequencing): the wire-in from run_install on a
-# consented existing deployment — paired with the settings.json hook-command
-# repoint that closes the drop's hook-blackout window (repoint-first-THEN-sweep
-# order) — is owned by the migrate-subcommand / hook-repoint units, NOT this one.
-# Sweeping the excluded surfaces before their long-running consumers repoint
-# would orphan the live hooks/registry consumers, so this unit ships the mechanic
-# without arming it in the default install path.
+# CALL-SITES (repoint-first-THEN-sweep contract): (1) run_install invokes this
+# immediately AFTER wire_hooks — the settings.json hook commands already point
+# at the in-place hooks dir before the legacy links drop, so no hook-blackout
+# window opens; (2) the `glass-atrium migrate` passthrough subcommand exposes a
+# standalone (re-)run for an existing deployment (honors --dry-run). Sweeping
+# before the repoint would orphan the live hooks/registry consumers — keep any
+# new call site BEHIND the repoint.
 migrate_layout() {
   log "== migrate: reconcile legacy bare-name farm -> essential-symlinks-only + foldered-rules (target=${TARGET_HOME}) =="
   "${DRY_RUN}" && log "(dry-run: report only — no unlink/relink)"

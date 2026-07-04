@@ -19,6 +19,9 @@
 #      FOREIGN symlink and a REAL user file at those paths are byte-preserved
 #      (every unlink routes through remove_if_ga_link's readlink-into-GA guard).
 #      Idempotent: a second run is a clean no-op.
+#   4. DISPATCH PATH — the `glass-atrium migrate` passthrough subcommand reaches
+#      migrate_layout through the REAL binary (GA_ROOT = the repo dir, so the
+#      seeded legacy links point into the repo), honoring --dry-run.
 #
 # Run via: bats test/essential-symlinks-migration.bats
 # Requires: bats >= 1.5.0, jq, bash 3.2+
@@ -258,4 +261,34 @@ seed_legacy_farm() {
   # the foreign symlink is preserved (readlink-into-GA guard rejects it)
   [[ -L "${TARGET}/agent-registry.json" ]]
   [[ "$(readlink "${TARGET}/agent-registry.json")" == "/tmp/ga-user-registry.json" ]]
+}
+
+# === 4. DISPATCH PATH (`glass-atrium migrate` passthrough subcommand) =========
+# Drives the REAL binary: its ga_init_env pins GA_ROOT to the repo dir, so the
+# legacy links are seeded pointing INTO the repo (${GA}) for the -lname /
+# readlink-into-GA guards to accept them. GA_TARGET_HOME keeps it hermetic.
+
+# Seed one legacy GA symlink under hooks/ pointing into the REPO GA root.
+seed_repo_legacy_link() {
+  mkdir -p "${TARGET}/hooks"
+  ln -s "${GA}/hooks/track-outcome.sh" "${TARGET}/hooks/legacy-hook.sh"
+}
+
+@test "dispatch: 'glass-atrium migrate' drops a legacy GA link via the passthrough" {
+  seed_repo_legacy_link
+
+  run env GA_TARGET_HOME="${TARGET}" bash "${GA}/glass-atrium" migrate
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"== migrate:"* ]]
+  [[ "${output}" == *"1 legacy GA symlink(s) dropped"* ]]
+  [[ ! -e "${TARGET}/hooks/legacy-hook.sh" ]]
+}
+
+@test "dispatch: 'glass-atrium --dry-run migrate' reports without mutating" {
+  seed_repo_legacy_link
+
+  run env GA_TARGET_HOME="${TARGET}" bash "${GA}/glass-atrium" --dry-run migrate
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"dry-run: report only"* ]]
+  [[ -L "${TARGET}/hooks/legacy-hook.sh" ]]
 }
