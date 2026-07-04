@@ -1,8 +1,8 @@
 // Dashboard API: 4 read-only panels + the P3-T3 self-update control plane (POST
-// /api/dashboard/update 2-step preview/commit + GET /api/dashboard/update-job).
+// /api/dashboard/update single atomic apply + GET /api/dashboard/update-job).
 // All DB access via Prisma 7 driver-adapter; raw SQL only via $queryRaw/$executeRaw
 // template-tag (parameter interpolation handled by Prisma; SQL injection impossible).
-// The update path never runs the long apply in-process: commit enqueues a DECOUPLED
+// The update path never runs the long apply in-process: apply enqueues a DECOUPLED
 // one-shot launchd job (so the install-parity `kickstart -k` monitor restart cannot
 // kill the runner) and returns immediately.
 
@@ -30,12 +30,11 @@ import type {
   DaemonStatusValue,
   DashboardErrorBody,
   KpiResponse,
-  UpdateCommitResponse,
+  UpdateApplyResponse,
   UpdateFileDiff,
   UpdateJobStatusResponse,
   UpdateJobStatusValue,
   UpdateMutationErrorBody,
-  UpdatePreviewResponse,
   UpdateStatusResponse,
 } from "../types/dashboard.js";
 
@@ -374,9 +373,9 @@ function invalidParam(name: string): DashboardErrorBody {
 }
 
 // ===========================================================================
-// P3-T3 — POST /api/dashboard/update (2-step preview/commit) + GET
+// P3-T3 — POST /api/dashboard/update (single atomic apply) + GET
 // /api/dashboard/update-job. The route NEVER runs the long apply in-process:
-// commit enqueues a DECOUPLED one-shot launchd job (scripts/update.sh renders
+// apply enqueues a DECOUPLED one-shot launchd job (scripts/update.sh renders
 // the plist; launchctl bootstrap loads it) and returns immediately, so the
 // install-parity `kickstart -k` monitor restart cannot kill the update runner.
 // ===========================================================================
@@ -391,61 +390,43 @@ const PREVIEW_MAX_BUFFER = 16 * 1024 * 1024;
 const ENQUEUE_TIMEOUT_MS = 20_000;
 
 // Default stale-sweep cutoff (30 min) — matches update.sh's 1800s pause TTL, so a
-// crashed decoupled updater (heartbeat frozen) is reclaimed but a normal
-// preview→commit gap never trips it. Override: ATRIUM_UPDATE_STALE_MS (test seam).
+// crashed decoupled updater (heartbeat frozen) is reclaimed but a live one is
+// never clobbered. Override: ATRIUM_UPDATE_STALE_MS (test seam).
 const DEFAULT_STALE_MS = 30 * 60 * 1000;
-
-// The preview nonce is a 64-char sha256 hex bound to {version + per-file diff
-// hashes}. The commit `confirm` token MUST echo it verbatim.
-const NONCE_RE = /^[0-9a-f]{64}$/;
 
 // The literal gate_render_diff marks a first-time add (update.sh apply-gate.sh).
 const NEW_FILE_MARKER = "(new file — no current version)";
 const DIFF_HEADER_RE = /^=== (.+) ===$/;
 
 type UpdateBodyResult =
-  | { kind: "preview" }
-  | { kind: "commit"; confirm: string }
+  | { kind: "apply" }
   | { kind: "error"; body: UpdateMutationErrorBody };
 
 // Manual body validation (NO Zod — these Fastify routes carry none; mirrors the
-// agents.ts NAME_RE + typeof idiom). mode ∈ {preview, commit}; commit requires
-// the 64-hex confirm nonce. Any deviation → 400 invalid_body.
+// agents.ts NAME_RE + typeof idiom). The only accepted mode is 'apply' (the 2-step
+// preview/commit dispatch is removed). Any deviation → 400 invalid_body.
 function validateUpdateBody(rawBody: unknown): UpdateBodyResult {
   if (rawBody === null || typeof rawBody !== "object" || Array.isArray(rawBody)) {
     return { kind: "error", body: invalidBody("body", "must be a JSON object") };
   }
   const body = rawBody as Record<string, unknown>;
-  const mode = body.mode;
-  if (mode === "preview") {
-    return { kind: "preview" };
+  if (body.mode === "apply") {
+    return { kind: "apply" };
   }
-  if (mode === "commit") {
-    const confirm = body.confirm;
-    if (typeof confirm !== "string" || !NONCE_RE.test(confirm)) {
-      return {
-        kind: "error",
-        body: invalidBody("confirm", "must be the 64-char hex preview nonce"),
-      };
-    }
-    return { kind: "commit", confirm };
-  }
-  return { kind: "error", body: invalidBody("mode", "must be 'preview' or 'commit'") };
+  return { kind: "error", body: invalidBody("mode", "must be 'apply'") };
 }
 
 function invalidBody(field: string, reason: string): UpdateMutationErrorBody {
   return { error: "invalid_body", field, reason };
 }
 
-// POST /api/dashboard/update — 2-step preview/commit dispatcher. Every request
-// first sweeps stale in-progress rows (WHERE-guarded, cannot clobber a fresh
-// heartbeat) so a crashed updater never permanently blocks the single-active slot.
+// POST /api/dashboard/update — single atomic apply. Every request first sweeps
+// stale in-progress rows (WHERE-guarded, cannot clobber a fresh heartbeat) so a
+// crashed updater never permanently blocks the single-active slot.
 async function handleUpdate(
   request: FastifyRequest,
   reply: FastifyReply,
-): Promise<
-  UpdatePreviewResponse | UpdateCommitResponse | UpdateMutationErrorBody | DashboardErrorBody
-> {
+): Promise<UpdateApplyResponse | UpdateMutationErrorBody | DashboardErrorBody> {
   const validation = validateUpdateBody(request.body);
   if (validation.kind === "error") {
     reply.code(400);
@@ -457,10 +438,7 @@ async function handleUpdate(
   } catch (error) {
     return failWithDb(request, reply, "/api/dashboard/update", error);
   }
-  if (validation.kind === "preview") {
-    return runUpdatePreview(request, reply, prisma);
-  }
-  return runUpdateCommit(request, reply, prisma, validation.confirm);
+  return runUpdateApply(request, reply, prisma);
 }
 
 // Stale sweep — a single WHERE-guarded UPDATE (status='in-progress' AND
@@ -478,15 +456,22 @@ async function sweepStaleJobs(prisma: ReturnType<typeof getPrisma>): Promise<voi
   });
 }
 
-// mode=preview — dry-run the headless update, return a structured per-file diff +
-// (when there are changes) reserve the single-active in-progress row bound to the
-// {version + per-file hash} nonce. The partial UNIQUE INDEX makes the INSERT the
-// atomic single-active guard: a 2nd concurrent preview trips its unique violation.
-async function runUpdatePreview(
+// mode=apply — the single atomic apply. Dry-run the headless update to get the
+// target version + per-file diff; with no changes → up_to_date (reserve nothing).
+// Otherwise verify the `claude` precondition, reserve the single-active in-progress
+// row (the partial UNIQUE INDEX makes the INSERT the atomic single-active guard),
+// then IMMEDIATELY enqueue the decoupled one-shot launchd job and return. The
+// handler never runs (nor awaits) the long apply — the one-shot launchd job runs it
+// detached, and the UI polls GET /api/dashboard/update-job for progress.
+//
+// SAFETY: dropping the old 2-step preview/commit removes ONLY the human diff
+// eyeball; the mechanical per-file SHA-256 integrity verify (+ sensitive-file skip,
+// atomic swap, rollback) still runs in update.sh update_run() Step 4 regardless.
+async function runUpdateApply(
   request: FastifyRequest,
   reply: FastifyReply,
   prisma: ReturnType<typeof getPrisma>,
-): Promise<UpdatePreviewResponse | UpdateMutationErrorBody | DashboardErrorBody> {
+): Promise<UpdateApplyResponse | UpdateMutationErrorBody | DashboardErrorBody> {
   const preview = await runPreviewCli();
   if (!preview.ok) {
     request.log.error({ route: "/api/dashboard/update", stderr: preview.stderr }, "preview failed");
@@ -495,12 +480,29 @@ async function runUpdatePreview(
   }
   const files = parsePreviewDiffs(preview.stdout);
   if (files.length === 0) {
-    // Nothing to apply → reserve nothing (no row, no nonce).
-    return { mode: "preview", status: "up_to_date", files: [] };
+    // Nothing to apply → reserve nothing (no row), return up_to_date.
+    return { mode: "apply", status: "up_to_date" };
   }
   const targetVersion = parsePreviewVersion(preview.stderr);
-  const nonce = computeNonce(targetVersion, files);
+
+  // claude -p precondition — the decoupled job's merge stage needs `claude`. Verify
+  // it resolves BEFORE reserving/enqueuing so a doomed job is never launched and no
+  // phantom in-progress row is left behind (loud-fail 500 claude_unresolved).
+  const claudeBin = await resolveClaudeBin();
+  if (claudeBin === null) {
+    reply.code(500);
+    return {
+      error: "claude_unresolved",
+      reason: "claude binary not resolvable for the decoupled update job",
+    };
+  }
+
+  // Reserve the single-active in-progress row. The partial UNIQUE INDEX
+  // (WHERE status='in-progress') makes this INSERT the atomic single-active guard:
+  // a 2nd concurrent apply trips PG 23505 → Prisma P2002 → 409 single_active.
+  // preview_nonce is stored as a forensic record only — no longer a confirm/drift gate.
   const now = new Date();
+  let rowId: bigint;
   try {
     const row = await prisma.updateJob.create({
       data: {
@@ -508,107 +510,48 @@ async function runUpdatePreview(
         startedAt: now,
         heartbeatAt: now,
         targetVersion,
-        previewNonce: nonce,
+        previewNonce: computeNonce(targetVersion, files),
       },
     });
-    request.log.info(
-      { route: "/api/dashboard/update", jobId: row.id.toString(), targetVersion, fileCount: files.length },
-      "update preview reserved single-active job",
-    );
-    return {
-      mode: "preview",
-      status: "ready",
-      job_id: bigintToNumber(row.id),
-      target_version: targetVersion,
-      nonce,
-      files,
-    };
+    rowId = row.id;
   } catch (error) {
     // Partial UNIQUE INDEX (WHERE status='in-progress') → PG 23505 → Prisma P2002.
-    // This IS the single-active guard: a 2nd concurrent preview is atomically rejected.
+    // This IS the single-active guard: a 2nd concurrent apply is atomically rejected.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       reply.code(409);
       return { error: "single_active", reason: "another update is already in progress" };
     }
     return failWithDb(request, reply, "/api/dashboard/update", error);
   }
-}
 
-// mode=commit — confirm the reserved preview then enqueue the decoupled job. The
-// handler returns IMMEDIATELY after the launchd bootstrap; it never runs (nor
-// awaits) the long apply, which the one-shot launchd job runs detached.
-async function runUpdateCommit(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  prisma: ReturnType<typeof getPrisma>,
-  confirm: string,
-): Promise<UpdateCommitResponse | UpdateMutationErrorBody | DashboardErrorBody> {
-  let row: { id: bigint; previewNonce: string | null } | null;
+  // Enqueue the decoupled one-shot launchd job. On any failure, mark the reserved
+  // row failed (frees the single-active slot) + return 500 enqueue_failed.
   try {
-    row = await prisma.updateJob.findFirst({
-      where: { status: "in_progress" },
-      orderBy: { id: "desc" },
-      select: { id: true, previewNonce: true },
-    });
-  } catch (error) {
-    return failWithDb(request, reply, "/api/dashboard/update", error);
-  }
-  if (row === null || row.previewNonce === null) {
-    reply.code(409);
-    return { error: "nonce_mismatch", reason: "no active preview — run a preview first" };
-  }
-  // Constant-token compare against the ROW's stored nonce — blanket auto-yes is
-  // structurally impossible (the client must echo the exact preview nonce).
-  if (confirm !== row.previewNonce) {
-    reply.code(409);
-    return { error: "nonce_mismatch", reason: "confirm token does not match the reserved preview" };
-  }
-
-  // Drift guard — re-run the dry-run and re-derive the nonce; a release that moved
-  // between preview and commit (bundle ≠ pinned set) yields a different nonce → abort.
-  const recheck = await runPreviewCli();
-  if (!recheck.ok) {
-    reply.code(500);
-    return { error: "preview_failed", reason: truncate(recheck.stderr) };
-  }
-  const recheckFiles = parsePreviewDiffs(recheck.stdout);
-  const recheckNonce = computeNonce(parsePreviewVersion(recheck.stderr), recheckFiles);
-  if (recheckNonce !== row.previewNonce) {
-    await markJobFailed(prisma, row.id, "drift — release changed since preview", request.log);
-    reply.code(409);
-    return { error: "drift_detected", reason: "release changed since preview — re-preview required" };
-  }
-
-  // claude -p precondition — the decoupled job's merge stage needs `claude`. Verify
-  // it resolves BEFORE enqueue so a doomed job is never launched (loud-fail 500).
-  const claudeBin = await resolveClaudeBin();
-  if (claudeBin === null) {
-    await markJobFailed(prisma, row.id, "claude binary unresolvable for the decoupled job", request.log);
-    reply.code(500);
-    return { error: "claude_unresolved", reason: "claude binary not resolvable for the decoupled update job" };
-  }
-
-  try {
-    await enqueueDecoupledJob(bigintToNumber(row.id));
+    await enqueueDecoupledJob(bigintToNumber(rowId));
   } catch (error) {
     const parsed = parseExecErr(error);
     request.log.error(
-      { route: "/api/dashboard/update", jobId: row.id.toString(), stderr: parsed.stderr },
+      { route: "/api/dashboard/update", jobId: rowId.toString(), stderr: parsed.stderr },
       "decoupled update job enqueue failed",
     );
-    await markJobFailed(prisma, row.id, "enqueue failed", request.log);
+    await markJobFailed(prisma, rowId, "enqueue failed", request.log);
     reply.code(500);
     return { error: "enqueue_failed", reason: truncate(parsed.stderr) };
   }
   request.log.info(
-    { route: "/api/dashboard/update", jobId: row.id.toString() },
+    { route: "/api/dashboard/update", jobId: rowId.toString(), targetVersion, fileCount: files.length },
     "decoupled update job enqueued (handler returning immediately)",
   );
-  return { mode: "commit", status: "in-progress", job_id: bigintToNumber(row.id) };
+  return {
+    mode: "apply",
+    status: "enqueued",
+    job_id: bigintToNumber(rowId),
+    target_version: targetVersion,
+  };
 }
 
-// Best-effort terminal-fail write (WHERE-guarded still-in-progress) used on the
-// abort paths so a rejected commit never leaves a phantom-active row.
+// Best-effort terminal-fail write (WHERE-guarded still-in-progress) — the
+// enqueue-failure path uses it so a failed enqueue never leaves a phantom-active row.
 async function markJobFailed(
   prisma: ReturnType<typeof getPrisma>,
   id: bigint,
@@ -766,14 +709,14 @@ function setPlistEnvValue(raw: string, key: string, value: string): string {
   return patched;
 }
 
-// Inject the COMMIT-scoped env into the plist: (1) ATRIUM_UPDATE_JOB_ID so the
+// Inject the apply-scoped env into the plist: (1) ATRIUM_UPDATE_JOB_ID so the
 // decoupled update.sh --headless adopts the route-created row; (2)
 // ATRIUM_UPDATE_CONFIRM_ANSWER=yes — the decoupled job has no TTY, so
 // apply-gate.sh gate_read_answer would otherwise fail-closed to a decline and
-// every web commit would die at the confirm gate. Reached ONLY from the commit
-// handler AFTER nonce verification (enqueueDecoupledJob's sole caller); the
-// preview path never touches the plist, so the fail-closed default and the
-// no-blanket-auto-yes rule stay intact. Atomic temp+rename.
+// every web apply would die at the confirm gate. Reached ONLY from the apply
+// handler via enqueueDecoupledJob (its sole caller), after the row is reserved and
+// the claude precondition passed — so the fail-closed default and the
+// no-blanket-auto-yes rule stay intact everywhere else. Atomic temp+rename.
 async function injectCommitEnvIntoPlist(plistPath: string, jobId: number): Promise<void> {
   const raw = await readFile(plistPath, "utf8");
   let patched: string;
@@ -867,8 +810,8 @@ function parsePreviewVersion(stderr: string): string {
 }
 
 // Nonce = sha256 over {version + each file's (path, is_new, sha256(diff))} in the
-// preview's emit order. Stored in update_job.preview_nonce; the commit re-derives
-// it to detect drift. 64-char hex (matches NONCE_RE).
+// preview's emit order. Stored in update_job.preview_nonce as a forensic record of
+// exactly which release+diff set was applied — no longer a confirm/drift gate. 64-char hex.
 function computeNonce(version: string, files: UpdateFileDiff[]): string {
   const hash = createHash("sha256");
   hash.update(`v=${version}\n`);

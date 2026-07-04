@@ -51,15 +51,15 @@ const UNKNOWN_AGENT_TITLE_HM =
 
 const INITIAL_FETCH_STATE = { status: 'loading', data: null, error: null };
 
-// Update 컨트롤 상수 (P3-T4) — poll 간격 · stale 컷오프 · diff 렌더 상한 · 엔드포인트.
+// Update 컨트롤 상수 (P3-T4) — poll 간격 · stale 컷오프 · 엔드포인트.
 // UPDATE_STALE_MS 는 서버 routes/dashboard.ts DEFAULT_STALE_MS(30분) 미러 — 클라 stale 판정이
-//   서버 sweep 컷오프 이상이어야 retry(preview POST)가 서버 stale-sweep 을 태워 예약 row 를 회수함
-//   (컷오프 미만이면 서버가 아직 in-progress 로 보아 재-preview 가 single_active 로 막힘).
+//   서버 sweep 컷오프 이상이어야 retry(apply POST)가 서버 stale-sweep 을 태워 예약 row 를 회수함
+//   (컷오프 미만이면 서버가 아직 in-progress 로 보아 재-apply 가 single_active 로 막힘).
 const UPDATE_POLL_MS = 5000;
 const UPDATE_STALE_MS = 30 * 60 * 1000;
-const UPDATE_DIFF_MAX_LINES = 400;
 const UPDATE_ENDPOINT = '/api/dashboard/update';
 const UPDATE_JOB_ENDPOINT = '/api/dashboard/update-job';
+const UPDATE_STATUS_ENDPOINT = '/api/dashboard/update-status';
 
 function ScreenDashboard({ onNav }) {
   const { Icon, PageHeader, TypeScaleStyle, Badge } = window.UI;
@@ -73,7 +73,7 @@ function ScreenDashboard({ onNav }) {
   const [outcomesState, setOutcomesState] = useStateD(INITIAL_FETCH_STATE);
   // E2 update-availability(T07) — 메인 fetch wave 합류 → Refresh 시 함께 재확인.
   const [updateState,    setUpdateState]    = useStateD(INITIAL_FETCH_STATE);
-  // P3-T4 update-job poll — preview/commit 2-step + in-progress/failed/completed 상태 구동.
+  // P3-T4 update-job poll — 단일 apply 후 in-progress/failed/completed 진행 상태 구동.
   const [updateJobState, setUpdateJobState] = useStateD(INITIAL_FETCH_STATE);
 
   const [costDays,    setCostDays]    = useStateD(7);
@@ -84,9 +84,11 @@ function ScreenDashboard({ onNav }) {
 
   const triggerRefresh = useCallbackD(() => setRefreshTick((t) => t + 1), []);
 
-  // update-job 온디맨드 재조회 — UpdateBanner 의 poll interval + mutate 직후 즉시 상태 반영에 사용.
+  // update-job / update-status 온디맨드 재조회 — UpdateBadge 의 poll interval + mutate 직후 즉시 상태 반영에 사용.
   //   메인 wave 와 독립(단건 GET, signal 불요 — AbortError 는 handleError 가 흡수).
   const refetchUpdateJob = useCallbackD(() => runFetch(UPDATE_JOB_ENDPOINT, undefined, setUpdateJobState), []);
+  // up_to_date apply 응답 후 availability 재확인 → resting 'current'(green) 로 해소.
+  const refetchUpdateStatus = useCallbackD(() => runFetch(UPDATE_STATUS_ENDPOINT, undefined, setUpdateState), []);
 
   useEffectD(() => {
     const ctrl = new AbortController();
@@ -108,7 +110,7 @@ function ScreenDashboard({ onNav }) {
       runFetch('/api/dashboard/cost-timeseries?days=7', ctrl.signal, setTodayTokState),
       runFetch('/api/agents/summary?days=7&order=runs&limit=5', ctrl.signal, setAgentsState),
       runFetch('/api/outcomes/cross-analysis?days=7', ctrl.signal, setOutcomesState),
-      runFetch('/api/dashboard/update-status', ctrl.signal, setUpdateState),
+      runFetch(UPDATE_STATUS_ENDPOINT, ctrl.signal, setUpdateState),
       runFetch(UPDATE_JOB_ENDPOINT, ctrl.signal, setUpdateJobState),
     ];
 
@@ -152,6 +154,13 @@ function ScreenDashboard({ onNav }) {
           title="Dashboard"
           right={
             <>
+              {/* self-update 통지 — 구 full-width 카드에서 toolbar 컴팩트 배지로 이관. 자기-숨김(hidden→null)이라 무조건 마운트. */}
+              <UpdateBadge
+                availabilityState={updateState}
+                jobState={updateJobState}
+                onRefetchJob={refetchUpdateJob}
+                onRefetchStatus={refetchUpdateStatus}
+              />
               {/* 단일 worst-severity rollup (T-DSH-2) — status Badge 가 TONE_ICON Lucide 선행(색+기호). 로딩 중엔 미렌더. */}
               {rollupTone && (
                 <Badge role="status" tone={rollupTone} icon>{ROLLUP_LABEL[rollupTone] || 'Status'}</Badge>
@@ -168,12 +177,6 @@ function ScreenDashboard({ onNav }) {
       {/* 섹션 채널 24px(.space-sections) — 카드 그룹 사이를 16px 카드 채널보다 한 단 넓게 분리(W1-T3).
           헤더→콘텐츠 간격은 PageHeader 내부 mb-4(16px) 단독 — agents/outcomes 등 정상 화면과 동일(앱 셸 p-6 미변경). */}
       <div className="space-sections">
-        <UpdateBanner
-          availabilityState={updateState}
-          jobState={updateJobState}
-          onRefetchJob={refetchUpdateJob}
-        />
-
         <KpiRow
           kpiState={kpiState}
           cost7State={cost7State}
@@ -218,22 +221,16 @@ function ScreenDashboard({ onNav }) {
   );
 }
 
-// 0. Update control (P3-T4) — E2 availability(/api/dashboard/update-status) 배너를 상호작용
-//   버튼으로 승격. 2-step: Update → preview(POST update mode=preview → per-file unified-diff +
-//   preview nonce) → 명시적 Confirm → commit(mode=commit, confirm=nonce). blanket auto-yes 금지
-//   (서버가 row nonce 와 대조). status GET(/api/dashboard/update-job) poll 로 in-progress/failed/
-//   completed 를 dual-encode; heartbeat 초과 job 은 stale + 수동-retry 로 degrade(영구 spinner 금지).
-//   非'update-available' verdict(current/unknown/source-dev) + 무 job → 무신호.
-//   ※ preview 는 서버에서 단일-활성 in_progress row 를 예약함(partial unique index) → 사용자가
-//     Confirm 없이 물리면(Not now) 그 예약 row.id 를 dismissedJobId 로 억제(자기 세션 오표시 차단);
-//     서버 stale-sweep(또는 다음 commit)이 실제 회수 담당.
-function UpdateBanner({ availabilityState, jobState, onRefetchJob }) {
+// 0. Update control — self-update 통지를 toolbar 컴팩트 3-state 배지로 렌더(구 full-width 카드 대체).
+//   단일 원자적 apply: yellow "Update available <target>"(클릭) → updating(spinner) → green "✓ <version>"(persistent
+//   resting). availability(/api/dashboard/update-status) + update-job(/api/dashboard/update-job) poll 로 구동 ·
+//   {mode:'apply'} POST 계약과 job poll 은 불변. 4상태가 모양(window.UI.Badge) 공유 — tone/선행 아이콘/텍스트/상호작용만
+//   상태별로 바뀐다(색 단독 신호 아님: 선행 Icon 이 shape+color dual-encode). heartbeat 초과 in-progress 는 stalled →
+//   failed(crit, 클릭=재시도)로 degrade(영구 spinner 금지). 非actionable verdict(unknown/source-dev) + 무 job → null(무신호).
+function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatus }) {
   const { Icon, Badge } = window.UI;
-
-  const [phase,          setPhase]          = useStateD('idle'); // idle | previewing | reviewing | committing
-  const [preview,        setPreview]        = useStateD(null);   // preview 응답(ready | up_to_date) | null
-  const [actionError,    setActionError]    = useStateD(null);   // { message, canRetry } | null
-  const [dismissedJobId, setDismissedJobId] = useStateD(null);   // 물린 예약 row 억제
+  const [phase,       setPhase]       = useStateD('idle');  // idle | working (apply POST 전송 중, 낙관적 updating)
+  const [actionError, setActionError] = useStateD(null);    // { message, canRetry } | null (mutation 오류 → failed)
 
   // job 은 poll 이 ready 이고 실제 row 가 있을 때만(none 은 무 job).
   const job = (jobState.status === 'ready' && jobState.data && jobState.data.status !== 'none')
@@ -245,334 +242,137 @@ function UpdateBanner({ availabilityState, jobState, onRefetchJob }) {
     availabilityData: availabilityState.data,
     job,
     phase,
-    preview,
     actionError,
-    dismissedJobId,
     now: Date.now(),
     staleMs: UPDATE_STALE_MS,
   });
 
-  // in-progress(신선) 또는 commit 전송 중에만 poll — stale/terminal 전이 시 interval 해제
-  //   (무한 spinner + 무의미 poll 차단). poll 은 부모 jobState 갱신 → 재렌더 → now 전진 → stale 판정.
-  const isPolling = view.kind === 'in-progress' || phase === 'committing';
+  // updating 뷰에서만 poll — completed/failed/current 전이 시 interval 해제(무한 spinner + 무의미 poll 차단).
+  //   poll 은 부모 jobState 갱신 → 재렌더 → now 전진 → stale(→failed) 판정.
+  const isPolling = view.kind === 'updating';
   useEffectD(() => {
     if (!isPolling) return undefined;
     const timer = setInterval(() => onRefetchJob(), UPDATE_POLL_MS);
     return () => clearInterval(timer);
   }, [isPolling, onRefetchJob]);
 
-  const startPreview = useCallbackD(async () => {
+  // 단일 원자적 apply — 즉시 적용. enqueued 면 job poll 인계, up_to_date 면 availability 재확인(green resting),
+  //   single_active(409) 면 live job 노출로 인계, 그 외 오류는 crit failed 배지(클릭=재-apply).
+  const startApply = useCallbackD(async () => {
     setActionError(null);
-    setDismissedJobId(null);
-    setPhase('previewing');
+    setPhase('working');
 
-    const res = await postUpdate({ mode: 'preview' });
+    const res = await postUpdate({ mode: 'apply' });
+    setPhase('idle'); // 낙관적 working 종료 — 이후 분기가 failed/current/job-poll 로 인계.
+
     if (!res.ok) {
-      // 409 single_active — 이미 예약된 update 존재. 에러 대신 live job(예약 row) 노출로 인계.
+      // 409 single_active — 이미 예약된 update 존재 → error 대신 live job 노출로 인계.
       if (res.status === 409 && res.data && res.data.error === 'single_active') {
-        setPreview(null);
-        setPhase('idle');
         onRefetchJob();
         return;
       }
-      setPreview(null);
-      setPhase('idle');
       setActionError({ message: mutationErrorMessage(res.status, res.data), canRetry: true });
       return;
     }
-    setPreview(res.data);
-    setPhase('reviewing');
-  }, [onRefetchJob]);
-
-  const confirmUpdate = useCallbackD(async () => {
-    if (!preview || preview.status !== 'ready') return;
-    setActionError(null);
-    setPhase('committing');
-
-    const res = await postUpdate({ mode: 'commit', confirm: preview.nonce });
-    if (!res.ok) {
-      // drift/nonce 만료 등 → retry(=fresh preview) 로 회복.
-      setPreview(null);
-      setPhase('idle');
-      setActionError({ message: mutationErrorMessage(res.status, res.data), canRetry: true });
+    if (res.data && res.data.status === 'up_to_date') {
+      onRefetchStatus();
       return;
     }
-    // commit 성공 — decoupled job 기동. preview 정리 후 poll 로 진행상태 인계.
-    setPreview(null);
-    setDismissedJobId(null);
-    setPhase('idle');
+    // status:'enqueued' — decoupled job 기동. poll 로 진행상태 인계.
     onRefetchJob();
-  }, [preview, onRefetchJob]);
-
-  const dismissPreview = useCallbackD(() => {
-    // 예약 row 회수는 서버 몫 → 같은 세션에선 id 로 억제(무한 in-progress 오표시 차단).
-    if (preview && preview.status === 'ready' && typeof preview.job_id === 'number') {
-      setDismissedJobId(preview.job_id);
-    }
-    setPreview(null);
-    setPhase('idle');
-  }, [preview]);
-
-  const dismissError = useCallbackD(() => setActionError(null), []);
+  }, [onRefetchJob, onRefetchStatus]);
 
   if (view.kind === 'hidden') return null;
 
-  const meta = UPDATE_VIEW_META[view.kind];
+  const availabilityData = availabilityState.data;
+  const isAlert = view.kind === 'failed';
 
-  return (
-    <UpdateShell tone={meta.tone} role={meta.role}>
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* spinner 는 부가 motion affordance — 상태의 정본 신호는 아래 tone Badge(아이콘+색+라벨) 가 운반. */}
-        {meta.spin && <Icon name="refresh" size={14} className={`text-${meta.tone} ga-spin`}/>}
-        <Badge role="status" tone={meta.tone} icon>{meta.label}</Badge>
-        <UpdateViewMeta view={view} availabilityData={availabilityState.data} job={job} preview={preview}/>
-      </div>
-      <UpdateViewBody
-        view={view}
-        preview={preview}
-        job={job}
-        actionError={actionError}
-        onPreview={startPreview}
-        onConfirm={confirmUpdate}
-        onDismiss={dismissPreview}
-        onDismissError={dismissError}
-      />
-    </UpdateShell>
-  );
-}
-
-// view.kind → 표현 메타(tone/label/role/spinner). Badge(role=status, tone, icon) 가 dual-encode 정본.
-//   role=alert 는 crit/warn(사용자 개입 필요), 그 외 status.
-const UPDATE_VIEW_META = {
-  available:     { tone: 'info', label: 'Update available',   role: 'status', spin: false },
-  previewing:    { tone: 'info', label: 'Preparing preview',  role: 'status', spin: true  },
-  reviewing:     { tone: 'info', label: 'Review changes',     role: 'status', spin: false },
-  'up-to-date':  { tone: 'ok',   label: 'Already up to date',  role: 'status', spin: false },
-  committing:    { tone: 'info', label: 'Starting update',    role: 'status', spin: true  },
-  'in-progress': { tone: 'info', label: 'Updating',           role: 'status', spin: true  },
-  stale:         { tone: 'warn', label: 'Update stalled',     role: 'alert',  spin: false },
-  failed:        { tone: 'crit', label: 'Update failed',      role: 'alert',  spin: false },
-  completed:     { tone: 'ok',   label: 'Update complete',    role: 'status', spin: false },
-  error:         { tone: 'crit', label: 'Update error',       role: 'alert',  spin: false },
-};
-
-// tone-tinted 배너 껍데기 — 상시 표면(alpha fill, blur 없음). tone 은 shell tint + 내부 Badge 심볼이
-//   함께 운반(색 단독 신호 아님).
-function UpdateShell({ tone, role, children }) {
-  return (
-    <div
-      role={role}
-      className="rounded-md border p-3 flex flex-col gap-2"
-      style={{ background: `rgb(var(--${tone}) / 0.08)`, borderColor: `rgb(var(--${tone}) / 0.4)` }}>
-      {children}
-    </div>
-  );
-}
-
-// 헤더 우측 컨텍스트 — 버전(available) / 파일수·타깃(reviewing) / 타깃·heartbeat(진행/터미널).
-function UpdateViewMeta({ view, availabilityData, job, preview }) {
-  const { Icon } = window.UI;
-
-  if (view.kind === 'available' && availabilityData) {
-    return (
-      <span className="fs-meta font-mono text-dim inline-flex items-center gap-1">
-        {availabilityData.local_version || 'unknown'}
-        <Icon name="arrow-right" size={11}/>
-        {availabilityData.latest_version || 'latest'}
-      </span>
-    );
-  }
-  if (view.kind === 'reviewing' && preview && preview.status === 'ready') {
-    const n = preview.files.length;
-    return (
-      <span className="fs-meta font-mono text-dim">
-        {formatInt(n)} file{n === 1 ? '' : 's'} · {preview.target_version || 'latest'}
-      </span>
-    );
-  }
-  if (job && (view.kind === 'in-progress' || view.kind === 'stale' || view.kind === 'completed' || view.kind === 'failed')) {
-    const showHeartbeat = job.heartbeat_at && (view.kind === 'in-progress' || view.kind === 'stale');
-    return (
-      <span className="fs-meta font-mono text-dim inline-flex items-center gap-1">
-        {job.target_version ? <span>{job.target_version}</span> : null}
-        {showHeartbeat ? <span>· updated {window.UI.formatRelativeTime(job.heartbeat_at)}</span> : null}
-      </span>
-    );
-  }
-  return null;
-}
-
-// view.kind 별 본문(안내 + 액션 버튼 + diff). 각 상태의 tone 은 UpdateShell + Badge 가 운반.
-function UpdateViewBody({ view, preview, job, actionError, onPreview, onConfirm, onDismiss, onDismissError }) {
+  let cluster;
   switch (view.kind) {
-    case 'available':
-      return (
-        <div>
-          <button className="btn primary sm" onClick={onPreview}>Review and update…</button>
-        </div>
+    // available — yellow(warn) 클릭 배지. 타깃 버전만 표기(e.g. "Update available 1.0.1", "1.0.0 → 1.0.1" 아님). 클릭=startApply.
+    case 'available': {
+      const latest = (availabilityData && availabilityData.latest_version) || 'latest';
+      cluster = (
+        <Badge role="status" tone="warn" icon interactive title={`Update to ${latest}`} onClick={startApply}>
+          Update available {latest}
+        </Badge>
       );
-    case 'previewing':
-      return <div className="fs-meta text-dim">Downloading the release and computing the diff…</div>;
-    case 'reviewing':
-      return (
-        <div className="flex flex-col gap-3">
-          <div className="fs-meta text-dim">Review the per-file changes below, then confirm. Nothing is applied until you confirm.</div>
-          <UpdateDiffList files={preview.files}/>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button className="btn primary sm" onClick={onConfirm}>Confirm and apply</button>
-            <button className="btn ghost sm" onClick={onDismiss}>Not now</button>
-          </div>
-        </div>
+      break;
+    }
+    // updating — spinner(모양+motion=tone carrier)를 pill 내부 leading glyph 로 배치. 다른 state 와 동일하게 심볼이 배지 안에 들어감. 非클릭(span → 내재적 비활성).
+    case 'updating': {
+      const target = job && job.target_version;
+      cluster = (
+        <Badge role="status" tone="neutral" glyph={false}>
+          <Icon name="refresh" size={11} className="text-info ga-spin"/> {target ? `Updating ${target}` : 'Updating'}
+        </Badge>
       );
-    case 'up-to-date':
-      return (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="fs-meta text-dim">No changes to apply — you already have the latest release.</span>
-          <button className="btn ghost sm" onClick={onDismiss}>Dismiss</button>
-        </div>
-      );
-    case 'committing':
-      return <div className="fs-meta text-dim">Starting the update job…</div>;
-    case 'in-progress':
-      return <div className="fs-meta text-dim">The update is running in the background. This page updates as it progresses.</div>;
-    case 'stale':
-      return (
-        <div className="flex flex-col gap-2">
-          <div className="fs-meta text-dim">No heartbeat for a while — the updater may have stopped. Retrying is safe.</div>
-          <div><button className="btn sm" onClick={onPreview}>Retry</button></div>
-        </div>
-      );
+      break;
+    }
+    // current — green(ok) persistent resting 배지. 인접 "All clear" 와 동일 idiom(check icon + --dim 버전 라벨).
+    //   completed job → target_version, 그 외(availability current) → local_version. ✓ 는 icon=true 가 그림(리터럴 금지).
+    case 'current': {
+      const version = (job && job.status === 'completed' && job.target_version)
+        || (availabilityData && availabilityData.local_version)
+        || '';
+      cluster = <Badge role="status" tone="ok" icon>{version}</Badge>;
+      break;
+    }
+    // failed — crit 클릭 배지(재시도). actionError / job failed / stalled in-progress 를 하나로 접음. dead-end 아님.
     case 'failed':
-      return (
-        <div className="flex flex-col gap-2">
-          {job && job.failure_reason
-            ? <div className="fs-meta font-mono text-dim" title={window.UI.titleOf(job.failure_reason)}>{job.failure_reason}</div>
-            : <div className="fs-meta text-dim">The update didn't finish.</div>}
-          <div><button className="btn sm" onClick={onPreview}>Retry</button></div>
-        </div>
+      cluster = (
+        <Badge role="status" tone="crit" icon interactive title="Retry update" onClick={startApply}>
+          Update failed
+        </Badge>
       );
-    case 'completed':
-      return (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="fs-meta text-dim">Update applied. Reload to run the new version.</span>
-          <button className="btn primary sm" onClick={() => window.location.reload()}>Reload</button>
-        </div>
-      );
-    case 'error':
-      return (
-        <div className="flex flex-col gap-2">
-          <div className="fs-meta text-dim">{actionError ? actionError.message : 'Something went wrong.'}</div>
-          <div className="flex items-center gap-2">
-            {actionError && actionError.canRetry && <button className="btn sm" onClick={onPreview}>Retry</button>}
-            <button className="btn ghost sm" onClick={onDismissError}>Dismiss</button>
-          </div>
-        </div>
-      );
+      break;
     default:
       return null;
   }
-}
 
-// per-file unified-diff — 스크롤 컨테이너 + 파일별 헤더 + diff 행(+/− glyph 로 dual-encode).
-function UpdateDiffList({ files }) {
+  // 아이콘은 aria-hidden(Badge 기본) → 라벨 텍스트를 aria-live 래퍼가 안내(updating→current 전이 통지, Badge 자체 DOM role 없음).
+  //   failed = role=alert(assertive), 그 외 = role=status(polite). 래퍼 inline-flex 는 updating 의 spinner+배지 클러스터 정렬.
   return (
-    <div className="rounded-md border border-line overflow-hidden">
-      <div className="overflow-y-auto bg-sunken" style={{ maxHeight: 360 }}>
-        {files.map((file) => <UpdateFileDiff key={file.path} file={file}/>)}
-      </div>
-    </div>
+    <span
+      role={isAlert ? 'alert' : 'status'}
+      aria-live={isAlert ? 'assertive' : 'polite'}
+      className="inline-flex items-center gap-1.5">
+      {cluster}
+    </span>
   );
 }
 
-function UpdateFileDiff({ file }) {
-  const { Icon, Badge } = window.UI;
-  const lines = (file.diff || '').split('\n');
-  const shown = lines.slice(0, UPDATE_DIFF_MAX_LINES);
-  const hidden = lines.length - shown.length;
-
-  return (
-    <div className="border-b border-line last:border-b-0">
-      <div className="flex items-center gap-2 px-2 py-1 bg-elev border-b border-line">
-        <Icon name="file" size={12} className="text-dim"/>
-        <span className="fs-meta font-mono text-ink truncate" title={file.path}>{file.path}</span>
-        {file.is_new && <Badge role="status" tone="ok" icon>New file</Badge>}
-      </div>
-      <div>
-        {shown.map((line, i) => {
-          const c = classifyDiffLine(line);
-          return (
-            <div key={i} className={DIFF_LINE_CLASS[c.variant] || 'diff-line'}>
-              <span className="diff-line__glyph" aria-hidden="true">{c.glyph || ' '}</span>
-              <span>{c.text.length > 0 ? c.text : ' '}</span>
-            </div>
-          );
-        })}
-        {hidden > 0 && (
-          <div className="diff-line text-faint">
-            <span className="diff-line__glyph" aria-hidden="true">…</span>
-            <span>{formatInt(hidden)} more lines — open the release notes for the full diff</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const DIFF_LINE_CLASS = {
-  add:  'diff-line diff-line--add',
-  del:  'diff-line diff-line--del',
-  hunk: 'diff-line text-dim',
-  ctx:  'diff-line',
-};
-
-// unified-diff 한 줄 분류 — +/− 는 glyph(비색 1차 신호) + tinted 행, @@/±±± 헤더는 hunk(무색),
-//   나머지는 context. add/del/ctx 는 선행 부호/공백을 벗겨 glyph 와 중복 표시 방지.
-function classifyDiffLine(line) {
-  if (line.startsWith('@@')) return { variant: 'hunk', glyph: '', text: line };
-  if (line.startsWith('+++') || line.startsWith('---')) return { variant: 'hunk', glyph: '', text: line };
-  if (line.startsWith('+')) return { variant: 'add', glyph: '+', text: line.slice(1) };
-  if (line.startsWith('-')) return { variant: 'del', glyph: '−', text: line.slice(1) };
-  if (line.startsWith(' ')) return { variant: 'ctx', glyph: '', text: line.slice(1) };
-  return { variant: 'ctx', glyph: '', text: line };
-}
-
-// UpdateBanner 상태 머신(순수) — 로컬 상호작용 phase 가 poll 보다 우선(리뷰 중 예약 row 를
-//   in-progress 로 오표시하지 않도록). idle 에서만 job poll 을 소비. completed/failed 는 recency
-//   윈도우(staleMs) 안에서만 노출(오래된 터미널 row 로 영구 잔류 신호 방지). dismissedJobId 는
-//   같은 세션에서 물린 예약 row 를 억제. verdict/ job 둘 다 무신호면 hidden.
+// UpdateBadge 상태 머신(순수) — 5 kind: hidden | available | updating | current | failed.
+//   우선순위: actionError → failed · working phase → updating(낙관적) · job poll(completed→current sticky /
+//   failed→failed / in-progress→ age>staleMs 면 failed[stalled] 아니면 updating) · availability
+//   (update-available→available / current→current[resting]) · else hidden. completed 는 age 게이트 없이
+//   sticky(green 유지) — job 이 availability 보다 우선이라 stale 한 update-available 로 되돌아가지 않는다.
 function deriveUpdateView(args) {
-  const { availabilityStatus, availabilityData, job, phase, preview, actionError, dismissedJobId, now, staleMs } = args;
+  const { availabilityStatus, availabilityData, job, phase, actionError, now, staleMs } = args;
 
-  if (actionError) return { kind: 'error' };
-  if (phase === 'committing') return { kind: 'committing' };
-  if (phase === 'previewing') return { kind: 'previewing' };
-  if (phase === 'reviewing') {
-    const ready = preview && preview.status === 'ready' && Array.isArray(preview.files) && preview.files.length > 0;
-    return { kind: ready ? 'reviewing' : 'up-to-date' };
-  }
+  if (actionError) return { kind: 'failed' };
+  if (phase === 'working') return { kind: 'updating' };
 
-  // idle — job poll 소비(자기 세션에서 물린 예약 row 는 억제).
-  if (job && job.id !== dismissedJobId) {
-    const heartbeat = Date.parse(job.heartbeat_at);
-    const age = Number.isNaN(heartbeat) ? Infinity : now - heartbeat;
-    if (job.status === 'completed') {
-      if (age <= staleMs) return { kind: 'completed' };
-    } else if (job.status === 'failed') {
-      if (age <= staleMs) return { kind: 'failed' };
-    } else if (job.status === 'in-progress') {
-      return { kind: age > staleMs ? 'stale' : 'in-progress' };
+  // job poll 소비 — completed 는 sticky(무 age 게이트), stalled in-progress 는 failed 로 degrade.
+  if (job) {
+    if (job.status === 'completed') return { kind: 'current' };
+    if (job.status === 'failed') return { kind: 'failed' };
+    if (job.status === 'in-progress') {
+      const heartbeat = Date.parse(job.heartbeat_at);
+      const age = Number.isNaN(heartbeat) ? Infinity : now - heartbeat;
+      return { kind: age > staleMs ? 'failed' : 'updating' };
     }
   }
 
-  if (availabilityStatus === 'ready' && availabilityData && availabilityData.status === 'update-available') {
-    return { kind: 'available' };
+  if (availabilityStatus === 'ready' && availabilityData) {
+    if (availabilityData.status === 'update-available') return { kind: 'available' };
+    if (availabilityData.status === 'current') return { kind: 'current' };
   }
   return { kind: 'hidden' };
 }
 
-// POST /api/dashboard/update — JSON body(mode: preview|commit, commit 은 confirm=nonce).
-//   { ok, status, data } 정규화(네트워크 실패도 typed shape 로 흡수). blanket auto-yes 금지 —
-//   confirm 은 항상 preview 가 발급한 nonce.
+// POST /api/dashboard/update — JSON body(mode: 'apply'). { ok, status, data } 정규화(네트워크
+//   실패도 typed shape 로 흡수).
 async function postUpdate(body) {
   try {
     const res = await fetch(UPDATE_ENDPOINT, {
@@ -591,12 +391,10 @@ async function postUpdate(body) {
 function mutationErrorMessage(status, data) {
   const code = data && data.error;
   const reason = data && data.reason;
-  if (code === 'drift_detected')   return 'The release changed since the preview — start a new preview.';
-  if (code === 'nonce_mismatch')   return 'The preview expired — start a new preview.';
   if (code === 'single_active')    return 'Another update is already in progress.';
   if (code === 'claude_unresolved') return "The updater couldn't find the tool it needs on this host.";
   if (code === 'enqueue_failed')   return "Couldn't start the update job.";
-  if (code === 'preview_failed')   return reason ? `Preview failed: ${reason}` : 'Preview failed.';
+  if (code === 'preview_failed')   return reason ? `Update check failed: ${reason}` : 'Update check failed.';
   if (code === 'network')          return reason ? `Network error: ${reason}` : 'Network error.';
   if (reason)                      return String(reason);
   return `Request failed (HTTP ${status}).`;

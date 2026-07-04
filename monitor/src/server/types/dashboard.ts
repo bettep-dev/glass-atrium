@@ -104,7 +104,7 @@ export type DashboardErrorBody =
   | { error: "invalid_param"; param: string };
 
 // ---------------------------------------------------------------------------
-// POST /api/dashboard/update (2-step preview/commit) + GET /api/dashboard/update-job
+// POST /api/dashboard/update (single atomic apply) + GET /api/dashboard/update-job
 // (P3-T3). The DB literal status values ('in-progress' carries a hyphen — see the
 // core.UpdateJobStatus enum @map). String-union (not `string`) so the React client
 // can compile-time pattern-match the three states for dual-encoded badges.
@@ -112,39 +112,29 @@ export type DashboardErrorBody =
 
 export type UpdateJobStatusValue = "in-progress" | "failed" | "completed";
 
-// One changed file in the dry-run preview. `diff` is the raw unified-diff body
-// update.sh --preview renders per file; `is_new` flags a first-time add (no
-// current version) so the client can label it distinctly.
+// One changed file parsed from the update.sh --preview dry-run. `diff` is the raw
+// unified-diff body update.sh renders per file; `is_new` flags a first-time add
+// (no current version). Used INTERNALLY by the apply path to detect the
+// up-to-date case + compute the record nonce; no longer surfaced in the response.
 export interface UpdateFileDiff {
   path: string;
   diff: string;
   is_new: boolean;
 }
 
-// POST mode=preview result. `ready` reserves the single-active in-progress row +
-// stores the {version + per-file hash}-bound nonce; `up_to_date` reserves nothing
-// (no changed files → nothing to commit).
-export type UpdatePreviewResponse =
+// POST mode=apply result — single atomic apply. `enqueued` reserves the
+// single-active in-progress row and IMMEDIATELY enqueues the decoupled one-shot
+// launchd job (the long apply runs detached; the UI polls update-job for
+// progress). `up_to_date` reserves nothing (no changed files → nothing to apply).
+export type UpdateApplyResponse =
   | {
-      mode: "preview";
-      status: "ready";
+      mode: "apply";
+      status: "enqueued";
       // BIGSERIAL id of the reserved core.update_job row (safe-int range).
       job_id: number;
       target_version: string;
-      // 64-char sha256 hex bound to {version + per-file diff hashes}. The client
-      // echoes it back verbatim as the commit `confirm` token.
-      nonce: string;
-      files: UpdateFileDiff[];
     }
-  | { mode: "preview"; status: "up_to_date"; files: [] };
-
-// POST mode=commit result — the handler enqueues the decoupled one-shot launchd
-// job and returns IMMEDIATELY (the long apply runs detached; UI polls update-job).
-export interface UpdateCommitResponse {
-  mode: "commit";
-  status: "in-progress";
-  job_id: number;
-}
+  | { mode: "apply"; status: "up_to_date" };
 
 // GET /api/dashboard/update-job — polling shape. `none` when no job row exists.
 export type UpdateJobStatusResponse =
@@ -160,14 +150,12 @@ export type UpdateJobStatusResponse =
     };
 
 // Mutation-path error taxonomy. 400 (manual-validation) mirrors the agents.ts
-// invalid_body idiom; 409 covers the single-active + nonce/drift guards; 500/503
-// cover the exec + precondition loud-fails. DB failures reuse db-failure.ts's
-// invalid_input / database_unavailable shapes (unioned here).
+// invalid_body idiom; 409 covers the single-active guard; 500/503 cover the exec
+// + precondition loud-fails. DB failures reuse db-failure.ts's invalid_input /
+// database_unavailable shapes (unioned here).
 export type UpdateMutationErrorBody =
   | { error: "invalid_body"; field: string; reason: string }
   | { error: "single_active"; reason: string }
-  | { error: "nonce_mismatch"; reason: string }
-  | { error: "drift_detected"; reason: string }
   | { error: "preview_failed"; reason: string }
   | { error: "enqueue_failed"; reason: string }
   | { error: "claude_unresolved"; reason: string }
