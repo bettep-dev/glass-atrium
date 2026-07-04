@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import gate_roster_sync
@@ -37,6 +37,7 @@ from .registry_ops import add_entry, build_entry, remove_entry
 from .scaffold import (
     PreflightError,
     assert_add_targets_absent,
+    normalize_agent_name,
     render_agent_md,
     require_dev_scope_for_stanza,
 )
@@ -87,6 +88,11 @@ def run_add(paths: StorePaths, req: AddRequest) -> str:
     failed — recovery marker written, reconciliation handed off), or
     MutationLockHeld (a concurrent add/delete holds the single-owner lock).
     """
+    # 0. born-prefixed mandate: normalize the fleet prefix BEFORE validation /
+    #    path composition so registry, stanza, gate sites, and the .md all carry
+    #    the canonical glass-atrium- name (consistent with the paths.py lists).
+    req = replace(req, name=normalize_agent_name(req.name))
+
     # 1. validate name + realpath-inside-agents BEFORE any path composition.
     #    Pure path validation (no store read) — safe outside the lock.
     md_path = validated_agent_md(paths.agents_dir, req.name)
@@ -227,7 +233,10 @@ def dry_run_add(paths: StorePaths, req: AddRequest) -> str:
     preflight_clear, reasons, q3_conflicts}. No mutation lock is taken — a preview
     must never block on an in-flight mutation.
     """
-    # Mirror run_add's pre-write validation WITHOUT entering the transaction.
+    # Mirror run_add's pre-write validation WITHOUT entering the transaction —
+    # including the born-prefixed normalization, so the dry-run previews the
+    # gate + pre-flight against the name the real ADD would actually write.
+    req = replace(req, name=normalize_agent_name(req.name))
     validated_agent_md(paths.agents_dir, req.name)
     is_dev = require_dev_scope_for_stanza(req.scope)
 
