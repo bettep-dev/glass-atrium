@@ -438,6 +438,8 @@ function ScreenOutcomes({ onNav }) {
     Promise.all([overallTask, ...perResultTasks])
       .then(([overall, ...perResult]) => {
         const byResultCount    = buildByResultCountMapO(overall.by_result);
+        // 합성 복구행(reconstructed) 서브카운트 — KPI headline 을 writer-emitted 로 분리.
+        const byResultReconstructed = buildByResultReconstructedMapO(overall.by_result);
         const agentStack       = buildAgentStackO(perResult, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
         const bucketSparks     = buildBucketSparkMapO(perResult, ANALYTICS_KPI_ORDER);
         // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
@@ -445,7 +447,7 @@ function ScreenOutcomes({ onNav }) {
         const crosstab          = buildCrosstabO(overall.cells);
         setAnalyticsState({
           status: 'ready',
-          data: { overall, byResultCount, agentStack, bucketSparks, needsContextCount, crosstab },
+          data: { overall, byResultCount, byResultReconstructed, agentStack, bucketSparks, needsContextCount, crosstab },
           error: null,
         });
       })
@@ -690,6 +692,9 @@ function KpiBucketRow({ state, onRetry }) {
   }
 
   const byResultCount = state.data.byResultCount;
+  // headline = writer-emitted (count - reconstructed) — 합성 복구행은 카드 내 sub-line 으로 분리
+  // (Attribution Health 'Reconstructed ⚠' 어휘 재사용, 복구 산물 ≠ 실패).
+  const byResultReconstructed = state.data.byResultReconstructed || {};
   const bucketSparks  = state.data.bucketSparks || {};
 
   // 분모 = API total (5개 result enum 전수) — 4-card 합(needs_context 제외)으로 재유도 금지.
@@ -707,12 +712,15 @@ function KpiBucketRow({ state, onRetry }) {
       <div className="grid grid-cols-4 gap-3">
         {ANALYTICS_KPI_ORDER.map((key) => {
           const meta = kpiMetaO(key);
-          const count = byResultCount[key] || 0;
+          const totalCount = byResultCount[key] || 0;
+          // clamp — 서버 불변식(reconstructed <= count) 방어 (음수 headline 차단).
+          const reconstructedCount = Math.min(Number(byResultReconstructed[key]) || 0, totalCount);
           return (
             <KpiBucket
               key={key}
               meta={meta}
-              count={count}
+              count={totalCount - reconstructedCount}
+              reconstructedCount={reconstructedCount}
               total={kpiTotal}
               sparkData={bucketSparks[key] ?? null}
             />
@@ -744,15 +752,20 @@ function NeedsContextSegment({ count, total, otherCount }) {
   );
 }
 
-function KpiBucket({ meta, count, total, sparkData }) {
+function KpiBucket({ meta, count, total, sparkData, reconstructedCount = 0 }) {
   const { Sparkline } = window.UI;
   const pct = total > 0 ? (count / total * 100) : 0;
 
   // 0건 버킷(예: 30d fail) → dead 0% 카드 대신 빈 sparkline 숨김 + '다른 기간에서 확인' 안내.
-  const isZeroBucket = count === 0;
+  //   reconstructed 만 있는 버킷은 dead 아님 → sub-line 유지.
+  const isZeroBucket = count === 0 && reconstructedCount === 0;
+  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
+  const ariaLabel = reconstructedCount > 0
+    ? `${meta.label}: ${count} writer-emitted, ${reconstructedCount} reconstructed`
+    : `${meta.label}: ${count}`;
 
   return (
-    <div className="kpi cursor-default" aria-label={`${meta.label}: ${count}`}>
+    <div className="kpi cursor-default" aria-label={ariaLabel}>
       <div className="kpi-label">
         <span
           className="inline-block w-2 h-2 rounded-sm"
@@ -764,6 +777,14 @@ function KpiBucket({ meta, count, total, sparkData }) {
         {formatIntO(count)}
         <span className="unit">/ {pct.toFixed(1)}%</span>
       </div>
+      {reconstructedCount > 0 && (
+        <div
+          className="fs-micro font-mono"
+          style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
+          title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
+          {synthMeta.symbol} {formatIntO(reconstructedCount)} {synthMeta.label.toLowerCase()}
+        </div>
+      )}
       {isZeroBucket ? null : (
         sparkData && sparkData.length >= 2 && (
           <div className="kpi-spark">
@@ -2755,6 +2776,20 @@ function buildByResultCountMapO(byResult) {
   for (const row of byResult) {
     if (row && typeof row.result === 'string') {
       out[row.result] = Number(row.count) || 0;
+    }
+  }
+  return out;
+}
+
+// cross-analysis by_result → { result: reconstructed_count } (합성 복구행 서브카운트).
+//   writer-emitted headline = count - reconstructed_count. 필드 부재(구 응답) → 0 (분리 없음과 동일).
+function buildByResultReconstructedMapO(byResult) {
+  const out = {};
+  for (const key of ANALYTICS_KPI_ORDER) out[key] = 0;
+  if (!Array.isArray(byResult)) return out;
+  for (const row of byResult) {
+    if (row && typeof row.result === 'string') {
+      out[row.result] = Number(row.reconstructed_count) || 0;
     }
   }
   return out;
