@@ -156,13 +156,26 @@ const LITERAL_OMISSION_BREAKDOWN_KEYS: ReadonlyMap<string, keyof LiteralOmission
 // + agent-id-missing + subagent-stop-phantom (query-derived noise sentinel) are
 // explicit synthesized members; the else-branch catch-all covers any future
 // value identically.
+const COMPLETION_SYNTHESIZED_SOURCE = "completion-synthesized";
 const SYNTHESIZED_SOURCES: ReadonlySet<string> = new Set<string>([
-  "completion-synthesized",
+  COMPLETION_SYNTHESIZED_SOURCE,
   "conversation-only",
   "cron-derived",
   "agent-id-missing",
   ATTRIBUTION_LOSS_PHANTOM_SOURCE,
 ]);
+
+// Reconstructed-row discriminator for the /cross-analysis by_result split: a row
+// is a harness recovery artifact (NOT writer-emitted) when downgrade_origin is
+// 'synthesized' OR attribution_source is a synthesis-branch token
+// (completion-synthesized / budget-truncation). Consumer-side split only — the
+// record-write path and every enum stay untouched; the FE derives the
+// writer-emitted headline as count - reconstructed_count.
+const RECONSTRUCTED_DOWNGRADE_ORIGIN = "synthesized";
+const RECONSTRUCTED_ATTRIBUTION_SOURCES: readonly string[] = [
+  COMPLETION_SYNTHESIZED_SOURCE,
+  BUDGET_TRUNCATION_SOURCE,
+];
 
 // DB row shapes
 
@@ -229,6 +242,8 @@ interface CrossCellDbRow {
 interface ByResultDbRow {
   result: string;
   count: bigint;
+  // FILTER sub-count of `count` — reconstructed (harness-synthesized) rows only.
+  reconstructed_count: bigint;
 }
 
 interface ByAgentDbRow {
@@ -654,7 +669,11 @@ async function handleCrossAnalysis(
         prisma.$queryRaw<ByResultDbRow[]>`
           SELECT
             result::text     AS result,
-            COUNT(*)::bigint AS count
+            COUNT(*)::bigint AS count,
+            (COUNT(*) FILTER (
+              WHERE downgrade_origin::text = ${RECONSTRUCTED_DOWNGRADE_ORIGIN}
+                 OR attribution_source IN (${Prisma.join(RECONSTRUCTED_ATTRIBUTION_SOURCES)})
+            ))::bigint       AS reconstructed_count
           FROM core.outcomes
           ${analyticsWhere}
           GROUP BY result
@@ -748,7 +767,13 @@ async function handleCrossAnalysis(
     // Defensive enum filter — drop rows with unrecognized result/agent values.
     const byResult: OutcomeCrossAnalysisByResult[] = byResultRows.flatMap((row) => {
       if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
-      return [{ result: row.result as OutcomeResultLiteral, count: bigintToNumber(row.count) }];
+      return [
+        {
+          result: row.result as OutcomeResultLiteral,
+          count: bigintToNumber(row.count),
+          reconstructed_count: bigintToNumber(row.reconstructed_count),
+        },
+      ];
     });
     const byAgentTop10: OutcomeCrossAnalysisByAgent[] = byAgentRows.map((row) => ({
       agent: row.agent,

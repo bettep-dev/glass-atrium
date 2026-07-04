@@ -177,9 +177,17 @@ export interface OutcomeCrossAnalysisCell {
   is_polar_mismatch: boolean;
 }
 
+// Per-result aggregate with the reconstructed sub-count split out. `count` keeps
+// its original semantics (ALL matching rows — additive shape change, so consumers
+// mapping result→count stay correct). `reconstructed_count` isolates harness
+// recovery artifacts (downgrade_origin='synthesized' OR attribution_source IN
+// (completion-synthesized, budget-truncation)) so the KPI headline can show
+// writer-emitted rows separately. Invariants: 0 <= reconstructed_count <= count;
+// writer-emitted = count - reconstructed_count.
 export interface OutcomeCrossAnalysisByResult {
   result: OutcomeResultLiteral;
   count: number;
+  reconstructed_count: number;
 }
 
 export interface OutcomeCrossAnalysisByAgent {
