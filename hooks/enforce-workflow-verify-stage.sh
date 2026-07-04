@@ -97,7 +97,7 @@ trap 'printf "[enforce-workflow-verify-stage] internal error at line %d: %s — 
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit. Mirrors
 # the DEV_SET in enforce-verification-gate.sh.
-readonly DEV_SET="dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
 
 # Firing-trace log path (passive probe). Lives in the live runtime data dir alongside
 # session-spawns/. WORKFLOW_GATE_FIRED_LOG override exists for Bats fail-safe testing only —
@@ -413,7 +413,7 @@ TOKEN_LINE_RE = re.compile(
 # by default. A hardcoded local FS Target in one of these spawns, with no monitor-POST instruction,
 # is the doc-routing leak this SECOND (weakest) pass flags. Keep in sync with the REPORT/PLANNING
 # scope agents in core-compliance-matrix.md.
-DOC_AGENT_SET = ("intel-reporter", "intel-planner")
+DOC_AGENT_SET = ("glass-atrium-intel-reporter", "glass-atrium-intel-planner")
 
 # Generic local-FS-path SHAPE signals — username-agnostic by construction (NO baked-in user dir).
 # A doc-routing leak hardcodes a local path as the deliverable DESTINATION; these match the SHAPE,
@@ -672,7 +672,7 @@ try:
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
     # Quote-bounded DEV agentType token (antigaming_src — see alias defs).
     dev_re = re.compile(r"['\"](" + dev_alt + r")['\"]")
-    rev_re = re.compile(r"['\"]qa-code-reviewer['\"]")
+    rev_re = re.compile(r"['\"]glass-atrium-qa-code-reviewer['\"]")
     dev_starts = [m.start() for m in dev_re.finditer(antigaming_src)]
     dev_present = bool(dev_starts)
 

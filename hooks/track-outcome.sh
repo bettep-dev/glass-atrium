@@ -1129,14 +1129,14 @@ JUDGE_TEXT=$(printf '%s %s' "$MSG_HEAD" "$MSG_TAIL" | tr '[:upper:]' '[:lower:]'
 # that MUST agree with these two.
 role_default_task_type() {
   case "${AGENT_TYPE:-}" in
-    qa-code-reviewer*) echo "review" ;;
-    qa-debugger*) echo "diagnosis" ;;
-    sec-guard*) echo "review" ;;
-    intel-reporter*) echo "doc" ;;
-    intel-planner*) echo "doc" ;;
-    wiki-curator*) echo "doc" ;;
-    design-designer*) echo "doc" ;;
-    meta-prompt-engineer*) echo "doc" ;;
+    glass-atrium-qa-code-reviewer*) echo "review" ;;
+    glass-atrium-qa-debugger*) echo "diagnosis" ;;
+    glass-atrium-sec-guard*) echo "review" ;;
+    glass-atrium-intel-reporter*) echo "doc" ;;
+    glass-atrium-intel-planner*) echo "doc" ;;
+    glass-atrium-wiki-curator*) echo "doc" ;;
+    glass-atrium-design-designer*) echo "doc" ;;
+    glass-atrium-meta-prompt-engineer*) echo "doc" ;;
     *) echo "" ;;
   esac
 }
@@ -1152,20 +1152,20 @@ role_default_task_type() {
 role_task_type_allowed() {
   local _tt="${1:-}"
   case "${AGENT_TYPE:-}" in
-    qa-code-reviewer*) [[ "${_tt}" == "review" ]] && echo "1" || echo "0" ;;
-    qa-debugger*) [[ "${_tt}" == "diagnosis" ]] && echo "1" || echo "0" ;;
-    sec-guard*)
+    glass-atrium-qa-code-reviewer*) [[ "${_tt}" == "review" ]] && echo "1" || echo "0" ;;
+    glass-atrium-qa-debugger*) [[ "${_tt}" == "diagnosis" ]] && echo "1" || echo "0" ;;
+    glass-atrium-sec-guard*)
       case "${_tt}" in review | diagnosis) echo "1" ;; *) echo "0" ;; esac
       ;;
-    intel-reporter*) [[ "${_tt}" == "doc" ]] && echo "1" || echo "0" ;;
-    intel-planner*)
+    glass-atrium-intel-reporter*) [[ "${_tt}" == "doc" ]] && echo "1" || echo "0" ;;
+    glass-atrium-intel-planner*)
       case "${_tt}" in plan | doc) echo "1" ;; *) echo "0" ;; esac
       ;;
-    wiki-curator*) [[ "${_tt}" == "doc" ]] && echo "1" || echo "0" ;;
-    design-designer*)
+    glass-atrium-wiki-curator*) [[ "${_tt}" == "doc" ]] && echo "1" || echo "0" ;;
+    glass-atrium-design-designer*)
       case "${_tt}" in doc | review) echo "1" ;; *) echo "0" ;; esac
       ;;
-    meta-prompt-engineer*)
+    glass-atrium-meta-prompt-engineer*)
       case "${_tt}" in doc | cleanup | refactor) echo "1" ;; *) echo "0" ;; esac
       ;;
     *) echo "1" ;;

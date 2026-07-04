@@ -208,7 +208,7 @@ if [[ -z "${AGENT_TYPE}" ]]; then
   exit 0
 fi
 case "${AGENT_TYPE}" in
-  intel-reporter | intel-planner) : ;;
+  glass-atrium-intel-reporter | glass-atrium-intel-planner) : ;;
   *)
     emit_trace "Write" "yes" "${AGENT_TYPE}" "n/a" "allow-non-doc-agent"
     exit 0

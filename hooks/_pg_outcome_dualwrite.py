@@ -173,14 +173,14 @@ _TASK_TYPE_VALID = {
 # match a prefix of the lowercased agent name so versioned/suffixed ids resolve;
 # code agents and unmatched agents fall through to the generic default below.
 _AGENT_ROLE_DEFAULT_TASK_TYPE = {
-    "qa-code-reviewer": "review",
-    "qa-debugger": "diagnosis",
-    "sec-guard": "review",
-    "intel-reporter": "doc",
-    "intel-planner": "doc",
-    "wiki-curator": "doc",
-    "design-designer": "doc",
-    "meta-prompt-engineer": "doc",
+    "glass-atrium-qa-code-reviewer": "review",
+    "glass-atrium-qa-debugger": "diagnosis",
+    "glass-atrium-sec-guard": "review",
+    "glass-atrium-intel-reporter": "doc",
+    "glass-atrium-intel-planner": "doc",
+    "glass-atrium-wiki-curator": "doc",
+    "glass-atrium-design-designer": "doc",
+    "glass-atrium-meta-prompt-engineer": "doc",
 }
 
 # Role → Allowed task_types allowlist (LAYER-3 mis-classification guard). SINGLE SoT alignment
@@ -191,14 +191,14 @@ _AGENT_ROLE_DEFAULT_TASK_TYPE = {
 # A role absent from this map (dev-* / unknown) has no constraining allowlist → any 9-set value
 # is accepted (the DEV allowlist is broad). Keys prefix-match the lowercased agent name.
 _AGENT_ROLE_ALLOWED_TASK_TYPES = {
-    "qa-code-reviewer": {"review"},
-    "qa-debugger": {"diagnosis"},
-    "sec-guard": {"review", "diagnosis"},
-    "intel-reporter": {"doc"},
-    "intel-planner": {"plan", "doc"},
-    "wiki-curator": {"doc"},
-    "design-designer": {"doc", "review"},
-    "meta-prompt-engineer": {"doc", "cleanup", "refactor"},
+    "glass-atrium-qa-code-reviewer": {"review"},
+    "glass-atrium-qa-debugger": {"diagnosis"},
+    "glass-atrium-sec-guard": {"review", "diagnosis"},
+    "glass-atrium-intel-reporter": {"doc"},
+    "glass-atrium-intel-planner": {"plan", "doc"},
+    "glass-atrium-wiki-curator": {"doc"},
+    "glass-atrium-design-designer": {"doc", "review"},
+    "glass-atrium-meta-prompt-engineer": {"doc", "cleanup", "refactor"},
 }
 
 _RESULT_VALID = {"done", "done_with_concerns", "blocked", "needs_context", "fail"}

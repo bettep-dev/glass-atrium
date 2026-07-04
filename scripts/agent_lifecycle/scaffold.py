@@ -25,7 +25,7 @@ from .validation import ValidationError
 # Tier-2 loader keys on this, so an authored body must carry the RIGHT scope (a
 # wrong-scope anchor mis-loads rules — worse than absent, so it HALTs not injects).
 _ANCHOR_RE = re.compile(
-    r"^>\s*Rules:\s*GLOBAL_RULES\.md\s*\(ALL\s*\+\s*(?P<scope>[^)]*?)\s*\)",
+    r"^>\s*Rules:\s*GLASS_ATRIUM_GLOBAL_RULES\.md\s*\(ALL\s*\+\s*(?P<scope>[^)]*?)\s*\)",
     re.MULTILINE,
 )
 
@@ -82,7 +82,7 @@ class BodyFrontmatterError(ValueError):
 
 def rules_anchor_line(scope: str) -> str:
     """The load-bearing `> Rules:` header line for `scope` (the Tier-2 anchor)."""
-    return f"> Rules: GLOBAL_RULES.md (ALL + {scope})"
+    return f"> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + {scope})"
 
 
 def render_agent_md(
