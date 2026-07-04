@@ -274,8 +274,8 @@ function StatusDot({ status }) {
 
 // 22px 원형 컬러 배지 + 이니셜. named agent 외에는 id 해시로 안정 색상
 const AGENT_NAMED_COLORS = {
-  'intel-planner':    '#3b82f6',
-  'intel-researcher': '#8b5cf6',
+  'glass-atrium-intel-planner':    '#3b82f6',
+  'glass-atrium-intel-researcher': '#8b5cf6',
   writer:     '#06b6d4',
   reviewer:   '#10b981',
   coder:      '#f59e0b',

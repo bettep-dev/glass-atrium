@@ -119,10 +119,10 @@ const STYLE_REF_GREENFIELD = 'greenfield' as const;
 // style_ref telemetry is a DEV-only graduation signal — non-DEV agents do not
 // emit style_ref, so including them corrupts overall_emission_rate (inflates the
 // denominator). DEV membership is derived at RUNTIME from the agent-registry
-// (canonical SoT) via this 'dev-' name prefix — the registry has no `scope`
+// (canonical SoT) via this 'glass-atrium-dev-' name prefix — the registry has no `scope`
 // field, so the prefix is the DEV discriminator per core-compliance-matrix Scope
 // Legend. No hardcoded DEV_AGENTS array.
-const DEV_AGENT_PREFIX = 'dev-';
+const DEV_AGENT_PREFIX = 'glass-atrium-dev-';
 
 interface TierCountDbRow {
   approval_tier: string;
@@ -366,7 +366,7 @@ async function handleImprovement(
   // appended to THIS where var ALONE, over its OWN buildOutcomeWhere(...) call
   // (not the outcomeWhere above) — unaffected by the registry-membership
   // scoping on outcomeWhere. DEV keys derived at runtime from the registry
-  // ('dev-' prefix). Fail-soft: an empty DEV set skips the predicate
+  // ('glass-atrium-dev-' prefix). Fail-soft: an empty DEV set skips the predicate
   // (fail-open) — Prisma.join([]) is invalid SQL.
   const devAgents = canonicalKeys.filter((name) =>
     name.startsWith(DEV_AGENT_PREFIX),

@@ -293,13 +293,13 @@ export const DIAGRAMS = [
     probes["Pre-delegation safety probes"]
 
     subgraph code_team["Coding team"]
-        planner_c["intel-planner (writes the plan)"]
+        planner_c["glass-atrium-intel-planner (writes the plan)"]
         stage2_gate{"Plan feasible? (complex plans)"}
-        cr_verdict["qa-code-reviewer (plan check)"]
+        cr_verdict["glass-atrium-qa-code-reviewer (plan check)"]
         dev_verdict["developer (plan check)"]
         dev_wave["DEV agents (write the code)"]
-        reviewer["qa-code-reviewer (reviews the code)"]
-        qa-debugger["qa-debugger (handles repeat failures)"]
+        reviewer["glass-atrium-qa-code-reviewer (reviews the code)"]
+        glass-atrium-qa-debugger["glass-atrium-qa-debugger (handles repeat failures)"]
     end
 
     subgraph code_out["Coding team output"]
@@ -331,8 +331,8 @@ export const DIAGRAMS = [
     dev_verdict -. "not feasible → replan" .-> planner_c
     dev_wave -- "code" --> reviewer
     reviewer -- "approve" --> git_pr
-    dev_wave -. "2nd failure" .-> qa-debugger
-    qa-debugger -- "fix complete" --> reviewer
+    dev_wave -. "2nd failure" .-> glass-atrium-qa-debugger
+    glass-atrium-qa-debugger -- "fix complete" --> reviewer
 
     from_doc --> monitor
     git_pr --> monitor
@@ -349,11 +349,11 @@ export const DIAGRAMS = [
     to_monitor[Monitoring verification → orchestration graph]
 
     subgraph doc_team["Document team"]
-        intel-researcher["intel-researcher (gathers sources)"]
-        planner_d["intel-planner (plans the doc)"]
-        design-designer["design-designer (advises on visuals)"]
+        glass-atrium-intel-researcher["glass-atrium-intel-researcher (gathers sources)"]
+        planner_d["glass-atrium-intel-planner (plans the doc)"]
+        glass-atrium-design-designer["glass-atrium-design-designer (advises on visuals)"]
         domain["domain agents (fill in content)"]
-        intel-reporter["intel-reporter (writes the doc)"]
+        glass-atrium-intel-reporter["glass-atrium-intel-reporter (writes the doc)"]
     end
 
     subgraph clauded_routes["Document API"]
@@ -372,19 +372,19 @@ export const DIAGRAMS = [
         md_root[/"Old document copies (read-only)"/]
     end
 
-    from_orch --> intel-researcher
-    from_orch -. "reads progress files at session start" .-> intel-researcher
+    from_orch --> glass-atrium-intel-researcher
+    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-researcher
     from_orch -. "reads progress files at session start" .-> planner_d
-    from_orch -. "reads progress files at session start" .-> intel-reporter
+    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-reporter
 
-    intel-researcher -- "research results" --> planner_d
+    glass-atrium-intel-researcher -- "research results" --> planner_d
     planner_d -- "plan document" --> domain
-    domain -- "domain content" --> intel-reporter
-    intel-reporter -- "save" --> post_api
+    domain -- "domain content" --> glass-atrium-intel-reporter
+    glass-atrium-intel-reporter -- "save" --> post_api
     planner_d -- "save" --> post_api
-    planner_d -. "if visually heavy" .-> design-designer
-    design-designer -. "advice" .-> planner_d
-    design-designer -. "advice" .-> intel-reporter
+    planner_d -. "if visually heavy" .-> glass-atrium-design-designer
+    glass-atrium-design-designer -. "advice" .-> planner_d
+    glass-atrium-design-designer -. "advice" .-> glass-atrium-intel-reporter
 
     post_api -- "stores file" --> html_root
     post_api -- "adds row" --> docs_row

@@ -155,7 +155,7 @@ export function extractFlows(
 
 // node parsing
 
-// Mermaid node id 문자 클래스 단일 SoT — 내부 hyphen 허용(`design-designer`), 단 trailing/연속 hyphen 불허:
+// Mermaid node id 문자 클래스 단일 SoT — 내부 hyphen 허용(`glass-atrium-design-designer`), 단 trailing/연속 hyphen 불허:
 // 무공백 `A-->B` 류에서 bare-id 가 edge op 의 `--` 를 침식하지 않게 hyphen 은 alnum 사이에서만 매칭.
 const NODE_ID_PATTERN = "[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*";
 
@@ -550,7 +550,7 @@ interface NodeTypeRule {
 }
 
 // Order matters — earlier rules win on substring overlap. Agent rules MUST
-// precede hook rules so "sec-guard" (compound word containing "guard")
+// precede hook rules so "glass-atrium-sec-guard" (compound word containing "guard")
 // resolves to agent, not hook. Daemon precedes both for the same reason.
 const NODE_TYPE_RULES: ReadonlyArray<NodeTypeRule> = [
   { keywords: ["daemon", "데몬"], type: "daemon" },
@@ -558,13 +558,13 @@ const NODE_TYPE_RULES: ReadonlyArray<NodeTypeRule> = [
     keywords: [
       "agent",
       "에이전트",
-      "intel-researcher",
-      "intel-planner",
-      "intel-reporter",
-      "qa-code-reviewer",
-      "qa-debugger",
-      "design-designer",
-      "sec-guard",
+      "glass-atrium-intel-researcher",
+      "glass-atrium-intel-planner",
+      "glass-atrium-intel-reporter",
+      "glass-atrium-qa-code-reviewer",
+      "glass-atrium-qa-debugger",
+      "glass-atrium-design-designer",
+      "glass-atrium-sec-guard",
       "오케스트레이터",
     ],
     type: "agent",
@@ -572,7 +572,7 @@ const NODE_TYPE_RULES: ReadonlyArray<NodeTypeRule> = [
   { keywords: ["hook", "훅", "scanner", "guard", "validator"], type: "hook" },
   { keywords: [".sh", "script", "스크립트", "cycle.sh", "apply.sh"], type: "script" },
   // Store keywords — "git pr" matches "Git PR" while "vault" catches Obsidian.
-  // "repository" (not bare "repo") — "repo" 는 "intel-reporter" 의 substring.
+  // "repository" (not bare "repo") — "repo" 는 "glass-atrium-intel-reporter" 의 substring.
   { keywords: ["store", "vault", "obsidian", "DB", "저장소", "repository", "git pr", "queue"], type: "store" },
   { keywords: ["external", "외부", "프로젝트"], type: "external" },
   // "blocked" (not bare "block") — "COMPLETION block output" 류 라벨이 gateway 로 재분류되지 않게.
