@@ -562,7 +562,7 @@ PRE_VERIFY_MODEL = HAIKU_MODEL
 
 # Compliance source files — the verifier reads excerpts and must check
 # the patch against all 4 axes independently.
-DEFAULT_RULES_DIR = HOME / ".claude" / "rules"
+DEFAULT_RULES_DIR = HOME / ".claude" / "rules" / "glass-atrium"
 COMPLIANCE_MATRIX_FILE = DEFAULT_RULES_DIR / "core-compliance-matrix.md"
 GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLASS_ATRIUM_GLOBAL_RULES.md"
 

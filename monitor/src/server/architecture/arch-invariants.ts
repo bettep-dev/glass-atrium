@@ -17,7 +17,7 @@ export interface ArchInvariants {
 	agents: number;
 	// `~/Library/LaunchAgents/com.glass-atrium.*.plist`.
 	launchd: number;
-	// `~/.glass-atrium/rules/*.md` (GLASS_ATRIUM_GLOBAL_RULES.md 동거 포함 — 현 SoT 결정).
+	// `~/.glass-atrium/rules/glass-atrium/*.md` (GLASS_ATRIUM_GLOBAL_RULES.md 동거 포함 — 현 SoT 결정).
 	rules: number;
 	// `~/.glass-atrium/scoped/*.md` 전체 (scope-*.md + shared-*.md).
 	scoped: number;

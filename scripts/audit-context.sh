@@ -205,7 +205,8 @@ def scan_registry(root: Path):
 def main():
     agents = scan_dir(ROOT / "agents", ".md", capture_frontmatter=True)
     # add description to rule rows
-    rules = scan_dir(ROOT / "rules", ".md", capture_frontmatter=False)
+    # scan_dir is NON-recursive — rules live foldered under rules/glass-atrium/
+    rules = scan_dir(ROOT / "rules" / "glass-atrium", ".md", capture_frontmatter=False)
     for r in rules:
         r["tier"] = rule_tier(r["name"])
     skills = scan_skills(ROOT / "skills")

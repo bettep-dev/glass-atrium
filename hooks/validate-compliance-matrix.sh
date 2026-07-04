@@ -42,15 +42,15 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Native rules ship FLAT this session: rules/*.md at the top level of
-# ~/.claude/rules/ (native autoload is ~/.claude/rules/*.md top-level-only;
-# foldering is deferred pending the rules-recursion probe). MATRIX_FILE +
-# RULES_DIR default to that top-level dir; both stay ENV-overridable so the Bats
-# suite can drive Layer B against controlled fixtures. These SessionStart hooks
-# are client-fired (a settings.json env block may not reach them), so the DEFAULT
-# constants — not an env block — carry the top-level paths.
-readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/core-compliance-matrix.md}"
-readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules}"
+# Native rules live FOLDERED at ~/.claude/rules/glass-atrium/*.md — the
+# rules-recursion probe settled RECURSIVE (native autoload discovers nested
+# rule files), so foldering is safe. MATRIX_FILE + RULES_DIR default to that
+# folder; both stay ENV-overridable so the Bats suite can drive Layer B against
+# controlled fixtures. These SessionStart hooks are client-fired (a
+# settings.json env block may not reach them), so the DEFAULT constants — not
+# an env block — carry the foldered paths.
+readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/glass-atrium/core-compliance-matrix.md}"
+readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules/glass-atrium}"
 # Scoped-rules dir — Tier-2/Tier-3 rule files relocated OUT of the native rules
 # autoload glob (Approach A diet) are consumed IN PLACE from ~/.glass-atrium/scoped
 # (dropped from the ~/.claude farm), reachable for on-demand + hook-injected reads.

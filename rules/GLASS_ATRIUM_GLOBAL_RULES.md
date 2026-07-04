@@ -1,1 +1,0 @@
-../agents/GLASS_ATRIUM_GLOBAL_RULES.md

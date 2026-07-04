@@ -107,7 +107,7 @@ class StorePaths:
 
     @property
     def compliance_matrix(self) -> Path:
-        return self.ga_root / "rules" / "core-compliance-matrix.md"
+        return self.ga_root / "rules" / "glass-atrium" / "core-compliance-matrix.md"
 
     @property
     def inject_scope_rules(self) -> Path:

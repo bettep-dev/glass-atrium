@@ -179,7 +179,7 @@ async function countUniqueHookBasenames(
 // 라이브 파일시스템에서 아트리움 자산을 카운트 (각 신호 격리).
 async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 	const agentsDir = join(ATRIUM_ROOT, "agents");
-	const rulesDir = join(ATRIUM_ROOT, "rules");
+	const rulesDir = join(ATRIUM_ROOT, "rules", "glass-atrium");
 	const scopedDir = join(ATRIUM_ROOT, "scoped");
 	const skillsDir = join(ATRIUM_ROOT, "skills");
 	const hooksDir = join(ATRIUM_ROOT, "hooks");

@@ -2,7 +2,7 @@
 
 Common rules for **all agents** (ALL scope). Scope-specific rules are in dedicated files (see bottom).
 
-> Scope legend: See [core-compliance-matrix.md#Scope Legend](../rules/core-compliance-matrix.md#scope-legend) for the full scope→agents mapping
+> Scope legend: See [core-compliance-matrix.md#Scope Legend](../rules/glass-atrium/core-compliance-matrix.md#scope-legend) for the full scope→agents mapping
 
 ## Role
 
@@ -188,4 +188,4 @@ Single source of truth for all excuse→rebuttal pairs. Domain-scoped rule files
 | Testing | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 | Decision | "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
 
-> Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix
+> Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix

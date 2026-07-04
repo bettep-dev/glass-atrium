@@ -51,6 +51,7 @@ except Exception as exc:  # noqa: BLE001 — import failure → skip, not error
 _PATH_CORPUS: tuple[str, ...] = (
     # sensitive
     "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
+    "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
     "GLASS_ATRIUM_GLOBAL_RULES.md",
     "rules/security.md",
@@ -150,6 +151,7 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
     def test_known_sensitive_paths_all_refused(self) -> None:
         for path in (
             "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
+            "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
             "rules/security.md",
             "scoped/scope-security.md",
             "project/.env",
@@ -198,10 +200,14 @@ class CliExitContract(unittest.TestCase):
         )
 
     def test_path_sensitive_exits_3_with_loud_message(self) -> None:
-        res = self._run(["path", "rules/GLASS_ATRIUM_GLOBAL_RULES.md"])
-        self.assertEqual(res.returncode, sp.EXIT_SENSITIVE)
-        self.assertIn("REFUSED", res.stderr)
-        self.assertIn("GLASS_ATRIUM_GLOBAL_RULES", res.stderr)
+        for path in (
+            "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
+            "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
+        ):
+            res = self._run(["path", path])
+            self.assertEqual(res.returncode, sp.EXIT_SENSITIVE)
+            self.assertIn("REFUSED", res.stderr)
+            self.assertIn("GLASS_ATRIUM_GLOBAL_RULES", res.stderr)
 
     def test_path_clean_exits_0_silent(self) -> None:
         res = self._run(["path", "agents/dev-python.md"])

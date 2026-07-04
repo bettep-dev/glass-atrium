@@ -167,7 +167,7 @@ done < <(find "${DEST_ROOT}" -name .git -print0 2>/dev/null || true)
 echo "  nested .git (excluding root): ${nested_git}"
 
 # confirm GLOBAL_RULES link resolves within the tree (link is relative now)
-gr_link="${DEST_ROOT}/rules/GLASS_ATRIUM_GLOBAL_RULES.md"
+gr_link="${DEST_ROOT}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
 gr_ok="no"
 if [[ -L "${gr_link}" ]]; then
   gr_tgt=""
