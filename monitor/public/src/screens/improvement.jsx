@@ -481,7 +481,7 @@ function ScreenImprovement({ onNav }) {
         .i-row-card:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
         .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
-        .i-empty-col { border:1.5px dashed rgb(var(--faint) / 0.4); border-radius:8px; padding:22px 12px; text-align:center; color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
+        .i-empty-col { border:1px dashed rgb(var(--faint) / 0.5); border-radius:8px; padding:28px; text-align:center; color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:12px; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
@@ -1568,12 +1568,8 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No tasks in the last {windowDays} days
+						No tasks in the last {windowDays} days
 					</div>
 				</div>
 			</div>
@@ -1773,12 +1769,8 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No suggestions in the last 30 days
+						No suggestions in the last 30 days
 					</div>
 				</div>
 			</div>
@@ -2047,12 +2039,8 @@ function StyleRefCardI({ state, styleRef }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> Collecting data
+						Collecting data
 					</div>
 				</div>
 			)}
@@ -2232,12 +2220,8 @@ function LearningLogCardI({ state, onRetry }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No learned patterns yet
+						No learned patterns yet
 					</div>
 				</div>
 			</div>
@@ -2304,12 +2288,8 @@ function LearningLogTableI({ patterns }) {
 			<div className="px-3 pb-3">
 				<div
 					className="i-empty-col"
-					style={{
-						borderColor: "rgb(var(--info) / 0.4)",
-						color: "rgb(var(--info))",
-					}}
 				>
-					<SymI s="ℹ" size={12} /> No new patterns in the last 7 days
+					No new patterns in the last 7 days
 				</div>
 			</div>
 		);
@@ -2583,12 +2563,8 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No improvement cycles recorded yet
+						No improvement cycles recorded yet
 					</div>
 				</div>
 			</div>
@@ -2753,12 +2729,8 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No candidate patterns in the last 7 days
+						No candidate patterns in the last 7 days
 					</div>
 				</div>
 			</div>
@@ -2785,12 +2757,8 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 				{active.length === 0 ? (
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> No active candidates — all declined (see
+						No active candidates — all declined (see
 						backlog)
 					</div>
 				) : (
@@ -2921,12 +2889,8 @@ function TrendCardI({ state, aggregate }) {
 				<div className="px-3 pb-3">
 					<div
 						className="i-empty-col"
-						style={{
-							borderColor: "rgb(var(--info) / 0.4)",
-							color: "rgb(var(--info))",
-						}}
 					>
-						<SymI s="ℹ" size={12} /> Not enough days to plot a trend
+						Not enough days to plot a trend
 					</div>
 				</div>
 			</div>
