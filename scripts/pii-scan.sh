@@ -80,6 +80,25 @@ collect_patterns() {
   fi
 }
 
+# --- 공개 식별자 정밀도 필터 ---------------------------------------------------
+# "<user>-dev" = 프로젝트의 공개 GitHub org 토큰 — 배포 URL(README · install.sh ·
+#   pricing.json 갱신 endpoint)에 의도적으로 공개된 식별자. grep -w 는 하이픈을
+#   단어 경계로 취급해 org 토큰 내부의 username 부분 문자열을 오탐한다.
+# 범위 한정 (게이트 전역 완화 아님): 단어 경계(w) 패턴에만 적용 + 라인 통째
+#   허용이 아니라 org 토큰만 제거 후 재검사 — 같은 라인에 org 토큰 밖의 실제
+#   username 이 남아 있으면 계속 FAIL. 토큰은 런타임 $USER 에서 유도한다
+#   (여기 하드코딩하면 그 자체가 추적 대상 PII).
+filter_public_org() {
+  # $1 = 패턴 · stdin = hit 라인 → 허용 토큰 제거 후에도 매치가 남는 라인만 통과
+  local pat="$1" line stripped
+  while IFS= read -r line; do
+    stripped="${line//"${pat}-dev"/}"
+    if printf '%s\n' "${stripped}" | grep -q -w -F -e "${pat}"; then
+      printf '%s\n' "${line}"
+    fi
+  done
+}
+
 # --- 스캔 (모드별) -----------------------------------------------------------
 # 출력 = 매치 라인 (file:line:content) → 호출부가 hit 존재 여부로 게이트 판정.
 # grep exit 1(무매치)은 정상 → || true. 패턴 매치는 전부 -F 고정 문자열.
@@ -134,6 +153,9 @@ scan_worktree_check() {
       for dir in "$@"; do
         hits+="$(scan_tree "${pat}" "${flag}" "${dir}")"
       done
+    fi
+    if [[ -n "${hits}" && "${flag}" == "w" ]]; then
+      hits="$(printf '%s\n' "${hits}" | filter_public_org "${pat}")"
     fi
     if [[ -n "${hits}" ]]; then
       # 패턴 자체(개인 정보)는 로그에 마스킹 — hit 라인만으로 위치 특정 가능
