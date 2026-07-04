@@ -108,8 +108,8 @@ const STYLE_REF_WINDOW_DAYS = 7;
 const TIER_BREAKDOWN_WINDOW_DAYS = 30;
 
 // Cross-layer SoT for the greenfield sentinel string, mirrored verbatim in:
-//   - bash:    ~/.claude/hooks/lib/style-ref-consts.sh      STYLE_REF_GREENFIELD
-//   - python:  ~/.claude/hooks/_style_ref_consts.py         STYLE_REF_GREENFIELD
+//   - bash:    ~/.glass-atrium/hooks/lib/style-ref-consts.sh   STYLE_REF_GREENFIELD
+//   - python:  ~/.glass-atrium/hooks/_style_ref_consts.py      STYLE_REF_GREENFIELD
 //   - TypeScript: this file (module-private — types/ stays type-only)
 // The JSX consumer (public/src/screens/improvement.jsx) cannot import this const
 // (Babel-standalone in-browser, public/ outside tsconfig include) — it tracks the

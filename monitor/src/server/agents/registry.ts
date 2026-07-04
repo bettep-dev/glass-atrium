@@ -1,5 +1,5 @@
 // agent-registry.json loader → agent name → AgentRegistryEntry Map (singleton cache).
-// SoT: `~/.claude/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
+// SoT: `~/.glass-atrium/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
 // singleton 이유: static 파일이라 per-request fs read + JSON.parse 회피 → /api/agents/summary p95 budget 보호.
 
 import { readFile } from "node:fs/promises";
@@ -166,13 +166,13 @@ export function buildAgentMembershipFragment(
   return buildMembershipInList(canonicalAgents, columnRef);
 }
 
-// env override → defaults to `~/.claude/agent-registry.json` (user home).
+// env override → defaults to `~/.glass-atrium/agent-registry.json` (install root).
 function resolveRegistryPath(): string {
   const override = process.env.AGENT_REGISTRY_PATH;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join(homedir(), ".claude", "agent-registry.json");
+  return join(homedir(), ".glass-atrium", "agent-registry.json");
 }
 
 // raw JSON → AgentRegistryEntry Map (defensive normalize).
@@ -221,14 +221,14 @@ async function enrichDescriptions(entries: Map<string, AgentRegistryEntry>): Pro
   );
 }
 
-// `~/.claude/agents/` — derived from the registry path's directory so an
+// `~/.glass-atrium/agents/` — derived from the registry path's directory so an
 // AGENT_REGISTRY_PATH override (tests) co-locates the `.md` fixtures with the JSON.
 function resolveAgentMdDir(): string {
   const override = process.env.AGENT_REGISTRY_PATH;
   if (typeof override === "string" && override.length > 0) {
     return join(dirname(override), "agents");
   }
-  return join(homedir(), ".claude", "agents");
+  return join(homedir(), ".glass-atrium", "agents");
 }
 
 // Defensive `.md` description read — graceful on missing file / odd frontmatter.

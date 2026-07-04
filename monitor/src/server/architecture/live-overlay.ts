@@ -63,23 +63,23 @@ const HOME = homedir();
 const WRITERS: ReadonlyArray<WriterDescriptor> = [
 	{
 		name: "cost-tracker",
-		path: `${HOME}/.claude/hooks/cost-tracker.sh`,
+		path: `${HOME}/.glass-atrium/hooks/cost-tracker.sh`,
 		marker: "PHASE1-DUALWRITE-BEGIN",
 	},
 	{
 		name: "agent-tracker",
-		path: `${HOME}/.claude/hooks/agent-tracker.sh`,
+		path: `${HOME}/.glass-atrium/hooks/agent-tracker.sh`,
 		marker: "PHASE1-DUALWRITE-BEGIN",
 	},
 	{
 		name: "outcome-record",
-		path: `${HOME}/.claude/hooks/track-outcome.sh`,
+		path: `${HOME}/.glass-atrium/hooks/track-outcome.sh`,
 		marker: "PHASE3-OUTCOME-DUALWRITE-BEGIN",
 	},
 	{
 		name: "learning-aggregator",
 		// import token, not an inline PHASE marker (dual-write block moved to _pg_learning_dualwrite)
-		path: `${HOME}/.claude/hooks/learning-aggregator.py`,
+		path: `${HOME}/.glass-atrium/hooks/learning-aggregator.py`,
 		marker: "_pg_learning_dualwrite",
 	},
 	{

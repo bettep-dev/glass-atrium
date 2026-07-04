@@ -62,7 +62,7 @@ function getDaemonConfigPath(): string {
 }
 
 function getAgentsDir(): string {
-  return process.env.MODEL_CONFIG_AGENTS_DIR ?? path.join(os.homedir(), ".claude", "agents");
+  return process.env.MODEL_CONFIG_AGENTS_DIR ?? path.join(os.homedir(), ".glass-atrium", "agents");
 }
 
 function getApplyLockPath(): string {
@@ -487,9 +487,9 @@ function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "fa
 
 /**
  * Upsert ONLY the `model:` line in one agent file's frontmatter; 'inherit' removes it.
- * The target path is realpath-resolved BEFORE the temp+rename so a symlinked
- * ~/.claude/agents entry keeps pointing at the GA-tracked file (D4 symlink hazard) —
- * the write lands inside the RESOLVED directory. Already-satisfied files are never
+ * The target path is realpath-resolved BEFORE the temp+rename so a ~/.glass-atrium/agents
+ * entry consumed in place resolves to the GA-tracked file — the write lands inside the
+ * RESOLVED directory. Already-satisfied files are never
  * rewritten (alias values + bytes preserved). Unparseable frontmatter → skipped + surfaced.
  */
 async function writeFrontmatterModel(linkPath: string, desired: string): Promise<SurfaceFileResult> {
