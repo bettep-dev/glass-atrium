@@ -360,22 +360,32 @@ async function handleImprovement(
   // gone.
   const outcomeWhere = buildOutcomeWhere(windowDays, agent, canonicalKeys);
   // style_ref telemetry window fixed at 7 days, independent of `windowDays`.
-  // Agent filter still applies so the per-agent drill-down stays consistent.
-  // canonicalKeys now applies to THIS base too (safe — devAgents below is
-  // already a registry subset, so no double-gating concern). DEV-subset gate
+  // Agent filter still applies so the per-agent drill-down stays consistent
+  // (drill-down matches the canonical prefixed key only). DEV-subset gate
   // appended to THIS where var ALONE, over its OWN buildOutcomeWhere(...) call
   // (not the outcomeWhere above) — unaffected by the registry-membership
   // scoping on outcomeWhere. DEV keys derived at runtime from the registry
   // ('glass-atrium-dev-' prefix). Fail-soft: an empty DEV set skips the predicate
-  // (fail-open) — Prisma.join([]) is invalid SQL.
+  // (fail-open, plain registry-gated where kept) — Prisma.join([]) is invalid SQL.
   const devAgents = canonicalKeys.filter((name) =>
     name.startsWith(DEV_AGENT_PREFIX),
   );
-  const baseStyleRefWhere = buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys);
+  // H6 rename-transition dual-match — pre-rename core.outcomes rows carry the
+  // bare 'dev-*' agent form; the graduation signal keeps that history by
+  // matching each registry DEV key alongside its bare sibling. The in-builder
+  // canonicalKeys gate is intentionally omitted on the DEV branch: it would
+  // AND-drop the bare siblings, and the dual-form IN-list is itself derived
+  // from registry DEV keys alone, so the T8 registry-as-display-SoT intent
+  // holds. GROUP BY agent keeps the two forms as separate rows;
+  // buildStyleRefSummary sums both into the overall rates.
+  const devTelemetryAgents = devAgents.flatMap((name) => [
+    name,
+    `dev-${name.slice(DEV_AGENT_PREFIX.length)}`,
+  ]);
   const styleRefWhere =
     devAgents.length === 0
-      ? baseStyleRefWhere
-      : Prisma.sql`${baseStyleRefWhere} AND agent IN (${Prisma.join(devAgents)})`;
+      ? buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys)
+      : Prisma.sql`${buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent)} AND agent IN (${Prisma.join(devTelemetryAgents)})`;
 
   const prisma = getPrisma();
   try {
