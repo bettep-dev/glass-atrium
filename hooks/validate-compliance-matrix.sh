@@ -2,7 +2,7 @@
 # validate-compliance-matrix.sh — Two-layer audit of core-compliance-matrix.md.
 #
 # Layer A (advisory, exit 0): filename-set drift between the matrix's declared
-#   rule files and the actual ~/.claude/rules/glass-atrium/ (+ ~/.glass-atrium/
+#   rule files and the actual ~/.claude/rules/ (+ ~/.glass-atrium/
 #   scoped/) filesystem. A renamed/deleted file without a matrix update (broken
 #   pointer) or a new undeclared file (governance gap) surfaces as a single
 #   banner line.
@@ -42,15 +42,15 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Native rules are FOLDERED into ~/.claude/rules/glass-atrium/ (the essential-
-# symlinks-only layout: the flat ~/.claude/rules/*.md farm was relocated into the
-# glass-atrium/ subdir, still native-loaded). MATRIX_FILE + RULES_DIR default into
-# that subdir; all three stay ENV-overridable so the Bats suite can drive Layer B
-# against controlled fixtures. These SessionStart hooks are client-fired (a
-# settings.json env block may not reach them), so the DEFAULT constants — not an
-# env block — carry the relocated paths.
-readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/glass-atrium/core-compliance-matrix.md}"
-readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules/glass-atrium}"
+# Native rules ship FLAT this session: rules/*.md at the top level of
+# ~/.claude/rules/ (native autoload is ~/.claude/rules/*.md top-level-only;
+# foldering is deferred pending the rules-recursion probe). MATRIX_FILE +
+# RULES_DIR default to that top-level dir; both stay ENV-overridable so the Bats
+# suite can drive Layer B against controlled fixtures. These SessionStart hooks
+# are client-fired (a settings.json env block may not reach them), so the DEFAULT
+# constants — not an env block — carry the top-level paths.
+readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/core-compliance-matrix.md}"
+readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules}"
 # Scoped-rules dir — Tier-2/Tier-3 rule files relocated OUT of the native rules
 # autoload glob (Approach A diet) are consumed IN PLACE from ~/.glass-atrium/scoped
 # (dropped from the ~/.claude farm), reachable for on-demand + hook-injected reads.
