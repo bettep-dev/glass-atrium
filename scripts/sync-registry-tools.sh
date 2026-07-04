@@ -91,7 +91,7 @@ if "agents" not in registry or not isinstance(registry["agents"], dict):
 fs_agents = {}
 parse_errors = []
 for md_path in sorted(agents_dir.glob("*.md")):
-    if md_path.name == "GLOBAL_RULES.md":
+    if md_path.name == "GLASS_ATRIUM_GLOBAL_RULES.md":
         continue
     text = md_path.read_text(encoding="utf-8")
     # frontmatter delimited by lines containing only '---' — split on first two

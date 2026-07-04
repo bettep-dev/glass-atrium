@@ -479,7 +479,7 @@ ApprovalTier = Literal["auto", "safety", ""]
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
 #     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
 _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(^|/)GLOBAL_RULES\.md$"),
+    re.compile(r"(^|/)GLASS_ATRIUM_GLOBAL_RULES\.md$"),
     re.compile(r"(^|/)security\.md$"),
     re.compile(r"(^|/)scope-security\.md$"),
     re.compile(r"(^|/)\.env(\.|$)"),
@@ -564,7 +564,7 @@ PRE_VERIFY_MODEL = HAIKU_MODEL
 # the patch against all 4 axes independently.
 DEFAULT_RULES_DIR = HOME / ".claude" / "rules"
 COMPLIANCE_MATRIX_FILE = DEFAULT_RULES_DIR / "core-compliance-matrix.md"
-GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLOBAL_RULES.md"
+GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLASS_ATRIUM_GLOBAL_RULES.md"
 
 # Truncation caps for verifier prompt (token budget protection).
 RULE_EXCERPT_CHAR_CAP = 6000
@@ -583,33 +583,33 @@ PRE_VERIFY_FAILURES_LIMIT = 8
 # Used to pick the correct scope-*.md file for axis C3.
 _AGENT_SCOPE_MAP: dict[str, str] = {
     # DEV scope
-    "dev-front": "scope-dev.md",
-    "dev-react": "scope-dev.md",
-    "dev-angular": "scope-dev.md",
-    "dev-gsap": "scope-dev.md",
-    "dev-android": "scope-dev.md",
-    "dev-nestjs": "scope-dev.md",
-    "dev-node": "scope-dev.md",
-    "dev-python": "scope-dev.md",
-    "dev-db": "scope-dev.md",
-    "dev-rag": "scope-dev.md",
-    "dev-animator": "scope-dev.md",
-    "dev-shell": "scope-dev.md",
+    "glass-atrium-dev-front": "scope-dev.md",
+    "glass-atrium-dev-react": "scope-dev.md",
+    "glass-atrium-dev-angular": "scope-dev.md",
+    "glass-atrium-dev-gsap": "scope-dev.md",
+    "glass-atrium-dev-android": "scope-dev.md",
+    "glass-atrium-dev-nestjs": "scope-dev.md",
+    "glass-atrium-dev-node": "scope-dev.md",
+    "glass-atrium-dev-python": "scope-dev.md",
+    "glass-atrium-dev-db": "scope-dev.md",
+    "glass-atrium-dev-rag": "scope-dev.md",
+    "glass-atrium-dev-animator": "scope-dev.md",
+    "glass-atrium-dev-shell": "scope-dev.md",
     # META scope
-    "meta-prompt-engineer": "scope-meta.md",
-    "meta-agent": "scope-meta.md",
+    "glass-atrium-meta-prompt-engineer": "scope-meta.md",
+    "glass-atrium-meta-agent": "scope-meta.md",
     # DESIGN scope
-    "design-designer": "scope-design.md",
+    "glass-atrium-design-designer": "scope-design.md",
     # RESEARCH / PLANNING / REPORT
-    "intel-researcher": "scope-research.md",
-    "intel-planner": "scope-planning.md",
-    "intel-reporter": "scope-report.md",
+    "glass-atrium-intel-researcher": "scope-research.md",
+    "glass-atrium-intel-planner": "scope-planning.md",
+    "glass-atrium-intel-reporter": "scope-report.md",
     # QA scope
-    "qa-code-reviewer": "scope-qa.md",
-    "qa-debugger": "scope-qa.md",
+    "glass-atrium-qa-code-reviewer": "scope-qa.md",
+    "glass-atrium-qa-debugger": "scope-qa.md",
     # SECURITY / WIKI
-    "sec-guard": "scope-security.md",
-    "wiki-curator": "scope-wiki.md",
+    "glass-atrium-sec-guard": "scope-security.md",
+    "glass-atrium-wiki-curator": "scope-wiki.md",
 }
 
 

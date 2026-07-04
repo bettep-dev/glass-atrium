@@ -362,7 +362,7 @@ update_roster_names_from_manifest() {
     | select(type == "string")
     | select(test("^agents/[^/]+\\.md$"))
     | sub("^agents/"; "") | sub("\\.md$"; "")
-    | select(. != "GLOBAL_RULES")
+    | select(. != "GLASS_ATRIUM_GLOBAL_RULES")
   ' -- "${manifest}" 2>/dev/null || true
 }
 
@@ -377,7 +377,7 @@ update_roster_names_from_dir() {
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
     base="${base%.md}"
-    [[ "${base}" == 'GLOBAL_RULES' ]] && continue
+    [[ "${base}" == 'GLASS_ATRIUM_GLOBAL_RULES' ]] && continue
     printf '%s\n' "${base}"
   done
 }
@@ -674,7 +674,7 @@ update_merge_agent_editable_regions() {
   for file in "${new_dir}"/agents/*.md; do
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
-    [[ "${base}" == 'GLOBAL_RULES.md' ]] && continue
+    [[ "${base}" == 'GLASS_ATRIUM_GLOBAL_RULES.md' ]] && continue
     local_file="${root}/agents/${base}"
     if [[ ! -f "${local_file}" ]]; then
       update_log "agent merge: ${base} is release-only (ADD) — defer to the agent_lifecycle ceremony, skipping"

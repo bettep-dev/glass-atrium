@@ -79,7 +79,7 @@ FILE_PATH=$(hook_get_tool_input "${INPUT}" "file_path")
 # 2. Allow exact basenames (memory-index + root-rule files).
 BASENAME=$(basename "${FILE_PATH}")
 case "${BASENAME}" in
-  CLAUDE.md | MEMORY.md | GLOBAL_RULES.md) exit 0 ;;
+  CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) exit 0 ;;
   *) : ;;
 esac
 

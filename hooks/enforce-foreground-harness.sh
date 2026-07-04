@@ -173,7 +173,7 @@ while IFS= read -r path; do
   # First segment after the root.
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
-    CLAUDE.md | MEMORY.md | GLOBAL_RULES.md) continue ;;
+    CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
     *)
       all_exempt=false
       break

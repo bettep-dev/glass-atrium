@@ -117,11 +117,11 @@ log "LLM preflight passed"
 
 EVAL_PROMPT="You are reviewing agent instruction files in ~/.claude/agents/.
 
-You must read GLOBAL_RULES.md first, then read every changed file in ${FILE_LIST}.
+You must read GLASS_ATRIUM_GLOBAL_RULES.md first, then read every changed file in ${FILE_LIST}.
 Do not guess. If a file cannot be read, treat that as FAIL.
 
 Evaluate each file on these 5 checks:
-1. Consistency with GLOBAL_RULES.md
+1. Consistency with GLASS_ATRIUM_GLOBAL_RULES.md
 2. No role boundary violations between agents
 3. Required sections present exactly: Goal, Guardrails, Prohibitions
 4. skills array matches the agent group (DEV / QA / non-DEV)
@@ -129,7 +129,7 @@ Evaluate each file on these 5 checks:
 
 FAIL conditions:
 - Any one of the 5 checks fails for any file
-- GLOBAL_RULES.md or any target file is not readable
+- GLASS_ATRIUM_GLOBAL_RULES.md or any target file is not readable
 - The agent group cannot be determined confidently
 - The skills array is missing or ambiguous
 - A required section heading is missing exactly as written
