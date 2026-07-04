@@ -150,7 +150,7 @@ Output format rules:
 
 # Telemetry + debug output suppressed; stdout only captured.
 # Bare-harness pattern: minimal Read/Glob/Grep tool whitelist (read-only eval — no Write/Edit/Bash needed).
-# --setting-sources project,local: load agents-dir project rules so eval has GLOBAL_RULES.md context.
+# --setting-sources project,local: load agents-dir project rules so eval has GLASS_ATRIUM_GLOBAL_RULES.md context.
 EVAL_RESULT=$(OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none CLAUDE_CODE_ENABLE_TELEMETRY=0 \
   "$CLAUDE" -p \
   --model claude-sonnet-4-6 \

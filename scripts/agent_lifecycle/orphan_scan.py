@@ -4,7 +4,7 @@ Responsibilities:
     Lint the agent definition's spread across stores (md / registry / matrix /
     inject-list / manifest / symlink) for the six mismatch modes plus symlink
     integrity, with the NON-AGENT EXCLUSION SET applied BEFORE every check so a
-    clean store never false-fires on GLOBAL_RULES.md / references/ / templates/.
+    clean store never false-fires on GLASS_ATRIUM_GLOBAL_RULES.md / references/ / templates/.
     count-mismatch keys on a SINGLE declared-count SoT = the registry agents dict
     (23). domains-overlap reuses the ONE overlap predicate (overlap.py) the R1-Q3
     gate also calls — same function, same threshold, no drift. A reconciliation
@@ -87,7 +87,7 @@ def _is_excluded(rel_path: str) -> bool:
     """True when an agents/-relative path is a non-agent file (M3 exclusion set).
 
     Applied BEFORE any mismatch / dangling / count check so a clean store never
-    flags GLOBAL_RULES.md or a references/ / templates/ file as an orphan.
+    flags GLASS_ATRIUM_GLOBAL_RULES.md or a references/ / templates/ file as an orphan.
     """
     if rel_path in NON_AGENT_EXCLUSIONS:
         return True
@@ -409,7 +409,7 @@ def _check_farm_symlinks(paths: StorePaths, registry_names: set[str]) -> list[Fi
     sandbox_env + the DELETE prune). Each <target_home>/agents/<name>.md symlink
     is checked: a link whose stem is not a registry agent is STRAY (post-exclusion),
     and a link whose target is missing is DANGLING. The non-agent exclusion set
-    (GLOBAL_RULES.md, references/*, templates/*) is applied so legit farm symlinks
+    (GLASS_ATRIUM_GLOBAL_RULES.md, references/*, templates/*) is applied so legit farm symlinks
     are never flagged. A missing farm dir is a no-op (nothing to enumerate).
     """
     farm_agents = target_home(paths.ga_root) / "agents"
