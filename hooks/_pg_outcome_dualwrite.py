@@ -3,7 +3,12 @@
 #
 # Invoked from track-outcome.sh AFTER the .md frontmatter has been written; this
 # is the SECOND write, so its failure MUST NOT lose data and MUST NOT crash the
-# stop hook (exit 0 always). One BEGIN/COMMIT covers outcomes + N
+# stop hook. The shell caller runs `... | python3 helper || true`, so it absorbs
+# ANY exit code — the helper therefore reports its outcome via a NAMED exit code
+# (0 ok · non-zero = a specific failure class, see EXIT_* below) WITHOUT disrupting
+# the hook, and never silently swallows a DB-unreachable/write-failed case behind a
+# fixed exit 0 (loud-fail per shared-self-improve-hygiene "Precondition Loud-Fail
+# Principle"). One BEGIN/COMMIT covers outcomes + N
 # correction_signals + an optional learning_log UPSERT, with outcomes RETURNING
 # id bound into correction_signals.outcome_id for FK consistency. Uses
 # autocommit=False for explicit transaction control.
@@ -37,12 +42,34 @@
 #     }
 #   }
 #
-# Emits an elapsed_ms stderr line per write for latency aggregation. Exit code is
-# always 0 — the hook downstream MUST NOT see a PG-side failure.
+# Emits an elapsed_ms stderr line per write for latency aggregation. Exit code:
+# 0 on success; a named non-zero code on failure (import / envelope / DB-unreachable
+# / write-failed) paired with an explicit stderr diagnostic — the caller's `|| true`
+# keeps the stop hook uncrashed while the failure stays observable (never a silent
+# fixed exit 0).
 
 import json
 import sys
 import time
+
+# Named exit codes — loud-fail observability. A non-zero code is a VISIBLE
+# process-level failure signal, NOT a hard error: track-outcome.sh runs the helper
+# under `| python3 helper || true`, so the stop hook never crashes regardless of the
+# code. Success stays 0 so the common path is unchanged.
+EXIT_OK = 0
+EXIT_IMPORT_ERR = 3       # psycopg driver unavailable — cannot reach the DB at all
+EXIT_BAD_ENVELOPE = 4     # malformed stdin JSON envelope
+EXIT_DB_UNREACHABLE = 5   # connect failed / timed out (connection_refused | timeout)
+EXIT_WRITE_FAILED = 6     # connected but the write failed (constraint_violation | unknown)
+
+# error_kind (from _classify_error) → named exit code. An unmapped kind defaults to
+# EXIT_WRITE_FAILED (reached-the-DB-but-failed classification).
+_ERROR_KIND_EXIT = {
+    "connection_refused": EXIT_DB_UNREACHABLE,
+    "timeout": EXIT_DB_UNREACHABLE,
+    "constraint_violation": EXIT_WRITE_FAILED,
+    "unknown": EXIT_WRITE_FAILED,
+}
 
 try:
     import psycopg
@@ -52,7 +79,7 @@ except ImportError as exc:
         '{"hook":"_pg_outcome_dualwrite","error_kind":"import_error",'
         '"message":"%s"}\n' % str(exc).replace('"', "'")
     )
-    sys.exit(0)
+    sys.exit(EXIT_IMPORT_ERR)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +103,14 @@ def _classify_error(exc):
 
 
 def _record_hook_failure(error_kind, payload_ref, retry_attempted):
-    """Best-effort secondary INSERT; ANY exception swallowed."""
+    """Best-effort secondary INSERT into core.hook_failures. Returns True when the
+    failure row landed, False otherwise.
+
+    The secondary write is best-effort (it must never raise into the caller) but it
+    is NOT silent: when even this write cannot land — the fully-DB-unreachable case,
+    where the primary write already failed for the same reason — the reason is
+    emitted to stderr so the failure stays observable (loud-fail), instead of the
+    former `except: pass` that swallowed it."""
     try:
         with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
             with conn.cursor() as cur:
@@ -94,8 +128,18 @@ def _record_hook_failure(error_kind, payload_ref, retry_attempted):
                     ),
                 )
             conn.commit()
-    except Exception:
-        pass
+        return True
+    except Exception as exc:  # noqa: BLE001 — best-effort secondary write, but NOT silent
+        sys.stderr.write(
+            '{"hook":"outcome-record","target_table":"core.hook_failures",'
+            '"error_kind":"secondary_write_failed","payload_ref":"%s",'
+            '"message":"%s"}\n'
+            % (
+                payload_ref,
+                str(exc)[:200].replace('"', "'").replace("\n", " "),
+            )
+        )
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +524,7 @@ def main():
             "[outcome-record] envelope parse failed: %s\n"
             % str(exc).replace('"', "'")
         )
-        sys.exit(0)
+        sys.exit(EXIT_BAD_ENVELOPE)
 
     payload_ref = (
         envelope.get("outcome", {}).get("correlation_id")
@@ -504,13 +548,16 @@ def main():
                     len(envelope.get("signals", []) or []),
                 )
             )
-            sys.exit(0)
+            sys.exit(EXIT_OK)
         last_exc = exc
         if attempt == 1:
             retry_attempted = True
             time.sleep(0.1)
 
-    # Both attempts failed.
+    # Both attempts failed — LOUD-FAIL: emit a structured stderr marker, record a
+    # secondary hook_failures row if the table is reachable, and exit a NAMED code
+    # (never a silent fixed exit 0). The caller's `|| true` absorbs the code, so the
+    # stop hook is not disrupted while the failure stays observable.
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
     error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")
@@ -529,13 +576,16 @@ def main():
             error_msg,
         )
     )
-    sys.stderr.write(
-        "[outcome-record] elapsed_ms=%d pg_insert=fail error_kind=%s\n"
-        % (elapsed_ms, error_kind)
-    )
 
-    _record_hook_failure(error_kind, payload_ref, retry_attempted)
-    sys.exit(0)
+    recorded = _record_hook_failure(error_kind, payload_ref, retry_attempted)
+    exit_code = _ERROR_KIND_EXIT.get(error_kind, EXIT_WRITE_FAILED)
+
+    sys.stderr.write(
+        "[outcome-record] elapsed_ms=%d pg_insert=fail error_kind=%s "
+        "hook_failure_recorded=%s exit=%d\n"
+        % (elapsed_ms, error_kind, "true" if recorded else "false", exit_code)
+    )
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
