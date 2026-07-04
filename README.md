@@ -109,7 +109,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 ## What's inside
 
 - **Fleet of specialist agents** — routed by a capability registry (`agent-registry.json`) rather than by keyword (developers per stack, plus QA, planning · research · reporting, design · audio, security, wiki, and meta).
-- **Layered rule system** — a global charter (`agents/GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), all bound together by an explicit compliance matrix.
+- **Layered rule system** — a global charter (`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), all bound together by an explicit compliance matrix.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong.
 - **Atrium Monitor** — a 10-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:7842`).
@@ -145,7 +145,7 @@ Choose **Uninstall** from the menu. It removes the installed symlinks and drops 
 
 ### How to write Atrium Monitor documents
 
-A request for a document, report, summary, or reference goes to **intel-reporter**; a request for planning, requirements definition, or task decomposition goes to **intel-planner**.
+A request for a document, report, summary, or reference goes to **glass-atrium-intel-reporter**; a request for planning, requirements definition, or task decomposition goes to **glass-atrium-intel-planner**.
 
 Which format you get **comes down to how you word the request**:
 
@@ -170,7 +170,7 @@ On top of this, if the proposed agent's domain **overlaps with an existing agent
 
 Along the way there are **two user-approval pauses**: first the orchestrator lays out its rationale and recommendation to settle create-versus-extend, and then it checks with you once more just before it actually writes to the agent file and the registry.
 
-The body (the system prompt) is authored by **meta-prompt-engineer**, and registration is handled by a dedicated CLI. All you have to do is ask to "add one" — the extend-versus-create judgment and the approval requests are the orchestrator's job.
+The body (the system prompt) is authored by **glass-atrium-meta-prompt-engineer**, and registration is handled by a dedicated CLI. All you have to do is ask to "add one" — the extend-versus-create judgment and the approval requests are the orchestrator's job.
 
 ## Monitor screens
 

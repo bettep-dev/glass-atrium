@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-design-anti-slop
-description: Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ qa-code-reviewer), motion/animation review (→ dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).
+description: Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per glass-atrium-design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing glass-atrium-design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ glass-atrium-qa-code-reviewer), motion/animation review (→ glass-atrium-dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).
 triggers:
   - anti-slop check
   - AI slop audit
@@ -17,21 +17,21 @@ od:
   capabilities_required: [Read, Grep]
 ---
 
-<!-- Anti-slop pattern categories mirror design-designer.md `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` subsection of `## Red Flags` (which adapts nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` Apache 2.0 verbatim entries + 2026 community patterns). This skill is the detector layer only — design-designer.md remains SoT. -->
+<!-- Anti-slop pattern categories mirror glass-atrium-design-designer.md `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` subsection of `## Red Flags` (which adapts nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` Apache 2.0 verbatim entries + 2026 community patterns). This skill is the detector layer only — glass-atrium-design-designer.md remains SoT. -->
 
 # Anti-Slop
 
 ## Overview
 
-Mechanical detector for AI-slop visual patterns. Surfaces hits per category with severity bands and remediation hints — does NOT override design-designer creative judgment, does NOT prescribe replacement code. Designer.md `### AI Slop Tropes` (subsection of `## Red Flags`) is canonical source of truth; this skill applies it as an inspection pass.
+Mechanical detector for AI-slop visual patterns. Surfaces hits per category with severity bands and remediation hints — does NOT override glass-atrium-design-designer creative judgment, does NOT prescribe replacement code. Designer.md `### AI Slop Tropes` (subsection of `## Red Flags`) is canonical source of truth; this skill applies it as an inspection pass.
 
 ## When to Use
 
-- Pre-emit review of design-designer canvas / DESIGN.md / philosophy artifacts
-- Code review of dev-front / dev-react / dev-gsap HTML / CSS deliverables (D8 visual sub-pass complement)
+- Pre-emit review of glass-atrium-design-designer canvas / DESIGN.md / philosophy artifacts
+- Code review of glass-atrium-dev-front / glass-atrium-dev-react / glass-atrium-dev-gsap HTML / CSS deliverables (D8 visual sub-pass complement)
 - Post-emit audit when user flags "looks AI-generated"
 
-## Pattern Categories (mirror design-designer.md SoT)
+## Pattern Categories (mirror glass-atrium-design-designer.md SoT)
 
 ### Color
 - Warm beige / cream / peach / pink / orange-brown canvas without brand justification
@@ -105,7 +105,7 @@ Mechanical detector for AI-slop visual patterns. Surfaces hits per category with
 ## Constraints
 
 - Hint stays at policy / defense-layer (e.g., "Replace generic font with brand-system primary"). No code, no specific API names, no concrete hex values.
-- Do NOT redefine patterns — design-designer.md SoT controls additions. If a new pattern is observed, surface as `[NEW PATTERN candidate]` for design-designer review, do not auto-canonize.
+- Do NOT redefine patterns — glass-atrium-design-designer.md SoT controls additions. If a new pattern is observed, surface as `[NEW PATTERN candidate]` for glass-atrium-design-designer review, do not auto-canonize.
 
 ## Cross-References
 
