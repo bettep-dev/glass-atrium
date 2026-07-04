@@ -109,14 +109,41 @@ ga_init_env() {
   # skips all of these while the manifest still bundles + verifies them. Prefix
   # globs + exact basenames, TARGET_HOME-relative (mirrors the
   # COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).
+  #
+  # ESSENTIAL-SYMLINKS-ONLY drop-set: only the NATIVELY-DISCOVERED surfaces
+  # (agents/, skills/, rules/) stay farmed into ~/.claude; the INDIRECTED /
+  # non-native-discovery surfaces are consumed in place from ~/.glass-atrium and
+  # therefore joined the exclude set:
+  #   * hooks/  — the event->hook wiring in settings.json binds ABSOLUTE command
+  #     paths (repointed to ~/.glass-atrium/hooks by the hook-template unit), so
+  #     no ~/.claude/hooks symlink is needed for the client to fire them.
+  #   * scoped/ — NOT natively auto-loaded (native rule auto-load is
+  #     ~/.claude/rules/*.md only); scoped/*.md is hook-INJECTED per-agent from
+  #     ~/.glass-atrium/scoped, so a ~/.claude/scoped link is dead weight.
+  #   * agent-registry.json — the monitor + agent_lifecycle consumers resolve it
+  #     from ~/.glass-atrium (env-independent default), so the ~/.claude link is
+  #     a runtime dangling reference once dropped.
+  #   * glass-atrium (the launcher) — invoked via the PATH-exported ~/.glass-atrium
+  #     copy, never through a ~/.claude alias.
+  # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these four
+  # surfaces MUST NOT take runtime effect before their long-running consumers are
+  # repointed (settings.json hook command path; monitor registry.ts default;
+  # inject-scope-rules/validate-compliance-matrix SCOPED source) — otherwise a
+  # live install orphans them (hook blackout / dangling registry / empty scope
+  # injection). Those consumer repoints land in their own units; this array edit
+  # is the farm-side mechanic only.
   SYMLINK_EXCLUDE_PREFIXES=(
     "lib/"
     "monitor/"
+    "hooks/"
+    "scoped/"
   )
   readonly SYMLINK_EXCLUDE_PREFIXES
   SYMLINK_EXCLUDE_EXACT=(
     "config.toml.example"
     "requirements.txt"
+    "agent-registry.json"
+    "glass-atrium"
   )
   readonly SYMLINK_EXCLUDE_EXACT
 
@@ -2595,6 +2622,134 @@ run_prune() {
   local verb="pruned"
   "${DRY_RUN}" && verb="would be pruned"
   log "== prune: ${pruned} ${verb}, ${flagged} flagged in-manifest, ${nevertouch} preserved never-touch (${candidates} candidates) =="
+}
+
+# --- P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
+# Idempotent, data-safe reconcile of an EXISTING bare-name-farm install to the
+# essential-symlinks-only + foldered-rules layout. Touches ONLY GA-CREATED
+# symlinks — every unlink routes through remove_if_ga_link's readlink-into-
+# GA_ROOT guard, so a foreign symlink OR a real user file at any of these paths
+# is preserved byte-for-byte (never a raw rm on a legacy path). Two moves:
+#   (A) DROP the now-excluded surfaces — unlink the legacy GA symlinks under
+#       hooks/ + scoped/ (prefixes) and at agent-registry.json + glass-atrium
+#       (exacts) a prior farm created, then rmdir-prune the emptied GA dirs
+#       (rmdir-only — a dir holding a user file makes rmdir fail = SAFE skip).
+#   (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
+#       foldered rules/glass-atrium/<name>.md location, but ONLY when the
+#       foldered GA source actually exists (post rules-fold unit); otherwise the
+#       flat link is LEFT IN PLACE (no dangling link) for the manifest re-farm to
+#       reconcile once the foldered source lands.
+# Idempotent by construction: a second run finds the excluded-surface links gone
+# (nothing to sweep) and the flat rules links already relocated (the foldered
+# link sits at depth 2, never re-matched by the maxdepth-1 scan), so it is a
+# clean no-op. Honors DRY_RUN (report-only, zero mutation).
+#
+# CALL-SITE (DEFERRED — cross-unit sequencing): the wire-in from run_install on a
+# consented existing deployment — paired with the settings.json hook-command
+# repoint that closes the drop's hook-blackout window (repoint-first-THEN-sweep
+# order) — is owned by the migrate-subcommand / hook-repoint units, NOT this one.
+# Sweeping the excluded surfaces before their long-running consumers repoint
+# would orphan the live hooks/registry consumers, so this unit ships the mechanic
+# without arming it in the default install path.
+migrate_layout() {
+  log "== migrate: reconcile legacy bare-name farm -> essential-symlinks-only + foldered-rules (target=${TARGET_HOME}) =="
+  "${DRY_RUN}" && log "(dry-run: report only — no unlink/relink)"
+  if [[ ! -d "${TARGET_HOME}" ]]; then
+    log "migrate: target home absent (${TARGET_HOME}) — nothing to migrate"
+    return 0
+  fi
+
+  local prefix dir link rc exact swept=0
+  # (A) DROP the now-excluded surfaces — GA symlinks only (remove_if_ga_link guard).
+  for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
+    dir="${TARGET_HOME}/${prefix%/}"
+    # a REAL dir only (never follow a symlinked dir) — lib//monitor/ were never
+    # farmed so their dirs are typically absent (skip), hooks//scoped/ present.
+    [[ -d "${dir}" && ! -L "${dir}" ]] || continue
+    # each candidate is re-verified inside remove_if_ga_link before any unlink;
+    # process substitution keeps the counter in this shell, find's masked exit
+    # (|| true) is benign.
+    # shellcheck disable=SC2312
+    while IFS= read -r link; do
+      [[ -n "${link}" ]] || continue
+      # return 1 = safe skip (foreign/real/never-touch) — bracket the single call
+      # with set +e + ERR-trap suspend (set -E propagates the trap into the
+      # callee, so a safe-skip non-zero would print a spurious ERROR line).
+      set +e
+      trap - ERR
+      remove_if_ga_link "${link}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] && swept=$((swept + 1))
+    done < <(find "${dir}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+  done
+  for exact in "${SYMLINK_EXCLUDE_EXACT[@]}"; do
+    link="${TARGET_HOME}/${exact}"
+    [[ -L "${link}" ]] || continue
+    set +e
+    trap - ERR
+    remove_if_ga_link "${link}"
+    rc=$?
+    trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+    set -e
+    [[ "${rc}" -eq 0 ]] && swept=$((swept + 1))
+  done
+
+  # prune the emptied excluded-surface dirs (rmdir-only — a dir still holding a
+  # user file makes rmdir fail = SAFE skip; NEVER rm -rf, per the rm-rf guardrail).
+  for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
+    dir="${TARGET_HOME}/${prefix%/}"
+    [[ -d "${dir}" && ! -L "${dir}" ]] || continue
+    if "${DRY_RUN}"; then
+      log "migrate: dry-run — would rmdir emptied GA dir if empty: ${prefix%/}"
+      continue
+    fi
+    # rmdir in an `if` masks BOTH set -e and the ERR trap for its expected
+    # non-zero (dir non-empty) → no set +e/trap bracketing needed.
+    if rmdir -- "${dir}" 2>/dev/null; then
+      log "migrate: removed emptied GA dir: ${prefix%/}"
+    fi
+  done
+
+  # (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
+  # foldered rules/glass-atrium/<name>.md, only when the foldered GA source exists.
+  local rules_dir="${TARGET_HOME}/rules" base folded_rel folded=0
+  if [[ -d "${rules_dir}" && ! -L "${rules_dir}" ]]; then
+    # maxdepth 1 → only FLAT rules links; an already-foldered link lives at
+    # rules/glass-atrium/ (depth 2) and is never re-matched (loop is idempotent).
+    # shellcheck disable=SC2312
+    while IFS= read -r link; do
+      [[ -n "${link}" ]] || continue
+      base="$(basename -- "${link}")"
+      folded_rel="rules/glass-atrium/${base}"
+      # never create a dangling link: skip the fold until the foldered GA source
+      # lands (rules-fold unit); the flat link stays put for the re-farm.
+      if [[ ! -e "${GA_ROOT}/${folded_rel}" ]]; then
+        log "migrate: foldered rules source absent (${folded_rel}) — leaving flat link ${base} for manifest re-farm"
+        continue
+      fi
+      # remove the flat GA link (guarded — a foreign/real file returns 1 and is
+      # left intact), then create the foldered link via swap_symlink (its
+      # per-file mkdir -p auto-creates rules/glass-atrium/, atomic + idempotent).
+      set +e
+      trap - ERR
+      remove_if_ga_link "${link}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] || continue
+      set +e
+      trap - ERR
+      swap_symlink "${folded_rel}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] && folded=$((folded + 1))
+    done < <(find "${rules_dir}" -maxdepth 1 -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+  fi
+
+  log "== migrate: ${swept} legacy GA symlink(s) dropped, ${folded} rules link(s) foldered =="
 }
 
 # --- one-stop bootstrap (install + monitor build + health gate) ------------
