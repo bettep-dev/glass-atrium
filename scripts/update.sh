@@ -35,7 +35,7 @@
 #   7. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
 #      path (success, decline, failure, SIGINT/SIGTERM).
 #
-# Sensitive-path refusal (T15 / gate G7): a sensitive harness file (GLOBAL_RULES,
+# Sensitive-path refusal (T15 / gate G7): a sensitive harness file (GLASS_ATRIUM_GLOBAL_RULES.md,
 # a security scope rule, a credential file, a launchd plist) is NEVER auto-synced
 # by the deterministic path — it is partitioned OUT of the apply set via the
 # shared python helper (autoagent/lib/sensitive_patterns.py, the SINGLE refusal
@@ -317,13 +317,44 @@ update_fetch_release() {
 # review). A path the helper cannot conclusively clear (env/usage error) is
 # fail-CLOSED into the sensitive set, never auto-synced. Returns 0 always; the
 # caller decides on the sensitive set.
+# Lexical relpath normalization — resolves `.` / `..` / empty segments WITHOUT
+# touching the filesystem. Prints the normal form on rc 0. Un-normalizable input
+# (absolute path, escape above root via leading `..`, or an empty result) → rc 1,
+# so the caller fails CLOSED: a spelling variant like `agents/NAME.md/.` or
+# `agents/../NAME.md` can no longer dodge the helper's basename-anchored regex
+# and get a false CLEAN verdict (manifest paths are always relative).
+update_normalize_relpath() {
+  local input="$1" seg joined
+  local -a segs=() out=()
+  [[ "${input}" == /* ]] && return 1
+  IFS='/' read -r -a segs <<<"${input}"
+  for seg in "${segs[@]+"${segs[@]}"}"; do
+    case "${seg}" in
+      '' | '.') ;;
+      '..')
+        [[ ${#out[@]} -gt 0 ]] || return 1
+        unset "out[$((${#out[@]} - 1))]"
+        ;;
+      *) out+=("${seg}") ;;
+    esac
+  done
+  [[ ${#out[@]} -gt 0 ]] || return 1
+  joined="$(
+    IFS='/'
+    printf '%s' "${out[*]}"
+  )"
+  printf '%s\n' "${joined}"
+}
+
 update_partition_sensitive() {
-  local clean_out="$1" sensitive_out="$2" path
+  local clean_out="$1" sensitive_out="$2" path norm
   : >"${clean_out}"
   : >"${sensitive_out}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
-    if sensitive_path_ok "${path}"; then
+    # Verdict on the NORMAL form; bucket entries keep the original spelling
+    # (downstream sync consumes the manifest-relative path as listed).
+    if norm="$(update_normalize_relpath "${path}")" && sensitive_path_ok "${norm}"; then
       printf '%s\n' "${path}" >>"${clean_out}"
     else
       printf '%s\n' "${path}" >>"${sensitive_out}"
@@ -346,13 +377,13 @@ update_partition_sensitive() {
 #
 # The roster is the UNION of two signals so a half-applied release (file present
 # but registry stale, or vice-versa) is still caught:
-#   * the agents/<name>.md file set (top-level only; references/ + GLOBAL_RULES
-#     excluded — they are not agents)
+#   * the agents/<name>.md file set (top-level only; references/ +
+#     GLASS_ATRIUM_GLOBAL_RULES.md excluded — they are not agents)
 #   * the agent-registry.json `.agents` object keys (the authoritative roster)
 
 # Emit (one per line) the agent NAMES a manifest declares via its files[] — the
 # top-level agents/<name>.md entries, with the references/ subtree and the
-# non-agent GLOBAL_RULES.md charter excluded. Empty when the manifest is absent
+# non-agent GLASS_ATRIUM_GLOBAL_RULES.md charter excluded. Empty when the manifest is absent
 # or unparseable (the comparison degrades to the other signal, never errors).
 update_roster_names_from_manifest() {
   local manifest="$1"
@@ -368,7 +399,7 @@ update_roster_names_from_manifest() {
 
 # Emit (one per line) the agent NAMES present as top-level agents/<name>.md files
 # under an install root (filesystem glob, non-recursive so references/ is skipped),
-# with GLOBAL_RULES.md excluded. Empty when the agents dir is absent.
+# with GLASS_ATRIUM_GLOBAL_RULES.md excluded. Empty when the agents dir is absent.
 update_roster_names_from_dir() {
   local root="$1" file base
   # No `nullglob` (unsafe to set in a sourced lib) — guard each match instead so
@@ -669,7 +700,7 @@ update_merge_agent_editable_regions() {
   : >"${records_file}"
 
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
-  # top-level only (references/ + the non-agent GLOBAL_RULES.md charter excluded,
+  # top-level only (references/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md charter excluded,
   # same scoping as the roster scan).
   for file in "${new_dir}"/agents/*.md; do
     [[ -e "${file}" ]] || continue
