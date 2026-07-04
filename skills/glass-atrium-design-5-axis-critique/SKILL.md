@@ -1,10 +1,10 @@
 ---
 name: glass-atrium-design-5-axis-critique
-description: Applies design-designer.md Pre-Emit 5-Axis self-critique rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) with 0-10 banded scoring as machine-checkable pre-emit gate. Use when design-designer or dev-front / dev-react / dev-gsap artifact needs pre-emit gate scoring before canvas / motion-philosophy / DESIGN.md / HTML primary deliverable emit. Do NOT use for qa-code-reviewer external-judge scope (→ scope-qa.md LLM-as-Judge 4-Dimensions), post-emit design quality scoring (→ design-designer.md Design Evaluation 4-Axis), or non-design code review.
+description: Applies glass-atrium-design-designer.md Pre-Emit 5-Axis self-critique rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) with 0-10 banded scoring as machine-checkable pre-emit gate. Use when glass-atrium-design-designer or glass-atrium-dev-front / glass-atrium-dev-react / glass-atrium-dev-gsap artifact needs pre-emit gate scoring before canvas / motion-philosophy / DESIGN.md / HTML primary deliverable emit. Do NOT use for glass-atrium-qa-code-reviewer external-judge scope (→ scope-qa.md LLM-as-Judge 4-Dimensions), post-emit design quality scoring (→ glass-atrium-design-designer.md Design Evaluation 4-Axis), or non-design code review.
 triggers:
   - design 5-axis
   - pre-emit critique
-  - design-designer self-score
+  - glass-atrium-design-designer self-score
   - 5-axis self-critique
 od:
   mode: review
@@ -17,21 +17,21 @@ od:
   capabilities_required: [Read]
 ---
 
-<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). Mirrors design-designer.md `## Pre-Emit 5-Axis Self-Critique (ADR-4 R2)` — design-designer.md remains SoT. -->
+<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). Mirrors glass-atrium-design-designer.md `## Pre-Emit 5-Axis Self-Critique (ADR-4 R2)` — glass-atrium-design-designer.md remains SoT. -->
 
 # Design 5-Axis Critique
 
 ## Overview
 
-Single-agent self-critique mode (design-designer scores own work pre-emit). Mechanical application of 5 axes with 0-10 banded rubric and emit-gate rule. Designer.md `## Pre-Emit 5-Axis Self-Critique (ADR-4 R2)` is SoT.
+Single-agent self-critique mode (glass-atrium-design-designer scores own work pre-emit). Mechanical application of 5 axes with 0-10 banded rubric and emit-gate rule. Designer.md `## Pre-Emit 5-Axis Self-Critique (ADR-4 R2)` is SoT.
 
 ## When to Use
 
-- Turn 3+ of design-designer work — before emitting any canvas / motion-philosophy / DESIGN.md
-- Pre-emit gate for dev-front / dev-react / dev-gsap HTML primary with visual concern
+- Turn 3+ of glass-atrium-design-designer work — before emitting any canvas / motion-philosophy / DESIGN.md
+- Pre-emit gate for glass-atrium-dev-front / glass-atrium-dev-react / glass-atrium-dev-gsap HTML primary with visual concern
 - Designer self-iteration loop
 
-## 5 Axes (verbatim from design-designer.md SoT)
+## 5 Axes (verbatim from glass-atrium-design-designer.md SoT)
 
 - **Philosophy**: consistency with stated design philosophy / brand direction / movement name. Does this deliverable embody the declared philosophy or drift from it?
 - **Hierarchy**: visual hierarchy clarity. Does the eye traverse the intended path? Is the primary action obvious within 1 second?
@@ -58,7 +58,7 @@ Single-agent self-critique mode (design-designer scores own work pre-emit). Mech
 
 ## Emit-Gate Rule
 
-If ANY axis < 7 (Broken or Functional band) → design-designer MUST iterate before emit. Pre-emit gate (not post-emit score) — deliverable does NOT leave the agent until all 5 axes ≥ 7.
+If ANY axis < 7 (Broken or Functional band) → glass-atrium-design-designer MUST iterate before emit. Pre-emit gate (not post-emit score) — deliverable does NOT leave the agent until all 5 axes ≥ 7.
 
 ## Iteration Protocol
 
@@ -92,9 +92,9 @@ Re-score → repeat until all axes ≥ 7.
 
 ## Distinction from Other Rubrics
 
-- **Pre-emit (this skill)**: gates emit at design-designer's own turn 3 — single-agent self-critique
-- **Post-emit Design Evaluation 4-Axis** (design-designer.md `## Design Evaluation 4-Axis`): scores deliverables that DO emit, weighted for visual identity (Identity 35% / Originality 35% / Craft 20% / Function 10%) — for learning-log signal
-- **External-judge 4-Dim** (scope-qa.md): qa-code-reviewer / QA agents apply Coverage / Insight / Instruction-following / Clarity when reviewing designer-authored deliverables — different lens, different consumer
+- **Pre-emit (this skill)**: gates emit at glass-atrium-design-designer's own turn 3 — single-agent self-critique
+- **Post-emit Design Evaluation 4-Axis** (glass-atrium-design-designer.md `## Design Evaluation 4-Axis`): scores deliverables that DO emit, weighted for visual identity (Identity 35% / Originality 35% / Craft 20% / Function 10%) — for learning-log signal
+- **External-judge 4-Dim** (scope-qa.md): glass-atrium-qa-code-reviewer / QA agents apply Coverage / Insight / Instruction-following / Clarity when reviewing designer-authored deliverables — different lens, different consumer
 
 Both pre-emit and post-emit apply: pre-emit first (gate), post-emit after (signal).
 

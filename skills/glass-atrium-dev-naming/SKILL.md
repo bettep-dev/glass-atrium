@@ -5,10 +5,10 @@ description: Naming conventions for DEV agents — 5 conciseness principles (no-
 
 ## Agent Injection Core
 
-> The block below (between the `AGENT-INJECT:NAMING` markers) is the compressed injected core extracted verbatim by a SubagentStart hook and injected into DEV + qa-code-reviewer subagents. Edit it here only — the full skill (User Dictionary, 5 Conciseness Principles, Quick rules, References) remains below as the on-demand detail.
+> The block below (between the `AGENT-INJECT:NAMING` markers) is the compressed injected core extracted verbatim by a SubagentStart hook and injected into DEV + glass-atrium-qa-code-reviewer subagents. Edit it here only — the full skill (User Dictionary, 5 Conciseness Principles, Quick rules, References) remains below as the on-demand detail.
 
 <!-- AGENT-INJECT:NAMING:START -->
-**Naming delta-core (auto-injected for DEV + qa-code-reviewer · full skill below · EDIT HERE ONLY) — raises recall of the user-specific convention; review-side (qa-code-reviewer) is the enforcement surface. Injects the non-inferable subset only.**
+**Naming delta-core (auto-injected for DEV + glass-atrium-qa-code-reviewer · full skill below · EDIT HERE ONLY) — raises recall of the user-specific convention; review-side (glass-atrium-qa-code-reviewer) is the enforcement surface. Injects the non-inferable subset only.**
 
 1. **Canonical verb set (PRIMARY)** — prefer `get/set/find/create/update/delete/put/build` for nearly all functions; a domain verb ONLY when the set genuinely cannot express the op · mappings (load-bearing — keep): storeTranscript→`setTranscript` · resolveUrl→`getURL` · convertImage→`getImage` · combineFileEmbeddings→`getFileEmbeddings`.
 2. **`get` contract (inverse-Joda / diverges from AIP-130)** — `get` = acquisition, null/undefined POSSIBLE (JS `Map.get` lineage), NOT throws-on-miss · non-null guarantee carried ONLY by the `*OrFail`/`*OrThrow` suffix · a `get*` that throws without the suffix is a contract violation here.

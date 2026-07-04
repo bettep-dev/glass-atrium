@@ -88,7 +88,7 @@ Hint stays at adjustment-direction level (policy):
 - "Swap fg/bg pair"
 - "Use larger text size to meet 3:1 threshold"
 
-No specific hex values, no concrete CSS — design-designer chooses replacement per brand palette.
+No specific hex values, no concrete CSS — glass-atrium-design-designer chooses replacement per brand palette.
 
 ## Cross-References
 

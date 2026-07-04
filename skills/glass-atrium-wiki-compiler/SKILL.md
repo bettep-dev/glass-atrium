@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-wiki-compiler
-description: Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed. Do NOT use for web material collection (->intel-researcher+defuddle), report writing (->intel-reporter), Q&A queries (->intel-researcher), index/master-index direct editing (-> T6 wiki-sync.sh), health check (-> separate skill).
+description: Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed. Do NOT use for web material collection (->glass-atrium-intel-researcher+defuddle), report writing (->glass-atrium-intel-reporter), Q&A queries (->glass-atrium-intel-researcher), index/master-index direct editing (-> T6 wiki-sync.sh), health check (-> separate skill).
 ---
 
 > **Output language**: Preserve source language (D5). Korean-only translation policy is removed. Frontmatter keys stay English; body stays in the source page's original language.
@@ -14,9 +14,9 @@ Converts raw/ source materials into `wiki/notes/` markdown through a narrow LLM 
 ## When to Use
 
 - New or modified raw/ files need conversion to wiki notes
-- Incremental wiki build after intel-researcher collects new materials
+- Incremental wiki build after glass-atrium-intel-researcher collects new materials
 - Batch compilation of multiple raw files in a single pass
-- **Exclusions**: Web material collection (intel-researcher+defuddle), report writing (intel-reporter), Q&A queries (intel-researcher), index/master-index editing (wiki-sync.sh), health check (separate skill)
+- **Exclusions**: Web material collection (glass-atrium-intel-researcher+defuddle), report writing (glass-atrium-intel-reporter), Q&A queries (glass-atrium-intel-researcher), index/master-index editing (wiki-sync.sh), health check (separate skill)
 
 ## Quick Reference
 
@@ -90,7 +90,7 @@ Bash("~/.claude/scripts/wiki-sync.sh")
 
 ### Step 3 — Health (optional, separate cadence)
 
-Not part of the daily compile. Run weekly (or on demand) via a dedicated health-check skill / `wiki-curator` health mode. Reports missing backlinks, orphan notes, duplicate concept candidates from SQLite queries + LLM interpretation. Implementation lives outside this skill (T9 or later).
+Not part of the daily compile. Run weekly (or on demand) via a dedicated health-check skill / `glass-atrium-wiki-curator` health mode. Reports missing backlinks, orphan notes, duplicate concept candidates from SQLite queries + LLM interpretation. Implementation lives outside this skill (T9 or later).
 
 ## Notes Frontmatter
 
@@ -131,7 +131,7 @@ Input `raw/2026-04-08-a1b2c3d4.md`:
 ---
 source_url: https://example.com/prompt-compression
 collected: 2026-04-08
-collector: intel-researcher
+collector: glass-atrium-intel-researcher
 ---
 # Prompt compression techniques
 Telegram style achieves 42% token reduction...
@@ -165,7 +165,7 @@ One Read, one Write. No cross-reference. No wikilinks.
 
 | Role | Owner | Flow |
 |------|-------|------|
-| Source collection | intel-researcher + WebFetch/defuddle | → `raw/` (flat, immutable, verbatim) |
+| Source collection | glass-atrium-intel-researcher + WebFetch/defuddle | → `raw/` (flat, immutable, verbatim) |
 | Conversion | **glass-atrium-wiki-compiler** (Step 1) | `raw/` → `notes/` |
 | Indexing | `wiki-sync.sh` (T6) | `notes/` → `wiki.sqlite` + `master-index.md` + `topic-map.md` |
 | Query | `wiki-query.sh` (T5, FTS5+BM25) | `wiki.sqlite` → results |

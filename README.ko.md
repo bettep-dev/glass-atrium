@@ -109,7 +109,7 @@ Glass Atrium에서 오케스트레이터는 전체 맥락을 혼자 쥔 채, 모
 ## 내부 구성 요소
 
 - **전문 에이전트 부대** — 키워드가 아니라 역량 레지스트리(`agent-registry.json`)로 라우팅됩니다(스택별 개발자에 QA, 기획·리서치·리포트, 디자인·오디오, 보안, 위키, 메타까지).
-- **계층화된 규칙 시스템** — 전역 헌장(`agents/GLOBAL_RULES.md`), 핵심 횡단 규칙(`rules/`), 범위별 규칙(`scoped/`)을 명시적인 컴플라이언스 매트릭스로 묶습니다.
+- **계층화된 규칙 시스템** — 전역 헌장(`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), 핵심 횡단 규칙(`rules/`), 범위별 규칙(`scoped/`)을 명시적인 컴플라이언스 매트릭스로 묶습니다.
 - **라이프사이클 훅 파이프라인** — 모든 도구 경계에서 시크릿·위험 명령·예산·결과 기록을 기계적으로 강제하는 훅 스크립트 모음(`hooks/`).
 - **자기개선 루프** — autoagent 데몬(`autoagent/`)이 쌓인 결과 기록과 교정 신호를 에이전트 지침 패치로 바꾸고, 안전한 것만 자동 적용합니다. 적용 전 원본을 보관해 두었다가 문제가 생기면 되돌립니다.
 - **Atrium Monitor** — Fastify 5 + Prisma 7 + React 18 기반의 10개 화면 실시간 대시보드(`http://127.0.0.1:7842`).
@@ -145,7 +145,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 ### 아트리움 모니터 문서 작성 방법
 
-문서·보고서·요약·레퍼런스 요청은 **intel-reporter**에게, 기획·요구사항 정의·작업 분해 요청은 **intel-planner**에게 위임됩니다.
+문서·보고서·요약·레퍼런스 요청은 **glass-atrium-intel-reporter**에게, 기획·요구사항 정의·작업 분해 요청은 **glass-atrium-intel-planner**에게 위임됩니다.
 
 어떤 형식으로 나올지는 **요청 문구가 결정합니다**:
 
@@ -170,7 +170,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 진행 중에는 **사용자 승인 일시정지가 두 번** 있습니다. 먼저 오케스트레이터가 판단 근거와 권고안을 제시해 생성 vs 확장을 확정하고, 그다음 에이전트 파일과 레지스트리에 실제로 기록하기 직전 한 번 더 확인합니다.
 
-본문(시스템 프롬프트)은 **meta-prompt-engineer**가 작성하고, 등록은 전용 CLI가 처리합니다. 사용자는 "추가해줘"라고 요청하기만 하면 되고, 확장·신규 판단과 승인 요청은 오케스트레이터가 맡습니다.
+본문(시스템 프롬프트)은 **glass-atrium-meta-prompt-engineer**가 작성하고, 등록은 전용 CLI가 처리합니다. 사용자는 "추가해줘"라고 요청하기만 하면 되고, 확장·신규 판단과 승인 요청은 오케스트레이터가 맡습니다.
 
 ## 모니터 화면
 
