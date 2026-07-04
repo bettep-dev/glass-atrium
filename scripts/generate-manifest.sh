@@ -87,7 +87,7 @@ set -euo pipefail
 # Single Atrium system version-of-record. Stamped into manifest.version on
 # regeneration and asserted by --check. The monitor health endpoint and the
 # update badge read THIS via the manifest (D1 — one version SoT).
-readonly ATRIUM_VERSION="1.0.1"
+readonly ATRIUM_VERSION="1.0.2"
 
 # Repo root = parent of this script's scripts/ dir (portable, same idiom as
 # the engine's root resolution).
