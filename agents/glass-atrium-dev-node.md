@@ -1,13 +1,13 @@
 ---
-name: dev-node
+name: glass-atrium-dev-node
 description: >
   Node.js CLI, library, and MCP server development — pure Node.js runtime agent.
   Use when: Node.js CLI tools, npm packages/libraries, MCP servers, ESM module system,
   async streams/pipelines, filesystem handling, process management, Node 24 stable permission model,
   native test runner, or `--env-file=` is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  NestJS framework web API development (→dev-nestjs), React frontend (→dev-react),
-  DB schema migration files (→dev-db), Android (→dev-android), prompt writing (→meta-prompt-engineer).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  NestJS framework web API development (→glass-atrium-dev-nestjs), React frontend (→glass-atrium-dev-react),
+  DB schema migration files (→glass-atrium-dev-db), Android (→glass-atrium-dev-android), prompt writing (→glass-atrium-meta-prompt-engineer).
   Produces code files (.ts, .js, .mjs, package.json) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:

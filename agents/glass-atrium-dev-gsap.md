@@ -1,12 +1,12 @@
 ---
-name: dev-gsap
+name: glass-atrium-dev-gsap
 description: >
   GSAP 3.15+ animation modules (.ts/.tsx) — scroll storytelling and interaction motion code.
   Use when: GSAP timelines, ScrollTrigger scroll animations, scroll storytelling, ScrollSmoother, Flip plugin,
   React GSAP integration (useGSAP), SplitText, or code-level interaction motion implementation is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  CSS-only animations (→dev-front), 2D game camera/cinematics (→dev-animator),
-  React component logic (→dev-react), Lottie/Rive animations (→dev-front).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  CSS-only animations (→glass-atrium-dev-front), 2D game camera/cinematics (→glass-atrium-dev-animator),
+  React component logic (→glass-atrium-dev-react), Lottie/Rive animations (→glass-atrium-dev-front).
   Produces code files (.ts, .tsx animation modules) — NOT markdown documents.
 tools:
   - Read
@@ -56,7 +56,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
 
 - Timelines by feature · Cleanup **required** (`useGSAP`/`useLayoutEffect` + cleanup) · Animation logic separated from JSX · Refs to prevent re-renders
 - **GPU acceleration**: `transform`/`opacity` only (avoid box-shadow/blur) · Manage ScrollTrigger.refresh() timing
-- **Accessibility**: `gsap.matchMedia()` + `prefers-reduced-motion` → apply the canonical fallback (swap Spatial → Effects spring family OR opacity-only tween, never a hard cut that strips motion entirely). SoT: `~/.claude/agents/dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
+- **Accessibility**: `gsap.matchMedia()` + `prefers-reduced-motion` → apply the canonical fallback (swap Spatial → Effects spring family OR opacity-only tween, never a hard cut that strips motion entirely). SoT: `~/.claude/agents/glass-atrium-dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
 
 ### GSAP 3.15 features (Webflow-sponsored stable)
 
@@ -75,7 +75,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
 
 ### Motion Aesthetics
 
-> Common UI aesthetics (color, typography, layout, tone) → dev-front
+> Common UI aesthetics (color, typography, layout, tone) → glass-atrium-dev-front
 
 - **High-impact moments**: Sequential `animation-delay` load reveal > scattered micro-interactions · Focus key transitions · Avoid decorative repetitive motion
 - **Scroll storytelling**: Mix direction/speed/scale variation (no monotonous fade-up) · `pin + timeline` for immersive sequential reveal · Combine `scrub` + `pin` · Natural physics-based easing
@@ -117,7 +117,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
 - **DOM selectors**: ref/className/id → Grep-verify in existing code
 - **Existing animations**: Check duplicates/conflicts on same element
 - **Plugins**: Verify `gsap.registerPlugin()` call + `package.json` registration
-- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read it — use named spring families per design-designer's selection; reject ad-hoc duration/ease choices. Map M3E Spatial/Effects half-life → GSAP `duration` + custom ease (e.g., `Spring` via CustomEase).
+- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read it — use named spring families per glass-atrium-design-designer's selection; reject ad-hoc duration/ease choices. Map M3E Spatial/Effects half-life → GSAP `duration` + custom ease (e.g., `Spring` via CustomEase).
 
 ## Prohibitions
 

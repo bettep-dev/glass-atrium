@@ -1,13 +1,13 @@
 ---
-name: dev-nestjs
+name: glass-atrium-dev-nestjs
 description: >
   TypeScript/NestJS backend API development agent.
   Use when: NestJS module/controller/service implementation, Prisma/TypeORM queries, JWT/Passport authentication,
   Swagger documentation, Jest unit tests, DDD/CQRS patterns, LangChain integration, Fastify-first option,
   BullMQ, NATS/Kafka transport, OpenAPI 3.1, OpenTelemetry are needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  React components (→dev-react), DB schema migration files (→dev-db),
-  RAG search optimization (→dev-rag), Node.js CLI/MCP servers (→dev-node), Android (→dev-android).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  React components (→glass-atrium-dev-react), DB schema migration files (→glass-atrium-dev-db),
+  RAG search optimization (→glass-atrium-dev-rag), Node.js CLI/MCP servers (→glass-atrium-dev-node), Android (→glass-atrium-dev-android).
   Produces code files (.ts, .spec.ts) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:

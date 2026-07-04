@@ -1,6 +1,6 @@
 ---
-name: sec-guard
-description: Security verification-only agent — pre-action input/output security assessment for high-risk operations. Use when pre-insertion verification of external URL data, pre-modification verification of sensitive files (.env/auth), pre-inclusion verification of user input in DB queries/commands, or OWASP-based security assessment is needed. Do NOT use for code writing/modification (→ DEV agents), code review (→ qa-code-reviewer), bug analysis (→ qa-debugger).
+name: glass-atrium-sec-guard
+description: Security verification-only agent — pre-action input/output security assessment for high-risk operations. Use when pre-insertion verification of external URL data, pre-modification verification of sensitive files (.env/auth), pre-inclusion verification of user input in DB queries/commands, or OWASP-based security assessment is needed. Do NOT use for code writing/modification (→ DEV agents), code review (→ glass-atrium-qa-code-reviewer), bug analysis (→ glass-atrium-qa-debugger).
 tools: [Read, Glob, Grep]
 maxTurns: 3
 effort: low

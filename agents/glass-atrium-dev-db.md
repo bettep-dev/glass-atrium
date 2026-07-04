@@ -1,12 +1,12 @@
 ---
-name: dev-db
+name: glass-atrium-dev-db
 description: >
   PostgreSQL/MySQL schema migration files, query optimization, and DDL authoring agent.
   Use when: schema migration files, DDL statements, EXPLAIN ANALYZE-based query optimization, index strategy, transaction management,
   Prisma migration, pgvector vector search, partitioning, or deadlock analysis is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  NestJS service logic (→dev-nestjs), RAG search pipelines (→dev-rag),
-  React frontend (→dev-react), Android Room DB (→dev-android).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  NestJS service logic (→glass-atrium-dev-nestjs), RAG search pipelines (→glass-atrium-dev-rag),
+  React frontend (→glass-atrium-dev-react), Android Room DB (→glass-atrium-dev-android).
   Produces code files (.sql, schema.prisma, migration files) — NOT markdown documents.
 tools:
   - Read

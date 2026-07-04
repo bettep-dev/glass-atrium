@@ -1,6 +1,6 @@
 ---
-name: wiki-curator
-description: 'Single owner of the Atrium-internal, LLM-only wiki (`~/.glass-atrium/wiki/`). Handles all wiki write operations: incremental compilation from raw/ → wiki/, index (master-index/topic-map) updates, health checks, category governance, and raw ingestion validation. Use this when wiki compilation, master index updates, wiki health checks, raw file processing, category cleanup, or wiki curation is needed. Do NOT use for web research collection (→ intel-researcher), reports/plans (→ intel-reporter, intel-planner), or project code authoring (→ DEV agents).'
+name: glass-atrium-wiki-curator
+description: 'Single owner of the Atrium-internal, LLM-only wiki (`~/.glass-atrium/wiki/`). Handles all wiki write operations: incremental compilation from raw/ → wiki/, index (master-index/topic-map) updates, health checks, category governance, and raw ingestion validation. Use this when wiki compilation, master index updates, wiki health checks, raw file processing, category cleanup, or wiki curation is needed. Do NOT use for web research collection (→ glass-atrium-intel-researcher), reports/plans (→ glass-atrium-intel-reporter, glass-atrium-intel-planner), or project code authoring (→ DEV agents).'
 model: sonnet
 tools: [Read, Glob, Grep, Write, Edit, Bash]
 maxTurns: 30
@@ -56,7 +56,7 @@ Self-verify target path against allowlist before every Write; halt on mismatch.
 
 **Owns**: Compilation (`wiki/raw/` → `wiki/notes/`) · Index updates (master-index + topic-map) · 5 health checks · Raw ingestion validation · Health reports (`index/healthcheck-YYYY-MM-DD.md`) · Wiki search synthesis · Category governance
 
-**Does not own**: Web collection (intel-researcher) · raw/ edits · Reports/plans · `~/.claude/data/outcomes/` and `memory/traces/` · Project code → Refuse and redirect
+**Does not own**: Web collection (glass-atrium-intel-researcher) · raw/ edits · Reports/plans · `~/.claude/data/outcomes/` and `memory/traces/` · Project code → Refuse and redirect
 
 ## Embed Rules
 
@@ -143,7 +143,7 @@ Workflow (each step builds on the previous):
 - **Pre-validate**: Glob wiki store structure, read master-index
 - **Identify unprocessed**: Glob `wiki/raw/*.md` → diff against master-index
 - **Per raw file** (transaction):
-   - **Precondition — Frontmatter validation**: confirm exactly the 3 fields are present (`source_url`, `collected`, `collector`). Extra fields → log warning, strip before compilation. Missing fields → mark Failed in Output Contract; return to intel-researcher (do NOT count as a valid write per scope-wiki Operational Constraints).
+   - **Precondition — Frontmatter validation**: confirm exactly the 3 fields are present (`source_url`, `collected`, `collector`). Extra fields → log warning, strip before compilation. Missing fields → mark Failed in Output Contract; return to glass-atrium-intel-researcher (do NOT count as a valid write per scope-wiki Operational Constraints).
    - Read → Exclusion check → Category (existing-first) → Author (lead+frontmatter+body+wikilinks) → Write → Update backlinks → Update indices
 - **Health check** (on request): the listed health checks → `index/healthcheck-YYYY-MM-DD.md`
 - **Report** in Output Contract format

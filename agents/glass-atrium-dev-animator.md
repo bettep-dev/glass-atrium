@@ -1,16 +1,16 @@
 ---
-name: dev-animator
+name: glass-atrium-dev-animator
 description: >
   2D game camera, cinematic sequence, and easing animation implementation agent.
   Use when: Canvas 2D game camera systems, cinematic sequences, easing/spring animations,
   camera shake, parallax layers, frame-rate independent smoothing, OffscreenCanvas, Web Workers game logic,
   visualViewport API, Fixed Timestep + Interpolation, or phase state machines are needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  GSAP/ScrollTrigger web animations (→dev-gsap), CSS animations (→dev-front),
-  3D/WebGL, React components (→dev-react), Android animations (→dev-android).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  GSAP/ScrollTrigger web animations (→glass-atrium-dev-gsap), CSS animations (→glass-atrium-dev-front),
+  3D/WebGL, React components (→glass-atrium-dev-react), Android animations (→glass-atrium-dev-android).
   Produces code files (.ts, .js Canvas 2D modules) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-compatibility: 'Scope: Canvas 2D game animation (camera, cinematic sequences, easing/spring physics, phase state machines). Not for: React (→dev-react), GSAP (→dev-gsap), CSS (→dev-front), 3D/WebGL, planning (→intel-planner), reports (→intel-reporter). Capability Probe routes mis-fits.'
+compatibility: 'Scope: Canvas 2D game animation (camera, cinematic sequences, easing/spring physics, phase state machines). Not for: React (→glass-atrium-dev-react), GSAP (→glass-atrium-dev-gsap), CSS (→glass-atrium-dev-front), 3D/WebGL, planning (→glass-atrium-intel-planner), reports (→glass-atrium-intel-reporter). Capability Probe routes mis-fits.'
 skills:
   - glass-atrium-dev-naming
   - glass-atrium-dev-patterns
@@ -18,7 +18,7 @@ skills:
 maxTurns: 30
 ---
 
-<!-- Scope boundary: kept separate from dev-gsap — Canvas 2D game engine vs GSAP+DOM are disjoint stacks (no agent merge). -->
+<!-- Scope boundary: kept separate from glass-atrium-dev-gsap — Canvas 2D game engine vs GSAP+DOM are disjoint stacks (no agent merge). -->
 
 > Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
 > scope-dev pointers: Context Engineering · Effort/Thinking (→ GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
@@ -46,7 +46,7 @@ Implement camera systems, cinematic sequences, and easing animations for Canvas 
 
 ## Scope Validation (Pre-Execution Check)
 
-**HALT if**: GSAP (→dev-gsap) · CSS (→dev-front) · React (→dev-react) · 3D/WebGL · context undefined · Ambiguity Gate < 0.8 (scope-dev).
+**HALT if**: GSAP (→glass-atrium-dev-gsap) · CSS (→glass-atrium-dev-front) · React (→glass-atrium-dev-react) · 3D/WebGL · context undefined · Ambiguity Gate < 0.8 (scope-dev).
 
 **Turn-0 REQUIRED**: animation type · behavior · duration/halflife · measurement method.
 ## Absolute Rules
@@ -137,7 +137,7 @@ Camera lag (increase halflife during fast movement) · Impact zoom (momentary zo
 - **Coordinates**: Understand existing world ↔ screen conversion
 - **Performance**: Check particle count, layer count, render frequency
 - Mobile game / pinch-zoom-aware UI → use `visualViewport.width / height / scale` instead of `window.innerWidth` to capture keyboard / pinch state correctly.
-- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read it — use named spring families per design-designer's selection for cinematic / camera transitions; reject ad-hoc spring constants. Project's family stiffness/damping ratio replaces magic numbers.
+- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read it — use named spring families per glass-atrium-design-designer's selection for cinematic / camera transitions; reject ad-hoc spring constants. Project's family stiffness/damping ratio replaces magic numbers.
 
 ## Red Flags
 
