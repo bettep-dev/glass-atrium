@@ -52,6 +52,33 @@ const FIXTURE_LEGACY_DECOY_REGISTRY = {
   },
 };
 
+// H6 dedupe 충돌 fixture — prefixed 키와 그 bare alias("dev-node")가 registry 에
+// 동시 존재 + alias 파생이 없어야 하는 비접두 user-origin 키("custom-helper").
+// Set dedupe 없이 flatMap 만 하면 "dev-node" 가 2회(bare 키 passthrough +
+// prefixed 키 alias 파생) 나오므로, 이 fixture 가 dedupe 삭제 회귀를 실제로 잡는다.
+const FIXTURE_DUAL_MATCH_COLLISION_REGISTRY = {
+  $schema: "agent-registry",
+  version: "1.1",
+  agents: {
+    "glass-atrium-dev-node": {
+      domains: ["nodejs"],
+      phase: "implementation",
+      dual_phase: false,
+    },
+    "dev-node": {
+      domains: ["legacy"],
+      phase: "implementation",
+      dual_phase: false,
+    },
+    "custom-helper": {
+      domains: ["user"],
+      phase: "implementation",
+      dual_phase: false,
+      origin: "user",
+    },
+  },
+};
+
 const ATRIUM_DEV_NODE_MD = `---
 description: Node.js ESM CLI and MCP server implementation specialist. Use when building Node tooling.
 ---
@@ -78,6 +105,18 @@ async function writeAtriumFixtures(home: string): Promise<void> {
   await writeFile(
     join(atriumRoot, "agents", "glass-atrium-dev-node.md"),
     ATRIUM_DEV_NODE_MD,
+    "utf8",
+  );
+}
+
+async function writeDualMatchCollisionFixtures(home: string): Promise<void> {
+  const atriumRoot = join(home, ".glass-atrium");
+  // agents/ .md 없이 registry JSON 만 배치 — description enrich 는 결측 허용
+  // (Promise.allSettled → null)이라 키 계산 검증에는 불필요.
+  await mkdir(atriumRoot, { recursive: true });
+  await writeFile(
+    join(atriumRoot, "agent-registry.json"),
+    JSON.stringify(FIXTURE_DUAL_MATCH_COLLISION_REGISTRY),
     "utf8",
   );
 }
@@ -192,14 +231,16 @@ test("loadCanonicalAgentKeys: 기본 경로 registry 의 키 배열 반환 (memb
 // (배포 회귀: /api/outcomes/search total 0). 거울 구현:
 // monitor/src/server/routes/improvement.ts DEV_AGENT_PREFIX dual-match —
 // 전환창 종료 시 registry.ts 쪽과 함께 제거.
-test("H6 전환 dual-match: glass-atrium-* 키마다 bare alias 도 포함 + 중복 없음", async () => {
-  await writeAtriumFixtures(tmpHome);
+test("H6 전환 dual-match: bare alias 충돌 시 정확히 1회 + 비접두 키 passthrough", async () => {
+  await writeDualMatchCollisionFixtures(tmpHome);
   const keys = await loadCanonicalAgentKeys();
-  // prefixed 정본 키와 de-prefixed legacy alias 가 모두 존재해야 한다.
-  assert.ok(keys.includes("glass-atrium-dev-node"));
-  assert.ok(keys.includes("dev-node"));
-  assert.ok(keys.includes("glass-atrium-qa-code-reviewer"));
-  assert.ok(keys.includes("qa-code-reviewer"));
-  // dedupe 불변식 — 동일 키 이중 삽입 금지 (IN-list 중복 방지).
-  assert.strictEqual(new Set(keys).size, keys.length);
+  // 정확-배열 단언이 세 분기를 모두 고정한다:
+  // 1. prefixed 키 + de-prefixed alias 동시 반환 (dual-match 본체)
+  // 2. registry 의 bare "dev-node" 와 alias 파생 "dev-node" 가 1회로 dedupe —
+  //    registry.ts 의 Set dedupe 를 지우면 "dev-node" 가 2회가 되어 실패한다
+  // 3. 비접두 user-origin 키는 alias 파생 없이 그대로 통과 (passthrough 분기)
+  assert.deepStrictEqual(
+    [...keys].sort(),
+    ["custom-helper", "dev-node", "glass-atrium-dev-node"],
+  );
 });

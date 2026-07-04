@@ -506,7 +506,7 @@
     "monitor/src/server/routes/dashboard.ts": "60fcd55abf40f13d53367ea2373981155356dd869ecd3f8fa0c5675552ba3bf0",
     "monitor/src/server/routes/health-detail.ts": "dedf956a8eb38ba880a4a9f928f9c3b896e2af2a036068cf7c8e96da447106ee",
     "monitor/src/server/routes/health.ts": "96fecb9feead632826eed83e4c6fb90ba1d4a1217d86c52e6263953310827537",
-    "monitor/src/server/routes/improvement.ts": "2c28b832a05f8e048f31678d5e5ba3ec57c987f7cfaed47203079d09f5b8375e",
+    "monitor/src/server/routes/improvement.ts": "966d6b9416b0731c4d46b4e60f171676e6560735adbb699677444ead9e0dc092",
     "monitor/src/server/routes/index.ts": "61b07c7a25603a69c49ec6dc8100377058eabd307048b4ac8cd8ef2b6261fcc0",
     "monitor/src/server/routes/model-config.ts": "29394d884f3a27c16a21354a11ccef2ed8b4ffdca6edb2568f2518d1dcdd046b",
     "monitor/src/server/routes/outcomes.ts": "b205635dc660ecd4c2b529d8e3416709daa037e96a51dde0fac704f5d6f1cc1c",

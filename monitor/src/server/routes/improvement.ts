@@ -373,11 +373,16 @@ async function handleImprovement(
   // H6 rename-transition dual-match — pre-rename core.outcomes rows carry the
   // bare 'dev-*' agent form; the graduation signal keeps that history by
   // matching each registry DEV key alongside its bare sibling. The in-builder
-  // canonicalKeys gate is intentionally omitted on the DEV branch: it would
-  // AND-drop the bare siblings, and the dual-form IN-list is itself derived
-  // from registry DEV keys alone, so the T8 registry-as-display-SoT intent
-  // holds. GROUP BY agent keeps the two forms as separate rows;
+  // canonicalKeys gate stays omitted on the DEV branch: the dual-form IN-list
+  // below is derived from registry DEV keys alone, so the T8
+  // registry-as-display-SoT intent holds without it (since the registry.ts H6
+  // dual-match, canonicalKeys itself carries the bare aliases too — the gate
+  // would now be redundant rather than alias-dropping, but omission stays the
+  // simpler contract). GROUP BY agent keeps the two forms as separate rows;
   // buildStyleRefSummary sums both into the overall rates.
+  // Transition-window cleanup (reciprocal): remove this block TOGETHER with
+  // the loadCanonicalAgentKeys H6 dual-match in ../agents/registry.ts — that
+  // block points back here.
   const devTelemetryAgents = devAgents.flatMap((name) => [
     name,
     `dev-${name.slice(DEV_AGENT_PREFIX.length)}`,
