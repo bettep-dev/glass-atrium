@@ -1,11 +1,13 @@
 #!/usr/bin/env bats
 # unwire_hooks — settings.json un-wire (uninstall path).
 #
-# unwire_hooks removes EVERY hook-group whose command resolves into the Atrium
-# hooks directory (~/.claude/hooks), across ALL events, PATH-TOLERANTLY (tilde or
+# unwire_hooks removes EVERY hook-group whose command resolves into EITHER Atrium
+# hooks directory (~/.claude/hooks OR ~/.glass-atrium/hooks — dual-dir after the
+# command-template repoint), across ALL events, PATH-TOLERANTLY (tilde or
 # absolute form) and INDEPENDENTLY of the EXPECTED_HOOK_BINDINGS enumeration (so a
 # deployed-but-not-listed surplus hook is still removed). It MUST:
 #   * remove tilde-form AND absolute-form Atrium bindings (path tolerance);
+#   * remove bindings under BOTH ~/.claude/hooks AND ~/.glass-atrium/hooks;
 #   * remove a surplus Atrium hook NOT in EXPECTED_HOOK_BINDINGS (SoT-independent);
 #   * PRESERVE a user hook whose command points elsewhere (e.g. ~/my-hooks/x.sh);
 #   * PRUNE an event key IT emptied, but LEAVE a pre-existing user-owned empty [];
@@ -205,6 +207,39 @@ JSON
   # the user command in a SEPARATE group object (same matcher VALUE) is PRESERVED
   [[ "$(count_cmd 'separate-group.sh')" -eq 1 ]]
   # PreToolUse survives with exactly the one surviving user-only group
+  [[ "$(jq -r '.hooks.PreToolUse | length' "${SETTINGS}")" -eq 1 ]]
+}
+
+# DUAL-DIR (P2 repoint): after the command-template repoint, an install may hold
+# bindings under the NEW ~/.glass-atrium/hooks dir, OR a mid-migration mix of both
+# the old ~/.claude/hooks and the new dir. unwire MUST sweep BOTH Atrium-owned
+# prefixes while preserving a foreign user hook that resolves under neither.
+write_dualdir_sample() {
+  cat >"${SETTINGS}" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.glass-atrium/hooks/advisory-spawn-budget.sh" } ] },
+      { "matcher": "Bash",  "hooks": [ { "type": "command", "command": "${HOME}/.glass-atrium/hooks/validate-secret-scan.sh" } ] },
+      { "matcher": "Edit",  "hooks": [ { "type": "command", "command": "~/.claude/hooks/legacy-old-dir.sh" } ] },
+      { "matcher": "Read",  "hooks": [ { "type": "command", "command": "~/my-hooks/foreign.sh" } ] }
+    ]
+  }
+}
+JSON
+}
+
+@test "dual-dir: ~/.glass-atrium/hooks AND legacy ~/.claude/hooks bindings both removed; foreign preserved" {
+  write_dualdir_sample
+  run_unwire_sandbox
+  [[ "${status}" -eq 0 ]]
+  jq -e . "${SETTINGS}" >/dev/null
+  # both Atrium dirs are swept (new-dir tilde + absolute forms, and the legacy old dir)
+  [[ "$(count_cmd '.glass-atrium/hooks/')" -eq 0 ]]
+  [[ "$(count_cmd '.claude/hooks/')" -eq 0 ]]
+  # the foreign user hook under neither Atrium dir survives, exactly once
+  [[ "$(count_cmd '~/my-hooks/foreign.sh')" -eq 1 ]]
+  # PreToolUse kept, holding only the one surviving foreign group
   [[ "$(jq -r '.hooks.PreToolUse | length' "${SETTINGS}")" -eq 1 ]]
 }
 

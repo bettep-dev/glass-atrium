@@ -3,7 +3,8 @@
 #
 # wire_hooks UPSERTS each EXPECTED_HOOK_BINDINGS entry into the user-owned
 # settings.json under its event, attaching the declared matcher + the
-# "$HOME/.claude/hooks/<basename>" command. It MUST:
+# "$HOME/.glass-atrium/hooks/<basename>" command (repointed from ~/.claude/hooks).
+# It MUST:
 #   * MERGE (preserve every other key byte-for-byte) — never overwrite.
 #   * be IDEMPOTENT — an already-present command is a no-op (no duplicate).
 #   * be ATOMIC + BACKED UP — temp-file + mv, timestamped backup before mutating.
@@ -65,9 +66,9 @@ count_bound() {
   # validate-tool-response lands under PostToolUse with the WebFetch|WebSearch matcher
   run jq -r '.hooks.PostToolUse[] | select(.hooks[].command | endswith("/validate-tool-response.sh")) | .matcher' "${SETTINGS}"
   [[ "${output}" == 'WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*' ]]
-  # the command path is the $HOME/.claude/hooks/<name> form
+  # the command path is the repointed $HOME/.glass-atrium/hooks/<name> form
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/advisory-spawn-budget.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.claude/hooks/advisory-spawn-budget.sh" ]]
+  [[ "${output}" == "${HOME}/.glass-atrium/hooks/advisory-spawn-budget.sh" ]]
 }
 
 @test "Workflow binding -> wired under PreToolUse with matcher Workflow (new event/matcher combo)" {
@@ -80,9 +81,9 @@ count_bound() {
   [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .matcher' "${SETTINGS}"
   [[ "${output}" == "Workflow" ]]
-  # command path is the $HOME/.claude/hooks/<name> form
+  # command path is the repointed $HOME/.glass-atrium/hooks/<name> form
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.claude/hooks/enforce-workflow-verify-stage.sh" ]]
+  [[ "${output}" == "${HOME}/.glass-atrium/hooks/enforce-workflow-verify-stage.sh" ]]
 }
 
 @test "Workflow binding -> idempotent: re-run adds no second occurrence" {
