@@ -253,7 +253,7 @@ class MergeCandidateGateTest(unittest.TestCase):
         release = _doc(top="# R", region="rule a vendor", bottom="z")
         stub = _StubVerify(passed=True)
         cand = em.build_merge_candidate(
-            "GLOBAL_RULES.md",
+            "GLASS_ATRIUM_GLOBAL_RULES.md",
             local,
             release,
             base_text=base,
@@ -264,7 +264,7 @@ class MergeCandidateGateTest(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "GLOBAL_RULES.md"
+            p = Path(d) / "GLASS_ATRIUM_GLOBAL_RULES.md"
             self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)  # never written
             self.assertFalse(p.exists())
             self.assertEqual(cand.verify(str(p)), 1)
@@ -627,7 +627,7 @@ class CliPlanTest(unittest.TestCase):
                 rc = em.main(
                     [
                         "plan",
-                        "--target", "GLOBAL_RULES.md",
+                        "--target", "GLASS_ATRIUM_GLOBAL_RULES.md",
                         "--local", local_p,
                         "--release", release_p,
                         "--out", out_p,
