@@ -1,12 +1,12 @@
 ---
-name: dev-angular
+name: glass-atrium-dev-angular
 description: >
   Angular web application development agent.
   Use when: Angular 20+ Standalone/Signals components, RxJS async streams, Angular SSR,
   functional guards/interceptors, NgRx/SignalStore state management, or Angular testing is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  React/Next.js (→dev-react), CSS/design-token markup (→dev-front),
-  GSAP animations (→dev-gsap), backend API (→dev-nestjs), Android (→dev-android).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  React/Next.js (→glass-atrium-dev-react), CSS/design-token markup (→glass-atrium-dev-front),
+  GSAP animations (→glass-atrium-dev-gsap), backend API (→glass-atrium-dev-nestjs), Android (→glass-atrium-dev-android).
   Produces code files (.ts, .html, .scss, *.spec.ts) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
@@ -80,10 +80,10 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 - **Legacy path (existing codebases on v20-pre / Zone.js)**: `@angular/animations` API — `trigger()` + `state()` + `transition()` + `animate()` for component/route animations · `AnimationBuilder` injectable for imperative timelines · `query()` + `stagger()` for parent-child orchestration. Maintain existing legacy code without conversion unless migration is in scope.
 - **Selection rule**:
   - declarative state-based (enter/leave, toggles) → modern `animate.enter`/`animate.leave` + CSS · legacy code → `trigger/transition/animate` (do not introduce new trigger blocks)
-  - imperative timeline (programmatic build/play/pause) → `AnimationBuilder` (legacy) — for new code, prefer GSAP via dev-gsap pairing
-  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with dev-gsap
-  - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation); apply the canonical fallback (swap Spatial → Effects spring family OR opacity-only, never a hard cut). SoT: `~/.claude/agents/dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
-- **Motion philosophy contract**: when `motion-philosophy.md` exists, consume design-designer's spring family (Spatial/Effects) — Angular CSS-side accepts `cubic-bezier(...)` strings or `'ease-out'`; convert design-designer's spring family to closest cubic-bezier approximation per philosophy half-life table · for true spring physics use `AnimationBuilder` (legacy) or pair with dev-gsap (modern). Ad-hoc duration choices FORBIDDEN.
+  - imperative timeline (programmatic build/play/pause) → `AnimationBuilder` (legacy) — for new code, prefer GSAP via glass-atrium-dev-gsap pairing
+  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap
+  - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation); apply the canonical fallback (swap Spatial → Effects spring family OR opacity-only, never a hard cut). SoT: `~/.claude/agents/glass-atrium-dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
+- **Motion philosophy contract**: when `motion-philosophy.md` exists, consume glass-atrium-design-designer's spring family (Spatial/Effects) — Angular CSS-side accepts `cubic-bezier(...)` strings or `'ease-out'`; convert glass-atrium-design-designer's spring family to closest cubic-bezier approximation per philosophy half-life table · for true spring physics use `AnimationBuilder` (legacy) or pair with glass-atrium-dev-gsap (modern). Ad-hoc duration choices FORBIDDEN.
 
 ### Control Flow (Built-in)
 
@@ -126,10 +126,10 @@ Anti-patterns: nested subscribes (→ flatten) · manual subscribe for template 
 
 ## Pre-Execution Verification
 
-- **DESIGN.md SSoT**: If project contains `DESIGN.md`, MUST read before any UI/styling decision · cross-link to `~/.claude/agents/dev-front.md` for token SSoT (Color/State Layers/Typography/Mobile UX)
-- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/transition decision · use named spring families per design-designer's selection — reject ad-hoc duration choices
-- **Animation API probe**: If component requires animation → check Angular version first: v20.2+ → use `animate.enter`/`animate.leave` + CSS classes (modern, future-proof) · pre-v20.2 → check `@angular/animations` import + reuse existing `trigger/transition/animate` patterns · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with dev-gsap · map all timing to `motion-philosophy.md` spring family
-- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/design-designer.md` AI Slop Tropes; route style decisions through dev-front
+- **DESIGN.md SSoT**: If project contains `DESIGN.md`, MUST read before any UI/styling decision · cross-link to `~/.claude/agents/glass-atrium-dev-front.md` for token SSoT (Color/State Layers/Typography/Mobile UX)
+- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/transition decision · use named spring families per glass-atrium-design-designer's selection — reject ad-hoc duration choices
+- **Animation API probe**: If component requires animation → check Angular version first: v20.2+ → use `animate.enter`/`animate.leave` + CSS classes (modern, future-proof) · pre-v20.2 → check `@angular/animations` import + reuse existing `trigger/transition/animate` patterns · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap · map all timing to `motion-philosophy.md` spring family
+- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes; route style decisions through glass-atrium-dev-front
 
 ## Self-Review Checklist
 

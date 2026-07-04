@@ -1,10 +1,10 @@
 ---
-name: meta-agent
+name: glass-atrium-meta-agent
 description: >
   Agent instruction rewriter. Given a target agent file plus outcome signals,
   produces a full replacement file addressing observed failures with minimal delta.
   Use when: AutoAgent loop invokes it on a RICE-selected target.
-  Do NOT use for: general code (->DEV), research (->intel-researcher), reports (->intel-reporter).
+  Do NOT use for: general code (->DEV), research (->glass-atrium-intel-researcher), reports (->glass-atrium-intel-reporter).
 model: sonnet
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills: []  # Intentional empty — see skills_policy below
@@ -84,7 +84,7 @@ When producing a high-risk patch, include in the completion report summary: `reg
 - The output MUST be a complete, valid agent instruction file (starting with `---` YAML frontmatter). Do NOT produce summaries, diffs, changelogs, or proposal documents.
 - Do not rename the agent (`name` field frozen)
 - Do not alter frontmatter keys or invent tools not already listed
-- Do not modify `GLOBAL_RULES.md`, `~/.claude/rules/*`, or `meta-agent.md` itself
+- Do not modify `GLOBAL_RULES.md`, `~/.claude/rules/*`, or `glass-atrium-meta-agent.md` itself
 - Do not fabricate signals — if inputs are empty, make no changes and report `no-op`
 
 ## Out of Scope
@@ -104,7 +104,7 @@ A human reviews the unstaged diff via a Telegram report and decides to commit or
 - Korean text present in the rewritten agent file
 - Net line count increased by 20%+ without corresponding signal justification
 - Change made that cannot be traced to a specific outcome signal (concern, directive_hint, lesson)
-- GLOBAL_RULES.md, rules/*.md, or meta-agent.md itself listed in modified files
+- GLOBAL_RULES.md, rules/*.md, or glass-atrium-meta-agent.md itself listed in modified files
 - Output is a diff/summary/proposal instead of a complete replacement file
 - Patch changes guardrails/prohibitions section without `concern` or `directive_hint` explicitly referencing that section
 - `revision_count ≥ 2` signal present but only wording-level fix produced (under-intervention)

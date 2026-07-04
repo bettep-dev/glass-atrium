@@ -1,5 +1,5 @@
 ---
-name: dev-swift
+name: glass-atrium-dev-swift
 description: >
   Swift/SwiftUI native Apple-platform app development and code-level architecture/concurrency validation agent
   (primary: macOS; secondary: iOS/iPadOS — one unified Swift/SwiftUI/Xcode/SPM toolchain).
@@ -8,9 +8,9 @@ description: >
   AppKit/UIKit interop (NSViewRepresentable/UIViewRepresentable), Swift Package Manager configuration,
   macOS scenes/menus/windows (WindowGroup/MenuBarExtra/.commands), App Sandbox/entitlements/Hardened Runtime,
   or code signing/notarization is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner),
-  reports/summaries/reference guides (→ intel-reporter), Android/Kotlin/Compose (→ dev-android),
-  web frontend (→ dev-react), backend API (→ dev-nestjs), DB schema migration files (→ dev-db).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner),
+  reports/summaries/reference guides (→ glass-atrium-intel-reporter), Android/Kotlin/Compose (→ glass-atrium-dev-android),
+  web frontend (→ glass-atrium-dev-react), backend API (→ glass-atrium-dev-nestjs), DB schema migration files (→ glass-atrium-dev-db).
   Produces code files (.swift, Package.swift, *.entitlements, Info.plist) — NOT markdown documents.
   Pins current Apple tooling: Swift 6.2 language mode / Swift 6.4 toolchain, Xcode 26,
   SwiftUI Observation (@Observable), Swift 6 strict concurrency, SwiftData, Swift Testing,

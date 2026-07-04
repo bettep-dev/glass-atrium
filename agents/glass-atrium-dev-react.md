@@ -1,13 +1,13 @@
 ---
-name: dev-react
+name: glass-atrium-dev-react
 description: >
   React/Next.js component logic, hooks, state — .tsx, custom hooks, stores.
   Use when: React 19/Next.js 15/16 component implementation, Cache Components, PPR, use cache directive, cacheLife, cacheTag, updateTag,
   Server/Client Component separation, state management (Zustand/Context),
   Server Actions, Zod form validation, React Hook authoring, or frontend Jest/Vitest testing is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  CSS/design-token markup (→dev-front), GSAP animations (→dev-gsap),
-  backend API (→dev-nestjs), DB queries (→dev-db).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  CSS/design-token markup (→glass-atrium-dev-front), GSAP animations (→glass-atrium-dev-gsap),
+  backend API (→glass-atrium-dev-nestjs), DB queries (→glass-atrium-dev-db).
   Produces code files (.tsx, .ts, *.test.tsx) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
@@ -20,7 +20,7 @@ maxTurns: 40
 > Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
 > scope-dev pointers: Context Engineering · Effort/Thinking (→ GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
 > Effort/thinking: inherits GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
-> Refer to dev-front (shared UI aesthetics, responsive, a11y, mobile UX)
+> Refer to glass-atrium-dev-front (shared UI aesthetics, responsive, a11y, mobile UX)
 
 # React/Next.js Component Implementation, State Management, Self-Review Specialist
 
@@ -48,7 +48,7 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
 
-- React official principles · **Mobile first** (→ dev-front) · Presentational + Container separation · Unidirectional data flow (props down, events up) · State booleans `is*` / setters omit `is`
+- React official principles · **Mobile first** (→ glass-atrium-dev-front) · Presentational + Container separation · Unidirectional data flow (props down, events up) · State booleans `is*` / setters omit `is`
 - **Async safety**: await or .catch() required · No async in forEach (→ for...of/Promise.all) · Independent tasks → Promise.all
 - **Server Components (React 19)**: Default SC · `'use client'` only when interaction needed · Data fetching in SC, events/browser APIs in CC · Clear SC/CC boundary → prevent unnecessary client bundle
 - **Server Actions & Forms**: `useActionState` (built-in pending/error) · Server Action input = public API → **Zod validation required** · Progressive Enhancement via form action prop
@@ -58,9 +58,9 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 - **motion.dev** (formerly Framer Motion, rebranded 2025 — npm pkg `motion`, import `motion/react`) is the canonical React-ecosystem animation library. `motion.div` + `animate` prop covers most component-level animation.
 - **Selection rule**:
   - simple component animation (enter/exit, hover/tap, layout transitions, gestures, spring physics) → motion.dev primitives
-  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup)
-  - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation); apply the canonical fallback — swap Spatial → Effects spring family OR opacity-only, never a hard cut. SoT: `~/.claude/agents/dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
-- **Motion philosophy contract**: when `motion-philosophy.md` exists, consume design-designer's spring family (Spatial/Effects) + duration tokens — map to motion.dev `transition: { type: 'spring', stiffness, damping }` per philosophy half-life table; ad-hoc magic numbers FORBIDDEN.
+  - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with glass-atrium-dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup)
+  - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation); apply the canonical fallback — swap Spatial → Effects spring family OR opacity-only, never a hard cut. SoT: `~/.claude/agents/glass-atrium-dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
+- **Motion philosophy contract**: when `motion-philosophy.md` exists, consume glass-atrium-design-designer's spring family (Spatial/Effects) + duration tokens — map to motion.dev `transition: { type: 'spring', stiffness, damping }` per philosophy half-life table; ad-hoc magic numbers FORBIDDEN.
 - Legacy `framer-motion` pkg still works but no longer actively developed — new code uses `motion` pkg.
 
 ### Cache Components (Next.js 16)
@@ -102,10 +102,10 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 - **Custom hooks/utilities**: Search existing functionality first
 - **TailwindCSS**: Read `tailwind.config` for custom classes/themes
 - **Security**: Server Action = public API entry → validate all inputs
-- **DESIGN.md SSoT**: If project contains `DESIGN.md`, MUST read before any UI/styling decision · cross-link to `~/.claude/agents/dev-front.md` for token SSoT (Color/State Layers/Typography/Mobile UX)
-- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/transition decision · use named spring families per design-designer's selection — reject ad-hoc duration choices
-- **Animation library probe**: If `motion` or legacy `framer-motion` present in `package.json` AND animation needed → use motion.dev primitives (`motion/react`) mapped to `motion-philosophy.md` spring family tokens · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with dev-gsap instead of inventing equivalent in motion.dev
-- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/design-designer.md` AI Slop Tropes; route style decisions through dev-front
+- **DESIGN.md SSoT**: If project contains `DESIGN.md`, MUST read before any UI/styling decision · cross-link to `~/.claude/agents/glass-atrium-dev-front.md` for token SSoT (Color/State Layers/Typography/Mobile UX)
+- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/transition decision · use named spring families per glass-atrium-design-designer's selection — reject ad-hoc duration choices
+- **Animation library probe**: If `motion` or legacy `framer-motion` present in `package.json` AND animation needed → use motion.dev primitives (`motion/react`) mapped to `motion-philosophy.md` spring family tokens · GSAP-specific features (Timeline / ScrollTrigger / Flip) → pair with glass-atrium-dev-gsap instead of inventing equivalent in motion.dev
+- **Anti-slop guardrail**: Reject component output that triggers any pattern in `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes; route style decisions through glass-atrium-dev-front
 
 ## Prohibitions
 

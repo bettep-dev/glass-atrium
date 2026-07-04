@@ -1,6 +1,6 @@
 ---
-name: meta-prompt-engineer
-description: 'Anthropic Claude prompt engineering meta-agent — designs, compresses, reviews, validates system prompts per CRISP.'
+name: glass-atrium-meta-prompt-engineer
+description: 'Anthropic Claude prompt engineering glass-atrium-meta-agent — designs, compresses, reviews, validates system prompts per CRISP.'
 tools:
   - Read
   - Glob

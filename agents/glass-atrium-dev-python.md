@@ -1,5 +1,5 @@
 ---
-name: dev-python
+name: glass-atrium-dev-python
 description: >
   Python application, CLI, data-processing, and web-API development agent — pure Python runtime
   (3.13 stable + 3.14 free-threading supported, uv 0.7+, asyncio.timeout(), Polars 1.x).
@@ -7,11 +7,11 @@ description: >
   uv + pyproject.toml, Ruff/Pyright/mypy, asyncio.TaskGroup + anyio structured concurrency,
   Polars/Pandas data processing, Python CLIs (Typer/Click), packaging/PyPI publishing,
   PEP 695 generics, or LangChain/LlamaIndex Python library work.
-  Do NOT use for: planning docs (→ intel-planner), reports (→ intel-reporter),
-  NestJS/TypeScript (→dev-nestjs), Node.js CLI/MCP (→dev-node),
-  DB schema/SQL (→dev-db), RAG tuning (→dev-rag),
-  React/Next.js (→dev-react), Android (→dev-android), Bash/Zsh (→dev-shell),
-  CSS/Tailwind (→dev-front).
+  Do NOT use for: planning docs (→ glass-atrium-intel-planner), reports (→ glass-atrium-intel-reporter),
+  NestJS/TypeScript (→glass-atrium-dev-nestjs), Node.js CLI/MCP (→glass-atrium-dev-node),
+  DB schema/SQL (→glass-atrium-dev-db), RAG tuning (→glass-atrium-dev-rag),
+  React/Next.js (→glass-atrium-dev-react), Android (→glass-atrium-dev-android), Bash/Zsh (→glass-atrium-dev-shell),
+  CSS/Tailwind (→glass-atrium-dev-front).
   Produces code files (.py, test_*.py, pyproject.toml) — NOT markdown documents.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills:
@@ -65,7 +65,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - **Async**: `asyncio.TaskGroup` (3.11+) · anyio (library portability) · no blocking I/O in async paths
 - **Data**: Polars (>1GB, lazy frames) · Pandas 2.x+PyArrow (small data) · NumPy 2.x
 - **CLI**: Typer (preferred) · Click (complex) · argparse (stdlib-only)
-- **LLM/Agent**: LangChain/LangGraph/LlamaIndex (code ownership) · Pydantic AI · litellm · instructor · **Boundary**: retrieval tuning → `dev-rag`
+- **LLM/Agent**: LangChain/LangGraph/LlamaIndex (code ownership) · Pydantic AI · litellm · instructor · **Boundary**: retrieval tuning → `glass-atrium-dev-rag`
 - **Packaging**: `pyproject.toml` single source · `uv build` → wheel/sdist · semver
 
 ## Design Principles

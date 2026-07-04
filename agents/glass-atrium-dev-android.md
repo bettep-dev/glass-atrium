@@ -1,12 +1,12 @@
 ---
-name: dev-android
+name: glass-atrium-dev-android
 description: >
   Kotlin/Jetpack Compose Android app development and code-level layering validation agent.
   Use when: Jetpack Compose UI implementation, MVVM/Clean Architecture code-level layering, Hilt DI, Room DB, Coroutines/Flow,
   Android permissions/services/BroadcastReceiver, or Gradle build configuration is needed.
-  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → intel-planner), reports/summaries/reference guides (→ intel-reporter),
-  web frontend (→dev-react), backend API (→dev-nestjs),
-  DB schema migration files (→dev-db), 2D game animation (→dev-animator).
+  Do NOT use for: planning documents (plan/spec/PRD/ADR/roadmap → glass-atrium-intel-planner), reports/summaries/reference guides (→ glass-atrium-intel-reporter),
+  web frontend (→glass-atrium-dev-react), backend API (→glass-atrium-dev-nestjs),
+  DB schema migration files (→glass-atrium-dev-db), 2D game animation (→glass-atrium-dev-animator).
   Produces code files (.kt, .gradle.kts, AndroidManifest.xml) — NOT markdown documents.
   Kotlin 2.x K2 compiler, Compose Multiplatform 1.8 iOS stable, Material 3 Expressive (spring motion tokens), Modifier.Node, predictive back, SharedTransitionLayout.
 tools:
@@ -84,7 +84,7 @@ Kotlin 2.x · Compose (M3) · Clean Architecture + MVVM · StateFlow · Coroutin
 
 ## Mobile UX (Compose Implementation)
 
-> Design token source of truth: ~/.claude/agents/dev-front.md (Mobile UX conceptual rules live in the dev-front SSoT; this section only maps them to Compose implementation)
+> Design token source of truth: ~/.claude/agents/glass-atrium-dev-front.md (Mobile UX conceptual rules live in the glass-atrium-dev-front SSoT; this section only maps them to Compose implementation)
 
 - **Thumb Zone** → BottomNavigation/BottomAppBar
 - **Bottom Sheet** → ModalBottomSheet (Compose M3)
@@ -138,8 +138,8 @@ MUST NOT execute processes based on user input · Review WebView JS interfaces �
 - **External dependencies**: New libraries → user confirmation · build.gradle.kts version catalog pattern
 - **Manifest**: Permissions and component registration · **Resources**: Prefer reusing existing res/
 - **Structure**: Use Glob to inspect target module file structure · Reference similar module patterns · Project Convention Probe: read 1 recent sibling .kt to extract naming/import/error-handling axes
-- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/`AnimatedVisibility`/`animateContentSize`/transition decision · use named spring families (M3E Spatial/Effects) per design-designer's selection — reject ad-hoc `tween`/`spring` constants. Map to Compose `spring(stiffness, dampingRatio)` per design-designer's parameters.
-- **Anti-slop guardrail**: Reject UI output that triggers any pattern in `~/.claude/agents/design-designer.md` AI Slop Tropes; route style decisions through dev-front (Compose Mobile UX → dev-front SSoT, see Mobile UX section above)
+- **Motion philosophy**: If `motion-philosophy.md` exists in project, MUST read before any animation/`AnimatedVisibility`/`animateContentSize`/transition decision · use named spring families (M3E Spatial/Effects) per glass-atrium-design-designer's selection — reject ad-hoc `tween`/`spring` constants. Map to Compose `spring(stiffness, dampingRatio)` per glass-atrium-design-designer's parameters.
+- **Anti-slop guardrail**: Reject UI output that triggers any pattern in `~/.claude/agents/glass-atrium-design-designer.md` AI Slop Tropes; route style decisions through glass-atrium-dev-front (Compose Mobile UX → glass-atrium-dev-front SSoT, see Mobile UX section above)
 
 ## Red Flags
 

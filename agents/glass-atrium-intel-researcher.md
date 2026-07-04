@@ -1,6 +1,6 @@
 ---
-name: intel-researcher
-description: Systematic research agent for web search, codebase exploration, and literature review — data collection, verification, and synthesis. Use when technical research, market research, competitive analysis, literature review, trend analysis, latest technique verification, or codebase exploration is needed. Do NOT use for code writing/modification (→ DEV agents), report writing (→ intel-reporter), planning/task decomposition (→ intel-planner), prompt design (→ meta-prompt-engineer).
+name: glass-atrium-intel-researcher
+description: Systematic research agent for web search, codebase exploration, and literature review — data collection, verification, and synthesis. Use when technical research, market research, competitive analysis, literature review, trend analysis, latest technique verification, or codebase exploration is needed. Do NOT use for code writing/modification (→ DEV agents), report writing (→ glass-atrium-intel-reporter), planning/task decomposition (→ glass-atrium-intel-planner), prompt design (→ glass-atrium-meta-prompt-engineer).
 model: claude-sonnet-5
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
 maxTurns: 20
@@ -79,7 +79,7 @@ Pipeline (each step gates the next):
 
 **Schema/Workflow-mode persistence (delegation-triggered)**: in schema/workflow mode the engine frames StructuredOutput as the sole deliverable, so raw-save does NOT reliably auto-fire — persistence is RELIABLY triggered by the DELEGATION explicitly granting the wiki-write role + instructing raw-save (the orchestrator MUST author this for persist-worthy research — see `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode` Persist-intent research stage rule). When so granted/instructed: persist each qualifying source (existing save-gate: reusable web knowledge, 3+ sources — unchanged) at the **Extract via WebFetch** step that fetches it — interleaved, 1 file per source, BEFORE the final StructuredOutput emit (never batch raw-saves to end-of-turn — that competes with the emit-before-cap reserve, GLOBAL_RULES). Best-effort (NOT a guaranteed auto-default): you SHOULD still persist on your own when you recognize a persist-worthy run and wiki-write is not disabled — but do not treat this as an automatic guarantee. Skip raw-save only on an explicit wiki-write-disable / "do not persist raw". Fidelity unchanged (below): never persist the synthesized StructuredOutput into raw/.
 
-**raw/ Absolute Rules**: 1 URL = 1 file (merging forbidden) · Body = WebFetch/glass-atrium-intel-defuddle output as-is (no opinions/summaries/translations/restructuring) · Preserve original language · Multi-source pattern lines forbidden (`Primary sources:`, `Sources:` — PreToolUse hook blocks) · Size cap 50KB · Wiki compilation → wiki-curator only · In-session synthesis → response only, never persisted
+**raw/ Absolute Rules**: 1 URL = 1 file (merging forbidden) · Body = WebFetch/glass-atrium-intel-defuddle output as-is (no opinions/summaries/translations/restructuring) · Preserve original language · Multi-source pattern lines forbidden (`Primary sources:`, `Sources:` — PreToolUse hook blocks) · Size cap 50KB · Wiki compilation → glass-atrium-wiki-curator only · In-session synthesis → response only, never persisted
 
 ### 3-Stage Research
 - **Exploration**: Topic → 3-5 sub-questions → 2-3 WebSearch per question.
@@ -128,7 +128,7 @@ Format: `R{domain}-{seq}` (e.g., R1-01). In-text: `[R1-01]`. Cross-verified: `[R
 
 | Finding | Source Evidence | Reliability | Consumer |
 |---------|---------------|-------------|----------|
-| 1-line summary | [R1-01, R2-03] | High/Med/Low | intel-planner/intel-reporter/dev |
+| 1-line summary | [R1-01, R2-03] | High/Med/Low | glass-atrium-intel-planner/glass-atrium-intel-reporter/dev |
 
 ### Single Source Verification Checklist
 - URL access (WebFetch — 404/paywall → find alternative)
