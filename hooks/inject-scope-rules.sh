@@ -52,15 +52,18 @@ SUBAGENT_BUDGET_METER_OFF="${SUBAGENT_BUDGET_METER_OFF:-}"
 # sandbox (the test points it at a fixture dir). Canonical SoT root = ~/.glass-atrium/agents.
 readonly AGENTS_DIR="${INJECT_SCOPE_RULES_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
 
-# Comment-logging source rule file — env-overridable (test fail-open branch), ${HOME}-relative.
-readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.claude/scoped/shared-comment-logging.md}"
+# Comment-logging source rule file — env-overridable (test fail-open branch). scoped/ is DROPPED
+# from the ~/.claude farm and consumed IN PLACE from ~/.glass-atrium/scoped; these SessionStart-
+# adjacent hooks are client-fired so the DEFAULT constant (not an env block) carries the new path.
+readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.glass-atrium/scoped/shared-comment-logging.md}"
 
-# style_ref source rule file — DEV-only injection; same env-override pattern as SRC_FILE.
-readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.claude/scoped/scope-dev.md}"
+# style_ref source rule file — DEV-only injection; same env-override + ~/.glass-atrium/scoped default.
+readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-atrium/scoped/scope-dev.md}"
 
-# naming source SKILL file — DEV(12)+qa-code-reviewer injection; same env-override + ${HOME}/.claude
-# pattern. The ${HOME}/.claude path is a symlink into the canonical ~/.glass-atrium store (verified);
-# the hook uses ${HOME}/.claude consistently with SRC_FILE/STYLEREF_SRC_FILE rather than the raw store.
+# naming source SKILL file — DEV(12)+qa-code-reviewer injection; same env-override pattern. UNLIKE
+# SRC_FILE/STYLEREF_SRC_FILE (relocated to ~/.glass-atrium/scoped), skills STAY FARMED into
+# ~/.claude/skills, so this default keeps the ~/.claude/skills path (a symlink into the canonical
+# ~/.glass-atrium store).
 readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skills/glass-atrium-dev-naming/SKILL.md}"
 
 # Comment-logging AGENT-INJECT block boundaries — literal anchors (stable across file edits).
