@@ -175,8 +175,31 @@ test("기본 경로 ENOENT: ~/.glass-atrium 부재 → 빈 Map fallback (기동 
 test("loadCanonicalAgentKeys: 기본 경로 registry 의 키 배열 반환 (membership 게이트 SoT)", async () => {
   await writeAtriumFixtures(tmpHome);
   const keys = await loadCanonicalAgentKeys();
+  // H6 전환창 dual-match 반영 — prefixed 정본 키 + bare legacy alias 동시 반환.
   assert.deepStrictEqual(
     [...keys].sort(),
-    ["glass-atrium-dev-node", "glass-atrium-qa-code-reviewer"],
+    [
+      "dev-node",
+      "glass-atrium-dev-node",
+      "glass-atrium-qa-code-reviewer",
+      "qa-code-reviewer",
+    ],
   );
+});
+
+// H6 rename-전환창 dual-match 회귀 테스트 — pre-rename DB 행은 bare agent 명
+// (dev-node 등)을 갖고, prefixed-only IN-list 는 그 히스토리 전체를 숨긴다
+// (배포 회귀: /api/outcomes/search total 0). 거울 구현:
+// monitor/src/server/routes/improvement.ts DEV_AGENT_PREFIX dual-match —
+// 전환창 종료 시 registry.ts 쪽과 함께 제거.
+test("H6 전환 dual-match: glass-atrium-* 키마다 bare alias 도 포함 + 중복 없음", async () => {
+  await writeAtriumFixtures(tmpHome);
+  const keys = await loadCanonicalAgentKeys();
+  // prefixed 정본 키와 de-prefixed legacy alias 가 모두 존재해야 한다.
+  assert.ok(keys.includes("glass-atrium-dev-node"));
+  assert.ok(keys.includes("dev-node"));
+  assert.ok(keys.includes("glass-atrium-qa-code-reviewer"));
+  assert.ok(keys.includes("qa-code-reviewer"));
+  // dedupe 불변식 — 동일 키 이중 삽입 금지 (IN-list 중복 방지).
+  assert.strictEqual(new Set(keys).size, keys.length);
 });
