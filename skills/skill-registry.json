@@ -24,19 +24,19 @@
       "triggers": [],
       "depends_on": [],
       "used_by": [
-        "dev-angular",
-        "dev-rag",
-        "dev-gsap",
-        "dev-node",
-        "dev-nestjs",
-        "dev-android",
-        "dev-shell",
-        "dev-front",
-        "dev-db",
-        "dev-react",
-        "qa-debugger",
-        "qa-code-reviewer",
-        "dev-animator"
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-rag",
+        "glass-atrium-dev-gsap",
+        "glass-atrium-dev-node",
+        "glass-atrium-dev-nestjs",
+        "glass-atrium-dev-android",
+        "glass-atrium-dev-shell",
+        "glass-atrium-dev-front",
+        "glass-atrium-dev-db",
+        "glass-atrium-dev-react",
+        "glass-atrium-qa-debugger",
+        "glass-atrium-qa-code-reviewer",
+        "glass-atrium-dev-animator"
       ],
       "phase": "build"
     },
@@ -49,17 +49,17 @@
         "glass-atrium-dev-naming"
       ],
       "used_by": [
-        "dev-angular",
-        "dev-rag",
-        "dev-gsap",
-        "dev-node",
-        "dev-nestjs",
-        "dev-android",
-        "dev-shell",
-        "dev-front",
-        "dev-db",
-        "dev-react",
-        "dev-animator"
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-rag",
+        "glass-atrium-dev-gsap",
+        "glass-atrium-dev-node",
+        "glass-atrium-dev-nestjs",
+        "glass-atrium-dev-android",
+        "glass-atrium-dev-shell",
+        "glass-atrium-dev-front",
+        "glass-atrium-dev-db",
+        "glass-atrium-dev-react",
+        "glass-atrium-dev-animator"
       ],
       "phase": "build"
     },
@@ -70,19 +70,19 @@
       "triggers": [],
       "depends_on": [],
       "used_by": [
-        "dev-angular",
-        "dev-rag",
-        "dev-gsap",
-        "dev-node",
-        "dev-nestjs",
-        "dev-android",
-        "dev-shell",
-        "dev-front",
-        "dev-db",
-        "dev-react",
-        "qa-debugger",
-        "qa-code-reviewer",
-        "dev-animator"
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-rag",
+        "glass-atrium-dev-gsap",
+        "glass-atrium-dev-node",
+        "glass-atrium-dev-nestjs",
+        "glass-atrium-dev-android",
+        "glass-atrium-dev-shell",
+        "glass-atrium-dev-front",
+        "glass-atrium-dev-db",
+        "glass-atrium-dev-react",
+        "glass-atrium-qa-debugger",
+        "glass-atrium-qa-code-reviewer",
+        "glass-atrium-dev-animator"
       ],
       "phase": "build"
     },
@@ -121,7 +121,7 @@
       "triggers": [],
       "depends_on": [],
       "used_by": [
-        "intel-researcher"
+        "glass-atrium-intel-researcher"
       ],
       "phase": "define"
     },
@@ -150,7 +150,7 @@
       "triggers": [],
       "depends_on": [],
       "used_by": [
-        "wiki-curator"
+        "glass-atrium-wiki-curator"
       ],
       "phase": "build"
     },
@@ -175,12 +175,12 @@
       ],
       "depends_on": [],
       "used_by": [
-        "design-designer",
-        "dev-front",
-        "dev-react",
-        "dev-angular",
-        "dev-android",
-        "qa-code-reviewer"
+        "glass-atrium-design-designer",
+        "glass-atrium-dev-front",
+        "glass-atrium-dev-react",
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-android",
+        "glass-atrium-qa-code-reviewer"
       ],
       "phase": "verify"
     },
@@ -196,8 +196,8 @@
       ],
       "depends_on": [],
       "used_by": [
-        "design-designer",
-        "dev-front"
+        "glass-atrium-design-designer",
+        "glass-atrium-dev-front"
       ],
       "phase": "verify"
     },
@@ -213,12 +213,12 @@
       ],
       "depends_on": [],
       "used_by": [
-        "design-designer",
-        "dev-front",
-        "qa-code-reviewer",
-        "dev-react",
-        "dev-angular",
-        "dev-android"
+        "glass-atrium-design-designer",
+        "glass-atrium-dev-front",
+        "glass-atrium-qa-code-reviewer",
+        "glass-atrium-dev-react",
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-android"
       ],
       "phase": "verify"
     },
@@ -234,12 +234,12 @@
       ],
       "depends_on": [],
       "used_by": [
-        "design-designer",
-        "dev-front",
-        "dev-react",
-        "dev-angular",
-        "dev-android",
-        "qa-code-reviewer"
+        "glass-atrium-design-designer",
+        "glass-atrium-dev-front",
+        "glass-atrium-dev-react",
+        "glass-atrium-dev-angular",
+        "glass-atrium-dev-android",
+        "glass-atrium-qa-code-reviewer"
       ],
       "phase": "verify"
     }
