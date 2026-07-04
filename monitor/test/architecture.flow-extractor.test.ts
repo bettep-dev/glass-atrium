@@ -155,7 +155,7 @@ test("SoT parity: v2-team-docs 의 hyphen node-id 전부 추출", () => {
   assert.ok(docsDiagram !== undefined);
   const out = extract(docsDiagram.mermaid_source);
   const ids = new Set(out.nodes.map((n) => n.id));
-  for (const id of ["intel-researcher", "design-designer", "intel-reporter"]) {
+  for (const id of ["glass-atrium-intel-researcher", "glass-atrium-design-designer", "glass-atrium-intel-reporter"]) {
     assert.ok(ids.has(id), `missing node: ${id}`);
   }
 });

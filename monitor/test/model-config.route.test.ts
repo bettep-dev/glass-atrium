@@ -88,15 +88,15 @@ let applyLockPath: string;
 let registryPath: string;
 let pricingSotPath: string;
 
-// Registry fixture — the on-disk dev agents that ARE registered. dev-ghost.md is
+// Registry fixture — the on-disk dev agents that ARE registered. glass-atrium-dev-ghost.md is
 // deliberately omitted so the T12 intersection excludes it (de-registered/archived).
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
   version: "1.1",
   agents: {
-    "dev-alpha": { domains: ["test"], phase: "implementation", dual_phase: false },
-    "dev-beta": { domains: ["test"], phase: "implementation", dual_phase: false },
-    "dev-broken": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "glass-atrium-dev-alpha": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "glass-atrium-dev-beta": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "glass-atrium-dev-broken": { domains: ["test"], phase: "implementation", dual_phase: false },
   },
 };
 
@@ -168,22 +168,22 @@ before(async () => {
 
   writeDaemonConfigFixture();
 
-  // dev-alpha is reached through a symlink — mirrors the live ~/.claude/agents layout.
-  writeFileSync(path.join(realAgentsDir, "dev-alpha.md"), agentMarkdown("dev-alpha"), "utf8");
-  symlinkSync(path.join(realAgentsDir, "dev-alpha.md"), path.join(agentsDir, "dev-alpha.md"));
-  writeFileSync(path.join(agentsDir, "dev-beta.md"), agentMarkdown("dev-beta"), "utf8");
-  writeFileSync(path.join(agentsDir, "dev-broken.md"), "no frontmatter here\njust text\n", "utf8");
-  // dev-ghost.md is present on disk but absent from the registry fixture — T12 must exclude it.
-  writeFileSync(path.join(agentsDir, "dev-ghost.md"), agentMarkdown("dev-ghost"), "utf8");
+  // glass-atrium-dev-alpha is reached through a symlink — mirrors the live ~/.claude/agents layout.
+  writeFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), agentMarkdown("glass-atrium-dev-alpha"), "utf8");
+  symlinkSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), path.join(agentsDir, "glass-atrium-dev-alpha.md"));
+  writeFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), agentMarkdown("glass-atrium-dev-beta"), "utf8");
+  writeFileSync(path.join(agentsDir, "glass-atrium-dev-broken.md"), "no frontmatter here\njust text\n", "utf8");
+  // glass-atrium-dev-ghost.md is present on disk but absent from the registry fixture — T12 must exclude it.
+  writeFileSync(path.join(agentsDir, "glass-atrium-dev-ghost.md"), agentMarkdown("glass-atrium-dev-ghost"), "utf8");
   writeFileSync(
-    path.join(agentsDir, "intel-researcher.md"),
-    agentMarkdown("intel-researcher", ["model: claude-sonnet-5"]),
+    path.join(agentsDir, "glass-atrium-intel-researcher.md"),
+    agentMarkdown("glass-atrium-intel-researcher", ["model: claude-sonnet-5"]),
     "utf8",
   );
 
   // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
-  // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only dev-alpha/beta/broken are
-  // registered → the on-disk dev-ghost.md is filtered out of every dev-file surface.
+  // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only glass-atrium-dev-alpha/beta/broken are
+  // registered → the on-disk glass-atrium-dev-ghost.md is filtered out of every dev-file surface.
   writeFileSync(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
   process.env.AGENT_REGISTRY_PATH = registryPath;
   resetAgentRegistryCache();
@@ -262,7 +262,7 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(dev.drift, false);
   assert.deepStrictEqual(
     dev.files?.map((f) => f.file),
-    ["dev-alpha.md", "dev-beta.md", "dev-broken.md"],
+    ["glass-atrium-dev-alpha.md", "glass-atrium-dev-beta.md", "glass-atrium-dev-broken.md"],
   );
 
   const research = domainOf(body, "model.research");
@@ -289,17 +289,17 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(body.daemon_config_sync, "ok");
 });
 
-test("T12: de-registered on-disk dev-*.md (dev-ghost) excluded from the model table", async () => {
+test("T12: de-registered on-disk dev-*.md (glass-atrium-dev-ghost) excluded from the model table", async () => {
   const res = await app.inject({ method: "GET", url: "/api/model-config" });
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigGetResponse;
 
   const dev = domainOf(body, "model.dev");
   const files = dev.files?.map((f) => f.file) ?? [];
-  // dev-ghost.md exists on disk but is absent from the registry → intersection drops it.
-  assert.ok(!files.includes("dev-ghost.md"), "unregistered dev-ghost.md must be excluded");
+  // glass-atrium-dev-ghost.md exists on disk but is absent from the registry → intersection drops it.
+  assert.ok(!files.includes("glass-atrium-dev-ghost.md"), "unregistered glass-atrium-dev-ghost.md must be excluded");
   // The registered dev agents survive the intersection (registry-scoped, not blanked).
-  assert.deepStrictEqual(files, ["dev-alpha.md", "dev-beta.md", "dev-broken.md"]);
+  assert.deepStrictEqual(files, ["glass-atrium-dev-alpha.md", "glass-atrium-dev-beta.md", "glass-atrium-dev-broken.md"]);
 });
 
 test("D5: drift compare is variant-suffix-normalized ('claude-sonnet-5[1m]' == 'claude-sonnet-5')", async () => {
@@ -327,12 +327,12 @@ test("GET tolerates a legacy alias on DB/frontmatter surfaces — display only, 
   // carry is installed out-of-band (direct prisma + frontmatter rewrite) and restored in
   // finally — GET must render it verbatim, not 500/blank it.
   const prisma = getPrisma();
-  const researchFile = path.join(agentsDir, "intel-researcher.md");
+  const researchFile = path.join(agentsDir, "glass-atrium-intel-researcher.md");
   await prisma.modelConfig.update({
     where: { configKey: "model.research" },
     data: { configValue: "sonnet" },
   });
-  writeFileSync(researchFile, agentMarkdown("intel-researcher", ["model: sonnet"]), "utf8");
+  writeFileSync(researchFile, agentMarkdown("glass-atrium-intel-researcher", ["model: sonnet"]), "utf8");
   try {
     const res = await app.inject({ method: "GET", url: "/api/model-config" });
     assert.strictEqual(res.statusCode, 200);
@@ -348,7 +348,7 @@ test("GET tolerates a legacy alias on DB/frontmatter surfaces — display only, 
       where: { configKey: "model.research" },
       data: { configValue: "claude-sonnet-5" },
     });
-    writeFileSync(researchFile, agentMarkdown("intel-researcher", ["model: claude-sonnet-5"]), "utf8");
+    writeFileSync(researchFile, agentMarkdown("glass-atrium-intel-researcher", ["model: claude-sonnet-5"]), "utf8");
   }
 });
 
@@ -384,7 +384,7 @@ test("D3 fail-open: missing pricing SoT → GET 200 with known_models [] — nex
 
 test("AC-2: invalid model value → 400 field-level error + zero writes", async () => {
   const daemonConfigBefore = readFileSync(daemonConfigPath, "utf8");
-  const betaBefore = readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8");
+  const betaBefore = readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8");
 
   const res = await app.inject({
     method: "PUT",
@@ -398,7 +398,7 @@ test("AC-2: invalid model value → 400 field-level error + zero writes", async 
 
   assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB row unchanged");
   assert.strictEqual(readFileSync(daemonConfigPath, "utf8"), daemonConfigBefore, "daemon-config untouched");
-  assert.strictEqual(readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8"), betaBefore, "frontmatter untouched");
+  assert.strictEqual(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8"), betaBefore, "frontmatter untouched");
 });
 
 test("D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/research too)", async () => {
@@ -506,22 +506,22 @@ test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unp
   const surface = surfaceOf(body, "frontmatter-dev");
   assert.strictEqual(surface.status, "skipped", "aggregate surfaces the unparseable skip");
   const byFile = new Map(surface.files?.map((f) => [f.file, f]) ?? []);
-  assert.strictEqual(byFile.get("dev-alpha.md")?.status, "ok");
-  assert.strictEqual(byFile.get("dev-beta.md")?.status, "ok");
-  assert.strictEqual(byFile.get("dev-broken.md")?.status, "skipped");
+  assert.strictEqual(byFile.get("glass-atrium-dev-alpha.md")?.status, "ok");
+  assert.strictEqual(byFile.get("glass-atrium-dev-beta.md")?.status, "ok");
+  assert.strictEqual(byFile.get("glass-atrium-dev-broken.md")?.status, "skipped");
 
   // Symlink hazard (D4): the agents-dir entry stays a symlink; the RESOLVED file got the line.
-  assert.ok(lstatSync(path.join(agentsDir, "dev-alpha.md")).isSymbolicLink(), "symlink preserved");
-  const alphaReal = readFileSync(path.join(realAgentsDir, "dev-alpha.md"), "utf8");
+  assert.ok(lstatSync(path.join(agentsDir, "glass-atrium-dev-alpha.md")).isSymbolicLink(), "symlink preserved");
+  const alphaReal = readFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), "utf8");
   assert.ok(alphaReal.includes("\nmodel: claude-opus-4-8\n"), "resolved target updated");
-  assert.ok(readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8").includes("\nmodel: claude-opus-4-8\n"));
+  assert.ok(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8").includes("\nmodel: claude-opus-4-8\n"));
   assert.strictEqual(
-    readFileSync(path.join(agentsDir, "dev-broken.md"), "utf8"),
+    readFileSync(path.join(agentsDir, "glass-atrium-dev-broken.md"), "utf8"),
     "no frontmatter here\njust text\n",
     "unparseable file untouched",
   );
   assert.ok(
-    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-5\n"),
+    readFileSync(path.join(agentsDir, "glass-atrium-intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-5\n"),
     "research file untouched by a dev pin",
   );
 
@@ -539,8 +539,8 @@ test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unp
   assert.strictEqual(res2.statusCode, 200);
   const body2 = res2.json() as ModelConfigPutResponse;
   assert.strictEqual(domainOf(body2, "model.dev").actual, "inherit");
-  assert.ok(!readFileSync(path.join(realAgentsDir, "dev-alpha.md"), "utf8").includes("model:"));
-  assert.ok(!readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8").includes("model:"));
+  assert.ok(!readFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), "utf8").includes("model:"));
+  assert.ok(!readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8").includes("model:"));
 });
 
 // ----- daemon-apply concurrency guard ------------------------------------------------
@@ -548,7 +548,7 @@ test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unp
 test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT passes", async () => {
   mkdirSync(applyLockPath, { recursive: true });
   try {
-    const betaBefore = readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8");
+    const betaBefore = readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8");
     // Concrete id — an alias value would 400 at validation before reaching the lock path.
     const res = await app.inject({
       method: "PUT",
@@ -558,7 +558,7 @@ test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT 
     assert.strictEqual(res.statusCode, 409);
     assert.strictEqual((res.json() as { error: string }).error, "daemon_apply_in_progress");
     assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB unchanged on 409");
-    assert.strictEqual(readFileSync(path.join(agentsDir, "dev-beta.md"), "utf8"), betaBefore);
+    assert.strictEqual(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8"), betaBefore);
 
     // The guard protects only the agents/ stash window — daemon-config (budget) updates pass.
     const res2 = await app.inject({
@@ -584,7 +584,7 @@ test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old
   });
   assert.strictEqual(res.statusCode, 200);
   assert.ok(
-    readFileSync(path.join(agentsDir, "intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-4-6\n"),
+    readFileSync(path.join(agentsDir, "glass-atrium-intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-4-6\n"),
     "research frontmatter line replaced",
   );
 
