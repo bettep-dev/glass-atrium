@@ -26,13 +26,17 @@
 # BOTH the release-bundle member list (publish-release.sh tars exactly this set)
 # AND the ~/.claude symlink-farm source — so it now carries TWO categories:
 #   INCLUDE-A  SYMLINKED harness components — git-TRACKED files under the dirs the
-#            engine farms into ~/.claude: agents/ autoagent/ hooks/ rules/ scoped/
-#            scripts/ skills/ — plus the top-level agent-registry.json and the
-#            top-level glass-atrium launcher (deployed to ~/.claude/glass-atrium).
+#            engine farms into ~/.claude: agents/ autoagent/ rules/ scripts/ skills/.
 #   INCLUDE-B  INSTALL-INTERNAL runtime — BUNDLED + per-file hash-verified like
 #            everything else, but consumed IN PLACE from ~/.glass-atrium and thus
 #            NEVER symlinked into ~/.claude (lib/ga-core.sh::is_symlink_excluded
-#            filters them out of the farm). Members:
+#            SYMLINK_EXCLUDE_PREFIXES/EXACT filters them out of the farm). Members:
+#              * hooks/ + scoped/ (settings.json hook command paths and the
+#                inject-scope-rules / validate-compliance-matrix SCOPED source
+#                read them from ~/.glass-atrium directly),
+#              * agent-registry.json + the top-level glass-atrium launcher
+#                (monitor registry.ts default and the launcher consumers resolve
+#                them in ~/.glass-atrium),
 #              * lib/ (ga-core.sh + ga-deps.sh, the install/uninstall/update
 #                ENGINE the launcher SOURCES from its own resolved dir),
 #              * config.toml.example (render_config template),
@@ -93,9 +97,11 @@ readonly MANIFEST="${GA_ROOT}/manifest.json"
 
 # Manifest scope — the paths hashed + bundled + integrity-verified. A new
 # top-level entry must be added here DELIBERATELY (policy change), never inferred.
-# The first block is the SYMLINKED harness set (INCLUDE-A); the second block is
-# the install-internal runtime (INCLUDE-B) that is bundled + verified but excluded
-# from the ~/.claude symlink farm (ga-core.sh::is_symlink_excluded). See the
+# INCLUDE-A/B membership is decided by ga-core.sh::is_symlink_excluded
+# (SYMLINK_EXCLUDE_PREFIXES/EXACT), NOT by position in this array — array order
+# is manifest-output order only. Symlinked (INCLUDE-A): agents, autoagent,
+# rules, scripts, skills. Install-internal (INCLUDE-B): agent-registry.json,
+# glass-atrium, hooks, scoped, plus the tail entries below. See the
 # Deploy-scope policy note above.
 readonly -a SCOPE_PATHS=(
   "agent-registry.json"
@@ -107,7 +113,7 @@ readonly -a SCOPE_PATHS=(
   "scoped"
   "scripts"
   "skills"
-  # INCLUDE-B — install-internal runtime (bundled + verified, NEVER symlinked)
+  # INCLUDE-B tail — install-internal runtime (full membership in the note above)
   "config.toml.example"
   "lib"
   "monitor"

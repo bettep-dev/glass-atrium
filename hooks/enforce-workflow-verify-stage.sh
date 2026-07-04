@@ -900,12 +900,12 @@ reason="$(
 How to fix — insert a verify stage ahead of the DEV implementation agent(), e.g.:
 
   pipeline(
-    agent('intel-planner', { goal: 'author plan' }),
+    agent('glass-atrium-intel-planner', { goal: 'author plan' }),
     parallel(
-      agent('qa-code-reviewer', { goal: 'judge implementation/test-feasibility -> pass|revise' }),
-      agent('dev-nestjs',       { goal: 'judge technical validity/approach -> feasible|infeasible' }),
+      agent('glass-atrium-qa-code-reviewer', { goal: 'judge implementation/test-feasibility -> pass|revise' }),
+      agent('glass-atrium-dev-nestjs',       { goal: 'judge technical validity/approach -> feasible|infeasible' }),
     ),
-    agent('dev-nestjs', { goal: 'implement per verified plan' }),  // gated on pass+feasible
+    agent('glass-atrium-dev-nestjs', { goal: 'implement per verified plan' }),  // gated on pass+feasible
   )
 
 If this is a SIMPLE workflow (typo/import/config — no real implementation), the gate is exempt; this static heuristic fires only on a DEV-spawn-without-any-qa-code-reviewer script. Add a qa-code-reviewer verify-stage and retry.

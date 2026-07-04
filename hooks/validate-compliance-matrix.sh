@@ -310,7 +310,7 @@ actual="$(
     | sort -u
 )"
 
-# Symlinked entries (e.g. GLOBAL_RULES.md -> agents/GLOBAL_RULES.md) count as
+# Symlinked entries (e.g. GLASS_ATRIUM_GLOBAL_RULES.md -> agents/GLASS_ATRIUM_GLOBAL_RULES.md) count as
 # present; -type l catches them.
 actual_links="$(
   find "${RULES_DIR}" -maxdepth 1 -type l -name '*.md' -exec basename {} \; 2>/dev/null \

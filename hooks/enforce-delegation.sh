@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse(Write|Edit) — block the orchestrator's direct file modification
-# Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLOBAL_RULES.md) pass; everything else is blocked with exit 2
+# Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) pass; everything else is blocked with exit 2
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
 # POLICY: ~/.claude/, ~/.claude-work/, ~/.claude-personal/ all enforce delegation — only sub-agents may modify
 #

@@ -86,8 +86,8 @@ if "agents" not in registry or not isinstance(registry["agents"], dict):
     print("ERROR: registry has no `agents` dict at top level", file=sys.stderr)
     sys.exit(1)
 
-# 2. Enumerate active .md agents (exclude GLOBAL_RULES.md + archive/ subdir).
-#    GLOBAL_RULES.md is the system charter, not an agent file.
+# 2. Enumerate active .md agents (exclude GLASS_ATRIUM_GLOBAL_RULES.md + archive/ subdir).
+#    GLASS_ATRIUM_GLOBAL_RULES.md is the system charter, not an agent file.
 fs_agents = {}
 parse_errors = []
 for md_path in sorted(agents_dir.glob("*.md")):
