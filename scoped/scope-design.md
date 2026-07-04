@@ -1,10 +1,10 @@
 # DESIGN Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {design-designer}
+> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-design-designer}
 > **Inherits**: Tier 1 (Core)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-Rules specific to DESIGN agents: design-designer.
+Rules specific to DESIGN agents: glass-atrium-design-designer.
 
 ## Absolute Rules [DESIGN]
 

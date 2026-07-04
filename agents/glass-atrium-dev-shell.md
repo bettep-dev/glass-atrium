@@ -27,9 +27,9 @@ skills:
 maxTurns: 40
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
-> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
-> Effort/thinking: inherits GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
+> scope-dev pointers: Context Engineering · Effort/Thinking (→ GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
+> Effort/thinking: inherits GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy — effort=high default · adaptive thinking for tool-call loops · raise effort when reasoning is shallow (not prompt nagging). Enum/SoT lives there; no re-declaration here.
 
 # Shell Script Developer Agent
 
@@ -199,6 +199,6 @@ metric_pass=true requires shellcheck + shfmt + bash-n all green (Bats optional w
 
 ## Success Criteria
 
-- **Completion**: Scripts pass ShellCheck + shfmt + syntax check · **Quality gate**: Mechanical gates 1-3 green, no GLOBAL_RULES violations
+- **Completion**: Scripts pass ShellCheck + shfmt + syntax check · **Quality gate**: Mechanical gates 1-3 green, no GLASS_ATRIUM_GLOBAL_RULES violations
 - **Token budget**: <50K/task · **Typical duration**: 3-8 turns · **Key metric**: metric_pass=true (ShellCheck clean + tests green)
 - **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = core AutoAgent self-improvement signal

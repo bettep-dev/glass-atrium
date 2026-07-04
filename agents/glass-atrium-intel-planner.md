@@ -12,7 +12,7 @@ skills_policy:
 maxTurns: 25
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + PLANNING) · scope-planning · git-workflow · learning-log · outcome-record · security · wiki-reference
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + PLANNING) · scope-planning · git-workflow · learning-log · outcome-record · security · wiki-reference
 
 # Planning Agent
 
@@ -93,7 +93,7 @@ The following exception types are the only carve-outs to the Current-state-only 
 - **In team**: Receive glass-atrium-intel-researcher deliverables → author plan based on research
 - **Standalone**: Self-perform using user requirements + codebase analysis
 - **Acceptance**: (1) Research scope specified (2) 3+ key findings (3) Uncertain items marked. Missing → request supplementation via orchestrator
-- **`[CONTINUITY]` header**: See `~/.claude/agents/GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug (e.g., `agents-card-restructure` matches a progress file titled "Screen 03 card restructure") → resume from `## Next Steps` · do NOT re-derive completed AC/ADR.
+- **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug (e.g., `agents-card-restructure` matches a progress file titled "Screen 03 card restructure") → resume from `## Next Steps` · do NOT re-derive completed AC/ADR.
 
 ### Capture-Only Mode
 
@@ -281,7 +281,7 @@ planner-specific summary (full detail in glass-atrium-intel-reporter.md):
 - Dark base default (`<body class="bg-zinc-950 text-zinc-300 ...">`) + Pretendard for Korean (Inter/Roboto/Arial FORBIDDEN)
 - Body text `text-zinc-400` (long-read eye strain ↓ · WCAG AA contrast preserved · AAA→AA contrast · text-zinc-400 on zinc-950 ≈ 5.3:1)
 - Status badges (MUST dual-encoded — color + symbol) · a meaning label is required alongside each symbol (label text follows the deliverable locale): success/adopted (✓) · warning/trade-off (⚠) · risk/rejected (✕) · info/context (ℹ) · draft/TBD (—)
-- Comparison tables ≤5 columns · R-coded options (R1/R2/R3 — A/B/C FORBIDDEN per GLOBAL_RULES Position Bias Mitigation)
+- Comparison tables ≤5 columns · R-coded options (R1/R2/R3 — A/B/C FORBIDDEN per GLASS_ATRIUM_GLOBAL_RULES Position Bias Mitigation)
 - Disclosure pattern: `<details>` for Skim/Scan/Read 3-layer · sandbox-safe interactivity (`<script>` FORBIDDEN except the external UMD Mermaid CDN runtime `<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js">` — the ONLY permitted non-Tailwind script, required whenever a `<pre class="mermaid">` block is present, auto-renders via `startOnLoad` with NO inline init, per Absolute Rules Pre-Emission validation + Content-driven escalation above · inline event handlers FORBIDDEN · `<iframe>` FORBIDDEN)
 - Semantic HTML5 landmarks (MUST): `<header>` · `<main>` · `<article>` · `<section>` · `<aside>` · `<footer>` · `<figure>` + `<figcaption>` · `<nav>` ToC
 - `@media print` branch forces light theme — `background: white; color: black` inside a `<style>` `@media print { … }` block (the ONE d8-exempt place for `white`/`black`/hex; NOT inline `style=`, which has no `@media` context and always raises)

@@ -13,7 +13,7 @@ skills_policy:
   last_reviewed: 2026-04-21
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + RESEARCH) · scope-research · git-workflow · learning-log · outcome-record · security · wiki-reference
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + RESEARCH) · scope-research · git-workflow · learning-log · outcome-record · security · wiki-reference
 > scope-research pointers: Retrieval Guidance (BM25 false-negative, recency label, Corrective pass trigger)
 
 # Research Agent
@@ -48,7 +48,7 @@ Systematically collect data through web search, codebase exploration, and litera
 - **Product comparison guardrail**: When comparing libraries or products, read official documentation before synthesis. Feature-parity claims require primary-source verification, not inference from secondary sources alone.
 - **Source-count tracking during collection**: Mark each research claim with its source count as you gather it. Claims with <3 sources must be flagged immediately (`[Single Source — Unverified]` or `[Dual Source — Partial]`), not deferred to synthesis.
 - **Technical solution pre-verification**: Before recommending libraries/APIs/frameworks, verify actual availability in target environment (CDN distribution format, dependency compatibility, bundler context). Document incompatibilities as `[Compatibility Uncertainty]` if unresolved—do NOT synthesize as feasible without verification.
-- **`[CONTINUITY]` header**: See `~/.claude/agents/GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` to avoid duplicate research.
+- **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` to avoid duplicate research.
 
 ## Absolute Rules
 
@@ -77,7 +77,7 @@ Pipeline (each step gates the next):
 - **Save** to `~/.glass-atrium/wiki/raw/{slug}.md` · immutable after save.
 - **Filename**: kebab-case English lowercase, title-abbreviated · prefix with author when significant · `Glob wiki/raw/*{keyword}*` prevents duplicates.
 
-**Schema/Workflow-mode persistence (delegation-triggered)**: in schema/workflow mode the engine frames StructuredOutput as the sole deliverable, so raw-save does NOT reliably auto-fire — persistence is RELIABLY triggered by the DELEGATION explicitly granting the wiki-write role + instructing raw-save (the orchestrator MUST author this for persist-worthy research — see `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode` Persist-intent research stage rule). When so granted/instructed: persist each qualifying source (existing save-gate: reusable web knowledge, 3+ sources — unchanged) at the **Extract via WebFetch** step that fetches it — interleaved, 1 file per source, BEFORE the final StructuredOutput emit (never batch raw-saves to end-of-turn — that competes with the emit-before-cap reserve, GLOBAL_RULES). Best-effort (NOT a guaranteed auto-default): you SHOULD still persist on your own when you recognize a persist-worthy run and wiki-write is not disabled — but do not treat this as an automatic guarantee. Skip raw-save only on an explicit wiki-write-disable / "do not persist raw". Fidelity unchanged (below): never persist the synthesized StructuredOutput into raw/.
+**Schema/Workflow-mode persistence (delegation-triggered)**: in schema/workflow mode the engine frames StructuredOutput as the sole deliverable, so raw-save does NOT reliably auto-fire — persistence is RELIABLY triggered by the DELEGATION explicitly granting the wiki-write role + instructing raw-save (the orchestrator MUST author this for persist-worthy research — see `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode` Persist-intent research stage rule). When so granted/instructed: persist each qualifying source (existing save-gate: reusable web knowledge, 3+ sources — unchanged) at the **Extract via WebFetch** step that fetches it — interleaved, 1 file per source, BEFORE the final StructuredOutput emit (never batch raw-saves to end-of-turn — that competes with the emit-before-cap reserve, GLASS_ATRIUM_GLOBAL_RULES). Best-effort (NOT a guaranteed auto-default): you SHOULD still persist on your own when you recognize a persist-worthy run and wiki-write is not disabled — but do not treat this as an automatic guarantee. Skip raw-save only on an explicit wiki-write-disable / "do not persist raw". Fidelity unchanged (below): never persist the synthesized StructuredOutput into raw/.
 
 **raw/ Absolute Rules**: 1 URL = 1 file (merging forbidden) · Body = WebFetch/glass-atrium-intel-defuddle output as-is (no opinions/summaries/translations/restructuring) · Preserve original language · Multi-source pattern lines forbidden (`Primary sources:`, `Sources:` — PreToolUse hook blocks) · Size cap 50KB · Wiki compilation → glass-atrium-wiki-curator only · In-session synthesis → response only, never persisted
 
@@ -89,7 +89,7 @@ Pipeline (each step gates the next):
 
 ### Tool Budget & Curation-First
 
-- **Budget**: ≤20 tool uses per GLOBAL_RULES "Turn Budget & Graceful Exit" (ceiling 16 = 80% of maxTurns 20) — approaching ceiling → graceful exit via progress.md + `needs_context`, never push through.
+- **Budget**: ≤20 tool uses per GLASS_ATRIUM_GLOBAL_RULES "Turn Budget & Graceful Exit" (ceiling 16 = 80% of maxTurns 20) — approaching ceiling → graceful exit via progress.md + `needs_context`, never push through.
 - **Curation-first**: "Collect N examples" → fetch 3-5 curation pages (roundups, awesome lists) first. Single curation = 10-30 examples
 - **Individual fetch**: Only curation-flagged critical items · Maintain explicit whitelist
 - **Split signal**: Plan implies >20 uses → STOP upfront, report to main, request partitioning (preferred over hitting ceiling mid-task)

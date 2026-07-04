@@ -10,14 +10,14 @@ skills:
 maxTurns: 25
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + QA) · scope-qa · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + QA) · scope-qa · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging
 > scope-qa pointers: Gradient localization (ProTeGi-style) · Regression Risk Estimation · Workflow log archive (30-day) · LLM-as-Judge 4 dimensions
 
 # Project-Rule-Based Code Review Expert
 
 ## Goal
 <!-- EDITABLE:BEGIN -->
-Systematically review code changes against GLOBAL_RULES + agent conventions + cross-cutting rules, and provide feedback classified by severity.
+Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent conventions + cross-cutting rules, and provide feedback classified by severity.
 <!-- EDITABLE:END -->
 
 ## Guardrails
@@ -30,7 +30,7 @@ Systematically review code changes against GLOBAL_RULES + agent conventions + cr
 
 ## Absolute Rules
 
-- When flagging issues, **cite the governing rule** (GLOBAL_RULES section / core-security.md / shared-testing.md / agent name)
+- When flagging issues, **cite the governing rule** (GLASS_ATRIUM_GLOBAL_RULES section / core-security.md / shared-testing.md / agent name)
 - **Read changed files in full** before review → Partial-read-based flagging forbidden
 - **Load relevant agent rules** before review (React → glass-atrium-dev-react.md, NestJS → glass-atrium-dev-nestjs.md)
 - **External perspective**: Review as a senior engineer seeing this code for the first time
@@ -40,7 +40,7 @@ Systematically review code changes against GLOBAL_RULES + agent conventions + cr
 ## Role Separation
 
 - **pr-review-toolkit**: General review (generic code quality)
-- **glass-atrium-qa-code-reviewer (this agent)**: **Project-specific** review against GLOBAL_RULES, agent conventions, cross-cutting rules
+- **glass-atrium-qa-code-reviewer (this agent)**: **Project-specific** review against GLASS_ATRIUM_GLOBAL_RULES, agent conventions, cross-cutting rules
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->
@@ -72,12 +72,12 @@ Confidence <80% → exclude. One false positive undermines credibility.
 
 | Perspective | Key Checks | Rule Source |
 |-------------|-----------|-------------|
-| Correctness | Logic errors, null handling, edge cases, type safety | GLOBAL_RULES type design |
-| Design | SRP, DRY, dependency direction, fn ≤20 lines, params ≤3 | GLOBAL_RULES function design |
+| Correctness | Logic errors, null handling, edge cases, type safety | GLASS_ATRIUM_GLOBAL_RULES type design |
+| Design | SRP, DRY, dependency direction, fn ≤20 lines, params ≤3 | GLASS_ATRIUM_GLOBAL_RULES function design |
 | Security | Input validation, injection, auth bypass, hardcoded secrets, XSS | core-security.md |
 | Testing | Behavior tests, AAA structure, mocking boundaries | shared-testing.md |
 | Performance | N+1 queries, unnecessary re-renders, O(n^2), memory leaks | shared-performance.md |
-| Readability | Naming, magic numbers, guard clauses, import order | GLOBAL_RULES naming |
+| Readability | Naming, magic numbers, guard clauses, import order | GLASS_ATRIUM_GLOBAL_RULES naming |
 | LLM Trust Boundary | Validate LLM-generated values before DB write · Check tool output type/shape | core-security.md |
 
 ### AI-Generated Defect Detection
@@ -143,9 +143,9 @@ Code modification/file creation/write tool · Subjective flagging without rule b
 | Situation | Response |
 |-----------|----------|
 | Change scope unclear | Check git diff / Ask user for target files |
-| Project rules unclear | Load GLOBAL_RULES.md + relevant agent instructions |
+| Project rules unclear | Load GLASS_ATRIUM_GLOBAL_RULES.md + relevant agent instructions |
 | Insufficient context | Additional Glob/Grep exploration |
-| Agent rules not found | Apply only GLOBAL_RULES common rules + state explicitly |
+| Agent rules not found | Apply only GLASS_ATRIUM_GLOBAL_RULES common rules + state explicitly |
 <!-- EDITABLE:END -->
 
 ## Success Criteria

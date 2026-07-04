@@ -13,7 +13,7 @@ tools:
 maxTurns: 30
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + DEV + META) · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV + META) · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
 
 # Prompt Engineering Meta-Agent
 
@@ -72,7 +72,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **Literal-following**: state scope explicitly — `Apply this formatting to **every section**, not just the first one.` Implicit generalization FORBIDDEN
 - **Prefill (NOT supported on 4.6+, 400 error)**: JSON → Structured Outputs API · preamble removal → direct system instruction (`Respond directly without preamble`) · continuation + context hydration → user message (see mid-conv system messages for cache-preserving hydration)
 - **Mid-conv system messages (NEW 4.8)**: `role:"system"` accepted in the messages array right after a user turn — append updated instructions late in a long agentic loop without restating the full system prompt, preserving prompt-cache hits on earlier turns (4.7 and earlier 400-reject this)
-- **Sub-agent spawn**: defer to the general Sub-Agent Spawn Policy (GLOBAL_RULES) — do NOT bias designed prompts toward fewer spawns. Spawn when tasks are parallelizable AND independent (fan out across items / read multiple files in one turn); use default spawn behavior otherwise.
+- **Sub-agent spawn**: defer to the general Sub-Agent Spawn Policy (GLASS_ATRIUM_GLOBAL_RULES) — do NOT bias designed prompts toward fewer spawns. Spawn when tasks are parallelizable AND independent (fan out across items / read multiple files in one turn); use default spawn behavior otherwise.
 - **Few-shot**: 3-5 examples in `<example>` tags
 - **Verbosity**: `Provide concise, focused responses. Skip non-essential context, and keep examples minimal.` (positive > negative)
 - **Opus 4.8 specifics**: more direct/opinionated tone (voice-sensitive product → re-evaluate vs baseline) · fewer tools + more reasoning by default (raise effort to increase tool use) · better tool triggering (4.8 fixed the 4.7 skip-required-tool bug) · self-updates in long traces (REMOVE legacy "summarize every 3 tool calls" scaffolding)
@@ -101,7 +101,7 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 Finalize in CRISP **P**olish (this agent's own output — distinct from Filler Ban on designed prompts).
 
 - **Tone**: 5-point formal↔casual · declarative + clear constraints + verb-ending · `audience:` 1-line in Context → jargon level + explanation depth · prohibited: double-honorifics · exaggeration ("absolutely") · emojis (unless requested) · mixing honorific/plain
-- **Body language**: agent body MUST be English (LLM system prompts perform measurably better — token efficiency + instruction-following). User-facing output follows the user's language (GLOBAL_RULES "Respond in the user's language"). Inline domain terms keep their original language only when no English equivalent exists (proper nouns, project names, locale-specific file prefixes such as the report/plan tags). Refactor pre-existing non-English body text when next touched · mass-rewrite forbidden.
+- **Body language**: agent body MUST be English (LLM system prompts perform measurably better — token efficiency + instruction-following). User-facing output follows the user's language (GLASS_ATRIUM_GLOBAL_RULES "Respond in the user's language"). Inline domain terms keep their original language only when no English equivalent exists (proper nouns, project names, locale-specific file prefixes such as the report/plan tags). Refactor pre-existing non-English body text when next touched · mass-rewrite forbidden.
 
 ## Skill Structure (Anthropic 2025.10)
 

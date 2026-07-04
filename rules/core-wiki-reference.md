@@ -20,4 +20,4 @@ Applies to all agents. [ALL]
 
 ## Wiki Write Operations
 
-Wiki compilation, index regeneration, health checks, raw-ingestion validation — **all write operations MUST be delegated to the `wiki-curator` agent**. Direct writes under `wiki/` by the orchestrator or other agents are FORBIDDEN. Exception: intel-researcher may write originals to `wiki/raw/` per the Raw Source Storage Pipeline (1 URL = 1 file, immutable after save).
+Wiki compilation, index regeneration, health checks, raw-ingestion validation — **all write operations MUST be delegated to the `glass-atrium-wiki-curator` agent**. Direct writes under `wiki/` by the orchestrator or other agents are FORBIDDEN. Exception: glass-atrium-intel-researcher may write originals to `wiki/raw/` per the Raw Source Storage Pipeline (1 URL = 1 file, immutable after save).

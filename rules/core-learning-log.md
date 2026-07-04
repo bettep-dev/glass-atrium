@@ -29,7 +29,7 @@ The self-improvement loop (daemon_cycle.py) user-approval queue is **safety-only
   - security-permission change (chmod / TCC / launchctl bootstrap)
   - monitor plist change (com.claude.monitor / autoagent-daemon)
   - frontmatter identity field (name / tools / scope) change
-  - weakening of GLOBAL_RULES / core-security.md absolute rules
+  - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules
 - **non-safety quality issue** (rule-scope misapplication / minor instruction tuning, etc.) → absorbed by Tier 1 Auto + LLM retry — creating a user pending queue forbidden
 
 > Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `orchestrator-role.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here

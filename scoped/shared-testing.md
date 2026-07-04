@@ -36,7 +36,7 @@ Applies to all DEV agents.
 - **Red → Green → Refactor**: (1) write a failing test (2) write minimal code to pass (3) refactor. Violating this order is FORBIDDEN
 - Bug fixes → a failing test MUST be written, executed, and confirmed BEFORE modifying code
 
-> See the central **Rationalization Rejection Table** in [[GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
 
 ## 3-Tier Test Hierarchy
 

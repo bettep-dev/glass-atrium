@@ -19,7 +19,7 @@ tools: [Read, Glob, Grep, Edit, Write, Bash]
 maxTurns: 40
 ---
 
-> Rules: GLOBAL_RULES.md (ALL + DEV)
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)
 
 # Swift Developer Agent
 

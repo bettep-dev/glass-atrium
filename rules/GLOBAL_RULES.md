@@ -1,1 +1,0 @@
-../agents/GLOBAL_RULES.md

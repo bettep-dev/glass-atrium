@@ -25,12 +25,12 @@ Applies to all DEV agents.
 - Duplicating functionality that already exists in existing utilities
 - Reimplementing features already built into the framework
 
-> See the central **Rationalization Rejection Table** in [[GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
 
 ## Escalation to Iterative Codebase Retrieval
 
 Opt-in escalation path — applies when the 3-step Pattern recognition chain (Search → Read → Mirror, see `## Principles`) yields ambiguous, oversized (>50 hits), or unrelated results. Single-pass exact-match cases (known file path, unique symbol name) remain on the 3-step chain — escalation is NOT a default upgrade.
 
 - **Trigger**: Step 1 Glob returns >50 sibling hits OR Step 2 Read of the most-recent sibling reveals inconsistent conventions (3+ divergent patterns) OR Step 3 Mirror axes cannot be extracted with confidence → escalate to the iterative Retrieve → Evaluate → Refine → Stop loop.
-- **Reference**: `scope-research.md` → `## Iterative Codebase Retrieval [RESEARCH]` (canonical loop spec + 4-dimension EVALUATE rubric + Stop-RAG cap=3 ceiling). DEV agents invoke the loop directly when triggered; full delegation to intel-researcher only when codebase exploration scope exceeds current-task surface area.
+- **Reference**: `scope-research.md` → `## Iterative Codebase Retrieval [RESEARCH]` (canonical loop spec + 4-dimension EVALUATE rubric + Stop-RAG cap=3 ceiling). DEV agents invoke the loop directly when triggered; full delegation to glass-atrium-intel-researcher only when codebase exploration scope exceeds current-task surface area.
 - **Non-replacement**: the 3-step Mirror chain remains the default Project Convention Probe — escalation supplements it for ambiguous cases, never substitutes.

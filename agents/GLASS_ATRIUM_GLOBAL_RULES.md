@@ -24,7 +24,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 - All responses in **Korean** · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
   Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
-  Agent body (system prompt) follows meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies stay in Korean.
+  Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies stay in Korean.
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
 - File names, class names, lines, APIs → Use **only verified** references
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission) · No API keys in handoff payloads · Sensitive info in logs MUST be masked
@@ -101,7 +101,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - **Work-unit checkpoint dimension (token/tool_use blowout, not only turn boundary)**: the turn-based ceiling (80% maxTurns) misses a single-turn token/tool_use blowout — a delegation can run out of budget mid-turn before any turn boundary fires. Checkpoint after each completed work-unit (each file / each fix), NOT only at the turn boundary, recording the resume point into `memory/progress-{task-name}.md` (the Cross-Session Continuity durable anchor above). This makes a mid-turn truncation resumable.
 - **Truncation recovery (orchestrator step — Failure Recovery Loop / Monitoring phase)**: a sub-agent that truncated (no `[COMPLETION]`) is resumed by `SendMessage(agentId)` to that COMPLETED subagent — its context is intact, so the work continues. This is DISTINCT from the unsupported agent-to-agent Handoff Pattern (`orchestrator-role.md` Orchestrator Identity): SendMessage continues a completed subagent (supported) rather than transferring control between agents (unsupported). For cross-session durability instead, resume from `memory/progress-{task-name}.md` (the canonical durable anchor).
 - **Emit-before-cap (schema/workflow agents)**: the StructuredOutput / `[COMPLETION]` emit IS the deliverable — a turn spent on analysis with NONE left to emit loses ALL the work. Under ultracode a schema-mode workflow `agent({schema})` that finishes without emitting returns null with NO engine-layer salvage (unlike the manual Agent path, where the SubagentStop transcript-synthesis net recovers a missing block). Therefore RESERVE budget to emit BEFORE the working ceiling: on approach, STOP analysis and emit the structured result with whatever is complete (partial > nothing). Never end a schema-mode turn on prose. Orchestrator-side resilience complement (retry-on-null / isolated-failure authoring): `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring`.
-- **Exempt**: `sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
+- **Exempt**: `glass-atrium-sec-guard` (maxTurns: 3, verdict-only — ceiling mechanic N/A)
 
 ### Context Compression Strategies
 
