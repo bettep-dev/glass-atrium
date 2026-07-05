@@ -107,7 +107,7 @@ const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
 // positives, and genuine loss is ~0 anyway (the honest expected value).
 const ATTRIBUTION_LOSS_AGENT_EVENT_WINDOW_MINUTES = 5;
 
-// Attribution-source → semantic-category map. Folds all 8 CHECK-canonical
+// Attribution-source → semantic-category map. Folds all 10 CHECK-canonical
 // values into 4 sum-complete categories. Any value NOT listed here (incl. a
 // future canonical addition) falls through to 'synthesized' via the
 // categorize() else-branch, so it can never silently drop from `total`.
@@ -152,29 +152,42 @@ const LITERAL_OMISSION_BREAKDOWN_KEYS: ReadonlyMap<string, keyof LiteralOmission
     ["completion-missing", "completion_missing"],
     [BUDGET_TRUNCATION_SOURCE, "budget_truncation"],
   ]);
+// structuredoutput-derived: schema-mode recovery artifact — the subagent's
+// deliverable was a terminal successfully-consumed StructuredOutput tool call
+// (schema-validated, writer-unverified: done/low/false, no [COMPLETION] block),
+// synthesized by track-outcome.sh. Explicit member (not catch-all-reliant) so an
+// audit can tell it from an unrecognized fall-through. Single-SoT literal — the
+// raw value stays byte-identical with track-outcome.sh.
+const STRUCTUREDOUTPUT_DERIVED_SOURCE = "structuredoutput-derived";
 // completion-synthesized (recovery artifact) + conversation-only + cron-derived
-// + agent-id-missing + subagent-stop-phantom (query-derived noise sentinel) are
-// explicit synthesized members; the else-branch catch-all covers any future
-// value identically.
+// + agent-id-missing + structuredoutput-derived (schema-mode recovery artifact)
+// + subagent-stop-phantom (query-derived noise sentinel) are explicit
+// synthesized members; the else-branch catch-all covers any future value
+// identically.
 const COMPLETION_SYNTHESIZED_SOURCE = "completion-synthesized";
 const SYNTHESIZED_SOURCES: ReadonlySet<string> = new Set<string>([
   COMPLETION_SYNTHESIZED_SOURCE,
   "conversation-only",
   "cron-derived",
   "agent-id-missing",
+  STRUCTUREDOUTPUT_DERIVED_SOURCE,
   ATTRIBUTION_LOSS_PHANTOM_SOURCE,
 ]);
 
 // Reconstructed-row discriminator for the /cross-analysis by_result split: a row
 // is a harness recovery artifact (NOT writer-emitted) when downgrade_origin is
 // 'synthesized' OR attribution_source is a synthesis-branch token
-// (completion-synthesized / budget-truncation). Consumer-side split only — the
-// record-write path and every enum stay untouched; the FE derives the
-// writer-emitted headline as count - reconstructed_count.
+// (completion-synthesized / budget-truncation / structuredoutput-derived).
+// Consumer-side split only — the record-write path and every enum stay
+// untouched; the FE derives the writer-emitted headline as
+// count - reconstructed_count. structuredoutput-derived rows also carry
+// downgrade_origin='synthesized', so the attribution arm is belt-and-braces —
+// it keeps the fold correct even for rows whose origin column is NULL.
 const RECONSTRUCTED_DOWNGRADE_ORIGIN = "synthesized";
 const RECONSTRUCTED_ATTRIBUTION_SOURCES: readonly string[] = [
   COMPLETION_SYNTHESIZED_SOURCE,
   BUDGET_TRUNCATION_SOURCE,
+  STRUCTUREDOUTPUT_DERIVED_SOURCE,
 ];
 
 // DB row shapes

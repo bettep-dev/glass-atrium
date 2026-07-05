@@ -13,7 +13,7 @@
 //   (a) per-row sum invariant: healthy+attribution_loss+literal_omission+
 //       synthesized === total for EVERY returned day point (universal property —
 //       holds across all rows, not only seeded ones)
-//   (b) NULL attribution_source rows excluded from totals (seed delta = 8, not 9)
+//   (b) NULL attribution_source rows excluded from totals (seed delta = 9, not 10)
 //   (c) days allowlist gate {7,30,90} accept · out-of-set (45/abc/-7/7.5/91/0)
 //       → 400 param='days' · empty → default-accept (200)
 //   (d) categorize/pivot mapping: each canonical attribution_source value lands in
@@ -58,9 +58,10 @@ import type {
 const SUITE_MARKER = `attr-daily-test-${randomUUID()}`;
 let app: FastifyInstance;
 
-// 8 CHECK-canonical attribution_source → expected category (route 의 진실 매핑 거울).
-// schema.prisma L258-266 CHECK 8종 + route categorizeAttributionSource() 와 1:1 일치.
-// NOTE (R2): subagent-stop-missing expected category 는 backing agent_events 유무 의존
+// CHECK-canonical attribution_source → expected category (route 의 진실 매핑 거울,
+// route categorizeAttributionSource() 와 1:1 일치). budget-truncation 만 제외 —
+// pure-fn 레벨 검증 (아래 (f)/(g) 테스트, live CHECK 미admit 사유 그쪽 주석 참조).
+// subagent-stop-missing expected category 는 backing agent_events 유무 의존:
 // 이 표는 backing 없는 기본 seed 기준 → 'synthesized'(phantom 노이즈)
 // genuine attribution_loss 경로는 별도 backing-event seed 로 검증 — 아래 (e) 테스트
 type Category = "healthy" | "attribution_loss" | "literal_omission" | "synthesized";
@@ -75,18 +76,20 @@ const CANONICAL_SOURCE_CATEGORY: ReadonlyArray<readonly [string, Category]> = [
   ["conversation-only", "synthesized"],
   ["cron-derived", "synthesized"],
   ["agent-id-missing", "synthesized"],
+  // schema-mode recovery artifact — writer-unverified StructuredOutput emit.
+  ["structuredoutput-derived", "synthesized"],
 ];
 
-// Expected per-category contribution of the 9-row seed (8 non-null one-each +
+// Expected per-category contribution of the 10-row seed (9 non-null one-each +
 // 1 NULL excluded), with NO agent_events backing: healthy 1 · attribution_loss 0
 // (subagent-stop-missing has no backing → reclassified phantom/synthesized) ·
-// literal_omission 2 · synthesized 5 · total_attributed delta 8 (NULL never counted).
+// literal_omission 2 · synthesized 6 · total_attributed delta 9 (NULL never counted).
 const EXPECTED_SEED_DELTA: Readonly<Record<Category, number>> & { total: number } = {
   healthy: 1,
   attribution_loss: 0,
   literal_omission: 2,
-  synthesized: 5,
-  total: 8,
+  synthesized: 6,
+  total: 9,
 };
 
 // Registry-membership scope was added to the route's outer query — this suite's
@@ -174,12 +177,12 @@ async function fetchWindowSummary(): Promise<AttributionDailyResponse> {
   return res.json() as AttributionDailyResponse;
 }
 
-// 9 seed 행 적재. record_ts 는 7일 window 안 + 미래 아님(NOW 직전) + 행별 distinct
+// 첫 seed 배치 적재. record_ts 는 7일 window 안 + 미래 아님(NOW 직전) + 행별 distinct
 // (outcomes_dedup UNIQUE(record_ts, agent, task_type) 충돌 회피 — agent 도 행별로 다름).
-// 8 canonical(category 검증용) + 1 NULL(제외 검증용). cid = SUITE_MARKER 표식.
-async function seedNineRows(): Promise<void> {
+// 9 canonical(category 검증용) + 1 NULL(제외 검증용). cid = SUITE_MARKER 표식.
+async function seedFirstBatch(): Promise<void> {
   const prisma = getPrisma();
-  // canonical 8 행 — record_ts 를 1분 간격으로 어긋나게(NOW - (idx+2) hours) 두어
+  // canonical 9 행 — record_ts 를 1분 간격으로 어긋나게(NOW - (idx+2) hours) 두어
   // window(7일) 내부에 안정적으로 배치 + dedup 충돌 회피.
   for (let i = 0; i < CANONICAL_SOURCE_CATEGORY.length; i++) {
     const entry = CANONICAL_SOURCE_CATEGORY[i];
@@ -254,7 +257,7 @@ test("days out-of-set (45/abc/-7/7.5/91/0) → 400 invalid_param param='days'", 
 // (a) per-row sum invariant — universal property across ALL returned day points
 test("every day point satisfies healthy+attribution_loss+literal_omission+synthesized === total", async () => {
   // seed 후 측정해 활동일이 반드시 존재하도록 보장(빈 series vacuous-pass 방지).
-  await seedNineRows();
+  await seedFirstBatch();
   const body = await fetchWindowSummary();
   assert.ok(body.days_series.length > 0, "seed guarantees at least one active day");
   for (const point of body.days_series) {
@@ -268,10 +271,10 @@ test("every day point satisfies healthy+attribution_loss+literal_omission+synthe
 });
 
 // (d) categorize/pivot mapping + (b) NULL exclusion — via pre/post-seed delta
-test("seed delta: each canonical source → correct category · NULL excluded · total delta = 8", async () => {
+test("seed delta: each canonical source → correct category · NULL excluded · total delta = 9", async () => {
   // pre-seed snapshot. 동시 세션 행은 pre/post 양쪽에 동일하게 존재 → delta 에서 상쇄.
-  // (seedNineRows 는 이전 테스트에서 이미 호출됨 — 멱등 측정 위해 cleanup 후 재측정 대신
-  //  추가 9행 적재 후 증분 측정 · record_ts/agent/cid 가 distinct 라 dedup 무충돌)
+  // (seedFirstBatch 는 이전 테스트에서 이미 호출됨 — 멱등 측정 위해 cleanup 후 재측정 대신
+  //  추가 10행 적재 후 증분 측정 · record_ts/agent/cid 가 distinct 라 dedup 무충돌)
   const before = sumCategories(await fetchWindowSummary());
 
   // 두 번째 seed 배치(다른 cid suffix 라운드) — 기존 SUITE_MARKER 유지하되 distinct 행.
@@ -301,10 +304,10 @@ test("seed delta: each canonical source → correct category · NULL excluded ·
   assert.strictEqual(
     delta.synthesized,
     EXPECTED_SEED_DELTA.synthesized,
-    "synthesized delta (completion-synthesized + conversation-only + cron-derived + agent-id-missing)",
+    "synthesized delta (completion-synthesized + conversation-only + cron-derived + agent-id-missing + structuredoutput-derived)",
   );
-  // NULL 행은 total_attributed 에 미반영 → 9행 적재했지만 delta 는 8.
-  assert.strictEqual(totalDelta, EXPECTED_SEED_DELTA.total, "total_attributed delta = 8 (NULL excluded)");
+  // NULL 행은 total_attributed 에 미반영 → 10행 적재했지만 delta 는 9.
+  assert.strictEqual(totalDelta, EXPECTED_SEED_DELTA.total, "total_attributed delta = 9 (NULL excluded)");
 });
 
 // window summary 4-category + total 추출 헬퍼.
@@ -361,7 +364,7 @@ async function findUnbackedMinutesOffset(fromMinutes: number): Promise<number> {
   throw new Error("no SubagentStop-free band inside the 7-day window");
 }
 
-// 두 번째 seed 배치 — 첫 배치와 동일 구성(8 canonical + 1 NULL)이되 record_ts/agent/cid
+// 두 번째 seed 배치 — 첫 배치와 동일 구성(9 canonical + 1 NULL)이되 record_ts/agent/cid
 // 모두 distinct 하여 dedup 무충돌. delta 측정 대상.
 async function seedSecondBatch(): Promise<void> {
   const prisma = getPrisma();
@@ -537,6 +540,8 @@ test("existing named sources keep categories; unknown still → synthesized", ()
   assert.strictEqual(categorizeAttributionSource("conversation-only"), "synthesized");
   assert.strictEqual(categorizeAttributionSource("cron-derived"), "synthesized");
   assert.strictEqual(categorizeAttributionSource("agent-id-missing"), "synthesized");
+  // schema-mode recovery artifact — explicit member, NOT catch-all-reliant.
+  assert.strictEqual(categorizeAttributionSource("structuredoutput-derived"), "synthesized");
   assert.strictEqual(categorizeAttributionSource("some-future-unknown-source"), "synthesized");
 });
 

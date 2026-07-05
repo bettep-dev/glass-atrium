@@ -4,7 +4,8 @@
 // Pinned invariants:
 //   (a) by_result rows carry reconstructed_count — a row counts as reconstructed
 //       when downgrade_origin='synthesized' OR attribution_source IN
-//       (completion-synthesized, budget-truncation); each OR arm qualifies alone.
+//       (completion-synthesized, budget-truncation, structuredoutput-derived);
+//       each OR arm qualifies alone.
 //   (b) `count` keeps its original ALL-rows semantics (additive shape change) —
 //       0 <= reconstructed_count <= count; writer-emitted = count - reconstructed_count.
 //   (c) /search response shape is UNCHANGED — no reconstructed_count leaks onto
@@ -34,7 +35,10 @@ let app: FastifyInstance;
 // Seed 설계 — 판별식의 각 arm 을 독립 검증:
 //   done_with_concerns × 4: writer 2 (hook-input, downgrade_origin NULL)
 //     + reconstructed 2 (완전 합성행: downgrade_origin+attribution 동시 / budget-truncation arm 단독)
-//   done × 2: writer 1 (hook-input) + reconstructed 1 (downgrade_origin arm 단독, attribution NULL)
+//   done × 4: writer 1 (hook-input) + reconstructed 3
+//     (downgrade_origin arm 단독, attribution NULL
+//      / schema-mode 실전형: structuredoutput-derived + synthesized 양쪽 필드
+//      / structuredoutput-derived attribution arm 단독 — origin NULL 에도 fold 유지)
 interface SeedRow {
   result: "done" | "done_with_concerns";
   attribution_source: string | null;
@@ -52,12 +56,18 @@ const SEED_ROWS: readonly SeedRow[] = [
   { result: "done_with_concerns", attribution_source: "budget-truncation", downgrade_origin: null },
   { result: "done", attribution_source: "hook-input", downgrade_origin: null },
   { result: "done", attribution_source: null, downgrade_origin: "synthesized" },
+  {
+    result: "done",
+    attribution_source: "structuredoutput-derived",
+    downgrade_origin: "synthesized",
+  },
+  { result: "done", attribution_source: "structuredoutput-derived", downgrade_origin: null },
 ] as const;
 
 const DWC_TOTAL = 4;
 const DWC_RECONSTRUCTED = 2;
-const DONE_TOTAL = 2;
-const DONE_RECONSTRUCTED = 1;
+const DONE_TOTAL = 4;
+const DONE_RECONSTRUCTED = 3;
 
 before(async () => {
   app = Fastify({ logger: false });
@@ -138,10 +148,12 @@ test("/cross-analysis by_result splits reconstructed rows per discriminator (bot
   const done = byResult.get("done");
   assert.ok(done, "done bucket present");
   assert.strictEqual(done.count, DONE_TOTAL);
+  // downgrade arm 단독 1 + schema-mode 실전형(양쪽 필드) 1
+  // + structuredoutput-derived attribution arm 단독 1 = 3 (행 단위, 이중집계 없음).
   assert.strictEqual(
     done.reconstructed_count,
     DONE_RECONSTRUCTED,
-    "downgrade_origin='synthesized' alone qualifies (attribution_source NULL)",
+    "downgrade-origin-only + full schema-mode row + structuredoutput-derived-only rows each fold to reconstructed",
   );
 });
 

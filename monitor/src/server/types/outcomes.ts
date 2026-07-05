@@ -181,7 +181,8 @@ export interface OutcomeCrossAnalysisCell {
 // its original semantics (ALL matching rows — additive shape change, so consumers
 // mapping result→count stay correct). `reconstructed_count` isolates harness
 // recovery artifacts (downgrade_origin='synthesized' OR attribution_source IN
-// (completion-synthesized, budget-truncation)) so the KPI headline can show
+// (completion-synthesized, budget-truncation, structuredoutput-derived)) so the
+// KPI headline can show
 // writer-emitted rows separately. Invariants: 0 <= reconstructed_count <= count;
 // writer-emitted = count - reconstructed_count.
 export interface OutcomeCrossAnalysisByResult {
@@ -289,7 +290,7 @@ export interface OutcomeHeatmapResponse {
 // ----- /api/outcomes/attribution-daily ----------------------------------------
 
 // Daily attribution-health series. Decomposes core.outcomes.attribution_source
-// into 4 sum-complete categories, mapping ALL 8 CHECK-canonical values (no value
+// into 4 sum-complete categories, mapping ALL 10 CHECK-canonical values (no value
 // can silently drop from `total`). NULL attribution_source rows are excluded from
 // every ratio/total (legacy rows predate attribution tracking).
 //
@@ -307,9 +308,9 @@ export interface OutcomeHeatmapResponse {
 //                      agent_event backing within ±5min of record_ts)
 //   literal_omission ← truncated_completion, completion-missing, budget-truncation
 //   synthesized      ← completion-synthesized, conversation-only, cron-derived,
-//                      agent-id-missing, subagent-stop-phantom, + else→catch-all
-//                      (any future canonical value folds here so total stays
-//                      sum-complete)
+//                      agent-id-missing, structuredoutput-derived,
+//                      subagent-stop-phantom, + else→catch-all (any future
+//                      canonical value folds here so total stays sum-complete)
 //   total = healthy + attribution_loss + literal_omission + synthesized
 
 // Allowlist for the days window — discrete membership {7,30,90}, NOT a range
