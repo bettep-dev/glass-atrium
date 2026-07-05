@@ -18,8 +18,9 @@
 #   5. collision prompt + tty+y → the interactive OVERWRITE arm: the user file is
 #                                 MOVED to a .ga-collision.<ts> backup (never rm),
 #                                 then the Atrium symlink is created. Driven via a
-#                                 BSD `script(1)` pty harness (the only seam that
-#                                 makes `[[ -t 0 ]]` true without a product change).
+#                                 `script(1)` pty harness (the only seam that
+#                                 makes `[[ -t 0 ]]` true without a product change),
+#                                 flavor-branched BSD vs util-linux.
 #   6. already-correct skip     → an EXACT GA symlink is an idempotent skip; the
 #                                 pointer is unchanged (distinct from re-swap).
 #   7. GA-wrong-rel re-swap     → a GA-pointing alias at the WRONG rel is SILENTLY
@@ -38,7 +39,7 @@
 #     collision-net's boundary (the mirror-farm suite covers the filtered scope).
 #
 # Run via: bats scripts/test/swap-symlink-collision.bats
-# Requires: bats >= 1.5.0, jq, bash 3.2+, BSD script(1) (macOS)
+# Requires: bats >= 1.5.0, jq, bash 3.2+, script(1) (BSD or util-linux flavor)
 #
 # Hermetic strategy: a per-test mktemp sandbox holds a synthetic GA root (source
 # files at the tested rels) with GA_LIB_DIR pointed at the real worktree
@@ -96,14 +97,27 @@ run_swap() {
     bash "${RUNNER}"
 }
 
-# Run the runner through a BSD script(1) pty so `[[ -t 0 ]]` is true, feeding 'y'
+# Run the runner through a script(1) pty so `[[ -t 0 ]]` is true, feeding 'y'
 # to the interactive overwrite prompt. The delayed feed keeps the master open
-# past the child's `read` (a bare pipe races EOF ahead of the data on BSD script).
+# past the child's `read` (a bare pipe races EOF ahead of the data).
+# script(1) flavor seam — no single invocation is portable across the two:
+#   BSD (macOS):        script -q /dev/null <cmd> <args...>   (positional command)
+#   util-linux (Linux): script -qec "<cmdline>" /dev/null     (command via -c)
+# BSD script has no --version (usage error to stderr), so a util-linux hit on
+# `script --version` is a decisive flavor probe.
 run_swap_pty_yes() {
-  local rel="$1"
+  local rel="$1" pty_cmd
+  # single-quoted pty_cmd on purpose ($1 expands inside bash -c, not here);
+  # the probe pipeline's masked rc IS the detection idiom (no-match → BSD)
+  # shellcheck disable=SC2016,SC2312
+  if script --version 2>/dev/null | grep -q util-linux; then
+    pty_cmd='{ printf "y\n"; sleep 1; } | script -qec "bash \"$1\"" /dev/null'
+  else
+    pty_cmd='{ printf "y\n"; sleep 1; } | script -q /dev/null bash "$1"'
+  fi
   run env GA_TARGET_HOME="${FACADE}" GA_LIB_DIR="${GA}/scripts/lib" \
     SWAP_CORE="${CORE}" SWAP_GAROOT="${GAROOT}" SWAP_REL="${rel}" SWAP_CP=1 \
-    bash -c '{ printf "y\n"; sleep 1; } | script -q /dev/null bash "$1"' _ "${RUNNER}"
+    bash -c "${pty_cmd}" _ "${RUNNER}"
 }
 
 @test "foreign symlink at rel -> hard die, user symlink preserved byte-intact" {
