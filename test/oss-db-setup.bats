@@ -123,6 +123,28 @@ run_setup() {
   done
 }
 
+@test "post-deploy step creates core.budget_overages idempotently with the 6 contract columns" {
+  # record every psql invocation's args; answer existence probes with "1" so the createdb branch is
+  # skipped and the run reaches the post-deploy budget_overages step.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\necho 1\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 0 ]]
+  # idempotence is guaranteed by construction: the statement is CREATE TABLE IF NOT EXISTS
+  grep -q 'CREATE TABLE IF NOT EXISTS core.budget_overages' "${SANDBOX}/psql-args"
+  # all 6 contract columns present (agent_type nullable, the rest NOT NULL, ts defaulted)
+  local c
+  for c in agent_id agent_type tool_use_count budget crossed_pct ts; do
+    grep -qF "${c}" "${SANDBOX}/psql-args" || {
+      echo "missing budget_overages column: ${c}" >&2
+      return 1
+    }
+  done
+  # ts is DB-defaulted so the hook need not pass it
+  grep -q 'ts timestamptz NOT NULL DEFAULT now()' "${SANDBOX}/psql-args"
+}
+
 @test "no literal \${HOME} token survives the render" {
   run_setup ""
   [[ "${status}" -eq 0 ]]
