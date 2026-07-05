@@ -46,7 +46,7 @@ Events with at least one registered hook in `settings.json`: `PreToolUse`, `Post
 - **Verify before assuming**: read the target event's existing hooks + `hook-utils.sh` before assuming a capability. A capability not listed here for an event is assumed ABSENT until file-verified.
 - **Mutation discipline**: only `PreToolUse` mutates model-visible data, and only `tool_input`. Do NOT design a `PostToolUse` hook that expects to rewrite tool output.
 - **Channel discipline**: pick channel a OR channel b per the registering event's contract; document which in the hook header. Mixing is allowed only where an existing hook already does so (`validate-output.sh`) and is intentional.
-- **Fail-open default**: lifecycle hooks that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure (`GLASS_ATRIUM_GLOBAL_RULES.md` Hook Operation Policy). Exception: `~/.claude/autoagent/` self-improvement pipeline hooks follow the loud-fail principle (`shared-self-improve-hygiene.md`).
+- **Fail-open default**: lifecycle hooks that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure (`GLASS_ATRIUM_GLOBAL_RULES.md` Hook Operation Policy). Exception: `~/.glass-atrium/autoagent/` self-improvement pipeline hooks follow the loud-fail principle (`shared-self-improve-hygiene.md`).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env`, tokens, or PII (`core-security.md` Secret Management, LLM07).
 
 ## Cross-References

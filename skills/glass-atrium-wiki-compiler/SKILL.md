@@ -80,12 +80,12 @@ for raw_file in delta:
 
 ### Step 2 — Sync (script, no LLM)
 
-- Invoke `~/.claude/scripts/wiki-sync.sh` (T6).
+- Invoke `~/.glass-atrium/scripts/wiki-sync.sh` (T6).
 - The script: scans `wiki/notes/`, upserts SQLite `wiki.sqlite` (FTS5 + metadata + backlinks), regenerates `master-index.md` and `topic-map.md` from SQL queries.
 - No LLM tokens spent. No manual editing of index files by this skill.
 
 ```
-Bash("~/.claude/scripts/wiki-sync.sh")
+Bash("~/.glass-atrium/scripts/wiki-sync.sh")
 ```
 
 ### Step 3 — Health (optional, separate cadence)

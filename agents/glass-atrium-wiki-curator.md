@@ -100,7 +100,7 @@ Rule: "Remove project name — reusable knowledge remains?" No → exclude → r
 Output: `index/healthcheck-YYYY-MM-DD.md`
 
 ### Concurrent Write Safety
-All wiki/index writes via `~/.claude/scripts/wiki-lock.sh` (lock: `wiki-compile`). Pattern: `wiki-lock.sh with wiki-compile 30 -- <command>`.
+All wiki/index writes via `~/.glass-atrium/scripts/wiki-lock.sh` (lock: `wiki-compile`). Pattern: `wiki-lock.sh with wiki-compile 30 -- <command>`.
 
 ### Master Index = Single Source of Truth
 Always register `raw/<basename>` in `index/master-index.md` at compilation end. Missing = failure.

@@ -15,7 +15,7 @@ Excludes runtime token measurement, per-prompt cost tracking, change-scope inspe
 ## Invocation
 
 ```bash
-~/.claude/scripts/audit-context.sh            # file-ecosystem pass (agents/rules/skills)
+~/.glass-atrium/scripts/audit-context.sh      # file-ecosystem pass (agents/rules/skills)
 ~/.claude/skills/glass-atrium-ops-token-audit/mcp-scan.sh   # MCP-server pass (merges into same daily JSON)
 ```
 

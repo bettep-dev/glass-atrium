@@ -60,7 +60,7 @@ Systematically collect data through web search, codebase exploration, and litera
 <!-- EDITABLE:BEGIN -->
 
 ### Wiki Pre-Check
-- Before research, run `Bash: ~/.claude/scripts/wiki-query.sh "topic"` → check existing wiki · Found → Read first, build on existing (prevent duplicate)
+- Before research, run `Bash: ~/.glass-atrium/scripts/wiki-query.sh "topic"` → check existing wiki · Found → Read first, build on existing (prevent duplicate)
 - Cite: `Existing wiki checked: [[concept-name]]` · Simple/urgent searches may skip
 
 ### Raw Source Storage Pipeline

@@ -1,6 +1,6 @@
 # Self-Improvement Pipeline Hygiene Rules (Cross-Cutting Concern)
 
-Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents that touch the autoagent self-improvement pipeline (`~/.claude/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists). Loaded automatically for ORCHESTRATOR; loaded for DEV when the change scope includes any path under `~/.claude/autoagent/` or the loop's launchd configuration.
+Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents that touch the autoagent self-improvement pipeline (`~/.glass-atrium/autoagent/daemon-apply.sh`, `daemon_cycle.py`, `daemon-cycle.sh`, related launchd plists). Loaded automatically for ORCHESTRATOR; loaded for DEV when the change scope includes any path under `~/.glass-atrium/autoagent/` or the loop's launchd configuration.
 
 ## Working Tree Hygiene Contract [ORCHESTRATOR+DEV]
 
@@ -28,9 +28,9 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 
 ## Harness Git Track Status
 
-- `~/.claude/autoagent/`, `~/.claude/rules/`, `~/.claude/agents/`, `~/.claude/monitor/` are EACH an independent git repository → change history of self-improvement core code (daemon-apply.sh / daemon_cycle.py / daemon-cycle.sh) AND of every rule file under `~/.claude/rules/` (including this document) is git-preserved — prior-version recovery via `git log` / `git restore`
+- `~/.glass-atrium/autoagent/`, `~/.glass-atrium/rules/`, `~/.glass-atrium/agents/`, `~/.glass-atrium/monitor/` are EACH an independent git repository → change history of self-improvement core code (daemon-apply.sh / daemon_cycle.py / daemon-cycle.sh) AND of every rule file under `~/.glass-atrium/rules/` (including this document) is git-preserved — prior-version recovery via `git log` / `git restore`
 - Git history is the recovery mechanism for these tracked dirs → pre-change local-backup duplication is redundant
-- Remaining untracked surface — `~/.claude/skills/`, `~/.claude/hooks/`, `~/.claude/scripts/`, and the `~/.claude/` root itself are NOT git repos → no recovery for changes confined to those paths. Rule-change recovery is already covered by the rules repo; this residual surface is lower-stakes (no self-improvement core code, no rule SoT)
+- Remaining untracked surface — `~/.glass-atrium/skills/`, `~/.glass-atrium/hooks/`, `~/.glass-atrium/scripts/`, and the `~/.glass-atrium/` root itself are NOT git repos → no recovery for changes confined to those paths. Rule-change recovery is already covered by the rules repo; this residual surface is lower-stakes (no self-improvement core code, no rule SoT)
 
 ## Cross-References
 
