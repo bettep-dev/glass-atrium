@@ -35,6 +35,17 @@
 # fail-open on EVERYTHING (qa-reviewer mandatory): missing agent_id, absent jq, un-writable/corrupt
 # counter, internal error → exit 0 silently. A hook bug must NEVER block a session; for v1 there is
 # no block path at all, so worst case is a missing or spurious advisory line.
+#
+# OVERAGE RECORDING (record-and-continue): beyond the STDERR advisory, this hook writes a durable
+# best-effort PG row (core.budget_overages) at each budget crossing — the 100% crossing (count ==
+# budget) then every floor(budget/5) tool_uses beyond (min 1 step). For the default budget 40 the
+# crossings are 40, 48, 56, ... (each step = +20%). WHY durable: an engine hard-kill at maxTurns fires
+# NO SubagentStop event, so SubagentStop synthesis produces zero outcome rows for that death mode; the
+# overage row is written BEFORE death, surviving the kill as the self-improvement loop's only signal.
+# agent_type is recovered from the agent-<agent_id>.meta.json sidecar (same recover pattern as
+# block-doc-routing-leak.sh, same PreToolUse event) — null fallback is accepted, resolution the norm.
+# The write goes through _pg-write.py: a DB outage, absent driver, absent jq, or any error NEVER fails
+# the hook (exit 0 preserved). Recovery + write cost is spent ONLY on a crossing, never every tool call.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -52,8 +63,89 @@ trap 'printf "[subagent-tool-budget-advisory] internal error at line %d: %s — 
 readonly DEFAULT_BUDGET_DIR="${HOME}/.claude/data/agent-tool-budget"
 budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${DEFAULT_BUDGET_DIR}}"
 
+# Overage-writer override — captured for Bats fail-safe testing: a PATH-shimmable stub replaces the
+# real _pg-write.py to count invocations without a live DB. Default = sibling _pg-write.py (executable,
+# `#!/usr/bin/env python3` shebang), invoked directly so the stub can be any executable.
+readonly DEFAULT_OVERAGE_WRITER="${BASH_SOURCE%/*}/_pg-write.py"
+overage_writer="${SUBAGENT_OVERAGE_WRITER:-${DEFAULT_OVERAGE_WRITER}}"
+
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+
+# recover_agent_type — resolve agent_type from the agent-<agent_id>.meta.json sidecar, ALGORITHMICALLY
+# EQUIVALENT to block-doc-routing-leak.sh recover_agent_type (same PreToolUse envelope: transcript_path +
+# session_id). Echoes the agentType on success, empty on ANY failure (absent jq, no sidecar, unreadable →
+# null fallback, an accepted overage-row value). Args: $1=transcript_path $2=session_id $3=agent_key.
+recover_agent_type() {
+  local transcript_val="${1}" session_val="${2}" agent_key="${3}"
+  # Need agent_key AND at least one resolution anchor.
+  [[ -z "${agent_key}" ]] && return 0
+  [[ -z "${transcript_val}" && -z "${session_val}" ]] && return 0
+  local filename="agent-${agent_key}.meta.json"
+  local sidecar recovered
+
+  # (1) sidecar co-located with transcript_path's dirname.
+  if [[ -n "${transcript_val}" ]]; then
+    sidecar="$(dirname -- "${transcript_val}")/${filename}"
+    if [[ -f "${sidecar}" && -r "${sidecar}" ]]; then
+      recovered="$(jq -r '.agentType // empty' "${sidecar}" 2>/dev/null || true)"
+      if [[ -n "${recovered}" ]]; then
+        printf '%s\n' "${recovered}"
+        return 0
+      fi
+    fi
+  fi
+
+  # (2) bounded glob keyed by session_id + agent_id (cwd-independent). Two layouts: the flat subagents/
+  #     dir + the workflow-nested location used by Dynamic-Workflow agents. agent_key is already
+  #     path-safe; the session_id glob segment is wildcard-bounded, never interpolated raw into a
+  #     traversal-capable position.
+  if [[ -n "${session_val}" ]]; then
+    local session_key match
+    session_key="$(hook_path_safe_key "${session_val}")"
+    if [[ -n "${session_key}" ]]; then
+      local -a patterns=(
+        "${HOME}/.claude/projects/"*"/${session_key}/subagents/${filename}"
+        "${HOME}/.claude/projects/"*"/${session_key}/subagents/workflows/wf_"*"/${filename}"
+      )
+      local pat
+      for pat in "${patterns[@]}"; do
+        # Glob expansion; nullglob-equivalent via the -f test inside the loop.
+        for match in ${pat}; do
+          if [[ -f "${match}" && -r "${match}" ]]; then
+            recovered="$(jq -r '.agentType // empty' "${match}" 2>/dev/null || true)"
+            if [[ -n "${recovered}" ]]; then
+              printf '%s\n' "${recovered}"
+              return 0
+            fi
+          fi
+        done
+      done
+    fi
+  fi
+  return 0
+}
+
+# record_overage — best-effort durable overage row via _pg-write.py into core.budget_overages. Builds the
+# JSON row with python3 (agent_type empty → JSON null; json.dumps escapes the opaque agent_id), then pipes
+# it to the writer. EVERY failure path is swallowed (`|| true`, `2>/dev/null`) — a DB outage, absent driver,
+# or a missing writer never fails the hook. Args: $1=agent_id $2=agent_type $3=tool_use_count $4=budget $5=crossed_pct.
+record_overage() {
+  local a_id="${1}" a_type="${2}" count="${3}" budget="${4}" pct="${5}" row_json
+  row_json="$(AID="${a_id}" ATYPE="${a_type}" CNT="${count}" BUD="${budget}" PCT="${pct}" python3 -c '
+import json, os
+atype = os.environ.get("ATYPE", "") or None
+print(json.dumps({
+    "agent_id": os.environ.get("AID", ""),
+    "agent_type": atype,
+    "tool_use_count": int(os.environ.get("CNT", "0")),
+    "budget": int(os.environ.get("BUD", "0")),
+    "crossed_pct": int(os.environ.get("PCT", "0")),
+}))
+' 2>/dev/null || true)"
+  [[ -z "${row_json}" ]] && return 0
+  printf '%s' "${row_json}" | "${overage_writer}" advisory-subagent-budget core.budget_overages >/dev/null 2>&1 || true
+}
 
 # TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (orchestrator-role.md HARD
 # SECONDARY trigger: a single delegation expected to exceed ~40 tool_uses SPLITs regardless of bundle
@@ -129,6 +221,32 @@ if ((new_count == crit_threshold)); then
 elif ((new_count == warn_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
     "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 70% of the ${tool_budget}-tool_use budget. NOTE: TOOL_USE count, NOT maxTurns/%. Plan to wrap up: finish the current work-unit, checkpoint remaining work to memory/progress-{task}.md. Non-blocking — the tool call proceeds." >&2
+fi
+
+# 6. Overage recording (record-and-continue durable signal). Fires ONLY on a budget crossing so the
+#    sidecar recovery + PG write cost is spent at most once per crossing, never on every tool call.
+#    Crossings: the 100% crossing (new_count == budget) then every floor(budget/5) tool_uses beyond
+#    (min 1 step) — for the default budget 40 that is 40, 48, 56, ... (each step = +20%). Base-10 is
+#    forced (10#) for the same octal-safety reason as the threshold math above.
+budget_n=$((10#${tool_budget}))
+overage_step=$((budget_n / 5))
+((overage_step >= 1)) || overage_step=1
+
+is_crossing=0
+if ((new_count == budget_n)); then
+  is_crossing=1
+elif ((new_count > budget_n && (new_count - budget_n) % overage_step == 0)); then
+  is_crossing=1
+fi
+
+if ((is_crossing == 1)); then
+  # crossed_pct: integer percentage at the crossing (100 at budget, +20% per default-budget step).
+  crossed_pct=$((new_count * 100 / budget_n))
+  # transcript_path + session_id are read lazily HERE — needed only for sidecar recovery on a crossing.
+  transcript_path="$(hook_get_field "${input}" "transcript_path")"
+  session_id="$(hook_get_field "${input}" "session_id")"
+  agent_type="$(recover_agent_type "${transcript_path}" "${session_id}" "${agent_key}")"
+  record_overage "${agent_id}" "${agent_type}" "${new_count}" "${budget_n}" "${crossed_pct}"
 fi
 
 exit 0

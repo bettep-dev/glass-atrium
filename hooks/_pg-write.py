@@ -83,6 +83,20 @@ _ALLOWED_COLUMNS = {
             "agent_type",
         }
     ),
+    # Budget-overage signal (advisory-subagent-budget.sh). Without this registration every
+    # overage INSERT is IdentifierRejected and silently discarded — the durable crossing signal
+    # never reaches the self-improvement loop. ts is defaulted by the table (now()); the hook
+    # passes the other 5 columns, but ts stays in the allowlist per the contract's 6-column set.
+    "core.budget_overages": frozenset(
+        {
+            "agent_id",
+            "agent_type",
+            "tool_use_count",
+            "budget",
+            "crossed_pct",
+            "ts",
+        }
+    ),
 }
 
 
