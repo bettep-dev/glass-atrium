@@ -242,7 +242,7 @@ failure returns a single error code.
   dirty flag converges on the single PostgreSQL `core.*` sink
 - Legacy file sinks (e.g., the transcript-based cost-tracker.sh approach) are retired
 - Ingestion pipelines INSERT into PG directly from outside this package
-  (`~/.claude/hooks`, `~/.claude/scripts`)
+  (`~/.glass-atrium/hooks`, `~/.glass-atrium/scripts`)
 
 ## Security
 
