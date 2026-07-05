@@ -85,12 +85,12 @@ const WRITERS: ReadonlyArray<WriterDescriptor> = [
 	{
 		name: "wiki-sync",
 		// import token, not a strippable PHASE comment — survives comment-hygiene edits
-		path: `${HOME}/.claude/scripts/wiki-sync.sh`,
+		path: `${HOME}/.glass-atrium/scripts/wiki-sync.sh`,
 		marker: "_pg_dual_write_daemon",
 	},
 	{
 		name: "autoagent",
-		path: `${HOME}/.claude/autoagent/daemon-cycle.sh`,
+		path: `${HOME}/.glass-atrium/autoagent/daemon-cycle.sh`,
 		marker: "PHASE2-AUTOAGENT-DUALWRITE-BEGIN",
 	},
 ];
