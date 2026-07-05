@@ -126,15 +126,14 @@ export AUTOAGENT_GIT_ROOT="${AUTOAGENT_GIT_ROOT:-${HOME}/.glass-atrium}"
 export AUTOAGENT_GIT_PATHSPEC="${AUTOAGENT_GIT_PATHSPEC:-agents/}"
 
 # -- Resolve script + module paths -----------------------------------------
-# Facade-safe self-resolution: launchd invokes this script THROUGH the ~/.claude
-# per-file symlink facade (~/.claude/autoagent/daemon-cycle.sh → this file).
-# bash never dereferences a file-level symlink in BASH_SOURCE, so a bare
-# dirname(BASH_SOURCE) is the FACADE dir — a real directory whose siblings
-# (daemon_cycle.py, daemon-apply.sh) exist only where a mirror symlink was
-# hand-created (the missing-mirror class behind the 2026-07-02 apply FATAL).
-# Walk the symlink chain in pure bash (readlink -f is GNU-only; python3 is not
-# verified until later in this script — exit-3 check). Precedent: glass-atrium
-# resolve_self.
+# Self-resolution: launchd now invokes this script at its store path
+# (~/.glass-atrium/autoagent/daemon-cycle.sh) — autoagent/ is consumed in place,
+# the ~/.claude/autoagent farm is gone. The walk stays defensive: if BASH_SOURCE
+# ever arrives through a symlink, bash never dereferences a file-level symlink,
+# so a bare dirname(BASH_SOURCE) would be the link dir, not the real siblings
+# (daemon_cycle.py, daemon-apply.sh). Walk the symlink chain in pure bash
+# (readlink -f is GNU-only; python3 is not verified until later — exit-3 check).
+# Precedent: glass-atrium resolve_self.
 resolve_self() {
     local src="${BASH_SOURCE[0]}" dir
     while [[ -L "${src}" ]]; do
@@ -394,7 +393,7 @@ run_regression_stage() {
 # Skip on dry-run + when the report file is absent or 0-byte (cycle failed).
 # Helper itself swallows failures (fail-loud-and-skip).
 run_pg_push_stage() {
-    local pg_push_py="${HOME}/.claude/scripts/_pg_push_autoagent_cycle.py"
+    local pg_push_py="${HOME}/.glass-atrium/scripts/_pg_push_autoagent_cycle.py"
     if [[ "${DRY_RUN}" -eq 0 && -s "${OUT_PATH}" && -f "${pg_push_py}" ]]; then
         printf '[daemon-cycle] PG_PUSH start out=%s date=%s started=%s\n' \
             "${OUT_PATH}" "${CYCLE_DATE}" "${CYCLE_STARTED_AT}" >&2
@@ -531,7 +530,7 @@ fi
 # dry-run skipped — consistent with cycle/apply/aggregate stage policy.
 # LOOP_PUSH uses the same logging pattern as PG_PUSH (start/end/skip); the
 # helper's `|| true` swallow is preserved but surfaced via loop_rc capture.
-LOOP_PUSH_PY="${HOME}/.claude/scripts/_pg_push_autoagent_loop_events.py"
+LOOP_PUSH_PY="${HOME}/.glass-atrium/scripts/_pg_push_autoagent_loop_events.py"
 if [[ "${DRY_RUN}" -eq 0 && -f "${LOOP_PUSH_PY}" ]]; then
     printf '[daemon-cycle] LOOP_PUSH start helper=%s\n' "${LOOP_PUSH_PY}" >&2
     loop_rc=0

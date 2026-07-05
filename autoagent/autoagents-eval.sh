@@ -104,7 +104,7 @@ log "changes detected: ${FILE_COUNT} — ${FILE_LIST}"
 
 # ── 1.5 LLM preflight ──────────────────────────────
 # shellcheck source=/dev/null
-source "$HOME/.claude/scripts/llm-preflight.sh"
+source "$HOME/.glass-atrium/scripts/llm-preflight.sh"
 PREFLIGHT_REASON=$(llm_preflight 10.00) || {
   log "LLM preflight failed: $PREFLIGHT_REASON"
   echo "RESULT: FAIL"
