@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.1",
   "_doc_settings_json": "settings.json is DELIBERATELY ABSENT from .files — it is user-owned config the installer never symlink-deploys. On `install` (NOT `agents-only`, which skips it), wire_hooks performs an idempotent, timestamped-backup MERGE that adds ONLY the Atrium hook event-bindings below into ~/.claude/settings.json — it never deletes or overwrites user-owned keys, and re-running is a no-op once the bindings are present. Run `glass-atrium doctor` to surface any DORMANT (deployed-but-unwired) hook bindings. Required bindings the doctor checks (15 total, matcher-scoped — the same hook may bind under TWO matchers, each tracked independently): PreToolUse{enforce-delegation@Write|Edit, enforce-verification-gate@Agent, validate-secret-scan@Write|Edit, validate-secret-scan@Bash, validate-prompt@Write|Edit, advisory-spawn-cost@Agent, advisory-spawn-budget@Agent, advisory-context-budget@Agent, enforce-workflow-verify-stage@Workflow, advisory-subagent-budget@(no matcher)}; PostToolUse{validate-output@(no matcher), validate-tool-response@WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*, detect-secret-file-write@Bash}; SessionStart{validate-compliance-matrix}; Stop{cost-tracker}. Note validate-secret-scan binds under BOTH Write|Edit AND Bash (the Bash channel scans shell-command secret leaks).",
   "files": [
     "agent-registry.json",
@@ -532,7 +532,7 @@
     "requirements.txt": "eae3486e48ad1b5cb6dea1024cdf0e3360461a9bf4a304f49713ee18985c5f23",
     "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md": "47936cffda3bfc29082da8c15ab9df96a48c82737686aa9ea07d9b4b1542c304",
     "rules/glass-atrium/core-compliance-matrix.md": "1860fd2ecac764cee30f18452fd6710fb3623ca7e2ab9666dc8d8aa6a3ec538e",
-    "rules/glass-atrium/core-git-workflow.md": "bbf00b31d7011e9b1ab3f10e5f63dbc56c0e4a96a62c58647cbd39b6cd0d8386",
+    "rules/glass-atrium/core-git-workflow.md": "94b88d9f2efc6b87e05b068f4d73c60a6d38cd73100466739e6d7b856d496948",
     "rules/glass-atrium/core-learning-log.md": "8eee99d6244a41a62df8477d7d89da24f4f687cc9d8c54940ded19ec80f65c25",
     "rules/glass-atrium/core-outcome-record.md": "4f1c34bc7b19ff144af6eb253b30fe2bacc92a98a642188c367c51a7a3855745",
     "rules/glass-atrium/core-security.md": "7916e511d5fb24e7ab10b96b4993fa31a7b5ac34a7f2693043de68da30f92692",
@@ -594,7 +594,7 @@
     "scripts/daemon-daily-restart.sh": "769f0c3b2002256d5ff98f222c742537b07227b2657c4d1b1526255e21997665",
     "scripts/daemon-inject-entry.sh": "e6dfff17e20be4117242ea053c3be75f9c30171cd1c1517dc27399ba6292d327",
     "scripts/gate-audit.sh": "5d3a99a811daf113e2fb80e75f0885e6e59dab6a93a978b92dfe9ad85d6d2e5a",
-    "scripts/generate-manifest.sh": "c07fc6e4246492ba923e690670cbe87f608a14f38c8c1b7b3a290b302ada2923",
+    "scripts/generate-manifest.sh": "ec3ea9aaa2a862d7dd26ffd7c3fb96d56c1bde15e387b91dc0ab49813691d25a",
     "scripts/lib/apply-gate.sh": "d1a8230f5fd39d9658e71a127a2ad4df58a67e60412c08d697060c6e3297c2ba",
     "scripts/lib/apply-lock.sh": "bf519a020c84a818bd9920596656ffaf0d3dcba31e655e6d469cbcfd3d4e6cf1",
     "scripts/lib/apply-spine.sh": "131f3f8d0c8377bbfaa3571f8e843cd7ba9c4667a8eaab094d5c35a43fbca18a",

@@ -4,7 +4,7 @@ Applies to all agents.
 
 ## Commits
 
-- **Message format**: `- [x] description in Korean`
+- **Message format**: `- [x] <English imperative description>`
 - All tests MUST pass before committing (see shared-testing.md)
 - `--no-verify` / `--no-gpg-sign` are **STRICTLY FORBIDDEN** in normal flow
   - Agent execution context without configured signing key → configure SSH/GPG key OR set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
@@ -13,7 +13,7 @@ Applies to all agents.
 ### Subject Line
 
 - **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics). The author's job is to find the most compressed phrasing that conveys the change's purpose — counting characters is the wrong frame.
-- **Tone (Korean)**: verb-stem / imperative ending mandatory; polite endings (존댓말) are FORBIDDEN. Example: `로그인 버튼 추가` (O) / `로그인 버튼을 추가했습니다` (X). English equivalent: imperative mood (`Add login button`).
+- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); Korean subjects are no longer used — this is a public OSS repository. Bodies are English as well.
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional. When used, place after the checkbox: `- [x] feat: <description>`.
 
 ### Subject and Body
@@ -27,7 +27,7 @@ Applies to all agents.
 - **Why over what**: the diff already shows what changed; the body explains why the change was needed. Implementation detail (how) belongs in the code, not the message.
 - **Inverted-pyramid ordering**: lead with the most important "why" sentence; supporting context follows.
 - **Meaning-unit wrapping**: break lines at clause / sentence / list-item boundaries. Identifiers (function names, file paths, hooks, tokens) MUST NEVER be split across lines. No fixed character cap — the author chooses break points that preserve readability. Short clauses (≤ ~10 words) stay on one line.
-- **Conciseness**: every sentence MUST add information not already conveyed by the subject or a prior body sentence. No formal greetings, no exaggerated adjectives (`매우 중요한`, `정말 깔끔하게`).
+- **Conciseness**: every sentence MUST add information not already conveyed by the subject or a prior body sentence. No formal greetings, no exaggerated adjectives (`very important`, `really cleanly`).
 - **Bullet form by default**: body content MUST be written as bullets; prose paragraphs are admitted ONLY when the change is a single causal narrative whose steps cannot decompose into 3+ independent bullets without breaking the chain. Meaning-unit wrapping still applies inside each bullet, and Conciseness still requires every bullet (and every prose sentence under the admission) to add new information.
 
 ### Anti-patterns
@@ -35,7 +35,7 @@ Applies to all agents.
 - **Chained single-line subjects**: stacking unrelated changes onto one subject via `—`, `·`, or `:` connectors.
 - **Diff-restating body**: rephrasing what the diff already shows (`Changed X to Y` when the diff makes that visible).
 - **Subject-body redundancy**: subject and body conveying the same fact in different words.
-- **Polite endings in Korean**: `~했습니다`, `~하였습니다` — use plain / verb-stem form instead.
+- **Non-imperative subjects**: `Added login button`, `Adding login button` — use imperative mood (`Add login button`) instead.
 
 ## AI Commit Attribution
 
