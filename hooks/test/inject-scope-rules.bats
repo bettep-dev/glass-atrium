@@ -204,3 +204,142 @@ assert_no_json_emitted() {
   assert_status 0
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
+
+# --- (e) meter-first assembly + universal 8KB byte-ceiling drop order (P1-T1 / P1-T2). ---
+# Unlike run_hook (which suppresses the meter), these tests ENABLE it: they build a maxTurns
+# frontmatter fixture + all four scope-block sources, then assert the meter is assembled FIRST and
+# the 8KB ceiling drops blocks in the pinned order naming → style-ref → minimalism → comment-logging
+# while never dropping the meter. Distinct needles per block make each assertion mutation-falsifiable.
+
+METER_NEEDLE="Turn-budget meter"
+COMMENT_NEEDLE="COMMENT-CORE-BODY"
+STYLEREF_NEEDLE="STYLEREF-CORE-BODY"
+MINIMALISM_NEEDLE="MINIMALISM-CORE-BODY"
+# NAMING_NEEDLE ("Naming delta-core") is defined at the top of the file.
+
+# Write a single-block source file: preamble, start marker, needle line, PAD 'X' bytes, end marker.
+# The pad ('X' run from /dev/zero via tr) inflates the block to a controlled byte size so the ceiling
+# drop order can be forced deterministically. Args: $1=path $2=start $3=end $4=needle $5=pad_bytes.
+write_block_src() {
+  local path="${1}" ms="${2}" me="${3}" needle="${4}" pad="${5}"
+  {
+    printf '%s\n' 'preamble (must not reach child)'
+    printf '%s\n' "${ms}"
+    printf '%s\n' "${needle}"
+    head -c "${pad}" /dev/zero | tr '\0' 'X'
+    printf '\n'
+    printf '%s\n' "${me}"
+    printf '%s\n' 'trailer (must not reach child)'
+  } >"${path}"
+}
+
+# Build all four block sources + a maxTurns frontmatter dir, then drive the hook with the meter
+# ENABLED (SUBAGENT_BUDGET_METER_OFF unset, AGENTS_DIR pointed at the fixture). style_ref + minimalism
+# share ONE source file (scope-dev.md) carrying both marker pairs, mirroring production. Pads default
+# to a tiny size; a test overrides them to force ceiling drops.
+# Args: $1=agent $2=comment_pad $3=styleref_pad $4=minimalism_pad $5=naming_pad
+run_hook_full() {
+  local agent="${1}" cpad="${2:-16}" spad="${3:-16}" mpad="${4:-16}" npad="${5:-16}"
+  local comment_src="${BATS_TEST_TMPDIR}/comment.md"
+  local styleref_src="${BATS_TEST_TMPDIR}/scope-dev.md"
+  local naming_src="${BATS_TEST_TMPDIR}/naming-full.md"
+  local agents_dir="${BATS_TEST_TMPDIR}/agents"
+
+  write_block_src "${comment_src}" '<!-- AGENT-INJECT:START -->' '<!-- AGENT-INJECT:END -->' "${COMMENT_NEEDLE}" "${cpad}"
+  write_block_src "${naming_src}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}" "${NAMING_NEEDLE}" "${npad}"
+  {
+    printf '%s\n' 'preamble'
+    printf '%s\n' '<!-- AGENT-INJECT:STYLE-REF:START -->'
+    printf '%s\n' "${STYLEREF_NEEDLE}"
+    head -c "${spad}" /dev/zero | tr '\0' 'X'
+    printf '\n'
+    printf '%s\n' '<!-- AGENT-INJECT:STYLE-REF:END -->'
+    printf '%s\n' '<!-- AGENT-INJECT:MINIMALISM:START -->'
+    printf '%s\n' "${MINIMALISM_NEEDLE}"
+    head -c "${mpad}" /dev/zero | tr '\0' 'X'
+    printf '\n'
+    printf '%s\n' '<!-- AGENT-INJECT:MINIMALISM:END -->'
+    printf '%s\n' 'trailer'
+  } >"${styleref_src}"
+
+  mkdir -p "${agents_dir}"
+  printf 'maxTurns: 40\n' >"${agents_dir}/${agent}.md"
+
+  run bash -c '
+    agent="$1"; hook="$2"; comment_src="$3"; styleref_src="$4"; naming_src="$5"; agents_dir="$6"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env \
+      INJECT_SCOPE_RULES_AGENTS_DIR="${agents_dir}" \
+      INJECT_SCOPE_RULES_SRC="${comment_src}" \
+      INJECT_SCOPE_RULES_STYLEREF_SRC="${styleref_src}" \
+      INJECT_SCOPE_RULES_NAMING_SRC="${naming_src}" \
+      bash "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${comment_src}" "${styleref_src}" "${naming_src}" "${agents_dir}"
+}
+
+# Assert $1 appears strictly BEFORE $2 in the assembled additionalContext (both must be present).
+assert_ctx_order() {
+  local ctx first="${1}" second="${2}"
+  ctx="$(ctx_of)"
+  printf '%s' "${ctx}" | python3 -c '
+import sys
+ctx = sys.stdin.read()
+a, b = sys.argv[1], sys.argv[2]
+ia, ib = ctx.find(a), ctx.find(b)
+sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
+' "${first}" "${second}" || {
+    echo "expected [${first}] to precede [${second}] in ctx: [${ctx}]" >&2
+    return 1
+  }
+}
+
+@test "meter block assembled FIRST — precedes comment-logging and naming (P1-T1)" {
+  run_hook_full "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${METER_NEEDLE}"
+  assert_ctx_contains "${COMMENT_NEEDLE}"
+  assert_ctx_order "${METER_NEEDLE}" "${COMMENT_NEEDLE}"
+  assert_ctx_order "${METER_NEEDLE}" "${NAMING_NEEDLE}"
+}
+
+@test "small blocks under 8KB ceiling — meter + all four scope blocks retained (P1-T2 baseline)" {
+  run_hook_full "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${METER_NEEDLE}"
+  assert_ctx_contains "${COMMENT_NEEDLE}"
+  assert_ctx_contains "${STYLEREF_NEEDLE}"
+  assert_ctx_contains "${MINIMALISM_NEEDLE}"
+  assert_ctx_contains "${NAMING_NEEDLE}"
+}
+
+@test "over 8KB by one block — naming dropped FIRST, meter + other three retained (P1-T2 order 1)" {
+  run_hook_full "glass-atrium-dev-react" 2200 2200 2200 2200
+  assert_status 0
+  assert_ctx_contains "${METER_NEEDLE}"
+  assert_ctx_contains "${COMMENT_NEEDLE}"
+  assert_ctx_contains "${STYLEREF_NEEDLE}"
+  assert_ctx_contains "${MINIMALISM_NEEDLE}"
+  assert_ctx_not_contains "${NAMING_NEEDLE}"
+}
+
+@test "far over 8KB — drops naming, style-ref, minimalism in order; keeps comment + meter (P1-T2)" {
+  run_hook_full "glass-atrium-dev-react" 5000 5000 5000 5000
+  assert_status 0
+  assert_ctx_contains "${METER_NEEDLE}"
+  assert_ctx_contains "${COMMENT_NEEDLE}"
+  assert_ctx_not_contains "${STYLEREF_NEEDLE}"
+  assert_ctx_not_contains "${MINIMALISM_NEEDLE}"
+  assert_ctx_not_contains "${NAMING_NEEDLE}"
+}
+
+@test "meter is NEVER dropped — a single oversized block cannot evict it (P1-T2 invariant)" {
+  # comment alone = 9000B > ceiling; after dropping naming/style-ref/minimalism the comment+meter is
+  # still over, so comment is dropped too — but the meter is not a drop candidate and MUST survive.
+  run_hook_full "glass-atrium-dev-react" 9000 5000 5000 5000
+  assert_status 0
+  assert_ctx_contains "${METER_NEEDLE}"
+  assert_ctx_not_contains "${COMMENT_NEEDLE}"
+  assert_ctx_not_contains "${STYLEREF_NEEDLE}"
+  assert_ctx_not_contains "${MINIMALISM_NEEDLE}"
+  assert_ctx_not_contains "${NAMING_NEEDLE}"
+}
