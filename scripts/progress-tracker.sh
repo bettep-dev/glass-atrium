@@ -37,10 +37,11 @@ if [[ -n "${_PROGRESS_TRACKER_LOADED:-}" ]]; then
 fi
 readonly _PROGRESS_TRACKER_LOADED=1
 
-# Resolve the REAL script directory: readlink -f dereferences the farmed
-# ~/.claude/scripts per-file symlink (macOS 12.3+ ships readlink -f; same realpath
-# discipline as cost-tracker.sh). An unresolved dirname would send ../hooks to
-# ~/.claude/hooks — no longer farmed, absent on fresh installs.
+# Resolve the REAL script directory: scripts/ is consumed in place from the
+# store, so ../hooks resolves to the sibling store hooks/ dir (hook-utils.sh).
+# readlink -f stays defensive — if the script ever arrives through a symlink it
+# still lands on the real tree (macOS 12.3+ ships readlink -f; same realpath
+# discipline as cost-tracker.sh).
 _progress_self="$(readlink -f -- "${BASH_SOURCE[0]}")" || _progress_self="${BASH_SOURCE[0]}"
 _PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${_progress_self}")" && pwd)"
 

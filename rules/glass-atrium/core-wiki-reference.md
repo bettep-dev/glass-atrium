@@ -6,7 +6,7 @@ Applies to all agents. [ALL]
 
 ## Knowledge Utilization
 
-- Before starting research / analysis tasks → run `~/.claude/scripts/wiki-query.sh "keyword"` to check existing wiki knowledge.
+- Before starting research / analysis tasks → run `~/.glass-atrium/scripts/wiki-query.sh "keyword"` to check existing wiki knowledge.
 - Use Korean + English synonyms in parallel ("쿼리 재작성" AND "query rewriting") — wiki-query.sh is BM25 + grep based (NOT semantic search), so synonym omission causes false negatives.
 - Verify the `collected:` field or frontmatter date on found documents → for documents older than 1 year, web cross-verification of currency is recommended.
 - Cite referenced wiki documents in your response as `Existing wiki checked: [[concept-name]]` (citation tracking).

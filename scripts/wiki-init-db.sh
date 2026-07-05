@@ -23,11 +23,12 @@ WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 readonly WIKI_ROOT
 readonly WIKI_BASE="${WIKI_ROOT}"
 readonly DB_PATH="${WIKI_ROOT}/index/wiki.sqlite"
-# Prefer the sibling schema; fall back to the installed ~/.claude/scripts copy.
+# Prefer the sibling schema; fall back to the store copy (scripts/ is consumed
+# in place from ~/.glass-atrium — the ~/.claude/scripts farm is gone).
 if [[ -f "${SCRIPT_DIR}/wiki-schema.sql" ]]; then
   readonly SCHEMA_PATH="${SCRIPT_DIR}/wiki-schema.sql"
 else
-  readonly SCHEMA_PATH="${HOME}/.claude/scripts/wiki-schema.sql"
+  readonly SCHEMA_PATH="${HOME}/.glass-atrium/scripts/wiki-schema.sql"
 fi
 
 log() { printf '[wiki-init-db] %s\n' "$*" >&2; }

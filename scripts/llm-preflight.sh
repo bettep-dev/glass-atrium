@@ -2,11 +2,11 @@
 # llm-preflight.sh — LLM API availability preflight check / cost advisor
 #
 # Two modes:
-#   1. Sourced (legacy):   source ~/.claude/scripts/llm-preflight.sh
+#   1. Sourced (legacy):   source ~/.glass-atrium/scripts/llm-preflight.sh
 #                          REASON=$(llm_preflight 10.00) || { echo "Preflight failed: $REASON"; exit 1; }
 #      → Performs daily cost gate + 30s LLM ping; returns non-zero on failure.
 #
-#   2. Standalone (new):   bash ~/.claude/scripts/llm-preflight.sh [budget]
+#   2. Standalone (new):   bash ~/.glass-atrium/scripts/llm-preflight.sh [budget]
 #      → Emits a single-line advisory like:
 #          [llm-preflight] cost_today=$1.23 budget=$10.00 status=OK
 #        Always exits 0 (advisory only — never blocks). Skips the costly LLM ping.

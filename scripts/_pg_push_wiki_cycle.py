@@ -5,7 +5,7 @@
 #   * core.daemon_runs (daemon_name='wiki', run_date=CYCLE_DATE) with aggregate stats
 #   * core.daemon_run_payload (FK 1:1) with the full JSON blob
 #
-# Both writes go through ~/.claude/scripts/_pg_dual_write_daemon.py (subprocess)
+# Both writes go through the sibling _pg_dual_write_daemon.py (subprocess)
 # so retry / hook_failures / fail-loud-and-skip semantics are preserved
 # identically to wiki-sync.sh writes.
 #
@@ -23,7 +23,8 @@ import sys
 OUT_PATH = os.environ.get("OUT_PATH", "")
 CYCLE_DATE = os.environ.get("CYCLE_DATE", "")
 CYCLE_STARTED_AT = os.environ.get("CYCLE_STARTED_AT", "")
-HELPER = os.path.expanduser("~/.claude/scripts/_pg_dual_write_daemon.py")
+# Sibling of this module — scripts/ is consumed in place from the store.
+HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
 
 
 def _aggregate(payload):

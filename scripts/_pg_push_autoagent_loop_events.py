@@ -41,7 +41,8 @@ from typing import Any
 
 # Path constants — same helper location as _pg_push_autoagent_cycle.py
 LOOP_LOG: str = os.path.expanduser("~/.claude/logs/autoagent-loop.jsonl")
-HELPER: str = os.path.expanduser("~/.claude/scripts/_pg_dual_write_daemon.py")
+# Sibling of this module — scripts/ is consumed in place from the store.
+HELPER: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
 
 
 def _parse_args() -> argparse.Namespace:

@@ -18,7 +18,7 @@ skills:
   - glass-atrium-dev-naming
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
-maxTurns: 40
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference

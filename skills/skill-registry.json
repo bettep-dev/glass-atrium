@@ -137,7 +137,7 @@
     "glass-atrium-ops-verify-arch": {
       "type": "directory",
       "path": "skills/glass-atrium-ops-verify-arch/SKILL.md",
-      "description": "On-demand audit-and-fix for the Atrium architecture diagrams (diagrams-source.ts) against the live filesystem. Runs the deterministic computeArchDrift() count, adds LLM semantic-completeness checks the machine cannot do (orphan nodes, prose-vs-behavior mismatch, new agent missing from the team graph, broken cross-refs), and emits an actionable fix report; then, on a deliberate human invocation, immediately APPLIES the fixes via a foreground dev-node delegation (count writes to arch-invariants.ts, semantic edits to diagrams-source.ts, build-gated launchctl restart, re-verify). Use this before a release, when the monitor's \"최신화 필요\" drift badge appears, or after adding/removing an agent/hook/rule/launchd job/skill. Pass --dry-run to report only, applying nothing. Excludes runtime daemon-health checks; apply happens only on human invocation, only via foreground dev-node delegation, never silently or from a daemon.",
+      "description": "On-demand audit-and-fix for the Atrium architecture diagrams (diagrams-source.ts) against the live filesystem. Runs the deterministic computeArchDrift() count, adds LLM semantic-completeness checks the machine cannot do (orphan nodes, prose-vs-behavior mismatch, new agent missing from the team graph, broken cross-refs), and emits an actionable fix report; then, on a deliberate human invocation, immediately APPLIES the fixes via a foreground glass-atrium-dev-node delegation (count writes to arch-invariants.ts, semantic edits to diagrams-source.ts, build-gated launchctl restart, re-verify). Use this before a release, when the monitor's \"최신화 필요\" drift badge appears, or after adding/removing an agent/hook/rule/launchd job/skill. Pass --dry-run to report only, applying nothing. Excludes runtime daemon-health checks; apply happens only on human invocation, only via foreground glass-atrium-dev-node delegation, never silently or from a daemon.",
       "triggers": [],
       "depends_on": [],
       "used_by": [],
@@ -166,7 +166,7 @@
     "glass-atrium-design-anti-slop": {
       "type": "directory",
       "path": "skills/glass-atrium-design-anti-slop/SKILL.md",
-      "description": "Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ qa-code-reviewer), motion/animation review (→ dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).",
+      "description": "Detects AI-slop visual design patterns (color/font/layout/content/iconography/effects/emoji) by mechanical inspection of HTML / CSS / canvas / PDF artifacts per glass-atrium-design-designer.md AI Slop Tropes SoT + 2026 community patterns. Use when reviewing glass-atrium-design-designer or UI-emitting DEV agent deliverables for generic-AI aesthetics before emit OR during code review. Do NOT use for plain code review without UI (→ glass-atrium-qa-code-reviewer), motion/animation review (→ glass-atrium-dev-animator review), or accessibility scoring without slop concern (→ glass-atrium-design-contrast-check).",
       "triggers": [
         "anti-slop check",
         "AI slop audit",
@@ -187,11 +187,11 @@
     "glass-atrium-design-5-axis-critique": {
       "type": "directory",
       "path": "skills/glass-atrium-design-5-axis-critique/SKILL.md",
-      "description": "Applies design-designer.md Pre-Emit 5-Axis self-critique rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) with 0-10 banded scoring as machine-checkable pre-emit gate. Use when design-designer or dev-front / dev-react / dev-gsap artifact needs pre-emit gate scoring before canvas / motion-philosophy / DESIGN.md / HTML primary deliverable emit. Do NOT use for qa-code-reviewer external-judge scope (→ scope-qa.md LLM-as-Judge 4-Dimensions), post-emit design quality scoring (→ design-designer.md Design Evaluation 4-Axis), or non-design code review.",
+      "description": "Applies glass-atrium-design-designer.md Pre-Emit 5-Axis self-critique rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) with 0-10 banded scoring as machine-checkable pre-emit gate. Use when glass-atrium-design-designer or glass-atrium-dev-front / glass-atrium-dev-react / glass-atrium-dev-gsap artifact needs pre-emit gate scoring before canvas / motion-philosophy / DESIGN.md / HTML primary deliverable emit. Do NOT use for glass-atrium-qa-code-reviewer external-judge scope (→ scope-qa.md LLM-as-Judge 4-Dimensions), post-emit design quality scoring (→ glass-atrium-design-designer.md Design Evaluation 4-Axis), or non-design code review.",
       "triggers": [
         "design 5-axis",
         "pre-emit critique",
-        "design-designer self-score",
+        "glass-atrium-design-designer self-score",
         "5-axis self-critique"
       ],
       "depends_on": [],

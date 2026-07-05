@@ -109,6 +109,24 @@ NOT_PATCHABLE_AGENTS = frozenset({"전체", "ALL", "all", ""})
 RATE_MIN_SAMPLE = 3
 RATE_FAILURE_FLOOR = 0.5
 
+# Pattern-7 (budget-overage concentration) — per-agent_type clustering of the
+# best-effort core.budget_overages rows written at soft-budget crossings (see
+# advisory-subagent-budget.sh + the plan's budget_overages contract). The
+# improvement target is the AGENT FILE's emit discipline (checkpoint earlier /
+# print-block-then-emit earlier), so the label is legitimately per-agent
+# patchable. The ORCHESTRATOR sizing failure mode is NOT routed through this loop
+# — it is handled STATICALLY by the P4 rules calibration line (D4 routing split);
+# a null / cross-cutting agent_type has no agent file to patch and is dropped at
+# intake (_UNPREFIXABLE_AGENTS / _emit_xc).
+BUDGET_OVERAGE_LABEL = "budget-overage concentration"
+# Minimum same-agent_type overage count within one watermark window before a
+# cluster row is emitted — mirrors the established 3+ occurrence floor
+# (AUTO_FAILURE_THRESHOLD / RATE_MIN_SAMPLE), avoiding one-off noise. Single-batch
+# reachability limit (same as pattern-1's budget-truncation note): 1-2
+# overages/window never form a pattern; cross-window totals accrue via the
+# learning_log UPSERT frequency merge, not a lowered floor.
+BUDGET_OVERAGE_MIN_OCCURRENCE = 3
+
 # Pattern-1 DISPLAY label decouple (P3a). The signature-ANCHOR literal is load-bearing:
 # PATTERN1_FAIL_LABEL is the core.learning_log pattern_signature core AND the daemon
 # _FAIL_COUNT_LABEL_PREFIXES startswith-match target, so it MUST stay verbatim. A
@@ -584,6 +602,61 @@ def _emit_exclusion_summary(aggregated: int, exclusion_counts: dict[str, int]) -
     )
 
 
+def _read_budget_overages(since_epoch: float) -> list[dict]:
+    """Read core.budget_overages agent_type values written after since_epoch.
+
+    Windowed by the shared aggregator watermark (ts > since_epoch) so each overage
+    row is clustered in exactly one run — reading the whole table every run would
+    double-count under the learning_log UPSERT frequency merge. PG absent /
+    unreachable → [] (degrade-not-die, sibling policy to the _pg_learning_dualwrite
+    read helpers). Only agent_type is fetched — the sole field per-agent_type
+    clustering needs."""
+    if not HAS_PG_DUALWRITE:
+        return []
+    try:
+        import psycopg  # HAS_PG_DUALWRITE True guarantees this import succeeds
+    except ImportError:
+        return []
+    try:
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=2, autocommit=True
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT agent_type FROM core.budget_overages "
+                    "WHERE ts > to_timestamp(%s)",
+                    (since_epoch,),
+                )
+                return [{"agent_type": row[0]} for row in cur.fetchall()]
+    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
+        print(
+            f"[learning-aggregator] budget_overages read failed, skip "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+        return []
+
+
+def _cluster_budget_overages(overage_rows: list[dict]) -> dict[str, int]:
+    """Cluster budget_overage rows into per-canonical-agent_type counts.
+
+    Pure (no I/O) so it unit-tests without a live DB. Each row's agent_type is
+    canonicalized to the live roster stem (glass-atrium-<stem>) so daemon_cycle
+    intake resolves it to agents/<stem>.md; a null / unknown / cross-cutting
+    agent_type has no patchable agent file (_UNPREFIXABLE_AGENTS) and is dropped.
+    The ORCHESTRATOR sizing failure mode is handled statically by the P4
+    calibration line, never routed through this per-agent loop (D4 routing split)."""
+    counts: dict[str, int] = defaultdict(int)
+    for row in overage_rows:
+        # _canonical_agent maps a null / missing agent_type to "" (an
+        # _UNPREFIXABLE_AGENTS member), so the single drop gate below covers it.
+        agent = _canonical_agent(row.get("agent_type"))
+        if agent in _UNPREFIXABLE_AGENTS:
+            continue  # null / unknown / cross-cutting → no agent file to patch
+        counts[agent] += 1
+    return counts
+
+
 def main() -> None:
     if not os.path.isdir(OUTCOMES_DIR):
         return
@@ -734,6 +807,22 @@ def main() -> None:
             done_rate = round(counts["done"] / total * 100, 1)
             if done_rate < 60:
                 _emit_xc(entries, _build_entry(today, f"{task_type} type low success rate ({done_rate}%)", str(total), "전체", total), "전체")
+
+    # pattern 7: per-agent_type budget-overage concentration. Clusters the
+    # best-effort core.budget_overages rows (written at soft-budget crossings) into
+    # a per-agent_type instruction-improvement candidate targeting the AGENT FILE's
+    # emit discipline. Read is windowed by `since` (the run's entry watermark), so
+    # each overage counts once across runs; _emit_xc intake-gates cross-cutting
+    # agents. The ORCHESTRATOR sizing failure mode is handled statically by the P4
+    # calibration line, NOT through this loop (D4 routing split).
+    overage_counts = _cluster_budget_overages(_read_budget_overages(since))
+    for agent, overages in overage_counts.items():
+        if overages >= BUDGET_OVERAGE_MIN_OCCURRENCE:
+            _emit_xc(
+                entries,
+                _build_entry(today, BUDGET_OVERAGE_LABEL, str(overages), agent, overages),
+                agent,
+            )
 
     # UPSERT into core.learning_log keyed on pattern_signature = "<pat_core>|<agent>".
     # _pg_read_learning_log_signatures returns the same (pat_core, agent) key, so dedup is symmetric:

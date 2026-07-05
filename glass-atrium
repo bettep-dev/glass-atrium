@@ -2722,10 +2722,11 @@ dispatch_action_token_panel() {
   stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
   RAW_ACTIVE=false
   reset_plate_geometry
-  section_header "Token Setup — OAuth approval" "${C_INFO}"
-  tty_line "$(c "${C_DIM}" "approve in your browser, then return here. the OAuth URL appears below.")"
-  tty_line "$(c "${C_DIM}" "(only the env-var name CLAUDE_CODE_OAUTH_TOKEN is shown — never the token value.)")"
-  tty_line ""
+  # ONE point-of-need raw cue: the framed pre-cue + framed done-digest already bracket this
+  # segment, so the verbose section-header block over-declared the one unavoidable cooked-TTY
+  # moment. A single minimal line sits next to the setup-token URL where the user is looking.
+  # SECURITY: env-var NAME only — the OAuth token value is never printed here.
+  tty_line "$(c "${C_DIM}" "approve in your browser, then return here (env-var CLAUDE_CODE_OAUTH_TOKEN only — never the token value)")"
   # preflight_provision_headless_token UNCHANGED: prints its own URL-approval guidance + runs
   # `claude setup-token`, renders the 0600 secrets file, self-tests. Its return code drives the
   # box done-state digest. A non-zero is a rendered status, never a launcher crash.

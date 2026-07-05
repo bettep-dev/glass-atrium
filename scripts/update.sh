@@ -1240,6 +1240,19 @@ update_oneshot_plist_path() {
   printf '%s\n' "${ATRIUM_UPDATE_ONESHOT_PLIST:-$(update_ga_root)/rendered/launchd/com.glass-atrium.update-oneshot.plist}"
 }
 
+# autoagent-cycle plist paths (NEVER request-derived). Overrides for tests.
+#   *_path        = the launchd-canonical ~/Library/LaunchAgents copy launchctl loads.
+#   *_rendered    = the render-parity SoT re-copied over the canonical copy so a
+#                   repointed ProgramArguments (store-path daemon-cycle.sh) takes
+#                   effect on reload. Mirrors load_launchd_jobs' rendered->LaunchAgents
+#                   staging.
+update_autoagent_plist_path() {
+  printf '%s\n' "${ATRIUM_UPDATE_AUTOAGENT_PLIST:-${HOME}/Library/LaunchAgents/com.glass-atrium.autoagent-cycle.plist}"
+}
+update_autoagent_rendered_plist_path() {
+  printf '%s\n' "${ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST:-$(update_ga_root)/rendered/launchd/com.glass-atrium.autoagent-cycle.plist}"
+}
+
 # Minimal XML entity escape for the plist string values (patsub_replacement is
 # disabled at the top of the file so '&' is a literal replacement char).
 update_xml_escape() {
@@ -1374,6 +1387,51 @@ update_refresh_monitor_launchd() {
   fi
 }
 
+# Refresh the autoagent-cycle launchd job — ONLY when already loaded (review-first:
+# an unloaded job stays the user's opt-in, never auto-bootstrapped here). Unlike the
+# monitor, this job's ProgramArguments were repointed to the store-path daemon-cycle.sh,
+# so a `kickstart -k` would re-run the STALE loaded definition; the new path takes
+# effect ONLY by RE-COPYING the freshly rendered plist over the LaunchAgents copy then
+# bootout+bootstrap (reload the definition). render-parity already re-rendered the plist
+# FILE; this is the missing reload half. Best-effort + loud — a launchd hiccup must not
+# fail an already-applied update.
+update_refresh_autoagent_launchd() {
+  local launchctl_bin uid label domain src dst
+  launchctl_bin="${ATRIUM_UPDATE_LAUNCHCTL:-launchctl}"
+  if ! command -v "${launchctl_bin}" >/dev/null 2>&1; then
+    update_log "post-step: launchctl not resolvable (${launchctl_bin}) — autoagent-cycle needs a manual reload"
+    return 0
+  fi
+  uid="$(id -u)"
+  label="com.glass-atrium.autoagent-cycle"
+  domain="gui/${uid}"
+  src="$(update_autoagent_rendered_plist_path)"
+  dst="$(update_autoagent_plist_path)"
+  # PROBE — only refresh a LOADED job; not loaded → leave it to the user's opt-in load.
+  if ! "${launchctl_bin}" print "${domain}/${label}" >/dev/null 2>&1; then
+    update_log "post-step: autoagent-cycle NOT loaded — leaving user opt-in load untouched"
+    return 0
+  fi
+  # the render-parity SoT must exist to re-copy — a render gap warns, never aborts.
+  if [[ ! -f "${src}" ]]; then
+    update_log "WARN: rendered autoagent-cycle plist absent (${src}) — reload skipped"
+    return 0
+  fi
+  if ! cp -f -- "${src}" "${dst}"; then
+    update_log "WARN: failed to stage autoagent-cycle plist (${src} -> ${dst}) — reload skipped"
+    return 0
+  fi
+  update_log "post-step: autoagent-cycle loaded — bootout + bootstrap ${domain}/${label}"
+  # bootout is ASYNCHRONOUS; a single transient retry (mirrors load_launchd_jobs) closes
+  # the rc=5 race where launchd has not fully released the domain slot yet.
+  "${launchctl_bin}" bootout "${domain}/${label}" </dev/null >/dev/null 2>&1 || true
+  if ! "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1; then
+    sleep 1
+    "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1 \
+      || update_log "WARN: bootstrap failed — autoagent-cycle may need a manual reload"
+  fi
+}
+
 # The whole install-parity post-step, orchestrated. Heartbeats bracket the long
 # build. Build failure is FATAL (returns 1 → job 'failed'); render + launchd refresh
 # are best-effort. Returns 0 on success, 1 on build failure.
@@ -1386,6 +1444,7 @@ update_post_step() {
   update_heartbeat
   update_render_parity
   update_refresh_monitor_launchd
+  update_refresh_autoagent_launchd
   update_log "post-step: install-parity complete"
   return 0
 }

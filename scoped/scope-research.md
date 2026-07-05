@@ -9,7 +9,7 @@ Rules specific to RESEARCH agents: glass-atrium-intel-researcher.
 ## Absolute Rules [RESEARCH]
 
 - **3+ source cross-verification REQUIRED**: Single-source claims are FORBIDDEN; cite ≥3 independent sources and reconcile contradictions
-- **Wiki-first**: Run `~/.claude/scripts/wiki-query.sh "keyword"` before web search; reuse existing wiki knowledge to prevent duplicate research
+- **Wiki-first**: Run `~/.glass-atrium/scripts/wiki-query.sh "keyword"` before web search; reuse existing wiki knowledge to prevent duplicate research
 
 ## Retrieval Guidance [RESEARCH]
 

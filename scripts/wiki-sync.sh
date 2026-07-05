@@ -47,16 +47,17 @@ readonly MASTER_INDEX="${WIKI_ROOT}/index/master-index.md"
 # checkout finds its own wiki-lock.sh / wiki-init-db.sh (mirror wiki-init-db.sh).
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 readonly SCRIPT_DIR
-# Prefer the sibling helper; fall back to the installed ~/.claude/scripts copy.
+# Prefer the sibling helper; fall back to the store copy (scripts/ is consumed
+# in place from ~/.glass-atrium — the ~/.claude/scripts farm is gone).
 if [[ -x "${SCRIPT_DIR}/wiki-lock.sh" ]]; then
   readonly LOCK_HELPER="${SCRIPT_DIR}/wiki-lock.sh"
 else
-  readonly LOCK_HELPER="${HOME}/.claude/scripts/wiki-lock.sh"
+  readonly LOCK_HELPER="${HOME}/.glass-atrium/scripts/wiki-lock.sh"
 fi
 if [[ -x "${SCRIPT_DIR}/wiki-init-db.sh" ]]; then
   readonly INIT_SCRIPT="${SCRIPT_DIR}/wiki-init-db.sh"
 else
-  readonly INIT_SCRIPT="${HOME}/.claude/scripts/wiki-init-db.sh"
+  readonly INIT_SCRIPT="${HOME}/.glass-atrium/scripts/wiki-init-db.sh"
 fi
 
 FORCE_INDEX=0
@@ -83,6 +84,7 @@ run_sync() {
   DB_PATH="${DB_PATH}" \
   MASTER_INDEX="${MASTER_INDEX}" \
   FORCE_INDEX="${force_index}" \
+  PG_HELPER_DIR="${SCRIPT_DIR}" \
   python3 - <<'PYEOF'
 import os
 import re
@@ -99,7 +101,9 @@ FORCE_INDEX  = os.environ.get("FORCE_INDEX", "0") == "1"
 # Dual-write: import shared helper. Failure to import (psycopg missing,
 # helper renamed) MUST NOT block SQLite writes — set a sentinel and proceed
 # SQLite-only per fail-loud-and-skip.
-sys.path.insert(0, os.path.expanduser("~/.claude/scripts"))
+# Sibling-of-this-script dir (scripts/ consumed in place from the store) passed
+# via env — __file__ is absent under a `python3 -` stdin heredoc.
+sys.path.insert(0, os.environ["PG_HELPER_DIR"])
 try:
     import _pg_dual_write_daemon as _pg
     _PG_AVAILABLE = True

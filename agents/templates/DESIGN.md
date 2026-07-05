@@ -1,12 +1,12 @@
 <!-- 9-section structure adapted from nexu-io/open-design docs/design-systems.md (Apache 2.0) · DTCG 2025.10 schema integration -->
-<!-- This template is consumed by design-designer (authoring) + DEV-scope agents (consumption per rules/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §6) -->
-<!-- Authoring contract: every section MUST be filled. Empty sections signal incomplete design system. Anti-patterns (§9) cross-link to design-designer.md AI Slop Tropes — do NOT duplicate. -->
+<!-- This template is consumed by glass-atrium-design-designer (authoring) + DEV-scope agents (consumption per rules/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §6) -->
+<!-- Authoring contract: every section MUST be filled. Empty sections signal incomplete design system. Anti-patterns (§9) cross-link to glass-atrium-design-designer.md AI Slop Tropes — do NOT duplicate. -->
 
 # [Design System Name]
 
 > **Created**: YYYY-MM-DD
 > **Version**: 0.1.0
-> **Author**: [design-designer name / agent]
+> **Author**: [glass-atrium-design-designer name / agent]
 > **Brand**: [brand reference name / source URL]
 > **Category**: [SaaS / E-commerce / Finance / Healthcare / Education / Editorial / Other]
 
@@ -77,7 +77,7 @@
 }
 ```
 
-**Generated CSS variables** (consumption layer — dev-front consumes):
+**Generated CSS variables** (consumption layer — glass-atrium-dev-front consumes):
 
 ```css
 :root {
@@ -210,7 +210,7 @@
 
 > Per-component spec: 7 properties × 5 states matrix. Each component name maps to a single source-of-truth file in the component library.
 
-**Component contract** (per component): 7 properties (BG / Text / Padding / Radius / Shadow / Hover / Purpose) × 5 states (default / hover / active / focus / disabled). State alpha values (hover / focus / active) derive from dev-front State Layers SSoT (`~/.claude/agents/dev-front.md`).
+**Component contract** (per component): 7 properties (BG / Text / Padding / Radius / Shadow / Hover / Purpose) × 5 states (default / hover / active / focus / disabled). State alpha values (hover / focus / active) derive from glass-atrium-dev-front State Layers SSoT (`~/.claude/agents/glass-atrium-dev-front.md`).
 
 **Example — Button (Primary)**:
 
@@ -273,7 +273,7 @@
 
 **`prefers-reduced-motion` contract**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — typically substitute `transition: opacity` only (no spatial motion). Browser auto-honors when CSS uses `@media` query; JS-driven animations require explicit check.
 
-**Spring family declaration** (consumption side — dev-front maps spring families to CSS / Tailwind half-life): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
+**Spring family declaration** (consumption side — glass-atrium-dev-front maps spring families to CSS / Tailwind half-life): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
 
 ---
 
@@ -307,7 +307,7 @@
 - All typography MUST resolve to `typography.*` tokens defined in §3. Generic system fonts (Inter / Roboto / Arial as primary) FORBIDDEN.
 - All motion MUST resolve to `transition.*` tokens defined in §7. Ad-hoc `transition: 0.2s ease` declarations FORBIDDEN.
 
-**Flexible** (design-designer override permitted):
+**Flexible** (glass-atrium-design-designer override permitted):
 - Layout composition (grid placement, asymmetry decisions)
 - Component variant naming (within established families)
 - Microcopy phrasing (within voice/tone rules)
@@ -321,16 +321,16 @@
 
 ## 9. Anti-Patterns (Forbidden)
 
-> SoT cross-reference — do NOT duplicate the catalogue. Authority lives in `~/.claude/agents/design-designer.md` → `### AI Slop Tropes` section. This section enforces that all design decisions in this DESIGN.md avoid those patterns.
+> SoT cross-reference — do NOT duplicate the catalogue. Authority lives in `~/.claude/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes` section. This section enforces that all design decisions in this DESIGN.md avoid those patterns.
 
-**Reference**: see `~/.claude/agents/design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` for the canonical anti-pattern catalogue covering:
+**Reference**: see `~/.claude/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` for the canonical anti-pattern catalogue covering:
 
 - **Canvas/color tropes** (warm beige defaults · aggressive gradients · pure-black text)
 - **Layout/container tropes** (rounded boxes with left-border accents · SVG-as-illustration · ≥3 identical section types in a row)
 - **Font tropes** (Inter/Roboto/Arial/generic system fonts · gratuitous emoji)
 - **Content tropes** (stat-slop · filler copy · invented metrics)
 - **2026 community patterns** (shadcn-ification · Lucide uniform stroke · AI-3D floating mesh · Vibe-Coding centerism · glassmorphism overuse)
-- **Workflow tropes** (Figma Make merged without design-designer sign-off)
+- **Workflow tropes** (Figma Make merged without glass-atrium-design-designer sign-off)
 
 **Project-specific additions** (optional — add only if this project has unique forbidden patterns NOT in the SoT):
 

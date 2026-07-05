@@ -125,6 +125,14 @@ ga_init_env() {
   #     a runtime dangling reference once dropped.
   #   * glass-atrium (the launcher) — invoked via the PATH-exported ~/.glass-atrium
   #     copy, never through a ~/.claude alias.
+  #   * scripts/ — Atrium-internal consumables (wiki/daemon helpers, launchd
+  #     renderers, healthchecks): no native Claude Code discovery. Every shipped
+  #     runtime + prose reference is repointed to the ~/.glass-atrium/scripts copy
+  #     (store path OR caller-sibling resolution), so a ~/.claude/scripts link is
+  #     dead weight.
+  #   * autoagent/ — the self-improvement daemon tree (daemon-cycle/apply/eval):
+  #     invoked via ~/.glass-atrium/autoagent (launchd ProgramArguments + sibling
+  #     resolution), never through a ~/.claude alias.
   # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these four
   # surfaces MUST NOT take runtime effect before their long-running consumers are
   # repointed (settings.json hook command path; monitor registry.ts default;
@@ -137,6 +145,8 @@ ga_init_env() {
     "monitor/"
     "hooks/"
     "scoped/"
+    "scripts/"
+    "autoagent/"
   )
   readonly SYMLINK_EXCLUDE_PREFIXES
   SYMLINK_EXCLUDE_EXACT=(
@@ -2834,9 +2844,12 @@ run_prune() {
 # GA_ROOT guard, so a foreign symlink OR a real user file at any of these paths
 # is preserved byte-for-byte (never a raw rm on a legacy path). Two moves:
 #   (A) DROP the now-excluded surfaces — unlink the legacy GA symlinks under
-#       hooks/ + scoped/ (prefixes) and at agent-registry.json + glass-atrium
-#       (exacts) a prior farm created, then rmdir-prune the emptied GA dirs
-#       (rmdir-only — a dir holding a user file makes rmdir fail = SAFE skip).
+#       hooks/ + scoped/ + scripts/ + autoagent/ (prefixes) and at
+#       agent-registry.json + glass-atrium (exacts) a prior farm created, then
+#       rmdir-prune the emptied GA dirs (rmdir-only — a dir holding a user file
+#       makes rmdir fail = SAFE skip). The find sweep is RECURSIVE (no maxdepth),
+#       so nested legacy links (scripts/lib, scripts/agent_lifecycle, autoagent/
+#       lib) are covered without a per-depth pass.
 #   (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
 #       foldered rules/glass-atrium/<name>.md location, but ONLY when the
 #       foldered GA source actually exists (post rules-fold unit); otherwise the
@@ -2867,7 +2880,8 @@ migrate_layout() {
   for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
     dir="${TARGET_HOME}/${prefix%/}"
     # a REAL dir only (never follow a symlinked dir) — lib//monitor/ were never
-    # farmed so their dirs are typically absent (skip), hooks//scoped/ present.
+    # farmed so their dirs are typically absent (skip); hooks//scoped//scripts//
+    # autoagent/ present on a legacy install.
     [[ -d "${dir}" && ! -L "${dir}" ]] || continue
     # each candidate is re-verified inside remove_if_ga_link before any unlink;
     # process substitution keeps the counter in this shell, find's masked exit

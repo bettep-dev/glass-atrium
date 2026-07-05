@@ -102,6 +102,15 @@ readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass
 # (dev_roster − {dev-swift} ∪ {qa-code-reviewer}), NOT the generic DEV/QA rosters.
 readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
+# Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c). WHY: the
+# engine persists any SubagentStart hook additionalContext larger than ~10KB (10240 bytes) to a
+# file and delivers only a ~2KB preview to the model — so an oversized assembly silently strips the
+# meter, the exact failure this hook repairs. 8192 bytes stays clear of that 10KB persistence
+# trigger, and the ~800B meter fits even the 2KB preview, so meter delivery holds in every
+# degradation mode. UNIVERSAL: the SubagentStart envelope carries no spawn-mode discriminator, so
+# engine/schema-mode spawns are indistinguishable from manual ones and all are bounded identically.
+readonly INJECT_CTX_MAX_BYTES=8192
+
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
 
@@ -171,6 +180,52 @@ build_meter_block() {
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
 }
 
+# Byte length of a string (wc -c counts bytes, locale-independent); tr strips BSD wc's leading
+# whitespace to a bare integer. Used to enforce INJECT_CTX_MAX_BYTES byte-accurately.
+# Args: $1=string · stdout: byte count integer.
+byte_len() {
+  printf '%s' "${1}" | wc -c | tr -cd '0-9'
+}
+
+# Join two context fragments with a blank-line delimiter, tolerating an empty left side (so the
+# first present block seeds the context without a leading blank line).
+# Args: $1=existing ctx $2=block to append · stdout: joined text (no trailing newline).
+join_block() {
+  if [[ -n "${1}" ]]; then
+    printf '%s\n\n%s' "${1}" "${2}"
+  else
+    printf '%s' "${2}"
+  fi
+}
+
+# Assemble additionalContext with the METER BLOCK FIRST (never dropped), then the four droppable
+# scope blocks in display order (comment-logging, style_ref, minimalism, naming), each gated by its
+# keep-flag argument. Reads the module-level *_BLOCK variables. Meter-first is load-bearing: even in
+# the 2KB persistence-preview degradation mode the meter must reach the model, so it can never sit
+# behind a larger block that pushes it past the preview cut.
+# Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming (each 0/1)
+# stdout: the assembled context (no trailing newline).
+assemble_ctx() {
+  local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}"
+  local ctx=""
+  if [[ -n "${METER_BLOCK}" ]]; then
+    ctx="${METER_BLOCK}"
+  fi
+  if [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${COMMENT_BLOCK}")"
+  fi
+  if [[ "${keep_styleref}" -eq 1 && -n "${STYLEREF_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${STYLEREF_BLOCK}")"
+  fi
+  if [[ "${keep_minimalism}" -eq 1 && -n "${MINIMALISM_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${MINIMALISM_BLOCK}")"
+  fi
+  if [[ "${keep_naming}" -eq 1 && -n "${NAMING_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${NAMING_BLOCK}")"
+  fi
+  printf '%s' "${ctx}"
+}
+
 # Comment-logging block — DEV + QA only (gated on the scope flag).
 COMMENT_BLOCK=""
 if [[ "${IS_INJECT_AGENT}" -eq 1 ]]; then
@@ -223,40 +278,32 @@ if [[ -z "${SUBAGENT_BUDGET_METER_OFF}" ]]; then
   fi
 fi
 
-# Combine available blocks — blank-line delimited so each block stays readable to the child.
-# All empty → nothing to inject, fail-open exit.
-CTX=""
-if [[ -n "${COMMENT_BLOCK}" ]]; then
-  CTX="${COMMENT_BLOCK}"
-fi
-if [[ -n "${STYLEREF_BLOCK}" ]]; then
-  if [[ -n "${CTX}" ]]; then
-    CTX="${CTX}"$'\n\n'"${STYLEREF_BLOCK}"
-  else
-    CTX="${STYLEREF_BLOCK}"
-  fi
-fi
-if [[ -n "${MINIMALISM_BLOCK}" ]]; then
-  if [[ -n "${CTX}" ]]; then
-    CTX="${CTX}"$'\n\n'"${MINIMALISM_BLOCK}"
-  else
-    CTX="${MINIMALISM_BLOCK}"
-  fi
-fi
-if [[ -n "${NAMING_BLOCK}" ]]; then
-  if [[ -n "${CTX}" ]]; then
-    CTX="${CTX}"$'\n\n'"${NAMING_BLOCK}"
-  else
-    CTX="${NAMING_BLOCK}"
-  fi
-fi
-if [[ -n "${METER_BLOCK}" ]]; then
-  if [[ -n "${CTX}" ]]; then
-    CTX="${CTX}"$'\n\n'"${METER_BLOCK}"
-  else
-    CTX="${METER_BLOCK}"
-  fi
-fi
+# Combine available blocks with the METER FIRST, then enforce the universal byte ceiling. assemble_ctx
+# places the meter first and appends the kept droppable blocks; the drop loop below removes the
+# lowest-value blocks in the PINNED order naming → style-ref → minimalism → comment-logging until the
+# total fits INJECT_CTX_MAX_BYTES. The meter is never a drop candidate (its absence is the fatal
+# failure this hook exists to fix), so under extreme pressure the meter alone survives.
+keep_comment=1
+keep_styleref=1
+keep_minimalism=1
+keep_naming=1
+CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}")"
+ctx_bytes="$(byte_len "${CTX}")"
+for drop_block in naming styleref minimalism comment; do
+  [[ "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
+  case "${drop_block}" in
+    naming) keep_naming=0 ;;
+    styleref) keep_styleref=0 ;;
+    minimalism) keep_minimalism=0 ;;
+    comment) keep_comment=0 ;;
+    *) ;; # unreachable — the loop iterates a fixed literal set; present only to satisfy SC2249.
+  esac
+  CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}")"
+  ctx_bytes="$(byte_len "${CTX}")"
+  printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
+done
+
+# All blocks empty → nothing to inject, fail-open exit.
 if [[ -z "${CTX}" ]]; then
   printf '[inject-scope-rules] no injectable block available; skipping injection (agent=%s)\n' "${AGENT_TYPE}" >&2
   exit 0

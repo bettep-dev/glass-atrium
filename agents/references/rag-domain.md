@@ -1,6 +1,6 @@
 # RAG / Search / Embedding Domain Reference
 
-> Reference for `intel-reporter` agent. Use when authoring RAG / search / embedding domain reports. Code-level fixes → delegate back to `dev-rag`.
+> Reference for `glass-atrium-intel-reporter` agent. Use when authoring RAG / search / embedding domain reports. Code-level fixes → delegate back to `glass-atrium-dev-rag`.
 
 ## Terminology Cheatsheet
 
@@ -30,12 +30,12 @@
 - Embedding swap reports MUST cite dimension compatibility check
 - Parameter change reports MUST cite A/B test sample size + statistical significance
 
-## When to Delegate Back to dev-rag
+## When to Delegate Back to glass-atrium-dev-rag
 
 | Situation | Action |
 |-----------|--------|
-| User wants the actual code change applied (not just analysis) | Delegate to `dev-rag` |
-| BM25 weights / RRF k-value need to be tuned in source files | Delegate to `dev-rag` |
-| Embedding model swap requires `.ts` retrieval module changes | Delegate to `dev-rag` |
-| Reader needs SQL query optimizations applied | Delegate to `dev-rag` |
-| Reader only needs the report (synthesis, comparison, recommendation) | Stay with `intel-reporter` |
+| User wants the actual code change applied (not just analysis) | Delegate to `glass-atrium-dev-rag` |
+| BM25 weights / RRF k-value need to be tuned in source files | Delegate to `glass-atrium-dev-rag` |
+| Embedding model swap requires `.ts` retrieval module changes | Delegate to `glass-atrium-dev-rag` |
+| Reader needs SQL query optimizations applied | Delegate to `glass-atrium-dev-rag` |
+| Reader only needs the report (synthesis, comparison, recommendation) | Stay with `glass-atrium-intel-reporter` |

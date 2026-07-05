@@ -155,7 +155,7 @@ fi
 if [[ "${skip_cron_watchdog}" -eq 0 ]]; then
   pane_snapshot="$(tmux capture-pane -t "${SESSION}" -p -S -1500 2>/dev/null || true)"
   if ! printf '%s' "${pane_snapshot}" | grep -qE 'Scheduled [a-f0-9]{8}'; then
-    fail "session alive but no cron registered — re-run: bash ~/.claude/scripts/daemon-inject-entry.sh wiki"
+    fail "session alive but no cron registered — re-run: bash ~/.glass-atrium/scripts/daemon-inject-entry.sh wiki"
   fi
   printf 'OK: session=%s claude_pid=%s fakechat=200 cron=registered pg=%s\n' \
     "${SESSION}" "${pane_pid}" "${pg_status}"

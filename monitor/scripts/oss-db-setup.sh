@@ -24,6 +24,7 @@ set -euo pipefail
 #   8 = recreate safety-guard violation (live 'glass_atrium' target, or backup/drop fail)
 #   9 = retry after P3009 baseline resolve still failed (manual intervention needed)
 #  10 = post-deploy attribution_source CHECK constraint apply failed
+#  11 = post-deploy core.budget_overages CREATE TABLE failed
 EXIT_BAD_CWD=3
 EXIT_MISSING_CLI=4
 EXIT_CREATEDB=5
@@ -32,6 +33,7 @@ EXIT_DB_OVERRIDE=7
 EXIT_RECREATE=8
 EXIT_P3009=9
 EXIT_POSTSQL=10
+EXIT_OVERAGE_TABLE=11
 
 # Squash baseline migration name — the P3009 target guard's known-name allowlist
 # (only this migration's failure is resolve-eligible). Never edit the applied
@@ -332,6 +334,21 @@ psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
   -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived']::text[]))) NOT VALID" \
   || fail "${EXIT_POSTSQL}" "attribution_source CHECK 제약 적용 실패 (DB '${DB_NAME}') — core.outcomes 존재 + peer auth 권한 확인"
+
+# --- step 7: core.budget_overages table (idempotent · post-deploy raw SQL) -----
+# The budget-overage signal store is hook-written best-effort (advisory-subagent-budget.sh via
+# _pg-write.py) and never touched by monitor application code needing prisma client types, so it is
+# created out-of-band HERE rather than via a prisma migration — mirroring the attribution CHECK
+# precedent above (editing the applied baseline SQL drifts existing-DB checksums). CREATE TABLE IF NOT
+# EXISTS is idempotent by construction — re-running is a no-op against an existing table. The 6 columns
+# MUST byte-match the _pg-write.py _ALLOWED_COLUMNS['core.budget_overages'] set and the plan contract:
+# agent_id/tool_use_count/budget/crossed_pct/ts are NOT NULL, agent_type is nullable (sidecar recovery
+# is the norm, null the accepted fallback). ts defaults to now() so the hook need not pass it. core
+# schema is created by migrate deploy (core.outcomes etc.) — this table joins it.
+log "core.budget_overages 테이블 생성 (idempotent · CREATE TABLE IF NOT EXISTS)"
+psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
+  -c "CREATE TABLE IF NOT EXISTS core.budget_overages (agent_id text NOT NULL, agent_type text, tool_use_count integer NOT NULL, budget integer NOT NULL, crossed_pct integer NOT NULL, ts timestamptz NOT NULL DEFAULT now())" \
+  || fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages CREATE TABLE 실패 (DB '${DB_NAME}') — core 스키마 존재 + peer auth 권한 확인"
 
 # --- no seed step --------------------------------------------------------------
 # The empty schema is functional on its own (0 required seeds) — stated so the installer

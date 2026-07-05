@@ -85,9 +85,12 @@ run_ga() {
 @test "foldered-rules: a rules/glass-atrium/<name>.md manifest entry farms to the correct target with subdir auto-create" {
   seed_src "agents/dev-x.md"
   seed_src "rules/glass-atrium/rule-a.md"
-  seed_src "hooks/hook-a.sh"          # excluded surface
-  seed_src "agent-registry.json"      # excluded surface
-  write_manifest "agents/dev-x.md" "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh" "agent-registry.json"
+  seed_src "hooks/hook-a.sh"                  # excluded surface
+  seed_src "scripts/wiki-sync.sh"            # newly-excluded surface
+  seed_src "autoagent/daemon-cycle.sh"       # newly-excluded surface
+  seed_src "agent-registry.json"             # excluded surface
+  write_manifest "agents/dev-x.md" "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh" \
+    "scripts/wiki-sync.sh" "autoagent/daemon-cycle.sh" "agent-registry.json"
 
   # precondition: no rules subdir yet
   [[ ! -e "${TARGET}/rules" ]]
@@ -104,6 +107,8 @@ run_ga() {
   [[ -L "${TARGET}/agents/dev-x.md" ]]
   # excluded surfaces are NOT farmed (create-site choke point)
   [[ ! -e "${TARGET}/hooks" ]]
+  [[ ! -e "${TARGET}/scripts" ]]
+  [[ ! -e "${TARGET}/autoagent" ]]
   [[ ! -e "${TARGET}/agent-registry.json" ]]
 }
 
@@ -169,16 +174,27 @@ seed_legacy_farm() {
   # source existence).
   seed_src "hooks/hook-a.sh"
   seed_src "scoped/scope-x.md"
+  seed_src "scripts/wiki-sync.sh"            # newly-excluded surface (top-level)
+  seed_src "scripts/lib/atrium-config.sh"    # newly-excluded surface (nested → recursive sweep)
+  seed_src "autoagent/daemon-cycle.sh"       # newly-excluded surface (top-level)
+  seed_src "autoagent/lib/git-txn.sh"        # newly-excluded surface (nested → recursive sweep)
   seed_src "agent-registry.json"
   seed_src "glass-atrium"
   seed_src "rules/rule-a.md"                 # legacy flat source (pre-fold)
   seed_src "rules/rule-b.md"                 # legacy flat source, NOT foldable
   seed_src "rules/glass-atrium/rule-a.md"    # foldered source EXISTS → rule-a foldable
 
-  mkdir -p "${TARGET}/hooks" "${TARGET}/scoped" "${TARGET}/rules"
+  mkdir -p "${TARGET}/hooks" "${TARGET}/scoped" "${TARGET}/scripts/lib" \
+    "${TARGET}/autoagent/lib" "${TARGET}/rules"
   # legacy GA symlinks (must be removed)
   ln -s "${GA_SANDBOX}/hooks/hook-a.sh" "${TARGET}/hooks/hook-a.sh"
   ln -s "${GA_SANDBOX}/scoped/scope-x.md" "${TARGET}/scoped/scope-x.md"
+  # scripts/ + autoagent/ legacy links, incl. NESTED — the recursive find sweep
+  # (no maxdepth) must drop the nested links too, not just the top-level ones.
+  ln -s "${GA_SANDBOX}/scripts/wiki-sync.sh" "${TARGET}/scripts/wiki-sync.sh"
+  ln -s "${GA_SANDBOX}/scripts/lib/atrium-config.sh" "${TARGET}/scripts/lib/atrium-config.sh"
+  ln -s "${GA_SANDBOX}/autoagent/daemon-cycle.sh" "${TARGET}/autoagent/daemon-cycle.sh"
+  ln -s "${GA_SANDBOX}/autoagent/lib/git-txn.sh" "${TARGET}/autoagent/lib/git-txn.sh"
   ln -s "${GA_SANDBOX}/agent-registry.json" "${TARGET}/agent-registry.json"
   ln -s "${GA_SANDBOX}/glass-atrium" "${TARGET}/glass-atrium"
   ln -s "${GA_SANDBOX}/rules/rule-a.md" "${TARGET}/rules/rule-a.md"   # foldable flat link
@@ -194,9 +210,14 @@ seed_legacy_farm() {
   run_ga migrate_layout
   [[ "${status}" -eq 0 ]]
 
-  # (A) the four dropped surfaces' GA symlinks are unlinked
+  # (A) the dropped surfaces' GA symlinks are unlinked (incl. the two newly-excluded
+  # prefixes scripts/ + autoagent/, both top-level AND nested — recursive sweep)
   [[ ! -e "${TARGET}/hooks/hook-a.sh" ]]
   [[ ! -e "${TARGET}/scoped/scope-x.md" ]]
+  [[ ! -e "${TARGET}/scripts/wiki-sync.sh" ]]
+  [[ ! -e "${TARGET}/scripts/lib/atrium-config.sh" ]]
+  [[ ! -e "${TARGET}/autoagent/daemon-cycle.sh" ]]
+  [[ ! -e "${TARGET}/autoagent/lib/git-txn.sh" ]]
   [[ ! -e "${TARGET}/agent-registry.json" ]]
   [[ ! -e "${TARGET}/glass-atrium" ]]
 
@@ -206,8 +227,15 @@ seed_legacy_farm() {
   [[ "$(cat "${TARGET}/hooks/user-real.sh")" == "USER HOOK BODY" ]]
   # hooks/ dir SURVIVES (still holds the foreign + user files) — rmdir-only safety
   [[ -d "${TARGET}/hooks" ]]
-  # scoped/ held ONLY the GA link → emptied → rmdir-pruned
+  # scoped/ held ONLY a top-level GA link → emptied → rmdir-pruned
   [[ ! -e "${TARGET}/scoped" ]]
+  # scripts/ + autoagent/ carried NESTED links, so after the recursive sweep drops
+  # every link the top-level rmdir-prune (non-recursive) fails on the leftover empty
+  # lib/ subdir → the dir survives as EMPTY residue (0 links = AC-T2b threshold met;
+  # empty-dir residue is outside the threshold, cleaned manually post-deploy). Assert
+  # the invariant that actually matters: zero GA links remain under either prefix.
+  [[ -z "$(find "${TARGET}/scripts" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]]
+  [[ -z "$(find "${TARGET}/autoagent" -type l -lname "${GA_SANDBOX}/*" 2>/dev/null)" ]]
 
   # (B) the foldable flat rules link is RELOCATED to the foldered path
   [[ ! -e "${TARGET}/rules/rule-a.md" ]]

@@ -166,14 +166,34 @@ else
   no "config.toml NOT rendered"
 fi
 
-# --- AC1: sandbox-manifest GA symlinks created (minus 1 collision skip) ---
+# --- AC1: sandbox-manifest GA symlinks created (farmed subset minus 1 collision) ---
 hdr "STEP 2 / AC1 — symlink farm"
+# The farm is a SUBSET of the manifest: install-internal surfaces (lib/, monitor/,
+# hooks/, scoped/, scripts/, autoagent/, config.toml.example, requirements.txt,
+# agent-registry.json, glass-atrium) are bundled + hash-verified but consumed in
+# place from ~/.glass-atrium and NEVER symlinked into ~/.claude. So the expectation
+# is DERIVED — run every sandbox-manifest rel through the ENGINE's OWN filter
+# (is_symlink_excluded), never a hardcoded count minus one; an inline mirror of
+# SYMLINK_EXCLUDE_* would go stale as the exclusion set evolves. Mirrors the
+# oss-e2e-bootstrap.sh engine-derivation precedent. Collision skip subtracts 1.
+FARM_EXPECT="$(
+  # subshell: sourcing the engine arms readonly globals — keep them contained
+  # shellcheck source=lib/ga-core.sh
+  source "${GA}/lib/ga-core.sh" || exit 1
+  ga_init_env "${GA}" || exit 1
+  expect=0
+  while IFS= read -r rel; do
+    [[ "$(is_symlink_excluded "${rel}")" == "no" ]] && expect=$((expect + 1))
+  done < <(jq -r '.files[]' "${SBX_MANIFEST}")
+  printf '%s\n' "$((expect - 1))"
+)"
 GA_LINKS="$(find "${TARGET}" -type l -lname "${GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
-printf '  GA-pointing symlinks: %s (sandbox manifest=%s, expect %s after 1 collision skip)\n' \
-  "${GA_LINKS}" "${SBX_MANIFEST_COUNT}" "$((SBX_MANIFEST_COUNT - 1))"
-[[ "${GA_LINKS}" -eq "$((SBX_MANIFEST_COUNT - 1))" ]] \
-  && ok "symlink count = sandbox-manifest-1 (collision skipped exactly 1)" \
-  || no "symlink count ${GA_LINKS} != $((SBX_MANIFEST_COUNT - 1))"
+printf '  GA-pointing symlinks: %s (sandbox manifest=%s, engine-derived farmed subset minus 1 collision=%s)\n' \
+  "${GA_LINKS}" "${SBX_MANIFEST_COUNT}" "${FARM_EXPECT}"
+[[ "${FARM_EXPECT}" =~ ^[0-9]+$ ]] || no "farm expectation derivation failed (got '${FARM_EXPECT}')"
+[[ "${GA_LINKS}" -eq "${FARM_EXPECT}" ]] \
+  && ok "symlink count = engine-derived farmed subset minus 1 collision (${GA_LINKS}/${FARM_EXPECT})" \
+  || no "symlink count ${GA_LINKS} != engine-derived farmed subset minus 1 collision ${FARM_EXPECT}"
 
 # --- AC4: collision — seeded user agent file survives byte-identical + warned ---
 hdr "STEP 2 / AC4 — collision detection"
@@ -214,7 +234,6 @@ hdr "STEP 3 — render-monitor-env.sh ordering (AC2 — render precedes validati
 # point render-monitor-env at the sandbox-rendered config; it validates the
 # monitor_docs_html_root as an existing absolute dir → ensure that dir exists.
 mkdir -p "${HOME}/.glass-atrium/monitor/data/documents" 2>/dev/null || true
-RENDER_TGT="$(jq -r '.files' /dev/null 2>/dev/null; true)"
 # render-monitor-env reads GA_ROOT/config.toml; symlink the rendered config there
 # via a sandbox GA_ROOT so we never touch the real config.toml.
 SBX_GAROOT="${SANDBOX}/ga-root"

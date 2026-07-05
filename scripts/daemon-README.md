@@ -9,7 +9,7 @@
   com.glass-atrium.autoagent-daemon.plist          launchd job → bootstrap script
   com.glass-atrium.wiki-daemon.plist               launchd job → bootstrap script
 
-~/.claude/scripts/
+~/.glass-atrium/scripts/
   autoagent-daemon-bootstrap.sh              creates tmux session if missing
   autoagent-daemon-healthcheck.sh            verifies session + claude alive
   wiki-daemon-bootstrap.sh                   creates tmux session if missing
@@ -81,8 +81,8 @@ tmux capture-pane -t claude-autoagent-daemon -p | tail -50
 ### Manual healthcheck
 
 ```bash
-~/.claude/scripts/autoagent-daemon-healthcheck.sh && echo HEALTHY
-~/.claude/scripts/wiki-daemon-healthcheck.sh     && echo HEALTHY
+~/.glass-atrium/scripts/autoagent-daemon-healthcheck.sh && echo HEALTHY
+~/.glass-atrium/scripts/wiki-daemon-healthcheck.sh     && echo HEALTHY
 ```
 
 Exit code: `0` = healthy, `1` = session missing or claude process dead.
@@ -97,7 +97,7 @@ tmux has-session -t claude-autoagent-daemon || echo "missing — needs restart"
 launchctl kickstart -k gui/$(id -u)/com.glass-atrium.autoagent-daemon
 
 # 2b. OR run the bootstrap script directly
-bash ~/.claude/scripts/autoagent-daemon-bootstrap.sh
+bash ~/.glass-atrium/scripts/autoagent-daemon-bootstrap.sh
 ```
 
 Same pattern for `wiki`.
@@ -178,5 +178,5 @@ mv ~/Library/LaunchAgents/com.glass-atrium.wiki-daemon.plist     ~/.Trash/
 
 ## Related Docs
 
-- `~/.claude/scripts/launchd-migration.md` — original 5-plist migration guide (TCC, bootstrap/legacy syntax, troubleshooting)
-- `~/.claude/scripts/system-health-check.sh` — already checks the existing user-managed `claude-daemon` session (line ~397); M7+W7 will extend it with the new daemons
+- `~/.glass-atrium/scripts/launchd-migration.md` — original 5-plist migration guide (TCC, bootstrap/legacy syntax, troubleshooting)
+- `~/.glass-atrium/scripts/system-health-check.sh` — already checks the existing user-managed `claude-daemon` session (line ~397); M7+W7 will extend it with the new daemons

@@ -15,7 +15,7 @@ skills:
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
   - glass-atrium-design-anti-slop  # mechanical AI-slop detector run before HTML/CSS/Tailwind emit (aligns with glass-atrium-design-designer.md AI Slop Tropes SoT)
-maxTurns: 40
+maxTurns: 80
 ---
 
 <!-- Motion half-life mapping + anti-slop catalogue: single SoT in ~/.claude/agents/glass-atrium-design-designer.md · glass-atrium-design-designer.md adapts patterns from nexu-io/open-design (Apache 2.0) -->

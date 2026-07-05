@@ -176,15 +176,15 @@ ga_realpath() {
     python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
 }
 
-# -- Self-path resolution (facade-safe) -------------------------------------
-# launchd invokes this script THROUGH the ~/.claude per-file symlink facade
-# (~/.claude/autoagent/daemon-apply.sh → this file). bash never dereferences a
-# file-level symlink in BASH_SOURCE, so dirname(BASH_SOURCE) is the FACADE dir —
-# a REAL directory (pwd -P cannot help) whose siblings exist only where a mirror
-# symlink was hand-created. Realpath the FILE first, then dirname, so every
-# sibling resource (lib/git-txn.sh, daemon_cycle.py, ../scripts/lib/apply-lock.sh)
-# resolves into the REAL tree regardless of how the script was invoked.
-# (Incident 2026-07-02: the missing apply-lock.sh mirror FATALed every cycle.)
+# -- Self-path resolution (symlink-safe) ------------------------------------
+# launchd now invokes this script at its store path
+# (~/.glass-atrium/autoagent/daemon-apply.sh) — autoagent/ is consumed in place,
+# the ~/.claude/autoagent farm is gone. The realpath stays defensive: bash never
+# dereferences a file-level symlink in BASH_SOURCE, so if the script ever arrives
+# through a symlink, dirname(BASH_SOURCE) would be the link dir, not the real
+# siblings. Realpath the FILE first, then dirname, so every sibling resource
+# (lib/git-txn.sh, daemon_cycle.py, ../scripts/lib/apply-lock.sh) resolves into
+# the REAL tree regardless of how the script was invoked.
 SCRIPT_DIR="$(dirname -- "$(ga_realpath "${BASH_SOURCE[0]}")")"
 
 # -- Reusable git-free transaction (shared with the glass-atrium-update E4 path) --
@@ -2112,7 +2112,7 @@ fi
 # does NOT propagate to daemon-apply exit code, because file commit + DB are
 # already updated in-loop via update_db_status — this is reconciliation only.
 # Skipped in dry-run (the script itself is read+write to DB).
-BACKFILL_SCRIPT="${HOME}/.claude/scripts/autoagent-status-backfill.py"
+BACKFILL_SCRIPT="${HOME}/.glass-atrium/scripts/autoagent-status-backfill.py"
 BACKFILL_LOG="/tmp/autoagent-status-backfill.log"
 if [[ "${DRY_RUN}" -eq 0 ]] && [[ -x "${BACKFILL_SCRIPT}" ]]; then
     backfill_ts="$(ts_now)"
