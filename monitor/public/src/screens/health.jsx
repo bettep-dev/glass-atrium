@@ -356,7 +356,7 @@ const CARD_MODEL_BUILDERS = {
       statusLabel:    meta.label,
       note:           needsAuth ? d.needs_auth_remediation : daemonScheduleNoteH(d.expected_next_at),
       // 비용가드 라이브 신호 — autoagent 만 반환, 타 데몬은 null → 칩 미렌더 (가짜 'ok' 금지).
-      // needs_auth 시 기존 infra_fault 칩 tooltip 에 복구 포인터 부착 (tone/icon/label 불변).
+      // needs_auth: append the recovery pointer to the existing infra_fault chip tooltip (tone/icon/label unchanged).
       costGuard:      enrichCostGuardWithAuthH(costGuardModelH(d.cost_guard_state), d),
       metricLabel:    'Last run',
       metricValue:    d.last_run_at ? formatTimeShortH(d.last_run_at) : '—',
@@ -763,8 +763,8 @@ function costGuardModelH(state) {
   return COST_GUARD_MODEL[state] || { tone: 'info', icon: 'info', label: String(state), prefix: 'Spending guard ', titleHint: `Spending guard state: ${String(state)}` };
 }
 
-// needs_auth 시 기존 칩 tooltip 뒤에 Token-Setup 복구 포인터만 덧붙임 — tone/icon/label 불변(새 시각 상태 없음).
-// null 칩(autoagent 외 데몬)은 그대로 통과 → 해당 데몬은 note 라인이 복구 포인터를 담당.
+// needs_auth: append only the Token-Setup recovery pointer after the existing chip tooltip — tone/icon/label unchanged (no new visual state).
+// null chip (non-autoagent daemons) passes through unchanged → those daemons' note line carries the recovery pointer.
 function enrichCostGuardWithAuthH(costGuard, daemon) {
   if (!costGuard || !daemon || daemon.needs_auth !== true || typeof daemon.needs_auth_remediation !== 'string') {
     return costGuard;

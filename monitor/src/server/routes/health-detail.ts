@@ -72,7 +72,7 @@ const HOME_DIR = process.env.HOME ?? homedir();
 const SETTINGS_PATH = path.join(HOME_DIR, ".claude", "settings.json");
 
 // GA-root headless-OAuth secrets file — existence STAT only (never opened/read).
-// Honors the same GA_ROOT override the launcher uses (glass-atrium:2681):
+// Honors the same GA_ROOT override the launcher uses (its GA_ROOT resolution):
 // ${GA_ROOT:-$HOME/.glass-atrium}/secrets/claude-auth.env.
 const GA_ROOT_DIR = process.env.GA_ROOT ?? path.join(HOME_DIR, ".glass-atrium");
 const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env");
