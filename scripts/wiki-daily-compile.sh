@@ -88,8 +88,10 @@ LOG_DIR="$HOME/.claude-work/projects/$PROJ_DIR/memory/traces"
 # UTC date keys the LOG_FILE so its date component matches the daemon_runs
 # run_date (the daemon keys UTC) — one (run_date, daemon_name) row per cycle.
 LOG_FILE="$LOG_DIR/wiki-compile-$(date -u +%Y-%m-%d).log"
-LOCK_SCRIPT="$HOME/.claude/scripts/wiki-lock.sh"
-SYNC_SCRIPT="$HOME/.claude/scripts/wiki-sync.sh"
+# Sibling helpers — scripts/ is consumed in place from the store, so resolve
+# relative to this script (WIKI_COMPILE_SELF_DIR) rather than the removed farm.
+LOCK_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-lock.sh"
+SYNC_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-sync.sh"
 
 # Resolve the haiku model id from the daemon-config.json SoT (avoids dated-pin
 # drift). Missing jq/file/key → alias literal claude-haiku-4-5 fallback (same
@@ -107,7 +109,7 @@ WIKI_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # SAME (run_date, daemon_name) daemon_runs row — a local-time key splits the row
 # at the KST/UTC date boundary, leaving the cron side without its payload.
 WIKI_RUN_DATE="$(date -u +%Y-%m-%d)"
-PG_HELPER="$HOME/.claude/scripts/_pg_dual_write_daemon.py"
+PG_HELPER="$WIKI_COMPILE_SELF_DIR/_pg_dual_write_daemon.py"
 
 # 0. Concurrency guard (wiki-lock)
 if [ -x "$LOCK_SCRIPT" ]; then
