@@ -71,6 +71,17 @@ const KNOWN_HOOK_ERROR_KINDS: ReadonlySet<HookErrorKindValue> = new Set([
 const HOME_DIR = process.env.HOME ?? homedir();
 const SETTINGS_PATH = path.join(HOME_DIR, ".claude", "settings.json");
 
+// GA-root headless-OAuth secrets file — existence STAT only (never opened/read).
+// Honors the same GA_ROOT override the launcher uses (glass-atrium:2681):
+// ${GA_ROOT:-$HOME/.glass-atrium}/secrets/claude-auth.env.
+const GA_ROOT_DIR = process.env.GA_ROOT ?? path.join(HOME_DIR, ".glass-atrium");
+const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env");
+
+// needs_auth recovery pointer — env-var NAME + instruction only, never the token
+// value (core-security.md Secret Management). Exported for the no-secret-content test.
+export const NEEDS_AUTH_REMEDIATION =
+  "Run: launcher → Token Setup (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN";
+
 // Why hard-coded daemon list: status cards render in fixed order.
 // daily-restart runs are role-qualified (one row per restarted daemon) so each
 // role gets its own card; legacy merged 'daily-restart' rows are history-only
@@ -154,6 +165,10 @@ async function handleDaemons(
       byName.set(row.daemon_name, row);
     }
 
+    // Single existence STAT of the shared claude-auth.env, once per response (never
+    // per DAEMON_BOARD row) — the absence corroborator for the needs_auth proxy.
+    const secretsAbsent = await isSecretsFileAbsent(request);
+
     const now = new Date();
     const daemons: DaemonStatusCard[] = DAEMON_BOARD.map((name) => {
       const row = byName.get(name);
@@ -161,22 +176,37 @@ async function handleDaemons(
       const rule = DAEMON_CRON_SCHEDULE[name];
       const stalenessMinutes =
         lastRunAt === null ? null : Math.floor((now.getTime() - lastRunAt.getTime()) / 60_000);
+      const isStale =
+        rule === undefined || stalenessMinutes === null
+          ? false
+          : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER;
+      // Narrow PG `status::text` → DaemonStatusValue union (6 values incl. quota_exceeded).
+      const lastStatus = narrowDaemonStatus(row?.last_status ?? null);
+      // Spec: cost_guard_state is for autoagent only; other daemons report null.
+      // Narrow PG `cost_guard_state::text` → CostGuardStateValue union (unknown → null).
+      const costGuardState =
+        name === "autoagent" ? narrowCostGuardState(row?.cost_guard_state ?? null) : null;
+
+      // needs_auth firing proxy (A-D2) — pure seam, unit-tested without a DB.
+      const needsAuth = deriveNeedsAuth({
+        lastRunAt,
+        isStale,
+        lastStatus,
+        costGuardState,
+        secretsAbsent,
+      });
+
       return {
         daemon_name: name,
         last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
-        // Narrow PG `status::text` → DaemonStatusValue union (6 values incl. quota_exceeded).
-        last_status: narrowDaemonStatus(row?.last_status ?? null),
+        last_status: lastStatus,
         expected_next_at:
           rule === undefined ? null : nextOccurrenceUtc(rule, DAY_BUCKET_TIMEZONE, now),
-        // Spec: cost_guard_state is for autoagent only; other daemons report null.
-        // Narrow PG `cost_guard_state::text` → CostGuardStateValue union (unknown → null).
-        cost_guard_state:
-          name === "autoagent" ? narrowCostGuardState(row?.cost_guard_state ?? null) : null,
+        cost_guard_state: costGuardState,
         staleness_minutes: stalenessMinutes,
-        is_stale:
-          rule === undefined || stalenessMinutes === null
-            ? false
-            : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER,
+        is_stale: isStale,
+        needs_auth: needsAuth,
+        needs_auth_remediation: needsAuth ? NEEDS_AUTH_REMEDIATION : null,
       };
     });
 
@@ -630,6 +660,51 @@ function isFsAbsentError(err: unknown): boolean {
   }
   const code = (err as { code?: unknown }).code;
   return code === "ENOENT" || code === "ENOTDIR";
+}
+
+// Existence STAT only — never opens/reads the target (its contents may be secret).
+// Exported for unit test (fs seam): true = absent (ENOENT/ENOTDIR), false = present,
+// null = indeterminate (permission / IO error, caller decides the conservative default).
+export async function isPathAbsent(targetPath: string): Promise<boolean | null> {
+  try {
+    await stat(targetPath);
+    return false;
+  } catch (err) {
+    if (isFsAbsentError(err)) {
+      return true;
+    }
+    return null;
+  }
+}
+
+// Single STAT of the GA-root claude-auth.env. Indeterminate (permission/IO) → treated
+// as present so no false remediation pointer is surfaced.
+async function isSecretsFileAbsent(request: FastifyRequest): Promise<boolean> {
+  const absent = await isPathAbsent(CLAUDE_AUTH_ENV_PATH);
+  if (absent === null) {
+    request.log.warn(
+      { route: "/api/health/daemons" },
+      "claude-auth.env stat indeterminate; treating as present (no remediation)",
+    );
+    return false;
+  }
+  return absent;
+}
+
+// needs_auth firing proxy (A-D2), pure. firing = ran AND not stale · failing = non-ok
+// status OR infra_fault cost-guard · unable = secrets file absent. A never-run/disabled
+// daemon (lastRunAt null OR stale) is NOT firing → stays false even when secrets absent.
+// Exported for unit test (no DB required).
+export function deriveNeedsAuth(params: {
+  lastRunAt: Date | null;
+  isStale: boolean;
+  lastStatus: DaemonStatusValue | null;
+  costGuardState: CostGuardStateValue | null;
+  secretsAbsent: boolean;
+}): boolean {
+  const isFiring = params.lastRunAt !== null && !params.isStale;
+  const isFailing = params.lastStatus !== "ok" || params.costGuardState === "infra_fault";
+  return isFiring && isFailing && params.secretsAbsent;
 }
 
 function failWithDb(

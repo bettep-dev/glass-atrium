@@ -24,6 +24,14 @@ export interface DaemonStatusCard {
   cost_guard_state: CostGuardStateValue | null;
   staleness_minutes: number | null;
   is_stale: boolean;
+  // DB-derived "firing but failing auth" proxy: the daemon has recent activity
+  // (ran, not stale) AND its last run failed (non-ok status OR infra_fault) AND the
+  // shared GA-root claude-auth.env is absent. A never-run/disabled daemon stays false
+  // → no false remediation on idle rows. Distinct field, never overloads last_status.
+  needs_auth: boolean;
+  // Recovery pointer surfaced only when needs_auth — env-var NAME + instruction text
+  // only, never the token value (core-security.md). null when needs_auth is false.
+  needs_auth_remediation: string | null;
 }
 
 export interface HealthDaemonsResponse {
