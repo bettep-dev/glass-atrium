@@ -21,14 +21,16 @@ cat <<'ORCHESTRATOR_INIT'
 ORCHESTRATOR_INIT
 
 # wiki search tool notice (for agents)
-echo '[WIKI] wiki 검색 가능: ~/.claude/scripts/wiki-query.sh "keywords"'
+echo '[WIKI] wiki 검색 가능: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
 
 # ----------------------------------------------------------------------------
 # Cross-Session Continuity — surface up to 5 newest in_progress files so the
 # new session can resume incomplete work (GLOBAL_RULES rule).
 # Silent when no progress files exist (no header line at all).
 # ----------------------------------------------------------------------------
-_PROGRESS_TRACKER="${HOME}/.claude/scripts/progress-tracker.sh"
+# Store-root form: scripts/ is consumed in place from the store — the
+# ~/.claude/scripts farm is gone (hooks/ and scripts/ are sibling store dirs).
+_PROGRESS_TRACKER="${HOME}/.glass-atrium/scripts/progress-tracker.sh"
 if [[ -r "${_PROGRESS_TRACKER}" ]]; then
   # shellcheck source=/dev/null
   source "${_PROGRESS_TRACKER}"

@@ -273,8 +273,9 @@ render_job() {
       err_log="/tmp/pg-backup.log"
       ;;
     autoagent-cycle)
-      # daemon-cycle.sh runs from the HARNESS home (symlink farm), not GA root
-      cmd="$(xml_escape "bash ${TARGET_HOME_PATH}/autoagent/daemon-cycle.sh")"
+      # daemon-cycle.sh is consumed in place from the store (GA root) — the
+      # ~/.claude/autoagent farm is gone, same store-path form as wiki-compile.
+      cmd="$(xml_escape "bash ${ROOT_PATH}/autoagent/daemon-cycle.sh")"
       args_xml="$(arg_xml /bin/bash -l -c "${cmd}")"
       env_xml="$(
         env_kv HOME "${E_HOME}"

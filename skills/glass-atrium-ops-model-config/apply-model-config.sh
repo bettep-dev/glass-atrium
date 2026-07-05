@@ -24,7 +24,7 @@ set -euo pipefail
 
 MC_API="${MC_API:-http://127.0.0.1:7842/api/model-config}"
 SETTINGS_PATH="${MODEL_CONFIG_SETTINGS_PATH:-${HOME}/.claude/settings.json}"
-RESTART_SCRIPT="${GLASS_ATRIUM_RESTART_SCRIPT:-${HOME}/.claude/scripts/daemon-daily-restart.sh}"
+RESTART_SCRIPT="${GLASS_ATRIUM_RESTART_SCRIPT:-${HOME}/.glass-atrium/scripts/daemon-daily-restart.sh}"
 PY="${PYTHON_BIN:-/usr/bin/python3}"
 
 die() {
