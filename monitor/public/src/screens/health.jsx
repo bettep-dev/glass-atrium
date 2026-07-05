@@ -343,14 +343,21 @@ const CARD_MODEL_BUILDERS = {
       };
     }
     const meta = window.HealthModel.resolveDaemonDisplayMeta(d);
+    // needs_auth (server firing-but-failing-auth proxy) surfaces the recovery step at
+    // the point of fault: the remediation replaces the schedule note (the fix outranks
+    // next-due time) and enriches the infra_fault chip tooltip. Same crit tone + chip,
+    // no new visual state. wiki has no cost-guard chip → the note line is its sole
+    // remediation surface (the fs corroborator's null-cost_guard coverage).
+    const needsAuth = d.needs_auth === true && typeof d.needs_auth_remediation === 'string';
     return {
       status: 'ready',
       tone:           facts.tone,
       pillLabel:      meta.label,
       statusLabel:    meta.label,
-      note:           daemonScheduleNoteH(d.expected_next_at),
+      note:           needsAuth ? d.needs_auth_remediation : daemonScheduleNoteH(d.expected_next_at),
       // 비용가드 라이브 신호 — autoagent 만 반환, 타 데몬은 null → 칩 미렌더 (가짜 'ok' 금지).
-      costGuard:      costGuardModelH(d.cost_guard_state),
+      // needs_auth 시 기존 infra_fault 칩 tooltip 에 복구 포인터 부착 (tone/icon/label 불변).
+      costGuard:      enrichCostGuardWithAuthH(costGuardModelH(d.cost_guard_state), d),
       metricLabel:    'Last run',
       metricValue:    d.last_run_at ? formatTimeShortH(d.last_run_at) : '—',
       subMetricLabel: 'STALENESS',
@@ -754,6 +761,15 @@ const COST_GUARD_MODEL = {
 function costGuardModelH(state) {
   if (state == null) return null;
   return COST_GUARD_MODEL[state] || { tone: 'info', icon: 'info', label: String(state), prefix: 'Spending guard ', titleHint: `Spending guard state: ${String(state)}` };
+}
+
+// needs_auth 시 기존 칩 tooltip 뒤에 Token-Setup 복구 포인터만 덧붙임 — tone/icon/label 불변(새 시각 상태 없음).
+// null 칩(autoagent 외 데몬)은 그대로 통과 → 해당 데몬은 note 라인이 복구 포인터를 담당.
+function enrichCostGuardWithAuthH(costGuard, daemon) {
+  if (!costGuard || !daemon || daemon.needs_auth !== true || typeof daemon.needs_auth_remediation !== 'string') {
+    return costGuard;
+  }
+  return { ...costGuard, titleHint: `${costGuard.titleHint} · Fix: ${daemon.needs_auth_remediation}` };
 }
 
 // UTC ISO 실순간(last_run_at·source_mtime·started_at) → KST "MM/DD HH:mm".
