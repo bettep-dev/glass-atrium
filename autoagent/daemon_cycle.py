@@ -1370,6 +1370,30 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
         return frozenset()
 
 
+# Canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md).
+_ROSTER_STEM_PREFIX = "glass-atrium-"
+
+
+def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
+    """Roster stem the bare/prefixed alias `agent` resolves to, or None.
+
+    Accumulated learning_log rows carry the same logical agent in bare form
+    ('dev-shell') while the live roster stem is the prefixed form
+    ('glass-atrium-dev-shell') — and vice versa on a bare-stem checkout.
+    Alias-trying both directions lets the caller rewrite Pattern.agent to the
+    REAL stem so downstream target_file resolution (agents/<stem>.md) hits the
+    file; no hit in either direction → None (caller keeps the loud-fail path).
+    """
+    prefixed = _ROSTER_STEM_PREFIX + agent
+    if prefixed in roster:
+        return prefixed
+    if agent.startswith(_ROSTER_STEM_PREFIX):
+        bare = agent[len(_ROSTER_STEM_PREFIX):]
+        if bare in roster:
+            return bare
+    return None
+
+
 def read_user_pending_patterns(
     log_path: Path,
     limit: int,
@@ -1419,8 +1443,14 @@ def read_user_pending_patterns(
         # WARN + loop event, then skip. roster empty (glob failed) → no
         # validation (fail-open).
         if roster and agent not in roster:
-            _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
-            continue
+            # Bare↔prefixed alias resolution before the loud-fail skip — a row
+            # keyed on the bare stem must not dead-end as roster-mismatch when
+            # the real agents/<stem>.md exists under the canonical prefix.
+            alias = _get_roster_alias(agent, roster)
+            if alias is None:
+                _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
+                continue
+            agent = alias
         discovered = row["discovered_date"]
         signature = row["pattern_signature"]
         patterns.append(

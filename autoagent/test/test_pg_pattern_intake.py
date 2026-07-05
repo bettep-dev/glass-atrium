@@ -274,5 +274,102 @@ class TestIntakeRosterRenameContract(_LivePgFixture):
         self.assertEqual(probe_args["changes_removed"], 0)
 
 
+def _intake_row(agent: str, row_id: int = 900001) -> dict:
+    """One stub reader-shaped intake row (read_pending_learning_patterns contract)."""
+    return {
+        "id": row_id,
+        "agent": agent,
+        "pattern_signature": f"alias probe|{agent}",
+        "frequency": 3,
+        "status": "identified",
+        "discovered_date": date(2026, 7, 1),
+    }
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestIntakeRosterAlias(unittest.TestCase):
+    """Bare↔prefixed alias rows rewrite Pattern.agent to the REAL roster stem
+    (canonical = glass-atrium-<bare>); unresolvable rows keep the loud-fail
+    WARN path. Stub reader + recorded loop events — no PG."""
+
+    def _intake(
+        self, rows: list[dict], stems: tuple[str, ...]
+    ) -> tuple[list, list, str]:
+        events: list[dict] = []
+        with tempfile.TemporaryDirectory() as d:
+            agents_dir = Path(d)
+            for stem in stems:
+                (agents_dir / f"{stem}.md").write_text("probe", encoding="utf-8")
+            patchers = (
+                mock.patch.object(dc, "HAS_PG_PATTERN_READ", True),
+                mock.patch.object(
+                    dc, "_pg_read_pending_patterns", lambda: rows, create=True
+                ),
+                mock.patch.object(
+                    dc,
+                    "_invoke_pg_helper",
+                    lambda envelope: events.append(envelope) or True,
+                ),
+            )
+            for patcher in patchers:
+                patcher.start()
+                self.addCleanup(patcher.stop)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                patterns = dc.read_user_pending_patterns(
+                    agents_dir / "unused-log.md", 10, agents_dir=agents_dir
+                )
+        return patterns, events, stderr.getvalue()
+
+    def test_when_bare_agent_and_prefixed_stem_then_agent_rewritten(self) -> None:
+        patterns, events, stderr_text = self._intake(
+            [_intake_row("dev-shell")], ("glass-atrium-dev-shell",)
+        )
+        self.assertEqual(len(patterns), 1)
+        self.assertEqual(patterns[0].agent, "glass-atrium-dev-shell")
+        self.assertEqual(events, [], "aliased row must not emit a mismatch event")
+        self.assertNotIn("roster mismatch", stderr_text)
+
+    def test_when_prefixed_agent_and_bare_stem_then_agent_rewritten(self) -> None:
+        patterns, _, _ = self._intake(
+            [_intake_row("glass-atrium-dev-shell")], ("dev-shell",)
+        )
+        self.assertEqual(len(patterns), 1)
+        self.assertEqual(patterns[0].agent, "dev-shell")
+
+    def test_when_exact_roster_stem_then_agent_untouched(self) -> None:
+        patterns, _, _ = self._intake(
+            [_intake_row("glass-atrium-dev-shell")], ("glass-atrium-dev-shell",)
+        )
+        self.assertEqual(len(patterns), 1)
+        self.assertEqual(patterns[0].agent, "glass-atrium-dev-shell")
+
+    def test_when_no_alias_resolves_then_warn_path_kept(self) -> None:
+        # A task_type leaked into the agent column must still loud-fail skip —
+        # the alias try must not weaken the roster gate.
+        patterns, events, stderr_text = self._intake(
+            [_intake_row("bug-fix")], ("glass-atrium-dev-shell",)
+        )
+        self.assertEqual(patterns, [])
+        self.assertIn("WARN: intake roster mismatch", stderr_text)
+        self.assertTrue(
+            any(
+                env.get("args", {}).get("eval_result") == "roster-mismatch"
+                for env in events
+            ),
+            f"missing roster-mismatch loop event: {events}",
+        )
+
+    def test_when_alias_helper_then_both_directions_and_none(self) -> None:
+        roster = frozenset({"glass-atrium-dev-shell", "dev-python"})
+        self.assertEqual(
+            dc._get_roster_alias("dev-shell", roster), "glass-atrium-dev-shell"
+        )
+        self.assertEqual(
+            dc._get_roster_alias("glass-atrium-dev-python", roster), "dev-python"
+        )
+        self.assertIsNone(dc._get_roster_alias("bug-fix", roster))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
