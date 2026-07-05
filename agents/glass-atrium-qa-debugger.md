@@ -4,7 +4,7 @@ description: Systematic debugging expert agent. Identifies root causes using 7 i
 tools: [Read, Glob, Grep, Bash]
 skills:
   - glass-atrium-core-iron-laws
-maxTurns: 40
+maxTurns: 80
 effort: xhigh
 ---
 

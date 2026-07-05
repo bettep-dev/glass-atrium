@@ -16,7 +16,7 @@ description: >
   SwiftUI Observation (@Observable), Swift 6 strict concurrency, SwiftData, Swift Testing,
   App Sandbox + Hardened Runtime + notarization.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
-maxTurns: 40
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)
