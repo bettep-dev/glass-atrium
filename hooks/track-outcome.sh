@@ -624,6 +624,84 @@ synth_files = collect_write_targets_current_turn(d)
 synth_has_writes = '1' if synth_files else '0'
 diag(f"synth_has_writes={synth_has_writes} synth_file_count={len(synth_files)}")
 
+# R2 discriminator input — TERMINAL successfully-consumed StructuredOutput. A schema-mode
+# (ultracode Workflow) agent's engine consumes ONLY the StructuredOutput tool call, so a
+# [COMPLETION]-absent run ending on a successfully-consumed emit IS a delivered result.
+# Scan gate mirrors detect_budget_truncation's subagent-origin contract: SubagentStop-origin
+# + raw agent_id present + no parsed [COMPLETION] (parse_tier 3) — main-session
+# Stop/PreCompact/SessionStart never pay the scan, and a parsed block always wins.
+def detect_terminal_structuredoutput(d):
+    import os as _os
+    if hook_event in MAIN_SESSION_HOOKS:
+        return '0'
+    if not (d.get('agent_id') or ''):
+        return '0'
+    if parse_tier != 3:
+        return '0'
+    items = next((d[k] for k in ('messages', 'transcript', 'conversation')
+                  if isinstance(d.get(k), list) and d.get(k)), [])
+    from_transcript = False
+    if not items:
+        tpath = _effective_transcript_path(d)
+        if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
+            from_transcript = True
+            try:
+                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
+                    for _line in _f:
+                        _line = _line.strip()
+                        if not _line:
+                            continue
+                        try:
+                            items.append(json.loads(_line))
+                        except (ValueError, json.JSONDecodeError):
+                            continue
+            except (OSError, IOError):
+                return '0'
+    if not items:
+        return '0'
+    window = _current_turn_window(items, from_transcript)
+    # Terminal = the run's LAST tool_use. "Later superseding assistant action" means a
+    # SUBSEQUENT tool_use — trailing plain assistant text does NOT supersede the emit.
+    last_tool_use = None
+    results_by_id = {}
+    for it in window:
+        if not isinstance(it, dict):
+            continue
+        content = it.get('content')
+        if content is None:
+            msg_obj = it.get('message')
+            content = msg_obj.get('content') if isinstance(msg_obj, dict) else None
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            if c.get('type') == 'tool_use':
+                last_tool_use = c
+            elif c.get('type') == 'tool_result':
+                rid = c.get('tool_use_id')
+                if isinstance(rid, str) and rid:
+                    results_by_id[rid] = c
+    if not isinstance(last_tool_use, dict) or last_tool_use.get('name') != 'StructuredOutput':
+        return '0'
+    tu_id = last_tool_use.get('id')
+    # Pair by tool_use_id, NEVER adjacency — an id-less tool_use cannot pair strictly →
+    # no match, caller keeps the old synthesis path (safe direction for odd transcripts).
+    if not isinstance(tu_id, str) or not tu_id:
+        return '0'
+    paired = results_by_id.get(tu_id)
+    # Absent paired tool_result = kill mid-call → no match.
+    if paired is None:
+        return '0'
+    # Success = is_error NOT truthy — absent OR false both = success (both shapes observed
+    # live); an equality-to-false check would misread the absent shape as an error.
+    if paired.get('is_error') or paired.get('isError'):
+        return '0'
+    return '1'
+
+terminal_so = detect_terminal_structuredoutput(d)
+diag(f"terminal_structuredoutput={terminal_so}")
+
 def out(k, v):
     print(f"@@{k}@@{clamp(v, 2000)}")
 
@@ -751,6 +829,7 @@ out('parse_tier', str(parse_tier))
 out('tool_use_count', str(tool_use_count))
 out('synth_has_writes', synth_has_writes)
 out('synth_files', ', '.join(synth_files))
+out('terminal_so', terminal_so)
 out('real_agent', real_agent)
 
 # revision_count: integer parse, 0 on non-integer/missing
@@ -869,6 +948,12 @@ SYNTH_FILES=$(extract_field synth_files)
 case "${SYNTH_HAS_WRITES}" in
   0 | 1) ;;
   *) SYNTH_HAS_WRITES=0 ;;
+esac
+# terminal_so: python-detected terminal successfully-consumed StructuredOutput (R2 input).
+TERMINAL_SO=$(extract_field terminal_so)
+case "${TERMINAL_SO}" in
+  1) ;;
+  *) TERMINAL_SO=0 ;;
 esac
 # real-agent predicate (Python-computed) — 1 = recordable, 0 = phantom termination.
 # Default 1 (fail-open) when the field is absent: only an explicit '0' triggers the drop.
@@ -1082,15 +1167,21 @@ detect_budget_truncation() {
 
 # completion-synthesized path: [COMPLETION] absent + tool_use≥1 (passed the conversation-only
 # skip) = a deliverable-producing turn. Synthesize the record from the transcript instead of
-# keyword inference. Two distinguishable attribution values arise here:
-#   budget-truncation      — the on-disk tool_use counter confirms a budget/turn HARD-KILL
-#   completion-synthesized — the default: work delivered, [COMPLETION] simply absent (daemon signal)
+# keyword inference. Three distinguishable attribution values arise here:
+#   structuredoutput-derived — terminal successfully-consumed StructuredOutput (schema-mode emit)
+#   budget-truncation        — the on-disk tool_use counter confirms a budget/turn HARD-KILL
+#   completion-synthesized   — the default: work delivered, [COMPLETION] simply absent (daemon signal)
 if [[ "${HAS_STRUCTURED}" != "true" ]]; then
-  # PRIMARY signal first: a counter at/over budget ⇒ budget-truncation, distinct from a plain
-  # synthesized row (and from the parse_tier==2 truncated_completion complementary detector above).
-  # if/else keeps the two labels mutually exclusive by construction — no path before this block sets
-  # budget-truncation, so completion-synthesized can never clobber a just-assigned budget kill.
-  if detect_budget_truncation; then
+  # Discriminator ORDER: structuredoutput-derived BEFORE budget-truncation. The budget counter is a
+  # cumulative >=40 HEURISTIC, while a terminal consumed StructuredOutput is DIRECT evidence of
+  # non-truncation — a hard-kill cannot leave a paired non-error tool_result in terminal position.
+  # Successful schema runs routinely sit at/over 40 tool_uses (the 40-52 band); budget-first would
+  # keep exactly those rows budget-truncation and pollute daemon_cycle's clusterable negatives.
+  # if/elif keeps the three labels mutually exclusive by construction — no path before this block
+  # sets any of them, so a later arm can never clobber an earlier assignment.
+  if [[ "${TERMINAL_SO}" = "1" ]]; then
+    ATTRIBUTION_SOURCE="structuredoutput-derived"
+  elif detect_budget_truncation; then
     ATTRIBUTION_SOURCE="budget-truncation"
   else
     ATTRIBUTION_SOURCE="completion-synthesized"
@@ -1508,22 +1599,33 @@ else
   #   the enum → _pg_outcome_dualwrite._norm_result silent-maps it to done = re-introducing the
   #   overconfident done that synthesis tried to block. done_with_concerns is enum-valid + carries
   #   the "delivered but unverified" meaning → passes the PG INSERT without the overconfident done.
-  case "$JUDGE_TEXT" in
-    *"hit your limit"* | *"rate limit"* | *"timed out"* | *"quota exceeded"* | *"레이트 리밋"* | *"할당량 초과"* | *"context window"*)
-      RESULT="blocked"
-      ;;
-    *)
-      RESULT="done_with_concerns"
-      ;;
-  esac
+  if [ "${ATTRIBUTION_SOURCE}" = "structuredoutput-derived" ]; then
+    # A terminal successfully-consumed StructuredOutput IS the delivered result (the engine
+    # consumes only that call — schema-mode contract). RESULT=done SUPERSEDES the JUDGE_TEXT
+    # rate-limit keyword heuristic: a successfully consumed emit refutes the rate-limit-cut
+    # hypothesis, and qa reviewers legitimately write "rate limit" in prose.
+    RESULT="done"
+  else
+    case "$JUDGE_TEXT" in
+      *"hit your limit"* | *"rate limit"* | *"timed out"* | *"quota exceeded"* | *"레이트 리밋"* | *"할당량 초과"* | *"context window"*)
+        RESULT="blocked"
+        ;;
+      *)
+        RESULT="done_with_concerns"
+        ;;
+    esac
+  fi
   # Synthesized record's confidence — always low since there is no self-assertion (prevent overconfidence).
   CONFIDENCE="low"
   # Block absent = no agent metric_pass claim → explicit false (distinct from EMPTY).
   METRIC_PASS="false"
-  # concerns synthesis — done_with_concerns rows otherwise carry an empty concerns column (the
+  # concerns synthesis — synthesized rows otherwise carry an empty concerns column (the
   # Python extractor only fills concerns from a real [COMPLETION] "## Concerns" block). Make the
-  # monitor's concerns column honest about why the row landed in the concerns family.
-  if [ "${RESULT}" = "done_with_concerns" ] && [ -z "${CONCERNS}" ]; then
+  # monitor's concerns column honest about why the row landed here. The R2 done row needs its
+  # OWN arm — the done_with_concerns gate below never fires for RESULT=done.
+  if [ "${ATTRIBUTION_SOURCE}" = "structuredoutput-derived" ] && [ -z "${CONCERNS}" ]; then
+    CONCERNS="[synthesized] deliverable was a StructuredOutput tool call — schema-validated, writer-unverified"
+  elif [ "${RESULT}" = "done_with_concerns" ] && [ -z "${CONCERNS}" ]; then
     CONCERNS="[synthesized] completed without a [COMPLETION] block — unverified"
   fi
   # files synthesis — pass the Write/Edit target paths through to frontmatter/PG along with the CID.

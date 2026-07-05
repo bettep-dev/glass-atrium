@@ -12,11 +12,20 @@
 # T1 block-then-emit → structured path (result/confidence from the writer, attribution hook-input)
 # T2 marker-preference → a trailing non-marker assistant text after the StructuredOutput
 #    tool_result must NOT shadow the [COMPLETION]-bearing turn
-# T3 regression guard → NO [COMPLETION] anywhere + terminal StructuredOutput keeps the current
-#    synthesis behavior (done_with_concerns + completion-synthesized + '[synthesized]' concerns)
-#    — the hook must NOT silently start treating StructuredOutput as done
-# T4 precedence guard → same as T3 with the per-agent tool-budget counter at budget ⇒
-#    budget-truncation wins the discriminator (ordering intact)
+# T3 R2-positive → NO [COMPLETION] + terminal successfully-consumed StructuredOutput derives
+#    done + structuredoutput-derived (low confidence, metric_pass false, own concerns line)
+# T4 order flip → counter at budget + consumed StructuredOutput ⇒ structuredoutput-derived wins
+#    (direct terminal evidence beats the cumulative >=40 heuristic)
+# T5 fallback guard → NO StructuredOutput anywhere pins the old synthesis path
+#    (done_with_concerns + completion-synthesized + '[synthesized]' concerns)
+# T6 errored SO tool_result → falls through to completion-synthesized (predicate falsifiability)
+# T7 rate-limit prose + consumed SO → done (keyword heuristic superseded by the consumed emit)
+# T8 tool_use_id pairing → interleaved errored decoy tool_result does not defeat id-pairing
+# T9 absent paired tool_result (kill mid-call) → no match, stays completion-synthesized
+# T10 budget pin → counter at budget + errored SO ⇒ budget-truncation (heuristic still live)
+#
+# R2-positive cases INSERT the NEW 10th attribution token into the live-reachable DB → they
+# probe the live CHECK first and skip until the live ALTER lands (orchestrator deploy step).
 #
 # Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...), the diag
 # log, and the PG helper path (${HOME}/.claude/hooks/_pg_outcome_dualwrite.py) are redirected
@@ -96,12 +105,20 @@ PY
 }
 
 # Write the synthetic schema-mode subagent transcript. Mode selects the fixture shape:
-#   block-then-emit — user → assistant tool_use Bash → tool_result → assistant TEXT carrying a
-#                     full [COMPLETION] block → assistant tool_use StructuredOutput →
-#                     tool_result success (the R3 contract shape)
-#   trailing-text   — block-then-emit + a LATER assistant text WITHOUT a [COMPLETION] marker
-#                     after the StructuredOutput tool_result (marker-preference stressor)
-#   no-block        — NO [COMPLETION] anywhere; terminal StructuredOutput (regression fixture)
+#   block-then-emit    — user → assistant tool_use Bash → tool_result → assistant TEXT carrying
+#                        a full [COMPLETION] block → assistant tool_use StructuredOutput →
+#                        tool_result success (the R3 contract shape)
+#   trailing-text      — block-then-emit + a LATER assistant text WITHOUT a [COMPLETION] marker
+#                        after the StructuredOutput tool_result (marker-preference stressor)
+#   no-block           — NO [COMPLETION] anywhere; terminal consumed StructuredOutput (R2 shape)
+#   no-block-no-so     — NO [COMPLETION] and NO StructuredOutput (true old-synthesis fallback)
+#   no-block-so-error  — terminal StructuredOutput whose paired tool_result is is_error:true
+#   no-block-ratelimit — rate-limit prose as the final assistant text + consumed terminal SO
+#   no-block-decoy     — errored decoy tool_result (foreign tool_use_id) interleaved between the
+#                        SO call and its real success result (adjacency-pairing would mis-read)
+#   no-block-orphan    — SO call with NO paired tool_result at all (kill mid-call)
+# The SO pair carries explicit id/tool_use_id — the hook pairs strictly by tool_use_id (never
+# adjacency), so an id-less fixture would no-match and fall back to the old synthesis path.
 write_transcript() {
   python3 - "${TRANSCRIPT}" "${UNIQUE_AGENT}" "${1}" <<'PY'
 import json, sys
@@ -116,25 +133,50 @@ completion = (
     "lesson: print the [COMPLETION] text turn BEFORE the StructuredOutput call\n"
     "[/COMPLETION]"
 )
+SO_ID = "toolu_sm_so01"
 structured_call = {"type": "assistant", "message": {"role": "assistant",
-    "content": [{"type": "tool_use", "name": "StructuredOutput",
+    "content": [{"type": "tool_use", "id": SO_ID, "name": "StructuredOutput",
                  "input": {"done": True, "notes": "schema deliverable"}}]}}
 structured_ok = {"type": "user", "message": {"role": "user",
-    "content": [{"type": "tool_result", "content": "ok"}]}}
+    "content": [{"type": "tool_result", "tool_use_id": SO_ID, "content": "ok"}]}}
+structured_err = {"type": "user", "message": {"role": "user",
+    "content": [{"type": "tool_result", "tool_use_id": SO_ID, "is_error": True,
+                 "content": "schema validation failed"}]}}
+decoy_result = {"type": "user", "message": {"role": "user",
+    "content": [{"type": "tool_result", "tool_use_id": "toolu_sm_decoy", "is_error": True,
+                 "content": "decoy error"}]}}
 rows = [
     {"type": "user", "message": {"role": "user", "content": "run the schema-mode research"}},
     {"type": "assistant", "message": {"role": "assistant",
         "content": [{"type": "text", "text": "Analyzing the corpus."}]}},
     {"type": "assistant", "message": {"role": "assistant",
-        "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "true"}}]}},
+        "content": [{"type": "tool_use", "id": "toolu_sm_bash01", "name": "Bash",
+                     "input": {"command": "true"}}]}},
     {"type": "user", "message": {"role": "user",
-        "content": [{"type": "tool_result", "content": "ok"}]}},
+        "content": [{"type": "tool_result", "tool_use_id": "toolu_sm_bash01",
+                     "content": "ok"}]}},
 ]
 if mode in ("block-then-emit", "trailing-text"):
     rows.append({"type": "assistant", "message": {"role": "assistant",
         "content": [{"type": "text", "text": completion}]}})
-rows.append(structured_call)
-rows.append(structured_ok)
+if mode == "no-block-ratelimit":
+    rows.append({"type": "assistant", "message": {"role": "assistant",
+        "content": [{"type": "text",
+                     "text": "Sources describe the API rate limit tiers in prose."}]}})
+if mode == "no-block-no-so":
+    pass  # ends on the Bash tool_result — no StructuredOutput anywhere
+elif mode == "no-block-orphan":
+    rows.append(structured_call)  # kill mid-call: paired tool_result never arrives
+elif mode == "no-block-so-error":
+    rows.append(structured_call)
+    rows.append(structured_err)
+elif mode == "no-block-decoy":
+    rows.append(structured_call)
+    rows.append(decoy_result)   # adjacency-pairing would read THIS errored foreign result
+    rows.append(structured_ok)  # id-pairing finds the real success
+else:
+    rows.append(structured_call)
+    rows.append(structured_ok)
 if mode == "trailing-text":
     rows.append({"type": "assistant", "message": {"role": "assistant",
         "content": [{"type": "text", "text": "Emitted the structured result."}]}})
@@ -204,6 +246,30 @@ run_hook() {
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
+# Live-constraint skip-probe — R2-positive cases INSERT attribution_source =
+# 'structuredoutput-derived' into the live-reachable DB; until the live CHECK is widened to the
+# 10-value set (the ALTER is an orchestrator deploy step, not this suite's job) that INSERT
+# violates the constraint → skip, mirroring the DB-unreachable skip in setup(). A missing
+# constraint rejects nothing → run.
+skip_unless_live_check_allows_r2_token() {
+  local con_def
+  con_def="$(PYTHONPATH="${PSYCOPG_PP}" python3 - 2>/dev/null <<'PY'
+import psycopg
+with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conname = 'outcomes_attribution_source_check'")
+        row = cur.fetchone()
+        print("NO_CONSTRAINT" if row is None else row[0])
+PY
+)" || con_def=""
+  case "${con_def}" in
+    *structuredoutput-derived* | NO_CONSTRAINT) ;;
+    *) skip "live CHECK not yet widened to structuredoutput-derived (orchestrator deploy pending)" ;;
+  esac
+}
+
 @test "T1 block-then-emit: [COMPLETION] text turn before StructuredOutput is honored (structured path)" {
   write_transcript block-then-emit
   write_payload
@@ -267,19 +333,69 @@ run_hook() {
   [[ "${output}" != "[synthesized]"* ]]
 }
 
-@test "T3 regression guard: no [COMPLETION] + terminal StructuredOutput stays synthesized (not silently done)" {
+@test "T3 R2-positive: no [COMPLETION] + terminal consumed StructuredOutput derives done (structuredoutput-derived)" {
+  skip_unless_live_check_allows_r2_token
   write_transcript no-block
   write_payload
 
   run_hook
   [ "${status}" -eq 0 ]
-  # Synthesis diagnostic fired with the default attribution (counter absent ⇒ fail-open).
-  [[ "${output}" == *"attribution=completion-synthesized"* ]]
+  # The consumed emit is direct evidence of a delivered result — synthesis derives from it.
+  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+  [[ "${output}" != *"attribution=completion-synthesized"* ]]
   [[ "${output}" != *"attribution=budget-truncation"* ]]
 
   run count_rows
   [ "${output}" = "1" ]
-  # The by-design conservatism holds: StructuredOutput alone is NOT a completion-equivalent.
+  # done, but writer-unverified: confidence stays low + the R2 arm's OWN concerns line.
+  run fetch_col result
+  [ "${output}" = "done" ]
+  run fetch_col confidence
+  [ "${output}" = "low" ]
+  run fetch_col attribution_source
+  [ "${output}" = "structuredoutput-derived" ]
+  run fetch_col downgrade_origin
+  [ "${output}" = "synthesized" ]
+  run fetch_col concerns
+  [[ "${output}" == *"[synthesized] deliverable was a StructuredOutput tool call"* ]]
+  run fetch_col summary
+  [[ "${output}" == "[synthesized]"* ]]
+}
+
+@test "T4 order flip: counter at budget (40) + consumed StructuredOutput ⇒ structuredoutput-derived wins" {
+  skip_unless_live_check_allows_r2_token
+  write_transcript no-block
+  write_payload
+  printf '%s\n' "40" >"${COUNTER_FILE}"
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  # Direct terminal evidence beats the cumulative >=40 heuristic — a hard-kill cannot leave a
+  # paired non-error tool_result in terminal position, and successful schema runs routinely
+  # sit at/over 40 (the 40-52 band).
+  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+  [[ "${output}" != *"attribution=budget-truncation"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  run fetch_col attribution_source
+  [ "${output}" = "structuredoutput-derived" ]
+  run fetch_col result
+  [ "${output}" = "done" ]
+}
+
+@test "T5 fallback guard: no [COMPLETION] + NO StructuredOutput keeps the old synthesis path" {
+  write_transcript no-block-no-so
+  write_payload
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"attribution=completion-synthesized"* ]]
+  [[ "${output}" != *"attribution=structuredoutput-derived"* ]]
+  [[ "${output}" != *"attribution=budget-truncation"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
   run fetch_col result
   [ "${output}" = "done_with_concerns" ]
   run fetch_col confidence
@@ -294,15 +410,81 @@ run_hook() {
   [[ "${output}" == "[synthesized]"* ]]
 }
 
-@test "T4 precedence guard: counter at budget (40) ⇒ budget-truncation wins over completion-synthesized" {
-  write_transcript no-block
+@test "T6 errored StructuredOutput tool_result falls through to completion-synthesized" {
+  write_transcript no-block-so-error
+  write_payload
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  # is_error:true = NOT consumed — the predicate must not fire on an errored emit.
+  [[ "${output}" == *"attribution=completion-synthesized"* ]]
+  [[ "${output}" != *"attribution=structuredoutput-derived"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  run fetch_col result
+  [ "${output}" = "done_with_concerns" ]
+}
+
+@test "T7 rate-limit prose + consumed StructuredOutput records done (keyword heuristic superseded)" {
+  skip_unless_live_check_allows_r2_token
+  write_transcript no-block-ratelimit
+  write_payload
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  # NOT blocked — a successfully consumed emit refutes the rate-limit-cut hypothesis even
+  # though the final assistant prose contains 'rate limit'.
+  run fetch_col result
+  [ "${output}" = "done" ]
+}
+
+@test "T8 tool_use_id pairing: interleaved errored decoy tool_result does not defeat id-pairing" {
+  skip_unless_live_check_allows_r2_token
+  write_transcript no-block-decoy
+  write_payload
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  # Adjacency-pairing would read the errored foreign-id decoy → completion-synthesized;
+  # strict tool_use_id pairing finds the real success result.
+  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  run fetch_col result
+  [ "${output}" = "done" ]
+}
+
+@test "T9 absent paired tool_result (kill mid-call) does not match — stays completion-synthesized" {
+  write_transcript no-block-orphan
+  write_payload
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"attribution=completion-synthesized"* ]]
+  [[ "${output}" != *"attribution=structuredoutput-derived"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  run fetch_col result
+  [ "${output}" = "done_with_concerns" ]
+}
+
+@test "T10 budget pin: counter at budget (40) + errored StructuredOutput ⇒ budget-truncation" {
+  write_transcript no-block-so-error
   write_payload
   printf '%s\n' "40" >"${COUNTER_FILE}"
 
   run_hook
   [ "${status}" -eq 0 ]
-  # Discriminator ordering intact: budget kill labels the row, never clobbered back.
+  # The heuristic stays live for non-consumed terminals: errored emit + counter at budget.
   [[ "${output}" == *"attribution=budget-truncation"* ]]
+  [[ "${output}" != *"attribution=structuredoutput-derived"* ]]
   [[ "${output}" != *"attribution=completion-synthesized"* ]]
 
   run count_rows
