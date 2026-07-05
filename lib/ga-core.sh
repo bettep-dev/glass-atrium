@@ -511,6 +511,47 @@ is_symlink_excluded() {
   printf 'no\n'
 }
 
+# --- sandbox-target guard (launchd domain protection) -----------------------
+# Echo "yes" when this run targets a NON-real home, via EITHER sandbox seam:
+#   (a) GA_TARGET_HOME override — TARGET_HOME points off ${HOME}/.claude (the
+#       bats/CI pattern: HOME stays real, target redirected);
+#   (b) fake-HOME sandbox — ${HOME} diverges from the current user's passwd-db
+#       home (the oss-e2e-bootstrap.sh pattern: HOME=<sandbox>, GA_TARGET_HOME
+#       unset, so seam (a) alone can NEVER see it).
+# WHY both: launchd gui-domain labels are per-UID, NOT per-HOME — a fake-HOME
+# run still mutates the REAL user's gui/${UID} domain, so launchctl teardown
+# must key on "is this the real home", not on path derivation alone.
+# Passwd-db home via dscl (macOS) / getent (Linux); UNRESOLVABLE → "no"
+# (real-home semantics preserved — every host where bootout can actually run
+# is macOS, where dscl always resolves the local user).
+# Stdout-verdict (always exits 0), mirroring is_never_touch / is_symlink_excluded.
+is_sandbox_target() {
+  if [[ "${TARGET_HOME}" != "${HOME}/.claude" ]]; then
+    printf 'yes\n'
+    return 0
+  fi
+  local un pw_home="" pw_raw=""
+  un="$(id -un 2>/dev/null)" || un=""
+  if [[ -n "${un}" ]]; then
+    if command -v dscl >/dev/null 2>&1; then
+      pw_raw="$(dscl . -read "/Users/${un}" NFSHomeDirectory 2>/dev/null)" || pw_raw=""
+      # "NFSHomeDirectory: /path" → prefix-strip via expansion (pipe-free)
+      if [[ "${pw_raw}" == "NFSHomeDirectory: "* ]]; then
+        pw_home="${pw_raw#NFSHomeDirectory: }"
+      fi
+    elif command -v getent >/dev/null 2>&1; then
+      pw_raw="$(getent passwd "${un}" 2>/dev/null)" || pw_raw=""
+      # passwd(5) field 6 via IFS split (pipe-free)
+      IFS=: read -r _ _ _ _ _ pw_home _ <<<"${pw_raw}"
+    fi
+  fi
+  if [[ -n "${pw_home}" && "${pw_home}" != "${HOME}" ]]; then
+    printf 'yes\n'
+  else
+    printf 'no\n'
+  fi
+}
+
 # --- config.toml render ----------------------------------------------------
 # Render config.toml.example (tracked, ${HOME}-placeholder template) into
 # config.toml (git-ignored) by expanding ONLY the ${HOME} placeholder; every
@@ -2225,12 +2266,27 @@ load_launchd_jobs() {
 # unload_launchd_jobs — uninstall teardown: bootout + remove the deployed plist for each
 # of the LAUNCHD_JOBS (inverse of load_launchd_jobs). IDEMPOTENT — a not-loaded job or an
 # absent plist is fine. launchctl absent → skip with a log (a machine without the jobs is
-# not a fault). The deployed plists in ${LAUNCH_AGENTS} are regenerable COPIES of the
-# rendered SoT (${RENDERED_PLIST_DIR}), which is left intact — so `rm -f` is correct here
-# (generated artifact, not a user config). Returns 0 (teardown is best-effort, never fatal).
+# not a fault). SANDBOX-GUARDED — a run against a non-real home (is_sandbox_target:
+# fake HOME or GA_TARGET_HOME seam) skips the whole teardown, because the gui/${UID}
+# domain is shared with the real user regardless of HOME. The deployed plists in
+# ${LAUNCH_AGENTS} are regenerable COPIES of the rendered SoT (${RENDERED_PLIST_DIR}),
+# which is left intact — so `rm -f` is correct here (generated artifact, not a user
+# config). Returns 0 (teardown is best-effort, never fatal).
 unload_launchd_jobs() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping launchd teardown (${#LAUNCHD_JOBS[@]} com.glass-atrium.* jobs — bootout + plist rm)"
+    return 0
+  fi
+  # SANDBOX GUARD: gui-domain labels are per-UID, NOT per-HOME — a sandboxed run
+  # (fake HOME or GA_TARGET_HOME) would bootout the REAL user's live jobs. Skip
+  # the WHOLE teardown, not just bootout: under a GA_TARGET_HOME-only sandbox
+  # HOME stays real, so ${LAUNCH_AGENTS} is the REAL ~/Library/LaunchAgents and
+  # the plist rm would hit real deployed plists. Skipping is the safe direction
+  # (fail-open); real-home runs are byte-identical to the pre-guard behavior.
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "uninstall: sandbox target — launchd domain untouched (bootout + plist rm skipped)"
     return 0
   fi
   if ! command -v launchctl >/dev/null 2>&1; then

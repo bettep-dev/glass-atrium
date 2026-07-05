@@ -14,9 +14,16 @@
 #     fixed-name throwaway claude_oss_e2e, and ONLY when this run created it.
 #   * aborts when claude_oss_e2e already exists (refuses to adopt/drop a db
 #     this run did not create).
-#   * launchd is static-verified only (rendered plists) — launchctl is NEVER
-#     invoked; loading plists stays a manual user step (scripts/daemon-README.md
-#     "Loading the launchd Plists").
+#   * launchd, install side: static-verified only (rendered plists) — this run
+#     passes neither --load-launchd nor --repoint-launchd, so INSTALL never
+#     invokes launchctl; loading plists stays a manual user step
+#     (scripts/daemon-README.md "Loading the launchd Plists").
+#   * launchd, uninstall side: `glass-atrium uninstall` DOES invoke `launchctl
+#     bootout gui/$UID/com.glass-atrium.*` in real-home runs — and gui-domain
+#     labels are per-UID, NOT per-HOME, so a fake-HOME run would still hit the
+#     REAL user's live jobs. What protects the authoring machine here is the
+#     engine's sandbox guard (lib/ga-core.sh is_sandbox_target → the
+#     unload_launchd_jobs "launchd domain untouched" skip), asserted in STEP 5.
 #
 # Env knobs:
 #   GA_E2E_SANDBOX  sandbox root (default: mktemp -d)
@@ -414,6 +421,13 @@ UNINST_RC=$?
     no "glass-atrium uninstall rc=${UNINST_RC}"
     tail -15 "${SANDBOX}/uninstall.log"
   }
+# SAFETY CONTRACT enforcement: this run's HOME is the fake sandbox, so the
+# engine's sandbox guard MUST have skipped the launchd teardown — otherwise the
+# uninstall just booted out the REAL user's live com.glass-atrium.* jobs
+# (gui-domain labels are per-UID, not per-HOME).
+grep -q 'sandbox target — launchd domain untouched' "${SANDBOX}/uninstall.log" \
+  && ok "sandbox guard fired — launchd domain untouched (real jobs protected)" \
+  || no "sandbox guard did NOT fire — uninstall may have hit the real gui/\$UID launchd domain"
 # CLONE_REAL (physical path) so the "zero remain" check is meaningful, not a
 # vacuous match against the never-targeted /var/folders prefix.
 LEFT="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/dev/null | wc -l | tr -d ' ')"
