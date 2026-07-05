@@ -156,6 +156,22 @@ class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
     def test_when_budget_truncation_constant_then_literal(self) -> None:
         self.assertEqual(pgdw.ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
 
+    def test_when_structuredoutput_derived_done_then_zero_hits(self) -> None:
+        # Third sibling token (terminal consumed StructuredOutput synthesis):
+        # done is not a negative OR-term, so the row yields zero hits with NO
+        # carve-out — pins the recorded no-behavior-change decision.
+        row = _row(
+            result="done",
+            attribution_source=pgdw.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+        )
+        self.assertEqual(pgdw.negative_signal_hits(row), ())
+        self.assertFalse(pgdw.is_negative_signal_outcome(row))
+
+    def test_when_structuredoutput_constant_then_literal(self) -> None:
+        self.assertEqual(
+            pgdw.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED, "structuredoutput-derived"
+        )
+
 
 @unittest.skipIf(agg is None, f"import failed: {_IMPORT_ERROR}")
 class _AggregatorRunFixture(unittest.TestCase):

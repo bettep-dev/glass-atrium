@@ -2889,18 +2889,32 @@ _ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
 # negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
 # pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
 _ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
+# Third synthesized-provenance sibling: a schema-mode run whose TERMINAL
+# StructuredOutput was successfully consumed. Its result=done proves the run
+# FINISHED (direct evidence of non-truncation) but the deliverable is
+# schema-validated + writer-unverified and lesson-less — such a row must never
+# stand as a "clean first-try done" SUCCESS exemplar, nor as a failure →
+# NEUTRAL polarity, mirroring the measurement-gap treatment.
+_ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 
 
 def _is_synthesized_measurement_gap(o: Outcome) -> bool:
-    """True for a completion-synthesized done_with_concerns Outcome — the synthesis
-    DEFAULT result, not an agent-emitted failure signal. Scoped to that exact
-    provenance+result pair so a real agent's done_with_concerns still counts.
+    """True for a synthesized Outcome whose result is a synthesis artifact, not an
+    agent-emitted signal: completion-synthesized done_with_concerns (the synthesis
+    DEFAULT) and structuredoutput-derived done (schema-validated emit,
+    writer-unverified). Scoped to those exact provenance+result pairs so a real
+    agent's done_with_concerns still counts.
 
     budget-truncation is a sibling synthesized-provenance attribution but a real
     negative, not a measurement gap — the explicit guard keeps it clusterable and
-    holds that invariant even if the completion-synthesized match is broadened."""
+    holds that invariant even if the synthesized matches are broadened."""
     if o.attribution_source == _ATTRIBUTION_BUDGET_TRUNCATION:
         return False
+    if (
+        o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
+        and o.result == "done"
+    ):
+        return True
     return (
         o.attribution_source == _ATTRIBUTION_SYNTHESIZED
         and o.result == "done_with_concerns"
@@ -2942,7 +2956,12 @@ def _is_failure_outcome(o: Outcome) -> bool:
 
 
 def _is_success_outcome(o: Outcome) -> bool:
-    """SUCCESS polarity: clean first-try done — never an absent/missing signal."""
+    """SUCCESS polarity: clean first-try done — never an absent/missing signal.
+
+    structuredoutput-derived carve-out: that row's done is synthesis-assigned
+    (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
+    if o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
+        return False
     return (
         o.result == "done"
         and o.revision_count == 0
