@@ -206,6 +206,40 @@ function buildLiteralOmissionBreakdownO(breakdown) {
   return { budget, truncated, missing };
 }
 
+// window_summary.dev_scope → DEV-agent truncation/synthesized baseline (compact 2-tile).
+//   同一 window 텔레메트리의 DEV 하위집합 — no-[COMPLETION]/budget-truncation 실패 모드를
+//   DEV 에이전트 한정으로 가시화 + rolling baseline(비율 자체가 baseline).
+//   DEV window 에 귀속행 0건(부재/빈 subset) → null (0/0 clutter 회피).
+function AttributionDevScopeO({ devScope }) {
+  if (!devScope || typeof devScope !== 'object') return null;
+  const total = Number(devScope.total_attributed) || 0;
+  if (total <= 0) return null;
+  const truncCount = Number(devScope.budget_truncation_count) || 0;
+  return (
+    <div className="mt-3 pt-3 border-t border-line">
+      <div className="fs-micro font-mono text-faint uppercase tracking-wider mb-1.5">
+        DEV agents · truncation baseline
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div
+          className="bg-elev rounded-md p-2.5 border border-line"
+          title="Budget-truncation (no-[COMPLETION] budget kill) rate for DEV agents over the selected window — the rolling baseline to watch for recurrence">
+          <div className="fs-micro font-mono text-dim">Budget-kill rate</div>
+          <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
+          <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
+        </div>
+        <div
+          className="bg-elev rounded-md p-2.5 border border-line"
+          title="Synthesized-outcome rate for DEV agents — harness recovery when no [COMPLETION] block was emitted (not a failure, a recovery artifact)">
+          <div className="fs-micro font-mono text-dim">Synthesized rate</div>
+          <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
+          <div className="fs-micro font-mono text-dim mt-0.5">no-[COMPLETION] recovery</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // budget_truncation_by_agent → 'Budget-killed subagents (7d)' 컴팩트 미니리스트 (agent → count, 서버가 count DESC 정렬).
 //   빈 배열/부재 → null (저볼륨 신호라 non-empty 일 때만 노출 · 빈-상태 clutter 회피).
 function AttributionBudgetKillListO({ rows }) {
@@ -1086,6 +1120,7 @@ function AttributionHealthBody({ state, onRetry }) {
         </span>
       </div>
       <AttributionBudgetKillListO rows={summary?.budget_truncation_by_agent}/>
+      <AttributionDevScopeO devScope={summary?.dev_scope}/>
     </div>
   );
 }
