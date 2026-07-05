@@ -64,8 +64,10 @@ HAIKU_TIMEOUT_SEC = 90
 # Budget ceiling + model id are read from the daemon-config.json SoT (shared loader
 # hooks/daemon_config.py — the single fallback-policy SoT, degrades to verified literals if the file is
 # absent/corrupt). wiki has no pre-verify budget, so it uses only haiku_max_budget_usd + haiku_model.
-# hooks/ is not on this module's sys.path, so add the same one-line insert as daemon_cycle.py.
-_HOOKS_DIR = HOME / ".claude" / "hooks"
+# hooks/ is not on this module's sys.path — self-locate it from THIS file (store:
+# ~/.glass-atrium/{scripts,hooks} siblings; CI checkout: repo/{scripts,hooks}).
+# ~/.claude/hooks is no longer farmed, so a HOME-anchored insert breaks fresh installs.
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 from daemon_config import (  # noqa: E402 — sys.path insert immediately above

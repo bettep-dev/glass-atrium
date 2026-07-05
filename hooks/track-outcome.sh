@@ -1851,7 +1851,9 @@ emit_error "DATA-070" "info" \
 # markdown body so the renderer CLI can reconstruct human-readable output on demand.
 # The signals[] envelope below is the single sink for correction-detection events.
 # DB contract: psycopg.connect("dbname=glass_atrium") only — no -h/host/localhost.
-PG_HELPER="${HOME}/.claude/hooks/_pg_outcome_dualwrite.py"
+# Sibling-of-this-script resolution — hooks are consumed in place from the store
+# (~/.claude/hooks is no longer farmed), so a HOME-anchored path breaks fresh installs.
+PG_HELPER="${BASH_SOURCE%/*}/_pg_outcome_dualwrite.py"
 if [ -x "${PG_HELPER}" ]; then
   # Build JSON envelope: outcome dict mirrors frontmatter (parameter-name 3-layer
   # discipline), plus the correction signal (if detected) and an empty learning_hint

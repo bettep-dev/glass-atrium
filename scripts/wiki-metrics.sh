@@ -35,7 +35,9 @@ readonly QUERY_SH="${SCRIPT_DIR}/wiki-query.sh"
 readonly SYNC_SH="${SCRIPT_DIR}/wiki-sync.sh"
 readonly INIT_SH="${SCRIPT_DIR}/wiki-init-db.sh"
 readonly LOCK_SH="${SCRIPT_DIR}/wiki-lock.sh"
-readonly VALIDATOR_SH="${HOME}/.claude/hooks/validate-pre-write-raw.sh"
+# Store-root form (same convention as WIKI_ROOT): hooks are consumed in place
+# from the store — ~/.claude/hooks is no longer farmed.
+readonly VALIDATOR_SH="${HOME}/.glass-atrium/hooks/validate-pre-write-raw.sh"
 
 # KPI target values.
 readonly TARGET_TIME_S=60

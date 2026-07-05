@@ -37,11 +37,15 @@ if [[ -n "${_PROGRESS_TRACKER_LOADED:-}" ]]; then
 fi
 readonly _PROGRESS_TRACKER_LOADED=1
 
-# Resolve script directory portably (no readlink -f on macOS BSD).
-_PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the REAL script directory: readlink -f dereferences the farmed
+# ~/.claude/scripts per-file symlink (macOS 12.3+ ships readlink -f; same realpath
+# discipline as cost-tracker.sh). An unresolved dirname would send ../hooks to
+# ~/.claude/hooks — no longer farmed, absent on fresh installs.
+_progress_self="$(readlink -f -- "${BASH_SOURCE[0]}")" || _progress_self="${BASH_SOURCE[0]}"
+_PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${_progress_self}")" && pwd)"
 
 # Source shared hook utilities (provides hook_read_input/get_field/emit_error).
-# hook-utils.sh lives in ~/.claude/hooks/, our directory is ~/.claude/scripts/.
+# hook-utils.sh lives in the store hooks/ dir — a sibling of our scripts/ dir.
 # shellcheck source=/dev/null
 source "${_PROGRESS_SCRIPT_DIR}/../hooks/hook-utils.sh"
 

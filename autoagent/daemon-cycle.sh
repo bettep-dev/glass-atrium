@@ -150,7 +150,9 @@ APPLY_SH="${SCRIPT_DIR}/daemon-apply.sh"
 # DEPRECATED: daemon-regression.sh archived. Variable kept for backward-compat
 # with --regression-only callers (now a no-op stub) so external references don't error.
 REGRESSION_SH="${SCRIPT_DIR}/archive/daemon-regression-deprecated-2026-05-02.sh"
-AGGREGATOR_PY="${HOME}/.claude/hooks/learning-aggregator.py"
+# Store-root form (same convention as CLAUDE_AUTH_ENV_LIB / PAUSE_FLAG_LIB): hooks
+# are consumed in place from the store — ~/.claude/hooks is no longer farmed.
+AGGREGATOR_PY="${HOME}/.glass-atrium/hooks/learning-aggregator.py"
 
 if [[ ! -f "${PY_MODULE}" ]]; then
     printf '[daemon-cycle] FATAL: missing %s\n' "${PY_MODULE}" >&2

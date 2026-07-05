@@ -626,15 +626,19 @@ fi
 # Feed the whole multi-line parser output to a single python writer-driver via an
 # env var (same security pattern as the parser — no shell interpolation of the
 # JSON). The driver splits on newlines and writes each row through the helper.
+# PG_HELPER: sibling of the CANONICALIZED script path (same realpath discipline as
+# PRICING_LIB_DIR above — an unresolved dirname under a symlinked invocation would
+# point at a dir without the helper). Passed via env: __file__ absent under -c.
 # shellcheck disable=SC2016
 PG_LINES="${PARSED}" \
   SESSION_ID="${SESSION_ID}" \
+  PG_HELPER="${COST_TRACKER_REAL%/*}/_pg_dual_write.py" \
   python3 -c '
 import json, os, sys, subprocess
 
 lines = os.environ.get("PG_LINES", "")
 session_id = os.environ["SESSION_ID"]
-helper = os.path.expanduser("~/.claude/hooks/_pg_dual_write.py")
+helper = os.environ["PG_HELPER"]
 
 
 def build_row(parsed):

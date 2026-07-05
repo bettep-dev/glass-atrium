@@ -27,9 +27,9 @@
 # R2-positive cases INSERT the NEW 10th attribution token into the live-reachable DB → they
 # probe the live CHECK first and skip until the live ALTER lands (orchestrator deploy step).
 #
-# Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...), the diag
-# log, and the PG helper path (${HOME}/.claude/hooks/_pg_outcome_dualwrite.py) are redirected
-# into the test temp dir. A copy of the real PG helper is placed there. psycopg lives in the
+# Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...) and the
+# diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
+# SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
 # into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
 # teardown DELETE so the shared glass_atrium DB is never polluted. The tool-budget counter dir
@@ -66,12 +66,8 @@ setup() {
   # so any slug works) — a hardcoded literal would be PII in the tracked tree (pii-scan gate).
   PROJ_SLUG="${HOME//\//-}"
   TRANSCRIPT_DIR="${SANDBOX_HOME}/.claude/projects/${PROJ_SLUG}/${SESSION_ID}/subagents"
-  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs" "${SANDBOX_HOME}/.claude/hooks"
+  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs"
   TRANSCRIPT="${TRANSCRIPT_DIR}/agent-${AGENT_ID}.jsonl"
-
-  # Copy the real PG helper into the sandbox HOME (the hook resolves it HOME-relative).
-  cp "${PG_HELPER_SRC}" "${SANDBOX_HOME}/.claude/hooks/_pg_outcome_dualwrite.py"
-  chmod +x "${SANDBOX_HOME}/.claude/hooks/_pg_outcome_dualwrite.py"
 
   BUDGET_DIR="${SM_TMP}/agent-tool-budget"
   mkdir -p "${BUDGET_DIR}"
