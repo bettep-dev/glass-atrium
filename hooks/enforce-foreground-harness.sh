@@ -22,7 +22,7 @@
 #            never break the user's session on infrastructure failure).
 #
 # BASENAME exception:
-#   CLAUDE.md, MEMORY.md, GLOBAL_RULES.md may be written directly. If every
+#   CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md may be written directly. If every
 #   harness-path occurrence in the prompt resolves to one of these basenames,
 #   the call is exempt.
 #
@@ -135,7 +135,7 @@ fi
 
 # BASENAME exception evaluation:
 # A match is "exempt" when its first path segment after the harness root is one
-# of {CLAUDE.md, MEMORY.md, GLOBAL_RULES.md} — i.e. the prompt references the
+# of {CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md} — i.e. the prompt references the
 # allowlisted root-level files directly. If EVERY match is exempt, the call is
 # exempt as a whole.
 #
@@ -173,7 +173,7 @@ while IFS= read -r path; do
   # First segment after the root.
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
-    CLAUDE.md | MEMORY.md | GLOBAL_RULES.md) continue ;;
+    CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
     *)
       all_exempt=false
       break

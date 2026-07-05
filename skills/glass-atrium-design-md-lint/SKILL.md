@@ -42,7 +42,7 @@ Deterministic structural lint of a DESIGN.md token graph. Parses the Base/Semant
 
 1. **broken-ref [error]** — every Semantic/Component alias (a `var(--x)` reference or a `{tier.token.path}` brace alias) MUST resolve to a defined token. A raw color literal (`#rgb`, `rgba(...)`) sitting at the Component tier where an alias belongs is also a broken-ref — raw values are allowed ONLY at the Base tier.
 2. **orphaned-token [warning]** — a Base token referenced by no alias. Multi-mode tokens (`*-dark`, `*-high-contrast`, colorblind variants) are NOT orphans: they are re-points of a semantic name consumed by mode switching (MD3 multi-mode aware), so they are excluded.
-3. **section-order [warning]** — the canonical DESIGN.md section order (Visual Theme → Color → Typography → Spacing → Layout → Components → Motion → Voice → Anti-Patterns) is preserved. Unrecognized sections are kept, never flagged (Consumers MUST preserve unrecognized sections per design-designer.md §section minimalism).
+3. **section-order [warning]** — the canonical DESIGN.md section order (Visual Theme → Color → Typography → Spacing → Layout → Components → Motion → Voice → Anti-Patterns) is preserved. Unrecognized sections are kept, never flagged (Consumers MUST preserve unrecognized sections per glass-atrium-design-designer.md §section minimalism).
 
 ## Usage
 

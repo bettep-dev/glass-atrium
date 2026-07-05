@@ -2,9 +2,10 @@
 # validate-compliance-matrix.sh — Two-layer audit of core-compliance-matrix.md.
 #
 # Layer A (advisory, exit 0): filename-set drift between the matrix's declared
-#   rule files and the actual ~/.claude/rules/ (+ ~/.claude/scoped/) filesystem.
-#   A renamed/deleted file without a matrix update (broken pointer) or a new
-#   undeclared file (governance gap) surfaces as a single banner line.
+#   rule files and the actual ~/.claude/rules/ (+ ~/.glass-atrium/
+#   scoped/) filesystem. A renamed/deleted file without a matrix update (broken
+#   pointer) or a new undeclared file (governance gap) surfaces as a single
+#   banner line.
 #
 # Layer B (enforcement, exit 2 on a CONFIRMED inconsistency): MATRIX-INTERNAL
 #   consistency — verifies the matrix table agrees with its own declarations:
@@ -41,14 +42,22 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/core-compliance-matrix.md}"
-readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules}"
-# Scoped-rules dir — Tier-2/Tier-3 rule files relocated OUT of the rules/*.md
-# main-session autoload glob (Approach A diet) still live here as real files
-# reachable for on-demand subagent reads. They remain matrix-declared, so the
-# drift scan MUST union this dir into the actual-present set; otherwise every
-# relocated file would falsely show as declared-missing each session.
-readonly SCOPED_DIR="${COMPLIANCE_SCOPED_DIR:-${HOME}/.claude/scoped}"
+# Native rules live FOLDERED at ~/.claude/rules/glass-atrium/*.md — the
+# rules-recursion probe settled RECURSIVE (native autoload discovers nested
+# rule files), so foldering is safe. MATRIX_FILE + RULES_DIR default to that
+# folder; both stay ENV-overridable so the Bats suite can drive Layer B against
+# controlled fixtures. These SessionStart hooks are client-fired (a
+# settings.json env block may not reach them), so the DEFAULT constants — not
+# an env block — carry the foldered paths.
+readonly MATRIX_FILE="${COMPLIANCE_MATRIX_FILE:-${HOME}/.claude/rules/glass-atrium/core-compliance-matrix.md}"
+readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules/glass-atrium}"
+# Scoped-rules dir — Tier-2/Tier-3 rule files relocated OUT of the native rules
+# autoload glob (Approach A diet) are consumed IN PLACE from ~/.glass-atrium/scoped
+# (dropped from the ~/.claude farm), reachable for on-demand + hook-injected reads.
+# They remain matrix-declared, so the drift scan MUST union this dir into the
+# actual-present set; otherwise every relocated file would falsely show as
+# declared-missing each session.
+readonly SCOPED_DIR="${COMPLIANCE_SCOPED_DIR:-${HOME}/.glass-atrium/scoped}"
 
 # Files that physically live in rules/ but are not loadable rules themselves.
 # core-compliance-matrix.md is the governance manifest (this script reads it as
@@ -301,7 +310,7 @@ actual="$(
     | sort -u
 )"
 
-# Symlinked entries (e.g. GLOBAL_RULES.md -> agents/GLOBAL_RULES.md) count as
+# Symlinked entries (e.g. GLASS_ATRIUM_GLOBAL_RULES.md -> agents/GLASS_ATRIUM_GLOBAL_RULES.md) count as
 # present; -type l catches them.
 actual_links="$(
   find "${RULES_DIR}" -maxdepth 1 -type l -name '*.md' -exec basename {} \; 2>/dev/null \

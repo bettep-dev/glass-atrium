@@ -111,20 +111,31 @@ fi
 #   scope field and can no longer name the DEV subset) by agent_lifecycle: the add/delete transaction
 #   + `python -m agent_lifecycle sync-gate-roster`. Manual editing is NO LONGER the sync path — do NOT
 #   hand-edit the lists.
+#
+# H6 TRANSITION-WINDOW DUAL-MATCH (glass-atrium- roster prefix): pre-rename outcome
+#   rows carry BARE agent names ('intel-planner', 'dev-front', ...). The inner
+#   subquery lifts a bare name to its prefixed form (norm_agent) so those rows stay
+#   visible to every agent comparison, while the IN-lists stay prefixed-only
+#   (auto-synced — do NOT hand-add bare names; sync-gate-roster would drop them).
 read -r -d '' AUDIT_SQL <<SQL || true
 WITH grp AS (
   SELECT coalesce(cid, correlation_id) AS gid,
-         bool_or(agent = 'intel-planner') AS has_planner,
+         bool_or(norm_agent = 'glass-atrium-intel-planner') AS has_planner,
          bool_or(task_type = 'plan') AS has_plan_task,
-         bool_or(agent = 'qa-code-reviewer') AS has_reviewer,
-         bool_or(agent IN (
-           'dev-front','dev-react','dev-angular','dev-gsap','dev-android',
-           'dev-nestjs','dev-node','dev-python','dev-db','dev-rag',
-           'dev-animator','dev-shell','dev-swift'
+         bool_or(norm_agent = 'glass-atrium-qa-code-reviewer') AS has_reviewer,
+         bool_or(norm_agent IN (
+           'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
+           'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
          )) AS has_dev,
          count(*) AS n,
          min(record_ts) AS first_ts
-  FROM core.outcomes
+  FROM (
+    SELECT cid, correlation_id, task_type, record_ts,
+           CASE WHEN agent LIKE 'glass-atrium-%' THEN agent
+                ELSE 'glass-atrium-' || agent END AS norm_agent
+    FROM core.outcomes
+  ) o
   WHERE coalesce(cid, correlation_id) IS NOT NULL
     AND record_ts >= now() - (interval '1 day' * ${days})
   GROUP BY coalesce(cid, correlation_id)
@@ -140,18 +151,24 @@ ORDER BY first_ts DESC;
 SQL
 
 # Summary-count SQL — computes denominator/numerator together (all plan-CIDs vs gate-not-run).
+# Same H6 norm_agent lift as AUDIT_SQL (pre-rename bare-name rows stay counted).
 read -r -d '' SUMMARY_SQL <<SQL || true
 WITH grp AS (
   SELECT coalesce(cid, correlation_id) AS gid,
-         bool_or(agent = 'intel-planner') AS has_planner,
+         bool_or(norm_agent = 'glass-atrium-intel-planner') AS has_planner,
          bool_or(task_type = 'plan') AS has_plan_task,
-         bool_or(agent = 'qa-code-reviewer') AS has_reviewer,
-         bool_or(agent IN (
-           'dev-front','dev-react','dev-angular','dev-gsap','dev-android',
-           'dev-nestjs','dev-node','dev-python','dev-db','dev-rag',
-           'dev-animator','dev-shell','dev-swift'
+         bool_or(norm_agent = 'glass-atrium-qa-code-reviewer') AS has_reviewer,
+         bool_or(norm_agent IN (
+           'glass-atrium-dev-front','glass-atrium-dev-react','glass-atrium-dev-angular','glass-atrium-dev-gsap','glass-atrium-dev-android',
+           'glass-atrium-dev-nestjs','glass-atrium-dev-node','glass-atrium-dev-python','glass-atrium-dev-db','glass-atrium-dev-rag',
+           'glass-atrium-dev-animator','glass-atrium-dev-shell','glass-atrium-dev-swift'
          )) AS has_dev
-  FROM core.outcomes
+  FROM (
+    SELECT cid, correlation_id, task_type, record_ts,
+           CASE WHEN agent LIKE 'glass-atrium-%' THEN agent
+                ELSE 'glass-atrium-' || agent END AS norm_agent
+    FROM core.outcomes
+  ) o
   WHERE coalesce(cid, correlation_id) IS NOT NULL
     AND record_ts >= now() - (interval '1 day' * ${days})
   GROUP BY coalesce(cid, correlation_id)

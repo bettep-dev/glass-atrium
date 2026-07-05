@@ -14,9 +14,16 @@
 #     fixed-name throwaway claude_oss_e2e, and ONLY when this run created it.
 #   * aborts when claude_oss_e2e already exists (refuses to adopt/drop a db
 #     this run did not create).
-#   * launchd is static-verified only (rendered plists) — launchctl is NEVER
-#     invoked; loading plists stays a manual user step (scripts/daemon-README.md
-#     "Loading the launchd Plists").
+#   * launchd, install side: static-verified only (rendered plists) — this run
+#     passes neither --load-launchd nor --repoint-launchd, so INSTALL never
+#     invokes launchctl; loading plists stays a manual user step
+#     (scripts/daemon-README.md "Loading the launchd Plists").
+#   * launchd, uninstall side: `glass-atrium uninstall` DOES invoke `launchctl
+#     bootout gui/$UID/com.glass-atrium.*` in real-home runs — and gui-domain
+#     labels are per-UID, NOT per-HOME, so a fake-HOME run would still hit the
+#     REAL user's live jobs. What protects the authoring machine here is the
+#     engine's sandbox guard (lib/ga-core.sh is_sandbox_target → the
+#     unload_launchd_jobs "launchd domain untouched" skip), asserted in STEP 5.
 #
 # Env knobs:
 #   GA_E2E_SANDBOX  sandbox root (default: mktemp -d)
@@ -242,20 +249,33 @@ if [[ -f "${CLONE}/config.toml" ]]; then
 else
   no "config.toml not rendered"
 fi
-# symlink farm: pristine fake home → links == the INCLUDE-A (symlinked) manifest
-# subset, NOT the full manifest. The manifest also bundles INCLUDE-B files
-# (prefixes lib/ + monitor/, exact config.toml.example + requirements.txt) that
-# deploy to ~/.glass-atrium but are NEVER symlinked into ~/.claude, so the farm is
-# legitimately smaller than the manifest. Derive the expectation from the manifest
-# via the SAME exclusion filter the installer applies — lib/ga-core.sh
-# SYMLINK_EXCLUDE_PREFIXES / SYMLINK_EXCLUDE_EXACT / is_symlink_excluded is the SoT
-# (mirrored inline here) — so it stays in sync as the manifest grows. The glob uses
-# CLONE_REAL (physical path) to match the pwd -P targets `glass-atrium install` writes.
-FARM_EXPECT="$(jq '[.files[] | select((startswith("lib/") or startswith("monitor/") or . == "config.toml.example" or . == "requirements.txt") | not)] | length' "${CLONE}/manifest.json")"
+# symlink farm: pristine fake home → links == the FARMED manifest subset, NOT
+# the full manifest. The manifest also bundles install-internal entries (lib/,
+# monitor/, hooks/, scoped/, config.toml.example, ...) consumed in place from
+# ~/.glass-atrium and never symlinked into ~/.claude, so the farm is legitimately
+# smaller. Derive the expectation by running every manifest rel through the
+# ENGINE'S OWN filter (source the clone's ga-core.sh + is_symlink_excluded in a
+# subshell) — an inline mirror of SYMLINK_EXCLUDE_* goes stale as the farm set
+# evolves; the engine query cannot. The find glob uses CLONE_REAL (physical
+# path) to match the pwd -P targets `glass-atrium install` writes.
+FARM_EXPECT="$(
+  # subshell: sourcing the engine arms readonly globals — keep them contained
+  # shellcheck source=/dev/null
+  source "${CLONE}/lib/ga-core.sh" || exit 1
+  ga_init_env "${CLONE}" || exit 1
+  expect=0
+  while IFS= read -r rel; do
+    [[ "$(is_symlink_excluded "${rel}")" == "no" ]] && expect=$((expect + 1))
+  done < <(jq -r '.files[]' "${CLONE}/manifest.json")
+  printf '%s\n' "${expect}"
+)"
+[[ "${FARM_EXPECT}" =~ ^[0-9]+$ && "${FARM_EXPECT}" -gt 0 ]] \
+  && ok "farm expectation derived via engine is_symlink_excluded (${FARM_EXPECT} of $(jq '.files | length' "${CLONE}/manifest.json") manifest entries)" \
+  || no "farm expectation derivation failed (got '${FARM_EXPECT}')"
 FARM_LINKS="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/dev/null | wc -l | tr -d ' ')"
 [[ "${FARM_LINKS}" -eq "${FARM_EXPECT}" ]] \
-  && ok "symlink farm complete — INCLUDE-A subset (${FARM_LINKS}/${FARM_EXPECT})" \
-  || no "symlink farm ${FARM_LINKS} != INCLUDE-A manifest subset ${FARM_EXPECT}"
+  && ok "symlink farm complete — farmed subset (${FARM_LINKS}/${FARM_EXPECT})" \
+  || no "symlink farm ${FARM_LINKS} != farmed manifest subset ${FARM_EXPECT}"
 
 # =============================================================================
 hdr "STEP 3 — T20 config chain: non-default port -> render-monitor-env -> .env"
@@ -401,6 +421,13 @@ UNINST_RC=$?
     no "glass-atrium uninstall rc=${UNINST_RC}"
     tail -15 "${SANDBOX}/uninstall.log"
   }
+# SAFETY CONTRACT enforcement: this run's HOME is the fake sandbox, so the
+# engine's sandbox guard MUST have skipped the launchd teardown — otherwise the
+# uninstall just booted out the REAL user's live com.glass-atrium.* jobs
+# (gui-domain labels are per-UID, not per-HOME).
+grep -q 'sandbox target — launchd domain untouched' "${SANDBOX}/uninstall.log" \
+  && ok "sandbox guard fired — launchd domain untouched (real jobs protected)" \
+  || no "sandbox guard did NOT fire — uninstall may have hit the real gui/\$UID launchd domain"
 # CLONE_REAL (physical path) so the "zero remain" check is meaningful, not a
 # vacuous match against the never-targeted /var/folders prefix.
 LEFT="$(find "${FAKE_HOME}/.claude" -type l -lname "${CLONE_REAL}/*" 2>/dev/null | wc -l | tr -d ' ')"

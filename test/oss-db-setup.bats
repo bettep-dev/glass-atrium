@@ -99,7 +99,7 @@ run_setup() {
   [[ "$(diff "${FAKE_ROOT}/.env" "${FAKE_ROOT}/.env.example" | grep -c '^[<>]')" -eq 6 ]]
 }
 
-@test "post-deploy step applies the 9-value attribution_source CHECK constraint (incl budget-truncation)" {
+@test "post-deploy step applies the 10-value attribution_source CHECK constraint (incl structuredoutput-derived)" {
   # record every psql invocation's args; still answer existence probes with "1" so the
   # createdb branch is skipped and the run reaches the post-deploy constraint step.
   printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\necho 1\nexit 0\n' \
@@ -111,11 +111,11 @@ run_setup() {
   grep -q 'DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check' "${SANDBOX}/psql-args"
   grep -q 'ADD CONSTRAINT outcomes_attribution_source_check' "${SANDBOX}/psql-args"
   grep -q 'NOT VALID' "${SANDBOX}/psql-args"
-  # the 9th canonical value is present alongside all 8 pre-existing ones
+  # the 10th canonical value is present alongside all 9 pre-existing ones
   local v
   for v in hook-input cron-derived agent-id-missing subagent-stop-missing \
            completion-missing conversation-only truncated_completion \
-           completion-synthesized budget-truncation; do
+           completion-synthesized budget-truncation structuredoutput-derived; do
     grep -qF "${v}" "${SANDBOX}/psql-args" || {
       echo "missing canonical value: ${v}" >&2
       return 1

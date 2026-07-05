@@ -109,14 +109,41 @@ ga_init_env() {
   # skips all of these while the manifest still bundles + verifies them. Prefix
   # globs + exact basenames, TARGET_HOME-relative (mirrors the
   # COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).
+  #
+  # ESSENTIAL-SYMLINKS-ONLY drop-set: only the NATIVELY-DISCOVERED surfaces
+  # (agents/, skills/, rules/) stay farmed into ~/.claude; the INDIRECTED /
+  # non-native-discovery surfaces are consumed in place from ~/.glass-atrium and
+  # therefore joined the exclude set:
+  #   * hooks/  — the event->hook wiring in settings.json binds ABSOLUTE command
+  #     paths (repointed to ~/.glass-atrium/hooks by the hook-template unit), so
+  #     no ~/.claude/hooks symlink is needed for the client to fire them.
+  #   * scoped/ — NOT natively auto-loaded (native rule auto-load is
+  #     ~/.claude/rules/*.md only); scoped/*.md is hook-INJECTED per-agent from
+  #     ~/.glass-atrium/scoped, so a ~/.claude/scoped link is dead weight.
+  #   * agent-registry.json — the monitor + agent_lifecycle consumers resolve it
+  #     from ~/.glass-atrium (env-independent default), so the ~/.claude link is
+  #     a runtime dangling reference once dropped.
+  #   * glass-atrium (the launcher) — invoked via the PATH-exported ~/.glass-atrium
+  #     copy, never through a ~/.claude alias.
+  # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these four
+  # surfaces MUST NOT take runtime effect before their long-running consumers are
+  # repointed (settings.json hook command path; monitor registry.ts default;
+  # inject-scope-rules/validate-compliance-matrix SCOPED source) — otherwise a
+  # live install orphans them (hook blackout / dangling registry / empty scope
+  # injection). Those consumer repoints land in their own units; this array edit
+  # is the farm-side mechanic only.
   SYMLINK_EXCLUDE_PREFIXES=(
     "lib/"
     "monitor/"
+    "hooks/"
+    "scoped/"
   )
   readonly SYMLINK_EXCLUDE_PREFIXES
   SYMLINK_EXCLUDE_EXACT=(
     "config.toml.example"
     "requirements.txt"
+    "agent-registry.json"
+    "glass-atrium"
   )
   readonly SYMLINK_EXCLUDE_EXACT
 
@@ -484,6 +511,47 @@ is_symlink_excluded() {
   printf 'no\n'
 }
 
+# --- sandbox-target guard (launchd domain protection) -----------------------
+# Echo "yes" when this run targets a NON-real home, via EITHER sandbox seam:
+#   (a) GA_TARGET_HOME override — TARGET_HOME points off ${HOME}/.claude (the
+#       bats/CI pattern: HOME stays real, target redirected);
+#   (b) fake-HOME sandbox — ${HOME} diverges from the current user's passwd-db
+#       home (the oss-e2e-bootstrap.sh pattern: HOME=<sandbox>, GA_TARGET_HOME
+#       unset, so seam (a) alone can NEVER see it).
+# WHY both: launchd gui-domain labels are per-UID, NOT per-HOME — a fake-HOME
+# run still mutates the REAL user's gui/${UID} domain, so launchctl teardown
+# must key on "is this the real home", not on path derivation alone.
+# Passwd-db home via dscl (macOS) / getent (Linux); UNRESOLVABLE → "no"
+# (real-home semantics preserved — every host where bootout can actually run
+# is macOS, where dscl always resolves the local user).
+# Stdout-verdict (always exits 0), mirroring is_never_touch / is_symlink_excluded.
+is_sandbox_target() {
+  if [[ "${TARGET_HOME}" != "${HOME}/.claude" ]]; then
+    printf 'yes\n'
+    return 0
+  fi
+  local un pw_home="" pw_raw=""
+  un="$(id -un 2>/dev/null)" || un=""
+  if [[ -n "${un}" ]]; then
+    if command -v dscl >/dev/null 2>&1; then
+      pw_raw="$(dscl . -read "/Users/${un}" NFSHomeDirectory 2>/dev/null)" || pw_raw=""
+      # "NFSHomeDirectory: /path" → prefix-strip via expansion (pipe-free)
+      if [[ "${pw_raw}" == "NFSHomeDirectory: "* ]]; then
+        pw_home="${pw_raw#NFSHomeDirectory: }"
+      fi
+    elif command -v getent >/dev/null 2>&1; then
+      pw_raw="$(getent passwd "${un}" 2>/dev/null)" || pw_raw=""
+      # passwd(5) field 6 via IFS split (pipe-free)
+      IFS=: read -r _ _ _ _ _ pw_home _ <<<"${pw_raw}"
+    fi
+  fi
+  if [[ -n "${pw_home}" && "${pw_home}" != "${HOME}" ]]; then
+    printf 'yes\n'
+  else
+    printf 'no\n'
+  fi
+}
+
 # --- config.toml render ----------------------------------------------------
 # Render config.toml.example (tracked, ${HOME}-placeholder template) into
 # config.toml (git-ignored) by expanding ONLY the ${HOME} placeholder; every
@@ -787,10 +855,85 @@ swap_symlink() {
   log "linked: ${rel}"
 }
 
+# --- wire repoint primitive: migrate old-dir hook commands to the new dir ------
+# An EXISTING install wired its hooks under ${HOME}/.claude/hooks/<hook>. After
+# the command-template repoint (wire_hooks now emits ${HOME}/.glass-atrium/hooks),
+# is_hook_bound() still matches those stale bindings BY BASENAME, so the wire
+# add-loop would treat them as already-wired and SKIP → the repoint would be a
+# silent no-op on an established install. This pass REWRITES every hook command
+# resolving under the OLD Atrium hooks dir to the NEW one (basename + any suffix
+# preserved), so the repoint actually lands before the idempotency check runs.
+#
+# DATA-SAFETY — same "only Atrium commands" property as unwire_hooks: only a
+# command whose (tilde-normalized) path startswith ${HOME}/.claude/hooks/ is
+# rewritten; a foreign user hook at any other path fails the prefix and is
+# preserved byte-for-byte. MERGE (every other key flows through `.`), ATOMIC
+# (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct
+# suffix so it never clobbers wire_hooks' own backup), injection-safe (--arg
+# everywhere → no path value ever reaches the jq program text).
+rewrite_hook_paths() {
+  local old_dir="${HOME}/.claude/hooks/"
+  local new_dir="${HOME}/.glass-atrium/hooks/"
+
+  # count commands currently resolving under the old dir (tilde-aware). jq failure
+  # (malformed json already ruled out by the caller) → 0 → clean no-op.
+  local pending
+  pending="$(
+    jq -r --arg old "${old_dir}" --arg home "${HOME}" '
+      def norm:
+        (. // "")
+        | (if startswith("~/") then $home + .[1:] else . end);
+      [ (.hooks // {}) | to_entries[] | .value[]? | (.hooks // [])[]? | .command | norm
+        | select(startswith($old)) ] | length
+    ' -- "${SETTINGS_JSON}" 2>/dev/null || printf '0'
+  )"
+  [[ -z "${pending}" ]] && pending=0
+  if [[ "${pending}" -eq 0 ]]; then
+    return 0
+  fi
+
+  # back up ONCE before the rewrite — distinct suffix from wire_hooks' backup so a
+  # same-second wire backup cannot overwrite this pre-rewrite image.
+  local backup
+  backup="${SETTINGS_JSON}.ga-repoint-backup.$(date +%Y%m%d-%H%M%S)"
+  cp -p -- "${SETTINGS_JSON}" "${backup}"
+  log "rewrite_hook_paths: backed up settings.json -> ${backup}"
+
+  RENDER_TMP="${SETTINGS_JSON}.ga-repoint.$$"
+  jq --arg old "${old_dir}" --arg new "${new_dir}" --arg home "${HOME}" '
+    def repoint:
+      (. // "") as $c
+      | (if ($c | startswith("~/")) then $home + $c[1:] else $c end) as $abs
+      | (if ($abs | startswith($old)) then $new + $abs[($old | length):] else $c end);
+    if (.hooks | type) == "object" then
+      .hooks |= map_values(
+        if type == "array" then
+          map(
+            if (.hooks | type) == "array" then
+              .hooks |= map(
+                if (.command | type) == "string" then .command |= repoint else . end
+              )
+            else . end
+          )
+        else . end
+      )
+    else . end
+  ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
+
+  if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
+    rm -f -- "${RENDER_TMP}"
+    RENDER_TMP=""
+    die "rewrite_hook_paths: repoint produced invalid JSON — backup preserved at ${backup}"
+  fi
+  mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
+  RENDER_TMP=""
+  log "rewrite_hook_paths: repointed ${pending} hook command(s) ${old_dir} -> ${new_dir} (backup: ${backup})"
+}
+
 # --- settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium
 #     hook commands, never any other key) -------------------------------------
 # Upserts each EXPECTED_HOOK_BINDINGS entry into settings.json under its event,
-# attaching the declared matcher + the "$HOME/.claude/hooks/<basename>" command.
+# attaching the declared matcher + the "$HOME/.glass-atrium/hooks/<basename>" command.
 #
 # SAFETY CONTRACT (why this cannot clobber user config):
 #   * MERGE not overwrite — the jq transform reads the FULL existing object and
@@ -826,6 +969,14 @@ wire_hooks() {
     die "wire_hooks: ${SETTINGS_JSON} is not valid JSON — refusing to merge (fix or restore it first)"
   fi
 
+  # REPOINT existing bindings BEFORE the idempotency loop. is_hook_bound compares
+  # by BASENAME, so an established install whose commands still point at the OLD
+  # ${HOME}/.claude/hooks dir would be seen as "already wired" and the add-loop
+  # would SKIP them → the template repoint below would be a silent no-op. The
+  # rewrite pass first migrates any old-dir command to the new dir so a repoint
+  # actually lands (see rewrite_hook_paths).
+  rewrite_hook_paths
+
   # back up ONCE before the FIRST mutation — timestamped, user-recoverable. Taken
   # lazily (only when a binding is actually about to be written) so a fully-wired
   # re-run stays a true no-op (zero filesystem writes), not an accumulating backup.
@@ -834,7 +985,9 @@ wire_hooks() {
   local binding event hook matcher cmd added=0 already=0
   for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
     IFS=$'\t' read -r event hook matcher <<<"${binding}"
-    cmd="${HOME}/.claude/hooks/${hook}"
+    # command template repointed to the in-place ~/.glass-atrium/hooks consumer
+    # (the ~/.claude/hooks farm is dropped; hooks fire from the install root).
+    cmd="${HOME}/.glass-atrium/hooks/${hook}"
 
     # idempotency: already bound under this event+matcher (command-within-matcher
     # compare) → no-op. Matcher-scoped so the same hook can be wired under two
@@ -1274,20 +1427,23 @@ read_manifest_dirs() {
 }
 
 # --- settings.json un-wire (remove ALL Atrium hook bindings) ----------------
-# Removes EVERY hook-group in settings.json whose command resolves into the
-# Atrium hooks directory (~/.claude/hooks), across ALL events. This is
+# Removes EVERY hook-group in settings.json whose command resolves into EITHER
+# Atrium hooks directory — the legacy farm dir (~/.claude/hooks) or the in-place
+# consumer dir (~/.glass-atrium/hooks) — across ALL events. This is
 # DELIBERATELY independent of the EXPECTED_HOOK_BINDINGS enumeration: that array
 # lists the complete install-wired binding set (42 entries), whereas the deployed
 # symlink farm can carry bindings outside that set (a user may hand-wire an Atrium
 # hook, or the array may drift from the physically deployed set) — iterating the
 # array would leave the
-# surplus bound (dead links after uninstall). ~/.claude/hooks IS the Atrium-
-# managed symlink farm (removed on uninstall), so ANY binding pointing there is
-# Atrium's and becomes a dead link — it must go.
+# surplus bound (dead links after uninstall). Both dirs are Atrium-owned —
+# ~/.claude/hooks IS the Atrium-managed legacy symlink farm (removed on
+# uninstall) and ~/.glass-atrium/hooks IS the release tree the repointed wire
+# template binds — so ANY binding pointing into either becomes dead: it must go.
 #
 # PATH-TOLERANT match (mirrors the doctor check's tilde-vs-absolute tolerance):
 # a command matches when, after normalizing a leading '~' to $HOME, it carries
-# the "$HOME/.claude/hooks/" prefix. So the tilde form ('~/.claude/hooks/<x>',
+# the "$HOME/.claude/hooks/" OR "$HOME/.glass-atrium/hooks/" prefix. So the
+# tilde form ('~/.claude/hooks/<x>',
 # the shape real settings.json stores), the ${HOME}-expanded absolute form, and
 # the literal absolute form ALL match, while a user hook elsewhere (e.g.
 # '~/my-hooks/x.sh') is preserved. Basename-independent — it keys on the hooks
@@ -1334,10 +1490,14 @@ unwire_hooks() {
   cp -p -- "${SETTINGS_JSON}" "${backup}"
   log "unwire_hooks: backed up settings.json -> ${backup}"
 
-  # Atrium hooks dir (absolute, current $HOME). Any binding whose command resolves
-  # here is Atrium's — matched path-tolerantly (a leading '~' is normalized to
-  # $HOME below, so tilde + absolute forms both match).
+  # Atrium hooks dirs (absolute, current $HOME) — DUAL: the legacy farm dir
+  # (${HOME}/.claude/hooks/) AND the in-place consumer dir (${HOME}/.glass-atrium/
+  # hooks/) that the repointed wire template now emits. Any binding whose command
+  # resolves under EITHER is Atrium-owned — matched path-tolerantly (a leading '~'
+  # is normalized to $HOME below, so tilde + absolute forms both match). Both
+  # prefixes are Atrium-owned, so the "foreign user hooks survive" property holds.
   local hooks_dir="${HOME}/.claude/hooks/"
+  local hooks_dir_new="${HOME}/.glass-atrium/hooks/"
 
   # iterate EVERY event under .hooks (SoT-INDEPENDENT — NOT EXPECTED_HOOK_BINDINGS)
   # so all deployed + future Atrium hooks are covered. The key list is snapshotted
@@ -1353,17 +1513,18 @@ unwire_hooks() {
     local tmp
     tmp="${SETTINGS_JSON}.ga-unwire.$$"
     # DROP every hook-group under this event that holds a command resolving into
-    # the Atrium hooks dir. into_hooksdir normalizes a leading '~' to $HOME (via
+    # EITHER Atrium hooks dir. into_hooksdir normalizes a leading '~' to $HOME (via
     # string slicing — never regex, so a $HOME with regex/replacement metachars is
-    # byte-safe), then tests the "$HOME/.claude/hooks/" prefix. A user hook at any
-    # other path fails the prefix and is preserved. --arg everywhere → no value is
-    # interpolated into the jq program (injection-safe). Editing over an absent /
-    # non-array .hooks[event] is a safe no-op (the `else .` branch returns input).
-    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg home "${HOME}" '
+    # byte-safe), then tests the "$HOME/.claude/hooks/" AND "$HOME/.glass-atrium/
+    # hooks/" prefixes. A user hook at any other path fails both and is preserved.
+    # --arg everywhere → no value is interpolated into the jq program (injection-
+    # safe). Editing over an absent / non-array .hooks[event] is a safe no-op (the
+    # `else .` branch returns input).
+    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg dir2 "${hooks_dir_new}" --arg home "${HOME}" '
       def into_hooksdir:
         (. // "")
         | (if startswith("~/") then $home + .[1:] else . end)
-        | startswith($dir);
+        | (startswith($dir) or startswith($dir2));
       if (.hooks[$ev] | type) == "array" then
         .hooks[$ev] |= map(
           select(
@@ -1563,7 +1724,7 @@ run_doctor() {
   fi
   if [[ "${unbound}" -gt 0 ]]; then
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
-    log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.claude/hooks/<hook>.sh\"}]}"
+    log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
     log "       NOTE: this doctor check is read-only and never writes settings.json. To apply these bindings, run 'glass-atrium install' — wire_hooks performs an idempotent, timestamped-backup MERGE of ONLY the Atrium hook bindings (it never deletes/overwrites user-owned keys; 'agents-only' skips it). You may also add them by hand."
   fi
 
@@ -1791,31 +1952,35 @@ verify_clean() {
     fail=1
   fi
 
-  # 2. zero Atrium hook bindings in settings.json
+  # 2. zero Atrium hook bindings in settings.json — DUAL-DIR, prefix-based.
+  #    An EXACT-cmd literal keyed on the OLD ${HOME}/.claude/hooks path would, after
+  #    the wire-template repoint, assert a never-wired path and always PASS — a
+  #    residual ${HOME}/.glass-atrium/hooks binding would slip through undetected.
+  #    Mirror unwire_hooks' dir-prefix approach instead: FAIL on ANY command that
+  #    (tilde-normalized) resolves under EITHER Atrium hooks dir, so no residual
+  #    Atrium binding under either prefix escapes the post-uninstall assertion.
   if [[ -f "${SETTINGS_JSON}" ]] && command -v jq >/dev/null 2>&1; then
     if ! jq -e . -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
       log "  FAIL : settings.json is not valid JSON (${SETTINGS_JSON})"
       fail=1
     else
-      local binding event hook matcher cmd bound=0
-      for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
-        IFS=$'\t' read -r event hook matcher <<<"${binding}"
-        cmd="${HOME}/.claude/hooks/${hook}"
-        local present
-        present="$(
-          jq -r --arg ev "${event}" --arg c "${cmd}" '
-            [ (.hooks[$ev] // [])[] | (.hooks // [])[]? | .command | select(. == $c) ] | length
-          ' -- "${SETTINGS_JSON}"
-        )"
-        if [[ "${present}" -gt 0 ]]; then
-          log "  FAIL : Atrium hook still bound — ${event} -> ${hook} (matcher=${matcher:-<none>})"
-          bound=$((bound + 1))
-        fi
-      done
-      if [[ "${bound}" -eq 0 ]]; then
-        log "  ok   : zero Atrium hook bindings in settings.json"
-      else
+      local old_dir="${HOME}/.claude/hooks/" new_dir="${HOME}/.glass-atrium/hooks/"
+      local residual
+      residual="$(
+        jq -r --arg d1 "${old_dir}" --arg d2 "${new_dir}" --arg home "${HOME}" '
+          def norm:
+            (. // "")
+            | (if startswith("~/") then $home + .[1:] else . end);
+          [ (.hooks // {}) | to_entries[] | .value[]? | (.hooks // [])[]? | .command | norm
+            | select(startswith($d1) or startswith($d2)) ] | length
+        ' -- "${SETTINGS_JSON}"
+      )"
+      [[ -z "${residual}" ]] && residual=0
+      if [[ "${residual}" -gt 0 ]]; then
+        log "  FAIL : ${residual} Atrium hook binding(s) still present in settings.json (under ~/.claude/hooks or ~/.glass-atrium/hooks)"
         fail=1
+      else
+        log "  ok   : zero Atrium hook bindings in settings.json"
       fi
     fi
   else
@@ -2101,12 +2266,27 @@ load_launchd_jobs() {
 # unload_launchd_jobs — uninstall teardown: bootout + remove the deployed plist for each
 # of the LAUNCHD_JOBS (inverse of load_launchd_jobs). IDEMPOTENT — a not-loaded job or an
 # absent plist is fine. launchctl absent → skip with a log (a machine without the jobs is
-# not a fault). The deployed plists in ${LAUNCH_AGENTS} are regenerable COPIES of the
-# rendered SoT (${RENDERED_PLIST_DIR}), which is left intact — so `rm -f` is correct here
-# (generated artifact, not a user config). Returns 0 (teardown is best-effort, never fatal).
+# not a fault). SANDBOX-GUARDED — a run against a non-real home (is_sandbox_target:
+# fake HOME or GA_TARGET_HOME seam) skips the whole teardown, because the gui/${UID}
+# domain is shared with the real user regardless of HOME. The deployed plists in
+# ${LAUNCH_AGENTS} are regenerable COPIES of the rendered SoT (${RENDERED_PLIST_DIR}),
+# which is left intact — so `rm -f` is correct here (generated artifact, not a user
+# config). Returns 0 (teardown is best-effort, never fatal).
 unload_launchd_jobs() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping launchd teardown (${#LAUNCHD_JOBS[@]} com.glass-atrium.* jobs — bootout + plist rm)"
+    return 0
+  fi
+  # SANDBOX GUARD: gui-domain labels are per-UID, NOT per-HOME — a sandboxed run
+  # (fake HOME or GA_TARGET_HOME) would bootout the REAL user's live jobs. Skip
+  # the WHOLE teardown, not just bootout: under a GA_TARGET_HOME-only sandbox
+  # HOME stays real, so ${LAUNCH_AGENTS} is the REAL ~/Library/LaunchAgents and
+  # the plist rm would hit real deployed plists. Skipping is the safe direction
+  # (fail-open); real-home runs are byte-identical to the pre-guard behavior.
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "uninstall: sandbox target — launchd domain untouched (bootout + plist rm skipped)"
     return 0
   fi
   if ! command -v launchctl >/dev/null 2>&1; then
@@ -2127,43 +2307,87 @@ unload_launchd_jobs() {
   return 0
 }
 
-# drop_databases — uninstall teardown: DROP the GA PostgreSQL databases (primary
-# ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a reinstall recreates a fresh,
-# consistent DB. NO backup / NO restore BY DESIGN: the dev-agent roster + schema
-# drift across installs, so a restored snapshot would be inconsistent with the
-# rebuilt system — a clean drop + fresh `createdb` + `prisma migrate deploy` on
-# reinstall (oss-db-setup.sh, idempotent) is the correct, consistent behaviour.
-# SECURITY: peer-auth Unix socket ONLY (-h ${PG_SOCKET}), never a host/port +
-# credentials, never reads/echoes a secret. IDEMPOTENT (--if-exists → clean no-op
-# on an already-dropped DB). GRACEFUL: a missing dropdb binary or an unreachable
+# drop_databases — uninstall teardown: pre-drop BACKUP, then DROP, of the GA
+# PostgreSQL databases (primary ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a
+# reinstall recreates a fresh, consistent DB while the dropped data stays
+# RECOVERABLE. The fresh-DB intent stands (dev-agent roster + schema drift across
+# installs → no auto-restore) — but the drop is gated on a verified backup:
+# BACKUP-BEFORE-DROP, FAIL-CLOSED per database. Each EXISTING database is
+# pg_dump'ed (custom -F c, pg_restore-compatible) to
+#   ${HOME}/.claude/backups/postgres/<db>-pre-uninstall-<ts>.dump
+# (pg-backup.sh's dir + timestamp convention; GA_DB_BACKUP_DIR sandbox override,
+# mirroring oss-db-setup.sh). A dump that FAILS or is EMPTY (non-empty gate =
+# oss-db-setup.sh backup_db_to_file precedent) SKIPS the drop for THAT database —
+# loud log, data preserved, uninstall continues. Applied uniformly (the shadow DB
+# may legitimately dump near-empty; the same gate still governs it).
+# Pre-uninstall dumps are KEEP-FOREVER safety artifacts: no rotation here, and
+# pg-backup.sh's 14-dump keep-window never trashes them ('pre-' sorts above every
+# dated glass_atrium-* name in its DESCENDING keep-window — load-bearing ordering,
+# do not rename without re-checking that glob). An absent database skips both dump
+# and drop silently (--if-exists semantics). SECURITY: peer-auth Unix socket ONLY
+# (-h ${PG_SOCKET}), never a host/port + credentials, never reads/echoes a secret.
+# IDEMPOTENT (absent DB → clean no-op). GRACEFUL: a missing binary or unreachable
 # server logs a warning and returns 0 so the rest of uninstall still completes —
-# a drop failure is NEVER fatal. This is a DELIBERATE, user-requested path that
-# drops the LIVE DB; it is DISTINCT from recreate_db_gate (which refuses the live
-# DB from the installer's --recreate-db path). That guard is for a different path
-# and is intentionally NOT reused or weakened here.
+# never fatal, and EVERY failure path lands on the data-PRESERVING side (skip the
+# drop, keep the DB). This is a DELIBERATE, user-requested path that drops the
+# LIVE DB; it is DISTINCT from recreate_db_gate (which refuses the live DB from
+# the installer's --recreate-db path). That guard is for a different path and is
+# intentionally NOT reused or weakened here.
 drop_databases() {
   if "${DRY_RUN}"; then
-    log "dry-run: skipping DB drop (${DB_NAME}, ${DB_NAME}_shadow)"
+    log "dry-run: skipping DB backup + drop (${DB_NAME}, ${DB_NAME}_shadow)"
     return 0
   fi
   if ! command -v dropdb >/dev/null 2>&1; then
     log "uninstall: dropdb not found — skipping DB drop (advisory; reinstall recreates the DB)"
     return 0
   fi
-  local db dropped=0
-  log "uninstall: dropping GA databases via peer-auth socket (${PG_SOCKET})"
+  # BACKUP-BEFORE-DROP hard precondition: without pg_dump nothing can be backed
+  # up, so nothing may be dropped (fail-closed, data preserved, still exit 0).
+  if ! command -v pg_dump >/dev/null 2>&1; then
+    log "uninstall: pg_dump not found — SKIPPING DB drop entirely (backup-before-drop is mandatory; data preserved)"
+    return 0
+  fi
+  local backup_dir="${GA_DB_BACKUP_DIR:-${HOME}/.claude/backups/postgres}"
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  if ! mkdir -p -- "${backup_dir}"; then
+    log "uninstall: cannot create backup dir ${backup_dir} — SKIPPING DB drop entirely (data preserved)"
+    return 0
+  fi
+  local db probe dump dropped=0
+  log "uninstall: backing up + dropping GA databases via peer-auth socket (${PG_SOCKET})"
   # Scope is EXACTLY the two GA databases — never a wildcard, never "drop all".
   for db in "${DB_NAME}" "${DB_NAME}_shadow"; do
-    # --if-exists: clean no-op on an already-dropped DB. --force (PG 13+): terminate
-    # residual connections (daemons were booted out above, but stay defensive).
+    # Absent DB → skip dump AND drop silently. A FAILED probe (server unreachable)
+    # also lands on the data-preserving side: no dump, no drop, loud warn.
+    if ! probe="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname='${db}'" 2>/dev/null)"; then
+      log "  warn: existence probe for '${db}' failed (server unreachable?) — drop skipped (data preserved)"
+      continue
+    fi
+    if [[ "${probe}" != "1" ]]; then
+      log "  skip: ${db} absent — nothing to back up or drop"
+      continue
+    fi
+    # FAIL-CLOSED dump gate: dump must complete AND be non-empty, or THIS
+    # database's drop is skipped. pg_dump stderr flows through (loud-fail aid).
+    dump="${backup_dir}/${db}-pre-uninstall-${ts}.dump"
+    if ! pg_dump -h "${PG_SOCKET}" -d "${db}" -F c -f "${dump}" || [[ ! -s "${dump}" ]]; then
+      log "  SKIP-DROP: pre-drop backup of '${db}' failed or empty (${dump}) — '${db}' NOT dropped (data preserved)"
+      continue
+    fi
+    log "  backup: ${db} → ${dump}"
+    # --if-exists: drop-race tolerance. --force (PG 13+): terminate residual
+    # connections (daemons were booted out above, but stay defensive).
     if dropdb -h "${PG_SOCKET}" --if-exists --force "${db}" >/dev/null 2>&1; then
       dropped=$((dropped + 1))
-      log "  drop: ${db} dropped (or already absent)"
+      log "  drop: ${db} dropped (backup: ${dump})"
     else
       log "  warn: dropdb '${db}' failed (server unreachable?) — skipped (advisory)"
     fi
   done
-  log "uninstall: DB drop done (${dropped}/2 dropdb calls ok)"
+  log "uninstall: DB drop done (${dropped}/2 dropped — skipped DBs preserved)"
   return 0
 }
 
@@ -2365,6 +2589,12 @@ run_install() {
   # the symlink farm so the hook FILES exist before they are bound. Skipped in
   # dry-run (mutation-free staging).
   wire_hooks
+
+  # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
+  # settings.json bindings above already point at the in-place hooks dir, so
+  # dropping the legacy bare-name-farm symlinks opens no hook-blackout window.
+  # GA-link-guarded + idempotent (fresh install = clean no-op); honors DRY_RUN.
+  migrate_layout
 
   # DB bootstrap BEFORE the launchd repoint — a (re)bootstrapped monitor daemon
   # needs the schema in place at first start. Skipped in dry-run; fast-path
@@ -2597,6 +2827,134 @@ run_prune() {
   log "== prune: ${pruned} ${verb}, ${flagged} flagged in-manifest, ${nevertouch} preserved never-touch (${candidates} candidates) =="
 }
 
+# --- P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
+# Idempotent, data-safe reconcile of an EXISTING bare-name-farm install to the
+# essential-symlinks-only + foldered-rules layout. Touches ONLY GA-CREATED
+# symlinks — every unlink routes through remove_if_ga_link's readlink-into-
+# GA_ROOT guard, so a foreign symlink OR a real user file at any of these paths
+# is preserved byte-for-byte (never a raw rm on a legacy path). Two moves:
+#   (A) DROP the now-excluded surfaces — unlink the legacy GA symlinks under
+#       hooks/ + scoped/ (prefixes) and at agent-registry.json + glass-atrium
+#       (exacts) a prior farm created, then rmdir-prune the emptied GA dirs
+#       (rmdir-only — a dir holding a user file makes rmdir fail = SAFE skip).
+#   (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
+#       foldered rules/glass-atrium/<name>.md location, but ONLY when the
+#       foldered GA source actually exists (post rules-fold unit); otherwise the
+#       flat link is LEFT IN PLACE (no dangling link) for the manifest re-farm to
+#       reconcile once the foldered source lands.
+# Idempotent by construction: a second run finds the excluded-surface links gone
+# (nothing to sweep) and the flat rules links already relocated (the foldered
+# link sits at depth 2, never re-matched by the maxdepth-1 scan), so it is a
+# clean no-op. Honors DRY_RUN (report-only, zero mutation).
+#
+# CALL-SITES (repoint-first-THEN-sweep contract): (1) run_install invokes this
+# immediately AFTER wire_hooks — the settings.json hook commands already point
+# at the in-place hooks dir before the legacy links drop, so no hook-blackout
+# window opens; (2) the `glass-atrium migrate` passthrough subcommand exposes a
+# standalone (re-)run for an existing deployment (honors --dry-run). Sweeping
+# before the repoint would orphan the live hooks/registry consumers — keep any
+# new call site BEHIND the repoint.
+migrate_layout() {
+  log "== migrate: reconcile legacy bare-name farm -> essential-symlinks-only + foldered-rules (target=${TARGET_HOME}) =="
+  "${DRY_RUN}" && log "(dry-run: report only — no unlink/relink)"
+  if [[ ! -d "${TARGET_HOME}" ]]; then
+    log "migrate: target home absent (${TARGET_HOME}) — nothing to migrate"
+    return 0
+  fi
+
+  local prefix dir link rc exact swept=0
+  # (A) DROP the now-excluded surfaces — GA symlinks only (remove_if_ga_link guard).
+  for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
+    dir="${TARGET_HOME}/${prefix%/}"
+    # a REAL dir only (never follow a symlinked dir) — lib//monitor/ were never
+    # farmed so their dirs are typically absent (skip), hooks//scoped/ present.
+    [[ -d "${dir}" && ! -L "${dir}" ]] || continue
+    # each candidate is re-verified inside remove_if_ga_link before any unlink;
+    # process substitution keeps the counter in this shell, find's masked exit
+    # (|| true) is benign.
+    # shellcheck disable=SC2312
+    while IFS= read -r link; do
+      [[ -n "${link}" ]] || continue
+      # return 1 = safe skip (foreign/real/never-touch) — bracket the single call
+      # with set +e + ERR-trap suspend (set -E propagates the trap into the
+      # callee, so a safe-skip non-zero would print a spurious ERROR line).
+      set +e
+      trap - ERR
+      remove_if_ga_link "${link}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] && swept=$((swept + 1))
+    done < <(find "${dir}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+  done
+  for exact in "${SYMLINK_EXCLUDE_EXACT[@]}"; do
+    link="${TARGET_HOME}/${exact}"
+    [[ -L "${link}" ]] || continue
+    set +e
+    trap - ERR
+    remove_if_ga_link "${link}"
+    rc=$?
+    trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+    set -e
+    [[ "${rc}" -eq 0 ]] && swept=$((swept + 1))
+  done
+
+  # prune the emptied excluded-surface dirs (rmdir-only — a dir still holding a
+  # user file makes rmdir fail = SAFE skip; NEVER rm -rf, per the rm-rf guardrail).
+  for prefix in "${SYMLINK_EXCLUDE_PREFIXES[@]}"; do
+    dir="${TARGET_HOME}/${prefix%/}"
+    [[ -d "${dir}" && ! -L "${dir}" ]] || continue
+    if "${DRY_RUN}"; then
+      log "migrate: dry-run — would rmdir emptied GA dir if empty: ${prefix%/}"
+      continue
+    fi
+    # rmdir in an `if` masks BOTH set -e and the ERR trap for its expected
+    # non-zero (dir non-empty) → no set +e/trap bracketing needed.
+    if rmdir -- "${dir}" 2>/dev/null; then
+      log "migrate: removed emptied GA dir: ${prefix%/}"
+    fi
+  done
+
+  # (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
+  # foldered rules/glass-atrium/<name>.md, only when the foldered GA source exists.
+  local rules_dir="${TARGET_HOME}/rules" base folded_rel folded=0
+  if [[ -d "${rules_dir}" && ! -L "${rules_dir}" ]]; then
+    # maxdepth 1 → only FLAT rules links; an already-foldered link lives at
+    # rules/glass-atrium/ (depth 2) and is never re-matched (loop is idempotent).
+    # shellcheck disable=SC2312
+    while IFS= read -r link; do
+      [[ -n "${link}" ]] || continue
+      base="$(basename -- "${link}")"
+      folded_rel="rules/glass-atrium/${base}"
+      # never create a dangling link: skip the fold until the foldered GA source
+      # lands (rules-fold unit); the flat link stays put for the re-farm.
+      if [[ ! -e "${GA_ROOT}/${folded_rel}" ]]; then
+        log "migrate: foldered rules source absent (${folded_rel}) — leaving flat link ${base} for manifest re-farm"
+        continue
+      fi
+      # remove the flat GA link (guarded — a foreign/real file returns 1 and is
+      # left intact), then create the foldered link via swap_symlink (its
+      # per-file mkdir -p auto-creates rules/glass-atrium/, atomic + idempotent).
+      set +e
+      trap - ERR
+      remove_if_ga_link "${link}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] || continue
+      set +e
+      trap - ERR
+      swap_symlink "${folded_rel}"
+      rc=$?
+      trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+      set -e
+      [[ "${rc}" -eq 0 ]] && folded=$((folded + 1))
+    done < <(find "${rules_dir}" -maxdepth 1 -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+  fi
+
+  log "== migrate: ${swept} legacy GA symlink(s) dropped, ${folded} rules link(s) foldered =="
+}
+
 # --- one-stop bootstrap (install + monitor build + health gate) ------------
 # Single-command wrap of the FULL fresh-machine sequence: run_install (doctor →
 # config render → plist render → symlink farm → hook wiring → DB bootstrap →
@@ -2659,8 +3017,10 @@ run_uninstall() {
   # STEP1 — stop + deregister the com.glass-atrium.* launchd jobs before the
   # symlinks they depend on are swept (bootout the daemons first).
   unload_launchd_jobs
-  # STEP2 — drop the GA databases (connections now drained). No backup/restore by
-  # design — reinstall recreates a fresh, consistent DB. Graceful-on-failure.
+  # STEP2 — back up, then drop, the GA databases (connections now drained).
+  # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips
+  # that DB's drop (data preserved) — reinstall recreates a fresh, consistent DB.
+  # Graceful-on-failure.
   drop_databases
   # STEP3 — reclaim disk: remove the regenerable monitor/node_modules.
   remove_node_modules

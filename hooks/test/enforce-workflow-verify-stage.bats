@@ -39,7 +39,7 @@ assert_docroute_block() { [[ "${status}" -eq 2 ]] && [[ "${output}" =~ "doc-rout
 # A run of N real (non-comment) filler agent() calls — used to push a lone impl-DEV
 # outside the co-location window with REAL code (comment-stripping cannot shrink it).
 filler() {
-  python3 -c "print(','.join(\"agent('intel-reporter',{goal:'sectionXXXXXXXX'})\" for _ in range(${1})))"
+  python3 -c "print(','.join(\"agent('glass-atrium-intel-reporter',{goal:'sectionXXXXXXXX'})\" for _ in range(${1})))"
 }
 
 # A recognized plan-reference token. C4 promoted the former entry advisory to a BLOCK_ENTRY: a
@@ -58,28 +58,28 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # --- (a) reviewer + DEV-verifier both present before the first impl dev-* → PASS ---
 
 @test "verify stage parallel(reviewer, dev) then impl dev → PASS (exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "reviewer adjacent to dev verifier, far impl dev → PASS (co-located DEV present)" {
   local f
   f="$(filler 20)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f},agent('dev-react',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-react',{goal:'feasible'})),${f},agent('glass-atrium-dev-react',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # --- DEV-verifier present, both parallel orderings → PASS (R5 false-BLOCK fix) ---
 
 @test "parallel(dev, reviewer) dev-first ordering then impl dev → PASS (order-independent)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-dev-nestjs',{goal:'feasible'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "long multi-sentence reviewer goal (~560 chars) with co-located dev → PASS" {
   local g
   g="judge $(python3 -c "print('x'*560)")"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'${g}'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -88,7 +88,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "reviewer present, lone impl dev separated by real code > window → BLOCK_NOVERIFYDEV (exit 2)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f},agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f},agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # H1 cause split: token-specific PREPENDED cause line + base reason intact
   [[ "${output}" == *"CAUSE (block-noverifydev): reviewer present but no dev-* verifier"* ]]
@@ -100,7 +100,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "separate impl dev runs far BEFORE the verify pair → BLOCK_ORDER (reviewer does not gate it)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('dev-nestjs',{goal:'impl early'}),${f},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})))"
+  run_hook "pipeline(agent('glass-atrium-dev-nestjs',{goal:'impl early'}),${f},parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})))"
   [[ "${status}" -eq 2 ]]
   # H1 cause split: token-specific PREPENDED cause line + base reason intact
   [[ "${output}" == *"CAUSE (block-order): an implementation dev-* precedes every reviewer"* ]]
@@ -112,7 +112,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "DEV verifier only inside a comment, real impl dev far away → BLOCK (comment dev not counted)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('qa-code-reviewer',{goal:'judge'}), /* verify with agent('dev-nestjs') goes here */ ${f}, agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), /* verify with agent('glass-atrium-dev-nestjs') goes here */ ${f}, agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -138,14 +138,14 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 }
 
 @test "url inside a goal string (//) does not false-strip the reviewer line → PASS" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # --- (e) regression: pre-existing reviewer-only checks unchanged ---
 
 @test "regression: DEV present, NO reviewer anywhere → BLOCK_NOREV (exit 2)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # H1 cause split: token-specific PREPENDED cause line + base reason intact
   [[ "${output}" == *"CAUSE (block-norev): no non-comment qa-code-reviewer token anywhere"* ]]
@@ -153,7 +153,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 }
 
 @test "regression: no DEV spawn at all → PASS (Stage-2 exempt)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'doc'}), agent('qa-code-reviewer',{goal:'review'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'doc'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -161,12 +161,12 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # indistinguishable from a verify-only stage with the dev listed first — so it fail-opens to PASS
 # (the co-located dev is read as the verify-DEV, leaving no implementation dev to gate).
 @test "lone dev then adjacent reviewer, no impl after → PASS (ambiguous, fail-open)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 @test "regression: reviewer token only inside a comment, dev spawned → BLOCK (comment-stripped)" {
-  run_hook "pipeline(/* should add agent('qa-code-reviewer') */ agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(/* should add agent('glass-atrium-qa-code-reviewer') */ agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -176,19 +176,19 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # merges STDERR into $output, so the entry-miss reason is asserted via $output. ---
 
 @test "entry: DEV + valid verify-stage, NO plan-ref NO token → BLOCK_ENTRY (exit 2)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 2 ]]
 }
 
 @test "entry: [ENTRY-CLASS] simple-task token present → no entry-miss block (exit 0)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge [ENTRY-CLASS] simple-task: trivial config edit'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge [ENTRY-CLASS] simple-task: trivial config edit'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
 
 @test "entry: plan-reference present → no entry-miss block (exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'see clauded-docs/4821 for the plan ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'see clauded-docs/4821 for the plan ${SIZE_EST}'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -197,13 +197,13 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # comment SILENCES entry-miss (matching the manual gate's raw grep). Pre-P0 this asserted a BLOCK;
 # the contract is now reversed. The deeper P0 coverage lives in section (j).
 @test "entry: [ENTRY-CLASS] token inside a comment now SILENCES entry-miss → PASS (P0 raw-scan)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), /* [ENTRY-CLASS] simple-task: hidden in a comment */ agent('dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), /* [ENTRY-CLASS] simple-task: hidden in a comment */ agent('glass-atrium-dev-nestjs',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
 
 @test "entry: verify-stage BLOCK script with no plan-ref/no token → entry-miss SUPPRESSED (decoupled)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 2 ]]
 }
@@ -223,20 +223,20 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 
   # Each entry: "<expected_status>::<script>" — mirrors the current suite fixtures + their statuses.
   local cases=(
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('qa-code-reviewer',{goal:'judge'}), agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),${f20},agent('dev-react',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('dev-nestjs',{goal:'feasible'}),agent('qa-code-reviewer',{goal:'judge'})), agent('dev-nestjs',{goal:'implement'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${g}'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
-    "2::pipeline(agent('qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f45},agent('dev-nestjs',{goal:'implement'}))"
-    "2::pipeline(agent('dev-nestjs',{goal:'impl early'}),${f45},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})))"
-    "2::pipeline(agent('qa-code-reviewer',{goal:'judge'}), /* verify with agent('dev-nestjs') goes here */ ${f45}, agent('dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-react',{goal:'feasible'})),${f20},agent('glass-atrium-dev-react',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-dev-nestjs',{goal:'feasible'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'${g}'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
+    "2::pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'judge plan feasibility in detail here'}),${f45},agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+    "2::pipeline(agent('glass-atrium-dev-nestjs',{goal:'impl early'}),${f45},parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})))"
+    "2::pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), /* verify with agent('glass-atrium-dev-nestjs') goes here */ ${f45}, agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
     "0::"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
-    "2::pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
-    "0::pipeline(agent('intel-reporter',{goal:'doc'}), agent('qa-code-reviewer',{goal:'review'}))"
-    "0::pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'feasible'}), agent('qa-code-reviewer',{goal:'review'}))"
-    "2::pipeline(/* should add agent('qa-code-reviewer') */ agent('dev-nestjs',{goal:'implement'}))"
-    "2::pipeline(agent('intel-planner',{goal:'author the plan inline now'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'see http://x.test/plan'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
+    "2::pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+    "0::pipeline(agent('glass-atrium-intel-reporter',{goal:'doc'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+    "0::pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+    "2::pipeline(/* should add agent('glass-atrium-qa-code-reviewer') */ agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+    "2::pipeline(agent('glass-atrium-intel-planner',{goal:'author the plan inline now'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   )
 
   local entry expected script
@@ -257,49 +257,49 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # anywhere, a non-doc agent, or no hardcoded path shape fails open to PASS. exit code + stderr only.
 
 @test "docroute: reporter spawn hardcodes local Target, no monitor POST → BLOCK (exit 2)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE the report to ~/design-md-analysis/improvement-report.md then Write the markdown file'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/design-md-analysis/improvement-report.md then Write the markdown file'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: planner spawn mkdir -p then Write local path, no POST → BLOCK (exit 2)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'mkdir -p \$HOME/reports && Write the plan markdown'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'mkdir -p \$HOME/reports && Write the plan markdown'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: same reporter spawn WITH a monitor-POST instruction → PASS (exit 0)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE the report to ~/r.md then POST it to the monitor clauded-docs API'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md then POST it to the monitor clauded-docs API'}))"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: planner /tmp staging cat-piped into clauded-docs POST → PASS (staging is normal)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'Target file: /tmp/plan.md then curl POST /api/clauded-docs with html_body'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target file: /tmp/plan.md then curl POST /api/clauded-docs with html_body'}))"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: non-doc non-DEV agent with a local path → PASS (unrelated, fail-open)" {
-  run_hook "pipeline(agent('qa-code-reviewer',{goal:'Target file: ~/notes.md review it'}))"
+  run_hook "pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'Target file: ~/notes.md review it'}))"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: doc agent spawn with NO hardcoded local path → PASS (fail-open)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize the findings into a coherent document'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings into a coherent document'}))"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: local Target path inside a comment is comment-stripped → PASS (fail-open)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize'}) /* Target file: ~/leak.md */)"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize'}) /* Target file: ~/leak.md */)"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
 @test "docroute: leak nested in an otherwise-valid DEV verify-stage workflow → BLOCK (independent pass)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-python',{goal:'feasible'})), agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "doc-routing leak" ]]
 }
@@ -313,7 +313,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "coloc: leading audit reviewer + later parallel(qa,dev) + impl → PASS (finditer)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})),agent('dev-react',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'AUDIT phase'}),${f},parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-react',{goal:'feasible'})),agent('glass-atrium-dev-react',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -323,14 +323,14 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "coloc: parallel(qa,<1100-char goal>,dev) + impl → PASS (parallel-group-bounds)" {
   local big
   big="$(python3 -c "print('x'*1100)")"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'${big}'}),agent('dev-python',{goal:'feasible'})),agent('dev-python',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'${big}'}),agent('glass-atrium-dev-python',{goal:'feasible'})),agent('glass-atrium-dev-python',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
 }
 
 # Zero-reviewer hard guarantee — DEV impl with NO qa-code-reviewer token anywhere → BLOCK. Preserved
 # verbatim across the FP fix (the fix may only WIDEN the PASS set for genuine verify pairs).
 @test "coloc: DEV impl, NO qa-code-reviewer anywhere → BLOCK (zero-reviewer guarantee)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -342,7 +342,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "coloc: stray audit reviewer + 2+ scattered impl devs, NO parallel pair → BLOCK (bypass closed)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('dev-nestjs',{goal:'impl1'}),${f},agent('dev-react',{goal:'impl2'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('glass-atrium-dev-nestjs',{goal:'impl1'}),${f},agent('glass-atrium-dev-react',{goal:'impl2'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -352,7 +352,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 @test "coloc: reviewer + lone impl dev beyond window, no pair → BLOCK" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('qa-code-reviewer',{goal:'judge feasibility'}),${f},agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge feasibility'}),${f},agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -367,7 +367,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 # EOL), faithfully reproducing the `// [ENTRY-CLASS]` incident shape.
 @test "P0(a): //-line [ENTRY-CLASS] + verify-stage + impl, no plan-ref → PASS (incident regression-lock)" {
   run_hook "pipeline(// [ENTRY-CLASS] simple-task: one-line config fix
-parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasible'})), agent('dev-shell',{goal:'implement ${SIZE_EST}'}))"
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-shell',{goal:'feasible'})), agent('glass-atrium-dev-shell',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -375,7 +375,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # (b) sibling false-BLOCK (FM-FB2): a commented plan-ref + a valid verify-stage + an impl dev, NO
 # [ENTRY-CLASS] token → entry-miss SILENCED → PASS.
 @test "P0(b): commented plan-ref + verify-stage + impl → PASS (entry silenced)" {
-  run_hook "pipeline(/* Plan: clauded-docs/123 */ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-react',{goal:'feasible'})), agent('dev-react',{goal:'implement ${SIZE_EST}'}))"
+  run_hook "pipeline(/* Plan: clauded-docs/123 */ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-react',{goal:'feasible'})), agent('glass-atrium-dev-react',{goal:'implement ${SIZE_EST}'}))"
   [[ ! "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -385,7 +385,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # still fires → BLOCK_DOCROUTE suppressed → PASS. Pre-P0 the stripped comment lost the suppressor and
 # false-BLOCKed a correctly-routed doc workflow.
 @test "P0(c): commented monitor-POST note suppresses BLOCK_DOCROUTE → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE the report to ~/r.md'}) /* route: POST to clauded-docs */)"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md'}) /* route: POST to clauded-docs */)"
   [[ ! "${output}" =~ "doc-routing leak" ]]
   [[ "${status}" -eq 0 ]]
 }
@@ -394,7 +394,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # on spawn/agentType tokens is the anti-gaming property, preserved by P0. A plan-ref is present so the
 # BLOCK is unambiguously the verify-stage verdict (not entry-miss).
 @test "P0(d): commented qa-code-reviewer + plan-ref + impl dev → BLOCK (anti-gaming preserved)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/9'}), /* agent('qa-code-reviewer') verify here */ agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/9'}), /* agent('glass-atrium-qa-code-reviewer') verify here */ agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -404,7 +404,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 @test "P0(e): commented dev-* verifier not counted, real impl dev far → BLOCK (verify-stage enforced)" {
   local f
   f="$(filler 45)"
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/9'}),agent('qa-code-reviewer',{goal:'judge'}), /* agent('dev-nestjs') verify */ ${f}, agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/9'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), /* agent('glass-atrium-dev-nestjs') verify */ ${f}, agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
 }
 
@@ -416,12 +416,12 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # if dev-swift is ever dropped from DEV_SET, confirming the gate reads the synced list. ---
 
 @test "membership: dev-swift impl, NO reviewer/plan-ref/token → BLOCK (synced DEV member recognized)" {
-  run_hook "pipeline(agent('dev-swift',{goal:'implement the swift module'}))"
+  run_hook "pipeline(agent('glass-atrium-dev-swift',{goal:'implement the swift module'}))"
   [[ "${status}" -eq 2 ]]
 }
 
 @test "membership: non-member intel-reporter alone → PASS (not a DEV spawn, exit 0)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize the findings'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings'}))"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -435,13 +435,13 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # into $output. ---
 
 @test "T1 no-widen: inline intel-planner author + verify-stage + impl, NO minted id → BLOCK_ENTRY (exit 2)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'author the plan inline now'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'author the plan inline now'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${output}" =~ "entry-miss" ]]
   [[ "${status}" -eq 2 ]]
 }
 
 @test "T1 message: exactly TWO resolution paths, INLINE-PLAN reasons, removed verify-stage path absent" {
-  run_hook "pipeline(agent('intel-planner',{goal:'author the plan inline now'}), parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'author the plan inline now'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # INLINE-PLAN note + >=1 reason marker (SEPARATION). Substring form `== *"..."*` keeps the quoted
   # needle literal, so regex-special chars ([], /) match as text.
@@ -471,7 +471,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # (missing-verify-stage BLOCK) AND the message CARRIES the entry-format addendum (both escape paths).
 # The dedicated "entry-miss" channel tag MUST remain absent (the no-literal-`entry-miss` constraint).
 @test "F1 positive: missing verify-stage + ENTRY_ADVISORY → BLOCK (exit 2) with entry-format addendum" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # still the missing-verify-stage BLOCK (base reason intact)
   [[ "${output}" == *"missing its mandatory"* ]]
@@ -487,7 +487,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # → entry_marker == ENTRY_OK → exit 2 (still missing-verify-stage BLOCK) AND the addendum is ABSENT
 # (no false nudge when the author already supplied an entry signal).
 @test "F1 negative: missing verify-stage + ENTRY_OK (plan-ref) → BLOCK (exit 2), NO entry addendum" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/777'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/777'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # still the missing-verify-stage BLOCK
   [[ "${output}" == *"missing its mandatory"* ]]
@@ -501,12 +501,12 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # while the addendum text appears only in the ENTRY_ADVISORY branch → proves message/exit decoupling.
 @test "F1 decouple: entry_marker drives MESSAGE only, exit stays 2 in both ADVISORY and OK" {
   # ENTRY_ADVISORY missing-verify case → exit 2 + addendum present
-  run_hook "pipeline(agent('intel-planner',{goal:'plan'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" == *"entry classification / plan-reference also required"* ]]
 
   # ENTRY_OK missing-verify case → exit STILL 2 + addendum absent
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/777'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/777'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" != *"entry classification / plan-reference also required"* ]]
 }
@@ -529,7 +529,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # dedicated "entry-miss" channel tag MUST remain absent (no-literal-`entry-miss` constraint, mirroring
 # the F1 positive test).
 @test "docroute F1: leak + dev-* spawn + ENTRY_ADVISORY → BLOCK (exit 2) with entry-format addendum" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # still the docroute BLOCK (base reason intact)
   [[ "${output}" == *"doc-routing leak"* ]]
@@ -547,7 +547,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # nudge without a DEV spawn). Distinct from the monitor-POST PASS case: no monitor-POST here, so the
 # leak still BLOCKs — only the addendum is withheld.
 @test "docroute F1: pure leak, NO dev-* spawn → BLOCK (exit 2), NO entry addendum (no spurious nudge)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: WRITE to ~/r.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}))"
   [[ "${status}" -eq 2 ]]
   # still the docroute BLOCK
   [[ "${output}" == *"doc-routing leak"* ]]
@@ -568,7 +568,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 
 # (a) the COPY-PASTE SCAFFOLD string is present in the entry-miss BLOCK stderr.
 @test "T2 scaffold: entry-miss BLOCK message carries the copy-paste plan-stub scaffold" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   # this is the dedicated entry-miss channel (not a verify-stage / docroute block)
   [[ "${output}" =~ "entry-miss" ]]
@@ -586,7 +586,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # entry-miss fixture → exit 2 AND the "entry-miss" channel tag present (the scaffold did not move the
 # block onto a different channel).
 @test "T2 scaffold: pre-existing exit-2 entry-miss verdict preserved (message-only change)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})), agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "entry-miss" ]]
   # the base entry-miss reason is intact alongside the new scaffold (no text was replaced)
@@ -613,7 +613,7 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
     script="$1"; hook="$2"; trace="$3"; stub="$4"
     payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
     printf "%s" "${payload}" | PATH="${stub}:${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}"
-  ' _ "pipeline(agent('dev-nestjs',{goal:'implement'}))" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
+  ' _ "pipeline(agent('glass-atrium-dev-nestjs',{goal:'implement'}))" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
   [[ "${status}" -eq 0 ]]
 }
 
@@ -635,46 +635,46 @@ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-shell',{goal:'feasi
 # by design until T4 (relief: the [DOC-ROUTE] token when user-requested). ---
 
 @test "docroute-gate: edit-existing .md mention ('at' framing) → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: read-context .md reference, StructuredOutput deliverable → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'read ~/.glass-atrium/scoped/scope-dev.md for background; deliverable is StructuredOutput'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'read ~/.glass-atrium/scoped/scope-dev.md for background; deliverable is StructuredOutput'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: plural 'Target files:' 6-element edit-delegation header → PASS (A11 companion)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'Target files: ~/.glass-atrium/rules/x.md
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: ~/.glass-atrium/rules/x.md
 Constraints: edit in place
 Completion criteria: emit StructuredOutput'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: memory/progress checkpoint phrasings → PASS (A3/A4a left-boundary lookbehind)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save your progress notes to memory/progress-x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save your progress notes to memory/progress-x.md'}))"
   assert_docroute_pass
-  run_hook "pipeline(agent('intel-reporter',{goal:'write your progress notes to memory/progress-x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'write your progress notes to memory/progress-x.md'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: 'emit StructuredOutput summarizing <path>.md' → PASS (emit not a destination verb)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'emit StructuredOutput summarizing ~/.glass-atrium/rules/x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'emit StructuredOutput summarizing ~/.glass-atrium/rules/x.md'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: output-as-noun 'Output Format Routing in <path>.md' → PASS ('in' excluded)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'follow the Output Format Routing in ~/.glass-atrium/scoped/scope-report.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'follow the Output Format Routing in ~/.glass-atrium/scoped/scope-report.md'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: 'revise and save <path>.md in place' → PASS (no destination preposition)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'revise and save ~/.glass-atrium/rules/x.md in place'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'revise and save ~/.glass-atrium/rules/x.md in place'}))"
   assert_docroute_pass
 }
 
 @test "docroute-gate: 'Persist nothing. Read <path>.md for context' → PASS (persist without destination)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Persist nothing. Read ~/.glass-atrium/rules/x.md for context'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Persist nothing. Read ~/.glass-atrium/rules/x.md for context'}))"
   assert_docroute_pass
 }
 
@@ -682,25 +682,25 @@ Completion criteria: emit StructuredOutput'}))"
 # FORBIDDEN); the stamp is the ONLY suppressor in scope (fixture purity above).
 
 @test "docroute-token: raw .md stamp suppresses its stamped-path leak line → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
 log('[DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy')"
   assert_docroute_pass
 }
 
 @test "docroute-token: stamped form inside a /* */ comment still suppresses (raw-scan) → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
 /* [DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy */"
   assert_docroute_pass
 }
 
 @test "docroute-token: raw .html stamp suppresses the A4b bare-path line → PASS" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'deliver the dashboard into ~/exports/dash.html'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the dashboard into ~/exports/dash.html'}))
 log('[DOC-ROUTE] user-requested-local: ~/exports/dash.html — user asked for a local dashboard file')"
   assert_docroute_pass
 }
 
 @test "docroute-token: 'Revise and save the doc to ~/project/README.md' + stamp → PASS (adapted A19c)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))
 log('[DOC-ROUTE] user-requested-local: ~/project/README.md — user asked to revise the repo README')"
   assert_docroute_pass
 }
@@ -708,83 +708,83 @@ log('[DOC-ROUTE] user-requested-local: ~/project/README.md — user asked to rev
 # BLOCK matrix — destination-framed leaks stay blocked; the stderr teaches the canonical stamp.
 
 @test "docroute-gate: 'save the finished report to <path>.md' → BLOCK (A4a 'to') + stamp taught" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))"
   assert_docroute_block
   # A16: the BLOCK stderr teaches the canonical stamped form (user-explicit-request-only scope)
   [[ "${output}" == *"log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')"* ]]
 }
 
 @test "docroute-gate: 'save the report as <path>.md' → BLOCK (A4a 'as')" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report as ~/reports/q3.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report as ~/reports/q3.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: 'store results under <path>.md' → BLOCK (A4a 'under')" {
-  run_hook "pipeline(agent('intel-planner',{goal:'store results under ~/reports/summary.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'store results under ~/reports/summary.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: 'deliver the final HTML into <path>.html' → BLOCK (A4b bare-path strength)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'deliver the final HTML into ~/exports/report.html'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the final HTML into ~/exports/report.html'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: verb-free 'Deliverable: <path>.html' noun header → BLOCK (A4b bare-path — .html noun-headers ride A4b)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Deliverable: ~/reports/dash.html'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/dash.html'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: verb-free 'Deliverable: <path>.md' noun header → BLOCK (A4c .md branch)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Deliverable: ~/reports/q3.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/q3.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: passive 'should end up at <path>.html' → BLOCK (A4b)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'the dashboard should end up at ~/reports/dash.html'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'the dashboard should end up at ~/reports/dash.html'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: 'store the final deliverable at <path>.html' → BLOCK (A4b — former accepted FN, now TP)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'store the final deliverable at ~/reports/final.html'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'store the final deliverable at ~/reports/final.html'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: 'Target files: write everything to ~/x.md' → BLOCK (A3 residual catch under plural header)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'Target files: write everything to ~/x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: write everything to ~/x.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: 'Revise and save the doc to ~/project/README.md' WITHOUT token → BLOCK (adapted A19c)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-token: stamp for a DIFFERENT path never clears a separate leak → BLOCK (path-scoped)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
 log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file')"
   assert_docroute_block
 }
 
 @test "docroute-token: bare stamp without a path + real leak → BLOCK (path-after-colon required)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))
 log('[DOC-ROUTE] user-requested-local: — no path stamped')"
   assert_docroute_block
 }
 
 @test "docroute-token: the degenerate '~' stamp + real leak on another line → BLOCK (concrete path required)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
 log('[DOC-ROUTE] user-requested-local: ~ — user asked')"
   assert_docroute_block
 }
 
 @test "docroute-token: the degenerate '/' stamp + real leak on another line → BLOCK (concrete path required)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
 log('[DOC-ROUTE] user-requested-local: / — root stamp')"
   assert_docroute_block
 }
 
 @test "docroute-token: the extensionless dir stamp '~/reports' + leak inside that dir → BLOCK (dot-extension required)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
 log('[DOC-ROUTE] user-requested-local: ~/reports — user asked for the reports dir')"
   assert_docroute_block
 }
@@ -794,15 +794,15 @@ log('[DOC-ROUTE] user-requested-local: ~/reports — user asked for the reports 
 # line-scoped stamp suppressor may drop only its own line, so the second spawn's leak still BLOCKs.
 @test "docroute-token: block comment spans stamp line onto a different spawn's leak line → BLOCK (line identity)" {
   run_hook "log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file') /* span
-continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports/b.md'}))"
+continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))"
   assert_docroute_block
 }
 
 @test "docroute-gate: A11 unit pair — singular 'Target file:' BLOCKs (A1), plural 'Target files:' PASSes" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target file: ~/x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: ~/x.md'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "doc-routing leak" ]]
-  run_hook "pipeline(agent('intel-reporter',{goal:'Target files: ~/x.md'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target files: ~/x.md'}))"
   [[ "${status}" -eq 0 ]]
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
@@ -817,7 +817,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # FIRE + non-blocking: valid verify-stage DEV workflow + plan-ref + a 'schema' token, NO robustAgent/
 # .catch → exit 0 (the advisory NEVER blocks) AND the resilience advisory is emitted on stderr.
 @test "resilience: schema-mode DEV workflow, no robustAgent/catch → PASS (exit 0) + advisory fires" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge with a schema-bound verdict'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with a schema-bound verdict'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"ADVISORY (resilience"* ]]
 }
@@ -825,7 +825,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # SUPPRESS (robustAgent present anywhere) → no advisory, exit 0. Wrapping the agent() calls in
 # robustAgent leaves the quoted agentType tokens intact, so the verify-stage still PASSes.
 @test "resilience: robustAgent wrapper present → PASS (exit 0), NO advisory" {
-  run_hook "pipeline(robustAgent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(robustAgent('qa-code-reviewer',{goal:'judge with schema'}),robustAgent('dev-nestjs',{goal:'feasible'})),robustAgent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(robustAgent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(robustAgent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}),robustAgent('glass-atrium-dev-nestjs',{goal:'feasible'})),robustAgent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"ADVISORY (resilience"* ]]
 }
@@ -833,14 +833,14 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # SUPPRESS (a bare .catch present, no robustAgent) → no advisory, exit 0. Either resilience token
 # anywhere silences the nudge.
 @test "resilience: bare .catch present (no robustAgent) → PASS (exit 0), NO advisory" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"ADVISORY (resilience"* ]]
 }
 
 # SCHEMA-GATED: a DEV workflow with NO 'schema' token → out of scope → no advisory (exit 0).
 @test "resilience: DEV workflow with NO schema token → PASS (exit 0), NO advisory (schema-gated)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"ADVISORY (resilience"* ]]
 }
@@ -848,7 +848,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # DEV-GATED: a non-DEV (doc-only) workflow with a schema token and no resilience idiom → out of scope
 # → no advisory (exit 0). The advisory only fires on DEV-spawning workflows.
 @test "resilience: non-DEV doc workflow with schema, no catch → PASS (exit 0), NO advisory (DEV-gated)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize with a schema-shaped output'}), agent('qa-code-reviewer',{goal:'review'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize with a schema-shaped output'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"ADVISORY (resilience"* ]]
 }
@@ -857,7 +857,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # verify-stage BLOCK (block-norev), NOT from the advisory. The advisory rides alongside on stderr but
 # is never the cause of the exit-2 — proving the advisory neither blocks nor suppresses a real block.
 @test "resilience: schema-no-catch DEV workflow missing verify-stage → BLOCK (exit 2, block-norev) + advisory rides along" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), agent('dev-nestjs',{goal:'implement with a schema output'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" == *"CAUSE (block-norev)"* ]]
   [[ "${output}" == *"ADVISORY (resilience"* ]]
@@ -876,7 +876,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # with the size-attestation remediation message + the block-sizeest firing trace. The entry addendum
 # stays absent (structurally inert on block-sizeest — ENTRY_OK-only), as does the entry-miss tag.
 @test "sizeest: DEV verify-stage under ENTRY_OK, NO [SIZE-EST] → BLOCK_SIZEEST (exit 2)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/55'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" == *"size-attestation miss"* ]]
   [[ "${output}" == *"[SIZE-EST] bundles=N tool_uses~=N"* ]]
@@ -888,14 +888,14 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 
 # PRESENT: same fixture WITH a [SIZE-EST] token → PASS (exit 0), no size-attestation block.
 @test "sizeest: DEV verify-stage under ENTRY_OK WITH [SIZE-EST] present → PASS (exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55 ${SIZE_EST}'}),parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/55 ${SIZE_EST}'}),parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"size-attestation miss"* ]]
 }
 
 # RAW-SCAN: a [SIZE-EST] token inside a /* */ comment still counts (raw attestation_src scan) → PASS.
 @test "sizeest: [SIZE-EST] token inside a comment still counts → PASS (raw-scan, exit 0)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}), /* [SIZE-EST] bundles=3 tool_uses~=30 */ parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/55'}), /* [SIZE-EST] bundles=3 tool_uses~=30 */ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"size-attestation miss"* ]]
 }
@@ -904,7 +904,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # block-sizeest. block-sizeest is ENTRY_OK-gated, so it never fires under ENTRY_ADVISORY — entry-miss
 # claims the block. Proves entry-miss keeps priority.
 @test "sizeest: entry-missing DEV → BLOCK_ENTRY not block-sizeest (entry-miss priority)" {
-  run_hook "pipeline(parallel(agent('qa-code-reviewer',{goal:'judge'}),agent('dev-nestjs',{goal:'feasible'})),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" =~ "entry-miss" ]]
   [[ "${output}" != *"size-attestation miss"* ]]
@@ -914,7 +914,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # DEV-GATED: a non-DEV (doc-only) workflow with NO [SIZE-EST] → PASS (exit 0). block-sizeest only
 # fires on DEV-spawning workflows.
 @test "sizeest: non-DEV doc workflow with NO [SIZE-EST] → PASS (DEV-gated, exit 0)" {
-  run_hook "pipeline(agent('intel-reporter',{goal:'synthesize the findings'}), agent('qa-code-reviewer',{goal:'review'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"size-attestation miss"* ]]
 }
@@ -923,7 +923,7 @@ continues */ pipeline(agent('intel-reporter',{goal:'save the report to ~/reports
 # BLOCK_NOREV (verify-stage verdict), NOT block-sizeest. block-sizeest is promoted only at a would-be
 # PASS emit, so a verify-stage BLOCK always keeps priority — proves the decoupling.
 @test "sizeest: missing verify-stage keeps priority over block-sizeest (BLOCK_NOREV, not size)" {
-  run_hook "pipeline(agent('intel-planner',{goal:'plan clauded-docs/55'}),agent('dev-nestjs',{goal:'implement'}))"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan clauded-docs/55'}),agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
   [[ "${status}" -eq 2 ]]
   [[ "${output}" == *"CAUSE (block-norev)"* ]]
   [[ "${output}" != *"size-attestation miss"* ]]

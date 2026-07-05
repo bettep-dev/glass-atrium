@@ -45,10 +45,14 @@ emit_error "DATA-073" "info" \
 # Same envelope contract as cost-tracker — see _pg_dual_write.py header for
 # semantics. A PG failure is silently tolerated with structured stderr +
 # a best-effort hook_failures counter (the hook stays non-blocking).
+# PG_HELPER: sibling-of-this-script resolution (hooks consumed in place from the
+# store; ~/.claude/hooks is no longer farmed) — passed via env because __file__
+# is absent under `python3 -c`.
 TIMESTAMP="${TIMESTAMP}" \
   HOOK_EVENT="${HOOK_EVENT}" \
   AGENT_ID="${AGENT_ID}" \
   AGENT_TYPE="${AGENT_TYPE}" \
+  PG_HELPER="${BASH_SOURCE%/*}/_pg_dual_write.py" \
   python3 -c '
 import json, os, subprocess, sys
 row = {
@@ -63,7 +67,7 @@ envelope = {
     "payload_ref": os.environ["AGENT_ID"][:128],
     "row": row,
 }
-helper = os.path.expanduser("~/.claude/hooks/_pg_dual_write.py")
+helper = os.environ["PG_HELPER"]
 subprocess.run(
     ["python3", helper],
     input=json.dumps(envelope),

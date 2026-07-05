@@ -3,7 +3,8 @@
 #
 # wire_hooks UPSERTS each EXPECTED_HOOK_BINDINGS entry into the user-owned
 # settings.json under its event, attaching the declared matcher + the
-# "$HOME/.claude/hooks/<basename>" command. It MUST:
+# "$HOME/.glass-atrium/hooks/<basename>" command (repointed from ~/.claude/hooks).
+# It MUST:
 #   * MERGE (preserve every other key byte-for-byte) — never overwrite.
 #   * be IDEMPOTENT — an already-present command is a no-op (no duplicate).
 #   * be ATOMIC + BACKED UP — temp-file + mv, timestamped backup before mutating.
@@ -65,9 +66,9 @@ count_bound() {
   # validate-tool-response lands under PostToolUse with the WebFetch|WebSearch matcher
   run jq -r '.hooks.PostToolUse[] | select(.hooks[].command | endswith("/validate-tool-response.sh")) | .matcher' "${SETTINGS}"
   [[ "${output}" == 'WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*' ]]
-  # the command path is the $HOME/.claude/hooks/<name> form
+  # the command path is the repointed $HOME/.glass-atrium/hooks/<name> form
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/advisory-spawn-budget.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.claude/hooks/advisory-spawn-budget.sh" ]]
+  [[ "${output}" == "${HOME}/.glass-atrium/hooks/advisory-spawn-budget.sh" ]]
 }
 
 @test "Workflow binding -> wired under PreToolUse with matcher Workflow (new event/matcher combo)" {
@@ -80,9 +81,9 @@ count_bound() {
   [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .matcher' "${SETTINGS}"
   [[ "${output}" == "Workflow" ]]
-  # command path is the $HOME/.claude/hooks/<name> form
+  # command path is the repointed $HOME/.glass-atrium/hooks/<name> form
   run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/enforce-workflow-verify-stage.sh")) | .hooks[].command' "${SETTINGS}"
-  [[ "${output}" == "${HOME}/.claude/hooks/enforce-workflow-verify-stage.sh" ]]
+  [[ "${output}" == "${HOME}/.glass-atrium/hooks/enforce-workflow-verify-stage.sh" ]]
 }
 
 @test "Workflow binding -> idempotent: re-run adds no second occurrence" {
@@ -229,6 +230,43 @@ JSON
   [[ "${output}" == *"not valid JSON"* ]]
   # the broken file is untouched (still byte-identical) — never silently rewritten
   [[ "$(cat "${SETTINGS}")" == '{ this is not json' ]]
+}
+
+@test "settings.json IS a symlink (dotfiles) -> converted to a regular file, link severed, target preserved, backup taken" {
+  # RISKY EDGE (a): a dotfiles-managed settings.json is a SYMLINK into an external
+  # store. wire_hooks `cp -p` FOLLOWS the symlink into the backup (backup = target
+  # content), then `mv -f RENDER_TMP SETTINGS_JSON` REPLACES the symlink NAME with
+  # a regular file — SEVERING the dotfiles link while leaving the original target
+  # file byte-untouched. This pins all four current-behavior facts so a later
+  # hook-repoint change cannot worsen the severance unnoticed.
+  local store="${TARGET}/dotfiles-store"
+  mkdir -p "${store}"
+  local target_file="${store}/real-settings.json"
+  cat >"${target_file}" <<'JSON'
+{ "model": "dotfiles-pinned", "hooks": {} }
+JSON
+  local before_target
+  before_target="$(jq -cS . "${target_file}")"
+  ln -s "${target_file}" "${SETTINGS}"
+  [[ -L "${SETTINGS}" ]] # precondition: settings.json starts as a symlink
+
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]]
+
+  # FACT 1 — settings.json is now a REGULAR file (no longer a symlink)
+  [[ -f "${SETTINGS}" && ! -L "${SETTINGS}" ]]
+  # FACT 2 — the dotfiles link is SEVERED: the new regular file is a distinct inode
+  # from the store target (mutating settings.json no longer writes through).
+  [[ "$(count_bound advisory-spawn-budget.sh)" -eq 1 ]] # merge landed on the new file
+  # FACT 3 — the original target file is byte-preserved (never written through)
+  [[ "$(jq -cS . "${target_file}")" == "${before_target}" ]]
+  [[ "$(jq -r '.hooks | has("PreToolUse")' "${target_file}")" == "false" ]]
+  # FACT 4 — a timestamped backup exists, and it holds the pre-merge (followed) content
+  [[ "${output}" == *"backed up settings.json -> ${SETTINGS}.ga-backup."* ]]
+  local backup
+  backup="$(find "${TARGET}" -name 'settings.json.ga-backup.*' | head -1)"
+  [[ -n "${backup}" ]]
+  [[ "$(jq -r '.model' "${backup}")" == "dotfiles-pinned" ]]
 }
 
 @test "doctor reports 0 dormant after wire-hooks (reconciliation)" {

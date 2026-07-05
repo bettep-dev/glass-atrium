@@ -73,6 +73,12 @@ _CLEAN_AGENT = "ap3-clean-probe-agent"
 _COUNT_SIGNATURE_FMT = "repeated failure by same agent|%s"
 
 
+def _count_signature(agent: str) -> str:
+    """Expected pattern-1 signature — patterns written going forward key on the
+    canonical stem (glass-atrium-<bare>), so bare probe agents gain the prefix."""
+    return _COUNT_SIGNATURE_FMT % ("glass-atrium-" + agent)
+
+
 def _row(agent: str = _TRIGGER_AGENT, result: str = "done", **extra) -> dict:
     """One synthetic reader-shaped outcome row (read_outcomes_since dict contract)."""
     base = {
@@ -156,6 +162,22 @@ class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
     def test_when_budget_truncation_constant_then_literal(self) -> None:
         self.assertEqual(pgdw.ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
 
+    def test_when_structuredoutput_derived_done_then_zero_hits(self) -> None:
+        # Third sibling token (terminal consumed StructuredOutput synthesis):
+        # done is not a negative OR-term, so the row yields zero hits with NO
+        # carve-out — pins the recorded no-behavior-change decision.
+        row = _row(
+            result="done",
+            attribution_source=pgdw.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+        )
+        self.assertEqual(pgdw.negative_signal_hits(row), ())
+        self.assertFalse(pgdw.is_negative_signal_outcome(row))
+
+    def test_when_structuredoutput_constant_then_literal(self) -> None:
+        self.assertEqual(
+            pgdw.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED, "structuredoutput-derived"
+        )
+
 
 @unittest.skipIf(agg is None, f"import failed: {_IMPORT_ERROR}")
 class _AggregatorRunFixture(unittest.TestCase):
@@ -217,7 +239,7 @@ class TestPerAgentTriggerEmission(_AggregatorRunFixture):
             ]
         )
         self.assertIn(
-            _COUNT_SIGNATURE_FMT % _TRIGGER_AGENT, self._upsert_signatures()
+            _count_signature(_TRIGGER_AGENT), self._upsert_signatures()
         )
 
     def test_when_mixed_nonresult_signals_then_count_pattern_emitted(self) -> None:
@@ -229,13 +251,13 @@ class TestPerAgentTriggerEmission(_AggregatorRunFixture):
             ]
         )
         self.assertIn(
-            _COUNT_SIGNATURE_FMT % _TRIGGER_AGENT, self._upsert_signatures()
+            _count_signature(_TRIGGER_AGENT), self._upsert_signatures()
         )
 
     def test_when_signals_below_threshold_then_no_count_pattern(self) -> None:
         self._run([_row(result="blocked"), _row(result="blocked"), _row()])
         self.assertNotIn(
-            _COUNT_SIGNATURE_FMT % _TRIGGER_AGENT, self._upsert_signatures()
+            _count_signature(_TRIGGER_AGENT), self._upsert_signatures()
         )
 
 
@@ -366,7 +388,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
     def test_when_rows_poisoned_then_no_pattern_for_agent(self) -> None:
         self._run_with_real_reader()
         self.assertNotIn(
-            _COUNT_SIGNATURE_FMT % _POISONED_AGENT, self._upsert_signatures()
+            _count_signature(_POISONED_AGENT), self._upsert_signatures()
         )
 
     def test_when_rows_clean_then_pattern_for_agent(self) -> None:
@@ -374,7 +396,73 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
         # not a broken pipeline.
         self._run_with_real_reader()
         self.assertIn(
-            _COUNT_SIGNATURE_FMT % _CLEAN_AGENT, self._upsert_signatures()
+            _count_signature(_CLEAN_AGENT), self._upsert_signatures()
+        )
+
+
+@unittest.skipIf(agg is None, f"import failed: {_IMPORT_ERROR}")
+class TestCanonicalAgent(unittest.TestCase):
+    """_canonical_agent unifies bare / prefixed / colon agent forms on the live
+    roster stem (glass-atrium-<bare>); sentinel + deprecated names stay bare."""
+
+    def test_when_bare_stem_then_prefixed(self) -> None:
+        self.assertEqual(
+            agg._canonical_agent("dev-shell"), "glass-atrium-dev-shell"
+        )
+
+    def test_when_prefixed_then_unchanged(self) -> None:
+        self.assertEqual(
+            agg._canonical_agent("glass-atrium-dev-shell"),
+            "glass-atrium-dev-shell",
+        )
+
+    def test_when_colon_form_then_agent_segment_canonicalized(self) -> None:
+        self.assertEqual(
+            agg._canonical_agent("dev-shell: haiku"), "glass-atrium-dev-shell"
+        )
+
+    def test_when_sentinel_or_none_then_untouched(self) -> None:
+        for raw, expected in (
+            ("", ""),
+            (None, ""),
+            ("unknown", "unknown"),
+            ("Unknown", "Unknown"),
+            ("전체", "전체"),
+            ("ALL", "ALL"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(agg._canonical_agent(raw), expected)
+
+    def test_when_deprecated_then_stays_bare(self) -> None:
+        self.assertEqual(agg._canonical_agent("animator"), "animator")
+
+    def test_when_deprecated_alias_forms_then_still_excluded(self) -> None:
+        # Prefix/colon-insensitive DEPRECATED_AGENTS matching — an alias form
+        # must not slip the retired agent past the input-stage exclusion.
+        for raw in ("animator", "glass-atrium-animator", "animator:probe"):
+            with self.subTest(raw=raw):
+                include, reason = agg._should_include_outcome(
+                    {"agent": raw, "attribution_source": "", "lesson": "x"}
+                )
+                self.assertFalse(include)
+                self.assertEqual(reason, "deprecated_agent")
+
+
+class TestCanonicalKeyUnification(_AggregatorRunFixture):
+    """Bare + prefixed + colon rows of ONE logical agent aggregate under a single
+    canonical key (observed live split: dev-shell vs glass-atrium-dev-shell)."""
+
+    def test_when_mixed_forms_then_single_pattern_on_canonical_stem(self) -> None:
+        self._run(
+            [
+                _row(agent=_TRIGGER_AGENT, result="blocked"),
+                _row(agent="glass-atrium-" + _TRIGGER_AGENT, result="blocked"),
+                _row(agent=_TRIGGER_AGENT + ": probe", result="blocked"),
+            ]
+        )
+        # 3 rows reach the >=3 trigger ONLY if all three forms share one key.
+        self.assertIn(
+            _count_signature(_TRIGGER_AGENT), self._upsert_signatures()
         )
 
 

@@ -10,11 +10,12 @@
 # labelled "budget-truncation" instead — and that label must survive the L905-style relabel guard.
 #
 # Isolation: the real track-outcome.sh is driven with a synthesized SubagentStop payload on stdin
-# (no [COMPLETION] block + one inline tool_use ⇒ the synthesis branch). HOME is sandboxed so the
-# PG dual-write helper (${HOME}/.claude/hooks/_pg_outcome_dualwrite.py) is absent ⇒ PG write is
-# skipped; the tool-budget counter dir is redirected into the test temp dir. Decision channel =
-# the '[outcome-record] synthesize: ... attribution=<value> ...' diagnostic on stderr (captured
-# via 2>&1). No live hook input is consumed.
+# (no [COMPLETION] block + one inline tool_use ⇒ the synthesis branch). The hook resolves the PG
+# dual-write helper as a SIBLING of the script (repo copy exists), so PG is fail-opened via
+# PGHOST pointing at a nonexistent socket dir (same technique as the cost-tracker suite) — no
+# live DB write; the tool-budget counter dir is redirected into the test temp dir. Decision
+# channel = the '[outcome-record] synthesize: ... attribution=<value> ...' diagnostic on stderr
+# (captured via 2>&1). No live hook input is consumed.
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
@@ -60,6 +61,7 @@ run_hook() {
   }' >"${PAYLOAD_FILE}"
   run env \
     HOME="${BT_TMP}/home" \
+    PGHOST="/nonexistent-socket-xyzzy" \
     CLAUDE_GATE_INFLIGHT="" \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
     SUBAGENT_TOOL_BUDGET="${SUBAGENT_TOOL_BUDGET:-40}" \

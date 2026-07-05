@@ -60,7 +60,7 @@ def test_when_model_set_stub_then_line_right_after_maxturns() -> None:
 
 
 def test_when_model_set_with_authored_body_then_line_present() -> None:
-    body = "> Rules: GLOBAL_RULES.md (ALL + DEV)\n\n# dev-x\n\nAuthored body.\n"
+    body = "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n\n# dev-x\n\nAuthored body.\n"
     out = render_agent_md(
         name="dev-x",
         scope="DEV",

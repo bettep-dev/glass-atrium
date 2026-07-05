@@ -1,5 +1,5 @@
 // agent-registry.json loader → agent name → AgentRegistryEntry Map (singleton cache).
-// SoT: `~/.claude/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
+// SoT: `~/.glass-atrium/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
 // singleton 이유: static 파일이라 per-request fs read + JSON.parse 회피 → /api/agents/summary p95 budget 보호.
 
 import { readFile } from "node:fs/promises";
@@ -87,15 +87,33 @@ export function resetAgentRegistryCache(): void {
   warnedOnce = false;
 }
 
+// H6 rename-transition dual-match prefix — registry keys are `glass-atrium-*`
+// post-rename; pre-rename DB rows still carry the bare agent form (see
+// loadCanonicalAgentKeys doc below).
+const CANONICAL_KEY_PREFIX = "glass-atrium-";
+
 /**
  * Convenience — the canonical agent-key array (registry SoT) the membership
  * gates bind against. Folds the repeated `[...entries.keys()]` spread every
  * gated call site otherwise duplicates. Empty array on an empty/corrupt registry
  * → the gate builders below fail-open on it (predicate skipped).
+ *
+ * H6 rename-transition dual-match: every `glass-atrium-*` registry key is
+ * returned ALONGSIDE its de-prefixed legacy alias (`glass-atrium-dev-shell` →
+ * `dev-shell`), deduped — pre-rename outcome/cost/dashboard DB rows carry the
+ * bare agent form, so a prefixed-only IN-list would hide that entire history.
+ * Mirrors the DEV_AGENT_PREFIX dual-match in
+ * monitor/src/server/routes/improvement.ts (style_ref telemetry); remove both
+ * together when the transition window closes.
  */
 export async function loadCanonicalAgentKeys(): Promise<string[]> {
   const entries = await loadAgentRegistry();
-  return [...entries.keys()];
+  const dualMatched = [...entries.keys()].flatMap((key) =>
+    key.startsWith(CANONICAL_KEY_PREFIX)
+      ? [key, key.slice(CANONICAL_KEY_PREFIX.length)]
+      : [key],
+  );
+  return [...new Set(dualMatched)];
 }
 
 // Bare membership fragment core — `<columnRef> IN (?..)`, or Prisma.empty on an
@@ -166,13 +184,13 @@ export function buildAgentMembershipFragment(
   return buildMembershipInList(canonicalAgents, columnRef);
 }
 
-// env override → defaults to `~/.claude/agent-registry.json` (user home).
+// env override → defaults to `~/.glass-atrium/agent-registry.json` (install root).
 function resolveRegistryPath(): string {
   const override = process.env.AGENT_REGISTRY_PATH;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return join(homedir(), ".claude", "agent-registry.json");
+  return join(homedir(), ".glass-atrium", "agent-registry.json");
 }
 
 // raw JSON → AgentRegistryEntry Map (defensive normalize).
@@ -221,14 +239,14 @@ async function enrichDescriptions(entries: Map<string, AgentRegistryEntry>): Pro
   );
 }
 
-// `~/.claude/agents/` — derived from the registry path's directory so an
+// `~/.glass-atrium/agents/` — derived from the registry path's directory so an
 // AGENT_REGISTRY_PATH override (tests) co-locates the `.md` fixtures with the JSON.
 function resolveAgentMdDir(): string {
   const override = process.env.AGENT_REGISTRY_PATH;
   if (typeof override === "string" && override.length > 0) {
     return join(dirname(override), "agents");
   }
-  return join(homedir(), ".claude", "agents");
+  return join(homedir(), ".glass-atrium", "agents");
 }
 
 // Defensive `.md` description read — graceful on missing file / odd frontmatter.

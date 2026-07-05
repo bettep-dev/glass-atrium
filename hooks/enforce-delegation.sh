@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse(Write|Edit) — block the orchestrator's direct file modification
-# Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLOBAL_RULES.md) pass; everything else is blocked with exit 2
+# Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) pass; everything else is blocked with exit 2
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
 # POLICY: ~/.claude/, ~/.claude-work/, ~/.claude-personal/ all enforce delegation — only sub-agents may modify
 #
@@ -79,7 +79,7 @@ FILE_PATH=$(hook_get_tool_input "${INPUT}" "file_path")
 # 2. Allow exact basenames (memory-index + root-rule files).
 BASENAME=$(basename "${FILE_PATH}")
 case "${BASENAME}" in
-  CLAUDE.md | MEMORY.md | GLOBAL_RULES.md) exit 0 ;;
+  CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) exit 0 ;;
   *) : ;;
 esac
 

@@ -479,7 +479,7 @@ ApprovalTier = Literal["auto", "safety", ""]
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
 #     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
 _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(^|/)GLOBAL_RULES\.md$"),
+    re.compile(r"(^|/)GLASS_ATRIUM_GLOBAL_RULES\.md$"),
     re.compile(r"(^|/)security\.md$"),
     re.compile(r"(^|/)scope-security\.md$"),
     re.compile(r"(^|/)\.env(\.|$)"),
@@ -562,9 +562,9 @@ PRE_VERIFY_MODEL = HAIKU_MODEL
 
 # Compliance source files — the verifier reads excerpts and must check
 # the patch against all 4 axes independently.
-DEFAULT_RULES_DIR = HOME / ".claude" / "rules"
+DEFAULT_RULES_DIR = HOME / ".claude" / "rules" / "glass-atrium"
 COMPLIANCE_MATRIX_FILE = DEFAULT_RULES_DIR / "core-compliance-matrix.md"
-GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLOBAL_RULES.md"
+GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLASS_ATRIUM_GLOBAL_RULES.md"
 
 # Truncation caps for verifier prompt (token budget protection).
 RULE_EXCERPT_CHAR_CAP = 6000
@@ -583,33 +583,33 @@ PRE_VERIFY_FAILURES_LIMIT = 8
 # Used to pick the correct scope-*.md file for axis C3.
 _AGENT_SCOPE_MAP: dict[str, str] = {
     # DEV scope
-    "dev-front": "scope-dev.md",
-    "dev-react": "scope-dev.md",
-    "dev-angular": "scope-dev.md",
-    "dev-gsap": "scope-dev.md",
-    "dev-android": "scope-dev.md",
-    "dev-nestjs": "scope-dev.md",
-    "dev-node": "scope-dev.md",
-    "dev-python": "scope-dev.md",
-    "dev-db": "scope-dev.md",
-    "dev-rag": "scope-dev.md",
-    "dev-animator": "scope-dev.md",
-    "dev-shell": "scope-dev.md",
+    "glass-atrium-dev-front": "scope-dev.md",
+    "glass-atrium-dev-react": "scope-dev.md",
+    "glass-atrium-dev-angular": "scope-dev.md",
+    "glass-atrium-dev-gsap": "scope-dev.md",
+    "glass-atrium-dev-android": "scope-dev.md",
+    "glass-atrium-dev-nestjs": "scope-dev.md",
+    "glass-atrium-dev-node": "scope-dev.md",
+    "glass-atrium-dev-python": "scope-dev.md",
+    "glass-atrium-dev-db": "scope-dev.md",
+    "glass-atrium-dev-rag": "scope-dev.md",
+    "glass-atrium-dev-animator": "scope-dev.md",
+    "glass-atrium-dev-shell": "scope-dev.md",
     # META scope
-    "meta-prompt-engineer": "scope-meta.md",
-    "meta-agent": "scope-meta.md",
+    "glass-atrium-meta-prompt-engineer": "scope-meta.md",
+    "glass-atrium-meta-agent": "scope-meta.md",
     # DESIGN scope
-    "design-designer": "scope-design.md",
+    "glass-atrium-design-designer": "scope-design.md",
     # RESEARCH / PLANNING / REPORT
-    "intel-researcher": "scope-research.md",
-    "intel-planner": "scope-planning.md",
-    "intel-reporter": "scope-report.md",
+    "glass-atrium-intel-researcher": "scope-research.md",
+    "glass-atrium-intel-planner": "scope-planning.md",
+    "glass-atrium-intel-reporter": "scope-report.md",
     # QA scope
-    "qa-code-reviewer": "scope-qa.md",
-    "qa-debugger": "scope-qa.md",
+    "glass-atrium-qa-code-reviewer": "scope-qa.md",
+    "glass-atrium-qa-debugger": "scope-qa.md",
     # SECURITY / WIKI
-    "sec-guard": "scope-security.md",
-    "wiki-curator": "scope-wiki.md",
+    "glass-atrium-sec-guard": "scope-security.md",
+    "glass-atrium-wiki-curator": "scope-wiki.md",
 }
 
 
@@ -1370,6 +1370,30 @@ def _agent_roster(agents_dir: Path) -> frozenset[str]:
         return frozenset()
 
 
+# Canonical roster stems carry this prefix (agents/glass-atrium-<bare>.md).
+_ROSTER_STEM_PREFIX = "glass-atrium-"
+
+
+def _get_roster_alias(agent: str, roster: frozenset[str]) -> str | None:
+    """Roster stem the bare/prefixed alias `agent` resolves to, or None.
+
+    Accumulated learning_log rows carry the same logical agent in bare form
+    ('dev-shell') while the live roster stem is the prefixed form
+    ('glass-atrium-dev-shell') — and vice versa on a bare-stem checkout.
+    Alias-trying both directions lets the caller rewrite Pattern.agent to the
+    REAL stem so downstream target_file resolution (agents/<stem>.md) hits the
+    file; no hit in either direction → None (caller keeps the loud-fail path).
+    """
+    prefixed = _ROSTER_STEM_PREFIX + agent
+    if prefixed in roster:
+        return prefixed
+    if agent.startswith(_ROSTER_STEM_PREFIX):
+        bare = agent[len(_ROSTER_STEM_PREFIX):]
+        if bare in roster:
+            return bare
+    return None
+
+
 def read_user_pending_patterns(
     log_path: Path,
     limit: int,
@@ -1419,8 +1443,14 @@ def read_user_pending_patterns(
         # WARN + loop event, then skip. roster empty (glob failed) → no
         # validation (fail-open).
         if roster and agent not in roster:
-            _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
-            continue
+            # Bare↔prefixed alias resolution before the loud-fail skip — a row
+            # keyed on the bare stem must not dead-end as roster-mismatch when
+            # the real agents/<stem>.md exists under the canonical prefix.
+            alias = _get_roster_alias(agent, roster)
+            if alias is None:
+                _warn_roster_mismatch(agent, row["pattern_signature"], event_ts)
+                continue
+            agent = alias
         discovered = row["discovered_date"]
         signature = row["pattern_signature"]
         patterns.append(
@@ -2889,18 +2919,32 @@ _ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
 # negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
 # pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
 _ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
+# Third synthesized-provenance sibling: a schema-mode run whose TERMINAL
+# StructuredOutput was successfully consumed. Its result=done proves the run
+# FINISHED (direct evidence of non-truncation) but the deliverable is
+# schema-validated + writer-unverified and lesson-less — such a row must never
+# stand as a "clean first-try done" SUCCESS exemplar, nor as a failure →
+# NEUTRAL polarity, mirroring the measurement-gap treatment.
+_ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 
 
 def _is_synthesized_measurement_gap(o: Outcome) -> bool:
-    """True for a completion-synthesized done_with_concerns Outcome — the synthesis
-    DEFAULT result, not an agent-emitted failure signal. Scoped to that exact
-    provenance+result pair so a real agent's done_with_concerns still counts.
+    """True for a synthesized Outcome whose result is a synthesis artifact, not an
+    agent-emitted signal: completion-synthesized done_with_concerns (the synthesis
+    DEFAULT) and structuredoutput-derived done (schema-validated emit,
+    writer-unverified). Scoped to those exact provenance+result pairs so a real
+    agent's done_with_concerns still counts.
 
     budget-truncation is a sibling synthesized-provenance attribution but a real
     negative, not a measurement gap — the explicit guard keeps it clusterable and
-    holds that invariant even if the completion-synthesized match is broadened."""
+    holds that invariant even if the synthesized matches are broadened."""
     if o.attribution_source == _ATTRIBUTION_BUDGET_TRUNCATION:
         return False
+    if (
+        o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
+        and o.result == "done"
+    ):
+        return True
     return (
         o.attribution_source == _ATTRIBUTION_SYNTHESIZED
         and o.result == "done_with_concerns"
@@ -2942,7 +2986,12 @@ def _is_failure_outcome(o: Outcome) -> bool:
 
 
 def _is_success_outcome(o: Outcome) -> bool:
-    """SUCCESS polarity: clean first-try done — never an absent/missing signal."""
+    """SUCCESS polarity: clean first-try done — never an absent/missing signal.
+
+    structuredoutput-derived carve-out: that row's done is synthesis-assigned
+    (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
+    if o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
+        return False
     return (
         o.result == "done"
         and o.revision_count == 0

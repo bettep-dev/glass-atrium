@@ -27,7 +27,7 @@ Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA rost
 - **INJECT_AGENTS** — DEV (12) + QA (2): receives the comment-logging core block.
 - **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block.
 - **MINIMALISM_AGENTS** — DEV (12): receives the MINIMALISM block.
-- **NAMING_AGENTS** — DEV minus dev-swift (11) + qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes dev-swift AND qa-debugger. Under the HYBRID fix this array is now auto-reconciled by the CLI alongside the other three.
+- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. Under the HYBRID fix this array is now auto-reconciled by the CLI alongside the other three.
 
 A newly registered DEV/QA agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently loads NO injection blocks. Symmetrically, a deleted DEV agent's name lingers in the arrays after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. Previously the operator was told to hand-edit the arrays (a prose TODO). That manual step is now executable: this skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
 
@@ -65,7 +65,7 @@ A non-zero exit means the live hook was NOT left in a partial state — the `.ba
 
 ## Idempotency
 
-Membership is checked by `split()` + token equality (not substring), so `dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change.
+Membership is checked by `split()` + token equality (not substring), so `glass-atrium-dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change.
 
 ## Output Format
 
@@ -75,7 +75,7 @@ RECONCILE-INJECT: [RECONCILED | ALREADY-SYNCED | FAILED]
 Command: cd ~/.glass-atrium/scripts && python3 -m agent_lifecycle sync-inject
 Exit code: <0|4|5|6>
 Inserted:
-  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS   # per actual scope (NAMING excludes dev-swift + qa-debugger); "(none)" if no inserts
+  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS   # per actual scope (NAMING excludes glass-atrium-dev-swift + glass-atrium-qa-debugger); "(none)" if no inserts
 Removed:
   <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS   # stale name of a deleted agent; "(none)" if no removes
 Backup: <path to .bak>                                                # omit if no write occurred

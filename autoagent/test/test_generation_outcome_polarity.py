@@ -20,6 +20,7 @@ Run with either runner:
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,14 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
+
+# The helper MUST enter sys.modules before daemon_cycle imports it (same
+# contract as test_pg_pattern_intake.py) — daemon_cycle prepends
+# ~/.claude/hooks (live install) to sys.path, which would otherwise shadow the
+# repo copy for every later test module in a combined run. psycopg absent →
+# suppress; daemon_cycle still imports with its fallback predicates.
+with contextlib.suppress(Exception):
+    import _pg_learning_dualwrite  # noqa: F401 — sys.modules pre-bind only
 
 try:
     import daemon_cycle as dc
@@ -254,6 +263,65 @@ class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
 
     def test_when_budget_truncation_constant_then_literal(self) -> None:
         self.assertEqual(dc._ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestStructuredOutputDerivedNeutral(unittest.TestCase):
+    """structuredoutput-derived done (terminal consumed StructuredOutput synthesis)
+    is writer-unverified — carved out of SUCCESS (never a clean first-try
+    exemplar) AND out of FAILURE via the measurement-gap treatment → NEUTRAL."""
+
+    def test_when_structuredoutput_derived_done_then_not_success(self) -> None:
+        o = _outcome(
+            dc,
+            result="done",
+            confidence="low",
+            metric_pass="false",
+            attribution_source="structuredoutput-derived",
+        )
+        self.assertFalse(
+            dc._is_success_outcome(o), "synthesized done must NOT be SUCCESS"
+        )
+
+    def test_when_structuredoutput_derived_done_then_measurement_gap(self) -> None:
+        o = _outcome(
+            dc, result="done", attribution_source="structuredoutput-derived"
+        )
+        self.assertTrue(dc._is_synthesized_measurement_gap(o))
+        self.assertFalse(dc._is_failure_outcome(o))
+
+    def test_when_structuredoutput_derived_done_then_neutral_section(self) -> None:
+        o = _outcome(
+            dc, result="done", attribution_source="structuredoutput-derived"
+        )
+        block = dc._render_generation_outcomes_block([o])
+        self.assertIn("== SUCCESS OUTCOMES (clean first-try done) (0) ==", block)
+        self.assertIn(
+            "== NEUTRAL OUTCOMES (no clear polarity / missing signal) (1) ==",
+            block,
+        )
+
+    def test_when_plain_done_then_still_success(self) -> None:
+        # Guard: the carve-out is provenance-scoped — a writer-emitted clean done
+        # (empty attribution_source) stays a SUCCESS exemplar.
+        o = _outcome(dc, result="done", attribution_source="")
+        self.assertTrue(dc._is_success_outcome(o))
+
+    def test_when_budget_truncation_sibling_then_not_swept(self) -> None:
+        # Sibling-token enumeration: broadening the synthesized matches must not
+        # sweep budget-truncation (a REAL negative) into the measurement gap.
+        o = _outcome(
+            dc,
+            result="done_with_concerns",
+            attribution_source="budget-truncation",
+        )
+        self.assertFalse(dc._is_synthesized_measurement_gap(o))
+        self.assertTrue(dc._is_failure_outcome(o))
+
+    def test_when_structuredoutput_constant_then_literal(self) -> None:
+        self.assertEqual(
+            dc._ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED, "structuredoutput-derived"
+        )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")

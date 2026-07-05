@@ -43,7 +43,7 @@ def trash_path(name: str, suffix: str) -> Path:
 # sub-paths; the scan matches on the agents/-relative path.
 NON_AGENT_EXCLUSIONS: frozenset[str] = frozenset(
     {
-        "GLOBAL_RULES.md",
+        "GLASS_ATRIUM_GLOBAL_RULES.md",
         "references/critical-spring.md",
         "references/rag-domain.md",
         "templates/DESIGN.md",
@@ -62,16 +62,16 @@ NON_AGENT_DIRS: frozenset[str] = frozenset({"references", "templates"})
 # this block (fail-safe-default). 10 names, re-confirmed live 2026-06-14.
 NON_DEV_BLOCK_LIST: frozenset[str] = frozenset(
     {
-        "qa-code-reviewer",
-        "qa-debugger",
-        "design-designer",
-        "meta-agent",
-        "intel-planner",
-        "meta-prompt-engineer",
-        "intel-reporter",
-        "intel-researcher",
-        "sec-guard",
-        "wiki-curator",
+        "glass-atrium-qa-code-reviewer",
+        "glass-atrium-qa-debugger",
+        "glass-atrium-design-designer",
+        "glass-atrium-meta-agent",
+        "glass-atrium-intel-planner",
+        "glass-atrium-meta-prompt-engineer",
+        "glass-atrium-intel-reporter",
+        "glass-atrium-intel-researcher",
+        "glass-atrium-sec-guard",
+        "glass-atrium-wiki-curator",
     }
 )
 
@@ -107,7 +107,7 @@ class StorePaths:
 
     @property
     def compliance_matrix(self) -> Path:
-        return self.ga_root / "rules" / "core-compliance-matrix.md"
+        return self.ga_root / "rules" / "glass-atrium" / "core-compliance-matrix.md"
 
     @property
     def inject_scope_rules(self) -> Path:

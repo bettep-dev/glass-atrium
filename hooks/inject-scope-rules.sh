@@ -52,15 +52,18 @@ SUBAGENT_BUDGET_METER_OFF="${SUBAGENT_BUDGET_METER_OFF:-}"
 # sandbox (the test points it at a fixture dir). Canonical SoT root = ~/.glass-atrium/agents.
 readonly AGENTS_DIR="${INJECT_SCOPE_RULES_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
 
-# Comment-logging source rule file — env-overridable (test fail-open branch), ${HOME}-relative.
-readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.claude/scoped/shared-comment-logging.md}"
+# Comment-logging source rule file — env-overridable (test fail-open branch). scoped/ is DROPPED
+# from the ~/.claude farm and consumed IN PLACE from ~/.glass-atrium/scoped; these SessionStart-
+# adjacent hooks are client-fired so the DEFAULT constant (not an env block) carries the new path.
+readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.glass-atrium/scoped/shared-comment-logging.md}"
 
-# style_ref source rule file — DEV-only injection; same env-override pattern as SRC_FILE.
-readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.claude/scoped/scope-dev.md}"
+# style_ref source rule file — DEV-only injection; same env-override + ~/.glass-atrium/scoped default.
+readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-atrium/scoped/scope-dev.md}"
 
-# naming source SKILL file — DEV(12)+qa-code-reviewer injection; same env-override + ${HOME}/.claude
-# pattern. The ${HOME}/.claude path is a symlink into the canonical ~/.glass-atrium store (verified);
-# the hook uses ${HOME}/.claude consistently with SRC_FILE/STYLEREF_SRC_FILE rather than the raw store.
+# naming source SKILL file — DEV(12)+qa-code-reviewer injection; same env-override pattern. UNLIKE
+# SRC_FILE/STYLEREF_SRC_FILE (relocated to ~/.glass-atrium/scoped), skills STAY FARMED into
+# ~/.claude/skills, so this default keeps the ~/.claude/skills path (a symlink into the canonical
+# ~/.glass-atrium store).
 readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skills/glass-atrium-dev-naming/SKILL.md}"
 
 # Comment-logging AGENT-INJECT block boundaries — literal anchors (stable across file edits).
@@ -82,13 +85,13 @@ readonly NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
 
 # Comment-logging scope-match — DEV + QA (core-compliance-matrix.md Scope Legend SoT).
 # Space-padded to block partial matches. Update when DEV/QA agents are added.
-readonly INJECT_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell qa-code-reviewer qa-debugger dev-swift "
+readonly INJECT_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-dev-swift "
 
 # style_ref scope-match — DEV ONLY (style_ref is DEV-scoped; QA excluded). Space-padded.
-readonly STYLEREF_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift "
+readonly STYLEREF_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
 # minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
-readonly MINIMALISM_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift "
+readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
 # naming scope-match — the 13 agents whose frontmatter declares glass-atrium-dev-naming: DEV(12,
 # EXCLUDING dev-swift) + qa-code-reviewer. Space-padded. DELIBERATELY NOT INJECT_AGENTS: that set
@@ -97,7 +100,7 @@ readonly MINIMALISM_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-androi
 # tracked array (it parses all 4 named arrays, naming included) — a new DEV agent is wired in
 # automatically; the narrower roster is enforced by a dedicated naming membership predicate
 # (dev_roster − {dev-swift} ∪ {qa-code-reviewer}), NOT the generic DEV/QA rosters.
-readonly NAMING_AGENTS=" dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell qa-code-reviewer "
+readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0

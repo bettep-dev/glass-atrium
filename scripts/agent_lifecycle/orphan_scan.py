@@ -4,7 +4,7 @@ Responsibilities:
     Lint the agent definition's spread across stores (md / registry / matrix /
     inject-list / manifest / symlink) for the six mismatch modes plus symlink
     integrity, with the NON-AGENT EXCLUSION SET applied BEFORE every check so a
-    clean store never false-fires on GLOBAL_RULES.md / references/ / templates/.
+    clean store never false-fires on GLASS_ATRIUM_GLOBAL_RULES.md / references/ / templates/.
     count-mismatch keys on a SINGLE declared-count SoT = the registry agents dict
     (23). domains-overlap reuses the ONE overlap predicate (overlap.py) the R1-Q3
     gate also calls — same function, same threshold, no drift. A reconciliation
@@ -38,14 +38,14 @@ from .subproc import target_home
 
 # DEV roster size SoT cross-check — the QA names INJECT_AGENTS adds over the DEV
 # roster (DEV + QA). Used by inject-list-mismatch to model the QA-vs-DEV split.
-_QA_NAMES: frozenset[str] = frozenset({"qa-code-reviewer", "qa-debugger"})
+_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"})
 
 # NAMING_AGENTS expected-membership inputs (the narrower 4th array): it adds
 # qa-code-reviewer ONLY (NEVER qa-debugger) and EXCLUDES dev-swift from the DEV
 # roster. Mirrors inject_sync._expected_naming_membership so detection and the
 # fix agree on the same dedicated rule.
-_NAMING_QA_NAMES: frozenset[str] = frozenset({"qa-code-reviewer"})
-_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"dev-swift"})
+_NAMING_QA_NAMES: frozenset[str] = frozenset({"glass-atrium-qa-code-reviewer"})
+_NAMING_EXCLUDED_DEV: frozenset[str] = frozenset({"glass-atrium-dev-swift"})
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ def _is_excluded(rel_path: str) -> bool:
     """True when an agents/-relative path is a non-agent file (M3 exclusion set).
 
     Applied BEFORE any mismatch / dangling / count check so a clean store never
-    flags GLOBAL_RULES.md or a references/ / templates/ file as an orphan.
+    flags GLASS_ATRIUM_GLOBAL_RULES.md or a references/ / templates/ file as an orphan.
     """
     if rel_path in NON_AGENT_EXCLUSIONS:
         return True
@@ -409,7 +409,7 @@ def _check_farm_symlinks(paths: StorePaths, registry_names: set[str]) -> list[Fi
     sandbox_env + the DELETE prune). Each <target_home>/agents/<name>.md symlink
     is checked: a link whose stem is not a registry agent is STRAY (post-exclusion),
     and a link whose target is missing is DANGLING. The non-agent exclusion set
-    (GLOBAL_RULES.md, references/*, templates/*) is applied so legit farm symlinks
+    (GLASS_ATRIUM_GLOBAL_RULES.md, references/*, templates/*) is applied so legit farm symlinks
     are never flagged. A missing farm dir is a no-op (nothing to enumerate).
     """
     farm_agents = target_home(paths.ga_root) / "agents"

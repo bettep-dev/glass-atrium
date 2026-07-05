@@ -37,9 +37,10 @@ DEFAULT_NOTES_DIR = DEFAULT_WIKI_ROOT / "notes"
 CLAUDE_BIN = os.environ.get("WIKI_DAEMON_CLAUDE_BIN", "claude")
 
 # Read budget/model literals from the shared JSON SoT (daemon-config.json).
-# daemon_cycle.py already puts hooks/ on sys.path, but this module lives on the scripts/ side,
-# so it does the same one-line insert then import as daemon_cycle.py (read_pattern handoff convention).
-_HOOKS_DIR = HOME / ".claude" / "hooks"
+# hooks/ self-located from THIS file (store: ~/.glass-atrium/{scripts,hooks} siblings;
+# CI checkout: repo/{scripts,hooks}) — ~/.claude/hooks is no longer farmed, so a
+# HOME-anchored insert breaks fresh installs. resolve() dereferences the scripts facade symlink.
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 from daemon_config import HAIKU_MAX_BUDGET_USD, HAIKU_MODEL  # noqa: E402

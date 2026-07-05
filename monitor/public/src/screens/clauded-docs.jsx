@@ -909,7 +909,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         button.doc-chip-badge { min-height: 24px; min-width: 24px; }
         /* (retired) .doc-status-badge — DocStatusBadgeCD 가 canonical Badge(role=status, interactive) 로 이전, screen-local FORM 제거. */
         /* multi-select + group UI tokens. */
-        /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → design-designer reject). */
+        /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         .doc-checkbox-cell { width: 28px; padding: 4px 6px 4px 12px; text-align: center; vertical-align: middle; }
         .doc-checkbox-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: rgb(var(--accent)); }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
@@ -2569,14 +2569,14 @@ function DocStatusBadgeCD({ docStatus, onToggle, isToggling }) {
 //   · checked     — bg-emerald-600 border-emerald-600 + white check SVG
 //   · indeterminate — bg-emerald-600 border-emerald-600 + white minus SVG
 //
-// Implementation 결정 (design-designer 자문 4-Axis 16/20 정합):
+// Implementation 결정 (glass-atrium-design-designer 자문 4-Axis 16/20 정합):
 //   · native <input type=checkbox> 보존 — screen reader / keyboard / form submit 호환
 //   · appearance-none 으로 OS default 제거 → 시각 영역만 재구성
 //   · indeterminate 는 HTML attribute 아닌 JS property — React ref + useEffect 로 양방향 동기화
 //   · check/minus SVG inline overlay (절대 위치 + peer state 의존하지 않음 — React conditional render)
 //     ※ peer-checked 미사용 사유 — native checkbox 자체에 ::after / pseudo-element 불가 (browser 제한)
 //     → wrapper span 으로 SVG overlay 배치, checked/indeterminate 분기 React 측에서 처리
-//   · transition-colors duration-150 — design-designer 자문 motion: spatial-fast equivalent (CSS-only)
+//   · transition-colors duration-150 — glass-atrium-design-designer 자문 motion: spatial-fast equivalent (CSS-only)
 function DocCheckboxCD({
 	checked,
 	indeterminate,
@@ -3242,7 +3242,7 @@ function renderCodeFormatCD(body, format, _scopeClass) {
 // YAML frontmatter strip — `---\n...\n---\n` (선행 + 후행 fence) 매칭 시 본문만 잘라냄.
 //   · 본문이 '---\n' (또는 '---\r\n') 으로 시작하지 않으면 strip 안 함
 //   · 닫는 fence 미발견 시 strip 안 함 (방어적 — 전체를 MD 로 렌더)
-//   · audience / agent / tokens_estimate 등 intel-reporter 메타가 사용자 가시화 차단 대상
+//   · audience / agent / tokens_estimate 등 glass-atrium-intel-reporter 메타가 사용자 가시화 차단 대상
 function stripYamlFrontmatterCD(md) {
 	if (typeof md !== "string" || md.length === 0) return "";
 	const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);

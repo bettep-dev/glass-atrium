@@ -61,7 +61,7 @@ fi
 # DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
-readonly DEV_SET="dev-front dev-react dev-angular dev-gsap dev-android dev-nestjs dev-node dev-python dev-db dev-rag dev-animator dev-shell dev-swift"
+readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
 
 # stdin non-interactive → drain once, otherwise fail-open.
 input=""
@@ -168,7 +168,7 @@ has_size_est_token() {
 # the DEV's own append from polluting its own read. (Append is O_APPEND atomic per line.)
 marker_path="${spawn_dir}/${session_key}"
 reviewer_present=false
-if [[ -f "${marker_path}" ]] && grep -qx "qa-code-reviewer" "${marker_path}" 2>/dev/null; then
+if [[ -f "${marker_path}" ]] && grep -qx "glass-atrium-qa-code-reviewer" "${marker_path}" 2>/dev/null; then
   reviewer_present=true
 fi
 
@@ -192,13 +192,13 @@ prune_marker_file() {
   local tmp_path
   tmp_path="$(mktemp "${path}.prune.XXXXXX" 2>/dev/null)" || return 0
   local reviewer_lines budget
-  reviewer_lines="$(grep -xc 'qa-code-reviewer' "${path}" 2>/dev/null || true)"
+  reviewer_lines="$(grep -xc 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null || true)"
   [[ "${reviewer_lines}" =~ ^[0-9]+$ ]] || reviewer_lines=0
   budget=$((marker_line_cap - reviewer_lines))
   ((budget < 0)) && budget=0
   {
-    grep -x 'qa-code-reviewer' "${path}" 2>/dev/null || true
-    grep -vx 'qa-code-reviewer' "${path}" 2>/dev/null | tail -n "${budget}" || true
+    grep -x 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null || true
+    grep -vx 'glass-atrium-qa-code-reviewer' "${path}" 2>/dev/null | tail -n "${budget}" || true
   } >"${tmp_path}" 2>/dev/null || {
     rm -f "${tmp_path}" 2>/dev/null || true
     return 0

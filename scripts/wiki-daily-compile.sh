@@ -398,7 +398,7 @@ the basename. Print a 1-line summary when done."
 
 # 5. Single batched claude -p call (--bare minimal mode + wiki-curator system prompt)
 CLAUDE_EXIT=0
-SYSTEM_PROMPT_CONTENT="$(cat "$HOME/.claude/agents/wiki-curator.md")"
+SYSTEM_PROMPT_CONTENT="$(cat "$HOME/.claude/agents/glass-atrium-wiki-curator.md")"
 # Derive the log label from the actual model var (no hardcoded-model drift).
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] claude -p batch call (budget=\$${BUDGET}, model=${HAIKU_MODEL})" >>"$LOG_FILE"
 cd /tmp

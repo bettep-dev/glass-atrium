@@ -708,6 +708,14 @@ ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
 # negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
 # pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
 ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
+# Third synthesized-provenance sibling track-outcome.sh stamps when a schema-mode
+# subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
+# confidence=low + metric_pass=false, writer-unverified. Decision (recorded): NO
+# negative-signal behavior change here — 'done' is not in NEGATIVE_SIGNAL_RESULTS
+# and the stamp carries no other OR-term, so such a row already yields zero
+# negative hits arithmetically. Polarity handling (NEUTRAL, never a SUCCESS
+# exemplar) lives in daemon_cycle's partition, which keys on this token.
+ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
 NEGATIVE_REVISION_MIN = 2
@@ -756,7 +764,12 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
 
     budget-truncation shares the synthesized provenance but is a real negative, not
     a measurement gap — the explicit guard keeps it clusterable and holds that
-    invariant even if the completion-synthesized match is ever broadened."""
+    invariant even if the completion-synthesized match is ever broadened.
+
+    structuredoutput-derived (result=done, writer-unverified) is the third sibling
+    provenance and needs NO carve-out here: done is not a negative OR-term, so the
+    row yields zero hits arithmetically; its SUCCESS-side exclusion (NEUTRAL
+    polarity) lives in daemon_cycle._is_success_outcome."""
     if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
         return False
     return (

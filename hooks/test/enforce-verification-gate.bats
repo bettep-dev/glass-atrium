@@ -58,7 +58,7 @@ run_hook_subagent() {
 
 # Pre-seed a qa-code-reviewer line into the session marker so reviewer_present=true.
 seed_reviewer() {
-  printf '%s\n' "qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-test-001"
+  printf '%s\n' "glass-atrium-qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-test-001"
 }
 
 # Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
@@ -90,14 +90,14 @@ assert_empty() {
 # --- (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2) ---
 
 @test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2 + stderr JSON)" {
-  run_hook "dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
+  run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
   assert_status 2
   assert_contains "VGATE-ENTRY-001"
   assert_contains "entry-miss"
 }
 
 @test "different dev-* agent, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
-  run_hook "dev-android" "wire up the new settings screen across modules [SIZE-EST] bundles=2 tool_uses~=25 — settings screen wiring"
+  run_hook "glass-atrium-dev-android" "wire up the new settings screen across modules [SIZE-EST] bundles=2 tool_uses~=25 — settings screen wiring"
   assert_status 2
   assert_contains "entry-miss"
 }
@@ -109,13 +109,13 @@ assert_empty() {
 # confirming the gate actually reads the synced list rather than a stale hand-edited copy. ---
 
 @test "synced member dev-swift, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
-  run_hook "dev-swift" "implement the SwiftUI settings flow across modules [SIZE-EST] bundles=2 tool_uses~=22 — swiftui settings flow"
+  run_hook "glass-atrium-dev-swift" "implement the SwiftUI settings flow across modules [SIZE-EST] bundles=2 tool_uses~=22 — swiftui settings flow"
   assert_status 2
   assert_contains "entry-miss"
 }
 
 @test "non-member intel-reporter, no plan-ref, no token → silent exit 0 (not a DEV spawn)" {
-  run_hook "intel-reporter" "synthesize the findings into a report"
+  run_hook "glass-atrium-intel-reporter" "synthesize the findings into a report"
   assert_status 0
   assert_empty
 }
@@ -123,7 +123,7 @@ assert_empty() {
 # --- (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked) ---
 
 @test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer advisory + exit 0 (NOT entry-miss block)" {
-  run_hook "dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "entry-miss"
@@ -131,7 +131,7 @@ assert_empty() {
 
 @test "dev spawn with plan-ref (SIZE-EST present) AND reviewer present → silent, exit 0, no output" {
   seed_reviewer
-  run_hook "dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
   assert_status 0
   assert_empty
 }
@@ -139,13 +139,13 @@ assert_empty() {
 # --- (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch) ---
 
 @test "dev spawn with [ENTRY-CLASS] simple-task token (SIZE-EST present) → silent, exit 0, no output" {
-  run_hook "dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
   assert_status 0
   assert_empty
 }
 
 @test "token present AND plan-ref (SIZE-EST present) → reviewer branch wins (plan-ref checked first), exit 0" {
-  run_hook "dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
+  run_hook "glass-atrium-dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "entry-miss"
@@ -155,7 +155,7 @@ assert_empty() {
 # hook_is_subagent so a nested sub-worker origin (agent_id present) is never blocked. ---
 
 @test "orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2, size gate reachable for plan-bearing spawns)" {
-  run_hook "dev-react" "implement per plan clauded-docs/1234"
+  run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234"
   assert_status 2
   assert_contains "VGATE-SIZE-001"
   assert_contains "size-est-miss"
@@ -163,21 +163,21 @@ assert_empty() {
 }
 
 @test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2)" {
-  run_hook "dev-nestjs" "implement the auth refactor across the service layer"
+  run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer"
   assert_status 2
   assert_contains "VGATE-SIZE-001"
   assert_contains "size-est-miss"
 }
 
 @test "nested sub-worker (agent_id present), same plan-ref NO-[SIZE-EST] prompt → size guard SKIPPED, exit 0 (NOT VGATE-SIZE-001)" {
-  run_hook_subagent "dev-react" "implement per plan clauded-docs/1234"
+  run_hook_subagent "glass-atrium-dev-react" "implement per plan clauded-docs/1234"
   assert_status 0
   assert_contains "no qa-code-reviewer recorded"
   assert_not_contains "VGATE-SIZE-001"
 }
 
 @test "orchestrator DEV with [SIZE-EST] token + simple-task token → size gate satisfied, exit 0" {
-  run_hook "dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
   assert_status 0
   assert_empty
 }
@@ -185,13 +185,13 @@ assert_empty() {
 # --- (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV) ---
 
 @test "non-dev subagent_type, no plan-ref, no token → silent, exit 0 (not a DEV spawn)" {
-  run_hook "intel-planner" "draft a plan for the auth refactor"
+  run_hook "glass-atrium-intel-planner" "draft a plan for the auth refactor"
   assert_status 0
   assert_empty
 }
 
 @test "non-dev subagent_type WITH plan-ref → silent, exit 0 (gate only fires on dev)" {
-  run_hook "qa-code-reviewer" "review plan clauded-docs/5555"
+  run_hook "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
   assert_status 0
   assert_empty
 }

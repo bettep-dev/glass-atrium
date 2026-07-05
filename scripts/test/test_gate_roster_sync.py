@@ -52,22 +52,22 @@ from agent_lifecycle.readers import (  # noqa: E402
 )
 from agent_lifecycle.validation import ValidationError  # noqa: E402
 
-# The live scope-dev.md DEV roster (13 names incl. dev-swift). Per test, the
+# The live scope-dev.md DEV roster (13 names incl. glass-atrium-dev-swift). Per test, the
 # fixture roster appends or omits a name to drive the sync.
 _DEV_ROSTER = [
-    "dev-front",
-    "dev-react",
-    "dev-angular",
-    "dev-gsap",
-    "dev-android",
-    "dev-nestjs",
-    "dev-node",
-    "dev-python",
-    "dev-db",
-    "dev-rag",
-    "dev-animator",
-    "dev-shell",
-    "dev-swift",
+    "glass-atrium-dev-front",
+    "glass-atrium-dev-react",
+    "glass-atrium-dev-angular",
+    "glass-atrium-dev-gsap",
+    "glass-atrium-dev-android",
+    "glass-atrium-dev-nestjs",
+    "glass-atrium-dev-node",
+    "glass-atrium-dev-python",
+    "glass-atrium-dev-db",
+    "glass-atrium-dev-rag",
+    "glass-atrium-dev-animator",
+    "glass-atrium-dev-shell",
+    "glass-atrium-dev-swift",
 ]
 
 
@@ -181,39 +181,39 @@ def test_insert_lands_in_all_three_sites_in_gate_format(tmp_path: Path) -> None:
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     result = gate_roster_sync.apply(paths)
 
     assert result.did_change
-    assert "dev-newkid" in _bash_members(paths.enforce_verification_gate)
-    assert "dev-newkid" in _bash_members(paths.enforce_workflow_verify_stage)
+    assert "glass-atrium-dev-newkid" in _bash_members(paths.enforce_verification_gate)
+    assert "glass-atrium-dev-newkid" in _bash_members(paths.enforce_workflow_verify_stage)
     for occ in _sql_occurrences(paths.gate_audit):
-        assert "dev-newkid" in occ
+        assert "glass-atrium-dev-newkid" in occ
     # exact format the gate reads: the bash line stays a single unpadded string.
     text = paths.enforce_verification_gate.read_text(encoding="utf-8")
-    assert f'readonly DEV_SET="{" ".join(_DEV_ROSTER + ["dev-newkid"])}"' in text
+    assert f'readonly DEV_SET="{" ".join(_DEV_ROSTER + ["glass-atrium-dev-newkid"])}"' in text
 
 
 def test_remove_drops_name_from_all_three_sites(tmp_path: Path) -> None:
     """A name dropped from the roster is rebuilt out of all 3 sites."""
     paths = _write_fixture(
         tmp_path,
-        dev_set=_DEV_ROSTER + ["dev-gone"],
-        sql=_DEV_ROSTER + ["dev-gone"],
-        roster=_DEV_ROSTER,  # dev-gone NOT in the roster -> pruned everywhere
+        dev_set=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        sql=_DEV_ROSTER + ["glass-atrium-dev-gone"],
+        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> pruned everywhere
     )
 
     result = gate_roster_sync.apply(paths)
 
     assert result.did_change
-    assert "dev-gone" not in _bash_members(paths.enforce_verification_gate)
-    assert "dev-gone" not in _bash_members(paths.enforce_workflow_verify_stage)
+    assert "glass-atrium-dev-gone" not in _bash_members(paths.enforce_verification_gate)
+    assert "glass-atrium-dev-gone" not in _bash_members(paths.enforce_workflow_verify_stage)
     for occ in _sql_occurrences(paths.gate_audit):
-        assert "dev-gone" not in occ
+        assert "glass-atrium-dev-gone" not in occ
     # roster members survive.
-    assert "dev-shell" in _bash_members(paths.enforce_verification_gate)
+    assert "glass-atrium-dev-shell" in _bash_members(paths.enforce_verification_gate)
 
 
 def test_idempotent_noop_leaves_files_unchanged(tmp_path: Path) -> None:
@@ -244,7 +244,7 @@ def test_two_sql_lists_stay_byte_identical(tmp_path: Path) -> None:
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     gate_roster_sync.apply(paths)
@@ -253,7 +253,7 @@ def test_two_sql_lists_stay_byte_identical(tmp_path: Path) -> None:
     assert len(occurrences) == 2
     assert occurrences[0] == occurrences[1]
     # raw blocks byte-identical too (the canonical renderer fed both).
-    body = gate_roster_sync.render_sql_in_list_body(_DEV_ROSTER + ["dev-newkid"])
+    body = gate_roster_sync.render_sql_in_list_body(_DEV_ROSTER + ["glass-atrium-dev-newkid"])
     assert paths.gate_audit.read_text(encoding="utf-8").count(body) == 2
 
 
@@ -265,7 +265,7 @@ def test_round_trip_rejects_a_corrupting_write(
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     first = paths.enforce_verification_gate
     original = first.read_bytes()
@@ -294,7 +294,7 @@ def test_clean_rollback_restores_byte_identical(
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
     targets = [
         paths.enforce_verification_gate,
@@ -323,7 +323,7 @@ def test_cross_file_rollback_restores_earlier_sites(
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],  # all 3 sites need the new name
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],  # all 3 sites need the new name
     )
     targets = [
         paths.enforce_verification_gate,
@@ -380,7 +380,7 @@ def test_detection_mode_reports_drift_no_write(tmp_path: Path) -> None:
     """orphan-scan gate-roster-mismatch reports the drift but writes nothing."""
     paths = _write_fixture(
         tmp_path,
-        dev_set=_DEV_ROSTER[:-1],  # DEV_SET missing dev-swift
+        dev_set=_DEV_ROSTER[:-1],  # DEV_SET missing glass-atrium-dev-swift
         sql=_DEV_ROSTER,
         roster=_DEV_ROSTER,
     )
@@ -402,9 +402,9 @@ def test_detection_mode_reports_drift_no_write(tmp_path: Path) -> None:
 
     assert code == EXIT_OK
     assert any(
-        f.name == "dev-swift" and "enforce-verification-gate.sh" in f.detail
+        f.name == "glass-atrium-dev-swift" and "enforce-verification-gate.sh" in f.detail
         for f in findings
-    ), f"expected a dev-swift miss, got {[(f.name, f.detail) for f in findings]}"
+    ), f"expected a glass-atrium-dev-swift miss, got {[(f.name, f.detail) for f in findings]}"
     # lint-only — no mutation, no `.bak`.
     assert gate.read_bytes() == before_bytes
     assert gate.stat().st_mtime_ns == before_mtime
@@ -419,7 +419,7 @@ def test_cli_rollback_maps_to_exit_tx_failed(
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
     def _boom(*_args: object, **_kwargs: object) -> None:
@@ -449,11 +449,17 @@ def test_cli_sync_gate_roster_clean_tree_is_ok_noop(tmp_path: Path) -> None:
 def test_run_add_auto_wires_gate_roster_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A DEV run_add inserts the new name into the roster AND all 3 gate sites (T6)."""
+    """A DEV run_add inserts the new name into the roster AND all 3 gate sites (T6).
+
+    The request carries a BARE name on purpose: run_add must normalize it to the
+    glass-atrium- fleet prefix (born-prefixed mandate), so every assertion below
+    checks the PREFIXED name — a bare-name birth would fail them all.
+    """
     from agent_lifecycle import add as add_mod
     from agent_lifecycle.add import AddRequest, run_add
 
-    target = "dev-newbie"
+    bare = "dev-newbie"
+    target = "glass-atrium-dev-newbie"  # the name run_add must actually write
     paths = _write_fixture(
         tmp_path,
         dev_set=_DEV_ROSTER,
@@ -469,7 +475,7 @@ def test_run_add_auto_wires_gate_roster_sync(
     monkeypatch.setattr(add_mod, "swap_symlinks", lambda *_a, **_k: None)
 
     req = AddRequest(
-        name=target,
+        name=bare,  # bare in, prefixed out — the born-prefixed proof
         scope="DEV",
         origin="user",
         domains=[],  # empty -> no Q3 overlap
@@ -505,7 +511,7 @@ def test_rollback_failed_raises_and_cli_returns_exit_6(
         tmp_path,
         dev_set=_DEV_ROSTER,
         sql=_DEV_ROSTER,
-        roster=_DEV_ROSTER + ["dev-newkid"],  # all 3 sites differ — each needs a write
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],  # all 3 sites differ — each needs a write
     )
 
     real_replace = gate_roster_sync._atomic_replace

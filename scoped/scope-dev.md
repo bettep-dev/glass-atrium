@@ -1,6 +1,6 @@
 # DEV Scope Rules
 
-> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {dev-front, dev-react, dev-angular, dev-gsap, dev-android, dev-nestjs, dev-node, dev-python, dev-db, dev-rag, dev-animator, dev-shell, dev-swift}
+> **Loading**: Tier 2 (Scope) — auto-loads when agent_scope ∈ {glass-atrium-dev-front, glass-atrium-dev-react, glass-atrium-dev-angular, glass-atrium-dev-gsap, glass-atrium-dev-android, glass-atrium-dev-nestjs, glass-atrium-dev-node, glass-atrium-dev-python, glass-atrium-dev-db, glass-atrium-dev-rag, glass-atrium-dev-animator, glass-atrium-dev-shell, glass-atrium-dev-swift}
 > **Inherits**: Tier 1 (Core) + Tier 3 (Cross-cutting: comment-logging · performance · search-first · testing · type-safety)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
@@ -20,23 +20,23 @@ An agent boundary is justified only when the two sides hold **ALL THREE** of the
 
 **Code-quality rules are NOT part of the axis.** Every DEV agent loads an identical `> Rules:` pointer set (scope-dev · testing · type-safety · git-workflow · security); quality consistency is centralised at the rule layer. A new agent proposed solely to enforce a different quality standard is invalid — update the shared rule instead.
 
-**Language alone is not an axis.** A new language/framework runtime justifies a new agent only when it ALSO introduces a concern meeting all three criteria above. Counter-example: `dev-python` covers FastAPI + Litestar + Django + CLIs + data pipelines in one agent (the Python-runtime concern is unified).
+**Language alone is not an axis.** A new language/framework runtime justifies a new agent only when it ALSO introduces a concern meeting all three criteria above. Counter-example: `glass-atrium-dev-python` covers FastAPI + Litestar + Django + CLIs + data pipelines in one agent (the Python-runtime concern is unified).
 
 ### New-Agent Creation Gate [DEV+ORCHESTRATOR+META]
 
-Default = **extend an existing agent**; creation is the exception. Before creating a DEV agent, the requester (orchestrator or meta-prompt-engineer) MUST answer all three questions affirmatively — any "no" blocks creation:
+Default = **extend an existing agent**; creation is the exception. Before creating a DEV agent, the requester (orchestrator or glass-atrium-meta-prompt-engineer) MUST answer all three questions affirmatively — any "no" blocks creation:
 
 - **Q1 — Concern novelty**: does the proposed agent own a concern meeting ALL THREE Separation-Axis criteria? A sub-variant of an existing concern (new framework on the same runtime, new API version) -> "no".
 - **Q2 — Extend test**: can the closest-concern existing agent absorb the new knowledge via its `description` + `domains` array + body, without degrading routing precision or exceeding a single-budget turn? If yes -> EXTEND, do not create.
 - **Q3 — Fleet-size cost**: does the addition keep every agent's `domains` array semantically distinct enough that capability-based routing stays precise? Heavily overlapping `domains` indicate a merge, not a creation.
 
-**On creation** (all four, atomically): (a) add the name to the `scope-dev.md` loading stanza · (b) add an `agent-registry.json` entry with a non-overlapping `domains` array · (c) attach the standard `> Rules:` pointer set identical to every other DEV agent (no custom quality rules) · (d) add a `compatibility` field when the agent has runtime preconditions (pattern: `dev-animator`).
+**On creation** (all four, atomically): (a) add the name to the `scope-dev.md` loading stanza · (b) add an `agent-registry.json` entry with a non-overlapping `domains` array · (c) attach the standard `> Rules:` pointer set identical to every other DEV agent (no custom quality rules) · (d) add a `compatibility` field when the agent has runtime preconditions (pattern: `glass-atrium-dev-animator`).
 
-**In-context lifecycle wiring (decision tree → CLI)**: the orchestrator's in-context flow (ceremony SoT: `orchestrator-role.md` → In-Context Agent-Lifecycle Ceremony) realises this gate through the `agent_lifecycle` CLI. **DEFAULT branch = EXTEND** (`extend.py` via `--add-domain` / `--append-section`, additive append-only); **CREATE only when Q1/Q2/Q3 all-affirmative**. Q1/Q2/Q3 map to `evaluate_add_gate` (add.py) — Q3 is the codified domain-overlap `>= 50%` hard-block in `overlap.py`. The gate (`gate.py` + `overlap.py`) stays **SOLE authority**: the flow SUPPLIES the Q1/Q2 attestation verdicts (`--gate-q1`/`--gate-q2`, each `pass`/`fail`) but NEVER computes `allowed` and NEVER re-implements the overlap predicate. The orchestrator never self-authors the body (meta-prompt-engineer is the author).
+**In-context lifecycle wiring (decision tree → CLI)**: the orchestrator's in-context flow (ceremony SoT: `orchestrator-role.md` → In-Context Agent-Lifecycle Ceremony) realises this gate through the `agent_lifecycle` CLI. **DEFAULT branch = EXTEND** (`extend.py` via `--add-domain` / `--append-section`, additive append-only); **CREATE only when Q1/Q2/Q3 all-affirmative**. Q1/Q2/Q3 map to `evaluate_add_gate` (add.py) — Q3 is the codified domain-overlap `>= 50%` hard-block in `overlap.py`. The gate (`gate.py` + `overlap.py`) stays **SOLE authority**: the flow SUPPLIES the Q1/Q2 attestation verdicts (`--gate-q1`/`--gate-q2`, each `pass`/`fail`) but NEVER computes `allowed` and NEVER re-implements the overlap predicate. The orchestrator never self-authors the body (glass-atrium-meta-prompt-engineer is the author).
 
-**Doc-sync note (CLI auto-writes vs. manual matrix update)**: a successful `add` auto-writes the agent file + `agent-registry.json` entry + (via the post-commit reconcile gate) the 4 `inject-scope-rules.sh` arrays (INJECT / STYLEREF / MINIMALISM / NAMING; the NAMING roster is deliberately narrower — DEV minus dev-swift plus qa-code-reviewer, excluding qa-debugger). The `core-compliance-matrix.md` **Scope Legend** DEV row + **Compliance Matrix** rows are NOT auto-written — they remain a SEPARATE post-creation doc update for the new agent name.
+**Doc-sync note (CLI auto-writes vs. manual matrix update)**: a successful `add` auto-writes the agent file + `agent-registry.json` entry + (via the post-commit reconcile gate) the 4 `inject-scope-rules.sh` arrays (INJECT / STYLEREF / MINIMALISM / NAMING; the NAMING roster is deliberately narrower — DEV minus glass-atrium-dev-swift plus glass-atrium-qa-code-reviewer, excluding glass-atrium-qa-debugger). The `core-compliance-matrix.md` **Scope Legend** DEV row + **Compliance Matrix** rows are NOT auto-written — they remain a SEPARATE post-creation doc update for the new agent name.
 
-**dev-front exposed-doc HTML participation = EXTEND, not creation (governance note)**: dev-front's narrow role co-authoring viewer-exposed clauded-docs HTML primaries (bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the skeleton-first non-parallel handoff in `scope-report.md` / `scope-planning.md` Designer Co-Emission Trigger) is an EXTEND of the existing dev-front concern (Creation-Gate Q2 = yes — markup-craft already belongs to dev-front), NOT a new agent. Disjoint concern boundary: design-designer = philosophy/Mermaid-type/section-composition/palette verdict (consultative, no markup) · intel-reporter|intel-planner = content + the single POST · dev-front = the bespoke styled-skeleton markup only. dev-front is NOT a default co-author (default = `{author, design-designer}`); the entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → dev-front markup-exception Monitoring judgment. `shared-design-token-consumption.md` (token-consumption surfaces) does NOT gate this — a self-contained Tailwind-CDN exposed doc is a markup-craft surface, not a token-consumption one, but markup craft is still dev-front's concern.
+**glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation (governance note)**: glass-atrium-dev-front's narrow role co-authoring viewer-exposed clauded-docs HTML primaries (bespoke interactive component / hand-authored CSS beyond Tailwind-CDN utilities, via the skeleton-first non-parallel handoff in `scope-report.md` / `scope-planning.md` Designer Co-Emission Trigger) is an EXTEND of the existing glass-atrium-dev-front concern (Creation-Gate Q2 = yes — markup-craft already belongs to glass-atrium-dev-front), NOT a new agent. Disjoint concern boundary: glass-atrium-design-designer = philosophy/Mermaid-type/section-composition/palette verdict (consultative, no markup) · glass-atrium-intel-reporter|glass-atrium-intel-planner = content + the single POST · glass-atrium-dev-front = the bespoke styled-skeleton markup only. glass-atrium-dev-front is NOT a default co-author (default = `{author, glass-atrium-design-designer}`); the entry/handoff mechanics (author `needs_devfront_markup` signal → orchestrator Monitoring-phase capability judgment, NOT user approval) are canonical in `orchestrator-role.md` → glass-atrium-dev-front markup-exception Monitoring judgment. `shared-design-token-consumption.md` (token-consumption surfaces) does NOT gate this — a self-contained Tailwind-CDN exposed doc is a markup-craft surface, not a token-consumption one, but markup craft is still glass-atrium-dev-front's concern.
 
 ## Absolute Rules [DEV+META]
 
@@ -57,7 +57,7 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 
 ## Sprint Contract Gate [DEV+QA]
 
-- Before starting a **sizable** task (definition below), Evaluator (qa-code-reviewer) pre-defines verification criteria
+- Before starting a **sizable** task (definition below), Evaluator (glass-atrium-qa-code-reviewer) pre-defines verification criteria
 - Criteria MUST be specified in `acceptance_criteria.md` or plan's `## Acceptance Criteria` section (3-5 items)
 - DEV agents MUST read and acknowledge acceptance criteria before starting
 - On completion, record pass/fail per criterion → Reflect in Outcome Record
@@ -78,14 +78,14 @@ Default = **extend an existing agent**; creation is the exception. Before creati
 
 ## Plan Direction Verification Gate [DEV+QA]
 
-**Boundary (read first)**: Sprint Contract Gate = qa-code-reviewer **PRE-defines** acceptance criteria (before work starts) · Plan Direction Verification Gate = the team **POST-verifies** an authored plan (after planning, before implementation). These are distinct gates — do not conflate.
+**Boundary (read first)**: Sprint Contract Gate = glass-atrium-qa-code-reviewer **PRE-defines** acceptance criteria (before work starts) · Plan Direction Verification Gate = the team **POST-verifies** an authored plan (after planning, before implementation). These are distinct gates — do not conflate.
 
 This section is the **A-side canonical (SoT)** for the DEV participation duty (`scope-qa.md` carries a pointer only). When the orchestrator routes a complex plan to direction verification (gate operation: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`), a DEV agent is a **mandatory** verification participant:
 
 - **DEV participation = hard gate**: the gate cannot pass without a DEV verdict (the user requires "개발에이전트 참여 필수"). The participating DEV is the one matching the plan's primary implementation domain (selection rule in `orchestrator-role.md`).
 - **DEV duty**: judge the authored plan's **technical validity + approach soundness** from an implementation standpoint — would this plan, as written, lead to a sound implementation?
 - **DEV verdict output**: `feasible` / `infeasible` + (on infeasible) a concrete alternative direction. Vague "looks fine" verdicts FORBIDDEN — name the unsound assumption / approach gap.
-- **Revision flow**: an `infeasible` (or qa-code-reviewer `revise`) verdict triggers at most 1 intel-planner revision; the revised plan returns for re-verification. A 2nd mismatch escalates to orchestrator judgment (count + escalation path canonical in `orchestrator-role.md`).
+- **Revision flow**: an `infeasible` (or glass-atrium-qa-code-reviewer `revise`) verdict triggers at most 1 glass-atrium-intel-planner revision; the revised plan returns for re-verification. A 2nd mismatch escalates to orchestrator judgment (count + escalation path canonical in `orchestrator-role.md`).
 - **Simple-task exemption**: inherits the Sprint Contract Gate carve-out — see Sprint Contract Gate → Sizable-task definition. Simple (entry-exempt) tasks skip this gate entirely.
 - **Ultracode enforcement note (load-bearing for DEV authoring workflow scripts)**: under ultracode the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook is BYPASSED for engine `agent()` spawns — so the in-script verify-stage is the PRIMARY (honor-system) authoring obligation, BACKSTOPPED by the heuristic `enforce-workflow-verify-stage.sh` `PreToolUse(Workflow)` static-scan gate (catches gross omission only — comment-only / missing / out-of-order / no co-located DEV reviewer; NOT full enforcement). See `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode` (canonical) + `skills/glass-atrium-ops-orchestrator.md` verify-stage skeleton.
 
@@ -180,7 +180,7 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
 - Advisory, not blocking: probe failure (glob/read error) → proceed, do not block. This is an emit obligation, not a result gate.
 <!-- AGENT-INJECT:STYLE-REF:END -->
-- **Gap Table on Missing Info**: when 1+ of the Pre-Execution Verification check items is found missing → prose response FORBIDDEN · table-format emit MUST · ask exactly one question immediately after emitting the table (aligns with GLOBAL_RULES "1 issue = 1 question") · writing code before receiving the user's answer forbidden:
+- **Gap Table on Missing Info**: when 1+ of the Pre-Execution Verification check items is found missing → prose response FORBIDDEN · table-format emit MUST · ask exactly one question immediately after emitting the table (aligns with GLASS_ATRIUM_GLOBAL_RULES "1 issue = 1 question") · writing code before receiving the user's answer forbidden:
 
   | 항목 | 상태 | 필요 정보 |
   |------|------|-----------|
@@ -209,7 +209,7 @@ When a task admits multiple vendors / engines / libraries for the same capabilit
 
 ## Agent-Level Tool Exceptions [DEV]
 
-- **dev-rag**: WebSearch and WebFetch are retained for RAG domain research and technique verification — exception to the general DEV tool restriction. See dev-rag.md frontmatter and scope-dev.md for rationale.
+- **glass-atrium-dev-rag**: WebSearch and WebFetch are retained for RAG domain research and technique verification — exception to the general DEV tool restriction. See glass-atrium-dev-rag.md frontmatter and scope-dev.md for rationale.
 
 ## Prohibitions [DEV]
 

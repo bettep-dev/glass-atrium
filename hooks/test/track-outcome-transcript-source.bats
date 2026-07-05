@@ -13,9 +13,9 @@
 # and asserts EXACTLY ONE core.outcomes row is written — proving the transcript-source path and
 # catching future payload-contract drift.
 #
-# Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...), the diag
-# log, and the PG helper path (${HOME}/.claude/hooks/_pg_outcome_dualwrite.py) are redirected
-# into the test temp dir. A copy of the real PG helper is placed there. psycopg lives in the
+# Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...) and the
+# diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
+# SIBLING of the script (setup skips when absent). psycopg lives in the
 # user site-packages (HOME-dependent), so PYTHONPATH is pinned to the real install and passed
 # into the sandboxed hook env. A UNIQUE per-run agent name scopes the count assertion + the
 # teardown DELETE so the shared glass_atrium DB is never polluted.
@@ -46,13 +46,12 @@ setup() {
 
   SANDBOX_HOME="${TS_TMP}/home"
   # Subagent transcript at the exact path _resolve_subagent_transcript() globs.
-  TRANSCRIPT_DIR="${SANDBOX_HOME}/.claude/projects/-Users-bettep/${SESSION_ID}/subagents"
-  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs" "${SANDBOX_HOME}/.claude/hooks"
+  # Project-dir slug derived from the runtime HOME (the resolver globs projects/*/,
+  # so any slug works) — a hardcoded literal would be PII in the tracked tree (pii-scan gate).
+  PROJ_SLUG="${HOME//\//-}"
+  TRANSCRIPT_DIR="${SANDBOX_HOME}/.claude/projects/${PROJ_SLUG}/${SESSION_ID}/subagents"
+  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs"
   TRANSCRIPT="${TRANSCRIPT_DIR}/agent-${AGENT_ID}.jsonl"
-
-  # Copy the real PG helper into the sandbox HOME (the hook resolves it HOME-relative).
-  cp "${PG_HELPER_SRC}" "${SANDBOX_HOME}/.claude/hooks/_pg_outcome_dualwrite.py"
-  chmod +x "${SANDBOX_HOME}/.claude/hooks/_pg_outcome_dualwrite.py"
 
   PAYLOAD_FILE="${TS_TMP}/payload.json"
 }
@@ -118,16 +117,20 @@ PY
 # SubagentStop payload WITHOUT last_assistant_message and WITHOUT inline messages — the exact
 # CC 2.1.199+ shape that regressed. transcript_path points at a (nonexistent) PARENT.
 write_payload() {
+  # cwd derived from the runtime HOME — a hardcoded path literal would be PII
+  # in the tracked tree (pii-scan gate). The value only shapes the project-dir
+  # slug the hook derives; any real absolute path is behavior-identical.
   jq -nc \
     --arg aid "${AGENT_ID}" \
     --arg sess "${SESSION_ID}" \
     --arg agent "${UNIQUE_AGENT}" \
+    --arg cwd "${HOME}" \
     '{
       hook_event_name: "SubagentStop",
       agent_type: $agent,
       agent_id: $aid,
       session_id: $sess,
-      cwd: "/Users/bettep",
+      cwd: $cwd,
       transcript_path: "/nonexistent/parent.jsonl"
     }' >"${PAYLOAD_FILE}"
 }

@@ -108,8 +108,8 @@ const STYLE_REF_WINDOW_DAYS = 7;
 const TIER_BREAKDOWN_WINDOW_DAYS = 30;
 
 // Cross-layer SoT for the greenfield sentinel string, mirrored verbatim in:
-//   - bash:    ~/.claude/hooks/lib/style-ref-consts.sh      STYLE_REF_GREENFIELD
-//   - python:  ~/.claude/hooks/_style_ref_consts.py         STYLE_REF_GREENFIELD
+//   - bash:    ~/.glass-atrium/hooks/lib/style-ref-consts.sh   STYLE_REF_GREENFIELD
+//   - python:  ~/.glass-atrium/hooks/_style_ref_consts.py      STYLE_REF_GREENFIELD
 //   - TypeScript: this file (module-private — types/ stays type-only)
 // The JSX consumer (public/src/screens/improvement.jsx) cannot import this const
 // (Babel-standalone in-browser, public/ outside tsconfig include) — it tracks the
@@ -119,10 +119,10 @@ const STYLE_REF_GREENFIELD = 'greenfield' as const;
 // style_ref telemetry is a DEV-only graduation signal — non-DEV agents do not
 // emit style_ref, so including them corrupts overall_emission_rate (inflates the
 // denominator). DEV membership is derived at RUNTIME from the agent-registry
-// (canonical SoT) via this 'dev-' name prefix — the registry has no `scope`
+// (canonical SoT) via this 'glass-atrium-dev-' name prefix — the registry has no `scope`
 // field, so the prefix is the DEV discriminator per core-compliance-matrix Scope
 // Legend. No hardcoded DEV_AGENTS array.
-const DEV_AGENT_PREFIX = 'dev-';
+const DEV_AGENT_PREFIX = 'glass-atrium-dev-';
 
 interface TierCountDbRow {
   approval_tier: string;
@@ -360,22 +360,37 @@ async function handleImprovement(
   // gone.
   const outcomeWhere = buildOutcomeWhere(windowDays, agent, canonicalKeys);
   // style_ref telemetry window fixed at 7 days, independent of `windowDays`.
-  // Agent filter still applies so the per-agent drill-down stays consistent.
-  // canonicalKeys now applies to THIS base too (safe — devAgents below is
-  // already a registry subset, so no double-gating concern). DEV-subset gate
+  // Agent filter still applies so the per-agent drill-down stays consistent
+  // (drill-down matches the canonical prefixed key only). DEV-subset gate
   // appended to THIS where var ALONE, over its OWN buildOutcomeWhere(...) call
   // (not the outcomeWhere above) — unaffected by the registry-membership
   // scoping on outcomeWhere. DEV keys derived at runtime from the registry
-  // ('dev-' prefix). Fail-soft: an empty DEV set skips the predicate
-  // (fail-open) — Prisma.join([]) is invalid SQL.
+  // ('glass-atrium-dev-' prefix). Fail-soft: an empty DEV set skips the predicate
+  // (fail-open, plain registry-gated where kept) — Prisma.join([]) is invalid SQL.
   const devAgents = canonicalKeys.filter((name) =>
     name.startsWith(DEV_AGENT_PREFIX),
   );
-  const baseStyleRefWhere = buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys);
+  // H6 rename-transition dual-match — pre-rename core.outcomes rows carry the
+  // bare 'dev-*' agent form; the graduation signal keeps that history by
+  // matching each registry DEV key alongside its bare sibling. The in-builder
+  // canonicalKeys gate stays omitted on the DEV branch: the dual-form IN-list
+  // below is derived from registry DEV keys alone, so the T8
+  // registry-as-display-SoT intent holds without it (since the registry.ts H6
+  // dual-match, canonicalKeys itself carries the bare aliases too — the gate
+  // would now be redundant rather than alias-dropping, but omission stays the
+  // simpler contract). GROUP BY agent keeps the two forms as separate rows;
+  // buildStyleRefSummary sums both into the overall rates.
+  // Transition-window cleanup (reciprocal): remove this block TOGETHER with
+  // the loadCanonicalAgentKeys H6 dual-match in ../agents/registry.ts — that
+  // block points back here.
+  const devTelemetryAgents = devAgents.flatMap((name) => [
+    name,
+    `dev-${name.slice(DEV_AGENT_PREFIX.length)}`,
+  ]);
   const styleRefWhere =
     devAgents.length === 0
-      ? baseStyleRefWhere
-      : Prisma.sql`${baseStyleRefWhere} AND agent IN (${Prisma.join(devAgents)})`;
+      ? buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent, canonicalKeys)
+      : Prisma.sql`${buildOutcomeWhere(STYLE_REF_WINDOW_DAYS, agent)} AND agent IN (${Prisma.join(devTelemetryAgents)})`;
 
   const prisma = getPrisma();
   try {

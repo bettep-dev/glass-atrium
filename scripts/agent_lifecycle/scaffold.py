@@ -25,7 +25,7 @@ from .validation import ValidationError
 # Tier-2 loader keys on this, so an authored body must carry the RIGHT scope (a
 # wrong-scope anchor mis-loads rules — worse than absent, so it HALTs not injects).
 _ANCHOR_RE = re.compile(
-    r"^>\s*Rules:\s*GLOBAL_RULES\.md\s*\(ALL\s*\+\s*(?P<scope>[^)]*?)\s*\)",
+    r"^>\s*Rules:\s*GLASS_ATRIUM_GLOBAL_RULES\.md\s*\(ALL\s*\+\s*(?P<scope>[^)]*?)\s*\)",
     re.MULTILINE,
 )
 
@@ -51,6 +51,27 @@ _FENCE_RE = re.compile(r"^---[ \t]*$", re.MULTILINE)
 # total fence count must stay at the canonical 2 (a lone markdown thematic-break
 # `---` would make it odd; a smuggled block makes it 4+, both caught by > 2).
 _CANONICAL_FENCE_COUNT = 2
+
+
+# Fleet name prefix every shipped agent carries post-rename. A newly ADDed
+# agent must be BORN prefixed so every prefix-keyed consumer (paths.py
+# NON_DEV_BLOCK_LIST, inject_sync/orphan_scan QA+naming frozensets, the
+# DEV_SET gate hooks) recognizes it — a bare-name birth would silently fall
+# outside all of them.
+GA_AGENT_PREFIX = "glass-atrium-"
+
+
+def normalize_agent_name(name: str) -> str:
+    """Return `name` guaranteed to carry the glass-atrium- fleet prefix.
+
+    Idempotent: an already-prefixed name passes through unchanged. An empty
+    name also passes through unchanged so downstream validation (NAME_RE)
+    still refuses it — normalization must never manufacture a valid name
+    out of an invalid one.
+    """
+    if not name or name.startswith(GA_AGENT_PREFIX):
+        return name
+    return GA_AGENT_PREFIX + name
 
 
 class PreflightError(RuntimeError):
@@ -82,7 +103,7 @@ class BodyFrontmatterError(ValueError):
 
 def rules_anchor_line(scope: str) -> str:
     """The load-bearing `> Rules:` header line for `scope` (the Tier-2 anchor)."""
-    return f"> Rules: GLOBAL_RULES.md (ALL + {scope})"
+    return f"> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + {scope})"
 
 
 def render_agent_md(

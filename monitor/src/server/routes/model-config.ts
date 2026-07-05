@@ -45,8 +45,8 @@ import type {
 // middleware/audit-log.ts AUDIT_ACTOR).
 const UPDATED_BY = "monitor-web";
 
-const RESEARCH_AGENT_FILE = "intel-researcher.md";
-const DEV_AGENT_FILE_PATTERN = /^dev-[a-z0-9-]+\.md$/;
+const RESEARCH_AGENT_FILE = "glass-atrium-intel-researcher.md";
+const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
 // flag, so the tmux session inherits the settings.json model (D3).
@@ -62,7 +62,7 @@ function getDaemonConfigPath(): string {
 }
 
 function getAgentsDir(): string {
-  return process.env.MODEL_CONFIG_AGENTS_DIR ?? path.join(os.homedir(), ".claude", "agents");
+  return process.env.MODEL_CONFIG_AGENTS_DIR ?? path.join(os.homedir(), ".glass-atrium", "agents");
 }
 
 function getApplyLockPath(): string {
@@ -407,8 +407,9 @@ async function listDevAgentFiles(): Promise<string[]> {
   } catch {
     return [];
   }
-  // Intersect the on-disk dev-*.md set with the canonical registry's dev-* keys so a
-  // de-registered/archived dev-*.md file no longer surfaces in the model table (nor
+  // Intersect the on-disk glass-atrium-dev-*.md set with the canonical registry's
+  // glass-atrium-dev-* keys so a
+  // de-registered/archived glass-atrium-dev-*.md file no longer surfaces in the model table (nor
   // receives a frontmatter write). Fail-open: an empty/corrupt registry (size 0)
   // skips the intersection and returns the full on-disk set — mirrors the SQL gates'
   // fail-open contract so a registry read failure never blanks the dev table.
@@ -417,7 +418,7 @@ async function listDevAgentFiles(): Promise<string[]> {
     return onDisk;
   }
   const registeredDevKeys = new Set(
-    [...registry.keys()].filter((key) => key.startsWith("dev-")),
+    [...registry.keys()].filter((key) => key.startsWith("glass-atrium-dev-")),
   );
   return onDisk.filter((name) => registeredDevKeys.has(name.replace(/\.md$/, "")));
 }
@@ -486,9 +487,9 @@ function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "fa
 
 /**
  * Upsert ONLY the `model:` line in one agent file's frontmatter; 'inherit' removes it.
- * The target path is realpath-resolved BEFORE the temp+rename so a symlinked
- * ~/.claude/agents entry keeps pointing at the GA-tracked file (D4 symlink hazard) —
- * the write lands inside the RESOLVED directory. Already-satisfied files are never
+ * The target path is realpath-resolved BEFORE the temp+rename so a ~/.glass-atrium/agents
+ * entry consumed in place resolves to the GA-tracked file — the write lands inside the
+ * RESOLVED directory. Already-satisfied files are never
  * rewritten (alias values + bytes preserved). Unparseable frontmatter → skipped + surfaced.
  */
 async function writeFrontmatterModel(linkPath: string, desired: string): Promise<SurfaceFileResult> {

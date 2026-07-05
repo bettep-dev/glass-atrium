@@ -35,7 +35,8 @@ export interface ArchDriftResult {
 const HOME = homedir();
 const ATRIUM_ROOT = join(HOME, ".glass-atrium");
 
-// 아트리움 훅 디렉터리 — `~/.claude/hooks/` 는 glass-atrium 으로의 per-file 심볼릭 미러.
+// 아트리움 훅 디렉터리 — 훅은 `~/.glass-atrium/hooks/` 에서 in-place 소비 (primary).
+// `~/.claude/hooks/` 는 farm 에서 드롭됨 → fail-open fallback (부재 시 0 카운트).
 // settings.json 명령 경로가 둘 중 하나 하위면 아트리움 소유로 카운트.
 const ATRIUM_HOOK_DIRS: readonly string[] = [
 	join(ATRIUM_ROOT, "hooks"),
@@ -178,7 +179,7 @@ async function countUniqueHookBasenames(
 // 라이브 파일시스템에서 아트리움 자산을 카운트 (각 신호 격리).
 async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 	const agentsDir = join(ATRIUM_ROOT, "agents");
-	const rulesDir = join(ATRIUM_ROOT, "rules");
+	const rulesDir = join(ATRIUM_ROOT, "rules", "glass-atrium");
 	const scopedDir = join(ATRIUM_ROOT, "scoped");
 	const skillsDir = join(ATRIUM_ROOT, "skills");
 	const hooksDir = join(ATRIUM_ROOT, "hooks");
@@ -198,7 +199,7 @@ async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 	] = await Promise.all([
 		countDirEntries(
 			agentsDir,
-			(name) => isMd(name) && name !== "GLOBAL_RULES.md",
+			(name) => isMd(name) && name !== "GLASS_ATRIUM_GLOBAL_RULES.md",
 			log,
 		),
 		countDirEntries(
@@ -206,7 +207,7 @@ async function countLiveInvariants(log: DriftLogger): Promise<ArchInvariants> {
 			(name) => name.startsWith("com.glass-atrium.") && name.endsWith(".plist"),
 			log,
 		),
-		// rules — GLOBAL_RULES.md 동거 포함 (현 SoT 결정 · agents 와 달리 미제외).
+		// rules — GLASS_ATRIUM_GLOBAL_RULES.md 동거 포함 (현 SoT 결정 · agents 와 달리 미제외).
 		countDirEntries(rulesDir, (name) => isMd(name), log),
 		countDirEntries(scopedDir, (name) => isMd(name), log),
 		countDirEntries(

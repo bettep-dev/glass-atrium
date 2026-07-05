@@ -109,7 +109,7 @@ file_hash() {
   printf 'AGENT BODY dev-x v1\n' >"${GA_SANDBOX}/agents/dev-x.md"
   mkdir -p "${GA_SANDBOX}/agents/sub"
   printf 'AGENT BODY nested v1\n' >"${GA_SANDBOX}/agents/sub/dev-z.md"
-  write_manifest "agents/dev-x.md" "agents/sub/dev-z.md" "rules/r.md"
+  write_manifest "agents/dev-x.md" "agents/sub/dev-z.md" "rules/glass-atrium/r.md"
 
   run_engine capture_install_baseline
   [[ "${status}" -eq 0 ]]
@@ -120,7 +120,7 @@ file_hash() {
   # the NEW base-content store is seeded basename-keyed (flat AND nested agent files)
   [[ -f "${STATE}/base-agents/dev-x.md" ]]
   [[ -f "${STATE}/base-agents/dev-z.md" ]]
-  # a NON-agent manifest entry is excluded from the store (rules/*.md → not stored)
+  # a NON-agent manifest entry is excluded from the store (rules/glass-atrium/*.md → not stored)
   [[ ! -e "${STATE}/base-agents/r.md" ]]
   # the stored body is the REAL base@install text (a true 3-way anchor, not a hash)
   [[ "$(cat "${STATE}/base-agents/dev-x.md")" == "AGENT BODY dev-x v1" ]]

@@ -138,15 +138,17 @@ load_skill() {
 
 @test "update_partition_sensitive splits clean vs sensitive, fail-closed" {
   # Exercises the T09 partition MECHANISM (does it route each path to the right
-  # bucket per the shared helper's verdict). GLOBAL_RULES.md is the canonical
-  # sensitive fixture — it matches the compiled refusal pattern, so the split is
-  # asserted independently of any single pattern's coverage. (The launchd-plist
-  # refusal contract is pinned separately below.)
+  # bucket per the shared helper's verdict). GLASS_ATRIUM_GLOBAL_RULES.md is the
+  # canonical sensitive fixture — it matches the compiled refusal pattern, so the
+  # split is asserted independently of any single pattern's coverage. The
+  # traversal spelling additionally pins the lexical-normalization gate (a `..`
+  # variant must not dodge the verdict). (The launchd-plist refusal contract is
+  # pinned separately below.)
   run bash -c '
     '"$(declare -f load_skill seed_file)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
-    printf "scripts/foo.sh\nagents/../GLOBAL_RULES.md\n" \
+    printf "scripts/foo.sh\nagents/../GLASS_ATRIUM_GLOBAL_RULES.md\n" \
       | update_partition_sensitive "'"${WORK}"'/clean" "'"${WORK}"'/sens"
     echo "CLEAN:"; cat "'"${WORK}"'/clean"
     echo "SENS:"; cat "'"${WORK}"'/sens"
@@ -154,7 +156,7 @@ load_skill() {
   [ "$status" -eq 0 ]
   # clean path lands in the clean bucket, sensitive path in the sensitive bucket
   [[ "$output" == *"CLEAN:"*"scripts/foo.sh"* ]]
-  [[ "$output" == *"SENS:"*"GLOBAL_RULES.md"* ]]
+  [[ "$output" == *"SENS:"*"GLASS_ATRIUM_GLOBAL_RULES.md"* ]]
 }
 
 @test "update_partition_sensitive refuses a glass-atrium launchd plist (gate G7)" {
