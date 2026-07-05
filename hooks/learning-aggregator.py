@@ -648,10 +648,9 @@ def _cluster_budget_overages(overage_rows: list[dict]) -> dict[str, int]:
     calibration line, never routed through this per-agent loop (D4 routing split)."""
     counts: dict[str, int] = defaultdict(int)
     for row in overage_rows:
-        raw_type = row.get("agent_type")
-        if raw_type is None:
-            continue
-        agent = _canonical_agent(raw_type)
+        # _canonical_agent maps a null / missing agent_type to "" (an
+        # _UNPREFIXABLE_AGENTS member), so the single drop gate below covers it.
+        agent = _canonical_agent(row.get("agent_type"))
         if agent in _UNPREFIXABLE_AGENTS:
             continue  # null / unknown / cross-cutting → no agent file to patch
         counts[agent] += 1
