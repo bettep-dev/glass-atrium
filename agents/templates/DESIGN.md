@@ -77,7 +77,7 @@
 }
 ```
 
-**Generated CSS variables** (consumption layer — dev-front consumes):
+**Generated CSS variables** (consumption layer — glass-atrium-dev-front consumes):
 
 ```css
 :root {
@@ -210,7 +210,7 @@
 
 > Per-component spec: 7 properties × 5 states matrix. Each component name maps to a single source-of-truth file in the component library.
 
-**Component contract** (per component): 7 properties (BG / Text / Padding / Radius / Shadow / Hover / Purpose) × 5 states (default / hover / active / focus / disabled). State alpha values (hover / focus / active) derive from dev-front State Layers SSoT (`~/.claude/agents/dev-front.md`).
+**Component contract** (per component): 7 properties (BG / Text / Padding / Radius / Shadow / Hover / Purpose) × 5 states (default / hover / active / focus / disabled). State alpha values (hover / focus / active) derive from glass-atrium-dev-front State Layers SSoT (`~/.claude/agents/glass-atrium-dev-front.md`).
 
 **Example — Button (Primary)**:
 
@@ -273,7 +273,7 @@
 
 **`prefers-reduced-motion` contract**: every animated component MUST honor `@media (prefers-reduced-motion: reduce)` — typically substitute `transition: opacity` only (no spatial motion). Browser auto-honors when CSS uses `@media` query; JS-driven animations require explicit check.
 
-**Spring family declaration** (consumption side — dev-front maps spring families to CSS / Tailwind half-life): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
+**Spring family declaration** (consumption side — glass-atrium-dev-front maps spring families to CSS / Tailwind half-life): families named in `motion-philosophy.md` — `spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`.
 
 ---
 
