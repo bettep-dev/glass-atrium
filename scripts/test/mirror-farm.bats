@@ -46,7 +46,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t mirror-farm-bats.XXXXXX)" && pwd -P)"
   GAROOT="${WORK}/garoot"        # sandbox GA root (real engine copy)
   FACADE="${WORK}/claude-target" # sandbox facade home (GA_TARGET_HOME pin)
-  mkdir -p "${GAROOT}/lib" "${GAROOT}/scripts/lib"
+  mkdir -p "${GAROOT}/lib" "${GAROOT}/scripts/lib" "${GAROOT}/skills/testkit"
   cp -p "${GA}/glass-atrium" "${GAROOT}/glass-atrium"
   cp -p "${GA}/lib/ga-core.sh" "${GAROOT}/lib/ga-core.sh"
   cp -p "${GA}/lib/ga-deps.sh" "${GAROOT}/lib/ga-deps.sh"
@@ -55,8 +55,8 @@ setup() {
   cp -p "${GA}/scripts/lib/atrium-config.sh" "${GAROOT}/scripts/lib/atrium-config.sh"
   cp -p "${GA}/scripts/lib/apply-spine.sh" "${GAROOT}/scripts/lib/apply-spine.sh"
   cp -p "${GA}/scripts/lib/update-pause-flag.sh" "${GAROOT}/scripts/lib/update-pause-flag.sh"
-  printf '# shipped lib v1\n' >"${GAROOT}/scripts/lib/newlib.sh"
-  write_manifest "scripts/lib/newlib.sh"
+  printf '# shipped lib v1\n' >"${GAROOT}/skills/testkit/newlib.sh"
+  write_manifest "skills/testkit/newlib.sh"
 }
 
 teardown() {
@@ -88,8 +88,8 @@ run_refresh() {
   mkdir -p "${FACADE}"
   run_refresh
   [ "$status" -eq 0 ]
-  [[ -L "${FACADE}/scripts/lib/newlib.sh" ]]
-  [[ "$(readlink "${FACADE}/scripts/lib/newlib.sh")" == "${GAROOT}/scripts/lib/newlib.sh" ]]
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]]
+  [[ "$(readlink "${FACADE}/skills/testkit/newlib.sh")" == "${GAROOT}/skills/testkit/newlib.sh" ]]
 }
 
 @test "double-run is idempotent (skip already-correct, link unchanged)" {
@@ -98,18 +98,18 @@ run_refresh() {
   [ "$status" -eq 0 ]
   run_refresh
   [ "$status" -eq 0 ]
-  [[ "$output" == *"skip (already correct): scripts/lib/newlib.sh"* ]]
-  [[ "$(readlink "${FACADE}/scripts/lib/newlib.sh")" == "${GAROOT}/scripts/lib/newlib.sh" ]]
+  [[ "$output" == *"skip (already correct): skills/testkit/newlib.sh"* ]]
+  [[ "$(readlink "${FACADE}/skills/testkit/newlib.sh")" == "${GAROOT}/skills/testkit/newlib.sh" ]]
 }
 
 @test "a mistargeted GA-pointing mirror is repaired (atomic re-swap)" {
-  mkdir -p "${FACADE}/scripts/lib"
+  mkdir -p "${FACADE}/skills/testkit"
   # points into the GA root but at the WRONG rel — swap_symlink's safe re-swap
   # branch (a foreign-target symlink would be refused instead).
-  ln -s "${GAROOT}/scripts/lib/renamed-away.sh" "${FACADE}/scripts/lib/newlib.sh"
+  ln -s "${GAROOT}/skills/testkit/renamed-away.sh" "${FACADE}/skills/testkit/newlib.sh"
   run_refresh
   [ "$status" -eq 0 ]
-  [[ "$(readlink "${FACADE}/scripts/lib/newlib.sh")" == "${GAROOT}/scripts/lib/newlib.sh" ]]
+  [[ "$(readlink "${FACADE}/skills/testkit/newlib.sh")" == "${GAROOT}/skills/testkit/newlib.sh" ]]
 }
 
 @test "facade-absent is a clean no-op (rc 3, nothing created)" {
@@ -130,22 +130,22 @@ run_refresh() {
 }
 
 @test "non-facade files are untouched by refresh AND the opt-in prune" {
-  mkdir -p "${FACADE}/scripts/lib"
-  printf 'my private notes\n' >"${FACADE}/scripts/lib/user-notes.txt" # real user file
-  ln -s "/tmp/somewhere-else.sh" "${FACADE}/scripts/lib/foreign.sh"   # foreign symlink
+  mkdir -p "${FACADE}/skills/testkit"
+  printf 'my private notes\n' >"${FACADE}/skills/testkit/user-notes.txt" # real user file
+  ln -s "/tmp/somewhere-else.sh" "${FACADE}/skills/testkit/foreign.sh"   # foreign symlink
   run_refresh
   [ "$status" -eq 0 ]
   run env GA_TARGET_HOME="${FACADE}" "${GAROOT}/glass-atrium" prune
   [ "$status" -eq 0 ]
-  [[ "$(cat "${FACADE}/scripts/lib/user-notes.txt")" == "my private notes" ]]
-  [[ "$(readlink "${FACADE}/scripts/lib/foreign.sh")" == "/tmp/somewhere-else.sh" ]]
-  [[ -L "${FACADE}/scripts/lib/newlib.sh" ]] # the legitimate mirror survives too
+  [[ "$(cat "${FACADE}/skills/testkit/user-notes.txt")" == "my private notes" ]]
+  [[ "$(readlink "${FACADE}/skills/testkit/foreign.sh")" == "/tmp/somewhere-else.sh" ]]
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]] # the legitimate mirror survives too
 }
 
 @test "stale mirror: --dry-run advisory reports without removing; opt-in prune removes" {
-  mkdir -p "${FACADE}/scripts/lib"
+  mkdir -p "${FACADE}/skills/testkit"
   # orphan: IS a symlink + GA-target + BROKEN (no source) + not in the manifest.
-  ln -s "${GAROOT}/scripts/lib/ghost.sh" "${FACADE}/scripts/lib/ghost.sh"
+  ln -s "${GAROOT}/skills/testkit/ghost.sh" "${FACADE}/skills/testkit/ghost.sh"
   run env GA_TARGET_HOME="${FACADE}" bash -c '
     set -Eeuo pipefail
     source "'"${LIB}"'"
@@ -153,17 +153,17 @@ run_refresh() {
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"would prune orphan GA symlink"*"ghost.sh"* ]]
-  [[ -L "${FACADE}/scripts/lib/ghost.sh" ]] # advisory NEVER removes
+  [[ -L "${FACADE}/skills/testkit/ghost.sh" ]] # advisory NEVER removes
   run env GA_TARGET_HOME="${FACADE}" "${GAROOT}/glass-atrium" prune
   [ "$status" -eq 0 ]
   [[ "$output" == *"removed orphan GA symlink"*"ghost.sh"* ]]
-  [[ ! -L "${FACADE}/scripts/lib/ghost.sh" ]]
+  [[ ! -L "${FACADE}/skills/testkit/ghost.sh" ]]
 }
 
 @test "missing-source manifest entries are warn+skipped via the filtered scope (update context)" {
   # ghost.sh is listed but has NO source under GAROOT (the sensitive-refused /
   # unapplied release-file edge) — unfiltered, swap_symlink would loud-die.
-  write_manifest "scripts/lib/newlib.sh" "scripts/lib/ghost.sh"
+  write_manifest "skills/testkit/newlib.sh" "skills/testkit/ghost.sh"
   mkdir -p "${FACADE}"
   run env GA_TARGET_HOME="${FACADE}" bash -c '
     set -Eeuo pipefail
@@ -172,11 +172,11 @@ run_refresh() {
     farm_refresh "'"${GAROOT}"'" "'"${WORK}"'/filtered.json"
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"mirror skipped: scripts/lib/ghost.sh"* ]]
-  [[ -L "${FACADE}/scripts/lib/newlib.sh" ]]
-  [[ ! -e "${FACADE}/scripts/lib/ghost.sh" ]]
+  [[ "$output" == *"mirror skipped: skills/testkit/ghost.sh"* ]]
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]]
+  [[ ! -e "${FACADE}/skills/testkit/ghost.sh" ]]
   # the filtered scope carries only the present entry
-  [[ "$(jq -r '.files | join(",")' "${WORK}/filtered.json")" == "scripts/lib/newlib.sh" ]]
+  [[ "$(jq -r '.files | join(",")' "${WORK}/filtered.json")" == "skills/testkit/newlib.sh" ]]
 }
 
 @test "farm_has_ga_links detects deployment links (no -> yes)" {
