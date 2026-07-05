@@ -15,6 +15,7 @@ import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
+  AttributionDailyDevScope,
   AttributionDailyPoint,
   AttributionDailyResponse,
   AttributionDailyWindowDays,
@@ -189,6 +190,19 @@ const RECONSTRUCTED_ATTRIBUTION_SOURCES: readonly string[] = [
   BUDGET_TRUNCATION_SOURCE,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 ];
+
+// DEV membership discriminator for the /attribution-daily dev_scope subset. The
+// registry has no `scope` field — the 'glass-atrium-dev-' name prefix is the DEV
+// marker (core-compliance-matrix Scope Legend), mirroring the DEV_AGENT_PREFIX in
+// routes/improvement.ts. loadCanonicalAgentKeys() dual-matches every prefixed key
+// with its de-prefixed legacy alias ('glass-atrium-dev-shell' → 'dev-shell'), so
+// both forms are selected here to keep pre-rename outcome rows in the subset.
+const DEV_AGENT_KEY_PREFIXES: readonly string[] = ["glass-atrium-dev-", "dev-"];
+function filterDevAgentKeys(canonicalKeys: readonly string[]): string[] {
+  return canonicalKeys.filter((name) =>
+    DEV_AGENT_KEY_PREFIXES.some((prefix) => name.startsWith(prefix)),
+  );
+}
 
 // DB row shapes
 
@@ -1032,10 +1046,8 @@ async function handleAttributionDaily(
     // internal EXISTS sub-select (the ae.agent_type sentinel check a few lines
     // down): that check is a genuine-vs-phantom-loss VALIDATION query, not an
     // agent-dimensioned display field, so it is out of scope for this gate.
-    const agentMembership = buildAgentMembershipFilter(
-      await loadCanonicalAgentKeys(),
-      Prisma.sql`o.agent`,
-    );
+    const canonicalKeys = await loadCanonicalAgentKeys();
+    const agentMembership = buildAgentMembershipFilter(canonicalKeys, Prisma.sql`o.agent`);
     // The raw `subagent-stop-missing` sentinel is NOT genuine loss — its
     // population is mostly harness phantom + mislabeled main-session Stops, with
     // near-zero real subagent failures. A GENUINE attribution loss requires a
@@ -1048,7 +1060,11 @@ async function handleAttributionDaily(
     // 'synthesized' (the noise catch-all). The EXISTS sub-select uses
     // agent_events_type_ts_idx (agent_type, event_ts). All other sources pass
     // through unchanged. Honest series is expected to flat-line near 0 — correct.
-    const rows = await prisma.$queryRaw<AttributionDailyDbRow[]>`
+    // Reuse the EXACT categorized-series SQL for both the all-agent view and the
+    // DEV-scoped subset (dev_scope below) — the membership fragment is the only
+    // difference, so the two window aggregations can never drift apart.
+    const queryAttributionRows = (membership: Prisma.Sql) =>
+      prisma.$queryRaw<AttributionDailyDbRow[]>`
       SELECT
         to_char(date_trunc('day', o.record_ts), 'YYYY-MM-DD') AS day,
         CASE
@@ -1070,11 +1086,12 @@ async function handleAttributionDaily(
       FROM core.outcomes o
       WHERE o.attribution_source IS NOT NULL
         AND o.record_ts > NOW() - (${days}::int * INTERVAL '1 day')
-        ${agentMembership}
+        ${membership}
       GROUP BY date_trunc('day', o.record_ts), 2
       ORDER BY date_trunc('day', o.record_ts) ASC
     `;
 
+    const rows = await queryAttributionRows(agentMembership);
     const { series, totals, breakdown } = pivotAttributionDaily(rows);
 
     // budget-truncation rows grouped by agent over the SAME window + membership
@@ -1093,6 +1110,20 @@ async function handleAttributionDaily(
       agent: r.agent,
       count: bigintToNumber(r.count),
     }));
+
+    // DEV-scoped subset — same window + categorization, filtered to registry DEV
+    // agents. Empty DEV set → zeros (an empty subset is empty; do NOT fail open to
+    // all agents the way the all-agent gate does on an empty registry). Reuses the
+    // shared query closure + pivot, so the DEV rates track the parent aggregation.
+    const devAgentKeys = filterDevAgentKeys(canonicalKeys);
+    const devRows =
+      devAgentKeys.length === 0
+        ? []
+        : await queryAttributionRows(
+            buildAgentMembershipFilter(devAgentKeys, Prisma.sql`o.agent`),
+          );
+    const devPivot = pivotAttributionDaily(devRows);
+    const devScope = buildDevScopeSummary(devPivot.totals, devPivot.breakdown);
 
     const totalAttributed =
       totals.healthy + totals.attribution_loss + totals.literal_omission + totals.synthesized;
@@ -1120,6 +1151,7 @@ async function handleAttributionDaily(
         total_attributed: totalAttributed,
         literal_omission_breakdown: breakdown,
         budget_truncation_by_agent: budgetTruncationByAgent,
+        dev_scope: devScope,
       },
     };
   } catch (error) {
@@ -1241,6 +1273,30 @@ export function categorizeAttributionSource(
 function ratioOrNull(numerator: number, denominator: number): number | null {
   if (denominator === 0) return null;
   return Math.round((numerator / denominator) * 1_000_000) / 1_000_000;
+}
+
+// Assemble the DEV-scoped summary from the DEV-filtered window pivot. total is the
+// same sum-complete denominator as the parent (healthy + attribution_loss +
+// literal_omission + synthesized); budget_truncation_count is the DEV-agent
+// no-[COMPLETION]/budget-kill failure count (breakdown sub-count), and its rate is
+// the rolling baseline the dashboard tracks. All rates null on an empty DEV window.
+//
+// Exported for the pure-fn test: budget-truncation cannot be route-seeded
+// (outcomes_attribution_source_check rejects it on INSERT), so its rate path is
+// verified at this level, mirroring the pivotAttributionDaily breakdown test.
+export function buildDevScopeSummary(
+  totals: AttributionCategoryTotals,
+  breakdown: LiteralOmissionBreakdown,
+): AttributionDailyDevScope {
+  const total =
+    totals.healthy + totals.attribution_loss + totals.literal_omission + totals.synthesized;
+  return {
+    total_attributed: total,
+    synthesized_rate: ratioOrNull(totals.synthesized, total),
+    literal_omission_rate: ratioOrNull(totals.literal_omission, total),
+    budget_truncation_count: breakdown.budget_truncation,
+    budget_truncation_rate: ratioOrNull(breakdown.budget_truncation, total),
+  };
 }
 
 // grader_verdict normalization + artifact-vs-quality breakdown

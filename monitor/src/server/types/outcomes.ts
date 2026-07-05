@@ -346,6 +346,22 @@ export interface BudgetTruncationAgentCount {
   count: number;
 }
 
+// DEV-scoped subset of the window telemetry — the SAME aggregation as the parent
+// summary, filtered to registry DEV agents (glass-atrium-dev-* prefix, dual-matched
+// to the legacy dev-* form). Surfaces the no-[COMPLETION]/budget-truncation failure
+// mode for DEV agents specifically, plus a rolling baseline the dashboard shows
+// (the rates ARE the baseline over the window). Rates are fractions of the DEV
+// total_attributed; null when the DEV window holds no attributed rows. An empty DEV
+// registry set yields zeros + null rates — an empty subset is empty, it never fails
+// open to all agents the way the all-agent gate does on an empty registry.
+export interface AttributionDailyDevScope {
+  total_attributed: number;
+  synthesized_rate: number | null;
+  literal_omission_rate: number | null;
+  budget_truncation_count: number;
+  budget_truncation_rate: number | null;
+}
+
 // Window-level summary over the whole [days] window (single SoT for the
 // improvement.jsx pointer tile). Rates are fractions of total_attributed;
 // null when total_attributed is 0 (no attributed rows in window → no rate).
@@ -361,6 +377,9 @@ export interface AttributionDailySummary {
   // budget-truncation rows grouped by agent over the window, sorted count DESC.
   // [] when the window holds no budget-truncation rows.
   budget_truncation_by_agent: BudgetTruncationAgentCount[];
+  // DEV-scoped view of the same truncation/synthesized telemetry (subset of the
+  // rates above, filtered to registry DEV agents).
+  dev_scope: AttributionDailyDevScope;
 }
 
 export interface AttributionDailyResponse {

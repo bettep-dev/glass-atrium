@@ -45,6 +45,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import {
+  buildDevScopeSummary,
   categorizeAttributionSource,
   pivotAttributionDaily,
   registerOutcomesRoutes,
@@ -115,6 +116,10 @@ const FIXTURE_AGENT_NAMES = [
   // literal_omission_breakdown route test (h/i) seed agents.
   "attr-daily-brk-agent-a",
   "attr-daily-brk-agent-b",
+  // dev_scope route test (j) — a DEV-prefixed agent (in the subset) + a non-DEV
+  // agent (registered so it counts in the all-agent total, excluded from dev_scope).
+  "glass-atrium-dev-attrtest",
+  "attr-daily-devscope-nondev",
 ];
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
@@ -644,5 +649,97 @@ test("budget_truncation_by_agent is an array, empty of non-budget-truncation age
       !byAgent.some((r) => r.agent === seededAgent),
       `${seededAgent} (a literal_omission agent) must not appear in budget_truncation_by_agent`,
     );
+  }
+});
+
+// (j-pure) buildDevScopeSummary — the budget_truncation_rate path the route seed
+// cannot reach (outcomes_attribution_source_check rejects 'budget-truncation'),
+// plus the empty-window null-rate contract. Fed off the exported pivot so the
+// denominator matches the parent aggregation exactly.
+test("buildDevScopeSummary: rates over the sum-complete total; budget-truncation feeds the truncation rate", () => {
+  const { totals, breakdown } = pivotAttributionDaily([
+    { day: "2026-07-01", attribution_source: "budget-truncation", cnt: 2n },
+    { day: "2026-07-01", attribution_source: "completion-synthesized", cnt: 3n },
+    { day: "2026-07-01", attribution_source: "hook-input", cnt: 5n },
+  ]);
+  const dev = buildDevScopeSummary(totals, breakdown);
+  // total = 2 (literal_omission) + 3 (synthesized) + 5 (healthy) = 10.
+  assert.strictEqual(dev.total_attributed, 10, "total is the sum-complete denominator");
+  assert.strictEqual(dev.budget_truncation_count, 2, "budget-truncation feeds the count");
+  assert.strictEqual(dev.budget_truncation_rate, 0.2, "budget_truncation_rate = 2/10");
+  assert.strictEqual(dev.synthesized_rate, 0.3, "synthesized_rate = 3/10");
+  assert.strictEqual(dev.literal_omission_rate, 0.2, "literal_omission_rate = 2/10");
+});
+
+test("buildDevScopeSummary: empty DEV window → zero count + null rates (never fabricated 0)", () => {
+  const { totals, breakdown } = pivotAttributionDaily([]);
+  const dev = buildDevScopeSummary(totals, breakdown);
+  assert.strictEqual(dev.total_attributed, 0, "empty window total is 0");
+  assert.strictEqual(dev.budget_truncation_count, 0, "no rows → 0 count");
+  assert.strictEqual(dev.budget_truncation_rate, null, "0 denominator → null rate");
+  assert.strictEqual(dev.synthesized_rate, null, "0 denominator → null rate");
+  assert.strictEqual(dev.literal_omission_rate, null, "0 denominator → null rate");
+});
+
+// dev_scope route seed — 2 completion-synthesized rows for a DEV-prefixed agent +
+// 1 for a non-DEV (but registered) agent. All admitted by the CHECK constraint;
+// distinct record_ts/cid → no dedup collision; 44..46min ago → inside the window.
+async function seedDevScopeRows(): Promise<void> {
+  const prisma = getPrisma();
+  const rows: ReadonlyArray<readonly [string, number]> = [
+    ["glass-atrium-dev-attrtest", 44],
+    ["glass-atrium-dev-attrtest", 45],
+    ["attr-daily-devscope-nondev", 46],
+  ];
+  for (let i = 0; i < rows.length; i++) {
+    const entry = rows[i];
+    if (entry === undefined) continue;
+    const [agent, minutesAgo] = entry;
+    await prisma.$executeRaw`
+      INSERT INTO core.outcomes
+        (record_ts, agent, task_type, result, summary, attribution_source, cid)
+      VALUES
+        (NOW() - (${minutesAgo}::int * INTERVAL '1 minute'),
+         ${agent},
+         'feature'::core."TaskType",
+         'done'::core."OutcomeResult",
+         'attribution-daily dev_scope seed',
+         'completion-synthesized',
+         ${`${SUITE_MARKER}-dev-${i}`})
+    `;
+  }
+}
+
+// (j-route) dev_scope filter — the DEV-scoped subset counts ONLY registry DEV
+// agents (glass-atrium-dev-* prefix). A non-DEV agent's row lands in the all-agent
+// total but is EXCLUDED from dev_scope, so the two total deltas differ by exactly
+// the non-DEV row. Delta-measured (concurrent rows cancel). Also asserts the
+// dev_scope object shape is present + well-typed.
+test("dev_scope excludes non-DEV agents: all-total delta - dev-total delta === non-DEV rows", async () => {
+  const before = await fetchWindowSummary();
+  const beforeAll = Number(before.window_summary.total_attributed);
+  const beforeDev = Number(before.window_summary.dev_scope.total_attributed);
+
+  await seedDevScopeRows();
+
+  const after = await fetchWindowSummary();
+  const afterAll = Number(after.window_summary.total_attributed);
+  const afterDev = Number(after.window_summary.dev_scope.total_attributed);
+
+  assert.strictEqual(afterAll - beforeAll, 3, "all-agent total counts all 3 seeded rows");
+  assert.strictEqual(afterDev - beforeDev, 2, "dev_scope total counts only the 2 DEV-agent rows");
+  assert.strictEqual(
+    afterAll - beforeAll - (afterDev - beforeDev),
+    1,
+    "the 1 non-DEV row is excluded from dev_scope",
+  );
+
+  // Shape lock — the 5 dev_scope fields are present + correctly typed.
+  const dev = after.window_summary.dev_scope;
+  assert.strictEqual(typeof dev.total_attributed, "number", "total_attributed is a number");
+  assert.strictEqual(typeof dev.budget_truncation_count, "number", "budget_truncation_count is a number");
+  for (const rateField of ["synthesized_rate", "literal_omission_rate", "budget_truncation_rate"] as const) {
+    const value = dev[rateField];
+    assert.ok(value === null || typeof value === "number", `${rateField} is number | null`);
   }
 });
