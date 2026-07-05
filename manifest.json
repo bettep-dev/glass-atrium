@@ -410,7 +410,7 @@
     "hooks/hook-utils.sh": "fe009a275a2f3d1cdfd85a532afb7dbcf6f05f05aad049e81d480a8f430f7092",
     "hooks/inject-scope-rules.sh": "3973621c2e82732bdb0cef023d0b9592229bda5ead789b40b78ef5893b8e8eae",
     "hooks/inject-session-context.sh": "cf3249edf3e41c68a13431d54200eb906f6a26f8c71c95c4aa14b64fbb2f98b6",
-    "hooks/learning-aggregator.py": "8da9f215f22c0127bfef3a71c5d20dc7dc102c64d05d4d390717c5683c15d0d0",
+    "hooks/learning-aggregator.py": "aeb412ba58423424c34dc4aed099b67b991bcce59c035eee150ffec74b6f8cce",
     "hooks/lib/code-based-grader.sh": "7d65d79757b35b57e5b178cdc998dd8984c5bef2a54c66b83543f69d9a3598d1",
     "hooks/lib/pricing_loader.py": "c2efb513aeb0ec1e425a6c43b01d336880c144adb77a59b2a6121d257302a6a0",
     "hooks/lib/style-ref-consts.sh": "074224a8f7d6b3459a137bf68e18573d135f584cf3da88c21be9855215dd74d4",
