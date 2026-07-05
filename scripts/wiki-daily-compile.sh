@@ -77,10 +77,8 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=0
 # WIKI_ROOT: single source of truth for the wiki data root. Default = the
 # glass-atrium store; WIKI_ROOT env overrides for tests / alternate roots.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
-WIKI_BASE="$WIKI_ROOT"
 RAW_DIR="$WIKI_ROOT/raw"
 NOTES_DIR="$WIKI_ROOT/notes"
-INDEX_FILE="$WIKI_ROOT/index/master-index.md"
 # Claude-Code project-dir cwd encoding: $HOME with '/' -> '-' (leading '-').
 PROJ_DIR="-${HOME#/}"
 PROJ_DIR="${PROJ_DIR//\//-}"

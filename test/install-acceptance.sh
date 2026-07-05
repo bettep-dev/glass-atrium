@@ -234,7 +234,6 @@ hdr "STEP 3 — render-monitor-env.sh ordering (AC2 — render precedes validati
 # point render-monitor-env at the sandbox-rendered config; it validates the
 # monitor_docs_html_root as an existing absolute dir → ensure that dir exists.
 mkdir -p "${HOME}/.glass-atrium/monitor/data/documents" 2>/dev/null || true
-RENDER_TGT="$(jq -r '.files' /dev/null 2>/dev/null; true)"
 # render-monitor-env reads GA_ROOT/config.toml; symlink the rendered config there
 # via a sandbox GA_ROOT so we never touch the real config.toml.
 SBX_GAROOT="${SANDBOX}/ga-root"
