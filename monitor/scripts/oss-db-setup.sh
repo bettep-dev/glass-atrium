@@ -323,14 +323,14 @@ fi
 # migration — editing the applied baseline SQL drifts existing-DB checksums (see the
 # SQUASH_BASELINE_MIGRATION note). DROP IF EXISTS + ADD → safe to re-run and to widen
 # the set. NOT VALID skips the full-table scan (pre-existing rows trusted); new writes
-# are still checked. The 9-value set MUST byte-match the dual-write producers
+# are still checked. The 10-value set MUST byte-match the dual-write producers
 # (track-outcome.sh / outcomes.ts / daemon_cycle.py / _pg_*_dualwrite.py) — a missing
 # value makes a dual-write hit constraint_violation → the row is silently dropped from PG.
 # core.outcomes lives only in the main DB (created by migrate deploy) — shadow excluded.
-log "attribution_source CHECK 제약 적용 (9종 캐노니컬 · idempotent · NOT VALID)"
+log "attribution_source CHECK 제약 적용 (10종 캐노니컬 · idempotent · NOT VALID)"
 psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
-  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation']::text[]))) NOT VALID" \
+  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived']::text[]))) NOT VALID" \
   || fail "${EXIT_POSTSQL}" "attribution_source CHECK 제약 적용 실패 (DB '${DB_NAME}') — core.outcomes 존재 + peer auth 권한 확인"
 
 # --- no seed step --------------------------------------------------------------
