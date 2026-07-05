@@ -11,7 +11,7 @@
 #     (cycle_date, pattern_label, target_file). cost_guard_state is the
 #     cycle-level snapshot copied to every proposal row.
 #
-# All writes go through ~/.claude/scripts/_pg_dual_write_daemon.py
+# All writes go through the sibling _pg_dual_write_daemon.py
 # (subprocess) so retry / hook_failures / fail-loud-and-skip semantics
 # match wiki-sync.sh and daemon-cycle.sh writes.
 #
@@ -25,7 +25,8 @@ import sys
 OUT_PATH = os.environ.get("OUT_PATH", "")
 CYCLE_DATE = os.environ.get("CYCLE_DATE", "")
 CYCLE_STARTED_AT = os.environ.get("CYCLE_STARTED_AT", "")
-HELPER = os.path.expanduser("~/.claude/scripts/_pg_dual_write_daemon.py")
+# Sibling of this module — scripts/ is consumed in place from the store.
+HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
 
 
 def _aggregate(payload):
