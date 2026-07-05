@@ -374,6 +374,43 @@ DEPRECATED_AGENTS: frozenset[str] = frozenset({
     "feature-dev",
 })
 
+# Live agents/*.md stems carry this prefix; outcome rows record the same logical
+# agent as bare, prefixed, or colon-qualified forms — without one canonical key
+# a single agent splits across aggregation keys and written patterns.
+_CANONICAL_AGENT_PREFIX = "glass-atrium-"
+# Sentinel/label values that are never roster stems — prefixing them would
+# fabricate a nonexistent agents/<stem>.md target for daemon_cycle intake.
+_UNPREFIXABLE_AGENTS = frozenset({"", "unknown", "전체", "ALL", "all"})
+
+
+def _get_bare_agent_stem(agent: str) -> str:
+    """Prefix-stripped stem — prefix-insensitive matching (DEPRECATED_AGENTS)."""
+    if agent.startswith(_CANONICAL_AGENT_PREFIX):
+        return agent[len(_CANONICAL_AGENT_PREFIX):]
+    return agent
+
+
+def _canonical_agent(raw: object) -> str:
+    """Canonical agent key = the live roster stem form (glass-atrium-<bare>).
+
+    - colon form ('dev-shell:qualifier') keeps only the leading agent segment
+    - already-prefixed stems pass through unchanged
+    - sentinel + deprecated names stay bare (no roster stem exists for them)
+    - any other bare stem gains the canonical prefix, so counts and patterns
+      written going forward key on the stem daemon_cycle intake resolves to
+      agents/<stem>.md
+    """
+    agent = str(raw).strip() if raw is not None else ""
+    if ":" in agent:
+        agent = agent.split(":", 1)[0].strip()
+    if agent.startswith(_CANONICAL_AGENT_PREFIX):
+        return agent
+    if agent in _UNPREFIXABLE_AGENTS or agent.lower() == "unknown":
+        return agent
+    if agent in DEPRECATED_AGENTS:
+        return agent
+    return _CANONICAL_AGENT_PREFIX + agent
+
 
 def _is_empty_lesson(value: object) -> bool:
     """Whether the lesson field is empty/unusable. Non-str (int/bool/list) counts as empty too;
@@ -399,7 +436,9 @@ def _should_include_outcome(record: dict) -> tuple[bool, str]:
     attribution = attribution.strip()
 
     # deprecated agent first — so 'Explore' + empty lesson reports 'deprecated_agent', not 'empty_lesson_only'
-    if agent in DEPRECATED_AGENTS:
+    # · prefix/colon-insensitive via the canonical bare stem, so 'glass-atrium-animator'
+    #   and 'animator:x' do not slip past the exclusion under an alias form
+    if _get_bare_agent_stem(_canonical_agent(agent)) in DEPRECATED_AGENTS:
         return False, "deprecated_agent"
 
     if attribution == "completion-missing":
@@ -608,7 +647,9 @@ def main() -> None:
             except (AttributeError, OSError):
                 pass
 
-        agent = data.get('agent', 'unknown')
+        # canonical stem keys the per-agent counts + written patterns — bare /
+        # prefixed / colon forms of one logical agent must aggregate as ONE key
+        agent = _canonical_agent(data.get('agent', 'unknown'))
         result = data.get('result', '')
         task_type = data.get('task_type', '')
         revision = data.get('revision_count', 0)
