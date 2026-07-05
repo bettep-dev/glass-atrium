@@ -61,7 +61,7 @@ except Exception as exc:  # noqa: BLE001 — psycopg absent → skip, not error
 
 _PROBE_AGENT = "ap2-probe-agent"
 _PROBE_SIGNATURE = f"ap2 intake contract probe|{_PROBE_AGENT}"
-_ROSTER_AGENT = "dev-python"
+_ROSTER_AGENT = "glass-atrium-dev-python"
 _ROSTER_SIGNATURE = f"ap2 roster probe|{_ROSTER_AGENT}"
 _MISMATCH_AGENT = "ap2-no-such-agent"
 _MISMATCH_SIGNATURE = f"ap2 mismatch probe|{_MISMATCH_AGENT}"
