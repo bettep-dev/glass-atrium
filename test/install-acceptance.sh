@@ -216,11 +216,11 @@ done
 MYHOOK="$(jq '[ .hooks.PreToolUse[]? | .hooks[]? | .command | select(endswith("/my-own-hook.sh")) ] | length' "${TARGET}/settings.json")"
 [[ "${MYHOOK}" -eq 1 ]] && ok "user's own hook (my-own-hook.sh) preserved" || no "user hook lost (count=${MYHOOK})"
 # all Atrium bindings added — expected count derived from the EXPECTED_HOOK_BINDINGS
-# array (the SoT), which now lives in lib/ga-core.sh declared INSIDE ga_init_env
+# array (the SoT), which now lives in lib/ga-env.sh declared INSIDE ga_init_env
 # (indented, two-step `ARR=(...)` then `readonly ARR` — the bash-3.2 cross-fn
 # nounset-safe idiom). The awk range matches the indented `EXPECTED_HOOK_BINDINGS=(`
 # open line through its closing `)` (the `^readonly -a` anchor no longer applies).
-GACORE="${GA}/lib/ga-core.sh"
+GACORE="${GA}/lib/ga-env.sh"
 EXPECTED_BINDING_COUNT="$(awk '/EXPECTED_HOOK_BINDINGS=\(/,/^[[:space:]]*\)/' "${GACORE}" | grep -c "$(printf '\t')")"
 ATRIUM_BOUND="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.claude/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
 printf '  Atrium hook commands bound: %s (expect %s)\n' "${ATRIUM_BOUND}" "${EXPECTED_BINDING_COUNT}"

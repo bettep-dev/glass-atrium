@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Guard: EXPECTED_HOOK_BINDINGS (lib/ga-core.sh) completeness vs the architecture
+# Guard: EXPECTED_HOOK_BINDINGS (lib/ga-env.sh) completeness vs the architecture
 # invariant (monitor/src/server/architecture/arch-invariants.ts). wire_hooks
 # iterates this array, so a SHORT array silently leaves deployed hooks DORMANT
 # (the 15->42 install-wiring gap this test locks down — 3 whole events,
@@ -28,14 +28,14 @@
 # Requires: bats (brew install bats-core), awk, sed, grep (BSD or GNU), bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-CORE="${GA}/lib/ga-core.sh"
+CORE="${GA}/lib/ga-env.sh"
 ARCH="${GA}/monitor/src/server/architecture/arch-invariants.ts"
 
 # the 7 settings.json hook events arch-invariants.ts HookEventCounts declares.
 EVENTS=(PreToolUse PostToolUse SessionStart Stop SubagentStart SubagentStop PreCompact)
 
 setup() {
-  [[ -f "${CORE}" ]] || skip "ga-core.sh not found: ${CORE}"
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
   [[ -f "${ARCH}" ]] || skip "arch-invariants.ts not found: ${ARCH}"
 }
 
