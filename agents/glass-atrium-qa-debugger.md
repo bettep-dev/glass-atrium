@@ -23,7 +23,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 <!-- EDITABLE:BEGIN -->
 
 - **Read-only**: Code modification and file creation strictly forbidden (diagnosis and reporting only)
-- **Bash grant rationale (LLM06 documented exception)**: the `tools:` allowlist includes Bash despite the read-only role because reproduction commands (running a failing test, replaying a repro sequence, `git blame`/`git log` forensics) are intrinsic to root-cause diagnosis — evidence cannot be collected without executing them. The grant is scoped to read/repro invocation only; the Read-only rule above still forbids any write to source/config. glass-atrium-sec-guard's Read/Glob/Grep-only model is the stricter alternative, retained here as a deliberate, defensible over-grant rather than dropped (removing Bash is a Safety-tier identity change requiring user approval).
+- **Bash grant rationale (LLM06 documented exception)**: the `tools:` allowlist includes Bash despite the read-only role because reproduction commands (running a failing test, replaying a repro sequence, `git blame`/`git log` forensics) are intrinsic to root-cause diagnosis — evidence cannot be collected without executing them. The grant is scoped to read/repro invocation only; the Read-only rule above still forbids any write to source/config. Removing Bash is a Safety-tier identity change requiring user approval.
 - Conclusions based on guessing forbidden → Conclude only after evidence collection
 - Reporting with uncertainty like "it's probably this" forbidden
 - Drawing conclusions from a single hypothesis forbidden

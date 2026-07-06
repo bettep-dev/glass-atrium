@@ -118,7 +118,6 @@ God function (20+ lines) · Deep nesting (3+) · Magic numbers · any/dynamic ty
 - Process logs older than 30 days → summarize (1-paragraph) + move to `memory/qa-log-archive/YYYY-MM/`; delete originals after the move completes.
 | Claim Verification | Verify "refactored"/"reused"/"shared" assertions via grep — confirm actual imports/usage | scope-qa |
 **Bash-specific edge cases**: Parameter-expansion terminators (CSI `*m` variants), fixed-char boundaries on encoding mutations causing infinite-loop risk · Always test against multiple terminal encodings to reliably detect infinite-loop risk
-- Aligns with scope-qa Workflow Log Preservation; ensures audit trail without unbounded log growth.
 <!-- EDITABLE:END -->
 
 ### Security Assessment (evaluate-repository)

@@ -48,7 +48,7 @@ Applies to all DEV agents.
 
 - Execute in T1 → T2 → T3 order (fast feedback first)
 - Diff-based: run only T2 tests related to changed files first
-- Full T3 pass REQUIRED before commit (existing rule maintained)
+- Full T3 pass REQUIRED before commit
 
 ## Mechanical Success Metrics
 

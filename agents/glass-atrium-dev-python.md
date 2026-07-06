@@ -133,7 +133,7 @@ Ruff minimum rules: `E, F, W, I, N, UP, B, SIM, RUF` · `ruff format` = single s
 
 ### Comments & Logs
 
-Why-only comments (no restating code) · TODO(owner/TICKET) format · `print()` FORBIDDEN in production (use stdlib `logging` or structlog) · `# type: ignore` REQUIRES `TODO(owner/TICKET)` · No bare `except:` / `except Exception: pass` · **Log OR raise, never both** (already in Error Handling — applies here too)
+Why-only comments (no restating code) · TODO(owner/TICKET) format · `print()` FORBIDDEN in production (use stdlib `logging` or structlog) · `# type: ignore` REQUIRES `TODO(owner/TICKET)` · No bare `except:` / `except Exception: pass` · **Log OR raise, never both**
 
 <!-- EDITABLE:END -->
 

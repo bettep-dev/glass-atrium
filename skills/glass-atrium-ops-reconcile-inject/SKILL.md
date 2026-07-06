@@ -5,7 +5,7 @@ description: Bidirectionally reconcile the four inject-scope-rules.sh bash array
 
 # Reconcile inject-scope-rules.sh arrays
 
-Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI. This replaces the old manual "hand-edit the bash arrays" TODO with one executable, transactional command that serves both the add and the delete lifecycle.
+Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI — one executable, transactional command serving both the add and delete lifecycle.
 
 ## When to Use
 
@@ -27,9 +27,9 @@ Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA rost
 - **INJECT_AGENTS** — DEV (12) + QA (2): receives the comment-logging core block.
 - **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block.
 - **MINIMALISM_AGENTS** — DEV (12): receives the MINIMALISM block.
-- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. Under the HYBRID fix this array is now auto-reconciled by the CLI alongside the other three.
+- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. This array is auto-reconciled by the CLI alongside the other three.
 
-A newly registered DEV/QA agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently loads NO injection blocks. Symmetrically, a deleted DEV agent's name lingers in the arrays after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. Previously the operator was told to hand-edit the arrays (a prose TODO). That manual step is now executable: this skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
+A newly registered DEV/QA agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently loads NO injection blocks. Symmetrically, a deleted DEV agent's name lingers in the arrays after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. This skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
 
 ## Core Process
 

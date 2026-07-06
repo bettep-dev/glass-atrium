@@ -51,4 +51,4 @@ So the agent writes the SPEC ("spatial-default = visualDuration 0.5s, bounce 0.2
 - **Capability gate** — a `linear()`-based Spatial family also names a cubic-bezier fallback for no-`linear()` runtimes (e.g. `spatial-default → --ease-spring-2`, fallback `--ease-out-3` — drops overshoot, keeps the move).
 - **Reduced-motion gate** — under `prefers-reduced-motion: reduce`, switch Spatial → Effects family (drop overshoot) or opacity-only, using a no-overshoot cubic-bezier token.
 
-These two gates are orthogonal (a `linear()`-unsupported browser ≠ a reduced-motion user) and each needs its own no-overshoot fallback token.
+Each gate needs its own no-overshoot fallback token (a `linear()`-unsupported browser ≠ a reduced-motion user).

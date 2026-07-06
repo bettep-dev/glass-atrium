@@ -213,7 +213,7 @@ The supplied body field IS the format discriminator (no `prefix` field). Returni
 - (a) explicit format request (HTML/web/PDF form ONLY): the user explicitly names an HTML / web / PDF output form (e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF"). A generic plan/spec/document request ("계획서로 작성", "기획서 정리", "make a plan", "write it up") is NOT an HTML signal — it routes to user-requested non-HTML (md default).
 - (b) explicit share intent: third-party sharing or direct human review/presentation made clear (e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing")
 
-Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare plan/spec/document request are NOT triggers — that is the abolished prefix-heuristic reappearing. EARS: When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a plan was requested).
+Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare plan/spec/document request are NOT triggers. EARS: When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a plan was requested).
 
 **Audience / exposure**: collapses into the single exposure question "did the user request a shareable HTML artifact?" — a 2-value exposure bit (user-requested HTML → viewer-exposed · agent-only record → viewer default-hidden). No per-prefix audience logic.
 
@@ -234,7 +234,7 @@ When a user-requested HTML primary defines a target-file set (the files the plan
 Parse-safety preconditions (P1/P4 — non-negotiable; violation → false-positive scope-drift warnings):
 
 - **Flat leaf (P1) MUST**: `<section id="target-files">` MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside (the hook's single-`</section>` terminator breaks on nesting)
-- **English heading MUST**: the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — `validate-scope-drift.sh` now matches the English token ONLY (the former bilingual matcher was narrowed to English-only). A localized/translated heading will NOT be recognized → scope binding silently lost
+- **English heading MUST**: the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — `validate-scope-drift.sh` matches the English token ONLY. A localized/translated heading will NOT be recognized → scope binding silently lost
 - **Literal id MUST**: the id is exactly `target-files` (hook matches this literal token; trailing attributes like `class=` may follow the id)
 - **One path per `<li>` MUST**: one `<li>` = one file path (prefer absolute) · path is the `<li>` text, optionally `<code>`-wrapped
 - **Optional — OMIT when empty MUST**: a plan with no defined target-file set OMITS the section entirely (the hook fail-opens on absence) · an empty `<section id="target-files">` FORBIDDEN

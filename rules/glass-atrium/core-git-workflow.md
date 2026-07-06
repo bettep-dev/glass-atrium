@@ -13,7 +13,7 @@ Applies to all agents.
 ### Subject Line
 
 - **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics). The author's job is to find the most compressed phrasing that conveys the change's purpose — counting characters is the wrong frame.
-- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); Korean subjects are no longer used — this is a public OSS repository. Bodies are English as well.
+- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); bodies are English as well (public OSS repository, no Korean subjects).
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional. When used, place after the checkbox: `- [x] feat: <description>`.
 
 ### Subject and Body

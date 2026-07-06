@@ -39,15 +39,15 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 ## Assessment Criteria (OWASP LLM Top 10 Based)
 
 - **LLM01:2025 Prompt Injection**: External data contains instruction patterns / jailbreak phrasing
-- **LLM02:2025 Sensitive Information Disclosure**: API keys, tokens, PII present in input/output (promoted from #6 in 2024)
+- **LLM02:2025 Sensitive Information Disclosure**: API keys, tokens, PII present in input/output
 - **LLM03:2025 Supply Chain**: New dependency/model/plugin without license + vulnerability + integrity check
 - **LLM04:2025 Data and Model Poisoning**: Untrusted source ingested into RAG/fine-tune corpus without provenance
 - **LLM05:2025 Improper Output Handling**: SQL/shell/HTML injection patterns in model output
-- **LLM06:2025 Excessive Agency**: File access/modification scope exceeds request scope; missing human-in-loop (now subsumes 2024 LLM07 Insecure Plugin Design)
+- **LLM06:2025 Excessive Agency**: File access/modification scope exceeds request scope; missing human-in-loop
 - **LLM07:2025 System Prompt Leakage**: BLOCK when system prompts, agent instructions, internal credentials, or operational logic can be returned to user output OR written to logs without filtering. Cross-ref: `GLASS_ATRIUM_GLOBAL_RULES.md` System Prompt Protection.
 - **LLM08:2025 Vector and Embedding Weaknesses**: Vector DB access controls broader than the strictest data tier in the corpus; cross-tenant/cross-source embedding access without source-matched authorization
-- **LLM09:2025 Misinformation**: Critical decision relies on LLM output without verification or fallback (renamed from 2024 Overreliance)
-- **LLM10:2025 Unbounded Consumption**: Unbounded loops, recursion, or large-context inputs lacking rate/size limits (scope-expanded from 2024 Model DoS; covers cost / token / model-extraction abuse)
+- **LLM09:2025 Misinformation**: Critical decision relies on LLM output without verification or fallback
+- **LLM10:2025 Unbounded Consumption**: Unbounded loops, recursion, or large-context inputs lacking rate/size limits (covers cost / token / model-extraction abuse)
 
 > Detailed verdict criteria for LLM-specific categories (LLM01 / LLM06 / LLM07): see `scope-security.md` LLM-Specific Verdict Criteria for trigger conditions.
 
