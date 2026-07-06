@@ -674,16 +674,79 @@ ga_detect_fakechat() {
   fi
 }
 
-# ga_cmd_marketplace_add — register the official marketplace (the fakechat install
-# prerequisite). Emitted only when ga_marketplace_present returned 'no'.
-ga_cmd_marketplace_add() {
-  printf 'claude plugin marketplace add anthropics/claude-plugins-official\n'
+# ga_marketplace_add — register the official plugin marketplace IN-PROCESS, working around a
+# live hang: a COLD `claude plugin marketplace add` (like the plugin install below) can print
+# success and register the marketplace WITHOUT the process exiting, so a foreground run_step
+# would block forever. We background the add — its stdout/stderr redirected to /dev/null
+# (MANDATORY hygiene: the backgrounded claude must not write into run_step's STEP_LOG, where a
+# post-kill flush could corrupt the classify read, matching the homebrew/claude token fd
+# hygiene) — then POLL ga_marketplace_present: the moment the marketplace registers we kill+reap
+# the (possibly stuck) process and return success; a 120s ceiling reaps it and returns failure.
+# Emitted as the single function token ga_marketplace_add by ga_cmd_marketplace_add (same
+# in-process pattern as ga_claude_install), because the background+poll cannot survive the entry
+# point's word-split argv runner. Single-pid kill is adequate (the live repro spawns no surviving
+# children). NON-FATAL: the caller treats a non-zero rc as warn-and-continue. Bash 3.2 clean.
+ga_marketplace_add() {
+  local pid waited=0
+  claude plugin marketplace add anthropics/claude-plugins-official >/dev/null 2>&1 &
+  pid=$!
+  while [[ "${waited}" -lt 120 ]]; do
+    if [[ "$(ga_marketplace_present)" == "yes" ]]; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # timeout — reap the stuck adder and report failure (NON-FATAL to the caller).
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  return 1
 }
 
-# ga_cmd_fakechat_install — install the fakechat plugin from the official marketplace.
+# ga_cmd_marketplace_add — emit the single function token ga_marketplace_add (a one-word builder
+# token the entry point runs in-process via run_step, exactly like ga_cmd_claude_cli_install ->
+# ga_claude_install). The actual work — a background+poll+kill hang guard the word-split argv
+# runner cannot express — lives in ga_marketplace_add above. Emitted only when
+# ga_marketplace_present returned 'no'.
+ga_cmd_marketplace_add() {
+  printf 'ga_marketplace_add\n'
+}
+
+# ga_fakechat_install — install the fakechat plugin IN-PROCESS, working around a live hang
+# (confirmed on a cold Mac): `claude plugin install fakechat@claude-plugins-official` prints
+# "Successfully installed" and registers the plugin, but the process does NOT exit (an
+# already-installed re-run exits fast). A foreground run_step would therefore block forever on a
+# fresh install. Same mechanism as ga_marketplace_add: background the install with fds redirected
+# to /dev/null (MANDATORY hygiene — keep the backgrounded claude out of run_step's STEP_LOG),
+# then POLL ga_detect_fakechat, kill+reap on registration (success) or on the 120s ceiling
+# (failure). Emitted as the single function token ga_fakechat_install by ga_cmd_fakechat_install.
+# NON-FATAL to the caller. Bash 3.2 clean.
+ga_fakechat_install() {
+  local pid waited=0
+  claude plugin install fakechat@claude-plugins-official >/dev/null 2>&1 &
+  pid=$!
+  while [[ "${waited}" -lt 120 ]]; do
+    if [[ "$(ga_detect_fakechat)" == "present" ]]; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # timeout — reap the stuck installer and report failure (NON-FATAL to the caller).
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  return 1
+}
+
+# ga_cmd_fakechat_install — emit the single function token ga_fakechat_install (run in-process by
+# run_step). The actual work (background+poll+kill hang guard) lives in ga_fakechat_install above.
 # The entry point runs ga_cmd_marketplace_add FIRST when the marketplace is absent.
 ga_cmd_fakechat_install() {
-  printf 'claude plugin install fakechat@claude-plugins-official\n'
+  printf 'ga_fakechat_install\n'
 }
 
 # === [9] python libraries (AUTO-WITH-CONSENT, PEP-668 aware) ==============
