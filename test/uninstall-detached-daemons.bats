@@ -230,7 +230,7 @@ STUB
   # stop_orphaned_postgres name is fully gone, and neither uninstall function calls the new one.
   ! grep -qF 'stop_orphaned_postgres' "${GA}/lib/ga-core.sh"
   local sdd ru
-  sdd="$(awk '/^stop_detached_daemons\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-core.sh")"
+  sdd="$(awk '/^stop_detached_daemons\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-daemons.sh")"
   ru="$(awk '/^run_uninstall\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-core.sh")"
   [[ -n "${sdd}" && -n "${ru}" ]]
   [[ "${sdd}" != *'clear_unmanaged_pg_orphan'* ]]
@@ -402,7 +402,12 @@ STUB
 }
 
 @test "R2(wiring): run_install clears stale daemon tmux sessions at install start" {
-  run grep -cF 'kill_daemon_tmux_sessions' "${GA}/lib/ga-core.sh"
-  # 1 definition + 2 call-sites (run_install start + stop_detached_daemons).
-  [[ "${output}" -ge 3 ]]
+  # after the ga-core split: the definition + the stop_detached_daemons call-site moved into
+  # ga-daemons.sh; only run_install's install-start call remains in ga-core.sh. Sum both files.
+  core_n="$(grep -cF 'kill_daemon_tmux_sessions' "${GA}/lib/ga-core.sh" || true)"
+  daemons_n="$(grep -cF 'kill_daemon_tmux_sessions' "${GA}/lib/ga-daemons.sh" || true)"
+  [[ -z "${core_n}" ]] && core_n=0
+  [[ -z "${daemons_n}" ]] && daemons_n=0
+  # 1 definition + 2 call-sites (run_install start in ga-core.sh + def & stop_detached_daemons call in ga-daemons.sh).
+  [[ "$(( core_n + daemons_n ))" -ge 3 ]]
 }
