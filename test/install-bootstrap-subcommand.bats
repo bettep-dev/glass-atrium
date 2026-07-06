@@ -56,8 +56,9 @@ teardown() {
 # npm    : `npm run build` succeeds unless STUB_NPM_BUILD_FAIL=1.
 # node   : the monitor server stand-in — sleeps so the gate's kill/wait path is
 #          exercised against a real child PID (never actually serves HTTP).
-# curl   : logs the requested URL, then returns the health body keyed on
-#          STUB_HEALTH (200|fail). 200 → write 200 to stdout via -w; fail → 000.
+# curl   : logs the requested URL, then returns the health response keyed on
+#          STUB_HEALTH (200|fail). 200 → a db:open BODY + the 200 code (the db-field gate
+#          needs the body, not just the status); fail → 000.
 # sleep  : the FIRST call (the gate's early-liveness `sleep 1` probe) does a tiny
 #          REAL settle so the just-backgrounded stub node is scheduled to write its
 #          up-marker before polling starts; EVERY subsequent call (the poll loop)
@@ -103,7 +104,11 @@ if [[ ! -f "${SANDBOX}/monitor-up.marker" ]]; then
   printf '000'; exit 0
 fi
 if [[ "\${STUB_HEALTH:-fail}" == "200" ]]; then
-  printf '200'; exit 0
+  # healthy monitor: emit the /api/health BODY (db:open) THEN the http_code on its own
+  # trailing line, matching the gate's -w '\n%{http_code}' parse (body = all-but-last line).
+  # A bare '200' (no db:open body) now FAILS the db-field gate (lib/ga-core.sh STEP 5 db-open),
+  # so the healthy-path stub must report a db-open monitor to reach the PASS branch.
+  printf '{"db":"open"}\n200'; exit 0
 fi
 [[ "\${fail_mode}" == "1" ]] && exit 22
 printf '000'; exit 0
