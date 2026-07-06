@@ -3245,6 +3245,23 @@ preflight_run_or_bail() {
   return "${rc}"
 }
 
+# preflight_run_or_bail_framed — run ONE consented NON-INTERACTIVE install step through
+# the FRAMED install-progress render path, then release-on-failure exactly like
+# preflight_run_or_bail (which it delegates to). Framing = install RENDER_MODE in run_step:
+# fd 1 AND fd 2 are captured into STEP_LOG and classify-folded, and a single live
+# spinner/label row replaces the raw scrolling flood — so a noisy `brew install` / `npm i`
+# stdout does not swamp the terminal. RENDER_MODE is FUNCTION-local here (bash 3.2 has no
+# block scope, but this wrapper's only job IS the framed call), so ONLY this step is
+# framed and it auto-reverts on return — nothing leaks to sibling steps. Used for the
+# brew batch / pg service+role / claude CLI steps, which are non-interactive once
+# HOMEBREW_NO_ASK + NONINTERACTIVE are exported. DELIBERATELY NOT used for the Homebrew
+# installer step (D3): that step has a LIVE sudo password prompt (lib/ga-deps.sh
+# ga_homebrew_install) that fd-capture would swallow, so it stays on the visible raw path.
+preflight_run_or_bail_framed() {
+  local RENDER_MODE="install"
+  preflight_run_or_bail "$1" "$2"
+}
+
 # preflight_guide_xcode_clt — GUIDE-USER gate (install ORDER step 1). The CLT
 # installer is a GUI dialog the user clicks through, so we PRINT the trigger
 # command, then POLL ga_detect_xcode_clt until it reports present (a hard
@@ -3673,9 +3690,11 @@ preflight_build_summary() {
   PREFLIGHT_SUMMARY=""
   local cmd
 
-  # (2) Homebrew
+  # (2) Homebrew — a human-readable label, NOT the bare ga_homebrew_install function
+  # token the builder now emits (meaningless in the consent / missing-set print), mirroring
+  # the claude CLI line below.
   [[ "$(ga_detect_homebrew)" == "absent" ]] \
-    && PREFLIGHT_SUMMARY="${PREFLIGHT_SUMMARY}Homebrew: $(ga_cmd_homebrew_install)"$'\n'
+    && PREFLIGHT_SUMMARY="${PREFLIGHT_SUMMARY}Homebrew (official curl|bash installer)"$'\n'
   # (3) brew batch — only when the missing-set is non-empty.
   cmd="$(ga_cmd_brew_batch)"
   [[ -n "${cmd}" ]] && PREFLIGHT_SUMMARY="${PREFLIGHT_SUMMARY}${cmd}"$'\n'
@@ -3795,6 +3814,25 @@ EOF
       return 1
     fi
 
+    # NON-INTERACTIVE env for the consented auto-install batch — consent was ALREADY
+    # granted by the grouped gate above, so suppressing per-command prompts here is
+    # correct, not a bypass. Scope: bash 3.2 `local` is FUNCTION-scoped (not block-scoped),
+    # so this reaches every child from here to the end of run_dependency_preflight (the
+    # brew/pg/claude steps AND the later fakechat/python steps) and AUTO-UNSETS on return —
+    # no leak into bootstrap/monitor. WHY each var:
+    #   HOMEBREW_NO_ASK=1     opts OUT of Homebrew 6.x DEFAULT ASK MODE — the `brew install`
+    #     [Y/n] that HANGS against the raw-mode TUI (the menu holds the terminal in raw mode,
+    #     so the user's `y` never reaches brew's cooked-mode read). `man brew` (6.0.6):
+    #     "HOMEBREW_NO_ASK: If set, do not enable default ask mode." It governs EVERY brew
+    #     child in the batch — `brew install`, `brew services start`, the `brew --prefix`
+    #     keg probes — so the env is preferred over a per-line `brew install --no-ask` flag.
+    #   NONINTERACTIVE=1      drops the Homebrew + claude curl|sh installers' RETURN pause and
+    #     governs their sudo path. It does NOT suppress ask mode (verified absent from the
+    #     `man brew` ask-mode governors), hence it is NOT sufficient alone — HOMEBREW_NO_ASK
+    #     is the one that silences the batch [Y/n].
+    #   HOMEBREW_NO_ENV_HINTS=1  silences post-install env hints (noise only).
+    local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1
+
     # (2) Homebrew — install, then eval shellenv so the new brew is on PATH.
     if [[ "$(ga_detect_homebrew)" == "absent" ]]; then
       preflight_run_or_bail "Homebrew install" "$(ga_cmd_homebrew_install)" || return $?
@@ -3805,7 +3843,7 @@ EOF
     local brew_cmd
     brew_cmd="$(ga_cmd_brew_batch)"
     if [[ -n "${brew_cmd}" ]]; then
-      preflight_run_or_bail "brew batch (missing formulae)" "${brew_cmd}" || return $?
+      preflight_run_or_bail_framed "brew batch (missing formulae)" "${brew_cmd}" || return $?
     fi
 
     # (A1) keg-only PATH inject — MUST run BEFORE the postgres detect: keg-only formulae
@@ -3817,18 +3855,26 @@ EOF
 
     # (4) PostgreSQL service + peer-auth role.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
-      preflight_run_or_bail "postgres: start service" "$(ga_cmd_pg_service_start)" || return $?
+      preflight_run_or_bail_framed "postgres: start service" "$(ga_cmd_pg_service_start)" || return $?
     fi
     if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
-      preflight_run_or_bail "postgres: create superuser role" "$(ga_cmd_pg_create_role)" || return $?
+      preflight_run_or_bail_framed "postgres: create superuser role" "$(ga_cmd_pg_create_role)" || return $?
     fi
 
     # (5) claude CLI — native installer FIRST (curl|sh -> ~/.local/bin/claude), npm -g
     # fallback (node@24 from the brew batch above, so npm exists by now). The builder
     # emits the ga_claude_install token; run_step calls it in-process.
     if [[ "$(ga_detect_claude_cli)" == "absent" ]]; then
-      preflight_run_or_bail "claude CLI (native installer, npm fallback)" "$(ga_cmd_claude_cli_install)" || return $?
+      preflight_run_or_bail_framed "claude CLI (native installer, npm fallback)" "$(ga_cmd_claude_cli_install)" || return $?
     fi
+
+    # commit the framed sequence's final row. install RENDER_MODE reuses ONE physical
+    # progress row and leaves the last resolved step in place with NO trailing newline (so
+    # successive framed steps overwrite it, matching the main-install one-row UX); emit ONE
+    # newline so the following GUIDE/auth output starts on a clean line instead of
+    # overwriting that row. On the failure path the framed step already committed a
+    # permanent FAIL line + returned, so this is reached only after an all-pass batch.
+    [[ -n "${TTY}" ]] && printf '\n' >"${TTY}"
   fi
 
   # (C2) native-installer claude PATH inject — the native installer drops the binary at
