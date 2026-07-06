@@ -3262,6 +3262,71 @@ preflight_run_or_bail_framed() {
   preflight_run_or_bail "$1" "$2"
 }
 
+# preflight_bracket — run ONE interactive preflight gate in cooked-mode scrollback, bracketed by
+# an alt-screen drop/re-enter (mirrors _confirm_pregate). MENU context only (the boxed orchestrator
+# calls it): a gate's preflight_line guidance + confirm_typed prompt cannot render inside the dimmed
+# work box, so drop rmcup + restore cooked stty for the gate, then re-enter smcup + raw on return.
+# Leaves a CLEARED alt-screen (like _confirm_pregate) — the caller repaints the frame
+# (enter_run_state) when a box render follows. $1.. = the gate function + its args. Returns the
+# gate's EXACT exit code (set -e is already off here — run_gate_quiet wrapped the whole preflight).
+preflight_bracket() {
+  local rc=0
+  tp rmcup
+  tp cnorm
+  stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
+  RAW_ACTIVE=false
+  reset_plate_geometry
+  "$@" || rc=$?
+  # Re-enter the alt-screen + raw mode (a box render or nav resumes next).
+  tp smcup
+  tp civis
+  stty -echo -icanon <"${TTY}" 2>/dev/null || true
+  RAW_ACTIVE=true
+  tp clear
+  apply_plate_geometry
+  return "${rc}"
+}
+
+# preflight_panel_step — render ONE non-interactive preflight command as a single-step (1/1) panel
+# unit inside the engaged work box (menu context only). Mirrors the token/monitor/purge single-step
+# panel vocabulary: set the 1/1 STEP scaffolding + the ITEM-4 bar, repaint the box body, then run
+# the command as a RENDER_MODE=panel run_step (fd1+fd2 captured + suppressed, the spinner owning the
+# box body row). $1 = past/resolved label · $2 = present-progressive ACTIVE label (empty → falls back
+# to $1) · $3 = command string. Returns the step's EXACT exit code; the caller decides bail vs warn.
+preflight_panel_step() {
+  local resolved="$1" active="$2" cmd="$3" rc=0
+  STEP_INDEX=1
+  STEP_TOTAL=1
+  STEP_LABEL_ACTIVE_CUR="${active:-${resolved}}"
+  STEP_BAR_ACCENT_CUR="${C_ACCENT}" # install = non-destructive → the blue ITEM-4 bar
+  STEP_BAR_CUR="$(build_run_bar)"
+  draw_workbox # show this step's label + bar in the box body before the (possibly slow) step
+  # RENDER_MODE is FUNCTION-local but bash `local` is dynamically scoped, so preflight_run_cmd →
+  # run_step both see "panel" and route into the fixed workbox body row (rail-safe inner paint).
+  local RENDER_MODE="panel"
+  preflight_run_cmd "${resolved}" "${cmd}" || rc=$?
+  _clear_step_state
+  # The boxed path surfaces NO per-step log (clean UI), so sweep the panel FAIL temp run_step
+  # parked in STEP_LAST_FAIL_LOG rather than leaking it (the passthrough path retains full inline
+  # step logs for diagnosis). rc stays the sole pass/fail signal.
+  if [[ "${rc}" -ne 0 && -n "${STEP_LAST_FAIL_LOG}" && -f "${STEP_LAST_FAIL_LOG}" ]]; then
+    rm -f "${STEP_LAST_FAIL_LOG}"
+    STEP_LAST_FAIL_LOG=""
+  fi
+  return "${rc}"
+}
+
+# preflight_panel_step_or_bail — preflight_panel_step + the release-on-failure guard the bailing
+# ENGAGE1 steps (brew batch / pg service+role / claude CLI) share (the panel analogue of
+# preflight_run_or_bail_framed). release_tty is a no-op in the menu context — the menu owns fd3 —
+# but is kept for symmetry. rc is captured BEFORE the release so the precise step exit code survives.
+preflight_panel_step_or_bail() {
+  local rc=0
+  preflight_panel_step "$1" "$2" "$3" || rc=$?
+  [[ "${rc}" -eq 0 ]] || preflight_release_tty
+  return "${rc}"
+}
+
 # preflight_guide_xcode_clt — GUIDE-USER gate (install ORDER step 1). The CLT
 # installer is a GUI dialog the user clicks through, so we PRINT the trigger
 # command, then POLL ga_detect_xcode_clt until it reports present (a hard
@@ -3648,6 +3713,24 @@ preflight_install_fakechat() {
   return "${rc}"
 }
 
+# _preflight_fakechat_boxed — MENU render of preflight_install_fakechat: the marketplace-add
+# prerequisite + the plugin install as 1/1 panel steps in the work box. Same detect guards +
+# builders as the scroll variant; ONLY the render target moves into the box. G7: the marketplace-add
+# carries a DISTINCT present-progressive label flagging the ~30s git clone (verified to COMPLETE, not
+# hang — a purely UX cue) so the box does not read as stalled. Returns the failing step's rc (the
+# caller treats a non-zero as non-fatal, mirroring the scroll path's warn-and-continue).
+_preflight_fakechat_boxed() {
+  [[ "$(ga_detect_fakechat)" == "present" ]] && return 0
+  local rc=0
+  if [[ "$(ga_marketplace_present)" == "no" ]]; then
+    preflight_panel_step "fakechat: add official marketplace" \
+      "adding marketplace (git clone, may take a minute)…" "$(ga_cmd_marketplace_add)" || rc=$?
+    [[ "${rc}" -eq 0 ]] || return "${rc}"
+  fi
+  preflight_panel_step "fakechat: install plugin" "" "$(ga_cmd_fakechat_install)" || rc=$?
+  return "${rc}"
+}
+
 # preflight_install_python_libs — AUTO-WITH-CONSENT (install ORDER step 8), PEP-668
 # aware. PRIMARY: pip install --user the missing set. On an externally-managed
 # (PEP-668) failure, ask for a SEPARATE consent to retry with --break-system-packages
@@ -3677,6 +3760,39 @@ preflight_install_python_libs() {
     return "${rc}"
   fi
   preflight_line "$(c "${C_DIM}" "python libs skipped — install them manually from requirements.txt.")"
+  return 1
+}
+
+# _preflight_python_break_consent — the PEP-668 --break-system-packages consent body, run INSIDE a
+# preflight_bracket (a cooked typed prompt cannot render in the dimmed box). Prints the failure
+# reason then the typed 'break' confirm; returns confirm_typed's verdict (0 = proceed).
+_preflight_python_break_consent() {
+  preflight_line ""
+  preflight_line "$(c "${C_ALERT}" "pip --user failed (likely PEP-668 externally-managed-environment).")"
+  confirm_typed "break" "Retry with --break-system-packages (overrides the PEP-668 guard)."
+}
+
+# _preflight_python_libs_boxed — MENU render of preflight_install_python_libs: the pip --user attempt
+# stays FRAMED as a 1/1 panel step (G3), and ONLY on its PEP-668 failure is the
+# --break-system-packages consent HOISTED to an alt-screen bracket (mirrors _confirm_pregate) — after
+# which the override retry runs as another framed panel step. Same builders + detect guards as the
+# scroll variant. Returns 0 on success, 1 when the override is declined (non-fatal to the caller).
+_preflight_python_libs_boxed() {
+  [[ "$(ga_detect_python_libs)" == "present" ]] && return 0
+  local user_cmd rc=0
+  user_cmd="$(ga_cmd_python_libs_user)"
+  [[ -n "${user_cmd}" ]] || return 0
+  preflight_panel_step "python libs (pip --user)" "" "${user_cmd}" || rc=$?
+  [[ "${rc}" -eq 0 ]] && return 0
+  # --user failed → hoist the override consent to a bracket, then re-establish the frame + retry.
+  local break_cmd
+  break_cmd="$(ga_cmd_python_libs_break_system)"
+  if preflight_bracket _preflight_python_break_consent; then
+    enter_run_state # repaint the frame the bracket left cleared, before the override panel step
+    rc=0
+    preflight_panel_step "python libs (--break-system-packages)" "" "${break_cmd}" || rc=$?
+    return "${rc}"
+  fi
   return 1
 }
 
@@ -3787,6 +3903,26 @@ run_dependency_preflight() {
     return 1
   fi
 
+  # DUAL CALL-CONTEXT dispatch (REQUIRED): the work-box render (enter_run_state / draw_workbox /
+  # paint_workbox_body_inner) needs the interactive-menu frame + plate geometry, which exist ONLY in
+  # the menu context — dispatch_action_install_panel runs apply_plate_geometry THEN
+  # `run_gate_quiet run_dependency_preflight` with PREFLIGHT_TTY_OWNED=false + TTY=fd3. The
+  # passthrough/CLI context (direct call at the `bootstrap` subcommand, PREFLIGHT_TTY_OWNED=true +
+  # TTY=fd4) has NO menu frame + NO plate geometry, so it MUST retain the scrolling
+  # preflight_line/preflight_run_cmd path — painting into a never-drawn frame would corrupt output.
+  # Discriminate on the menu's own non-owned fd3.
+  if [[ "${PREFLIGHT_TTY_OWNED}" == "false" && "${TTY}" == "/dev/fd/3" ]]; then
+    _run_dependency_preflight_boxed
+  else
+    _run_dependency_preflight_scroll
+  fi
+}
+
+# _run_dependency_preflight_scroll — the PASSTHROUGH/CLI render path: the historical scrolling
+# preflight (preflight_line chrome + preflight_run_cmd single-line / preflight_run_or_bail_framed
+# install steps), byte-for-byte the pre-restructure body. Reached when no interactive-menu frame
+# exists (fd4, preflight-owned TTY). All release_tty calls are live here (this path DOES own fd4).
+_run_dependency_preflight_scroll() {
   preflight_line ""
   preflight_line "$(c "${C_INFO}" "── dependency preflight (bare-Mac bootstrap) ──")"
 
@@ -3910,6 +4046,112 @@ EOF
   preflight_line ""
   preflight_line "$(c "${C_OK}" "[ok]") dependency preflight complete — continuing to bootstrap."
   preflight_release_tty
+  return 0
+}
+
+# _run_dependency_preflight_boxed — the MENU render path: the SAME install-order flow, but the
+# INTERACTIVE gates (Xcode CLT, grouped consent, claude auth/token, python --break) drop to a
+# cooked-scrollback alt-screen bracket (preflight_bracket, mirroring _confirm_pregate), and the two
+# contiguous NON-interactive install groups render INSIDE the work box as 1/1 panel steps
+# (enter_run_state + STEP scaffolding + RENDER_MODE=panel run_step, mirroring
+# dispatch_action_uninstall_panel), engaged TWICE around the auth gate. The Homebrew installer is the
+# ONE unframed, off-workbox step: its LIVE sudo password prompt needs a cooked TTY (a panel
+# fd-capture would swallow it — the D3 rationale), so it runs in its own bracket. Each bracket return
+# leaves a CLEARED alt-screen, so the next box render is preceded by an enter_run_state repaint [G5].
+# preflight_release_tty is a no-op here (the menu owns fd3), so it is omitted; a declined/aborted gate
+# returns non-zero and dispatch_action_install_panel renders the concise abort (full step logs live on
+# the passthrough path). Detect verdicts + command builders are byte-for-byte the scroll path's — ONLY
+# the render target (box vs scroll) + the prompt bracket differ. set -e is off (run_gate_quiet wrap).
+_run_dependency_preflight_boxed() {
+  local rc=0
+
+  # (1) Xcode CLT — GUIDE gate, bracketed (guidance + poll need cooked scrollback). Skip the
+  # rmcup/smcup flicker when the toolchain is already present (a common partial-provision case).
+  if [[ "$(ga_detect_xcode_clt)" != "present" ]]; then
+    preflight_bracket preflight_guide_xcode_clt || return 1
+  fi
+
+  # (2-5,8) the auto-with-consent set, behind ONE grouped consent bracket. The GUIDE gates
+  # (CLT above, auth below) + fakechat are NOT in the consent set.
+  if [[ "$(preflight_has_auto_work)" == "yes" ]]; then
+    # build the display list from the summary (newline -> argv), same as the scroll path.
+    local consent_lines=() sline
+    while IFS= read -r sline; do
+      [[ -n "${sline}" ]] && consent_lines+=("${sline}")
+    done <<EOF
+${PREFLIGHT_SUMMARY}
+EOF
+    preflight_bracket preflight_grouped_consent "${consent_lines[@]}" || return 1
+
+    # consent granted → suppress per-command prompts for the batch (function-scoped, auto-unset).
+    # Same three env vars + rationale as the scroll path (HOMEBREW_NO_ASK silences the brew [Y/n]).
+    local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1
+
+    # (2) Homebrew — UNFRAMED, in its OWN bracket: the curl|sh installer has a LIVE sudo password
+    # prompt a panel fd-capture would swallow (the D3 rationale), so it runs off the work box in
+    # cooked scrollback. eval shellenv after so the new brew is on PATH for the batch below.
+    if [[ "$(ga_detect_homebrew)" == "absent" ]]; then
+      preflight_bracket preflight_run_or_bail "Homebrew install" "$(ga_cmd_homebrew_install)" || rc=$?
+      [[ "${rc}" -eq 0 ]] || return "${rc}"
+      preflight_eval_brew_shellenv
+    fi
+
+    # ENGAGE1 — dim the menu + show the work box for the framed non-interactive group. Placed AFTER
+    # the Homebrew bracket so this repaints the full frame the bracket left cleared [G5].
+    enter_run_state
+
+    # (3) brew batch — single grouped `brew install` of only the missing formulae, framed panel step.
+    local brew_cmd
+    brew_cmd="$(ga_cmd_brew_batch)"
+    if [[ -n "${brew_cmd}" ]]; then
+      preflight_panel_step_or_bail "brew batch (missing formulae)" "" "${brew_cmd}" || return $?
+    fi
+
+    # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
+    preflight_keg_path_inject node@24
+    preflight_keg_path_inject postgresql@17
+
+    # (4) PostgreSQL service + peer-auth role — framed panel steps.
+    if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
+      preflight_panel_step_or_bail "postgres: start service" "" "$(ga_cmd_pg_service_start)" || return $?
+    fi
+    if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
+      preflight_panel_step_or_bail "postgres: create superuser role" "" "$(ga_cmd_pg_create_role)" || return $?
+    fi
+
+    # (5) claude CLI — native installer FIRST, npm fallback — framed panel step.
+    if [[ "$(ga_detect_claude_cli)" == "absent" ]]; then
+      preflight_panel_step_or_bail "claude CLI (native installer, npm fallback)" "" "$(ga_cmd_claude_cli_install)" || return $?
+    fi
+  fi
+
+  # (C2) native-installer claude PATH inject — before the auth gate's bare `command -v claude`.
+  # Runs OUTSIDE the auto-work block so it also covers a prior native install (same as scroll).
+  if [[ -x "${HOME}/.local/bin/claude" ]]; then
+    preflight_path_prepend "${HOME}/.local/bin"
+  fi
+
+  # (6) claude AUTH — GUIDE HARD GATE, bracketed (login guidance + `claude setup-token` OAuth both
+  # need a cooked TTY). Skip the bracket ONLY when auth is ALREADY present AND the headless token is
+  # already provisioned (token_already_provisioned — the same fast-path the Token panel uses): then
+  # preflight_guide_claude_auth would be a no-op, so the rmcup/smcup flicker is avoided.
+  if [[ "$(ga_detect_claude_auth)" == "present" ]] && token_already_provisioned; then
+    : # already authenticated + headless token provisioned — no interactive gate needed.
+  else
+    preflight_bracket preflight_guide_claude_auth || return 1
+  fi
+
+  # ENGAGE2 — fakechat + python libs (post-auth, NON-fatal), framed in the work box. The unconditional
+  # enter_run_state re-establishes the frame the auth bracket left cleared [G5]; a fully-provisioned
+  # tail (nothing left to install) just shows the dimmed frame briefly before dispatch's install run.
+  enter_run_state
+  # (7) fakechat — AUTO-NO-CONSENT (marketplace-add prereq THEN plugin install). Non-fatal: a failure
+  # is warn-and-continue in the scroll path, so here it just leaves its last box frame and proceeds.
+  _preflight_fakechat_boxed || true
+  # (8) python libs — AUTO-WITH-CONSENT (--user framed; --break consent bracketed). Also non-fatal.
+  if [[ "$(ga_detect_python_libs)" != "present" ]]; then
+    _preflight_python_libs_boxed || true
+  fi
   return 0
 }
 
