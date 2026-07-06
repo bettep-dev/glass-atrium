@@ -561,6 +561,159 @@ assert_eq "every idle start is matched by a stop (single-active invariant, no le
 
 echo ""
 echo "============================================================================"
+echo "(R4-8) per-window idle ANIMATION VALUE — detection / count_and_gate / handoff"
+echo "============================================================================"
+# Assertion (A): NO blank/static frame in the detection, preflight_count_and_gate, and
+# preflight->run_plan handoff windows — an animation VALUE (a non-blank painted frame carrying
+# the window label on LINE 1 + a live dots token on LINE 2) is present at EACH.
+#
+# The REAL start_idle_spinner forks a subshell that paints every 100ms; that fork is hard-gated
+# on an interactive TTY (`[[ -t 1 ]]`) + FULLSCREEN, so under a piped harness it is a deliberate
+# no-op (the terminal VISUAL is interactive-only). So this section (1) drives the REAL call sites
+# — dispatch_action_install_panel (detection + the count_and_gate it spans, per glass-atrium:3215)
+# and run_action_panel (the handoff, glass-atrium:2023-2029) and the boxed preflight (the pg
+# cluster, glass-atrium:4603) — with (2) a FAITHFUL synchronous tick-0 reproducer of the fork's
+# paint (mirrors glass-atrium:1849-1865: `  <frame0> <label>` on LINE 1, `  <_spinner_dots 0>` on
+# LINE 2, using the REAL SPIN_FRAMES + the REAL _spinner_dots). It records one <label>\t<line1>\t
+# <line2> row per window so the actual painted value at each real call site is asserted non-blank.
+IDLE_CAP="$(mktemp "${TMPDIR:-/tmp}/ga-r4-idlecap.XXXXXX")"
+: >"${IDLE_CAP}"
+# a representative SPIN_FRAMES so frame0 is a real glyph (resolve_glyphs assigns per tier at runtime)
+SPIN_FRAMES='- \ | /'
+
+# capturing reproducer: faithful synchronous tick-0 paint of the real idle fork (no fork, no TTY gate)
+start_idle_spinner() {
+  local label="${1:-}"
+  IDLE_STARTS=$((IDLE_STARTS + 1))
+  local IFS=' ' frames frame0
+  # shellcheck disable=SC2206
+  frames=(${SPIN_FRAMES})
+  local n="${#frames[@]}"
+  [[ "${n}" -gt 0 ]] || n=1
+  frame0="${frames[0]:- }"
+  local line1 line2
+  line1="$(printf '  %s %s' "$(c "${C_INFO}" "${frame0}")" "$(c "${C_STRONG}" "${label}")")"
+  line2="$(printf '  %s' "$(_spinner_dots 0)")" # REAL _spinner_dots, tick 0
+  printf '%s\t%s\t%s\n' "${label}" "${line1}" "${line2}" >>"${IDLE_CAP}"
+}
+stop_idle_spinner() { IDLE_STOPS=$((IDLE_STOPS + 1)); }
+
+# assert one captured window's animation value: row exists, LINE 1 non-blank + carries the label,
+# LINE 2 non-blank (a dots token). $1=human name · $2=exact label.
+assert_window_animated() {
+  local name="$1" want="$2" row l1 l2
+  row="$(awk -F'\t' -v w="${want}" '$1 == w {print; exit}' "${IDLE_CAP}")"
+  if [[ -z "${row}" ]]; then
+    fail "${name} window emitted NO idle frame (label='${want}' not captured — blank/static frame)"
+    return
+  fi
+  l1="$(printf '%s' "${row}" | cut -f2)"
+  l2="$(printf '%s' "${row}" | cut -f3)"
+  if [[ -n "${l1// /}" && "${l1}" == *"${want}"* ]]; then
+    pass "${name} window LINE 1 animation value present + carries label [${l1}]"
+  else
+    fail "${name} window LINE 1 blank or missing label (got [${l1}])"
+  fi
+  if [[ -n "${l2// /}" ]]; then
+    pass "${name} window LINE 2 animation token present [${l2}]"
+  else
+    fail "${name} window LINE 2 blank (no dots animation)"
+  fi
+}
+
+# --- drive the DETECTION (+ count_and_gate) window via the REAL dispatch_action_install_panel ---
+# stub the surrounding gate machinery to a clean no-op so the three in-dispatch start_idle_spinner
+# call sites (glass-atrium:3222/3238/3259) fire under the capturing reproducer.
+apply_plate_geometry() { :; }
+run_gate_quiet() {
+  local rc=0
+  "$@" || rc=$?
+  return "${rc}"
+}
+run_dependency_preflight() { return 0; }
+stop_launchd_monitor_for_install() { return 0; }
+stop_orphan_monitor_for_install() { return 0; }
+restore_launchd_monitor() { return 0; }
+_panel_abort() { :; }
+# run_action_panel is LEFT REAL (not stubbed) so dispatch drives its handoff idle window through
+# real code; its engine callees are stubbed to a clean no-op so no real install work runs.
+build_step_plan() {
+  STEP_FN=("rec_ok")
+  STEP_LABEL=("s1")
+  STEP_LABEL_ACTIVE=("s1")
+  STEP_SUPPRESS=("")
+}
+run_plan() { return 0; }
+status_line() { :; }
+FULLSCREEN=true
+set +e
+trap - ERR
+: >"${IDLE_CAP}"
+IDLE_STARTS=0
+IDLE_STOPS=0
+dispatch_action_install_panel </dev/null
+disp_rc=$?
+set +e
+trap - ERR
+printf '  dispatch_action_install_panel rc=%s  idle starts=%s stops=%s\n' "${disp_rc}" "${IDLE_STARTS}" "${IDLE_STOPS}"
+printf '  captured detection-phase windows:\n'
+sed 's/^/    /' "${IDLE_CAP}"
+assert_eq "dispatch_action_install_panel returns 0 (engine exit unchanged)" "0" "${disp_rc}"
+assert_window_animated "detection" "Detecting dependencies"
+# the detection idle window SPANS preflight_count_and_gate (glass-atrium:3215 — it is stopped only
+# when the first bracket/panel step takes over), so proving it animated proves the count_and_gate
+# window is animated (they are the SAME idle window, not two).
+assert_window_animated "preflight_count_and_gate (spanned by the detection window)" "Detecting dependencies"
+assert_window_animated "monitor-stop gate" "Freeing monitor port"
+assert_eq "every dispatch idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
+
+# --- drive the HANDOFF window via the REAL run_action_panel (glass-atrium:2020-2039), standalone ---
+set +e
+trap - ERR
+: >"${IDLE_CAP}"
+IDLE_STARTS=0
+IDLE_STOPS=0
+run_action_panel install "Install" "${C_OK}" </dev/null
+rap_rc=$?
+set +e
+trap - ERR
+printf '  run_action_panel rc=%s  idle starts=%s stops=%s\n' "${rap_rc}" "${IDLE_STARTS}" "${IDLE_STOPS}"
+printf '  captured handoff window:\n'
+sed 's/^/    /' "${IDLE_CAP}"
+assert_eq "run_action_panel returns 0 (engine exit unchanged)" "0" "${rap_rc}"
+assert_window_animated "preflight->run_plan handoff" "Preparing steps"
+assert_eq "handoff idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
+
+# --- confirm the pg-cluster window (glass-atrium:4603) also paints a value in the boxed preflight ---
+# reset to the fresh bare-Mac scenario that FIRES the pg resolve idle window
+SC_MISSING="postgresql@18
+node@24
+bun
+sqlite"
+SC_HOMEBREW="absent"
+SC_PG="present-but-down"
+SC_ROLE="absent"
+SC_KEG=""
+SC_CLAUDE="absent"
+SC_AUTH="present"
+SC_FAKECHAT="absent"
+SC_MARKET="no"
+SC_PYTHON="absent"
+SC_PG_UTC="down"
+SC_PG_INIT="no"
+PREFLIGHT_SUMMARY="scripted-auto-work"
+: >"${IDLE_CAP}"
+IDLE_STARTS=0
+IDLE_STOPS=0
+run_path _run_dependency_preflight_boxed
+printf '  boxed preflight pg-window capture: idle starts=%s stops=%s\n' "${IDLE_STARTS}" "${IDLE_STOPS}"
+sed 's/^/    /' "${IDLE_CAP}"
+assert_window_animated "pg keg/UTC-resolve" "Resolving PostgreSQL"
+assert_eq "pg-window idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
+rm -f "${IDLE_CAP}"
+
+echo ""
+echo "============================================================================"
 printf 'R4 HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
 rm -f "${GA_SEQ}"
