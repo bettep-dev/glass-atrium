@@ -14,7 +14,7 @@
 # tests of the exact body/code split + db-field matcher idioms in isolation.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-CORE_SH="${GA}/lib/ga-core.sh"
+CORE_SH="${GA}/lib/ga-db.sh"
 
 setup() {
   [[ -f "${CORE_SH}" ]] || skip "lib not found: ${CORE_SH}"
