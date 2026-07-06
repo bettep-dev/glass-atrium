@@ -1555,6 +1555,26 @@ paint_workbox_body_inner() {
   printf '%s%*s' "${content}" "${pad}" "" >"${TTY}"
 }
 
+# _job_control_state / _restore_job_control — snapshot + restore the shell's monitor
+# (job-control) flag around a `set +m` window. WHY snapshot-restore, not an unconditional
+# `set -m`: this launcher runs NON-INTERACTIVELY (job control OFF by default), so a bare
+# `set -m` restore ENABLES it → a later terminal-mode write `stty "${TTY_SAVED}" <"${TTY}"`
+# (confirm_typed / preflight_bracket cooked-mode toggle) runs in its own background process
+# group, takes SIGTTOU, and STOPS (state T); the launcher then blocks forever on the stopped
+# stty (the typed install-consent hang). Snapshot keeps an already-off shell off, yet
+# preserves a genuinely-on interactive shell. _job_control_state is a pure read (safe inside
+# `$(...)`); _restore_job_control mutates the caller's shell (call it directly, never in `$()`).
+_job_control_state() {
+  case $- in
+    *m*) printf 'on' ;;
+    *) printf 'off' ;;
+  esac
+}
+
+_restore_job_control() {
+  if [[ "$1" == "on" ]]; then set -m; else set +m; fi
+}
+
 # start_step_spinner / stop_step_spinner — a single-line braille animation tethered
 # to one engine step. SCROLLBACK DISCIPLINE (C-2): the step screen runs in normal
 # scrollback (dispatch_action dropped the alt-screen via `tp rmcup`), so the spinner
@@ -1582,8 +1602,12 @@ start_step_spinner() {
 
   tp civis # hide the cursor for the spin (the file's guarded tput wrapper)
   # The spinner body runs in a forked subshell with its own unconditional cnorm trap.
-  # set +m/-m around the launch suppresses the job-control "[n] PID" notice; the matching
-  # wrap on the stop side suppresses the "Terminated" notice when we kill it.
+  # set +m around the launch suppresses the job-control "[n] PID" notice; the matching wrap
+  # on the stop side suppresses the "Terminated" notice when we kill it. RESTORE the prior
+  # monitor state (not an unconditional set -m) so a non-interactive run stays job-control-OFF
+  # → no SIGTTOU-stop of a later stty (see _job_control_state / _restore_job_control above).
+  local jobctl_prev
+  jobctl_prev="$(_job_control_state)"
   set +m
   (
     # EXIT keeps the unconditional cnorm on every path; INT/TERM additionally EXIT
@@ -1636,7 +1660,7 @@ start_step_spinner() {
     done
   ) &
   SPIN_PID=$!
-  set -m
+  _restore_job_control "${jobctl_prev}"
 }
 
 # stop_step_spinner — kill ONLY the spinner PID, clear its status line, restore the
@@ -1644,6 +1668,10 @@ start_step_spinner() {
 # is moot — IMP1 replaced the proc-sub with a synchronous fd-2-to-file capture.)
 stop_step_spinner() {
   [[ -n "${SPIN_PID}" ]] || return 0
+  # RESTORE the prior monitor state (see start_step_spinner) — a bare set -m here would leave
+  # job control ON in this non-interactive shell and SIGTTOU-stop a later stty.
+  local jobctl_prev
+  jobctl_prev="$(_job_control_state)"
   set +m
   kill "${SPIN_PID}" 2>/dev/null || true # default SIGTERM → the spinner's INT/TERM trap exits
   # belt-and-suspenders: if the spinner is somehow still alive (e.g. a future trap
@@ -1651,7 +1679,7 @@ stop_step_spinner() {
   # following wait CANNOT deadlock. Targets ONLY the spinner PID, never a blanket wait.
   kill -0 "${SPIN_PID}" 2>/dev/null && kill -KILL "${SPIN_PID}" 2>/dev/null || true
   wait "${SPIN_PID}" 2>/dev/null || true # reap ONLY the spinner; the child's TERM trap ran cnorm
-  set -m
+  _restore_job_control "${jobctl_prev}"
   SPIN_PID=""
   # BUG A (rail-safe panel clear): in panel RENDER_MODE the spinner's last paint sits on the
   # workbox BODY row, framed by the box's left/right rails. A full-row `\r\033[2K` here erases
