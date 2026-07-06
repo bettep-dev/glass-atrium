@@ -4016,7 +4016,11 @@ EOF
       # start path (a purely 'present' cluster never enters this branch, so never waits).
       preflight_run_or_bail_framed "postgres: wait until ready" "ga_pg_wait_ready" || return $?
     fi
-    if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
+    # role gate is `!= present` (evaluated AFTER the readiness wait): a residual present-but-down
+    # (server slow to answer) as well as a genuine absent both trigger the create. ga_pg_ensure_role
+    # is idempotent (\gexec NOT-EXISTS guard + ON_ERROR_STOP=1), so a re-run over an existing role is
+    # a safe no-op and a truly-down server fails loudly rather than being silently skipped.
+    if [[ "$(ga_detect_postgres_role)" != "present" ]]; then
       preflight_run_or_bail_framed "postgres: create superuser role" "$(ga_cmd_pg_create_role)" || return $?
     fi
 
@@ -4223,7 +4227,9 @@ EOF
       # bails loudly. Runs ONLY on the start path (a purely 'present' cluster never waits).
       preflight_panel_step_or_bail "postgres: wait until ready" "" "ga_pg_wait_ready" || return $?
     fi
-    if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
+    # role gate is `!= present` post-readiness (see the scroll path for the full rationale) —
+    # idempotent create covers both a residual present-but-down and a genuine absent.
+    if [[ "$(ga_detect_postgres_role)" != "present" ]]; then
       preflight_panel_step_or_bail "postgres: create superuser role" "" "$(ga_cmd_pg_create_role)" || return $?
     fi
 

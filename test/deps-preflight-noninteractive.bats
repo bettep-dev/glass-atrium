@@ -633,6 +633,48 @@ extract_launcher_fn() {
   [[ -n "${start_ln}" && -n "${wait_ln}" && "${start_ln}" -lt "${wait_ln}" ]]
 }
 
+# === STEP 3 — role-create RUN-site gate `!= present`; COUNT stays conservative `== absent` =
+
+@test "STEP3(static): both role-create RUN-sites gate on != present (post-readiness idempotent)" {
+  # scroll + boxed run-sites each evaluate `!= present` (a residual present-but-down OR absent both create).
+  run grep -cF 'if [[ "$(ga_detect_postgres_role)" != "present" ]]; then' "${LAUNCHER}"
+  [[ "${output}" -eq 2 ]]
+  # the OLD `== absent` RUN-site gate is gone from the create call-sites (a create line follows each).
+  local scroll boxed
+  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ "${scroll}" == *'ga_detect_postgres_role)" != "present"'* ]]
+  [[ "${boxed}" == *'ga_detect_postgres_role)" != "present"'* ]]
+  [[ "${scroll}" != *'ga_detect_postgres_role)" == "absent"'* ]]
+  [[ "${boxed}" != *'ga_detect_postgres_role)" == "absent"'* ]]
+}
+
+@test "STEP3(static): preflight_count_and_gate KEEPS the conservative == absent role count" {
+  # the count must NOT mirror `!= present` — that OVER-counts a warm machine whose role already
+  # exists (post-readiness role=='present' → step skipped → bar stuck at N-1/N). Under-count +
+  # clamp is the safe direction.
+  local body
+  body="$(awk '/^preflight_count_and_gate\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ -n "${body}" ]]
+  [[ "${body}" == *'ga_detect_postgres_role)" == "absent"'* ]]
+  [[ "${body}" != *'ga_detect_postgres_role)" != "present"'* ]]
+}
+
+@test "STEP3(count): warm machine whose role ALREADY exists does NOT count the role step" {
+  # regression guard for the stuck N-1/N bar: role present up-front → role NOT counted, only pg-service.
+  extract_launcher_fn preflight_count_and_gate
+  ga_brew_missing_set() { printf ''; }                   # pg NOT in the brew missing-set (warm)
+  ga_detect_postgres() { printf 'present-but-down\n'; }  # service WILL start (+1)
+  ga_detect_postgres_role() { printf 'present\n'; }      # role already exists → NOT counted
+  ga_detect_claude_cli() { printf 'present\n'; }
+  ga_detect_fakechat() { printf 'present\n'; }
+  ga_marketplace_present() { printf 'yes\n'; }
+  ga_detect_python_libs() { printf 'present\n'; }
+  preflight_count_and_gate
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 1 ]] # pg-service only, role uncounted (conservative)
+  [[ "${STEP_TOTAL}" -eq 1 ]]
+}
+
 # === BUG3 — fakechat/marketplace in-process tokens + background+poll+kill hang guard =====
 
 @test "BUG3: ga_cmd_fakechat_install emits the in-process function token ga_fakechat_install" {
