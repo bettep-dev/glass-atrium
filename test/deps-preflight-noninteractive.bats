@@ -94,10 +94,10 @@ teardown() {
 
 @test "D1: ga_cmd_brew_batch emits 'brew install <formulae>' with NO --no-ask / -y flag" {
   # deterministic missing-set (override the real-machine probe).
-  ga_brew_missing_set() { printf 'postgresql@17\nbun\ntmux\n'; }
+  ga_brew_missing_set() { printf 'postgresql@18\nbun\ntmux\n'; }
   run ga_cmd_brew_batch
   [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "brew install postgresql@17 bun tmux" ]]
+  [[ "${output}" == "brew install postgresql@18 bun tmux" ]]
   # the builder must NOT carry non-interactivity — that is the env's job (HOMEBREW_NO_ASK).
   [[ "${output}" != *"--no-ask"* ]]
   [[ "${output}" != *"--yes"* ]]
@@ -112,7 +112,7 @@ teardown() {
 }
 
 @test "D1: a stubbed brew invoked with the batch argv SEES HOMEBREW_NO_ASK=1" {
-  ga_brew_missing_set() { printf 'postgresql@17\nbun\n'; }
+  ga_brew_missing_set() { printf 'postgresql@18\nbun\n'; }
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
   # stub brew records the ask-mode env it was called with, then no-ops.
@@ -446,12 +446,12 @@ extract_launcher_fn() {
   eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
 }
 
-@test "BUG2(count): cold Mac (postgresql@17 in brew missing-set) counts BOTH pg steps → 7 total" {
+@test "BUG2(count): cold Mac (postgresql@18 in brew missing-set) counts BOTH pg steps → 7 total" {
   extract_launcher_fn preflight_count_and_gate
-  # cold bare-Mac: the brew missing-set carries postgresql@17 (a FRESH cluster) + claude absent.
+  # cold bare-Mac: the brew missing-set carries postgresql@18 (a FRESH cluster) + claude absent.
   # The STALE live ga_detect_postgres reads 'absent' up-front (psql is still inside the brew batch),
   # so a live-detect count would WRONGLY zero the pg steps — the missing-set derivation must win.
-  ga_brew_missing_set() { printf 'postgresql@17\nnode@24\nbun\nsqlite\n'; }
+  ga_brew_missing_set() { printf 'postgresql@18\nnode@24\nbun\nsqlite\n'; }
   ga_detect_postgres() { printf 'absent\n'; }            # stale — must NOT drive the pg count
   ga_detect_postgres_role() { printf 'present-but-down\n'; }
   ga_detect_claude_cli() { printf 'absent\n'; }
@@ -699,7 +699,7 @@ extract_launcher_fn() {
   [[ -z "$(PATH="${empty}" ga_pg_keg_major)" ]]
 }
 
-@test "STEP4: preflight_keg_path_inject_pg injects the resolved major, defaulting to @17 when none" {
+@test "STEP4: preflight_keg_path_inject_pg injects the resolved major, defaulting to @18 when none" {
   extract_launcher_fn preflight_keg_path_inject_pg
   local captured=""
   preflight_keg_path_inject() { captured="$1"; }
@@ -707,18 +707,19 @@ extract_launcher_fn() {
   ga_pg_keg_major() { printf '14'; }
   preflight_keg_path_inject_pg
   [[ "${captured}" == "postgresql@14" ]]
-  # empty resolver → default to the fresh-install pin @17.
+  # empty resolver → default to the fresh-install pin @18.
   ga_pg_keg_major() { printf ''; }
   preflight_keg_path_inject_pg
-  [[ "${captured}" == "postgresql@17" ]]
+  [[ "${captured}" == "postgresql@18" ]]
 }
 
-@test "STEP4(static): both keg-inject sites use preflight_keg_path_inject_pg (no literal postgresql@17)" {
+@test "STEP4(static): both keg-inject sites use preflight_keg_path_inject_pg (no literal postgresql@N)" {
   # 1 definition + 2 call-sites.
   run grep -cF 'preflight_keg_path_inject_pg' "${LAUNCHER}"
   [[ "${output}" -ge 3 ]]
-  # the literal postgresql@17 KEG-INJECT call is GONE (missing-set pin references @17 elsewhere, not a keg-inject).
-  run grep -cF 'preflight_keg_path_inject postgresql@17' "${LAUNCHER}"
+  # no literal postgresql@N KEG-INJECT call — the resolver owns the version (fresh-pin @18
+  # references live in the missing-set / default fallbacks, NOT as a keg-inject literal).
+  run grep -cE 'preflight_keg_path_inject postgresql@[0-9]' "${LAUNCHER}"
   [[ "${output}" -eq 0 ]]
   # node@24 keg-inject stays literal at both sites (single pinned major, unchanged).
   run grep -cF 'preflight_keg_path_inject node@24' "${LAUNCHER}"
@@ -798,4 +799,151 @@ extract_launcher_fn() {
   [[ "${rc}" -eq 1 ]] # non-fatal failure verdict
   run pgrep -f '918273646'
   [[ "${status}" -ne 0 ]] # the live bg claude was killed+reaped at the ceiling
+}
+
+# === R1 — PostgreSQL @18 fresh pin + initdb fallback (uninitialized data dir) ============
+
+@test "R1(pin): postgresql@18 is the fresh-install missing-set pin (absent PG), never @17" {
+  ga_detect_postgres() { printf 'absent\n'; }
+  ga_detect_node() { printf 'present\n'; }
+  ga_detect_bun() { printf 'present\n'; }
+  ga_detect_sqlite_fts5() { printf 'present\n'; }
+  ga_detect_cli_tool() { printf 'present\n'; }
+  run ga_brew_missing_set
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"postgresql@18"* ]]
+  [[ "${output}" != *"postgresql@17"* ]]
+}
+
+@test "R1(service): ga_cmd_pg_service_start defaults to @18 when no major resolves" {
+  # neither psql on PATH nor a brew keg → the fresh-install pin default.
+  command() { return 1; } # force `command -v psql/brew` to miss
+  run ga_cmd_pg_service_start
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "brew services start postgresql@18" ]]
+}
+
+@test "R1(restart): ga_cmd_pg_service_restart emits a RESTART line, default @18" {
+  command() { return 1; }
+  run ga_cmd_pg_service_restart
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "brew services restart postgresql@18" ]]
+}
+
+@test "R1(initdb-token): ga_cmd_pg_initdb emits the single in-process token ga_pg_initdb" {
+  run ga_cmd_pg_initdb
+  [[ "${status}" -eq 0 ]]
+  local tok; tok="$(printf '%s' "${output}" | tr -d '[:space:]')"
+  set -- ${output}
+  [[ "$#" -eq 1 ]]
+  [[ "${tok}" == "ga_pg_initdb" ]]
+}
+
+# NOTE: the stub var is PGSTUB_PREFIX, NOT `prefix` — ga_pg_data_dir declares a `local
+# prefix`, so a same-named stub var would be shadowed under bash dynamic scope (the stub
+# would read the function's empty local instead of the test's path).
+@test "R1(detect): ga_pg_data_dir_initialized is 'no' for an UNINITIALIZED brew keg data dir" {
+  PGSTUB_PREFIX="${SANDBOX}/brew"
+  mkdir -p "${PGSTUB_PREFIX}/var/postgresql@18" # dir exists but NO PG_VERSION marker
+  ga_pg_keg_major() { printf '18'; }
+  ga_brew_prefix() { printf '%s' "${PGSTUB_PREFIX}"; }
+  run ga_pg_data_dir_initialized
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "no" ]]
+}
+
+@test "R1(detect): ga_pg_data_dir_initialized is 'yes' once the PG_VERSION marker exists" {
+  PGSTUB_PREFIX="${SANDBOX}/brew"
+  mkdir -p "${PGSTUB_PREFIX}/var/postgresql@18"
+  printf '18\n' >"${PGSTUB_PREFIX}/var/postgresql@18/PG_VERSION"
+  ga_pg_keg_major() { printf '18'; }
+  ga_brew_prefix() { printf '%s' "${PGSTUB_PREFIX}"; }
+  run ga_pg_data_dir_initialized
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "yes" ]]
+}
+
+@test "R1(detect): ga_pg_data_dir_initialized is 'yes' when NO brew keg (non-brew cluster, skip initdb)" {
+  ga_pg_keg_major() { printf ''; } # no brew postgresql@N keg installed
+  run ga_pg_data_dir_initialized
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "yes" ]]
+}
+
+@test "R1(initdb-guard): ga_pg_initdb HARD-SKIPS an already-initialized cluster (never re-initdb)" {
+  PGSTUB_PREFIX="${SANDBOX}/brew"
+  mkdir -p "${PGSTUB_PREFIX}/var/postgresql@18"
+  printf '18\n' >"${PGSTUB_PREFIX}/var/postgresql@18/PG_VERSION"
+  ga_pg_keg_major() { printf '18'; }
+  ga_brew_prefix() { printf '%s' "${PGSTUB_PREFIX}"; }
+  # a poisoned initdb stub must NEVER be reached (skip on PG_VERSION present).
+  local stub="${SANDBOX}/bin"; mkdir -p "${stub}"
+  printf '#!/bin/bash\ntouch "%s/initdb-RAN"\nexit 0\n' "${SANDBOX}" >"${stub}/initdb"
+  chmod +x "${stub}/initdb"
+  PATH="${stub}:${PATH}" ga_pg_initdb
+  [[ ! -e "${SANDBOX}/initdb-RAN" ]] # destructive re-init was prevented
+}
+
+@test "R1(initdb-fires): ga_pg_initdb runs initdb -D <dir> --encoding=UTF8 on an uninitialized dir" {
+  PGSTUB_PREFIX="${SANDBOX}/brew"
+  mkdir -p "${PGSTUB_PREFIX}/var/postgresql@18" # no PG_VERSION → uninitialized
+  ga_pg_keg_major() { printf '18'; }
+  ga_brew_prefix() { printf '%s' "${PGSTUB_PREFIX}"; }
+  local stub="${SANDBOX}/bin"; mkdir -p "${stub}"
+  # record the exact argv the real ga_pg_initdb passes to initdb.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >"%s/initdb-argv"\nexit 0\n' "${SANDBOX}" >"${stub}/initdb"
+  chmod +x "${stub}/initdb"
+  PATH="${stub}:${PATH}" ga_pg_initdb
+  [[ -e "${SANDBOX}/initdb-argv" ]]
+  run cat "${SANDBOX}/initdb-argv"
+  [[ "${output}" == "-D ${PGSTUB_PREFIX}/var/postgresql@18 --encoding=UTF8" ]]
+}
+
+# === R3 — foreign/broken postgres UTC-rejection detect ==================================
+
+@test "R3(detect): ga_detect_postgres_utc is 'broken' when the server rejects SET timezone='UTC'" {
+  local stub="${SANDBOX}/bin"; mkdir -p "${stub}"
+  # psql: SELECT 1 succeeds (server answers) but the SET timezone='UTC' probe FAILS (22023).
+  cat >"${stub}/psql" <<'PSQL'
+#!/bin/bash
+for a in "$@"; do
+  case "$a" in
+    *"SET timezone='UTC'"*) exit 1 ;;  # broken server rejects UTC (pg 22023)
+    "SELECT 1") exit 0 ;;
+  esac
+done
+exit 0
+PSQL
+  chmod +x "${stub}/psql"
+  run env PATH="${stub}:${PATH}" bash -c "source '${DEPS_SH}'; PG_SOCKET=/tmp ga_detect_postgres_utc"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "broken" ]]
+}
+
+@test "R3(detect): ga_detect_postgres_utc is 'ok' when the server accepts SET timezone='UTC'" {
+  local stub="${SANDBOX}/bin"; mkdir -p "${stub}"
+  printf '#!/bin/bash\nexit 0\n' >"${stub}/psql" # every probe (SELECT 1 + SET UTC) succeeds
+  chmod +x "${stub}/psql"
+  run env PATH="${stub}:${PATH}" bash -c "source '${DEPS_SH}'; PG_SOCKET=/tmp ga_detect_postgres_utc"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "ok" ]]
+}
+
+@test "R3(detect): ga_detect_postgres_utc is 'down' when no server answers the socket" {
+  local stub="${SANDBOX}/bin"; mkdir -p "${stub}"
+  printf '#!/bin/bash\nexit 1\n' >"${stub}/psql" # SELECT 1 fails → no live server
+  chmod +x "${stub}/psql"
+  run env PATH="${stub}:${PATH}" bash -c "source '${DEPS_SH}'; PG_SOCKET=/tmp ga_detect_postgres_utc"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "down" ]]
+}
+
+@test "R3(static): preflight_pg_utc_guard is wired into BOTH preflight paths after keg-inject" {
+  run grep -cF 'preflight_pg_utc_guard || return $?' "${LAUNCHER}"
+  [[ "${output}" -eq 2 ]]
+}
+
+@test "R1(static): the initdb step is wired into BOTH preflight paths (gated on uninitialized)" {
+  run grep -cF 'ga_pg_data_dir_initialized' "${LAUNCHER}"
+  [[ "${output}" -ge 2 ]]
 }

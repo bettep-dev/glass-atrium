@@ -3236,7 +3236,7 @@ preflight_path_prepend() {
 # postgresql@N) are keg-only — `brew shellenv` does NOT add their bins to PATH, so a
 # fresh `brew install node@24` leaves `node` unresolved this session without this.
 # No-op when the formula is absent (an nvm-node / no-brew-pg machine is untouched) or
-# the prefix is unresolvable. $1 = brew formula name (e.g. node@24, postgresql@17).
+# the prefix is unresolvable. $1 = brew formula name (e.g. node@24, postgresql@18).
 preflight_keg_path_inject() {
   local formula="$1" prefix
   [[ "$(ga_brew_formula_present "${formula}")" == "yes" ]] || return 0
@@ -3249,14 +3249,48 @@ preflight_keg_path_inject() {
 # preflight_keg_path_inject_pg — version-agnostic keg-inject of the installed PostgreSQL keg. Resolves
 # the HIGHEST installed brew postgresql@N via ga_pg_keg_major (brew-keg-first, NOT the psql-client-first
 # ga_pg_installed_major — a stale lower-major psql on PATH must not pick the wrong keg), defaulting to
-# the fresh-install pin @17 when none resolves (the post-consent brew batch just added postgresql@17 but
+# the fresh-install pin @18 when none resolves (the post-consent brew batch just added postgresql@18 but
 # its keg-only psql is not yet on PATH). Replaces the former literal `postgresql@17` inject so a
-# present-but-down PG14 injects @14 and a fresh @17 injects @17. The single-major node@24 keg stays literal.
+# present-but-down PG14 injects @14 and a fresh @18 injects @18. The single-major node@24 keg stays literal.
 preflight_keg_path_inject_pg() {
   local major
   major="$(ga_pg_keg_major)"
-  [[ -z "${major}" ]] && major="17"
+  [[ -z "${major}" ]] && major="18"
   preflight_keg_path_inject "postgresql@${major}"
+}
+
+# preflight_pg_utc_guard — intercept a FOREIGN/BROKEN postgres squatting the peer-auth socket
+# BEFORE the service/role steps (and the downstream monitor) trust it. ga_detect_postgres=='present'
+# is satisfied by a bare SELECT 1, but an orphaned postmaster from a now-deleted keg (lost tzdata)
+# ANSWERS SELECT 1 yet REJECTS `SET timezone='UTC'` (pg 22023) — and the monitor's UTC-gated pool
+# then FATALs the 30s bootstrap health gate. Discriminate via ga_detect_postgres_utc:
+#   * not 'broken' (ok / down / absent) → clean, nothing to do (return 0).
+#   * 'broken' + a brew-managed keg present → RESTART the resolved keg + re-verify (self-heal a
+#     brew-owned server; a plain start is a no-op on an already-running broken server, hence restart).
+#   * 'broken' + NO brew keg (an UNMANAGED orphan of a deleted keg) → LOUD-FAIL with concrete
+#     remediation and return non-zero — NEVER silently proceed into the downstream 30s FATAL.
+# Runs after the keg-inject (psql is on PATH), in BOTH preflight paths. Returns 0 on a clean/healed
+# socket, non-zero on an unrecoverable squatter (the caller bails exactly like the other steps).
+preflight_pg_utc_guard() {
+  [[ "$(ga_detect_postgres_utc)" == "broken" ]] || return 0
+  preflight_line "$(c "${C_ALERT}" "[warn]") a postgres on ${PG_SOCKET}/.s.PGSQL.5432 answers but REJECTS SET timezone='UTC' (broken/foreign server)."
+  if [[ -n "$(ga_pg_keg_major)" ]]; then
+    preflight_line "$(c "${C_DIM}" "[info]") brew-managed keg present — restarting the target service to clear the broken state."
+    preflight_run_cmd "postgres: restart UTC-rejecting server" "$(ga_cmd_pg_service_restart)" || true
+    ga_pg_wait_ready || true
+    if [[ "$(ga_detect_postgres_utc)" != "broken" ]]; then
+      preflight_line "$(c "${C_OK}" "[ok]") postgres now accepts SET timezone='UTC' — continuing."
+      return 0
+    fi
+  fi
+  # unmanaged orphan, OR a brew restart that did not clear it → loud-fail with remediation.
+  preflight_line "$(c "${C_ALERT}" "[fail]") a foreign/broken postgres owns ${PG_SOCKET}/.s.PGSQL.5432 and rejects SET timezone='UTC' —"
+  preflight_line "        it is not a brew-managed target GA can restart. Stop it, then re-run the installer:"
+  preflight_line "          1) find it:   lsof ${PG_SOCKET}/.s.PGSQL.5432    (or: lsof -ti tcp:5432)"
+  preflight_line "          2) stop it:   kill -INT <pid>    (fast shutdown; likely an orphan of a deleted keg)"
+  preflight_line "          3) re-run once :5432 is free."
+  preflight_release_tty
+  return 1
 }
 
 # preflight_run_cmd — run ONE install command STRING (from a ga_cmd_* builder) as a
@@ -4041,11 +4075,30 @@ EOF
     fi
 
     # (A1) keg-only PATH inject — MUST run BEFORE the postgres detect: keg-only formulae
-    # are off PATH after `brew install`, so without this a fresh postgresql@17 leaves bare
+    # are off PATH after `brew install`, so without this a fresh postgresql@18 leaves bare
     # `command -v psql` unresolved → ga_detect_postgres returns 'absent' → the service-
     # start branch below never fires. Each call self-guards on formula presence.
     preflight_keg_path_inject node@24
     preflight_keg_path_inject_pg
+
+    # (A2) foreign/broken postgres guard — a squatter that ANSWERS SELECT 1 but REJECTS
+    # SET timezone='UTC' (an orphaned postmaster from a deleted keg, lost tzdata) passes
+    # ga_detect_postgres=='present' and would be silently trusted, only to FATAL the
+    # monitor's UTC-gated pool 30s later. Intercept it here (self-heal a brew-managed keg,
+    # loud-fail an unmanaged orphan). Runs after keg-inject so psql is on PATH.
+    preflight_pg_utc_guard || return $?
+
+    # (A3) initialize an UNINITIALIZED cluster data dir — `brew install postgresql@N` can
+    # pour the binaries but FAIL its post_install data-dir init ("unknown install step:
+    # init_data_dir" on older Homebrew), leaving no PG_VERSION and no server for the
+    # service-start below to boot. Fall back to a manual initdb. IDEMPOTENT (skipped when
+    # PG_VERSION already exists → never re-initdb over live data) and no-op on a non-brew
+    # cluster. Like the readiness wait, this is an UNCOUNTED extra step the shared-counter
+    # clamp absorbs (an over-count would stick the bar at N-1/N; an under-count degrades to
+    # an N/N tail — so initdb is deliberately not added to preflight_count_and_gate).
+    if [[ "$(ga_pg_data_dir_initialized)" == "no" ]]; then
+      preflight_run_or_bail_framed "postgres: initialize data dir" "$(ga_cmd_pg_initdb)" || return $?
+    fi
 
     # (4) PostgreSQL service + peer-auth role.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
@@ -4136,7 +4189,7 @@ PREFLIGHT_GROUP2_RUNNABLE=0
 #
 # COUNT-DRIFT: the pg + fakechat steps run DOWNSTREAM of installs that happen inside this same
 # preflight, so their live detects are STALE up-front. We predict the post-install state:
-#   * pg-service / pg-role — postgresql@17 in the brew MISSING-SET means a fresh cluster WILL be
+#   * pg-service / pg-role — postgresql@18 in the brew MISSING-SET means a fresh cluster WILL be
 #     installed, so BOTH the service-start and the role-create WILL run. (A cold bare-Mac reads
 #     ga_detect_postgres=='absent' up-front — psql is still inside the brew batch — so the live
 #     verdict would wrongly zero these.) WARM fallback (pg already installed, not in the
@@ -4157,8 +4210,8 @@ preflight_count_and_gate() {
   [[ -n "${missing_set}" ]] && g1=$((g1 + 1))
   # (4) postgres: missing-set-derived on a fresh cluster (service + role BOTH run), else the
   # warm live-down / role-absent fallback. Substring match is safe — no other formula name
-  # contains 'postgresql@17'.
-  if [[ "${missing_set}" == *"postgresql@17"* ]]; then
+  # contains 'postgresql@18'.
+  if [[ "${missing_set}" == *"postgresql@18"* ]]; then
     g1=$((g1 + 2))
   else
     [[ "$(ga_detect_postgres)" == "present-but-down" ]] && g1=$((g1 + 1))
@@ -4259,6 +4312,19 @@ EOF
     # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
     preflight_keg_path_inject node@24
     preflight_keg_path_inject_pg
+
+    # (A2) foreign/broken postgres guard — identical rationale to the scroll path: intercept a
+    # squatter that answers SELECT 1 but rejects SET timezone='UTC' before the service/role
+    # steps (and the monitor) trust it. preflight_pg_utc_guard prints its own loud-fail chrome,
+    # so it is called directly (not as a framed panel step) and bails on non-zero.
+    preflight_pg_utc_guard || return $?
+
+    # (A3) initialize an UNINITIALIZED cluster data dir (identical rationale to the scroll path) —
+    # the "@18 install 중단" data-dir fallback. UNCOUNTED extra step (clamp-absorbed), gated on the
+    # PG_VERSION marker so a re-run / non-brew cluster is a no-op.
+    if [[ "$(ga_pg_data_dir_initialized)" == "no" ]]; then
+      preflight_panel_step_or_bail "postgres: initialize data dir" "" "$(ga_cmd_pg_initdb)" || return $?
+    fi
 
     # (4) PostgreSQL service + peer-auth role — framed panel steps.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then

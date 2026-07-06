@@ -77,12 +77,18 @@ SC_MISSING="" # ga_brew_missing_set output (newline list)
 SC_HOMEBREW="present"
 SC_PG="present"     # ga_detect_postgres verdict
 SC_ROLE="present"   # ga_detect_postgres_role verdict
-SC_KEG=""           # ga_pg_keg_major (empty => real default @17)
+SC_KEG=""           # ga_pg_keg_major (empty => real default @18)
 SC_CLAUDE="present" # ga_detect_claude_cli
 SC_AUTH="present"   # ga_detect_claude_auth
 SC_FAKECHAT="present"
 SC_MARKET="yes"     # ga_marketplace_present
 SC_PYTHON="present" # ga_detect_python_libs
+# R3/R1 defaults for the (A) scenario loop: a non-broken UTC verdict (the guard is a no-op)
+# and an already-initialized data dir (the initdb step is skipped), so the four scenarios'
+# counter/role assertions stay unchanged. The (D) block below overrides these directly to
+# exercise the broken-pg guard + the initdb fires/skips branches.
+SC_PG_UTC="down" # ga_detect_postgres_utc: ok|broken|down (down => guard no-op)
+SC_PG_INIT="yes" # ga_pg_data_dir_initialized: yes|no (yes => initdb skipped)
 
 # === detect stubs (scripted verdicts) =================================================
 ga_detect_xcode_clt() { printf 'present\n'; }
@@ -98,12 +104,14 @@ ga_detect_claude_auth() { printf '%s\n' "${SC_AUTH}"; }
 ga_detect_fakechat() { printf '%s\n' "${SC_FAKECHAT}"; }
 ga_marketplace_present() { printf '%s\n' "${SC_MARKET}"; }
 ga_detect_python_libs() { printf '%s\n' "${SC_PYTHON}"; }
+ga_detect_postgres_utc() { printf '%s\n' "${SC_PG_UTC}"; }
+ga_pg_data_dir_initialized() { printf '%s\n' "${SC_PG_INIT}"; }
 ga_brew_missing_set() {
   [[ -n "${SC_MISSING}" ]] && printf '%s\n' "${SC_MISSING}"
   return 0
 }
 ga_python_missing_set() { printf 'psycopg\n'; }
-ga_pg_keg_major() { printf '%s' "${SC_KEG}"; } # empty => preflight_keg_path_inject_pg defaults to 17
+ga_pg_keg_major() { printf '%s' "${SC_KEG}"; } # empty => preflight_keg_path_inject_pg defaults to 18
 
 # === install-COMMAND builders → recorder tokens (nothing real runs) ===================
 # Emptiness is preserved where the orchestrator branches on it (brew batch / python).
@@ -113,6 +121,8 @@ ga_cmd_brew_batch() {
   return 0
 }
 ga_cmd_pg_service_start() { printf 'rec_pg_service\n'; }
+ga_cmd_pg_service_restart() { printf 'rec_pg_restart\n'; }
+ga_cmd_pg_initdb() { printf 'rec_pg_initdb\n'; }
 ga_cmd_pg_create_role() { printf 'rec_pg_create_role\n'; }
 ga_cmd_claude_cli_install() { printf 'rec_claude_cli\n'; }
 ga_cmd_fakechat_install() { printf 'rec_fakechat_install\n'; }
@@ -131,6 +141,17 @@ rec_brew_batch() {
 }
 rec_pg_service() {
   _rec 'pg_service'
+  return 0
+}
+rec_pg_initdb() {
+  _rec 'pg_initdb'
+  return 0
+}
+# rec_pg_restart models a brew restart that CLEARS the broken state: record the action
+# and flip the UTC verdict to 'ok' so the guard's post-restart re-check passes.
+rec_pg_restart() {
+  _rec 'pg_restart'
+  SC_PG_UTC="ok"
   return 0
 }
 rec_pg_create_role() {
@@ -166,7 +187,7 @@ ga_pg_wait_ready() {
 }
 
 # === keg-inject capture (drives the real preflight_keg_path_inject_pg default logic) ===
-# preflight_keg_path_inject_pg stays REAL (computes major via ga_pg_keg_major, defaults @17);
+# preflight_keg_path_inject_pg stays REAL (computes major via ga_pg_keg_major, defaults @18);
 # only the terminal preflight_keg_path_inject is captured so we see the resolved formula.
 preflight_keg_path_inject() {
   _rec "keg_inject:$1"
@@ -233,8 +254,14 @@ run_scenario_path() {
   STEP_INDEX=""
   STEP_TOTAL=""
   # invoke with stdin closed: ANY stray blocking read would EOF-fail fast, never hang.
-  "${pathfn}" </dev/null
-  rc=$?
+  # `|| rc=$?` keeps run_step's re-armed set -e from ABORTING the whole harness on an
+  # EXPECTED non-zero path return (the || list is a set -e-exempt context); mirrors the
+  # production preflight_run_cmd `|| rc=$?` capture.
+  "${pathfn}" </dev/null || rc=$?
+  # run_step flips set -e back ON + re-arms the ERR trap at its tail; reset the ambient
+  # state to run_gate_quiet's contract (-e off, no ERR trap) before returning to the caller.
+  set +e
+  trap - ERR
   return "${rc}"
 }
 
@@ -324,19 +351,19 @@ apply_scenario() {
       SC_KEG="16" SC_CLAUDE="present" SC_AUTH="present" SC_FAKECHAT="present" SC_MARKET="yes" SC_PYTHON="present"
       ;;
     S2)
-      SC_MISSING="postgresql@17
+      SC_MISSING="postgresql@18
 node@24
 bun
 sqlite" SC_HOMEBREW="absent" SC_PG="present-but-down" SC_ROLE="absent"
-      SC_KEG="17" SC_CLAUDE="absent" SC_AUTH="present" SC_FAKECHAT="absent" SC_MARKET="no" SC_PYTHON="absent"
+      SC_KEG="18" SC_CLAUDE="absent" SC_AUTH="present" SC_FAKECHAT="absent" SC_MARKET="no" SC_PYTHON="absent"
       ;;
     S3)
       SC_MISSING="" SC_HOMEBREW="present" SC_PG="present-but-down" SC_ROLE="absent"
       SC_KEG="14" SC_CLAUDE="present" SC_AUTH="present" SC_FAKECHAT="present" SC_MARKET="yes" SC_PYTHON="present"
       ;;
     S4)
-      SC_MISSING="postgresql@17" SC_HOMEBREW="present" SC_PG="present-but-down" SC_ROLE="present-but-down"
-      SC_KEG="17" SC_CLAUDE="present" SC_AUTH="present" SC_FAKECHAT="present" SC_MARKET="yes" SC_PYTHON="present"
+      SC_MISSING="postgresql@18" SC_HOMEBREW="present" SC_PG="present-but-down" SC_ROLE="present-but-down"
+      SC_KEG="18" SC_CLAUDE="present" SC_AUTH="present" SC_FAKECHAT="present" SC_MARKET="yes" SC_PYTHON="present"
       ;;
     *)
       printf 'unknown scenario: %s\n' "$1" >&2
@@ -353,7 +380,7 @@ declare -a SCEN_DESC=(
   "postgres absent->installed present-but-down + role present-but-down (current live)"
 )
 # expected keg formula + role behaviour per scenario.
-declare -a SCEN_KEG=("postgresql@16" "postgresql@17" "postgresql@14" "postgresql@17")
+declare -a SCEN_KEG=("postgresql@16" "postgresql@18" "postgresql@14" "postgresql@18")
 declare -a SCEN_ROLE=("fires" "fires" "fires" "fires")
 
 echo "============================================================================"
@@ -465,6 +492,80 @@ else
 fi
 unset -f sleep
 rm -rf "${STEP2_BIN}"
+
+# RESTORE the scenario-flow recorder stub: the (C) block above re-extracted the REAL
+# bounded ga_pg_wait_ready, and bash function defs do NOT stack. The (D) block drives the
+# full boxed path again — without this re-stub the real 15s poll would fire against a dead
+# /tmp socket, return 1, and the panel step would bail (a false D-block failure).
+ga_pg_wait_ready() {
+  _rec 'pg_wait_ready'
+  return 0
+}
+
+echo ""
+echo "============================================================================"
+echo "(D) R1 initdb fallback + R3 foreign/broken-pg UTC guard"
+echo "============================================================================"
+
+# --- D1: initdb FIRES on an UNINITIALIZED fresh cluster, ordered BEFORE service-start ---
+set +e
+trap - ERR
+apply_scenario S2 # fresh bare-Mac all-absent (postgresql@18 in the missing-set)
+SC_PG_INIT="no"   # data dir uninitialized ("@18 install 중단") => initdb must fire
+SC_PG_UTC="down"  # no live server yet => guard is a no-op
+run_scenario_path _run_dependency_preflight_boxed
+rc=$?
+rec_d1="$(_rec_dump)"
+echo "    observed(D1): $(printf '%s' "${rec_d1}" | tr '\n' ' ')"
+assert_eq "D1 boxed path returns 0" "0" "${rc}"
+assert_contains "D1 initdb step FIRES (uninitialized data dir)" "pg_initdb" "${rec_d1}"
+# initdb MUST precede the service start (a cluster must exist before it can be started).
+init_ln="$(printf '%s' "${rec_d1}" | grep -nE '^pg_initdb$' | head -1 | cut -d: -f1)"
+svc_ln="$(printf '%s' "${rec_d1}" | grep -nE '^pg_service$' | head -1 | cut -d: -f1)"
+if [[ -n "${init_ln}" && -n "${svc_ln}" && "${init_ln}" -lt "${svc_ln}" ]]; then
+  pass "D1 initdb runs BEFORE service start (init=${init_ln} svc=${svc_ln})"
+else
+  fail "D1 initdb ordering (init=${init_ln} svc=${svc_ln})"
+fi
+
+# --- D2: initdb is SKIPPED on an already-initialized cluster ---
+set +e
+trap - ERR
+apply_scenario S2
+SC_PG_INIT="yes" # PG_VERSION present => initdb must NOT run
+SC_PG_UTC="down"
+run_scenario_path _run_dependency_preflight_boxed
+rc=$?
+rec_d2="$(_rec_dump)"
+echo "    observed(D2): $(printf '%s' "${rec_d2}" | tr '\n' ' ')"
+assert_eq "D2 boxed path returns 0" "0" "${rc}"
+assert_absent "D2 initdb step SKIPPED (initialized data dir)" "pg_initdb" "${rec_d2}"
+
+# --- D3: broken-pg guard SELF-HEALS a brew-managed keg (restart clears the UTC rejection) ---
+set +e
+trap - ERR
+_rec_reset
+SC_PG_UTC="broken" # answers SELECT 1 but rejects SET timezone='UTC'
+SC_KEG="18"        # brew-managed keg present => guard restarts + re-verifies
+preflight_pg_utc_guard
+rc=$?
+rec_d3="$(_rec_dump)"
+echo "    observed(D3): $(printf '%s' "${rec_d3}" | tr '\n' ' ')"
+assert_eq "D3 guard returns 0 after a clearing restart" "0" "${rc}"
+assert_contains "D3 restart step FIRES (brew-managed keg)" "pg_restart" "${rec_d3}"
+
+# --- D4: broken-pg guard LOUD-FAILS an UNMANAGED orphan (no brew keg to restart) ---
+set +e
+trap - ERR
+_rec_reset
+SC_PG_UTC="broken" # broken squatter
+SC_KEG=""          # no brew keg => unmanaged orphan => loud-fail, never restart
+preflight_pg_utc_guard
+rc=$?
+rec_d4="$(_rec_dump)"
+echo "    observed(D4): $(printf '%s' "${rec_d4}" | tr '\n' ' ')"
+assert_eq "D4 guard LOUD-FAILS on an unmanaged orphan" "1" "${rc}"
+assert_absent "D4 no restart attempted (no brew keg)" "pg_restart" "${rec_d4}"
 
 echo ""
 echo "============================================================================"

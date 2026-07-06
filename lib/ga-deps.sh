@@ -210,12 +210,12 @@ GA_PG_TOO_OLD_WARNED=""
 # ga_warn_pg_too_old — emit the unsupported (major < 14) PostgreSQL UPGRADE GUIDE once to
 # STDERR. The major<14 'wrong-version' verdict is GUIDE-only: postgres auto-install is
 # absent-only, so a too-old PG is never auto-replaced — GA will NOT stack a second
-# postgresql@17 daemon (port 5432 collision); the user upgrades the existing cluster
+# postgresql@18 daemon (port 5432 collision); the user upgrades the existing cluster
 # first. Pure note → STDERR only, never the stdout status token. No missing-set add, no block.
 ga_warn_pg_too_old() {
   [[ -n "${GA_PG_TOO_OLD_WARNED}" ]] && return 0
   GA_PG_TOO_OLD_WARNED=1
-  printf 'GUIDE: PostgreSQL <14 detected (unsupported) — upgrade to 17 before continuing.\n' >&2
+  printf 'GUIDE: PostgreSQL <14 detected (unsupported) — upgrade to 18 before continuing.\n' >&2
   printf '       GA will not auto-install a second daemon over it (port 5432 collision);\n' >&2
   printf '       migrate the existing cluster first (pg_dumpall | psql, or pg_upgrade), then re-run.\n' >&2
 }
@@ -393,7 +393,7 @@ ga_detect_sqlite_fts5() {
 # GA_BREW_CLI_TOOLS — the CLI-tools set the brew batch may install. Each entry maps
 # a probe COMMAND to its brew FORMULA via the "cmd:formula" form (most are 1:1; the
 # split lets a future cmd!=formula case stay declarative). bash 3.2: plain indexed
-# array (NO associative array). postgresql@17 / node@24 / bun are version-gated and
+# array (NO associative array). postgresql@18 / node@24 / bun are version-gated and
 # sqlite is FTS5-CAPABILITY-gated (ga_detect_sqlite_fts5) above — all handled
 # separately; this list is the genuinely-missing bare-presence utility set.
 GA_BREW_CLI_TOOLS=(
@@ -414,15 +414,15 @@ GA_BREW_CLI_TOOLS=(
 ga_brew_missing_set() {
   local missing="" entry cmd formula verdict
 
-  # postgresql@17 — fresh-install pin, added to the missing-set ONLY when postgres is
+  # postgresql@18 — fresh-install pin, added to the missing-set ONLY when postgres is
   # truly ABSENT. ABSENT-ONLY (not absent||wrong-version): a present-but-old (major <
-  # 14 → 'wrong-version') or present-but-down PG must NOT auto-get a second @17 daemon
+  # 14 → 'wrong-version') or present-but-down PG must NOT auto-get a second @18 daemon
   # — that collides on port 5432. Those cases route to the GUIDE path (later group),
   # not this auto-install set. Contrast node@24 below, which keeps absent||wrong-version
   # (keg-only node is parallel-installable; a postgres daemon is not).
   verdict="$(ga_detect_postgres)"
   if [[ "${verdict}" == "absent" ]]; then
-    missing="${missing}postgresql@17"$'\n'
+    missing="${missing}postgresql@18"$'\n'
   fi
 
   # node@24 — add on absent OR wrong-version (a present node 25 fails the major gate).
@@ -485,7 +485,7 @@ EOF
 
 # ga_pg_installed_major — resolve the installed PostgreSQL major at RUNTIME so the
 # service-start builder names the actual formula (PG14 present-but-down → 14, a fresh
-# postgresql@17 → 17) instead of a hardcoded pin. Order mirrors ga_detect_postgres'
+# postgresql@18 → 18) instead of a hardcoded pin. Order mirrors ga_detect_postgres'
 # own probe: the psql client major first (authoritative for a present-but-down server
 # the detect already version-gated), then the HIGHEST brew-installed postgresql@N
 # formula (covers a freshly-installed keg-only @N whose psql is not yet on PATH). Empty
@@ -527,15 +527,131 @@ ga_pg_keg_major() {
 
 # ga_cmd_pg_service_start — start (idempotent) the installed postgresql@N brew service,
 # N resolved at runtime (ga_pg_installed_major) — never a hardcoded @14 — so a
-# present-but-down PG14 emits @14 and a freshly-installed @17 emits @17. `brew services
+# present-but-down PG14 emits @14 and a freshly-installed @18 emits @18. `brew services
 # start` is a no-op when already running, so it is safe to emit on present-but-down.
 ga_cmd_pg_service_start() {
   local major
   major="$(ga_pg_installed_major)"
   # default to the fresh-install pin (B1) when nothing resolves — the post-consent
-  # install just added postgresql@17 but its keg-only psql is not yet on PATH.
-  [[ -z "${major}" ]] && major="17"
+  # install just added postgresql@18 but its keg-only psql is not yet on PATH.
+  [[ -z "${major}" ]] && major="18"
   printf 'brew services start postgresql@%s\n' "${major}"
+}
+
+# ga_cmd_pg_service_restart — RESTART (not just start) the installed postgresql@N brew
+# service, N resolved at runtime (ga_pg_installed_major) — never a hardcoded pin. Used by
+# the foreign/broken-pg guard (R3): a brew-managed server that ANSWERS but REJECTS
+# `SET timezone='UTC'` needs a full restart (a plain `brew services start` is a no-op on an
+# already-running server, so it would NOT clear the broken state). Same runtime-major +
+# default-18 resolution as ga_cmd_pg_service_start.
+ga_cmd_pg_service_restart() {
+  local major
+  major="$(ga_pg_installed_major)"
+  [[ -z "${major}" ]] && major="18"
+  printf 'brew services restart postgresql@%s\n' "${major}"
+}
+
+# ga_pg_data_dir — echo the brew postgresql@N cluster DATA DIR, N resolved via
+# ga_pg_keg_major (brew-keg-first — the keg just installed, NOT a stale psql on PATH),
+# defaulting to the fresh-install pin @18 when none resolves. Path convention is Homebrew's
+# `<prefix>/var/postgresql@N` (the same dir `brew services start postgresql@N` boots from).
+# Empty when no brew prefix resolves (the caller then treats it as "nothing to initialize").
+# Read-only, always exit 0.
+ga_pg_data_dir() {
+  local major prefix
+  major="$(ga_pg_keg_major)"
+  [[ -z "${major}" ]] && major="18"
+  prefix="$(ga_brew_prefix)"
+  [[ -z "${prefix}" ]] && {
+    printf ''
+    return 0
+  }
+  printf '%s/var/postgresql@%s' "${prefix}" "${major}"
+}
+
+# ga_pg_data_dir_initialized — 'yes'/'no' verdict on whether the brew postgresql@N cluster
+# data dir is ALREADY initialized, keyed on the canonical PG_VERSION marker file initdb
+# writes. Returns 'yes' (→ the initdb step is SKIPPED) in two cases: (1) no brew postgresql@N
+# keg is installed at all — a system / non-brew cluster owns its own data dir and GA must NOT
+# initdb a brew path that will never be used; (2) the keg's data dir already has PG_VERSION.
+# Returns 'no' ONLY when a brew keg exists but its data dir lacks the marker — the confirmed
+# "@18 install 중단" bug where `brew install postgresql@18` pours binaries but its post_install
+# fails to init the data dir. Read-only, always exit 0.
+ga_pg_data_dir_initialized() {
+  local major dir
+  major="$(ga_pg_keg_major)"
+  # no brew keg to own → nothing for GA to initialize (skip the initdb step).
+  if [[ -z "${major}" ]]; then
+    printf 'yes\n'
+    return 0
+  fi
+  dir="$(ga_pg_data_dir)"
+  if [[ -n "${dir}" && -f "${dir}/PG_VERSION" ]]; then
+    printf 'yes\n'
+  else
+    printf 'no\n'
+  fi
+}
+
+# ga_pg_initdb — IN-PROCESS fallback initialization of an UNINITIALIZED brew postgresql@N
+# cluster data dir (the confirmed "@18 install 중단": `brew install postgresql@18` errors its
+# post_install with "unknown install step: init_data_dir" on older Homebrew, so the binaries
+# pour but the data dir is never made → no server, no socket, and the install hangs at the
+# monitor health gate). Runs `initdb -D <datadir> --encoding=UTF8` so the downstream
+# `brew services start` has a cluster to boot. Emitted as the single function token
+# ga_cmd_pg_initdb (same in-process pattern as ga_pg_ensure_role) because the word-split argv
+# runner cannot express a guarded multi-statement command. SELF-GUARDED + NON-DESTRUCTIVE: an
+# existing PG_VERSION means the cluster is already initialized — re-running initdb over live
+# data is DESTRUCTIVE, so hard-skip (idempotent no-op). A missing brew prefix is a non-fatal
+# no-op (nothing resolvable to initialize). ON a real, empty target initdb creates the dir.
+ga_pg_initdb() {
+  local dir
+  dir="$(ga_pg_data_dir)"
+  if [[ -z "${dir}" ]]; then
+    printf 'ga_pg_initdb: no brew prefix resolved — skipping initdb (nothing to initialize)\n' >&2
+    return 0
+  fi
+  # DESTRUCTIVE-GUARD: never re-initdb over an already-initialized cluster.
+  if [[ -f "${dir}/PG_VERSION" ]]; then
+    printf 'ga_pg_initdb: %s already initialized (PG_VERSION present) — skipping\n' "${dir}" >&2
+    return 0
+  fi
+  initdb -D "${dir}" --encoding=UTF8
+}
+
+# ga_cmd_pg_initdb — emit the single function token ga_pg_initdb (a one-word builder token
+# run in-process by run_step, exactly like ga_cmd_pg_create_role → ga_pg_ensure_role). The
+# actual work (a guarded in-process initdb the word-split argv runner cannot express) lives in
+# ga_pg_initdb above.
+ga_cmd_pg_initdb() {
+  printf 'ga_pg_initdb\n'
+}
+
+# ga_detect_postgres_utc — DISCRIMINATING liveness verdict a plain SELECT-1 'present' misses:
+#   ok     — a server answers the socket AND accepts `SET timezone='UTC'`
+#   broken — a server ANSWERS SELECT 1 but REJECTS `SET timezone='UTC'` (pg 22023
+#            invalid_parameter_value — e.g. an orphaned postmaster from a now-deleted keg that
+#            lost its tzdata). ga_detect_postgres reports 'present' for this squatter (SELECT 1
+#            alone succeeds), so the service/role steps would trust it — then the monitor's
+#            UTC-gated pool (POOL_STARTUP_OPTIONS="-c timezone=UTC") FATALs the 30s health gate.
+#   down   — no server answering on the socket (nothing to discriminate; the normal
+#            absent/present-but-down path handles it, no false 'broken').
+# Read-only, single-token, exit 0 (detect contract). Same PG_SOCKET peer-auth SoT as the
+# other detects; ON_ERROR_STOP=1 makes the UTC SET a real non-zero on rejection (no swallow).
+ga_detect_postgres_utc() {
+  if ! command -v psql >/dev/null 2>&1; then
+    printf 'down\n'
+    return 0
+  fi
+  if ! psql -h "${PG_SOCKET}" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+    printf 'down\n'
+    return 0
+  fi
+  if psql -h "${PG_SOCKET}" -d postgres -v ON_ERROR_STOP=1 -tAc "SET timezone='UTC'" >/dev/null 2>&1; then
+    printf 'ok\n'
+  else
+    printf 'broken\n'
+  fi
 }
 
 # ga_pg_wait_ready — BOUNDED in-process poll for a live PostgreSQL server on the peer-auth
