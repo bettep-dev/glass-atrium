@@ -22,8 +22,12 @@
 #     vs _run_dependency_preflight_scroll (passthrough/CLI: owned fd4, scrolling render).
 #   * Interactive gates (Xcode CLT, grouped consent, claude auth, python --break) run in a
 #     cooked-scrollback alt-screen bracket (preflight_bracket, mirroring _confirm_pregate).
-#   * The two contiguous NON-interactive install groups render INSIDE the work box as 1/1
-#     panel steps via preflight_panel_step[_or_bail] (function-local RENDER_MODE=panel).
+#   * The two contiguous NON-interactive install groups render INSIDE the work box as framed
+#     panel steps via preflight_panel_step[_or_bail] (function-local RENDER_MODE=panel), each
+#     advancing a SHARED clamped i/STEP_TOTAL counter fixed ONCE up-front by
+#     preflight_count_and_gate (BUG2); an all-present group skips its enter_run_state engage so
+#     no empty dimmed work box flashes (BUG1). fakechat/marketplace install via in-process
+#     function tokens with a background+poll+kill hang guard (BUG3).
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
 #   * G7 fakechat marketplace-add carries a DISTINCT slow-clone ACTIVE label.
@@ -264,13 +268,19 @@ teardown() {
   grep -qF 'preflight_panel_step_or_bail "claude CLI (native installer, npm fallback)"' "${LAUNCHER}"
 }
 
-@test "panel(static): preflight_panel_step frames via a function-local RENDER_MODE=panel" {
+@test "panel(static): preflight_panel_step advances a SHARED clamped STEP_INDEX (BUG2, no 1/1 hardcode)" {
   local body
   body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   [[ -n "${body}" ]]
-  # 1/1 single-step scaffolding routed into the work box body as a panel step.
-  [[ "${body}" == *'STEP_INDEX=1'* ]]
-  [[ "${body}" == *'STEP_TOTAL=1'* ]]
+  # BUG2 shared-counter contract: advance the shared STEP_INDEX, NEVER reset STEP_TOTAL here,
+  # CLAMP i <= N so an imperfect up-front estimate degrades to an N/N tail (never "7/5").
+  [[ "${body}" == *'STEP_INDEX=$((${STEP_INDEX:-0} + 1))'* ]]
+  [[ "${body}" == *'-gt "${STEP_TOTAL}"'* ]]        # the clamp condition (i > N)
+  [[ "${body}" == *'STEP_INDEX="${STEP_TOTAL}"'* ]] # the clamp assignment (pin to N)
+  # the OLD 1/1 single-step hardcode is GONE (STEP_TOTAL is owned by preflight_count_and_gate).
+  [[ "${body}" != *'STEP_INDEX=1'* ]]
+  [[ "${body}" != *'STEP_TOTAL=1'* ]]
+  # still routes into the work box body as a panel step.
   [[ "${body}" == *'local RENDER_MODE="panel"'* ]]
   [[ "${body}" == *'draw_workbox'* ]]
 }
@@ -426,4 +436,197 @@ teardown() {
   _framed() { local RENDER_MODE="panel"; _inner; }
   [[ "$(_framed)" == "panel" ]]
   [[ -z "${RENDER_MODE}" ]]
+}
+
+# === BUG2 — up-front count pass: shared STEP_TOTAL + per-group runnable counts ===========
+
+# extract_launcher_fn — eval a single named launcher function into the test shell so it can be
+# DRIVEN dynamically (its detect/render deps are stubbed by each caller) without booting the TUI.
+extract_launcher_fn() {
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+}
+
+@test "BUG2(count): cold Mac (postgresql@17 in brew missing-set) counts BOTH pg steps → 7 total" {
+  extract_launcher_fn preflight_count_and_gate
+  # cold bare-Mac: the brew missing-set carries postgresql@17 (a FRESH cluster) + claude absent.
+  # The STALE live ga_detect_postgres reads 'absent' up-front (psql is still inside the brew batch),
+  # so a live-detect count would WRONGLY zero the pg steps — the missing-set derivation must win.
+  ga_brew_missing_set() { printf 'postgresql@17\nnode@24\nbun\nsqlite\n'; }
+  ga_detect_postgres() { printf 'absent\n'; }            # stale — must NOT drive the pg count
+  ga_detect_postgres_role() { printf 'present-but-down\n'; }
+  ga_detect_claude_cli() { printf 'absent\n'; }
+  ga_detect_fakechat() { printf 'present-but-down\n'; }
+  ga_marketplace_present() { printf 'no\n'; }
+  ga_detect_python_libs() { printf 'absent\n'; }
+  STEP_TOTAL=""
+  STEP_INDEX="sentinel"
+  preflight_count_and_gate
+  # GROUP1 = brew(1) + pg service+role(2, missing-set-derived) + claude(1) = 4
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 4 ]]
+  # GROUP2 = fakechat marketplace+plugin(2, claude-absent-derived) + python(1) = 3
+  [[ "${PREFLIGHT_GROUP2_RUNNABLE}" -eq 3 ]]
+  # BOXED-STEPS-ONLY shared total (Homebrew + gates excluded), fixed ONCE = 7.
+  [[ "${STEP_TOTAL}" -eq 7 ]]
+  # STEP_INDEX reset to empty (no 0/N pre-flash before the first framed step increments it).
+  [[ -z "${STEP_INDEX}" ]]
+}
+
+@test "BUG2(count): warm machine (pg NOT in missing-set) uses live down/role-absent fallback" {
+  extract_launcher_fn preflight_count_and_gate
+  ga_brew_missing_set() { printf ''; }                   # nothing brew-missing
+  ga_detect_postgres() { printf 'present-but-down\n'; }  # warm: server down
+  ga_detect_postgres_role() { printf 'absent\n'; }       # warm: role missing
+  ga_detect_claude_cli() { printf 'present\n'; }
+  ga_detect_fakechat() { printf 'present\n'; }           # fakechat present → 0 fakechat steps
+  ga_marketplace_present() { printf 'yes\n'; }
+  ga_detect_python_libs() { printf 'present\n'; }
+  preflight_count_and_gate
+  # GROUP1 = brew(0) + pg service(1)+role(1) via WARM fallback + claude(0) = 2
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 2 ]]
+  # GROUP2 = 0 (fakechat present + python present) → BUG1 skip-empty engage
+  [[ "${PREFLIGHT_GROUP2_RUNNABLE}" -eq 0 ]]
+  [[ "${STEP_TOTAL}" -eq 2 ]]
+}
+
+@test "BUG2(count): claude present + fakechat absent + marketplace present counts plugin only" {
+  extract_launcher_fn preflight_count_and_gate
+  ga_brew_missing_set() { printf ''; }
+  ga_detect_postgres() { printf 'present\n'; }
+  ga_detect_postgres_role() { printf 'present\n'; }
+  ga_detect_claude_cli() { printf 'present\n'; }
+  ga_detect_fakechat() { printf 'absent\n'; }            # plugin WILL install
+  ga_marketplace_present() { printf 'yes\n'; }           # marketplace-add SKIPPED (already present)
+  ga_detect_python_libs() { printf 'present\n'; }
+  preflight_count_and_gate
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 0 ]]
+  [[ "${PREFLIGHT_GROUP2_RUNNABLE}" -eq 1 ]] # plugin only
+  [[ "${STEP_TOTAL}" -eq 1 ]]
+}
+
+@test "BUG2(count): all-present machine yields STEP_TOTAL=0 + both groups empty (full skip)" {
+  extract_launcher_fn preflight_count_and_gate
+  ga_brew_missing_set() { printf ''; }
+  ga_detect_postgres() { printf 'present\n'; }
+  ga_detect_postgres_role() { printf 'present\n'; }
+  ga_detect_claude_cli() { printf 'present\n'; }
+  ga_detect_fakechat() { printf 'present\n'; }
+  ga_marketplace_present() { printf 'yes\n'; }
+  ga_detect_python_libs() { printf 'present\n'; }
+  preflight_count_and_gate
+  [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -eq 0 ]]
+  [[ "${PREFLIGHT_GROUP2_RUNNABLE}" -eq 0 ]]
+  [[ "${STEP_TOTAL}" -eq 0 ]]
+}
+
+@test "BUG2(counter): preflight_panel_step advances a shared STEP_INDEX + CLAMPS at STEP_TOTAL" {
+  # stub the heavy render/run deps so only the shared-counter arithmetic executes.
+  draw_workbox() { :; }
+  build_run_bar() { :; }
+  preflight_run_cmd() { return 0; }
+  C_ACCENT=""
+  STEP_LAST_FAIL_LOG=""
+  extract_launcher_fn preflight_panel_step
+  # the count pass fixes the total ONCE at 5; the index starts empty.
+  STEP_TOTAL=5
+  STEP_INDEX=""
+  local seen="" i
+  for i in 1 2 3 4 5 6 7; do
+    preflight_panel_step "step ${i}" "" "true"
+    seen="${seen}${STEP_INDEX} "
+  done
+  # increments 1..5 across BOTH groups' worth of steps, then CLAMPS at 5 (never 6/5 or 7/5).
+  [[ "${seen}" == "1 2 3 4 5 5 5 " ]]
+  # STEP_TOTAL is NEVER reset by the writer (stays the shared 5).
+  [[ "${STEP_TOTAL}" -eq 5 ]]
+}
+
+# === BUG1 — skip-empty enter_run_state engage (no empty dimmed work box) =================
+
+@test "BUG1(static): both enter_run_state engages are gated on their group runnable-count" {
+  local body
+  body="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ -n "${body}" ]]
+  # the up-front count pass runs BEFORE the engages.
+  [[ "${body}" == *'preflight_count_and_gate'* ]]
+  # ENGAGE1 gated on GROUP1 > 0; ENGAGE2 gated on GROUP2 > 0 (skip the empty dimmed box).
+  [[ "${body}" == *'[[ "${PREFLIGHT_GROUP1_RUNNABLE}" -gt 0 ]] && enter_run_state'* ]]
+  [[ "${body}" == *'[[ "${PREFLIGHT_GROUP2_RUNNABLE}" -gt 0 ]] && enter_run_state'* ]]
+  # NO unconditional bare 'enter_run_state' line survives in the boxed flow.
+  run grep -cE '^[[:space:]]*enter_run_state[[:space:]]*$' <<<"${body}"
+  [[ "${output}" -eq 0 ]]
+}
+
+# === BUG3 — fakechat/marketplace in-process tokens + background+poll+kill hang guard =====
+
+@test "BUG3: ga_cmd_fakechat_install emits the in-process function token ga_fakechat_install" {
+  run ga_cmd_fakechat_install
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "ga_fakechat_install" ]]
+  set -- ${output} # a single bare word survives the word-split argv runner
+  [[ "$#" -eq 1 ]]
+  declare -F ga_fakechat_install # the token resolves to a real in-process function
+}
+
+@test "BUG3: ga_cmd_marketplace_add emits the in-process function token ga_marketplace_add" {
+  run ga_cmd_marketplace_add
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "ga_marketplace_add" ]]
+  set -- ${output}
+  [[ "$#" -eq 1 ]]
+  declare -F ga_marketplace_add
+}
+
+@test "BUG3(body): ga_fakechat_install backgrounds w/ fd hygiene, polls, KILLS on success AND timeout, reaps" {
+  local body
+  body="$(awk '/^ga_fakechat_install\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DEPS_SH}")"
+  [[ -n "${body}" ]]
+  # background the claude install with BOTH fds to /dev/null (STEP_LOG hygiene), capture the pid.
+  [[ "${body}" == *'>/dev/null 2>&1 &'* ]]
+  [[ "${body}" == *'pid=$!'* ]]
+  # poll the detect verdict with a >=2s interval under a 120s ceiling.
+  [[ "${body}" == *'ga_detect_fakechat'* ]]
+  [[ "${body}" == *'sleep 2'* ]]
+  [[ "${body}" == *'-lt 120'* ]]
+  # kill on BOTH success and timeout, then wait/reap — TWO kill+wait pairs, errors suppressed.
+  [[ "$(grep -c 'kill "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]]
+  [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]]
+  # NON-FATAL: the timeout tail returns failure (the caller ||true-s it).
+  [[ "${body}" == *'return 1'* ]]
+}
+
+@test "BUG3(live): ga_fakechat_install exits 0 on stubbed-present, killing+reaping the hung bg pid" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a 'claude' that HANGS after 'success' (the live no-exit repro); exec keeps a SINGLE pid to kill
+  # (matches the live repro: no surviving children). A UNIQUE sleep sentinel makes pgrep precise.
+  printf '#!/bin/bash\nexec sleep 918273645\n' >"${stub}/claude"
+  chmod +x "${stub}/claude"
+  # detect flips to present on the FIRST poll → the loop kills the stuck pid and returns 0 fast.
+  ga_detect_fakechat() { printf 'present\n'; }
+  PATH="${stub}:${PATH}"
+  local rc=0
+  ga_fakechat_install || rc=$?
+  [[ "${rc}" -eq 0 ]]
+  # the backgrounded claude was killed+reaped — no leaked child survives.
+  run pgrep -f '918273645'
+  [[ "${status}" -ne 0 ]]
+}
+
+@test "BUG3(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the timeout ceiling" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a live-forever 'claude' (UNIQUE sentinel) so the timeout branch has a real pid to reap.
+  printf '#!/bin/bash\nexec sleep 918273646\n' >"${stub}/claude"
+  chmod +x "${stub}/claude"
+  # detect NEVER reports present → the loop runs to the 120s ceiling.
+  ga_detect_fakechat() { printf 'absent\n'; }
+  # collapse the poll interval to instant so the 60-iteration ceiling completes at once. NOT
+  # exported → the child 'claude' stub keeps the REAL sleep (stays alive to be killed at timeout).
+  sleep() { return 0; }
+  PATH="${stub}:${PATH}"
+  local rc=0
+  ga_fakechat_install || rc=$?
+  [[ "${rc}" -eq 1 ]] # non-fatal failure verdict
+  run pgrep -f '918273646'
+  [[ "${status}" -ne 0 ]] # the live bg claude was killed+reaped at the ceiling
 }
