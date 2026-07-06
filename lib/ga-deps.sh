@@ -129,14 +129,33 @@ ga_detect_homebrew() {
   fi
 }
 
-# ga_cmd_homebrew_install — the official install line. The script prompts for sudo + a
-# keyboard pause; the entry point's consent gate fronts it, and the user clears the
-# script's own sudo prompt live.
+# ga_homebrew_install — install Homebrew IN-PROCESS via the official one-liner. The
+# $(curl ...) command substitution is expanded HERE, in this function's own shell, so the
+# downloaded installer script actually RUNS. Emitted as the single function token
+# ga_homebrew_install by ga_cmd_homebrew_install below (same in-process pattern as
+# ga_claude_install / ga_pg_ensure_role): a $(curl ...) substitution CANNOT survive the
+# entry point's word-split argv runner — preflight_run_cmd word-splits the command string
+# WITHOUT eval and execs "$@", so an emitted `/bin/bash -c "$(curl …)"` STRING splits into
+# a broken argv and the substitution never expands. Housing the substitution in a real
+# function that run_step invokes in-process is the only word-split-safe expression of it.
+# The installer prompts for sudo + (interactively) a RETURN pause: the grouped consent
+# gate fronts it, NONINTERACTIVE=1 (exported by the consented preflight block) drops the
+# RETURN pause, and the user clears the script's own LIVE sudo prompt (this step is kept
+# OFF the framed install-capture path so that prompt stays visible).
+# SECURITY: curl|bash from the official Homebrew install URL is the vendor-documented
+# install path (HTTPS, -f fails on 4xx/5xx; no secrets read or echoed).
+ga_homebrew_install() {
+  # real execution: the $(curl ...) is expanded in THIS shell, not emitted as text.
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+}
+
+# ga_cmd_homebrew_install — emit the single function token ga_homebrew_install (a one-word
+# builder token the entry point runs in-process via run_step, exactly like
+# ga_cmd_claude_cli_install -> ga_claude_install). The actual work — a $(curl ...)
+# substitution the word-split argv runner cannot express — lives in ga_homebrew_install
+# above; the consent/summary print substitutes a human-readable label, never this token.
 ga_cmd_homebrew_install() {
-  # the $(curl ...) is INTENTIONALLY literal — this string is the command the entry
-  # point RUNS, not one we expand here; single quotes required.
-  # shellcheck disable=SC2016
-  printf '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n'
+  printf 'ga_homebrew_install\n'
 }
 
 # ga_cmd_brew_shellenv — the eval line that puts a freshly-installed brew on PATH for the
