@@ -2029,11 +2029,15 @@ status_line() {
 # unchanged — ONLY the render target moved from the old panel row to the workbox body row.
 run_action_panel() {
   local action="$1" title="$2" accent="$3" status=0
-  enter_run_state
-  # A/W3 (async feel): animate the preflight->run_plan HANDOFF. enter_run_state paints a STATIC
-  # filled-bar body, then build_step_plan (pure array assembly) runs before run_plan's first step
-  # spinner — a brief static frame. Hold the idle animator across build_step_plan so the box never
-  # sits un-animated; stop it just before run_plan (whose first run_step also defensively stops it).
+  # BUG1: run_action_panel no longer self-engages — the CALLER owns the single frame-composing
+  # enter_run_state at the genuine cleared-frame boundary (install: dispatch's post-preflight
+  # re-engage; uninstall: the post-"remove"-pregate re-engage). By the time control reaches here the
+  # box frame is already composed + intact (the interim monitor gates paint body-only), so this
+  # preflight->run_plan HANDOFF is BODY-ONLY: no gratuitous full-frame repaint (BUG1's symptom).
+  # A/W3 (async feel): animate the handoff. build_step_plan (pure array assembly) runs before
+  # run_plan's first step spinner — a brief static frame. Hold the idle animator across build_step_plan
+  # so the box never sits un-animated; stop it just before run_plan (whose first run_step also
+  # defensively stops it). The body paints land on the caller's intact frame — never a frameless box.
   start_idle_spinner "Preparing steps"
   build_step_plan "${action}"
   stop_idle_spinner
@@ -3122,6 +3126,11 @@ dispatch_action_uninstall_panel() {
     enter_nav_state
     return 0
   fi
+  # BUG1: the "remove" pre-gate's rmcup/smcup+clear leaves the alt-screen CLEARED (not composed), so
+  # compose the box frame HERE — the single cleared-frame-boundary re-engage for this path — before the
+  # now-body-only run_action_panel handoff. Without it the uninstall box would paint over a cleared
+  # screen = frameless. (run_action_panel no longer self-engages; the caller owns the engage.)
+  enter_run_state
   # Run the base uninstall plan in the box (VR-8 accent: C_ALERT amber, destructive).
   run_action_panel uninstall "Uninstall" "${C_ALERT}" || status=$?
   # The optional config purge is a SECOND typed confirm pre-gate, then a single box step.
@@ -3241,8 +3250,11 @@ dispatch_action_install_panel() {
     return "${PREFLIGHT_EXIT_BLOCKED}"
   fi
   # A/W2 (async feel): animate the launchd-monitor stop gate (it polls the daemon's death ~1-2s = a
-  # static frame otherwise). enter_run_state repaints the frame the boxed preflight's last bracket may
-  # have left cleared, THEN the idle animates. rc captured BEFORE stop_idle; idle stopped BEFORE abort.
+  # static frame otherwise). BUG1: this is THE SINGLE guaranteed re-engage at the preflight->monitor
+  # cleared-frame boundary — run_dependency_preflight may return with its last bracket having left the
+  # alt-screen cleared, so compose the frame ONCE here. Every downstream idle window (this gate, the
+  # orphan gate, run_action_panel's build_step_plan handoff) then paints BODY-ONLY on this intact frame
+  # — no further full-frame repaints. rc captured BEFORE stop_idle; idle stopped BEFORE abort.
   grc=0
   enter_run_state
   start_idle_spinner "Freeing monitor port"
@@ -3263,9 +3275,11 @@ dispatch_action_install_panel() {
   # Ordering matters: launchd stop FIRST (so monitor_is_launchd_owned is false by the time
   # the orphan probe runs), orphan sweep SECOND. A stuck orphan aborts cleanly (same panel
   # path as the launchd case); the function logs the lsof remediation to the captured gate log.
-  # A/W2 (cont.): same idle-animated wrap as the launchd gate.
+  # A/W2 (cont.): same idle-animated wrap as the launchd gate — but BODY-ONLY. BUG1: the single
+  # post-preflight enter_run_state above already composed the frame, and the launchd gate painted only
+  # body rows (never touched the frame), so this orphan gate reuses that intact frame with an idle body
+  # paint. A re-engage here was a gratuitous full-frame repaint (BUG1's intermittent refresh) — removed.
   grc=0
-  enter_run_state
   start_idle_spinner "Freeing monitor port"
   run_gate_quiet stop_orphan_monitor_for_install || grc=$?
   stop_idle_spinner
@@ -4605,11 +4619,14 @@ EOF
 
     # A/W4 (async feel): the keg-inject + pg_utc_guard cluster runs between framed panel steps with
     # the previous step resolved to a STATIC frame — and pg_utc_guard does a real psql connect that
-    # can stall on a slow cluster. Animate it: enter_run_state repaints the box (rail-clean even when
-    # ENGAGE1 was skipped or a bracket left the frame cleared — QA post-bracket re-entry), then the
-    # idle animator holds the box alive through the guard. rc captured BEFORE stop_idle (exit-code
+    # can stall on a slow cluster. Animate it with an idle spinner. BUG1: the frame re-engage is now
+    # CONDITIONAL on the EXACT INVERSE of ENGAGE1's gate — re-engage ONLY when ENGAGE1 was skipped
+    # (GROUP1 empty), i.e. the grouped-consent bracket left the frame cleared and nothing re-composed
+    # it. When ENGAGE1 FIRED the frame is already composed + intact through the brew batch panel step,
+    # so a re-engage here would be a gratuitous full-frame repaint (BUG1's symptom). The start_idle
+    # body animation stays UNCONDITIONAL (always needed). rc captured BEFORE stop_idle (exit-code
     # preservation); idle stopped BEFORE the bail so no stray child paints past the return.
-    enter_run_state
+    [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -le 0 ]] && enter_run_state
     start_idle_spinner "Resolving PostgreSQL"
     # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
     preflight_keg_path_inject node@24
