@@ -675,6 +675,56 @@ extract_launcher_fn() {
   [[ "${STEP_TOTAL}" -eq 1 ]]
 }
 
+# === STEP 4 — version-agnostic keg-inject (brew-keg-first, not stale-psql-first) =========
+
+@test "STEP4: ga_pg_keg_major prefers the highest brew keg, IGNORING a stale lower-major psql on PATH" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a stale psql 14 on PATH — the psql-client-first resolver would WRONGLY pick 14 for the inject.
+  printf '#!/bin/bash\n[[ "$1" == "--version" ]] && echo "psql (PostgreSQL) 14.11"\nexit 0\n' >"${stub}/psql"
+  # brew list --versions reports BOTH kegs installed → sort -rn must pick the highest (17).
+  printf '#!/bin/bash\nif [[ "$1" == "list" ]]; then echo "postgresql@14 14.11"; echo "postgresql@17 17.2"; fi\nexit 0\n' >"${stub}/brew"
+  chmod +x "${stub}/psql" "${stub}/brew"
+  # keg-inject resolver is brew-keg-first → 17 (NOT the stale psql 14).
+  [[ "$(PATH="${stub}:${PATH}" ga_pg_keg_major)" == "17" ]]
+  # contrast (falsifiable): the service-NAMING resolver IS psql-client-first → 14 — the exact
+  # pitfall ga_pg_keg_major exists to avoid for the keg-inject purpose.
+  [[ "$(PATH="${stub}:${PATH}" ga_pg_installed_major)" == "14" ]]
+}
+
+@test "STEP4: ga_pg_keg_major is empty when no brew keg exists (caller then defaults to the pin)" {
+  local empty="${SANDBOX}/emptybin"
+  mkdir -p "${empty}"
+  # no brew on PATH → command -v brew fails → empty (never a spurious major).
+  [[ -z "$(PATH="${empty}" ga_pg_keg_major)" ]]
+}
+
+@test "STEP4: preflight_keg_path_inject_pg injects the resolved major, defaulting to @17 when none" {
+  extract_launcher_fn preflight_keg_path_inject_pg
+  local captured=""
+  preflight_keg_path_inject() { captured="$1"; }
+  # resolved major present → inject THAT keg (a present-but-down PG14 → postgresql@14).
+  ga_pg_keg_major() { printf '14'; }
+  preflight_keg_path_inject_pg
+  [[ "${captured}" == "postgresql@14" ]]
+  # empty resolver → default to the fresh-install pin @17.
+  ga_pg_keg_major() { printf ''; }
+  preflight_keg_path_inject_pg
+  [[ "${captured}" == "postgresql@17" ]]
+}
+
+@test "STEP4(static): both keg-inject sites use preflight_keg_path_inject_pg (no literal postgresql@17)" {
+  # 1 definition + 2 call-sites.
+  run grep -cF 'preflight_keg_path_inject_pg' "${LAUNCHER}"
+  [[ "${output}" -ge 3 ]]
+  # the literal postgresql@17 KEG-INJECT call is GONE (missing-set pin references @17 elsewhere, not a keg-inject).
+  run grep -cF 'preflight_keg_path_inject postgresql@17' "${LAUNCHER}"
+  [[ "${output}" -eq 0 ]]
+  # node@24 keg-inject stays literal at both sites (single pinned major, unchanged).
+  run grep -cF 'preflight_keg_path_inject node@24' "${LAUNCHER}"
+  [[ "${output}" -eq 2 ]]
+}
+
 # === BUG3 — fakechat/marketplace in-process tokens + background+poll+kill hang guard =====
 
 @test "BUG3: ga_cmd_fakechat_install emits the in-process function token ga_fakechat_install" {

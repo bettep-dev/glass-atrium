@@ -3218,6 +3218,19 @@ preflight_keg_path_inject() {
   return 0
 }
 
+# preflight_keg_path_inject_pg — version-agnostic keg-inject of the installed PostgreSQL keg. Resolves
+# the HIGHEST installed brew postgresql@N via ga_pg_keg_major (brew-keg-first, NOT the psql-client-first
+# ga_pg_installed_major — a stale lower-major psql on PATH must not pick the wrong keg), defaulting to
+# the fresh-install pin @17 when none resolves (the post-consent brew batch just added postgresql@17 but
+# its keg-only psql is not yet on PATH). Replaces the former literal `postgresql@17` inject so a
+# present-but-down PG14 injects @14 and a fresh @17 injects @17. The single-major node@24 keg stays literal.
+preflight_keg_path_inject_pg() {
+  local major
+  major="$(ga_pg_keg_major)"
+  [[ -z "${major}" ]] && major="17"
+  preflight_keg_path_inject "postgresql@${major}"
+}
+
 # preflight_run_cmd — run ONE install command STRING (from a ga_cmd_* builder) as a
 # labelled run_step. The string is word-split into argv under a local space-IFS
 # (the file-wide IFS is $'\n\t'). Returns the step's exit code. Used for the
@@ -4004,7 +4017,7 @@ EOF
     # `command -v psql` unresolved → ga_detect_postgres returns 'absent' → the service-
     # start branch below never fires. Each call self-guards on formula presence.
     preflight_keg_path_inject node@24
-    preflight_keg_path_inject postgresql@17
+    preflight_keg_path_inject_pg
 
     # (4) PostgreSQL service + peer-auth role.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
@@ -4217,7 +4230,7 @@ EOF
 
     # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
     preflight_keg_path_inject node@24
-    preflight_keg_path_inject postgresql@17
+    preflight_keg_path_inject_pg
 
     # (4) PostgreSQL service + peer-auth role — framed panel steps.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then

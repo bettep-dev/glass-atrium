@@ -508,6 +508,23 @@ ga_pg_installed_major() {
   printf ''
 }
 
+# ga_pg_keg_major — resolve the PostgreSQL major to KEG-PATH-inject: the HIGHEST installed brew
+# postgresql@N keg. DISTINCT from ga_pg_installed_major (which is psql-client-FIRST, for NAMING the
+# service to start): the keg-inject purpose is to prepend a freshly-installed keg's bin to PATH, so
+# a stale lower-major psql already on PATH must NOT decide the inject — that would prepend the wrong
+# (or a non-existent) keg. brew-keg-first is therefore correct HERE. Empty when no brew postgresql@N
+# keg is installed (the caller then injects the fresh-install pin, whose keg-inject self-guards on
+# formula presence → a no-op when even the pin is absent). Read-only (brew list), always exit 0.
+ga_pg_keg_major() {
+  local brew_major
+  if command -v brew >/dev/null 2>&1; then
+    brew_major="$(brew list --versions 2>/dev/null | sed -n 's/^postgresql@\([0-9][0-9]*\).*/\1/p' | sort -rn | head -n1 || true)"
+    printf '%s' "${brew_major}"
+    return 0
+  fi
+  printf ''
+}
+
 # ga_cmd_pg_service_start — start (idempotent) the installed postgresql@N brew service,
 # N resolved at runtime (ga_pg_installed_major) — never a hardcoded @14 — so a
 # present-but-down PG14 emits @14 and a freshly-installed @17 emits @17. `brew services
