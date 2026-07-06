@@ -1810,13 +1810,19 @@ stop_step_spinner() {
   # (paint_workbox_body_inner "" cups to the inner start + writes inner-width spaces), leaving the
   # rail columns untouched. Non-panel scrolling modes (install/uninstall) keep the full-row
   # CR+clear — they have no rails to protect and the scrolling model needs the whole-row wipe.
+  # BUG2 (cursor): the cursor visibility folds INTO the RENDER_MODE branch. In panel mode the box
+  # never shows a live cursor block, so RE-HIDE (civis) after the child's EXIT-trap cnorm fired — no
+  # nav/redraw_frame_inplace path re-emits cnorm, so a stray cnorm here leaks a visible cursor block
+  # onto the menu edge + right body. In scrolling mode keep cnorm so the cursor stays visible for the
+  # scrollback log. Either branch ends on a `tp` call, so the captured return code is unchanged.
   if [[ "${RENDER_MODE:-}" == "panel" ]]; then
     paint_workbox_body_inner ""      # clear LINE 1 inner span (rails preserved)
     paint_workbox_body_row2_inner "" # clear LINE 2 inner span (no stale tail/dots survives the stop)
+    tp civis                         # panel: re-hide (the box has no live cursor)
   else
     printf '\r\033[2K' >"${TTY}" # erase the spinner's status line (scrolling model)
+    tp cnorm                     # scrolling: restore the cursor for scrollback visibility
   fi
-  tp cnorm                     # belt-and-suspenders: cnorm fires even if the child was already reaped
 }
 
 # start_idle_spinner / stop_idle_spinner — the ASYNC-FEEL animator for the BLOCKING windows that
@@ -1891,7 +1897,11 @@ stop_idle_spinner() {
     paint_workbox_body_inner ""
     paint_workbox_body_row2_inner ""
   fi
-  tp cnorm
+  # BUG2 (cursor): the idle spinner runs ONLY in the fullscreen box, which never shows a live cursor
+  # block, so end on civis (re-hide) rather than cnorm. The cooked-prompt callers (_confirm_pregate,
+  # preflight_bracket, token pre-gate) re-assert their OWN cnorm AFTER this returns, so the consent
+  # prompts stay visible; the box/menu paths (which do NOT re-emit cnorm) keep the cursor hidden.
+  tp civis
 }
 
 # === install single-line progress renderer =================================
