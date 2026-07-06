@@ -136,8 +136,13 @@ redraw_frame_inplace() { :; }
 build_install_progress_body() { printf ''; }
 redraw_install_progress() { :; }
 paint_workbox_body_inner() { :; }
+paint_workbox_body_row2_inner() { :; } # LINE 2 painter stub (async-feel 2-row box)
 start_step_spinner() { :; }
 stop_step_spinner() { :; }
+# idle-spinner (async-feel animator) stubs — no-op by default; the R4-7 balance section overrides
+# these with counters to prove the detection/handoff windows are animated with no PID leak.
+start_idle_spinner() { :; }
+stop_idle_spinner() { :; }
 classify_step_log() { STEP_SUPPRESSED_COUNT=0; }
 _dump_step_log() { :; }
 c() { printf '%s' "${2:-}"; } # strip SGR so the rendered bar string is measurable
@@ -468,41 +473,91 @@ assert_eq "shared caller ends at n/n (raw)" "4" "${u_idxs[$((${#u_idxs[@]} - 1))
 
 echo ""
 echo "============================================================================"
-echo "(R4-6) 4e rolling label — real-time tail + Bash-3.2 cycling fallback"
+echo "(R4-6) LINE 2 detail resolver — real-time tail + SLOW dots fallback"
 echo "============================================================================"
-# _spinner_rolling_label is a PURE helper (reads args + STEP_LOG_CUR), so the rolling animation is
-# unit-testable WITHOUT the time-based forked spinner (which is mocked to a no-op here).
+# _spinner_rolling_label is a PURE helper (reads its tick arg + STEP_LOG_CUR), so the LINE 2 detail
+# is unit-testable WITHOUT the time-based forked spinner (mocked to a no-op here). The step LABEL now
+# lives on LINE 1 (the stable headline) — this resolver returns ONLY the LINE 2 detail: the output
+# tail when the step is emitting, else the SLOW dots animation (NOT the buggy R4-4e per-tick roll).
 R4_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-r4-log.XXXXXX")"
 
 # (a) non-empty capture => the LATEST line (real-time sub-process output), across ticks
 printf 'compiling module A\ncompiling module B\n' >"${R4_LOG}"
 STEP_LOG_CUR="${R4_LOG}"
-assert_eq "rolling label shows the latest captured line (tick 0)" "compiling module B" "$(_spinner_rolling_label 0 'BASE')"
-# a NEW line appended => the label rolls to it on the next tick (the 'rolling' proof)
+assert_eq "LINE2 detail shows the latest captured line (output-producing step, tick 0)" "compiling module B" "$(_spinner_rolling_label 0)"
+# a NEW line appended => the detail follows it on the next slow-boundary tick (the calm refresh proof)
 printf 'linking\n' >>"${R4_LOG}"
-assert_eq "rolling label FOLLOWS newly appended output (tick 1) — it rolls" "linking" "$(_spinner_rolling_label 1 'BASE')"
+assert_eq "LINE2 detail FOLLOWS newly appended output (calm refresh)" "linking" "$(_spinner_rolling_label 6)"
 
-# (b) empty capture => context-preserving cycling working phrase, advanced by the tick index
+# (b) empty capture => the SLOW dots animation (no base label — the label is on LINE 1)
 : >"${R4_LOG}"
-assert_eq "empty-log fallback tick 0 = base label" "BASE" "$(_spinner_rolling_label 0 'BASE')"
-assert_eq "empty-log fallback tick 1 = base + working phrase" "BASE (working)" "$(_spinner_rolling_label 1 'BASE')"
-assert_eq "empty-log fallback tick 2 = base + still-working phrase" "BASE (still working)" "$(_spinner_rolling_label 2 'BASE')"
-assert_eq "empty-log fallback cycles back at tick 3 (mod 3)" "BASE" "$(_spinner_rolling_label 3 'BASE')"
+assert_eq "empty-log (no-output step) fallback tick 0 = one dot" "." "$(_spinner_rolling_label 0)"
+assert_eq "empty-log fallback at the FIRST slow boundary = two dots" ".." "$(_spinner_rolling_label "${SPIN_SLOW_DIV}")"
+assert_eq "empty-log fallback at the SECOND slow boundary = three dots" "..." "$(_spinner_rolling_label $((SPIN_SLOW_DIV * 2)))"
+assert_eq "empty-log fallback cycles back to one dot at the THIRD slow boundary" "." "$(_spinner_rolling_label $((SPIN_SLOW_DIV * 3)))"
 
-# (c) unset capture (non-capturing step) => the base label, never a crash under set -u
+# (c) unset capture (non-capturing step) => the dots, never a crash under set -u
 STEP_LOG_CUR=""
-assert_eq "no-capture step falls back to the base label (set -u safe)" "BASE" "$(_spinner_rolling_label 0 'BASE')"
+assert_eq "no-capture step falls back to the slow dots (set -u safe)" "." "$(_spinner_rolling_label 0)"
 
 # (d) an over-long output line is width-trimmed to a single row (no wrap)
 printf 'X%.0s' $(seq 1 90) >"${R4_LOG}"
 STEP_LOG_CUR="${R4_LOG}"
-trimmed="$(_spinner_rolling_label 0 'BASE')"
+trimmed="$(_spinner_rolling_label 0)"
 if [[ "${#trimmed}" -le 58 && "${trimmed}" == *... ]]; then
   pass "over-long output line trimmed to a single row (len=${#trimmed}, ellipsized)"
 else
   fail "over-long line should be trimmed+ellipsized, got len=${#trimmed}"
 fi
 rm -f "${R4_LOG}"
+
+echo ""
+echo "============================================================================"
+echo "(R4-7) SLOW-cadence dots + 2-row box geometry + idle-window balance"
+echo "============================================================================"
+# (a) _spinner_dots: the dots advance on the SLOW boundary (every SPIN_SLOW_DIV ticks ≈ 600ms), NOT
+# every 100ms tick. Prove every tick WITHIN a slow window yields the SAME dots (decoupled from the
+# 100ms frame), and the dots ADVANCE only at the window boundary.
+dots_stable="yes"
+k=0
+while [[ "${k}" -lt "${SPIN_SLOW_DIV}" ]]; do
+  [[ "$(_spinner_dots "${k}")" == "." ]] || dots_stable="no"
+  k=$((k + 1))
+done
+assert_eq "dots are STABLE across every 100ms tick within a slow window (not a per-tick roll)" "yes" "${dots_stable}"
+assert_eq "dots ADVANCE to '..' only at the slow-window boundary" ".." "$(_spinner_dots "${SPIN_SLOW_DIV}")"
+assert_eq "dots phase is set-u safe at tick 0" "." "$(_spinner_dots 0)"
+
+# (b) 2-row box geometry: WORKBOX_BODY_ROW2 is the row directly below LINE 1, and the bottom rail
+# sits one row below THAT (WORKBOX_FIRST_ROW+3), all STRICTLY above the pinned keyhint. Drive the
+# REAL compute_menu_geometry with a generous stubbed TTY so FULLSCREEN engages.
+term_size() { printf '120 50'; }
+tput() { case "$1" in cup) return 0 ;; *) return 0 ;; esac; }
+GEOMETRY_DIRTY=true
+compute_menu_geometry
+assert_eq "LINE 2 anchor is exactly one row below LINE 1 (2-row body)" "$((WORKBOX_BODY_ROW + 1))" "${WORKBOX_BODY_ROW2}"
+assert_eq "LINE 1 anchor is one row below the box top rail" "$((WORKBOX_FIRST_ROW + 1))" "${WORKBOX_BODY_ROW}"
+if [[ "$((WORKBOX_FIRST_ROW + 3))" -lt "${MENU_KEYHINT_ROW}" ]]; then
+  pass "4-row box (top+LINE1+LINE2+bottom) bottom rail stays STRICTLY above the pinned keyhint (rail-safe)"
+else
+  fail "box bottom rail ($((WORKBOX_FIRST_ROW + 3))) collides the keyhint (${MENU_KEYHINT_ROW})"
+fi
+
+# (c) idle-window balance: the boxed preflight's async-feel animation MUST start at least one idle
+# window (no frozen blank frame) AND every start MUST be matched by a stop (single-active invariant,
+# no leaked idle PID). Override start/stop_idle_spinner with counters, re-drive the boxed preflight.
+IDLE_STARTS=0
+IDLE_STOPS=0
+start_idle_spinner() { IDLE_STARTS=$((IDLE_STARTS + 1)); }
+stop_idle_spinner() { IDLE_STOPS=$((IDLE_STOPS + 1)); }
+run_path _run_dependency_preflight_boxed
+echo "  idle windows: starts=${IDLE_STARTS} stops=${IDLE_STOPS}"
+if [[ "${IDLE_STARTS}" -ge 1 ]]; then
+  pass "boxed preflight animates at least one idle window (no frozen/blank detection frame): ${IDLE_STARTS}"
+else
+  fail "boxed preflight started NO idle window — a blank detection frame would render"
+fi
+assert_eq "every idle start is matched by a stop (single-active invariant, no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
 
 echo ""
 echo "============================================================================"

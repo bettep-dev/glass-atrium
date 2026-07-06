@@ -551,8 +551,15 @@ extract_launcher_fn() {
   # ENGAGE1 gated on GROUP1 > 0; ENGAGE2 gated on GROUP2 > 0 (skip the empty dimmed box).
   [[ "${body}" == *'[[ "${PREFLIGHT_GROUP1_RUNNABLE}" -gt 0 ]] && enter_run_state'* ]]
   [[ "${body}" == *'[[ "${PREFLIGHT_GROUP2_RUNNABLE}" -gt 0 ]] && enter_run_state'* ]]
-  # NO unconditional bare 'enter_run_state' line survives in the boxed flow.
-  run grep -cE '^[[:space:]]*enter_run_state[[:space:]]*$' <<<"${body}"
+  # BUG1's real guard is "a dimmed box must never be EMPTY". The two ENGAGE points stay group-gated
+  # (above); any OTHER bare 'enter_run_state' is permitted ONLY when the very next line is
+  # start_idle_spinner — the async-feel animated enter (the box is alive, never an empty dimmed
+  # frame). So: assert ZERO bare enter_run_state lines that are NOT immediately idle-animated.
+  run awk '
+    /^[[:space:]]*enter_run_state[[:space:]]*$/ { pend=1; next }
+    pend==1 { if ($0 !~ /start_idle_spinner/) { bad++ } pend=0 }
+    END { print bad + 0 }
+  ' <<<"${body}"
   [[ "${output}" -eq 0 ]]
 }
 
@@ -939,8 +946,15 @@ PSQL
 }
 
 @test "R3(static): preflight_pg_utc_guard is wired into BOTH preflight paths after keg-inject" {
+  # Both preflight paths invoke the guard WITH a failure-bail. The scroll path uses the direct
+  # `|| return $?` idiom; the boxed path captures the rc BEFORE stop_idle_spinner (so the idle
+  # spinner's kill/wait/tput cannot clobber $?) then returns it — the same bail, exit-code-safe.
+  run grep -cE 'preflight_pg_utc_guard \|\|' "${LAUNCHER}"
+  [[ "${output}" -eq 2 ]] # both paths invoke-and-check the guard
   run grep -cF 'preflight_pg_utc_guard || return $?' "${LAUNCHER}"
-  [[ "${output}" -eq 2 ]]
+  [[ "${output}" -eq 1 ]] # scroll path: direct bail
+  run grep -cF 'preflight_pg_utc_guard || pg_guard_rc=$?' "${LAUNCHER}"
+  [[ "${output}" -eq 1 ]] # boxed path: capture-then-bail (exit-code preserved across stop_idle_spinner)
 }
 
 @test "R1(static): the initdb step is wired into BOTH preflight paths (gated on uninitialized)" {
