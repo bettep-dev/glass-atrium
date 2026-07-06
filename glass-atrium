@@ -2603,9 +2603,9 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → render → farm → wire → migrate → DB →
+      # run_install body (doctor gate → stale-daemon clear → render → farm → wire → migrate → DB →
       # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
-      # 13th step that registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads
+      # 14th step that registers the 8 launchd jobs (CHANGE 1: menu Install now auto-loads
       # launchd via menu_load_launchd_jobs, opt-out GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
       # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
       # a verified build. baseline capture is run_install's final body step (capture_install_
@@ -2613,9 +2613,10 @@ build_step_plan() {
       # TUI plan must include it or a menu install never anchors its first editable_merge.
       # dry-run/repoint/etc. honour the lib flag vars (load + baseline capture are dry-run
       # reports under --dry-run). The three arrays are a PARALLEL-array contract — they MUST
-      # stay equal-length (13 each) and in this order; run_plan iterates [0, #STEP_FN).
+      # stay equal-length (14 each) and in this order; run_plan iterates [0, #STEP_FN).
       STEP_LABEL=(
         "Doctor preflight"
+        "Clear stale daemon sessions"
         "Render config.toml"
         "Render launchd plists"
         "Symlink farm"
@@ -2631,6 +2632,7 @@ build_step_plan() {
       )
       STEP_LABEL_ACTIVE=(
         "Running doctor preflight…"
+        "Clearing stale daemon sessions…"
         "Rendering config.toml…"
         "Rendering launchd plists…"
         "Farming symlinks…"
@@ -2646,6 +2648,7 @@ build_step_plan() {
       )
       STEP_FN=(
         "run_doctor_preflight"
+        "kill_daemon_tmux_sessions"
         "render_config"
         "render_plists"
         "run_symlink_farm install"
@@ -2661,11 +2664,12 @@ build_step_plan() {
       )
       ;;
     uninstall)
-      # run_uninstall body: launchd teardown → DB drop → node_modules removal →
-      # manifest-link removal → orphan sweep → empty-dir cleanup → update-state
-      # teardown → hook un-wire → shell-rc PATH-line removal. launchd teardown runs
-      # FIRST so the daemons stop (connections drain) before the DB is dropped and
-      # before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
+      # run_uninstall body: launchd teardown → detached-daemon stop → DB drop →
+      # node_modules removal → manifest-link removal → orphan sweep → empty-dir
+      # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal.
+      # launchd teardown runs FIRST, then the detached-daemon stop reaches the tmux
+      # daemon sessions launchctl bootout does NOT, so all connections drain before
+      # the DB is dropped and before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
       # fail-closed per DB (a failed/empty pre-drop pg_dump skips that DB's drop —
       # lib drop_databases) — reinstall recreates a fresh, consistent DB. empty-dir cleanup +
       # update-state teardown mirror run_uninstall's STEP4/T26 (rmdir-only empty
@@ -2676,6 +2680,7 @@ build_step_plan() {
       # and in run_uninstall order.
       STEP_LABEL=(
         "Tear down launchd jobs"
+        "Stop detached daemons"
         "Drop databases"
         "Remove node_modules"
         "Remove manifest symlinks"
@@ -2687,6 +2692,7 @@ build_step_plan() {
       )
       STEP_LABEL_ACTIVE=(
         "Tearing down launchd jobs…"
+        "Stopping detached daemons…"
         "Dropping databases…"
         "Removing node_modules…"
         "Removing manifest symlinks…"
@@ -2698,6 +2704,7 @@ build_step_plan() {
       )
       STEP_FN=(
         "unload_launchd_jobs"
+        "stop_detached_daemons"
         "drop_databases"
         "remove_node_modules"
         "remove_manifest_links"
