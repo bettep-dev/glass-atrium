@@ -1141,7 +1141,12 @@ workbox_body_str() {
       else
         local counter=""
         if [[ -n "${STEP_INDEX:-}" && -n "${STEP_TOTAL:-}" ]]; then
-          counter="$(c "${C_DIM}" "$(build_counter_str "${STEP_INDEX}" "${STEP_TOTAL}")")"
+          # 4a: same STEP_INDEX_BASE offset as the run_step counter so the pre-first-tick body
+          # fallback stays on the grand sequence. Empty base => raw i/N (unchanged).
+          local disp_i disp_n
+          disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
+          disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+          counter="$(c "${C_DIM}" "$(build_counter_str "${disp_i}" "${disp_n}")")"
         fi
         printf ' %s%s' "${counter}" "$(c "${C_STRONG}" "${active_label}")"
       fi
@@ -1575,6 +1580,39 @@ _restore_job_control() {
   if [[ "$1" == "on" ]]; then set -m; else set +m; fi
 }
 
+# _spinner_rolling_label — 4e: resolve the spinner's animated label for ONE 100ms tick. A PURE,
+# non-blocking, bash-3.2-safe helper (reads only its args + the global STEP_LOG_CUR) so it is
+# unit-testable in isolation instead of only visually. Priority:
+#   1. the running step's captured log (STEP_LOG_CUR) has content => its LATEST line (real-time
+#      sub-process output), CR/TAB-sanitized to a single row + width-trimmed so it never wraps.
+#   2. empty / no capture (a non-capturing or not-yet-emitting step) => the fixed base label ($2)
+#      plus a short working phrase CYCLED by the tick index ($1), so a silent step still animates
+#      WITHOUT losing the step's context. The braille frame animates regardless; this only enriches
+#      the label text. Runs inside the FORKED spinner subshell, so the tail read never slows the
+#      parent step. STEP_LOG_CUR MUST be assigned to the current step's temp BEFORE the spinner forks
+#      (see run_step) or the child would snapshot a stale/empty pre-fork value.
+# $1 = tick index (>=0 integer) · $2 = fixed base label (already styled by the caller).
+_spinner_rolling_label() {
+  local tick="$1" base="$2" cur="${STEP_LOG_CUR:-}" line=""
+  if [[ -n "${cur}" && -s "${cur}" ]]; then
+    line="$(tail -n 1 "${cur}" 2>/dev/null || true)"
+    line="${line//$'\r'/}"  # strip CRs from in-place-updating sub-tools (progress redraws)
+    line="${line//$'\t'/ }" # tabs -> spaces so the row stays single-line
+    if [[ -n "${line// /}" ]]; then
+      # width-trim so a long build line never wraps the single fixed status row (ASCII marker).
+      [[ "${#line}" -gt 56 ]] && line="${line:0:55}..."
+      printf '%s' "${line}"
+      return 0
+    fi
+  fi
+  # FALLBACK: keep the step context ($base) + a tick-cycled working phrase for textual motion.
+  # ASCII-only suffixes (no glyph SoT dependency) so --ascii mode degrades cleanly.
+  local suffixes=("" " (working)" " (still working)")
+  local sn="${#suffixes[@]}"
+  [[ "${sn}" -gt 0 ]] || sn=1
+  printf '%s%s' "${base}" "${suffixes[$((tick % sn))]}"
+}
+
 # start_step_spinner / stop_step_spinner — a single-line braille animation tethered
 # to one engine step. SCROLLBACK DISCIPLINE (C-2): the step screen runs in normal
 # scrollback (dispatch_action dropped the alt-screen via `tp rmcup`), so the spinner
@@ -1620,11 +1658,10 @@ start_step_spinner() {
     frames=(${SPIN_FRAMES}) # word-split the space-joined frame string
     local n="${#frames[@]}" i=0
     [[ "${n}" -gt 0 ]] || n=1
-    # The label is FIXED for the whole step, so colorize it ONCE before the loop — only
-    # the frame glyph advances per tick, so only it stays inside the per-frame substitution.
+    # The BASE label is FIXED for the whole step, so colorize it ONCE before the loop.
     # In install mode the label is pre-styled (its own SGR codes already applied) — paint
     # it verbatim; otherwise wrap the bare label in C_STRONG (the historical model).
-    local label_str
+    local label_str roll
     if [[ "${prestyled}" == "prestyled" ]]; then
       label_str="${label}"
     else
@@ -1637,6 +1674,10 @@ start_step_spinner() {
       # trips). The `:-` empty-default keeps the spinner a clean fixed-width space cell on
       # that path; the resolved (menu) path holds real frames, so its cycling is unchanged.
       frame="${frames[$((i % n))]:- }"
+      # 4e: resolve the per-tick ROLLING label — the running step's latest captured output line
+      # (STEP_LOG_CUR tail) when it is emitting, else the fixed base label + a tick-cycled working
+      # phrase. Pure + non-blocking; the tail runs HERE in the forked child, never slowing the step.
+      roll="$(_spinner_rolling_label "${i}" "${label_str}")"
       # Panel mode: repaint the SAME absolute workbox body row (CUP) so each tick overwrites
       # in place — no scroll, no drift. This is the ONE in-place exemption: the spinner owns a
       # SINGLE fixed row INSIDE the already-stable draw_frame frame, never a rail/keyhint/menu
@@ -1648,12 +1689,12 @@ start_step_spinner() {
         # (rail-safe) — no ESC[2K of the rail columns, no rail rewrite. The box's left/right rails
         # (drawn by the last full plate_row) persist untouched across every tick.
         if [[ -n "${STEP_BAR_CUR:-}" ]]; then
-          paint_workbox_body_inner "$(printf '  %s %s  %s' "$(c "${C_INFO}" "${frame}")" "${STEP_BAR_CUR}" "${label_str}")"
+          paint_workbox_body_inner "$(printf '  %s %s  %s' "$(c "${C_INFO}" "${frame}")" "${STEP_BAR_CUR}" "${roll}")"
         else
-          paint_workbox_body_inner "$(printf '  %s %s' "$(c "${C_INFO}" "${frame}")" "${label_str}")"
+          paint_workbox_body_inner "$(printf '  %s %s' "$(c "${C_INFO}" "${frame}")" "${roll}")"
         fi
       else
-        printf '\r\033[2K  %s %s' "$(c "${C_INFO}" "${frame}")" "${label_str}" >"${TTY}"
+        printf '\r\033[2K  %s %s' "$(c "${C_INFO}" "${frame}")" "${roll}" >"${TTY}"
       fi
       i=$((i + 1))
       sleep 0.1 # 100ms cadence (clig.dev feedback floor)
@@ -1766,7 +1807,13 @@ progress_bar_width() {
 # defaulting to C_ACCENT. Empty when the step globals are unset. Built ONCE per step into STEP_BAR_CUR.
 build_run_bar() {
   [[ -n "${STEP_INDEX:-}" && -n "${STEP_TOTAL:-}" ]] || return 0
-  build_progress_bar "${STEP_INDEX}" "${STEP_TOTAL}" "$(progress_bar_width)" "${STEP_BAR_ACCENT_CUR:-${C_ACCENT}}"
+  # 4a: render the STEP_INDEX_BASE-OFFSET index/total so the install-panel bar continues ONE grand
+  # sequence across the preflight->install handoff (base+1 .. base+n). Empty base => 0 offset =>
+  # raw STEP_INDEX/STEP_TOTAL, byte-for-byte unchanged for every shared uninstall/db/token/purge caller.
+  local disp_i disp_n
+  disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
+  disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+  build_progress_bar "${disp_i}" "${disp_n}" "$(progress_bar_width)" "${STEP_BAR_ACCENT_CUR:-${C_ACCENT}}"
 }
 
 # enter_run_state — the dim-for-run transition (REDRAW_MODEL): set WORK_STATE=run +
@@ -1914,7 +1961,12 @@ run_step() {
   # PROG_FULL/PROG_EMPTY glyph SoT, so --ascii degrades it to `#`/`.`.
   local counter=""
   if [[ -n "${STEP_INDEX:-}" && -n "${STEP_TOTAL:-}" ]]; then
-    counter="$(c "${C_DIM}" "$(build_counter_str "${STEP_INDEX}" "${STEP_TOTAL}")")"
+    # 4a: offset by STEP_INDEX_BASE (empty except on the install-panel handoff) so the block-bar
+    # counter continues the grand sequence rather than restarting at 1/n. Empty base => raw i/N.
+    local disp_i disp_n
+    disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
+    disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+    counter="$(c "${C_DIM}" "$(build_counter_str "${disp_i}" "${disp_n}")")"
   fi
 
   # Tense shift (VR-5): the running line shows the present-progressive ACTIVE label
@@ -1935,6 +1987,17 @@ run_step() {
     panel_mode="panel"
     counter="" # ITEM 4: the bar owns the i/N; no separate [i/N] stamp in the panel body
   fi
+
+  # 4e: create the step's capture temp + publish STEP_LOG_CUR BEFORE the spinner forks. The forked
+  # spinner subshell snapshots STEP_LOG_CUR at fork time, so it MUST already hold THIS step's path
+  # for the per-tick rolling label to tail the running sub-process output (a pre-fork empty/stale
+  # value would make the rolling label silently no-op). The file is empty at fork; "$@" appends to it
+  # below (same path), and the child's `tail -n 1` reads the growing file live. Moved up from its
+  # historical spot just before the capture redirect (no behavior change to the capture itself — the
+  # redirect target is still this STEP_LOG; only the mktemp+track now precede the spinner start).
+  local STEP_LOG
+  STEP_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-step.XXXXXX")"
+  STEP_LOG_CUR="${STEP_LOG}" # track for the abort-trap sweep + the 4e rolling-label tail while in flight
 
   # spinner owns the animated running status line (off-TTY: a hard no-op). It is
   # started BEFORE the brace group and stopped just after, so the spinner PID is
@@ -1985,11 +2048,8 @@ run_step() {
   # install mode MERGES fd 1 into the capture (`>… 2>&1`) so a noisy subprocess STDOUT
   # (npm run build, prisma/npm-ci in oss-db-setup.sh) is suppressible by classify instead
   # of flooding the terminal + breaking the single-line model. Other modes capture fd 2
-  # only (the historical behavior — uninstall unchanged).
-  local STEP_LOG
-  STEP_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-step.XXXXXX")"
-  STEP_LOG_CUR="${STEP_LOG}" # track for the abort-trap sweep while the step is in flight
-
+  # only (the historical behavior — uninstall unchanged). NB: STEP_LOG / STEP_LOG_CUR are created
+  # ABOVE (before the spinner fork, 4e) — the capture redirect below writes to that same STEP_LOG.
   local rc=0
   set +e
   trap - ERR
@@ -2142,6 +2202,13 @@ outcome_panel() {
 # are set per step so run_step can stamp a [i/N] counter.
 STEP_INDEX=""
 STEP_TOTAL=""
+# 4a: STEP_INDEX_BASE — an OPT-IN continuous-sequence render offset. Empty ("" == 0 offset) for
+# EVERY shared caller (uninstall/db/token/purge), so the counter/bar render byte-for-byte unchanged.
+# It is set ONLY at the install-panel preflight->install handoff (carrying the preflight FINAL step
+# count) so dispatch's install run_plan continues as base+1 .. base+n of ONE grand total (base+n) with
+# NO reset at the handoff. Swept by _clear_step_state (run_plan's end-of-plan teardown), so no later
+# shared caller inherits a stale base. DISPLAY-only: never feeds exit codes or step control flow.
+STEP_INDEX_BASE=""
 STEP_LABEL_ACTIVE_CUR=""   # present-progressive label for the step currently running
 STEP_BAR_CUR=""            # ITEM 4: the prebuilt dominant progress-bar string for the running step
                            # (built ONCE per step in run_plan so the 100ms spinner tick never recomputes it)
@@ -2151,11 +2218,16 @@ STEP_LAST_FAIL_LOG=""      # set by run_step's FAIL branch to the temp log of th
 STEP_FAIL_LOG_PERSISTED="" # set by run_plan to the persisted-on-fail copy path (outcome_panel reads it)
 STEP_FAIL_INDEX=""         # set by run_plan to the 1-based index of the failing step (panel status line)
 
-# _clear_step_state — reset the 5 per-step render globals to empty. Shared by run_plan's teardown +
+# _clear_step_state — reset the per-step render globals to empty. Shared by run_plan's teardown +
 # the single-step token/uninstall/purge dispatchers (identical reset block, one SoT).
+# 4a: STEP_INDEX_BASE is swept here too so an install-panel run's carried offset never leaks into a
+# later same-session shared caller (its end-of-plan teardown at run_plan clears the base after the
+# install render consumed it). The preflight->install handoff (which SETS the base) does NOT call
+# this function — it inlines a partial clear that PRESERVES the base (see _run_dependency_preflight_boxed).
 _clear_step_state() {
   STEP_INDEX=""
   STEP_TOTAL=""
+  STEP_INDEX_BASE=""
   STEP_LABEL_ACTIVE_CUR=""
   STEP_BAR_CUR=""
   STEP_BAR_ACCENT_CUR=""
@@ -4374,9 +4446,25 @@ EOF
   if [[ "$(ga_detect_python_libs)" != "present" ]]; then
     _preflight_python_libs_boxed || true
   fi
-  # BUG2: sweep the shared step counter (+ per-step render globals) now that the final framed step has
-  # run, so no stale i/N counter leaks into the transition to dispatch's own install run_plan.
-  _clear_step_state
+  # 4a: CARRY the preflight FINAL clamped STEP_INDEX (the real preflight step count, post-clamp) into
+  # the opt-in STEP_INDEX_BASE render offset BEFORE clearing the counter, so dispatch's install run_plan
+  # continues the SAME grand sequence (base+1 .. base+n) with NO reset/blink at the handoff. STEP_INDEX
+  # is "" when no framed step ran (all-present tail) => base 0 => install shows 1/n..n/n (correct: zero
+  # preflight steps). This function is EXCLUSIVE to the install-panel path (run_dependency_preflight
+  # routes here only for PREFLIGHT_TTY_OWNED=false + TTY=/dev/fd/3), so the base is confined to it, and
+  # run_gate_quiet wraps this call in a brace group (NOT a subshell) so the assignment propagates to
+  # dispatch_action_install_panel + its later run_action_panel/run_plan. run_plan's end-of-plan
+  # _clear_step_state then sweeps the base (see _clear_step_state), so no later shared caller inherits it.
+  STEP_INDEX_BASE="${STEP_INDEX:-0}"
+  # BUG2: sweep the shared counter (STEP_INDEX/STEP_TOTAL) + the per-step render detail so no stale i/N
+  # or label/bar leaks into dispatch's install run_plan (which re-seeds STEP_INDEX/STEP_TOTAL fresh 1..n).
+  # This is the _clear_step_state reset block MINUS STEP_INDEX_BASE (deliberately PRESERVED — it is the
+  # carried offset consumed by the install render, not a stale value).
+  STEP_INDEX=""
+  STEP_TOTAL=""
+  STEP_LABEL_ACTIVE_CUR=""
+  STEP_BAR_CUR=""
+  STEP_BAR_ACCENT_CUR=""
   return 0
 }
 
