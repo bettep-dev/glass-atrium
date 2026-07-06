@@ -4009,6 +4009,12 @@ EOF
     # (4) PostgreSQL service + peer-auth role.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
       preflight_run_or_bail_framed "postgres: start service" "$(ga_cmd_pg_service_start)" || return $?
+      # readiness wait — `brew services start` returns BEFORE the postmaster accepts connections;
+      # gate the role detect + the downstream setup_database on a bounded (~15s) live-server poll
+      # so neither races a not-yet-ready cluster (a race → false present-but-down → the role step
+      # is silently skipped). A timeout bails loudly via the framed FAIL row. Runs ONLY on the
+      # start path (a purely 'present' cluster never enters this branch, so never waits).
+      preflight_run_or_bail_framed "postgres: wait until ready" "ga_pg_wait_ready" || return $?
     fi
     if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
       preflight_run_or_bail_framed "postgres: create superuser role" "$(ga_cmd_pg_create_role)" || return $?
@@ -4212,6 +4218,10 @@ EOF
     # (4) PostgreSQL service + peer-auth role — framed panel steps.
     if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
       preflight_panel_step_or_bail "postgres: start service" "" "$(ga_cmd_pg_service_start)" || return $?
+      # readiness wait (see the scroll path for the full rationale) — bounded ~15s live-server poll
+      # so the role detect + downstream setup_database never race a not-yet-ready cluster. Timeout
+      # bails loudly. Runs ONLY on the start path (a purely 'present' cluster never waits).
+      preflight_panel_step_or_bail "postgres: wait until ready" "" "ga_pg_wait_ready" || return $?
     fi
     if [[ "$(ga_detect_postgres_role)" == "absent" ]]; then
       preflight_panel_step_or_bail "postgres: create superuser role" "" "$(ga_cmd_pg_create_role)" || return $?

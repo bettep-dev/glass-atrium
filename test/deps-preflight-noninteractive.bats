@@ -571,6 +571,68 @@ extract_launcher_fn() {
   [[ "${body}" != *'{ "$@" 2>"${STEP_LOG}"; }'* ]]
 }
 
+# === STEP 2 — ga_pg_wait_ready: bounded live-server poll after an attempted start ========
+
+@test "STEP2: ga_pg_wait_ready is defined + bounded (hard ceiling, no unbounded until-loop)" {
+  declare -F ga_pg_wait_ready
+  local body
+  body="$(declare -f ga_pg_wait_ready)"
+  # a HARD counter ceiling gates the loop — the mandatory bound against a NEW infinite-hang path.
+  [[ "${body}" == *'ceiling=15'* ]]
+  [[ "${body}" == *'-lt "${ceiling}"'* ]]
+  [[ "${body}" == *'waited=$((waited + 1))'* ]]
+  # probes: pg_isready primary, psql SELECT 1 fallback — both on the peer-auth socket SoT.
+  [[ "${body}" == *'pg_isready -h "${PG_SOCKET}"'* ]]
+  [[ "${body}" == *"psql -h \"\${PG_SOCKET}\" -d postgres -tAc 'SELECT 1'"* ]]
+  # non-zero on timeout (the caller bails loudly).
+  [[ "${body}" == *'return 1'* ]]
+}
+
+@test "STEP2(live): ga_pg_wait_ready returns 0 as soon as pg_isready reports ready" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a pg_isready that reports ready immediately → the poll returns 0 on the first iteration.
+  printf '#!/bin/bash\nexit 0\n' >"${stub}/pg_isready"
+  chmod +x "${stub}/pg_isready"
+  PG_SOCKET="/tmp"
+  local rc=0
+  PATH="${stub}:${PATH}" ga_pg_wait_ready || rc=$?
+  [[ "${rc}" -eq 0 ]]
+}
+
+@test "STEP2(live): ga_pg_wait_ready TIMES OUT non-zero when the server never answers" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a pg_isready that NEVER reports ready + a psql that never connects → runs to the ceiling.
+  printf '#!/bin/bash\nexit 1\n' >"${stub}/pg_isready"
+  printf '#!/bin/bash\nexit 1\n' >"${stub}/psql"
+  chmod +x "${stub}/pg_isready" "${stub}/psql"
+  # collapse the poll interval to instant so the 15-iteration ceiling completes at once.
+  sleep() { return 0; }
+  PG_SOCKET="/tmp"
+  local rc=0
+  PATH="${stub}:${PATH}" ga_pg_wait_ready || rc=$?
+  [[ "${rc}" -eq 1 ]]
+}
+
+@test "STEP2(static): both run-sites wait for readiness INSIDE the present-but-down start block" {
+  # scroll path: the wait step is framed AND sits inside the start branch (start attempted only).
+  grep -qF 'preflight_run_or_bail_framed "postgres: wait until ready" "ga_pg_wait_ready"' "${LAUNCHER}"
+  # boxed path: the wait is a framed panel step, same placement.
+  grep -qF 'preflight_panel_step_or_bail "postgres: wait until ready" "" "ga_pg_wait_ready"' "${LAUNCHER}"
+  # ordering: in EACH path the wait step immediately follows the service-start step.
+  local scroll boxed
+  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  local start_ln wait_ln
+  start_ln="$(grep -nF 'postgres: start service' <<<"${scroll}" | head -n1 | cut -d: -f1)"
+  wait_ln="$(grep -nF 'postgres: wait until ready' <<<"${scroll}" | head -n1 | cut -d: -f1)"
+  [[ -n "${start_ln}" && -n "${wait_ln}" && "${start_ln}" -lt "${wait_ln}" ]]
+  start_ln="$(grep -nF 'postgres: start service' <<<"${boxed}" | head -n1 | cut -d: -f1)"
+  wait_ln="$(grep -nF 'postgres: wait until ready' <<<"${boxed}" | head -n1 | cut -d: -f1)"
+  [[ -n "${start_ln}" && -n "${wait_ln}" && "${start_ln}" -lt "${wait_ln}" ]]
+}
+
 # === BUG3 — fakechat/marketplace in-process tokens + background+poll+kill hang guard =====
 
 @test "BUG3: ga_cmd_fakechat_install emits the in-process function token ga_fakechat_install" {

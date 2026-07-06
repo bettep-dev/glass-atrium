@@ -521,6 +521,35 @@ ga_cmd_pg_service_start() {
   printf 'brew services start postgresql@%s\n' "${major}"
 }
 
+# ga_pg_wait_ready — BOUNDED in-process poll for a live PostgreSQL server on the peer-auth
+# socket, run AFTER an attempted service start (a purely-'present' cluster needs no wait).
+# `brew services start` returns BEFORE the postmaster finishes accepting connections, so the
+# downstream role detect + the engine's setup_database would race a not-yet-ready server and
+# spuriously read 'present-but-down' / fail their first connect. This polls until the server
+# answers or a HARD counter ceiling (~15s) elapses, returning non-zero on timeout. The ceiling
+# is MANDATORY — an unbounded until-loop would itself be a NEW infinite-hang path (the very
+# class of bug the preflight is being hardened against). pg_isready is the purpose-built cheap
+# probe; a psql SELECT 1 on ${PG_SOCKET} is the authoritative fallback for a minimal libpq that
+# ships without the pg_isready helper (same socket + verdict boundary as ga_detect_postgres, so
+# readiness here == the detect's 'present' boundary). Same in-process pattern as ga_pg_ensure_role
+# (never an emitted command string). Bash 3.2 clean (integer counter, no fractional read -t).
+ga_pg_wait_ready() {
+  local waited=0
+  local ceiling=15
+  while [[ "${waited}" -lt "${ceiling}" ]]; do
+    if command -v pg_isready >/dev/null 2>&1; then
+      if pg_isready -h "${PG_SOCKET}" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif psql -h "${PG_SOCKET}" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 # ga_pg_ensure_role — IDEMPOTENT create of the OS-user superuser peer-auth role.
 # createuser exits 1 on an already-existing role (no --if-not-exists flag), which
 # would block the install; this guard is a clean no-op when the role exists.
