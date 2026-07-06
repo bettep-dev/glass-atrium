@@ -141,7 +141,7 @@ Delegation required elements: **Goal · Target files/paths · Constraints · Com
 | `output_cap` | Max final-output size | 1500 KR chars or equivalent |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
 | `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch reserved for structured/API pages < 8KB |
-| `spawn_budget` | Max sub-agent invocations per Wave; hitting ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3, glass-atrium-intel-planner ~2, glass-atrium-qa-code-reviewer ~1 — anchor matches MAX_CHILDREN=5 from orchestrator-role.md `### Spawn Budget` |
+| `spawn_budget` | Max sub-agent invocations per Wave; hitting ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3, glass-atrium-intel-planner ~2, glass-atrium-qa-code-reviewer ~1 — per-wave soft budgets; concurrency itself is bounded by the Workflow engine's runtime self-cap (core-derived, per-machine), not a fixed number (orchestrator-role.md `### Spawn Budget`) |
 
 > Reviewer budget uplift (2026-04-21 first trial): 13 uses against a 10 budget — review involves heavy Grep×Read interleaving, so the default is raised to ~14.
 
@@ -503,11 +503,11 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 - Sub-agent invoked without all delegation elements (Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
 - Multiple agents modifying the same file without worktree isolation
 - Pipeline stage started before prior stage's acceptance criteria are verified
-- Team of 5+ agents composed without explicit user approval
+- A VERY large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value + total-session token cost (no fixed-number gate — the engine's runtime self-cap bounds concurrency)
 - `background: true` + `isolation: worktree` used together (Issue #33045)
 - Free-text delegation prompt without structured format or English domain keywords
 - Sub-agent chain depth > 2 (orchestrator → worker → sub-worker) — nesting forbidden (cross-ref orchestrator-role.md `### Spawn Budget`)
-- Single Wave spawning more sub-agents than `spawn_budget` — split into sequential Waves instead of parallel overflow
+- Single Wave fanning out beyond the Workflow engine's runtime concurrency self-cap (core-derived, per-machine) — split into sequential Waves instead of parallel overflow
 - Routing decision made via keyword/alias match instead of `domains` semantic match (capability-based routing is the only legitimate path)
 - Subagent spawned despite an unmet `compatibility` precondition (e.g., glass-atrium-intel-reporter dispatched for user-requested HTML emission while monitor daemon at 127.0.0.1:7842 is down) — Compatibility Probe MUST halt delegation pre-spawn rather than absorb the failure as a `result: blocked` post-spawn
 - **Missing-verify-stage guard (ultracode)**: a DEV-spawning workflow authored without a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first DEV implementation stage, gated on the combined `pass`+`feasible` verdict → **halt and re-author**. Honor-system self-check PRIMARY; the `enforce-workflow-verify-stage.sh` static-scan gate backstops gross omissions only. Hardened contract + skeleton (canonical): `### Pipeline Acceptance Criteria` → "In-script verify-stage".
