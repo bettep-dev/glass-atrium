@@ -80,6 +80,20 @@ ga_init_env() {
   )
   readonly LAUNCHD_JOBS
 
+  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the daemon
+  # bootstrap scripts' `readonly SESSION=` (scripts/wiki-daemon-bootstrap.sh:15
+  # 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
+  # 'claude-autoagent-daemon'; also daemon-inject-entry.sh role_session_default). These
+  # sessions run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout`
+  # (reparented to PID 1) + `claude plugin uninstall`, so uninstall/install must kill
+  # them explicitly. Same two-step (plain assign then bare `readonly`) idiom as
+  # LAUNCHD_JOBS so a cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
+  GA_DAEMON_SESSIONS=(
+    claude-wiki-daemon
+    claude-autoagent-daemon
+  )
+  readonly GA_DAEMON_SESSIONS
+
   # manifest drift gate (doctor preflight §8) — the --check verifier that fails
   # loud on a source-vs-manifest divergence before install. Override (GA_GENERATE_MANIFEST)
   # mirrors the GA_* sandbox pattern.
@@ -2341,6 +2355,155 @@ unload_launchd_jobs() {
   return 0
 }
 
+# kill_daemon_tmux_sessions — kill the DETACHED daemon tmux sessions (GA_DAEMON_SESSIONS).
+# These run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout`
+# (reparented to PID 1), so bootout alone leaves them running. Shared by uninstall
+# (stop_detached_daemons) AND install start (clear a stale session so a fresh daemon boots
+# clean). GUARDED exactly like unload_launchd_jobs: DRY_RUN reports without acting;
+# is_sandbox_target skips the WHOLE kill (the tmux server is a per-USER host resource shared
+# with the real user regardless of HOME — a sandboxed run must NOT kill the real sessions);
+# a missing tmux is a loud-log skip (Precondition Loud-Fail — never silent). Best-effort,
+# always returns 0.
+kill_daemon_tmux_sessions() {
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping detached daemon tmux session teardown (${GA_DAEMON_SESSIONS[*]})"
+    return 0
+  fi
+  # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "sandbox target — detached daemon tmux sessions untouched"
+    return 0
+  fi
+  if ! command -v tmux >/dev/null 2>&1; then
+    log "tmux not found — skipping detached daemon tmux session teardown"
+    return 0
+  fi
+  local sess
+  for sess in "${GA_DAEMON_SESSIONS[@]}"; do
+    if tmux has-session -t "${sess}" 2>/dev/null; then
+      if tmux kill-session -t "${sess}" 2>/dev/null; then
+        log "killed detached tmux session '${sess}'"
+      else
+        log "tmux kill-session '${sess}' failed (continuing)"
+      fi
+    else
+      log "no detached tmux session '${sess}' to kill"
+    fi
+  done
+  return 0
+}
+
+# stop_orphaned_postgres — stop a postgres server still bound to :5432 / owning the peer-auth
+# socket after `brew services stop` — the confirmed squatter: a postmaster from a now-DELETED
+# keg (files gone, process alive PPID 1) that keeps the socket and, having lost its tzdata,
+# breaks the monitor's UTC-gated pool on the next install. Two layers: (1) best-effort
+# `brew services stop postgresql@N` for a still-brew-managed service (clean path); (2) backstop
+# for the deleted-keg orphan brew has forgotten — lsof the socket/:5432, SIGINT (postgres FAST
+# shutdown), poll the socket free (bounded), then remove a stale socket file. GRACEFUL — every
+# missing tool / failed signal is a loud-log skip, never fatal; always returns 0. Callers must
+# have already passed the DRY_RUN + sandbox guards (stop_detached_daemons does).
+stop_orphaned_postgres() {
+  local sock="${PG_SOCKET}/.s.PGSQL.5432"
+  # (1) clean stop of a still-brew-managed GA postgres service. A now-DELETED keg won't be
+  # here (brew forgot it) — the lsof backstop below handles exactly that orphan.
+  if command -v brew >/dev/null 2>&1; then
+    local pg_formula
+    pg_formula="$(brew list --versions 2>/dev/null | sed -n 's/^\(postgresql@[0-9][0-9]*\).*/\1/p' | sort -t@ -k2 -rn | head -n1 || true)"
+    if [[ -n "${pg_formula}" ]]; then
+      if brew services stop "${pg_formula}" >/dev/null 2>&1; then
+        log "stopped brew service ${pg_formula}"
+      else
+        log "brew services stop ${pg_formula} non-zero (continuing)"
+      fi
+    fi
+  fi
+  # (2) backstop for the deleted-keg orphan: identify the postmaster owning the socket/:5432.
+  if ! command -v lsof >/dev/null 2>&1; then
+    log "lsof not found — cannot detect an orphaned postmaster on ${sock}"
+    return 0
+  fi
+  local pids
+  pids="$(lsof -t -- "${sock}" 2>/dev/null || true)"
+  [[ -z "${pids}" ]] && pids="$(lsof -ti tcp:5432 2>/dev/null || true)"
+  if [[ -z "${pids}" ]]; then
+    log "no orphaned postmaster bound to ${sock} / :5432"
+  else
+    local pid
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      # SIGINT = postgres "fast shutdown": rolls back active txns, then exits.
+      if kill -INT "${pid}" 2>/dev/null; then
+        log "sent SIGINT (fast shutdown) to orphaned postmaster pid ${pid}"
+      else
+        log "could not signal postmaster pid ${pid} (continuing)"
+      fi
+    done <<EOF
+${pids}
+EOF
+    # bounded poll until the socket frees (never an unbounded wait — that would be a new
+    # hang path). ~10s ceiling; break the instant the socket has no owner.
+    local waited=0
+    while [[ "${waited}" -lt 10 ]]; do
+      [[ -e "${sock}" ]] || break
+      [[ -z "$(lsof -t -- "${sock}" 2>/dev/null || true)" ]] && break
+      sleep 1
+      waited=$((waited + 1))
+    done
+  fi
+  # remove a stale socket file left behind by a killed/crashed postmaster so a reinstall's
+  # fresh cluster binds a clean socket.
+  if [[ -S "${sock}" ]]; then
+    if rm -f -- "${sock}" 2>/dev/null; then
+      log "removed stale postgres socket ${sock}"
+    fi
+  fi
+  return 0
+}
+
+# stop_detached_daemons — uninstall teardown of the orphans that survive `launchctl bootout`
+# + `claude plugin uninstall`: (a) the detached daemon tmux sessions, (b) lingering fakechat
+# channel procs (`claude --channels plugin:fakechat@...` + their `spawn-unix-fd.py` helpers)
+# that outlive the plugin uninstall, and (c) an orphaned postmaster still squatting :5432 / the
+# peer-auth socket. Runs BEFORE the DB drop so the daemons release their DB connections first.
+# GUARDED like unload_launchd_jobs (DRY_RUN report-only, is_sandbox_target skip — these are
+# per-USER host resources shared with the real user regardless of HOME). Best-effort +
+# loud-log each action; NEVER aborts uninstall (always returns 0).
+stop_detached_daemons() {
+  # (a) tmux sessions — shared helper carries its own DRY_RUN + sandbox + tmux-absent guards.
+  kill_daemon_tmux_sessions
+
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping fakechat proc reap + orphaned pg stop"
+    return 0
+  fi
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "sandbox target — fakechat procs + :5432 postmaster untouched"
+    return 0
+  fi
+
+  # (b) lingering fakechat channel procs + spawn helpers (outlive the plugin uninstall).
+  if command -v pkill >/dev/null 2>&1; then
+    if pkill -f 'claude --channels plugin:fakechat@' 2>/dev/null; then
+      log "reaped lingering fakechat channel procs (claude --channels plugin:fakechat@)"
+    else
+      log "no lingering fakechat channel procs to reap"
+    fi
+    if pkill -f 'spawn-unix-fd.py' 2>/dev/null; then
+      log "reaped fakechat spawn-unix-fd.py helper procs"
+    else
+      log "no fakechat spawn-unix-fd.py helper procs to reap"
+    fi
+  else
+    log "pkill not found — skipping fakechat proc reap"
+  fi
+
+  # (c) orphaned postmaster still bound to the peer-auth socket / :5432.
+  stop_orphaned_postgres
+  return 0
+}
+
 # drop_databases — uninstall teardown: pre-drop BACKUP, then DROP, of the GA
 # PostgreSQL databases (primary ${DB_NAME} + its shadow ${DB_NAME}_shadow) so a
 # reinstall recreates a fresh, consistent DB while the dropped data stays
@@ -2605,6 +2768,13 @@ run_install() {
   trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
   set -e
   [[ "${doctor_rc}" -eq 0 ]] || die "doctor preflight failed — aborting install"
+
+  # clear any STALE detached daemon tmux session before a fresh install: a
+  # `claude-{wiki,autoagent}-daemon` session left over from a prior install (it
+  # survives launchctl bootout + plugin uninstall) would otherwise linger with a
+  # broken config. Guarded (DRY_RUN + sandbox + tmux-absent); a reinstall's own
+  # daemons start clean afterward.
+  kill_daemon_tmux_sessions
 
   # config.toml render — MUST precede any render-monitor-env.sh invocation
   # (ordering contract: that script validates [paths].monitor_docs_html_root as
@@ -3055,6 +3225,12 @@ run_uninstall() {
   # STEP1 — stop + deregister the com.glass-atrium.* launchd jobs before the
   # symlinks they depend on are swept (bootout the daemons first).
   unload_launchd_jobs
+  # STEP1b — stop the DETACHED daemons launchctl bootout does NOT reach: the
+  # daemon tmux sessions (reparented to PID 1), lingering fakechat channel procs,
+  # and an orphaned postmaster squatting :5432 / the peer-auth socket. MUST run
+  # BEFORE the DB drop so the daemons release their DB connections first (and so a
+  # reinstall gets a clean socket back).
+  stop_detached_daemons
   # STEP2 — back up, then drop, the GA databases (connections now drained).
   # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips
   # that DB's drop (data preserved) — reinstall recreates a fresh, consistent DB.
