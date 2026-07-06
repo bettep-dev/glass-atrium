@@ -556,6 +556,21 @@ extract_launcher_fn() {
   [[ "${output}" -eq 0 ]]
 }
 
+# === STEP 1 — run_step pins the CAPTURED exec's stdin to /dev/null (P1 install-stall) ====
+
+@test "STEP1(static): run_step redirects the captured exec stdin from /dev/null in BOTH branches" {
+  local body
+  body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ -n "${body}" ]]
+  # install/panel branch: fd1+fd2 captured AND stdin pinned to EOF.
+  [[ "${body}" == *'{ "$@" </dev/null >"${STEP_LOG}" 2>&1; }'* ]]
+  # else (historical fd-2-only) branch: stdin pinned to EOF too.
+  [[ "${body}" == *'{ "$@" </dev/null 2>"${STEP_LOG}"; }'* ]]
+  # the OLD un-pinned captures are GONE (no branch execs with an inherited terminal stdin).
+  [[ "${body}" != *'{ "$@" >"${STEP_LOG}" 2>&1; }'* ]]
+  [[ "${body}" != *'{ "$@" 2>"${STEP_LOG}"; }'* ]]
+}
+
 # === BUG3 — fakechat/marketplace in-process tokens + background+poll+kill hang guard =====
 
 @test "BUG3: ga_cmd_fakechat_install emits the in-process function token ga_fakechat_install" {

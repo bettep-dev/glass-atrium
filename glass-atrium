@@ -1966,9 +1966,13 @@ run_step() {
   set +e
   trap - ERR
   if [[ -n "${install_mode}" ]]; then
-    { "$@" >"${STEP_LOG}" 2>&1; } # merge fd 1 + fd 2 so stdout flood is captured
+    # </dev/null: pin the CAPTURED exec's stdin to EOF so a hidden sub-tool prompt (brew/pip/
+    # claude/fakechat) fails fast (rc!=0, surfaced) instead of blocking invisibly forever. Every
+    # legitimate prompt reads <"${TTY}" / /dev/tty on a DIFFERENT fd outside this capture, so this
+    # never starves a real prompt — it only closes the invisible-hang path (P1 install-stall).
+    { "$@" </dev/null >"${STEP_LOG}" 2>&1; } # merge fd 1 + fd 2 so stdout flood is captured
   else
-    { "$@" 2>"${STEP_LOG}"; } # fd-2-only capture (historical scrolling model)
+    { "$@" </dev/null 2>"${STEP_LOG}"; } # fd-2-only capture (historical scrolling model)
   fi
   rc=$?
   stop_step_spinner # kill ONLY the spinner PID (synchronous capture needs no sink wait)
