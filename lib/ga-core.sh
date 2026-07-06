@@ -224,6 +224,7 @@ ga_init_env() {
     "PreToolUse	enforce-foreground-harness.sh	Agent"
     "PreToolUse	enforce-verification-gate.sh	Agent"
     "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
+    "PreToolUse	lint-workflow-template-literal.sh	Workflow"
     "PreToolUse	telemetry-activation.sh	Agent"
     "PreToolUse	validate-pre-write-raw.sh	Write"
     "PreToolUse	validate-prompt.sh	Write|Edit"

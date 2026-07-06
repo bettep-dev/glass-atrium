@@ -98,6 +98,36 @@ count_bound() {
   [[ "${output}" == *"skip (already wired): PreToolUse -> enforce-workflow-verify-stage.sh (matcher=Workflow)"* ]]
 }
 
+@test "second Workflow binding -> wired under PreToolUse with matcher Workflow (lint-workflow-template-literal)" {
+  # lint-workflow-template-literal.sh is the SECOND PreToolUse + Workflow-matcher
+  # binding — wire_hooks must upsert it as a distinct leaf alongside (not masking)
+  # enforce-workflow-verify-stage.sh under the shared matcher.
+  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]]
+  # exactly one occurrence, landed under PreToolUse with matcher "Workflow"
+  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
+  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/lint-workflow-template-literal.sh")) | .matcher' "${SETTINGS}"
+  [[ "${output}" == "Workflow" ]]
+  # command path is the repointed $HOME/.glass-atrium/hooks/<name> form
+  run jq -r '.hooks.PreToolUse[] | select(.hooks[].command | endswith("/lint-workflow-template-literal.sh")) | .hooks[].command' "${SETTINGS}"
+  [[ "${output}" == "${HOME}/.glass-atrium/hooks/lint-workflow-template-literal.sh" ]]
+  # both Workflow-matcher hooks coexist as independent leaves (no masking)
+  [[ "$(count_bound enforce-workflow-verify-stage.sh)" -eq 1 ]]
+}
+
+@test "second Workflow binding -> idempotent: re-run adds no second occurrence (lint-workflow-template-literal)" {
+  printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]]
+  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
+  # second run must skip it (already wired), no duplicate
+  run_wire_sandbox
+  [[ "${status}" -eq 0 ]]
+  [[ "$(count_bound lint-workflow-template-literal.sh)" -eq 1 ]]
+  [[ "${output}" == *"skip (already wired): PreToolUse -> lint-workflow-template-literal.sh (matcher=Workflow)"* ]]
+}
+
 @test "already-present binding -> NOT duplicated (idempotent re-run)" {
   # first run wires everything from a bare skeleton
   printf '%s\n' '{ "hooks": {} }' >"${SETTINGS}"

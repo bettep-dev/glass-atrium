@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "_doc_settings_json": "settings.json is DELIBERATELY ABSENT from .files — it is user-owned config the installer never symlink-deploys. On `install` (NOT `agents-only`, which skips it), wire_hooks performs an idempotent, timestamped-backup MERGE that adds ONLY the Atrium hook event-bindings below into ~/.claude/settings.json — it never deletes or overwrites user-owned keys, and re-running is a no-op once the bindings are present. Run `glass-atrium doctor` to surface any DORMANT (deployed-but-unwired) hook bindings. Required bindings the doctor checks (15 total, matcher-scoped — the same hook may bind under TWO matchers, each tracked independently): PreToolUse{enforce-delegation@Write|Edit, enforce-verification-gate@Agent, validate-secret-scan@Write|Edit, validate-secret-scan@Bash, validate-prompt@Write|Edit, advisory-spawn-cost@Agent, advisory-spawn-budget@Agent, advisory-context-budget@Agent, enforce-workflow-verify-stage@Workflow, advisory-subagent-budget@(no matcher)}; PostToolUse{validate-output@(no matcher), validate-tool-response@WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*, detect-secret-file-write@Bash}; SessionStart{validate-compliance-matrix}; Stop{cost-tracker}. Note validate-secret-scan binds under BOTH Write|Edit AND Bash (the Bash channel scans shell-command secret leaks).",
+  "_doc_settings_json": "settings.json is DELIBERATELY ABSENT from .files — it is user-owned config the installer never symlink-deploys. On `install` (NOT `agents-only`, which skips it), wire_hooks performs an idempotent, timestamped-backup MERGE that adds ONLY the Atrium hook event-bindings below into ~/.claude/settings.json — it never deletes or overwrites user-owned keys, and re-running is a no-op once the bindings are present. Run `glass-atrium doctor` to surface any DORMANT (deployed-but-unwired) hook bindings. Required bindings the doctor checks (16 total, matcher-scoped — the same hook may bind under TWO matchers, each tracked independently): PreToolUse{enforce-delegation@Write|Edit, enforce-verification-gate@Agent, validate-secret-scan@Write|Edit, validate-secret-scan@Bash, validate-prompt@Write|Edit, advisory-spawn-cost@Agent, advisory-spawn-budget@Agent, advisory-context-budget@Agent, enforce-workflow-verify-stage@Workflow, lint-workflow-template-literal@Workflow, advisory-subagent-budget@(no matcher)}; PostToolUse{validate-output@(no matcher), validate-tool-response@WebFetch|WebSearch|mcp__.*(fetch|get|read|search).*, detect-secret-file-write@Bash}; SessionStart{validate-compliance-matrix}; Stop{cost-tracker}. Note validate-secret-scan binds under BOTH Write|Edit AND Bash (the Bash channel scans shell-command secret leaks).",
   "files": [
     "agent-registry.json",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
@@ -84,6 +84,7 @@
     "hooks/lib/pricing_loader.py",
     "hooks/lib/style-ref-consts.sh",
     "hooks/lib/style_ref_match.py",
+    "hooks/lint-workflow-template-literal.sh",
     "hooks/post-edit-format.sh",
     "hooks/post-edit-outcome-sync.sh",
     "hooks/post-edit-typecheck.sh",
@@ -415,6 +416,7 @@
     "hooks/lib/pricing_loader.py": "c2efb513aeb0ec1e425a6c43b01d336880c144adb77a59b2a6121d257302a6a0",
     "hooks/lib/style-ref-consts.sh": "074224a8f7d6b3459a137bf68e18573d135f584cf3da88c21be9855215dd74d4",
     "hooks/lib/style_ref_match.py": "47fc8960edefaaa51d6977bc346f3b6c5bc6b1043981a15de51f5397d3e9f6d2",
+    "hooks/lint-workflow-template-literal.sh": "3da7fc57ad6e0b0d8ea24da2522b1fd2700d7953cb7cbdafda2de9d1b49c8f85",
     "hooks/post-edit-format.sh": "def8c3327ba6940c1ac2780b7281d5e3a5b3f97de53fdd98b2864f892c087c30",
     "hooks/post-edit-outcome-sync.sh": "21debd8961ee5b79f8f42b77f078ab9fcda938e1edd6e0b548861bd3a2420609",
     "hooks/post-edit-typecheck.sh": "6c6209c82ab7447f948c3826457670e6c4e9cea2f643266ad9a8392100db168c",
