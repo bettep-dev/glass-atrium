@@ -49,6 +49,16 @@ setup() {
   mkdir -p "${GAROOT}/lib" "${GAROOT}/scripts/lib" "${GAROOT}/skills/testkit"
   cp -p "${GA}/glass-atrium" "${GAROOT}/glass-atrium"
   cp -p "${GA}/lib/ga-core.sh" "${GAROOT}/lib/ga-core.sh"
+  # ga-core.sh is now a THIN LOADER over its 7 domain siblings; the launcher-exec
+  # `glass-atrium prune` path sources it, so the siblings must be present too.
+  cp -p "${GA}/lib/ga-env.sh" \
+    "${GA}/lib/ga-symlink.sh" \
+    "${GA}/lib/ga-config-hooks.sh" \
+    "${GA}/lib/ga-launchd.sh" \
+    "${GA}/lib/ga-db.sh" \
+    "${GA}/lib/ga-daemons.sh" \
+    "${GA}/lib/ga-doctor.sh" \
+    "${GAROOT}/lib/"
   cp -p "${GA}/lib/ga-deps.sh" "${GAROOT}/lib/ga-deps.sh"
   # ga_init_env hard-requires the E5 libs from <root>/scripts/lib (loud-fails
   # "E5 lib missing" otherwise) — copy the real trio into the sandbox engine.

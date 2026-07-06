@@ -36,6 +36,16 @@ setup() {
   # sandbox monitor/.env; the engine logic (not a thin entry point) is what these
   # bootstrap tests exercise.
   cp "${REAL_LIB}" "${GA_SBX}/lib/ga-core.sh"
+  # ga-core.sh is now a THIN LOADER that sources its 7 domain siblings; copy them
+  # alongside so the sandbox source resolves the full engine (absent -> loud-fail).
+  cp "${GA}/lib/ga-env.sh" \
+    "${GA}/lib/ga-symlink.sh" \
+    "${GA}/lib/ga-config-hooks.sh" \
+    "${GA}/lib/ga-launchd.sh" \
+    "${GA}/lib/ga-db.sh" \
+    "${GA}/lib/ga-daemons.sh" \
+    "${GA}/lib/ga-doctor.sh" \
+    "${GA_SBX}/lib/"
   # ga_init_env now HARD-requires the E5 update-system libs (atrium-config.sh /
   # apply-spine.sh / update-pause-flag.sh) under <GA_ROOT>/scripts/lib and die()s
   # ("E5 lib missing") when they are absent. Provision them into the sandbox so
