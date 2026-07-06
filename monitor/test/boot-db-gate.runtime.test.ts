@@ -27,11 +27,11 @@ const CONNECT_TIMEOUT_MS = (() => {
   return Number(m[1]);
 })();
 
-test("db.ts config value: connectionTimeoutMillis is a bounded positive (5000), not unset/0", () => {
+test("db.ts config value: connectionTimeoutMillis is a bounded positive (5000), not unset/0", { timeout: 5000 }, () => {
   assert.equal(CONNECT_TIMEOUT_MS, 5000, "the fix pins a 5s ceiling; 0/unset = unbounded connect");
 });
 
-test("pg connect to a NONEXISTENT /tmp socket rejects fast (well within the ceiling), never hangs", async () => {
+test("pg connect to a NONEXISTENT /tmp socket rejects fast (well within the ceiling), never hangs", { timeout: 15000 }, async () => {
   const port = 59431; // /tmp/.s.PGSQL.59431 — no such socket file exists
   const sock = `/tmp/.s.PGSQL.${port}`;
   if (existsSync(sock)) unlinkSync(sock);
@@ -44,18 +44,23 @@ test("pg connect to a NONEXISTENT /tmp socket rejects fast (well within the ceil
   });
   const t0 = Date.now();
   let rejected = false;
+  // try/finally: the pool MUST be closed on EVERY path (including an unexpected throw), or
+  // its handles keep the node:test event loop alive and the process never exits on its own.
   try {
-    await pool.query("SELECT 1");
-  } catch {
-    rejected = true;
+    try {
+      await pool.query("SELECT 1");
+    } catch {
+      rejected = true;
+    }
+    const elapsed = Date.now() - t0;
+    assert.ok(rejected, "a missing socket must reject, not resolve");
+    assert.ok(
+      elapsed < CONNECT_TIMEOUT_MS,
+      `ENOENT should reject fast (${elapsed}ms), well under the ${CONNECT_TIMEOUT_MS}ms ceiling`,
+    );
+  } finally {
+    await pool.end().catch(() => {});
   }
-  const elapsed = Date.now() - t0;
-  await pool.end().catch(() => {});
-  assert.ok(rejected, "a missing socket must reject, not resolve");
-  assert.ok(
-    elapsed < CONNECT_TIMEOUT_MS,
-    `ENOENT should reject fast (${elapsed}ms), well under the ${CONNECT_TIMEOUT_MS}ms ceiling`,
-  );
 });
 
 test("pg connect to a STALLED socket (accepts, never speaks) is BOUNDED by the ceiling (no infinite hang)", { timeout: 20000 }, async () => {
@@ -81,22 +86,32 @@ test("pg connect to a STALLED socket (accepts, never speaks) is BOUNDED by the c
   });
   const t0 = Date.now();
   let err: Error | null = null;
+  // try/finally so EVERY handle (pool + the accepted stalled sockets + the listening server)
+  // is released on any path. Root cause of the pre-fix leak: the teardown was straight-line
+  // (an early throw skipped it) AND `server.close()` was fire-and-forget — un-awaited, so the
+  // listening handle's release was not guaranteed before the file's next test, keeping the
+  // node:test event loop alive and preventing a clean self-exit.
   try {
-    await pool.query("SELECT 1");
-  } catch (e) {
-    err = e as Error;
+    try {
+      await pool.query("SELECT 1");
+    } catch (e) {
+      err = e as Error;
+    }
+    const elapsed = Date.now() - t0;
+    assert.ok(err, "the stalled connect must reject (timeout), not resolve or hang");
+    // BOUNDED: rejects at ~ceiling, not immediately (proves the timeout is what cut it) and not
+    // unboundedly (the whole point of the fix). Generous window to absorb CI jitter.
+    assert.ok(
+      elapsed >= CONNECT_TIMEOUT_MS - 1500 && elapsed <= CONNECT_TIMEOUT_MS + 4000,
+      `stalled connect must be bounded by ~${CONNECT_TIMEOUT_MS}ms (got ${elapsed}ms) — not 0, not ∞`,
+    );
+  } finally {
+    await pool.end().catch(() => {});
+    // destroy the still-open accepted sockets FIRST — server.close() waits on open connections,
+    // so closing before destroy would itself hang on the stalled socket.
+    for (const s of accepted) s.destroy();
+    // AWAIT the close so the listening handle is actually released before the test returns.
+    await new Promise<void>((res) => server.close(() => res()));
+    if (existsSync(sockPath)) unlinkSync(sockPath);
   }
-  const elapsed = Date.now() - t0;
-  await pool.end().catch(() => {});
-  for (const s of accepted) s.destroy();
-  server.close();
-  if (existsSync(sockPath)) unlinkSync(sockPath);
-
-  assert.ok(err, "the stalled connect must reject (timeout), not resolve or hang");
-  // BOUNDED: rejects at ~ceiling, not immediately (proves the timeout is what cut it) and not
-  // unboundedly (the whole point of the fix). Generous window to absorb CI jitter.
-  assert.ok(
-    elapsed >= CONNECT_TIMEOUT_MS - 1500 && elapsed <= CONNECT_TIMEOUT_MS + 4000,
-    `stalled connect must be bounded by ~${CONNECT_TIMEOUT_MS}ms (got ${elapsed}ms) — not 0, not ∞`,
-  );
 });
