@@ -363,18 +363,45 @@ ga_detect_bun() {
   ga_detect_cli_tool bun
 }
 
+# ga_detect_sqlite_fts5 — sqlite3 CAPABILITY verdict, gated on the FTS5 extension (NOT
+# bare binary presence): the wiki depends on sqlite3 + FTS5 full-text search, and a
+# stock-macOS sqlite3 can ship WITHOUT the FTS5 module compiled in. Verdict:
+#   absent        — no sqlite3 binary at all
+#   wrong-version — sqlite3 present but the FTS5 module is not compiled in
+#   present       — sqlite3 present AND FTS5 is available
+# The probe is a CHEAP, read-only, in-memory capability test: create a throwaway FTS5
+# virtual table in a `:memory:` database (no file, no disk mutation, no server). It
+# exits 0 only when FTS5 is compiled in. Both non-present verdicts route the brew
+# `sqlite` formula (built WITH FTS5) into the missing-set; a system sqlite3 that already
+# has FTS5 is left untouched (no needless brew install over a working capability).
+ga_detect_sqlite_fts5() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    printf 'absent\n'
+    return 0
+  fi
+  # in-memory FTS5 probe — no file, no mutation; exit 0 only when FTS5 is compiled in.
+  if sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(x)' >/dev/null 2>&1; then
+    printf 'present\n'
+    return 0
+  fi
+  # sqlite3 exists but lacks the FTS5 module — the wiki needs it, so the FTS5-enabled
+  # brew formula is the fix. GUIDE the capability failure via the same missing-set path
+  # a version gate uses (add on wrong-version), never a silent 'present' that would skip.
+  printf 'wrong-version\n'
+}
+
 # GA_BREW_CLI_TOOLS — the CLI-tools set the brew batch may install. Each entry maps
 # a probe COMMAND to its brew FORMULA via the "cmd:formula" form (most are 1:1; the
 # split lets a future cmd!=formula case stay declarative). bash 3.2: plain indexed
-# array (NO associative array). postgresql@17 / node@24 / bun are version-gated
-# above and handled separately; this list is the genuinely-missing utility set.
+# array (NO associative array). postgresql@17 / node@24 / bun are version-gated and
+# sqlite is FTS5-CAPABILITY-gated (ga_detect_sqlite_fts5) above — all handled
+# separately; this list is the genuinely-missing bare-presence utility set.
 GA_BREW_CLI_TOOLS=(
   "tmux:tmux"
   "jq:jq"
   "git:git"
   "curl:curl"
   "lsof:lsof"
-  "sqlite3:sqlite"
   "rsync:rsync"
 )
 
@@ -407,6 +434,15 @@ ga_brew_missing_set() {
   # bun — add when absent.
   if [[ "$(ga_detect_bun)" == "absent" ]]; then
     missing="${missing}bun"$'\n'
+  fi
+
+  # sqlite — FTS5-CAPABILITY gate (NOT bare presence): add the brew formula (built WITH
+  # FTS5) on absent OR wrong-version (sqlite3 present but no FTS5 module). A system
+  # sqlite3 that already HAS FTS5 is 'present' and NEVER added — do not silently force
+  # brew sqlite over a working capability. The wiki requires sqlite3 + FTS5.
+  verdict="$(ga_detect_sqlite_fts5)"
+  if [[ "${verdict}" == "absent" || "${verdict}" == "wrong-version" ]]; then
+    missing="${missing}sqlite"$'\n'
   fi
 
   # CLI-tools set — add each genuinely-missing utility by its brew formula name.
