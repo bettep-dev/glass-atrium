@@ -2394,31 +2394,34 @@ kill_daemon_tmux_sessions() {
   return 0
 }
 
-# stop_orphaned_postgres — stop a postgres server still bound to :5432 / owning the peer-auth
-# socket after `brew services stop` — the confirmed squatter: a postmaster from a now-DELETED
-# keg (files gone, process alive PPID 1) that keeps the socket and, having lost its tzdata,
-# breaks the monitor's UTC-gated pool on the next install. Two layers: (1) best-effort
-# `brew services stop postgresql@N` for a still-brew-managed service (clean path); (2) backstop
-# for the deleted-keg orphan brew has forgotten — lsof the socket/:5432, SIGINT (postgres FAST
-# shutdown), poll the socket free (bounded), then remove a stale socket file. GRACEFUL — every
-# missing tool / failed signal is a loud-log skip, never fatal; always returns 0. Callers must
-# have already passed the DRY_RUN + sandbox guards (stop_detached_daemons does).
-stop_orphaned_postgres() {
+# clear_unmanaged_pg_orphan — INSTALL-scoped clear of a GENUINE unmanaged postgres orphan: a
+# postmaster from a now-DELETED keg (files gone, process alive PPID 1) that keeps the :5432 /
+# peer-auth socket and, having lost its tzdata, REJECTS `SET timezone='UTC'` — breaking the
+# monitor's UTC-gated pool. Called ONLY from preflight_pg_utc_guard's unmanaged-orphan branch,
+# reached after ga_detect_postgres_utc=='broken' AND a brew RESTART did not clear it — so a
+# HEALTHY server (ok / down / absent) is never entered here and is NEVER touched. Two layers, NO
+# brew-service stop (never stop a brew-managed server): (layer-2) lsof the socket/:5432, SIGINT
+# (postgres FAST shutdown), poll the socket free (bounded); (layer-3) remove the stale socket
+# file so a fresh install binds clean. Carries its OWN DRY_RUN + sandbox guards (it no longer
+# sits behind stop_detached_daemons' guards) — a skipped clear leaves the orphan in place, so
+# the caller's post-clear re-verify stays 'broken' and falls through to the loud-fail (never a
+# false 'cleared'). GRACEFUL — every missing tool / failed signal is a loud-log skip, never
+# fatal; always returns 0.
+clear_unmanaged_pg_orphan() {
   local sock="${PG_SOCKET}/.s.PGSQL.5432"
-  # (1) clean stop of a still-brew-managed GA postgres service. A now-DELETED keg won't be
-  # here (brew forgot it) — the lsof backstop below handles exactly that orphan.
-  if command -v brew >/dev/null 2>&1; then
-    local pg_formula
-    pg_formula="$(brew list --versions 2>/dev/null | sed -n 's/^\(postgresql@[0-9][0-9]*\).*/\1/p' | sort -t@ -k2 -rn | head -n1 || true)"
-    if [[ -n "${pg_formula}" ]]; then
-      if brew services stop "${pg_formula}" >/dev/null 2>&1; then
-        log "stopped brew service ${pg_formula}"
-      else
-        log "brew services stop ${pg_formula} non-zero (continuing)"
-      fi
-    fi
+  # This helper now runs install-scoped (from preflight_pg_utc_guard), NOT behind
+  # stop_detached_daemons' guards — so it carries its OWN DRY_RUN + sandbox guards. A skipped
+  # clear leaves the orphan, so the caller's re-verify stays 'broken' → correct loud-fail.
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping unmanaged pg orphan clear on ${sock}"
+    return 0
   fi
-  # (2) backstop for the deleted-keg orphan: identify the postmaster owning the socket/:5432.
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" ]]; then
+    log "sandbox target — unmanaged pg orphan on ${sock} left untouched"
+    return 0
+  fi
+  # (layer-2) identify the postmaster owning the socket/:5432 and SIGINT it (fast shutdown).
   if ! command -v lsof >/dev/null 2>&1; then
     log "lsof not found — cannot detect an orphaned postmaster on ${sock}"
     return 0
@@ -2451,8 +2454,8 @@ EOF
       waited=$((waited + 1))
     done
   fi
-  # remove a stale socket file left behind by a killed/crashed postmaster so a reinstall's
-  # fresh cluster binds a clean socket.
+  # (layer-3) remove a stale socket file left behind by the killed postmaster so a fresh
+  # install's cluster binds a clean socket.
   if [[ -S "${sock}" ]]; then
     if rm -f -- "${sock}" 2>/dev/null; then
       log "removed stale postgres socket ${sock}"
@@ -2462,24 +2465,26 @@ EOF
 }
 
 # stop_detached_daemons — uninstall teardown of the orphans that survive `launchctl bootout`
-# + `claude plugin uninstall`: (a) the detached daemon tmux sessions, (b) lingering fakechat
+# + `claude plugin uninstall`: (a) the detached daemon tmux sessions and (b) lingering fakechat
 # channel procs (`claude --channels plugin:fakechat@...` + their `spawn-unix-fd.py` helpers)
-# that outlive the plugin uninstall, and (c) an orphaned postmaster still squatting :5432 / the
-# peer-auth socket. Runs BEFORE the DB drop so the daemons release their DB connections first.
-# GUARDED like unload_launchd_jobs (DRY_RUN report-only, is_sandbox_target skip — these are
-# per-USER host resources shared with the real user regardless of HOME). Best-effort +
-# loud-log each action; NEVER aborts uninstall (always returns 0).
+# that outlive the plugin uninstall. Runs BEFORE the DB drop so the daemons release their DB
+# connections first. The postgres SERVER + its /tmp peer-auth socket are LEFT ALONE — uninstall
+# must never stop a server it did not start (a healthy brew server + its socket are the user's,
+# not GA's to tear down; the orphan clear lives install-side in preflight_pg_utc_guard, entered
+# only for a genuinely broken/unmanaged squatter). GUARDED like unload_launchd_jobs (DRY_RUN
+# report-only, is_sandbox_target skip — these are per-USER host resources shared with the real
+# user regardless of HOME). Best-effort + loud-log each action; NEVER aborts uninstall (returns 0).
 stop_detached_daemons() {
   # (a) tmux sessions — shared helper carries its own DRY_RUN + sandbox + tmux-absent guards.
   kill_daemon_tmux_sessions
 
   if "${DRY_RUN}"; then
-    log "dry-run: skipping fakechat proc reap + orphaned pg stop"
+    log "dry-run: skipping fakechat proc reap"
     return 0
   fi
   # shellcheck disable=SC2310,SC2311,SC2312
   if [[ "$(is_sandbox_target)" == "yes" ]]; then
-    log "sandbox target — fakechat procs + :5432 postmaster untouched"
+    log "sandbox target — fakechat procs untouched"
     return 0
   fi
 
@@ -2498,9 +2503,8 @@ stop_detached_daemons() {
   else
     log "pkill not found — skipping fakechat proc reap"
   fi
-
-  # (c) orphaned postmaster still bound to the peer-auth socket / :5432.
-  stop_orphaned_postgres
+  # The postgres server + its /tmp peer-auth socket are intentionally NOT touched here — a
+  # healthy server is the user's, and the genuine-orphan clear is install-scoped (preflight).
   return 0
 }
 
@@ -3226,10 +3230,9 @@ run_uninstall() {
   # symlinks they depend on are swept (bootout the daemons first).
   unload_launchd_jobs
   # STEP1b — stop the DETACHED daemons launchctl bootout does NOT reach: the
-  # daemon tmux sessions (reparented to PID 1), lingering fakechat channel procs,
-  # and an orphaned postmaster squatting :5432 / the peer-auth socket. MUST run
-  # BEFORE the DB drop so the daemons release their DB connections first (and so a
-  # reinstall gets a clean socket back).
+  # daemon tmux sessions (reparented to PID 1) and lingering fakechat channel
+  # procs. MUST run BEFORE the DB drop so the daemons release their DB connections
+  # first. The postgres server + its socket are left untouched (never GA's to stop).
   stop_detached_daemons
   # STEP2 — back up, then drop, the GA databases (connections now drained).
   # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips

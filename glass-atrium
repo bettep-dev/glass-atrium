@@ -3355,9 +3355,21 @@ preflight_pg_utc_guard() {
       return 0
     fi
   fi
-  # unmanaged orphan, OR a brew restart that did not clear it → loud-fail with remediation.
+  # unmanaged orphan, OR a brew restart that did not clear it → attempt an install-scoped clear
+  # of the genuine orphan (SIGINT + stale-socket removal), then re-verify. A freshly-cleared
+  # socket reads 'down' (not 'ok'), so the success check is `!= broken` (mirrors the brew-restart
+  # re-verify above), NEVER `== ok` — else a genuinely-cleared orphan would fall to the loud-fail.
+  # A DRY_RUN / sandbox clear is a no-op inside the helper, so the orphan stays 'broken' here and
+  # correctly reaches the loud-fail below (never a false 'cleared').
+  preflight_line "$(c "${C_DIM}" "[info]") no brew-managed keg (or restart did not clear it) — clearing the unmanaged orphan on the socket."
+  clear_unmanaged_pg_orphan
+  if [[ "$(ga_detect_postgres_utc)" != "broken" ]]; then
+    preflight_line "$(c "${C_OK}" "[ok]") the unmanaged orphan was cleared (:5432 socket freed) — continuing."
+    return 0
+  fi
+  # the clear did not free the socket (unfreeable, OR skipped under DRY_RUN/sandbox) → loud-fail.
   preflight_line "$(c "${C_ALERT}" "[fail]") a foreign/broken postgres owns ${PG_SOCKET}/.s.PGSQL.5432 and rejects SET timezone='UTC' —"
-  preflight_line "        it is not a brew-managed target GA can restart. Stop it, then re-run the installer:"
+  preflight_line "        it could not be cleared automatically. Stop it, then re-run the installer:"
   preflight_line "          1) find it:   lsof ${PG_SOCKET}/.s.PGSQL.5432    (or: lsof -ti tcp:5432)"
   preflight_line "          2) stop it:   kill -INT <pid>    (fast shutdown; likely an orphan of a deleted keg)"
   preflight_line "          3) re-run once :5432 is free."
