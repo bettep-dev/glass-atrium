@@ -20,6 +20,9 @@ const POOL_WARM_CONFIG = {
   min: 1,
   // socket-level liveness — Unix socket 에선 무해, TCP 전환 대비 유지
   keepAlive: true,
+  // connect timeout 5s — unset(0) = pg default = 무기한 connect. still-booting cluster 에 붙는
+  // boot-time assert/prewarm 이 무기한 hang 하던 step-12 원인 → bounded 로 5s 내 throw → fatal exit → respawn
+  connectionTimeoutMillis: 5000,
 } as const;
 
 /** Returns the lazily-initialized Prisma client (one per process). */
@@ -45,7 +48,8 @@ export function getPrisma(): PrismaClient {
 
 /**
  * Startup-time assertion — verifies the pg session is actually UTC.
- * Fatal if not UTC — blocks silent drift. main.ts calls it right after server.listen().
+ * Fatal if not UTC — blocks silent drift. main.ts calls it BEFORE server.listen() as a DB gate,
+ * so an unavailable DB exits (1) before binding :7842 (connectionTimeoutMillis bounds the connect).
  */
 export async function assertSessionTimezoneIsUtc(): Promise<void> {
   const prisma = getPrisma();

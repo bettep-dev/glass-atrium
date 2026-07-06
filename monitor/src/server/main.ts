@@ -92,10 +92,11 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
-  await app.listen({ host: HOST, port: PORT });
-  app.log.info(`listening on http://${HOST}:${PORT}`);
-
-  // pg session timezone UTC 검증 (Pool startup options 적용 확인) · UTC 아니면 fatal exit → launchd restart → drift 무음 지속 차단
+  // pg session timezone UTC 검증 (Pool startup options 적용 확인) · app.listen 이전에 실행 = DB gate:
+  // DB unavailable 이면 :7842 bind 이전에 fatal exit(1) → launchd respawn (무기한 hang 하며 포트 점유 X).
+  // db.ts connectionTimeoutMillis:5000 이 이 pre-listen connect 를 5s 로 bound → bootstrap early-liveness
+  // probe (sleep 1 + kill -0)는 bounded connect 동안 살아있어 통과; DB-down boot 은 exit(1)→respawn (wedge 아님).
+  // UTC 아니면도 fatal exit → launchd restart → drift 무음 지속 차단.
   try {
     await assertSessionTimezoneIsUtc();
     app.log.info("pg session timezone verification passed (UTC)");
@@ -104,10 +105,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // boot-stage pool pre-warm — cold-start latency 제거
+  // boot-stage pool pre-warm — cold-start latency 제거 (app.listen 이전, DB gate 통과 직후)
   // db.ts idleTimeoutMillis:0 + min:1 은 reactive only (close 방지)이고 커넥션 미생성 → 여기서 첫 커넥션 생성 → min:1 floor 유지 대상 확보
   // Prisma 7 client 는 첫 실행 시 per-query-shape JS compile 지불 → boot self-call 로 미리 컴파일 → 실제 첫 요청은 compile 비용 미지불
   await prewarmPool(app);
+
+  // DB gate + pre-warm 통과 후에만 포트 bind — DB unavailable 은 여기 도달 전 exit
+  await app.listen({ host: HOST, port: PORT });
+  app.log.info(`listening on http://${HOST}:${PORT}`);
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를
   // 부팅 시점에 loud 하게 표면화 (/api/health browser 필드 + health 화면 카드)
