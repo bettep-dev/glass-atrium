@@ -50,7 +50,7 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # intra-session growth). Cap chosen >> both downstream consumers' decision thresholds so the
 # prune never alters a verdict: the gate's read is presence-only (grep -qx qa-code-reviewer) and
 # every reviewer line is retained on prune; advisory-spawn-budget.sh's runaway threshold is ~30
-# (≈6x MAX_CHILDREN), far below this cap, so a count clamped at the cap still trips it correctly.
+# (a lifetime-cumulative runaway anchor), far below this cap, so a count clamped at the cap still trips it correctly.
 readonly DEFAULT_MARKER_LINE_CAP=500
 marker_line_cap="${SESSION_SPAWN_MARKER_CAP:-${DEFAULT_MARKER_LINE_CAP}}"
 # Non-integer / zero override → default (fail-safe: a bad cap must never disable the marker).

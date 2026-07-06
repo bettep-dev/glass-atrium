@@ -2,7 +2,7 @@
 # advisory-spawn-budget.sh — PreToolUse(Agent) cumulative-spawn-count advisory hook.
 #
 # Fires a non-blocking advisory once a session's CUMULATIVE spawn count crosses a conservative
-# threshold, reminding the orchestrator of the MAX_CHILDREN=5 cost-discipline budget when a
+# threshold, reminding the orchestrator of the cumulative-spawn cost-discipline safety net when a
 # session fans out far past it.
 #
 # HONEST FRAMING — what this measures and what it CANNOT:
@@ -15,7 +15,7 @@
 #   is therefore an explicit Non-Goal. This hook is ADVISORY ONLY and NEVER blocks.
 #
 #   The cumulative count is a coarse proxy: a long, healthy multi-wave session legitimately spawns
-#   many agents sequentially. The threshold is set high enough (≈6× MAX_CHILDREN) to stay quiet on
+#   many agents sequentially. The threshold is set high enough (≈30 cumulative, see TUNE below) to stay quiet on
 #   normal sequential-wave work and only speak up on a runaway fan-out.
 #
 # Manual-path only — the ultracode/Workflow engine's agent() spawn does not fire PreToolUse(Agent),
@@ -52,11 +52,13 @@ spawn_dir="${SESSION_SPAWNS_DIR:-${DEFAULT_SPAWN_DIR}}"
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# TUNE: MAX_CHILDREN=5 is the CONCURRENT cost-discipline budget (orchestrator-role.md Spawn Budget).
-# Cumulative spawns naturally exceed 5 across sequential waves — a healthy multi-wave session was
-# observed at ~20 cumulative. The cost concern is a RUNAWAY fan-out, so the threshold sits at ≈6×
-# MAX_CHILDREN = 30: above the observed-healthy ~20, below the empirically-anchored 40-52 truncation
-# range (orchestrator-role.md Delegation-size discipline HARD SECONDARY trigger). Env-overridable
+# TUNE: concurrency is bounded by the Workflow engine's runtime self-cap (core-derived, per-machine;
+# orchestrator-role.md Spawn Budget) — NOT by a fixed per-orchestrator number. This advisory is a
+# SEPARATE, lifetime-CUMULATIVE runaway backstop, so it keeps an ABSOLUTE threshold. Cumulative
+# spawns naturally climb across sequential waves — a healthy multi-wave session was observed at ~20
+# cumulative. The cost concern is a RUNAWAY fan-out, so the threshold sits at 30: above the
+# observed-healthy ~20, below the empirically-anchored 40-52 truncation range (orchestrator-role.md
+# Delegation-size discipline HARD SECONDARY trigger). Env-overridable
 # (SPAWN_BUDGET_ADVISORY_THRESHOLD) for recalibration as session-spawn percentiles accumulate.
 readonly DEFAULT_THRESHOLD=30
 threshold="${SPAWN_BUDGET_ADVISORY_THRESHOLD:-${DEFAULT_THRESHOLD}}"
@@ -117,7 +119,7 @@ if ((spawn_count <= threshold)); then
 fi
 
 # 6. STDERR advisory fire (no stdout JSON · not a block · exit 0).
-reason="Spawn-budget advisory: this session has cumulative ${spawn_count} agent spawns, past the ${threshold} runaway-fan-out threshold (≈6x the MAX_CHILDREN=5 concurrent cost-discipline budget, orchestrator-role.md Spawn Budget). Consider sequential waves over parallel overflow, and one-budget-sized delegations over many tiny spawns (each spawn re-tokenizes system prompt + tool schemas). Non-blocking — the spawn proceeds. NOTE: this is CUMULATIVE lifetime spawns, NOT concurrent children or chain depth (the PreToolUse envelope cannot provide those)."
+reason="Spawn-budget advisory: this session has cumulative ${spawn_count} agent spawns, past the ${threshold} runaway-fan-out threshold (a lifetime-cumulative safety net; concurrency itself is bounded by the Workflow engine's runtime self-cap, not a fixed number — orchestrator-role.md Spawn Budget). Consider sequential waves over parallel overflow, and one-budget-sized delegations over many tiny spawns (each spawn re-tokenizes system prompt + tool schemas). Non-blocking — the spawn proceeds. NOTE: this is CUMULATIVE lifetime spawns, NOT concurrent children or chain depth (the PreToolUse envelope cannot provide those)."
 printf '[agent-spawn-budget-advisory] %s\n' "${reason}" >&2
 
 exit 0
