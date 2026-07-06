@@ -2076,7 +2076,7 @@ bootstrap_health_gate() {
   # precondition (loud-fail): a pre-existing listener on the gate's own port (e.g.
   # an already-loaded launchd monitor) would answer curl with 200 from the STALE
   # instance, masking the freshly-built dist/. Refuse to start the gate in that case.
-  if curl -s -o /dev/null --fail "http://127.0.0.1:${port}/api/health" 2>/dev/null; then
+  if curl -s -o /dev/null --fail --connect-timeout 2 --max-time 5 "http://127.0.0.1:${port}/api/health" 2>/dev/null; then
     die "port ${port} already serving /api/health (launchd monitor up?) — stop it (launchctl bootout gui/${UID}/com.glass-atrium.monitor) before the bootstrap gate, else the gate validates the stale instance, not the rebuilt dist/"
   fi
 
@@ -2099,15 +2099,30 @@ bootstrap_health_gate() {
     exit "${BOOTSTRAP_EXIT_HEALTH}"
   fi
 
-  # poll loop — break on the first HTTP 200. set -e safe: curl is in a condition.
-  local http_code="" elapsed=0
+  # poll loop — break on the first HTTP 200. set -e safe: curl is in a condition. The response
+  # BODY is captured too (not -o /dev/null): /api/health ALWAYS returns 200 (degraded → db:"closed"
+  # on a DB failure), so the db-field gate below needs the body, not just the status. `-w
+  # '\n%{http_code}'` appends the code on its own trailing line (the health JSON is single-line),
+  # so the last line is the status + everything before it is the body. --connect-timeout/--max-time
+  # bound each probe so a still-booting monitor cannot wedge the poll.
+  local http_code="" body="" resp="" elapsed=0
   while [[ "${elapsed}" -lt "${BOOTSTRAP_HEALTH_WINDOW_SECS}" ]]; do
-    http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+    resp="$(curl -s --connect-timeout 2 --max-time 5 -w '\n%{http_code}' \
       "http://127.0.0.1:${port}/api/health" 2>/dev/null || true)"
+    http_code="$(printf '%s\n' "${resp}" | tail -n1)"
+    body="$(printf '%s\n' "${resp}" | sed '$d')"
     [[ "${http_code}" == "200" ]] && break
     sleep 1
     elapsed=$((elapsed + 1))
   done
+
+  # db-field gate: an http-code-only PASS would FALSE-PASS a DB-down monitor (health is 200 even
+  # when degraded). Require the body's db field to be "open" (tolerate an optional space after ':').
+  local db_open="no"
+  case "${body}" in
+    *'"db":"open"'* | *'"db": "open"'*) db_open="yes" ;;
+    *) db_open="no" ;;
+  esac
 
   # bind the verdict to the freshly-built child: capture WHILE the port is still
   # bound (before the kill block frees it). lsof -ti tcp:<port> lists the listener
@@ -2140,14 +2155,23 @@ bootstrap_health_gate() {
     wait "${mon_pid}" 2>/dev/null || true
   fi
 
-  if [[ "${http_code}" == "200" && "${listener_ok}" == "yes" ]]; then
-    log "== bootstrap: monitor health gate PASS (/api/health 200 in ${elapsed}s, port ${port}, listener=pid ${mon_pid}) =="
+  if [[ "${http_code}" == "200" && "${listener_ok}" == "yes" && "${db_open}" == "yes" ]]; then
+    log "== bootstrap: monitor health gate PASS (/api/health 200 + db:open in ${elapsed}s, port ${port}, listener=pid ${mon_pid}) =="
     if "${LOAD_LAUNCHD}"; then
       log "== bootstrap: health gate passed — proceeding to --load-launchd (loading the 8 launchd jobs) =="
     else
       log "== bootstrap COMPLETE — load launchd jobs manually (review-first): docs/INSTALL.md §7, or re-run with --load-launchd =="
     fi
     return 0
+  fi
+  # 200 from OUR freshly-built listener but the DB is unavailable (db:"closed" / degraded) — a
+  # DISTINCT loud-fail (not the generic no-200 tail): the monitor is up, PostgreSQL is not.
+  if [[ "${http_code}" == "200" && "${listener_ok}" == "yes" && "${db_open}" != "yes" ]]; then
+    printf 'FATAL: monitor health gate FAILED — /api/health 200 on port %s but db is not "open" (monitor up, DB unavailable) — start/repair PostgreSQL, then re-run\n' \
+      "${port}" >&2
+    log "  monitor output (last 20 lines of ${GATE_LOG}):"
+    tail -n 20 -- "${GATE_LOG}" >&2 || true
+    exit "${BOOTSTRAP_EXIT_HEALTH}"
   fi
   if [[ "${http_code}" == "200" && "${listener_ok}" != "yes" ]]; then
     printf 'FATAL: /api/health returned 200 on port %s but the gate child (pid %s) was NOT the listener — a stale monitor (launchd?) answered, the freshly-built dist/ is unverified\n' \
