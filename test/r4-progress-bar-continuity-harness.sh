@@ -178,6 +178,7 @@ run_path() {
   _seq_reset
   STEP_INDEX=""
   STEP_TOTAL=""
+  STEP_INDEX_BASE="" # 4a: preflight is phase 1 (no carried offset) — start each run with a clean base
   ENGAGE_CALLS=0
   "${pathfn}" </dev/null || rc=$?
   set +e
@@ -337,6 +338,171 @@ rc=$?
 printf '  all-present boxed rc=%s engage_calls=%s\n' "${rc}" "${ENGAGE_CALLS}"
 assert_eq "all-present boxed returns 0" "0" "${rc}"
 assert_eq "no enter_run_state engage when nothing runs (box not flashed)" "0" "${ENGAGE_CALLS}"
+
+echo ""
+echo "============================================================================"
+echo "(R4-4) ONE continuous index across the preflight->install run_plan handoff (4a)"
+echo "============================================================================"
+# The load-bearing 4a proof: drive the boxed preflight (fresh bare-Mac, framed steps run), then drive
+# the install run_plan and PROVE its DISPLAYED index continues at base+1..base+n (never resets to 1).
+# STEP_INDEX_BASE carries the preflight FINAL clamped index across the handoff; build_run_bar renders
+# the OFFSET index/total. We record the DISPLAY (offset) pair by wrapping build_progress_bar (the SoT
+# both build_run_bar callers funnel through), so the recorded values ARE what the user would see.
+
+# reset to the fresh bare-Mac scenario (R4-3 mutated the SC_* detect verdicts to all-present)
+SC_MISSING="postgresql@18
+node@24
+bun
+sqlite"
+SC_HOMEBREW="absent"
+SC_PG="present-but-down"
+SC_ROLE="absent"
+SC_KEG=""
+SC_CLAUDE="absent"
+SC_AUTH="present"
+SC_FAKECHAT="absent"
+SC_MARKET="no"
+SC_PYTHON="absent"
+SC_PG_UTC="down"
+SC_PG_INIT="no"
+PREFLIGHT_SUMMARY="scripted-auto-work"
+
+run_path _run_dependency_preflight_boxed
+rc=$?
+seq="$(_seq_dump)"
+# the LAST preflight render's idx is the real preflight step count carried into the base
+last_pf_idx=""
+while IFS=' ' read -r i _t _f _b _rest; do
+  [[ -z "${i}" ]] && continue
+  last_pf_idx="${i}"
+done <<<"${seq}"
+base_after="${STEP_INDEX_BASE:-}"
+printf '  boxed preflight rc=%s  last preflight idx=%s  STEP_INDEX_BASE after handoff=%s\n' \
+  "${rc}" "${last_pf_idx}" "${base_after}"
+assert_eq "boxed preflight (fresh) returns 0" "0" "${rc}"
+assert_eq "handoff CARRIES the preflight FINAL clamped index into STEP_INDEX_BASE" "${last_pf_idx}" "${base_after}"
+if [[ "${base_after}" =~ ^[0-9]+$ && "${base_after}" -ge 1 ]]; then
+  pass "carried base is a positive integer (preflight steps ran): ${base_after}"
+else
+  fail "carried base should be a positive integer, got [${base_after}]"
+fi
+
+# record the DISPLAY (offset) index/total that build_run_bar feeds build_progress_bar per step.
+R4_DISP="$(mktemp "${TMPDIR:-/tmp}/ga-r4-disp.XXXXXX")"
+build_progress_bar() { printf '%s %s\n' "$1" "$2" >>"${R4_DISP}"; } # capture DISPLAY i/n (offset applied)
+
+# drive the install run_plan (panel mode) exactly as dispatch does after the handoff — base carries.
+set +e
+trap - ERR
+: >"${R4_DISP}"
+STEP_LABEL=("s1" "s2" "s3")
+STEP_LABEL_ACTIVE=("s1" "s2" "s3")
+STEP_FN=("rec_ok" "rec_ok" "rec_ok")
+STEP_SUPPRESS=("" "" "")
+run_plan "install-after-preflight" "${C_ACCENT}" "panel" </dev/null || true
+set +e
+trap - ERR
+
+d_idxs=()
+d_tots=()
+while IFS=' ' read -r di dt _rest; do
+  [[ -z "${di}" ]] && continue
+  d_idxs+=("${di}")
+  d_tots+=("${dt}")
+done <"${R4_DISP}"
+printf '  install run_plan DISPLAY sequence (idx/total): '
+for k in "${!d_idxs[@]}"; do printf '%s/%s ' "${d_idxs[${k}]}" "${d_tots[${k}]}"; done
+printf '\n'
+
+assert_eq "install run_plan rendered 3 display steps" "3" "${#d_idxs[@]}"
+assert_eq "install FIRST display index continues at base+1 (NO reset to 1/n)" "$((base_after + 1))" "${d_idxs[0]:-}"
+
+grand_ok="yes"
+for t in "${d_tots[@]}"; do [[ "${t}" == "$((base_after + 3))" ]] || grand_ok="no"; done
+assert_eq "install display TOTAL is the grand total base+n on every step" "yes" "${grand_ok}"
+
+cont_ok="yes"
+for k in "${!d_idxs[@]}"; do [[ "${d_idxs[${k}]}" == "$((base_after + k + 1))" ]] || cont_ok="no"; done
+assert_eq "install display index is ONE continuous base+1..base+n run" "yes" "${cont_ok}"
+
+noreset="yes"
+for di in "${d_idxs[@]}"; do [[ "${di}" -gt "${base_after}" ]] || noreset="no"; done
+assert_eq "no install display index falls back to <=base (no handoff blink/reset)" "yes" "${noreset}"
+
+# reset lifecycle: run_plan's end-of-plan _clear_step_state MUST sweep the carried base so a later
+# shared caller does not inherit it (QA engine-safety MUST-HANDLE).
+assert_eq "run_plan end-of-plan teardown swept STEP_INDEX_BASE (no stale base)" "" "${STEP_INDEX_BASE:-}"
+
+echo ""
+echo "============================================================================"
+echo "(R4-5) shared run_plan callers keep their OWN independent counter (base unset)"
+echo "============================================================================"
+# With the base swept, an uninstall/db/token/purge run_plan renders raw 1..n / n — byte-for-byte the
+# pre-4a behavior. Proves the STEP_INDEX_BASE offset is confined to the install-panel handoff.
+set +e
+trap - ERR
+: >"${R4_DISP}"
+STEP_INDEX_BASE="" # explicit: a shared caller never carries a base
+STEP_LABEL=("u1" "u2" "u3" "u4")
+STEP_LABEL_ACTIVE=("u1" "u2" "u3" "u4")
+STEP_FN=("rec_ok" "rec_ok" "rec_ok" "rec_ok")
+STEP_SUPPRESS=("" "" "" "")
+run_plan "uninstall-mode plan" "${C_ALERT}" </dev/null || true
+set +e
+trap - ERR
+
+u_idxs=()
+u_tots=()
+while IFS=' ' read -r di dt _rest; do
+  [[ -z "${di}" ]] && continue
+  u_idxs+=("${di}")
+  u_tots+=("${dt}")
+done <"${R4_DISP}"
+rm -f "${R4_DISP}"
+printf '  uninstall run_plan DISPLAY sequence (idx/total): '
+for k in "${!u_idxs[@]}"; do printf '%s/%s ' "${u_idxs[${k}]}" "${u_tots[${k}]}"; done
+printf '\n'
+assert_eq "shared caller FIRST index is 1 (no inherited base offset)" "1" "${u_idxs[0]:-}"
+assert_eq "shared caller total is its own raw n (no base+n)" "4" "${u_tots[0]:-}"
+assert_eq "shared caller ends at n/n (raw)" "4" "${u_idxs[$((${#u_idxs[@]} - 1))]:-}"
+
+echo ""
+echo "============================================================================"
+echo "(R4-6) 4e rolling label — real-time tail + Bash-3.2 cycling fallback"
+echo "============================================================================"
+# _spinner_rolling_label is a PURE helper (reads args + STEP_LOG_CUR), so the rolling animation is
+# unit-testable WITHOUT the time-based forked spinner (which is mocked to a no-op here).
+R4_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-r4-log.XXXXXX")"
+
+# (a) non-empty capture => the LATEST line (real-time sub-process output), across ticks
+printf 'compiling module A\ncompiling module B\n' >"${R4_LOG}"
+STEP_LOG_CUR="${R4_LOG}"
+assert_eq "rolling label shows the latest captured line (tick 0)" "compiling module B" "$(_spinner_rolling_label 0 'BASE')"
+# a NEW line appended => the label rolls to it on the next tick (the 'rolling' proof)
+printf 'linking\n' >>"${R4_LOG}"
+assert_eq "rolling label FOLLOWS newly appended output (tick 1) — it rolls" "linking" "$(_spinner_rolling_label 1 'BASE')"
+
+# (b) empty capture => context-preserving cycling working phrase, advanced by the tick index
+: >"${R4_LOG}"
+assert_eq "empty-log fallback tick 0 = base label" "BASE" "$(_spinner_rolling_label 0 'BASE')"
+assert_eq "empty-log fallback tick 1 = base + working phrase" "BASE (working)" "$(_spinner_rolling_label 1 'BASE')"
+assert_eq "empty-log fallback tick 2 = base + still-working phrase" "BASE (still working)" "$(_spinner_rolling_label 2 'BASE')"
+assert_eq "empty-log fallback cycles back at tick 3 (mod 3)" "BASE" "$(_spinner_rolling_label 3 'BASE')"
+
+# (c) unset capture (non-capturing step) => the base label, never a crash under set -u
+STEP_LOG_CUR=""
+assert_eq "no-capture step falls back to the base label (set -u safe)" "BASE" "$(_spinner_rolling_label 0 'BASE')"
+
+# (d) an over-long output line is width-trimmed to a single row (no wrap)
+printf 'X%.0s' $(seq 1 90) >"${R4_LOG}"
+STEP_LOG_CUR="${R4_LOG}"
+trimmed="$(_spinner_rolling_label 0 'BASE')"
+if [[ "${#trimmed}" -le 58 && "${trimmed}" == *... ]]; then
+  pass "over-long output line trimmed to a single row (len=${#trimmed}, ellipsized)"
+else
+  fail "over-long line should be trimmed+ellipsized, got len=${#trimmed}"
+fi
+rm -f "${R4_LOG}"
 
 echo ""
 echo "============================================================================"
