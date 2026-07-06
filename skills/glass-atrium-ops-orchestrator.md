@@ -86,15 +86,9 @@ Before emitting a delegation, self-check:
 
 Reuses the 0.7 threshold from "3-Layer Non-Determinism Mitigation"; this verification gate operationalises that threshold for routing specifically.
 
-#### Team Size Cap
+#### Team Size
 
-| Team Size | Action |
-|-----------|--------|
-| 1-3 members | default-allowed (normal request range) |
-| 4-5 members | additional justification REQUIRED in the `reason` field — explicitly state why this scale is needed |
-| 6+ members | **user confirmation REQUIRED** before execution — prevents team inflation |
-
-Consistent with the Team Composition Rules section's 3-5 default + 5+ approval rule.
+Routine fan-out needs no special justification — the Workflow engine's runtime self-cap (core-derived, per-machine) bounds concurrency, so no fixed-number gate applies and there is NO fixed-number user-confirmation trigger. A VERY large fan-out (well beyond a normal team) should still be reasoned about in the `reason` field (synthesis value · total-session token cost). Canonical: orchestrator-role.md `### Team Size`.
 
 ### Team Composition Rules [ORCHESTRATOR]
 
@@ -107,7 +101,7 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 
 - **Sub-agent**: Focused tasks where only results are needed (cost-efficient)
 - **Agent team**: When discussion/collaboration/cross-file modification required (higher cost)
-- Team of 3-5 members default `[default, adjustable]` (exceeding → user approval) · 5-6 self-contained tasks per agent `[default, adjustable]`
+- Team size bounded by the Workflow engine's runtime self-cap (core-derived, per-machine) — no fixed-number default, no "exceeding → user approval" trigger (canonical: orchestrator-role.md `### Team Size`) · 5-6 self-contained tasks per agent `[default, adjustable]`
 - **File ownership separation required**: Concurrent modification of same file forbidden → worktree isolation / ownership matrix
 
 #### Worktree Isolation [ORCHESTRATOR]
@@ -384,7 +378,7 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 | Concurrent modification of same file | Sub-agent (sequential) |
 
 **Operational rules**:
-- Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size Cap rule (1-3 default · 4-5 with extra justification · 6+ user confirmation required) defined in orchestrator-role.md `### Team Size Cap`. The "5+ forbidden" wording was specific to the Agent Teams pattern, not a global limit.
+- Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size rule (no fixed-number gate — the Workflow engine's runtime self-cap, core-derived per-machine, bounds concurrency; a VERY large fan-out just needs reasoning in `reason` about synthesis value + total-session token cost) defined in orchestrator-role.md `### Team Size`. The "5+ forbidden" wording was specific to the Agent Teams pattern, not a global limit.
 - Model tiering: Lead(Opus) + Teammate(Sonnet) natural language instructions
 - Manually include agent instructions (.claude/agents/*.md content) in spawn prompt
 - Control Wave execution (parallel → sequential) via blockedBy field

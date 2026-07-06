@@ -652,7 +652,7 @@
     "skills/glass-atrium-meta-authoring/SKILL.md": "00c361048514a2f1a229abea477f11a2f7747caed24db9b706f7df05247c0a0d",
     "skills/glass-atrium-ops-model-config/SKILL.md": "d8da398fb9d8d4e1170710b7511af3e5ae1454a28028649d1fd73470122b0af7",
     "skills/glass-atrium-ops-model-config/apply-model-config.sh": "a9f7526f561899b886b8d0bb814f5200740fbd13e4294f3cb8b165c80b8fa8f2",
-    "skills/glass-atrium-ops-orchestrator.md": "d05f7e1ea403f996f8fb92103cd1954010f8ca0c8a3e362d0c319472709fed0a",
+    "skills/glass-atrium-ops-orchestrator.md": "92064479b9ebea20d7d588775375bc37e13ab2731dee32abba97fff87df9f005",
     "skills/glass-atrium-ops-reconcile-inject/SKILL.md": "d28d64835b044fb2c08bd962d87587de41a9a72b7cb81154548629d46f27aa6e",
     "skills/glass-atrium-ops-token-audit/SKILL.md": "c3a3f2ce6c8526ab365fdb43b12e5f7234ec3adb6079c69137b3791284463bed",
     "skills/glass-atrium-ops-token-audit/mcp-scan.sh": "b19a43f3819a2cfa44e846efe0e0963e1793f8142285f7c0d4503c47b8f5e5c4",
