@@ -26,6 +26,16 @@
 #   harness-path occurrence in the prompt resolves to one of these basenames,
 #   the call is exempt.
 #
+# Runtime-DATA exclusion:
+#   Rule 2 protects harness CONFIG writes (agents/, hooks/, skills/,
+#   settings*.json, the memory dir) — those silently break future sessions.
+#   Runtime-DATA subdirs (data/, projects/, logs/, todos/, shell-snapshots/,
+#   statsig/) hold session transcripts, logs and caches that CANNOT misconfigure
+#   a future session, so a bare reference to them (a pure text scan cannot tell a
+#   READ from a WRITE) must not force foreground. The memory dir is nested under
+#   projects/ (projects/<proj>/memory/…) and stays fully protected via a
+#   /memory/ path-segment guard, so the exclusion never leaks into memory writes.
+#
 # Source: rules/orchestrator-role.md → Harness Path Protection.
 
 set -Eeuo pipefail
@@ -174,6 +184,19 @@ while IFS= read -r path; do
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
     CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
+    data | projects | logs | todos | shell-snapshots | statsig)
+      # Runtime-DATA subdir → not config, does not force foreground. The memory
+      # dir nests under projects/ (projects/<proj>/memory/…) — a /memory/ path
+      # segment keeps the match protected so this exclusion cannot un-protect a
+      # memory write. `/${remainder}/` frames the boundaries for the glob.
+      case "/${remainder}/" in
+        */memory/*)
+          all_exempt=false
+          break
+          ;;
+        *) continue ;;
+      esac
+      ;;
     *)
       all_exempt=false
       break

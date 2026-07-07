@@ -195,7 +195,20 @@ def _effective_transcript_path(payload_d):
     # transcript_path. Single resolution point reused by the [COMPLETION] parse,
     # the tool_use count, and the write-target collection so all three read the
     # same (subagent) source rather than the parent transcript.
-    return _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
+    own = _resolve_subagent_transcript(payload_d)
+    if own:
+        return own
+    # Subagent (agent_id present) whose OWN transcript is unresolvable — e.g. a
+    # workflow-controller/root SubagentStop: on SubagentStop the payload
+    # transcript_path points at the PARENT (see _resolve_subagent_transcript), so
+    # falling back to it would count the PARENT's tool_use / summary against this
+    # spawn, synthesizing a polluted phantom row. Suppress the parent fallback for
+    # that case → the tool_use count degrades to 0 and the row is phantom-dropped
+    # instead of synthesized. Keep the fallback for the main-session / non-subagent
+    # case (no agent_id), where transcript_path IS the correct own transcript.
+    if payload_d.get('agent_id', ''):
+        return ''
+    return payload_d.get('transcript_path', '') or ''
 
 
 def _last_assistant_text_from_transcript(transcript_path):
@@ -530,7 +543,13 @@ def _transcript_readable(transcript_val):
 
 
 _pred_recovered = (agent_type not in ('subagent_stop_missing', 'agent_id_missing', '', 'unknown'))
-_pred_transcript = _transcript_readable(d.get('transcript_path', ''))
+# Predicate (ii) keys on the SUBAGENT's OWN transcript, not the raw payload
+# transcript_path: on SubagentStop the payload transcript_path is the PARENT, so a
+# readable parent would falsely satisfy (ii) and keep a phantom workflow-controller
+# row alive (REAL_AGENT=1 → the quiet phantom-drop below is defeated and a polluted
+# row is synthesized). A real continuation still resolves its own transcript, so (ii)
+# stays true for it — no regression to leaf / recovered / happy paths.
+_pred_transcript = _transcript_readable(_resolve_subagent_transcript(d))
 _pred_summary = not _is_stub_summary(summary)
 real_agent = '1' if (_pred_recovered or _pred_transcript or _pred_summary) else '0'
 
