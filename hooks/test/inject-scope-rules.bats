@@ -24,6 +24,12 @@ HOOK_SH="${HOOKS_DIR}/inject-scope-rules.sh"
 # The marker string the naming block is uniquely identified by (its first line in the SKILL.md core).
 NAMING_NEEDLE="Naming delta-core"
 
+# The always-on [COMPLETION] emit-format directive needle — a stable, bracket-free substring unique
+# to the emit block (must NOT collide with the meter / comment / naming needles). This block is
+# delivered to EVERY agent_type independent of SUBAGENT_BUDGET_METER_OFF and of maxTurns (the PRIMARY
+# fix for schema-mode/workflow subagents emitting the inline single-line [COMPLETION] form).
+EMIT_NEEDLE="REQUIRED by the outcome recorder"
+
 # The NAMING block markers the hermetic fixture must carry (mirror hooks/inject-scope-rules.sh anchors).
 NAMING_MARKER_START='<!-- AGENT-INJECT:NAMING:START -->'
 NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
@@ -155,12 +161,14 @@ assert_no_json_emitted() {
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
-# With every other source sandboxed to /nonexistent and the meter off, a non-naming agent has NO
-# injectable block at all → the hook fail-opens with no JSON emitted (exit 0).
-@test "qa-debugger with all other sources absent → no JSON emitted (fail-open, exit 0)" {
+# Even with every scope source sandboxed to /nonexistent AND the meter off, the ALWAYS-ON emit-format
+# directive is still delivered — so JSON IS emitted (the directive is the one universally-present
+# block, independent of every scope source and of the meter). This is the R3 delivery-hole guard.
+@test "qa-debugger with all scope sources absent + meter off → emit directive still delivered, JSON emitted (exit 0)" {
   run_hook "glass-atrium-qa-debugger"
   assert_status 0
-  assert_no_json_emitted
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
 # --- (d) fail-open: naming markers absent → no hard error, naming block omitted, OTHER blocks emit ---
@@ -203,6 +211,74 @@ assert_no_json_emitted() {
   run_hook "glass-atrium-dev-react" "/nonexistent/naming.md"
   assert_status 0
   assert_ctx_not_contains "${NAMING_NEEDLE}"
+}
+
+# --- (d2) always-on [COMPLETION] emit-format directive (PRIMARY emit-side fix, T2/T3). ---
+# The directive is delivered to EVERY agent independent of SUBAGENT_BUDGET_METER_OFF and of maxTurns,
+# and is ordered before the four droppable scope blocks so it survives the ~2KB persistence preview.
+# These assertions key on the 8192-byte ceiling and directive-first ordering, NOT on the 2KB preview.
+
+# Drive the hook with the meter ENABLED (kill-switch explicitly unset) but AGENTS_DIR absent, so
+# read_max_turns returns empty → METER_BLOCK is empty. All scope sources absent. This isolates the
+# emit directive as the sole delivered block and proves it is INDEPENDENT of maxTurns (empty meter).
+run_hook_no_meter() {
+  local agent="${1}"
+  run bash -c '
+    agent="$1"; hook="$2"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env -u SUBAGENT_BUDGET_METER_OFF \
+      INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      INJECT_SCOPE_RULES_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      bash "${hook}"
+  ' _ "${agent}" "${HOOK_SH}"
+}
+
+# Assert the assembled additionalContext is at most $1 bytes (byte-accurate via wc -c).
+assert_ctx_max_bytes() {
+  local ctx nbytes
+  ctx="$(ctx_of)"
+  nbytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
+  [[ "${nbytes}" -le "${1}" ]] || {
+    echo "expected additionalContext <= ${1} bytes, got ${nbytes} (ctx: [${ctx}])" >&2
+    return 1
+  }
+}
+
+@test "emit directive delivered under SUBAGENT_BUDGET_METER_OFF=1 (kill-switch independent)" {
+  # run_hook forces SUBAGENT_BUDGET_METER_OFF=1 → meter suppressed; the emit directive must survive.
+  run_hook "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_not_contains "${METER_NEEDLE}"
+}
+
+@test "emit directive delivered when agent has no maxTurns frontmatter (empty METER_BLOCK, meter enabled)" {
+  # Meter NOT killed (kill-switch unset) but AGENTS_DIR absent → read_max_turns empty → METER_BLOCK
+  # empty; the emit directive must still reach the child, independent of the maxTurns coupling.
+  run_hook_no_meter "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_not_contains "${METER_NEEDLE}"
+}
+
+@test "emit directive ordered BEFORE the meter and all four droppable scope blocks" {
+  run_hook_full "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_order "${EMIT_NEEDLE}" "${METER_NEEDLE}"
+  assert_ctx_order "${EMIT_NEEDLE}" "${COMMENT_NEEDLE}"
+  assert_ctx_order "${EMIT_NEEDLE}" "${STYLEREF_NEEDLE}"
+  assert_ctx_order "${EMIT_NEEDLE}" "${MINIMALISM_NEEDLE}"
+  assert_ctx_order "${EMIT_NEEDLE}" "${NAMING_NEEDLE}"
+}
+
+@test "assembled additionalContext stays <= 8192 bytes with emit block included, under drop pressure" {
+  run_hook_full "glass-atrium-dev-react" 5000 5000 5000 5000
+  assert_status 0
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_max_bytes 8192
 }
 
 # --- (e) meter-first assembly + universal 8KB byte-ceiling drop order (P1-T1 / P1-T2). ---

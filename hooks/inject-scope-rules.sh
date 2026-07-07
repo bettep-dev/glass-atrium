@@ -28,9 +28,18 @@
 # the checkpoint-at-80% instruction. It is INDEPENDENT of the four scope blocks above (a non-DEV/QA
 # agent still receives the meter; a missing meter must not suppress a scope block, vice-versa).
 #
-# Other agents → no injection, exit 0.
+# [COMPLETION] emit-format block (ALL subagents — universal, ALWAYS-ON, assembled FIRST): the PRIMARY
+# emit-side fix. Ultracode/workflow schema-mode subagents emit the [COMPLETION] block as a SINGLE
+# inline line (pipe-delimited fields, no newline after the tag, no [/COMPLETION] close); track-
+# outcome.sh anchors every parse tier on a newline right after the tag, so the inline form matches no
+# tier → fields discarded → outcome synthesized (done_with_concerns/low). This block delivers the
+# strict multi-line emit contract to EVERY agent_type, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF and of
+# maxTurns (NOT folded into build_meter_block/read_max_turns, whose kill-switch + maxTurns coupling
+# would otherwise leave workflow subagents uncovered). Placed FIRST so it survives the ~2KB preview.
+#
+# Non-DEV/QA agents → still receive the universal emit-format block (+ meter when applicable), exit 0.
 # fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty extraction)
-# → exit 0 + 1 stderr diagnostic line, injecting whatever IS available (the five blocks are
+# → exit 0 + 1 stderr diagnostic line, injecting whatever IS available (the blocks are
 # independent — a missing block must NOT suppress the others).
 
 set -Eeuo pipefail
@@ -180,6 +189,22 @@ build_meter_block() {
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
 }
 
+# Build the always-on [COMPLETION] emit-format directive. Static text (no args), delivered to EVERY
+# subagent regardless of agent_type and INDEPENDENT of SUBAGENT_BUDGET_METER_OFF and of maxTurns
+# (deliberately NOT folded into build_meter_block / read_max_turns — the kill-switch + maxTurns
+# coupling would otherwise leave workflow subagents uncovered). WHY: ultracode/workflow schema-mode
+# spawns emit the [COMPLETION] block as a SINGLE inline line (pipe-delimited fields, no newline after
+# the tag, no [/COMPLETION] close); track-outcome.sh anchors every parse tier on a newline right after
+# the tag, so the inline form matches no tier → fields discarded → outcome synthesized
+# (done_with_concerns/low). This block delivers the strict multi-line contract the recorder can parse.
+# stdout: the emit-format block text.
+build_emit_format_block() {
+  printf '%s\n' \
+    "**[COMPLETION] emit format (auto-injected · REQUIRED by the outcome recorder)**" \
+    "- Print the [COMPLETION] block MULTI-LINE: the [COMPLETION] tag ALONE on its own line, EACH field (result / task_type / metric_pass / confidence / summary / …) on its OWN line, closed by a [/COMPLETION] sentinel ALONE on its own line." \
+    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form."
+}
+
 # Byte length of a string (wc -c counts bytes, locale-independent); tr strips BSD wc's leading
 # whitespace to a bare integer. Used to enforce INJECT_CTX_MAX_BYTES byte-accurately.
 # Args: $1=string · stdout: byte count integer.
@@ -198,18 +223,23 @@ join_block() {
   fi
 }
 
-# Assemble additionalContext with the METER BLOCK FIRST (never dropped), then the four droppable
-# scope blocks in display order (comment-logging, style_ref, minimalism, naming), each gated by its
-# keep-flag argument. Reads the module-level *_BLOCK variables. Meter-first is load-bearing: even in
-# the 2KB persistence-preview degradation mode the meter must reach the model, so it can never sit
-# behind a larger block that pushes it past the preview cut.
+# Assemble additionalContext with the two NON-DROPPABLE blocks first — the EMIT-FORMAT block, then
+# the METER block — followed by the four droppable scope blocks in display order (comment-logging,
+# style_ref, minimalism, naming), each gated by its keep-flag argument. Reads the module-level
+# *_BLOCK variables. Emit-first / meter-second is load-bearing: even in the 2KB persistence-preview
+# degradation mode BOTH must reach the model, so neither can sit behind a larger droppable block that
+# pushes it past the preview cut. The emit-format block leads because it is the PRIMARY fix (a
+# workflow subagent that never emits a parseable [COMPLETION] block is the failure this hook repairs).
 # Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming (each 0/1)
 # stdout: the assembled context (no trailing newline).
 assemble_ctx() {
   local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}"
   local ctx=""
+  if [[ -n "${EMIT_BLOCK}" ]]; then
+    ctx="${EMIT_BLOCK}"
+  fi
   if [[ -n "${METER_BLOCK}" ]]; then
-    ctx="${METER_BLOCK}"
+    ctx="$(join_block "${ctx}" "${METER_BLOCK}")"
   fi
   if [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${COMMENT_BLOCK}")"
@@ -265,6 +295,12 @@ if [[ "${NAMING_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
   fi
 fi
 
+# Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Deliberately
+# unconditional: independent of SUBAGENT_BUDGET_METER_OFF and of read_max_turns (the two coupling
+# holes that would otherwise leave workflow/schema subagents uncovered). Static text, so it never
+# fails to build; it is NEVER a drop candidate.
+EMIT_BLOCK="$(build_emit_format_block)"
+
 # Budget-meter block — ALL subagents (universal), independent of the four scope blocks above.
 # Kill-switch + un-derivable maxTurns → empty (no meter). A missing meter must not suppress a
 # scope block, and vice-versa.
@@ -278,11 +314,12 @@ if [[ -z "${SUBAGENT_BUDGET_METER_OFF}" ]]; then
   fi
 fi
 
-# Combine available blocks with the METER FIRST, then enforce the universal byte ceiling. assemble_ctx
-# places the meter first and appends the kept droppable blocks; the drop loop below removes the
-# lowest-value blocks in the PINNED order naming → style-ref → minimalism → comment-logging until the
-# total fits INJECT_CTX_MAX_BYTES. The meter is never a drop candidate (its absence is the fatal
-# failure this hook exists to fix), so under extreme pressure the meter alone survives.
+# Combine available blocks with the EMIT-FORMAT block FIRST, the METER block SECOND, then enforce the
+# universal byte ceiling. assemble_ctx places those two non-droppable blocks first and appends the kept
+# droppable blocks; the drop loop below removes the lowest-value blocks in the PINNED order
+# naming → style-ref → minimalism → comment-logging until the total fits INJECT_CTX_MAX_BYTES. Neither
+# the emit-format block nor the meter is a drop candidate (both address the "no parseable [COMPLETION]"
+# failure this hook exists to fix), so under extreme pressure only those two survive.
 keep_comment=1
 keep_styleref=1
 keep_minimalism=1
