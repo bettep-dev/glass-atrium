@@ -989,3 +989,195 @@ PSQL
   run grep -cF 'ga_pg_data_dir_initialized' "${LAUNCHER}"
   [[ "${output}" -ge 2 ]]
 }
+
+# === AUTH-HARDENING — ga_detect_claude_auth keychain-first present + bounded probe ======
+#
+# DEFENSIVE hardening (NOT a repair of a valid subcommand): on macOS the OAuth credential
+# lives in the login Keychain (service "Claude Code-credentials"), which the ~/.claude/
+# .credentials.json PRESENCE check misses — so a Keychain-authed user previously depended on
+# the UN-TIMED `claude auth status` subprocess as the sole macOS signal. A cold-start hang of
+# that subprocess (run inside $() with no timeout) returned non-zero → "absent" → the hard
+# gate looped. The fix: (1) a macOS Keychain PRESENT-path (uname-guarded, `security` WITHOUT
+# -w — attributes only, no secret retrieved, no unlock GUI) that short-circuits BEFORE the
+# subprocess, and (2) a TIME-BOUND (background+kill idiom, no macOS `timeout`) on the retained
+# auth-status corroboration fallback. `auth status` is a VALID subcommand and is NOT renamed.
+#
+# The stubs are FAITHFUL (not green-washed): the claude stub models `auth status` SPECIFICALLY
+# (a blanket rc0 would also pass `whoami`/junk tokens — modelling the exact subcommand is what
+# makes the auth-status cases falsifiable), the security stub honours the no--w exit-code
+# contract and emits NO secret, and the uname stub returns Darwin for the macOS cases and a
+# non-Darwin value for the fall-through guard.
+
+@test "AUTH(a): macOS + Keychain item present → 'present' (security WITHOUT -w, auth-status NOT reached)" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  # claude present (command -v resolves it); records IF 'auth status' is ever reached.
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  touch "${GA_STUB_SANDBOX}/authstatus-called"
+  exit "${GA_STUB_AUTH_RC:-1}"
+fi
+echo junk
+exit 0
+SH
+  # uname → Darwin (macOS path).
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  # security: records the argv (to assert no -w), Keychain item PRESENT (exit 0), emits NO secret.
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit "${GA_STUB_SEC_RC:-0}"
+SH
+  chmod +x "${stub}/claude" "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude" # NO creds file → creds check misses, Keychain must decide
+  export GA_STUB_SEC_RC=0    # Keychain item exists
+  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  # security was invoked WITHOUT -w and WITH the exact service (attributes-only, no secret read).
+  run cat "${SANDBOX}/security-argv"
+  [[ "${output}" != *"-w"* ]]
+  [[ "${output}" == *'-s Claude Code-credentials'* ]]
+  # Keychain short-circuited BEFORE the fragile auth-status subprocess (the whole point).
+  [[ ! -e "${SANDBOX}/authstatus-called" ]]
+}
+
+@test "AUTH(b): macOS + no Keychain + no creds + auth-status FAILS → 'absent'" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  touch "${GA_STUB_SANDBOX}/authstatus-called"
+  exit "${GA_STUB_AUTH_RC:-1}"
+fi
+echo junk
+exit 0
+SH
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit "${GA_STUB_SEC_RC:-0}"
+SH
+  chmod +x "${stub}/claude" "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude"
+  export GA_STUB_SEC_RC=44 # errSecItemNotFound — no Keychain item
+  export GA_STUB_AUTH_RC=1 # auth status: unauthenticated
+  # no sleep stub: the bounded probe BLOCKS on the child (wait), so a fast-exiting stub
+  # returns at once; the watchdog is killed before its real 10s sleep matters.
+  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "absent" ]]
+  # the auth-status probe WAS the deciding signal (Keychain missed) — modelled specifically.
+  [[ -e "${SANDBOX}/authstatus-called" ]]
+}
+
+@test "AUTH(c): creds file present → 'present' (regression; neither Keychain nor probe reached)" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  touch "${GA_STUB_SANDBOX}/authstatus-called"
+  exit 1
+fi
+echo junk
+exit 0
+SH
+  # a security stub that would REGISTER if called — it must NOT be (creds short-circuits first).
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit 0
+SH
+  chmod +x "${stub}/claude" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude"
+  printf '{}\n' >"${home}/.claude/.credentials.json" # PRESENCE only (contents never read)
+  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  # short-circuited at the creds-file check — neither Keychain nor auth-status was reached.
+  [[ ! -e "${SANDBOX}/security-argv" ]]
+  [[ ! -e "${SANDBOX}/authstatus-called" ]]
+}
+
+@test "AUTH(d): claude binary absent → 'present-but-down'" {
+  # empty PATH dir → command -v claude fails; the guard fires before uname/security/probe.
+  local empty="${SANDBOX}/emptybin"
+  mkdir -p "${empty}"
+  [[ "$(PATH="${empty}" ga_detect_claude_auth)" == "present-but-down" ]]
+}
+
+@test "AUTH(e): macOS + no Keychain + no creds + auth-status SUCCEEDS → 'present' (corroboration path)" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  touch "${GA_STUB_SANDBOX}/authstatus-called"
+  exit "${GA_STUB_AUTH_RC:-1}"
+fi
+echo junk
+exit 0
+SH
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit "${GA_STUB_SEC_RC:-0}"
+SH
+  chmod +x "${stub}/claude" "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude"
+  export GA_STUB_SEC_RC=44 # no Keychain item → fall through to the bounded probe
+  export GA_STUB_AUTH_RC=0 # auth status: authenticated
+  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  [[ -e "${SANDBOX}/authstatus-called" ]] # the corroboration probe was exercised
+}
+
+@test "AUTH(f): non-Darwin fall-through skips the Keychain probe (uname guard), auth-status decides" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  touch "${GA_STUB_SANDBOX}/authstatus-called"
+  exit "${GA_STUB_AUTH_RC:-1}"
+fi
+echo junk
+exit 0
+SH
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  # security would exit 0 (item "present") IF called — the uname guard must prevent that.
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit 0
+SH
+  chmod +x "${stub}/claude" "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude"
+  export GA_STUB_UNAME=Linux # non-Darwin → Keychain block skipped
+  export GA_STUB_AUTH_RC=0   # auth status decides → present
+  [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "present" ]]
+  # the macOS-only `security` probe was NEVER invoked on a non-Darwin host.
+  [[ ! -e "${SANDBOX}/security-argv" ]]
+  # the verdict came from the auth-status corroboration path instead.
+  [[ -e "${SANDBOX}/authstatus-called" ]]
+}
