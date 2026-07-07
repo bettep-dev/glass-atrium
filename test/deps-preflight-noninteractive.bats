@@ -20,7 +20,7 @@
 #   * DUAL call-context dispatch: run_dependency_preflight branches into
 #     _run_dependency_preflight_boxed (menu: non-owned TTY == /dev/fd/3, work-box render)
 #     vs _run_dependency_preflight_scroll (passthrough/CLI: owned fd4, scrolling render).
-#   * Interactive gates (Xcode CLT, grouped consent, claude auth, python --break) run in a
+#   * Interactive gates (Xcode CLT, grouped consent, claude auth) run in a
 #     cooked-scrollback alt-screen bracket (preflight_bracket, mirroring _confirm_pregate).
 #   * The two contiguous NON-interactive install groups render INSIDE the work box as framed
 #     panel steps via preflight_panel_step[_or_bail] (function-local RENDER_MODE=panel), each
@@ -31,7 +31,8 @@
 #   * The passthrough path RETAINS the framed runner (preflight_run_or_bail_framed,
 #     function-local RENDER_MODE=install) + scrolling preflight_line/preflight_run_cmd.
 #   * G7 fakechat marketplace-add carries a DISTINCT slow-clone ACTIVE label.
-#   * G3 python pip --user stays framed; the PEP-668 --break override consent is bracketed.
+#   * G3 python pip --user stays framed; on a PEP-668 failure the --break-system-packages retry
+#     AUTO-runs (no typed consent, no bracket) with a VISIBLE override log, non-fatal on retry-fail.
 #   * G8 sqlite is FTS5-CAPABILITY-gated (brew sqlite added only when system sqlite3 lacks
 #     the FTS5 module), NOT bare-presence-gated.
 #
@@ -380,7 +381,7 @@ teardown() {
   [[ "${body}" == *'STEP_LABEL_ACTIVE_CUR="${active:-${resolved}}"'* ]]
 }
 
-# === G3 — python pip --user framed; the PEP-668 --break override consent bracketed ====
+# === G3 — python pip --user framed; PEP-668 --break-system-packages retry AUTO-runs =====
 
 @test "G3(static): _preflight_python_libs_boxed frames pip --user AND the --break retry" {
   local body
@@ -388,16 +389,43 @@ teardown() {
   [[ -n "${body}" ]]
   [[ "${body}" == *'preflight_panel_step "python libs (pip --user)"'* ]]
   [[ "${body}" == *'preflight_panel_step "python libs (--break-system-packages)"'* ]]
-  # the override consent is HOISTED to an alt-screen bracket (a cooked prompt cannot render
-  # in the dimmed box), NOT run inline as a panel step.
-  [[ "${body}" == *'preflight_bracket _preflight_python_break_consent'* ]]
 }
 
-@test "G3(static): the bracketed --break consent still requires a typed confirmation" {
+@test "G3(static): the boxed --break retry AUTO-runs — NO bracket, NO typed consent" {
   local body
-  body="$(awk '/^_preflight_python_break_consent\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   [[ -n "${body}" ]]
-  [[ "${body}" == *'confirm_typed "break"'* ]]
+  # the override no longer sits behind a second gate: no alt-screen bracket, no confirm_typed.
+  [[ "${body}" != *'preflight_bracket'* ]]
+  [[ "${body}" != *'confirm_typed'* ]]
+  # with no bracket tearing down the frame, no enter_run_state re-engage is needed either.
+  [[ "${body}" != *'enter_run_state'* ]]
+}
+
+@test "G3(static): the boxed override is surfaced VISIBLY (active-label documents --break)" {
+  local body
+  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ -n "${body}" ]]
+  # the retry panel step carries a non-empty ACTIVE label naming the override (visible, not silent).
+  [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
+}
+
+@test "G3(static): the scroll variant AUTO-retries with a VISIBLE override log, no typed consent" {
+  local body
+  body="$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  [[ -n "${body}" ]]
+  [[ "${body}" == *'preflight_run_cmd "python libs (pip --user)"'* ]]
+  [[ "${body}" == *'preflight_run_cmd "python libs (--break-system-packages)"'* ]]
+  # NO second typed gate — the retry auto-proceeds.
+  [[ "${body}" != *'confirm_typed'* ]]
+  # the override is LOGGED visibly via preflight_line naming --break-system-packages.
+  [[ "${body}" == *'preflight_line'* ]]
+  [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
+}
+
+@test "G3(static): the dead _preflight_python_break_consent helper is REMOVED" {
+  # the second typed gate is gone → its helper must not linger anywhere in the launcher.
+  ! grep -qF '_preflight_python_break_consent' "${LAUNCHER}"
 }
 
 # === G4 — fakechat + python steps stay NON-FATAL (warn-and-continue) ==================

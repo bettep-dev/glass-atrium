@@ -201,7 +201,6 @@ preflight_grouped_consent() { return 0; }
 preflight_guide_claude_auth() { return 0; }
 preflight_provision_headless_token() { return 0; }
 token_already_provisioned() { return 0; }
-_preflight_python_break_consent() { return 0; }
 preflight_install_fakechat() {
   _rec 'scroll_fakechat'
   return 0
@@ -566,6 +565,100 @@ rec_d4="$(_rec_dump)"
 echo "    observed(D4): $(printf '%s' "${rec_d4}" | tr '\n' ' ')"
 assert_eq "D4 guard LOUD-FAILS on an unmanaged orphan" "1" "${rc}"
 assert_absent "D4 no restart attempted (no brew keg)" "pg_restart" "${rec_d4}"
+
+echo ""
+echo "============================================================================"
+echo "(E) PEP-668 fallback — pip --user FAIL AUTO-retries --break-system-packages"
+echo "============================================================================"
+# Drive the REAL python-libs installers with a pip --user that FAILS (the PEP-668
+# externally-managed marker) and assert the --break-system-packages retry fires
+# AUTOMATICALLY — no typed consent, no alt-screen bracket — and is non-fatal on a
+# retry-failure. Re-extract the REAL scroll entry (the scenario stub above replaced it;
+# bash defs do NOT stack). _preflight_python_libs_boxed is already the REAL sourced fn.
+eval "$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+
+# capture the override LOG line + trip on any (now-forbidden) second consent/bracket call.
+preflight_line() { _rec "line:$*"; }
+confirm_typed() {
+  _rec 'FORBIDDEN_confirm_typed'
+  return 0
+}
+preflight_bracket() {
+  _rec 'FORBIDDEN_bracket'
+  "$@"
+}
+ga_detect_python_libs() { printf 'absent\n'; }
+
+# _e_run — run ONE python-libs variant with a FAILING pip --user + a SUCCEEDING override retry.
+_e_run() {
+  local rc=0
+  set +e
+  trap - ERR
+  _rec_reset
+  STEP_INDEX=""
+  STEP_TOTAL=""
+  rec_python_user() {
+    _rec 'python_user'
+    return 1
+  } # PEP-668 externally-managed FAILURE
+  rec_python_break() {
+    _rec 'python_break'
+    return 0
+  } # override retry SUCCEEDS
+  "$1" </dev/null || rc=$?
+  set +e
+  trap - ERR
+  return "${rc}"
+}
+
+for variant in preflight_install_python_libs _preflight_python_libs_boxed; do
+  _e_run "${variant}"
+  rc=$?
+  rec_e="$(_rec_dump)"
+  echo "    observed(${variant}): $(printf '%s' "${rec_e}" | tr '\n' ' ')"
+  assert_eq "${variant}: returns 0 when the --break retry succeeds" "0" "${rc}"
+  assert_contains "${variant}: pip --user attempted FIRST" "python_user" "${rec_e}"
+  assert_contains "${variant}: --break-system-packages retry AUTO-fires" "python_break" "${rec_e}"
+  assert_absent "${variant}: NO typed break consent" "FORBIDDEN_confirm_typed" "${rec_e}"
+  assert_absent "${variant}: NO alt-screen bracket" "FORBIDDEN_bracket" "${rec_e}"
+  u_ln="$(printf '%s' "${rec_e}" | grep -nE '^python_user$' | head -1 | cut -d: -f1)"
+  b_ln="$(printf '%s' "${rec_e}" | grep -nE '^python_break$' | head -1 | cut -d: -f1)"
+  if [[ -n "${u_ln}" && -n "${b_ln}" && "${u_ln}" -lt "${b_ln}" ]]; then
+    pass "${variant}: --break retry runs AFTER the --user attempt (u=${u_ln} b=${b_ln})"
+  else
+    fail "${variant}: retry ordering (u=${u_ln} b=${b_ln})"
+  fi
+done
+
+# the scroll variant LOGS the override VISIBLY (preflight_line names --break-system-packages).
+_e_run preflight_install_python_libs
+rec_e="$(_rec_dump)"
+assert_contains "scroll: override is LOGGED visibly (--break-system-packages named)" \
+  "auto-retrying with --break-system-packages" "${rec_e}"
+
+# NON-FATAL: when the --break retry ITSELF fails, the fn RETURNS that rc so the caller
+# (glass-atrium step 8) warns "python libs not installed — continuing" and the install proceeds.
+set +e
+trap - ERR
+_rec_reset
+STEP_INDEX=""
+STEP_TOTAL=""
+rec_python_user() {
+  _rec 'python_user'
+  return 1
+}
+rec_python_break() {
+  _rec 'python_break'
+  return 3
+} # override retry ALSO fails
+rc=0
+preflight_install_python_libs </dev/null || rc=$?
+set +e
+trap - ERR
+rec_e="$(_rec_dump)"
+echo "    observed(retry-fail): $(printf '%s' "${rec_e}" | tr '\n' ' ')"
+assert_eq "scroll: a FAILING --break retry returns its rc (non-fatal, NOT swallowed to 0)" "3" "${rc}"
+assert_contains "scroll: the override retry was still attempted" "python_break" "${rec_e}"
 
 echo ""
 echo "============================================================================"
