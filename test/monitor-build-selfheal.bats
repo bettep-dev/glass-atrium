@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
-# monitor-build-selfheal.bats — Bug3 (T1 self-heal npm ci + T2 build_monitor return-not-exit).
+# monitor-build-selfheal.bats — monitor-build force-quit fix (npm-ci self-heal + build_monitor return-not-exit).
 #
-# T1 (Bug3-a): before `npm run build`, when monitor/node_modules/.bin/tsc is absent the
+# npm-ci self-heal: before `npm run build`, when monitor/node_modules/.bin/tsc is absent the
 # build MUST self-heal by running `npm ci` first (partial-install recovery); when tsc is
 # already present, `npm ci` MUST be skipped (no redundant reinstall).
 #
-# T2 (Bug3-b): the TUI build_monitor MUST `return` its named build code (BOOTSTRAP_EXIT_BUILD=20)
+# Return-not-exit: the TUI build_monitor MUST `return` its named build code (BOOTSTRAP_EXIT_BUILD=20)
 # on failure, NEVER an in-step `exit`. run_step invokes the step fn as a SAME-SHELL brace group
 # under `set +e`, so an in-step `exit` terminates the WHOLE process (masked force-quit, no FAIL
 # panel); a `return` is captured as rc → run_plan renders the FAIL panel. The regression guard is
@@ -44,7 +44,7 @@ setup() {
 
   # npm stub: record each invocation, simulate `ci` populating .bin/tsc and `run build`
   # needing it (so a tsc-absent build fails until ci self-heals). NPM_FORCE_BUILD_FAIL=1
-  # makes `run build` ALWAYS fail (T2 needs a failure independent of the self-heal).
+  # makes `run build` ALWAYS fail (the return-not-exit test needs a failure independent of the self-heal).
   cat >"${STUB_BIN}/npm" <<'NPM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${MARKER_LOG}"
@@ -104,13 +104,13 @@ drive() {
     bash "${DRIVER}"
 }
 
-# === T1 — self-heal npm ci before build ====================================
+# === Self-heal npm ci before build ====================================
 
 # NB: bats fails a test only on its LAST command's status — intermediate `[[ ]]` failures
 # do NOT abort. Every multi-condition assertion below is therefore a short-circuiting `&&`
 # chain, so ANY unmet condition propagates to the final status and fails the test.
 
-@test "T1: build_monitor runs npm ci BEFORE npm run build when tsc is absent" {
+@test "npm-ci-selfheal: build_monitor runs npm ci BEFORE npm run build when tsc is absent" {
   # tsc absent (fresh sandbox monitor) → self-heal must fire.
   drive 0
   [[ "${status}" -eq 0 ]] \
@@ -118,7 +118,7 @@ drive() {
     && [[ "$(cat "${MARKER}")" == $'ci\nrun build' ]]   # exact order: ci first, then build
 }
 
-@test "T1: build_monitor SKIPS npm ci when node_modules/.bin/tsc already present" {
+@test "npm-ci-selfheal: build_monitor SKIPS npm ci when node_modules/.bin/tsc already present" {
   # pre-populate a valid install → ci must NOT run (no redundant reinstall).
   mkdir -p "${SANDBOX_ROOT}/monitor/node_modules/.bin"
   : >"${SANDBOX_ROOT}/monitor/node_modules/.bin/tsc"
@@ -129,9 +129,9 @@ drive() {
     && [[ "$(cat "${MARKER}")" == "run build" ]]         # ONLY build, no ci
 }
 
-# === T2 — build_monitor returns (not exit) on failure ======================
+# === build_monitor returns (not exit) on failure ======================
 
-@test "T2: build_monitor RETURNS BOOTSTRAP_EXIT_BUILD on build failure (control continues, no process kill)" {
+@test "build-return: build_monitor RETURNS BOOTSTRAP_EXIT_BUILD on build failure (control continues, no process kill)" {
   # force the build to fail regardless of self-heal; a pre-fix `exit 20` would kill the
   # driver before REACHED prints. Post-fix `return 20` lets control continue.
   drive 1
@@ -141,7 +141,7 @@ drive() {
 
 # === static guards (machine-safe; the divergent CLI copy + return-not-exit contract) ===
 
-@test "T2: build_monitor uses return (not exit/die) for its failure paths" {
+@test "build-return: build_monitor uses return (not exit/die) for its failure paths" {
   local body
   body="$(sed -n '/^build_monitor() {/,/^}/p' "${TUI}")"
   [[ "${body}" == *'return "${BOOTSTRAP_EXIT_BUILD}"'* ]] \
@@ -149,7 +149,7 @@ drive() {
     && [[ "${body}" != *"die "* ]]                        # npm-absent path no longer die()s
 }
 
-@test "T1/T2: CLI run_bootstrap self-heals AND deliberately keeps exit (passthrough semantics)" {
+@test "selfheal+return: CLI run_bootstrap self-heals AND deliberately keeps exit (passthrough semantics)" {
   local body
   body="$(sed -n '/^run_bootstrap() {/,/^}/p' "${CORE}")"
   [[ "${body}" == *"node_modules/.bin/tsc"* ]] \

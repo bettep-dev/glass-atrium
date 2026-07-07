@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# r4-progress-bar-continuity-harness.sh — EXECUTION verification of R4 (unified continuous
+# progress-bar-continuity-harness.sh — EXECUTION verification of the progress-bar work (unified continuous
 # progress bar) on the UNCOMMITTED working tree. Unlike deps-preflight-exec-harness.sh (which
 # focuses on step ORDER + keg resolution and captures only STEP_INDEX/STEP_TOTAL), this harness
 # keeps the REAL bar/counter RENDERERS live (build_counter_str / build_progress_bar / build_run_bar
@@ -138,7 +138,7 @@ paint_workbox_body_inner() { :; }
 paint_workbox_body_row2_inner() { :; } # LINE 2 painter stub (async-feel 2-row box)
 start_step_spinner() { :; }
 stop_step_spinner() { :; }
-# idle-spinner (async-feel animator) stubs — no-op by default; the R4-7 balance section overrides
+# idle-spinner (async-feel animator) stubs — no-op by default; the idle-window balance section overrides
 # these with counters to prove the detection/handoff windows are animated with no PID leak.
 start_idle_spinner() { :; }
 stop_idle_spinner() { :; }
@@ -191,7 +191,7 @@ run_path() {
 }
 
 echo "============================================================================"
-echo "(R4-1) boxed preflight — single continuous bar w/ A3 initdb over-count clamp"
+echo "boxed preflight — single continuous bar w/ A3 initdb over-count clamp"
 echo "============================================================================"
 run_path _run_dependency_preflight_boxed
 rc=$?
@@ -274,10 +274,10 @@ assert_eq "build_run_bar produced a non-empty bar at every step" "yes" "${allbar
 
 echo ""
 echo "============================================================================"
-echo "(R4-2) engine exit codes BYTE-FOR-BYTE unchanged through run_plan (install mode)"
+echo "engine exit codes BYTE-FOR-BYTE unchanged through run_plan (install mode)"
 echo "============================================================================"
 # A 3-step install plan whose MIDDLE step returns an arbitrary rc must surface that rc verbatim
-# + set STEP_FAIL_INDEX=2. Then an all-pass plan must return 0. This proves the R4 render changes
+# + set STEP_FAIL_INDEX=2. Then an all-pass plan must return 0. This proves the progress-bar render changes
 # left run_plan's exit-code propagation untouched.
 _step_ok_a() { return 0; }
 _step_fail_42() { return 42; }
@@ -329,7 +329,7 @@ assert_eq "uninstall-mode run_plan surfaces rc unchanged" "42" "${rc}"
 
 echo ""
 echo "============================================================================"
-echo "(R4-3) box-engage gating — an all-present group never engages an empty box"
+echo "box-engage gating — an all-present group never engages an empty box"
 echo "============================================================================"
 # All-present scenario: no auto-work => preflight_count_and_gate yields STEP_TOTAL=0 and the
 # ENGAGE gates skip enter_run_state (BUG1). Proves the box only engages when work exists.
@@ -345,7 +345,7 @@ assert_eq "no enter_run_state engage when nothing runs (box not flashed)" "0" "$
 
 echo ""
 echo "============================================================================"
-echo "(R4-4) ONE continuous index across the preflight->install run_plan handoff (4a)"
+echo "ONE continuous index across the preflight->install run_plan handoff (4a)"
 echo "============================================================================"
 # The load-bearing 4a proof: drive the boxed preflight (fresh bare-Mac, framed steps run), then drive
 # the install run_plan and PROVE its DISPLAYED index continues at base+1..base+n (never resets to 1).
@@ -353,7 +353,7 @@ echo "==========================================================================
 # the OFFSET index/total. We record the DISPLAY (offset) pair by wrapping build_progress_bar (the SoT
 # both build_run_bar callers funnel through), so the recorded values ARE what the user would see.
 
-# reset to the fresh bare-Mac scenario (R4-3 mutated the SC_* detect verdicts to all-present)
+# reset to the fresh bare-Mac scenario (the box-engage scenario mutated the SC_* detect verdicts to all-present)
 SC_MISSING="postgresql@18
 node@24
 bun
@@ -381,7 +381,7 @@ while IFS=' ' read -r i _t _f _b _rest; do
   last_pf_idx="${i}"
 done <<<"${seq}"
 base_after="${STEP_INDEX_BASE:-}"
-# T6 (Bug2): preflight_count_and_gate freezes GRAND_TOTAL = (g1+g2 preflight) + INSTALL_PLAN_LEN and
+# Unified grand total: preflight_count_and_gate freezes GRAND_TOTAL = (g1+g2 preflight) + INSTALL_PLAN_LEN and
 # the preflight->install handoff PRESERVES it (partial clear keeps STEP_INDEX_BASE + GRAND_TOTAL). Capture
 # it HERE — the install run_plan below is on the install-panel path and its end-of-plan _clear_step_state
 # sweeps GRAND_TOTAL, so it must be read before that teardown to assert the install denominator.
@@ -390,8 +390,8 @@ printf '  boxed preflight rc=%s  last preflight idx=%s  STEP_INDEX_BASE after ha
   "${rc}" "${last_pf_idx}" "${base_after}" "${grand_frozen}"
 assert_eq "boxed preflight (fresh) returns 0" "0" "${rc}"
 assert_eq "handoff CARRIES the preflight FINAL clamped index into STEP_INDEX_BASE" "${last_pf_idx}" "${base_after}"
-# T6 formula pin: the frozen grand total is the preflight step count (base) + the fixed 14-step install plan.
-assert_eq "handoff PRESERVES the frozen GRAND_TOTAL = base + INSTALL_PLAN_LEN (T6 unified denominator)" "$((base_after + INSTALL_PLAN_LEN))" "${grand_frozen}"
+# Grand-total formula pin: the frozen grand total is the preflight step count (base) + the fixed 14-step install plan.
+assert_eq "handoff PRESERVES the frozen GRAND_TOTAL = base + INSTALL_PLAN_LEN (unified denominator)" "$((base_after + INSTALL_PLAN_LEN))" "${grand_frozen}"
 if [[ "${base_after}" =~ ^[0-9]+$ && "${base_after}" -ge 1 ]]; then
   pass "carried base is a positive integer (preflight steps ran): ${base_after}"
 else
@@ -428,14 +428,14 @@ printf '\n'
 assert_eq "install run_plan rendered 3 display steps" "3" "${#d_idxs[@]}"
 assert_eq "install FIRST display index continues at base+1 (NO reset to 1/n)" "$((base_after + 1))" "${d_idxs[0]:-}"
 
-# T6 (Bug2) re-target: the install-panel denominator is the ONE frozen GRAND_TOTAL (base + INSTALL_PLAN_LEN),
-# NOT the pre-T6 base+local_plan_len. This scenario IS the install path (mode="panel", base carried from the
+# Unified grand total (re-target): the install-panel denominator is the ONE frozen GRAND_TOTAL (base + INSTALL_PLAN_LEN),
+# NOT the pre-unification base+local_plan_len. This scenario IS the install path (mode="panel", base carried from the
 # real preflight that froze GRAND_TOTAL), so every display step renders over the unified grand total — here
 # the 3-step mock plan renders base+1..base+3 / GRAND_TOTAL (a truncated stand-in for the real 14-step plan;
-# the idx-continuity checks above/below still pin base+k+1). The shared-caller sweep is proved by R4-5 below.
+# the idx-continuity checks above/below still pin base+k+1). The shared-caller sweep is proved by the shared-caller scenario below.
 grand_ok="yes"
 for t in "${d_tots[@]}"; do [[ "${t}" == "${grand_frozen}" ]] || grand_ok="no"; done
-assert_eq "install display TOTAL is the frozen GRAND_TOTAL (T6 unified denominator) on every step" "yes" "${grand_ok}"
+assert_eq "install display TOTAL is the frozen GRAND_TOTAL (unified denominator) on every step" "yes" "${grand_ok}"
 
 cont_ok="yes"
 for k in "${!d_idxs[@]}"; do [[ "${d_idxs[${k}]}" == "$((base_after + k + 1))" ]] || cont_ok="no"; done
@@ -451,7 +451,7 @@ assert_eq "run_plan end-of-plan teardown swept STEP_INDEX_BASE (no stale base)" 
 
 echo ""
 echo "============================================================================"
-echo "(R4-5) shared run_plan callers keep their OWN independent counter (base unset)"
+echo "shared run_plan callers keep their OWN independent counter (base unset)"
 echo "============================================================================"
 # With the base swept, an uninstall/db/token/purge run_plan renders raw 1..n / n — byte-for-byte the
 # pre-4a behavior. Proves the STEP_INDEX_BASE offset is confined to the install-panel handoff.
@@ -484,12 +484,12 @@ assert_eq "shared caller ends at n/n (raw)" "4" "${u_idxs[$((${#u_idxs[@]} - 1))
 
 echo ""
 echo "============================================================================"
-echo "(R4-6) LINE 2 detail resolver — real-time tail + SLOW dots fallback"
+echo "LINE 2 detail resolver — real-time tail + SLOW dots fallback"
 echo "============================================================================"
 # _spinner_rolling_label is a PURE helper (reads its tick arg + STEP_LOG_CUR), so the LINE 2 detail
 # is unit-testable WITHOUT the time-based forked spinner (mocked to a no-op here). The step LABEL now
 # lives on LINE 1 (the stable headline) — this resolver returns ONLY the LINE 2 detail: the output
-# tail when the step is emitting, else the SLOW dots animation (NOT the buggy R4-4e per-tick roll).
+# tail when the step is emitting, else the SLOW dots animation (NOT the buggy per-tick roll).
 R4_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-r4-log.XXXXXX")"
 
 # (a) non-empty capture => the LATEST line (real-time sub-process output), across ticks
@@ -524,7 +524,7 @@ rm -f "${R4_LOG}"
 
 echo ""
 echo "============================================================================"
-echo "(R4-7) SLOW-cadence dots + 2-row box geometry + idle-window balance"
+echo "SLOW-cadence dots + 2-row box geometry + idle-window balance"
 echo "============================================================================"
 # (a) _spinner_dots: the dots advance on the SLOW boundary (every SPIN_SLOW_DIV ticks ≈ 600ms), NOT
 # every 100ms tick. Prove every tick WITHIN a slow window yields the SAME dots (decoupled from the
@@ -572,7 +572,7 @@ assert_eq "every idle start is matched by a stop (single-active invariant, no le
 
 echo ""
 echo "============================================================================"
-echo "(R4-8) per-window idle ANIMATION VALUE — detection / count_and_gate / handoff"
+echo "per-window idle ANIMATION VALUE — detection / count_and_gate / handoff"
 echo "============================================================================"
 # Assertion (A): NO blank/static frame in the detection, preflight_count_and_gate, and
 # preflight->run_plan handoff windows — an animation VALUE (a non-blank painted frame carrying

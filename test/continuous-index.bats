@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# r4-continuous-index.bats — hermetic unit coverage for the R4 4a (continuous index) + 4e (rolling
-# label) render helpers in glass-atrium. Complements the end-to-end r4-progress-bar-continuity-harness.sh
+# continuous-index.bats — hermetic unit coverage for the progress-bar 4a (continuous index) + 4e (rolling
+# label) render helpers in glass-atrium. Complements the end-to-end progress-bar-continuity-harness.sh
 # (which drives the whole preflight->install run_plan handoff) with isolated, falsifiable assertions on
 # the two PURE helpers a time-based forked spinner otherwise makes hard to test:
 #
@@ -13,7 +13,7 @@
 # Hermetic: each test EVALs a SINGLE launcher function into the test shell (extract_launcher_fn) — the
 # TUI never boots, no TTY, NO system mutation. RENDER-ONLY: these helpers never touch exit codes.
 #
-# Run via: bats test/r4-continuous-index.bats
+# Run via: bats test/continuous-index.bats
 # Requires: bats (brew install bats-core), awk, tail, bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
@@ -60,7 +60,7 @@ _stub_bar_collaborators() {
   STEP_TOTAL=3
   run build_run_bar
   [ "${status}" -eq 0 ]
-  [ "${output}" = "BAR[8/10]" ] # base+1 .. base+n → 8/10 (the R4-4 harness's exact handoff case)
+  [ "${output}" = "BAR[8/10]" ] # base+1 .. base+n → 8/10 (the continuous-index harness's exact handoff case)
 }
 
 @test "build_run_bar: final offset step lands at base+n / base+n (no stuck N-1/N)" {
@@ -104,7 +104,7 @@ _stub_bar_collaborators() {
 # === LINE 2 detail resolver — _spinner_rolling_label (tail) + _spinner_dots (fallback) ==========
 # The async-feel 2-line box moved the step LABEL to LINE 1 (the stable headline); _spinner_rolling_label
 # now resolves ONLY the LINE 2 DETAIL — the real-time output tail when the step emits, else the SLOW
-# dots animation (_spinner_dots), which REPLACES the buggy R4-4e per-tick "(working)" text roll.
+# dots animation (_spinner_dots), which REPLACES the buggy per-tick "(working)" text roll.
 
 @test "_spinner_rolling_label: output-producing step shows the LATEST captured line (real-time)" {
   extract_launcher_fn _spinner_rolling_label

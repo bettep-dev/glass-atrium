@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# bug3-force-quit-class.bats — Bug3 T2b (force-quit CLASS removal) + T3 (initial-trigger hardening).
+# run-step-fail-return.bats — force-quit-class removal + hash -r keg-inject hardening.
 #
-# T2b (Bug3-b2): build_monitor was only ONE instance of a class defect — run_step invokes each
+# Force-quit-class guard: build_monitor was only ONE instance of a class defect — run_step invokes each
 # step as a SAME-SHELL brace group `{ "$@"; }` under `set +e` (glass-atrium run_step), so an
 # in-step `exit`/`die` on ANY step terminates the WHOLE TUI process (masked force-quit, no FAIL
 # panel; cleanup() restores the terminal). The user's FIRST force-quit may be step-8-origin
@@ -17,7 +17,7 @@
 # child process and asserts a `REACHED_AFTER` marker AFTER the call — ABSENT pre-fix (bare exit
 # killed the process), PRESENT post-fix (exit_step returned → run_step's rc → control continues).
 #
-# T3 (Bug3-c, SECONDARY): `hash -r` after the node@24 keg PATH inject (freshly-brewed npm resolves
+# hash -r keg hardening (SECONDARY): `hash -r` after the node@24 keg PATH inject (freshly-brewed npm resolves
 # in-process) + a guide-only Xcode CLT presence hint before the npm build. Static-scan (plan-
 # sanctioned — a behavioral `hash -r` proof is impractical machine-safe).
 #
@@ -25,7 +25,7 @@
 # stubbed. NO real npm/brew/psql/node/DB, no machine state. Mirrors test/monitor-build-selfheal.bats
 # (launcher-as-library source pattern) + test/deps-preflight-exec-harness.sh (TTY=/dev/null drive).
 #
-# Run via: bats test/bug3-force-quit-class.bats
+# Run via: bats test/run-step-fail-return.bats
 # Requires: bats (brew install bats-core), bash 3.2+
 
 # SC2154: BATS_TEST_DIRNAME injected by bats. SC2016: static-scan assertions single-quote
@@ -144,9 +144,9 @@ drive_gate() {
 # abort. Every multi-condition assertion below is a short-circuiting `&&` chain so ANY unmet
 # condition propagates to the final status.
 
-# === T2b behavioral — step-8 (setup_database → run_db_setup) same-scope sentinel ===========
+# === Force-quit-guard behavioral — step-8 (setup_database → run_db_setup) same-scope sentinel ===========
 
-@test "T2b: a step-8 (setup_database) routine failure RETURNS a FAIL rc — TUI process survives" {
+@test "force-quit-guard: a step-8 (setup_database) routine failure RETURNS a FAIL rc — TUI process survives" {
   # oss-db-setup.sh exits 6 (prisma-failure). Pre-fix run_db_setup `exit 6` inside run_step's
   # same-shell brace group kills the driver before REACHED_AFTER. Post-fix exit_step returns 6.
   drive_db 6
@@ -154,15 +154,15 @@ drive_gate() {
     && [[ "${output}" == *"REACHED_AFTER rc=6"* ]]
 }
 
-@test "T2b: a step-8 SUCCESS still returns 0 (mechanism does not break the happy path)" {
+@test "force-quit-guard: a step-8 SUCCESS still returns 0 (mechanism does not break the happy path)" {
   drive_db 0
   [[ "${status}" -eq 0 ]] \
     && [[ "${output}" == *"REACHED_AFTER rc=0"* ]]
 }
 
-# === T2b behavioral — step-13 (bootstrap_health_gate) same-scope sentinel ==================
+# === Force-quit-guard behavioral — step-13 (bootstrap_health_gate) same-scope sentinel ==================
 
-@test "T2b: a step-13 (health gate) routine failure RETURNS BOOTSTRAP_EXIT_HEALTH — process survives" {
+@test "force-quit-guard: a step-13 (health gate) routine failure RETURNS BOOTSTRAP_EXIT_HEALTH — process survives" {
   # node exits immediately → the gate's early-liveness probe fails → the converted exit-21 path.
   # Pre-fix `exit 21` kills the driver before REACHED_AFTER; post-fix exit_step returns 21.
   drive_gate
@@ -172,7 +172,7 @@ drive_gate() {
 
 # === static — the mode-aware exit helpers + run_step's GA_TUI_STEP contract ================
 
-@test "T2b(static): exit_step + die_step gate on GA_TUI_STEP and keep the CLI exit branch" {
+@test "force-quit-guard(static): exit_step + die_step gate on GA_TUI_STEP and keep the CLI exit branch" {
   local es ds
   es="$(awk '/^exit_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${ENVLIB}")"
   ds="$(awk '/^die_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${ENVLIB}")"
@@ -186,14 +186,14 @@ drive_gate() {
     && [[ "${ds}" == *'exit '* ]]
 }
 
-@test "T2b(static): run_step sets GA_TUI_STEP across the step invocation" {
+@test "force-quit-guard(static): run_step sets GA_TUI_STEP across the step invocation" {
   local body
   body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}")"
   [[ "${body}" == *'GA_TUI_STEP=1'* ]] \
     && [[ "${body}" == *'GA_TUI_STEP=""'* ]]
 }
 
-@test "T2b(static): converted ga-db.sh routine-failure sites use exit_step/die_step + return" {
+@test "force-quit-guard(static): converted ga-db.sh routine-failure sites use exit_step/die_step + return" {
   local setup rundb recreate gate
   setup="$(awk '/^setup_database\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DB}")"
   rundb="$(awk '/^run_db_setup\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DB}")"
@@ -208,7 +208,7 @@ drive_gate() {
     && [[ "${gate}" == *'exit_step "${BOOTSTRAP_EXIT_HEALTH}" || return "${BOOTSTRAP_EXIT_HEALTH}"'* ]]
 }
 
-@test "T2b(static): the health gate no longer bare-exits BOOTSTRAP_EXIT_HEALTH (all 4 converted)" {
+@test "force-quit-guard(static): the health gate no longer bare-exits BOOTSTRAP_EXIT_HEALTH (all 4 converted)" {
   local gate
   gate="$(awk '/^bootstrap_health_gate\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DB}")"
   # no orphan `exit "${BOOTSTRAP_EXIT_HEALTH}"` remains (only exit_step wraps it)
@@ -216,7 +216,7 @@ drive_gate() {
     && [[ "$(grep -c 'exit_step "${BOOTSTRAP_EXIT_HEALTH}"' <<<"${gate}")" -eq 4 ]]
 }
 
-@test "T2b(static): run_doctor_preflight (TUI-only) returns instead of bare die" {
+@test "force-quit-guard(static): run_doctor_preflight (TUI-only) returns instead of bare die" {
   local body
   body="$(awk '/^run_doctor_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}")"
   [[ "${body}" == *'return'* ]] \
@@ -225,7 +225,7 @@ drive_gate() {
 
 # === CLI-safety static-scan — the passthrough exit contract is unchanged ===================
 
-@test "CLI-safety: ga-core.sh run_bootstrap phase-2 still bare-exits BOOTSTRAP_EXIT_BUILD (T2 guard)" {
+@test "CLI-safety: ga-core.sh run_bootstrap phase-2 still bare-exits BOOTSTRAP_EXIT_BUILD (build-return guard)" {
   local body
   body="$(awk '/^run_bootstrap\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${CORE}")"
   [[ "${body}" == *'exit "${BOOTSTRAP_EXIT_BUILD}"'* ]]
@@ -238,16 +238,16 @@ drive_gate() {
   [[ "${body}" == *'setup_database'* ]]
 }
 
-# === T3 static-scan — hash -r after node@24 keg inject + guide-only CLT check ===============
+# === hash -r static-scan — hash -r after node@24 keg inject + guide-only CLT check ===============
 
-@test "T3(static): hash -r follows every preflight_keg_path_inject node@24 (both render paths)" {
+@test "hash-r(static): hash -r follows every preflight_keg_path_inject node@24 (both render paths)" {
   # exactly the two keg-inject node@24 sites (scroll + boxed) each get a following `hash -r`.
   [[ "$(grep -c 'preflight_keg_path_inject node@24' "${TUI}")" -eq 2 ]] \
     && [[ "$(grep -cE '^[[:space:]]*hash -r' "${TUI}")" -ge 2 ]]
 }
 
-@test "T3(static): the guide-only Xcode CLT gate is invoked before the build path (pre-existing coverage)" {
-  # T3's "CLT check before npm" is ALREADY satisfied by preflight_guide_xcode_clt (install-order
+@test "hash-r(static): the guide-only Xcode CLT gate is invoked before the build path (pre-existing coverage)" {
+  # The hash -r round's "CLT check before npm" is ALREADY satisfied by preflight_guide_xcode_clt (install-order
   # step 1, invoked in BOTH the scroll + boxed preflight paths) — NO duplicate added (minimalism).
   # Assert it is CALLED (not merely defined) in both render paths and references the CLT install
   # command (guide-only, no silent failure). Regression guard if a reorder drops the gate.

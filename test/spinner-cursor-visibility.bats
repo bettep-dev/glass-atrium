@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# bug2-cursor-visibility.bats — falsifiable coverage for BUG2 (the cursor stays a visible block
+# spinner-cursor-visibility.bats — falsifiable coverage for the cursor-visibility bug (the cursor stays a visible block
 # after a panel-mode spinner stops).
 #
 # ROOT CAUSE: stop_step_spinner ended on an UNCONDITIONAL `tp cnorm`, and stop_idle_spinner ended
@@ -13,7 +13,7 @@
 # pre-gate) re-assert their OWN cnorm AFTER the stop, so the typed consent prompts stay visible.
 # The forked-child cnorm death-traps (Ctrl-C scrollback safety) are PRESERVED.
 #
-# Run via: bats test/bug2-cursor-visibility.bats
+# Run via: bats test/spinner-cursor-visibility.bats
 # Hermetic: each test evals a SINGLE launcher function into the test shell and records the cursor
 # ops via a `tp` stub. No TUI, no TTY mutation, no system side effects.
 #

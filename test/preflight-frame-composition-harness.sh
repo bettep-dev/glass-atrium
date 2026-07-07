@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bug1-frame-composition-harness.sh — falsifiable coverage for BUG1 (the intermittent full-screen
+# preflight-frame-composition-harness.sh — falsifiable coverage for the blank-work-box hang (the intermittent full-screen
 # refresh) on the UNCOMMITTED working tree. It drives the REAL box-phase control flow with the TTY
 # renderers stubbed and records a FRAME-STATE event stream, then verifies two invariants:
 #
@@ -11,7 +11,7 @@
 #        group-empty (ENGAGE1 skipped), and not-yet-authed.
 #
 #   (I2) NO GRATUITOUS FULL-FRAME REDRAW — inside the boxed preflight no enter_run_state re-composes
-#        a frame that is ALREADY composed (the BUG1 symptom). In particular the W4 "Resolving
+#        a frame that is ALREADY composed (the blank-work-box hang symptom). In particular the W4 "Resolving
 #        PostgreSQL" re-engage is CONDITIONAL on ENGAGE1 having been skipped (GROUP1 empty): when
 #        ENGAGE1 fired, the frame is intact and W4 must NOT re-compose.
 #
@@ -210,7 +210,7 @@ run_boxed() {
 }
 
 echo "============================================================================"
-echo "(BUG1-S1) group-empty + not-yet-authed — W4 re-engage FIRES (never frameless)"
+echo "S1 group-empty + not-yet-authed — W4 re-engage FIRES (never frameless)"
 echo "============================================================================"
 SC_CLT="present"
 SC_AUTOWORK="yes"
@@ -234,15 +234,15 @@ verify_frame_events "COMPOSED"
 assert_eq "S1 no frame violations (never frameless, no gratuitous redraw)" "0" "${VIO_COUNT}"
 # W4 must fire exactly once (ENGAGE1 skipped → the box would be frameless without it).
 assert_eq "S1 W4 conditional re-engage fired once (COMPOSE count)" "1" "$(_count_evt COMPOSE)"
-# T5 (Bug1-b) re-target: pg detect was split from ONE cluster-wide idle bracket into THREE PER-DETECT
+# Per-detect idle brackets (re-target): pg detect was split from ONE cluster-wide idle bracket into THREE PER-DETECT
 # brackets (utc-guard, postgres detect, role detect — launcher lines ~4756/4783/4796), so the bounded
 # ~2s connect never flashes a blank box body. Each fires start_idle_spinner "Resolving PostgreSQL" →
 # 3 IDLE_START events (each STOP-paired), all on the composed frame (verify_frame_events COMPOSED +
 # VIO_COUNT=0 above prove none is frameless). The count moved 1→3; the "on the composed frame" invariant holds.
-assert_eq "S1 the Resolving idle windows (T5 per-detect brackets) ran on the composed frame" "3" "$(_count_evt IDLE_START)"
+assert_eq "S1 the Resolving idle windows (per-detect brackets) ran on the composed frame" "3" "$(_count_evt IDLE_START)"
 
 echo "============================================================================"
-echo "(BUG1-S2) group1-runnable + provisioned-auth — W4 SKIPS (no gratuitous redraw)"
+echo "S2 group1-runnable + provisioned-auth — W4 SKIPS (no gratuitous redraw)"
 echo "============================================================================"
 SC_CLT="present"
 SC_AUTOWORK="yes"
@@ -264,12 +264,12 @@ sed 's/^/      /' "${GA_EVT}"
 assert_eq "S2 boxed returns 0" "0" "${rc}"
 verify_frame_events "COMPOSED"
 assert_eq "S2 no frame violations" "0" "${VIO_COUNT}"
-# ONLY ENGAGE1 composes — W4 must NOT re-compose the already-intact frame (the BUG1 gratuitous fix).
+# ONLY ENGAGE1 composes — W4 must NOT re-compose the already-intact frame (the gratuitous-redraw fix).
 assert_eq "S2 exactly one COMPOSE (ENGAGE1 only; W4 skipped)" "1" "$(_count_evt COMPOSE)"
 assert_eq "S2 brew batch rendered as a framed body panel" "1" "$(_count_evt BODY_PANEL)"
 
 echo "============================================================================"
-echo "(BUG1-S3) CLT-missing + bare machine — four brackets, each repainted"
+echo "S3 CLT-missing + bare machine — four brackets, each repainted"
 echo "============================================================================"
 SC_CLT="absent"
 SC_AUTOWORK="yes"
@@ -296,7 +296,7 @@ assert_eq "S3 four brackets cleared the frame (CLT+consent+homebrew+auth)" "4" "
 assert_eq "S3 two composes (ENGAGE1 + ENGAGE2; W4 skipped)" "2" "$(_count_evt COMPOSE)"
 
 echo "============================================================================"
-echo "(BUG1-S4) fully-provisioned fast path — boxed touches no frame at all"
+echo "S4 fully-provisioned fast path — boxed touches no frame at all"
 echo "============================================================================"
 SC_CLT="present"
 SC_AUTOWORK="no"
@@ -315,7 +315,7 @@ assert_eq "S4 zero composes on the fast path (W1 frame carries through)" "0" "$(
 assert_eq "S4 zero idle windows in boxed on the fast path" "0" "$(_count_evt IDLE_START)"
 
 echo "============================================================================"
-echo "(BUG1-D) dispatch_action_install_panel — ONE boundary re-engage, gates body-only"
+echo "dispatch dispatch_action_install_panel — ONE boundary re-engage, gates body-only"
 echo "============================================================================"
 # stub the dispatch-level gates + the run_action_panel handoff (body-only: it must NOT self-engage).
 apply_plate_geometry() { :; }
@@ -350,7 +350,7 @@ last_compose_before_handoff="$(awk '/COMPOSE/{c++} /HANDOFF/{print c; exit}' "${
 assert_eq "D the run_action_panel handoff follows a composed frame (body-only)" "2" "${last_compose_before_handoff}"
 
 echo "============================================================================"
-echo "(BUG1-STATIC) structural invariants of the re-engage relocation"
+echo "STATIC structural invariants of the re-engage relocation"
 echo "============================================================================"
 _fn_body() { awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}"; }
 

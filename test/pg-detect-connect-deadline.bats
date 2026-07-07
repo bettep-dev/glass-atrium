@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
-# bug1-connect-deadline.bats — falsifiable coverage for Bug1 (the "blank work box hang after
+# pg-detect-connect-deadline.bats — falsifiable coverage for the connect-deadline fix (the "blank work box hang after
 # Resolving PostgreSQL"), split into its two fixes:
 #
-#   T4 (Bug1-a, PRIMARY/durable): every psql detect connect is bounded by a PGCONNECT_TIMEOUT
+#   Bounded connect deadline (PRIMARY/durable): every psql detect connect is bounded by a PGCONNECT_TIMEOUT
 #     deadline exported at the top of each detect/wait function (local -x → reaches the $(...)
 #     psql child, auto-unsets on return). Covers all SIX known connect sites via the four
 #     function-level exports: ga_detect_postgres (SELECT 1), ga_detect_postgres_role (rolname
@@ -13,18 +13,18 @@
 #     effectively unbounded), so the fix's export is exactly what turns an unbounded block into
 #     a bounded one — fail-before (killed at the ceiling) / pass-after (self-completes bounded).
 #
-#   T5 (Bug1-b, COSMETIC): each blocking pg detect substitution in _run_dependency_preflight_boxed
+#   Per-detect idle brackets (COSMETIC): each blocking pg detect substitution in _run_dependency_preflight_boxed
 #     runs inside its OWN start_idle_spinner…stop_idle_spinner bracket (per-detect, never one pair
 #     spanning the cluster — the framed panel steps self-paint the same body row and would fight a
 #     cluster-wide idle child). Static-scan of the launcher.
 #
-# Run via: bats test/bug1-connect-deadline.bats
+# Run via: bats test/pg-detect-connect-deadline.bats
 # Requires: bats (brew install bats-core), bash 3.2+
 #
 # Machine-safe: no real psql/postgres/launchd. The behavioral tests PATH-stub psql and run the
 # detect in a throwaway `bash -c` (a fresh shell → no stale command hash) under the repo's
 # background+poll+kill hang guard (mirrors deps-preflight-noninteractive.bats:30/795/1002 —
-# NOT macOS-absent `timeout`). The T5 assertions are STATIC (awk/grep the launcher text).
+# NOT macOS-absent `timeout`). The idle-bracket assertions are STATIC (awk/grep the launcher text).
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 DEPS_SH="${GA}/lib/ga-deps.sh"
@@ -90,9 +90,9 @@ run_bounded() {
   DETECT_OUT="$(cat "${out}")"
 }
 
-# === T4 (Bug1-a) — bounded connect deadline (behavioral, fail-before/pass-after) =============
+# === Bounded connect deadline (behavioral, fail-before/pass-after) =============
 
-@test "T4(behavioral): ga_detect_postgres abandons a hung connect within the deadline (not unbounded)" {
+@test "connect-deadline(behavioral): ga_detect_postgres abandons a hung connect within the deadline (not unbounded)" {
   local stub="${SANDBOX}/bin"
   mk_slow_psql "${stub}"
   # unset ambient PGCONNECT_TIMEOUT so the ONLY deadline the stub can see is the fn's own export —
@@ -102,7 +102,7 @@ run_bounded() {
   [[ "${DETECT_OUT}" == "present-but-down" ]]  # returned the down verdict, never blocked unbounded
 }
 
-@test "T4(behavioral): ga_detect_postgres_role bounds the FIRST role-path connect (site 308) too" {
+@test "connect-deadline(behavioral): ga_detect_postgres_role bounds the FIRST role-path connect (site 308) too" {
   local stub="${SANDBOX}/bin"
   mk_slow_psql "${stub}"
   # role path opens TWO connects (rolname query @308 then the SELECT-1 re-probe @314); if 308 were
@@ -112,7 +112,7 @@ run_bounded() {
   [[ "${DETECT_OUT}" == "present-but-down" ]]
 }
 
-@test "T4(R2 no-regression): a healthy-fast cluster still reads 'present' (the bound is connect-phase only)" {
+@test "connect-deadline(no-regression): a healthy-fast cluster still reads 'present' (the bound is connect-phase only)" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
   # psql answers every probe instantly (SELECT 1 exit 0) → the ~2s connect bound is never spent.
@@ -130,7 +130,7 @@ PSQL
   [[ "${output}" == "present" ]]
 }
 
-@test "T4(static): all FOUR pg detect/wait fns export PGCONNECT_TIMEOUT=2 (the 6 connect sites, bounded)" {
+@test "connect-deadline(static): all FOUR pg detect/wait fns export PGCONNECT_TIMEOUT=2 (the 6 connect sites, bounded)" {
   local fn body
   # the four function-level exports cover all six known connect sites at once (each fn's connects
   # inherit the local -x); value is exactly 2 — libpq's effective floor (it silently bumps <2 to 2).
@@ -144,9 +144,9 @@ PSQL
   [[ "${output}" -eq 4 ]]
 }
 
-# === T5 (Bug1-b) — per-detect idle brackets across the boxed detect cluster (static) =========
+# === Per-detect idle brackets across the boxed detect cluster (static) =========
 
-@test "T5(static): each pg detect substitution runs inside its OWN idle bracket (no blank-body window)" {
+@test "idle-bracket(static): each pg detect substitution runs inside its OWN idle bracket (no blank-body window)" {
   local boxed
   boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   [[ -n "${boxed}" ]]
@@ -169,7 +169,7 @@ PSQL
   [[ "${output}" -eq 0 ]]
 }
 
-@test "T5(static): no single idle bracket spans a self-painting panel step (per-detect, not cluster-wide)" {
+@test "idle-bracket(static): no single idle bracket spans a self-painting panel step (per-detect, not cluster-wide)" {
   local boxed
   boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   [[ -n "${boxed}" ]]
@@ -184,7 +184,7 @@ PSQL
   [[ "${output}" -eq 0 ]]
 }
 
-@test "T5(static): the pg_utc_guard failure path STOPS the idle spinner before returning (stop-before-bail)" {
+@test "idle-bracket(static): the pg_utc_guard failure path STOPS the idle spinner before returning (stop-before-bail)" {
   local boxed stop_ln bail_ln
   boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   [[ -n "${boxed}" ]]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # glass-atrium `bootstrap` one-stop path — unit coverage for the engine's
-# run_bootstrap that no other suite exercised as-a-unit (audit gap oss-install/T3):
+# run_bootstrap that no other suite exercised as-a-unit (bootstrap unit-coverage audit gap):
 #   * dry-run: run_bootstrap with DRY_RUN=true short-circuits before build/health.
 #   * exit 20 (BOOTSTRAP_EXIT_BUILD): `npm run build` failure is a loud-fail.
 #   * exit 21 (BOOTSTRAP_EXIT_HEALTH): no /api/health 200 in the window.

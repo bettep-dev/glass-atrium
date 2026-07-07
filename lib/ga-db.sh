@@ -56,7 +56,7 @@ recreate_db_gate() {
   set -e
   if [[ "${db_rc}" -ne 0 ]]; then
     log "DB recreate failed — oss-db-setup.sh exit codes: 5=createdb 6=prisma 7=override 8=recreate-guard (rc=${db_rc})"
-    # T2b: CLI keeps the named exit code; TUI run_step RETURNS it → run_plan FAIL panel (not a force-quit).
+    # force-quit-class guard: CLI keeps the named exit code; TUI run_step RETURNS it → run_plan FAIL panel (not a force-quit).
     exit_step "${db_rc}" || return "${db_rc}"
   fi
   log "== DB recreate done =="
@@ -82,7 +82,7 @@ run_db_setup() {
   set -e
   if [[ "${db_rc}" -ne 0 ]]; then
     log "DB bootstrap failed — oss-db-setup.sh exit codes: 3=cwd 4=missing-cli 5=createdb 6=prisma (rc=${db_rc})"
-    # T2b: the step-8 npm-ci/createdb/prisma failure the user's FIRST force-quit may originate from —
+    # force-quit-class guard: the step-8 npm-ci/createdb/prisma failure a force-quit may originate from —
     # CLI keeps the named exit code; TUI run_step RETURNS it → run_plan FAIL panel, never a masked quit.
     exit_step "${db_rc}" || return "${db_rc}"
   fi
@@ -215,7 +215,7 @@ drop_databases() {
 # expires, then stop it. Port derives via the shared atrium_monitor_port resolver
 # (env → monitor/.env → config.toml [ports].monitor → 16145 — the single shell
 # SoT). The monitor PID is stopped via kill (NEVER launchctl).
-# T2b RESIDUAL RISK (deliberate): the four ROUTINE-failure `exit "${BOOTSTRAP_EXIT_HEALTH}"` paths
+# force-quit-guard RESIDUAL RISK (deliberate): the four ROUTINE-failure `exit "${BOOTSTRAP_EXIT_HEALTH}"` paths
 # below (build/exec-fail, db-not-open, wrong-listener, no-200-timeout) are converted to exit_step so
 # the TUI renders a FAIL panel. The remaining `die`s here (curl-absent, port-unresolvable, port-
 # already-serving, lsof-absent) + recreate_db_gate/run_db_setup's script-missing dies are LEFT as
@@ -223,7 +223,7 @@ drop_databases() {
 # stock-macOS tools, a broken port config, an already-running monitor) whose `die` carries an
 # actionable remediation, and are extremely unlikely on a real install — a loud FATAL exit is
 # acceptable there. The observed step-8 (db-setup) and step-13 (gate) force-quit paths are all
-# covered above; per the T2b plan's residual-risk provision this is the conscious scope boundary.
+# covered above; per the force-quit-guard residual-risk provision this is the conscious scope boundary.
 bootstrap_health_gate() {
   log "== bootstrap [3/3]: monitor health gate (/api/health, ${BOOTSTRAP_HEALTH_WINDOW_SECS}s window) =="
   command -v curl >/dev/null 2>&1 \

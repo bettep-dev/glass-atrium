@@ -286,7 +286,7 @@ rm -rf -- "${MSAND}"
 # WHY SKIPPED (hermeticity, not a real-uninstall regression): this harness is the
 # LIGHT sandbox — it overrides only GA_TARGET_HOME (+ GA_CONFIG_TOML / GA_MANIFEST),
 # reusing the REAL $HOME and $GA_ROOT. But `glass-atrium uninstall` (a) requires an
-# explicit --yes (initial-commit destructive-consent gate — NOT a T1-T6 change) and
+# explicit --yes (initial-commit destructive-consent gate — NOT a monitor-build/TUI-session change) and
 # (b) its run_uninstall path calls drop_databases (REAL peer-auth socket + real DB
 # name), remove_node_modules (rm -rf ${GA_ROOT}/monitor/node_modules — GA_ROOT is
 # readonly + non-overridable, so this is the real worktree tree), and

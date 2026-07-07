@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# t6-grand-total-unify.bats — T6 (Bug2): unify the install step counter into ONE frozen grand
+# install-step-counter-grand-total.bats — unify the install step counter into ONE frozen grand
 # total so the preflight->install handoff no longer jumps the DENOMINATOR (the visible 6->19).
 #
 # Root cause: the preflight box (base=0, STEP_TOTAL=g1+g2) and the install box
@@ -18,7 +18,7 @@
 # Hermetic: each test EVALs a SINGLE launcher function into the test shell (extract_launcher_fn) —
 # the TUI never boots, no TTY, no system mutation. RENDER-ONLY (these helpers never touch exit codes).
 #
-# Run via: bats test/t6-grand-total-unify.bats
+# Run via: bats test/install-step-counter-grand-total.bats
 # Requires: bats (brew install bats-core), awk, sed, bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
@@ -31,7 +31,7 @@ setup() {
 }
 
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
-# driven in isolation without booting the TUI (mirrors r4-continuous-index.bats).
+# driven in isolation without booting the TUI (mirrors continuous-index.bats).
 extract_launcher_fn() {
   eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
 }

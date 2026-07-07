@@ -254,7 +254,7 @@ ga_warn_postgres_version() {
 # Probe order: binary -> major floor -> live server on ${PG_SOCKET} (the engine's
 # setup_database probes the same SoT, so detect + setup agree).
 ga_detect_postgres() {
-  # T4 (Bug1-a): bound the CONNECT phase so a starting/half-dead cluster never blocks the render loop unbounded.
+  # PGCONNECT_TIMEOUT-bounded detect connect: bound the CONNECT phase so a starting/half-dead cluster never blocks the render loop unbounded.
   # local -x reaches the $(...) psql child + auto-unsets on return; covers every psql connect in this fn; ~2s (libpq floors <2 at 2); bash-3.2 clean.
   # 2nd-tier hardening (out of scope here): lib/ga-db.sh db_exists probes (setup_database ~111, uninstall ~180) are also untimed.
   local -x PGCONNECT_TIMEOUT=2
@@ -295,7 +295,7 @@ ga_detect_postgres() {
 #   present-but-down — server not answering (cannot evaluate the role yet)
 # Gated on a live server; reads catalog membership only, never credentials.
 ga_detect_postgres_role() {
-  # T4 (Bug1-a): bound both connects on the role path (rolname query + the SELECT-1 re-probe) — see ga_detect_postgres.
+  # PGCONNECT_TIMEOUT-bounded connects: bound both connects on the role path (rolname query + the SELECT-1 re-probe) — see ga_detect_postgres.
   local -x PGCONNECT_TIMEOUT=2
   if ! command -v psql >/dev/null 2>&1; then
     printf 'present-but-down\n'
@@ -546,7 +546,7 @@ ga_cmd_pg_service_start() {
 
 # ga_cmd_pg_service_restart — RESTART (not just start) the installed postgresql@N brew
 # service, N resolved at runtime (ga_pg_installed_major) — never a hardcoded pin. Used by
-# the foreign/broken-pg guard (R3): a brew-managed server that ANSWERS but REJECTS
+# the foreign/broken-pg guard: a brew-managed server that ANSWERS but REJECTS
 # `SET timezone='UTC'` needs a full restart (a plain `brew services start` is a no-op on an
 # already-running server, so it would NOT clear the broken state). Same runtime-major +
 # default-18 resolution as ga_cmd_pg_service_start.
@@ -645,7 +645,7 @@ ga_cmd_pg_initdb() {
 # Read-only, single-token, exit 0 (detect contract). Same PG_SOCKET peer-auth SoT as the
 # other detects; ON_ERROR_STOP=1 makes the UTC SET a real non-zero on rejection (no swallow).
 ga_detect_postgres_utc() {
-  # T4 (Bug1-a): bound both connects here (SELECT-1 + the SET timezone='UTC' probe) — see ga_detect_postgres.
+  # PGCONNECT_TIMEOUT-bounded connects: bound both connects here (SELECT-1 + the SET timezone='UTC' probe) — see ga_detect_postgres.
   local -x PGCONNECT_TIMEOUT=2
   if ! command -v psql >/dev/null 2>&1; then
     printf 'down\n'
@@ -675,7 +675,7 @@ ga_detect_postgres_utc() {
 # readiness here == the detect's 'present' boundary). Same in-process pattern as ga_pg_ensure_role
 # (never an emitted command string). Bash 3.2 clean (integer counter, no fractional read -t).
 ga_pg_wait_ready() {
-  # T4 (Bug1-a): bound the psql SELECT-1 fallback connect so a single poll iteration can never block past the deadline — see ga_detect_postgres.
+  # PGCONNECT_TIMEOUT-bounded connect: bound the psql SELECT-1 fallback connect so a single poll iteration can never block past the deadline — see ga_detect_postgres.
   local -x PGCONNECT_TIMEOUT=2
   local waited=0
   local ceiling=15

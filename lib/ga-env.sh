@@ -338,7 +338,7 @@ die() {
   exit 1
 }
 
-# exit_step / die_step — T2b force-quit-CLASS guard for run_plan step functions shared between
+# exit_step / die_step — force-quit-CLASS guard for run_plan step functions shared between
 # the TUI menu path and the CLI passthrough. The TUI run_step invokes each step as a SAME-SHELL
 # brace group `{ "$@"; }` under `set +e` (glass-atrium run_step) then captures `rc=$?`; an in-step
 # `exit`/`die` therefore terminates the WHOLE TUI process (masked force-quit, no FAIL panel — the

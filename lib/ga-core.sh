@@ -591,7 +591,7 @@ run_bootstrap() {
   log "== bootstrap [2/3]: monitor build (npm run build, cwd=${GA_ROOT}/monitor) =="
   command -v npm >/dev/null 2>&1 \
     || die "npm not found — monitor build needs Node.js (install Node 24, then re-run bootstrap)"
-  # T1: self-heal a partial install — `npm ci` (idempotent + atomic from package-lock.json)
+  # npm-ci self-heal before the monitor build — `npm ci` (idempotent + atomic from package-lock.json)
   # when the tsc binary is absent, inside the SAME subshell as the build. Snippet is
   # DUPLICATED verbatim from the TUI build_monitor (glass-atrium); a shared helper is not
   # worth the indirection for a one-line snippet whose failure terminal diverges. CLI
