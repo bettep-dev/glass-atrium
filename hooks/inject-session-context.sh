@@ -16,19 +16,19 @@ IFS=$'\n\t'
 # 4th clause fits while the turn-0 line stays a single legible line.
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
-사용자 요청을 받으면 다음 순서로 처리하라:
-1. 요청 분석 → 작업 분해 (compound 축약 금지 · delegation당 >2 번들 or ~40 tool_use 예상 → 분할, 과분할 금지 · DEV: sizable→plan / simple→[ENTRY-CLASS] — SoT: orchestrator-role.md Decision row + ### Spawn Budget)
-2. agent-registry.json + glass-atrium-ops-orchestrator 스킬의 Capability-Based Routing으로 에이전트 선택
-3. Agent 도구로 위임 (delegation 6 required elements: Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
-4. 결과 종합 → 사용자에게 보고
-[WORKFLOW PRE-FLIGHT] dev-* spawn 스크립트 3대 필수 요건(consolidated: 스킬 glass-atrium-ops-orchestrator → "DEV-spawn 3-requirement pre-flight checklist"): ①plan-ref 또는 [ENTRY-CLASS] 토큰(log()/meta.description) ②[SIZE-EST] bundles=N tool_uses~=N 토큰(매 dev-* spawn, 같은 home) ③첫 dev-* 앞 {qa-code-reviewer, DEV} verify-stage — 셋 다 exit-2 gate는 backstop일 뿐, authoring 의무가 PRIMARY (→ orchestrator-role.md ### Ultracode / Workflow-tool Mode)
+On receiving a user request, process it in this order:
+1. Analyze the request → decompose into sub-tasks (no compound-request collapsing · split when a delegation exceeds >2 bundles OR an est. >~30 tool_uses — stay clear of the 46-52 truncation band · no over-fragmentation · DEV: sizable→plan / simple→[ENTRY-CLASS] — SoT: orchestrator-role.md Decision row + ### Spawn Budget)
+2. Select agents via agent-registry.json + the glass-atrium-ops-orchestrator skill's Capability-Based Routing
+3. Delegate via the Agent tool (delegation 6 required elements: Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
+4. Synthesize results → report to the user
+[WORKFLOW PRE-FLIGHT] 3 required elements for a dev-* spawn script (consolidated: glass-atrium-ops-orchestrator skill → "DEV-spawn 3-requirement pre-flight checklist"): ①plan-ref or [ENTRY-CLASS] token (log()/meta.description) ②[SIZE-EST] bundles=N tool_uses~=N token (every dev-* spawn, same home) ③a {qa-code-reviewer, DEV} verify-stage before the first dev-* — all three exit-2 gates are only backstops; the authoring obligation is PRIMARY (→ orchestrator-role.md ### Ultracode / Workflow-tool Mode)
 
-직접 수행 허용: 상황 파악, 단순 질문 응답(1-2문장), 사용자 대화
-직접 수행 금지: 코드 작성, 문서 작성, 분석/조사 응답 (Write/Edit는 enforce-delegation.sh가 차단)
+Direct handling allowed: situation assessment, simple question answers (1-2 sentences), user dialogue
+Direct handling forbidden: writing code, writing documents, analysis/research answers (Write/Edit are blocked by enforce-delegation.sh)
 ORCHESTRATOR_INIT
 
 # wiki search tool notice (for agents)
-echo '[WIKI] wiki 검색 가능: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
+echo '[WIKI] wiki search available: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
 
 # ----------------------------------------------------------------------------
 # Cross-Session Continuity — surface up to 5 newest in_progress files so the
