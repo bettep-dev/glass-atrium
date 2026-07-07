@@ -69,8 +69,9 @@ gate_body() {
   # the 200 + our-listener + db-not-open branch is its own loud-fail (monitor up, DB down).
   [[ "${body}" == *'"${http_code}" == "200" && "${listener_ok}" == "yes" && "${db_open}" != "yes"'* ]]
   [[ "${body}" == *'monitor up, DB unavailable'* ]]
-  # it exits with the health-gate code (surfaced to the wrapper's exit-code branch).
-  [[ "$(grep -c 'exit "${BOOTSTRAP_EXIT_HEALTH}"' <<<"${body}")" -ge 3 ]]
+  # it surfaces the health-gate code on its fail paths via the T2b exit_step wrapper — `exit` on the
+  # CLI passthrough (GA_TUI_STEP unset), `return` under the TUI run_step; the CLI exit-code is unchanged.
+  [[ "$(grep -c 'exit_step "${BOOTSTRAP_EXIT_HEALTH}"' <<<"${body}")" -ge 3 ]]
 }
 
 # === STEP 5 — the body/code split + db-field matcher idioms (dynamic, falsifiable) =======

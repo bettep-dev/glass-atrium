@@ -338,6 +338,33 @@ die() {
   exit 1
 }
 
+# exit_step / die_step — T2b force-quit-CLASS guard for run_plan step functions shared between
+# the TUI menu path and the CLI passthrough. The TUI run_step invokes each step as a SAME-SHELL
+# brace group `{ "$@"; }` under `set +e` (glass-atrium run_step) then captures `rc=$?`; an in-step
+# `exit`/`die` therefore terminates the WHOLE TUI process (masked force-quit, no FAIL panel — the
+# cleanup() EXIT trap restores the terminal). run_step sets GA_TUI_STEP=1 ONLY across the "$@"
+# invocation, so a step's routine failure must RETURN under it (run_plan renders the FAIL panel +
+# persisted see:<log>) yet still `exit` on the CLI path (the named bootstrap codes 20/21/… stay the
+# CLI/dashboard contract). These two leaves centralize that branch — the engine-level subshell
+# alternative was rejected (cleanup() reads parent-shell globals a step mutates, e.g. GATE_LOG).
+#
+# exit_step CODE — for a site whose message is ALREADY logged: CLI → `exit CODE`; TUI → return
+# non-zero so the caller's `|| return CODE` fires. Idiom: `exit_step "${rc}" || return "${rc}"`.
+exit_step() {
+  [[ -n "${GA_TUI_STEP:-}" ]] && return 1
+  exit "${1:-1}"
+}
+
+# die_step CODE MSG… — die() variant: prints `FATAL: MSG`, then CLI → `exit CODE`; TUI → `return
+# CODE` so the caller's `|| return CODE` fires. Idiom: `cond || die_step 1 "msg" || return 1`.
+die_step() {
+  local code="${1:-1}"
+  shift
+  printf 'FATAL: %s\n' "$*" >&2
+  [[ -n "${GA_TUI_STEP:-}" ]] && return "${code}"
+  exit "${code}"
+}
+
 # --- never-touch guard -----------------------------------------------------
 # Echo "yes" when a target-relative path is a protected user-owned path, else
 # "no". Always exits 0 — a stdout verdict (not a boolean return) so the ERR

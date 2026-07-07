@@ -2233,6 +2233,10 @@ run_step() {
   local rc=0
   set +e
   trap - ERR
+  # T2b (force-quit CLASS): mark the step TUI-run so a step fn's routine-failure `exit` becomes a
+  # FAIL-panel RETURN via exit_step/die_step (lib/ga-env.sh) — not a masked whole-process force-quit.
+  # CLI-passthrough-shared fns (setup_database/bootstrap_health_gate) keep `exit` when GA_TUI_STEP unset.
+  GA_TUI_STEP=1
   if [[ -n "${install_mode}" ]]; then
     # </dev/null: pin the CAPTURED exec's stdin to EOF so a hidden sub-tool prompt (brew/pip/
     # claude/fakechat) fails fast (rc!=0, surfaced) instead of blocking invisibly forever. Every
@@ -2243,6 +2247,7 @@ run_step() {
     { "$@" </dev/null 2>"${STEP_LOG}"; } # fd-2-only capture (historical scrolling model)
   fi
   rc=$?
+  GA_TUI_STEP=""
   stop_step_spinner # kill ONLY the spinner PID (synchronous capture needs no sink wait)
   trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
   set -e
@@ -2398,6 +2403,7 @@ STEP_SUPPRESS_SPINNER=""   # "true" suppresses the live spinner for the running 
 STEP_LAST_FAIL_LOG=""      # set by run_step's FAIL branch to the temp log of the failing step
 STEP_FAIL_LOG_PERSISTED="" # set by run_plan to the persisted-on-fail copy path (outcome_panel reads it)
 STEP_FAIL_INDEX=""         # set by run_plan to the 1-based index of the failing step (panel status line)
+GA_TUI_STEP=""             # T2b: "1" only across run_step's "$@" call; exit_step/die_step read it
 
 # _clear_step_state — reset the per-step render globals to empty. Shared by run_plan's teardown +
 # the single-step token/uninstall/purge dispatchers (identical reset block, one SoT).
@@ -2535,7 +2541,11 @@ run_doctor_preflight() {
   doctor_rc=$?
   trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
   set -e
-  [[ "${doctor_rc}" -eq 0 ]] || die "doctor preflight failed — aborting install"
+  # T2b: RETURN the doctor rc under the TUI run_step (FAIL panel) — a bare `die` here force-quit the
+  # whole process (masked, no panel). This step fn is TUI-only (its sole caller is the install
+  # STEP_FN plan; the CLI run_install runs `run_doctor` inline with its own die), so die_step always
+  # RETURNS in practice; the CLI branch is a harmless never-reached safety default.
+  [[ "${doctor_rc}" -eq 0 ]] || die_step "${doctor_rc}" "doctor preflight failed — aborting install" || return "${doctor_rc}"
 }
 
 # monitor production build — run_bootstrap's phase-2 inline step. npm absence is a
@@ -4473,6 +4483,9 @@ EOF
     # `command -v psql` unresolved → ga_detect_postgres returns 'absent' → the service-
     # start branch below never fires. Each call self-guards on formula presence.
     preflight_keg_path_inject node@24
+    # T3 (Bug3-c): drop the shell command-hash cache so a JUST-brewed node@24 npm resolves in-process
+    # (a stale `hash` entry for npm/node from before the keg inject would otherwise mask the new bin).
+    hash -r
     preflight_keg_path_inject_pg
 
     # (A2) foreign/broken postgres guard — a squatter that ANSWERS SELECT 1 but REJECTS
@@ -4716,6 +4729,7 @@ EOF
     start_idle_spinner "Resolving PostgreSQL"
     # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
     preflight_keg_path_inject node@24
+    hash -r # T3 (Bug3-c): re-resolve a just-brewed node@24 npm in-process (clear stale command hash)
     preflight_keg_path_inject_pg
 
     # (A2) foreign/broken postgres guard — identical rationale to the scroll path: intercept a

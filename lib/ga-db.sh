@@ -56,7 +56,8 @@ recreate_db_gate() {
   set -e
   if [[ "${db_rc}" -ne 0 ]]; then
     log "DB recreate failed — oss-db-setup.sh exit codes: 5=createdb 6=prisma 7=override 8=recreate-guard (rc=${db_rc})"
-    exit "${db_rc}"
+    # T2b: CLI keeps the named exit code; TUI run_step RETURNS it → run_plan FAIL panel (not a force-quit).
+    exit_step "${db_rc}" || return "${db_rc}"
   fi
   log "== DB recreate done =="
 }
@@ -81,7 +82,9 @@ run_db_setup() {
   set -e
   if [[ "${db_rc}" -ne 0 ]]; then
     log "DB bootstrap failed — oss-db-setup.sh exit codes: 3=cwd 4=missing-cli 5=createdb 6=prisma (rc=${db_rc})"
-    exit "${db_rc}"
+    # T2b: the step-8 npm-ci/createdb/prisma failure the user's FIRST force-quit may originate from —
+    # CLI keeps the named exit code; TUI run_step RETURNS it → run_plan FAIL panel, never a masked quit.
+    exit_step "${db_rc}" || return "${db_rc}"
   fi
   log "== DB bootstrap done =="
 }
@@ -104,7 +107,8 @@ setup_database() {
     return 0
   fi
   command -v psql >/dev/null 2>&1 \
-    || die "psql not found — install PostgreSQL, or set GA_SKIP_DB_SETUP=1 and run '${0##*/} db-setup' later"
+    || die_step 1 "psql not found — install PostgreSQL, or set GA_SKIP_DB_SETUP=1 and run '${0##*/} db-setup' later" \
+    || return 1
   # presence probe only — a server-down/unreachable socket falls through to the
   # full setup path, whose createdb step loud-fails with a named exit code.
   local db_exists
@@ -211,6 +215,15 @@ drop_databases() {
 # expires, then stop it. Port derives via the shared atrium_monitor_port resolver
 # (env → monitor/.env → config.toml [ports].monitor → 16145 — the single shell
 # SoT). The monitor PID is stopped via kill (NEVER launchctl).
+# T2b RESIDUAL RISK (deliberate): the four ROUTINE-failure `exit "${BOOTSTRAP_EXIT_HEALTH}"` paths
+# below (build/exec-fail, db-not-open, wrong-listener, no-200-timeout) are converted to exit_step so
+# the TUI renders a FAIL panel. The remaining `die`s here (curl-absent, port-unresolvable, port-
+# already-serving, lsof-absent) + recreate_db_gate/run_db_setup's script-missing dies are LEFT as
+# whole-process exits: they are genuinely-unrecoverable environment/config PRECONDITIONS (missing
+# stock-macOS tools, a broken port config, an already-running monitor) whose `die` carries an
+# actionable remediation, and are extremely unlikely on a real install — a loud FATAL exit is
+# acceptable there. The observed step-8 (db-setup) and step-13 (gate) force-quit paths are all
+# covered above; per the T2b plan's residual-risk provision this is the conscious scope boundary.
 bootstrap_health_gate() {
   log "== bootstrap [3/3]: monitor health gate (/api/health, ${BOOTSTRAP_HEALTH_WINDOW_SECS}s window) =="
   command -v curl >/dev/null 2>&1 \
@@ -247,7 +260,7 @@ bootstrap_health_gate() {
   if ! kill -0 "${mon_pid}" 2>/dev/null; then
     printf 'FATAL: monitor process exited immediately (build/cwd/exec failure) — see %s\n' "${GATE_LOG}" >&2
     tail -n 20 -- "${GATE_LOG}" >&2 || true
-    exit "${BOOTSTRAP_EXIT_HEALTH}"
+    exit_step "${BOOTSTRAP_EXIT_HEALTH}" || return "${BOOTSTRAP_EXIT_HEALTH}"
   fi
 
   # poll loop — break on the first HTTP 200. set -e safe: curl is in a condition. The response
@@ -322,14 +335,14 @@ bootstrap_health_gate() {
       "${port}" >&2
     log "  monitor output (last 20 lines of ${GATE_LOG}):"
     tail -n 20 -- "${GATE_LOG}" >&2 || true
-    exit "${BOOTSTRAP_EXIT_HEALTH}"
+    exit_step "${BOOTSTRAP_EXIT_HEALTH}" || return "${BOOTSTRAP_EXIT_HEALTH}"
   fi
   if [[ "${http_code}" == "200" && "${listener_ok}" != "yes" ]]; then
     printf 'FATAL: /api/health returned 200 on port %s but the gate child (pid %s) was NOT the listener — a stale monitor (launchd?) answered, the freshly-built dist/ is unverified\n' \
       "${port}" "${mon_pid}" >&2
     log "  monitor output (last 20 lines of ${GATE_LOG}):"
     tail -n 20 -- "${GATE_LOG}" >&2 || true
-    exit "${BOOTSTRAP_EXIT_HEALTH}"
+    exit_step "${BOOTSTRAP_EXIT_HEALTH}" || return "${BOOTSTRAP_EXIT_HEALTH}"
   fi
   # surface the captured monitor log on failure — the only diagnostic for WHY the
   # gate never saw a 200 (e.g. a bind error / crash in the redirected output).
@@ -337,5 +350,5 @@ bootstrap_health_gate() {
     "${BOOTSTRAP_HEALTH_WINDOW_SECS}" "${port}" "${http_code:-none}" >&2
   log "  monitor output (last 20 lines of ${GATE_LOG}):"
   tail -n 20 -- "${GATE_LOG}" >&2 || true
-  exit "${BOOTSTRAP_EXIT_HEALTH}"
+  exit_step "${BOOTSTRAP_EXIT_HEALTH}" || return "${BOOTSTRAP_EXIT_HEALTH}"
 }
