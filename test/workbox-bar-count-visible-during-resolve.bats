@@ -35,14 +35,16 @@ setup() {
 }
 
 # extract_launcher_fn — eval a single named launcher function into the test shell (mirrors
-# continuous-index.bats / spinner-cursor-visibility.bats).
+# continuous-index.bats / spinner-cursor-visibility.bats). Scans the loader AND its extracted
+# TUI sibling modules (lib/ga-tui-*.sh) — the render primitives (hrule/_bar_fill/build_*_bar/
+# build_counter_str/c) now live in ga-tui-primitives.sh; each fn is defined in exactly one file.
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 # _fn_body — the raw text of a single launcher function (for static shape assertions).
 _fn_body() {
-  awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}"
+  awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 # _load_render_stack — eval the REAL render call-graph stop_idle_spinner's restore path needs (the
