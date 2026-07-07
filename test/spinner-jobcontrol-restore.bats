@@ -35,7 +35,7 @@ setup() {
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
 # driven in isolation without booting the TUI (mirrors deps-preflight-noninteractive.bats).
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 # === unit — _job_control_state reads the monitor ($-) flag ============================

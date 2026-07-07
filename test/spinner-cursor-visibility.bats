@@ -37,12 +37,12 @@ setup() {
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
 # driven in isolation without booting the TUI (mirrors spinner-jobcontrol-restore.bats).
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 # _fn_body — the raw text of a single launcher function (for static assertions).
 _fn_body() {
-  awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}"
+  awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 # _stub_spinner_env — record every `tp` cursor op to TP_LOG and neutralize the kill/wait/paint/

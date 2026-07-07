@@ -33,7 +33,7 @@ setup() {
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
 # driven in isolation without booting the TUI (mirrors continuous-index.bats).
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 # stub build_run_bar's collaborators so the recorded output IS the DISPLAY index/total it computed.
