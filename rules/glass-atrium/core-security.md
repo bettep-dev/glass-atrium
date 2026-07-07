@@ -80,7 +80,7 @@ All 10 categories (LLM01-10) are covered inline by the `[LLMxx:2025]` tag at eac
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "This is an internal API, no security review needed" | Internal APIs are the #1 lateral movement vector. All endpoints need input validation regardless of exposure. |
-| "I'll add input validation later" | Unvalidated code in production is a live vulnerability. Validation is part of the implementation, not a follow-up. |
-| "The framework handles security automatically" | Frameworks provide defaults, not guarantees. Misconfiguration is OWASP A05. Verify each security control explicitly. |
-| "This data isn't sensitive" | Data classification changes. PII can appear in unexpected fields. Validate at boundaries regardless of perceived sensitivity. |
+| "This is an internal API, no security review needed" | Internal APIs = #1 lateral-movement vector · all endpoints need input validation regardless of exposure |
+| "I'll add input validation later" | Unvalidated production code = live vulnerability · validation is part of the implementation, not a follow-up |
+| "The framework handles security automatically" | Frameworks provide defaults, not guarantees · misconfiguration = OWASP A05 · verify each security control explicitly |
+| "This data isn't sensitive" | Data classification changes · PII appears in unexpected fields · validate at boundaries regardless of perceived sensitivity |

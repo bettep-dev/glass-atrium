@@ -164,10 +164,10 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 
 ## Rationalization Rejection [ALL]
 
-Reject trading an established engineering practice for a shortcut: name the excuse, then apply the rebuttal. Domain-specific excuse→rebuttal pairs now live in each domain's home rule file (git-workflow · security · performance · search-first · testing). The single cross-domain **Decision** case below is genuinely all-scope and stays here.
+Reject trading an established practice for a shortcut: name the excuse → apply the rebuttal. Domain excuse→rebuttal pairs live in each home rule file (git-workflow · security · performance · search-first · testing); the cross-domain **Decision** case below is all-scope, stays here.
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
+| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper** · auth, schema-as-SoT, type safety, complete loading = the right path, shortcuts become future debt · (BLOB-on-disk like WAV = essential-fit call, not a shortcut — distinguish) |
 
 > Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix

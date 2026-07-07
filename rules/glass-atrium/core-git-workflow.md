@@ -70,6 +70,6 @@ Applies to all agents.
 
 | Excuse | Rebuttal |
 |--------|----------|
-| "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages. Every change goes through a PR regardless of size. |
-| "I'll squash the commits later" | "Later" creates merge conflicts and lost context. Write clean commits from the start. |
-| "Tests are passing locally, no need to wait for CI" | Local environment ≠ CI environment. CI catches dependency and configuration issues that local runs miss. |
+| "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages · every change goes through a PR regardless of size |
+| "I'll squash the commits later" | "Later" = merge conflicts + lost context · write clean commits from the start |
+| "Tests are passing locally, no need to wait for CI" | Local env ≠ CI env · CI catches dependency + configuration issues local runs miss |
