@@ -103,7 +103,29 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   run_hook "pipeline(agent('glass-atrium-dev-nestjs',{goal:'impl early'}),${f},parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})))"
   [[ "${status}" -eq 2 ]]
   # H1 cause split: token-specific PREPENDED cause line + base reason intact
-  [[ "${output}" == *"CAUSE (block-order): an implementation dev-* precedes every reviewer"* ]]
+  [[ "${output}" == *"CAUSE (block-order): a dev-* token textually precedes EVERY qa-code-reviewer"* ]]
+  [[ "${output}" == *"missing its mandatory"* ]]
+}
+
+# --- Discovery/Design dev-* used BEFORE the verify reviewer trips BLOCK_ORDER: the corrected cause
+# states the flagged token may be an earlier Discovery/Design dev-* (not the implement stage) and
+# names both lawful escape hatches (non-DEV Discovery agent; reviewer-first Contract phase). Same
+# shape as the fixture above, framed as a legitimate Discovery pass. ---
+
+@test "Discovery dev-* before the verify reviewer → BLOCK_ORDER cause names both escape hatches" {
+  local f
+  f="$(filler 45)"
+  run_hook "pipeline(agent('glass-atrium-dev-python',{goal:'DISCOVERY: analyze the existing modules before design'}),${f},parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-python',{goal:'feasible'})))"
+  [[ "${status}" -eq 2 ]]
+  # corrected block-order cause line present
+  [[ "${output}" == *"CAUSE (block-order): a dev-* token textually precedes EVERY qa-code-reviewer"* ]]
+  # (a) the flagged token MAY be an earlier Discovery/Design dev-*, not the implement stage
+  [[ "${output}" == *"Discovery/Design"* ]]
+  # escape hatch (a): non-DEV Discovery agent
+  [[ "${output}" == *"glass-atrium-intel-researcher"* ]]
+  # escape hatch (b): reviewer-first Contract phase
+  [[ "${output}" == *"Contract"* ]]
+  # shared base reason block intact (untouched)
   [[ "${output}" == *"missing its mandatory"* ]]
 }
 
