@@ -671,15 +671,15 @@ extract_launcher_fn() {
 # === STEP 3 — role-create RUN-site gate `!= present`; COUNT stays conservative `== absent` =
 
 @test "STEP3(static): both role-create RUN-sites gate on != present (post-readiness idempotent)" {
-  # scroll + boxed run-sites each evaluate `!= present` (a residual present-but-down OR absent both create).
-  run grep -cF 'if [[ "$(ga_detect_postgres_role)" != "present" ]]; then' "${LAUNCHER}"
-  [[ "${output}" -eq 2 ]]
-  # the OLD `== absent` RUN-site gate is gone from the create call-sites (a create line follows each).
   local scroll boxed
   scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
   boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
-  [[ "${scroll}" == *'ga_detect_postgres_role)" != "present"'* ]]
-  [[ "${boxed}" == *'ga_detect_postgres_role)" != "present"'* ]]
+  # scroll keeps the inline substitution gate; boxed (T5 idle-bracketed) captures the verdict first,
+  # then gates the CAPTURED var on != present — identical != present semantics, no == absent RUN-site gate.
+  [[ "${scroll}" == *'if [[ "$(ga_detect_postgres_role)" != "present" ]]; then'* ]]
+  [[ "${boxed}" == *'pg_role_verdict="$(ga_detect_postgres_role)"'* ]]
+  [[ "${boxed}" == *'if [[ "${pg_role_verdict}" != "present" ]]; then'* ]]
+  # the OLD `== absent` RUN-site gate is gone from BOTH create call-sites.
   [[ "${scroll}" != *'ga_detect_postgres_role)" == "absent"'* ]]
   [[ "${boxed}" != *'ga_detect_postgres_role)" == "absent"'* ]]
 }

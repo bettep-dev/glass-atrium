@@ -4749,7 +4749,14 @@ EOF
     fi
 
     # (4) PostgreSQL service + peer-auth role — framed panel steps.
-    if [[ "$(ga_detect_postgres)" == "present-but-down" ]]; then
+    # T5 (Bug1-b): capture each detect verdict inside its OWN idle bracket so the T4-bounded (~2s) connect never flashes a blank box body.
+    # PER-DETECT, not one pair spanning the cluster — the framed panel steps below self-paint the same body row + would fight a cluster-wide idle child.
+    # Separated declare/assign keeps the exit code clean (SC2155).
+    local pg_verdict
+    start_idle_spinner "Resolving PostgreSQL"
+    pg_verdict="$(ga_detect_postgres)"
+    stop_idle_spinner
+    if [[ "${pg_verdict}" == "present-but-down" ]]; then
       preflight_panel_step_or_bail "postgres: start service" "" "$(ga_cmd_pg_service_start)" || return $?
       # readiness wait (see the scroll path for the full rationale) — bounded ~15s live-server poll
       # so the role detect + downstream setup_database never race a not-yet-ready cluster. Timeout
@@ -4758,7 +4765,11 @@ EOF
     fi
     # role gate is `!= present` post-readiness (see the scroll path for the full rationale) —
     # idempotent create covers both a residual present-but-down and a genuine absent.
-    if [[ "$(ga_detect_postgres_role)" != "present" ]]; then
+    local pg_role_verdict
+    start_idle_spinner "Resolving PostgreSQL"
+    pg_role_verdict="$(ga_detect_postgres_role)"
+    stop_idle_spinner
+    if [[ "${pg_role_verdict}" != "present" ]]; then
       preflight_panel_step_or_bail "postgres: create superuser role" "" "$(ga_cmd_pg_create_role)" || return $?
     fi
 
