@@ -19,9 +19,9 @@ import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 
 // Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 로 렌더(scripts/render-monitor-env.sh)
-// 미설정 → 7842 default · PORT = generic fallback
+// 미설정 → 16145 default · PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 7842);
+const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 16145);
 // Reject a non-bindable port loudly — never silently bind a wrong port.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
