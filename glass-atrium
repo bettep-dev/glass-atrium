@@ -2748,15 +2748,20 @@ confirm_typed() {
 # proceeds normally; the explicit die stays the CI/passthrough safety net.
 #
 # monitor_is_launchd_owned — POSITIVE launchd ownership evidence only. A free-running
-# `node` dev server on :7842 must NOT be auto-handled, so "port serving + plist exists"
-# is insufficient. True ONLY if BOTH: `launchctl list` shows com.glass-atrium.monitor
-# with a NUMERIC pid (a `-` = loaded-but-not-running → NOT owned), AND that pid is an
-# exact whole-line match in `lsof -ti tcp:7842` (the engine gate's own cross-check shape,
-# ga-core.sh ~L1371 — `grep -Fxq` so 5355 never false-matches 53556). launchctl/lsof
-# absent → false (no auto-handle; the engine gate's existing die stays the safety net).
+# `node` dev server on the monitor port must NOT be auto-handled, so "port serving +
+# plist exists" is insufficient. True ONLY if BOTH: `launchctl list` shows
+# com.glass-atrium.monitor with a NUMERIC pid (a `-` = loaded-but-not-running → NOT
+# owned), AND that pid is an exact whole-line match in `lsof -ti tcp:<port>` (the engine
+# gate's own cross-check shape, ga-core.sh ~L1371 — `grep -Fxq` so 5355 never
+# false-matches 53556). The port derives via the shared atrium_monitor_port resolver
+# (ADR-1) — never a literal, so no split-brain vs the port the monitor actually binds.
+# launchctl/lsof absent OR an unresolvable port → false (no auto-handle; the engine
+# gate's existing die stays the safety net).
 monitor_is_launchd_owned() {
   command -v launchctl >/dev/null 2>&1 || return 1
   command -v lsof >/dev/null 2>&1 || return 1
+  local port
+  port="$(atrium_monitor_port)" || return 1 # unresolvable port → cannot assert ownership
   local label="com.glass-atrium.monitor" pid
   # `launchctl list` row: "<pid>\t<status>\t<label>" — the label is the LAST whitespace
   # field. EXACT-label awk match (==, not substring) so the sibling job
@@ -2764,10 +2769,10 @@ monitor_is_launchd_owned() {
   # sorts first, so a substring + head -1 would wrongly select the `-` pid.
   pid="$(launchctl list 2>/dev/null | awk -v l="${label}" '$NF==l{print $1; exit}' || true)"
   [[ "${pid}" =~ ^[0-9]+$ ]] || return 1 # `-` (not running) / empty / garbage → not owned
-  # cross-check the launchd pid actually owns the :7842 LISTENER (exact whole-line).
+  # cross-check the launchd pid actually owns the :${port} LISTENER (exact whole-line).
   # -sTCP:LISTEN restricts to the listener; a bare lsof also returns client connections.
   local listener_pids
-  listener_pids="$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null || true)"
+  listener_pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
   printf '%s\n' "${listener_pids}" | grep -Fxq -- "${pid}" || return 1
   return 0
 }
@@ -2775,11 +2780,14 @@ monitor_is_launchd_owned() {
 # stop_launchd_monitor_for_install — stop a launchd-owned monitor so the health gate
 # sees a free port. No-op (return 0) when not launchd-owned. The stop flags are set
 # BEFORE the bootout so a crash mid-stop still triggers the cleanup() restore. After
-# bootout, poll until :7842 frees, bounded (~5s). On a port that never frees: restore +
-# a loud stderr message, then return non-zero so the caller aborts the install cleanly
-# (never proceed blind into a gate that would validate the stale instance).
+# bootout, poll until the monitor port frees, bounded (~5s). On a port that never frees:
+# restore + a loud stderr message, then return non-zero so the caller aborts the install
+# cleanly (never proceed blind into a gate that would validate the stale instance). The
+# port derives via atrium_monitor_port (ADR-1) — never a literal.
 stop_launchd_monitor_for_install() {
   monitor_is_launchd_owned || return 0
+  local port
+  port="$(atrium_monitor_port)" || return 1 # unresolvable port → abort before any stop
   local label="com.glass-atrium.monitor"
   # set the stop flags BEFORE the bootout (crash-mid-stop → cleanup() still restores).
   MONITOR_WAS_STOPPED="yes"
@@ -2795,16 +2803,16 @@ stop_launchd_monitor_for_install() {
   # viewing the dashboard) keeps a bare lsof non-empty → false 5s timeout abort.
   local waited=0
   while [[ "${waited}" -lt 5 ]]; do
-    [[ -z "$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null || true)" ]] && return 0
+    [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]] && return 0
     sleep 1
     waited=$((waited + 1))
   done
-  if [[ -z "$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null || true)" ]]; then
+  if [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]]; then
     return 0
   fi
   # port never freed — restore what we stopped, surface loudly, and signal abort.
-  printf 'ERROR: launchd monitor stop left :7842 bound after %ss — install aborted to avoid validating the stale instance. Restoring the monitor.\n' \
-    "${waited}" >&2
+  printf 'ERROR: launchd monitor stop left :%s bound after %ss — install aborted to avoid validating the stale instance. Restoring the monitor.\n' \
+    "${port}" "${waited}" >&2
   restore_launchd_monitor
   return 1
 }
@@ -2827,10 +2835,15 @@ restore_launchd_monitor() {
   # the curl verify below is the real liveness check.
   launchctl bootstrap "gui/${UID}" "${plist}" 2>/dev/null || true
   # verify restore: poll /api/health for 200, bounded by the engine's own health window
-  # constant (no new magic number) so the two windows stay consistent.
+  # constant (no new magic number) so the two windows stay consistent. The port derives
+  # via atrium_monitor_port (ADR-1); a resolver failure is masked to '' (this fn ALWAYS
+  # returns 0 inside cleanup() under set -e) → the poll simply times out into the loud
+  # manual-remediation message below, never a non-zero rc that would corrupt the exit code.
+  local port
+  port="$(atrium_monitor_port 2>/dev/null || true)"
   local waited=0
   while [[ "${waited}" -lt "${BOOTSTRAP_HEALTH_WINDOW_SECS}" ]]; do
-    if curl -sf -o /dev/null "http://127.0.0.1:7842/api/health" 2>/dev/null; then
+    if curl -sf -o /dev/null "http://127.0.0.1:${port}/api/health" 2>/dev/null; then
       log "== install: launchd monitor restored (now serving the rebuilt dist) =="
       return 0
     fi
@@ -2845,21 +2858,25 @@ restore_launchd_monitor() {
 
 # === CHANGE 3: non-launchd orphan stop for the install health gate ==========
 # monitor_is_launchd_owned (above) recognizes ONLY a launchd-MANAGED monitor (a loaded
-# com.glass-atrium.monitor job whose pid owns :7842). A NON-launchd orphan — a stray
-# `node dist/server/main.js` left over from a crashed install, a manual dev run, etc. —
-# is therefore MISSED by stop_launchd_monitor_for_install (it returns 0/no-op), so the
-# orphan keeps :7842 bound and bootstrap_health_gate's precondition curl sees a 200 from
-# the stale instance and die()s — the root cause of the install "hang" (the dying step
-# exits past stop_step_spinner; CHANGE 2 reaps the spinner, this CHANGE frees the port).
+# com.glass-atrium.monitor job whose pid owns the monitor port). A NON-launchd orphan — a
+# stray `node dist/server/main.js` left over from a crashed install, a manual dev run,
+# etc. — is therefore MISSED by stop_launchd_monitor_for_install (it returns 0/no-op), so
+# the orphan keeps the port bound and bootstrap_health_gate's precondition curl sees a 200
+# from the stale instance and die()s — the root cause of the install "hang" (the dying
+# step exits past stop_step_spinner; CHANGE 2 reaps the spinner, this CHANGE frees the port).
 #
-# monitor_orphan_pid_on_port — echo the PID of a :7842 LISTENER that is NOT launchd-owned,
-# else echo nothing. SAFETY: this is the SOLE source of the kill target — it returns a PID
-# ONLY when (a) lsof reports a LISTENER pid on :7842 AND (b) monitor_is_launchd_owned is
-# false (no loaded job owns that port). A launchd-owned monitor yields NOTHING here, so the
-# launchd path (stop_launchd_monitor_for_install / bootout) stays the ONLY handler for it —
-# this function never targets a launchd-managed process. Always exits 0 (stdout verdict).
+# monitor_orphan_pid_on_port — echo the PID of a monitor-port LISTENER that is NOT
+# launchd-owned, else echo nothing. It is the shared NON-LAUNCHD-LISTENER DETECTOR and does
+# NOT judge ours-vs-foreign (that ACTION policy lives in the caller — ADR-2 polarity note:
+# detectors shared, action per-caller). Returns a PID ONLY when (a) lsof reports a LISTENER
+# pid on the resolved port AND (b) monitor_is_launchd_owned is false (no loaded job owns
+# that port). A launchd-owned monitor yields NOTHING here, so the launchd path
+# (stop_launchd_monitor_for_install / bootout) stays its ONLY handler. The port derives via
+# atrium_monitor_port (ADR-1) — never a literal. Always exits 0 (stdout verdict).
 monitor_orphan_pid_on_port() {
   command -v lsof >/dev/null 2>&1 || return 0 # no lsof → cannot identify an orphan; defer to the gate's die
+  local port
+  port="$(atrium_monitor_port)" || return 0 # unresolvable port → cannot probe; defer to the gate's die
   # if a launchd job legitimately owns the port, this is NOT an orphan — emit nothing so
   # only stop_launchd_monitor_for_install (bootout) handles it. (`!` keeps set -e happy.)
   if monitor_is_launchd_owned; then
@@ -2868,29 +2885,73 @@ monitor_orphan_pid_on_port() {
   # -sTCP:LISTEN: the LISTENER pid only (a bare lsof also returns client connections, e.g.
   # a browser viewing the dashboard — never a kill target). head -1: a single owning pid.
   local listener_pid
-  listener_pid="$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  listener_pid="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
   [[ "${listener_pid}" =~ ^[0-9]+$ ]] || return 0 # nothing listening (or garbage) → no orphan
   printf '%s\n' "${listener_pid}"
 }
 
-# stop_orphan_monitor_for_install — if a NON-launchd orphan holds :7842, stop it so the
-# health gate's port is free. No-op (return 0) when the port is free OR launchd-owned (the
-# launchd path already handled the latter, having run first). SAFETY: kills ONLY the verified
-# :7842 non-launchd LISTENER pid (never a blind kill, never a launchd-managed pid). SIGTERM
-# first, verify the port frees (bounded ~5s), escalate to SIGKILL only if it does not. On a
-# port that never frees, loud-fail (return non-zero) so the caller aborts the install cleanly
-# rather than proceed into a gate that would validate the stale instance.
+# monitor_pid_is_ours — TRUE (rc 0) iff PID $1 is OUR monitor, defined (ADR-2 R1) as BOTH:
+#   (a) its argv contains `dist/server/main.js` (identifies it as A monitor), AND
+#   (b) its working directory == ${GA_ROOT}/monitor (pins it to OUR install root).
+# The monitor is launched `cd ${GA_ROOT}/monitor && exec node dist/server/main.js`
+# (lib/ga-db.sh), so `ps -o command=` reports the RELATIVE argv `node dist/server/main.js`
+# — matching an ABSOLUTE ${GA_ROOT}/monitor/dist/server/main.js would NEVER hit and would
+# MIS-FLAG our own stray as foreign (regressing the AC-S2.5b self-heal). The cwd is the
+# disambiguator a bare argv match lacks: a foreign `node …/dist/server/main.js` running in
+# a DIFFERENT tree passes (a) but fails (b). cwd via `lsof -p <pid> -a -d cwd -Fn` (parse
+# the n-prefixed name field). ps/lsof absent, a non-numeric pid, or any missing signal →
+# rc 1 (treated FOREIGN → fail-safe: never kill on incomplete evidence). Args: $1 = pid.
+monitor_pid_is_ours() {
+  local pid="$1"
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  command -v lsof >/dev/null 2>&1 || return 1
+  # (a) argv identifies A monitor — the RELATIVE `dist/server/main.js` substring.
+  local argv
+  argv="$(ps -o command= -p "${pid}" 2>/dev/null || true)"
+  case "${argv}" in
+    *dist/server/main.js*) ;;
+    *) return 1 ;; # argv is not a monitor → foreign
+  esac
+  # (b) cwd pins it to OUR install root. `-a -d cwd` restricts lsof's output to the cwd fd;
+  # -Fn emits an `n`-prefixed name line for it — strip the leading `n`.
+  local cwd
+  cwd="$(lsof -p "${pid}" -a -d cwd -Fn 2>/dev/null | awk '/^n/{print substr($0, 2); exit}' || true)"
+  [[ "${cwd}" == "${GA_ROOT}/monitor" ]] || return 1 # different tree → foreign
+  return 0
+}
+
+# stop_orphan_monitor_for_install — if a NON-launchd LISTENER holds the monitor port, apply
+# the ADR-2 ownership policy: our own stray (monitor_pid_is_ours: argv `dist/server/main.js`
+# AND cwd ${GA_ROOT}/monitor) → SIGTERM→SIGKILL self-heal (UNCHANGED behavior); a FOREIGN
+# holder (fails the argv+cwd test) → do NOT kill, FAIL the install loudly identifying it.
+# No-op (return 0) when the port is free OR launchd-owned (the launchd path already handled
+# the latter, having run first). SAFETY: only ever kills the verified :port non-launchd
+# LISTENER pid that is VERIFIED-ours (never a blind kill, never a launchd-managed pid, never
+# a foreign pid). SIGTERM first, verify the port frees (bounded ~5s), escalate to SIGKILL
+# only if it does not. On a port that never frees, loud-fail (return non-zero) so the caller
+# aborts the install cleanly. The port derives via atrium_monitor_port (ADR-1).
 stop_orphan_monitor_for_install() {
   local orphan_pid
   orphan_pid="$(monitor_orphan_pid_on_port)"
   [[ -n "${orphan_pid}" ]] || return 0 # port free or launchd-owned → nothing to do
-  log "== install: NON-launchd orphan on :7842 (pid ${orphan_pid}) — stopping it so the health gate port is free =="
-  # SIGTERM the verified orphan listener pid, then poll until :7842 frees (bounded ~5s).
+  local port
+  port="$(atrium_monitor_port)" || return 1 # unresolvable port → abort before any action
+  # Part B (ADR-2): a non-launchd holder is only OUR stray if its argv contains
+  # dist/server/main.js AND its cwd is ${GA_ROOT}/monitor. A FOREIGN holder is NOT ours —
+  # NEVER kill it; fail the install loudly so the operator resolves the conflict by hand.
+  if ! monitor_pid_is_ours "${orphan_pid}"; then
+    printf 'ERROR: :%s is held by a FOREIGN process (pid %s) that is NOT our monitor (argv/cwd mismatch) — install aborted WITHOUT killing it. Identify it: lsof -nP -iTCP:%s -sTCP:LISTEN\n' \
+      "${port}" "${orphan_pid}" "${port}" >&2
+    return 1
+  fi
+  log "== install: NON-launchd OUR-monitor stray on :${port} (pid ${orphan_pid}) — stopping it so the health gate port is free =="
+  # SIGTERM the verified our-stray listener pid, then poll until :${port} frees (bounded ~5s).
   kill "${orphan_pid}" 2>/dev/null || true
   local waited=0
   while [[ "${waited}" -lt 5 ]]; do
-    [[ -z "$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null || true)" ]] && {
-      log "== install: orphan stopped — :7842 is now free for the health gate =="
+    [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]] && {
+      log "== install: orphan stopped — :${port} is now free for the health gate =="
       return 0
     }
     sleep 1
@@ -2905,12 +2966,13 @@ stop_orphan_monitor_for_install() {
     kill -KILL "${orphan_pid}" 2>/dev/null || true
     sleep 1
   fi
-  if [[ -z "$(lsof -ti tcp:7842 -sTCP:LISTEN 2>/dev/null || true)" ]]; then
-    log "== install: orphan stopped (SIGKILL) — :7842 is now free for the health gate =="
+  if [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]]; then
+    log "== install: orphan stopped (SIGKILL) — :${port} is now free for the health gate =="
     return 0
   fi
   # port never freed — surface loudly and signal abort (never validate a stale instance).
-  printf 'ERROR: a non-launchd process still holds :7842 after SIGTERM+SIGKILL — install aborted to avoid validating the stale instance. Identify it: lsof -nP -iTCP:7842 -sTCP:LISTEN\n' >&2
+  printf 'ERROR: a non-launchd process still holds :%s after SIGTERM+SIGKILL — install aborted to avoid validating the stale instance. Identify it: lsof -nP -iTCP:%s -sTCP:LISTEN\n' \
+    "${port}" "${port}" >&2
   return 1
 }
 
@@ -3080,7 +3142,12 @@ parse_monitor_summary() {
 # (xdg-open fallback for a non-macOS host). Returns 0 always — a non-zero open is a rendered status,
 # never a launcher crash (mirrors Token). Reads NO secret — only the localhost URL.
 dispatch_action_monitor_panel() {
-  local url="http://127.0.0.1:7842" status=0
+  # Dashboard URL derives via atrium_monitor_port (ADR-1) — never a literal. A resolver
+  # failure is masked to '' (this panel ALWAYS returns 0); the open then no-ops into a
+  # rendered non-zero status, never a launcher crash.
+  local port
+  port="$(atrium_monitor_port 2>/dev/null || true)"
+  local url="http://127.0.0.1:${port}" status=0
   # Single-step panel hygiene: clear any prior run_plan action's persisted fail-log path so the
   # Monitor done bottom-row never inherits a stale `log:` pointer (mirrors _panel_abort).
   STEP_FAIL_LOG_PERSISTED=""
