@@ -188,7 +188,7 @@ drive_gate() {
 
 @test "force-quit-guard(static): run_step sets GA_TUI_STEP across the step invocation" {
   local body
-  body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}")"
+  body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)"
   [[ "${body}" == *'GA_TUI_STEP=1'* ]] \
     && [[ "${body}" == *'GA_TUI_STEP=""'* ]]
 }
@@ -218,7 +218,7 @@ drive_gate() {
 
 @test "force-quit-guard(static): run_doctor_preflight (TUI-only) returns instead of bare die" {
   local body
-  body="$(awk '/^run_doctor_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}")"
+  body="$(awk '/^run_doctor_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)"
   [[ "${body}" == *'return'* ]] \
     && [[ "${body}" != *$'|| die '* ]]
 }

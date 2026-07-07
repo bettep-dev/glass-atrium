@@ -352,7 +352,7 @@ assert_eq "D the run_action_panel handoff follows a composed frame (body-only)" 
 echo "============================================================================"
 echo "STATIC structural invariants of the re-engage relocation"
 echo "============================================================================"
-_fn_body() { awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}"; }
+_fn_body() { awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA_DIR_ROOT}"/lib/ga-tui-*.sh; }
 
 # run_action_panel is BODY-ONLY: it no longer self-engages (the caller owns the engage). Match an
 # actual CALL line (bare `enter_run_state`), not the word inside an explanatory comment.

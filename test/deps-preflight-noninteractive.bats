@@ -471,7 +471,7 @@ teardown() {
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
 # DRIVEN dynamically (its detect/render deps are stubbed by each caller) without booting the TUI.
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 @test "count(cold): cold Mac (postgresql@18 in brew missing-set) counts BOTH pg steps → 7 total" {
@@ -595,7 +595,7 @@ extract_launcher_fn() {
 
 @test "STEP1(static): run_step redirects the captured exec stdin from /dev/null in BOTH branches" {
   local body
-  body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^run_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # install/panel branch: fd1+fd2 captured AND stdin pinned to EOF.
   [[ "${body}" == *'{ "$@" </dev/null >"${STEP_LOG}" 2>&1; }'* ]]

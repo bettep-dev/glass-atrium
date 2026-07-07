@@ -143,7 +143,7 @@ drive() {
 
 @test "build-return: build_monitor uses return (not exit/die) for its failure paths" {
   local body
-  body="$(sed -n '/^build_monitor() {/,/^}/p' "${TUI}")"
+  body="$(sed -n '/^build_monitor() {/,/^}/p' "${TUI}" "${GA}"/lib/ga-tui-*.sh)"
   [[ "${body}" == *'return "${BOOTSTRAP_EXIT_BUILD}"'* ]] \
     && [[ "${body}" != *'exit "${BOOTSTRAP_EXIT_BUILD}"'* ]] \
     && [[ "${body}" != *"die "* ]]                        # npm-absent path no longer die()s
