@@ -1174,7 +1174,8 @@ workbox_body_str() {
           # fallback stays on the grand sequence. Empty base => raw i/N (unchanged).
           local disp_i disp_n
           disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
-          disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+          # BUG2/T6: prefer the frozen GRAND_TOTAL denominator; empty (shared callers) => raw base+STEP_TOTAL.
+          disp_n=${GRAND_TOTAL:-$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))}
           counter="$(c "${C_DIM}" "$(build_counter_str "${disp_i}" "${disp_n}")")"
         fi
         printf ' %s%s' "${counter}" "$(c "${C_STRONG}" "${active_label}")"
@@ -1979,7 +1980,8 @@ build_run_bar() {
   # raw STEP_INDEX/STEP_TOTAL, byte-for-byte unchanged for every shared uninstall/db/token/purge caller.
   local disp_i disp_n
   disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
-  disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+  # BUG2/T6: prefer the frozen GRAND_TOTAL denominator; empty (shared callers) => raw base+STEP_TOTAL.
+  disp_n=${GRAND_TOTAL:-$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))}
   build_progress_bar "${disp_i}" "${disp_n}" "$(progress_bar_width)" "${STEP_BAR_ACCENT_CUR:-${C_ACCENT}}"
 }
 
@@ -2041,11 +2043,22 @@ run_action_panel() {
   start_idle_spinner "Preparing steps"
   build_step_plan "${action}"
   stop_idle_spinner
+  # BUG2/T6: snapshot the frozen grand total + carried base BEFORE run_plan's end-of-plan teardown
+  # (_clear_step_state) sweeps them, so the done line's "failed at step N/T" stays on the SAME grand
+  # scale as the running bar (install panel only). Empty for every shared caller (uninstall/db/token/
+  # purge never set GRAND_TOTAL) => the N/T below is byte-for-byte the raw plan length, unchanged.
+  local grand_total="${GRAND_TOTAL:-}" grand_base="${STEP_INDEX_BASE:-0}"
   run_plan "${title}" "${accent}" "panel" || status=$?
   # idx/total for the done line: STEP_FN holds the plan length; run_plan sets
   # STEP_FAIL_INDEX to the 1-based failing step on failure (default to total on success).
   local total_steps="${#STEP_FN[@]}"
   local fail_idx="${STEP_FAIL_INDEX:-${total_steps}}"
+  # T6: on the install-panel handoff, offset the failing-step index onto the grand sequence
+  # (base+fail_idx / GRAND_TOTAL) so the done line matches the bar. No-op when GRAND_TOTAL is empty.
+  if [[ -n "${grand_total}" ]]; then
+    total_steps="${grand_total}"
+    fail_idx=$((grand_base + fail_idx))
+  fi
   status_line "${status}" "${title}" "${fail_idx}" "${total_steps}"
   IFS= read -rsn1 _ <"${TTY}" || true
   enter_nav_state
@@ -2142,7 +2155,8 @@ run_step() {
     # counter continues the grand sequence rather than restarting at 1/n. Empty base => raw i/N.
     local disp_i disp_n
     disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
-    disp_n=$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))
+    # BUG2/T6: prefer the frozen GRAND_TOTAL denominator; empty (shared callers) => raw base+STEP_TOTAL.
+    disp_n=${GRAND_TOTAL:-$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))}
     counter="$(c "${C_DIM}" "$(build_counter_str "${disp_i}" "${disp_n}")")"
   fi
 
@@ -2395,6 +2409,14 @@ STEP_TOTAL=""
 # NO reset at the handoff. Swept by _clear_step_state (run_plan's end-of-plan teardown), so no later
 # shared caller inherits a stale base. DISPLAY-only: never feeds exit codes or step control flow.
 STEP_INDEX_BASE=""
+# BUG2/T6: GRAND_TOTAL — the ONE frozen install denominator ((g1+g2 preflight steps) + INSTALL_PLAN_LEN),
+# published ONCE by preflight_count_and_gate. Empty for EVERY shared caller so the 3 disp_n render sites
+# fall back to base+STEP_TOTAL byte-for-byte. Set only on the install-panel path; swept by _clear_step_state.
+GRAND_TOTAL=""
+# INSTALL_PLAN_LEN — the install build_step_plan length as a STATIC literal, NOT ${#STEP_FN[@]}:
+# preflight_count_and_gate runs BEFORE build_step_plan install, so the array is not yet 14 at count time.
+# A drift guard (test/t6-grand-total-unify.bats) pins this to the live plan length after build_step_plan.
+INSTALL_PLAN_LEN=14
 STEP_LABEL_ACTIVE_CUR=""   # present-progressive label for the step currently running
 STEP_BAR_CUR=""            # ITEM 4: the prebuilt dominant progress-bar string for the running step
                            # (built ONCE per step in run_plan so the 100ms spinner tick never recomputes it)
@@ -2415,6 +2437,7 @@ _clear_step_state() {
   STEP_INDEX=""
   STEP_TOTAL=""
   STEP_INDEX_BASE=""
+  GRAND_TOTAL="" # BUG2/T6: sweep beside STEP_INDEX_BASE so a prior install grand total never leaks
   STEP_LABEL_ACTIVE_CUR=""
   STEP_BAR_CUR=""
   STEP_BAR_ACCENT_CUR=""
@@ -4648,6 +4671,10 @@ preflight_count_and_gate() {
   # Leave STEP_INDEX empty until the first framed step increments it (no 0/N pre-flash).
   STEP_TOTAL=$((g1 + g2))
   STEP_INDEX=""
+  # BUG2/T6: freeze the ONE grand total = the (g1+g2) preflight steps + the fixed 14-step install plan,
+  # so preflight AND install render the SAME denominator (no 6->19 jump). GLOBAL (no `local`) so it
+  # propagates through run_gate_quiet's brace group into dispatch's install run_action_panel.
+  GRAND_TOTAL=$((g1 + g2 + INSTALL_PLAN_LEN))
   return 0
 }
 
@@ -4819,8 +4846,11 @@ EOF
   STEP_INDEX_BASE="${STEP_INDEX:-0}"
   # BUG2: sweep the shared counter (STEP_INDEX/STEP_TOTAL) + the per-step render detail so no stale i/N
   # or label/bar leaks into dispatch's install run_plan (which re-seeds STEP_INDEX/STEP_TOTAL fresh 1..n).
-  # This is the _clear_step_state reset block MINUS STEP_INDEX_BASE (deliberately PRESERVED — it is the
-  # carried offset consumed by the install render, not a stale value).
+  # This is the _clear_step_state reset block MINUS STEP_INDEX_BASE and GRAND_TOTAL (BOTH deliberately
+  # PRESERVED — they are the carried render offset + the frozen grand denominator the install render
+  # consumes, not stale values). Adding GRAND_TOTAL here would make install fall back to base+STEP_TOTAL
+  # (=19) and reintroduce the 6->19 jump — mirror STEP_INDEX_BASE exactly (swept in _clear_step_state,
+  # preserved at this handoff).
   STEP_INDEX=""
   STEP_TOTAL=""
   STEP_LABEL_ACTIVE_CUR=""
