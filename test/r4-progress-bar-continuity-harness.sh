@@ -124,7 +124,6 @@ preflight_grouped_consent() { return 0; }
 preflight_guide_claude_auth() { return 0; }
 preflight_provision_headless_token() { return 0; }
 token_already_provisioned() { return 0; }
-_preflight_python_break_consent() { return 0; }
 preflight_install_fakechat() { return 0; }
 preflight_install_python_libs() { return 0; }
 preflight_bracket() { "$@"; } # run the gate, no alt-screen/stty
