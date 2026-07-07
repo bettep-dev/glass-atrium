@@ -24,8 +24,11 @@
 # T9 absent paired tool_result (kill mid-call) → no match, stays completion-synthesized
 # T10 budget pin → counter at budget + errored SO ⇒ budget-truncation (heuristic still live)
 #
-# R2-positive cases INSERT the NEW 10th attribution token into the live-reachable DB → they
-# probe the live CHECK first and skip until the live ALTER lands (orchestrator deploy step).
+# R2-positive cases (T3/T4/T7/T8) run the DB-free stderr rescue regression UNCONDITIONALLY —
+# a terminal_so=1 event LANDS attribution=structuredoutput-derived on the stderr diagnostic
+# channel (computed BEFORE the PG INSERT), so the regression holds even in a token-absent CHECK
+# env. Only the DB-row assertions (which INSERT the 10th attribution token) are gated behind the
+# live-CHECK probe → they self-skip until the live ALTER lands (orchestrator deploy step).
 #
 # Isolation: HOME is sandboxed so the transcript resolution (~/.claude/projects/...) and the
 # diag log are redirected into the test temp dir. The PG helper is resolved by the hook as a
@@ -44,14 +47,6 @@ setup() {
   [[ -f "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not found: ${PG_HELPER_SRC}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
-
-  # psycopg site-packages dir (HOME-dependent user install) — pin it for the sandboxed hook.
-  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
-  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
-  # DB must be reachable — otherwise the row assertions cannot run.
-  PYTHONPATH="${PSYCOPG_PP}" python3 -c \
-    'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
-    >/dev/null 2>&1 || skip "glass_atrium DB not reachable"
 
   SM_TMP="$(mktemp -d)"
   # Unique per-run agent + agent_id — scopes both the row assertions and the DELETE.
@@ -74,6 +69,22 @@ setup() {
   COUNTER_FILE="${BUDGET_DIR}/${AGENT_ID}"
 
   PAYLOAD_FILE="${SM_TMP}/payload.json"
+
+  # DB-free inline-tolerance cases (T4/T5, tagged [inline]) fail-open PG and read the decision off
+  # the stderr diagnostic channel — no live DB. They stop here so the psycopg/DB probe below never
+  # skips them (mirrors track-outcome-budget-truncation.bats: runs without a live DB). The probe
+  # moved AFTER the tmp setup so the [inline] early-return keeps SANDBOX_HOME/PAYLOAD_FILE/BUDGET_DIR.
+  case "${BATS_TEST_DESCRIPTION}" in
+    *"[inline]"*) return 0 ;;
+  esac
+
+  # DB-dependent cases: pin psycopg (HOME-dependent user install) for the sandboxed hook, then
+  # require the live DB — the row assertions cannot run without it.
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
+  PYTHONPATH="${PSYCOPG_PP}" python3 -c \
+    'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
+    >/dev/null 2>&1 || skip "glass_atrium DB not reachable"
 }
 
 teardown() {
@@ -330,17 +341,25 @@ PY
 }
 
 @test "T3 R2-positive: no [COMPLETION] + terminal consumed StructuredOutput derives done (structuredoutput-derived)" {
-  skip_unless_live_check_allows_r2_token
   write_transcript no-block
   write_payload
 
   run_hook
-  [ "${status}" -eq 0 ]
-  # The consumed emit is direct evidence of a delivered result — synthesis derives from it.
-  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
-  [[ "${output}" != *"attribution=completion-synthesized"* ]]
-  [[ "${output}" != *"attribution=budget-truncation"* ]]
+  [ "${status}" -eq 0 ] || return 1
+  # DB-free rescue regression (unconditional — survives a token-absent CHECK): the attribution
+  # decision rides the stderr diagnostic channel, computed BEFORE the PG INSERT, so a terminal_so=1
+  # event LANDS structuredoutput-derived even where the widened token would be rejected by the row
+  # INSERT below. This is the portable proof; the DB-row assertions are the extra confirmation.
+  # Routed through oc/no (|| return 1) so each is load-bearing regardless of position — a bare
+  # intermediate [[ ]] is silently ignored (only the last command sets status), and these run BEFORE
+  # the skip gate, so the regression stays enforced even when the live CHECK/token is absent.
+  oc "terminal_structuredoutput=1" "${output}" || return 1
+  oc "attribution=structuredoutput-derived" "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+  no "attribution=budget-truncation" "${output}" || return 1
 
+  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
+  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # done, but writer-unverified: confidence stays low + the R2 arm's OWN concerns line.
@@ -359,19 +378,24 @@ PY
 }
 
 @test "T4 order flip: counter at budget (40) + consumed StructuredOutput ⇒ structuredoutput-derived wins" {
-  skip_unless_live_check_allows_r2_token
   write_transcript no-block
   write_payload
   printf '%s\n' "40" >"${COUNTER_FILE}"
 
   run_hook
-  [ "${status}" -eq 0 ]
-  # Direct terminal evidence beats the cumulative >=40 heuristic — a hard-kill cannot leave a
-  # paired non-error tool_result in terminal position, and successful schema runs routinely
-  # sit at/over 40 (the 40-52 band).
-  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
-  [[ "${output}" != *"attribution=budget-truncation"* ]]
+  [ "${status}" -eq 0 ] || return 1
+  # DB-free rescue regression (unconditional): direct terminal evidence beats the cumulative >=40
+  # heuristic on the stderr channel, computed BEFORE the PG INSERT — a hard-kill cannot leave a
+  # paired non-error tool_result in terminal position, and successful schema runs routinely sit
+  # at/over 40 (the 40-52 band), so structuredoutput-derived (not budget-truncation) must win.
+  # Routed through oc/no (|| return 1) so each is load-bearing before the skip gate (bare
+  # intermediate [[ ]] is silently ignored — only the last command sets status).
+  oc "terminal_structuredoutput=1" "${output}" || return 1
+  oc "attribution=structuredoutput-derived" "${output}" || return 1
+  no "attribution=budget-truncation" "${output}" || return 1
 
+  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
+  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col attribution_source
@@ -423,14 +447,21 @@ PY
 }
 
 @test "T7 rate-limit prose + consumed StructuredOutput records done (keyword heuristic superseded)" {
-  skip_unless_live_check_allows_r2_token
   write_transcript no-block-ratelimit
   write_payload
 
   run_hook
-  [ "${status}" -eq 0 ]
-  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+  [ "${status}" -eq 0 ] || return 1
+  # DB-free rescue regression (unconditional): the consumed emit supersedes the rate-limit keyword
+  # heuristic on the stderr channel, computed BEFORE the PG INSERT — terminal_so=1 LANDS
+  # structuredoutput-derived even in a token-absent CHECK env where the row INSERT below is rejected.
+  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (bare intermediate
+  # [[ ]] is silently ignored — only the last command sets status).
+  oc "terminal_structuredoutput=1" "${output}" || return 1
+  oc "attribution=structuredoutput-derived" "${output}" || return 1
 
+  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
+  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   # NOT blocked — a successfully consumed emit refutes the rate-limit-cut hypothesis even
@@ -440,16 +471,21 @@ PY
 }
 
 @test "T8 tool_use_id pairing: interleaved errored decoy tool_result does not defeat id-pairing" {
-  skip_unless_live_check_allows_r2_token
   write_transcript no-block-decoy
   write_payload
 
   run_hook
-  [ "${status}" -eq 0 ]
-  # Adjacency-pairing would read the errored foreign-id decoy → completion-synthesized;
-  # strict tool_use_id pairing finds the real success result.
-  [[ "${output}" == *"attribution=structuredoutput-derived"* ]]
+  [ "${status}" -eq 0 ] || return 1
+  # DB-free rescue regression (unconditional): adjacency-pairing would read the errored foreign-id
+  # decoy → completion-synthesized; strict tool_use_id pairing finds the real success result. This
+  # rides the stderr channel, computed BEFORE the PG INSERT, so it survives a token-absent CHECK.
+  # Routed through oc (|| return 1) so each is load-bearing before the skip gate (bare intermediate
+  # [[ ]] is silently ignored — only the last command sets status).
+  oc "terminal_structuredoutput=1" "${output}" || return 1
+  oc "attribution=structuredoutput-derived" "${output}" || return 1
 
+  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the widened token.
+  skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
   run fetch_col result
@@ -489,4 +525,208 @@ PY
   [ "${output}" = "budget-truncation" ]
   run fetch_col result
   [ "${output}" = "done_with_concerns" ]
+}
+
+# --------------------------------------------------------------------------
+# Inline single-line [COMPLETION] tolerance (T4/T5)
+#
+# Ultracode/workflow schema-mode subagents emit the whole [COMPLETION] block as ONE line —
+# tag + delimiter-joined fields, NO newline after the tag, NO [/COMPLETION] close — so _T1/_T2
+# (both require a newline right after the tag) miss it → the structured fields would be discarded
+# → synthesized done_with_concerns/low/false. The inline matcher runs ONLY after _T1/_T2 miss
+# (multi-line precedence unchanged) and recovers the fields into the same field dict, giving the
+# complete recovered block tier-1 semantics (so it is never re-labelled truncated_completion).
+#
+# These cases are DB-free (tagged [inline]): PG is fail-opened via PGHOST and the decision is read
+# off the stderr diagnostic channel (the DIAG parse_tier line + the DATA-070 auto-generated record
+# marker carrying "result"/"task_type"), mirroring track-outcome-budget-truncation.bats. The closed
+# delimiter set is emitted as explicit UTF-8 bytes so the exact codepoint is unambiguous regardless
+# of editor encoding. result=done is the distinguishing recovery signal — the synthesis branch can
+# only ever produce done_with_concerns (or blocked), never done.
+# --------------------------------------------------------------------------
+
+# bats 1.13 checks only the LAST command's status, so a bare intermediate `[[ ]]` assertion is
+# silently ignored (a false one never fails the test). oc/no echo a diagnostic + return non-zero
+# so each caller's `|| return 1` aborts the test AT the failing assertion. Explicit output arg
+# keeps them independent of the `run`-set global.
+oc() { [[ "${2}" == *"${1}"* ]] || { printf 'assert-contains FAILED: [%s] absent from output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
+no() { [[ "${2}" != *"${1}"* ]] || { printf 'assert-omits FAILED: [%s] present in output:\n%s\n' "${1}" "${2}" >&2; return 1; }; }
+
+# Emit one inline delimiter by codepoint token (explicit UTF-8 bytes — the closed set from T4/R2).
+il_delim() {
+  case "${1}" in
+    pipe) printf '|' ;;              # U+007C VERTICAL LINE
+    middot) printf '\xc2\xb7' ;;     # U+00B7 MIDDLE DOT
+    bullet) printf '\xe2\x80\xa2' ;; # U+2022 BULLET
+    dotop) printf '\xe2\x8b\x85' ;;  # U+22C5 DOT OPERATOR
+  esac
+}
+
+# A full inline [COMPLETION] line delimited by the given codepoint token.
+il_message() {
+  local d
+  d="$(il_delim "${1}")"
+  printf '[COMPLETION] result: done %s task_type: diagnosis %s metric_pass: true %s confidence: high %s summary: recovered inline block' \
+    "${d}" "${d}" "${d}" "${d}"
+}
+
+# DB-free hook driver: inline block in last_assistant_message, PG fail-opened (PGHOST → nonexistent
+# socket), stderr merged into stdout. $1 = message; $2 = agent_type (default qa-debugger, for which
+# task_type=diagnosis is on-role so no reclassification masks the recovered value). The helper does
+# the `run`, so callers invoke it directly (not `run il_run_hook`).
+il_run_hook() {
+  local msg="${1}" agent="${2:-glass-atrium-qa-debugger}"
+  jq -nc --arg m "${msg}" --arg agent "${agent}" --arg aid "${AGENT_ID}" --arg sess "${SESSION_ID}" '{
+    hook_event_name: "SubagentStop",
+    agent_type: $agent,
+    agent_id: $aid,
+    session_id: $sess,
+    last_assistant_message: $m,
+    messages: [
+      {role: "user", content: "run the inline schema-mode work"},
+      {role: "assistant", content: [{type: "tool_use", name: "Edit", input: {}}]}
+    ]
+  }' >"${PAYLOAD_FILE}"
+  run env \
+    HOME="${SANDBOX_HOME}" \
+    PGHOST="/nonexistent-socket-xyzzy" \
+    CLAUDE_GATE_INFLIGHT="" \
+    SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
+    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+# DB-backed variant: real PG (no PGHOST override, PYTHONPATH pinned to psycopg) — proves the
+# recovered VALUES (metric_pass/confidence) reach the row, which the stderr channel does not expose.
+il_run_hook_db() {
+  local msg="${1}" agent="${2:-glass-atrium-qa-debugger}"
+  jq -nc --arg m "${msg}" --arg agent "${agent}" --arg aid "${AGENT_ID}" --arg sess "${SESSION_ID}" '{
+    hook_event_name: "SubagentStop",
+    agent_type: $agent,
+    agent_id: $aid,
+    session_id: $sess,
+    last_assistant_message: $m,
+    messages: [
+      {role: "user", content: "run the inline schema-mode work"},
+      {role: "assistant", content: [{type: "tool_use", name: "Edit", input: {}}]}
+    ]
+  }' >"${PAYLOAD_FILE}"
+  run env \
+    HOME="${SANDBOX_HOME}" \
+    CLAUDE_GATE_INFLIGHT="" \
+    PYTHONPATH="${PSYCOPG_PP}" \
+    SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
+    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+@test "[inline] pipe (U+007C) delimited real example parses tier-1 (result/task_type recovered, not synthesized)" {
+  il_run_hook "$(il_message pipe)"
+  [ "${status}" -eq 0 ] || return 1
+  # Recovered as a COMPLETE block (tier-1), NOT fallen through to tier-3 keyword inference.
+  oc "parse_tier=1" "${output}" || return 1
+  no "parse_tier=3" "${output}" || return 1
+  # Structured path — the synthesis branch never ran, so it was not relabeled truncated/synthesized.
+  no "synthesize:" "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+  # Writer fields recovered: result=done (synthesis would force done_with_concerns) + task_type.
+  oc '"result":"done"' "${output}" || return 1
+  oc '"task_type":"diagnosis"' "${output}" || return 1
+}
+
+@test "[inline] middot (U+00B7) delimiter parses tier-1 (result recovered)" {
+  il_run_hook "$(il_message middot)"
+  [ "${status}" -eq 0 ] || return 1
+  oc "parse_tier=1" "${output}" || return 1
+  oc '"result":"done"' "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+}
+
+@test "[inline] bullet (U+2022) delimiter parses tier-1 (result recovered)" {
+  il_run_hook "$(il_message bullet)"
+  [ "${status}" -eq 0 ] || return 1
+  oc "parse_tier=1" "${output}" || return 1
+  oc '"result":"done"' "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+}
+
+@test "[inline] dot-operator (U+22C5) delimiter parses tier-1 (result recovered)" {
+  il_run_hook "$(il_message dotop)"
+  [ "${status}" -eq 0 ] || return 1
+  oc "parse_tier=1" "${output}" || return 1
+  oc '"result":"done"' "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+}
+
+@test "[inline] summary containing a literal pipe still binds the leading known fields" {
+  local d
+  d="$(il_delim pipe)"
+  local msg
+  msg="$(printf '[COMPLETION] result: done %s task_type: diagnosis %s metric_pass: true %s confidence: high %s summary: fixed the parser %s and added a guard' \
+    "${d}" "${d}" "${d}" "${d}" "${d}")"
+  il_run_hook "${msg}"
+  [ "${status}" -eq 0 ] || return 1
+  # Greedy left-to-right: the delimiter inside summary does not steal the leading known fields.
+  oc "parse_tier=1" "${output}" || return 1
+  oc '"result":"done"' "${output}" || return 1
+  oc '"task_type":"diagnosis"' "${output}" || return 1
+}
+
+@test "[inline] prose mentioning [COMPLETION] off line-start with a stray pipe does NOT match (stays tier-3)" {
+  il_run_hook "see [COMPLETION] below | foo"
+  [ "${status}" -eq 0 ] || return 1
+  # Line-anchor rejects the non-line-start tag → keyword-inference fallback.
+  oc "parse_tier=3" "${output}" || return 1
+  no "parse_tier=1" "${output}" || return 1
+}
+
+@test "[inline] line-anchored [COMPLETION] with NO known field does NOT match (KNOWN_FIELD guard, stays tier-3)" {
+  il_run_hook "[COMPLETION] just some prose here | more prose without fields"
+  [ "${status}" -eq 0 ] || return 1
+  # The line-anchor passes but the >=1-core-field guard rejects prose → tier-3.
+  oc "parse_tier=3" "${output}" || return 1
+  no "parse_tier=1" "${output}" || return 1
+}
+
+@test "[inline] multi-line closed block still parses tier-1 via _T1 (no regression from the inline matcher)" {
+  local msg
+  msg="$(printf '[COMPLETION]\nresult: done\ntask_type: diagnosis\nmetric_pass: true\nconfidence: high\nsummary: multi-line still wins\n[/COMPLETION]')"
+  il_run_hook "${msg}"
+  [ "${status}" -eq 0 ] || return 1
+  oc "parse_tier=1" "${output}" || return 1
+  oc '"result":"done"' "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+}
+
+@test "inline single-line [COMPLETION] full-field recovery lands in core.outcomes (metric_pass/confidence)" {
+  # DB-backed (NOT [inline]) — proves the recovered metric_pass=true + confidence=high VALUES reach
+  # the row (the stderr channel exposes only result/task_type). attribution stays hook-input
+  # (agent_type present) so the row inserts under the original CHECK (no widened-token dependency).
+  local d
+  d="$(il_delim pipe)"
+  local msg
+  msg="$(printf '[COMPLETION] result: done %s task_type: diagnosis %s metric_pass: true %s confidence: high %s summary: db-backed inline recovery for %s' \
+    "${d}" "${d}" "${d}" "${d}" "${UNIQUE_AGENT}")"
+
+  run count_rows
+  [ "${status}" -eq 0 ] || return 1
+  [ "${output}" = "0" ] || return 1
+
+  # agent_type = UNIQUE_AGENT so the row lands under the name count_rows/fetch_col query (an unknown
+  # agent has the broad dev-style allowlist → task_type=diagnosis stays on-role, not reclassified).
+  il_run_hook_db "${msg}" "${UNIQUE_AGENT}"
+  [ "${status}" -eq 0 ] || return 1
+  oc "parse_tier=1" "${output}" || return 1
+  oc "pg_insert=ok" "${output}" || return 1
+
+  run count_rows
+  [ "${output}" = "1" ] || return 1
+  run fetch_col result
+  [ "${output}" = "done" ] || return 1
+  run fetch_col task_type
+  [ "${output}" = "diagnosis" ] || return 1
+  run fetch_col confidence
+  [ "${output}" = "high" ] || return 1
+  run fetch_col metric_pass
+  [[ "${output}" == "True" || "${output}" == "t" ]] || return 1
+  run fetch_col attribution_source
+  [ "${output}" = "hook-input" ] || return 1
 }

@@ -68,6 +68,15 @@ import sys, json, re
 
 KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal'}
 
+# Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
+# match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
+_INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summary'}
+# Closed inline-delimiter set, enumerated by codepoint so the exact members are unambiguous and a
+# new variant is a conscious addition (never editor-encoding drift): pipe U+007C · middot U+00B7 ·
+# bullet U+2022 · dot-operator U+22C5. Built from ints → the source stays ASCII (no non-ASCII byte
+# to mis-encode). None of the four is regex-special inside a character class.
+_INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
+
 def diag(msg):
     line = f"[outcome-record] DIAG: {msg}"
     print(line, file=sys.stderr)
@@ -363,6 +372,29 @@ else:
     if m_tier2:
         parse_tier = 2
         completion = parse_completion_body(m_tier2.group(1))
+
+# Inline single-line tolerance (ultracode/workflow schema-mode) — recover ONLY after the multi-line
+# tiers miss (their precedence is unchanged). These subagents emit the whole block as ONE line: tag
+# + delimiter-joined fields, NO newline after the tag, NO [/COMPLETION] close — so _T1/_T2 (both
+# require a newline right after the tag) miss it and the structured fields would be discarded →
+# synthesized. LINE-ANCHORED + NON-DOTALL (MULTILINE only, unlike _T1/_T2) so `.+`/`$` never span
+# into following transcript lines. A COMPLETE recovered block is given parse_tier=1 (complete-block
+# semantics) so it is never re-labelled truncated_completion downstream.
+if parse_tier == 0:
+    m_inline = re.search(r'^[ \t]*\[COMPLETION\][ \t]+(.+)$', msg, re.MULTILINE)
+    if m_inline:
+        inline_body = m_inline.group(1)
+        # Strip an optional same-line [/COMPLETION] sentinel before splitting.
+        inline_body = re.sub(r'[ \t]*\[/COMPLETION\][ \t]*$', '', inline_body)
+        # Delimiters → newlines, then reuse parse_completion_body. Greedy left-to-right: the leading
+        # known fields (result/task_type/metric_pass/confidence) bind before a summary value that
+        # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
+        inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
+        # Guard: require >=1 CORE field so prose merely mentioning [COMPLETION] with a stray
+        # delimiter does NOT match (parse_completion_body already drops unknown keys).
+        if _INLINE_CORE_FIELDS & set(inline_fields):
+            parse_tier = 1
+            completion = inline_fields
 
 if parse_tier == 0:
     parse_tier = 3  # keyword-based inference fallback
@@ -1167,19 +1199,29 @@ detect_budget_truncation() {
 
 # completion-synthesized path: [COMPLETION] absent + tool_use≥1 (passed the conversation-only
 # skip) = a deliverable-producing turn. Synthesize the record from the transcript instead of
-# keyword inference. Three distinguishable attribution values arise here:
+# keyword inference. Four distinguishable attribution values can hold on entry here:
+#   truncated_completion     — a tier-2 open-no-close block ALREADY relabelled above (:1121)
 #   structuredoutput-derived — terminal successfully-consumed StructuredOutput (schema-mode emit)
 #   budget-truncation        — the on-disk tool_use counter confirms a budget/turn HARD-KILL
 #   completion-synthesized   — the default: work delivered, [COMPLETION] simply absent (daemon signal)
 if [[ "${HAS_STRUCTURED}" != "true" ]]; then
-  # Discriminator ORDER: structuredoutput-derived BEFORE budget-truncation. The budget counter is a
-  # cumulative >=40 HEURISTIC, while a terminal consumed StructuredOutput is DIRECT evidence of
-  # non-truncation — a hard-kill cannot leave a paired non-error tool_result in terminal position.
-  # Successful schema runs routinely sit at/over 40 tool_uses (the 40-52 band); budget-first would
-  # keep exactly those rows budget-truncation and pollute daemon_cycle's clusterable negatives.
-  # if/elif keeps the three labels mutually exclusive by construction — no path before this block
-  # sets any of them, so a later arm can never clobber an earlier assignment.
-  if [[ "${TERMINAL_SO}" = "1" ]]; then
+  # MONOTONIC single precedence ladder — no synthesis label ever clobbers an EXISTING one.
+  # truncated_completion (set at the :1121 tier-2 relabel) is an ALREADY-claimed truncation signal:
+  # it takes top precedence so a later arm cannot flip it. The pre-fix bug was exactly this clobber —
+  # a tier-2 open block (HAS_STRUCTURED=false) fell through to completion-synthesized (or budget-
+  # truncation), erasing the truncation signal. Below the truncation guard the documented order holds:
+  # structuredoutput-derived > budget-truncation > completion-synthesized. Discriminator ORDER rationale
+  # (structuredoutput-derived BEFORE budget-truncation): the budget counter is a cumulative >=40
+  # HEURISTIC, while a terminal consumed StructuredOutput is DIRECT evidence of non-truncation — a
+  # hard-kill cannot leave a paired non-error tool_result in terminal position, and successful schema
+  # runs routinely sit in the 40-52 band, so budget-first would mislabel exactly those rows and pollute
+  # daemon_cycle's clusterable negatives. structuredoutput-derived needs parse_tier=3 and
+  # truncated_completion needs parse_tier=2, so the two are structurally exclusive — the truncation
+  # guard's live interaction is with budget-truncation (both can co-occur on a tier-2 block at/over
+  # budget). if/elif keeps the four labels mutually exclusive by construction.
+  if [[ "${ATTRIBUTION_SOURCE}" = "truncated_completion" ]]; then
+    : # keep the existing tier-2 truncation label — never downgraded to a synthesis label
+  elif [[ "${TERMINAL_SO}" = "1" ]]; then
     ATTRIBUTION_SOURCE="structuredoutput-derived"
   elif detect_budget_truncation; then
     ATTRIBUTION_SOURCE="budget-truncation"
