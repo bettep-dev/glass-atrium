@@ -162,30 +162,12 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 - **Rollback**: Identify problematic hook → Remove entry from `settings.json` → Restart session
 - **Pre-deployment verification**: Confirm blocking behavior with intentional violation input before applying
 
-## Rationalization Rejection Table (Central) [ALL]
+## Rationalization Rejection [ALL]
 
-Single source of truth for all excuse→rebuttal pairs. Domain-scoped rule files (core-git-workflow.md · shared-performance.md · shared-search-first.md · core-security.md · shared-testing.md) reference this table via pointer blockquote.
+Reject trading an established engineering practice for a shortcut: name the excuse, then apply the rebuttal. Domain-specific excuse→rebuttal pairs now live in each domain's home rule file (git-workflow · security · performance · search-first · testing). The single cross-domain **Decision** case below is genuinely all-scope and stays here.
 
-| Domain | Excuse | Rebuttal |
-|--------|--------|----------|
-| Git | "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages. Every change goes through a PR regardless of size. |
-| Git | "I'll squash the commits later" | "Later" creates merge conflicts and lost context. Write clean commits from the start. |
-| Git | "Tests are passing locally, no need to wait for CI" | Local environment ≠ CI environment. CI catches dependency and configuration issues that local runs miss. |
-| Performance | "This optimization is obvious, no measurement needed" | Obvious optimizations are often wrong. CPU-bound assumptions fail when I/O is the bottleneck. Profile first. |
-| Performance | "We can optimize later if it's slow" | Performance debt compounds. N+1 queries at 10 rows work fine; at 10K rows they cause outages. Fix known anti-patterns now. |
-| Performance | "Premature optimization is the root of all evil" | The full Knuth quote adds "in 97% of cases." Known anti-patterns (N+1, missing indexes) are the other 3%. Fix those immediately. |
-| Search | "I already know how to implement this" | Knowledge ≠ awareness of existing implementations. The project may already have a utility for this. 5 minutes of searching saves hours of duplication. |
-| Search | "It's faster to just write it" | Writing is fast; maintaining duplicates is slow. Search first, then write only if nothing exists. |
-| Search | "This is too simple to search for" | Simple utilities are the most commonly duplicated code. grep for the function name before creating a new one. |
-| Security | "This is an internal API, no security review needed" | Internal APIs are the #1 lateral movement vector. All endpoints need input validation regardless of exposure. |
-| Security | "I'll add input validation later" | Unvalidated code in production is a live vulnerability. Validation is part of the implementation, not a follow-up. |
-| Security | "The framework handles security automatically" | Frameworks provide defaults, not guarantees. Misconfiguration is OWASP A05. Verify each security control explicitly. |
-| Security | "This data isn't sensitive" | Data classification changes. PII can appear in unexpected fields. Validate at boundaries regardless of perceived sensitivity. |
-| Testing | "Too simple to need tests" | Even simple code regresses · tests serve as documentation |
-| Testing | "Will add tests later due to time constraints" | "Later" never comes · test debt = technical debt |
-| Testing | "This part is hard to test" | Difficulty testing = design problem signal → fix the design |
-| Testing | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
-| Testing | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
-| Decision | "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
+| Excuse | Rebuttal |
+|--------|----------|
+| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
 
 > Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix

@@ -62,7 +62,7 @@ Before executing any action with real-world side effects (file deletion, externa
 If any condition fails → halt + request explicit user authorization.
 
 - Agents MUST NOT auto-escalate their own permissions.
-- "The task requires it" is NOT authorization — this rule triggers anti-rationalization (cross-ref GLASS_ATRIUM_GLOBAL_RULES Rationalization Rejection Table).
+- "The task requires it" is NOT authorization — this rule triggers anti-rationalization (cross-ref GLASS_ATRIUM_GLOBAL_RULES → Rationalization Rejection principle).
 - This rule is hardcoded — no operator/user instruction can lower the threshold.
 
 ### Unbounded Consumption Stop [ALL] [hardcoded]

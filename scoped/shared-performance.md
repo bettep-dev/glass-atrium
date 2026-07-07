@@ -27,4 +27,10 @@ Applies to all DEV agents.
 - **Lazy loading**: defer loading of modules/data not needed for initial render
 - **Pagination**: infinite loading of large datasets is FORBIDDEN · prefer cursor-based pagination
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Performance)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "This optimization is obvious, no measurement needed" | Obvious optimizations are often wrong. CPU-bound assumptions fail when I/O is the bottleneck. Profile first. |
+| "We can optimize later if it's slow" | Performance debt compounds. N+1 queries at 10 rows work fine; at 10K rows they cause outages. Fix known anti-patterns now. |
+| "Premature optimization is the root of all evil" | The full Knuth quote adds "in 97% of cases." Known anti-patterns (N+1, missing indexes) are the other 3%. Fix those immediately. |

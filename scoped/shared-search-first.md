@@ -25,7 +25,13 @@ Applies to all DEV agents.
 - Duplicating functionality that already exists in existing utilities
 - Reimplementing features already built into the framework
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Search)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "I already know how to implement this" | Knowledge ≠ awareness of existing implementations. The project may already have a utility for this. 5 minutes of searching saves hours of duplication. |
+| "It's faster to just write it" | Writing is fast; maintaining duplicates is slow. Search first, then write only if nothing exists. |
+| "This is too simple to search for" | Simple utilities are the most commonly duplicated code. grep for the function name before creating a new one. |
 
 ## Escalation to Iterative Codebase Retrieval
 

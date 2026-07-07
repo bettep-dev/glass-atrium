@@ -76,4 +76,11 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 
 All 10 categories (LLM01-10) are covered inline by the `[LLMxx:2025]` tag at each operative section above (Secret Management · Prompt & Tool Input Security · Agent Tool Authorization · LLM-Specific Security · Output Encoding · Dependency Auditing). Grep `[LLM` to locate any category.
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Security)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "This is an internal API, no security review needed" | Internal APIs are the #1 lateral movement vector. All endpoints need input validation regardless of exposure. |
+| "I'll add input validation later" | Unvalidated code in production is a live vulnerability. Validation is part of the implementation, not a follow-up. |
+| "The framework handles security automatically" | Frameworks provide defaults, not guarantees. Misconfiguration is OWASP A05. Verify each security control explicitly. |
+| "This data isn't sensitive" | Data classification changes. PII can appear in unexpected fields. Validate at boundaries regardless of perceived sensitivity. |
