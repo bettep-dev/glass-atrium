@@ -685,7 +685,7 @@ function AnalyticsPeriodSeg({ value, onChange }) {
 
 function AnalyticsSection({ analyticsState, heatmapState, attributionState, heatmapFilter, period, onChangeHeatmapFilter, onRetry }) {
   // Heatmap + AgentStackedBar 좌우 2열 — heat-cell aspect-ratio:1 로 폭 축소 시 높이 자동 정렬.
-  // 데스크탑 viewport 만 운영 (127.0.0.1:7842) → md breakpoint 분기 불필요.
+  // 데스크탑 viewport 만 운영 (127.0.0.1:16145) → md breakpoint 분기 불필요.
   // AttributionHealthCard — 2열 grid 아래 full-width (일별 30-bar 그리드 가독성).
   return (
     <div className="flex-shrink-0">

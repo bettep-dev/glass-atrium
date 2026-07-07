@@ -106,7 +106,7 @@ load_launchd_jobs() {
 
     # STEP2 — idempotent reload: bootout any running instance, WAIT for it to
     # actually unload, then bootstrap. `bootout` is ASYNCHRONOUS — for an already-
-    # loaded job (esp. com.glass-atrium.monitor, which holds :7842) the daemon does
+    # loaded job (esp. com.glass-atrium.monitor, which holds :16145) the daemon does
     # not release its port/unload instantly, so an IMMEDIATE re-bootstrap races the
     # still-terminating old instance and fails with rc=5 (Input/output error) →
     # spurious exit 23. The settle poll closes that race: a not-loaded job (fresh

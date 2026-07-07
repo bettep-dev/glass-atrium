@@ -1,4 +1,4 @@
-// Fastify server entry point — single-origin localhost (127.0.0.1:7842).
+// Fastify server entry point — single-origin localhost (127.0.0.1:16145).
 // Bind: 127.0.0.1 ONLY (single-origin; never 0.0.0.0 / ::).
 // Static: public/ at root /, API at /api/*.
 // Graceful shutdown: SIGINT/SIGTERM -> app.close() + prisma.$disconnect().
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   });
 
   // pg session timezone UTC 검증 (Pool startup options 적용 확인) · app.listen 이전에 실행 = DB gate:
-  // DB unavailable 이면 :7842 bind 이전에 fatal exit(1) → launchd respawn (무기한 hang 하며 포트 점유 X).
+  // DB unavailable 이면 :16145 bind 이전에 fatal exit(1) → launchd respawn (무기한 hang 하며 포트 점유 X).
   // db.ts connectionTimeoutMillis:5000 이 이 pre-listen connect 를 5s 로 bound → bootstrap early-liveness
   // probe (sleep 1 + kill -0)는 bounded connect 동안 살아있어 통과; DB-down boot 은 exit(1)→respawn (wedge 아님).
   // UTC 아니면도 fatal exit → launchd restart → drift 무음 지속 차단.

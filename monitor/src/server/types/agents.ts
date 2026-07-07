@@ -172,7 +172,7 @@ export interface AgentSummaryItem {
   // ISO 8601 UTC timestamp of the most recent outcome; null when none in window.
   last_run_at: string | null;
   // agent-registry.json runtime-precondition declaration (e.g. "monitor running at
-  // 127.0.0.1:7842"). Undeclared agent or missing registry → null (backwards-compat).
+  // 127.0.0.1:16145"). Undeclared agent or missing registry → null (backwards-compat).
   // Orthogonal to the frontmatter `tools:` array — not a tool-authorization bypass.
   compatibility: string | null;
   // 1-line role description sourced from the agent `.md` frontmatter (the `.md` is

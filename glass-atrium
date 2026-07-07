@@ -128,7 +128,7 @@ PREFLIGHT_TTY_OWNED=false      # true when WE opened fd 4 (must close on cleanup
 PREFLIGHT_NONINTERACTIVE=false # true when no controlling TTY is reachable
 
 # IMP2 launchd-monitor stop/restore state — the install health gate cannot validate
-# the fresh build while a launchd monitor still serves :7842. The install path stops a
+# the fresh build while a launchd monitor still serves :16145. The install path stops a
 # launchd-OWNED monitor before run_plan and restores it after; cleanup() is the backstop
 # restorer on any die/exit/INT/TERM. File-scope so cleanup() (which survives a bare engine
 # `exit`, where a function-local trap cannot fire) reads them — same pattern as GATE_LOG.
@@ -2740,7 +2740,7 @@ confirm_typed() {
 
 # === IMP2: launchd monitor stop/restore for the install health gate =========
 # The engine bootstrap_health_gate (lib/ga-core.sh) refuses to start while a monitor
-# already serves :7842 — it would validate the STALE instance, not the rebuilt dist/.
+# already serves :16145 — it would validate the STALE instance, not the rebuilt dist/.
 # When that monitor is launchd-OWNED, the install transparently stops it before the gate
 # and restores it after. Restore is GUARANTEED on every exit path via cleanup()'s EXIT
 # trap (the only hook that survives the gate's bare `exit`). The engine gate is left
@@ -3254,7 +3254,7 @@ _confirm_pregate() {
 }
 
 # _panel_abort — show the concise FAIL done-line for an install PRE-gate abort (blocked
-# preflight / stuck :7842), wait for a key, return to nav. status_line transitions to the
+# preflight / stuck :16145), wait for a key, return to nav. status_line transitions to the
 # done state + full-frame redraws (REDRAW_MODEL), so it wipes any preflight scrollback clean
 # on its own — no pre-clear needed. No scrolling detail reaches the box.
 _panel_abort() {
@@ -3335,14 +3335,14 @@ dispatch_action_install_panel() {
   run_gate_quiet stop_launchd_monitor_for_install || grc=$?
   stop_idle_spinner
   if [[ "${grc}" -ne 0 ]]; then
-    # IMP2: a launchd-owned monitor still holds :7842 — abort cleanly (stop_* already
+    # IMP2: a launchd-owned monitor still holds :16145 — abort cleanly (stop_* already
     # restored + logged the remediation to the captured gate log; the box surfaces only
     # the concise done line, the captured remediation is surfaced to stderr).
     _gate_surface_on_fail
     _panel_abort "${PREFLIGHT_EXIT_BLOCKED}"
     return "${PREFLIGHT_EXIT_BLOCKED}"
   fi
-  # CHANGE 3: AFTER the launchd-owned stop, sweep a NON-launchd orphan on :7842 (a stray
+  # CHANGE 3: AFTER the launchd-owned stop, sweep a NON-launchd orphan on :16145 (a stray
   # `node` left by a crashed install / manual dev run). The launchd stop above already
   # cleared a managed monitor, so anything still listening here is a true orphan that
   # would otherwise make bootstrap_health_gate die on its stale-instance precondition.

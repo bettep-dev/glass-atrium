@@ -17,7 +17,7 @@ import { Prisma } from "../../generated/prisma/client.js";
  * - `phase`: lifecycle phase (`implementation` / `review` / `report` etc.)
  * - `dual_phase`: registry flag — agent participates in two lifecycle phases.
  *   Non-boolean / undeclared → false.
- * - `compatibility`: runtime precondition (e.g. "monitor running at 127.0.0.1:7842");
+ * - `compatibility`: runtime precondition (e.g. "monitor running at 127.0.0.1:16145");
  *   undeclared or non-string → null. Orthogonal to agent frontmatter `tools:` array.
  * - `description`: 1-line role description sourced from the agent `.md` frontmatter
  *   (the `.md` is the description SoT). null when the `.md` is missing or its

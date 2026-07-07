@@ -49,7 +49,7 @@ export function getPrisma(): PrismaClient {
 /**
  * Startup-time assertion — verifies the pg session is actually UTC.
  * Fatal if not UTC — blocks silent drift. main.ts calls it BEFORE server.listen() as a DB gate,
- * so an unavailable DB exits (1) before binding :7842 (connectionTimeoutMillis bounds the connect).
+ * so an unavailable DB exits (1) before binding :16145 (connectionTimeoutMillis bounds the connect).
  */
 export async function assertSessionTimezoneIsUtc(): Promise<void> {
   const prisma = getPrisma();
