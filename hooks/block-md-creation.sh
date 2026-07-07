@@ -11,12 +11,14 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/hook-utils.sh
+source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 
-# POST-API hint port from the config-rendered env key (config.toml [ports].monitor
-# → ATRIUM_MONITOR_PORT) — keeps the guidance accurate on a non-default port;
-# non-numeric → default.
-monitor_port="${ATRIUM_MONITOR_PORT:-7842}"
-[[ "${monitor_port}" =~ ^[0-9]+$ ]] || monitor_port=7842
+# POST-API hint port, derived via the hook_monitor_port wrapper (ADR-1: env →
+# monitor/.env → config → 16145) — keeps the guidance accurate on a non-default port.
+# NO literal fallback here (the single default lives in the resolver); a resolver
+# failure degrades to '' (cosmetic in the guidance string only).
+monitor_port="$(hook_monitor_port || true)"
 
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"

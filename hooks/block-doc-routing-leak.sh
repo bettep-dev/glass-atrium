@@ -45,11 +45,14 @@ DOC_ROUTING_LEAK_FIRED_LOG="${DOC_ROUTING_LEAK_FIRED_LOG:-${HOME}/.claude/data/d
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/hook-utils.sh
+source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 
 # POST-API hint port (guidance text only — never a block-verdict dependency).
-# config.toml [ports].monitor → ATRIUM_MONITOR_PORT; non-numeric → default.
-monitor_port="${ATRIUM_MONITOR_PORT:-7842}"
-[[ "${monitor_port}" =~ ^[0-9]+$ ]] || monitor_port=7842
+# Derived via the hook_monitor_port wrapper (ADR-1: env → monitor/.env → config →
+# 16145) — carries NO literal fallback here (the single default lives in the resolver);
+# a resolver failure degrades to '' (cosmetic in the guidance string only).
+monitor_port="$(hook_monitor_port || true)"
 
 # Normalize a POSIX path by collapsing "." and ".." segments without touching the
 # filesystem (the target file may not exist yet). Traversal-safety: "memory/../x"

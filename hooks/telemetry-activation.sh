@@ -14,11 +14,13 @@ IFS=$'\n\t'
 # fail-open ERR trap — protect the hook's intrinsic behavior.
 trap 'printf "[telemetry-activation] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-# Port consumed from the config-rendered env key (config.toml [ports].monitor →
-# ATRIUM_MONITOR_PORT). Host stays FIXED at loopback — only the port is
-# externalized; a non-numeric value falls back to the default (URL-injection guard).
-monitor_port="${ATRIUM_MONITOR_PORT:-7842}"
-[[ "${monitor_port}" =~ ^[0-9]+$ ]] || monitor_port=7842
+# Port derived via the hook_monitor_port wrapper (ADR-1: env → monitor/.env → config
+# → 16145). Host stays FIXED at loopback — only the port is externalized. NO literal
+# fallback here (the single default lives in the resolver); a resolver failure degrades
+# to '' → the URL becomes non-bindable and the fire-and-forget POST silently no-ops.
+# shellcheck source=lib/hook-utils.sh
+source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
+monitor_port="$(hook_monitor_port || true)"
 readonly MONITOR_URL="http://127.0.0.1:${monitor_port}/api/telemetry/activation"
 readonly CURL_TIMEOUT=2
 # Same as the monitor route's TRIGGER_PHRASE_MAX_LENGTH (double defense).

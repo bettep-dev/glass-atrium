@@ -463,7 +463,7 @@ MONITOR_POST_RE = re.compile(
     r"|/api/clauded-docs"
     r"|monitor[- ]?post"
     r"|POST[^\n]{0,40}?(?:monitor|clauded)"               # "POST to the monitor" / "POST ... clauded"
-    r"|127\.0\.0\.1:7842"                                 # monitor base URL (port from convention)
+    r"|127\.0\.0\.1:16145"                                # monitor base URL (port from convention)
     r"|html_body"                                         # the PUT/POST body field name
     r"|doc_status",                                       # the clauded-docs lifecycle field
     re.IGNORECASE,
@@ -809,7 +809,7 @@ COPY-PASTE SCAFFOLD (the compliant path is fewer keystrokes than overriding — 
 
   --- path (1): persisted plan (sizable DEV work — the DEFAULT) ---
   // 1. POST the plan body to the monitor, capture the minted id:
-  //    DOC_ID=$(curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs \
+  //    DOC_ID=$(curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs \
   //      -H 'content-type: application/json' \
   //      --data "$(jq -n --arg b '<plan markdown body>' '{html_body:$b, doc_status:"progress"}')" \
   //      | jq -r '.id')
