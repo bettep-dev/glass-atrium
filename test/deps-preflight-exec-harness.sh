@@ -575,7 +575,7 @@ echo "==========================================================================
 # AUTOMATICALLY — no typed consent, no alt-screen bracket — and is non-fatal on a
 # retry-failure. Re-extract the REAL scroll entry (the scenario stub above replaced it;
 # bash defs do NOT stack). _preflight_python_libs_boxed is already the REAL sourced fn.
-eval "$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+eval "$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA_DIR_ROOT}"/lib/ga-tui-*.sh)"
 
 # capture the override LOG line + trip on any (now-forbidden) second consent/bracket call.
 preflight_line() { _rec "line:$*"; }

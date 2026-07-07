@@ -227,13 +227,13 @@ teardown() {
 
 @test "dispatch(static): run_dependency_preflight discriminates menu fd3 from passthrough" {
   # the guard: non-owned TTY that is exactly the menu's fd3 → boxed; everything else scroll.
-  grep -qF 'if [[ "${PREFLIGHT_TTY_OWNED}" == "false" && "${TTY}" == "/dev/fd/3" ]]; then' "${LAUNCHER}"
+  grep -qF 'if [[ "${PREFLIGHT_TTY_OWNED}" == "false" && "${TTY}" == "/dev/fd/3" ]]; then' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # both branch functions are defined.
-  grep -qE '^_run_dependency_preflight_boxed\(\) \{' "${LAUNCHER}"
-  grep -qE '^_run_dependency_preflight_scroll\(\) \{' "${LAUNCHER}"
+  grep -qE '^_run_dependency_preflight_boxed\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qE '^_run_dependency_preflight_scroll\(\) \{' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # the dispatcher body routes to each on the correct side.
   local body
-  body="$(awk '/^run_dependency_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^run_dependency_preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'_run_dependency_preflight_boxed'* ]]
   [[ "${body}" == *'_run_dependency_preflight_scroll'* ]]
@@ -243,16 +243,16 @@ teardown() {
 
 @test "gates(static): boxed interactive gates each run in a preflight_bracket" {
   # Xcode CLT + grouped consent + claude auth gates all drop to the cooked-scrollback bracket.
-  grep -qF 'preflight_bracket preflight_guide_xcode_clt' "${LAUNCHER}"
-  grep -qF 'preflight_bracket preflight_grouped_consent' "${LAUNCHER}"
-  grep -qF 'preflight_bracket preflight_guide_claude_auth' "${LAUNCHER}"
+  grep -qF 'preflight_bracket preflight_guide_xcode_clt' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_bracket preflight_grouped_consent' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_bracket preflight_guide_claude_auth' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 @test "gates(static): preflight_bracket IS the alt-screen consent bracket (rmcup/smcup)" {
   # mirrors _confirm_pregate: drop the alt-screen + restore cooked stty for the gate, then
   # re-enter the alt-screen + raw mode on return.
   local body
-  body="$(awk '/^preflight_bracket\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_bracket\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'tp rmcup'* ]]
   [[ "${body}" == *'tp smcup'* ]]
@@ -263,15 +263,15 @@ teardown() {
 # === menu NON-interactive groups engage the work-box PANEL (RENDER_MODE=panel) ========
 
 @test "panel(static): boxed brew/pg/claude steps engage preflight_panel_step_or_bail" {
-  grep -qF 'preflight_panel_step_or_bail "brew batch (missing formulae)"' "${LAUNCHER}"
-  grep -qF 'preflight_panel_step_or_bail "postgres: start service"' "${LAUNCHER}"
-  grep -qF 'preflight_panel_step_or_bail "postgres: create superuser role"' "${LAUNCHER}"
-  grep -qF 'preflight_panel_step_or_bail "claude CLI (native installer, npm fallback)"' "${LAUNCHER}"
+  grep -qF 'preflight_panel_step_or_bail "brew batch (missing formulae)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_panel_step_or_bail "postgres: start service"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_panel_step_or_bail "postgres: create superuser role"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_panel_step_or_bail "claude CLI (native installer, npm fallback)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 @test "panel(static): preflight_panel_step advances a SHARED clamped STEP_INDEX (unified counter, no 1/1 hardcode)" {
   local body
-  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # Shared-counter contract: advance the shared STEP_INDEX, NEVER reset STEP_TOTAL here,
   # CLAMP i <= N so an imperfect up-front estimate degrades to an N/N tail (never "7/5").
@@ -288,7 +288,7 @@ teardown() {
 
 @test "panel(static): preflight_panel_step_or_bail delegates to preflight_panel_step" {
   local body
-  body="$(awk '/^preflight_panel_step_or_bail\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_panel_step_or_bail\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'preflight_panel_step "$1" "$2" "$3"'* ]]
 }
@@ -296,15 +296,15 @@ teardown() {
 # === passthrough (scroll) path RETAINS the framed runner + scrolling render ============
 
 @test "scroll(static): passthrough brew/pg/claude steps keep preflight_run_or_bail_framed" {
-  grep -qF 'preflight_run_or_bail_framed "brew batch (missing formulae)"' "${LAUNCHER}"
-  grep -qF 'preflight_run_or_bail_framed "postgres: start service"' "${LAUNCHER}"
-  grep -qF 'preflight_run_or_bail_framed "postgres: create superuser role"' "${LAUNCHER}"
-  grep -qF 'preflight_run_or_bail_framed "claude CLI (native installer, npm fallback)"' "${LAUNCHER}"
+  grep -qF 'preflight_run_or_bail_framed "brew batch (missing formulae)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_run_or_bail_framed "postgres: start service"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_run_or_bail_framed "postgres: create superuser role"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF 'preflight_run_or_bail_framed "claude CLI (native installer, npm fallback)"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 @test "scroll(static): preflight_run_or_bail_framed frames via function-local RENDER_MODE=install" {
   local body
-  body="$(awk '/^preflight_run_or_bail_framed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_run_or_bail_framed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'local RENDER_MODE="install"'* ]]
   [[ "${body}" == *'preflight_run_or_bail "$1" "$2"'* ]]
@@ -312,7 +312,7 @@ teardown() {
 
 @test "scroll(static): the passthrough path renders via scrolling preflight_line/preflight_run_cmd" {
   local body
-  body="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # scrolling chrome (NOT the work box): the historical banner + inline line renderer.
   [[ "${body}" == *'preflight_line'* ]]
@@ -325,16 +325,16 @@ teardown() {
 
 @test "Homebrew(static): sudo installer stays UNframed + off the spinner panel" {
   # passthrough path: bare unframed runner (its live sudo prompt stays on the visible path).
-  grep -qF 'preflight_run_or_bail "Homebrew install"' "${LAUNCHER}"
+  grep -qF 'preflight_run_or_bail "Homebrew install"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # boxed path: a cooked-scrollback bracket (NOT a panel step — a panel fd-capture would
   # swallow the sudo prompt; a bracket carries no TUI spinner at all → "spinner-suppressed").
-  grep -qF 'preflight_bracket preflight_run_or_bail "Homebrew install"' "${LAUNCHER}"
+  grep -qF 'preflight_bracket preflight_run_or_bail "Homebrew install"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # NEVER framed and NEVER a panel step for the Homebrew installer.
-  run grep -cF 'preflight_run_or_bail_framed "Homebrew install"' "${LAUNCHER}"
+  run awk -v p='preflight_run_or_bail_framed "Homebrew install"' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 0 ]]
-  run grep -cF 'preflight_panel_step_or_bail "Homebrew install"' "${LAUNCHER}"
+  run awk -v p='preflight_panel_step_or_bail "Homebrew install"' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 0 ]]
-  run grep -cF 'preflight_panel_step "Homebrew install"' "${LAUNCHER}"
+  run awk -v p='preflight_panel_step "Homebrew install"' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 0 ]]
 }
 
@@ -343,14 +343,14 @@ teardown() {
 @test "D1(static): NONINTERACTIVE + HOMEBREW_NO_ASK + NO_ENV_HINTS as one local -x per path" {
   # ONE single-line three-var export in EACH render path (boxed + scroll = 2 total) — never
   # split into three separate exports, and colocated with the consented auto-work block.
-  run grep -cE '^\s*local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1\s*$' "${LAUNCHER}"
+  run awk '/^[[:space:]]*local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1 HOMEBREW_NO_ENV_HINTS=1[[:space:]]*$/{c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 2 ]]
 }
 
 @test "D1(static): the HOMEBREW_NO_ASK export PRECEDES the Homebrew install call site" {
   local env_ln hb_ln
-  env_ln="$(grep -nE '^\s*local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1' "${LAUNCHER}" | head -n1 | cut -d: -f1)"
-  hb_ln="$(grep -nF 'preflight_run_or_bail "Homebrew install"' "${LAUNCHER}" | head -n1 | cut -d: -f1)"
+  env_ln="$(grep -nE '^\s*local -x NONINTERACTIVE=1 HOMEBREW_NO_ASK=1' "${GA}"/lib/ga-tui-preflight.sh | head -n1 | cut -d: -f1)"
+  hb_ln="$(grep -nF 'preflight_run_or_bail "Homebrew install"' "${GA}"/lib/ga-tui-preflight.sh | head -n1 | cut -d: -f1)"
   [[ -n "${env_ln}" && -n "${hb_ln}" ]]
   [[ "${env_ln}" -lt "${hb_ln}" ]]
 }
@@ -359,7 +359,7 @@ teardown() {
 
 @test "G7(static): _preflight_fakechat_boxed frames its steps as panel steps" {
   local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'preflight_panel_step "fakechat: add official marketplace"'* ]]
   [[ "${body}" == *'preflight_panel_step "fakechat: install plugin"'* ]]
@@ -367,7 +367,7 @@ teardown() {
 
 @test "G7(static): marketplace-add carries a DISTINCT present-progressive slow-clone label" {
   local body
-  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_fakechat_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # the active label flags the ~30s git clone so the box does not read as stalled.
   [[ "${body}" == *'adding marketplace (git clone, may take a minute)…'* ]]
@@ -375,7 +375,7 @@ teardown() {
 
 @test "G7(static): preflight_panel_step drives STEP_LABEL_ACTIVE_CUR from its active arg" {
   local body
-  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_panel_step\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # $2 (active) feeds the live label, falling back to $1 (resolved) when empty.
   [[ "${body}" == *'STEP_LABEL_ACTIVE_CUR="${active:-${resolved}}"'* ]]
@@ -385,7 +385,7 @@ teardown() {
 
 @test "G3(static): _preflight_python_libs_boxed frames pip --user AND the --break retry" {
   local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'preflight_panel_step "python libs (pip --user)"'* ]]
   [[ "${body}" == *'preflight_panel_step "python libs (--break-system-packages)"'* ]]
@@ -393,7 +393,7 @@ teardown() {
 
 @test "G3(static): the boxed --break retry AUTO-runs — NO bracket, NO typed consent" {
   local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # the override no longer sits behind a second gate: no alt-screen bracket, no confirm_typed.
   [[ "${body}" != *'preflight_bracket'* ]]
@@ -404,7 +404,7 @@ teardown() {
 
 @test "G3(static): the boxed override is surfaced VISIBLY (active-label documents --break)" {
   local body
-  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_preflight_python_libs_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # the retry panel step carries a non-empty ACTIVE label naming the override (visible, not silent).
   [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
@@ -412,7 +412,7 @@ teardown() {
 
 @test "G3(static): the scroll variant AUTO-retries with a VISIBLE override log, no typed consent" {
   local body
-  body="$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_install_python_libs\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'preflight_run_cmd "python libs (pip --user)"'* ]]
   [[ "${body}" == *'preflight_run_cmd "python libs (--break-system-packages)"'* ]]
@@ -425,14 +425,14 @@ teardown() {
 
 @test "G3(static): the dead _preflight_python_break_consent helper is REMOVED" {
   # the second typed gate is gone → its helper must not linger anywhere in the launcher.
-  ! grep -qF '_preflight_python_break_consent' "${LAUNCHER}"
+  ! grep -qF '_preflight_python_break_consent' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 # === G4 — fakechat + python steps stay NON-FATAL (warn-and-continue) ==================
 
 @test "G4(static): the boxed fakechat + python steps are non-fatal (|| true, never bail)" {
-  grep -qF '_preflight_fakechat_boxed || true' "${LAUNCHER}"
-  grep -qF '_preflight_python_libs_boxed || true' "${LAUNCHER}"
+  grep -qF '_preflight_fakechat_boxed || true' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
+  grep -qF '_preflight_python_libs_boxed || true' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
 }
 
 # === consent gate not weakened ========================================================
@@ -440,7 +440,7 @@ teardown() {
 @test "consent: grouped gate still fronts the batch on a typed confirmation" {
   # the fix must NOT bypass consent — the grouped gate still calls confirm_typed.
   local body
-  body="$(awk '/^preflight_grouped_consent\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_grouped_consent\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'confirm_typed'* ]]
 }
@@ -572,7 +572,7 @@ extract_launcher_fn() {
 
 @test "blank-box(static): both enter_run_state engages are gated on their group runnable-count" {
   local body
-  body="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # the up-front count pass runs BEFORE the engages.
   [[ "${body}" == *'preflight_count_and_gate'* ]]
@@ -652,13 +652,13 @@ extract_launcher_fn() {
 
 @test "STEP2(static): both run-sites wait for readiness INSIDE the present-but-down start block" {
   # scroll path: the wait step is framed AND sits inside the start branch (start attempted only).
-  grep -qF 'preflight_run_or_bail_framed "postgres: wait until ready" "ga_pg_wait_ready"' "${LAUNCHER}"
+  grep -qF 'preflight_run_or_bail_framed "postgres: wait until ready" "ga_pg_wait_ready"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # boxed path: the wait is a framed panel step, same placement.
-  grep -qF 'preflight_panel_step_or_bail "postgres: wait until ready" "" "ga_pg_wait_ready"' "${LAUNCHER}"
+  grep -qF 'preflight_panel_step_or_bail "postgres: wait until ready" "" "ga_pg_wait_ready"' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   # ordering: in EACH path the wait step immediately follows the service-start step.
   local scroll boxed
-  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   local start_ln wait_ln
   start_ln="$(grep -nF 'postgres: start service' <<<"${scroll}" | head -n1 | cut -d: -f1)"
   wait_ln="$(grep -nF 'postgres: wait until ready' <<<"${scroll}" | head -n1 | cut -d: -f1)"
@@ -672,8 +672,8 @@ extract_launcher_fn() {
 
 @test "STEP3(static): both role-create RUN-sites gate on != present (post-readiness idempotent)" {
   local scroll boxed
-  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  scroll="$(awk '/^_run_dependency_preflight_scroll\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   # scroll keeps the inline substitution gate; boxed (idle-bracketed) captures the verdict first,
   # then gates the CAPTURED var on != present — identical != present semantics, no == absent RUN-site gate.
   [[ "${scroll}" == *'if [[ "$(ga_detect_postgres_role)" != "present" ]]; then'* ]]
@@ -689,7 +689,7 @@ extract_launcher_fn() {
   # exists (post-readiness role=='present' → step skipped → bar stuck at N-1/N). Under-count +
   # clamp is the safe direction.
   local body
-  body="$(awk '/^preflight_count_and_gate\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_count_and_gate\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'ga_detect_postgres_role)" == "absent"'* ]]
   [[ "${body}" != *'ga_detect_postgres_role)" != "present"'* ]]
@@ -750,14 +750,14 @@ extract_launcher_fn() {
 
 @test "STEP4(static): both keg-inject sites use preflight_keg_path_inject_pg (no literal postgresql@N)" {
   # 1 definition + 2 call-sites.
-  run grep -cF 'preflight_keg_path_inject_pg' "${LAUNCHER}"
+  run awk -v p='preflight_keg_path_inject_pg' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -ge 3 ]]
   # no literal postgresql@N KEG-INJECT call — the resolver owns the version (fresh-pin @18
   # references live in the missing-set / default fallbacks, NOT as a keg-inject literal).
-  run grep -cE 'preflight_keg_path_inject postgresql@[0-9]' "${LAUNCHER}"
+  run awk '/preflight_keg_path_inject postgresql@[0-9]/{c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 0 ]]
   # node@24 keg-inject stays literal at both sites (single pinned major, unchanged).
-  run grep -cF 'preflight_keg_path_inject node@24' "${LAUNCHER}"
+  run awk -v p='preflight_keg_path_inject node@24' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 2 ]]
 }
 
@@ -977,16 +977,16 @@ PSQL
   # Both preflight paths invoke the guard WITH a failure-bail. The scroll path uses the direct
   # `|| return $?` idiom; the boxed path captures the rc BEFORE stop_idle_spinner (so the idle
   # spinner's kill/wait/tput cannot clobber $?) then returns it — the same bail, exit-code-safe.
-  run grep -cE 'preflight_pg_utc_guard \|\|' "${LAUNCHER}"
+  run awk '/preflight_pg_utc_guard \|\|/{c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 2 ]] # both paths invoke-and-check the guard
-  run grep -cF 'preflight_pg_utc_guard || return $?' "${LAUNCHER}"
+  run awk -v p='preflight_pg_utc_guard || return $?' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 1 ]] # scroll path: direct bail
-  run grep -cF 'preflight_pg_utc_guard || pg_guard_rc=$?' "${LAUNCHER}"
+  run awk -v p='preflight_pg_utc_guard || pg_guard_rc=$?' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -eq 1 ]] # boxed path: capture-then-bail (exit-code preserved across stop_idle_spinner)
 }
 
 @test "R1(static): the initdb step is wired into BOTH preflight paths (gated on uninitialized)" {
-  run grep -cF 'ga_pg_data_dir_initialized' "${LAUNCHER}"
+  run awk -v p='ga_pg_data_dir_initialized' 'index($0,p){c++} END{print c+0}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
   [[ "${output}" -ge 2 ]]
 }
 

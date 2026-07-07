@@ -63,7 +63,7 @@ teardown() {
 # DRIVEN dynamically (its deps stubbed per-test) without booting the TUI. (glass-atrium carries a
 # BASH_SOURCE==$0 source-guard, so the functions are callable in isolation.)
 extract_launcher_fn() {
-  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+  eval "$(awk -v fn="$1" 'index($0, fn "() {") == 1 {f = 1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
 }
 
 # --- stub factories ------------------------------------------------------------------
@@ -371,7 +371,7 @@ STUB
 
 @test "guard(static): preflight_pg_utc_guard wires clear_unmanaged_pg_orphan with a != broken re-verify" {
   local body
-  body="$(awk '/^preflight_pg_utc_guard\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^preflight_pg_utc_guard\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   # the renamed install-scoped clear is invoked from the unmanaged-orphan branch.
   [[ "${body}" == *'clear_unmanaged_pg_orphan'* ]]

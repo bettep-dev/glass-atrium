@@ -148,7 +148,7 @@ PSQL
 
 @test "idle-bracket(static): each pg detect substitution runs inside its OWN idle bracket (no blank-body window)" {
   local boxed
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${boxed}" ]]
   # verdicts are captured via SEPARATED declare/assign (SC2155-safe), never combined into one line.
   [[ "${boxed}" == *'local pg_verdict'* ]]
@@ -171,7 +171,7 @@ PSQL
 
 @test "idle-bracket(static): no single idle bracket spans a self-painting panel step (per-detect, not cluster-wide)" {
   local boxed
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${boxed}" ]]
   # a framed panel step painting the SAME body row while an idle child animates it = the fight the
   # per-detect bracketing avoids. Assert ZERO panel steps run inside an open idle bracket.
@@ -186,7 +186,7 @@ PSQL
 
 @test "idle-bracket(static): the pg_utc_guard failure path STOPS the idle spinner before returning (stop-before-bail)" {
   local boxed stop_ln bail_ln
-  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  boxed="$(awk '/^_run_dependency_preflight_boxed\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${boxed}" ]]
   # the guard rc is captured, the idle is stopped, THEN the failure bail returns — so no stray idle
   # child paints past the guard-failure return (the invariant the per-detect refactor must preserve).

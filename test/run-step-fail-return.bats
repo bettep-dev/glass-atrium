@@ -242,8 +242,8 @@ drive_gate() {
 
 @test "hash-r(static): hash -r follows every preflight_keg_path_inject node@24 (both render paths)" {
   # exactly the two keg-inject node@24 sites (scroll + boxed) each get a following `hash -r`.
-  [[ "$(grep -c 'preflight_keg_path_inject node@24' "${TUI}")" -eq 2 ]] \
-    && [[ "$(grep -cE '^[[:space:]]*hash -r' "${TUI}")" -ge 2 ]]
+  [[ "$(awk -v p='preflight_keg_path_inject node@24' 'index($0,p){c++} END{print c+0}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)" -eq 2 ]] \
+    && [[ "$(awk '/^[[:space:]]*hash -r/{c++} END{print c+0}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)" -ge 2 ]]
 }
 
 @test "hash-r(static): the guide-only Xcode CLT gate is invoked before the build path (pre-existing coverage)" {
@@ -251,8 +251,8 @@ drive_gate() {
   # step 1, invoked in BOTH the scroll + boxed preflight paths) — NO duplicate added (minimalism).
   # Assert it is CALLED (not merely defined) in both render paths and references the CLT install
   # command (guide-only, no silent failure). Regression guard if a reorder drops the gate.
-  [[ "$(grep -c 'if ! preflight_guide_xcode_clt' "${TUI}")" -ge 1 ]] \
-    && grep -q 'preflight_bracket preflight_guide_xcode_clt' "${TUI}" \
-    && grep -q 'ga_detect_xcode_clt' "${TUI}" \
-    && grep -q 'xcode-select --install' "${TUI}"
+  [[ "$(awk -v p='if ! preflight_guide_xcode_clt' 'index($0,p){c++} END{print c+0}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)" -ge 1 ]] \
+    && grep -q 'preflight_bracket preflight_guide_xcode_clt' "${TUI}" "${GA}"/lib/ga-tui-*.sh \
+    && grep -q 'ga_detect_xcode_clt' "${TUI}" "${GA}"/lib/ga-tui-*.sh \
+    && grep -q 'xcode-select --install' "${TUI}" "${GA}"/lib/ga-tui-*.sh
 }
