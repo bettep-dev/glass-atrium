@@ -62,6 +62,69 @@ atrium_config_port() {
   printf '%s\n' "${val}"
 }
 
+# Private bindable-port predicate — integer 1-65535. Returns 0/1, no output.
+# Shared by atrium_monitor_port for the env / rendered-.env value guards
+# (atrium_config_port keeps its own inline check untouched).
+_atrium_port_is_valid() {
+  local val="$1"
+  [[ "${val}" =~ ^[0-9]+$ ]] && ((val >= 1 && val <= 65535))
+}
+
+# Resolved rendered monitor/.env path (may not exist — the resolver degrades to
+# config.toml then the terminal default). ATRIUM_MONITOR_ENV env overrides for
+# test/sandbox, mirroring the ATRIUM_CONFIG_TOML override on atrium_config_file.
+atrium_monitor_env_file() {
+  printf '%s\n' "${ATRIUM_MONITOR_ENV:-${GA_ROOT:-${HOME}/.glass-atrium}/monitor/.env}"
+}
+
+# Extract ATRIUM_MONITOR_PORT from a rendered monitor/.env — the sibling idiom
+# already used by lib/ga-db.sh and test/bootstrap-health-gate-exec-harness.sh.
+# Echoes the value (empty when the key is absent); last assignment wins (env-file
+# override semantics). Args: $1 = env file path (assumed to exist).
+atrium_monitor_env_port() {
+  local env_file="$1" val
+  val="$(grep -E '^ATRIUM_MONITOR_PORT=[0-9]+$' -- "${env_file}" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
+  printf '%s\n' "${val}"
+}
+
+# Resolve the effective monitor port — the single shell SoT for the live port.
+# Precedence (ADR-1): exported ATRIUM_MONITOR_PORT (the value a running monitor
+# actually bound) → rendered monitor/.env ATRIUM_MONITOR_PORT → config.toml
+# [ports].monitor (via atrium_config_port) → terminal default 16145. A CONFIGURED
+# invalid value (env or .env) is a user error → loud fail (stderr + rc 1), never
+# a silent fallback; config.toml invalids are loud-failed by atrium_config_port.
+# The literal 16145 lives HERE as the terminal default and NOWHERE else in shell.
+atrium_monitor_port() {
+  local val env_file
+  # 1. exported env — the live monitor's bound value.
+  if [[ -n "${ATRIUM_MONITOR_PORT:-}" ]]; then
+    val="${ATRIUM_MONITOR_PORT}"
+    if ! _atrium_port_is_valid "${val}"; then
+      printf 'atrium-config: invalid ATRIUM_MONITOR_PORT=%s (env) — must be an integer 1-65535\n' \
+        "${val}" >&2
+      return 1
+    fi
+    printf '%s\n' "${val}"
+    return 0
+  fi
+  # 2. rendered monitor/.env value.
+  env_file="$(atrium_monitor_env_file)"
+  if [[ -f "${env_file}" ]]; then
+    val="$(atrium_monitor_env_port "${env_file}")"
+    if [[ -n "${val}" ]]; then
+      if ! _atrium_port_is_valid "${val}"; then
+        printf 'atrium-config: invalid ATRIUM_MONITOR_PORT=%s in %s — must be an integer 1-65535\n' \
+          "${val}" "${env_file}" >&2
+        return 1
+      fi
+      printf '%s\n' "${val}"
+      return 0
+    fi
+  fi
+  # 3. config.toml [ports].monitor, terminal default 16145 (loud-fails invalids).
+  atrium_config_port '[ports]' 'monitor' '16145'
+}
+
 # Escape ERE metacharacters so a config value embeds literally in a grep -E
 # pattern (IANA tz ids may carry '+', e.g. Etc/GMT+9 — unescaped, detection
 # would silently mismatch).
