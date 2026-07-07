@@ -4140,10 +4140,14 @@ _preflight_fakechat_boxed() {
 
 # preflight_install_python_libs — AUTO-WITH-CONSENT (install ORDER step 8), PEP-668
 # aware. PRIMARY: pip install --user the missing set. On an externally-managed
-# (PEP-668) failure, ask for a SEPARATE consent to retry with --break-system-packages
-# (the override is a distinct system-policy decision, so it gets its own gate, not
-# the grouped one). requirements.txt is the package SoT; the command builders target
-# only the genuinely-missing subset for a fast re-run. Returns 0 on success.
+# (PEP-668) failure, AUTO-retry with --break-system-packages (no second typed gate):
+# the grouped consent already covered installing the python libs, and the retry is
+# `pip install --user --break-system-packages` — USER site-packages, not system, the
+# low-risk PEP-668 escape hatch — so the override auto-proceeds, logged VISIBLY (a
+# system-policy override, no longer a blocking prompt). requirements.txt is the package
+# SoT; the command builders target only the genuinely-missing subset for a fast re-run.
+# Returns 0 on success; on a retry FAILURE it returns that rc so the caller warns and
+# continues (non-fatal — a manual install path exists).
 preflight_install_python_libs() {
   [[ "$(ga_detect_python_libs)" == "present" ]] && return 0
 
@@ -4156,34 +4160,26 @@ preflight_install_python_libs() {
   fi
 
   # the --user line failed — the common cause on a modern python3 is the PEP-668
-  # externally-managed marker. Offer the override behind its OWN consent gate.
+  # externally-managed marker. AUTO-retry with the override (no typed gate): the user
+  # already consented to the python-libs install, and --break-system-packages here still
+  # targets USER site-packages. Log the override visibly so the user SEES it was used.
   preflight_line ""
-  preflight_line "$(c "${C_ALERT}" "pip --user failed (likely PEP-668 externally-managed-environment).")"
+  preflight_line "$(c "${C_ALERT}" "pip --user failed (likely PEP-668 externally-managed-environment) — auto-retrying with --break-system-packages.")"
   local break_cmd
   break_cmd="$(ga_cmd_python_libs_break_system)"
-  if confirm_typed "break" "Retry with --break-system-packages (overrides the PEP-668 guard)."; then
-    rc=0
-    preflight_run_cmd "python libs (--break-system-packages)" "${break_cmd}" || rc=$?
-    return "${rc}"
-  fi
-  preflight_line "$(c "${C_DIM}" "python libs skipped — install them manually from requirements.txt.")"
-  return 1
-}
-
-# _preflight_python_break_consent — the PEP-668 --break-system-packages consent body, run INSIDE a
-# preflight_bracket (a cooked typed prompt cannot render in the dimmed box). Prints the failure
-# reason then the typed 'break' confirm; returns confirm_typed's verdict (0 = proceed).
-_preflight_python_break_consent() {
-  preflight_line ""
-  preflight_line "$(c "${C_ALERT}" "pip --user failed (likely PEP-668 externally-managed-environment).")"
-  confirm_typed "break" "Retry with --break-system-packages (overrides the PEP-668 guard)."
+  rc=0
+  preflight_run_cmd "python libs (--break-system-packages)" "${break_cmd}" || rc=$?
+  return "${rc}"
 }
 
 # _preflight_python_libs_boxed — MENU render of preflight_install_python_libs: the pip --user attempt
-# stays FRAMED as a 1/1 panel step (G3), and ONLY on its PEP-668 failure is the
-# --break-system-packages consent HOISTED to an alt-screen bracket (mirrors _confirm_pregate) — after
-# which the override retry runs as another framed panel step. Same builders + detect guards as the
-# scroll variant. Returns 0 on success, 1 when the override is declined (non-fatal to the caller).
+# stays FRAMED as a 1/1 panel step (G3), and ONLY on its PEP-668 failure the --break-system-packages
+# retry AUTO-runs as another framed panel step — no alt-screen bracket, no typed consent. The grouped
+# consent already covered the python-libs install and the override targets USER site-packages, so it
+# auto-proceeds; the override is surfaced VISIBLY via the retry step's ACTIVE label (the panel frame
+# stays intact — no bracket to clear, hence no enter_run_state re-engage). Same builders + detect
+# guards as the scroll variant. Returns 0 on success; on a retry FAILURE it returns that rc so the
+# caller warns and continues (non-fatal).
 _preflight_python_libs_boxed() {
   [[ "$(ga_detect_python_libs)" == "present" ]] && return 0
   local user_cmd rc=0
@@ -4191,16 +4187,16 @@ _preflight_python_libs_boxed() {
   [[ -n "${user_cmd}" ]] || return 0
   preflight_panel_step "python libs (pip --user)" "" "${user_cmd}" || rc=$?
   [[ "${rc}" -eq 0 ]] && return 0
-  # --user failed → hoist the override consent to a bracket, then re-establish the frame + retry.
+  # --user failed (likely PEP-668) → AUTO-retry with the override as a framed panel step. The ACTIVE
+  # label documents the override so the user SEES --break-system-packages was used (visible, not a
+  # blocking prompt). No alt-screen bracket, so the panel frame is never torn down + needs no repaint.
   local break_cmd
   break_cmd="$(ga_cmd_python_libs_break_system)"
-  if preflight_bracket _preflight_python_break_consent; then
-    enter_run_state # repaint the frame the bracket left cleared, before the override panel step
-    rc=0
-    preflight_panel_step "python libs (--break-system-packages)" "" "${break_cmd}" || rc=$?
-    return "${rc}"
-  fi
-  return 1
+  rc=0
+  preflight_panel_step "python libs (--break-system-packages)" \
+    "pip --user failed (PEP-668) — auto-retrying with --break-system-packages…" \
+    "${break_cmd}" || rc=$?
+  return "${rc}"
 }
 
 # preflight_build_summary — populate the global PREFLIGHT_SUMMARY newline list with
