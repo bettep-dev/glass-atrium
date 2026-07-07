@@ -68,7 +68,7 @@ run_setup() {
   before="$(shasum "${FAKE_ROOT}/.env" | awk '{print $1}')"
   run_setup "claude_oss_e2e"
   [[ "${status}" -eq 7 ]]
-  [[ "${output}" == *"다른 DB"* ]]
+  [[ "${output}" == *"different DB"* ]]
   # no DB action attempted, .env untouched
   [[ ! -e "${SANDBOX}/createdb-called" ]]
   [[ "$(shasum "${FAKE_ROOT}/.env" | awk '{print $1}')" == "${before}" ]]
@@ -243,7 +243,7 @@ run_recreate() {
     GA_DB_BACKUP_DIR="${SANDBOX}/backups" PATH="${STUB_BIN}" \
     bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
   [[ "${status}" -eq 4 ]]
-  [[ "${output}" == *"recreate 필수 CLI 부재"* ]]
+  [[ "${output}" == *"required CLI for recreate"* ]]
 }
 
 @test "GA_DB_RECREATE backs up BEFORE dropping (order proven by call markers)" {
@@ -280,7 +280,7 @@ run_recreate() {
   chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
   run_recreate "claude_oss_e2e"
   [[ "${status}" -eq 8 ]]
-  [[ "${output}" == *"빈 파일"* ]]
+  [[ "${output}" == *"empty file"* ]]
   [[ ! -e "${SANDBOX}/dropdb-called" ]]
 }
 
