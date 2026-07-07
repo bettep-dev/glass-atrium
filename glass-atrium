@@ -326,7 +326,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 # --- menu model (parallel arrays — bash-3.2 has no assoc arrays) ------------
 # Index-aligned: label / description / action keyword / destructive flag. MENU_COUNT
-# MUST equal every array's length; redraw_menu repositions by cursor save/restore so
+# MUST equal every array's length; redraw_frame_inplace repositions by cursor save/restore so
 # it is immune to the count, but draw_menu iterates [0, MENU_COUNT) — keep them in sync.
 readonly -a MENU_LABEL=(
   "Install"
@@ -473,7 +473,7 @@ MONITOR_SUMMARY_ROW2=""
 # caret gutter + label@cell + description), a bottom rail, and a keyhint footer.
 # Each row: rail + 1 margin + caret gutter + label (14 cells) + description.
 # Absolute column padding keeps the grid aligned regardless of label length. In
-# fullscreen, redraw_menu repaints this block at its absolute CUP anchor after
+# fullscreen, redraw_frame_inplace repaints this block at its absolute CUP anchor after
 # clearing the exact rows in place, so the frame/footer rows redraw drift-free.
 
 # === work-area box =========================================================
@@ -524,12 +524,10 @@ CLASSIFY_LIVE_COUNTER=""
 CLASSIFY_LIVE_LABEL=""
 # CLASSIFY_PANEL — set "true" by run_step in panel RENDER_MODE. When true, classify_step_log
 # prints NOTHING to the screen: ALL lines (loud, banners, routine, default) are folded into
-# STEP_SUPPRESSED_COUNT and a loud (error/failed) line additionally flips STEP_PANEL_LOUD_SEEN
-# so run_step can detect a failure even though the step rc may be 0. This is MORE aggressive
-# than install mode (which still prints loud lines + banners) — the panel shows only the
-# synthesized step progress, zero raw lines / banners / paths (secret-safe by construction).
+# STEP_SUPPRESSED_COUNT. This is MORE aggressive than install mode (which still prints loud
+# lines + banners) — the panel shows only the synthesized step progress, zero raw lines /
+# banners / paths (secret-safe by construction).
 CLASSIFY_PANEL=""
-STEP_PANEL_LOUD_SEEN=""
 # === install single-line progress renderer =================================
 # In install RENDER_MODE the per-step scrolling-log model is replaced by ONE
 # persistent progress row, redrawn in place with CR + clear-line (\r\033[2K) ONLY —

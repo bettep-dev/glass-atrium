@@ -147,7 +147,7 @@ draw_wordmark() {
 # replacing the former blank gap. A single row of dim G_DOT glyphs (`·`, ASCII `.`)
 # spanning the shared plate inner width, indented PLATE_MARGIN to align under the
 # plate. Stays exactly ONE line — the wordmark(5)+separator(1)=6-row offset is the
-# constant redraw_menu adds to MENU_FIRST_ROW to anchor the menu block absolutely.
+# constant redraw_frame_inplace adds to MENU_FIRST_ROW to anchor the menu block absolutely.
 draw_separator() {
   local inner
   inner="$(plate_inner)"
@@ -242,7 +242,7 @@ draw_menu() {
   fi
   # In fullscreen mode the keyhint is bottom-pinned separately (draw_keyhint via an
   # absolute CUP), so draw_menu emits it inline ONLY in the compact layout — that keeps
-  # the redraw_menu \033[J region (which clears to end-of-screen from the saved menu row)
+  # the redraw_frame_inplace \033[J region (which clears to end-of-screen from the saved menu row)
   # from wiping the bottom-pinned keyhint on every arrow-key redraw.
   if [[ "${FULLSCREEN}" != "true" ]]; then
     draw_keyhint
@@ -394,11 +394,6 @@ redraw_nav_move() {
   [[ "${cur}" -ne "${prev}" ]] && paint_menu_row "${cur}"
   paint_workbox_body_inner "$(workbox_body_str)"
 }
-
-# redraw_menu — thin wrapper: a nav move (or any menu-state change) is an IN-PLACE full-extent
-# redraw now (ITEM 1) — cached geometry + per-row ESC[2K (no ESC[2J), so nav is flicker-free
-# (no jump, no flash) AND still fragment-free (the full extent is per-row cleared every redraw).
-redraw_menu() { redraw_frame_inplace; }
 
 # on_winch — SIGWINCH handler: a resize MAY change the extent, so it forces a geometry recompute
 # + full-clear redraw via draw_frame_full (the one place a single ESC[2J flash is acceptable).

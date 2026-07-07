@@ -147,17 +147,11 @@ classify_step_log() {
       _classify_reprint_live
       continue
     fi
-    # PANEL mode: print NOTHING. Fold every line into the suppressed count; flag a loud
-    # (error/failed) line so run_step surfaces a failure via the status line, never inline.
+    # PANEL mode: print NOTHING. Fold every line into the suppressed count.
     # Banners, file paths (target=…, secrets/clauded paths), doctor rows — all folded here,
     # so no raw subprocess noise and no secrets reach the clean panel.
     if [[ "${CLASSIFY_PANEL}" == "true" ]]; then
       STEP_SUPPRESSED_COUNT=$((STEP_SUPPRESSED_COUNT + 1))
-      trimmed="${line#"${line%%[![:space:]]*}"}"
-      case "${trimmed}" in
-        FATAL:* | *[Ee]rror* | *[Ff]ailed*) STEP_PANEL_LOUD_SEEN="true" ;;
-        *) : ;;
-      esac
       continue
     fi
     # classify on a leading-whitespace-trimmed copy (wire_hooks indents its per-item

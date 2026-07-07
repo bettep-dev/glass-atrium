@@ -10,18 +10,6 @@
 # file-scope step/run globals at call time in the same sourced shell. run_step drives
 # the counters through a brace group (never a subshell) so STEP_INDEX/GRAND_TOTAL/
 # STEP_INDEX_BASE mutations propagate to the parent.
-# commit_install_permanent — erase the live progress row, print ONE permanent line
-# (newline-terminated → scrolled-up history), then REPRINT the live progress row below
-# it so the loud line becomes permanent history and the live row sits one row under.
-# CR + clear-line ONLY (no cursor-up / save-restore). $1=the already-formatted +
-# already-newline-terminated permanent line (printed verbatim) · $2..$5 = the live-row
-# redraw args (glyph/counter/active_label/suppressed) to reprint beneath it.
-commit_install_permanent() {
-  local permanent_line="$1" glyph="$2" counter="$3" active_label="$4" suppressed="$5"
-  printf '\r\033[2K' >"${TTY}"              # erase the live progress row first
-  printf '%s' "${permanent_line}" >"${TTY}" # the loud line already leads with \r\033[2K + ends in \n
-  redraw_install_progress "${glyph}" "${counter}" "${active_label}" "${suppressed}"
-}
 
 # parse_token_summary — ITEM 3: synthesize the Token Setup done-state digest into TOKEN_SUMMARY
 # from preflight_provision_headless_token's return code ($1). NEVER reads or echoes the token
@@ -170,8 +158,7 @@ run_step() {
   # reprints the live progress row beneath it (the static spinner frame is used as the
   # leading cell; the spinner is stopped by the time classify runs). Empty in other modes.
   # Panel mode does NOT arm the reprint context — classify prints nothing, so there is no
-  # live row to reprint beneath; it sets CLASSIFY_PANEL instead (full suppression + loud-detect).
-  STEP_PANEL_LOUD_SEEN=""
+  # live row to reprint beneath; it sets CLASSIFY_PANEL instead (full suppression).
   CLASSIFY_PANEL=""
   if [[ -n "${panel_mode}" ]]; then
     CLASSIFY_PANEL="true"
@@ -217,13 +204,10 @@ run_step() {
   classify_step_log "${STEP_LOG}"
   local suppressed="${STEP_SUPPRESSED_COUNT}"
   # disarm the reprint + panel context immediately so a later step never inherits them.
-  # rc stays the SOLE source of truth for pass/fail — STEP_PANEL_LOUD_SEEN is diagnostic
-  # only and never overrides the engine exit code (exit-code behavior is byte-for-byte).
   CLASSIFY_LIVE_GLYPH=""
   CLASSIFY_LIVE_COUNTER=""
   CLASSIFY_LIVE_LABEL=""
   CLASSIFY_PANEL=""
-  STEP_PANEL_LOUD_SEEN=""
 
   # restamp the status row: append a fresh stamped line (the running row stays as
   # scrollback) — consistent with the engine's own scrolling-log ethos (nothing hidden).

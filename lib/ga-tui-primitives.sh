@@ -288,6 +288,6 @@ tp() { tput "$@" 2>/dev/null || true; }
 
 # cup_to — move the cursor to an absolute 1-based (row, col) on the TTY. Pure vt100
 # CUP (\033[row;colH) — tier/ASCII-independent (the file already emits raw cursor
-# control unguarded in redraw_menu), so it needs no USE_COLOR/UTF8 guard. Used by the
+# control unguarded in redraw_frame_inplace), so it needs no USE_COLOR/UTF8 guard. Used by the
 # fullscreen menu to anchor the centered block + the bottom-pinned keyhint.
 cup_to() { printf '\033[%s;%sH' "$1" "$2" >"${TTY}"; }
