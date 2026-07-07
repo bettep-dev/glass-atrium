@@ -332,7 +332,7 @@ echo "==========================================================================
 echo "box-engage gating — an all-present group never engages an empty box"
 echo "============================================================================"
 # All-present scenario: no auto-work => preflight_count_and_gate yields STEP_TOTAL=0 and the
-# ENGAGE gates skip enter_run_state (BUG1). Proves the box only engages when work exists.
+# ENGAGE gates skip enter_run_state. Proves the box only engages when work exists.
 SC_MISSING="" SC_HOMEBREW="present" SC_PG="present" SC_ROLE="present" SC_KEG="18"
 SC_CLAUDE="present" SC_AUTH="present" SC_FAKECHAT="present" SC_MARKET="yes" SC_PYTHON="present"
 SC_PG_UTC="down" SC_PG_INIT="yes"

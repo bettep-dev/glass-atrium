@@ -389,7 +389,7 @@
     "autoagent/migrations/remediate_pattern1_soft_truncation.sql": "8e4207a46830e6d773e240d0e118da367e1fc5248e83b64d05041582ca916053",
     "autoagent/package.json": "8495c5dba4543252564c8ee24bde73fb7eb6759fdb4271891f43a8bfb80aeaee",
     "config.toml.example": "0dd07d47c200dc46f13deeedc4acbf3d3e5a49654ddd0f098c2f9720b5a32417",
-    "glass-atrium": "6cee77e6f9c21c4d602d2b5b03d5614c555c4978fbb1ab348d424bbe7cbaefd5",
+    "glass-atrium": "253da46a2e34a39fc889775a963ce00f2b5362a28976195f5e7546ccc243303f",
     "hooks/_pg-write.py": "cc3a0740821d77588ee69d794664e0e0562fd8a720368e9ea16067e570b8dfd5",
     "hooks/_pg_dual_write.py": "ac9a6fcd547d2f92cef16dbccbb056d18b8139c191231d3309eb49e8e42e8f9f",
     "hooks/_pg_learning_dualwrite.py": "7efeb39bb773960c377237b0cfe1743298ba4f995e7613b6a714cc0fceac2903",

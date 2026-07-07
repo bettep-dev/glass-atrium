@@ -4694,7 +4694,7 @@ preflight_count_and_gate() {
 _run_dependency_preflight_boxed() {
   local rc=0
 
-  # BUG2: count every framed box step's will-run predicate ONCE, up-front (before ANY install
+  # step-counter grand-total: count every framed box step's will-run predicate ONCE, up-front (before ANY install
   # mutates live detect state), publishing the shared STEP_TOTAL + the two per-group runnable
   # counts. Must run before ENGAGE1 so both enter_run_state engages can gate on their group.
   preflight_count_and_gate
