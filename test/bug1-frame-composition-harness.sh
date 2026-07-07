@@ -234,7 +234,12 @@ verify_frame_events "COMPOSED"
 assert_eq "S1 no frame violations (never frameless, no gratuitous redraw)" "0" "${VIO_COUNT}"
 # W4 must fire exactly once (ENGAGE1 skipped → the box would be frameless without it).
 assert_eq "S1 W4 conditional re-engage fired once (COMPOSE count)" "1" "$(_count_evt COMPOSE)"
-assert_eq "S1 the Resolving idle window ran on the composed frame" "1" "$(_count_evt IDLE_START)"
+# T5 (Bug1-b) re-target: pg detect was split from ONE cluster-wide idle bracket into THREE PER-DETECT
+# brackets (utc-guard, postgres detect, role detect — launcher lines ~4756/4783/4796), so the bounded
+# ~2s connect never flashes a blank box body. Each fires start_idle_spinner "Resolving PostgreSQL" →
+# 3 IDLE_START events (each STOP-paired), all on the composed frame (verify_frame_events COMPOSED +
+# VIO_COUNT=0 above prove none is frameless). The count moved 1→3; the "on the composed frame" invariant holds.
+assert_eq "S1 the Resolving idle windows (T5 per-detect brackets) ran on the composed frame" "3" "$(_count_evt IDLE_START)"
 
 echo "============================================================================"
 echo "(BUG1-S2) group1-runnable + provisioned-auth — W4 SKIPS (no gratuitous redraw)"

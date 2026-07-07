@@ -381,10 +381,17 @@ while IFS=' ' read -r i _t _f _b _rest; do
   last_pf_idx="${i}"
 done <<<"${seq}"
 base_after="${STEP_INDEX_BASE:-}"
-printf '  boxed preflight rc=%s  last preflight idx=%s  STEP_INDEX_BASE after handoff=%s\n' \
-  "${rc}" "${last_pf_idx}" "${base_after}"
+# T6 (Bug2): preflight_count_and_gate freezes GRAND_TOTAL = (g1+g2 preflight) + INSTALL_PLAN_LEN and
+# the preflight->install handoff PRESERVES it (partial clear keeps STEP_INDEX_BASE + GRAND_TOTAL). Capture
+# it HERE — the install run_plan below is on the install-panel path and its end-of-plan _clear_step_state
+# sweeps GRAND_TOTAL, so it must be read before that teardown to assert the install denominator.
+grand_frozen="${GRAND_TOTAL:-}"
+printf '  boxed preflight rc=%s  last preflight idx=%s  STEP_INDEX_BASE after handoff=%s  GRAND_TOTAL=%s\n' \
+  "${rc}" "${last_pf_idx}" "${base_after}" "${grand_frozen}"
 assert_eq "boxed preflight (fresh) returns 0" "0" "${rc}"
 assert_eq "handoff CARRIES the preflight FINAL clamped index into STEP_INDEX_BASE" "${last_pf_idx}" "${base_after}"
+# T6 formula pin: the frozen grand total is the preflight step count (base) + the fixed 14-step install plan.
+assert_eq "handoff PRESERVES the frozen GRAND_TOTAL = base + INSTALL_PLAN_LEN (T6 unified denominator)" "$((base_after + INSTALL_PLAN_LEN))" "${grand_frozen}"
 if [[ "${base_after}" =~ ^[0-9]+$ && "${base_after}" -ge 1 ]]; then
   pass "carried base is a positive integer (preflight steps ran): ${base_after}"
 else
@@ -421,9 +428,14 @@ printf '\n'
 assert_eq "install run_plan rendered 3 display steps" "3" "${#d_idxs[@]}"
 assert_eq "install FIRST display index continues at base+1 (NO reset to 1/n)" "$((base_after + 1))" "${d_idxs[0]:-}"
 
+# T6 (Bug2) re-target: the install-panel denominator is the ONE frozen GRAND_TOTAL (base + INSTALL_PLAN_LEN),
+# NOT the pre-T6 base+local_plan_len. This scenario IS the install path (mode="panel", base carried from the
+# real preflight that froze GRAND_TOTAL), so every display step renders over the unified grand total — here
+# the 3-step mock plan renders base+1..base+3 / GRAND_TOTAL (a truncated stand-in for the real 14-step plan;
+# the idx-continuity checks above/below still pin base+k+1). The shared-caller sweep is proved by R4-5 below.
 grand_ok="yes"
-for t in "${d_tots[@]}"; do [[ "${t}" == "$((base_after + 3))" ]] || grand_ok="no"; done
-assert_eq "install display TOTAL is the grand total base+n on every step" "yes" "${grand_ok}"
+for t in "${d_tots[@]}"; do [[ "${t}" == "${grand_frozen}" ]] || grand_ok="no"; done
+assert_eq "install display TOTAL is the frozen GRAND_TOTAL (T6 unified denominator) on every step" "yes" "${grand_ok}"
 
 cont_ok="yes"
 for k in "${!d_idxs[@]}"; do [[ "${d_idxs[${k}]}" == "$((base_after + k + 1))" ]] || cont_ok="no"; done
