@@ -38,6 +38,8 @@ Governs how the orchestrator agent delegates tasks, composes agent teams, manage
 
 **Execution**: Execute sequentially in sorted order (or in parallel within the same phase). For DEV agents with `dual_phase: true`, the phase 2 vs 4 assignment is determined by the decomposition result (diagnosis-only vs includes implementation).
 
+**Ordering caveat (ultracode verify-gate — reconciles pre-verify phase-2 DEV analysis with the hook)**: a `dual_phase` DEV assigned to phase-2 analysis is spawned as a `dev-*` token BEFORE any verify reviewer, so under ultracode `enforce-workflow-verify-stage.sh` classifies it as an un-gated implementation dev and fires `BLOCK_ORDER` — UNLESS that `dev-*` is co-located within ~1000 comment-stripped chars of, or co-grouped in the same `parallel()` as, a `glass-atrium-qa-code-reviewer` token. The phase-2 DEV-analysis permission itself is UNCHANGED; to keep it lawful under the gate, either route the pre-verify analysis to a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) or front-load a reviewer-first `{qa,dev}` Contract verify before it. Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`; worked skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
+
 #### Routing Return Schema
 
 Routing decisions are expressed as a team structure containing the 3 elements below. Schema is shared between single and compound cases.
@@ -329,6 +331,33 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
 
   The DEV `agentType` in both the verify and implementation stages is the plan's primary-domain DEV (selection rule per `orchestrator-role.md`); `glass-atrium-dev-nestjs` above is illustrative.
 
+  **3-phase Discovery+Design variant (no `dev-*` before the reviewer — avoids the recurring `BLOCK_ORDER` false-positive)**: the 2-phase skeleton above starts AT the verify stage, but real sprints often need Discovery/Design analysis FIRST. The gate classifies EVERY quoted `dev-*` token that textually precedes the `glass-atrium-qa-code-reviewer` token — of ANY phase/purpose, Discovery/Design analysis INCLUDED — as an un-gated implementation dev and fires `BLOCK_ORDER` (`min(rev_starts) < min(impl_dev_starts)`), UNLESS that `dev-*` is co-located within ~1000 comment-stripped chars of, or co-grouped in the same `parallel()` as, the reviewer. Two LAWFUL ways to do pre-verify Discovery/Design: **(a)** use a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) for the analysis (shown below); **(b)** front-load a GENUINE reviewer-first `{qa,dev}` "Contract" verify phase (a real verify, NOT a lone reviewer placed only to satisfy ordering) BEFORE any Discovery `dev-*`, so every later `dev-*` is preceded by a reviewer. Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`. The skeleton reuses the `robustAgent` helper from the 2-phase skeleton above and carries BOTH the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its PASS is EARNED by correct ordering — not a masked `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
+
+  ```js
+  // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
+  // NO dev-* token precedes the reviewer (Discovery/Design uses NON-DEV agents), so BLOCK_ORDER
+  // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (### Resilient
+  // Workflow Authoring): every schema-mode agent() stays retry-once-on-null / isolated-failure, and
+  // every stage goal carries the print-block-then-emit instruction. Escape hatch (a) is shown; hatch
+  // (b) = replace Phase 1 with a reviewer-first {qa,dev} Contract verify placed before any dev-*.
+  log('plan-ref: clauded-docs/42');   // entry signal (raw-scanned) — reference the REAL minted id; 42 is illustrative
+  log('[SIZE-EST] bundles=2 tool_uses~=28 — implement + its new tests; Discovery/Design is NON-DEV');
+  pipeline(
+    // Phase 1 — Discovery + Design: NON-DEV analysis. No dev-* here, so nothing precedes the reviewer.
+    robustAgent('glass-atrium-intel-researcher', { goal: 'discover constraints + prior art' }),
+    robustAgent('glass-atrium-intel-planner',    { goal: 'design the implementation approach -> plan' }),
+    // Phase 2 — verify: reviewer + primary-domain DEV CO-LOCATED in ONE parallel() (independent verdicts).
+    parallel(
+      robustAgent('glass-atrium-qa-code-reviewer', { goal: 'judge implementation/test-feasibility -> pass|revise' }),
+      robustAgent('glass-atrium-dev-nestjs',       { goal: 'judge technical validity/approach -> feasible|infeasible' }),
+    ),
+    // Phase 3 — implement: runs ONLY on pass+feasible. This first impl dev-* is preceded by the reviewer.
+    robustAgent('glass-atrium-dev-nestjs', { goal: 'implement per verified plan' /* gated on pass+feasible */ }),
+  )
+  ```
+
+  The DEV `agentType` is the plan's primary-domain DEV (`glass-atrium-dev-nestjs` illustrative). Hatch (b) is the fallback when Discovery genuinely needs a `dev-*`'s domain judgment: run a real `{qa,dev}` Contract verify FIRST, then the Discovery `dev-*` follows a reviewer and no longer reads as un-gated. Both hatches keep the DEV hard-gate + honor-system-primary verify-stage discipline intact — they change only WHICH agent does pre-verify analysis, never the verify requirement itself.
+
 **Entry-class token placement (ultracode — DEV workflow)** — a DEV workflow spawning a `dev-*` agent records the `[ENTRY-CLASS] simple-task: <reason>` token (and any plan-ref) in its recommended canonical home: a top-of-script `log()` string or `meta.description` field. This is a greppability CONVENTION, NOT a comment restriction — the gate raw-scans these tokens, so any placement passes. CONTRAST: the `glass-atrium-qa-code-reviewer` verify-stage token above is the OPPOSITE — comment-stripped by the gate, so it genuinely needs non-comment placement; do not conflate the two. **Two INDEPENDENT gates**: `[ENTRY-CLASS]` satisfies ONLY the entry-miss gate — a `dev-*` spawn STILL independently requires the `{glass-atrium-qa-code-reviewer, dev}` verify-stage above (the entry token does NOT exempt it; a `dev-*` spawned with no co-located reviewer is BLOCKED):
 
   ```js
@@ -513,8 +542,10 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
   3. a **`dev-*` verifier is co-located** within ~1000 comment-stripped chars of the reviewer in the SAME `parallel()` block (a reviewer with no co-located DEV verifier = DEV hard-gate absent → BLOCK; note the distance is measured AFTER comment-stripping, so do NOT pad with comments to fake co-location — and newlines inside `/* */` block comments now SURVIVE stripping (line identity preserved), so comment padding still cannot shrink distances but no longer merges lines);
   4. (gate cannot verify — your obligation) implementation is **gated on the combined `pass`+`feasible` verdict**, and the DEV verdict is genuinely a hard gate (no pass without `feasible`).
   5. no bash `${…}` (operator forms `${#a[@]}` / `${a[@]}` / `${VAR:-x}`) sits unescaped inside a JS template literal → Workflow parse error mislabeled as "TypeScript syntax" (backstopped by `lint-workflow-template-literal.sh`).
+  6. **no Discovery/Design `dev-*` precedes the reviewer** — a `dev-*` used for pre-verify Discovery/Design analysis (a legitimate earlier phase, NOT the implement stage) that textually precedes the `glass-atrium-qa-code-reviewer` verify-spawn WITHOUT co-location (~1000 comment-stripped chars) or co-grouping in the same `parallel()` is classified as an un-gated implementation dev and fires `BLOCK_ORDER` (`min(rev_starts) < min(impl_dev_starts)`) → move that analysis to a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) OR front-load a reviewer-first `{qa,dev}` Contract verify before it. Honor-system-primary framing is unchanged; this one is a GENUINE mechanical exit-2 `BLOCK_ORDER`, not a new enforcement claim. 3-phase skeleton: `### Pipeline Acceptance Criteria` → "In-script verify-stage".
 
   Copyable skeleton: `### Pipeline Acceptance Criteria` → "In-script verify-stage". Simple-plan workflows are exempt (inherit the Stage-2 simple-task carve-out).
+- **Pre-verify Discovery `dev-*` order guard (ultracode)**: a `dev-*` used for Discovery/Design analysis positioned BEFORE the `glass-atrium-qa-code-reviewer` verify-spawn without co-location / co-grouping is classified as an un-gated implementation dev → `BLOCK_ORDER` (a legitimate Discovery/Design phase, NOT the implement stage). Fix: a NON-DEV Discovery agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) OR a reviewer-first `{qa,dev}` Contract phase before any Discovery `dev-*`. Honor-system-primary framing unchanged; the exit-2 `BLOCK_ORDER` is the genuine mechanical block. Skeleton: `### Pipeline Acceptance Criteria` → In-script verify-stage 3-phase variant.
 - **Reflexive [DOC-ROUTE] stamping guard**: a `[DOC-ROUTE] user-requested-local:` token stamped WITHOUT an actual explicit user request for that local destination (new file OR edit of an existing user file) → violation — the token carries a real user redirect, never silences the doc-routing gate. Halt, remove the stamp, route the deliverable per `scope-report.md` Output Format Routing. Canonical form + placement: `### Pipeline Acceptance Criteria` → "[DOC-ROUTE] token placement".
 - **Generic-subagent guard [LLM06/LLM01/LLM07]**: a workflow `agent()` call invoked WITHOUT an agentType matching the routing decision → spawns a GENERIC subagent that receives only its own system prompt and does NOT inherit the parent system prompt — stripping this project's Tier-2 scope rules + Tier-3 cross-cutting rules + the `inject-scope-rules.sh` SubagentStart injection + the per-agent `tools:` allowlist. **FORBIDDEN.** The capability-based routing decision MUST flow into `agentType` (typed invocation) on every spawn — manual Agent-tool path and workflow path alike. Untyped spawn = OWASP LLM06 Excessive Agency (primary, least-privilege tool allowlist lost) + LLM01 (scope-rule input-trust guards lost) + LLM07 (system-prompt-leakage guard lost) + LLM10 (budget/turn ceiling lost).
 

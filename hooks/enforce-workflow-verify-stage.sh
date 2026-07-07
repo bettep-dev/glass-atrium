@@ -882,7 +882,7 @@ case "${verdict}" in
     ;;
   BLOCK_ORDER)
     trace_tag="block-order"
-    cause="an implementation dev-* precedes every reviewer — move the verify parallel() before it"
+    cause="a dev-* token textually precedes EVERY qa-code-reviewer (the min(rev_starts) < min(impl_dev_starts) ordering check fails), so the gate classifies it as an un-gated implementation dev-* — but the flagged token MAY be an earlier Discovery/Design analysis dev-*, NOT the implement stage. Two lawful fixes: (a) use a NON-DEV agent (glass-atrium-intel-researcher / glass-atrium-intel-planner / Explore) for the pre-verify Discovery/Design work so no dev-* precedes the reviewer; OR (b) front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-* (a REAL {qa,dev} verify, not a lone reviewer placed only to satisfy ordering)"
     ;;
   *)
     emit_trace "pass" "${script_len}"
