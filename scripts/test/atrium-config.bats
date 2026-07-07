@@ -29,7 +29,7 @@ write_fixture() {
 [meta]
 timezone = "America/New_York" # trailing comment
 [ports]
-monitor = 7842
+monitor = 16145
 wiki_fakechat = 18788
 [paths]
 monitor = "/some/path"
@@ -64,7 +64,7 @@ lib_call() {
 @test "table-scoped: [paths].monitor never collides with [ports].monitor" {
   write_fixture
   lib_call "${WORK}/config.toml" atrium_toml_get '[ports]' monitor
-  [[ "${output}" == "7842" ]]
+  [[ "${output}" == "16145" ]]
   lib_call "${WORK}/config.toml" atrium_toml_get '[paths]' monitor
   [[ "${output}" == "/some/path" ]]
 }

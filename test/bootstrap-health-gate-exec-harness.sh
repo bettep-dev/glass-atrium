@@ -96,17 +96,15 @@ EOF
   printf '%s' "${d}"
 }
 
-# Mirror the gate's own port derivation (lib/ga-db.sh): ${GA_ROOT}/monitor/.env
-# ATRIUM_MONITOR_PORT else 7842, so this precondition check targets the port the gate
-# will actually bind (incl. a CI env whose rendered .env pins a different one). GA_ROOT
-# is readonly (ga_init_env, source time), so the gate cannot be redirected onto a
-# throwaway free port here — an externally-held port is instead an unmet precondition,
-# skipped below rather than failed.
-GATE_PORT=7842
-if [[ -f "${GA_ROOT}/monitor/.env" ]]; then
-  gate_env_port="$(grep -E '^ATRIUM_MONITOR_PORT=[0-9]+$' -- "${GA_ROOT}/monitor/.env" | tail -1 | cut -d= -f2)"
-  [[ -n "${gate_env_port}" ]] && GATE_PORT="${gate_env_port}"
-fi
+# Mirror the gate's own port derivation (lib/ga-db.sh): the shared atrium_monitor_port
+# resolver (env → monitor/.env → config.toml [ports].monitor → 16145 terminal default),
+# sourced with the launcher above. Using the IDENTICAL resolver — not a re-implemented
+# grep with its own literal — guarantees this precondition check targets the exact port
+# the gate will bind (incl. a CI env whose rendered .env pins a different one) with no
+# split-brain literal to drift. GA_ROOT is readonly (ga_init_env, source time), so the
+# gate cannot be redirected onto a throwaway free port here — an externally-held port is
+# instead an unmet precondition, skipped below rather than failed.
+GATE_PORT="$(atrium_monitor_port)"
 
 echo "============================================================================"
 echo "(D-probe) per-request curl bound vs an accept-then-never-reply socket"

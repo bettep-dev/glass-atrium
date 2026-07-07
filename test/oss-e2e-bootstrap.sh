@@ -130,7 +130,7 @@ ok "smoke port ${E2E_PORT} free"
 REAL_MIG_BEFORE="$(psql -h "${PG_SOCKET}" -d glass_atrium -tAc \
   'SELECT count(*) FROM _prisma_migrations' 2>/dev/null || printf 'ABSENT')"
 REAL_MONITOR_UP="no"
-curl -sf -o /dev/null "http://127.0.0.1:7842/api/health" 2>/dev/null && REAL_MONITOR_UP="yes"
+curl -sf -o /dev/null "http://127.0.0.1:16145/api/health" 2>/dev/null && REAL_MONITOR_UP="yes"
 printf '  baseline: real glass_atrium migrations=%s, real monitor up=%s\n' \
   "${REAL_MIG_BEFORE}" "${REAL_MONITOR_UP}"
 # real-env caches derived BEFORE any HOME override (sandbox npm/playwright reuse)
@@ -282,7 +282,7 @@ hdr "STEP 3 — T20 config chain: non-default port -> render-monitor-env -> .env
 # runbook step: the operator sets [ports].monitor in the rendered config
 # portable in-place edit: BSD `sed -i ''` (2-arg) and GNU `sed -i` (1-arg) are
 # mutually incompatible, so use the temp-file + mv idiom that works on both.
-sed -e "s/^monitor = 7842\$/monitor = ${E2E_PORT}/" "${CLONE}/config.toml" \
+sed -e "s/^monitor = 16145\$/monitor = ${E2E_PORT}/" "${CLONE}/config.toml" \
   >"${CLONE}/config.toml.tmp" && mv "${CLONE}/config.toml.tmp" "${CLONE}/config.toml"
 grep -q "^monitor = ${E2E_PORT}\$" "${CLONE}/config.toml" \
   && ok "[ports].monitor set to ${E2E_PORT} in sandbox config.toml" \
@@ -336,9 +336,9 @@ else
 fi
 # non-interference: the real monitor (if it was up) must still answer
 if [[ "${REAL_MONITOR_UP}" == "yes" ]]; then
-  curl -sf -o /dev/null "http://127.0.0.1:7842/api/health" \
-    && ok "real monitor on 7842 unaffected" \
-    || no "real monitor on 7842 stopped answering during E2E"
+  curl -sf -o /dev/null "http://127.0.0.1:16145/api/health" \
+    && ok "real monitor on 16145 unaffected" \
+    || no "real monitor on 16145 stopped answering during E2E"
 fi
 # stop the sandbox monitor before parity checks
 kill "${MONITOR_PID}" 2>/dev/null
@@ -504,7 +504,7 @@ REAL_MIG_AFTER="$(psql -h "${PG_SOCKET}" -d glass_atrium -tAc \
   && ok "real glass_atrium db migration count unchanged (${REAL_MIG_BEFORE})" \
   || no "real glass_atrium db migrations changed: ${REAL_MIG_BEFORE} -> ${REAL_MIG_AFTER}"
 if [[ "${REAL_MONITOR_UP}" == "yes" ]]; then
-  curl -sf -o /dev/null "http://127.0.0.1:7842/api/health" \
+  curl -sf -o /dev/null "http://127.0.0.1:16145/api/health" \
     && ok "real monitor still healthy post-run" \
     || no "real monitor unhealthy post-run"
 fi

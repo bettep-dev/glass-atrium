@@ -575,7 +575,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   # scaffold lead-in + both ready-to-fill resolution stubs surfaced
   [[ "${output}" == *"COPY-PASTE SCAFFOLD"* ]]
   # path (1) persisted-plan stub: the POST curl + the minted-id plan-ref log line
-  [[ "${output}" == *"POST http://127.0.0.1:7842/api/clauded-docs"* ]]
+  [[ "${output}" == *"POST http://127.0.0.1:16145/api/clauded-docs"* ]]
   [[ "${output}" == *"log('plan-ref: clauded-docs/<DOC_ID>')"* ]]
   # path (2) simple-task stub: the ready-to-fill [ENTRY-CLASS] log line (E1 criterion-negation form)
   [[ "${output}" == *"log('[ENTRY-CLASS] simple-task: multi-file=no"* ]]

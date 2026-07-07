@@ -6,7 +6,7 @@
 #   * exit 21 (BOOTSTRAP_EXIT_HEALTH): no /api/health 200 in the window.
 #   * health-gate PASS: build ok + /api/health 200 → rc 0 + the [3/3] PASS log.
 #   * env-port fallback: bootstrap_health_gate reads ATRIUM_MONITOR_PORT from
-#     monitor/.env, else defaults to 7842 — the curl target proves which port.
+#     monitor/.env, else defaults to 16145 — the curl target proves which port.
 #
 # Hermetic strategy (mirrors scripts/test/daemon-bootstrap-supervise.bats): copy
 # lib/ga-core.sh into a sandbox GA_ROOT (resolving the sandbox monitor/.env),
@@ -225,16 +225,16 @@ source_and_call() {
   printf 'ATRIUM_MONITOR_PORT=18888\n' >"${GA_SBX}/monitor/.env"
   STUB_HEALTH=200 source_and_call bootstrap_health_gate
   [[ "${status}" -eq 0 ]]
-  # the stubbed curl logged the URL it was handed — assert the .env port, not 7842.
+  # the stubbed curl logged the URL it was handed — assert the .env port, not the 16145 default.
   grep -q 'http://127.0.0.1:18888/api/health' "${CURL_URL_LOG}"
-  run ! grep -q '127.0.0.1:7842' "${CURL_URL_LOG}"
+  run ! grep -q '127.0.0.1:16145' "${CURL_URL_LOG}"
 }
 
-# === env-port fallback — absent .env defaults to 7842 ========================
-@test "bootstrap_health_gate falls back to port 7842 when monitor/.env is absent" {
+# === env-port fallback — absent .env defaults to 16145 ======================
+@test "bootstrap_health_gate falls back to port 16145 when monitor/.env is absent" {
   # no monitor/.env written → the gate keeps its default port. STUB_HEALTH=fail
   # exits 21 after the (instant-sleep) poll loop, having probed the default port.
   STUB_HEALTH=fail source_and_call bootstrap_health_gate
   [[ "${status}" -eq 21 ]]
-  grep -q 'http://127.0.0.1:7842/api/health' "${CURL_URL_LOG}"
+  grep -q 'http://127.0.0.1:16145/api/health' "${CURL_URL_LOG}"
 }

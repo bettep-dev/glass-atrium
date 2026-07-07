@@ -7,7 +7,7 @@
 //   1. db.ts POOL_WARM_CONFIG bounds the pg connect (connectionTimeoutMillis:5000). Unset(0) = pg
 //      default = UNBOUNDED connect = the step-12 boot hang against a still-booting cluster.
 //   2. main.ts runs assertSessionTimezoneIsUtc() (the DB assertion) + prewarmPool BEFORE app.listen(),
-//      so a DB-unavailable boot exits(1) → launchd respawn instead of binding :7842 on an unusable DB.
+//      so a DB-unavailable boot exits(1) → launchd respawn instead of binding :16145 on an unusable DB.
 //
 // Run via: npx tsx --test test/boot-db-gate.unit.test.ts
 
@@ -39,7 +39,7 @@ test("main.ts: the DB assertion runs BEFORE app.listen (DB gate precedes the por
   assert.ok(listenIdx >= 0, "app.listen() call not found in main.ts");
   assert.ok(
     assertIdx < listenIdx,
-    "the DB assertion must precede app.listen() so a DB-down boot exits before binding :7842",
+    "the DB assertion must precede app.listen() so a DB-down boot exits before binding :16145",
   );
 });
 

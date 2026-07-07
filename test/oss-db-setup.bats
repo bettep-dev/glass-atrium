@@ -93,7 +93,7 @@ run_setup() {
   [[ "${status}" -eq 0 ]]
   grep -qF "DATABASE_URL=postgresql://$(id -un)@localhost/glass_atrium?host=/tmp" "${FAKE_ROOT}/.env"
   grep -qF "SHADOW_DATABASE_URL=postgresql://$(id -un)@localhost/glass_atrium_shadow?host=/tmp" "${FAKE_ROOT}/.env"
-  grep -q '^ATRIUM_MONITOR_PORT=7842$' "${FAKE_ROOT}/.env"
+  grep -q '^ATRIUM_MONITOR_PORT=16145$' "${FAKE_ROOT}/.env"
   grep -q "^CLAUDED_DOCS_HTML_ROOT=${HOME}/.glass-atrium/monitor/data/documents$" "${FAKE_ROOT}/.env"
   # additive render: exactly the 2 URL + 1 ${HOME} lines differ (3 removed + 3 added)
   [[ "$(diff "${FAKE_ROOT}/.env" "${FAKE_ROOT}/.env.example" | grep -c '^[<>]')" -eq 6 ]]
