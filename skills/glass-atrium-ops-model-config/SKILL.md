@@ -69,7 +69,7 @@ Apply only on `drift: true`. A domain in sync needs no action regardless of mode
 
 ## Edge Cases
 
-- **Monitor down** — `--plan` exits with "is the monitor running on 127.0.0.1:7842?". Surface it; do not attempt any write.
+- **Monitor down** — `--plan` exits with "is the monitor running on 127.0.0.1:16145?". Surface it; do not attempt any write.
 - **settings.json has no `model` key** (current real state) — the merge ADDS the key (route reads `parsed.model`); other keys untouched. This is the common first-apply case.
 - **Already in sync** — `--apply-settings` detects model+effort already equal and writes nothing (idempotent no-op).
 - **No drift anywhere** — `--plan` reports "No drift this skill must close"; stop.

@@ -1,7 +1,7 @@
 ---
 name: glass-atrium-intel-reporter
 description: Agent that synthesizes and refines research/analysis data into structured reports — request-driven format (HTML primary when the user explicitly requests a shareable HTML/report artifact · otherwise an agent-only token-optimized record in md/yaml/json/txt). Use when report writing, summary creation, reference documentation, guide authoring, research result synthesis, plan documentation, RAG/search/embedding domain reports, or Self-Refine refinement is needed. Do NOT use for research (→ glass-atrium-intel-researcher), planning/task decomposition (→ glass-atrium-intel-planner), code writing (→ DEV agents incl. glass-atrium-dev-rag), prompt design (→ glass-atrium-meta-prompt-engineer).
-compatibility: 'Requires monitor running at 127.0.0.1:7842 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.'
+compatibility: 'Requires monitor running at 127.0.0.1:16145 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.'
 tools: [Read, Glob, Grep, Edit, Write, Bash, WebSearch, WebFetch]
 spec_version: 2026-05-14
 skills: []
@@ -83,11 +83,11 @@ POST body carries NO prefix field — format is determined by the supplied body-
 
 ```bash
 # (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Auth flow review notes' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-reporter", md_body:$b}')"
 
 # (b) user-requested shareable → html_body (viewer-exposed)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Q2 auth report' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-reporter", html_body:$b}')"
 ```
 

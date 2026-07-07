@@ -45,7 +45,7 @@ Call the shared core `computeArchDrift(log)` from `~/.glass-atrium/monitor/src/s
 The path of least friction is the already-wired live route, which calls `computeArchDrift()` and returns its result in the response:
 
 ```bash
-curl -sf http://127.0.0.1:7842/api/architecture/live | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps({'stale': d.get('stale'), 'diffs': d.get('diffs', [])}, ensure_ascii=False, indent=2))"
+curl -sf http://127.0.0.1:16145/api/architecture/live | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps({'stale': d.get('stale'), 'diffs': d.get('diffs', [])}, ensure_ascii=False, indent=2))"
 ```
 
 If the monitor is not running, invoke the function directly via the monitor's tsx runtime (the same module the route imports) rather than counting files by hand — hand-counting risks diverging from the Atrium-ownership filter.
@@ -139,7 +139,7 @@ If either file is already dirty, snapshot its PRE-RUN state (so rollback restore
 - **R1 success oracle**: do NOT assert "dist mtime unchanged". With `noEmitOnError` unset, `tsc` partially writes `dist/*.js` even on a type error, so an mtime-invariant oracle false-fails. Rollback success = **(a)** the two src `.ts` files' `git -C ~/.glass-atrium diff` == 0 (or matches the step-3 snapshot) **AND (b)** `launchctl kickstart` never fired on the failed build. The dist partial write is harmless (gitignored; the next clean build overwrites it).
 - Report "build failed, apply rolled back".
 
-**7. Re-verify readiness poll (R4).** After kickstart the monitor restarts via SIGKILL (Fastify must re-bind `:7842`). Do NOT issue a single immediate curl — a connection-refused during the boot race would be mis-read as false-stale. Instead **poll/retry** `/api/architecture/live` until HTTP 200 + a fresh value (≤~10s, short interval). Success oracle = `stale:false`.
+**7. Re-verify readiness poll (R4).** After kickstart the monitor restarts via SIGKILL (Fastify must re-bind `:16145`). Do NOT issue a single immediate curl — a connection-refused during the boot race would be mis-read as false-stale. Instead **poll/retry** `/api/architecture/live` until HTTP 200 + a fresh value (≤~10s, short interval). Success oracle = `stale:false`.
 
 **8. Post-apply summary (MANDATORY).** Show the user: the files changed, the applied value per diff, the semantic-edit slugs (CONTENT is an LLM edit — surface all of it for human confirmation), and the re-verify result.
 

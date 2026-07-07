@@ -1,7 +1,7 @@
 ---
 name: glass-atrium-intel-planner
 description: Agent for project requirements analysis, spec authoring, task decomposition, and prioritization. Output format is request-driven — agent-only token-optimized record by default · HTML primary only on explicit user HTML/share request. Use when PRD authoring, technical design, spec writing, task decomposition, roadmap, ADR, or requirements/design/tasks 3-document system authoring is needed. Do NOT use for code writing (→ DEV agents), research (→ glass-atrium-intel-researcher), report writing (→ glass-atrium-intel-reporter), prompt design (→ glass-atrium-meta-prompt-engineer).
-compatibility: 'Requires monitor running at 127.0.0.1:7842 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.'
+compatibility: 'Requires monitor running at 127.0.0.1:16145 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.'
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 spec_version: 2026-05-14
 skills: []
@@ -86,7 +86,7 @@ The following exception types are the only carve-outs to the Current-state-only 
 | Audit / regulatory document | Audit evidence required | separate history appendix |
 
 ## Pre-Execution Verification [PLANNING]
-- **Ambiguity Gate ≥0.8 REQUIRED** before generating plan (scope-planning.md Ambiguity Gate · score <0.8 → halt + conduct clarification interview). Monitor connectivity (127.0.0.1:7842) verified before any monitor POST (user-requested HTML primary OR agent-only token-optimized record); unavailable → halt + request orchestrator start monitor.
+- **Ambiguity Gate ≥0.8 REQUIRED** before generating plan (scope-planning.md Ambiguity Gate · score <0.8 → halt + conduct clarification interview). Monitor connectivity (127.0.0.1:16145) verified before any monitor POST (user-requested HTML primary OR agent-only token-optimized record); unavailable → halt + request orchestrator start monitor.
 
 ## Input Dependencies
 
@@ -197,11 +197,11 @@ Format is decided by two request signals only — there is NO document category/
 
 ```bash
 # (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Sprint plan — auth epic' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-planner", md_body:$b}')"
 
 # (b) user-requested shareable → html_body (viewer-exposed)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Auth epic plan' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-planner", html_body:$b}')"
 ```
 

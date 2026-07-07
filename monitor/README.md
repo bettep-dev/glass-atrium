@@ -81,7 +81,7 @@ monitor/
 │   ├── schema.prisma           # 3 schemas (core/wiki/monitor), 21 models
 │   └── migrations/             # squashed OSS baseline + incremental migrations
 ├── src/server/                 # Fastify backend
-│   ├── main.ts                 # entry point (port via ATRIUM_MONITOR_PORT, default 7842, 127.0.0.1)
+│   ├── main.ts                 # entry point (port via ATRIUM_MONITOR_PORT, default 16145, 127.0.0.1)
 │   ├── db.ts                   # Prisma client + driver adapter
 │   ├── logger.ts               # Pino config
 │   ├── routes/                 # API routes
@@ -170,7 +170,7 @@ npm run db:deploy               # apply migrations (prisma migrate deploy — no
 ### Dev server
 
 ```bash
-npm run dev                     # tsx watch — http://127.0.0.1:7842
+npm run dev                     # tsx watch — http://127.0.0.1:16145
 ```
 
 > Use `npm run db:migrate` (`prisma migrate dev`) only for local schema changes
@@ -198,7 +198,7 @@ npm run typecheck               # tsc --noEmit
 |------|------|------|
 | `DATABASE_URL` | required | PostgreSQL Unix-socket URI, user-qualified peer-auth form: `postgresql://<os-user>@localhost/glass_atrium?host=/tmp`. The user segment must be present — with an empty user, Prisma's schema engine connects as a built-in default user (not the OS peer user) and `migrate deploy` fails with `P1010`. `oss-db-setup.sh` renders this form automatically |
 | `SHADOW_DATABASE_URL` | required only for `db:migrate` | `prisma migrate dev` shadow DB · avoids false drift on the raw-SQL tsvector GENERATED columns + GIN/trgm indexes · a separate DB on the same PG instance (`postgresql://<os-user>@localhost/glass_atrium_shadow?host=/tmp`, created idempotently by `oss-db-setup.sh` — manual one-time: `CREATE DATABASE glass_atrium_shadow OWNER <os-user>`) |
-| `ATRIUM_MONITOR_PORT` | optional | listen port (default `7842`) — rendered from `config.toml` `[ports].monitor` by `scripts/render-monitor-env.sh` |
+| `ATRIUM_MONITOR_PORT` | optional | listen port (default `16145`) — rendered from `config.toml` `[ports].monitor` by `scripts/render-monitor-env.sh` |
 | `CLAUDED_DOCS_HTML_ROOT` | optional | HTML-primary FS root override for new POST/PUT documents · absolute path or `~/`-prefixed · unset default = `~/.claude/monitor/data/documents/` (monitor-internal) |
 | `CLAUDED_DOCS_MD_ROOT` | optional | MD companion / legacy `.md` scan root (**read-only** — new rows never write here) · unset = disabled (no legacy MD scan) · set only on environments that still have legacy `.md` artifacts |
 | `CLAUDED_DOCS_ROOT` | optional (deprecated alias) | legacy alias resolved to `CLAUDED_DOCS_MD_ROOT` · logs one deprecation warning per process · new environments use `CLAUDED_DOCS_MD_ROOT` |

@@ -2,7 +2,7 @@
   "$schema": "agent-registry",
   "version": "1.1",
   "dual_phase_definition": "true = agent has a distinct PLAN phase followed by an EXECUTE phase (e.g., reads codebase, proposes approach, then implements). false = agent is single-phase execution: it receives a task and executes directly without an internal plan-then-act split. Agents without explicit internal planning (pure analysis, pure retrieval, pure review) are false.",
-  "compatibility_schema": "v1: optional free-form string per agent declaring runtime preconditions (e.g., 'Requires monitor running at 127.0.0.1:7842 for HTML primary emission'). Absent/null/undefined → agent is always available (backwards-compatible default). Orchestrator Compatibility Probe checks this field pre-delegation and halts with remediation hint when preconditions are unmet. Frontmatter `compatibility:` on the agent .md is the per-agent canonical source; registry entries mirror it for routing-time lookup.",
+  "compatibility_schema": "v1: optional free-form string per agent declaring runtime preconditions (e.g., 'Requires monitor running at 127.0.0.1:16145 for HTML primary emission'). Absent/null/undefined → agent is always available (backwards-compatible default). Orchestrator Compatibility Probe checks this field pre-delegation and halts with remediation hint when preconditions are unmet. Frontmatter `compatibility:` on the agent .md is the per-agent canonical source; registry entries mirror it for routing-time lookup.",
   "phases": {
     "research": 1,
     "analysis": 2,
@@ -321,7 +321,7 @@
       ],
       "phase": "planning",
       "dual_phase": false,
-      "compatibility": "Requires monitor running at 127.0.0.1:7842 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "compatibility": "Requires monitor running at 127.0.0.1:16145 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
       "origin": "shipped"
     },
     "glass-atrium-meta-prompt-engineer": {
@@ -466,7 +466,7 @@
       ],
       "phase": "report",
       "dual_phase": false,
-      "compatibility": "Requires monitor running at 127.0.0.1:7842 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "compatibility": "Requires monitor running at 127.0.0.1:16145 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
       "origin": "shipped"
     },
     "glass-atrium-intel-researcher": {

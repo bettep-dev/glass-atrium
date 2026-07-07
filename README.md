@@ -112,7 +112,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 - **Layered rule system** — a global charter (`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), all bound together by an explicit compliance matrix.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong.
-- **Atrium Monitor** — a 10-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:7842`).
+- **Atrium Monitor** — a 10-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
 - **Direct model + budget assignment** — the monitor's **Models & budgets** screen assigns a per-domain model and a per-call USD hard cap without your having to edit the config file.
 - **Live architecture map** — the monitor's System map screen renders the 7 maintained Mermaid diagrams alongside live daemon status.
 - **Wiki knowledge store** — an LLM-only store (`wiki/`) with a raw-source → curated-notes pipeline and a SQLite BM25 full-text search index. The research agents' web findings accumulate here, and it is consulted first — ahead of any new research or analysis — to reuse existing knowledge.
@@ -135,7 +135,7 @@ They load globally at session start, and Claude activates them on its own to sui
 curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
-When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:7842`.
+When the interactive menu opens, choose **Install** — once it finishes, the dependencies and daemons are configured and started automatically, and the dashboard is reachable at `http://127.0.0.1:16145`.
 
 > **Leave the installed folder where it is.** The installer downloads a release bundle, unpacks it into the `~/.glass-atrium` folder, and links it into your Claude config directory through a **per-file symlink farm** (the method described earlier). The real files live here, so moving or deleting the folder breaks the links.
 
