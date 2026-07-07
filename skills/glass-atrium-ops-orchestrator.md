@@ -185,7 +185,7 @@ This is a **routing aid** that helps the sub-agent self-anchor, not hook-enforce
 
 #### Audit/Scan Routing Discipline (delegation-size, security lens) [ORCHESTRATOR]
 
-The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) applied to the security lens. **NEVER route a large/exhaustive audit, whole-file scan, or multi-finding structured-output task to `glass-atrium-sec-guard`** (maxTurns: 3, verdict-only): its 3-turn budget cannot both analyze a large surface AND emit a structured result, so it runs out before the StructuredOutput / `[COMPLETION]` emit — the result is then LOST (under ultracode a schema-mode `agent()` that finishes without emitting returns null with no engine-layer salvage; see `### Resilient Workflow Authoring`). EARS: When a security task is a sized audit/scan or expects multi-finding structured output, the system shall route it to `glass-atrium-qa-code-reviewer` (normal turn budget, reliably emits structured output) or to `glass-atrium-dev-python` for code-level security work, and shall reserve `glass-atrium-sec-guard` for BOUNDED pre-action security verdicts only (single target, terse verdict).
+The delegation-size discipline (`orchestrator-role.md` → `### Spawn Budget`) applied to the security lens. **NEVER route a large/exhaustive audit, whole-file scan, or multi-finding structured-output task to `glass-atrium-sec-guard`** (maxTurns: 3, verdict-only): its 3-turn budget cannot both analyze a large surface AND emit a structured result, so it runs out before the StructuredOutput / `[COMPLETION]` emit — the result is then LOST (under ultracode a schema-mode `agent()` that finishes without emitting THROWS (uncaught → crashes the run) with no engine-layer salvage — wrap it so the throw is caught; see `### Resilient Workflow Authoring`). EARS: When a security task is a sized audit/scan or expects multi-finding structured output, the system shall route it to `glass-atrium-qa-code-reviewer` (normal turn budget, reliably emits structured output) or to `glass-atrium-dev-python` for code-level security work, and shall reserve `glass-atrium-sec-guard` for BOUNDED pre-action security verdicts only (single target, terse verdict).
 
 ### Quality Gates [ORCHESTRATOR]
 
@@ -213,7 +213,7 @@ No dependency → Fan-out / Linear dependency → Pipeline / Single → Router
 
 #### Resilient Workflow Authoring [ORCHESTRATOR]
 
-A workflow `agent({schema})` returns **null** when the subagent finishes WITHOUT emitting StructuredOutput. The engine's nudge-then-fail is Claude-Code-internal (not editable), and — unlike the manual Agent-tool path, which is salvaged by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — a schema-mode workflow agent has **NO engine-layer salvage**. Therefore the SCRIPT is the resilience layer. MANDATORY when authoring any workflow:
+A workflow `agent({schema})` THROWS when the subagent finishes WITHOUT emitting StructuredOutput (an uncaught throw → crashes the whole run); it returns **null** only for user-skip / terminal-API-death. So the `.catch(() => null)` in `robustAgent` is the load-bearing element that makes the run survivable — it converts the schema-non-emit throw into a null the retry path handles. The engine's nudge-then-fail is Claude-Code-internal (not editable), and — unlike the manual Agent-tool path, which is salvaged by the SubagentStop transcript-synthesis net (`track-outcome.sh`) — a schema-mode workflow agent has **NO engine-layer salvage**. Therefore the SCRIPT is the resilience layer. MANDATORY when authoring any workflow:
 
 - **Retry on null**: wrap every schema-mode `agent()` in a retry helper — on null, re-spawn ONCE with a tightened "reserve budget + you MUST emit StructuredOutput" re-prompt (optionally a higher-turn `agentType`).
 - **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure can NEVER reject/crash the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
@@ -236,8 +236,10 @@ EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-o
 ```js
 // robustAgent: retry-once-on-null, isolated failure, never crashes the workflow
 async function robustAgent(agentType, opts) {
-  const run = (extra) =>
-    agent(agentType, { ...opts, ...extra }).catch(() => null); // isolate: never rejects
+  const run = (extra) => {
+    const merged = { ...opts, ...extra };
+    return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
+  };
   let result = await run();
   if (result == null) {
     // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
@@ -297,8 +299,9 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
   ```js
   // HOOK-PASSING SHAPE — copy verbatim, do not paraphrase. Carries the robustAgent resilience
   // wrapper (### Resilient Workflow Authoring) INLINE, so every schema-mode agent() is
-  // retry-once-on-null / isolated-failure BY CONSTRUCTION — a bare agent() returns null on
-  // truncation with NO engine-layer salvage. The glass-atrium-qa-code-reviewer and its primary-domain DEV
+  // retry-once-on-null / isolated-failure BY CONSTRUCTION — a bare agent({schema}) THROWS on schema-non-emit
+  // (uncaught → crashes the run); .catch(() => null) is the load-bearing catcher that converts the throw to
+  // a null the retry handles. The glass-atrium-qa-code-reviewer and its primary-domain DEV
   // verifier sit CO-LOCATED inside the SAME parallel() verify block (within ~1000 comment-stripped
   // chars), the reviewer precedes the LATER implementation dev-*, and every agentType is a literal
   // straight-quoted token (a variable/concatenated agentType fail-opens past the gate but defeats
@@ -311,8 +314,10 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
   // the compliant idiom is present the moment this skeleton is pasted — do NOT strip it back to bare
   // agent() calls.
   async function robustAgent(agentType, opts) {
-    const run = (extra) =>
-      agent(agentType, { ...opts, ...extra }).catch(() => null); // isolate: never rejects
+    const run = (extra) => {
+      const merged = { ...opts, ...extra };
+      return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
+    };
     let result = await run();
     if (result == null) {
       // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)

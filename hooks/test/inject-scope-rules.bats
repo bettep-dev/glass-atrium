@@ -382,7 +382,9 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
 }
 
 @test "over 8KB by one block — naming dropped FIRST, meter + other three retained (P1-T2 order 1)" {
-  run_hook_full "glass-atrium-dev-react" 2200 2200 2200 2200
+  # Pad sized so the four-block total clears 8192 by less than one block: dropping naming alone
+  # (the first drop candidate) restores the ceiling, keeping comment + style-ref + minimalism + meter.
+  run_hook_full "glass-atrium-dev-react" 1800 1800 1800 1800
   assert_status 0
   assert_ctx_contains "${METER_NEEDLE}"
   assert_ctx_contains "${COMMENT_NEEDLE}"
@@ -411,4 +413,40 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
   assert_ctx_not_contains "${STYLEREF_NEEDLE}"
   assert_ctx_not_contains "${MINIMALISM_NEEDLE}"
   assert_ctx_not_contains "${NAMING_NEEDLE}"
+}
+
+# --- (f) T1 numeric preview-survival guard: EMIT + METER combined MUST fit the ~2KB persistence
+# preview (Claude Code delivers only a ~2KB preview of additionalContext, so both non-droppable
+# blocks must lead within that budget). This is the ACTUAL constraint the emit/meter-first ordering
+# protects — no other @test asserts it numerically. Drive the meter ENABLED (maxTurns frontmatter)
+# with every scope source absent, isolating ctx to EMIT + METER only, then bound its byte length.
+run_hook_emit_meter_only() {
+  local agent="${1}"
+  local agents_dir="${BATS_TEST_TMPDIR}/emit-meter-agents"
+  mkdir -p "${agents_dir}"
+  printf 'maxTurns: 40\n' >"${agents_dir}/${agent}.md"
+  run bash -c '
+    agent="$1"; hook="$2"; agents_dir="$3"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env -u SUBAGENT_BUDGET_METER_OFF \
+      INJECT_SCOPE_RULES_AGENTS_DIR="${agents_dir}" \
+      INJECT_SCOPE_RULES_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      bash "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${agents_dir}"
+}
+
+@test "EMIT + METER combined stays < 2048 bytes (~2KB persistence-preview survival, T1)" {
+  run_hook_emit_meter_only "glass-atrium-dev-react"
+  assert_status 0
+  assert_ctx_contains "${EMIT_NEEDLE}"
+  assert_ctx_contains "${METER_NEEDLE}"
+  local ctx nbytes
+  ctx="$(ctx_of)"
+  nbytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
+  [[ "${nbytes}" -lt 2048 ]] || {
+    echo "expected EMIT+METER < 2048 bytes, got ${nbytes}" >&2
+    return 1
+  }
 }

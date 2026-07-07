@@ -192,7 +192,8 @@ EOF
 }
 
 # emit_resilience_advisory — ADVISORY-ONLY (exit 0, stderr, NEVER blocks). A schema-mode workflow
-# agent() returns bare null on truncation with NO engine-layer salvage, so every schema-mode agent()
+# agent() THROWS on non-emit (uncaught → crashes the run); the .catch(() => null) in robustAgent is the
+# load-bearing catcher that converts the throw to a null the retry handles, so every schema-mode agent()
 # MUST be wrapped in the robustAgent retry-once-on-null / isolated-failure idiom (copy-verbatim
 # skeleton: skills/glass-atrium-ops-orchestrator.md "### Resilient Workflow Authoring"). A per-call-site
 # "absence of convention" scan is NOT soundly decidable (unbounded valid idioms) AND a BLOCK would
@@ -224,7 +225,7 @@ emit_resilience_advisory() {
   if [[ "${script_src}" == *robustAgent* || "${script_src}" == *catch* ]]; then
     return 0
   fi
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() but contains NO robustAgent / .catch() retry-on-null wrapper. A schema-mode agent() returns bare null on truncation with NO engine-layer salvage — wrap every schema-mode agent() in the robustAgent retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). ADVISORY ONLY — this check NEVER blocks." >&2
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() but contains NO robustAgent / .catch() retry-on-null wrapper. A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). NOTE: this is a WHOLE-SCRIPT presence check — it cannot tell a fully-wrapped script from one carrying robustAgent in one stage and a bare agent({schema}) in another, so wrap EVERY schema-mode agent(), not just one stage. ADVISORY ONLY — this check NEVER blocks." >&2
   return 0
 }
 

@@ -193,7 +193,7 @@ build_meter_block() {
     "**Turn-budget meter (auto-injected · GLOBAL_RULES Turn Budget & Graceful Exit)**" \
     "- Your maxTurns hard cap is ${max_turns} TURNS (a TURN cap, not a tool_use cap). The hard cap kills you mid-tool-use → no [COMPLETION] block → costly orchestrator recovery." \
     "- Working ceiling = ${ceiling} turns (80% of cap). As you APPROACH ${ceiling}: STOP, do NOT push to the hard cap." \
-    "- On approach: finish the current write to a valid state (no partial files), checkpoint done/remaining to memory/progress-{task}.md, then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary." \
+    "- On approach: finish the current write to a valid state (no partial files), checkpoint done/remaining to memory/progress-{task}.md, then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary. (schema-mode/workflow agents: STILL call StructuredOutput as the terminal action even on a needs_context exit — print this [COMPLETION] block first, then emit StructuredOutput; ending on the prose block alone throws.)" \
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
 }
 
@@ -210,7 +210,8 @@ build_emit_format_block() {
   printf '%s\n' \
     "**[COMPLETION] emit format (auto-injected · REQUIRED by the outcome recorder)**" \
     "- Print the [COMPLETION] block MULTI-LINE: the [COMPLETION] tag ALONE on its own line, EACH field (result / task_type / metric_pass / confidence / summary / …) on its OWN line, closed by a [/COMPLETION] sentinel ALONE on its own line." \
-    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form."
+    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form." \
+    "- SCHEMA-MODE / WORKFLOW (ultracode) agents: your StructuredOutput call IS the terminal deliverable — you MUST call StructuredOutput as the LAST action. Print this multi-line [COMPLETION] block as a dedicated text turn IMMEDIATELY BEFORE the StructuredOutput call (print-block-then-emit). Do NOT treat printing the prose [COMPLETION] block as \"done\" and stop — a schema-mode run that ends without calling StructuredOutput is a hard engine error (the run throws), not a graceful finish."
 }
 
 # Byte length of a string (wc -c counts bytes, locale-independent); tr strips BSD wc's leading
