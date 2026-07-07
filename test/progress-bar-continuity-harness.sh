@@ -589,52 +589,84 @@ echo "==========================================================================
 # <line2> row per window so the actual painted value at each real call site is asserted non-blank.
 IDLE_CAP="$(mktemp "${TMPDIR:-/tmp}/ga-r4-idlecap.XXXXXX")"
 : >"${IDLE_CAP}"
-# a representative SPIN_FRAMES so frame0 is a real glyph (resolve_glyphs assigns per tier at runtime)
+# a representative SPIN_FRAMES + a deterministic bar-glyph set (resolve_glyphs is main-only, never
+# runs at source time) so the REAL build_run_bar renders a measurable progress track.
 SPIN_FRAMES='- \ | /'
+PROG_FULL='#'
+PROG_EMPTY='.'
 
-# capturing reproducer: faithful synchronous tick-0 paint of the real idle fork (no fork, no TTY gate)
+# T2 re-instrumentation: observe the REAL painter that stop_idle_spinner's run-state restore paints —
+# NOT a re-synthesized frame+label (the old reproducer synthesized LINE 1 = frame+label independently
+# of STEP_BAR_CUR, so it was INVARIANT to the blank-box fix and asserted nothing). The idle window runs
+# in run-state; a dummy IDLE_PID + no-op kill/wait let the REAL stop_idle_spinner restore tail fire,
+# painting the REAL body via the captured painter — bar+count on the bar-carrying resolve window (Edit 3
+# sets STEP_BAR_CUR), blank on the no-step-count detection/port/handoff windows (RC-1's bar-presence
+# carve-out). Mirrors test/workbox-bar-count-visible-during-resolve.bats's discriminator.
+# the R4_DISP section above stubbed build_progress_bar to a file-capture; restore the REAL one so
+# build_run_bar renders an actual progress track for the run-state restore body.
+eval "$(awk 'index($0, "build_progress_bar() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+kill() { return 0; }
+wait() { return 0; }
+CUR_IDLE_LABEL=""
+IN_STOP=0
 start_idle_spinner() {
-  local label="${1:-}"
   IDLE_STARTS=$((IDLE_STARTS + 1))
-  local IFS=' ' frames frame0
-  # shellcheck disable=SC2206
-  frames=(${SPIN_FRAMES})
-  local n="${#frames[@]}"
-  [[ "${n}" -gt 0 ]] || n=1
-  frame0="${frames[0]:- }"
-  local line1 line2
-  line1="$(printf '  %s %s' "$(c "${C_INFO}" "${frame0}")" "$(c "${C_STRONG}" "${label}")")"
-  line2="$(printf '  %s' "$(_spinner_dots 0)")" # REAL _spinner_dots, tick 0
-  printf '%s\t%s\t%s\n' "${label}" "${line1}" "${line2}" >>"${IDLE_CAP}"
+  CUR_IDLE_LABEL="${1:-}"
+  WORK_STATE=run          # the async-feel idle window is a run-state window (real enter_run_state is stubbed here)
+  IDLE_PID="idle-harness" # non-empty so the REAL stop_idle_spinner runs its restore tail
 }
-stop_idle_spinner() { IDLE_STOPS=$((IDLE_STOPS + 1)); }
+# re-install the REAL (Edit-1) stop_idle_spinner (earlier sections stubbed it) and wrap it so the
+# matched start/stop counter survives while the real run-state restore paints through the capture.
+eval "$(awk 'index($0, "stop_idle_spinner() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}" | sed '1s/stop_idle_spinner/__real_stop_idle/')"
+stop_idle_spinner() {
+  IDLE_STOPS=$((IDLE_STOPS + 1))
+  IN_STOP=1
+  __real_stop_idle
+  IN_STOP=0
+}
+# capture ONLY the stop_idle_spinner restore paint (Edit 1), tagged with the active window label —
+# NOT the panel-step paints that also target this row — so each idle window yields exactly one row:
+# its REAL run-state restore body.
+paint_workbox_body_inner() {
+  [[ "${IN_STOP}" == "1" ]] || return 0
+  printf '%s\t%s\n' "${CUR_IDLE_LABEL}" "$1" >>"${IDLE_CAP}"
+}
+paint_workbox_body_row2_inner() { :; }
 
-# assert one captured window's animation value: row exists, LINE 1 non-blank + carries the label,
-# LINE 2 non-blank (a dots token). $1=human name · $2=exact label.
-assert_window_animated() {
-  local name="$1" want="$2" row l1 l2
+# assert one captured window's REAL restore body. mode=bar -> LINE 1 carries a progress track glyph
+# (PROG_FULL/PROG_EMPTY) + an i/N count (VISIBLE, not merely animated; the fill % may be low early so
+# the track glyph — not a specific fill count — is the invariant). mode=blank -> LINE 1 is blank (the
+# correct no-step-count resting state, proving the compound gate does not over-paint). $1=name $2=label
+# $3=mode.
+assert_window_body() {
+  local name="$1" want="$2" mode="$3" row l1
   row="$(awk -F'\t' -v w="${want}" '$1 == w {print; exit}' "${IDLE_CAP}")"
   if [[ -z "${row}" ]]; then
-    fail "${name} window emitted NO idle frame (label='${want}' not captured — blank/static frame)"
+    fail "${name} window emitted NO restore frame (label='${want}' not captured)"
     return
   fi
   l1="$(printf '%s' "${row}" | cut -f2)"
-  l2="$(printf '%s' "${row}" | cut -f3)"
-  if [[ -n "${l1// /}" && "${l1}" == *"${want}"* ]]; then
-    pass "${name} window LINE 1 animation value present + carries label [${l1}]"
-  else
-    fail "${name} window LINE 1 blank or missing label (got [${l1}])"
-  fi
-  if [[ -n "${l2// /}" ]]; then
-    pass "${name} window LINE 2 animation token present [${l2}]"
-  else
-    fail "${name} window LINE 2 blank (no dots animation)"
-  fi
+  case "${mode}" in
+    bar)
+      if [[ -n "${l1// /}" ]] && { [[ "${l1}" == *"${PROG_FULL}"* ]] || [[ "${l1}" == *"${PROG_EMPTY}"* ]]; } && [[ "${l1}" =~ [0-9]+/[0-9]+ ]]; then
+        pass "${name} window LINE 1 carries the bar+count (not blank-box) [${l1}]"
+      else
+        fail "${name} window LINE 1 missing bar+count (blank-box regression) [${l1}]"
+      fi
+      ;;
+    blank)
+      if [[ -z "${l1// /}" ]]; then
+        pass "${name} no-step-count window LINE 1 correctly blank (compound gate, no over-paint)"
+      else
+        fail "${name} no-step-count window LINE 1 unexpectedly painted a bar (over-assert) [${l1}]"
+      fi
+      ;;
+  esac
 }
 
 # --- drive the DETECTION (+ count_and_gate) window via the REAL dispatch_action_install_panel ---
 # stub the surrounding gate machinery to a clean no-op so the three in-dispatch start_idle_spinner
-# call sites (glass-atrium:3222/3238/3259) fire under the capturing reproducer.
+# call sites fire, then observe the REAL stop_idle_spinner restore body via the captured painter.
 apply_plate_geometry() { :; }
 run_gate_quiet() {
   local rc=0
@@ -662,6 +694,10 @@ trap - ERR
 : >"${IDLE_CAP}"
 IDLE_STARTS=0
 IDLE_STOPS=0
+STEP_INDEX="" # detection/monitor-stop windows precede count_and_gate => empty bar => blank rest
+STEP_TOTAL=""
+STEP_BAR_CUR=""
+WORK_STATE=nav
 dispatch_action_install_panel </dev/null
 disp_rc=$?
 set +e
@@ -670,12 +706,13 @@ printf '  dispatch_action_install_panel rc=%s  idle starts=%s stops=%s\n' "${dis
 printf '  captured detection-phase windows:\n'
 sed 's/^/    /' "${IDLE_CAP}"
 assert_eq "dispatch_action_install_panel returns 0 (engine exit unchanged)" "0" "${disp_rc}"
-assert_window_animated "detection" "Detecting dependencies"
-# the detection idle window SPANS preflight_count_and_gate (glass-atrium:3215 — it is stopped only
-# when the first bracket/panel step takes over), so proving it animated proves the count_and_gate
-# window is animated (they are the SAME idle window, not two).
-assert_window_animated "preflight_count_and_gate (spanned by the detection window)" "Detecting dependencies"
-assert_window_animated "monitor-stop gate" "Freeing monitor port"
+assert_window_body "detection" "Detecting dependencies" blank
+# the detection idle window SPANS preflight_count_and_gate (glass-atrium:3215 — stopped only when the
+# first bracket/panel step takes over) and precedes any step bar, so its correct resting state is BLANK
+# (RC-1's bar-presence carve-out) — asserting blank proves the compound gate does NOT over-paint a bar
+# on the no-step-count window (they are the SAME idle window, not two).
+assert_window_body "preflight_count_and_gate (spanned by the detection window)" "Detecting dependencies" blank
+assert_window_body "monitor-stop gate" "Freeing monitor port" blank
 assert_eq "every dispatch idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
 
 # --- drive the HANDOFF window via the REAL run_action_panel (glass-atrium:2020-2039), standalone ---
@@ -684,6 +721,10 @@ trap - ERR
 : >"${IDLE_CAP}"
 IDLE_STARTS=0
 IDLE_STOPS=0
+STEP_INDEX="" # the handoff runs after the preflight tail cleared the step bar => blank rest
+STEP_TOTAL=""
+STEP_BAR_CUR=""
+WORK_STATE=nav
 run_action_panel install "Install" "${C_OK}" </dev/null
 rap_rc=$?
 set +e
@@ -692,7 +733,7 @@ printf '  run_action_panel rc=%s  idle starts=%s stops=%s\n' "${rap_rc}" "${IDLE
 printf '  captured handoff window:\n'
 sed 's/^/    /' "${IDLE_CAP}"
 assert_eq "run_action_panel returns 0 (engine exit unchanged)" "0" "${rap_rc}"
-assert_window_animated "preflight->run_plan handoff" "Preparing steps"
+assert_window_body "preflight->run_plan handoff" "Preparing steps" blank
 assert_eq "handoff idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
 
 # --- confirm the pg-cluster window (glass-atrium:4603) also paints a value in the boxed preflight ---
@@ -719,7 +760,7 @@ IDLE_STOPS=0
 run_path _run_dependency_preflight_boxed
 printf '  boxed preflight pg-window capture: idle starts=%s stops=%s\n' "${IDLE_STARTS}" "${IDLE_STOPS}"
 sed 's/^/    /' "${IDLE_CAP}"
-assert_window_animated "pg keg/UTC-resolve" "Resolving PostgreSQL"
+assert_window_body "pg keg/UTC-resolve" "Resolving PostgreSQL" bar
 assert_eq "pg-window idle start is matched by a stop (no leaked idle PID)" "${IDLE_STARTS}" "${IDLE_STOPS}"
 rm -f "${IDLE_CAP}"
 

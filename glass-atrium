@@ -1862,8 +1862,14 @@ start_idle_spinner() {
     label_str="$(c "${C_STRONG}" "${label}")"
     while true; do
       frame="${frames[$((i % n))]:- }"
-      # LINE 1 (indeterminate headline: spinner frame + the caller's status label) — every tick.
-      paint_workbox_body_inner "$(printf '  %s %s' "$(c "${C_INFO}" "${frame}")" "${label_str}")"
+      # LINE 1 (indeterminate headline: spinner frame + optional bar + the caller's status label) —
+      # every tick. RC-1: composite the bar+count UNDER the spinner when a run bar is active (mirror
+      # the panel-step arm) so the idle animation keeps the i/N bar visible; else frame + label only.
+      if [[ "${WORK_STATE:-}" == "run" && -n "${STEP_BAR_CUR:-}" ]]; then
+        paint_workbox_body_inner "$(printf '  %s %s  %s' "$(c "${C_INFO}" "${frame}")" "${STEP_BAR_CUR}" "${label_str}")"
+      else
+        paint_workbox_body_inner "$(printf '  %s %s' "$(c "${C_INFO}" "${frame}")" "${label_str}")"
+      fi
       # LINE 2 (slow dots: "slowly in progress") — advanced ONLY on the slow boundary. An idle
       # window has no meaningful real-time output, so it always shows dots (never a STEP_LOG_CUR
       # tail — a prior step's stale capture MUST NOT leak here, hence _spinner_dots directly).
@@ -1895,8 +1901,22 @@ stop_idle_spinner() {
   # Clear both box rows on the fullscreen path (rail-safe inner-span clear). The next render
   # (a bracket rmcup, a panel step, or the following idle window) repaints from a clean body.
   if [[ "${FULLSCREEN}" == "true" ]]; then
-    paint_workbox_body_inner ""
-    paint_workbox_body_row2_inner ""
+    # RC-1: in run-state WITH an active step bar, restore the bar+count resting body instead of
+    # blanking — the conditional panel steps between idle windows otherwise leave a blank run body.
+    # COMPOUND gate (run AND non-empty build_run_bar): the no-step-count windows (Detecting/Freeing/
+    # Preparing) also run under WORK_STATE=run but have an empty bar and correctly rest blank.
+    local run_bar=""
+    if [[ "${WORK_STATE:-}" == "run" ]]; then
+      run_bar="$(build_run_bar)"
+    fi
+    if [[ -n "${run_bar}" ]]; then
+      STEP_BAR_CUR="${run_bar}"
+      paint_workbox_body_inner "$(workbox_body_str)"
+      paint_workbox_body_row2_inner ""
+    else
+      paint_workbox_body_inner ""
+      paint_workbox_body_row2_inner ""
+    fi
   fi
   # cursor-visibility fix: the idle spinner runs ONLY in the fullscreen box, which never shows a live cursor
   # block, so end on civis (re-hide) rather than cnorm. The cooked-prompt callers (_confirm_pregate,
@@ -4753,6 +4773,11 @@ EOF
     # body animation stays UNCONDITIONAL (always needed). rc captured BEFORE stop_idle (exit-code
     # preservation); idle stopped BEFORE the bail so no stray child paints past the return.
     [[ "${PREFLIGHT_GROUP1_RUNNABLE}" -le 0 ]] && enter_run_state
+    # RC-1: publish the step bar BEFORE the spinner fork (the subshell snapshots STEP_BAR_CUR) so the
+    # idle animation carries the i/N bar and stop_idle_spinner restores it. Seed STEP_INDEX to 0 ONLY
+    # when empty (brew batch skipped => no prior panel step set it); a real mid-cluster index is kept.
+    STEP_INDEX="${STEP_INDEX:-0}"
+    STEP_BAR_CUR="$(build_run_bar)"
     start_idle_spinner "Resolving PostgreSQL"
     # (A1) keg-only PATH inject BEFORE the postgres detect (identical rationale to the scroll path).
     preflight_keg_path_inject node@24
@@ -4780,6 +4805,9 @@ EOF
     # PER-DETECT, not one pair spanning the cluster — the framed panel steps below self-paint the same body row + would fight a cluster-wide idle child.
     # Separated declare/assign keeps the exit code clean (SC2155).
     local pg_verdict
+    # RC-1: refresh the step bar before the fork (seed STEP_INDEX only when empty).
+    STEP_INDEX="${STEP_INDEX:-0}"
+    STEP_BAR_CUR="$(build_run_bar)"
     start_idle_spinner "Resolving PostgreSQL"
     pg_verdict="$(ga_detect_postgres)"
     stop_idle_spinner
@@ -4793,6 +4821,9 @@ EOF
     # role gate is `!= present` post-readiness (see the scroll path for the full rationale) —
     # idempotent create covers both a residual present-but-down and a genuine absent.
     local pg_role_verdict
+    # RC-1: refresh the step bar before the fork (seed STEP_INDEX only when empty).
+    STEP_INDEX="${STEP_INDEX:-0}"
+    STEP_BAR_CUR="$(build_run_bar)"
     start_idle_spinner "Resolving PostgreSQL"
     pg_role_verdict="$(ga_detect_postgres_role)"
     stop_idle_spinner
