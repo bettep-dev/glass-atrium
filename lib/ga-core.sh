@@ -591,7 +591,13 @@ run_bootstrap() {
   log "== bootstrap [2/3]: monitor build (npm run build, cwd=${GA_ROOT}/monitor) =="
   command -v npm >/dev/null 2>&1 \
     || die "npm not found — monitor build needs Node.js (install Node 24, then re-run bootstrap)"
-  (cd -- "${GA_ROOT}/monitor" && npm run build) || {
+  # T1: self-heal a partial install — `npm ci` (idempotent + atomic from package-lock.json)
+  # when the tsc binary is absent, inside the SAME subshell as the build. Snippet is
+  # DUPLICATED verbatim from the TUI build_monitor (glass-atrium); a shared helper is not
+  # worth the indirection for a one-line snippet whose failure terminal diverges. CLI
+  # passthrough DELIBERATELY keeps `exit` (NOT the TUI's `return`): run_bootstrap is a
+  # top-level CLI flow, not a run_step-captured TUI step, so `exit` is the correct terminal.
+  (cd -- "${GA_ROOT}/monitor" && { [[ -x node_modules/.bin/tsc ]] || npm ci; } && npm run build) || {
     printf 'FATAL: monitor build failed (npm run build) — see output above\n' >&2
     exit "${BOOTSTRAP_EXIT_BUILD}"
   }

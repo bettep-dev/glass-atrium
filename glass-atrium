@@ -2547,11 +2547,27 @@ build_monitor() {
     return 0
   fi
   log "== monitor build: npm run build (cwd=${GA_ROOT}/monitor) =="
-  command -v npm >/dev/null 2>&1 \
-    || die "npm not found — monitor build needs Node.js (install Node 24, then re-run bootstrap)"
-  (cd -- "${GA_ROOT}/monitor" && npm run build) || {
+  # T2: every failure path RETURNS (never exit/die). run_step invokes this step as a
+  # SAME-SHELL brace group `{ "$@"; }` under set +e (glass-atrium run_step) then captures
+  # `rc=$?`; an in-step `exit`/`die` would terminate the WHOLE TUI process (masked
+  # force-quit, no FAIL panel), whereas a `return N` becomes rc → run_plan renders the
+  # FAIL panel + persisted see:<log>. RETURN CODE CHOICE: BOOTSTRAP_EXIT_BUILD (20) for
+  # EVERY failure path (npm-absent + build-failure) — one uniform build code so the FAIL
+  # panel reads identically regardless of which precondition failed.
+  if ! command -v npm >/dev/null 2>&1; then
+    printf 'FATAL: npm not found — monitor build needs Node.js (install Node 24, then re-run bootstrap)\n' >&2
+    return "${BOOTSTRAP_EXIT_BUILD}"
+  fi
+  # T1: self-heal a partial install (DB present + node_modules absent perpetuates a tree
+  # missing tsc, since npm ci runs only in oss-db-setup.sh's DB-absent branch). When the
+  # tsc binary is absent, run `npm ci` (idempotent + atomic from package-lock.json) BEFORE
+  # the build, inside the SAME subshell so cwd stays monitor/. The .bin/tsc probe (not a
+  # bare node_modules/ dir check) catches a partially-populated tree. DUPLICATED verbatim
+  # in lib/ga-core.sh run_bootstrap (CLI copy) — see that copy's note; a shared helper is
+  # not worth the indirection for a one-line snippet whose failure terminal diverges.
+  (cd -- "${GA_ROOT}/monitor" && { [[ -x node_modules/.bin/tsc ]] || npm ci; } && npm run build) || {
     printf 'FATAL: monitor build failed (npm run build) — see output above\n' >&2
-    exit "${BOOTSTRAP_EXIT_BUILD}"
+    return "${BOOTSTRAP_EXIT_BUILD}"
   }
   log "== monitor build done =="
 }
