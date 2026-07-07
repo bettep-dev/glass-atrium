@@ -44,9 +44,24 @@ seed_counter() {
   printf '%s\n' "${value}" >"${COUNTER_FILE}"
 }
 
-# Drive the real hook. Args: $1 = last_assistant_message text (default: no-completion filler).
-#   Reads SUBAGENT_TOOL_BUDGET / SUBAGENT_TOOL_BUDGET_OFF from the caller's env (default unset).
-# Merges the hook's stderr into stdout so the synthesize diagnostic lands in $output.
+# Drive the real hook under the shared budget-truncation env: PG fail-opened (PGHOST → nonexistent
+# socket), budget counter dir redirected into the temp dir, SUBAGENT_TOOL_BUDGET* read from the
+# caller's env (default unset). Merges the hook's stderr into stdout so the synthesize diagnostic
+# lands in $output. `run` sets $status/$output as globals, so the calling @test reads them after
+# this helper returns. The payload file must already be built by the caller.
+_bt_run_env() {
+  run env \
+    HOME="${BT_TMP}/home" \
+    PGHOST="/nonexistent-socket-xyzzy" \
+    CLAUDE_GATE_INFLIGHT="" \
+    SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
+    SUBAGENT_TOOL_BUDGET="${SUBAGENT_TOOL_BUDGET:-40}" \
+    SUBAGENT_TOOL_BUDGET_OFF="${SUBAGENT_TOOL_BUDGET_OFF:-}" \
+    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+}
+
+# Drive the hook with an inline-message payload. $1 = last_assistant_message (default: no-completion
+# filler) ⇒ NO [COMPLETION] block + one tool_use ⇒ the synthesis branch.
 run_hook() {
   local msg="${1:-worked on it; no completion block emitted}"
   jq -nc --arg m "${msg}" --arg aid "${AGENT_ID}" '{
@@ -59,14 +74,7 @@ run_hook() {
       {role: "assistant", content: [{type: "tool_use", name: "Edit", input: {}}]}
     ]
   }' >"${PAYLOAD_FILE}"
-  run env \
-    HOME="${BT_TMP}/home" \
-    PGHOST="/nonexistent-socket-xyzzy" \
-    CLAUDE_GATE_INFLIGHT="" \
-    SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
-    SUBAGENT_TOOL_BUDGET="${SUBAGENT_TOOL_BUDGET:-40}" \
-    SUBAGENT_TOOL_BUDGET_OFF="${SUBAGENT_TOOL_BUDGET_OFF:-}" \
-    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+  _bt_run_env
 }
 
 # Open [COMPLETION] with NO [/COMPLETION] close (⇒ _T1 misses, _T2 matches ⇒ parse_tier=2) plus an
@@ -117,14 +125,7 @@ run_hook_transcript() {
     session_id: "sess-bt",
     transcript_path: "/nonexistent/parent.jsonl"
   }' >"${PAYLOAD_FILE}"
-  run env \
-    HOME="${BT_TMP}/home" \
-    PGHOST="/nonexistent-socket-xyzzy" \
-    CLAUDE_GATE_INFLIGHT="" \
-    SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
-    SUBAGENT_TOOL_BUDGET="${SUBAGENT_TOOL_BUDGET:-40}" \
-    SUBAGENT_TOOL_BUDGET_OFF="${SUBAGENT_TOOL_BUDGET_OFF:-}" \
-    bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
+  _bt_run_env
 }
 
 # --- budget-truncation: counter AT/OVER budget ---

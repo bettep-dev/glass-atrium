@@ -570,11 +570,10 @@ il_message() {
     "${d}" "${d}" "${d}" "${d}"
 }
 
-# DB-free hook driver: inline block in last_assistant_message, PG fail-opened (PGHOST → nonexistent
-# socket), stderr merged into stdout. $1 = message; $2 = agent_type (default qa-debugger, for which
-# task_type=diagnosis is on-role so no reclassification masks the recovered value). The helper does
-# the `run`, so callers invoke it directly (not `run il_run_hook`).
-il_run_hook() {
+# Build the inline-tolerance SubagentStop payload shared by the two il_run_hook* drivers below.
+# $1 = message (last_assistant_message); $2 = agent_type (default qa-debugger, for which
+# task_type=diagnosis is on-role so no reclassification masks the recovered value).
+il_write_payload() {
   local msg="${1}" agent="${2:-glass-atrium-qa-debugger}"
   jq -nc --arg m "${msg}" --arg agent "${agent}" --arg aid "${AGENT_ID}" --arg sess "${SESSION_ID}" '{
     hook_event_name: "SubagentStop",
@@ -587,6 +586,13 @@ il_run_hook() {
       {role: "assistant", content: [{type: "tool_use", name: "Edit", input: {}}]}
     ]
   }' >"${PAYLOAD_FILE}"
+}
+
+# DB-free hook driver: inline block in last_assistant_message, PG fail-opened (PGHOST → nonexistent
+# socket), stderr merged into stdout. Args forwarded to il_write_payload. The helper does the `run`,
+# so callers invoke it directly (not `run il_run_hook`).
+il_run_hook() {
+  il_write_payload "$@"
   run env \
     HOME="${SANDBOX_HOME}" \
     PGHOST="/nonexistent-socket-xyzzy" \
@@ -598,18 +604,7 @@ il_run_hook() {
 # DB-backed variant: real PG (no PGHOST override, PYTHONPATH pinned to psycopg) — proves the
 # recovered VALUES (metric_pass/confidence) reach the row, which the stderr channel does not expose.
 il_run_hook_db() {
-  local msg="${1}" agent="${2:-glass-atrium-qa-debugger}"
-  jq -nc --arg m "${msg}" --arg agent "${agent}" --arg aid "${AGENT_ID}" --arg sess "${SESSION_ID}" '{
-    hook_event_name: "SubagentStop",
-    agent_type: $agent,
-    agent_id: $aid,
-    session_id: $sess,
-    last_assistant_message: $m,
-    messages: [
-      {role: "user", content: "run the inline schema-mode work"},
-      {role: "assistant", content: [{type: "tool_use", name: "Edit", input: {}}]}
-    ]
-  }' >"${PAYLOAD_FILE}"
+  il_write_payload "$@"
   run env \
     HOME="${SANDBOX_HOME}" \
     CLAUDE_GATE_INFLIGHT="" \

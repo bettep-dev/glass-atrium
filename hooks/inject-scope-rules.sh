@@ -126,14 +126,6 @@ INPUT="$(hook_read_input)"
 AGENT_TYPE="$(hook_get_field "${INPUT}" "agent_type")"
 [[ -z "${AGENT_TYPE}" ]] && exit 0
 
-# Scope match — exact-token on space boundaries. Recorded as a flag (not an early exit): the
-# budget meter applies to ALL subagents, so a non-DEV/QA agent must still proceed to the meter
-# block. Only the comment-logging / style_ref blocks gate on this flag.
-IS_INJECT_AGENT=0
-if [[ "${INJECT_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  IS_INJECT_AGENT=1
-fi
-
 # Absent jq = system misconfiguration — fail-open.
 if ! command -v jq >/dev/null 2>&1; then
   printf '[inject-scope-rules] jq not found on PATH; skipping injection (agent=%s)\n' "${AGENT_TYPE}" >&2
@@ -149,6 +141,22 @@ extract_block() {
   [[ -f "${src}" ]] || return 0
   sed -n "/${start}/,/${end}/p" "${src}" 2>/dev/null \
     | grep -vxF "${start}" | grep -vxF "${end}" || true
+}
+
+# Extract a droppable scope block WHEN AGENT_TYPE is in the given roster, emitting a single fail-open
+# diagnostic on an empty extraction (markers/file absent). Consolidates the four near-identical
+# scope-block sites; blocks stay mutually independent — an empty one self-skips and never suppresses
+# the others (a non-matching roster yields empty with no diagnostic, as before).
+# Args: $1=roster (space-padded) $2=src_file $3=marker_start $4=marker_end $5=label · stdout: block text.
+extract_scope_block() {
+  local roster="${1}" src="${2}" start="${3}" end="${4}" label="${5}" block=""
+  if [[ "${roster}" == *" ${AGENT_TYPE} "* ]]; then
+    block="$(extract_block "${src}" "${start}" "${end}")"
+    if [[ -z "${block}" ]]; then
+      printf '[inject-scope-rules] %s block empty or markers absent in %s (agent=%s)\n' "${label}" "${src}" "${AGENT_TYPE}" >&2
+    fi
+  fi
+  printf '%s' "${block}"
 }
 
 # Read the maxTurns integer from an agent's frontmatter. fail-open: agent_type un-derivable,
@@ -256,44 +264,15 @@ assemble_ctx() {
   printf '%s' "${ctx}"
 }
 
-# Comment-logging block — DEV + QA only (gated on the scope flag).
-COMMENT_BLOCK=""
-if [[ "${IS_INJECT_AGENT}" -eq 1 ]]; then
-  COMMENT_BLOCK="$(extract_block "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}")"
-  if [[ -z "${COMMENT_BLOCK}" ]]; then
-    printf '[inject-scope-rules] comment-logging block empty or markers absent in %s (agent=%s)\n' "${SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
-
-# style_ref block — DEV only (QA excluded). Independent of the comment block: its absence must
-# NOT suppress the comment block, and vice-versa.
-STYLEREF_BLOCK=""
-if [[ "${STYLEREF_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  STYLEREF_BLOCK="$(extract_block "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}")"
-  if [[ -z "${STYLEREF_BLOCK}" ]]; then
-    printf '[inject-scope-rules] style_ref block empty or markers absent in %s (agent=%s)\n' "${STYLEREF_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
-
-# minimalism block — DEV only (QA excluded). Sourced from the same scope-dev.md file as the
-# style_ref block. Independent of the other blocks: its absence must NOT suppress them, vice-versa.
-MINIMALISM_BLOCK=""
-if [[ "${MINIMALISM_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  MINIMALISM_BLOCK="$(extract_block "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}")"
-  if [[ -z "${MINIMALISM_BLOCK}" ]]; then
-    printf '[inject-scope-rules] minimalism block empty or markers absent in %s (agent=%s)\n' "${STYLEREF_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
-
-# naming block — DEV(12)+qa-code-reviewer (gated on NAMING_AGENTS membership). Sourced from the
-# naming SKILL.md. Independent of the other blocks: its absence must NOT suppress them, vice-versa.
-NAMING_BLOCK=""
-if [[ "${NAMING_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  NAMING_BLOCK="$(extract_block "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}")"
-  if [[ -z "${NAMING_BLOCK}" ]]; then
-    printf '[inject-scope-rules] naming block empty or markers absent in %s (agent=%s)\n' "${NAMING_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
+# Four droppable scope blocks — each extracted only when AGENT_TYPE is in that block's roster (an
+# empty extraction self-skips with a fail-open diagnostic; see extract_scope_block). Rosters DIFFER:
+# comment-logging = DEV+QA · style_ref/minimalism = DEV-only (shared scope-dev.md source) · naming =
+# DEV(12)+qa-code-reviewer. The blocks are mutually independent — a missing one never suppresses the
+# others (see the *_AGENTS definitions above for the exact rosters + rationale).
+COMMENT_BLOCK="$(extract_scope_block "${INJECT_AGENTS}" "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}" "comment-logging")"
+STYLEREF_BLOCK="$(extract_scope_block "${STYLEREF_AGENTS}" "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}" "style_ref")"
+MINIMALISM_BLOCK="$(extract_scope_block "${MINIMALISM_AGENTS}" "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}" "minimalism")"
+NAMING_BLOCK="$(extract_scope_block "${NAMING_AGENTS}" "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}" "naming")"
 
 # Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Deliberately
 # unconditional: independent of SUBAGENT_BUDGET_METER_OFF and of read_max_turns (the two coupling

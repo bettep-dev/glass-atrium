@@ -117,13 +117,6 @@ assert_ctx_not_contains() {
     return 1
   }
 }
-assert_no_json_emitted() {
-  printf '%s' "${output}" | grep -q '"hookSpecificOutput"' && {
-    echo "expected NO injection JSON, got: ${output}" >&2
-    return 1
-  }
-  return 0
-}
 
 # --- (a) a NAMING_AGENTS DEV member (dev-react) receives the naming block ---
 
