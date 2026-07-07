@@ -208,23 +208,21 @@ drop_databases() {
 }
 
 # Start the built monitor directly, poll /api/health until 200 or the window
-# expires, then stop it. Port is read from monitor/.env (ATRIUM_MONITOR_PORT),
-# defaulting to 7842. The monitor PID is stopped via kill (NEVER launchctl).
+# expires, then stop it. Port derives via the shared atrium_monitor_port resolver
+# (env → monitor/.env → config.toml [ports].monitor → 16145 — the single shell
+# SoT). The monitor PID is stopped via kill (NEVER launchctl).
 bootstrap_health_gate() {
   log "== bootstrap [3/3]: monitor health gate (/api/health, ${BOOTSTRAP_HEALTH_WINDOW_SECS}s window) =="
   command -v curl >/dev/null 2>&1 \
     || die "curl not found — required for the monitor health gate"
 
-  local port="7842"
-  if [[ -f "${GA_ROOT}/monitor/.env" ]]; then
-    local env_port
-    # read the rendered port (single key, last wins); empty/absent → keep default.
-    # SC2312 fires only because the lib has no file-scope `set -o pipefail`
-    # visible to shellcheck (the caller arms it) — the pipe rc mask is intentional.
-    # shellcheck disable=SC2312
-    env_port="$(grep -E '^ATRIUM_MONITOR_PORT=[0-9]+$' -- "${GA_ROOT}/monitor/.env" | tail -1 | cut -d= -f2)"
-    [[ -n "${env_port}" ]] && port="${env_port}"
-  fi
+  # Single shell SoT (ADR-1): exported ATRIUM_MONITOR_PORT → rendered monitor/.env
+  # → config.toml [ports].monitor → terminal default 16145. A CONFIGURED invalid
+  # value loud-fails inside the resolver (stderr + rc 1); surface it as a die so
+  # the CLI-fallback contract (loud, never a silent wrong-port default) is kept.
+  local port
+  port="$(atrium_monitor_port)" \
+    || die "monitor port resolution failed — check config.toml [ports].monitor / monitor/.env ATRIUM_MONITOR_PORT"
 
   # precondition (loud-fail): a pre-existing listener on the gate's own port (e.g.
   # an already-loaded launchd monitor) would answer curl with 200 from the STALE
