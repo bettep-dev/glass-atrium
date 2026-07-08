@@ -13,10 +13,10 @@
 #   (B) INSTALL preflight_pg_utc_guard discriminates correctly across four pg states:
 #       B1 healthy 'ok'                    → no-op, guard never enters its body, ZERO actions.
 #       B2 'broken' + brew-managed keg     → brew RESTART clears it, re-verify != broken → 0.
-#       B3 'broken' + NO brew keg          → scoped orphan clear FIRES (SIGINT + socket rm),
-#                                            re-verify != broken → 0 (continue).
-#       B3b 'broken' + keg, restart NO-clear→ restart fires, does NOT clear, THEN scoped clear
-#                                            FIRES → re-verify != broken → 0 (unresolvable-by-restart).
+#       B3 'broken' + NO brew keg          → scoped orphan clear FIRES (SIGINT; layer-3 socket rm is
+#                                            guard-conditional on a stale socket remaining) → 0.
+#       B3b 'broken' + keg, restart NO-clear→ restart fires, does NOT clear, THEN scoped clear FIRES
+#                                            (SIGINT; guard-conditional socket rm) → 0 (unresolvable-by-restart).
 #       B4a DRY_RUN 'broken' unmanaged     → clear is a no-op, stays broken → LOUD-FAIL return 1,
 #                                            NO SIGINT, NO socket rm (never a false 'cleared').
 #       B4b sandbox 'broken' unmanaged     → same loud-fail, no destructive action.
@@ -27,7 +27,12 @@
 # in-process RECORDERS that NEVER exec the real tool — the guard/clear logic under test runs for
 # real, but no signal is sent, no socket is removed, no brew service is touched. The only real
 # read is the `[[ -S ]]` socket-type test (read-only) — deliberately left real so the socket-rm
-# branch is exercised faithfully against the live socket's existence.
+# branch is exercised faithfully against the live socket's existence. Consequence: the layer-3
+# socket rm is guard-CONDITIONAL at runtime (it fires only when a stale socket file actually remains
+# at that path). B3/B3b therefore assert it via assert_socket_rm_matches_guard (mirroring the code's
+# own `[[ -S ]]` guard) plus a deterministic [B-static] body-presence check — NOT an unconditional
+# runtime fire, which was the stale, host-fragile expectation (it failed on any host with no live pg
+# on /tmp, where the socket is legitimately absent and the code correctly skips the removal).
 #
 # The functions UNDER TEST run REAL: stop_detached_daemons, kill_daemon_tmux_sessions,
 # clear_unmanaged_pg_orphan, preflight_pg_utc_guard. Only the leaf tools + the detect probes +
@@ -37,9 +42,10 @@
 #
 # ShellCheck note: this harness sources a multi-thousand-line library and OVERRIDES its symbols,
 # so several checks are inherent false-positives of static analysis against dynamically-sourced
-# code — SC2034 (vars read only by the sourced launcher fns), SC2312 (return-masking in
-# display-only command subs).
-# shellcheck disable=SC2034,SC2312
+# code — SC2034 (vars read only by the sourced launcher fns), SC2154 (launcher globals like
+# PG_SOCKET assigned at source time), SC2312 (return-masking in display-only command subs),
+# SC2016 (the [B-static] check matches a single-quoted LITERAL of the function's source text).
+# shellcheck disable=SC2034,SC2154,SC2312,SC2016
 set -uo pipefail
 
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,6 +88,18 @@ assert_rec_has() { # $1=label $2=needle
 }
 assert_rec_absent() { # $1=label $2=needle
   if grep -qF "$2" "${GA_REC}"; then fail "$1 (UNEXPECTED '$2' — destructive action fired)"; else pass "$1 (absent)"; fi
+}
+# The layer-3 stale-socket removal in clear_unmanaged_pg_orphan is GUARDED by the code's REAL
+# `[[ -S "${sock}" ]]` test against ${PG_SOCKET}/.s.PGSQL.5432 (readonly /tmp, not redirectable),
+# left un-stubbed above. So the record-only rm fires IFF a socket file actually exists there when the
+# harness runs — mirror that guard rather than demand an unconditional fire (the old, host-fragile bug).
+assert_socket_rm_matches_guard() { # $1=label
+  local sock="${PG_SOCKET}/.s.PGSQL.5432"
+  if [[ -S "${sock}" ]]; then
+    assert_rec_has "$1 (live socket present → layer-3 rm fires)" "rm_socket:"
+  else
+    assert_rec_absent "$1 (no socket at ${sock} → layer-3 rm correctly skipped)" "rm_socket:"
+  fi
 }
 
 # === scenario state (scripted per scenario) ===========================================
@@ -238,6 +256,18 @@ echo "(B) INSTALL: preflight_pg_utc_guard state discrimination"
 echo "============================================================================"
 
 echo ""
+echo "  [B-static] clear_unmanaged_pg_orphan retains the layer-3 stale-socket removal branch"
+# Deterministic (host-independent) proof that the socket-rm branch EXISTS in the code — complements
+# the guard-conditional runtime checks in B3/B3b (which can only OBSERVE the rm fire when a live
+# socket happens to exist). If a regression drops layer-3, this static check fails on every host.
+CL_BODY="$(declare -f clear_unmanaged_pg_orphan)"
+if [[ "${CL_BODY}" == *'rm -f -- "${sock}"'* ]]; then
+  pass "clear_unmanaged_pg_orphan body contains the layer-3 rm -f -- \"\${sock}\" removal"
+else
+  fail "clear_unmanaged_pg_orphan body is MISSING the layer-3 socket removal"
+fi
+
+echo ""
 echo "  [B1] healthy 'ok' server → no-op (guard never enters its body)"
 _reset_case
 SC_PG_UTC="ok"
@@ -276,7 +306,7 @@ echo "    observed: $(_rec_dump)"
 assert_eq "B3 returns 0 (orphan cleared, continue)" "0" "${rc}"
 assert_rec_absent "B3 NO brew restart (no keg)" "pg_restart"
 assert_rec_has "B3 SIGINT fast-shutdown FIRES" "sigint:424242"
-assert_rec_has "B3 stale socket removal FIRES" "rm_socket:"
+assert_socket_rm_matches_guard "B3 socket removal matches the code's [[ -S ]] guard"
 
 echo ""
 echo "  [B3b] 'broken' + keg, restart does NOT clear → scoped clear FIRES (unresolvable-by-restart)"
@@ -291,7 +321,7 @@ echo "    observed: $(_rec_dump)"
 assert_eq "B3b returns 0 (cleared after restart failed)" "0" "${rc}"
 assert_rec_has "B3b brew restart attempted first" "pg_restart"
 assert_rec_has "B3b scoped clear SIGINT FIRES after restart" "sigint:424242"
-assert_rec_has "B3b socket removal FIRES" "rm_socket:"
+assert_socket_rm_matches_guard "B3b socket removal matches the code's [[ -S ]] guard"
 
 echo ""
 echo "  [B4a] DRY_RUN 'broken' unmanaged → clear is a no-op → LOUD-FAIL 1 (no false clear)"

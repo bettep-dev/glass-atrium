@@ -233,9 +233,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
   # git-txn / daemon-apply suites. `bats --recursive` over the 4 test roots
-  # picks up ALL 32 suites (8 test/ + 6 hooks/test/ + 14 scripts/test/ +
-  # 4 autoagent/test/) — a strict coverage increase over the old flat job's 13
-  # explicit paths, which silently omitted 19 suites. Every suite is hermetic
+  # picks up ALL 66 suites (30 test/ + 14 hooks/test/ + 17 scripts/test/ +
+  # 5 autoagent/test/) — a strict coverage increase over the old flat job's
+  # hand-listed explicit paths, which silently omitted any suite not on the list.
+  # Every suite is hermetic
   # (mktemp sandboxes + PATH-prepended stub binaries for
   # psql/createdb/launchctl/tmux/claude), so this job needs neither Postgres nor
   # launchd nor the claude CLI. None of the suites load bats-support/bats-assert
