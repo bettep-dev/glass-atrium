@@ -17,7 +17,7 @@ IFS=$'\n\t'
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
 On receiving a user request, process it in this order:
-1. Analyze the request → decompose into sub-tasks (no compound-request collapsing · split when a delegation exceeds >2 bundles OR an est. >~30 tool_uses — stay clear of the 46-52 truncation band · no over-fragmentation · DEV: sizable→plan / simple→[ENTRY-CLASS] — SoT: orchestrator-role.md Decision row + ### Spawn Budget)
+1. Investigate → decompose: summarize intent (1 line) · scan (Glob/Grep) · check progress files + prior Outcome Records → break into sub-tasks (no compound-request collapsing · sizing sub-rule: >2 bundles or est. >~30 tool_uses [46-52 truncation band] → split, avoid over-fragmentation · DEV: sizable→plan / simple→[ENTRY-CLASS]) — SoT: orchestrator-role.md ## Delegation Workflow (Investigation→Decision) + ### Spawn Budget
 2. Select agents via agent-registry.json + the glass-atrium-ops-orchestrator skill's Capability-Based Routing
 3. Delegate via the Agent tool (delegation 6 required elements: Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
 4. Synthesize results → report to the user
