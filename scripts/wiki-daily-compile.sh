@@ -4,9 +4,8 @@
 # Persists compiled_count/compiled_total to core.daemon_runs for monitor card.
 
 # WIKI_ROOT: single source of truth for the wiki data root. Resolved BEFORE the
-# pre-strict-mode fork-OK probe so the diagnostic reports the configured raw/
-# path. Default = the glass-atrium store; WIKI_ROOT env overrides. Re-asserted
-# (idempotently) at the main resolver below.
+# pre-strict-mode fork-OK probe so the diagnostic reports the configured raw/ path
+# (default = glass-atrium store; env overrides); re-asserted at the main resolver below.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 
 echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cron fork OK pid=$$ ppid=$PPID HOME=${HOME:-EMPTY} PWD=$PWD USER=${USER:-EMPTY} SHELL=${SHELL:-EMPTY} raw_count=$(ls "${WIKI_ROOT}/raw/"*.md 2>/dev/null | wc -l | tr -d ' ') glob_test=$(printf '%s\n' "${WIKI_ROOT}/raw/"*.md | head -1)" >>/tmp/wiki-compile.log
@@ -48,12 +47,10 @@ else
   fi
 fi
 
-# Headless claude auth (launchd keychain-bypass): a launchd-spawned `claude -p`
-# (non-GUI session) authenticating ONLY via the GUI macOS Keychain OAuth item
-# returns 401; the env token bypasses it. Source the 0600 secrets file
-# (render-claude-auth.sh output) BEFORE the claude call below so
-# CLAUDE_CODE_OAUTH_TOKEN is exported. Absent file → loud WARN + keychain
-# fallback. Lib lives beside this script's lib/ dir.
+# Headless claude auth (launchd keychain-bypass): a launchd-spawned `claude -p` authing
+# ONLY via the GUI Keychain OAuth item returns 401; the env token bypasses it. Source the
+# 0600 secrets file (render-claude-auth.sh) BEFORE the claude call so
+# CLAUDE_CODE_OAUTH_TOKEN is exported. Absent → loud WARN + keychain fallback.
 CLAUDE_AUTH_ENV_LIB="$WIKI_COMPILE_SELF_DIR/lib/claude-auth-env.sh"
 if [ -f "$CLAUDE_AUTH_ENV_LIB" ]; then
   # shellcheck source=lib/claude-auth-env.sh
@@ -63,10 +60,8 @@ else
   echo "[wiki-daily-compile] WARN: claude-auth-env lib missing ($CLAUDE_AUTH_ENV_LIB) — keychain auth only" >&2
 fi
 
-# Quota-footer timezone — RESOLVED [meta].timezone, env-overridable; ERE-escaped
-# for the quota greps below. The resolution rationale (concrete-zone requirement,
-# TZ-immune /etc/localtime read) lives once in atrium_load_timezone
-# (lib/atrium-config.sh).
+# Quota-footer timezone — RESOLVED [meta].timezone (env-overridable), ERE-escaped for the
+# quota greps below. Resolution rationale lives in atrium_load_timezone (lib/atrium-config.sh).
 ATRIUM_TIMEZONE="$(atrium_load_timezone)"
 TZ_ERE="$(atrium_ere_escape "$ATRIUM_TIMEZONE")"
 
@@ -74,8 +69,7 @@ export OTEL_METRICS_EXPORTER=none
 export OTEL_LOGS_EXPORTER=none
 export CLAUDE_CODE_ENABLE_TELEMETRY=0
 
-# WIKI_ROOT: single source of truth for the wiki data root. Default = the
-# glass-atrium store; WIKI_ROOT env overrides for tests / alternate roots.
+# WIKI_ROOT (re-asserted, idempotent — see top): default = glass-atrium store, env overrides.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 RAW_DIR="$WIKI_ROOT/raw"
 NOTES_DIR="$WIKI_ROOT/notes"
@@ -123,29 +117,21 @@ fi
 # bash 3.2 compatible (awk, no declare -A).
 _extract_source_url() {
   local file="$1"
-  # A frontmatter delimiter is three dashes + ONLY ASCII space/tab (^---[ \t]*$)
-  # — locale-independent, so `---x` is not a delimiter and the block keeps
-  # scanning. The [[:space:]] class is locale-dependent (matches nbsp under
-  # UTF-8 but not under C); [ \t] is deterministic across locales. The extracted
-  # value is CR-stripped so it byte-matches the Python detector's CR-stripped
-  # value, keeping the two detectors in ASCII-deterministic lockstep.
-  # Leading sub(/\r$/,"") strips a trailing CR from every record BEFORE the
-  # delimiter test so a CRLF file's `---\r` matches ^---[ \t]*$ — awk splits
-  # records on \n only, leaving the \r that Python's \r\n→\n normalize removes;
-  # without the strip the delimiter never matches on a fully-CRLF file, so the
-  # block never opens (the cross-detector divergence this closes).
-  # awk: n=1 after the first delimiter, exit at the second; print + exit on the
-  # first source_url within the block.
+  # Frontmatter delimiter = three dashes + ONLY ASCII space/tab (^---[ \t]*$),
+  # locale-independent: [[:space:]] matches nbsp under UTF-8, [ \t] is deterministic.
+  # Per-record sub(/\r$/,"") strips a trailing CR BEFORE the delimiter test so a CRLF
+  # file's `---\r` matches (awk splits on \n only, leaving the \r Python's normalize
+  # removes) — without it the block never opens on a fully-CRLF file (the cross-detector
+  # divergence). Extracted value is CR-stripped for byte-parity with the Python detector.
+  # awk: n=1 after the first delimiter, exit at the second; print + exit on first source_url.
   awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_url:/{sub(/^source_url:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true
 }
 
-# Extract source_raw (a note's stable back-reference to its originating raw
-# basename) from frontmatter — byte-parity with _extract_source_url so the Python
-# detector mirrors it exactly. source_raw is the only collision-immune identity:
-# raw basenames are unique (1 URL = 1 file, immutable), whereas a slug-renamed
-# note loses both its basename match and its source_url, leaving a colliding raw
-# eternally re-detected as backlog. Same ASCII delimiter, same per-record CR
-# strip, same ASCII trailing-trim as _extract_source_url — only the key differs.
+# Extract source_raw (a note's stable back-reference to its originating raw basename)
+# — byte-parity with _extract_source_url. source_raw is the only collision-immune
+# identity: raw basenames are unique (1 URL = 1 file, immutable), whereas a slug-renamed
+# note loses both its basename match and its source_url → a colliding raw is eternally
+# re-detected as backlog. Same delimiter / CR-strip / trailing-trim; only the key differs.
 _extract_source_raw() {
   local file="$1"
   awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_raw:/{sub(/^source_raw:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true
@@ -183,12 +169,10 @@ _collect_note_source_raws() {
   printf '%s' "${_result}"
 }
 
-# Build the COLLISION SET: source_urls shared by MORE THAN ONE raw/*.md. A
-# source_url claimed by several raws cannot identify a single processed raw — one
-# raw's compiled note would otherwise mark its url-twins as processed and they
-# would never compile (silent loss). Such raws are instead matched by basename
-# only. Output is a newline-separated, deduplicated string. bash 3.2 compatible
-# (sort | uniq -d, no declare -A).
+# Build the COLLISION SET: source_urls shared by MORE THAN ONE raw/*.md. A url claimed
+# by several raws can't identify one processed raw — one raw's note would mark its
+# url-twins processed and they'd never compile (silent loss); such raws are basename-matched
+# only. Output = newline-separated deduplicated string. bash 3.2 (sort | uniq -d).
 _collect_collision_source_urls() {
   local _dir="$1"
   local _rf _u
@@ -199,11 +183,9 @@ _collect_collision_source_urls() {
     _u=$(_extract_source_url "${_rf}")
     [[ -n "${_u}" ]] && _all="${_all}${_u}"$'\n'
   done
-  # uniq -d keeps only lines occurring 2+ times → the collision set. The trailing
-  # blank line from the concat is dropped by grep -v before sorting. The 0-url
-  # case makes grep -v match nothing (exit 1) → with pipefail the pipeline returns
-  # 1, which under set -e would abort the standalone COLLISION_URLS assignment; the
-  # empty collision set is the correct result, so the non-match is suppressed.
+  # uniq -d keeps lines occurring 2+ times → the collision set (grep -v drops the
+  # trailing blank). The 0-url case: grep -v matches nothing (exit 1) → under pipefail
+  # + set -e the assignment would abort, but an empty collision set is correct → suppress.
   printf '%s' "${_all}" | grep -v '^$' | sort | uniq -d || true
 }
 
@@ -225,14 +207,11 @@ _collision_warn_lines() {
   done <<<"${_collisions}"
 }
 
-# Classify a raw as processed/unprocessed. Echoes "processed" or "unprocessed".
-# Args: raw file, note-url set, collision set, note-source_raw set. The primary
-# match is the raw's basename appearing as some note's source_raw value: raw
-# basenames are unique (1 URL = 1 file, immutable), so this identity is
-# unambiguous and needs NO collision guard — it is the only path that survives a
-# slug-rename + source_url drop. The basename match (notes/<basename>.md) and the
-# guarded source_url match remain as fallbacks so legacy notes lacking source_raw
-# still classify as processed.
+# Classify a raw as processed/unprocessed. Args: raw file, note-url set, collision set,
+# note-source_raw set. Primary match = the raw's basename as some note's source_raw: raw
+# basenames are unique (1 URL = 1 file), so it needs NO collision guard and is the only
+# path surviving a slug-rename + source_url drop. The basename match (notes/<basename>.md)
+# and guarded source_url match are fallbacks for legacy notes lacking source_raw.
 _classify_raw() {
   local _file="$1"
   local _note_urls="$2"
@@ -259,14 +238,12 @@ _classify_raw() {
   printf 'unprocessed'
 }
 
-# Stamp a note's frontmatter with the script-authoritative source_raw (and a
-# source_url backfill when absent), repairing whatever the LLM emitted — the
-# script, not the prompt, owns this identity. Args: note file, source_raw value
-# (raw basename), source_url value (may be empty). Idempotent (existing keys are
-# left untouched), CRLF-safe (records compared with a CR-stripped copy, original
-# bytes re-emitted), atomic (temp + mv). No-op unless the file opens with a `---`
-# frontmatter delimiter — a malformed note is never rewritten. bash 3.2 (awk, no
-# declare -A).
+# Stamp a note's frontmatter with the script-authoritative source_raw (+ source_url
+# backfill when absent) — the script, not the LLM prompt, owns this identity. Args: note
+# file, source_raw (raw basename), source_url (may be empty). Idempotent (existing keys
+# untouched), CRLF-safe (CR-stripped copy drives the test, original bytes re-emitted),
+# atomic (temp + mv). No-op unless the file opens with a `---` delimiter (malformed note
+# never rewritten).
 _inject_source_raw() {
   local _note="$1"
   local _raw="$2"
@@ -302,13 +279,11 @@ _inject_source_raw() {
   fi
 }
 
-# 0.5 Named precondition (Loud-Fail): distinguish a relocation-miss from a
-#     legitimately-not-yet-seeded store BEFORE the raw-glob find. The find at the
-#     loop tail redirects stderr to the log, which would otherwise mask a missing
-#     RAW_DIR as a silent "0 unprocessed" — identical to an empty store. If the
-#     configured WIKI_ROOT itself is absent → relocation-miss, fail loud + record
-#     PG status 'error'. If WIKI_ROOT exists but raw/ does not → store simply has
-#     no raw sources yet → benign, fall through (find yields 0, normal exit-0).
+# 0.5 Named precondition (Loud-Fail): distinguish a relocation-miss from a not-yet-seeded
+#     store BEFORE the raw-glob find (whose stderr→log would mask a missing RAW_DIR as a
+#     silent "0 unprocessed", identical to an empty store). WIKI_ROOT itself absent →
+#     relocation-miss: fail loud + record PG status 'error'. WIKI_ROOT present but raw/
+#     absent → no raw sources yet → benign, fall through (find yields 0, normal exit-0).
 if [ ! -d "$RAW_DIR" ]; then
   if [ ! -d "$WIKI_ROOT" ]; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] FATAL: configured wiki root missing: $WIKI_ROOT (possible relocation-miss; verify WIKI_ROOT)" >>"$LOG_FILE" 2>/dev/null || true
@@ -387,14 +362,11 @@ Output: for each input raw, reuse its filename verbatim — write to
 ${NOTES_DIR}/<exact-input-basename>.md (absolute path); do not rename or slugify
 the basename. Print a 1-line summary when done."
 
-# 4.5 Cost ceiling: the per-call --max-budget-usd (Step 5, clamped [0.50, 5.00])
-# bounds this cron's own spend — the same per-CALL ceiling the wiki daemon
-# (wiki_daemon_cycle.py HAIKU_MAX_BUDGET_USD) relies on. A daily-total gate
-# against core.cost_events is unusable here: the table carries no
-# component/workload tag, so a wiki-scoped daily sum is not queryable, and the
-# GLOBAL total (all workloads) blocks this cron every day once non-wiki spend
-# crosses the threshold. Post-call detection (5.4 budget-config, 5.5 quota) plus
-# the CLAUDE_EXIT generic-failure envelope below handle the failure modes.
+# 4.5 Cost ceiling: the per-call --max-budget-usd (Step 5, clamped [0.50, 5.00]) bounds
+# this cron's own spend — the per-CALL ceiling the wiki daemon (HAIKU_MAX_BUDGET_USD)
+# relies on. A daily-total gate on core.cost_events is unusable: no component/workload tag,
+# so a wiki-scoped daily sum isn't queryable and the GLOBAL total would block this cron
+# once non-wiki spend crosses the threshold. Failure modes: 5.4/5.5 + CLAUDE_EXIT below.
 
 # 5. Single batched claude -p call (--bare minimal mode + wiki-curator system prompt)
 CLAUDE_EXIT=0
@@ -414,14 +386,11 @@ cd /tmp
   >>"$LOG_FILE" 2>&1 || CLAUDE_EXIT=$?
 if [ "$CLAUDE_EXIT" -ne 0 ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] claude -p exited ${CLAUDE_EXIT}" >>"$LOG_FILE"
-  # A non-zero exit that is NEITHER a local --max-budget-usd shortfall NOR a
-  # Claude Max quota cap is a generic LLM-unavailable failure (CLI missing /
-  # auth / network). The dedicated 5.4 budget-config and 5.5 quota branches own
-  # their own envelopes + exit 0, so this branch defers to them; only the
-  # residual generic case emits here. Without this row the health-check readback
-  # finds no envelope and false-negatives "missing" — the late aggregate row at
-  # step 7 can be skipped if a downstream step aborts under set -e.
-  # compiled_count=0 — the LLM call did not complete.
+  # A non-zero exit that is NEITHER a --max-budget-usd shortfall NOR a Claude Max quota cap
+  # is a generic LLM-unavailable failure (CLI missing / auth / network). The 5.4/5.5 branches
+  # own their envelopes + exit 0, so this defers to them; only the residual generic case emits
+  # here. Without this row the health-check readback false-negatives "missing" (the late step-7
+  # aggregate can be skipped if a downstream step aborts under set -e). compiled_count=0.
   if ! grep -qE 'Exceeded USD budget' "$LOG_FILE" 2>/dev/null \
     && ! grep -qE 'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets .* \('"$TZ_ERE"'\)' "$LOG_FILE" 2>/dev/null; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-llm-fail] generic claude -p failure (exit=${CLAUDE_EXIT}) — recording status='error', aborting cycle" >>"$LOG_FILE"
@@ -434,19 +403,16 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   fi
 fi
 
-# 5.4 / 5.5 Post-call abort detection — gated on a non-zero CLAUDE_EXIT, the only
-# legitimate context for a quota/budget abort. $LOG_FILE is append-mode and also
-# captures the Haiku model's own summary text, so a SUCCESSFUL compile whose
-# summary echoes 'Limit reached'/'Usage'/'out of extra usage' would false-positive
-# a quota/budget envelope and skip sync+aggregate. Gating both scans on the
-# failure exit prevents a successful run from ever matching.
+# 5.4 / 5.5 Post-call abort detection — gated on non-zero CLAUDE_EXIT, the only legitimate
+# context for a quota/budget abort. $LOG_FILE is append-mode + captures the model's own
+# summary, so a SUCCESSFUL compile echoing 'Limit reached'/'Usage'/'out of extra usage'
+# would false-positive a quota/budget envelope + skip sync. Gating both scans on the
+# failure exit prevents that.
 if [ "$CLAUDE_EXIT" -ne 0 ]; then
-  # 5.4 Local budget-config detection (PRIOR to quota check). 'Exceeded USD
-  # budget' is a local --max-budget-usd ceiling shortfall (self-inflicted config
-  # error), NOT an external Claude Max quota — kept separate so a too-low budget
-  # bug is not masked (same split as python _detect_budget_too_low). DaemonStatus
-  # has no budget-specific value → record status='error', distinct from
-  # quota_exceeded (excluded from the alert-suppress set).
+  # 5.4 Local budget-config detection (PRIOR to quota). 'Exceeded USD budget' is a local
+  # --max-budget-usd shortfall (self-inflicted config error), NOT an external quota — kept
+  # separate so a too-low-budget bug isn't masked (same split as _detect_budget_too_low). No
+  # budget-specific DaemonStatus → record status='error', distinct from quota_exceeded.
   if grep -qE 'Exceeded USD budget' "$LOG_FILE" 2>/dev/null; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-budget-config] local --max-budget-usd ceiling too low (budget=\$${BUDGET}) — recording status='error' (not quota), aborting cycle" >>"$LOG_FILE"
     if [ -x "$PG_HELPER" ]; then
@@ -474,12 +440,11 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   fi
 fi
 
-# 5.6 Stamp source_raw on each compiled note — the script-authoritative identity
-# the LLM cannot be trusted to write. For each input raw with basename B, a
-# note at notes/B.md (the deterministic filename contract from the prompt) gets
-# source_raw:B (and a source_url backfill) so the recount and every future cycle
-# match it collision-immune. Runs before sync so the regenerated master-index +
-# sqlite reflect the stamped frontmatter.
+# 5.6 Stamp source_raw on each compiled note — the script-authoritative identity the LLM
+# cannot be trusted to write. For input raw basename B, the note at notes/B.md (the prompt's
+# deterministic filename contract) gets source_raw:B (+ source_url backfill) so the recount
+# and every future cycle match it collision-immune. Runs before sync so master-index + sqlite
+# reflect the stamped frontmatter.
 for file in "${UNPROCESSED[@]}"; do
   inj_base=$(basename "$file")
   inj_note="${NOTES_DIR}/${inj_base}"
@@ -515,12 +480,10 @@ fi
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile finished success=${SUCCESS}/${TOTAL} failed=${#FAILED[@]} sync_exit=${SYNC_EXIT}" >>"$LOG_FILE"
 
-# Write the aggregate core.daemon_runs row for the wiki cycle.
-# wiki-sync.sh writes per-step metrics; this aggregate row guarantees the
-# 09:00 health-check cron-readback finds a wiki-daemon row for today.
-# status: sync fail or SUCCESS=0 → error / some fail → partial / all ok → ok.
-# PG DaemonStatus enum has no 'fail' value. Best-effort: a PG failure MUST NOT
-# block the script.
+# Write the aggregate core.daemon_runs row for the wiki cycle — guarantees the 09:00
+# health-check cron-readback finds a wiki-daemon row for today (wiki-sync writes per-step).
+# status: sync-fail or SUCCESS=0 → error / some fail → partial / all ok → ok (no 'fail' in
+# the DaemonStatus enum). Best-effort: a PG failure MUST NOT block the script.
 WIKI_AGG_STATUS="ok"
 if [ "$SYNC_EXIT" -ne 0 ] || [ "$SUCCESS" -eq 0 ]; then
   WIKI_AGG_STATUS="error"

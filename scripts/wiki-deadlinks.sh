@@ -32,11 +32,9 @@ PY_MODULE="${SCRIPT_DIR}/wiki_deadlinks.py"
 # shellcheck source=lib/wiki-compile-lock.sh
 source "${SCRIPT_DIR}/lib/wiki-compile-lock.sh"
 
-# WIKI_ROOT: single source of truth for the wiki data root. Default = the
-# glass-atrium store. The python module's DEFAULT_WIKI_ROOT also reads this env
-# (authoritative seam); threading --wiki-root below is the belt-and-suspenders
-# explicit forward. A --notes-dir override still wins downstream (python sets
-# wiki_root=notes_dir.parent).
+# WIKI_ROOT: single source of truth for the wiki data root (default = glass-atrium store).
+# The python module's DEFAULT_WIKI_ROOT reads the same env (authoritative seam); --wiki-root
+# below is the explicit forward. A --notes-dir override still wins (python: wiki_root=notes_dir.parent).
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 
 if [[ ! -f "${PY_MODULE}" ]]; then
@@ -44,7 +42,7 @@ if [[ ! -f "${PY_MODULE}" ]]; then
     exit 2
 fi
 
-# -- Parse CLI args ----------------------------------------------------------
+# Parse CLI args
 
 DRY_RUN_ALL=0
 NOTES_DIR_OVERRIDE=""
@@ -88,7 +86,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# -- Python binary -----------------------------------------------------------
+# Python binary
 
 PYTHON_BIN="${WIKI_DAEMON_PYTHON_BIN:-python3}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -96,13 +94,13 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     exit 3
 fi
 
-# -- Self-test short-circuit -------------------------------------------------
+# Self-test short-circuit
 
 if [[ "${SELF_TEST}" -eq 1 ]]; then
     exec "${PYTHON_BIN}" "${PY_MODULE}" --self-test
 fi
 
-# -- Resolve output JSON path ------------------------------------------------
+# Resolve output JSON path
 
 CYCLE_DATE="$(date -u +%Y-%m-%d)"
 REPORTS_DIR="${HOME}/.claude/data/daemon-reports"
@@ -116,7 +114,7 @@ fi
 # Ensure reports dir exists.
 mkdir -p "${REPORTS_DIR}"
 
-# -- Build Python argument list ----------------------------------------------
+# Build Python argument list
 
 PY_ARGS=("--wiki-root" "${WIKI_ROOT}" "--out-json" "${OUT_PATH}")
 
@@ -128,7 +126,7 @@ if [[ -n "${NOTES_DIR_OVERRIDE}" ]]; then
     PY_ARGS+=("--notes-dir" "${NOTES_DIR_OVERRIDE}")
 fi
 
-# -- Acquire shared lock + run -----------------------------------------------
+# Acquire shared lock + run
 
 set +e
 run_under_compile_lock wiki-deadlinks -- "${PYTHON_BIN}" "${PY_MODULE}" "${PY_ARGS[@]}"

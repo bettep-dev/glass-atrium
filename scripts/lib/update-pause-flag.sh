@@ -1,46 +1,34 @@
 #!/usr/bin/env bash
-# update-pause-flag.sh — the cooperative AutoAgent-daemon pause flag for the
-# Glass Atrium update system (plan E3 / design C, task T10). Pure, sourced
-# library: function definitions ONLY, no top-level side effects, no executable
-# entry point — the same convention as scripts/lib/apply-spine.sh and
-# atrium-config.sh.
+# update-pause-flag.sh — cooperative AutoAgent-daemon pause flag for the Glass
+# Atrium update system. Pure sourced library: function defs only, no side effects
+# (same convention as apply-spine.sh / atrium-config.sh); strict mode is the
+# CALLER's responsibility (a sourced lib must not mutate caller shell options).
 #
-# IMPORTANT — strict mode is the CALLER's responsibility (sourced-lib convention)
-# This file deliberately does NOT run `set -Eeuo pipefail`: a sourced file must
-# not mutate the caller's shell options. Every function is SAFE under a caller
-# that has already set `set -Eeuo pipefail` + `IFS=$'\n\t'`.
+# PURPOSE (cooperative writer-serialization): a running update HOLDS this flag
+# while it swaps files; the launchd-live autoagent daemon (and the
+# daemon-daily-restart instance) cooperatively SUSPENDS its run while held, so a
+# daemon cycle/apply write never races the swap. Daemon honors via
+# `update_pause_is_active` (daemon-cycle.sh, daemon-apply.sh); updater toggles via
+# `update_pause_create` / `update_pause_remove`.
 #
-# PURPOSE (writer-serialization, cooperative): while a Glass Atrium update swaps
-# files, it HOLDS this flag; the launchd-live autoagent daemon (AND the
-# daemon-daily-restart-spawned instance) cooperatively SUSPENDS its
-# decision-to-run for as long as the flag is held, so a daemon cycle/apply write
-# can never race the update's file swap. The daemon honors the flag via
-# `update_pause_is_active` at its entry points (daemon-cycle.sh, daemon-apply.sh);
-# the updater creates/removes it via `update_pause_create` / `update_pause_remove`.
-#
-# CANONICAL PATH (FIXED, GA_ROOT-anchored — NEVER a per-invocation temp path):
+# CANONICAL PATH (FIXED, GA_ROOT-anchored — NEVER a per-invocation temp):
 #     ${GA_ROOT}/.update-state/autoagent-pause.flag
-# stated alongside the .apply-lock locking convention. The state dir is resolved
-# by `update_pause_state_dir`; an ATRIUM_PAUSE_STATE_DIR env override exists for
-# tests/sandboxes only (the python honor side — autoagent/lib/autoagent_pause.py —
-# reads the SAME env vars + defaults so updater and daemon coordinate on one path).
+# resolved by `update_pause_state_dir` (ATRIUM_PAUSE_STATE_DIR overrides tests
+# only). The python honor side (autoagent/lib/autoagent_pause.py) reads the SAME
+# env vars + defaults so updater and daemon coordinate on one path.
 #
-# STALE / TTL GUARD (Precondition Loud-Fail — shared-self-improve-hygiene): a
-# trap clears the flag on a normal updater exit, but a CRASHED updater
-# (SIGKILL / OOM / power-loss) leaves it behind with no trap able to fire. So
-# `update_pause_is_active` additionally treats a flag OLDER than a bounded TTL
-# (ATRIUM_PAUSE_TTL_SECS, default 1800s) as crashed-updater residue: it
-# LOUD-FAIL clears the flag and reports NOT-active, so the daemon + daily-restart
-# instance can NEVER freeze indefinitely behind an abandoned flag.
+# STALE / TTL GUARD (Precondition Loud-Fail — shared-self-improve-hygiene): the
+# exit trap clears the flag normally, but a CRASHED updater (SIGKILL / OOM /
+# power-loss) leaves it with no trap able to fire. So `update_pause_is_active`
+# treats a flag older than a bounded TTL (ATRIUM_PAUSE_TTL_SECS, default 1800s) as
+# crashed-updater residue: loud-fail clears it + reports NOT-active, so the daemon
+# can NEVER freeze indefinitely behind an abandoned flag.
 #
-# AGE-CHECK PORTABILITY (binding): the age comparison uses `python3` mtime
-# (os.stat().st_mtime), NEVER the BSD/GNU-divergent `stat -f` / `stat -c` (whose
-# flags differ between macOS and Linux). python3 is already a hard dependency of
-# the daemon (daemon-cycle.sh exits 3 when it is absent).
+# AGE-CHECK PORTABILITY (binding): the comparison uses `python3` mtime, NEVER the
+# BSD/GNU-divergent `stat -f` / `stat -c`. python3 is already a hard daemon
+# dependency (daemon-cycle.sh exits 3 when absent).
 
-# ---------------------------------------------------------------------------
 # Path resolution
-# ---------------------------------------------------------------------------
 
 # Echo the update-state dir holding the pause flag. Precedence:
 #   $1 arg → ATRIUM_PAUSE_STATE_DIR env → ${GA_ROOT:-${HOME}/.glass-atrium}/.update-state
@@ -71,9 +59,7 @@ update_pause_ttl_secs() {
   fi
 }
 
-# ---------------------------------------------------------------------------
 # Age check (python3 mtime — NEVER stat -f / stat -c)
-# ---------------------------------------------------------------------------
 
 # Echo the integer age in seconds (now - mtime) of the flag at $1 via python3
 # os.stat().st_mtime. Loud-fails (rc 1) when the file is absent OR python3
@@ -94,9 +80,7 @@ print(int(age) if age > 0 else 0)
 PY
 }
 
-# ---------------------------------------------------------------------------
 # Updater-side helpers (create / remove)
-# ---------------------------------------------------------------------------
 
 # Create the canonical pause flag atomically (temp + mv). Writes a small payload
 # (pid + unix-second mtime anchor). Echoes the created path. Arg: $1 = optional
@@ -120,9 +104,7 @@ update_pause_remove() {
   rm -f -- "${flag}"
 }
 
-# ---------------------------------------------------------------------------
 # Daemon-side honor predicate
-# ---------------------------------------------------------------------------
 
 # THE honor predicate the daemon entry points call.
 #   rc 0 = a FRESH flag is held → the caller (daemon) MUST SUSPEND this run.

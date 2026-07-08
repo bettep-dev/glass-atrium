@@ -13,31 +13,29 @@
 # sourcing script owns strict mode + the ERR trap.
 #
 # Problem this closes: the ~/.claude per-file symlink facade was created ONCE at
-# install time (lib/ga-core.sh run_symlink_farm) and re-run only by the
-# agent_lifecycle CLI after an agent add/delete — every OTHER new manifest file
-# shipped WITHOUT its mirror until someone hand-linked it (incident #58325:
-# scripts/lib/apply-lock.sh had no mirror and the daemon FATALed). This lib
-# gives the install / update / manifest-regeneration flows ONE shared,
-# probe-guarded way to re-run the farm so a new file can never again ship
+# install (lib/ga-core.sh run_symlink_farm) and re-run only by the agent_lifecycle
+# CLI after an agent add/delete — every OTHER new manifest file shipped WITHOUT its
+# mirror until hand-linked (incident #58325: scripts/lib/apply-lock.sh had no
+# mirror → daemon FATALed). This lib gives install / update / manifest-regen flows
+# ONE shared, probe-guarded way to re-run the farm so a new file never again ships
 # unmirrored.
 #
 # Mechanism REUSE, not reimplementation: the refresh shells out to the CANONICAL
-# sync entrypoint `<ga_root>/glass-atrium agents-only` (run_agents_only ->
-# run_symlink_farm -> swap_symlink), so the scope rule (manifest.files minus
-# is_symlink_excluded), idempotency ("skip (already correct)"), the atomic
-# ln-into-temp + rename per-link swap, the collision / foreign-symlink / real
-# user-file refusals, and the NEVER_TOUCH guards all stay in lib/ga-core.sh — a
-# change to the swap semantics lands in ONE place. Subprocess by design (the
-# agent_lifecycle subproc.py precedent): sourcing ga-core.sh in-process would
-# collide with the caller (readonly GA_ROOT/TARGET_HOME + bare log()/die()).
+# sync entrypoint `<ga_root>/glass-atrium agents-only` (run_agents_only →
+# run_symlink_farm → swap_symlink), so the scope rule, idempotency, the atomic
+# ln-into-temp + rename swap, the collision / foreign-symlink / real-user-file
+# refusals, and the NEVER_TOUCH guards all stay in lib/ga-core.sh — swap semantics
+# change in ONE place. Subprocess by design (agent_lifecycle subproc.py precedent):
+# sourcing ga-core.sh in-process would collide with the caller (readonly
+# GA_ROOT/TARGET_HOME + bare log()/die()).
 #
-# Stale-mirror REMOVAL stays OUT of the automatic path: run_prune is
-# explicit-opt-in by ga-core.sh design (4-criteria guard: symlink + GA-target +
-# broken + not-in-manifest). farm_prune_advisory surfaces a --dry-run report
-# only — flipping opt-in to auto-delete is a separate governance decision.
+# Stale-mirror REMOVAL stays OUT of the automatic path: run_prune is explicit
+# opt-in by ga-core.sh design (4-criteria: symlink + GA-target + broken +
+# not-in-manifest); farm_prune_advisory surfaces a --dry-run report only —
+# auto-delete is a separate governance decision.
 #
 # Sandbox seams (inherited by the launcher subprocess): GA_TARGET_HOME pins the
-# facade home and GA_MANIFEST (farm_refresh $2) pins the scope manifest, so a
+# facade home, GA_MANIFEST (farm_refresh $2) pins the scope manifest, so a
 # hermetic test never touches the real ~/.claude.
 
 # leaf logging (stderr only; mirrors apply-lock.sh's `[apply-lock]` prefix).
@@ -106,14 +104,12 @@ farm_refresh() {
 
 # Write to $3 a {version, files} manifest copying $2 with .files FILTERED to
 # entries whose source exists under GA root $1, WARN-listing each absent one.
-# Update-context guard: a release file the sensitive partition REFUSED to
-# auto-sync (or a rolled-back apply) is listed in the new manifest but missing
-# from the tree — unfiltered, swap_symlink would loud-die "manifest source
-# missing" and hard-fail EVERY update until manual review. Warn+skip is the
-# update contract; the doctor §4 source-presence check still reports the gap.
-# The output is a per-run scratch scope (hashes irrelevant to the farm and
-# dropped), NEVER the persisted root manifest. rc 1 on jq/manifest/write
-# failure (caller loud-fails).
+# Update-context guard: a release file the sensitive partition REFUSED to sync (or
+# a rolled-back apply) is in the new manifest but missing from the tree —
+# unfiltered, swap_symlink would loud-die "manifest source missing" and hard-fail
+# EVERY update until manual review. Warn+skip is the update contract (the doctor §4
+# check still reports the gap). Output is a per-run scratch scope (hashes dropped),
+# NEVER the persisted root manifest. rc 1 on jq/manifest/write failure.
 farm_write_present_manifest() {
   local ga_root="$1" src="$2" out="$3" rel version missing=0 kept=0
   local present_list=""

@@ -1,29 +1,15 @@
 #!/usr/bin/env bats
 # Supervise-lifecycle regression suite for {wiki,autoagent}-daemon-bootstrap.sh
-# + lib/daemon-bootstrap-common.sh — pins the TOCTOU/exit-0 death-family fixes:
-#   * supervise + pre-existing session → ADOPT (monitor loop), never no-op exit 0
-#   * return + pre-existing session    → no-op exit 0 kept (caller owns lifecycle)
-#   * duplicate-create race            → treated as success, inject skipped by the
-#                                        loser, exactly ONE live supervisor
-#   * restart-window lock              → supervise waits while daemon-daily-restart
-#                                        holds the lock, then adopts; a dead-holder
-#                                        (stale) lock is ignored
-#   * transient session vanish         → a session that appears then vanishes while
-#                                        the lock holder lives re-enters the wait;
-#                                        create deferred until lock release
-#   * monitor exit 3                   → supervisor lock released for the respawn
-#
-# Run via: bats scripts/test/daemon-bootstrap-supervise.bats
-# Requires: bats >= 1.5.0 (brew install bats-core), bash 3.2+
-#
-# Hermetic strategy (mirrors the retired daemon-bootstrap-2mode.bats, recovered
-# from git history): copy the live wrapper + lib/ into a sandbox so SCRIPT_DIR
-# resolves the stub inject sibling; stub the PATH binaries
-# (tmux/claude/curl/bun/lsof/pgrep); DAEMON_LOCK_DIR points into the sandbox so
-# no production /tmp lock is touched. The tmux stub keys has-session on a marker
-# file, plus a one-shot transient marker (consumed on first probe) that simulates
-# a half-created session visible for exactly one has-session call; new-session
-# behavior is selected per test via TMUX_NEW_SESSION_MODE (ok | raced | atomic).
+# + lib/daemon-bootstrap-common.sh — pins the TOCTOU/exit-0 death-family fixes
+# (adopt-vs-no-op, duplicate-create race, restart-window lock, transient session
+# vanish, monitor exit 3); each contract is detailed at its section below.
+# Hermetic: copy the live wrapper + shared libs into a sandbox so SCRIPT_DIR
+# resolves the stub inject sibling; stub the PATH binaries (tmux/claude/curl/bun/
+# lsof/pgrep); DAEMON_LOCK_DIR points into the sandbox so no production lock is
+# touched. The tmux stub keys has-session on a marker file, plus a one-shot
+# transient marker (consumed on first probe) simulating a half-created session
+# visible for exactly one has-session call; new-session behavior is selected per
+# test via TMUX_NEW_SESSION_MODE (ok | raced | atomic).
 
 bats_require_minimum_version 1.5.0
 
@@ -157,10 +143,8 @@ wait_for_log() {
   return 1
 }
 
-# ---------------------------------------------------------------------------
 # Adopt-and-supervise: pre-existing session must never produce a clean exit 0
 # in supervise mode (the unsupervised-session death under SuccessfulExit=false).
-# ---------------------------------------------------------------------------
 
 @test "supervise + pre-existing session: adopts (monitor loop), no recreate, no no-op exit" {
   : >"${SESSION_MARKER}"
@@ -189,10 +173,8 @@ wait_for_log() {
   [[ "${output}" != *"entering self-health monitoring loop"* ]]
 }
 
-# ---------------------------------------------------------------------------
 # Duplicate-create TOCTOU: the loser treats the racer's session as success,
 # never injects (the winner owns it), and still supervises in supervise mode.
-# ---------------------------------------------------------------------------
 
 @test "duplicate-create race (supervise loser): adopts winner's session, skips inject" {
   local s pid
@@ -249,10 +231,8 @@ wait_for_log() {
   [[ "$(wc -l <"${INJECT_CALLS}" | tr -d ' ')" -eq 1 ]]
 }
 
-# ---------------------------------------------------------------------------
 # Restart-window lock honor (supervise) — wait while held by a live holder,
 # adopt once the session reappears; ignore a stale (dead-holder) lock.
-# ---------------------------------------------------------------------------
 
 @test "restart-window lock: supervise waits, then adopts the recreated session" {
   local s pid
@@ -307,10 +287,8 @@ wait_for_log() {
   kill -0 "${pid}"
 }
 
-# ---------------------------------------------------------------------------
 # Monitor tick: missing session still exits 3 (launchd respawn) AND the EXIT
 # trap releases the supervisor lock so the respawned instance can acquire it.
-# ---------------------------------------------------------------------------
 
 @test "monitor loop: missing session → exit 3, supervisor lock released" {
   : >"${SESSION_MARKER}"
@@ -326,11 +304,9 @@ wait_for_log() {
   grep -qF "missing — exit 3 (launchd respawn)" "${TMPROOT}/boot.log"
 }
 
-# ---------------------------------------------------------------------------
 # Config externalization (T21): [ports].wiki_fakechat overrides the bind port
 # end-to-end (create log + tmux session env); an invalid configured port
 # loud-fails before any session work.
-# ---------------------------------------------------------------------------
 
 @test "config override: [ports].wiki_fakechat honored through create + tmux env" {
   local s pid

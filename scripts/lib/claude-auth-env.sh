@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # claude-auth-env.sh — source the 0600 headless-auth secrets file so a
 # launchd-spawned `claude` inherits CLAUDE_CODE_OAUTH_TOKEN and bypasses the
-# GUI-session macOS Keychain OAuth item (which a non-GUI launchd session cannot
-# use — it returns 401). Sourced, not executable; no side effects beyond the
-# export. Rendered by render-claude-auth.sh.
-#
-# Call `claude_auth_load_env` BEFORE any `claude` invocation. Absent file →
-# loud WARN + return 0 (the daemon falls back to the keychain, current behavior);
-# never crash on absence — provisioning is the user running the install CLI.
+# GUI-session macOS Keychain OAuth item (unusable from a non-GUI launchd session
+# → 401). Sourced, not executable; no side effects beyond the export. Rendered by
+# render-claude-auth.sh. Call `claude_auth_load_env` BEFORE any `claude` call;
+# absent file → loud WARN + return 0 (keychain fallback), never crash.
 
 # Resolve the secrets file the same way render-claude-auth.sh writes it
 # (GA_ROOT-anchored), so the read path and the write path agree on ONE location.

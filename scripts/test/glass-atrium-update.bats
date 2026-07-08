@@ -1,30 +1,21 @@
 #!/usr/bin/env bats
 # glass-atrium-update suite — pins the E3 T09 update-skill adapter contract:
-#   * resolution helpers      — GA_ROOT / reports-dir / .apply-lock / release slug
-#   * .apply-lock serialize    — a mid-apply daemon is signalled by .apply-lock
-#                               CONTENTION (the retired update_head_is_wip /
-#                               [WIP-AUTO]-HEAD detector is gone): a stale/dead lock
-#                               is reclaimed, a live one blocks
-#   * update_partition_sensitive — clean vs sensitive split, fail-CLOSED on error
-#   * update_serialize_begin / update_cleanup — pause flag set + lock acquired,
-#                               lock contention loud-fails, stale lock reclaimed,
-#                               trap unwinds both
-#   * end-to-end run via the ATRIUM_UPDATE_SRC_DIR test seam — verify → confirm →
-#     deterministic non-agent sync → baseline; decline writes nothing
-#   * boundary asserts        — NOT a merge engine (agent md excluded), NEVER
-#                               writes core.autoagent_proposals
-#
-# Run via: bats scripts/test/glass-atrium-update.bats
-# Requires: bats >= 1.5.0, jq, python3, diff, shasum/sha256sum
-# (git deliberately NOT required — the flow under test is git-free end to end,
-# and this suite must prove it runs on a git-less no-.git consumer host.)
-#
-# Hermetic strategy: every test runs inside a per-test mktemp sandbox with
-# GA_ROOT / AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR
-# redirected into it. The libs are sourced from the REAL install (the sandbox GA_ROOT
-# only holds the test's fixture tree, not the libs), so the skill resolves its libs
-# via a separate REAL_LIB_ROOT. Confirmation is injected via ATRIUM_UPDATE_CONFIRM_ANSWER
-# and the download is bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched.
+# resolution helpers (GA_ROOT / reports-dir / .apply-lock / release slug); .apply-lock
+# serialize — a mid-apply daemon is signalled by .apply-lock CONTENTION (the retired
+# update_head_is_wip / [WIP-AUTO]-HEAD detector is gone): a stale/dead lock is
+# reclaimed, a live one blocks; update_partition_sensitive — clean vs sensitive split,
+# fail-CLOSED on error; update_serialize_begin / update_cleanup — pause flag set + lock
+# acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
+# run via the ATRIUM_UPDATE_SRC_DIR seam (verify → confirm → deterministic non-agent
+# sync → baseline; decline writes nothing); boundary asserts — NOT a merge engine
+# (agent md excluded), NEVER writes core.autoagent_proposals.
+# git is deliberately NOT required — the flow is git-free end to end, proving it runs
+# on a git-less no-.git consumer host.
+# Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
+# AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
+# into it; libs are sourced from the REAL install (REAL_LIB_ROOT). Confirmation
+# injected via ATRIUM_UPDATE_CONFIRM_ANSWER, download bypassed via ATRIUM_UPDATE_SRC_DIR
+# — /dev/tty and gh are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -111,7 +102,7 @@ load_skill() {
   source "${REAL_LIB_ROOT}/scripts/lib/apply-lock.sh"
 }
 
-# --- resolution helpers ----------------------------------------------------
+# resolution helpers
 
 @test "resolution helpers anchor on GA_ROOT and the daemon reports dir" {
   run bash -c '
@@ -134,7 +125,7 @@ load_skill() {
   [[ "$output" == "owner/repo" ]]
 }
 
-# --- sensitive partition (fail-closed) -------------------------------------
+# sensitive partition (fail-closed)
 
 @test "update_partition_sensitive splits clean vs sensitive, fail-closed" {
   # Exercises the T09 partition MECHANISM (does it route each path to the right
@@ -177,7 +168,7 @@ load_skill() {
   [[ "$output" == *"SENS:"*"plist"* ]]
 }
 
-# --- serialize begin + cleanup unwind --------------------------------------
+# serialize begin + cleanup unwind
 
 @test "serialize_begin sets the pause flag + acquires the lock; cleanup unwinds both" {
   run bash -c '
@@ -238,7 +229,7 @@ load_skill() {
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]] # cleanup released the reclaimed lock
 }
 
-# --- end-to-end apply via the test seam ------------------------------------
+# end-to-end apply via the test seam
 
 @test "full run applies a non-agent change on confirm and captures a baseline" {
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
@@ -346,17 +337,15 @@ load_skill() {
   [[ "$(cat "${INSTALL}/agents/foo.md")" == "new agent" ]]
 }
 
-# --- post-apply hook-binding reconciliation (wire-hooks) ------------------
+# post-apply hook-binding reconciliation (wire-hooks)
 #
-# ROOT FIX: update_run applied the new FILES + refreshed the ~/.claude mirror
-# farm but never ran wire_hooks, so a release that added/changed a hook binding
-# left settings.json pinned to the OLD binding set (the new hook shipped DORMANT
-# until the next full install). update_run now shells out to the canonical
-# `glass-atrium wire-hooks` subcommand AFTER the verified apply + farm refresh —
-# the SAME idempotent, timestamped-backup MERGE install uses. These tests pin (1)
-# the post-apply invocation + install-parity ordering, (2) the loud-fail exit 12
-# contract with NO rollback of the applied files, and (3) the real end-to-end
-# merge: a settings.json missing the bindings gains them through the update path.
+# ROOT FIX: update_run applied the new FILES + refreshed the ~/.claude farm but never
+# ran wire_hooks, so a release adding/changing a hook binding left settings.json on the
+# OLD set (the new hook shipped DORMANT until the next full install). update_run now
+# shells out to `glass-atrium wire-hooks` AFTER the verified apply + farm refresh (the
+# SAME idempotent timestamped-backup MERGE install uses). Tests pin (1) post-apply
+# invocation + install-parity ordering, (2) loud-fail exit 12 with NO rollback of the
+# applied files, (3) end-to-end: a settings.json missing the bindings gains them.
 
 # Install a stub glass-atrium launcher at <root> that appends each invocation's
 # argv (one line per call) to <calls> and exits 0 — lets a full update_run prove
@@ -472,7 +461,7 @@ STUB
   [[ "$output" -ge 1 ]]
 }
 
-# --- roster-migration gate (T20 / gate G8) --------------------------------
+# roster-migration gate (T20 / gate G8)
 
 # Seed a minimal agent-registry.json at $1 listing the agent keys $2.. so the
 # roster comparison has a registry signal alongside the file-set signal.
@@ -753,14 +742,13 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   done <<<"${output}"
 }
 
-# --- agent EDITABLE-region merge (E4 / T19) --------------------------------
+# agent EDITABLE-region merge (E4 / T19)
 #
-# These pin the LIVE merge integration: each changed agents/<name>.md flows
-# through editable_merge `plan` → the SAME T12 confirm gate → git_txn_apply. The
-# transaction is git-FREE (before-image copy → apply → verify → atomic restore on
-# fail; no git repo, no rev-parse — proven by autoagent/test/git-txn-gitfree.bats),
-# so these fixtures run in a plain NON-git INSTALL sandbox and the merge PROCEEDS
-# and applies whether or not a .git repo is present (no git_init needed).
+# These pin the LIVE merge integration: each changed agents/<name>.md flows through
+# editable_merge `plan` → the SAME T12 confirm gate → git_txn_apply. The transaction is
+# git-FREE (before-image copy → apply → verify → atomic restore on fail; no git repo, no
+# rev-parse — proven by autoagent/test/git-txn-gitfree.bats), so these fixtures run in a
+# NON-git INSTALL sandbox and the merge PROCEEDS whether or not a .git repo is present.
 
 # Seed the base@install body for agents/<name>.md into the base-content store
 # (basename-keyed at <state>/base-agents/<name>.md) — the provenance the resolver
@@ -966,7 +954,7 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
 }
 
-# --- P3-T2: headless / web-triggered orchestration ------------------------------
+# P3-T2: headless / web-triggered orchestration
 #
 # These pin the P3 headless layer added ON TOP of the E3 interactive flow:
 #   * core.update_job DB status tracking (in-progress → heartbeat → completed/failed)

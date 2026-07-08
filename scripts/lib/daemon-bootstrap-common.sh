@@ -210,10 +210,9 @@ daemon_bootstrap_create_session() {
 }
 
 # HTTP readiness probe loop (step 5 prelude). Probes GET / up to
-# HTTP_READY_MAX_ATTEMPTS times. Sets the module global http_ready to "true" when
-# ready, "false" otherwise so the caller can branch (the defer path). A global
-# rather than a stdout echo because log() writes to stdout — a command-
-# substitution capture would otherwise swallow the log lines into the value.
+# HTTP_READY_MAX_ATTEMPTS times; sets the module global http_ready true/false so
+# the caller branches (defer path). A global, not a stdout echo, because log()
+# writes to stdout — a command-substitution capture would swallow the log lines.
 # -fsS = fail on HTTP >= 400 + silent + still show errors. Mirrors the
 # daemon-inject-entry.sh liveness contract.
 http_ready=false
@@ -234,13 +233,12 @@ daemon_bootstrap_wait_http_ready() {
   done
 }
 
-# Step 5: invoke the entry injection and classify its rc. Captures the inject
-# exit code (0=ok / 2=quota wall / other=fail) into the global inject_exit so the
-# step-6 mode gate can forward it as the bootstrap rc in return mode. set -e is
-# suppressed inside `if`, but we want the raw code, so use a plain invocation +
-# $?. On rc=2 the quota marker is written only when WRITE_QUOTA_MARKER=true
-# (autoagent: daemon-daily-restart consumes the marker; wiki's scheme is
-# decoupled, so wiki writes none and rc=2 stays diagnostic).
+# Step 5: invoke the entry injection and classify its rc. Captures the inject exit
+# code (0=ok / 2=quota wall / other=fail) into the global inject_exit so the step-6
+# mode gate forwards it as the bootstrap rc in return mode. set -e is suppressed
+# inside `if`, but we want the raw code, so use a plain invocation + $?. On rc=2 the
+# quota marker is written only when WRITE_QUOTA_MARKER=true (autoagent consumes it;
+# wiki is decoupled, writes none, rc=2 stays diagnostic).
 daemon_bootstrap_inject() {
   local inject_script="${SCRIPT_DIR}/daemon-inject-entry.sh"
   log "invoking entry injection: ${inject_script} ${ROLE}"
@@ -274,14 +272,13 @@ daemon_bootstrap_inject() {
 }
 
 # Bounded wait while daemon-daily-restart's kill→recreate window is open (live
-# holder on DAEMON_RESTART_LOCK). Returns when the lock is free/stale, when the
-# session appears (caller re-checks + adopts), or when the patience cap expires.
-# restart_lock_outcome (free | session | expired) tells the caller WHY: a
-# "session" return can be transient — daemon-daily-restart's retry loop kills a
-# half-created session before each retry — and the caller must re-enter rather
-# than fall through to reclaim+create against the live window. The wait budget
-# is module-global so re-entries share ONE RESTART_LOCK_WAIT_SEC cap (bounds
-# the whole bootstrap, not each entry — no unbounded spin).
+# holder on DAEMON_RESTART_LOCK). Returns when the lock is free/stale, the session
+# appears (caller re-checks + adopts), or the patience cap expires.
+# restart_lock_outcome (free | session | expired) tells the caller WHY: a "session"
+# return can be transient — the retry loop kills a half-created session before each
+# retry — so the caller must re-enter rather than reclaim+create against the live
+# window. The wait budget is module-global so re-entries share ONE
+# RESTART_LOCK_WAIT_SEC cap (bounds the whole bootstrap — no unbounded spin).
 restart_lock_outcome=""
 restart_lock_waited=0
 daemon_bootstrap_wait_restart_lock() {

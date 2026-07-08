@@ -1,13 +1,9 @@
 #!/usr/bin/env bats
 # atrium-config.sh unit suite — pins the shared config.toml accessor contract:
-#   * defaults when the config file or key is absent (fresh-clone safety)
-#   * table-scoped extraction (same key in another section never collides)
-#   * quote + trailing-comment stripping
-#   * port guard — non-integer / out-of-range configured value → rc 1 (loud)
-#   * ATRIUM_CONFIG_TOML override selects the config file
-#   * atrium_ere_escape — metachar value embeds literally under grep -E
-#
-# Run via: bats scripts/test/atrium-config.bats
+# fresh-clone default safety (missing file/key → default), table-scoped extraction
+# (same key in another section never collides), quote + trailing-comment stripping,
+# port guard (non-integer / out-of-range → rc 1 loud), ATRIUM_CONFIG_TOML override,
+# atrium_ere_escape (metachar value embeds literally under grep -E).
 # Hermetic: fixtures live under mktemp WORK; the lib is sourced read-only.
 
 bats_require_minimum_version 1.5.0
@@ -99,7 +95,7 @@ lib_call() {
   [[ "${status}" -eq 0 ]]
 }
 
-# --- atrium_monitor_port resolver (ADR-1 precedence chain, AC-S1.1) ---------
+# atrium_monitor_port resolver (ADR-1 precedence chain, AC-S1.1)
 
 # Runs atrium_monitor_port in a fresh bash with the resolver inputs pinned.
 # Args: $1 = ATRIUM_MONITOR_ENV path · $2 = ATRIUM_CONFIG_TOML path.

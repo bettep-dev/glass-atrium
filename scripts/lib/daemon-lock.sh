@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# SC2154: ROLE is defined by the sourcing script (daemon-daily-restart.sh, or a
-# bootstrap wrapper per the daemon-bootstrap-common.sh wrapper contract) — a
-# sourced lib cannot see the assignment, so the unassigned-reference warning is
-# a structural false positive. SC2034 is its mirror image: the lock paths and
-# result globals are consumed by the sourcing scripts, not inside this lib.
+# SC2154: ROLE is set by the sourcing script (daemon-daily-restart.sh or a
+# bootstrap wrapper) — a sourced lib cannot see the assignment, a structural false
+# positive. SC2034 mirror: the lock paths + result globals are consumed by the
+# sourcing scripts, not this lib.
 # shellcheck disable=SC2154,SC2034
 #
 # daemon-lock.sh — symlink pid-lock helpers shared by daemon-daily-restart.sh
-# (holds the restart-window lock across kill→recreate) and
-# daemon-bootstrap-common.sh (supervisor lock + restart-window honor). Sourced,
-# not executable; both sourcing scripts define ROLE before sourcing.
+# (restart-window lock across kill→recreate) and daemon-bootstrap-common.sh
+# (supervisor lock + restart-window honor). Sourced, not executable; both define
+# ROLE before sourcing.
 #
 # Primitive: `ln -s <pid> <lock>` — symlink creation is atomic AND carries the
-# holder pid as the link target, so there is no mkdir+pidfile two-step window in
-# which a racer reads an empty lock. A SIGKILLed holder leaves a stale link;
-# acquire reclaims it after a liveness probe (kill -0) on the recorded pid.
-# Helpers report state via globals (daemon_lock_holder / daemon_lock_acquired),
-# not exit codes, so set -e / ERR-trap callers can invoke them plainly.
+# holder pid as the target, so there is no mkdir+pidfile two-step window where a
+# racer reads an empty lock. A SIGKILLed holder leaves a stale link; acquire
+# reclaims it after a liveness probe (kill -0) on the recorded pid. Helpers report
+# state via globals (daemon_lock_holder / daemon_lock_acquired), not exit codes,
+# so set -e / ERR-trap callers invoke them plainly.
 
 # Env-overridable for hermetic tests only; production callers share the /tmp
 # default — both sourcing scripts MUST resolve identical lock paths.

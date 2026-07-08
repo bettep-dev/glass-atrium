@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
-# sensitive-refusal.sh — the update skill's shared sensitive-file refusal gate
-# (plan E3 / design C, task T15 / gate G7). Pure, sourced library: function
-# definitions ONLY, no top-level side effects, no executable entry point — the
-# same convention as scripts/lib/apply-spine.sh, apply-gate.sh, atrium-config.sh.
+# sensitive-refusal.sh — the update skill's shared sensitive-file refusal gate.
+# Pure sourced library: function defs only, no side effects (same convention as
+# apply-spine.sh / apply-gate.sh / atrium-config.sh); strict mode is the CALLER's
+# responsibility (a sourced lib must not mutate caller shell options).
 #
-# IMPORTANT — strict mode is the CALLER's responsibility (sourced-lib convention)
-# This file deliberately does NOT run `set -Eeuo pipefail`: a sourced file must
-# not mutate the caller's shell options. Every function here is written to be
-# SAFE under a caller that has already set `set -Eeuo pipefail` + `IFS=$'\n\t'`.
-# The bats suite sources this lib under full strict mode to prove that.
-#
-# Role (T15 / gate G7): the skill MUST refuse to sync a sensitive harness file
-# (GLOBAL_RULES, the security scope rules, a credential file, a launchd plist) or
-# a diff body carrying an irreversible/external-effect command. The refusal set
-# is the COMPILED regex tuples in autoagent/daemon_cycle.py — the SINGLE source.
-# The skill consults that set ONLY by shelling out to the python helper
-# autoagent/lib/sensitive_patterns.py, which IMPORTS the compiled tuples. A
-# shell-ERE data file is deliberately NOT used: a shell-regex dialect would
-# silently diverge from Python's `re` (forbidden re-implementation), so the
-# daemon and the skill provably refuse the SAME set.
+# Role (gate G7): the skill MUST refuse to sync a sensitive harness file
+# (GLOBAL_RULES, security scope rules, a credential file, a launchd plist) or a
+# diff body carrying an irreversible/external-effect command. CRITICAL: the
+# refusal set is the COMPILED regex tuples in autoagent/daemon_cycle.py — the
+# SINGLE source; the skill consults it ONLY by shelling out to the python helper
+# autoagent/lib/sensitive_patterns.py (which imports those tuples). A shell-ERE
+# data file is deliberately NOT used — a shell-regex dialect would silently
+# diverge from Python `re` (forbidden re-implementation), so daemon and skill
+# provably refuse the SAME set.
 #
 # Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): a
-# missing python3, a missing helper, or an unreachable compiled source returns
-# non-zero with an explicit stderr line — never a silent skip (which would let a
-# sensitive file slip through unchecked).
+# missing python3, missing helper, or unreachable compiled source returns
+# non-zero + stderr — never a silent skip (which would let a sensitive file slip
+# through unchecked).
 #
 # Helper exit-code contract (mirrored from sensitive_patterns.py):
 #   0  CLEAN      — not sensitive, safe to proceed
@@ -31,8 +25,8 @@
 #   2  USAGE      — bad invocation
 #   4  ENV        — compiled source unreachable
 
-# Resolve the python helper path. Honors GA_ROOT (test/non-default install seam),
-# falling back to ${HOME}/.glass-atrium — the same precedence as atrium-config.sh.
+# Resolve the python helper path. Honors GA_ROOT (test seam), falling back to
+# ${HOME}/.glass-atrium — same precedence as atrium-config.sh.
 sensitive_helper_path() {
   printf '%s\n' \
     "${ATRIUM_SENSITIVE_HELPER:-${GA_ROOT:-${HOME}/.glass-atrium}/autoagent/lib/sensitive_patterns.py}"
@@ -61,10 +55,9 @@ sensitive_preflight() {
   return 0
 }
 
-# Shared invocation: preflight, resolve the interpreter + helper, then run the
-# helper in the requested mode. Args: $1 = helper mode (path|diff) · $2 = subject
-# (a path, or '-' for stdin). Propagates the helper's exit-code contract verbatim
-# (0 CLEAN · 3 SENSITIVE · 2 USAGE), or rc 4 (ENV) on a preflight failure.
+# Shared invocation: preflight, then run the helper in the requested mode. Args:
+# $1 = mode (path|diff) · $2 = subject (path, or '-' for stdin). Propagates the
+# helper's rc verbatim (0 CLEAN · 3 SENSITIVE · 2 USAGE), or rc 4 (ENV) on preflight fail.
 sensitive_invoke() {
   local mode="$1" subject="$2" py helper
   sensitive_preflight || return 4

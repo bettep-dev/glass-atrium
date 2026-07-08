@@ -15,9 +15,8 @@
 # Design decisions:
 #   * Idempotent: re-running is a no-op if nothing changed.
 #   * O(delta): only changed files write to DB (mtime comparison).
-#   * Python does the frontmatter parsing + DB I/O in one process for speed
-#     (avoids per-file sqlite3 fork overhead; macOS sqlite3 supports stdin
-#      but a single Python process is cleaner for UPSERT + param binding).
+#   * Python does frontmatter parse + DB I/O in one process (avoids per-file
+#     sqlite3 fork overhead; cleaner for UPSERT + param binding).
 #   * master-index.md is written atomically via temp + mv.
 #
 # Usage:
@@ -27,16 +26,12 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# wiki SQLite writes (notes/dirty_flag/FTS5) are PRESERVED because wiki-query.sh
-# BM25 still depends on them. The dual-write blocks below mirror SQLite ops to
-# PG (wiki.notes + wiki.dirty_flag) and remain active. The
-# master-index.md write at regenerate_master_index() is the wikilink-format
-# browse index (LLM-only store, no Obsidian app), not a data sink — also
-# preserved.
-# WIKI_ROOT: single source of truth for the wiki data root. Default = the
-# glass-atrium store. WIKI_BASE is preserved as the alias the inner python
-# heredoc env block reads (export WIKI_BASE below) — no python edits required,
-# only the bash resolver.
+# SQLite writes (notes/dirty_flag/FTS5) are PRESERVED — wiki-query.sh BM25 depends
+# on them; the dual-write blocks below mirror SQLite ops to PG and stay active. The
+# master-index.md write (regenerate_master_index) is the wikilink browse index
+# (LLM-only, no Obsidian app), not a data sink — also preserved.
+# WIKI_ROOT: single source of truth for the wiki data root (default = glass-atrium
+# store). WIKI_BASE is the alias the inner python heredoc reads (export below).
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 readonly WIKI_ROOT
 readonly WIKI_BASE="${WIKI_ROOT}"

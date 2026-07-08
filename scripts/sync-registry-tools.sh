@@ -2,47 +2,31 @@
 # sync-registry-tools.sh — propagate `tools:` from agent .md frontmatter to agent-registry.json
 # Usage: sync-registry-tools.sh [--dry-run]
 #
-# Purpose:
-#   Mirror each agent's authoritative frontmatter `tools:` array (in
-#   ~/.claude/agents/<name>.md) into the matching entry under the `agents` dict of
-#   ~/.claude/agent-registry.json. The orchestrator-role.md Decision-phase
-#   Capability Probe reads `frontmatter tools:` at delegation time, but the
-#   registry mirror is consumed by tooling that prefers the JSON form (avoids
-#   re-parsing 23 markdown files). Drift between the two surfaces breaks the
-#   probe contract for any consumer that picks the JSON path.
+# Mirror each agent's authoritative frontmatter `tools:` array (~/.claude/agents/<name>.md)
+# into the matching `agents` entry of ~/.claude/agent-registry.json. The
+# orchestrator-role.md Decision-phase Capability Probe reads frontmatter `tools:` at
+# delegation time, but tooling that prefers the JSON form consumes this mirror
+# (avoids re-parsing 23 markdown files); drift between the two breaks the probe.
 #
-# When to re-run:
-#   1. After editing any agent's frontmatter `tools:` array.
-#   2. After adding/removing an agent (.md file).
-#   3. As a periodic drift check (`--dry-run` then inspect diff).
+# Re-run after editing any `tools:` array, adding/removing an agent, or as a
+# periodic drift check (`--dry-run` then inspect diff).
 #
-# Key-order preservation:
-#   `tools` is inserted at index 1 (between `domains` and `phase`) to match the
-#   convention already established by the `design-designer` entry. JSON output uses
-#   2-space indent + trailing newline + ensure_ascii=false to match existing
-#   formatting (verified against current file: 402 lines, 2-space indent).
+# Key-order: `tools` inserted at index 1 (between `domains` and `phase`) to match
+# the `design-designer` entry. JSON output = 2-space indent + trailing newline +
+# ensure_ascii=false to match existing formatting.
 #
-# Source-of-truth policy:
-#   Agent .md frontmatter is the SoT. On mismatch with the registry, the .md
-#   value overwrites — the script does NOT touch any .md file.
+# SoT: agent frontmatter is authoritative — on mismatch the frontmatter value
+# overwrites the registry; the script NEVER writes any agent file.
 #
-# Reporting:
-#   stdout single line:  synced=N updated=N skipped=N orphans=N missing=N
-#     synced   = entries already matching .md (no-op)
-#     updated  = entries written with new/changed tools value
-#     skipped  = active .md files lacking a `tools:` field (reported by name)
-#     orphans  = registry entries with no matching .md file (reported, NOT removed)
-#     missing  = active .md files with no registry entry (reported, NOT added)
+# Reporting (stdout one line): synced=N updated=N skipped=N orphans=N missing=N —
+#   synced=already matching · updated=written · skipped=active file lacking `tools:` ·
+#   orphans=registry entry with no file (reported, NOT removed) · missing=active file
+#   with no registry entry (reported, NOT added).
 #
-# Exit codes:
-#   0 = success (zero or more updates applied)
-#   1 = JSON parse / write error (registry malformed or unwritable)
-#   2 = frontmatter parse error on at least one .md file
+# Exit codes: 0=success · 1=JSON parse/write error · 2=frontmatter parse error.
 #
-# Idempotency:
-#   Re-running on a clean tree must produce `updated=0` and zero file changes.
-#   The script computes the post-merge JSON in memory and compares against the
-#   on-disk bytes — write skipped when identical.
+# Idempotency: re-run on a clean tree yields `updated=0` + zero file changes
+# (post-merge JSON computed in memory, compared to on-disk bytes, write skipped if equal).
 set -Eeuo pipefail
 IFS=$'\n\t'
 

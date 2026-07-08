@@ -2,26 +2,22 @@
 # llm-preflight.sh — LLM API availability preflight check / cost advisor
 #
 # Two modes:
-#   1. Sourced (legacy):   source ~/.glass-atrium/scripts/llm-preflight.sh
-#                          REASON=$(llm_preflight 10.00) || { echo "Preflight failed: $REASON"; exit 1; }
-#      → Performs daily cost gate + 30s LLM ping; returns non-zero on failure.
+#   1. Sourced (legacy): `REASON=$(llm_preflight 10.00) || exit 1` — daily cost gate +
+#      30s LLM ping; returns non-zero on failure.
+#   2. Standalone (new): `bash llm-preflight.sh [budget]` — emits one advisory line
+#      (`[llm-preflight] cost_today=$1.23 budget=$10.00 status=OK`), always exits 0
+#      (never blocks), skips the costly LLM ping.
 #
-#   2. Standalone (new):   bash ~/.glass-atrium/scripts/llm-preflight.sh [budget]
-#      → Emits a single-line advisory like:
-#          [llm-preflight] cost_today=$1.23 budget=$10.00 status=OK
-#        Always exits 0 (advisory only — never blocks). Skips the costly LLM ping.
+# NOTE: standalone mode is for cron-driven cost visibility. MUST NOT wire into
+# SessionStart (30s ping per session is too expensive).
 #
-# NOTE: standalone mode is intended for cron-driven cost visibility.
-# It MUST NOT be wired into SessionStart (per audit plan: 30s ping per session is too expensive).
-#
-# COST SOURCE: the daily-cost figure comes from PG core.cost_events (event_date =
-# current_date), the live single sink. See _llm_preflight_today_cost.
+# COST SOURCE: PG core.cost_events (event_date = current_date), the live single sink.
 
 PREFLIGHT_CLAUDE="${AUTOAGENT_CLAUDE_BIN:-claude}"
 
-# Resolve the haiku model id from the daemon-config.json SoT — prevents dated-pin drift.
-# jq missing / file missing / key missing → fall back to the alias literal claude-haiku-4-5 (same policy as daemon_config.py).
-# Resolved once for both sourced and direct-execution paths (ping happens only in Check B).
+# Resolve the haiku model id from daemon-config.json (SoT) to avoid dated-pin drift;
+# jq/file/key missing → fall back to the alias literal claude-haiku-4-5 (matches
+# daemon_config.py). Resolved once for both paths (ping happens only in Check B).
 PREFLIGHT_DAEMON_CONFIG="${HOME}/.claude/data/daemon-config.json"
 PREFLIGHT_HAIKU_MODEL="claude-haiku-4-5"
 if command -v jq >/dev/null 2>&1 && [[ -f "${PREFLIGHT_DAEMON_CONFIG}" ]]; then
@@ -29,18 +25,13 @@ if command -v jq >/dev/null 2>&1 && [[ -f "${PREFLIGHT_DAEMON_CONFIG}" ]]; then
   [[ -n "${_preflight_cfg_model}" ]] && PREFLIGHT_HAIKU_MODEL="${_preflight_cfg_model}"
 fi
 
-# Compute today's accumulated cost from PG core.cost_events (the live single
-# sink). Echoes a "%.2f" formatted USD figure on stdout:
-# SUM(cost_usd) WHERE event_date = current_date.
-#
-# fail-open: DB unreachable / psycopg absent / query error → echo 0.00. To keep a
-# dead gate VISIBLE, a live-read failure also emits a one-line stderr advisory —
-# the threshold gate still passes on a DB hiccup, but the unreachable cost source
-# is no longer silent.
-#
-# psycopg Unix-socket only (never -h/-p), connect double-capped (connect 1s +
-# statement 1500ms) — mirrors advisory-spawn-cost.sh. STUBBABLE for Bats:
-# LLM_PREFLIGHT_TEST_COST bypasses the live PG read entirely.
+# Compute today's accumulated cost from PG core.cost_events (live single sink):
+# SUM(cost_usd) WHERE event_date = current_date, echoed as "%.2f" USD on stdout.
+# fail-open: DB unreachable / psycopg absent / query error → echo 0.00, BUT also
+# emit a one-line stderr advisory so the dead gate stays VISIBLE (the threshold
+# still passes on a DB hiccup, the unreachable source is not silent).
+# psycopg Unix-socket only (never -h/-p), double-capped (connect 1s + statement
+# 1500ms); STUBBABLE for Bats via LLM_PREFLIGHT_TEST_COST (bypasses the live read).
 _llm_preflight_today_cost() {
   if [[ -n "${LLM_PREFLIGHT_TEST_COST:-}" ]]; then
     printf '%.2f\n' "${LLM_PREFLIGHT_TEST_COST}"

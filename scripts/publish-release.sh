@@ -2,25 +2,22 @@
 # publish-release.sh — Glass Atrium release publishing helper (GitHub Releases).
 #
 # SCAFFOLD (E1/T04). Transport = GitHub Releases assets: each release carries
-# manifest.json (version + per-file SHA-256) plus a hashed file bundle, consumed
-# by the update skill over HTTPS — integrity is verified per-file against the
-# manifest hashes, never raw `main`, no git remote required on the CONSUMER.
+# manifest.json (version + per-file SHA-256) + a hashed bundle, consumed by the
+# update skill over HTTPS — integrity verified per-file against manifest hashes,
+# never raw `main`, no git remote on the CONSUMER.
 #
 # This helper NEVER creates a git remote and NEVER pushes a tag. `build` only
-# stages assets; `publish` only uploads them to an ALREADY-EXISTING remote via
-# `gh release create`. The default `publish` run is a DRY RUN that prints the
-# exact command (creates nothing) — actual upload needs --execute.
+# stages assets; `publish` only uploads to an ALREADY-EXISTING remote via
+# `gh release create`. Default `publish` is a DRY RUN (prints the exact command,
+# creates nothing) — actual upload needs --execute.
 #
-#   ┌─ TODO (PENDING USER STEP — the GitHub repo URL is not known yet) ────────┐
-#   │ The release repo is UNCONFIGURED. Before the first real release the user  │
-#   │ must, OUTSIDE this script:                                                │
-#   │   1. create the GitHub repo,                                             │
-#   │   2. `git remote add origin <url>` in ~/.glass-atrium,                    │
-#   │   3. set the slug: ATRIUM_RELEASE_REPO=<owner/repo> (or [release].repo    │
-#   │      in config.toml),                                                     │
-#   │   4. create + push the first tag `v<manifest.version>`.                   │
-#   │ Until the slug is set, `publish` loud-fails (exit 5) and uploads nothing. │
-#   └──────────────────────────────────────────────────────────────────────────┘
+# TODO (PENDING USER STEP — GitHub repo URL not known yet): the release repo is
+# UNCONFIGURED. Before the first real release the user must, OUTSIDE this script:
+#   1. create the GitHub repo,
+#   2. `git remote add origin <url>` in ~/.glass-atrium,
+#   3. set the slug ATRIUM_RELEASE_REPO=<owner/repo> (or [release].repo in config.toml),
+#   4. create + push the first tag `v<manifest.version>`.
+# Until the slug is set, `publish` loud-fails (exit 5) and uploads nothing.
 #
 # Runbook (the repeatable release step):
 #   1. scripts/generate-manifest.sh                 # stamp version + hashes

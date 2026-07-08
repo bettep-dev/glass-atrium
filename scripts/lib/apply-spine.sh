@@ -1,48 +1,35 @@
 #!/usr/bin/env bash
-# apply-spine.sh — the deterministic safe-apply spine for the Glass Atrium
-# update system (plan E3 / design C). Pure, sourced library: function
-# definitions ONLY, no top-level side effects, no executable entry point —
-# the same convention as scripts/lib/atrium-config.sh and daemon-lock.sh.
+# apply-spine.sh — deterministic safe-apply spine for the Glass Atrium update
+# system. Pure sourced library: function defs only, no top-level side effects
+# (same convention as atrium-config.sh / daemon-lock.sh).
 #
-# IMPORTANT — strict mode is the CALLER's responsibility (sourced-lib convention)
-# This file deliberately does NOT run `set -Eeuo pipefail`: a sourced file must
-# not mutate the caller's shell options (it would surprise interactive sources
-# and break re-sourcing). Every function here is written to be SAFE under a
-# caller that has already set `set -Eeuo pipefail` + `IFS=$'\n\t'` (separated
-# local declarations, explicit `|| true` where a non-zero status is expected,
-# bash-3.2-safe `"${arr[@]:-}"` array expansions for the macOS stock shell).
-# The bats suite sources this lib under full strict mode to prove that.
+# Strict mode is the CALLER's responsibility — a sourced lib must not mutate the
+# caller's shell options; every fn is safe under `set -Eeuo pipefail` (the bats
+# suite sources it under strict mode to prove that).
 #
-# Scope (the three E3 capabilities this lib provides):
-#   T13  spine_find_changed_files   — non-agent hash-diff change selection
-#   T11  spine_stage_and_verify     — stage + per-file SHA-256 verify (no swap)
-#        spine_commit_staged        — snapshot + swap + rollback on failure
-#        spine_apply                — T11 transaction (verify-all, then commit)
-#   T14  spine_set_baseline         — capture the applied manifest as base@install
-#        spine_get_baseline         — read the stored base@install anchor path
+# Scope (E3 capabilities): spine_find_changed_files (T13, non-agent hash-diff
+# selection) · spine_stage_and_verify + spine_commit_staged + spine_apply (T11,
+# stage + per-file SHA-256 verify, then swap with rollback) · spine_set_baseline
+# + spine_get_baseline (T14, base@install anchor capture/read).
 #
-# Manifest schema consumed (produced by scripts/generate-manifest.sh, v1.0.0):
+# Manifest schema (from generate-manifest.sh, v1.0.0):
 #   { "version": "1.0.0", "files": ["agents/foo.md", …],
 #     "hashes": { "agents/foo.md": "<64-hex sha256>", … } }
-# A path's expected content hash is hashes[path] (O(1) lookup).
+# expected content hash = hashes[path] (O(1) lookup).
 #
-# Atomicity caveat (named accurately, per the plan): the apply is STAGED and
-# ROLLBACK-GUARDED, NOT a single atomic transaction across many files. Each file
-# is swapped with a plain copy (open-truncate-write — not atomic in isolation);
-# a failure mid-swap restores every file already swapped from a pre-swap
-# snapshot. There is NO cross-file all-or-nothing kernel primitive here.
+# Atomicity caveat (accurate): the apply is STAGED and ROLLBACK-GUARDED, NOT a
+# single atomic cross-file transaction. Each file is swapped by a plain copy (not
+# atomic in isolation); a mid-swap failure restores every already-swapped file
+# from a pre-swap snapshot. No cross-file all-or-nothing kernel primitive exists.
 #
 # Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): every
-# verification mismatch, missing source, or missing manifest hash returns
-# non-zero with an explicit stderr line — never a silent skip.
+# verify mismatch, missing source, or missing manifest hash returns non-zero +
+# stderr, never a silent skip.
 #
-# Portability: SHA-256 via `shasum -a 256` (macOS / perl-backed) with a
-# `sha256sum` (GNU coreutils) fallback — same precedence as generate-manifest.sh.
-# jq is the manifest reader (already a hard dependency of the update system).
+# Portability: SHA-256 via `shasum -a 256` (macOS) with a `sha256sum` (GNU)
+# fallback — same precedence as generate-manifest.sh. jq reads the manifest.
 
-# ---------------------------------------------------------------------------
 # Internal helpers
-# ---------------------------------------------------------------------------
 
 # Loud-fail when a required external tool is absent. Args: tool names.
 spine_require_tools() {
@@ -82,10 +69,10 @@ spine_get_manifest_hash() {
 
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
 # sync? Returns 0 (excluded) / 1 (included). Exclusions (T13 CRITICAL):
-#   * agents/**/*.md     — resolved by the SEPARATE E4 agent three-anchor merge
-#                          path (base@install / vendor / local), never here
-#   * *.local.md         — learned local-overlay files (never vendor-owned)
-#   * config.toml        — rendered, git-ignored runtime config (user-owned)
+#   * any markdown under agents/ — resolved by the SEPARATE E4 agent three-anchor
+#     merge path (base@install / vendor / local), never here
+#   * *.local.md   — learned local-overlay files (never vendor-owned)
+#   * config.toml  — rendered, git-ignored runtime config (user-owned)
 spine_is_excluded_path() {
   local path="$1"
   # any markdown anywhere under agents/ → E4 merge path
@@ -101,9 +88,7 @@ spine_is_excluded_path() {
   return 1
 }
 
-# ---------------------------------------------------------------------------
 # T13 — non-agent hash-diff change selection
-# ---------------------------------------------------------------------------
 
 # Emit (one relative path per line) the NON-AGENT files whose live content
 # differs from the staged new-release manifest, with the agent/overlay/config
@@ -136,9 +121,7 @@ spine_find_changed_files() {
   done < <(jq -r '.files[]' -- "${manifest}")
 }
 
-# ---------------------------------------------------------------------------
 # T11 — staged apply + rollback
-# ---------------------------------------------------------------------------
 
 # Phase 1: copy each changed file from the new-release tree into a staging dir
 # and verify the staged copy's SHA-256 equals the manifest hashes[path]. Reads
@@ -269,9 +252,7 @@ spine_apply() {
     | spine_commit_staged "${staging}" "${install_root}" "${snapshot}" || return 1
 }
 
-# ---------------------------------------------------------------------------
 # T14 — baseline (base@install) anchor capture + read
-# ---------------------------------------------------------------------------
 
 # Resolve the update-state directory holding the baseline anchor. Precedence:
 # $1 arg → ATRIUM_UPDATE_STATE_DIR env → ${HOME}/.claude/data/update (the same
