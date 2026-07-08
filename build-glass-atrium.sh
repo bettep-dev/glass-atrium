@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Build the Glass Atrium root project as a NON-DESTRUCTIVE COPY of the
-# ~/.claude harness (per clauded-docs spec #6987: 8-item closed allowlist,
-# nested .git removed by omission, single root git, monitor full migration).
-#
-# WHY non-destructive: this stage only CREATES ~/.glass-atrium. The real
-# ~/.claude is never moved/edited/deleted — relocate + symlink-farm install
-# is a later DEV stage. User-owned runtime paths (credentials, projects,
-# history, ide, shell-snapshots, todos, ~/.claude-personal) are out of the
-# allowlist by construction and never touched.
+# Build the Glass Atrium root project as a non-destructive copy of the ~/.claude
+# harness (spec #6987: 8-item closed allowlist, nested .git removed by omission,
+# single root git, monitor full migration).
+# WHY non-destructive: only CREATES ~/.glass-atrium — real ~/.claude never
+# moved/edited/deleted; user runtime paths out of the allowlist by construction.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# --- constants -------------------------------------------------------------
+# constants
 readonly SRC_ROOT="${HOME}/.claude"
 readonly DEST_ROOT="${HOME}/.glass-atrium"
 # closed 8-item allowlist (7 dirs + 1 file) — spec #6987 RELOCATE allowlist
 readonly -a DIRS=(agents rules hooks scripts skills autoagent monitor)
 readonly EXTRA_FILE="agent-registry.json"
 
-# --- error trap ------------------------------------------------------------
+# error trap
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-# --- guards (abort if real ~/.claude is at risk) --------------------------
+# guards (abort if real ~/.claude is at risk)
 [[ -d "${SRC_ROOT}" ]] || {
   echo "FATAL: source ${SRC_ROOT} missing" >&2
   exit 1
@@ -41,11 +37,10 @@ command -v git >/dev/null 2>&1 || {
 
 mkdir -p "${DEST_ROOT}"
 
-# --- step 1: rsync copy (preserve symlinks, exclude nested .git + junk) ----
-# -a preserves symlinks WITHOUT dereferencing (no -L) → satisfies "do NOT
-# dereference". --exclude=.git/ omits the 6 nested repos (remove-nested-.git
-# by omission). node_modules + monitor/data are INCLUDED intentionally so the
-# migrated monitor runs without npm ci. Junk caches excluded.
+# step 1: rsync copy (preserve symlinks, exclude nested .git + junk)
+# -a preserves symlinks WITHOUT dereferencing (no -L). --exclude=.git/ omits the
+# 6 nested repos. node_modules + monitor/data INCLUDED intentionally so the
+# migrated monitor runs without npm ci.
 rsync_one() {
   # $1 = relative path under SRC_ROOT (dir with trailing slash or a file)
   local rel="$1"
@@ -68,8 +63,7 @@ for d in "${DIRS[@]}"; do
     exit 1
   }
   echo "  - ${d}/"
-  # trailing slash on source dir → copy CONTENTS into DEST/<d> via dirname trick:
-  # rsync of "src/agents" (no slash) into DEST/ creates DEST/agents — that is what we want.
+  # rsync of "src/agents" (no trailing slash) into DEST/ creates DEST/agents/
   rsync_one "${d}"
 done
 echo "  - ${EXTRA_FILE}"
@@ -79,17 +73,15 @@ echo "  - ${EXTRA_FILE}"
 }
 rsync_one "${EXTRA_FILE}"
 
-# --- step 2: internal-symlink retarget ------------------------------------
-# Re-point every symlink inside ~/.glass-atrium whose target is an ABSOLUTE
-# path into ${SRC_ROOT}. Replace with an equivalent path INSIDE the tree,
-# preferring a relative link so the root project is self-contained.
+# step 2: internal-symlink retarget
+# Re-point every symlink whose target is an ABSOLUTE path into ${SRC_ROOT} to an
+# equivalent relative path INSIDE the tree (self-contained root project).
 echo "[2/4] retarget internal symlinks pointing into ${SRC_ROOT}"
 RETARGETED_LIST=""
 while IFS= read -r -d '' link; do
   tgt="$(readlink "${link}")"
   case "${tgt}" in
     "${SRC_ROOT}/"*)
-      # equivalent path inside the new tree
       rel_inside="${tgt#"${SRC_ROOT}/"}" # e.g. agents/GLASS_ATRIUM_GLOBAL_RULES.md
       new_abs="${DEST_ROOT}/${rel_inside}"
       link_dir=""
@@ -109,7 +101,7 @@ while IFS= read -r -d '' link; do
 done < <(find "${DEST_ROOT}" -type l -print0 2>/dev/null || true)
 [[ -n "${RETARGETED_LIST}" ]] || echo "  (none found)"
 
-# --- step 3: git init + .gitignore + initial commit -----------------------
+# step 3: git init + .gitignore + initial commit
 echo "[3/4] git init + .gitignore + initial commit"
 cat >"${DEST_ROOT}/.gitignore" <<'GITIGNORE'
 # Glass Atrium root project — ignore runtime/regenerable artifacts
@@ -151,7 +143,7 @@ git -C "${DEST_ROOT}" commit -q -m "초기 Glass Atrium 루트 프로젝트 이�
 ~/.claude 하니스 실파일(8-item allowlist)을 ~/.glass-atrium 단일 git 루트로
 비파괴 복사 · 중첩 .git 6개 제외 · GLASS_ATRIUM_GLOBAL_RULES 심링크 트리내 상대링크 재타깃"
 
-# --- step 4: verify --------------------------------------------------------
+# step 4: verify
 echo "[4/4] verify"
 TOTAL_SIZE="$(du -sh "${DEST_ROOT}" 2>/dev/null | awk '{print $1}')"
 echo "  size: ${TOTAL_SIZE}"

@@ -1,20 +1,12 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # assigns the shared C_*/G_*/SPIN_*/PROG_*/USE_* UI globals (declared as stubs in the glass-atrium loader) — read by the render primitives + menu at runtime after the loader sources every TUI module, unresolvable when linted standalone
-# Glass Atrium launcher — capability-detection module. SOURCED by the glass-atrium
-# entry point (never executed): the shebang, strict mode, IFS, traps and the
-# C_*/G_*/SPIN_*/PROG_* global stubs stay loader-owned so re-sourcing never re-arms
-# them. Decides the color + glyph tiers once at startup (detect_capabilities ->
-# resolve_palette / resolve_glyphs), reading + assigning the loader's file-scope UI
-# globals at call time in the same sourced shell.
+# shellcheck disable=SC2034  # assigns shared C_*/G_*/SPIN_*/PROG_*/USE_* loader-stub globals, read at runtime; unresolvable standalone
+# Glass Atrium launcher — capability-detection module. SOURCED (never executed):
+# shebang/strict-mode/IFS/traps/C_*/G_*/SPIN_* stubs stay loader-owned so re-sourcing
+# never re-arms. Decides color + glyph tiers once at startup (resolve_palette/glyphs).
 
-# === capability detection ==================================================
-# Decide the color + glyph tiers ONCE at startup. Order of precedence:
-#   --ascii / NO_COLOR / non-TTY  ->  force mono + ASCII
-#   COLORTERM=truecolor|24bit     ->  truecolor (tput colors caps at 256, so the
-#                                     env var is the only reliable 24-bit signal)
-#   tput colors >= 256            ->  256
-#   tput colors >= 8              ->  16
-#   else                          ->  mono
+# capability detection
+# Color + glyph tiers decided ONCE at startup. tput colors caps at 256, so COLORTERM
+# is the only reliable 24-bit signal (else precedence by tput colors: 256/16/mono).
 detect_capabilities() {
   local force_ascii="$1"
   USE_UTF8=false
@@ -28,7 +20,6 @@ detect_capabilities() {
     USE_UTF8=true
   fi
 
-  # color is OFF on a non-TTY, under NO_COLOR, or with --ascii.
   if [[ "${force_ascii}" == "true" ]]; then return 0; fi
   if [[ -n "${NO_COLOR:-}" ]]; then return 0; fi
   if [[ ! -t 1 ]]; then return 0; fi
@@ -49,8 +40,7 @@ detect_capabilities() {
   fi
 }
 
-# Populate the C_* SGR parameter strings for the active tier. Each role maps to
-# its closest representation; mono leaves them empty so c() is a no-op.
+# Populate C_* SGR strings for the active tier; mono leaves them empty so c() is a no-op.
 resolve_palette() {
   C_ACCENT=""
   C_ALERT=""
@@ -95,11 +85,9 @@ resolve_palette() {
   esac
 }
 
-# Populate the G_* glyph set for the active glyph tier. UTF-8 gets the rounded box +
-# incised status marks; ASCII gets pure-7-bit equivalents (every glyph degrades, no
-# UTF-8 ever leaks under --ascii / a non-UTF-8 locale). Width note: the ASCII step
-# marks are bracketed words ([ok]/[x]) by deliberate design so a status column stays
-# legible without color — the run-plan stamp logic accounts for both widths.
+# Populate the G_* glyph set for the active tier; ASCII degrades every glyph (no UTF-8
+# leak under --ascii). ASCII step marks are variable-width bracketed words ([ok]/[x]) by
+# design — the run-plan stamp logic accounts for both widths.
 resolve_glyphs() {
   if [[ "${USE_UTF8}" == "true" ]]; then
     G_TL="╭"
@@ -115,7 +103,7 @@ resolve_glyphs() {
     G_ARROW_U="↑"
     G_ARROW_D="↓"
     G_ENTER="↵"
-    # braille 8-frame spinner (one fixed-width cell per frame) + sub-char block ladder.
+    # braille 8-frame spinner: one fixed-width cell per frame (anti-jitter).
     SPIN_FRAMES='⣾ ⢿ ⡿ ⣷ ⣯ ⢟ ⡻ ⣽'
     PROG_FULL="█"
     PROG_EMPTY="░"

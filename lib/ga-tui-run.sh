@@ -1,29 +1,24 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034,SC2154,SC2310,SC2312  # SC2154: reads shared globals (STEP_*/GRAND_TOTAL/STEP_INDEX*/INSTALL_PLAN_*/STEP_LABEL/STEP_FN/WORK_STATE/C_*/G_* etc.) declared + assigned by the glass-atrium loader; SC2034: assigns shared step/run globals read at runtime by the loader + other TUI siblings; both present at runtime after the loader sources every TUI module, unresolvable when linted standalone; SC2310: `fn || rc=$?` is the intended exit-capture idiom (mirrors the loader's file-wide SC2310 disable); SC2312: summary/render helpers are deliberately invoked inside command substitutions (the masked return carries no signal) — mirrors the loader's file-wide SC2312 disable
-# Glass Atrium launcher — step-run orchestration module. SOURCED by the glass-atrium
-# entry point (never executed): the shebang, strict mode, IFS, traps and every
-# interleaved top-level const/stub (the step-counter state band, readonly
-# INSTALL_PLAN_LEN, the STEP_LABEL/STEP_FN arrays) stay loader-owned so re-sourcing
-# never re-arms them. Owns the per-step runner and its section/outcome panels, the
-# install + step-plan builders, the doctor preflight gate, the monitor build, the
-# launchd job loader and the token/summary parsers — reading and mutating the loader's
-# file-scope step/run globals at call time in the same sourced shell. run_step drives
-# the counters through a brace group (never a subshell) so STEP_INDEX/GRAND_TOTAL/
-# STEP_INDEX_BASE mutations propagate to the parent.
+# Glass Atrium launcher — step-run orchestration module, SOURCED by the entry point (never
+# executed): shebang, strict mode, IFS, traps and the top-level consts (step-counter state band,
+# readonly INSTALL_PLAN_LEN, STEP_LABEL/STEP_FN arrays) stay loader-owned so re-sourcing never
+# re-arms them. Owns the per-step runner + its section/outcome panels, the install + step-plan
+# builders, the doctor preflight gate, the monitor build, the launchd job loader and the
+# token/summary parsers. run_step drives the counters through a brace group (never a subshell)
+# so STEP_INDEX/GRAND_TOTAL/STEP_INDEX_BASE mutations propagate to the parent.
 
-# parse_token_summary — ITEM 3: synthesize the Token Setup done-state digest into TOKEN_SUMMARY
-# from preflight_provision_headless_token's return code ($1). NEVER reads or echoes the token
-# value — the OAuth credential never reaches this function (it stays in preflight_provision's
-# local, scrubbed there). It composes only a verdict glyph + a concise human reason + the
-# env-var NAME cue. Return-code map (mirrors preflight_provision_headless_token's documented set):
+# parse_token_summary — synthesize the Token Setup done digest into TOKEN_SUMMARY from
+# preflight_provision_headless_token's return code ($1). NEVER reads or echoes the token value —
+# the OAuth credential never reaches here (it stays in preflight_provision's local, scrubbed).
+# Composes only a verdict glyph + a concise reason + the env-var NAME cue. Return-code map:
 #   0 — provisioned (or idempotent skip)               → ✓ green
 #   1 — rendered but self-test still 401s               → ✗ red, "self-test still 401"
 #   2 — headless-auth scripts absent (keychain fallback)→ ✗ red, "auth scripts missing"
 #   3 — 'claude setup-token' produced no usable value   → ✗ red, "no token from setup-token"
 #   4 — render-claude-auth.sh rejected the value        → ✗ red, "render rejected the value"
 #   * — any other non-zero (e.g. setup-token non-zero)  → ✗ red, "setup-token failed (exit N)"
-# The PASS row2 carries the env-var-name cue; the FAIL row2 carries the retry hint. NO token, NO
-# secrets-file path content — env-var NAME only (CLAUDE_CODE_OAUTH_TOKEN is a name, not a secret).
+# NO token, NO secrets-file path content — env-var NAME only (CLAUDE_CODE_OAUTH_TOKEN is a name).
 parse_token_summary() {
   local rc="$1" reason="" glyph head
   TOKEN_SUMMARY=""
@@ -49,61 +44,53 @@ parse_token_summary() {
   return 0
 }
 
-# run_step — invoke ONE engine step with a live pending->running->done glyph and
-# its STDERR captured into a temp file, then classified + folded. Returns the step rc.
+# run_step — invoke ONE engine step with a live pending->running->done glyph and its STDERR
+# captured into a temp file, then classified + folded. Returns the step rc.
 #
-# Capture pattern (IMP1 — SYNCHRONOUS, no proc-sub race): redirect fd 2 to a regular
-# temp file (`2>"${STEP_LOG}"`) — the file is fully flushed + complete the instant the
-# command returns, so the post-return classify reads it reliably in run_step's OWN
-# shell (no cross-subshell count handoff, no bare `wait` for a sink — the old proc-sub
-# `2> >(step_sink)` was unsound on bash 3.2: the bare wait did not synchronize it).
-# set +e/-e brackets the call and $? is captured immediately; the ERR trap is suspended
-# for the bracketed call so an expected non-zero step (doctor FAIL) renders its glyph.
-# classify_step_log prints LOUD/DIM lines + counts SUPPRESSED routine lines into
-# STEP_SUPPRESSED_COUNT; the count folds into the ✓ row's single printf; PASS rm's the
-# temp, FAIL dumps it inline (_dump_step_log) and persists it via run_plan.
+# Capture (IMP1 — SYNCHRONOUS, no proc-sub race): redirect fd 2 to a regular temp file, fully
+# flushed the instant the command returns, so the post-return classify reads it in run_step's OWN
+# shell (the old proc-sub `2> >(step_sink)` was unsound on bash 3.2 — the bare `wait` did not
+# synchronize it). set +e/-e brackets the call, $? is captured immediately, and the ERR trap is
+# suspended so an expected non-zero step (doctor FAIL) still renders its glyph. classify_step_log
+# prints LOUD/DIM lines + counts SUPPRESSED routine lines into STEP_SUPPRESSED_COUNT (folded into
+# the ✓ row's single printf); PASS rm's the temp, FAIL dumps it inline + persists via run_plan.
 #
-# $1 = past/nominal label (the resolved-line label) · $2.. = the engine function +
-# its positional args (e.g. `run_symlink_farm install`). While the step runs, the
-# braille spinner owns the status line showing the present-progressive ACTIVE label
-# (STEP_LABEL_ACTIVE_CUR, set per step by run_plan; falls back to $1 when unset); on
-# resolution a fresh stamped ✓/✗ line carrying the past label is appended. The optional
-# STEP_INDEX / STEP_TOTAL globals (set by run_plan) prefix a dim block-bar counter.
+# $1 = past/nominal label · $2.. = the engine function + its positional args. While the step runs
+# the braille spinner owns the status line with the present-progressive ACTIVE label
+# (STEP_LABEL_ACTIVE_CUR, falls back to $1); on resolution a fresh stamped ✓/✗ line with the past
+# label is appended. Optional STEP_INDEX / STEP_TOTAL prefix a dim block-bar counter.
 run_step() {
   local label="$1"
   shift
 
-  # Glyphs from the shared G_* set so a single --ascii toggle degrades the step marks
-  # together with the menu frame + wordmark.
+  # Glyphs from the shared G_* set so a single --ascii toggle degrades the step marks too.
   local done_glyph fail_glyph
   done_glyph="$(c "${C_OK}" "${G_OK}")"
   fail_glyph="$(c "${C_ALERT}" "${G_FAIL}")"
 
-  # Optional dim sub-char block-bar step counter (run_plan sets STEP_INDEX/STEP_TOTAL
-  # per step). build_counter_str renders the fixed-width X-of-Y gauge from the shared
-  # PROG_FULL/PROG_EMPTY glyph SoT, so --ascii degrades it to `#`/`.`.
+  # Optional dim block-bar step counter (run_plan sets STEP_INDEX/STEP_TOTAL per step).
+  # build_counter_str renders the fixed-width X-of-Y gauge from the shared glyph SoT (--ascii → #/.).
   local counter=""
   if [[ -n "${STEP_INDEX:-}" && -n "${STEP_TOTAL:-}" ]]; then
     # 4a: offset by STEP_INDEX_BASE (empty except on the install-panel handoff) so the block-bar
     # counter continues the grand sequence rather than restarting at 1/n. Empty base => raw i/N.
     local disp_i disp_n
     disp_i=$((${STEP_INDEX_BASE:-0} + STEP_INDEX))
-    # frozen unified step counter: prefer the frozen GRAND_TOTAL denominator; empty (shared callers) => raw base+STEP_TOTAL.
+    # frozen counter: prefer the frozen GRAND_TOTAL denominator; empty (shared callers) => base+STEP_TOTAL.
     disp_n=${GRAND_TOTAL:-$((${STEP_INDEX_BASE:-0} + STEP_TOTAL))}
     counter="$(c "${C_DIM}" "$(build_counter_str "${disp_i}" "${disp_n}")")"
   fi
 
-  # Tense shift (VR-5): the running line shows the present-progressive ACTIVE label
-  # (e.g. "Building monitor…"); the resolved line below carries the past label ($1).
+  # Tense shift (VR-5): the running line shows the present-progressive ACTIVE label; the resolved
+  # line below carries the past label ($1).
   local active_label="${STEP_LABEL_ACTIVE_CUR:-${label}}"
 
-  # install / panel RENDER_MODE: ONE in-place progress row replaces the per-step scrolling
-  # line. The spinner paints the pre-styled body (counter + C_STRONG label) verbatim; the
-  # classify reprint context lets each committed LOUD/DIM line reprint the live row below it
-  # (install mode only — panel mode suppresses ALL output, so its reprint is a no-op). Empty
-  # mode = the historical scrolling model (uninstall) — unchanged. In install mode the
-  # counter is the block-bar gauge; in panel mode it is EMPTY — the dominant FILLED bar (ITEM 4,
-  # STEP_BAR_CUR) carries the i/N now, so the redundant `[i/N]` stamp is dropped from the body.
+  # install / panel RENDER_MODE: ONE in-place progress row replaces the per-step scrolling line.
+  # The spinner paints the pre-styled body verbatim; the classify reprint context lets each
+  # committed LOUD/DIM line reprint the live row below it (install mode only — panel suppresses ALL
+  # output). Empty mode = the historical scrolling model (uninstall), unchanged. In panel mode the
+  # counter is EMPTY — the dominant FILLED bar (STEP_BAR_CUR) carries the i/N, so the redundant
+  # `[i/N]` stamp is dropped from the body.
   local install_mode="" panel_mode=""
   [[ "${RENDER_MODE:-}" == "install" ]] && install_mode="install"
   if [[ "${RENDER_MODE:-}" == "panel" ]]; then
@@ -113,52 +100,42 @@ run_step() {
   fi
 
   # 4e: create the step's capture temp + publish STEP_LOG_CUR BEFORE the spinner forks. The forked
-  # spinner subshell snapshots STEP_LOG_CUR at fork time, so it MUST already hold THIS step's path
-  # for the per-tick rolling label to tail the running sub-process output (a pre-fork empty/stale
-  # value would make the rolling label silently no-op). The file is empty at fork; "$@" appends to it
-  # below (same path), and the child's `tail -n 1` reads the growing file live. Moved up from its
-  # historical spot just before the capture redirect (no behavior change to the capture itself — the
-  # redirect target is still this STEP_LOG; only the mktemp+track now precede the spinner start).
+  # spinner snapshots STEP_LOG_CUR at fork time, so it MUST already hold THIS step's path for the
+  # per-tick rolling label to tail the running sub-process output (a pre-fork empty/stale value
+  # would make the rolling label silently no-op). The file is empty at fork; "$@" appends to it
+  # below (same path) and the child's `tail -n 1` reads the growing file live.
   local STEP_LOG
   STEP_LOG="$(mktemp "${TMPDIR:-/tmp}/ga-step.XXXXXX")"
   STEP_LOG_CUR="${STEP_LOG}" # track for the abort-trap sweep + the 4e rolling-label tail while in flight
 
-  # spinner owns the animated running status line (off-TTY: a hard no-op). It is
-  # started BEFORE the brace group and stopped just after, so the spinner PID is
-  # reaped on its own (kill-targeted, never a blanket wait).
-  #
-  # SUPPRESSION (BUG-2 B): for a step whose STDERR is the scrolling feedback
-  # (run_doctor emits ~15-34 log lines), a CR-repainting spinner would tick
-  # against the classify tail. STEP_SUPPRESS_SPINNER (set per step by run_plan) gates
+  # spinner owns the animated running status line (off-TTY: a hard no-op). Started BEFORE the brace
+  # group + stopped just after, so its PID is reaped on its own (kill-targeted, never a blanket wait).
+  # SUPPRESSION (BUG-2 B): for a step whose STDERR is the scrolling feedback (run_doctor emits ~15-34
+  # lines) a CR-repainting spinner would tick against the classify tail. STEP_SUPPRESS_SPINNER gates
   # the spinner OFF for those steps; stop_step_spinner is a no-op when SPIN_PID stayed empty.
   if [[ "${STEP_SUPPRESS_SPINNER:-}" != "true" ]]; then
     if [[ -n "${install_mode}" ]]; then
-      # install: feed the spinner the pre-styled single-line body (no fold during the run;
-      # the bash-3.2-faithful generic fold lands the final N-items count on the resolved
-      # redraw) so it repaints the whole row, advancing ONLY the frame glyph per tick.
+      # install: feed the spinner the pre-styled single-line body (no fold during the run) so it
+      # repaints the whole row, advancing ONLY the frame glyph per tick.
       start_step_spinner "$(build_install_progress_body "${counter}" "${active_label}" 0)" prestyled
     else
       start_step_spinner "${counter}${active_label}"
     fi
   elif [[ -n "${panel_mode}" ]]; then
-    # SUPPRESSED-spinner panel step: the spinner
-    # is what paints WORKBOX_BODY_ROW during a run, so a suppressed step leaves the box body
-    # BLANK for the whole probe. Paint the run-state body ONCE here — AFTER STEP_INDEX/STEP_TOTAL
-    # /STEP_LABEL_ACTIVE_CUR are set for the step (run_plan sets them before run_step) — via the
-    # SAME rail-safe panel path the live spinner + resolved frame use (redraw_install_progress →
-    # paint_workbox_body_inner: inner span only, box rails preserved). Running glyph = C_INFO G_DOT
-    # (mirrors the classify live glyph). Generalizes to ANY future suppressed-spinner panel step.
+    # SUPPRESSED-spinner panel step: the spinner is what paints WORKBOX_BODY_ROW during a run, so
+    # a suppressed step would leave the box body BLANK for the whole probe. Paint the run-state
+    # body ONCE here (STEP_INDEX/STEP_TOTAL/STEP_LABEL_ACTIVE_CUR already set) via the SAME rail-safe
+    # panel path (paint_workbox_body_inner: inner span only, box rails preserved). Running glyph =
+    # C_INFO G_DOT. Generalizes to ANY suppressed-spinner panel step.
     redraw_install_progress "$(c "${C_INFO}" "${G_DOT}")" "${counter}" "${active_label}" 0
     # LINE 2 for a suppressed-spinner step: no live animator paints it, so seed the slow dots ONCE
-    # (a static "…" cue) rather than leaving LINE2 blank for the whole probe. Rail-safe inner span.
+    # (a static "…" cue) rather than leaving LINE2 blank. Rail-safe inner span.
     paint_workbox_body_row2_inner "$(printf '  %s' "$(_spinner_dots 0)")"
   fi
 
-  # install: arm the classify reprint context so each committed permanent (loud/dim) line
-  # reprints the live progress row beneath it (the static spinner frame is used as the
-  # leading cell; the spinner is stopped by the time classify runs). Empty in other modes.
-  # Panel mode does NOT arm the reprint context — classify prints nothing, so there is no
-  # live row to reprint beneath; it sets CLASSIFY_PANEL instead (full suppression).
+  # install: arm the classify reprint context so each committed loud/dim line reprints the live
+  # progress row beneath it (the spinner is stopped by the time classify runs). Panel mode does NOT
+  # arm it — classify prints nothing, so it sets CLASSIFY_PANEL instead (full suppression).
   CLASSIFY_PANEL=""
   if [[ -n "${panel_mode}" ]]; then
     CLASSIFY_PANEL="true"
@@ -168,26 +145,23 @@ run_step() {
     CLASSIFY_LIVE_LABEL="${active_label}"
   fi
 
-  # Capture the step's output to a regular temp file (IMP1): the redirect is synchronous —
-  # the file is fully written the instant "$@" returns, so the post-return classify reads
-  # it in run_step's own shell with no proc-sub race + a directly-usable suppressed count.
-  # install mode MERGES fd 1 into the capture (`>… 2>&1`) so a noisy subprocess STDOUT
-  # (npm run build, prisma/npm-ci in oss-db-setup.sh) is suppressible by classify instead
-  # of flooding the terminal + breaking the single-line model. Other modes capture fd 2
-  # only (the historical behavior — uninstall unchanged). NB: STEP_LOG / STEP_LOG_CUR are created
-  # ABOVE (before the spinner fork, 4e) — the capture redirect below writes to that same STEP_LOG.
+  # Capture the step's output to a regular temp file (IMP1): synchronous — fully written the instant
+  # "$@" returns, so the post-return classify reads it in run_step's own shell with no proc-sub race.
+  # install mode MERGES fd 1 into the capture (`>… 2>&1`) so a noisy subprocess STDOUT (npm build,
+  # prisma/npm-ci) is suppressible by classify instead of flooding the terminal. Other modes capture
+  # fd 2 only (uninstall unchanged). STEP_LOG is created ABOVE (before the spinner fork, 4e).
   local rc=0
   set +e
   trap - ERR
   # force-quit-class guard: mark the step TUI-run so a step fn's routine-failure `exit` becomes a
-  # FAIL-panel RETURN via exit_step/die_step (lib/ga-env.sh) — not a masked whole-process force-quit.
-  # CLI-passthrough-shared fns (setup_database/bootstrap_health_gate) keep `exit` when GA_TUI_STEP unset.
+  # FAIL-panel RETURN via exit_step/die_step — not a masked whole-process force-quit. CLI-shared fns
+  # (setup_database/bootstrap_health_gate) keep `exit` when GA_TUI_STEP is unset.
   GA_TUI_STEP=1
   if [[ -n "${install_mode}" ]]; then
-    # </dev/null: pin the CAPTURED exec's stdin to EOF so a hidden sub-tool prompt (brew/pip/
-    # claude/fakechat) fails fast (rc!=0, surfaced) instead of blocking invisibly forever. Every
-    # legitimate prompt reads <"${TTY}" / /dev/tty on a DIFFERENT fd outside this capture, so this
-    # never starves a real prompt — it only closes the invisible-hang path (P1 install-stall).
+    # </dev/null: pin the CAPTURED exec's stdin to EOF so a hidden sub-tool prompt (brew/pip/claude)
+    # fails fast (surfaced) instead of blocking invisibly forever. Every legitimate prompt reads
+    # <"${TTY}" / /dev/tty on a DIFFERENT fd outside this capture, so this never starves a real
+    # prompt — it only closes the invisible-hang path (P1 install-stall).
     { "$@" </dev/null >"${STEP_LOG}" 2>&1; } # merge fd 1 + fd 2 so stdout flood is captured
   else
     { "$@" </dev/null 2>"${STEP_LOG}"; } # fd-2-only capture (historical scrolling model)
@@ -198,9 +172,8 @@ run_step() {
   trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
   set -e
 
-  # CLASSIFY-AND-RENDER the now-complete log: LOUD/DIM lines printed live, SUPPRESSED
-  # routine lines counted into STEP_SUPPRESSED_COUNT (a plain var in THIS shell). In
-  # install mode, committed loud/dim lines reprint the live progress row beneath them.
+  # CLASSIFY-AND-RENDER the complete log: LOUD/DIM lines printed live, SUPPRESSED routine lines
+  # counted into STEP_SUPPRESSED_COUNT. In install mode, committed lines reprint the live row.
   classify_step_log "${STEP_LOG}"
   local suppressed="${STEP_SUPPRESSED_COUNT}"
   # disarm the reprint + panel context immediately so a later step never inherits them.
@@ -209,21 +182,18 @@ run_step() {
   CLASSIFY_LIVE_LABEL=""
   CLASSIFY_PANEL=""
 
-  # restamp the status row: append a fresh stamped line (the running row stays as
-  # scrollback) — consistent with the engine's own scrolling-log ethos (nothing hidden).
-  # The cursor is at col 0 below the tail; we do not track the tail-line count, so a
-  # fresh-line append avoids a mis-targeted in-place restamp.
+  # restamp the status row: append a fresh stamped line (the running row stays as scrollback). We do
+  # not track the tail-line count, so a fresh append avoids a mis-targeted in-place restamp.
   if [[ "${rc}" -eq 0 ]]; then
-    # FOLD the per-step tally into the ONE PASS printf (qa: single printf, not a 2nd):
-    # when count>0 append ` <G_DOT> N items` in C_DIM, mirroring outcome_panel's ` · Ns`.
+    # FOLD the per-step tally into the ONE PASS printf: when count>0 append ` <G_DOT> N items` in
+    # C_DIM (mirrors outcome_panel's ` · Ns`).
     local items_suffix=""
     if [[ "${suppressed}" -gt 0 ]]; then
       items_suffix=" $(c "${C_DIM}" "${G_DOT} ${suppressed} items")"
     fi
     if [[ -n "${panel_mode}" ]]; then
-      # panel: redraw the resolved frame on the SAME absolute workbox body row (G_OK + the ITEM 4
-      # dominant bar at THIS step's fill + past label in C_DIM, NO items fold) — overwritten by the
-      # next step's start redraw. STEP_BAR_CUR still holds this step's bar (run_plan clears it after).
+      # panel: redraw the resolved frame on the SAME workbox body row (G_OK + the dominant bar at
+      # this step's fill + past label, NO items fold) — overwritten by the next step's start redraw.
       # BUG A: paint ONLY the inner span (rail-safe) so the box's left/right rails survive the resolve.
       if [[ -n "${STEP_BAR_CUR:-}" ]]; then
         paint_workbox_body_inner "$(printf '  %s %s  %s' "${done_glyph}" "${STEP_BAR_CUR}" "$(c "${C_DIM}" "${label}")")"
@@ -232,9 +202,8 @@ run_step() {
       fi
       paint_workbox_body_row2_inner "" # resolved frame: clear LINE 2 (no stale running-detail lingers)
     elif [[ -n "${install_mode}" ]]; then
-      # install: REDRAW the SAME row one last time as a transient resolved frame (G_OK +
-      # counter + past label in C_DIM + final fold), NO newline — it stays in place to be
-      # overwritten by the next step's start redraw, so exactly ONE physical row is reused.
+      # install: REDRAW the SAME row one last time as a transient resolved frame (NO newline) — it
+      # stays in place to be overwritten by the next step's start redraw (exactly ONE row reused).
       printf '\r\033[2K  %s %s%s%s' "${done_glyph}" "${counter}" "$(c "${C_DIM}" "${label}")" "${items_suffix}" >"${TTY}"
     else
       printf '  %s%s %s%s\n' "${counter}" "${done_glyph}" "$(c "${C_DIM}" "${label}")" "${items_suffix}" >"${TTY}"
