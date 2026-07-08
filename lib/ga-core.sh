@@ -1,25 +1,18 @@
 # shellcheck shell=bash
-# Glass Atrium — shared core for the install/uninstall engine. SOURCED ONLY by the
-# executable entry point (glass-atrium) — it has no entrypoint dispatch and no
-# file-scope `set -Eeuo pipefail`/`IFS`/traps (strict mode + traps stay owned by
-# the entry point so re-sourcing never re-arms them).
-# ga_init_env "<GA_ROOT>" MUST be called once with the ENTRY POINT'S resolved root
-# before any other function — GA_ROOT is passed in, NEVER self-derived from this
-# file's BASH_SOURCE (which would resolve to <root>/lib/, one dir too deep).
+# Glass Atrium — shared core for the install/uninstall engine. SOURCED ONLY by the executable entry
+# point (glass-atrium); no entrypoint dispatch, no file-scope `set -Eeuo pipefail`/`IFS`/traps (strict
+# mode + traps stay owned by the entry point so re-sourcing never re-arms them). ga_init_env "<GA_ROOT>"
+# MUST be called once with the entry point's resolved root before any other fn — GA_ROOT is passed in,
+# NEVER self-derived from this file's BASH_SOURCE (which would resolve to <root>/lib/, one dir too deep).
 
 # thin-loader: source the seven functional-domain siblings
-# ga-core.sh is a THIN LOADER: it sources the seven domain siblings (byte-identical
-# extractions of the former inline concerns) then defines the flow/orchestration
-# functions inline below. Because `source lib/ga-core.sh` transitively loads every
-# domain, all downstream consumers keep the whole engine after one source (zero
-# consumer edits). Self-locates its own lib/ dir from BASH_SOURCE (source-path
-# agnostic) — GA_ROOT still arrives ONLY via ga_init_env's $1, never self-derived
-# here. Order is env-first defensive (D2): the source-time surface is empty so any
-# permutation is correct today, env-first future-proofs a latent top-level stmt.
-# Each source is an explicit loud-fail guard: printf (NOT log — log lives in
-# ga-env.sh and is undefined if THAT source fails) to stderr + `return 1`; never
-# `|| true`, never an implicit `set -e` (bats consumers source this WITHOUT strict
-# mode, so the explicit guard is what fails loudly under both callers).
+# ga-core.sh is a THIN LOADER — it sources the seven domain siblings then defines the flow functions
+# below; `source lib/ga-core.sh` transitively loads every domain (zero consumer edits). Self-locates its
+# lib/ dir from BASH_SOURCE (source-path agnostic), but GA_ROOT still arrives ONLY via ga_init_env's $1,
+# never self-derived here. Env-first order (D2): the source-time surface is empty so any permutation works
+# today; env-first future-proofs a latent top-level stmt. Each source is an explicit loud-fail guard:
+# printf (NOT log — log lives in ga-env.sh, undefined if THAT source fails) + `return 1`, never `|| true` /
+# an implicit `set -e` (bats consumers source WITHOUT strict mode, so the explicit guard fails loudly for both).
 __ga_core_libdir="${BASH_SOURCE[0]%/*}"
 # shellcheck source=lib/ga-env.sh
 source "${__ga_core_libdir}/ga-env.sh" || {
@@ -58,13 +51,10 @@ source "${__ga_core_libdir}/ga-doctor.sh" || {
 }
 unset __ga_core_libdir
 
-# remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim
-# disk. node_modules is a regenerable build artifact (reinstall's oss-db-setup.sh
-# bootstrap runs `npm ci`), so `rm` is correct here — the File Deletion Policy
-# permits rm for regenerable files (NOT mv-to-Trash). IDEMPOTENT: an absent dir is
-# a clean skip. The path is a fixed ${GA_ROOT}-anchored literal (the same install-
-# tree anchor every other monitor step uses) — never a bare/relative/glob path.
-# Returns 0 (teardown is best-effort, never fatal).
+# remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim disk. node_modules
+# is a regenerable build artifact (reinstall's oss-db-setup.sh runs `npm ci`), so `rm` is correct — the
+# File Deletion Policy permits rm for regenerable files (NOT mv-to-Trash). IDEMPOTENT (absent dir = clean
+# skip). The path is a fixed ${GA_ROOT}-anchored literal (never bare/relative/glob). Returns 0 (best-effort).
 remove_node_modules() {
   local nm="${GA_ROOT}/monitor/node_modules"
   if "${DRY_RUN}"; then
@@ -75,13 +65,11 @@ remove_node_modules() {
     log "uninstall: ${nm} absent — nothing to remove"
     return 0
   fi
-  # SECURITY: path is a fixed ${GA_ROOT}-anchored literal (no glob, no user input,
-  # GA_ROOT is readonly + non-empty by construction) — rm -rf is scoped to exactly
-  # this regenerable dir.
-  # Best-effort, never fatal: under the inherited set -Eeuo pipefail a genuine rm
-  # failure would otherwise abort before the return 0 (and halt later teardown steps,
-  # since the run_uninstall call site is not if-wrapped). Explicit if (NOT a silent
-  # `|| true`) so the failure is logged, then the contract's return 0 still holds.
+  # SECURITY: path is a fixed ${GA_ROOT}-anchored literal (no glob, no user input, GA_ROOT readonly +
+  # non-empty by construction) — rm -rf is scoped to exactly this regenerable dir.
+  # Best-effort, never fatal: under the inherited set -Eeuo pipefail a genuine rm failure would abort
+  # before the return 0 (halting later teardown, as the call site is not if-wrapped). Explicit if (NOT a
+  # silent `|| true`) so the failure is logged, then the contract's return 0 holds.
   if ! rm -rf -- "${nm}"; then
     log "uninstall: warn: could not fully remove ${nm} (continuing)"
   else
@@ -90,19 +78,15 @@ remove_node_modules() {
   return 0
 }
 
-# remove_rc_lines — uninstall teardown: strip the PATH-export lines that install
-# persisted into the user's login-shell rc (inverse of preflight_persist_rc_line in
-# glass-atrium). Install tags EVERY persisted line with a trailing ` # glass-atrium`
-# marker; this removes ONLY lines bearing that EXACT marker — never a bare `export PATH`
-# (which would clobber the user's own lines). Both ~/.zshrc AND ~/.bash_profile are
-# swept because the active $SHELL at uninstall time may differ from install time.
-# SAFETY: a timestamped .ga-backup copy is taken BEFORE any edit (never edit a user rc
-# without a backup); the marker-matched lines are removed via grep -v to a temp file +
-# atomic mv (never a partial rc). IDEMPOTENT: an absent file or a file with no marker is
-# a clean skip. GRACEFUL: returns 0 unconditionally — an rc edit failure NEVER aborts the
-# rest of uninstall. LEGACY CAVEAT: pre-marker installs wrote UNMARKED rc lines that this
-# (deliberately) will not catch — that is the accepted, safe forward path (better to leave
-# a stale-but-harmless PATH line than to risk removing a user-authored one).
+# remove_rc_lines — uninstall teardown: strip the PATH-export lines install persisted into the user's
+# login-shell rc (inverse of preflight_persist_rc_line). Install tags EVERY line with a trailing
+# ` # glass-atrium` marker; this removes ONLY lines bearing that EXACT marker — never a bare `export PATH`
+# (which would clobber the user's own). Both ~/.zshrc AND ~/.bash_profile are swept ($SHELL may differ from
+# install time). SAFETY: a timestamped .ga-backup is taken BEFORE any edit; marker lines are removed via
+# grep -v → temp file + atomic mv (never a partial rc). IDEMPOTENT (absent/no-marker = skip), GRACEFUL
+# (returns 0 — an rc edit failure NEVER aborts uninstall). LEGACY CAVEAT: pre-marker installs wrote UNMARKED
+# rc lines this deliberately won't catch — the accepted safe forward path (leave a stale-but-harmless PATH
+# line rather than risk a user-authored one).
 remove_rc_lines() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping shell rc PATH-line removal"
@@ -222,13 +206,10 @@ run_install() {
 }
 
 # T24: base@install baseline capture (post-install)
-# Snapshot the installed manifest.json as the base@install baseline — the PRIMARY
-# 3-anchor base the NEXT update diffs against (apply-spine spine_set_baseline
-# writes it atomically to the canonical update-state dir, ATRIUM_UPDATE_STATE_DIR-
-# overridable). ADVISORY-but-loud: a capture miss is WARNed, never fatal — the
-# install itself already succeeded, and a missing baseline only widens the next
-# update's merge base (the updater also re-captures its own baseline post-apply).
-# Skipped in dry-run (mutation-free staging).
+# Snapshot the installed manifest.json as the base@install baseline — the PRIMARY 3-anchor base the NEXT
+# update diffs against (spine_set_baseline writes it atomically to the update-state dir, ATRIUM_UPDATE_STATE_DIR-
+# overridable). ADVISORY-but-loud: a capture miss is WARNed, never fatal — the install already succeeded, and
+# a missing baseline only widens the next update's merge base. Skipped in dry-run.
 capture_install_baseline() {
   if "${DRY_RUN}"; then
     log "baseline: dry-run — skipping base@install capture (would snapshot ${MANIFEST})"
@@ -250,31 +231,23 @@ capture_install_baseline() {
     log "  warn : baseline capture failed (manifest=${MANIFEST}) — next update will re-derive its base"
   fi
 
-  # T24 — ALSO seed the base-content STORE. The hash-only baseline manifest above
-  # proves a file CHANGED but cannot reconstruct the base region TEXT a 3-way merge
-  # needs (there is no content-from-hash). Seeding the store lets the NEXT update do
-  # a REAL diff3 (base/vendor/local) instead of the gated-2-way present-both
-  # fallback. Advisory like the manifest capture: a seeding miss only widens the
-  # next update's merge gate, never aborts the already-succeeded install.
+  # T24 — ALSO seed the base-content STORE: the hash-only baseline above proves a file CHANGED but cannot
+  # reconstruct the base region TEXT a 3-way merge needs. Seeding lets the NEXT update do a REAL diff3
+  # (base/vendor/local) instead of the gated-2-way fallback. Advisory — a seeding miss only widens the
+  # next update's merge gate, never aborts the install.
   capture_base_agent_store
 }
 
 # T24: base@install EDITABLE-region content store (post-install)
-# Snapshot each base@install agent *.md BODY into the base-content store that
-# editable_merge.load_base_text CONSUMES — keyed by BASENAME under
-# <state-dir>/base-agents/ (the editable_merge.base_store_dir layout, where
-# state-dir == spine_baseline_dir so the hash manifest + the content store share
-# one update-state root). WITH this store the next update resolves an EDITABLE
-# region via a real 3-anchor diff3; WITHOUT it editable_merge degrades
-# safety-conservatively to the gated-2-way fallback (more human gating, never a
-# silent corrupt). The updater (scripts/update.sh update_capture_base_content)
-# re-seeds the SAME store post-apply; install seeds it first.
-#
-# Source bodies come from ${GA_ROOT}/<rel> (the real release files the symlink farm
-# points at), NOT the installed target symlinks. Only agents/*.md carry EDITABLE
-# regions (the canonical predicate mirrors spine_is_excluded_path's agent-markdown
-# branch). ADVISORY + loud: every copy miss is WARNed + counted, never fatal — the
-# install already succeeded, and a partial store only widens the next merge gate.
+# Snapshot each base@install agent *.md BODY into the base-content store editable_merge.load_base_text
+# CONSUMES — BASENAME-keyed under <state-dir>/base-agents/ (state-dir == spine_baseline_dir, so the hash
+# manifest + content store share one update-state root). WITH this store the next update resolves an
+# EDITABLE region via a real 3-anchor diff3; WITHOUT it editable_merge degrades safety-conservatively to
+# the gated-2-way fallback (more human gating, never a silent corrupt). The updater
+# (scripts/update.sh update_capture_base_content) re-seeds the SAME store post-apply; install seeds first.
+# Source bodies come from ${GA_ROOT}/<rel> (the real release files the symlink farm points at), NOT the
+# installed target symlinks. Only agents/*.md carry EDITABLE regions (predicate mirrors
+# spine_is_excluded_path). ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
 capture_base_agent_store() {
   local store rel src dst base copied=0 missing=0
   store="$(spine_baseline_dir)/base-agents"
@@ -282,12 +255,9 @@ capture_base_agent_store() {
     log "  warn : base-content store dir uncreatable (${store}) — next update falls back to the gated-2-way merge"
     return 0
   fi
-  # read_manifest_files dies on its OWN precondition failure (jq absent / manifest
-  # missing) — both already guaranteed false here (the caller guarded MANIFEST
-  # presence; jq is an install-wide hard dep). Even so, a die fires INSIDE the
-  # process-substitution subshell only, so the loop would just see empty input
-  # (copied=0) — never an aborted install. Process sub (not a pipe) keeps the
-  # counters in THIS shell.
+  # read_manifest_files dies on its OWN precondition failure (jq/manifest), both already false here. Even
+  # so, a die fires INSIDE the process-substitution subshell only, so the loop just sees empty input
+  # (copied=0) — never an aborted install. Process sub (not a pipe) keeps the counters in THIS shell.
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
@@ -318,34 +288,27 @@ capture_base_agent_store() {
 }
 
 # agents-only symlink farm (agent add/delete scope)
-# Runs ONLY the per-file symlink-farm loop from run_install — the minimal step
-# the F2 agent-lifecycle CLI needs to (re)link manifest entries after an agent
-# add/delete. Reuses read_manifest_files + swap_symlink; honours TARGET_HOME +
-# DRY_RUN. Deliberately SKIPS run_doctor / render_config / render_plists /
-# wire_hooks / setup_database — a doctor preflight that dies (or rewriting
-# settings.json / re-rendering config) is far beyond an agent-link refresh.
+# Runs ONLY the per-file symlink-farm loop from run_install — the minimal step the F2 agent-lifecycle CLI
+# needs to (re)link manifest entries after an agent add/delete. Reuses read_manifest_files + swap_symlink;
+# honours TARGET_HOME + DRY_RUN. Deliberately SKIPS run_doctor / render_config / render_plists / wire_hooks
+# / setup_database — those are far beyond an agent-link refresh.
 run_agents_only() {
   run_symlink_farm "agents-only"
 }
 
 # prune ORPHAN dangling GA symlinks (recurrence-prevention)
-# The symlink farm has no prune path: when a source file is dropped from the GA
-# root AND from the manifest, its previously-installed symlink in the target is
-# left dangling forever (doctor §5 only WARN-counts danglers, never unlinks).
-# run_prune SAFELY removes those ORPHANS. A link is removed ONLY if it satisfies
-# ALL FOUR criteria (mirrors the manual prune):
+# The symlink farm has no prune path: a source dropped from the GA root AND the manifest leaves its
+# installed symlink dangling forever (doctor §5 only WARN-counts danglers). run_prune SAFELY removes
+# those ORPHANS — a link is removed ONLY if it satisfies ALL FOUR criteria (mirrors the manual prune):
 #   (a) IS a symlink                  } both guaranteed by the doctor §5
 #   (c) target is under the GA root   } `find -type l -lname GA/*` idiom
 #   (b) is BROKEN (target missing)    — [[ ! -e ]], the §5 resolving-preserve test
 #   (d) its TARGET_HOME-rel path is NOT in manifest .files
-# A BROKEN link that IS in the manifest = a should-exist source transiently
-# missing → PRESERVE + flag (never remove). is_never_touch is a defense-in-depth
-# preserve branch. A resolving symlink / non-symlink real file / foreign-target
-# symlink is NEVER a candidate (criteria b / a+c exclude them structurally).
-#
-# EXPLICIT-OPT-IN: zero call sites inside run_install / run_bootstrap /
-# run_agents_only — deleting during a routine install is unsafe.
-# Exit codes (loud-fail, distinct from die's generic 1): 2 = no target dir,
+# A BROKEN link that IS in the manifest = a should-exist source transiently missing → PRESERVE + flag.
+# is_never_touch is a defense-in-depth preserve branch. A resolving / non-symlink / foreign-target link
+# is NEVER a candidate (criteria b / a+c exclude them structurally).
+# EXPLICIT-OPT-IN: zero call sites inside run_install / run_bootstrap / run_agents_only (deleting during a
+# routine install is unsafe). Exit codes (loud-fail, distinct from die's generic 1): 2 = no target dir,
 # 3 = manifest absent/unparseable. --dry-run reports but removes nothing.
 run_prune() {
   # STEP1 — preconditions (loud-fail, named exit codes; no silent absorption).
@@ -430,35 +393,23 @@ run_prune() {
 }
 
 # P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
-# Idempotent, data-safe reconcile of an EXISTING bare-name-farm install to the
-# essential-symlinks-only + foldered-rules layout. Touches ONLY GA-CREATED
-# symlinks — every unlink routes through remove_if_ga_link's readlink-into-
-# GA_ROOT guard, so a foreign symlink OR a real user file at any of these paths
-# is preserved byte-for-byte (never a raw rm on a legacy path). Two moves:
-#   (A) DROP the now-excluded surfaces — unlink the legacy GA symlinks under
-#       hooks/ + scoped/ + scripts/ + autoagent/ (prefixes) and at
-#       agent-registry.json + glass-atrium (exacts) a prior farm created, then
-#       rmdir-prune the emptied GA dirs (rmdir-only — a dir holding a user file
-#       makes rmdir fail = SAFE skip). The find sweep is RECURSIVE (no maxdepth),
-#       so nested legacy links (scripts/lib, scripts/agent_lifecycle, autoagent/
-#       lib) are covered without a per-depth pass.
-#   (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the
-#       foldered rules/glass-atrium/<name>.md location, but ONLY when the
-#       foldered GA source actually exists (post rules-fold unit); otherwise the
-#       flat link is LEFT IN PLACE (no dangling link) for the manifest re-farm to
-#       reconcile once the foldered source lands.
-# Idempotent by construction: a second run finds the excluded-surface links gone
-# (nothing to sweep) and the flat rules links already relocated (the foldered
-# link sits at depth 2, never re-matched by the maxdepth-1 scan), so it is a
-# clean no-op. Honors DRY_RUN (report-only, zero mutation).
-#
-# CALL-SITES (repoint-first-THEN-sweep contract): (1) run_install invokes this
-# immediately AFTER wire_hooks — the settings.json hook commands already point
-# at the in-place hooks dir before the legacy links drop, so no hook-blackout
-# window opens; (2) the `glass-atrium migrate` passthrough subcommand exposes a
-# standalone (re-)run for an existing deployment (honors --dry-run). Sweeping
-# before the repoint would orphan the live hooks/registry consumers — keep any
-# new call site BEHIND the repoint.
+# Idempotent, data-safe reconcile of an EXISTING bare-name-farm install to the essential-symlinks-only +
+# foldered-rules layout. Touches ONLY GA-CREATED symlinks — every unlink routes through
+# remove_if_ga_link's readlink-into-GA_ROOT guard, so a foreign symlink OR a real user file is preserved
+# byte-for-byte (never a raw rm on a legacy path). Two moves:
+#   (A) DROP the now-excluded surfaces — unlink legacy GA symlinks under hooks/ + scoped/ + scripts/ +
+#       autoagent/ (prefixes) and at agent-registry.json + glass-atrium (exacts), then rmdir-prune the
+#       emptied GA dirs (rmdir-only — a dir holding a user file fails rmdir = SAFE skip). The find sweep is
+#       RECURSIVE (no maxdepth), so nested legacy links (scripts/lib, autoagent/lib) are covered.
+#   (B) FOLD the rules — relocate each flat rules/<name>.md GA symlink to the foldered
+#       rules/glass-atrium/<name>.md, ONLY when the foldered GA source exists; else the flat link is LEFT
+#       IN PLACE (no dangling link) for the manifest re-farm once the foldered source lands.
+# Idempotent by construction: a 2nd run finds the excluded-surface links gone and the flat rules links
+# already relocated (the foldered link sits at depth 2, never re-matched by the maxdepth-1 scan). Honors DRY_RUN.
+# CALL-SITES (repoint-first-THEN-sweep contract): (1) run_install invokes this immediately AFTER wire_hooks
+# — the settings.json hook commands already point at the in-place hooks dir, so no hook-blackout opens; (2)
+# the `glass-atrium migrate` passthrough exposes a standalone (re-)run (honors --dry-run). Sweeping before
+# the repoint would orphan the live hooks/registry consumers — keep any new call site BEHIND the repoint.
 migrate_layout() {
   log "== migrate: reconcile legacy bare-name farm -> essential-symlinks-only + foldered-rules (target=${TARGET_HOME}) =="
   "${DRY_RUN}" && log "(dry-run: report only — no unlink/relink)"
@@ -562,14 +513,11 @@ migrate_layout() {
 }
 
 # one-stop bootstrap (install + monitor build + health gate)
-# Single-command wrap of the FULL fresh-machine sequence: run_install (doctor →
-# config render → plist render → symlink farm → hook wiring → DB bootstrap →
-# launchd repoint → claude --version) THEN monitor `npm run build` and a /api/
-# health gate. Named exit codes (loud-fail, no silent absorption). launchd job
-# LOADING stays manual (review-first ethos) BY DEFAULT — never launchctl from
-# here UNLESS the opt-in --load-launchd flag is set, in which case the 8 jobs
-# load AFTER the health gate passes (phase 4, load_launchd_jobs).
-#
+# Single-command wrap of the FULL fresh-machine sequence: run_install (doctor → config render → plist
+# render → symlink farm → hook wiring → DB bootstrap → launchd repoint → claude --version) THEN monitor
+# `npm run build` + a /api/ health gate. Named exit codes (loud-fail). launchd job LOADING stays manual
+# (review-first) BY DEFAULT — never launchctl from here UNLESS --load-launchd is set, then the 8 jobs load
+# AFTER the health gate passes (phase 4).
 # Exit-code semantics (distinct from die's generic 1):
 #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)
 #   22 = --load-launchd: rendered plists absent   23 = --load-launchd: a bootstrap failed
@@ -616,14 +564,11 @@ run_bootstrap() {
 }
 
 # uninstall orchestration
-# Parallel to run_install: the callable uninstall flow. --verify-clean and
-# --orphan-scan are mutually-exclusive standalone modes the launcher dispatches
-# before reaching here; run_uninstall is the default removal path. Order:
-# launchd teardown → DB drop → node_modules removal → manifest-link removal →
-# orphan sweep → empty-dir cleanup → hook un-wire → shell-rc PATH-line removal →
-# (opt-in config purge).
-# launchd teardown runs FIRST so the daemons stop (connections drain) before the DB
-# is dropped and before their symlinked files vanish.
+# Parallel to run_install: the default removal path (--verify-clean / --orphan-scan are mutually-exclusive
+# standalone modes the launcher dispatches before here). Order: launchd teardown → DB drop → node_modules
+# removal → manifest-link removal → orphan sweep → empty-dir cleanup → hook un-wire → shell-rc PATH-line
+# removal → (opt-in config purge). launchd teardown runs FIRST so the daemons stop (connections drain)
+# before the DB is dropped and their symlinked files vanish.
 run_uninstall() {
   log "== uninstall: removing GA symlinks (target=${TARGET_HOME}) =="
   # STEP1 — stop + deregister the com.glass-atrium.* launchd jobs before the
@@ -644,11 +589,9 @@ run_uninstall() {
   remove_manifest_links
   sweep_orphans
 
-  # STEP4 — INSTALL/UNINSTALL DIRECTORY SYMMETRY: the symlink passes above unlink
-  # FILES but leave behind the empty DIRECTORY skeletons swap_symlink's `mkdir -p`
-  # created (agents/, hooks/, skills/<name>/, ...). Runs AFTER both symlink passes
-  # so those dirs are actually empty; rmdir-only (never rm -rf) so any dir holding
-  # a user file survives untouched.
+  # STEP4 — INSTALL/UNINSTALL DIRECTORY SYMMETRY: the passes above unlink FILES but leave the empty DIR
+  # skeletons swap_symlink's `mkdir -p` created (agents/, hooks/, skills/<name>/, ...). Runs AFTER both
+  # symlink passes so those dirs are empty; rmdir-only (never rm -rf) so any dir holding a user file survives.
   remove_empty_dirs
 
   # T26 — explicit NON-SYMLINK update-state teardown. remove_manifest_links +
@@ -678,17 +621,13 @@ run_uninstall() {
 }
 
 # T26: non-symlink update-state teardown (uninstall)
-# The symlink farm helpers (remove_manifest_links/sweep_orphans) only unlink
-# SYMLINKS; the update system's runtime/recovery state lives in PLAIN files that
-# they never reach, so this explicit step tears them down:
-#   * pause flag (GA_ROOT/.update-state/autoagent-pause.flag): ephemeral daemon-
-#     coordination state — ALWAYS removed (a residual flag after uninstall is
-#     meaningless and could wrongly suspend a later reinstall's daemon).
-#     update_pause_remove is idempotent (absent flag → no-op).
-#   * base@install baseline (the next update's diff base): RECOVERY state — KEPT
-#     by default, mirroring config.toml's keep-unless-`--purge-config` policy;
-#     moved to the Trash (never rm'd, per the file-deletion policy) ONLY under
-#     --purge-config.
+# remove_manifest_links/sweep_orphans only unlink SYMLINKS; the update system's runtime/recovery state
+# lives in PLAIN files they never reach, so this explicit step tears them down:
+#   * pause flag (GA_ROOT/.update-state/autoagent-pause.flag): ephemeral coordination state — ALWAYS
+#     removed (a residual flag could wrongly suspend a later reinstall's daemon; update_pause_remove is
+#     idempotent).
+#   * base@install baseline (the next update's diff base): RECOVERY state — KEPT by default (mirrors
+#     config.toml's keep-unless-`--purge-config`); moved to the Trash (never rm'd) ONLY under --purge-config.
 # Dry-run reports each action without performing it.
 teardown_update_state() {
   # STEP A — pause flag (always; ephemeral coordination state).
@@ -731,26 +670,17 @@ teardown_update_state() {
 }
 
 # update orchestration (T08 dispatcher → T09 updater flow)
-# run_update — the `glass-atrium update` subcommand handler. It DISPATCHES to the
-# updater script (scripts/update.sh, the T09 entry point) and propagates its exit
-# code verbatim.
-#
-# WHY a SUBPROCESS, never a source: the updater is its OWN executable entry point —
-# it sets `set -Eeuo pipefail` + arms `trap update_cleanup EXIT INT TERM` (the T10
-# pause-flag + apply-lock unwind). Sourcing it into the launcher would re-arm those
-# traps in OUR shell, so its EXIT cleanup would fire on the launcher's exit (and a
-# double-source would re-run readonly assigns). Running it as a child keeps its
-# strict mode + trap-cleanup isolated to its own process; its exit code is ours.
-#
-# Args ("$@") pass through verbatim — the updater owns its own argv parsing
-# (`--help`), so the launcher MUST NOT route them through ga_parse_args (the
-# installer's flag parser, which loud-dies on the updater's --help).
-#
-# Resolution: GA_ROOT-anchored (the running install's OWN tree — the binary
-# resolves through the symlink farm to its real repo, so the updater sits beside it),
-# overridable via ATRIUM_UPDATE_SCRIPT for a sandbox/CI layout (mirrors the GA_*
-# override pattern). Loud-fail (die) when the updater is absent or non-executable —
-# no silent absorption of a missing entry point (Precondition Loud-Fail).
+# run_update — the `glass-atrium update` subcommand handler: DISPATCHES to the updater script
+# (scripts/update.sh) and propagates its exit code verbatim.
+# WHY a SUBPROCESS, never a source: the updater is its OWN entry point — it arms `set -Eeuo pipefail` +
+# `trap update_cleanup EXIT INT TERM` (T10 pause-flag + apply-lock unwind). Sourcing would re-arm those
+# traps in OUR shell (its EXIT cleanup fires on the launcher's exit; a double-source re-runs readonly
+# assigns). A child keeps its strict mode + trap-cleanup isolated; its exit code is ours.
+# Args ("$@") pass through verbatim — the updater owns its argv parsing (`--help`), so the launcher MUST
+# NOT route them through ga_parse_args (which loud-dies on the updater's --help).
+# Resolution: GA_ROOT-anchored (the binary resolves through the symlink farm to its real repo, so the
+# updater sits beside it), overridable via ATRIUM_UPDATE_SCRIPT for sandbox/CI. Loud-fail (die) when the
+# updater is absent or non-executable (Precondition Loud-Fail).
 run_update() {
   local updater="${ATRIUM_UPDATE_SCRIPT:-${GA_ROOT}/scripts/update.sh}"
   [[ -f "${updater}" ]] \

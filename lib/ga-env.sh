@@ -3,18 +3,14 @@
 # Glass Atrium — environment init, logging, and OS-portable stat/util primitives (foundation domain). Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
 # [1] idempotency sentinel + ga_init_env
-# The ONLY function that runs `readonly`. Assigns ALL shared constants + run-mode
-# flag DEFAULTS (the flags stay plain/non-readonly so the caller's parse_args can
-# still set them). Idempotent: a second call (re-source / double-init) is a clean
-# no-op so a `set -e` `readonly` re-assignment can never fire twice.
-#
-# GA_ROOT contract: ga_init_env "<resolved_ga_root>" [<target_home_override>].
-# $1 is the authoritative GA_ROOT (the entry point's own resolved location); the
-# function does `readonly GA_ROOT="${1:?...}"`. No BASH_SOURCE fallback, no
-# $GA_ROOT env read (the env var is scrubbed/repurposed by sibling renderers).
+# The ONLY function that runs `readonly`. Assigns ALL shared constants + run-mode flag DEFAULTS (flags stay
+# plain/non-readonly so the caller's parse_args can set them). Idempotent: a second call (re-source /
+# double-init) is a clean no-op so a `set -e` `readonly` re-assign can never fire twice.
+# GA_ROOT contract: ga_init_env "<resolved_ga_root>" [<target_home_override>]. $1 is the authoritative
+# GA_ROOT (the entry point's resolved location); no BASH_SOURCE fallback, no $GA_ROOT env read (the env
+# var is scrubbed/repurposed by sibling renderers).
 ga_init_env() {
-  # idempotent: a second call (re-source / double-init) is a clean no-op so the
-  # set -e `readonly` re-assignment can never fire twice.
+  # idempotent: a second call is a clean no-op (set -e `readonly` never re-fires).
   if [[ -n "${GA_CORE_INITED:-}" ]]; then return 0; fi
 
   local ga_root="${1:?ga_init_env requires the resolved GA_ROOT as \$1}"
@@ -24,10 +20,8 @@ ga_init_env() {
   readonly GA_ROOT="${ga_root}"
   # sandbox override — throwaway target dir when GA_TARGET_HOME is set
   readonly TARGET_HOME="${GA_TARGET_HOME:-${HOME}/.claude}"
-  # MANIFEST overridable (GA_MANIFEST) so a sandbox/CI run can drive the installer
-  # against a tree-matched manifest without editing the tracked one — mirrors the
-  # GA_TARGET_HOME / GA_CONFIG_TOML sandbox-override pattern. Default = the tracked
-  # manifest in the GA root.
+  # MANIFEST overridable (GA_MANIFEST) so a sandbox/CI run drives the installer against a tree-matched
+  # manifest without editing the tracked one (GA_* override pattern). Default = the tracked manifest in the GA root.
   readonly MANIFEST="${GA_MANIFEST:-${GA_ROOT}/manifest.json}"
   readonly LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
 
@@ -38,12 +32,10 @@ ga_init_env() {
   readonly CONFIG_TOML_EXAMPLE="${GA_ROOT}/config.toml.example"
   readonly CONFIG_TOML="${GA_CONFIG_TOML:-${GA_ROOT}/config.toml}"
 
-  # DB bootstrap — fresh-machine path delegates to the monitor's own setup script
-  # (createdb + .env + npm ci + prisma generate/deploy, each step idempotent).
-  # DB_NAME / PG_SOCKET mirror the script's own constants (peer-auth Unix socket).
-  # GA_DB_NAME points the presence probe AND the delegated setup at a throwaway DB
-  # (sandbox/CI E2E) — the env var flows through to oss-db-setup.sh unchanged,
-  # mirroring the GA_TARGET_HOME / GA_MANIFEST / GA_CONFIG_TOML override pattern.
+  # DB bootstrap — fresh-machine path delegates to the monitor's own setup script (createdb + .env + npm ci
+  # + prisma generate/deploy, each idempotent). DB_NAME / PG_SOCKET mirror the script's constants (peer-auth
+  # Unix socket). GA_DB_NAME points the presence probe AND the delegated setup at a throwaway DB (sandbox/CI),
+  # flowing through to oss-db-setup.sh unchanged (GA_* override pattern).
   readonly DB_SETUP_SCRIPT="${GA_ROOT}/monitor/scripts/oss-db-setup.sh"
   readonly DB_NAME="${GA_DB_NAME:-glass_atrium}"
   # GA_PG_SOCKET is a TEST SEAM (default /tmp): lets a test redirect the socket dir so clear_unmanaged_pg_orphan's rm can never target the live /tmp socket. Unset → /tmp, production byte-identical (mirrors the GA_* override pattern).
@@ -58,12 +50,10 @@ ga_init_env() {
   # from here, copies them into ~/Library/LaunchAgents, then launchctl bootstraps.
   readonly RENDERED_PLIST_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
   readonly LAUNCHD_LABEL_PREFIX="com.glass-atrium"
-  # job names mirror render-launchd-plists.sh JOBS 1:1 (the 8 com.glass-atrium.*
-  # stanzas in config.toml). Drift here vs the renderer = a load gap.
-  # bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for
-  # the nounset check, so a cross-function `${ARR[@]}` aborts with "unbound". Use
-  # the two-step idiom (plain global assign, then `readonly` WITHOUT -a) so every
-  # caller can expand it.
+  # job names mirror render-launchd-plists.sh JOBS 1:1 (8 com.glass-atrium.* stanzas); drift vs the renderer
+  # = a load gap. bash 3.2 + set -u: an in-function `readonly -a ARR=(...)` is function-local for nounset, so
+  # a cross-function `${ARR[@]}` aborts "unbound" — use the two-step idiom (plain global assign, then
+  # `readonly` WITHOUT -a) so every caller can expand it.
   LAUNCHD_JOBS=(
     monitor
     autoagent-daemon
@@ -76,14 +66,11 @@ ga_init_env() {
   )
   readonly LAUNCHD_JOBS
 
-  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the daemon
-  # bootstrap scripts' `readonly SESSION=` (scripts/wiki-daemon-bootstrap.sh:15
-  # 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
-  # 'claude-autoagent-daemon'; also daemon-inject-entry.sh role_session_default). These
-  # sessions run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout`
-  # (reparented to PID 1) + `claude plugin uninstall`, so uninstall/install must kill
-  # them explicitly. Same two-step (plain assign then bare `readonly`) idiom as
-  # LAUNCHD_JOBS so a cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
+  # GA_DAEMON_SESSIONS — the DETACHED daemon tmux session names. SoT = the bootstrap scripts' `readonly
+  # SESSION=` (scripts/wiki-daemon-bootstrap.sh:15 'claude-wiki-daemon' + scripts/autoagent-daemon-bootstrap.sh:16
+  # 'claude-autoagent-daemon'). These SURVIVE `launchctl bootout` (reparented to PID 1) + `claude plugin
+  # uninstall`, so uninstall/install must kill them explicitly. Same two-step idiom as LAUNCHD_JOBS so a
+  # cross-function `${GA_DAEMON_SESSIONS[@]}` stays defined under set -u.
   GA_DAEMON_SESSIONS=(
     claude-wiki-daemon
     claude-autoagent-daemon
@@ -105,51 +92,34 @@ ga_init_env() {
   )
   readonly COLLISION_SCOPE_PREFIXES
 
-  # symlink-farm exclusion — INSTALL-INTERNAL manifest entries that are BUNDLED
-  # + per-file hash-verified (they ship in the release + doctor §4 checks their
-  # presence) yet are NEVER symlinked into ~/.claude, because they are consumed
-  # IN PLACE from ~/.glass-atrium: lib/ga-core.sh + lib/ga-deps.sh are SOURCED by
-  # the launcher from its own resolved dir, config.toml.example is the
-  # render_config template, requirements.txt is the python-deps source, and
-  # monitor/ is the dashboard app the bootstrap BUILDS (`cd monitor && npm run
-  # build`) and RUNS in place (`node dist/server/main.js`, launchd-repointed to
-  # ${GA_ROOT}/monitor) — a ~/.claude/monitor link would be wrong (the daemon
-  # runs from ~/.glass-atrium/monitor, not ~/.claude). A ~/.claude/lib link is
-  # equally wrong (nothing there sources it) — so the farm (create + remove)
-  # skips all of these while the manifest still bundles + verifies them. Prefix
-  # globs + exact basenames, TARGET_HOME-relative (mirrors the
-  # COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).
+  # symlink-farm exclusion — INSTALL-INTERNAL manifest entries that are BUNDLED + per-file hash-verified
+  # (they ship + doctor §4 checks their presence) yet are NEVER symlinked into ~/.claude, because they are
+  # consumed IN PLACE from ~/.glass-atrium: lib/ga-core.sh + lib/ga-deps.sh are SOURCED by the launcher from
+  # its own dir; config.toml.example is the render_config template; requirements.txt is the python-deps
+  # source; monitor/ is the dashboard the bootstrap BUILDS (`cd monitor && npm run build`) + RUNS in place
+  # (`node dist/server/main.js`, launchd-repointed to ${GA_ROOT}/monitor) — a ~/.claude/monitor or
+  # ~/.claude/lib link would be wrong (nothing there sources them). Prefix globs + exact basenames,
+  # TARGET_HOME-relative (mirrors the COLLISION_SCOPE_PREFIXES / NEVER_TOUCH shapes).
   #
-  # ESSENTIAL-SYMLINKS-ONLY drop-set: only the NATIVELY-DISCOVERED surfaces
-  # (agents/, skills/, rules/) stay farmed into ~/.claude; the INDIRECTED /
-  # non-native-discovery surfaces are consumed in place from ~/.glass-atrium and
-  # therefore joined the exclude set:
-  #   * hooks/  — the event->hook wiring in settings.json binds ABSOLUTE command
-  #     paths (repointed to ~/.glass-atrium/hooks by the hook-template unit), so
-  #     no ~/.claude/hooks symlink is needed for the client to fire them.
-  #   * scoped/ — NOT natively auto-loaded (native rule auto-load is
-  #     ~/.claude/rules/*.md only); scoped/*.md is hook-INJECTED per-agent from
-  #     ~/.glass-atrium/scoped, so a ~/.claude/scoped link is dead weight.
-  #   * agent-registry.json — the monitor + agent_lifecycle consumers resolve it
-  #     from ~/.glass-atrium (env-independent default), so the ~/.claude link is
-  #     a runtime dangling reference once dropped.
-  #   * glass-atrium (the launcher) — invoked via the PATH-exported ~/.glass-atrium
-  #     copy, never through a ~/.claude alias.
-  #   * scripts/ — Atrium-internal consumables (wiki/daemon helpers, launchd
-  #     renderers, healthchecks): no native Claude Code discovery. Every shipped
-  #     runtime + prose reference is repointed to the ~/.glass-atrium/scripts copy
-  #     (store path OR caller-sibling resolution), so a ~/.claude/scripts link is
-  #     dead weight.
-  #   * autoagent/ — the self-improvement daemon tree (daemon-cycle/apply/eval):
-  #     invoked via ~/.glass-atrium/autoagent (launchd ProgramArguments + sibling
-  #     resolution), never through a ~/.claude alias.
-  # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these four
-  # surfaces MUST NOT take runtime effect before their long-running consumers are
-  # repointed (settings.json hook command path; monitor registry.ts default;
-  # inject-scope-rules/validate-compliance-matrix SCOPED source) — otherwise a
-  # live install orphans them (hook blackout / dangling registry / empty scope
-  # injection). Those consumer repoints land in their own units; this array edit
-  # is the farm-side mechanic only.
+  # ESSENTIAL-SYMLINKS-ONLY drop-set: only the NATIVELY-DISCOVERED surfaces (agents/, skills/, rules/) stay
+  # farmed into ~/.claude; the INDIRECTED / non-native-discovery surfaces are consumed in place from
+  # ~/.glass-atrium and joined the exclude set — each per-surface reason is load-bearing:
+  #   * hooks/  — settings.json binds ABSOLUTE command paths (repointed to ~/.glass-atrium/hooks), so no
+  #     ~/.claude/hooks symlink is needed for the client to fire them.
+  #   * scoped/ — NOT natively auto-loaded (native rule auto-load is ~/.claude/rules/*.md only); scoped/*.md
+  #     is hook-INJECTED per-agent from ~/.glass-atrium/scoped, so a ~/.claude/scoped link is dead weight.
+  #   * agent-registry.json — the monitor + agent_lifecycle resolve it from ~/.glass-atrium (env-independent
+  #     default), so the ~/.claude link is a runtime dangling reference once dropped.
+  #   * glass-atrium (the launcher) — invoked via the PATH-exported ~/.glass-atrium copy, never a ~/.claude alias.
+  #   * scripts/ — Atrium-internal consumables (no native Claude Code discovery); every shipped runtime +
+  #     prose reference is repointed to the ~/.glass-atrium/scripts copy, so a ~/.claude/scripts link is dead weight.
+  #   * autoagent/ — the self-improvement daemon tree, invoked via ~/.glass-atrium/autoagent (launchd
+  #     ProgramArguments + sibling resolution), never a ~/.claude alias.
+  # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these surfaces MUST NOT take runtime
+  # effect before their long-running consumers are repointed (settings.json hook command path; monitor
+  # registry.ts default; inject-scope-rules/validate-compliance-matrix SCOPED source) — else a live install
+  # orphans them (hook blackout / dangling registry / empty scope injection). This array edit is the
+  # farm-side mechanic only; those consumer repoints land in their own units.
   SYMLINK_EXCLUDE_PREFIXES=(
     "lib/"
     "monitor/"
@@ -181,29 +151,21 @@ ga_init_env() {
   # prefix-matched never-touch (e.g. vercel-plugin-device-id, -id.lock, ...)
   readonly NEVER_TOUCH_PREFIX="vercel-plugin-device-id"
 
-  # settings.json — the EVENT->HOOK wiring lives ONLY here and is NOT in the
-  # manifest (it is user-owned config the installer must never overwrite — see the
-  # never-touch guard + D-5 doctor binding check below). The installer deploys the
-  # hook FILES; the user wires them by adding these bindings to settings.json. The
-  # doctor check (run_doctor §6) reads settings.json read-only and WARNS per
-  # missing binding — a deployed-but-unwired hook is dormant (never fires).
+  # settings.json — the EVENT->HOOK wiring lives ONLY here and is NOT in the manifest (user-owned config
+  # the installer must never overwrite — see the never-touch guard + D-5 doctor binding check). The
+  # installer deploys the hook FILES; the user wires them via these bindings. The doctor check (run_doctor
+  # §6) reads settings.json read-only + WARNS per missing binding (a deployed-but-unwired hook is dormant).
   readonly SETTINGS_JSON="${TARGET_HOME}/settings.json"
 
-  # expected hook->event bindings the user MUST register in settings.json for the
-  # deployed hooks to actually fire. Each entry = "<event>\t<hook-basename>\t<matcher>".
-  # Format: PreToolUse / PostToolUse / SessionStart / Stop / SubagentStart /
-  # SubagentStop / PreCompact. Each row is matched
-  # against the live settings.json .hooks[<event>][].hooks[].command field by
-  # basename, SCOPED to its matcher (command-WITHIN-matcher — the doctor binding
-  # check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the
-  # selector wire_hooks attaches when UPSERTING a not-yet-present binding AND the
-  # scoping key for the bound/dormant check; an empty 3rd column means "no matcher
-  # key" (SessionStart/Stop are unmatched events). Because the key is per-matcher,
-  # the SAME hook may appear in TWO rows under one event with different matchers
-  # (e.g. validate-secret-scan.sh on Write|Edit AND on Bash) — each is wired and
-  # tracked independently, no row masks the other.
-  # Add a row here when a new hook is deployed that needs an event binding.
-  # This is the SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
+  # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
+  # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
+  # Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live settings.json
+  # .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher (command-WITHIN-matcher — the
+  # doctor binding check + wire_hooks idempotency key). The 3rd column (matcher) is BOTH the UPSERT selector
+  # AND the bound/dormant scoping key; an empty 3rd column = "no matcher key" (SessionStart/Stop are
+  # unmatched). Per-matcher, so the SAME hook may appear in TWO rows under one event with different matchers
+  # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
+  # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
   EXPECTED_HOOK_BINDINGS=(
     "PreToolUse	advisory-context-budget.sh	Agent"
@@ -269,20 +231,15 @@ ga_init_env() {
   # health-gate window — the monitor is expected up well within this many seconds.
   readonly BOOTSTRAP_HEALTH_WINDOW_SECS=30
 
-  # E5 update-system libs — sourced HERE (after GA_ROOT is readonly) so the
-  # install/uninstall/doctor flows below can call the update-system helpers:
+  # E5 update-system libs — sourced HERE (after GA_ROOT is readonly) so the install/uninstall/doctor flows
+  # can call the update-system helpers:
   #   * atrium-config.sh    — atrium_toml_get (doctor §9 [release].repo read)
-  #   * apply-spine.sh       — spine_set_baseline / spine_get_baseline / spine_*
-  #                            (T24 install baseline capture · §9 baseline probe)
-  #   * update-pause-flag.sh — update_pause_remove / update_pause_flag_path /
-  #                            update_pause_flag_age_secs (T26 teardown · T27 stale)
-  # All three are PURE (function-only, no side effects, no strict-mode mutation —
-  # the same sourced-lib convention as this engine), so sourcing them here defines
-  # the functions without any file-scope action. Resolved under GA_ROOT (the libs
-  # always sit beside this engine in scripts/lib); GA_LIB_DIR overrides for a
-  # sandbox/CI layout, mirroring the GA_* override pattern. Loud-fail (die) on an
-  # absent lib — a missing E5 lib is a broken install, never a silent skip
-  # (shared-self-improve-hygiene Precondition Loud-Fail Principle).
+  #   * apply-spine.sh       — spine_set_baseline / spine_get_baseline / spine_* (T24 capture · §9 probe)
+  #   * update-pause-flag.sh — update_pause_remove / update_pause_flag_path / update_pause_flag_age_secs (T26 · T27)
+  # All three are PURE (function-only, no side effects / strict-mode mutation), so sourcing here defines the
+  # functions without any file-scope action. Resolved under GA_ROOT/scripts/lib (GA_LIB_DIR overrides for
+  # sandbox/CI). Loud-fail (die) on an absent lib — a missing E5 lib is a broken install, never a silent
+  # skip (shared-self-improve-hygiene Precondition Loud-Fail Principle).
   readonly LIB_DIR="${GA_LIB_DIR:-${GA_ROOT}/scripts/lib}"
   local _e5_lib
   for _e5_lib in atrium-config.sh apply-spine.sh update-pause-flag.sh; do
@@ -389,11 +346,9 @@ is_never_touch() {
 }
 
 # OS-portable stat accessors (BSD/macOS `stat -f` vs GNU/Linux `stat -c`)
-# BSD and GNU stat diverge on BOTH the flag (-f vs -c) AND the per-field format
-# specifier, so a blind -f→-c swap silently returns WRONG values on GNU (it does
-# not understand %Lp/%m). Detect the flavor ONCE (uname -s, memoized) and route
-# each PURPOSE through its own accessor carrying the correct flag+specifier.
-# Mirrors resolve_self()'s BSD/GNU readlink -f portability split in the entry point.
+# BSD and GNU stat diverge on BOTH the flag (-f vs -c) AND the per-field specifier, so a blind -f→-c swap
+# silently returns WRONG values on GNU. Detect the flavor ONCE (uname -s, memoized) + route each PURPOSE
+# through its own accessor carrying the correct flag+specifier:
 #   dev   (st_dev) : BSD %d  == GNU %d   (specifier matches)
 #   perms (octal)  : BSD %Lp -> GNU %a   (specifier DIFFERS)
 #   mtime (epoch)  : BSD %m  -> GNU %Y   (specifier DIFFERS)
@@ -446,18 +401,13 @@ dev_of() { stat_dev "$1"; }
 
 # sandbox-target guard (launchd domain protection)
 # Echo "yes" when this run targets a NON-real home, via EITHER sandbox seam:
-#   (a) GA_TARGET_HOME override — TARGET_HOME points off ${HOME}/.claude (the
-#       bats/CI pattern: HOME stays real, target redirected);
-#   (b) fake-HOME sandbox — ${HOME} diverges from the current user's passwd-db
-#       home (the oss-e2e-bootstrap.sh pattern: HOME=<sandbox>, GA_TARGET_HOME
-#       unset, so seam (a) alone can NEVER see it).
-# WHY both: launchd gui-domain labels are per-UID, NOT per-HOME — a fake-HOME
-# run still mutates the REAL user's gui/${UID} domain, so launchctl teardown
-# must key on "is this the real home", not on path derivation alone.
-# Passwd-db home via dscl (macOS) / getent (Linux); UNRESOLVABLE → "no"
-# (real-home semantics preserved — every host where bootout can actually run
-# is macOS, where dscl always resolves the local user).
-# Stdout-verdict (always exits 0), mirroring is_never_touch / is_symlink_excluded.
+#   (a) GA_TARGET_HOME override — TARGET_HOME points off ${HOME}/.claude (bats/CI: HOME real, target redirected);
+#   (b) fake-HOME sandbox — ${HOME} diverges from the passwd-db home (oss-e2e-bootstrap.sh: HOME=<sandbox>,
+#       GA_TARGET_HOME unset, so seam (a) alone can NEVER see it).
+# WHY both: launchd gui-domain labels are per-UID, NOT per-HOME — a fake-HOME run still mutates the REAL
+# user's gui/${UID} domain, so teardown must key on "is this the real home", not path derivation alone.
+# Passwd-db home via dscl (macOS) / getent (Linux); UNRESOLVABLE → "no" (real-home semantics preserved —
+# every host where bootout runs is macOS, where dscl always resolves). Stdout-verdict (always exits 0).
 is_sandbox_target() {
   if [[ "${TARGET_HOME}" != "${HOME}/.claude" ]]; then
     printf 'yes\n'
@@ -486,13 +436,11 @@ is_sandbox_target() {
 }
 
 # post-install claude liveness (advisory)
-# Run a command under a HARD wall-clock bound, killing its whole process group on
-# expiry. bash 3.2 / macOS-portable: stock macOS has NO GNU `timeout`/`gtimeout`,
-# but `/usr/bin/perl` is always present. The exec'd child leads its own process
-# group (setpgrp), so on SIGALRM we SIGKILL the entire group. Defense-in-depth for
-# the advisory post-check — the primary hang-immunity comes from full /dev/null I/O
-# decoupling at the call site (see doctor_postcheck), NOT from this bound alone.
-# Exit: child's exit code on completion · 124 on timeout · 70/71 on fork/exec fail.
+# Run a command under a HARD wall-clock bound, killing its whole process group on expiry. bash 3.2 /
+# macOS-portable: stock macOS has NO GNU `timeout`/`gtimeout`, but `/usr/bin/perl` is always present. The
+# exec'd child leads its own process group (setpgrp), so on SIGALRM we SIGKILL the entire group.
+# Defense-in-depth — primary hang-immunity is full /dev/null I/O decoupling at the call site
+# (see doctor_postcheck), NOT this bound alone. Exit: child rc · 124 timeout · 70/71 fork/exec fail.
 run_with_timeout() {
   local bound="$1"
   shift
