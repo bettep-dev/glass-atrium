@@ -459,7 +459,7 @@
     "lib/ga-db.sh": "7917c3fa548b5e1953a83c9eb50de51d9245bfaf376e32202813d5f4d29c8baf",
     "lib/ga-deps.sh": "3273592dcbcb20209b4070bde744b22268284d067468c63535906a952cac21c0",
     "lib/ga-doctor.sh": "0f15c719835ea9d3036be48777d239c2f36620e9309f020639ca003b50d26988",
-    "lib/ga-env.sh": "28076b039dc569f01ca54add8a95d54ba2ea9d435bb9e4b991e573cd2388d021",
+    "lib/ga-env.sh": "9e1586c320aac6a86afe03041c96511433e6c98929d4f2365a399cfec565edcd",
     "lib/ga-launchd.sh": "a9d84b967d81ec618b679afc61acdd287f8d373629662c02b6b2f6653fe46680",
     "lib/ga-symlink.sh": "ab1ffeeb1cf6ab312d66eec3cf349e8c9ef8ed7043d3161ef3bc2c8dd72310b3",
     "lib/ga-tui-caps.sh": "c8d99ab63503ada881aaa94ada18e3c39d0cd783da1488d46e80ba480bc53b49",

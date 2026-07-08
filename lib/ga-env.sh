@@ -46,7 +46,8 @@ ga_init_env() {
   # mirroring the GA_TARGET_HOME / GA_MANIFEST / GA_CONFIG_TOML override pattern.
   readonly DB_SETUP_SCRIPT="${GA_ROOT}/monitor/scripts/oss-db-setup.sh"
   readonly DB_NAME="${GA_DB_NAME:-glass_atrium}"
-  readonly PG_SOCKET="/tmp"
+  # GA_PG_SOCKET is a TEST SEAM (default /tmp): lets a test redirect the socket dir so clear_unmanaged_pg_orphan's rm can never target the live /tmp socket. Unset → /tmp, production byte-identical (mirrors the GA_* override pattern).
+  readonly PG_SOCKET="${GA_PG_SOCKET:-/tmp}"
 
   # launchd plist render — file-write ONLY (never launchctl). Output dir is the
   # renderer's GA_PLIST_OUT default (<GA root>/rendered/launchd, git-ignored) or

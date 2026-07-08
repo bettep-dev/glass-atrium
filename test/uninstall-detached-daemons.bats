@@ -27,9 +27,10 @@
 #   * tmux / pkill / lsof resolve to PATH-stub RECORDERS (never the real tools);
 #   * `kill` (shell builtin) is overridden to a RECORDER (never signals a real pid);
 #   * `sleep` is a no-op (collapse the bounded poll);
-#   * `rm` is a record-only PATH stub SAFETY BELT — PG_SOCKET is the real "/tmp" (readonly
-#     in ga_init_env), so a real postgres socket at /tmp/.s.PGSQL.5432 must NEVER be deleted
-#     by a test. The record-only rm makes the socket-removal branch falsifiable without touch;
+#   * `rm` is a record-only PATH stub RECORDER; the ROOT-CAUSE safety belt is the GA_PG_SOCKET
+#     redirect (setup points PG_SOCKET at a per-test temp dir BEFORE ga_init_env), so
+#     clear_unmanaged_pg_orphan's socket path resolves under that temp dir and can NEVER reach
+#     the live /tmp/.s.PGSQL.5432 by construction — the record-only rm only makes the branch observable;
 #   * is_sandbox_target is overridden per-test (the real verdict depends on the host HOME).
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
@@ -42,6 +43,17 @@ setup() {
   mkdir -p "${STUB_BIN}"
   REC="${SANDBOX}/rec"
   : >"${REC}"
+  # capture the REAL rm now, before STUB_BIN is prepended to PATH — teardown needs it because the
+  # record-only rm stub (a PATH executable) is NOT bypassed by `command` (only funcs/builtins are).
+  REAL_RM="$(command -v rm)"
+  # PG_SOCKET redirect (GA_PG_SOCKET test seam) — point the socket dir at a per-test temp dir so
+  # clear_unmanaged_pg_orphan's layer-3 rm resolves under it and can NEVER target the live /tmp
+  # socket. MUST be exported BEFORE ga_init_env (PG_SOCKET is readonly once resolved).
+  # Short /tmp base: the AF_UNIX sun_path bind cap is ~104 bytes (macOS) and $TMPDIR
+  # (/var/folders/...) alone eats ~91. A unique mktemp subdir under /tmp stays bindable and is a
+  # DISTINCT path from the live /tmp/.s.PGSQL.5432 (rm on the subdir can never reach the live socket).
+  PG_SOCK_DIR="$(mktemp -d /tmp/ga-dd-sock.XXXXXX)"
+  export GA_PG_SOCKET="${PG_SOCK_DIR}"
   # suspend any inherited ERR trap; ga-core is sourceable without strict-mode side effects.
   trap - ERR
   # shellcheck source=/dev/null
@@ -56,7 +68,10 @@ setup() {
 }
 
 teardown() {
-  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}" || true
+  # REAL_RM (captured pre-stub) genuinely removes the temp dirs — the PATH rm stub is a no-op recorder.
+  local real_rm="${REAL_RM:-/bin/rm}"
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && "${real_rm}" -rf -- "${SANDBOX}" || true
+  [[ -n "${PG_SOCK_DIR:-}" && -d "${PG_SOCK_DIR}" ]] && "${real_rm}" -rf -- "${PG_SOCK_DIR}" || true
 }
 
 # extract_launcher_fn — eval a single named launcher function into the test shell so it can be
@@ -125,6 +140,20 @@ esac
 exit 0
 STUB
   chmod +x "${STUB_BIN}/brew"
+}
+
+# make_fake_pg_socket <path>: bind a REAL AF_UNIX socket at the redirected temp path so the
+# layer-3 `[[ -S "${sock}" ]]` guard is TRUE and the socket-rm branch genuinely fires there (a
+# plain `touch` is a regular file and fails -S). python3 bind+close leaves a socket-type file on
+# disk. Skips the test if python3 is absent (the redirect safety itself does not need it).
+make_fake_pg_socket() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required to bind a fake AF_UNIX socket"
+  python3 - "$1" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sys.argv[1])
+s.close()
+PY
 }
 
 # ------------------------------------------------------------------------------------
@@ -245,6 +274,8 @@ STUB
   stub_brew # present but MUST NOT be called (layer-1 brew-services-stop was deleted)
   kill() { printf 'kill %s\n' "$*" >>"${REC}"; return 0; }
   sleep() { return 0; }
+  # bind a real socket at the REDIRECTED temp path so layer-3 rm genuinely fires THERE, never /tmp.
+  make_fake_pg_socket "${PG_SOCK_DIR}/.s.PGSQL.5432"
   GA_LSOF_PIDS="424242" # a fake unmanaged-orphan pid
   export GA_LSOF_PIDS
   run clear_unmanaged_pg_orphan
@@ -253,6 +284,9 @@ STUB
   grep -qF 'kill -INT 424242' "${REC}"
   # layer-1 is GONE: NO brew-managed server is ever stopped by the clear.
   ! grep -qF 'brew services stop' "${REC}"
+  # layer-3 rm fires on the TEMP socket path — proven by construction to never reach /tmp.
+  grep -qF "rm -f -- ${PG_SOCK_DIR}/.s.PGSQL.5432" "${REC}"
+  ! grep -qF '/tmp/.s.PGSQL.5432' "${REC}"
 }
 
 @test "clear(layers): the helper body keeps layer-2 SIGINT + layer-3 socket-rm, drops layer-1 brew stop" {

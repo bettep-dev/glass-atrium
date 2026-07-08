@@ -22,17 +22,19 @@
 #       B4b sandbox 'broken' unmanaged     → same loud-fail, no destructive action.
 #
 # READ-ONLY toward the live SYSTEM: the real postgres@18 is HEALTHY and its peer-auth socket is
-# /tmp/.s.PGSQL.5432 (PG_SOCKET is a hardcoded `readonly /tmp` in ga_init_env — NOT overridable).
-# So `rm`, `kill`, `lsof`, `psql`, `pg_isready`, `brew`, `tmux`, `pkill` are shadowed as PURE
-# in-process RECORDERS that NEVER exec the real tool — the guard/clear logic under test runs for
-# real, but no signal is sent, no socket is removed, no brew service is touched. The only real
-# read is the `[[ -S ]]` socket-type test (read-only) — deliberately left real so the socket-rm
-# branch is exercised faithfully against the live socket's existence. Consequence: the layer-3
-# socket rm is guard-CONDITIONAL at runtime (it fires only when a stale socket file actually remains
-# at that path). B3/B3b therefore assert it via assert_socket_rm_matches_guard (mirroring the code's
-# own `[[ -S ]]` guard) plus a deterministic [B-static] body-presence check — NOT an unconditional
-# runtime fire, which was the stale, host-fragile expectation (it failed on any host with no live pg
-# on /tmp, where the socket is legitimately absent and the code correctly skips the removal).
+# /tmp/.s.PGSQL.5432. PG_SOCKET is REDIRECTED to a per-test temp dir via the GA_PG_SOCKET seam
+# (exported BEFORE the launcher is sourced, since ga_init_env makes PG_SOCKET readonly at source
+# time), so the guard/clear socket path resolves under the temp dir and can NEVER reach the live
+# /tmp socket. On top of that, `rm`, `kill`, `lsof`, `psql`, `pg_isready`, `brew`, `tmux`, `pkill`
+# are shadowed as PURE in-process RECORDERS that NEVER exec the real tool — the guard/clear logic
+# under test runs for real, but no signal is sent, no socket is removed, no brew service is touched.
+# The only real read is the `[[ -S ]]` socket-type test (read-only) — left real so the socket-rm
+# branch is exercised faithfully against the REDIRECTED temp path's socket existence. Consequence:
+# the layer-3 socket rm is guard-CONDITIONAL at runtime (it fires only when a socket file actually
+# exists at the redirected path). B3/B3b therefore assert it via assert_socket_rm_matches_guard
+# (mirroring the code's own `[[ -S ]]` guard) plus a deterministic [B-static] body-presence check —
+# NOT an unconditional runtime fire, which was the stale, host-fragile expectation (it failed on any
+# host with no socket at the checked path, where the code correctly skips the removal).
 #
 # The functions UNDER TEST run REAL: stop_detached_daemons, kill_daemon_tmux_sessions,
 # clear_unmanaged_pg_orphan, preflight_pg_utc_guard. Only the leaf tools + the detect probes +
@@ -52,10 +54,17 @@ HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GA_DIR_ROOT="$(cd -- "${HARNESS_DIR}/.." && pwd)"
 LAUNCHER="${GA_DIR_ROOT}/glass-atrium"
 
+# PG_SOCKET redirect (GA_PG_SOCKET test seam) — MUST be exported BEFORE sourcing the launcher,
+# because ga_init_env makes PG_SOCKET readonly at source time. Redirecting the socket dir at a temp
+# dir means clear_unmanaged_pg_orphan's socket path resolves under it and can NEVER reach the live
+# /tmp/.s.PGSQL.5432 by construction. Distinct mktemp subdir; cleaned up at harness exit.
+GA_PG_SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ga-pgsafe-sock.XXXXXX")"
+export GA_PG_SOCKET="${GA_PG_SOCK_DIR}"
+
 # --- source the launcher as a library (main skipped by its source-guard) ----------------
-# This runs ga_init_env (PG_SOCKET → readonly /tmp) + sources lib/ga-core.sh + lib/ga-deps.sh,
-# giving stop_detached_daemons / clear_unmanaged_pg_orphan (ga-core) AND preflight_pg_utc_guard
-# (glass-atrium) in one shot.
+# This runs ga_init_env (PG_SOCKET → the GA_PG_SOCKET temp-dir redirect) + sources lib/ga-core.sh
+# + lib/ga-deps.sh, giving stop_detached_daemons / clear_unmanaged_pg_orphan (ga-core) AND
+# preflight_pg_utc_guard (glass-atrium) in one shot.
 # shellcheck source=/dev/null
 source "${LAUNCHER}"
 # match run_gate_quiet's runtime: no -e, no ERR/EXIT trap (else an expected non-zero guard
@@ -90,8 +99,8 @@ assert_rec_absent() { # $1=label $2=needle
   if grep -qF "$2" "${GA_REC}"; then fail "$1 (UNEXPECTED '$2' — destructive action fired)"; else pass "$1 (absent)"; fi
 }
 # The layer-3 stale-socket removal in clear_unmanaged_pg_orphan is GUARDED by the code's REAL
-# `[[ -S "${sock}" ]]` test against ${PG_SOCKET}/.s.PGSQL.5432 (readonly /tmp, not redirectable),
-# left un-stubbed above. So the record-only rm fires IFF a socket file actually exists there when the
+# `[[ -S "${sock}" ]]` test against ${PG_SOCKET}/.s.PGSQL.5432 (redirected to a per-test temp dir via
+# GA_PG_SOCKET), left un-stubbed above. So the record-only rm fires IFF a socket file actually exists there when the
 # harness runs — mirror that guard rather than demand an unconditional fire (the old, host-fragile bug).
 assert_socket_rm_matches_guard() { # $1=label
   local sock="${PG_SOCKET}/.s.PGSQL.5432"
@@ -355,5 +364,7 @@ echo "==========================================================================
 printf 'HARNESS RESULT: %s passed, %s failed\n' "${PASSES}" "${FAILS}"
 echo "============================================================================"
 # `rm` is shadowed as a pure recorder above; use the real coreutils rm for temp cleanup.
+# `command` bypasses the shell-function shadow (unlike a PATH stub), reaching the real rm.
 command rm -f "${GA_REC}" "${GA_LOG}"
+command rm -rf -- "${GA_PG_SOCK_DIR}"
 [[ "${FAILS}" -eq 0 ]]
