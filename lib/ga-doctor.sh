@@ -4,11 +4,9 @@
 
 # doctor / preflight
 # Mutation-free checks: same-device, target writable, no dangling, manifest ok.
-# $1 == "preflight" → §7 target-side deploy reconciliation is ADVISORY (warn,
-# not abort): a fresh install legitimately has 0 deployed entries because
-# run_symlink_farm runs AFTER this preflight, so "not installed" is not a fault
-# there. The standalone `doctor` subcommand passes no arg → §7 stays a hard FAIL
-# on a genuinely-deployed system that has drifted/missing symlinks.
+# $1 == "preflight" → §7 target-side deploy reconciliation is ADVISORY (warn, not abort): a fresh
+# install legitimately has 0 deployed entries (run_symlink_farm runs AFTER preflight). The
+# standalone `doctor` (no arg) → §7 stays a hard FAIL on a deployed system with drifted/missing symlinks.
 run_doctor() {
   local mode="${1:-standalone}"
   local fail=0
@@ -36,10 +34,9 @@ run_doctor() {
     fail=1
   fi
 
-  # 3. same-device advisory — GA root vs target home. Informational only: the swap
-  # rename is atomic by construction (STAGE_TMP co-located with dst), so a cross-
-  # device GA/target layout does NOT abort the install; it is surfaced here as a
-  # layout note (e.g. GA checkout on an external volume) without failing doctor.
+  # 3. same-device advisory — GA root vs target home. Informational only: the swap rename is atomic
+  # by construction (STAGE_TMP co-located with dst), so a cross-device layout does NOT abort the
+  # install — surfaced as a layout note (e.g. GA checkout on an external volume) without failing doctor.
   if [[ -d "${GA_ROOT}" && -d "${TARGET_HOME}" ]]; then
     local ga_dev th_dev
     # dev_of is a thin stat wrapper; an advisory-only verdict — masking its rc is
@@ -96,17 +93,13 @@ run_doctor() {
     [[ "${dangling}" -eq 0 ]] && log "  ok   : no dangling GA symlinks"
   fi
 
-  # 6. hook event-binding gap (D-5) — the installer deploys hook FILES but the
-  #    event->hook WIRING lives ONLY in settings.json, which is user-owned and
-  #    NOT in the manifest. A clean/partial install therefore leaves deployed
-  #    hooks DORMANT (present on disk, never fired). This check is mutation-free
-  #    by design: auto-writing the user's settings.json is unsafe (would clobber
-  #    user config + violate the never-touch guard), so we SURFACE the gap
-  #    loudly (loud-fail) and let the USER apply the bindings. Missing bindings
-  #    are a WARNING advisory (doctor still PASSes on §1-5), not a hard FAIL —
-  #    so a dormant-hook gap is reported without blocking an otherwise-valid
-  #    install. The fix is documentation, not mutation (see the apply-by-hand
-  #    NOTE emitted below + manifest.json ._doc_settings_json).
+  # 6. hook event-binding gap (D-5) — the installer deploys hook FILES but the event->hook WIRING
+  #    lives ONLY in settings.json (user-owned, NOT in the manifest), so a clean/partial install
+  #    leaves deployed hooks DORMANT (on disk, never fired). Mutation-free by design: auto-writing
+  #    settings.json is unsafe (clobbers user config + violates never-touch), so SURFACE the gap
+  #    loudly and let the USER apply the bindings. Missing bindings are a WARNING (doctor still
+  #    PASSes on §1-5), not a hard FAIL — the fix is documentation, not mutation (see the
+  #    apply-by-hand NOTE below + manifest.json ._doc_settings_json).
   local unbound=0
   if [[ ! -f "${SETTINGS_JSON}" ]]; then
     log "  warn : settings.json absent (${SETTINGS_JSON}) — ALL hook event-bindings are unwired; deployed hooks are DORMANT"
@@ -117,11 +110,9 @@ run_doctor() {
     local binding event hook matcher
     for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
       IFS=$'\t' read -r event hook matcher <<<"${binding}"
-      # matcher-scoped check so the same hook bound under two matchers (e.g.
-      # validate-secret-scan.sh on Write|Edit AND Bash) is reported per-tuple —
-      # a missing Bash binding must NOT be masked by a present Write|Edit one.
-      # is_hook_bound returns 0 by contract (stdout verdict) → masking is intentional
-      # (SC2311 = the sourced-lib analog of SC2310; no file-scope set -e here)
+      # matcher-scoped check so the same hook bound under two matchers (e.g. validate-secret-scan.sh
+      # on Write|Edit AND Bash) is reported per-tuple — a missing Bash binding not masked by a present one.
+      # is_hook_bound is a stdout verdict (exits 0) → SC2311 masking intentional (no file-scope set -e).
       # shellcheck disable=SC2310,SC2311,SC2312
       if [[ "$(is_hook_bound "${event}" "${hook}" "${matcher}")" == "yes" ]]; then
         log "  ok   : hook bound — ${event} -> ${hook} (matcher=${matcher:-<none>})"
@@ -137,28 +128,24 @@ run_doctor() {
     log "       NOTE: this doctor check is read-only and never writes settings.json. To apply these bindings, run 'glass-atrium install' — wire_hooks performs an idempotent, timestamped-backup MERGE of ONLY the Atrium hook bindings (it never deletes/overwrites user-owned keys; 'agents-only' skips it). You may also add them by hand."
   fi
 
-  # 7. target-side deploy reconciliation — symmetric inverse of §4. §4 checks
-  #    manifest entry -> SOURCE present; this checks manifest entry -> TARGET
-  #    installed (a symlink under TARGET_HOME resolving into GA_ROOT). A manifest
-  #    entry on disk in the source but NOT symlinked into the target is an
-  #    UNDEPLOYED entry — invisible to §4 (source present) and §5 (only flags
-  #    EXISTING dangling links, never a missing one). Loud-fail per
-  #    shared-self-improve-hygiene.md Precondition Loud-Fail Principle: surface
-  #    every miss so a partial/stale deploy (e.g. a newly added skill or script
-  #    never run through `glass-atrium agents-only`) cannot fossilize silently.
+  # 7. target-side deploy reconciliation — symmetric inverse of §4. §4 checks manifest entry ->
+  #    SOURCE present; this checks manifest entry -> TARGET installed (a symlink under TARGET_HOME
+  #    resolving into GA_ROOT). An entry present in the source but NOT symlinked into the target is
+  #    UNDEPLOYED — invisible to §4 (source present) and §5 (only flags EXISTING dangling links).
+  #    Loud-fail per shared-self-improve-hygiene.md Precondition Loud-Fail Principle: surface every
+  #    miss so a partial/stale deploy (e.g. a new skill/script never run through `glass-atrium
+  #    agents-only`) cannot fossilize silently.
   local undeployed_fresh=0
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" && -d "${TARGET_HOME}" ]] \
     && jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
-    # Two contexts downgrade §7 from hard-FAIL to an advisory:
-    #   (a) preflight — run_symlink_farm runs AFTER this preflight, so a fresh
-    #       install legitimately has 0 deployed entries (existing behavior).
-    #   (b) FULLY-FRESH standalone target — a brand-new empty target home with NO
-    #       GA-pointing symlinks at all is the SAME not-yet-deployed case, not
-    #       drift: 0/N deployed because nothing was ever installed here. ga_links
-    #       (the §5 find idiom) counts GA-pointing symlinks under TARGET_HOME;
-    #       zero such links ⇒ nothing is deployed ⇒ every manifest entry reports
-    #       undeployed. The hard-FAIL is RESERVED for genuine PARTIAL drift (some
-    #       entries deployed, some missing) on an established install.
+    # Two contexts downgrade §7 from hard-FAIL to advisory:
+    #   (a) preflight — run_symlink_farm runs AFTER preflight, so a fresh install legitimately has
+    #       0 deployed entries.
+    #   (b) FULLY-FRESH standalone target — a brand-new empty target home with NO GA-pointing
+    #       symlinks is the SAME not-yet-deployed case, not drift. ga_links (the §5 find idiom)
+    #       counts GA-pointing symlinks under TARGET_HOME; zero ⇒ nothing deployed ⇒ every entry
+    #       reports undeployed. The hard-FAIL is RESERVED for genuine PARTIAL drift (some deployed,
+    #       some missing) on an established install.
     local ga_links=0 lk
     # find ends with `|| true` → masked exit is benign; process substitution
     # keeps the loop in the current shell (var-safe).
@@ -213,12 +200,10 @@ run_doctor() {
     log "  warn : target-side reconciliation skipped (manifest unreadable, jq absent, or target home missing)"
   fi
 
-  # 8. manifest drift gate (D-T2) — advisory-but-loud. generate-manifest.sh
-  #    --check fails (exit 1) on a source-vs-manifest divergence (a tracked
-  #    in-scope file missing from .files, or a listed entry no longer tracked).
-  #    Surfaced as a WARNING (doctor still PASSes on §1-7) so a healthy install
-  #    is not blocked by a manifest the operator can regenerate; the loud line
-  #    points at the fix. Skipped (not a fail) when the generator is absent.
+  # 8. manifest drift gate (D-T2) — advisory-but-loud. generate-manifest.sh --check fails (exit 1)
+  #    on a source-vs-manifest divergence (a tracked in-scope file missing from .files, or a listed
+  #    entry no longer tracked). Surfaced as a WARNING (doctor still PASSes on §1-7) so a healthy
+  #    install isn't blocked; skipped (not a fail) when the generator is absent.
   local drift=0
   if [[ -x "${GENERATE_MANIFEST}" ]]; then
     if bash "${GENERATE_MANIFEST}" --check >/dev/null 2>&1; then
@@ -232,12 +217,10 @@ run_doctor() {
     log "  warn : manifest drift gate skipped (generator not executable: ${GENERATE_MANIFEST})"
   fi
 
-  # 9. update-system advisory (E5 — T22/T27). PASS-compatible by design: every
-  #    line here is informational, a note, or a WARN — §9 NEVER sets `fail` (an
-  #    unconfigured release repo or a source-dev tree is a valid state, not an
-  #    install fault). Surfaces the update CLI's health at a glance: installed
-  #    version, source-dev vs consumer tree, release-repo wiring, base@install
-  #    baseline presence, and a STALE-pause warning (a dormant-daemon indicator).
+  # 9. update-system advisory (E5 — T22/T27). PASS-compatible by design: every line is info, a
+  #    note, or a WARN — §9 NEVER sets `fail` (an unconfigured release repo / source-dev tree is a
+  #    valid state). Surfaces the update CLI's health: installed version, source-dev vs consumer
+  #    tree, release-repo wiring, base@install baseline presence, a STALE-pause warning.
   local stale_pause=0
   # 9a — installed CLI version (manifest.version), advisory visibility.
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" ]]; then

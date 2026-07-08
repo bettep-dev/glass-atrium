@@ -2,15 +2,12 @@
 # shellcheck disable=SC2154  # references shared globals (DRY_RUN/GA_DAEMON_SESSIONS/PG_SOCKET) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — detached daemon / tmux-session / unmanaged-postgres-orphan lifecycle domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# kill_daemon_tmux_sessions — kill the DETACHED daemon tmux sessions (GA_DAEMON_SESSIONS).
-# These run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout`
-# (reparented to PID 1), so bootout alone leaves them running. Shared by uninstall
-# (stop_detached_daemons) AND install start (clear a stale session so a fresh daemon boots
-# clean). GUARDED exactly like unload_launchd_jobs: DRY_RUN reports without acting;
-# is_sandbox_target skips the WHOLE kill (the tmux server is a per-USER host resource shared
-# with the real user regardless of HOME — a sandboxed run must NOT kill the real sessions);
-# a missing tmux is a loud-log skip (Precondition Loud-Fail — never silent). Best-effort,
-# always returns 0.
+# kill_daemon_tmux_sessions — kill the DETACHED daemon tmux sessions (GA_DAEMON_SESSIONS) that
+# run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout` (reparented to
+# PID 1). Shared by uninstall (stop_detached_daemons) + install-start (clear a stale session).
+# Guarded like unload_launchd_jobs: DRY_RUN report-only; is_sandbox_target skips the WHOLE kill
+# (the tmux server is a per-USER host resource shared with the real user regardless of HOME);
+# missing tmux = loud-log skip (Precondition Loud-Fail). Best-effort, returns 0.
 kill_daemon_tmux_sessions() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping detached daemon tmux session teardown (${GA_DAEMON_SESSIONS[*]})"
@@ -42,23 +39,19 @@ kill_daemon_tmux_sessions() {
 }
 
 # clear_unmanaged_pg_orphan — INSTALL-scoped clear of a GENUINE unmanaged postgres orphan: a
-# postmaster from a now-DELETED keg (files gone, process alive PPID 1) that keeps the :5432 /
-# peer-auth socket and, having lost its tzdata, REJECTS `SET timezone='UTC'` — breaking the
-# monitor's UTC-gated pool. Called ONLY from preflight_pg_utc_guard's unmanaged-orphan branch,
-# reached after ga_detect_postgres_utc=='broken' AND a brew RESTART did not clear it — so a
-# HEALTHY server (ok / down / absent) is never entered here and is NEVER touched. Two layers, NO
-# brew-service stop (never stop a brew-managed server): (layer-2) lsof the socket/:5432, SIGINT
-# (postgres FAST shutdown), poll the socket free (bounded); (layer-3) remove the stale socket
-# file so a fresh install binds clean. Carries its OWN DRY_RUN + sandbox guards (it no longer
-# sits behind stop_detached_daemons' guards) — a skipped clear leaves the orphan in place, so
-# the caller's post-clear re-verify stays 'broken' and falls through to the loud-fail (never a
-# false 'cleared'). GRACEFUL — every missing tool / failed signal is a loud-log skip, never
-# fatal; always returns 0.
+# postmaster from a now-DELETED keg (files gone, alive PPID 1) that keeps :5432 / the peer-auth
+# socket and, having lost its tzdata, REJECTS `SET timezone='UTC'` — breaking the monitor's
+# UTC-gated pool. Called ONLY from preflight_pg_utc_guard's unmanaged-orphan branch (after
+# ga_detect_postgres_utc=='broken' AND a brew RESTART failed to clear it), so a HEALTHY server
+# (ok/down/absent) is NEVER entered or touched. Two layers, NO brew-service stop: (layer-2) lsof
+# the socket/:5432, SIGINT (postgres FAST shutdown), poll the socket free (bounded); (layer-3)
+# remove the stale socket so a fresh install binds clean. Carries its OWN DRY_RUN + sandbox
+# guards — a skipped clear leaves the orphan, so the caller's re-verify stays 'broken' →
+# loud-fail (never a false 'cleared'). GRACEFUL — missing tool / failed signal = loud-log skip,
+# returns 0.
 clear_unmanaged_pg_orphan() {
   local sock="${PG_SOCKET}/.s.PGSQL.5432"
-  # This helper now runs install-scoped (from preflight_pg_utc_guard), NOT behind
-  # stop_detached_daemons' guards — so it carries its OWN DRY_RUN + sandbox guards. A skipped
-  # clear leaves the orphan, so the caller's re-verify stays 'broken' → correct loud-fail.
+  # install-scoped (own DRY_RUN + sandbox guards); a skipped clear leaves the orphan → caller re-verify stays 'broken' → loud-fail.
   if "${DRY_RUN}"; then
     log "dry-run: skipping unmanaged pg orphan clear on ${sock}"
     return 0
@@ -91,8 +84,7 @@ clear_unmanaged_pg_orphan() {
     done <<EOF
 ${pids}
 EOF
-    # bounded poll until the socket frees (never an unbounded wait — that would be a new
-    # hang path). ~10s ceiling; break the instant the socket has no owner.
+    # bounded poll (~10s) until the socket frees — an unbounded wait would be a new hang path.
     local waited=0
     while [[ "${waited}" -lt 10 ]]; do
       [[ -e "${sock}" ]] || break
@@ -101,8 +93,7 @@ EOF
       waited=$((waited + 1))
     done
   fi
-  # (layer-3) remove a stale socket file left behind by the killed postmaster so a fresh
-  # install's cluster binds a clean socket.
+  # (layer-3) remove a stale socket left by the killed postmaster so a fresh install binds clean.
   if [[ -S "${sock}" ]]; then
     if rm -f -- "${sock}" 2>/dev/null; then
       log "removed stale postgres socket ${sock}"
@@ -111,16 +102,14 @@ EOF
   return 0
 }
 
-# stop_detached_daemons — uninstall teardown of the orphans that survive `launchctl bootout`
-# + `claude plugin uninstall`: (a) the detached daemon tmux sessions and (b) lingering fakechat
-# channel procs (`claude --channels plugin:fakechat@...` + their `spawn-unix-fd.py` helpers)
-# that outlive the plugin uninstall. Runs BEFORE the DB drop so the daemons release their DB
-# connections first. The postgres SERVER + its /tmp peer-auth socket are LEFT ALONE — uninstall
-# must never stop a server it did not start (a healthy brew server + its socket are the user's,
-# not GA's to tear down; the orphan clear lives install-side in preflight_pg_utc_guard, entered
-# only for a genuinely broken/unmanaged squatter). GUARDED like unload_launchd_jobs (DRY_RUN
-# report-only, is_sandbox_target skip — these are per-USER host resources shared with the real
-# user regardless of HOME). Best-effort + loud-log each action; NEVER aborts uninstall (returns 0).
+# stop_detached_daemons — uninstall teardown of the orphans that survive `launchctl bootout` +
+# `claude plugin uninstall`: (a) the detached daemon tmux sessions and (b) lingering fakechat
+# channel procs (`claude --channels plugin:fakechat@...` + their `spawn-unix-fd.py` helpers).
+# Runs BEFORE the DB drop so the daemons release their DB connections first. The postgres SERVER
+# + its /tmp peer-auth socket are LEFT ALONE — uninstall never stops a server it did not start
+# (the orphan clear lives install-side in preflight_pg_utc_guard, for a broken/unmanaged
+# squatter). Guarded like unload_launchd_jobs (DRY_RUN report-only, is_sandbox_target skip —
+# per-USER host resources shared regardless of HOME). Best-effort + loud-log; returns 0.
 stop_detached_daemons() {
   # (a) tmux sessions — shared helper carries its own DRY_RUN + sandbox + tmux-absent guards.
   kill_daemon_tmux_sessions
@@ -150,7 +139,6 @@ stop_detached_daemons() {
   else
     log "pkill not found — skipping fakechat proc reap"
   fi
-  # The postgres server + its /tmp peer-auth socket are intentionally NOT touched here — a
-  # healthy server is the user's, and the genuine-orphan clear is install-scoped (preflight).
+  # postgres server + /tmp socket intentionally NOT touched — a healthy server is the user's (orphan clear is install-scoped).
   return 0
 }

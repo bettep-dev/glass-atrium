@@ -12,10 +12,9 @@ read_manifest_files() {
 }
 
 # collision scope query
-# Echo "yes" when a target-relative path falls under a collision-checked
-# component dir (agents/ or skills/) — the components the dropped plugin layer
-# would have auto-namespaced. Else "no". Stdout-verdict (always exits 0) so the
-# ERR trap never fires, mirroring is_never_touch / is_hook_bound.
+# Echo "yes" when a target-relative path falls under a collision-checked component dir (agents/ or
+# skills/) — the components the dropped plugin layer would have auto-namespaced; else "no".
+# Stdout-verdict (exits 0) so the ERR trap never fires, mirroring is_never_touch / is_hook_bound.
 is_collision_scope() {
   local rel="$1"
   local prefix
@@ -32,14 +31,12 @@ is_collision_scope() {
 }
 
 # symlink-farm exclusion query
-# Echo "yes" when a manifest-relative path is INSTALL-INTERNAL — bundled + hash-
-# verified but consumed in place from ~/.glass-atrium and therefore never
-# symlinked into ~/.claude (SYMLINK_EXCLUDE_PREFIXES / SYMLINK_EXCLUDE_EXACT).
-# Else "no". Stdout-verdict (always exits 0) so the ERR trap never fires,
-# mirroring is_never_touch / is_collision_scope. Applied at every symlink-farm
-# WRITE site (run_symlink_farm create, remove_manifest_links remove); the doctor
-# §4 source-presence check deliberately does NOT use it (it still verifies the
-# bundle actually shipped lib/ etc.).
+# Echo "yes" when a manifest-relative path is INSTALL-INTERNAL — bundled + hash-verified but
+# consumed in place from ~/.glass-atrium, never symlinked into ~/.claude (SYMLINK_EXCLUDE_PREFIXES
+# / SYMLINK_EXCLUDE_EXACT); else "no". Stdout-verdict (exits 0) so the ERR trap never fires
+# (mirrors is_never_touch / is_collision_scope). Applied at every symlink-farm WRITE site
+# (run_symlink_farm create, remove_manifest_links remove); the doctor §4 source-presence check
+# deliberately does NOT use it (it still verifies the bundle actually shipped lib/ etc.).
 is_symlink_excluded() {
   local rel="$1"
   local prefix exact
@@ -62,13 +59,12 @@ is_symlink_excluded() {
 }
 
 # H-3 atomic per-file symlink swap
-# Creates TARGET_HOME/<rel> as a symlink -> GA_ROOT/<rel>.
-# Idempotent: skips when the correct symlink already exists.
-# Coexistence: refuses to overwrite a non-symlink user file or a foreign symlink.
-# Collision detection (agents/skills): a DIFFERENT same-named NON-symlink user
-# file under agents/ or skills/ is WARN+skip (or prompt with --collision-prompt),
-# never overwritten — the uniform-farm substitute for plugin auto-namespacing.
-# Returns 0 on link/skip-correct, 2 on a collision skip (caller tallies it).
+# Creates TARGET_HOME/<rel> as a symlink -> GA_ROOT/<rel>. Idempotent (skips when the correct
+# symlink already exists). Coexistence: refuses to overwrite a non-symlink user file or a foreign
+# symlink. Collision detection (agents/skills): a DIFFERENT same-named NON-symlink user file under
+# agents/ or skills/ is WARN+skip (or prompt with --collision-prompt), never overwritten — the
+# uniform-farm substitute for plugin auto-namespacing. Returns 0 on link/skip-correct, 2 on a
+# collision skip (caller tallies it).
 swap_symlink() {
   local rel="$1"
   local src="${GA_ROOT}/${rel}"
@@ -76,10 +72,9 @@ swap_symlink() {
   local dst_dir
   dst_dir="$(dirname -- "${dst}")"
 
-  # never-touch guard (defense in depth — manifest should never list these)
-  # is_never_touch returns 0 by contract (stdout verdict) → masking is intentional.
-  # SC2311 (not SC2310) fires here because the lib has NO file-scope `set -e`
-  # (sourced-only, the caller arms it) — same intentional masking, different code.
+  # never-touch guard (defense in depth — manifest should never list these).
+  # is_never_touch is a stdout verdict (exits 0) → masking intentional; SC2311 (not SC2310) fires
+  # because this sourced lib has no file-scope `set -e` (the caller arms it).
   # shellcheck disable=SC2310,SC2311,SC2312
   if [[ "$(is_never_touch "${rel}")" == "yes" ]]; then
     die "refusing to touch never-touch path: ${rel}"
@@ -106,18 +101,15 @@ swap_symlink() {
     fi
     # a stale GA symlink (points into GA but wrong rel) → safe to re-swap
   elif [[ -e "${dst}" ]]; then
-    # a real user file with the same basename. For collision-scoped components
-    # (agents/ skills/) this is a basename COLLISION: WARN + skip (or prompt),
-    # never overwrite — the uniform-farm replacement for plugin namespacing.
-    # is_collision_scope returns 0 by contract (stdout verdict) → masking intentional
-    # (SC2311 = the sourced-lib analog of SC2310; no file-scope set -e here)
+    # a real user file with the same basename. Collision-scoped components (agents/ skills/): a
+    # basename COLLISION → WARN + skip (or prompt), never overwrite (uniform-farm replacement for
+    # plugin namespacing). is_collision_scope is a stdout verdict (exits 0) → SC2311 masking intentional.
     # shellcheck disable=SC2310,SC2311,SC2312
     if [[ "$(is_collision_scope "${rel}")" == "yes" ]]; then
       log "COLLISION: a different user file already exists at ${dst} (not our symlink)"
       if "${COLLISION_PROMPT}"; then
         local reply=""
-        # interactive prompt — only honoured when a tty is attached; otherwise
-        # fall through to the safe default (skip), never blocking a scripted run.
+        # interactive prompt — honoured only with a tty; else fall through to the safe default (skip), never blocking a scripted run.
         if [[ -t 0 ]]; then
           printf 'Overwrite user file with the Atrium symlink? [y/N]: ' >&2
           read -r reply || reply=""
@@ -148,11 +140,10 @@ swap_symlink() {
     return 0
   fi
 
-  # H-3 — atomic rename by construction: ln -s into .tmp (co-located in dst_dir, so
-  # STAGE_TMP and dst always share st_dev) then mv -f over dst. The rename(2) is
-  # unconditionally same-device atomic by this construction — no st_dev assertion
-  # is needed (and the symlink TARGET's device is irrelevant: a symlink stores its
-  # target only as a path string, never copying the target's data).
+  # H-3 — atomic rename by construction: ln -s into .tmp (co-located in dst_dir, so STAGE_TMP and
+  # dst always share st_dev) then mv -f over dst. rename(2) is unconditionally same-device atomic by
+  # this construction — no st_dev assertion needed (the symlink TARGET's device is irrelevant: a
+  # symlink stores its target only as a path string, never copying the target's data).
   STAGE_TMP="${dst}.ga-tmp.$$"
   ln -s -- "${src}" "${STAGE_TMP}"
 
@@ -162,20 +153,16 @@ swap_symlink() {
 }
 
 # single-link removal (target-verified)
-# Removes the given absolute path ONLY if it is a symlink whose readlink target
-# resolves into GA_ROOT. Real files + foreign symlinks + never-touch are skipped.
-# Returns 0 when removed, 1 when (safely) skipped.
+# Removes the given absolute path ONLY if it is a symlink whose readlink target resolves into
+# GA_ROOT. Real files + foreign symlinks + never-touch are skipped. Returns 0 removed, 1 (safely) skipped.
 remove_if_ga_link() {
   local link="$1"
   # target-relative path for the never-touch guard
   local rel="${link#"${TARGET_HOME}/"}"
 
-  # is_never_touch is a STDOUT-verdict helper (always exits 0) → branch on its
-  # "yes"/"no" string, not on $? (which is always 0). Consumed as
-  # `[[ "$(is_never_touch ...)" == "yes" ]]` — capturing $? here
-  # misclassified every path as protected and skipped all removals.
-  # is_never_touch returns 0 by contract (stdout verdict) → masking is intentional
-  # (SC2311 = the sourced-lib analog of SC2310; no file-scope set -e here)
+  # is_never_touch is a STDOUT-verdict helper (always exits 0) → branch on its "yes"/"no" string,
+  # NOT on $? (always 0). Capturing $? here misclassified every path as protected and skipped all
+  # removals. Masking intentional; SC2311 (not SC2310) — no file-scope set -e in this sourced lib.
   # shellcheck disable=SC2310,SC2311,SC2312
   if [[ "$(is_never_touch "${rel}")" == "yes" ]]; then
     log "skip (never-touch): ${rel}"
@@ -201,10 +188,8 @@ remove_if_ga_link() {
     return 0
   fi
 
-  # DRY_RUN log-and-skip: a "dry-run" MUST perform ZERO mutations. Skip the rm
-  # under EITHER SCAN_ONLY (above) OR DRY_RUN, while keeping SCAN_ONLY's own
-  # branch + message intact. Return 0 (like the SCAN_ONLY skip) so the caller's
-  # removed-counter reports the would-remove count accurately.
+  # DRY_RUN log-and-skip: a dry-run performs ZERO mutations — skip the rm (SCAN_ONLY branch above
+  # kept intact). Return 0 (like the SCAN_ONLY skip) so the caller's removed-counter stays accurate.
   if "${DRY_RUN}"; then
     log "dry-run: would remove ${rel} -> ${tgt}"
     return 0
@@ -227,18 +212,15 @@ remove_manifest_links() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
-    # install-internal payload was never symlinked (see run_symlink_farm) → there
-    # is nothing to remove; skip it symmetrically so the removed-count stays
-    # accurate. (stdout verdict, always exits 0 → SC2311 masking intentional.)
+    # install-internal payload was never symlinked (see run_symlink_farm) → nothing to remove; skip
+    # it symmetrically so the removed-count stays accurate (stdout verdict → SC2311 masking intentional).
     # shellcheck disable=SC2310,SC2311,SC2312
     if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
       continue
     fi
-    # A return 1 from remove_if_ga_link is a SAFE SKIP, not an error, so set -e
-    # must not abort on it. Bracket the single call with set +e/set -e (the
-    # SC2310-clean idiom) and capture rc, then branch. Also suspend the ERR trap
-    # for the call (set -E propagates it into the callee, so the safe-skip
-    # `return 1` would otherwise print a spurious ERROR line) and restore it.
+    # remove_if_ga_link's return 1 is a SAFE SKIP, not an error → bracket the call with set +e/set
+    # -e (SC2310-clean idiom) + capture rc. Also suspend the ERR trap (set -E propagates it into the
+    # callee, so the safe-skip `return 1` would otherwise print a spurious ERROR line), then restore.
     set +e
     trap - ERR
     remove_if_ga_link "${TARGET_HOME}/${rel}"
@@ -260,9 +242,8 @@ sweep_orphans() {
   # shellcheck disable=SC2312
   while IFS= read -r link; do
     [[ -n "${link}" ]] || continue
-    # return 1 = safe skip — bracket the single call with set +e/set -e, and
-    # suspend the ERR trap (set -E propagates it into the callee, so the safe-skip
-    # `return 1` would otherwise print a spurious ERROR line) then restore it.
+    # return 1 = safe skip — bracket the call with set +e/set -e + suspend the ERR trap (set -E
+    # propagates it into the callee → the safe-skip `return 1` would print a spurious ERROR line), then restore.
     set +e
     trap - ERR
     remove_if_ga_link "${link}"
@@ -275,27 +256,21 @@ sweep_orphans() {
 }
 
 # GA-created empty-directory cleanup (install/uninstall symmetry)
-# INVERSE of the symlink farm's per-file `mkdir -p` (swap_symlink): once the
-# symlink-removal passes (remove_manifest_links + sweep_orphans) have unlinked
-# every GA symlink, the DIRECTORY skeletons the farm created (agents/, hooks/,
-# skills/<name>/, agents/references/, ...) are left behind EMPTY. This removes
-# exactly those — and ONLY when empty — so a clean uninstall leaves NO orphan GA
-# dir skeletons, matching the install side that creates each one.
+# INVERSE of the symlink farm's per-file `mkdir -p` (swap_symlink): once the symlink-removal passes
+# (remove_manifest_links + sweep_orphans) have unlinked every GA symlink, the DIRECTORY skeletons
+# the farm created (agents/, hooks/, skills/<name>/, agents/references/, ...) are left behind
+# EMPTY. This removes exactly those — and ONLY when empty — matching the install side.
 #
 # SAFETY INVARIANT (why this can NEVER delete user content):
-#   * `rmdir` removes ONLY an EMPTY directory — a dir still holding ANY user file
-#     makes rmdir FAIL (non-zero), so a user file dropped into a GA dir keeps that
-#     dir alive. This is the whole safety story; NEVER `rm -rf` (which would
-#     recurse into user content) — see the dev-shell rm-rf guardrail.
-#   * the candidate set is DERIVED from the manifest (read_manifest_dirs: the
-#     ancestor dirs of every FARMED file), so only dirs the farm itself created
-#     are ever considered — never an arbitrary target subtree.
-#   * DEEPEST-FIRST order (read_manifest_dirs lists a descendant before its
-#     ancestor) so a parent is attempted only AFTER its children were removed —
-#     an emptied parent then rmdirs too, a still-occupied one fails safely.
-#   * TARGET_HOME itself is NEVER a candidate (top-level manifest files map to the
-#     boundary and are dropped by read_manifest_dirs); the never-touch guard is a
-#     second line of defense.
+#   * `rmdir` removes ONLY an EMPTY directory — a dir holding ANY user file makes rmdir FAIL
+#     (non-zero), so a user file in a GA dir keeps it alive. NEVER `rm -rf` (which would recurse
+#     into user content) — see the dev-shell rm-rf guardrail.
+#   * the candidate set is DERIVED from the manifest (read_manifest_dirs: ancestor dirs of every
+#     FARMED file), so only dirs the farm itself created are considered — never an arbitrary subtree.
+#   * DEEPEST-FIRST (read_manifest_dirs lists a descendant before its ancestor) so a parent is
+#     attempted only AFTER its children — an emptied parent rmdirs too, a still-occupied one fails safely.
+#   * TARGET_HOME itself is NEVER a candidate (top-level files map to the boundary, dropped by
+#     read_manifest_dirs); the never-touch guard is a second line of defense.
 # Honors DRY_RUN (report-only). Mirrors remove_manifest_links/sweep_orphans style.
 remove_empty_dirs() {
   command -v jq >/dev/null 2>&1 || die "jq required to parse ${MANIFEST}"
@@ -306,15 +281,13 @@ remove_empty_dirs() {
   [[ -d "${TARGET_HOME}" ]] || return 0
 
   local reldir abs removed=0 kept=0
-  # read_manifest_dirs streams deepest-first via process substitution → the loop
-  # stays in the current shell (counter-safe). SC2312: its exit is masked but
-  # benign (it dies on its own precondition failure).
+  # read_manifest_dirs streams deepest-first via process substitution → loop stays in the current
+  # shell (counter-safe). SC2312: masked exit benign (it dies on its own precondition failure).
   # shellcheck disable=SC2312
   while IFS= read -r reldir; do
     [[ -n "${reldir}" ]] || continue
-    # never-touch guard (defense in depth — a manifest dir should never be one).
-    # is_never_touch is a stdout verdict (always exits 0) → SC2311 masking is
-    # intentional (no file-scope set -e in this sourced lib).
+    # never-touch guard (defense in depth — a manifest dir should never be one). is_never_touch is a
+    # stdout verdict (exits 0) → SC2311 masking intentional (no file-scope set -e in this sourced lib).
     # shellcheck disable=SC2310,SC2311,SC2312
     if [[ "$(is_never_touch "${reldir}")" == "yes" ]]; then
       log "skip (never-touch dir): ${reldir}"
@@ -327,9 +300,8 @@ remove_empty_dirs() {
       log "dry-run: would rmdir GA dir if empty: ${reldir}"
       continue
     fi
-    # rmdir removes ONLY an empty dir; a non-empty (user content) dir makes it fail
-    # → SAFE skip. The `if` condition masks BOTH set -e and the ERR trap for that
-    # expected non-zero, so no set +e/trap bracketing is needed here.
+    # rmdir removes ONLY an empty dir; a non-empty (user content) dir fails → SAFE skip. The `if`
+    # condition masks BOTH set -e and the ERR trap for that expected non-zero (no bracketing needed).
     if rmdir -- "${abs}" 2>/dev/null; then
       log "removed empty GA dir: ${reldir}"
       removed=$((removed + 1))
@@ -346,16 +318,15 @@ remove_empty_dirs() {
 }
 
 # manifest-derived directory set (deepest-first) — callee of remove_empty_dirs
-# Emit every ANCESTOR directory (TARGET_HOME-relative) of every FARMED manifest
-# file — i.e. the dirs swap_symlink's `mkdir -p` created — DEEPEST-FIRST and
-# deduped, so the caller can rmdir children before parents.
-#   * install-internal entries (is_symlink_excluded: lib/, monitor/, ...) are
-#     skipped — they are never symlinked in, so their dirs are never GA-created.
-#   * a top-level file (no '/') contributes NOTHING: its only parent IS
-#     TARGET_HOME, the boundary this must never emit (safety).
-# Deepest-first == reverse byte-order sort: an ancestor is always a proper string
-# prefix of its descendant, so a reverse `LC_ALL=C sort` lists every descendant
-# before its ancestor — the exact rmdir-children-before-parents invariant.
+# Emit every ANCESTOR directory (TARGET_HOME-relative) of every FARMED manifest file — the dirs
+# swap_symlink's `mkdir -p` created — DEEPEST-FIRST + deduped, so the caller rmdirs children before
+# parents.
+#   * install-internal entries (is_symlink_excluded: lib/, monitor/, ...) are skipped — never
+#     symlinked in, so their dirs are never GA-created.
+#   * a top-level file (no '/') contributes NOTHING: its only parent IS TARGET_HOME, the boundary
+#     this must never emit (safety).
+# Deepest-first == reverse byte-order sort: an ancestor is always a proper string prefix of its
+# descendant, so a reverse `LC_ALL=C sort` lists every descendant before its ancestor.
 read_manifest_dirs() {
   local rel dir
   # read_manifest_files dies on its own precondition failure → masked exit benign;
@@ -382,11 +353,9 @@ read_manifest_dirs() {
 }
 
 # shared per-file symlink farm
-# The manifest-driven symlink-farm loop shared by run_install and
-# run_agents_only. <label> distinguishes the two log-line prefixes
-# ("install" vs "agents-only"); the swap/collision/rc contract is identical, so
-# it lives here once (a change to the swap semantics or a new rc code lands in a
-# single place). Honours TARGET_HOME + DRY_RUN via swap_symlink.
+# The manifest-driven symlink-farm loop shared by run_install and run_agents_only. <label>
+# distinguishes the two log-line prefixes ("install" vs "agents-only"); the swap/collision/rc
+# contract is identical, so it lives here once. Honours TARGET_HOME + DRY_RUN via swap_symlink.
 run_symlink_farm() {
   local label="$1"
 
@@ -399,20 +368,17 @@ run_symlink_farm() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
-    # install-internal payload (lib/ engine, config template, requirements) is
-    # bundled + hash-verified but consumed in place from GA_ROOT — never a
-    # ~/.claude symlink. Skip it here (is_symlink_excluded is a stdout verdict,
-    # always exits 0 → SC2311 masking is intentional; no file-scope set -e).
+    # install-internal payload (lib/ engine, config template, requirements) is bundled +
+    # hash-verified but consumed in place from GA_ROOT — never a ~/.claude symlink. Skip it here
+    # (is_symlink_excluded is a stdout verdict → SC2311 masking intentional; no file-scope set -e).
     # shellcheck disable=SC2310,SC2311,SC2312
     if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
       log "skip (install-internal, not symlinked): ${rel}"
       continue
     fi
-    # swap_symlink returns 2 on a collision SKIP (a safe non-error outcome), so
-    # set -e must not abort. Bracket the single call with set +e/set -e (the
-    # SC2310-clean idiom) and branch on rc. Also suspend the ERR trap for the
-    # call (set -E propagates it into the callee, so the safe-skip non-zero
-    # return would otherwise print a spurious ERROR line) and restore it.
+    # swap_symlink returns 2 on a collision SKIP (safe non-error) → set -e must not abort. Bracket
+    # the call with set +e/set -e (SC2310-clean idiom) + branch on rc. Also suspend the ERR trap
+    # (set -E propagates it into the callee → the safe-skip non-zero would print a spurious ERROR line), restore.
     set +e
     trap - ERR
     swap_symlink "${rel}"
