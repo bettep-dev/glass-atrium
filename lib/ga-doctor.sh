@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SETTINGS_JSON/CONFIG_TOML/EXPECTED_HOOK_BINDINGS/GENERATE_MANIFEST/DRY_RUN) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — doctor/preflight diagnostics + verify-clean parity + post-install liveness domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# --- doctor / preflight ----------------------------------------------------
+# doctor / preflight
 # Mutation-free checks: same-device, target writable, no dangling, manifest ok.
 # $1 == "preflight" → §7 target-side deploy reconciliation is ADVISORY (warn,
 # not abort): a fresh install legitimately has 0 deployed entries because
@@ -336,7 +336,7 @@ run_doctor() {
   return 1
 }
 
-# --- verify-clean (parity doctor) ------------------------------------------
+# verify-clean (parity doctor)
 # Mutation-free: asserts zero GA symlinks under the target AND zero Atrium hook
 # bindings remain in settings.json. Returns 0 when clean, 1 otherwise.
 verify_clean() {

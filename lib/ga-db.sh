@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — database provisioning/recreate + drop-with-backup + monitor health gate domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# --- same-name conflict recreate gate (--recreate-db) ----------------------
+# same-name conflict recreate gate (--recreate-db)
 # Backs up + drops + recreates an EXISTING DB. SANDBOX-ONLY by construction:
 #   * refuses on the literal live DB 'glass_atrium' unless GA_DB_NAME points the whole
 #     DB path at a throwaway name (DB_NAME != glass_atrium). Mirrors oss-db-setup.sh's
@@ -89,7 +89,7 @@ run_db_setup() {
   log "== DB bootstrap done =="
 }
 
-# --- DB bootstrap (fresh-machine gate — delegates to oss-db-setup.sh) ------
+# DB bootstrap (fresh-machine gate — delegates to oss-db-setup.sh)
 # glass-atrium owns the WHEN (fresh machine = 'glass_atrium' DB absent), the monitor's
 # oss-db-setup.sh owns the HOW. Existing-DB machines skip here so a re-run is
 # zero-diff and never re-enters the heavy npm-ci path; applying PENDING

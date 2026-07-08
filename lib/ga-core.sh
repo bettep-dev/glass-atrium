@@ -7,7 +7,7 @@
 # before any other function — GA_ROOT is passed in, NEVER self-derived from this
 # file's BASH_SOURCE (which would resolve to <root>/lib/, one dir too deep).
 
-# === thin-loader: source the seven functional-domain siblings =============
+# thin-loader: source the seven functional-domain siblings
 # ga-core.sh is a THIN LOADER: it sources the seven domain siblings (byte-identical
 # extractions of the former inline concerns) then defines the flow/orchestration
 # functions inline below. Because `source lib/ga-core.sh` transitively loads every
@@ -151,9 +151,9 @@ remove_rc_lines() {
   return 0
 }
 
-# === [6] orchestration =====================================================
+# [6] orchestration
 
-# --- install orchestration -------------------------------------------------
+# install orchestration
 run_install() {
   # Capture the doctor verdict without tripping set -e OR the ERR trap on an
   # expected non-zero (FAIL) return: suspend both for the single call, restore
@@ -221,7 +221,7 @@ run_install() {
   capture_install_baseline
 }
 
-# --- T24: base@install baseline capture (post-install) ---------------------
+# T24: base@install baseline capture (post-install)
 # Snapshot the installed manifest.json as the base@install baseline — the PRIMARY
 # 3-anchor base the NEXT update diffs against (apply-spine spine_set_baseline
 # writes it atomically to the canonical update-state dir, ATRIUM_UPDATE_STATE_DIR-
@@ -259,7 +259,7 @@ capture_install_baseline() {
   capture_base_agent_store
 }
 
-# --- T24: base@install EDITABLE-region content store (post-install) ---------
+# T24: base@install EDITABLE-region content store (post-install)
 # Snapshot each base@install agent *.md BODY into the base-content store that
 # editable_merge.load_base_text CONSUMES — keyed by BASENAME under
 # <state-dir>/base-agents/ (the editable_merge.base_store_dir layout, where
@@ -317,7 +317,7 @@ capture_base_agent_store() {
   fi
 }
 
-# --- agents-only symlink farm (agent add/delete scope) ---------------------
+# agents-only symlink farm (agent add/delete scope)
 # Runs ONLY the per-file symlink-farm loop from run_install — the minimal step
 # the F2 agent-lifecycle CLI needs to (re)link manifest entries after an agent
 # add/delete. Reuses read_manifest_files + swap_symlink; honours TARGET_HOME +
@@ -328,7 +328,7 @@ run_agents_only() {
   run_symlink_farm "agents-only"
 }
 
-# --- prune ORPHAN dangling GA symlinks (recurrence-prevention) --------------
+# prune ORPHAN dangling GA symlinks (recurrence-prevention)
 # The symlink farm has no prune path: when a source file is dropped from the GA
 # root AND from the manifest, its previously-installed symlink in the target is
 # left dangling forever (doctor §5 only WARN-counts danglers, never unlinks).
@@ -429,7 +429,7 @@ run_prune() {
   log "== prune: ${pruned} ${verb}, ${flagged} flagged in-manifest, ${nevertouch} preserved never-touch (${candidates} candidates) =="
 }
 
-# --- P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
+# P2 essential-symlinks-only MIGRATION (legacy bare-name farm -> new layout)
 # Idempotent, data-safe reconcile of an EXISTING bare-name-farm install to the
 # essential-symlinks-only + foldered-rules layout. Touches ONLY GA-CREATED
 # symlinks — every unlink routes through remove_if_ga_link's readlink-into-
@@ -561,7 +561,7 @@ migrate_layout() {
   log "== migrate: ${swept} legacy GA symlink(s) dropped, ${folded} rules link(s) foldered =="
 }
 
-# --- one-stop bootstrap (install + monitor build + health gate) ------------
+# one-stop bootstrap (install + monitor build + health gate)
 # Single-command wrap of the FULL fresh-machine sequence: run_install (doctor →
 # config render → plist render → symlink farm → hook wiring → DB bootstrap →
 # launchd repoint → claude --version) THEN monitor `npm run build` and a /api/
@@ -615,7 +615,7 @@ run_bootstrap() {
   load_launchd_jobs
 }
 
-# --- uninstall orchestration -----------------------------------------------
+# uninstall orchestration
 # Parallel to run_install: the callable uninstall flow. --verify-clean and
 # --orphan-scan are mutually-exclusive standalone modes the launcher dispatches
 # before reaching here; run_uninstall is the default removal path. Order:
@@ -677,7 +677,7 @@ run_uninstall() {
   log "== uninstall: done (real files + user files + never-touch untouched) =="
 }
 
-# --- T26: non-symlink update-state teardown (uninstall) --------------------
+# T26: non-symlink update-state teardown (uninstall)
 # The symlink farm helpers (remove_manifest_links/sweep_orphans) only unlink
 # SYMLINKS; the update system's runtime/recovery state lives in PLAIN files that
 # they never reach, so this explicit step tears them down:
@@ -730,7 +730,7 @@ teardown_update_state() {
   log "uninstall: moved base@install baseline -> ${dest} (Trash; never rm'd)"
 }
 
-# --- update orchestration (T08 dispatcher → T09 updater flow) ---------------
+# update orchestration (T08 dispatcher → T09 updater flow)
 # run_update — the `glass-atrium update` subcommand handler. It DISPATCHES to the
 # updater script (scripts/update.sh, the T09 entry point) and propagates its exit
 # code verbatim.

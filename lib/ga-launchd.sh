@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # references shared globals (GA_ROOT/LAUNCH_AGENTS/LAUNCHD_JOBS/LAUNCHD_LABEL_PREFIX/PLIST_RENDERER/RENDERED_PLIST_DIR/CONFIG_TOML/BOOTSTRAP_EXIT_*/DRY_RUN/LOAD_LAUNCHD/REPOINT_LAUNCHD) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — launchd plist render + job load/unload lifecycle domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# --- launchd repoint (guarded, OFF by default, never in dry-run) -----------
+# launchd repoint (guarded, OFF by default, never in dry-run)
 repoint_launchd() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping launchd repoint (never run in staging dry-run)"
@@ -25,7 +25,7 @@ repoint_launchd() {
   log "launchd repoint done"
 }
 
-# --- launchd plist render (file-write only — NEVER touches launchctl) -------
+# launchd plist render (file-write only — NEVER touches launchctl)
 # Renders the 8 com.glass-atrium.* plists from the rendered config.toml.
 # Loading them into ~/Library/LaunchAgents stays a MANUAL user action (see
 # scripts/daemon-README.md "Loading the launchd Plists"); the only launchctl
@@ -42,7 +42,7 @@ render_plists() {
     || die "launchd plist render failed — exit codes: 3=config 4=key 5=lint 6=path-leak"
 }
 
-# --- launchd job load (OPT-IN: --load-launchd, post-health-gate only) -------
+# launchd job load (OPT-IN: --load-launchd, post-health-gate only)
 # The opt-in completion of the one-stop install: copy each rendered plist into
 # ~/Library/LaunchAgents, then launchctl bootstrap it (the same primitive
 # repoint_launchd uses). OFF by default — no flag = NO launchctl (review-first).

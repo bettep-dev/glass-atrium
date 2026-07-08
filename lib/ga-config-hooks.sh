@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # references shared globals (SETTINGS_JSON/CONFIG_TOML/CONFIG_TOML_EXAMPLE/EXPECTED_HOOK_BINDINGS/DRY_RUN/RE_RENDER) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — config.toml render + settings.json hook wiring domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# --- settings.json hook-binding query (read-only — D-5) ---------------------
+# settings.json hook-binding query (read-only — D-5)
 # Echo "yes" when settings.json binds <hook-basename> under <event> (optionally
 # scoped to <matcher>), else "no".
 # Read-ONLY: this NEVER writes settings.json (mutation-free doctor contract).
@@ -57,7 +57,7 @@ is_hook_bound() {
   printf '%s\n' "${found}"
 }
 
-# --- config.toml render ----------------------------------------------------
+# config.toml render
 # Render config.toml.example (tracked, ${HOME}-placeholder template) into
 # config.toml (git-ignored) by expanding ONLY the ${HOME} placeholder; every
 # other literal stays verbatim.
@@ -170,7 +170,7 @@ render_config() {
   resolve_config_binaries
 }
 
-# --- E1 binary-path resolver helpers (Stepdown: callees of render_config) ----
+# E1 binary-path resolver helpers (Stepdown: callees of render_config)
 # ga_resolve_bin — echo the directory-canonicalized absolute path of a binary,
 # macOS-portable (NO GNU realpath / readlink -f). Canonicalizes the CONTAINING dir
 # via `cd … && pwd -P` while PRESERVING the basename — deliberately NOT dereferencing
@@ -258,7 +258,7 @@ resolve_config_binaries() {
   log "resolve_config_binaries: node_bin=${node_bin:-<unchanged>} claude_bin=${claude_bin}"
 }
 
-# --- wire repoint primitive: migrate old-dir hook commands to the new dir ------
+# wire repoint primitive: migrate old-dir hook commands to the new dir
 # An EXISTING install wired its hooks under ${HOME}/.claude/hooks/<hook>. After
 # the command-template repoint (wire_hooks now emits ${HOME}/.glass-atrium/hooks),
 # is_hook_bound() still matches those stale bindings BY BASENAME, so the wire
@@ -333,8 +333,8 @@ rewrite_hook_paths() {
   log "rewrite_hook_paths: repointed ${pending} hook command(s) ${old_dir} -> ${new_dir} (backup: ${backup})"
 }
 
-# --- settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium
-#     hook commands, never any other key) -------------------------------------
+# settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium
+# hook commands, never any other key)
 # Upserts each EXPECTED_HOOK_BINDINGS entry into settings.json under its event,
 # attaching the declared matcher + the "$HOME/.glass-atrium/hooks/<basename>" command.
 #
@@ -448,7 +448,7 @@ wire_hooks() {
   log "wire_hooks: ${added} binding(s) added, ${already} already wired (backup: ${backup:-none — no mutation})"
 }
 
-# --- settings.json un-wire (remove ALL Atrium hook bindings) ----------------
+# settings.json un-wire (remove ALL Atrium hook bindings)
 # Removes EVERY hook-group in settings.json whose command resolves into EITHER
 # Atrium hooks directory — the legacy farm dir (~/.claude/hooks) or the in-place
 # consumer dir (~/.glass-atrium/hooks) — across ALL events. This is
@@ -593,7 +593,7 @@ unwire_hooks() {
   log "unwire_hooks: ${removed} Atrium binding-group(s) removed across all events (backup: ${backup})"
 }
 
-# --- config.toml purge (opt-in, mv-to-Trash — never rm a config) -----------
+# config.toml purge (opt-in, mv-to-Trash — never rm a config)
 purge_config() {
   if "${DRY_RUN}"; then
     log "dry-run: skipping config.toml purge (would mv ${CONFIG_TOML} -> Trash)"

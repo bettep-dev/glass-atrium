@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # ga_init_env assigns the shared readonly globals (GA_ROOT/TARGET_HOME/MANIFEST/EXPECTED_HOOK_BINDINGS/...) consumed by sibling ga-*.sh domains after sourcing — unused within this producer file when linted standalone
 # Glass Atrium — environment init, logging, and OS-portable stat/util primitives (foundation domain). Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# === [1] idempotency sentinel + ga_init_env ================================
+# [1] idempotency sentinel + ga_init_env
 # The ONLY function that runs `readonly`. Assigns ALL shared constants + run-mode
 # flag DEFAULTS (the flags stay plain/non-readonly so the caller's parse_args can
 # still set them). Idempotent: a second call (re-source / double-init) is a clean
@@ -328,7 +328,7 @@ ga_init_env() {
   readonly GA_CORE_INITED=1
 }
 
-# === [2] leaf logging ======================================================
+# [2] leaf logging
 # Prose-prefix coupling: the launcher's classify_step_log (glass-atrium) keys severity
 # classes (LOUD/DIM/SUPPRESS) on these `log` message prefixes — keep them in sync.
 log() { printf '%s\n' "$*" >&2; }
@@ -365,7 +365,7 @@ die_step() {
   exit "${code}"
 }
 
-# --- never-touch guard -----------------------------------------------------
+# never-touch guard
 # Echo "yes" when a target-relative path is a protected user-owned path, else
 # "no". Always exits 0 — a stdout verdict (not a boolean return) so the ERR
 # trap never fires on an expected "no" and no set +e bracketing is needed.
@@ -387,7 +387,7 @@ is_never_touch() {
   esac
 }
 
-# --- OS-portable stat accessors (BSD/macOS `stat -f` vs GNU/Linux `stat -c`) -
+# OS-portable stat accessors (BSD/macOS `stat -f` vs GNU/Linux `stat -c`)
 # BSD and GNU stat diverge on BOTH the flag (-f vs -c) AND the per-field format
 # specifier, so a blind -f→-c swap silently returns WRONG values on GNU (it does
 # not understand %Lp/%m). Detect the flavor ONCE (uname -s, memoized) and route
@@ -438,12 +438,12 @@ stat_mtime() {
   fi
 }
 
-# --- device id (doctor same-device advisory helper) ------------------------
+# device id (doctor same-device advisory helper)
 # Numeric st_dev of a path via the OS-portable accessor. Caller must pass an
 # existing path.
 dev_of() { stat_dev "$1"; }
 
-# --- sandbox-target guard (launchd domain protection) -----------------------
+# sandbox-target guard (launchd domain protection)
 # Echo "yes" when this run targets a NON-real home, via EITHER sandbox seam:
 #   (a) GA_TARGET_HOME override — TARGET_HOME points off ${HOME}/.claude (the
 #       bats/CI pattern: HOME stays real, target redirected);
@@ -484,7 +484,7 @@ is_sandbox_target() {
   fi
 }
 
-# --- post-install claude liveness (advisory) -------------------------------
+# post-install claude liveness (advisory)
 # Run a command under a HARD wall-clock bound, killing its whole process group on
 # expiry. bash 3.2 / macOS-portable: stock macOS has NO GNU `timeout`/`gtimeout`,
 # but `/usr/bin/perl` is always present. The exec'd child leads its own process

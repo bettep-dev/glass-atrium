@@ -33,7 +33,7 @@
 # sourced standalone (keeps it independently sourceable + linter-clean).
 : "${PG_SOCKET:=/tmp}"
 
-# === [1] generic binary / version primitives ==============================
+# [1] generic binary / version primitives
 
 # ga_major_version — echo the major component of the first integer in a version string
 # on stdin (e.g. "v24.3.1" -> 24, "psql (PostgreSQL) 14.11" -> 14), empty when none.
@@ -58,7 +58,7 @@ ga_join_lines() {
   printf '%s' "${joined}"
 }
 
-# === [2] Xcode Command Line Tools (GUIDE-USER) ============================
+# [2] Xcode Command Line Tools (GUIDE-USER)
 
 # ga_detect_xcode_clt — 'present' when the active developer dir is set + exists.
 # FAIL-SAFE-SKIP: emit 'absent' ONLY on the clear not-installed signal (xcode-select -p
@@ -93,7 +93,7 @@ ga_cmd_xcode_clt() {
   printf 'xcode-select --install\n'
 }
 
-# === [3] Homebrew (AUTO-WITH-CONSENT, dual-prefix probe) ==================
+# [3] Homebrew (AUTO-WITH-CONSENT, dual-prefix probe)
 
 # ga_brew_prefix — echo the active Homebrew prefix, probing both /opt/homebrew (Apple
 # Silicon) and /usr/local (Intel). Prefers a brew on PATH (its --prefix is authoritative),
@@ -169,7 +169,7 @@ ga_cmd_brew_shellenv() {
   printf '%s/bin/brew shellenv\n' "${prefix}"
 }
 
-# === [4] brew formula detection + batch builder ==========================
+# [4] brew formula detection + batch builder
 
 # ga_brew_formula_present — 'yes' if a brew formula is installed (brew list --versions is
 # the cheap idempotent probe), 'no' when brew itself is absent (caller then treats the
@@ -487,7 +487,7 @@ EOF
   printf 'brew install %s\n' "${joined}"
 }
 
-# === [5] PostgreSQL service + peer-auth role command strings ==============
+# [5] PostgreSQL service + peer-auth role command strings
 
 # ga_pg_installed_major — resolve the installed PostgreSQL major at RUNTIME so the
 # service-start builder names the actual formula (PG14 present-but-down → 14, a fresh
@@ -722,7 +722,7 @@ ga_cmd_pg_create_role() {
   printf 'ga_pg_ensure_role\n'
 }
 
-# === [6] claude CLI binary (AUTO-WITH-CONSENT, npm -g) ====================
+# [6] claude CLI binary (AUTO-WITH-CONSENT, npm -g)
 
 # ga_detect_claude_cli — 'present'/'absent' claude-binary probe. 'present' when claude
 # is on PATH (npm-global install) OR at the native-installer location
@@ -766,7 +766,7 @@ ga_cmd_claude_cli_install() {
   printf 'ga_claude_install\n'
 }
 
-# === [7] claude AUTH (GUIDE-USER HARD GATE) ===============================
+# [7] claude AUTH (GUIDE-USER HARD GATE)
 
 # ga_detect_claude_auth — authentication verdict via THREE stable-first signals,
 # NONE of which reads the credentials file contents or retrieves a secret:
@@ -851,7 +851,7 @@ ga_cmd_claude_auth_guide() {
   printf 'claude login\n'
 }
 
-# === [8] fakechat plugin (AUTO-NO-CONSENT, post-auth) =====================
+# [8] fakechat plugin (AUTO-NO-CONSENT, post-auth)
 
 # ga_marketplace_present — 'yes' when the official plugin marketplace is registered.
 # An unauthenticated / marketplace-absent claude cannot resolve the plugin, so the
@@ -958,7 +958,7 @@ ga_cmd_fakechat_install() {
   printf 'ga_fakechat_install\n'
 }
 
-# === [9] python libraries (AUTO-WITH-CONSENT, PEP-668 aware) ==============
+# [9] python libraries (AUTO-WITH-CONSENT, PEP-668 aware)
 
 # GA_PYTHON_IMPORTS — the import-NAME : pip-PACKAGE pairs the python libs step needs.
 # The import name (what `python3 -c "import X"` uses) often differs from the pip

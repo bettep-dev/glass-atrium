@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154  # references shared globals (GA_ROOT/TARGET_HOME/MANIFEST/SYMLINK_EXCLUDE_*/COLLISION_*/DRY_RUN/SCAN_ONLY) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — symlink-farm build + manifest link/dir management domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
-# --- manifest parsing ------------------------------------------------------
+# manifest parsing
 # manifest.json shape: { "files": ["agents/foo.md", "rules/bar.md", ...] }
 # Emits one shipped relative path per line.
 read_manifest_files() {
@@ -11,7 +11,7 @@ read_manifest_files() {
   jq -r '.files[]' -- "${MANIFEST}"
 }
 
-# --- collision scope query -------------------------------------------------
+# collision scope query
 # Echo "yes" when a target-relative path falls under a collision-checked
 # component dir (agents/ or skills/) — the components the dropped plugin layer
 # would have auto-namespaced. Else "no". Stdout-verdict (always exits 0) so the
@@ -31,7 +31,7 @@ is_collision_scope() {
   printf 'no\n'
 }
 
-# --- symlink-farm exclusion query ------------------------------------------
+# symlink-farm exclusion query
 # Echo "yes" when a manifest-relative path is INSTALL-INTERNAL — bundled + hash-
 # verified but consumed in place from ~/.glass-atrium and therefore never
 # symlinked into ~/.claude (SYMLINK_EXCLUDE_PREFIXES / SYMLINK_EXCLUDE_EXACT).
@@ -61,7 +61,7 @@ is_symlink_excluded() {
   printf 'no\n'
 }
 
-# --- H-3 atomic per-file symlink swap --------------------------------------
+# H-3 atomic per-file symlink swap
 # Creates TARGET_HOME/<rel> as a symlink -> GA_ROOT/<rel>.
 # Idempotent: skips when the correct symlink already exists.
 # Coexistence: refuses to overwrite a non-symlink user file or a foreign symlink.
@@ -161,7 +161,7 @@ swap_symlink() {
   log "linked: ${rel}"
 }
 
-# --- single-link removal (target-verified) ---------------------------------
+# single-link removal (target-verified)
 # Removes the given absolute path ONLY if it is a symlink whose readlink target
 # resolves into GA_ROOT. Real files + foreign symlinks + never-touch are skipped.
 # Returns 0 when removed, 1 when (safely) skipped.
@@ -215,7 +215,7 @@ remove_if_ga_link() {
   return 0
 }
 
-# --- manifest-driven removal -----------------------------------------------
+# manifest-driven removal
 remove_manifest_links() {
   command -v jq >/dev/null 2>&1 || die "jq required to parse ${MANIFEST}"
   [[ -f "${MANIFEST}" ]] || {
@@ -250,7 +250,7 @@ remove_manifest_links() {
   log "manifest pass: ${removed} GA symlink(s) removed"
 }
 
-# --- orphan sweep (catch GA links not in the manifest) ---------------------
+# orphan sweep (catch GA links not in the manifest)
 # find every symlink under the target whose link-target glob is GA_ROOT/* —
 # each is still target-verified inside remove_if_ga_link before any rm.
 sweep_orphans() {
@@ -274,7 +274,7 @@ sweep_orphans() {
   "${SCAN_ONLY}" || log "orphan sweep: ${removed} extra GA symlink(s) removed"
 }
 
-# --- GA-created empty-directory cleanup (install/uninstall symmetry) ---------
+# GA-created empty-directory cleanup (install/uninstall symmetry)
 # INVERSE of the symlink farm's per-file `mkdir -p` (swap_symlink): once the
 # symlink-removal passes (remove_manifest_links + sweep_orphans) have unlinked
 # every GA symlink, the DIRECTORY skeletons the farm created (agents/, hooks/,
@@ -345,7 +345,7 @@ remove_empty_dirs() {
   fi
 }
 
-# --- manifest-derived directory set (deepest-first) — callee of remove_empty_dirs
+# manifest-derived directory set (deepest-first) — callee of remove_empty_dirs
 # Emit every ANCESTOR directory (TARGET_HOME-relative) of every FARMED manifest
 # file — i.e. the dirs swap_symlink's `mkdir -p` created — DEEPEST-FIRST and
 # deduped, so the caller can rmdir children before parents.
@@ -381,7 +381,7 @@ read_manifest_dirs() {
   done < <(read_manifest_files) | LC_ALL=C sort -ru
 }
 
-# --- shared per-file symlink farm ------------------------------------------
+# shared per-file symlink farm
 # The manifest-driven symlink-farm loop shared by run_install and
 # run_agents_only. <label> distinguishes the two log-line prefixes
 # ("install" vs "agents-only"); the swap/collision/rc contract is identical, so
