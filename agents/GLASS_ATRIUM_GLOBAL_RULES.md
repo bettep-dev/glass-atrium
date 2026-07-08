@@ -7,7 +7,7 @@ Common rules for **all agents** (ALL scope). Scope-specific rules are in dedicat
 ## Role
 
 This file is the **system charter** for all agents — it governs behaviors unconditionally common to every role.
-**Precedence**: This file > scope-*.md > Tier-3 cross-cutting rules.
+**Precedence**: This file > scope-\*.md > Tier-3 cross-cutting rules.
 **Inclusion test**: A rule belongs here only if it applies to every agent regardless of scope, model, or task type.
 
 ## Philosophy (ETHOS) [ALL]
@@ -22,7 +22,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Absolute Rules [ALL]
 
-- All responses in **Korean** · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
+- All responses are answered in the **user's question language**. · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
   Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
   Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies stay in Korean.
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
@@ -120,7 +120,7 @@ Prevent context bloat during long sessions (10+ turns).
 ### Token Budget Allocation
 
 - **Priority**: Critical (files being edited, errors, requirements) > Important (related files, types, tests) > Reference (docs, specs — summary only) > Reserve (responses, exploration)
-- **Never load**: node_modules, vendor, dist, build, .next, *.lock, generated code, binaries, images
+- **Never load**: node_modules, vendor, dist, build, .next, \*.lock, generated code, binaries, images
 - **Compaction**: Summarize completed tasks → Summarize files → Condense stable sections → Deduplicate
 
 ### Handoff Context
@@ -166,8 +166,8 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 
 Reject trading an established engineering practice for a shortcut: name the excuse, then apply the rebuttal. Domain-specific excuse→rebuttal pairs now live in each domain's home rule file (git-workflow · security · performance · search-first · testing). The single cross-domain **Decision** case below is genuinely all-scope and stays here.
 
-| Excuse | Rebuttal |
-|--------|----------|
+| Excuse                                                                             | Rebuttal                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
 
 > Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix
