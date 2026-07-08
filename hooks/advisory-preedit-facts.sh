@@ -1,40 +1,22 @@
 #!/usr/bin/env bash
-# advisory-preedit-facts.sh — Stop / SubagentStop Pre-Edit Facts advisory
+# advisory-preedit-facts.sh — Stop/SubagentStop Pre-Edit Facts advisory.
 #
-# Purpose:
-#   Post-turn ADVISORY for the scope-dev.md "Pre-Edit Facts Disclosure" rule.
-#   After a turn ends, surface which files were Write/Edit-ed without an
-#   accompanying `Pre-Edit Facts:` declaration. WARN only — NEVER blocks.
-#   Declaration/edit facts come from the transcript, not the inline
-#   last_assistant_message (Stop/SubagentStop supply only a transcript_path).
+# Post-turn ADVISORY for the scope-dev.md "Pre-Edit Facts Disclosure" rule: surfaces files
+# Write/Edit-ed without a `Pre-Edit Facts:` declaration. WARN only, NEVER blocks. Facts come from the
+# transcript (Stop/SubagentStop supply only a transcript_path, not the inline last_assistant_message).
+# Registered on Stop AND SubagentStop (matcher ""), firing alongside track-outcome.sh.
+# Advisory-only because Stop/SubagentStop have NO block channel — a finished turn cannot be rewound
+# by exit 2 (rules/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
 #
-# Trigger (REGISTERED — settings.json Stop AND SubagentStop, matcher ""):
-#   Fires alongside track-outcome.sh on every turn / subagent end. Advisory
-#   only — Stop/SubagentStop have NO block channel (a finished turn cannot be
-#   rewound by exit 2), so ALWAYS exit 0 (see rules/shared-hook-capability-contract.md
-#   Per-Event Capability Table — Stop/SubagentStop = observe-only).
-#
-# Pre-Edit Facts: declaration format (aligns with scope-dev.md rule):
-#   A block headed `Pre-Edit Facts: <file_path>` followed by lines for
-#   `importers:`, `affected API:`, `data schemas:`, `user instruction:`.
-#   The advisory keys on the <file_path> header only — it checks declaration
-#   PRESENCE per edited file, NOT fact quality/accuracy.
-#
-# Contract:
-#   stdin  — JSON payload from Claude Code (includes transcript_path; the
-#            inline last_assistant_message is intentionally NOT relied upon).
-#   stdout — silent.
-#   stderr — single advisory line listing edited files missing a declaration.
-#   exit 0 — ALWAYS. This hook never blocks (Stop/SubagentStop are advisory
-#            lifecycle events; exit 2 cannot rewind a finished turn anyway).
-#            Per shared-hook-capability-contract.md, Stop/SubagentStop have NO block
-#            channel — advisory accounting only.
+# Declaration format (scope-dev.md rule): a block headed `Pre-Edit Facts: <file_path>` then
+# `importers:` / `affected API:` / `data schemas:` / `user instruction:`. The advisory keys on the
+# <file_path> header PRESENCE per edited file, NOT fact quality/accuracy.
+# Per shared-hook-capability-contract.md the Stop/SubagentStop lifecycle is advisory accounting only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Diagnostic ERR trap — stderr only. Fail-open on internal error so the hook
-# never breaks the user's session-end on infrastructure failure.
+# Diagnostic ERR trap — stderr only, fail-open so an internal error never breaks session-end.
 trap 'printf "[preedit-facts-advisory] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
 # Drain stdin. Empty payload → nothing to advise on, exit silently.
@@ -46,25 +28,17 @@ if [[ -z "${INPUT}" ]]; then
   exit 0
 fi
 
-# python3 required for JSON + transcript parsing. Fail-open if absent — the
-# advisory must not break session end on a missing interpreter.
+# python3 required for JSON + transcript parsing. Fail-open if absent (must not break session-end).
 if ! command -v python3 >/dev/null 2>&1; then
   printf '[preedit-facts-advisory] python3 not found — fail-open (exit 0)\n' >&2
   exit 0
 fi
 
-# Single-pass pipeline inside python3: parse input JSON, read transcript jsonl,
-# collect (a) Write/Edit file_path set + (b) Pre-Edit Facts: declared-path set,
-# diff them. Keeping the parse + transcript I/O inside python3 avoids the
-# multi-line shell extraction trap (sed/head collapse multi-line bodies).
-#
-# Emits @@verdict@@<token> on stdout:
-#   skip_silent      — transcript_path absent/unreadable OR no edits this turn
-#                      (fail-open; advisory has nothing actionable to say)
-#   all_declared     — every edited file had a Pre-Edit Facts: declaration
-#   missing          — 1+ edited files lacked a declaration (caller WARNs)
-#                      + @@files@@<comma-joined undeclared basenames-or-paths>
-#   error            — unrecoverable internal error (caller exits 0 fail-open)
+# Single-pass python3: parse input JSON + transcript jsonl, collect the Write/Edit file_path set vs
+# the Pre-Edit Facts: declared-path set, diff them. Inside python3 to avoid the multi-line shell
+# extraction trap (sed/head collapse multi-line bodies). Emits @@verdict@@<token> on stdout:
+# skip_silent (no transcript / no edits — fail-open) · all_declared · missing (+ @@files@@ list) ·
+# error (internal error — caller exits 0 fail-open).
 PIPELINE_PY=$(
   cat <<'PY'
 import json

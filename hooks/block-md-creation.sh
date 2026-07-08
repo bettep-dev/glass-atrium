@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # PreToolUse hook: block monitor SoT-bypass patterns · exit 2 = block the tool call
 #
-# BLOCK: monitor-internal documents root .{md,yaml,yml,json,txt} — POST API only
-# ALLOW: all other .{md,yaml,yml,json,txt} — README · ADR · wiki · harness · memory
-#
-# Format is request-driven (agent-only default / explicit-HTML-request) → a basename
-#   prefix is not an HTML-primary signal. Only the path-based monitor-internal
-#   POST-API gate applies.
+# BLOCK: monitor-internal documents root .{md,yaml,yml,json,txt} — POST API only.
+# ALLOW: all other .{md,yaml,yml,json,txt} (README · ADR · wiki · harness · memory).
+# Format is request-driven (agent-only default / explicit-HTML-request), so a basename prefix is not
+# an HTML-primary signal — only the path-based monitor-internal POST-API gate applies.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -14,10 +12,9 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # shellcheck source=lib/hook-utils.sh
 source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 
-# POST-API hint port, derived via the hook_monitor_port wrapper (ADR-1: env →
-# monitor/.env → config → 16145) — keeps the guidance accurate on a non-default port.
-# NO literal fallback here (the single default lives in the resolver); a resolver
-# failure degrades to '' (cosmetic in the guidance string only).
+# POST-API hint port via the hook_monitor_port wrapper (env → monitor/.env → config → 16145) — keeps
+# the guidance accurate on a non-default port. NO literal fallback here (default lives in the
+# resolver); a resolver failure degrades to '' (cosmetic in the guidance string only).
 monitor_port="$(hook_monitor_port || true)"
 
 INPUT="$(hook_read_input)"
@@ -36,8 +33,8 @@ case "${FILE_PATH:-}" in
   *) exit 0 ;;
 esac
 
-# Step 3 BLOCK: monitor-internal path — block POST API bypass
-# Live path = .glass-atrium/monitor · legacy .claude/monitor kept in the OR (portability).
+# Step 3 BLOCK: monitor-internal path (POST-API bypass). Live = .glass-atrium/monitor; legacy
+# .claude/monitor kept in the OR (portability).
 if [[ "${FILE_PATH}" == *"/.glass-atrium/monitor/data/documents/"* || "${FILE_PATH}" == *"/.claude/monitor/data/documents/"* ]]; then
   hook_log "blocked: ${FILE_PATH} reason=monitor-internal"
   emit_error "DEL-002" "block" \

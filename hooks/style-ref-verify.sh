@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# style-ref-verify.sh — Stop / SubagentStop style_ref cross-verification
+# style-ref-verify.sh — Stop / SubagentStop style_ref cross-verification.
 #
-# Purpose:
-#   Verify that the [COMPLETION] block's style_ref field corresponds to a path
-#   actually Read in the current session. Surfaces the Gaming-the-Judge
-#   content-based false-positive risk by warning when an emitted style_ref path
-#   is absent from the session's tool_use Read history.
+# Warns (never blocks) when a [COMPLETION] style_ref path is absent from the
+# session's Read history — surfacing the Gaming-the-Judge content-based
+# false-positive risk.
 #
-# Trigger (DEFERRED — not yet wired in settings.json):
-#   Stop OR SubagentStop event, fired alongside track-outcome.sh. Wiring is
-#   intentionally deferred — staged rollout ships the hook first as a
-#   deployed-but-inactive measurement layer. User decides when to register in
-#   settings.json. Suggested registration form (FOR USER REFERENCE ONLY — do
-#   NOT auto-edit settings.json):
+# DEFERRED — not yet wired in settings.json; staged rollout ships the hook first
+# as a deployed-but-inactive measurement layer (user decides when to register).
+# Suggested registration form (USER REFERENCE ONLY — do NOT auto-edit settings.json):
 #     {
 #       "hooks": {
 #         "SubagentStop": [
@@ -27,33 +22,17 @@
 #       }
 #     }
 #
-# Contract:
-#   stdin  — JSON payload from Claude Code (includes last_assistant_message
-#            + transcript_path).
-#   stdout — silent on pass / pass-through.
-#   stderr — single-line warning when style_ref path is not found in session
-#            Read history.
-#   exit 0 — pass / silent skip / warning emitted (warn-not-block to preserve
-#            Gaming-the-Judge honesty without breaking the session).
-#   exit 5 — loud-fail precondition (transcript file unreadable). Named exit
-#            code per shared-self-improve-hygiene.md "Precondition Loud-Fail
-#            Principle" — silent fail absorption FORBIDDEN.
-#   exit 6 — loud-fail precondition (required binary missing: python3).
-#
-# Logic outline:
-#   1. Parse [COMPLETION] block from last_assistant_message → extract style_ref.
-#   2. style_ref absent OR == "greenfield" → exit 0 silently.
-#   3. transcript_path absent / unreadable → loud-fail exit 5.
-#   4. Read transcript jsonl → enumerate Read tool_use file_path values.
-#   5. Cross-check: style_ref is substring of (or basename matches) any Read
-#      path → pass silently.
-#   6. No match → emit single-line stderr warning, exit 0.
+# exit 0 — pass / silent skip / warning (warn-not-block preserves Gaming-the-Judge
+#          honesty without breaking the session).
+# exit 5 — loud-fail precondition (transcript unreadable). Named exit code per
+#          shared-self-improve-hygiene.md "Precondition Loud-Fail Principle" —
+#          silent fail absorption FORBIDDEN.
+# exit 6 — loud-fail precondition (python3 missing).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Diagnostic ERR trap — stderr only. Fail-open on internal error so the hook
-# never breaks the user's session on infrastructure failure.
+# Fail-open ERR trap (stderr only) — never break the session on internal error.
 trap 'printf "[style-ref-verify] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
 # Drain stdin. Empty payload → nothing to verify, exit silently.
@@ -71,17 +50,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 6
 fi
 
-# Single-pass pipeline: parse input JSON, extract [COMPLETION] body, extract
-# style_ref, optionally read transcript jsonl, emit verdict. Keeping all of
-# this inside python3 avoids the multi-line shell extraction trap (sed +
-# head -1 collapses multi-line message bodies).
-#
-# Emits @@verdict@@<token> on stdout:
-#   skip_silent       — no [COMPLETION] / style_ref absent / greenfield literal
-#   loud_fail_tpath   — transcript_path absent or unreadable (caller exits 5)
-#   match             — style_ref found in Read history (pass)
-#   no_match          — style_ref not found (caller emits WARN, exits 0)
-#   error             — unrecoverable internal error (caller exits 0 fail-open)
+# All parsing stays inside python3 to avoid the multi-line shell extraction trap
+# (sed + head -1 collapses multi-line message bodies). Emits @@verdict@@<token>:
+#   skip_silent     — no [COMPLETION] / style_ref absent / greenfield literal
+#   loud_fail_tpath — transcript_path absent or unreadable (caller exits 5)
+#   match           — style_ref found in Read history (pass)
+#   no_match        — style_ref not found (caller emits WARN, exits 0)
+#   error           — unrecoverable internal error (caller exits 0 fail-open)
 PIPELINE_PY=$(
   cat <<'PY'
 import json
@@ -188,8 +163,8 @@ except Exception as exc:  # noqa: BLE001 — fail-open, never block on parse bug
 PY
 )
 
-# STYLE_REF_MATCH_LIB: shared matcher path (single SoT with track-outcome.sh).
-# Resolved from this script's own dir so the symlinked ~/.claude/hooks path works.
+# Shared matcher (single SoT with track-outcome.sh), resolved from this script's
+# own dir so the symlinked ~/.claude/hooks path works.
 STYLE_REF_MATCH_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/style_ref_match.py"
 
 PIPELINE_OUT=""

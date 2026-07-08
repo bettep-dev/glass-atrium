@@ -1,46 +1,16 @@
 #!/usr/bin/env bash
-# prune-security-warnings-state.sh — SessionStart hook
+# prune-security-warnings-state.sh — SessionStart hook (advisory, always exit 0).
 #
-# Purpose:
-#   The 3rd-party `security-guidance` plugin writes per-session state to
-#     ~/.claude/security_warnings_state_<session-uuid>.json
-#   and only cleans entries older than 30 days, with a 10% probability per
-#   PreToolUse trigger (security_reminder_hook.py:227). Per-session state
-#   has no operational value once the session ends, so the lazy cleanup
-#   accumulates dozens of stale files between manual sweeps.
+# The `security-guidance` plugin only lazily cleans its per-session state files
+# (~/.claude/security_warnings_state_<uuid>.json) — 10% probability per PreToolUse,
+# 30-day threshold — so stale files accumulate. This deterministically Trashes
+# every stale file at SessionStart, preserving the active session's file (matched
+# by session_id from stdin JSON, or — when absent — by a 5-minute mtime window
+# that defends against the plugin pre-creating the file before SessionStart fires).
 #
-#   This hook runs at SessionStart, deterministically moves every stale
-#   `security_warnings_state_*.json` file to the macOS Trash, and preserves
-#   only the file whose UUID matches the currently-starting session.
-#
-# Trigger:
-#   SessionStart (registered in ~/.claude/settings.json).
-#
-# Active-session detection:
-#   Claude Code passes hook input on stdin as JSON (`{"session_id": "<uuid>", ...}`).
-#   We extract the UUID with a pure-bash regex match — no jq dependency, sub-50ms.
-#   If the session_id field is absent, we fall back to a 5-minute mtime window:
-#   any file modified within the last 300 seconds is preserved (defends against
-#   the plugin pre-creating the file before SessionStart fires).
-#
-# File deletion policy:
-#   Per Tier-1 rule, JSON state files are config artifacts (not regenerable
-#   build outputs) — `mv ~/.Trash/` is mandatory; `rm` is FORBIDDEN.
-#   Trash collision is avoided by appending `_<unix-epoch>` before `.json`.
-#
-# Exit codes:
-#   0 — always (advisory hook, must never block session start).
-#
-# Flags:
-#   --dry-run — list would-be-moved files on stdout, exit 0 without moving.
-#
-# Env overrides (testing):
-#   PRUNE_BASE_DIR — directory to scan (default: ~/.claude).
-#   PRUNE_TRASH_DIR — destination directory (default: ~/.Trash).
-#
-# Performance budget:
-#   Steady state (zero stale files) <50ms — single glob + early return.
-#   With N stale files, ~N * mv-syscall (each <5ms on local APFS).
+# File deletion policy: per Tier-1 rule these JSON state files are config artifacts
+# (not regenerable) — `mv ~/.Trash/` mandatory, `rm` FORBIDDEN.
+# Env overrides (testing): PRUNE_BASE_DIR, PRUNE_TRASH_DIR. --dry-run lists only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -59,18 +29,13 @@ fi
 base_dir="${PRUNE_BASE_DIR:-${DEFAULT_BASE_DIR}}"
 trash_dir="${PRUNE_TRASH_DIR:-${DEFAULT_TRASH_DIR}}"
 
-# 3. Read hook input from stdin (non-blocking; some test contexts have empty stdin)
-#    Use a 1-second read timeout via tail to avoid stalling if stdin is open
-#    but unfed. Claude Code always feeds JSON, but defensive coding wins.
+# 3. Drain stdin if piped (Claude Code feeds JSON; empty in some test contexts).
 input_json=""
 if [[ ! -t 0 ]]; then
-  # stdin is piped — drain it (small payload, single read)
   input_json="$(cat || true)"
 fi
 
-# 4. Extract session_id with pure-bash regex (no jq).
-#    Pattern: matches "session_id": "<uuid>" with optional whitespace.
-#    UUID format = 8-4-4-4-12 hex characters separated by hyphens.
+# 4. Extract session_id with pure-bash regex — no jq (UUID = 8-4-4-4-12 hex).
 active_session_id=""
 if [[ -n "${input_json}" ]]; then
   uuid_re='"session_id"[[:space:]]*:[[:space:]]*"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"'
@@ -79,43 +44,40 @@ if [[ -n "${input_json}" ]]; then
   fi
 fi
 
-# 5. Collect candidate files via glob (nullglob so empty match = empty array)
+# 5. Collect candidates (nullglob → empty match = empty array).
 shopt -s nullglob
 candidates=("${base_dir}"/security_warnings_state_*.json)
 shopt -u nullglob
 
-# 6. Idempotent fast path — nothing to do
+# 6. Idempotent fast path — nothing to do.
 if [[ ${#candidates[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# 7. Compute mtime cutoff (POSIX-portable; macOS BSD `date` works the same)
+# 7. Compute mtime cutoff (macOS BSD `date` works the same as GNU).
 now_epoch="$(date +%s)"
 cutoff_epoch=$((now_epoch - MTIME_WINDOW_SECONDS))
 
-# 8. Ensure destination exists (no-op if already present)
 if [[ "${dry_run}" == false ]]; then
   mkdir -p "${trash_dir}"
 fi
 
-# 9. Iterate, deciding preserve vs. move
+# 8. Iterate — preserve the active-session file, move the rest.
 moved_count=0
 preserved_count=0
 for file in "${candidates[@]}"; do
   basename_only="${file##*/}"
-  # Strip prefix + suffix to extract UUID portion
   uuid_part="${basename_only#security_warnings_state_}"
   uuid_part="${uuid_part%.json}"
 
-  # Decision: preserve if UUID matches active session
   if [[ -n "${active_session_id}" && "${uuid_part}" == "${active_session_id}" ]]; then
     preserved_count=$((preserved_count + 1))
     continue
   fi
 
-  # Decision: preserve if no session_id known but file is fresh (last 5 min)
+  # Fallback: no session_id → preserve files fresh within the mtime window.
   if [[ -z "${active_session_id}" ]]; then
-    # macOS BSD `stat -f %m` returns mtime epoch
+    # macOS BSD `stat -f %m` returns mtime epoch.
     file_mtime="$(stat -f %m "${file}" 2>/dev/null || printf '0')"
     if [[ -n "${file_mtime}" && "${file_mtime}" -ge "${cutoff_epoch}" ]]; then
       preserved_count=$((preserved_count + 1))
@@ -123,7 +85,7 @@ for file in "${candidates[@]}"; do
     fi
   fi
 
-  # Build trash destination with epoch suffix to dodge collisions
+  # Epoch suffix dodges Trash name collisions.
   dest_name="${basename_only%.json}_${now_epoch}.json"
   dest_path="${trash_dir}/${dest_name}"
 
@@ -136,7 +98,7 @@ for file in "${candidates[@]}"; do
   fi
 done
 
-# 10. Single advisory line on stdout if anything moved (silent on no-op)
+# 9. Single advisory line if anything moved (silent on no-op).
 if [[ "${dry_run}" == true ]]; then
   printf '[prune-security-warnings] dry-run: %d candidate(s), preserved=%d, active_session=%s\n' \
     "${#candidates[@]}" "${preserved_count}" "${active_session_id:-none}"

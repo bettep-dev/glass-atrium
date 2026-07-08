@@ -1,46 +1,18 @@
 #!/usr/bin/env bash
-# prune-session-spawns.sh — SessionStart hook
+# prune-session-spawns.sh — SessionStart hook (advisory, fail-open, always exit 0).
 #
-# Purpose:
-#   enforce-verification-gate.sh writes per-session spawn markers to
-#     ~/.claude/data/session-spawns/<session-key>
-#   on every PreToolUse(Agent) spawn, but nothing reaps them — the directory
-#   accumulates one file per session unboundedly. Per-session markers have no
-#   operational value once the session ends (the gate read is synchronous,
-#   in-session). This SessionStart reaper mtime-TTL-sweeps stale markers,
-#   matching the codebase reap convention (prune-security-warnings-state.sh
-#   SessionStart sweep · post-edit-typecheck.sh Stop-time rm).
+# enforce-verification-gate.sh writes a per-session spawn marker to
+# ~/.claude/data/session-spawns/<session-key> on every PreToolUse(Agent) spawn,
+# but nothing reaps them. This SessionStart reaper mtime-TTL-sweeps stale markers.
 #
-# Design rationale:
-#   - SessionStart, NOT an in-hook sweep — keeps the spawn hot path
-#     (enforce-verification-gate.sh PreToolUse) latency-free.
-#   - NOT cron — deterministic, runs once per session start, no daemon.
-#   - mtime-TTL (not session-id match) — the active session's marker is
-#     freshly written (mtime ~now), so the TTL window naturally preserves it;
-#     a session_id match is unnecessary and would not improve correctness.
+# Design: runs at SessionStart (NOT an in-hook sweep) to keep the spawn hot path
+# latency-free; mtime-TTL (not session-id match) — the active session's marker is
+# freshly written, so the TTL window preserves it without a session_id lookup.
 #
-# Trigger:
-#   SessionStart (registered in ~/.claude/settings.json).
-#
-# File deletion policy:
-#   Per Tier-1 rule, marker files are session-internal state artifacts (not
-#   regenerable build outputs) — `mv ~/.Trash/` is mandatory; `rm` FORBIDDEN.
-#   Trash collision avoided by appending `_<unix-epoch>` to the basename.
-#
-# Exit codes:
-#   0 — always (advisory hook, must never block session start · fail-open).
-#
-# Flags:
-#   --dry-run — list would-be-moved markers on stdout, exit 0 without moving.
-#
-# Env overrides (testing):
-#   SESSION_SPAWNS_DIR — directory to sweep (default: ~/.claude/data/session-spawns).
-#   PRUNE_TRASH_DIR    — destination directory (default: ~/.Trash).
-#   SESSION_SPAWNS_TTL — stale threshold in seconds (default: 86400 = 24h).
-#
-# Performance budget:
-#   Steady state (zero markers / missing dir) <50ms — single glob + early return.
-#   With N stale markers, ~N * mv-syscall (each <5ms on local APFS).
+# File deletion policy: per Tier-1 rule markers are session-internal state (not
+# regenerable) — `mv ~/.Trash/` mandatory, `rm` FORBIDDEN.
+# Env overrides (testing): SESSION_SPAWNS_DIR, PRUNE_TRASH_DIR, SESSION_SPAWNS_TTL
+# (seconds, default 86400). --dry-run lists only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -60,8 +32,7 @@ spawns_dir="${SESSION_SPAWNS_DIR:-${DEFAULT_SPAWNS_DIR}}"
 trash_dir="${PRUNE_TRASH_DIR:-${DEFAULT_TRASH_DIR}}"
 ttl_seconds="${SESSION_SPAWNS_TTL:-${DEFAULT_TTL_SECONDS}}"
 
-# TTL integer guard — non-integer input → default (silent). The hook is fail-open;
-# input validation failure must not block the session.
+# TTL integer guard — non-integer → default (fail-open; must not block session).
 if [[ ! "${ttl_seconds}" =~ ^[0-9]+$ ]]; then
   ttl_seconds="${DEFAULT_TTL_SECONDS}"
 fi
@@ -90,7 +61,7 @@ fi
 now_epoch="$(date +%s)"
 cutoff_epoch=$((now_epoch - ttl_seconds))
 
-# 8. Ensure destination exists (no-op if already present).
+# 8. Ensure Trash dir exists.
 if [[ "${dry_run}" == false ]]; then
   mkdir -p "${trash_dir}" 2>/dev/null || true
 fi
@@ -109,7 +80,7 @@ for file in "${candidates[@]}"; do
     continue
   fi
 
-  # Build trash destination with epoch suffix to dodge collisions.
+  # Epoch suffix dodges Trash name collisions.
   basename_only="${file##*/}"
   dest_path="${trash_dir}/${basename_only}_${now_epoch}"
 

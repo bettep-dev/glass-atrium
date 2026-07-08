@@ -21,7 +21,7 @@ hook_require_python3 "SEC-017" \
 INPUT=$(hook_read_input)
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
-# --- Structured + format secret patterns (Write|Edit content channel) --------
+# Structured + format secret patterns (Write|Edit content channel).
 # High-signal patterns: structured-token shapes + generic credential
 # assignments (non-trivial value only, to avoid FP on empty/placeholder) +
 # PEM private-key headers + cloud service-account JSON markers.
@@ -80,9 +80,8 @@ scan_content() {
     # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
     # pattern is not parsed as a grep option flag.
     if printf '%s\n' "${blob}" | grep -qiE -- "${PATTERNS[${i}]}"; then
-      # emit_error is a 5-param signature (code, severity, message, suggestion,
-      # ctx) — bilingual EN/KO text is combined into the single message/
-      # suggestion args so the emitted JSON stays well-formed.
+      # emit_error 5-param signature — bilingual EN/KO combined into one message/
+      # suggestion arg so the emitted JSON stays well-formed.
       emit_error "${CODES[${i}]}" "block" \
         "Secret pattern detected: ${NAMES_EN[${i}]} / 시크릿 패턴 감지: ${NAMES_KO[${i}]}" \
         "Replace hardcoded secret with environment variable / 하드코딩된 시크릿을 환경변수로 교체하세요" \
@@ -92,7 +91,7 @@ scan_content() {
   done
 }
 
-# --- Bash channel (HIGH SIGNAL ONLY) -----------------------------------------
+# Bash channel (HIGH SIGNAL ONLY).
 # Block a credential VALUE written into a dotenv/secrets file via Bash.
 # Anti-FP gate: require BOTH a secrets-file write target AND a credential value
 # on the command — neither alone blocks (a benign `echo hello`, an `echo to

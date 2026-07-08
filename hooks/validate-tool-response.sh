@@ -21,11 +21,9 @@ INPUT=$(hook_read_input)
 
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
-# Target scope: tools whose response carries EXTERNAL (untrusted) content.
-# WebFetch / WebSearch are the built-ins; mcp fetch/read tools (naming convention
-# mcp__<server>__fetch / __get / __read / __search) also pull external content.
-# Non-target tool → fail-open silent (the injection channel is external-content
-# tools only; Bash/Read of local files is out of scope here).
+# Target scope: tools whose response carries EXTERNAL (untrusted) content —
+# WebFetch/WebSearch built-ins + mcp fetch/get/read/search tools. Non-target →
+# fail-open silent (Bash/Read of local files is out of scope; not an injection channel).
 case "${TOOL_NAME}" in
   WebFetch | WebSearch) ;;
   mcp__*fetch* | mcp__*get* | mcp__*read* | mcp__*search*) ;;

@@ -1,27 +1,20 @@
 #!/usr/bin/env bash
-# enforce-config-protection.sh — PreToolUse(Write|Edit) lint/format config-weakening gate.
-# Blocks edits that WEAKEN lint/format/strictness config (rule-disable, exception-add,
-# strictness flip-to-loose) — stops an agent disabling a quality gate to pass verification.
+# enforce-config-protection.sh — PreToolUse(Write|Edit) gate blocking config edits that WEAKEN
+# lint/format/strictness (rule-disable, "off" value, eslint-disable, strictness true→false),
+# stopping an agent from disabling a quality gate to pass verification.
 #
-# Protected basenames (scope-limited — anything else is NOT a target):
-#   .eslintrc* · .prettierrc* · ruff.toml · biome.json
-#     → weakening = rule-disable / "off" value / eslint-disable directive added.
-#   tsconfig.json
-#     → weakening = strictness key {strict, noImplicitAny, strictNullChecks,
-#       noUncheckedIndexedAccess} flipped true→false. Non-strictness fields
-#       (paths/include/exclude) → DEFAULT-ALLOW (basename-only match would false-block).
+# Protected basenames (scope-limited; anything else → allow):
+#   .eslintrc* · .prettierrc* · ruff.toml · biome.json → rule-disable / "off" / eslint-disable added.
+#   tsconfig.json → strictness key {strict, noImplicitAny, strictNullChecks, noUncheckedIndexedAccess}
+#     flipped true→false. Non-strictness fields (paths/include/exclude) → allow (basename match would false-block).
 #
-# DEFAULT-ALLOW (exit 0): strengthen/neutral edit · ambiguous Edit fragment
-#   (old_string/new_string only — cannot judge full file) · tsconfig non-strictness
-#   field · approval marker present · any internal/parse error (fail-open).
-# Block channel: stderr emit_error + exit 2 — non-substitutable with the stdout
-#   decision channel (shared-hook-capability-contract.md Block Channels).
-# Contract: stdin = JSON (tool_name + tool_input) · stdout silent · stderr =
-#   structured block error OR fail-open warn · exit 0 pass · exit 2 block.
-# Approval marker: CONFIG_PROTECTION_APPROVE=1 → one-time pass (intentional weakening),
+# DEFAULT-ALLOW (exit 0): strengthen/neutral · ambiguous Edit fragment · tsconfig non-strictness
+#   field · approval marker · any internal/parse error (fail-open).
+# Block channel: stderr emit_error + exit 2, non-substitutable with the stdout decision channel
+#   (shared-hook-capability-contract.md Block Channels).
+# Approval marker CONFIG_PROTECTION_APPROVE=1 → one-time pass for intentional weakening,
 #   per core-security.md high-impact-action explicit-approval posture.
-# Fail-open rationale: a parse bug must never wall off every config edit (system-wide
-#   blast radius), so any internal error → exit 0 + warn, false-block = 0.
+# Fail-open: a parse bug must never wall off every config edit (system-wide blast radius) → internal error = exit 0 + warn.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -31,7 +24,7 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # Diagnostic ERR trap — fail-open. Internal error must never wall off edits.
 trap 'printf "[config-protection] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-# --- Approval bypass: user-approved weakening → one-time pass ---
+# Approval bypass: user-approved weakening → one-time pass.
 if [[ "${CONFIG_PROTECTION_APPROVE:-}" == "1" ]]; then
   exit 0
 fi
@@ -52,7 +45,7 @@ fi
 
 basename_only="${FILE_PATH##*/}"
 
-# --- Scope limit: classify the protected config type by basename ---
+# Scope limit: classify the protected config type by basename.
 # config_kind ∈ { linter, tsconfig, "" }. "" → not a protected config → allow.
 config_kind=""
 case "${basename_only}" in
@@ -66,13 +59,11 @@ case "${basename_only}" in
 esac
 
 if [[ -z "${config_kind}" ]]; then
-  # Not a known config basename → not a target.
   exit 0
 fi
 
-# --- Gather the edit content to inspect for weakening ---
-# Write → full file content. Edit → new_string fragment only (ambiguous; we can
-# still detect an added weakening directive, but absence of one → DEFAULT-ALLOW).
+# Gather the edit content to inspect. Write → full file content; Edit → new_string
+# fragment only (ambiguous — absence of a weakening directive → DEFAULT-ALLOW).
 NEW_CONTENT=""
 if [[ "${TOOL_NAME}" == "Write" ]]; then
   NEW_CONTENT="$(hook_get_tool_input "${INPUT}" "content")"
@@ -85,10 +76,8 @@ if [[ -z "${NEW_CONTENT}" ]]; then
   exit 0
 fi
 
-# --- Weakening detection (delegated to python3 for robust JSON-key parsing) ---
-# Emits a single token on stdout:
-#   weaken:<reason>  — weakening detected → caller blocks (exit 2)
-#   allow            — strengthen / neutral / ambiguous → DEFAULT-ALLOW
+# Weakening detection (delegated to python3 for robust JSON-key parsing). Emits one
+# token on stdout: weaken:<reason> → caller blocks (exit 2) · allow → DEFAULT-ALLOW.
 DETECT_PY=$(
   cat <<'PY'
 import json

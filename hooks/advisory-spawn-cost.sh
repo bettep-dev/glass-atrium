@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# advisory-spawn-cost.sh — PreToolUse(Agent) session-cost advisory hook.
+# advisory-spawn-cost.sh — PreToolUse(Agent) session-cost advisory.
 #
 # When cumulative session tokens exceed the threshold, fires a non-blocking advisory once before
 # spawn ("session heavy, split remaining work") — guards against a single overpacked delegation
 # truncating the sub-agent (missing [COMPLETION]), which the turn-based guard misses.
-#
-# Manual-path only — the ultracode/Workflow agent() spawn does not fire PreToolUse(Agent).
-# Cost source: PG core.cost_events by session_id (read-only; PG total lags the current turn by
-# ~1 turn — harmless for a "already heavy" threshold). Channel: STDERR advisory + exit 0 (the
-# PreToolUse schema accepts only approve/block). fail-open: ANY DB error/timeout/absent psycopg/
-# corrupted payload → exit 0. SELECT double-capped (connect 1s + statement 1500ms) — no external
-# timeout binary (absent on stock macOS). Const-12/16: psycopg Unix-socket only, never -h/-p.
+# Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent).
+# Cost source: PG core.cost_events by session_id (read-only; total lags the current turn by ~1 turn —
+# harmless for an "already heavy" threshold). Channel: STDERR advisory + exit 0. fail-open: ANY DB
+# error/timeout/absent psycopg/corrupted payload → exit 0. SELECT double-capped (connect 1s +
+# statement 1500ms; no timeout binary on stock macOS). psycopg Unix-socket only, never -h/-p.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -21,14 +19,12 @@ trap 'printf "[agent-spawn-cost-advisory] internal error at line %d: %s — fail
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# TUNE: above p95 (~1.13M) + below p99 (~7M truncation cluster) → ~5x margin. Tokens (not USD —
-# price-stable + truncation-relevant). Caveat: cumulative tokens is a proxy; per-turn context
-# occupancy is the true driver. Recalibrate from core.cost_events percentiles.
+# TUNE: above p95 (~1.13M), below the ~7M p99 truncation cluster → ~5x margin. Tokens (price-stable +
+# truncation-relevant). Caveat: cumulative tokens is a proxy; per-turn occupancy is the true driver.
 readonly CUMULATIVE_TOKEN_THRESHOLD=2000000
 
-# Read cumulative session tokens — echoes 1 integer line. STUBBABLE: COST_ADVISORY_TEST_TOKENS
-# bypasses the live PG read (Bats). fail-open: ANY DB error/timeout/absent psycopg → '0'.
-# session_id passed via env-var (neutralizes injection; parameterized %s binding).
+# Read cumulative session tokens (1 integer). STUBBABLE via COST_ADVISORY_TEST_TOKENS (Bats).
+# fail-open → '0'. session_id via env-var + parameterized %s binding (neutralizes injection).
 read_session_tokens() {
   local sid="${1:-}"
   if [[ -n "${COST_ADVISORY_TEST_TOKENS:-}" ]]; then

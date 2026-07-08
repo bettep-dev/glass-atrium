@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # telemetry-activation.sh — Agent activation telemetry collector.
 #
-# POSTs the activated-agent distribution to the monitor's /api/telemetry/activation, the data
-# source for measuring agent-instruction improvement effect.
+# POSTs the activated-agent distribution to the monitor's /api/telemetry/activation
+# (data source for measuring agent-instruction improvement effect).
 #   - PreToolUse(Agent): source=orchestrator, agent_name=subagent_type, trigger_phrase=prompt[:500]
 #   - SubagentStart:     source=subagent, agent_name=agent_type, cid=extracted from prompt
 # fire-and-forget: monitor down/503 has zero impact (silent), curl --max-time 2, every error

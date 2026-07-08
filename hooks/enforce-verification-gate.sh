@@ -6,26 +6,23 @@
 #      recorded this session, surfacing the missing Stage-2 gate. ADVISORY-ONLY (complex/simple plan
 #      judgment is the orchestrator's) → never blocks.
 #   2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — an ORCHESTRATOR-ORIGIN DEV
-#      spawn (agent_id absent) carrying NO [SIZE-EST] self-attestation token. The [SIZE-EST] contract
-#      applies to EVERY DEV spawn (orchestrator-role.md ### Spawn Budget), so this fires even for a
-#      plan-bearing spawn — the former "plan-bearing → zero false-block" guarantee is REVOKED for this
-#      [SIZE-EST] dimension. GUARDED by hook_is_subagent: a nested sub-worker origin (agent_id present)
-#      does NOT load the token-defining rules → never blocked (directionally fail-safe: misread ⇒
-#      skipped block, never a false-block). Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
+#      spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies to EVERY DEV spawn
+#      (orchestrator-role.md ### Spawn Budget), so it fires even for a plan-bearing spawn. GUARDED by
+#      hook_is_subagent: a nested sub-worker origin (agent_id present) does NOT load the token-defining
+#      rules → never blocked (directionally fail-safe: misread ⇒ skipped block, never a false-block).
+#      Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
 #   3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
-#      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The [ENTRY-CLASS]
-#      simple-task token is the escape hatch for legitimate small DEV work. Non-DEV spawns exit 0;
-#      plan-bearing / token-bearing spawns clear THIS branch (but still face surface 2 above).
+#      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
+#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
+#      clear THIS branch (but still face surface 2).
 #
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
 #   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
-# Channel: STDERR advisory (exit 0) for surface 1 · channel-a emit_error + exit 2 for surface 2.
-# Session state: agent_events has no session_id column + async PG write → no synchronous lookup,
-#   so each spawn appends agent_type to a local marker (session-spawns/<key>) read here.
-# Ordering: READ-BEFORE-STAMP — reviewer-present snapshot taken BEFORE this spawn appends its own
-#   type → sequential reviewer→DEV passes (reviewer's PreToolUse durably committed first), same-batch
-#   parallel reviewer+DEV raises (reviewer stamp not yet committed at DEV-read). Avoids a
-#   write-after-read inversion where the DEV's own append pollutes its read.
+# Session state: agent_events has no session_id column + async PG write → no synchronous lookup, so
+#   each spawn appends agent_type to a local marker (session-spawns/<key>) read here.
+# Ordering: READ-BEFORE-STAMP — reviewer-present snapshot taken BEFORE this spawn appends its own type
+#   → sequential reviewer→DEV passes (reviewer PreToolUse durably committed first); same-batch parallel
+#   reviewer+DEV raises. Avoids a write-after-read inversion where the DEV's own append pollutes its read.
 # fail-open: internal error / marker absent / corrupted payload → exit 0, never interferes.
 
 set -Eeuo pipefail
