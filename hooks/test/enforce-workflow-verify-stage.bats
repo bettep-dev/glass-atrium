@@ -55,7 +55,7 @@ PLAN_REF="clauded-docs/100"
 # BLOCK_SIZEEST) to keep the co-location / ordering / resilience behavior under test isolated.
 SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
 
-# --- (a) reviewer + DEV-verifier both present before the first impl dev-* → PASS ---
+# (a) reviewer + DEV-verifier both present before the first impl dev-* → PASS
 
 @test "verify stage parallel(reviewer, dev) then impl dev → PASS (exit 0)" {
   run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}), agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
@@ -69,7 +69,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 0 ]]
 }
 
-# --- DEV-verifier present, both parallel orderings → PASS (R5 false-BLOCK fix) ---
+# DEV-verifier present, both parallel orderings → PASS (R5 false-BLOCK fix)
 
 @test "parallel(dev, reviewer) dev-first ordering then impl dev → PASS (order-independent)" {
   run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),parallel(agent('glass-atrium-dev-nestjs',{goal:'feasible'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
@@ -83,7 +83,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 0 ]]
 }
 
-# --- (b) reviewer present but DEV-verifier absent → BLOCK (exit 2) ---
+# (b) reviewer present but DEV-verifier absent → BLOCK (exit 2)
 
 @test "reviewer present, lone impl dev separated by real code > window → BLOCK_NOVERIFYDEV (exit 2)" {
   local f
@@ -95,7 +95,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${output}" == *"missing its mandatory"* ]]
 }
 
-# --- implementation dev that the reviewer does not precede → BLOCK (ordering) ---
+# implementation dev that the reviewer does not precede → BLOCK (ordering)
 
 @test "separate impl dev runs far BEFORE the verify pair → BLOCK_ORDER (reviewer does not gate it)" {
   local f
@@ -107,10 +107,10 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${output}" == *"missing its mandatory"* ]]
 }
 
-# --- Discovery/Design dev-* used BEFORE the verify reviewer trips BLOCK_ORDER: the corrected cause
+# Discovery/Design dev-* used BEFORE the verify reviewer trips BLOCK_ORDER: the corrected cause
 # states the flagged token may be an earlier Discovery/Design dev-* (not the implement stage) and
 # names both lawful escape hatches (non-DEV Discovery agent; reviewer-first Contract phase). Same
-# shape as the fixture above, framed as a legitimate Discovery pass. ---
+# shape as the fixture above, framed as a legitimate Discovery pass.
 
 @test "Discovery dev-* before the verify reviewer → BLOCK_ORDER cause names both escape hatches" {
   local f
@@ -129,7 +129,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${output}" == *"missing its mandatory"* ]]
 }
 
-# --- (c) a comment-only DEV-verifier token is NOT counted ---
+# (c) a comment-only DEV-verifier token is NOT counted
 
 @test "DEV verifier only inside a comment, real impl dev far away → BLOCK (comment dev not counted)" {
   local f
@@ -138,7 +138,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 2 ]]
 }
 
-# --- (d) parse ambiguity / fail-open paths → PASS ---
+# (d) parse ambiguity / fail-open paths → PASS
 
 @test "empty script → PASS (nothing to inspect, fail-open)" {
   run_hook ""
@@ -164,7 +164,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 0 ]]
 }
 
-# --- (e) regression: pre-existing reviewer-only checks unchanged ---
+# (e) regression: pre-existing reviewer-only checks unchanged
 
 @test "regression: DEV present, NO reviewer anywhere → BLOCK_NOREV (exit 2)" {
   run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan'}), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
@@ -192,10 +192,10 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 2 ]]
 }
 
-# --- (f) C4 entry-miss BLOCK — C4 promoted the former STDERR-only advisory to a real BLOCK_ENTRY
+# (f) C4 entry-miss BLOCK — C4 promoted the former STDERR-only advisory to a real BLOCK_ENTRY
 # (stderr reason + exit 2). A DEV-spawning workflow with NEITHER a plan-ref NOR an [ENTRY-CLASS]
 # simple-task token is now BLOCKED before the verify-stage verdict, decoupled from it. bats `run`
-# merges STDERR into $output, so the entry-miss reason is asserted via $output. ---
+# merges STDERR into $output, so the entry-miss reason is asserted via $output.
 
 @test "entry: DEV + valid verify-stage, NO plan-ref NO token → BLOCK_ENTRY (exit 2)" {
   run_hook "pipeline(parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
@@ -230,12 +230,12 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 2 ]]
 }
 
-# --- (g) exit-code-decoupling REGRESSION — every pre-existing case's status is IDENTICAL to before
+# (g) exit-code-decoupling REGRESSION — every pre-existing case's status is IDENTICAL to before
 # the C4 entry-miss block was promoted. The expected statuses below are the ground-truth verdicts
 # the suite above already pins (PASS fixtures carry a plan-ref to isolate co-location from the C4
 # BLOCK_ENTRY; BLOCK fixtures land on a verify-stage BLOCK that subsumes the entry check). This
 # block re-asserts every fixture's status as a consolidated regression guard. (output text is
-# intentionally NOT asserted here — only `status` is the regression subject.) ---
+# intentionally NOT asserted here — only `status` is the regression subject.)
 
 @test "regression(exit): every suite fixture yields its ground-truth status" {
   local f20 f45 g
@@ -273,7 +273,7 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   done
 }
 
-# --- (h) SECOND DETECTION PASS — doc-routing leak (weakest layer, string heuristic, fail-open). ---
+# (h) SECOND DETECTION PASS — doc-routing leak (weakest layer, string heuristic, fail-open).
 # An intel-reporter / intel-planner spawn hardcoding a local-FS Target with NO monitor-POST
 # instruction is BLOCKED (exit 2, distinct "doc-routing leak" stderr); a monitor-POST signal
 # anywhere, a non-doc agent, or no hardcoded path shape fails open to PASS. exit code + stderr only.
@@ -326,8 +326,8 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${output}" =~ "doc-routing leak" ]]
 }
 
-# --- (i) CO-LOCATION FP FIX — finditer over ALL reviewer spans + parallel(...) group-bounds. Each
-# fixture carries a plan-ref so C4's BLOCK_ENTRY never preempts the co-location verdict under test. ---
+# (i) CO-LOCATION FP FIX — finditer over ALL reviewer spans + parallel(...) group-bounds. Each
+# fixture carries a plan-ref so C4's BLOCK_ENTRY never preempts the co-location verdict under test.
 
 # FP1 (multi-reviewer): a leading audit/Phase-1 qa-code-reviewer (no co-located dev) followed by a
 # genuine parallel(qa,dev) verify pair + impl dev. finditer over every reviewer span finds the later
@@ -378,10 +378,10 @@ SIZE_EST="[SIZE-EST] bundles=1 tool_uses~=10"
   [[ "${status}" -eq 2 ]]
 }
 
-# --- (j) P0 ASYMMETRIC RAW-SCAN — the entry / plan / monitor-POST self-attestation tokens are scanned
+# (j) P0 ASYMMETRIC RAW-SCAN — the entry / plan / monitor-POST self-attestation tokens are scanned
 # on RAW src (matching the manual gate's raw grep), while spawn/agentType tokens + the leak TRIGGER
 # stay comment-stripped (anti-gaming preserved). Locks the comment-placement false-BLOCK incident
-# (FM-FB1/FM-FB2) and proves the no-weaken guarantee: a commented spawn/reviewer/dev still BLOCKs. ---
+# (FM-FB1/FM-FB2) and proves the no-weaken guarantee: a commented spawn/reviewer/dev still BLOCKs.
 
 # (a) incident regression-lock: a //-line commented [ENTRY-CLASS] token + a valid verify-stage + an
 # impl dev, NO plan-ref → entry-miss SILENCED → PASS. Pre-P0 this was the entry-miss false-BLOCK that
@@ -430,12 +430,12 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ "${status}" -eq 2 ]]
 }
 
-# --- (k) SYNCED-ROSTER MEMBERSHIP PROBE — a real synced DEV member (dev-swift) is recognized by the
+# (k) SYNCED-ROSTER MEMBERSHIP PROBE — a real synced DEV member (dev-swift) is recognized by the
 # gate as a DEV-implementation spawn (DEV impl with NO qa-code-reviewer / plan-ref / [ENTRY-CLASS]
 # token → BLOCK), while a non-member (intel-reporter) alone is not gated (exit 0). Proves the gate
 # keys on DEV_SET membership. dev-swift is the agent whose DEV_SET absence originally motivated the
 # gate-roster auto-sync (agent_lifecycle add/delete + `sync-gate-roster`); the BLOCK case fails RED
-# if dev-swift is ever dropped from DEV_SET, confirming the gate reads the synced list. ---
+# if dev-swift is ever dropped from DEV_SET, confirming the gate reads the synced list.
 
 @test "membership: dev-swift impl, NO reviewer/plan-ref/token → BLOCK (synced DEV member recognized)" {
   run_hook "pipeline(agent('glass-atrium-dev-swift',{goal:'implement the swift module'}))"
@@ -447,14 +447,14 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ "${status}" -eq 0 ]]
 }
 
-# --- (l) T1 INLINE-PLAN no-widening + message-content — an in-script intel-planner author stage
+# (l) T1 INLINE-PLAN no-widening + message-content — an in-script intel-planner author stage
 # (an inline one-shot author+verify+implement workflow) carrying NO minted clauded-docs/<N> id STILL
 # blocks (entry-miss, exit 2): R2 (widen the gate to accept an inline planner spawn as a plan-ref)
 # was REJECTED, so the gate did NOT widen — parity with the existing "DEV + valid verify-stage, NO
 # plan-ref NO token → BLOCK_ENTRY" fixture, plus an inline author stage. The rewritten message pins
 # exactly TWO resolution paths (persist a plan / record a simple-task token), carries the INLINE-PLAN
 # reasons, and DROPS the old "author a qa-code-reviewer verify-stage" path. bats `run` merges STDERR
-# into $output. ---
+# into $output.
 
 @test "T1 no-widen: inline intel-planner author + verify-stage + impl, NO minted id → BLOCK_ENTRY (exit 2)" {
   run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'author the plan inline now'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})), agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
@@ -480,14 +480,14 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ "${output}" != *"qa-code-reviewer verify-stage"* ]]
 }
 
-# --- (m) F1 TWO-STEP REVEAL FIX — when a DEV workflow lands on the missing-verify-stage BLOCK AND
+# (m) F1 TWO-STEP REVEAL FIX — when a DEV workflow lands on the missing-verify-stage BLOCK AND
 # also carries no entry signal (entry_marker == ENTRY_ADVISORY), the BLOCK message now CONDITIONALLY
 # appends an entry-format addendum (the two escape paths) so the author resolves the verify-stage AND
 # the entry signal in ONE pass instead of two round-trips. Strictly MESSAGE-ONLY: entry_marker selects
 # the message text, never the verdict or the exit code (still 2). The addendum is phrased WITHOUT the
 # literal "entry-miss" so the dedicated entry-miss channel tag stays absent from this BLOCK's output.
 # bats `run` merges STDERR into $output; the substring `== *"..."*` form keeps the [], /, () in the
-# needle literal (regex-special chars match as text). ---
+# needle literal (regex-special chars match as text).
 
 # POSITIVE: missing verify-stage + DEV spawn + NO plan-ref + NO [ENTRY-CLASS] token → exit 2
 # (missing-verify-stage BLOCK) AND the message CARRIES the entry-format addendum (both escape paths).
@@ -533,7 +533,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ "${output}" != *"entry classification / plan-reference also required"* ]]
 }
 
-# --- (n) T1 DOCROUTE-PATH GENERALIZATION — the centralized entry addendum (formerly inline on the
+# (n) T1 DOCROUTE-PATH GENERALIZATION — the centralized entry addendum (formerly inline on the
 # verify-stage path only) now ALSO rides the docroute "block-docroute" verdict via block_and_exit's
 # ALLOWLIST gate (explicit enumeration block-norev|block-noverifydev|block-order|block-docroute,
 # NO block-* glob — block-entry stays excluded). A doc-routing leak that
@@ -544,7 +544,7 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
 # ENTRY_OK via PLAN_REF, silently breaking both arms. Assertions key on the discriminator
 # `entry classification / plan-reference also required`, NOT `POST /api/clauded-docs` (the latter
 # already lives in the docroute BASE reason → would FALSE-PASS). bats `run` merges STDERR into
-# $output; `== *"..."*` keeps the [], /, () in the needle literal. ---
+# $output; `== *"..."*` keeps the [], /, () in the needle literal.
 
 # POSITIVE: docroute leak (doc-agent local Target, NO monitor-POST) + a dev-* spawn + NO plan-ref/token
 # → BLOCK_DOCROUTE (exit 2) AND the entry-format addendum appended (the docroute-path gap closed). The
@@ -579,14 +579,14 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ ! "${output}" =~ "entry-miss" ]]
 }
 
-# --- (o) T2 ENTRY-MISS COPY-PASTE SCAFFOLD — the entry-miss BLOCK message now carries a ready-to-fill
+# (o) T2 ENTRY-MISS COPY-PASTE SCAFFOLD — the entry-miss BLOCK message now carries a ready-to-fill
 # plan-stub scaffold so the compliant path costs fewer keystrokes than overriding. Strictly MESSAGE-ONLY:
 # the scaffold rides the SAME entry-miss reason string; the gate decision (exit 2), the regexes, and the
 # entry_marker logic are untouched. The fixture is the canonical entry-miss shape (DEV spawn with a valid
 # verify-stage but NEITHER a plan-ref NOR an [ENTRY-CLASS] token) — identical to the section (f) fixture
 # "entry: DEV + valid verify-stage, NO plan-ref NO token → BLOCK_ENTRY (exit 2)", so it pins that the
 # exit-2 entry-miss verdict is byte-for-byte preserved while the new scaffold text is present. bats `run`
-# merges STDERR into $output; `== *"..."*` keeps the [], /, (), <> in the needle literal. ---
+# merges STDERR into $output; `== *"..."*` keeps the [], /, (), <> in the needle literal.
 
 # (a) the COPY-PASTE SCAFFOLD string is present in the entry-miss BLOCK stderr.
 @test "T2 scaffold: entry-miss BLOCK message carries the copy-paste plan-stub scaffold" {
@@ -615,12 +615,12 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   [[ "${output}" == *"NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification"* ]]
 }
 
-# --- (p) H1/T1 CAUSE-SPLIT + TRACE OBSERVABILITY — the verify-stage BLOCK verdict is cause-split
+# (p) H1/T1 CAUSE-SPLIT + TRACE OBSERVABILITY — the verify-stage BLOCK verdict is cause-split
 # into three tokens (BLOCK_NOREV / BLOCK_NOVERIFYDEV / BLOCK_ORDER; token-specific cause-line asserts
 # live inline on the retagged fixtures above). The bash side dispatches on an EXACT-token case whose
 # default is the strict enumerated fail-open (any unknown/future helper token → PASS, exit 0), and
 # the empty-script fail-open branches now emit the distinct pass-noscript trace tag (verdict/exit
-# unchanged — observability only). ---
+# unchanged — observability only).
 
 # H1 fail-open: an UNKNOWN helper verdict token must fall through the case default to exit 0. A stub
 # python3 (prepended to PATH) forces the helper output, isolating the bash dispatch from the real
@@ -647,14 +647,14 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
   grep -q "verdict=pass-noscript" "${TRACE_LOG}"
 }
 
-# --- (q) T1 DOCROUTE DESTINATION-GATE + [DOC-ROUTE] TOKEN — regex + stamp-suppressor semantics
+# (q) T1 DOCROUTE DESTINATION-GATE + [DOC-ROUTE] TOKEN — regex + stamp-suppressor semantics
 # live at the hook's LOCAL_TARGET_RE / TOKEN_LINE_RE comments (enforce-workflow-verify-stage.sh).
 # FIXTURE PURITY (HARD): token fixtures carry NO clauded-docs / monitor substrings —
 # MONITOR_POST_RE would independently suppress and silently un-test the token arm.
 # Accepted static FNs, comment-documented NOT asserted (runtime Write hook = primary .md guard):
 # preposition-less "save <path>" · verb-evasion (put/drop) · "the deliverable is <path>". Accepted
 # residual FPs, comment-documented NOT asserted: .html/.markdown edit-existing MENTIONS still block
-# by design until T4 (relief: the [DOC-ROUTE] token when user-requested). ---
+# by design until T4 (relief: the [DOC-ROUTE] token when user-requested).
 
 @test "docroute-gate: edit-existing .md mention ('at' framing) → PASS" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
@@ -829,12 +829,12 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
   [[ ! "${output}" =~ "doc-routing leak" ]]
 }
 
-# --- (r) RESILIENCE ADVISORY (T7) — ADVISORY-ONLY (exit 0, stderr, NEVER exit 2). A DEV-spawning
+# (r) RESILIENCE ADVISORY (T7) — ADVISORY-ONLY (exit 0, stderr, NEVER exit 2). A DEV-spawning
 # workflow with a schema-mode agent() but ZERO robustAgent/.catch resilience idiom gets a NON-blocking
 # stderr nudge; robustAgent OR .catch anywhere suppresses it; no schema token or a non-DEV workflow is
 # out of scope. Whole-script token presence (decidable + fail-open-consistent). bats `run` merges
 # STDERR into $output; the `== *"..."*` form keeps the '(' in the needle literal. Fixtures carry a
-# plan-ref so C4's BLOCK_ENTRY never preempts the PASS cases under test. ---
+# plan-ref so C4's BLOCK_ENTRY never preempts the PASS cases under test.
 
 # FIRE + non-blocking: valid verify-stage DEV workflow + plan-ref + a 'schema' token, NO robustAgent/
 # .catch → exit 0 (the advisory NEVER blocks) AND the resilience advisory is emitted on stderr.
@@ -885,14 +885,14 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
   [[ "${output}" == *"ADVISORY (resilience"* ]]
 }
 
-# --- (s) BLOCK_SIZEEST — a would-be-PASS DEV workflow under ENTRY_OK carrying NO [SIZE-EST]
+# (s) BLOCK_SIZEEST — a would-be-PASS DEV workflow under ENTRY_OK carrying NO [SIZE-EST]
 # delegation-size self-attestation token in the RAW source is promoted to exit 2 (distinct
 # "size-attestation miss" stderr, trace tag block-sizeest). DEV-gated + ENTRY_OK-gated + decoupled
 # from the verify-stage verdict (promoted only at a would-be PASS, so a verify-stage BLOCK and the
 # entry-miss block both keep priority). The token is raw-scanned (a commented [SIZE-EST] still
 # counts), mirroring the [ENTRY-CLASS] / plan-ref P0 asymmetric-scan policy. Fixtures use LITERAL
 # plan-refs (not ${PLAN_REF}) so the presence/absence of ${SIZE_EST} is unambiguous. bats `run`
-# merges STDERR into $output; `== *"..."*` keeps the [], () in the needle literal. ---
+# merges STDERR into $output; `== *"..."*` keeps the [], () in the needle literal.
 
 # MISS: valid verify-stage + literal plan-ref (ENTRY_OK) but NO [SIZE-EST] → BLOCK_SIZEEST (exit 2)
 # with the size-attestation remediation message + the block-sizeest firing trace. The entry addendum

@@ -19,7 +19,7 @@ run_raw() {
   printf '%s' "$1" | "$HOOK"
 }
 
-# --- core exit-code contract: in-scope breakers, out-of-scope + fail-open cases ---
+# core exit-code contract: in-scope breakers, out-of-scope + fail-open cases
 
 @test "non-Workflow tool_name is out of scope -> exit 0" {
   run run_hook Edit 'const s = `${arr[@]}`;'
@@ -86,7 +86,7 @@ run_raw() {
   [ "$status" -eq 0 ]
 }
 
-# --- bonus coverage: remaining operator variants and Do-NOT-flag shapes ---
+# bonus coverage: remaining operator variants and Do-NOT-flag shapes
 
 @test "assign operator \${opt:=x} -> exit 2" {
   run run_hook Workflow 'const s = `${opt:=x}`;'
@@ -128,7 +128,7 @@ run_raw() {
   [ "$status" -eq 0 ]
 }
 
-# --- block-message accuracy + line reporting ---
+# block-message accuracy + line reporting
 
 @test "block message asserts it is NOT a TypeScript syntax error" {
   run run_hook Workflow 'const s = `${arr[@]}`;'
@@ -150,7 +150,7 @@ run_raw() {
   [[ "$output" == *"line 2:"* ]]
 }
 
-# --- scanner state-machine coverage: nested braces, nested template, block-comment skip ---
+# scanner state-machine coverage: nested braces, nested template, block-comment skip
 
 @test "nested object literal \${ {x:1} } (no bash shape) tracks brace depth -> exit 0" {
   run run_hook Workflow 'const s = `${ {x:1} }`;'
@@ -167,7 +167,7 @@ run_raw() {
   [ "$status" -eq 0 ]
 }
 
-# --- false-positive regression: valid JS whose interpolation only CONTAINS shape chars -> exit 0 ---
+# false-positive regression: valid JS whose interpolation only CONTAINS shape chars -> exit 0
 # The whole-body match rejects these because the shape chars sit AFTER other JS expression structure,
 # so the body is not itself a bash parameter-expansion. Each source is 100% valid JavaScript.
 
@@ -201,7 +201,7 @@ run_raw() {
   [ "$status" -eq 0 ]
 }
 
-# --- CRLF line-counting guard: real breaker on line 3 -> exit 2 AND reports line 3 ---
+# CRLF line-counting guard: real breaker on line 3 -> exit 2 AND reports line 3
 
 @test "CRLF 3-line script with \${arr[@]} on line 3 -> exit 2 and reports line 3" {
   run run_hook Workflow $'const a = 1;\r\nconst b = 2;\r\nconst s = `${arr[@]}`;'

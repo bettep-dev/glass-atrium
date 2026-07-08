@@ -1,18 +1,7 @@
 #!/usr/bin/env bash
-# hook-utils.sh — Shared utility library for Claude Code hooks
-#
+# hook-utils.sh — Shared utility library for Claude Code hooks.
 # Usage: source "${BASH_SOURCE%/*}/hook-utils.sh"
-#
-# Provides common functions for hook scripts:
-#   hook_read_input     — Read JSON from stdin
-#   hook_get_field      — Extract top-level JSON field
-#   hook_get_tool_input — Extract tool_input sub-field
-#   hook_emit_error     — Structured JSON error to stderr
-#   hook_log            — Diagnostic message to stderr
-#   hook_is_subagent    — Check subagent context
-#
-# Dependencies: python3 (macOS system default)
-# Compatibility: Bash 3.2+ (macOS stock)
+# Dependencies: python3 (macOS system default) · Compatibility: Bash 3.2+ (macOS stock).
 
 # Guard against double-sourcing
 if [[ -n "${_HOOK_UTILS_LOADED:-}" ]]; then
@@ -20,8 +9,7 @@ if [[ -n "${_HOOK_UTILS_LOADED:-}" ]]; then
 fi
 readonly _HOOK_UTILS_LOADED=1
 
-# Read and return hook JSON input from stdin.
-# Falls back to empty JSON object on read failure.
+# Read hook JSON from stdin; empty read → empty JSON object.
 hook_read_input() {
   local input
   input="$(cat 2>/dev/null)" || true
@@ -84,13 +72,11 @@ hook_is_subagent() {
   [[ -n "${agent_id}" ]]
 }
 
-# Fail-closed python3 precondition guard — for SECURITY hooks ONLY.
+# Fail-closed python3 precondition guard — SECURITY hooks ONLY.
 # WHY: hook_get_field/hook_get_tool_input degrade to empty when python3 is absent
-# (their trailing `2>/dev/null || printf ""`), which silently disarms a fail-open
-# security gate (empty CONTENT = no match = allow). A security hook MUST instead
-# fail CLOSED. This helper does not change the fail-soft extraction other hooks
-# rely on — only the two security hooks opt in by calling it; everything else
-# keeps its current behavior.
+# (trailing `2>/dev/null || printf ""`) → silently disarms a fail-open security gate
+# (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Only the two
+# security hooks opt in — fail-soft extraction for every other hook is unchanged.
 # Args: $1=block_code · $2=message. On python3 absent → emit_error(block) + exit 2.
 hook_require_python3() {
   local code="${1}" message="${2}"
@@ -108,13 +94,10 @@ hook_require_python3() {
 # Args: $1=raw_identifier · stdout: sanitized segment (may be empty).
 hook_path_safe_key() { printf '%s' "${1}" | tr -cd 'A-Za-z0-9_-'; }
 
-# Common directories (shared constants)
 HOOK_LOG_DIR="${HOME}/.claude/logs"
 HOOK_DATA_DIR="${HOME}/.claude/data"
 
-# English-only alias for hooks using the 5-param emit_error signature.
-# Maps: emit_error(code, severity, message, suggestion, ctx)
-#   to: hook_emit_error(code, severity, message, suggestion, ctx)
+# English-only alias for hooks using the 5-param emit_error signature → hook_emit_error.
 emit_error() {
   local code="${1}" severity="${2}" message="${3}"
   local suggestion="${4:-}" ctx="${5:-"{}"}"

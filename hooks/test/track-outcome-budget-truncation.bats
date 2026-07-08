@@ -128,7 +128,7 @@ run_hook_transcript() {
   _bt_run_env
 }
 
-# --- budget-truncation: counter AT/OVER budget ---
+# budget-truncation: counter AT/OVER budget
 
 @test "counter == budget (40) ⇒ attribution=budget-truncation (boundary)" {
   seed_counter 40
@@ -150,7 +150,7 @@ run_hook_transcript() {
   [[ "${output}" == *"attribution=budget-truncation"* ]]
 }
 
-# --- completion-synthesized: fail-open cases (counter low / absent / disabled) ---
+# completion-synthesized: fail-open cases (counter low / absent / disabled)
 
 @test "counter below budget (5) ⇒ attribution=completion-synthesized (not a budget kill)" {
   seed_counter 5
@@ -180,7 +180,7 @@ run_hook_transcript() {
   [[ "${output}" != *"attribution=budget-truncation"* ]]
 }
 
-# --- seven-phrase blocked branch still fires (complementary, unchanged) ---
+# seven-phrase blocked branch still fires (complementary, unchanged)
 
 @test "rate-limit phrase ⇒ result=blocked still synthesized (counter low, seven-phrase intact)" {
   seed_counter 3
@@ -190,7 +190,7 @@ run_hook_transcript() {
   [[ "${output}" == *'"result":"blocked"'* ]]
 }
 
-# --- T6 monotonic attribution: truncated_completion (tier-2) is never clobbered by the synthesis ---
+# T6 monotonic attribution: truncated_completion (tier-2) is never clobbered by the synthesis
 #
 # The synthesis branch assigns structuredoutput-derived / budget-truncation / completion-synthesized
 # only when NO earlier stage already claimed the row. A tier-2 open-no-close block already labelled
@@ -227,7 +227,7 @@ run_hook_transcript() {
     && [[ "${output}" != *"attribution=completion-synthesized"* ]]
 }
 
-# --- precedence arms: each of the three synthesis labels beats completion-synthesized ---
+# precedence arms: each of the three synthesis labels beats completion-synthesized
 
 @test "arm 1 — structuredoutput-derived beats completion-synthesized (counter low, terminal consumed SO)" {
   seed_counter 5

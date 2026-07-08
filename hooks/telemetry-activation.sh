@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # telemetry-activation.sh — Agent activation telemetry collector.
-#
 # POSTs the activated-agent distribution to the monitor's /api/telemetry/activation
 # (data source for measuring agent-instruction improvement effect).
 #   - PreToolUse(Agent): source=orchestrator, agent_name=subagent_type, trigger_phrase=prompt[:500]
 #   - SubagentStart:     source=subagent, agent_name=agent_type, cid=extracted from prompt
-# fire-and-forget: monitor down/503 has zero impact (silent), curl --max-time 2, every error
-# logs 1 stderr line then exit 0. Security: loopback-only URL, jq --arg escaping, no -K env leak.
+# fire-and-forget: monitor down/503 has zero impact (silent), curl --max-time 2, every error logs
+# 1 stderr line then exit 0. Security: loopback-only URL, jq --arg escaping, no -K env leak.
 
 set -Eeuo pipefail
 IFS=$'\n\t'

@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 # post-edit-typecheck.sh — TS type check, run once at turn end.
-#
-#   - PostToolUse(Edit|Write): on .ts/.tsx edit, only append PROJECT_ROOT to the per-session
-#     marker (no tsc) — keeps every edit sub-second (vs the old per-edit full recompile).
+#   - PostToolUse(Edit|Write): on .ts/.tsx edit, append PROJECT_ROOT to the per-session marker
+#     only (no tsc) — keeps every edit sub-second (marker append, not a full recompile).
 #   - Stop / SubagentStop: marker present → run tsc --noEmit once per recorded root, then remove.
-#
-# Non-blocking: even on a type error, exit 0 + stderr only (Stop is observe-only — exit 2 cannot
-# reverse an ended turn). Marker key = session_id (Stop payload carries no file_path). emit_error
-# EXEMPT: raw tsc output IS the error display, so passthrough is the contract. tsc resolution:
-# direct ${root}/node_modules/.bin/tsc preferred, else npx tsc.
-#
+# Non-blocking: type error → exit 0 + stderr only (Stop is observe-only — exit 2 cannot reverse an
+# ended turn). Marker key = session_id (Stop payload carries no file_path). emit_error EXEMPT: raw
+# tsc output IS the error display. tsc resolution: ${root}/node_modules/.bin/tsc, else npx tsc.
 # Env (testing): TYPECHECK_MARKER_DIR (marker dir) · TYPECHECK_DRY_RUN=1 (print plan, no tsc).
 
 set -Eeuo pipefail
@@ -51,7 +47,6 @@ record_marker() {
   file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
   [[ -z "${file_path}" ]] && return 0
 
-  # Only .ts/.tsx are targeted.
   case "${file_path}" in
     *.ts | *.tsx) ;;
     *) return 0 ;;

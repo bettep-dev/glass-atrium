@@ -65,7 +65,7 @@ zero_evidence() {
   ' _ "${REAL_LIB}"
 }
 
-# --- Step 1: infra attribution rows → unverified (author-side only) ---
+# Step 1: infra attribution rows → unverified (author-side only)
 
 @test "attribution subagent-stop-missing → unverified (infra row, never graded)" {
   grade bug-fix true "done" subagent-stop-missing "test passing exit 0" "fix.test.ts"
@@ -91,7 +91,7 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
-# --- Step 2: non-success result → unverified (nothing to verify) ---
+# Step 2: non-success result → unverified (nothing to verify)
 
 @test "result=fail → unverified (not a success-family value)" {
   grade bug-fix true "fail" hook-input "test passing exit 0" "fix.test.ts"
@@ -112,7 +112,7 @@ zero_evidence() {
   [[ "${output}" == "verified_pass" ]]
 }
 
-# --- Step 3: non-code task_types → explicit skip-with-reason → unverified ---
+# Step 3: non-code task_types → explicit skip-with-reason → unverified
 
 @test "task_type=review → unverified (no test artifact expected)" {
   grade review true "done" hook-input "looks good, approved" "src/a.ts"
@@ -138,7 +138,7 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
-# --- Step 4: writer did not claim metric_pass=true → unverified ---
+# Step 4: writer did not claim metric_pass=true → unverified
 
 @test "metric_pass=false → unverified (no positive claim to verify)" {
   grade bug-fix false "done" hook-input "test passing exit 0" "fix.test.ts"
@@ -152,7 +152,7 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
-# --- Step 5: narrow LLM09 zero-evidence guard → verified_fail (the ONLY path) ---
+# Step 5: narrow LLM09 zero-evidence guard → verified_fail (the ONLY path)
 
 @test "done + metric_pass=true + zero evidence of any kind → verified_fail" {
   grade bug-fix true "done" hook-input "" ""
@@ -188,7 +188,7 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
-# --- Step 6: per-task-type verified_pass checks ---
+# Step 6: per-task-type verified_pass checks
 
 @test "bug-fix with test + passing phrasing → verified_pass" {
   grade bug-fix true "done" hook-input "added regression test, suite passing" "src/fix.ts"
@@ -256,7 +256,7 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
-# --- _cbg_zero_evidence direct unit checks ---
+# _cbg_zero_evidence direct unit checks
 
 @test "_cbg_zero_evidence: blank body + blank files → true (zero evidence)" {
   zero_evidence "" ""
@@ -288,7 +288,7 @@ zero_evidence() {
   [[ "${status}" -ne 0 ]]
 }
 
-# --- Source-guard idempotency: re-source is a no-op, function still defined ---
+# Source-guard idempotency: re-source is a no-op, function still defined
 
 @test "double-source guard: re-sourcing the lib is idempotent, function survives" {
   run bash -c '

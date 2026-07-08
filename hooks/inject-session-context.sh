@@ -7,13 +7,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# [WORKFLOW PRE-FLIGHT] turn-0 line design decision (Thread A/B salience initiative, additive):
-# The turn-0 line enumerates the THREE co-equal DEV-spawn requirements (entry token / [SIZE-EST] / verify-stage).
-# DECISION: JS-authoring pitfalls (bash dollar-brace leak + nested backtick inside a dollar-brace interpolation)
-# are DELIBERATELY kept OFF this turn-0 line to preserve one-legible-line readability. They live on the skill
-# (glass-atrium-ops-orchestrator -> "Plain-JS script" bullet + Pre-submit self-check item 5) and the SoT
-# (orchestrator-role.md -> ### Ultracode / Workflow-tool Mode JS-authoring pitfall bullet). Revisit ONLY if a
-# 4th clause fits while the turn-0 line stays a single legible line.
+# [WORKFLOW PRE-FLIGHT] turn-0 line design decision (additive): the turn-0 line enumerates the
+# THREE co-equal DEV-spawn requirements (entry token / [SIZE-EST] / verify-stage). JS-authoring
+# pitfalls (bash dollar-brace leak + nested backtick in a dollar-brace interpolation) are
+# DELIBERATELY kept OFF it for one-legible-line readability — they live on the skill + SoT
+# (orchestrator-role.md -> ### Ultracode / Workflow-tool Mode). Revisit only if a 4th clause fits.
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
 사용자 요청을 받으면 다음 순서로 처리하라:
@@ -30,11 +28,8 @@ ORCHESTRATOR_INIT
 # wiki search tool notice (for agents)
 echo '[WIKI] wiki 검색 가능: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
 
-# ----------------------------------------------------------------------------
-# Cross-Session Continuity — surface up to 5 newest in_progress files so the
-# new session can resume incomplete work (GLOBAL_RULES rule).
-# Silent when no progress files exist (no header line at all).
-# ----------------------------------------------------------------------------
+# Cross-Session Continuity — surface up to 5 newest in_progress files so a new session
+# resumes incomplete work (GLOBAL_RULES); silent when none exist (no header line at all).
 # Store-root form: scripts/ is consumed in place from the store — the
 # ~/.claude/scripts farm is gone (hooks/ and scripts/ are sibling store dirs).
 _PROGRESS_TRACKER="${HOME}/.glass-atrium/scripts/progress-tracker.sh"
