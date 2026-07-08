@@ -1,5 +1,4 @@
-// Structured JSON logger (Pino) — Fastify's native log backend.
-// stdout only; launchd/console captures.
+// Structured JSON logger (Pino) — Fastify's native backend; stdout only (launchd/console captures).
 
 import pino, { type LoggerOptions } from "pino";
 import type { FastifyBaseLogger } from "fastify";

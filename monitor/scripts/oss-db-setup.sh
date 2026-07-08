@@ -4,16 +4,14 @@
 # The engine is symlink-farm only and does no DB work, so this script owns the
 # unattended (non-interactive) clean-install path for the `glass_atrium` DB.
 #
-# Why `migrate deploy` not `migrate dev`: deploy is non-interactive and needs no
-# shadow DB (fits unattended install); dev requires interactive prompts. The shadow
-# DB is unneeded by deploy but created here idempotently so the later dev path
-# (migrate dev's drift-detection safety net) works without manual CREATE DATABASE.
+# Why `migrate deploy` not `migrate dev`: deploy is non-interactive + needs no shadow
+# DB (fits unattended install). The shadow DB is created here idempotently anyway so the
+# later dev path (drift-detection safety net) works without manual CREATE DATABASE.
 #
-# Idempotent: createdb skips an existing main/shadow DB · existing .env is preserved
-# · deploy applies only pending migrations. Loud-fail: set -euo pipefail + a named
-# exit code + stderr message per precondition.
+# Idempotent (createdb skips existing DB · .env preserved · only pending migrations) +
+# loud-fail (set -euo pipefail + named exit code + stderr message per precondition).
 #
-# Run from the monitor/ project root (DATABASE_URL's socket path assumes host=/tmp):
+# Run from the monitor/ project root (DATABASE_URL socket assumes host=/tmp):
 #   $ bash scripts/oss-db-setup.sh
 set -euo pipefail
 
@@ -201,12 +199,12 @@ deploy_output_is_baseline_p3009() {
   fi
 }
 
-# --- precondition: cwd (loud-fail) ---------------------------------------------
+# precondition: cwd (loud-fail)
 # Confirm the monitor root via prisma.config.ts + prisma/migrations/ both present.
 [[ -f prisma.config.ts ]] && [[ -d prisma/migrations ]] \
   || fail "${EXIT_BAD_CWD}" "must run from the monitor root (prisma.config.ts + prisma/migrations/ missing) — cwd=${PWD}"
 
-# --- precondition: required CLI (loud-fail) ------------------------------------
+# precondition: required CLI (loud-fail)
 for cli in createdb psql npm npx; do
   command -v "${cli}" >/dev/null 2>&1 \
     || fail "${EXIT_MISSING_CLI}" "missing required CLI: ${cli} (check PostgreSQL client / Node install)"
@@ -219,7 +217,7 @@ if [[ -n "${GA_DB_RECREATE:-}" ]]; then
   done
 fi
 
-# --- precondition: GA_DB_NAME override consistency (loud-fail) ------------------
+# precondition: GA_DB_NAME override consistency (loud-fail)
 # Name charset guard — non-identifier chars are dangerous across createdb args / URL / grep.
 [[ "${DB_NAME}" =~ ^[a-z_][a-z0-9_]*$ ]] \
   || fail "${EXIT_DB_OVERRIDE}" "GA_DB_NAME='${DB_NAME}' invalid — only lowercase letters / digits / underscore allowed"
@@ -237,29 +235,27 @@ if [[ -n "${GA_DB_NAME:-}" && -f .env ]] \
     "GA_DB_NAME=${DB_NAME} but the existing .env DATABASE_URL points at a different DB — fix .env or unset GA_DB_NAME"
 fi
 
-# --- step 0 (opt-in): conflict-recreate (GA_DB_RECREATE) -----------------------
+# step 0 (opt-in): conflict-recreate (GA_DB_RECREATE)
 # Same-name conflict path: entered only when forcing a fresh install despite an existing
 # DB. Safety invariant — DB_NAME != 'glass_atrium' (recreate_database's inner guard +
-# engine guard, doubled). backup (parameterized) → drain → dropdb, then the createdb
-# below recreates. Shadow is excluded (not a schema-bearing DB; the createdb idempotent
-# path covers it).
+# engine guard, doubled). Shadow excluded (createdb idempotent path covers it).
 if [[ -n "${GA_DB_RECREATE:-}" ]]; then
   recreate_database "${DB_NAME}"
 fi
 
-# --- step 1: createdb (idempotent — main + shadow) ------------------------------
+# step 1: createdb (idempotent — main + shadow)
 create_db_if_absent "${DB_NAME}"
 # shadow: migrate dev's drift-detection safety net — unused by deploy, but created here
 # so the later dev path works immediately without a manual CREATE DATABASE.
 create_db_if_absent "${SHADOW_DB_NAME}"
 
-# --- step 1b: PG15+ schema public CREATE grant (idempotent · DB-scoped) ---------
-# PG15 dropped PUBLIC's automatic CREATE on schema public → grant the GA role explicitly.
-# Per main/shadow (privilege is DB-scoped) · a safe no-op for a superuser/owner.
+# step 1b: PG15+ schema public CREATE grant (idempotent · DB-scoped)
+# PG15 dropped PUBLIC's CREATE on schema public → grant the GA role explicitly (per
+# main/shadow; safe no-op when already held).
 grant_public_create "${DB_NAME}"
 grant_public_create "${SHADOW_DB_NAME}"
 
-# --- step 2: .env (idempotent — preserve if present) ---------------------------
+# step 2: .env (idempotent — preserve if present)
 if [[ -f .env ]]; then
   log ".env already exists → preserving (not overwriting)"
 else
@@ -273,15 +269,15 @@ else
   log ".env.example → .env render complete (DB=${DB_NAME}, user=${DB_USER}) · review/edit the DATABASE_URL value before proceeding"
 fi
 
-# --- step 3: dependency install (clean, lockfile-pinned) -----------------------
+# step 3: dependency install (clean, lockfile-pinned)
 log "npm ci (lockfile-pinned install from package-lock.json)"
 npm ci
 
-# --- step 4: prisma generate (loud-fail) ---------------------------------------
+# step 4: prisma generate (loud-fail)
 log "prisma generate (Prisma client)"
 npx prisma generate || fail "${EXIT_PRISMA}" "prisma generate failed"
 
-# --- step 5: prisma migrate deploy (non-interactive · no shadow DB) -------------
+# step 5: prisma migrate deploy (non-interactive · no shadow DB)
 # Fresh empty DB: applies only pending migrations then exits clean (deploy_rc=0 → skips
 # the P3009 branch). Pre-squash DB (failed baseline record): deploy fails P3009 → the
 # narrow targeted recovery below —
@@ -319,38 +315,32 @@ if [[ "${deploy_rc}" -ne 0 ]]; then
   log "P3009: resolve + deploy retry succeeded — pre-squash baseline recovered cleanly"
 fi
 
-# --- step 6: attribution_source CHECK constraint (idempotent · post-deploy raw SQL) ---
-# init_oss_baseline defines core.outcomes.attribution_source as plain TEXT (no CHECK),
-# so the canonical value allowlist is applied out-of-band HERE rather than via a
-# migration — editing the applied baseline SQL drifts existing-DB checksums (see the
-# SQUASH_BASELINE_MIGRATION note). DROP IF EXISTS + ADD → safe to re-run and to widen
-# the set. NOT VALID skips the full-table scan (pre-existing rows trusted); new writes
-# are still checked. The 10-value set MUST byte-match the dual-write producers
-# (track-outcome.sh / outcomes.ts / daemon_cycle.py / _pg_*_dualwrite.py) — a missing
-# value makes a dual-write hit constraint_violation → the row is silently dropped from PG.
-# core.outcomes lives only in the main DB (created by migrate deploy) — shadow excluded.
+# step 6: attribution_source CHECK constraint (idempotent · post-deploy raw SQL)
+# init_oss_baseline defines core.outcomes.attribution_source as plain TEXT (no CHECK), so
+# the canonical value allowlist is applied out-of-band HERE, not via a migration — editing
+# the applied baseline SQL drifts existing-DB checksums. DROP IF EXISTS + ADD is re-run/widen
+# safe; NOT VALID skips the full-table scan (pre-existing rows trusted, new writes checked).
+# The 10-value set MUST byte-match the dual-write producers (track-outcome.sh / outcomes.ts /
+# daemon_cycle.py / _pg_*_dualwrite.py) — a missing value → constraint_violation → the row is
+# silently dropped from PG. core.outcomes lives only in the main DB — shadow excluded.
 log "applying attribution_source CHECK constraint (10 canonical values · idempotent · NOT VALID)"
 psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
   -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived']::text[]))) NOT VALID" \
   || fail "${EXIT_POSTSQL}" "attribution_source CHECK constraint apply failed (DB '${DB_NAME}') — check core.outcomes exists + peer auth privileges"
 
-# --- step 7: core.budget_overages table (idempotent · post-deploy raw SQL) -----
 # The budget-overage signal store is hook-written best-effort (advisory-subagent-budget.sh via
-# _pg-write.py) and never touched by monitor application code needing prisma client types, so it is
-# created out-of-band HERE rather than via a prisma migration — mirroring the attribution CHECK
-# precedent above (editing the applied baseline SQL drifts existing-DB checksums). CREATE TABLE IF NOT
-# EXISTS is idempotent by construction — re-running is a no-op against an existing table. The 6 columns
-# MUST byte-match the _pg-write.py _ALLOWED_COLUMNS['core.budget_overages'] set and the plan contract:
-# agent_id/tool_use_count/budget/crossed_pct/ts are NOT NULL, agent_type is nullable (sidecar recovery
-# is the norm, null the accepted fallback). ts defaults to now() so the hook need not pass it. core
-# schema is created by migrate deploy (core.outcomes etc.) — this table joins it.
+# _pg-write.py), so it is created out-of-band HERE, not via a prisma migration — same
+# checksum-drift reason as the attribution CHECK above. CREATE TABLE IF NOT EXISTS is
+# idempotent. The 6 columns MUST byte-match _pg-write.py's _ALLOWED_COLUMNS['core.budget_overages']:
+# agent_id/tool_use_count/budget/crossed_pct/ts NOT NULL, agent_type nullable (sidecar recovery
+# is the norm, null the accepted fallback). ts defaults to now(). core schema comes from migrate deploy.
 log "creating core.budget_overages table (idempotent · CREATE TABLE IF NOT EXISTS)"
 psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "CREATE TABLE IF NOT EXISTS core.budget_overages (agent_id text NOT NULL, agent_type text, tool_use_count integer NOT NULL, budget integer NOT NULL, crossed_pct integer NOT NULL, ts timestamptz NOT NULL DEFAULT now())" \
   || fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages CREATE TABLE failed (DB '${DB_NAME}') — check core schema exists + peer auth privileges"
 
-# --- no seed step --------------------------------------------------------------
+# no seed step
 # The empty schema is functional on its own (0 required seeds) — stated so the installer
 # does not go looking for a seed.
 log "no seed needed — the empty schema is functional (no required seed)"

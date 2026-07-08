@@ -151,9 +151,8 @@ export type AgentSummarySortKey = "name" | "runs" | "success" | "p95";
 export type AgentSummaryCostAttribution = "unavailable" | "approximate" | "exact";
 
 export interface AgentSummaryItem {
-  // Both hold the agent NAME (e.g. "react-dev") — no separate hash id this cycle;
-  // the agent_id hash in core.agent_events is internal pairing-key only. A stable
-  // per-agent identifier migration will widen this contract.
+  // Both hold the agent NAME (e.g. "react-dev") — no separate hash id this cycle; the
+  // agent_id hash in core.agent_events is internal pairing-key only.
   agent_id: string;
   agent_name: string;
   // outcomes row count for the agent within the window (group by `agent`).
@@ -172,26 +171,21 @@ export interface AgentSummaryItem {
   // ISO 8601 UTC timestamp of the most recent outcome; null when none in window.
   last_run_at: string | null;
   // agent-registry.json runtime-precondition declaration (e.g. "monitor running at
-  // 127.0.0.1:16145"). Undeclared agent or missing registry → null (backwards-compat).
-  // Orthogonal to the frontmatter `tools:` array — not a tool-authorization bypass.
+  // 127.0.0.1:16145"). Undeclared/missing registry → null. Orthogonal to the frontmatter
+  // `tools:` array — not a tool-authorization bypass.
   compatibility: string | null;
-  // 1-line role description sourced from the agent `.md` frontmatter (the `.md` is
-  // the SoT). null when the agent has no `.md` / no usable frontmatter description.
+  // 1-line role description from the agent .md frontmatter (SoT); null when absent/unusable.
   description: string | null;
-  // agent-registry.json dual_phase flag — agent participates in two lifecycle
-  // phases. false when undeclared / missing registry (backwards-compat).
+  // agent-registry.json dual_phase flag — two-lifecycle-phase agent. false when undeclared.
   dual_phase: boolean;
-  // agent-registry.json origin — "user" (ADD-created) or "shipped" (built-in).
-  // The FE gates the delete affordance on origin === "user". null when undeclared
-  // / missing registry (backwards-compat).
+  // agent-registry.json origin — "user" (ADD-created) or "shipped" (built-in). FE gates
+  // the delete affordance on origin === "user". null when undeclared.
   origin: string | null;
-  // core.agent_events SubagentStart count over the ACTIVE ?days window — spawn
-  // frequency, distinct from `runs` (outcomes-derived). Null when agent_type
-  // absent from agent_events (outcomes-only agent, e.g. orchestrator); 0 = zero
-  // spawns in the window.
+  // core.agent_events SubagentStart count over the ACTIVE ?days window — spawn frequency,
+  // distinct from `runs` (outcomes-derived). Null when agent_type absent from agent_events
+  // (outcomes-only agent, e.g. orchestrator); 0 = zero spawns in the window.
   invocations: number | null;
-  // Deprecated alias of `invocations` (name implied a fixed 30d window while the
-  // value tracks the requested ?days) — kept one release.
+  // Deprecated alias of `invocations` (name implied fixed 30d; tracks ?days) — kept one release.
   invocations_30d: number | null;
 }
 
@@ -285,16 +279,12 @@ export type AgentsErrorBody =
   | { error: "invalid_days"; allowed: ReadonlyArray<AgentsWindowDays> }
   | { error: "invalid_param"; param: string; reason?: string };
 
-// ---------------------------------------------------------------------------
-// DELETE /api/agents/:name — gated DEV-agent DELETE (wires the agent_lifecycle
-// CLI `delete`). The CLI gate semantics (NON-DEV block list,
-// fail-closed-on-missing-scope/origin, --confirm hard gate) are consumed
-// unchanged. The mutation lock is owned solely by the CLI's `run_delete`.
-// ---------------------------------------------------------------------------
+// DELETE /api/agents/:name — gated DEV-agent DELETE (wires the agent_lifecycle CLI
+// `delete`). CLI gate semantics (NON-DEV block list, fail-closed-on-missing-scope/origin,
+// --confirm hard gate) consumed unchanged; the mutation lock is owned solely by run_delete.
 
-// preview = `delete <name> --dry-run` (zero-write: the 4 targets + ALLOWED/
-// REFUSED verdict); commit = `delete <name> --confirm <name>` (the live,
-// irreversible mv-to-Trash + derived-chain prune).
+// preview = `delete <name> --dry-run` (zero-write: 4 targets + ALLOWED/REFUSED verdict);
+// commit = `delete <name> --confirm <name>` (live, irreversible mv-to-Trash + chain prune).
 export type DeleteAgentMode = "preview" | "commit";
 
 export interface DeleteAgentRequestBody {

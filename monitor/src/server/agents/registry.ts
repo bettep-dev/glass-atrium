@@ -12,16 +12,11 @@ import { Prisma } from "../../generated/prisma/client.js";
 
 /**
  * Single agent's registry entry — only metadata surfaceable in monitor responses.
- *
  * - `domains`: capability hint (orchestrator routing)
  * - `phase`: lifecycle phase (`implementation` / `review` / `report` etc.)
- * - `dual_phase`: registry flag — agent participates in two lifecycle phases.
- *   Non-boolean / undeclared → false.
- * - `compatibility`: runtime precondition (e.g. "monitor running at 127.0.0.1:16145");
- *   undeclared or non-string → null. Orthogonal to agent frontmatter `tools:` array.
- * - `description`: 1-line role description sourced from the agent `.md` frontmatter
- *   (the `.md` is the description SoT). null when the `.md` is missing or its
- *   frontmatter carries no usable description.
+ * - `dual_phase`: agent participates in two lifecycle phases; non-boolean / undeclared → false.
+ * - `compatibility`: runtime precondition (e.g. "monitor running at 127.0.0.1:16145"); undeclared/non-string → null. Orthogonal to frontmatter `tools:`.
+ * - `description`: 1-line role from the agent `.md` frontmatter (the `.md` is the SoT); null when missing / no usable description.
  */
 export interface AgentRegistryEntry {
   domains: string[];
@@ -29,8 +24,7 @@ export interface AgentRegistryEntry {
   dual_phase: boolean;
   compatibility: string | null;
   description: string | null;
-  // Provenance — "user" (created via ADD) or "shipped" (built-in baseline). The
-  // delete affordance gates on origin === "user". null when undeclared.
+  // Provenance — "user" (created via ADD) or "shipped" (baseline); the delete affordance gates on origin === "user". null when undeclared.
   origin: string | null;
 }
 
@@ -73,9 +67,8 @@ export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntr
     return cachedEntries;
   }
   const entries = normalizeRegistry(parsed);
-  // Enrich with the `.md` role description (the `.md` is the description SoT).
-  // One-time per-agent fs read folded into the singleton cache — preserves the
-  // /api/agents/summary p95 budget (no per-request re-read).
+  // Enrich with the `.md` role description (the `.md` is the SoT).
+  // One-time per-agent fs read folded into the singleton cache — preserves the /api/agents/summary p95 budget.
   await enrichDescriptions(entries);
   cachedEntries = entries;
   return cachedEntries;
@@ -87,24 +80,19 @@ export function resetAgentRegistryCache(): void {
   warnedOnce = false;
 }
 
-// H6 rename-transition dual-match prefix — registry keys are `glass-atrium-*`
-// post-rename; pre-rename DB rows still carry the bare agent form (see
-// loadCanonicalAgentKeys doc below).
+// H6 rename-transition dual-match prefix — registry keys are `glass-atrium-*` post-rename;
+// pre-rename DB rows still carry the bare agent form (see loadCanonicalAgentKeys doc below).
 const CANONICAL_KEY_PREFIX = "glass-atrium-";
 
 /**
- * Convenience — the canonical agent-key array (registry SoT) the membership
- * gates bind against. Folds the repeated `[...entries.keys()]` spread every
- * gated call site otherwise duplicates. Empty array on an empty/corrupt registry
- * → the gate builders below fail-open on it (predicate skipped).
+ * Convenience — the canonical agent-key array (registry SoT) the membership gates bind against.
+ * Folds the repeated `[...entries.keys()]` spread every gated call site duplicates. Empty array on an
+ * empty/corrupt registry → the gate builders fail-open (predicate skipped).
  *
- * H6 rename-transition dual-match: every `glass-atrium-*` registry key is
- * returned ALONGSIDE its de-prefixed legacy alias (`glass-atrium-dev-shell` →
- * `dev-shell`), deduped — pre-rename outcome/cost/dashboard DB rows carry the
- * bare agent form, so a prefixed-only IN-list would hide that entire history.
- * Mirrors the DEV_AGENT_PREFIX dual-match in
- * monitor/src/server/routes/improvement.ts (style_ref telemetry); remove both
- * together when the transition window closes.
+ * H6 rename-transition dual-match: every `glass-atrium-*` key is returned ALONGSIDE its de-prefixed legacy
+ * alias (`glass-atrium-dev-shell` → `dev-shell`), deduped — pre-rename outcome/cost/dashboard rows carry the
+ * bare form, so a prefixed-only IN-list would hide that history. Mirrors the DEV_AGENT_PREFIX dual-match in
+ * routes/improvement.ts (style_ref telemetry); remove both together when the transition window closes.
  */
 export async function loadCanonicalAgentKeys(): Promise<string[]> {
   const entries = await loadAgentRegistry();
@@ -116,14 +104,10 @@ export async function loadCanonicalAgentKeys(): Promise<string[]> {
   return [...new Set(dualMatched)];
 }
 
-// Bare membership fragment core — `<columnRef> IN (?..)`, or Prisma.empty on an
-// empty registry. Single SoT for the LLM05 parameter-binding contract: the agent
-// names are BOUND via Prisma.join (never string-concatenated into the SQL text),
-// and fail-open is authored once here — Prisma.join([]) would emit a
-// syntactically broken `IN ()`, so the length===0 guard skips the predicate.
-// `columnRef` is inlined as raw SQL (a Prisma.Sql fragment, not a bound value),
-// so callers pass a trusted column literal (`agent`, `o.agent`, `agent_type`,
-// `agent_name`, `target_agent`), never user input.
+// Bare membership fragment core — `<columnRef> IN (?..)`, or Prisma.empty on an empty registry.
+// Single SoT for the LLM05 parameter-binding contract: agent names are BOUND via Prisma.join (never string-concatenated into the SQL text).
+// Fail-open authored once here — Prisma.join([]) would emit a syntactically broken `IN ()`, so the length===0 guard skips the predicate.
+// `columnRef` is inlined as raw SQL (a Prisma.Sql fragment, not a bound value), so callers pass a trusted column literal (`agent`, `o.agent`, `agent_type`, `agent_name`, `target_agent`), never user input.
 function buildMembershipInList(
   canonicalAgents: ReadonlyArray<string>,
   columnRef: Prisma.Sql,
@@ -135,22 +119,15 @@ function buildMembershipInList(
 }
 
 /**
- * Canonical-membership gate — the shared SoT for the "show only Atrium-system
- * agents (registry SoT)" predicate across every agent-dimensioned surface.
- * Centralized here (co-located with `loadAgentRegistry`) so the gated/ungated
- * drift — some surfaces applied it, others folded in orchestrator/cron/sentinel/
- * one-off-cid noise — cannot recur.
+ * Canonical-membership gate — shared SoT for the "show only Atrium-system agents (registry SoT)" predicate
+ * across every agent-dimensioned surface. Co-located with `loadAgentRegistry` so gated/ungated drift cannot recur.
  *
- * AND-PREFIXED shape: emits `AND <columnRef> IN (?..)` for APPEND-AFTER-A-
- * COMPLETE-WHERE call sites. Fail-open by design: an empty registry (read/parse
- * failure) returns `Prisma.empty` so the predicate is skipped rather than
- * emitting invalid SQL.
+ * AND-PREFIXED shape: emits `AND <columnRef> IN (?..)` for append-after-a-complete-WHERE call sites.
+ * Fail-open: an empty registry (read/parse failure) returns `Prisma.empty` so the predicate is skipped, not invalid SQL.
  *
- * `columnRef` defaults to the bare `agent` column; pass a qualified fragment
- * (e.g. `Prisma.sql`o.agent``) when the query aliases the source table so the
- * predicate can live inside a LEFT JOIN ... ON clause (a top-level WHERE on the
- * aliased column would collapse the LEFT JOIN into an inner join and drop
- * generate_series gap-fill days).
+ * `columnRef` defaults to the bare `agent` column; pass a qualified fragment (e.g. `Prisma.sql`o.agent``) when the
+ * query aliases the source table, so the predicate can live inside a LEFT JOIN ... ON clause — a top-level WHERE on
+ * the aliased column would collapse the LEFT JOIN into an inner join and drop generate_series gap-fill days.
  */
 export function buildAgentMembershipFilter(
   canonicalAgents: ReadonlyArray<string>,
@@ -165,17 +142,13 @@ export function buildAgentMembershipFilter(
 }
 
 /**
- * Canonical-membership gate — BARE-FRAGMENT companion to
- * `buildAgentMembershipFilter`, over the SAME fail-open + parameter-binding core.
+ * Canonical-membership gate — BARE-FRAGMENT companion to `buildAgentMembershipFilter`, over the SAME
+ * fail-open + parameter-binding core.
  *
- * BARE shape: emits `<columnRef> IN (?..)` WITHOUT a leading `AND`, for the two
- * families the AND-prefixed form cannot serve: fragments-array builders that
- * end in `Prisma.join(fragments, " AND ", "WHERE ")` (a stray `AND` would break
- * the join) and no-WHERE call sites that prefix the fragment with their own
- * `WHERE `. Omitted-on-empty: returns `Prisma.empty` on an empty registry so the
- * caller pushes nothing / emits no `WHERE` (fail-open).
- *
- * `columnRef` semantics identical to `buildAgentMembershipFilter`.
+ * BARE shape: emits `<columnRef> IN (?..)` WITHOUT a leading `AND`, for the two families the AND-prefixed
+ * form cannot serve — fragments-array builders ending in `Prisma.join(fragments, " AND ", "WHERE ")` (a stray
+ * `AND` would break the join) and no-WHERE call sites that prefix their own `WHERE `. Omitted-on-empty:
+ * `Prisma.empty` on an empty registry so the caller emits no `WHERE` (fail-open). `columnRef` as in `buildAgentMembershipFilter`.
  */
 export function buildAgentMembershipFragment(
   canonicalAgents: ReadonlyArray<string>,
@@ -227,9 +200,8 @@ function normalizeRegistry(parsed: unknown): Map<string, AgentRegistryEntry> {
   return out;
 }
 
-// Per-agent `.md` description enrichment — reads each `<name>.md` once (parallel,
-// defensive). A missing/odd `.md` leaves description = null; one read never blocks
-// the others (Promise.allSettled). All reads off the cached-singleton path.
+// Per-agent `.md` description enrichment — reads each `<name>.md` once (parallel, defensive).
+// A missing/odd `.md` leaves description = null; one read never blocks the others (Promise.allSettled), all off the cached-singleton path.
 async function enrichDescriptions(entries: Map<string, AgentRegistryEntry>): Promise<void> {
   const dir = resolveAgentMdDir();
   await Promise.allSettled(
@@ -239,8 +211,7 @@ async function enrichDescriptions(entries: Map<string, AgentRegistryEntry>): Pro
   );
 }
 
-// `~/.glass-atrium/agents/` — derived from the registry path's directory so an
-// AGENT_REGISTRY_PATH override (tests) co-locates the `.md` fixtures with the JSON.
+// `~/.glass-atrium/agents/` — derived from the registry path's dir so an AGENT_REGISTRY_PATH override (tests) co-locates `.md` fixtures with the JSON.
 function resolveAgentMdDir(): string {
   const override = process.env.AGENT_REGISTRY_PATH;
   if (typeof override === "string" && override.length > 0) {
@@ -249,8 +220,7 @@ function resolveAgentMdDir(): string {
   return join(homedir(), ".glass-atrium", "agents");
 }
 
-// Defensive `.md` description read — graceful on missing file / odd frontmatter.
-// Returns a single-line role description, or null when nothing usable is present.
+// Defensive `.md` description read — graceful on missing file / odd frontmatter; returns a single-line role description or null.
 async function readAgentDescription(path: string): Promise<string | null> {
   let raw: string;
   try {
@@ -280,8 +250,7 @@ async function readAgentDescription(path: string): Promise<string | null> {
   return toRoleLine(description);
 }
 
-// Pull the YAML block between the leading `---` fence and the next `---` line.
-// null when no opening fence (no frontmatter).
+// Pull the YAML block between the leading `---` fence and the next `---`; null when no opening fence.
 function extractFrontmatter(raw: string): string | null {
   const lines = raw.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") {
@@ -298,9 +267,8 @@ function extractFrontmatter(raw: string): string | null {
   return null;
 }
 
-// Collapse a (possibly folded multi-line) description to one line, then take the
-// first sentence as the role line — Identity wants a concise role, not the full
-// "Use when / Do NOT use for" frontmatter prose.
+// Collapse a (possibly folded) description to one line, then take the first sentence as the role line.
+// Identity wants a concise role, not the full "Use when / Do NOT use for" frontmatter prose.
 function toRoleLine(description: string): string | null {
   const collapsed = description.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) {

@@ -1,8 +1,6 @@
-// Boot-time reconciliation of stored monitor.documents.html_path values against
-// the configured document root. A root change (env edit / migration) leaves rows
-// pointing outside the root — every GET/PUT body read on them 500s until fixed.
-// Loud non-fatal: mismatches are surfaced as an ERROR log at startup; the server
-// stays up (unaffected rows + non-docs surfaces keep working).
+// Boot-time reconciliation of stored monitor.documents.html_path against the configured document root.
+// A root change (env edit / migration) leaves rows pointing outside root — every GET/PUT body read on them 500s.
+// Loud non-fatal: mismatches surfaced as an ERROR log at boot; the server stays up (unaffected rows keep working).
 
 import { sep } from "node:path";
 

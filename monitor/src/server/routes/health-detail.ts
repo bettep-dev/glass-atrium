@@ -137,7 +137,7 @@ export async function registerHealthDetailRoutes(app: FastifyInstance): Promise<
   app.get("/api/health/hook-failures", handleHookFailures);
 }
 
-// ----- 1. /api/health/daemons -------------------------------------------------
+// 1. /api/health/daemons
 
 async function handleDaemons(
   request: FastifyRequest,
@@ -225,7 +225,7 @@ async function handleDaemons(
   }
 }
 
-// ----- 2. /api/health/wiki-reports --------------------------------------------
+// 2. /api/health/wiki-reports
 
 async function handleWikiReports(
   request: FastifyRequest<{ Querystring: { days?: string } }>,
@@ -286,7 +286,7 @@ async function handleWikiReports(
   }
 }
 
-// ----- 3. /api/health/hook-chain ----------------------------------------------
+// 3. /api/health/hook-chain
 
 async function handleHookChain(
   request: FastifyRequest,
@@ -392,7 +392,7 @@ function rawHookToEntry(hook: RawHookEntry): HookEntry {
   };
 }
 
-// ----- 4. /api/health/daemon-payload ------------------------------------------
+// 4. /api/health/daemon-payload
 
 interface DaemonPayloadRow {
   run_date: Date;
@@ -454,7 +454,7 @@ async function handleDaemonPayload(
   }
 }
 
-// ----- 5. /api/health/hook-failures -------------------------------------------
+// 5. /api/health/hook-failures
 
 interface HookFailureRow {
   id: bigint;
@@ -553,7 +553,7 @@ async function handleHookFailures(
   }
 }
 
-// ----- shared helpers (mirror dashboard.ts/autoagent.ts patterns) -------------
+// shared helpers (mirror dashboard.ts/autoagent.ts patterns)
 
 function parseDaysParam(
   raw: string | undefined,

@@ -1,6 +1,5 @@
 // Prisma 7 client singleton via @prisma/adapter-pg driver-adapter pattern.
-// connectionString is a Unix-socket URL (host=/tmp), set in .env.
-// Generated client lives at src/generated/prisma/.
+// connectionString = Unix-socket URL (host=/tmp), set in .env; generated client at src/generated/prisma/.
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
@@ -12,7 +11,6 @@ let prismaSingleton: PrismaClient | null = null;
 const POOL_STARTUP_OPTIONS = "-c timezone=UTC";
 
 // warm-pool config — idle drain 차단으로 cold-start 제거 (drain → 0 시 Prisma 7 per-query-shape JS compile ~0.2~0.42s 재지불)
-// PrismaPg 1st-arg 은 pg.PoolConfig 로 그대로 new pg.Pool() 전달 → options(timezone=UTC) 와 동일 flat object 공존
 const POOL_WARM_CONFIG = {
   // idleTimeoutMillis falsy(0) → idle-close setTimeout 미예약 → 무기한 유지 (양수값은 drain 만 지연, 결국 0 도달)
   idleTimeoutMillis: 0,

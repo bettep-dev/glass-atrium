@@ -1,13 +1,6 @@
-// Unified Atrium system version resolver — the SINGLE source of truth is
-// `~/.glass-atrium/manifest.json` `version` (set to 1.0.0 by T01). The monitor
-// reports this ONE system version; the former standalone 0.4.0 (health APP_VERSION
-// + package.json) is removed/reconciled (plan D1 / T03).
-//
-// Path-resolution + graceful-degrade conventions mirror agents/registry.ts:
-// env override → `~/.glass-atrium/manifest.json`, and a missing/unreadable/invalid
-// manifest degrades to "unknown" (a liveness probe must NEVER crash). Resolved once
-// and cached — a version change requires a monitor restart to surface, and caching
-// avoids re-reading a ~32KB JSON on every /api/health probe.
+// Unified Atrium system version resolver — single SoT is `~/.glass-atrium/manifest.json` `version`.
+// Any failure (missing/invalid manifest, absent/non-string `version`) degrades to "unknown" — a liveness probe must NEVER crash.
+// Resolved once + cached: avoids re-reading a ~32KB JSON on every /api/health probe (a version change needs a monitor restart to surface).
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -27,9 +20,8 @@ let cachedVersion: string | null = null;
 // warn once — a missing/corrupt manifest must not flood stderr on every probe.
 let warnedOnce = false;
 
-// env override → defaults to `~/.glass-atrium/manifest.json` (the live install
-// root, matching compute-arch-drift.ts ATRIUM_ROOT). ATRIUM_MANIFEST_PATH lets
-// tests point at a fixture without touching the real install.
+// Defaults to `~/.glass-atrium/manifest.json` (live install root, matches compute-arch-drift.ts ATRIUM_ROOT).
+// env override ATRIUM_MANIFEST_PATH lets tests point at a fixture without touching the real install.
 function resolveManifestPath(): string {
   const override = process.env.ATRIUM_MANIFEST_PATH;
   if (typeof override === "string" && override.length > 0) {
@@ -38,12 +30,7 @@ function resolveManifestPath(): string {
   return join(homedir(), ".glass-atrium", "manifest.json");
 }
 
-/**
- * Resolves the unified Atrium system version (cached after first read).
- *
- * Returns the manifest `version` string, or UNKNOWN_VERSION on any failure
- * (missing file / unreadable / invalid JSON / absent or non-string `version`).
- */
+/** Resolves the unified Atrium system version (cached after first read); UNKNOWN_VERSION on any failure. */
 export async function getAtriumVersion(logger?: VersionLogger): Promise<string> {
   if (cachedVersion !== null) {
     return cachedVersion;
