@@ -71,8 +71,6 @@ When the project's DESIGN.md is DTCG-aligned (per `~/.claude/agents/templates/DE
 | "DESIGN.md doesn't cover this exact case" | Either a token IS defined (you didn't find it — re-read) OR DESIGN.md genuinely lacks coverage → ask glass-atrium-design-designer to extend it, do NOT invent a value. |
 | "Motion is too trivial to declare a token" | Motion-token declaration is the only audit signal for spring-family consistency. Skipping declaration breaks choreography rules silently. |
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
-
 ## Cross-References
 
 - `~/.claude/agents/templates/DESIGN.md` — DESIGN.md schema (DTCG 2025.10) authored by glass-atrium-design-designer
