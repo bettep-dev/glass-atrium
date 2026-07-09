@@ -1110,11 +1110,32 @@ SH
   [[ ! -e "${SANDBOX}/authstatus-called" ]]
 }
 
-@test "AUTH(d): claude binary absent → 'present-but-down'" {
-  # empty PATH dir → command -v claude fails; the guard fires before uname/security/probe.
-  local empty="${SANDBOX}/emptybin"
-  mkdir -p "${empty}"
-  [[ "$(PATH="${empty}" ga_detect_claude_auth)" == "present-but-down" ]]
+@test "AUTH(d): no creds + no Keychain + claude absent → 'present-but-down' (sandboxed HOME, clean PATH)" {
+  # Post-reorder the two credential signals run BEFORE the command-v-claude guard, so this must supply
+  # a creds-free sandboxed HOME (never the real machine state) and a clean PATH holding only uname(Darwin)
+  # + security(no item) stubs and NO claude stub: creds(miss) → Keychain(miss) → command -v claude(fails)
+  # → present-but-down. A `:${PATH}` suffix or an unsandboxed HOME would leak real state and flip the verdict.
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit "${GA_STUB_SEC_RC:-0}"
+SH
+  chmod +x "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude" # empty → no creds file
+  export GA_STUB_SEC_RC=44   # errSecItemNotFound — no Keychain item
+  # bats 1.13.0 masks mid-body [[ ]] failures → re-source the lib in a clean child (also the direct
+  # subshell cross-check) and assert the verdict via a terminal `run`+`[ ]` (last-command status).
+  export GA_TEST_HOME="${home}" GA_TEST_PATH="${stub}" GA_TEST_DEPS="${DEPS_SH}"
+  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
+  [ "${status}" -eq 0 ] && [ "${output}" = "present-but-down" ]
 }
 
 @test "AUTH(e): macOS + no Keychain + no creds + auth-status SUCCEEDS → 'present' (corroboration path)" {
@@ -1181,4 +1202,40 @@ SH
   [[ ! -e "${SANDBOX}/security-argv" ]]
   # the verdict came from the auth-status corroboration path instead.
   [[ -e "${SANDBOX}/authstatus-called" ]]
+}
+
+@test "AUTH(g): macOS + Keychain item + claude OFF PATH → 'present' (reorder: authed user, no claude on PATH)" {
+  # THE reorder-proving case: an authenticated user whose claude is NOT on the install-shell PATH.
+  # Under the OLD command-v-first order this returned 'present-but-down' (looping the auth gate); the
+  # authoritative-first order lets the PATH-independent Keychain signal decide → 'present'. Clean PATH
+  # (only uname/security stubs, NO claude stub, no `:${PATH}` suffix) so `command -v claude` genuinely
+  # fails; machine-safe (stubbed security, no real Keychain/network).
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  export GA_STUB_SANDBOX="${SANDBOX}"
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  # security: records argv (assert no -w), Keychain item PRESENT (exit 0), emits NO secret.
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+printf '%s' "$*" >"${GA_STUB_SANDBOX}/security-argv"
+exit "${GA_STUB_SEC_RC:-0}"
+SH
+  chmod +x "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude" # NO creds file → the Keychain signal must decide
+  export GA_STUB_SEC_RC=0    # Keychain item exists
+  # secondary: security invoked WITHOUT -w and WITH the exact service (attributes-only, no secret read);
+  # checked BEFORE the terminal verdict so the last-command status remains the authoritative assertion.
+  export GA_TEST_HOME="${home}" GA_TEST_PATH="${stub}" GA_TEST_DEPS="${DEPS_SH}"
+  # bats 1.13.0 masks mid-body [[ ]] failures → re-source the lib in a clean child (also the direct
+  # subshell cross-check) with claude OFF PATH and assert the verdict via a terminal `run`+`[ ]`.
+  run bash -c 'source "${GA_TEST_DEPS}"; HOME="${GA_TEST_HOME}" PATH="${GA_TEST_PATH}" ga_detect_claude_auth'
+  local argv
+  argv="$(cat "${SANDBOX}/security-argv" 2>/dev/null || true)"
+  [[ "${argv}" != *"-w"* ]]
+  [[ "${argv}" == *'-s Claude Code-credentials'* ]]
+  [ "${status}" -eq 0 ] && [ "${output}" = "present" ]
 }

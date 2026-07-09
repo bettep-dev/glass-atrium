@@ -705,40 +705,50 @@ ga_cmd_claude_cli_install() {
 
 # [7] claude AUTH (GUIDE-USER HARD GATE)
 
-# ga_detect_claude_auth — authentication verdict via THREE stable-first signals, NONE reading the
-# credentials file contents or retrieving a secret:
+# ga_detect_claude_auth — authentication verdict via AUTHORITATIVE-FIRST signals, NONE reading the
+# credentials file contents or retrieving a secret. The two PATH-INDEPENDENT credential signals (creds
+# file, macOS Keychain) run BEFORE the command-v-claude branch, so a signed-in user is detected as
+# 'present' even when claude is not on the install-shell PATH (Claude Code often lives in ~/.local/bin,
+# which the TUI PATH can miss — see ga_detect_claude_cli). Signal order:
 #   1. ~/.claude/.credentials.json PRESENCE only (test -e — never cat/read/parse).
 #   2. macOS Keychain PRESENCE probe (Darwin only): `security find-generic-password` WITHOUT -w —
 #      attributes only, no secret retrieved, no unlock GUI. The STABLE macOS signal (the OAuth token
-#      lives in the Keychain, which the file check misses), so it runs BEFORE the subprocess probe.
-#   3. corroborating non-interactive `claude auth status`, TIME-BOUNDED so a cold-start hang cannot
+#      lives in the Keychain, which the file check misses). PATH-independent (needs no claude binary).
+#   3. command -v claude — reached ONLY when there is no creds file AND no Keychain item; a missing
+#      binary here means auth cannot be evaluated at all.
+#   4. corroborating non-interactive `claude auth status`, TIME-BOUNDED so a cold-start hang cannot
 #      wedge the gate (exit 0 = authenticated).
-# Verdict: present — creds file OR Keychain item OR the bounded probe authenticates; absent — none of
-# those; present-but-down — the claude binary is missing (cannot evaluate auth).
+# Verdict: present — creds file OR Keychain item OR the bounded probe authenticates; present-but-down —
+# no credential signal AND the claude binary is missing (cannot evaluate auth); absent — claude present
+# but no credential signal and the bounded probe fails.
 # SECURITY: the credentials file is read-presence-only via test -e (bytes NEVER opened); `security`
 # runs WITHOUT -w (no secret read/retrieved/logged); the auth-status output is DISCARDED (exit-code
 # only — its JSON carries account/subscription PII, kept out of context).
 ga_detect_claude_auth() {
-  if ! command -v claude >/dev/null 2>&1; then
-    printf 'present-but-down\n'
-    return 0
-  fi
+  # AUTHORITATIVE-FIRST: the two PATH-independent credential signals decide BEFORE the command-v-claude
+  # branch, so a signed-in user whose claude is off the install-shell PATH is still detected as 'present'.
   # (1) PRESENCE-ONLY probe of the NEVER-TOUCH credentials path (test -e never reads contents).
   local creds="${HOME}/.claude/.credentials.json"
   if [[ -e "${creds}" ]]; then
     printf 'present\n'
     return 0
   fi
-  # (2) macOS Keychain-first STABLE signal — the OAuth credential lives in the login Keychain
+  # (2) macOS Keychain STABLE signal — the OAuth credential lives in the login Keychain
   # (service "Claude Code-credentials"), which the file check misses. Attributes-only lookup (NO -w):
-  # exit 0 = item exists, no secret retrieved, no unlock GUI. Runs BEFORE the cold-start-prone subprocess.
+  # exit 0 = item exists, no secret retrieved, no unlock GUI. PATH-independent (needs no claude binary).
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1; then
       printf 'present\n'
       return 0
     fi
   fi
-  # (3) corroborating non-interactive probe (fallback for non-macOS / macOS-without-Keychain):
+  # (3) no credential signal above → auth needs the claude binary to corroborate; if it is missing we
+  # cannot evaluate auth at all (distinct from 'absent', which is claude-present-but-unauthenticated).
+  if ! command -v claude >/dev/null 2>&1; then
+    printf 'present-but-down\n'
+    return 0
+  fi
+  # (4) corroborating non-interactive probe (fallback for non-macOS / macOS-without-Keychain):
   # 'claude auth status' exits 0 only when authenticated. Output DISCARDED (exit-code only) so no
   # account/subscription PII enters context. BOUNDED against a cold-start hang: macOS ships no
   # `timeout`/`gtimeout`, so — same idiom as ga_marketplace_add — background the probe (fds + stdin to
@@ -749,18 +759,21 @@ ga_detect_claude_auth() {
   # (wait returns non-zero → unauthenticated; the stable signals above cover a genuinely authed user). Bash 3.2 clean.
   local auth_rc=1 pid watchdog ceiling
   ceiling="${GA_AUTH_PROBE_TIMEOUT_SECS:-10}"
+  # fds+stdin to /dev/null so the probe can never block on a prompt nor hold a $() capture pipe.
   claude auth status </dev/null >/dev/null 2>&1 &
   pid=$!
-  # fds redirected: an un-redirected watchdog subshell leaks its orphaned `sleep` (survives the
-  # kill below) still holding the $() capture pipe write-end open, blocking the verdict the full
-  # ceiling AFTER it is decided — a real-user latency bug, not just test slowness.
   { sleep "${ceiling}" && kill "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
   watchdog=$!
   # blocks until the probe exits naturally OR the watchdog kills it; either way we reap it.
   if wait "${pid}"; then
     auth_rc=0
   fi
-  # probe done — cancel+reap the watchdog (a no-op if it already fired at the ceiling).
+  # probe done — tear down the watchdog. `kill "${watchdog}"` ends only the subshell; its `sleep`
+  # child is reparented (orphaned) and lives out the full ceiling. That lingering orphan is benign
+  # for the $() caller (its fds are /dev/null) but a harness that waits on ALL background
+  # descendants (bats `run`) blocks on it for the whole ceiling after the verdict is already known.
+  # pkill -P reaps the sleep child FIRST (while its ppid is still the live watchdog), so no orphan.
+  pkill -P "${watchdog}" 2>/dev/null || true
   kill "${watchdog}" 2>/dev/null || true
   wait "${watchdog}" 2>/dev/null || true
   if [[ "${auth_rc}" -eq 0 ]]; then
