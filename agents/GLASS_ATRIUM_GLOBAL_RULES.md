@@ -22,7 +22,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Absolute Rules [ALL]
 
-- All responses in **Korean** · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
+- All responses are answered in the **user's question language**. · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
   Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
   Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies stay in Korean.
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
