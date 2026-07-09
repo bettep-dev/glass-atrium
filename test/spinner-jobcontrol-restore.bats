@@ -99,7 +99,7 @@ extract_launcher_fn() {
 
 @test "static: start_step_spinner snapshots + restores, no bare 'set -m'" {
   local body
-  body="$(awk '/^start_step_spinner\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^start_step_spinner\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'jobctl_prev="$(_job_control_state)"'* ]]
   [[ "${body}" == *'_restore_job_control "${jobctl_prev}"'* ]]
@@ -110,7 +110,7 @@ extract_launcher_fn() {
 
 @test "static: stop_step_spinner snapshots + restores, no bare 'set -m'" {
   local body
-  body="$(awk '/^stop_step_spinner\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}")"
+  body="$(awk '/^stop_step_spinner\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh)"
   [[ -n "${body}" ]]
   [[ "${body}" == *'jobctl_prev="$(_job_control_state)"'* ]]
   [[ "${body}" == *'_restore_job_control "${jobctl_prev}"'* ]]
@@ -181,6 +181,7 @@ HARNESS
 
 @test "pty(real): start+stop leaves job control OFF and a later bg stty is NOT SIGTTOU-stopped" {
   command -v script >/dev/null 2>&1 || skip "script (pty allocator) unavailable"
+  [[ "$(uname)" == "Darwin" ]] || skip "pty job-control test exercises macOS-specific SIGTTOU behavior (Glass Atrium is macOS-only)"
   local harness="${BATS_TEST_TMPDIR}/pty-harness.sh"
   _write_pty_harness "${harness}"
   export GA_LAUNCHER="${LAUNCHER}"
@@ -195,6 +196,7 @@ HARNESS
 @test "pty(control): forcing the OLD unconditional set -m DOES SIGTTOU-stop the later stty" {
   # falsification control — proves the harness detects the exact bug the fix removes.
   command -v script >/dev/null 2>&1 || skip "script (pty allocator) unavailable"
+  [[ "$(uname)" == "Darwin" ]] || skip "pty job-control test exercises macOS-specific SIGTTOU behavior (Glass Atrium is macOS-only)"
   local harness="${BATS_TEST_TMPDIR}/pty-harness.sh"
   _write_pty_harness "${harness}"
   export GA_LAUNCHER="${LAUNCHER}"

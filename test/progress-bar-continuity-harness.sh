@@ -604,7 +604,7 @@ PROG_EMPTY='.'
 # carve-out). Mirrors test/workbox-bar-count-visible-during-resolve.bats's discriminator.
 # the R4_DISP section above stubbed build_progress_bar to a file-capture; restore the REAL one so
 # build_run_bar renders an actual progress track for the run-state restore body.
-eval "$(awk 'index($0, "build_progress_bar() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}")"
+eval "$(awk 'index($0, "build_progress_bar() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA_DIR_ROOT}"/lib/ga-tui-*.sh)"
 kill() { return 0; }
 wait() { return 0; }
 CUR_IDLE_LABEL=""
@@ -617,7 +617,7 @@ start_idle_spinner() {
 }
 # re-install the REAL (Edit-1) stop_idle_spinner (earlier sections stubbed it) and wrap it so the
 # matched start/stop counter survives while the real run-state restore paints through the capture.
-eval "$(awk 'index($0, "stop_idle_spinner() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}" | sed '1s/stop_idle_spinner/__real_stop_idle/')"
+eval "$(awk 'index($0, "stop_idle_spinner() {") == 1 {f=1} f {print} f && /^}/ {exit}' "${LAUNCHER}" "${GA_DIR_ROOT}"/lib/ga-tui-*.sh | sed '1s/stop_idle_spinner/__real_stop_idle/')"
 stop_idle_spinner() {
   IDLE_STOPS=$((IDLE_STOPS + 1))
   IN_STOP=1

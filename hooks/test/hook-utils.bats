@@ -92,8 +92,12 @@ build_ga_fixture() {
 }
 
 @test "AC-S1.3a: wrapper carries no literal port default (16145 / 7842)" {
-  run grep -c '16145' "${REAL_WRAP}"
+  # Comment-aware: the wrapper's L8 comment MENTIONS the terminal default (16145) to
+  # document that the LITERAL lives in the resolver, not here. A comment is not a
+  # hardcoded default, so count the literal only on NON-COMMENT (code) lines. This
+  # still FAILS if a real code line (e.g. `PORT_DEFAULT=16145`) hardcodes the port.
+  run bash -c "grep -vE '^[[:space:]]*#' \"${REAL_WRAP}\" | grep -c '16145' || true"
   [[ "${output}" == "0" ]]
-  run grep -c '7842' "${REAL_WRAP}"
+  run bash -c "grep -vE '^[[:space:]]*#' \"${REAL_WRAP}\" | grep -c '7842' || true"
   [[ "${output}" == "0" ]]
 }
