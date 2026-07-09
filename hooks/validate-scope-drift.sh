@@ -65,7 +65,6 @@ extract_target_files_section() {
     | sed -n 's/.*<section[^>]*id="target-files"[^>]*>\(.*\)/\1/p')"
   [[ -z "${from_open}" ]] && return 0
 
-  # Slice up to the first </section>.
   sliced="$(printf '%s' "${from_open}" | sed 's/<\/section>.*//')"
   [[ -z "${sliced}" ]] && return 0
 

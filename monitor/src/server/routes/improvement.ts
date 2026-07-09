@@ -1,24 +1,13 @@
 // Improvement API: read-only endpoints joining learning + autoagent for the
-// unified self-improvement dashboard.
+// self-improvement dashboard.
 //
-// 2-tier surface over a 4-value PG enum:
-//   public 'auto'   ← DB ApprovalTier 'auto'
-//   public 'safety' ← DB ApprovalTier 'user' OR 'user-pending' OR legacy 'llm'
-//   'llm' is frozen/legacy but stays readable → folds into 'safety' in both the
-//   tier_distribution count (foldTierCounts) AND the safety tier filter
-//   (buildProposalWhere), so count and filter share the same 3-value safety set —
-//   no orphan legacy row. The actionable feed (buildActionableProposalWhere) is
-//   safety-only by construction (auto-tier is terminal — no auto actionable row).
+// 2-tier public surface over a 4-value PG enum: 'auto' ← DB 'auto'; 'safety' ← DB
+// 'user' | 'user-pending' | legacy 'llm'. Legacy 'llm' folds into 'safety' in BOTH
+// foldTierCounts AND buildProposalWhere so count and filter share one 3-value safety
+// set (no orphan legacy row). The actionable feed is safety-only by construction.
 //
-// Index coverage:
-//   autoagent_proposals_cycle_idx       (cycle_date)            — window filter
-//   autoagent_proposals_status_tier_idx (status, approval_tier) — distribution
-//   autoagent_proposals_agent_cycle_idx (target_agent, cycle_date) — agent filter
-//   outcomes_ts_idx                     (record_ts)             — window filter
-//
-// tier_distribution is process-cached for STATS_CACHE_TTL_MS to absorb FE card
-// polling (monotonic clock — no expiry-during-request races); main
-// /api/improvement re-computes per-request.
+// tier_distribution is process-cached for STATS_CACHE_TTL_MS (monotonic clock);
+// main /api/improvement re-computes per-request.
 
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
@@ -72,15 +61,12 @@ const ALLOWED_TIERS: ReadonlySet<ImprovementTier> = new Set(["auto", "safety"]);
 const LIMIT_MAX = 200;
 const LIMIT_DEFAULT = 50;
 
-// Actionable feed defensive cap. The actionable fetch (status ∈ pending/snoozed)
-// is decoupled from the user `limit` so action rows are never truncated by the
-// recency LIMIT; this ceiling guards a pathological pending backlog from
-// unbounded payload.
+// Actionable feed cap: fetch (status ∈ pending/snoozed) is decoupled from the user
+// `limit` so action rows aren't truncated by recency; guards a pending backlog blowout.
 const ACTIONABLE_FETCH_CAP = 200;
 
-// Recent-row bound for the orphan-table read surfaces. Each endpoint returns a
-// bounded recency slice + table-wide aggregate rollups, so the LIMIT caps the
-// row payload while the summary stays complete.
+// Orphan-table read bound: each endpoint returns a bounded recency slice + table-wide
+// rollups, so LIMIT caps the row payload while the summary stays complete.
 const ORPHAN_LIMIT_DEFAULT = 50;
 const ORPHAN_LIMIT_MAX = 200;
 
@@ -295,16 +281,14 @@ export async function registerImprovementRoutes(app: FastifyInstance): Promise<v
   // autoagent_loop_events) populated by hooks/daemons.
   app.get("/api/improvement/learning-log", handleLearningLog);
   app.get("/api/improvement/loop-events", handleLoopEvents);
-  // Interactive approval UI terminal-state writers. approve shells out to
-  // daemon-apply.sh (high-impact; an unwanted apply is recoverable via the
-  // agents-bak before-image restore below, within the retention window). reject
+  // Interactive approval writers. approve shells to daemon-apply.sh (high-impact; an
+  // unwanted apply is recoverable via the agents-bak before-image restore below). reject
   // is a status-only, low-risk transition to 'rejected'.
   app.post("/api/improvement/:id/approve", handleApprove);
   app.post("/api/improvement/:id/reject", handleReject);
-  // Git-free recovery for an applied proposal: rolls the touched agent .md files
-  // back from the agents-bak before-image snapshot captured at apply time
-  // (handleRestore → scripts/update.sh --restore-agents). Replaces the retired
-  // VCS rollback path — the git-free daemon keeps no in-repo history to lean on.
+  // Git-free recovery for an applied proposal: rolls the touched agent .md files back from
+  // the agents-bak before-image (handleRestore → scripts/update.sh --restore-agents). The
+  // git-free daemon keeps no in-repo history, so there is no VCS rollback path.
   app.post("/api/improvement/:id/restore", handleRestore);
 }
 
@@ -316,10 +300,9 @@ interface ImprovementQuerystring {
   agent?: string;
 }
 
-// Fastify does not strip/reject unrecognized querystring keys without a route
-// schema — a misspelled or legacy key (e.g. `window_days`) previously fell
-// through silently, leaving the `window` default in effect with no error.
-// parseImprovementQuery rejects any key outside this set so misuse is loud.
+// Fastify does not reject unrecognized querystring keys without a route schema — a
+// misspelled/legacy key (e.g. `window_days`) would fall through silently, leaving the
+// `window` default in effect. parseImprovementQuery rejects any key outside this set.
 const IMPROVEMENT_QUERY_KEYS: ReadonlySet<string> = new Set([
   "limit",
   "window",
@@ -339,34 +322,25 @@ async function handleImprovement(
   }
   const { limit, windowDays, tier, agent } = parsed.value;
 
-  // Registry load hoisted above the WHERE builders: T8 gates the proposal +
-  // actionable feeds on target_agent registry-membership, T9 gates the
-  // tier_breakdown cohort, and the style_ref DEV subset below derives from the
-  // same cached entries. Cached singleton, so the early load adds no cost.
+  // Registry load hoisted above the WHERE builders — the proposal/actionable feeds, the
+  // tier_breakdown cohort, and the style_ref DEV subset below all gate on the same cached
+  // entries. Cached singleton, so the early load adds no cost.
   const canonicalKeys = await loadCanonicalAgentKeys();
 
   const proposalWhere = buildProposalWhere(windowDays, tier, agent, canonicalKeys);
-  // Actionable feed WHERE — status ∈ pending/snoozed AND safety-tier only
-  // (auto-tier is terminal by construction → no auto actionable surface). `agent`
-  // filter preserved (FE drill-down consistency); recency window dropped so
-  // actionable rows are never crowded out of the safety column by the
-  // recent-terminal slice.
+  // Actionable feed WHERE — status ∈ pending/snoozed AND safety-tier only (auto-tier is
+  // terminal → no auto actionable). `agent` filter preserved for FE drill-down; recency
+  // window dropped so actionable rows aren't crowded out by the recent-terminal slice.
   const actionableWhere = buildActionableProposalWhere(agent, canonicalKeys);
-  // Registry-membership scope for outcome_summary + join_meta.linked_agent_count
-  // — closes the gap T8/T9/T10 deliberately left open. buildOutcomeWhere now
-  // takes canonicalKeys directly (in-builder gate, mirrors
-  // buildProposalWhere/buildActionableProposalWhere) — the external
-  // buildAgentMembershipFilter concatenation this call site used to bolt on is
-  // gone.
+  // Registry-membership scope for outcome_summary + join_meta.linked_agent_count.
+  // buildOutcomeWhere takes canonicalKeys directly (in-builder gate, mirrors
+  // buildProposalWhere/buildActionableProposalWhere).
   const outcomeWhere = buildOutcomeWhere(windowDays, agent, canonicalKeys);
-  // style_ref telemetry window fixed at 7 days, independent of `windowDays`.
-  // Agent filter still applies so the per-agent drill-down stays consistent
-  // (drill-down matches the canonical prefixed key only). DEV-subset gate
-  // appended to THIS where var ALONE, over its OWN buildOutcomeWhere(...) call
-  // (not the outcomeWhere above) — unaffected by the registry-membership
-  // scoping on outcomeWhere. DEV keys derived at runtime from the registry
-  // ('glass-atrium-dev-' prefix). Fail-soft: an empty DEV set skips the predicate
-  // (fail-open, plain registry-gated where kept) — Prisma.join([]) is invalid SQL.
+  // style_ref telemetry window fixed at 7 days, independent of `windowDays`. Agent filter
+  // still applies (drill-down matches the canonical prefixed key). DEV-subset gate appended
+  // to THIS where var alone, over its OWN buildOutcomeWhere call (not outcomeWhere above).
+  // DEV keys derived at runtime from the 'glass-atrium-dev-' prefix. Fail-soft: an empty DEV
+  // set skips the predicate (Prisma.join([]) is invalid SQL).
   const devAgents = canonicalKeys.filter((name) =>
     name.startsWith(DEV_AGENT_PREFIX),
   );
@@ -513,19 +487,12 @@ async function handleImprovement(
               AND p.target_agent = o.agent
           )
       `,
-      // style_ref telemetry — per-agent 7-day rolling aggregation. Two parallel
-      // ratios:
-      //   1. emission_rate    = emission_count / emission_total
-      //        (style_ref IS NOT NULL — path OR 'greenfield')
-      //   2. verified_rate    = verified_true_count / verified_eligible
-      //        (eligibility excludes 'greenfield' rows — structurally no path to
-      //         cross-verify against tool_use Read history)
-      // Index usage: outcomes_style_ref_agent_ts_idx (partial, predicate
-      // `style_ref IS NOT NULL`) covers emission_count + verified counts;
-      // emission_total uses outcomes_agent_ts_idx. ${STYLE_REF_GREENFIELD} is
-      // auto-parameterized (bound at execute time, not inlined) — the partial
-      // index predicate carries no greenfield literal, only the FILTER clause uses
-      // the bound parameter, so the index stays usable.
+      // style_ref telemetry — per-agent 7-day rolling aggregation, two ratios:
+      //   1. emission_rate = emission_count / emission_total (style_ref IS NOT NULL — path OR 'greenfield')
+      //   2. verified_rate = verified_true_count / verified_eligible (excludes 'greenfield' rows —
+      //      structurally no path to cross-verify against tool_use Read history)
+      // ${STYLE_REF_GREENFIELD} is auto-parameterized (bound at execute time), so the partial
+      // index outcomes_style_ref_agent_ts_idx stays usable.
       prisma.$queryRaw<StyleRefAgentDbRow[]>`
         SELECT
           agent,
@@ -542,37 +509,22 @@ async function handleImprovement(
       `,
     ]);
 
-    // Graceful degradation: tier_breakdown and confidence_distribution are
-    // optional metrics, the only queries touching the late-added
-    // `baseline_pre_3tier` / confidence_observed / promotion_tier columns.
-    // Isolated out of the main Promise.all so a single optional-column absence
-    // (PG 42703 undefined_column) degrades to a zero-init partial instead of
-    // collapsing the endpoint to 503 — the DB is available, just one column
-    // missing. The other queries stay in the Promise.all: their failure IS a
-    // genuine DB-down signal so 503 stays correct (failWithDb catch). allSettled
-    // never rejects → the catch is reserved for real infra failures.
-    //
-    // Degradation shape: foldTierBreakdownRow([]) zero-init keeps
-    // `tier_breakdown_30d` a non-null object so the FE renders its no-data
-    // indicator rather than crashing on a null/missing field.
+    // Graceful degradation: tier_breakdown + confidence_distribution are optional metrics —
+    // the only queries touching the late-added baseline_pre_3tier / confidence_observed /
+    // promotion_tier columns. Isolated out of the main Promise.all so a single optional-column
+    // absence (PG 42703 undefined_column) degrades to a zero-init partial instead of a 503 (DB
+    // is up, one column missing); the other queries stay in Promise.all so their failure is
+    // still a genuine DB-down 503 (allSettled never rejects — catch reserved for real infra).
+    // foldTierBreakdownRow([]) zero-init keeps tier_breakdown_30d a non-null object so the FE
+    // renders its no-data indicator instead of crashing on null.
     const [tierBreakdownResult, confidenceDistResult] = await Promise.allSettled([
-      // 3-Tier baseline cohort split — fixed 30d window
-      // (TIER_BREAKDOWN_WINDOW_DAYS, independent of the `windowDays` user filter).
-      // 3 parallel COUNT() FILTER aggregates in one SELECT (single-row return,
-      // folded by foldTierBreakdownRow). T9 — scoped to the positive registry
-      // allowlist (agent IN loadAgentRegistry()) instead of the former 3-item
-      // infra denylist; the registry excludes those infra tokens (orchestrator /
-      // subagent_stop_missing / unknown) AND every other non-registry noise agent,
-      // so the allowlist subsumes the retired denylist. Fail-open on an empty
-      // registry (buildAgentMembershipFilter → Prisma.empty → predicate skipped).
-      // poisoned_window rows excluded — they are metric_pass=false mis-measurements
-      // that would inflate code_based_fail_30d (mirrors the baseline_pre_3tier
-      // exclusion style above).
-      //
-      // Index usage: outcomes_baseline_pre_3tier_idx (partial, predicate
-      // `WHERE baseline_pre_3tier IS NOT NULL`) supports pre_3tier_baseline_count
-      // directly. code_based_pass/fail_30d use outcomes_ts_idx + bitmap AND on the
-      // metric_pass column (partial COUNT acceptable at the 30d cohort scale).
+      // 3-Tier baseline cohort split — fixed 30d window (TIER_BREAKDOWN_WINDOW_DAYS, independent
+      // of the `windowDays` user filter). 3 COUNT() FILTER aggregates in one SELECT, folded by
+      // foldTierBreakdownRow. Scoped to the positive registry allowlist (agent IN
+      // loadAgentRegistry()), which excludes infra tokens + non-registry noise. Fail-open on an
+      // empty registry (buildAgentMembershipFilter → Prisma.empty → predicate skipped).
+      // poisoned_window rows excluded — metric_pass=false mis-measurements that would inflate
+      // code_based_fail_30d. Index: outcomes_baseline_pre_3tier_idx (partial) + outcomes_ts_idx.
       prisma.$queryRaw<TierBreakdownDbRow[]>`
         SELECT
           COUNT(*) FILTER (WHERE metric_pass = TRUE AND baseline_pre_3tier IS NULL)::bigint AS code_based_pass_30d,
@@ -583,22 +535,13 @@ async function handleImprovement(
           ${buildAgentMembershipFilter(canonicalKeys)}
           AND poisoned_window = FALSE
       `,
-      // confidence_observed × promotion_tier distribution — isolated in the same
-      // allSettled batch as tier_breakdown because it is the only proposal-side
-      // aggregate touching the late-added confidence_observed/promotion_tier
-      // columns: a future add/drop (PG 42703 undefined_column) degrades to empty
-      // buckets, not a 503.
-      //
-      // GROUP BY the COALESCE'd lane so NULL promotion_tier rows surface under the
-      // 'unassigned' label (no silent drop). AVG(confidence_observed) returns NULL
-      // for an all-NULL lane (PG skips NULLs), which foldConfidenceDistribution
-      // maps to a null avg → FE renders "not computed".
-      //
-      // The window filter reuses the user `windowDays` (proposal-side metric,
-      // unlike the fixed-30d cohort-attribution tier_breakdown).
-      // Index usage: autoagent_proposals_confidence_idx (partial, predicate
-      // `WHERE confidence_observed IS NOT NULL`) assists the AVG; the cycle_date
-      // window uses autoagent_proposals_cycle_idx.
+      // confidence_observed × promotion_tier distribution — isolated in the same allSettled batch
+      // as tier_breakdown (only proposal-side aggregate touching the late-added
+      // confidence_observed/promotion_tier columns): a future add/drop degrades to empty buckets,
+      // not a 503. GROUP BY the COALESCE'd lane so NULL promotion_tier surfaces as 'unassigned'
+      // (no silent drop). AVG(confidence_observed) is NULL for an all-NULL lane → null avg ("not
+      // computed"). Window reuses the user `windowDays`. Index: autoagent_proposals_confidence_idx
+      // (partial) + autoagent_proposals_cycle_idx.
       prisma.$queryRaw<ConfidenceTierDbRow[]>`
         SELECT
           COALESCE(promotion_tier, 'unassigned') AS promotion_tier,
@@ -1078,19 +1021,14 @@ const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 
-// SECURITY (LLM06 — Excessive Agency / human-in-the-loop): approve mutates the
-// agent .md files via daemon-apply.sh. High-impact, but (1) gated behind an
-// explicit user button-click in the local 127.0.0.1 monitor UI (the click IS the
-// human-in-the-loop decision), and (2) recoverable — daemon-apply is git-free, so
-// BEFORE applying it captures a per-proposal before-image copy of each touched
-// file under agents-bak/<cycle_date>_p<id>; an unwanted apply is rolled back by
-// restoring that snapshot via POST :id/restore (handleRestore →
-// scripts/update.sh --restore-agents), within the 14-day retention window. The DB
-// holds only the forward proposedDiff (no before-image bytes), so a VCS-based
-// rollback is unavailable — the agents-bak before-image is the sole recovery
-// anchor. The script bypasses the auto-tier + pre_verify gates precisely because
-// the user explicitly approved. `id` is validated to a positive integer before it
-// reaches execFile, and the script path is a fixed home-dir constant — no
+// SECURITY (LLM06 — Excessive Agency / human-in-the-loop): approve mutates agent .md
+// files via daemon-apply.sh (high-impact). Guarded because: (1) gated behind an explicit
+// 127.0.0.1 monitor button-click (the click IS the human-in-the-loop decision); (2)
+// recoverable — daemon-apply is git-free, so it first captures a per-proposal before-image
+// under agents-bak/<cycle_date>_p<id>, restored via POST :id/restore within the 14-day
+// window. The DB holds only the forward proposedDiff, so agents-bak is the SOLE recovery
+// anchor (no VCS rollback). Bypasses auto-tier + pre_verify because the user approved.
+// `id` is validated positive-int and the script path is a fixed home-dir constant — no
 // request-derived shell input.
 async function handleApprove(
   request: FastifyRequest<{ Params: { id: string } }>,
@@ -1103,12 +1041,9 @@ async function handleApprove(
     return { status: "invalid_param", param: "id" };
   }
 
-  // execFile (not exec) — argv array, no shell interpolation. The proposal id is
-  // passed as a discrete argv element, so even a hypothetical non-integer could
-  // not break out into a shell command (defense-in-depth atop the int guard).
-  // --auto-regen: on a stale stored diff the script regenerates + pre-verifies +
-  // re-applies inline instead of dead-ending at exit 9, so the user is never left
-  // stuck on a 422 needs_regen — see the exit 10-14 branches.
+  // execFile (not exec) — id passed as a discrete argv element, no shell interpolation
+  // (defense-in-depth atop the int guard). --auto-regen: on a stale stored diff the script
+  // regenerates + pre-verifies + re-applies inline instead of dead-ending at exit 9.
   let exitCode: number;
   let stderr: string;
   try {
@@ -1293,14 +1228,11 @@ async function handleReject(
 
 // POST /api/improvement/:id/restore
 
-// Resolves scripts/update.sh — P3-T2's git-free recovery entry point. Its
-// --restore-agents <cycle-id> mode rolls the touched agent .md files back from the
-// agents-bak before-image, and acquires the shared pause + .apply-lock itself, so
-// this route does NOT double-lock (weakening the serialization invariant). Fixed
-// home-dir install path — never request-derived, so this execFile is not a
-// shell-injection / SSRF surface. ATRIUM_UPDATE_SCRIPT is a server-startup testing
-// seam (process-env, never request-derived), mirroring resolveApplyScript's
-// AUTOAGENT_APPLY_SCRIPT.
+// Resolves scripts/update.sh — git-free recovery entry. --restore-agents <cycle-id> rolls
+// the touched agent .md files back from the agents-bak before-image and acquires the shared
+// pause + .apply-lock itself, so this route does NOT double-lock. Fixed home-dir path, never
+// request-derived → not a shell-injection / SSRF surface. ATRIUM_UPDATE_SCRIPT is a
+// server-startup test seam (process-env, never request-derived).
 function resolveRestoreScript(): string {
   const override = process.env.ATRIUM_UPDATE_SCRIPT;
   if (typeof override === "string" && override.length > 0) {
@@ -1309,29 +1241,24 @@ function resolveRestoreScript(): string {
   return path.join(homedir(), ".glass-atrium", "scripts", "update.sh");
 }
 
-// scripts/update.sh --restore-agents <cycle-id> exit-code contract (P3-T2):
-//   0  = restored (touched agent .md files rolled back from the before-image)
-//   10 = restore failed — no agents-bak snapshot for the cycle-id (pruned past the
-//        14-day retention window OR the proposal never landed via the git-free
-//        transaction) OR a per-file write failure; update.sh loud-fails the reason.
-//   2 (bad arg — the route always passes a cycle-id) / other (lock held / no
-//        python3 / spawn ENOENT) fold into the infra-class default → 500.
+// scripts/update.sh --restore-agents <cycle-id> exit-code contract:
+//   0  = restored (agent .md files rolled back from the before-image)
+//   10 = restore failed — no agents-bak snapshot (pruned past the 14-day window, or the
+//        proposal never landed, or a per-file write failure); update.sh loud-fails the reason.
+//   2 / other (bad arg / lock held / no python3 / spawn ENOENT) → infra-class default 500.
 const RESTORE_EXIT_OK = 0;
 const RESTORE_EXIT_FAILED = 10;
 
-// Restore (200) — the applied proposal's touched agent .md files rolled back from
-// its agents-bak before-image snapshot (git-free recovery; see the SECURITY note
-// above handleApprove).
+// Restore (200) — applied proposal's agent .md files rolled back from its agents-bak
+// before-image (git-free recovery; see the SECURITY note above handleApprove).
 interface RestoreProposalResponse {
   id: number;
   status: "restored";
   cycle_id: string; // the agents-bak <cycle_date>_p<id> snapshot restored from
 }
 
-// Restore-specific mutation errors. The invalid_param (400) + internal (500) DB
-// failure cases reuse the shared ImprovementMutationErrorBody discriminator; the
-// rest stay local rather than widening the approve/reject union in
-// types/improvement.ts (not this route file's concern).
+// Restore-specific mutation errors. invalid_param (400) + internal (500) reuse the shared
+// ImprovementMutationErrorBody; the rest stay local rather than widening the shared union.
 type RestoreErrorBody =
   | { status: "not_found"; id: number }
   | { status: "not_restorable"; id: number; reason: string }
@@ -1343,13 +1270,11 @@ interface ProposalRestoreRow {
   cycle_id: string;
 }
 
-// The recovery net the approve SECURITY note promises: undo an applied proposal by
-// restoring the before-image snapshot daemon-apply captured under
-// agents-bak/<cycle_date>_p<id>. Only an 'applied' proposal has a snapshot, so the
-// route gates on status before shelling out. The cycle-id is built server-side
-// from the validated integer id + the row's DB-rendered cycle_date (never request
-// text) and passed as a discrete execFile argv element — no shell, no
-// request-derived path.
+// Recovery net for the approve SECURITY note: undo an applied proposal by restoring the
+// agents-bak/<cycle_date>_p<id> before-image. Only an 'applied' proposal has a snapshot, so
+// the route gates on status before shelling out. The cycle-id is built server-side from the
+// validated int id + the row's DB cycle_date (never request text) and passed as a discrete
+// execFile argv element — no shell, no request-derived path.
 async function handleRestore(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply,

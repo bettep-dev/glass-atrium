@@ -1,21 +1,12 @@
 #!/usr/bin/env bats
-# generate-manifest.sh suite — pins the manifest contract:
-#   * regenerate stamps the top-level version from the ATRIUM_VERSION SoT
-#   * every files[] path carries a 64-hex sha256 in the parallel hashes map
-#     (hashes count == files count; recorded hash == a direct shasum)
-#   * files[] stays an array of STRINGS (installer/doctor backward-compat)
-#   * --check exit codes: 0 on a matching tree · 1 on orphan / missing /
-#     version-mismatch / content-hash-mismatch divergence · 6 on an empty set
-#   * regeneration is deterministic (byte-identical across two runs)
-#
-# Run via: bats scripts/test/generate-manifest.bats
-# Requires: bats >= 1.5.0, git, jq, shasum (or sha256sum)
-#
-# Hermetic strategy: a per-test standalone git repo under a realpath-resolved
-# (pwd -P) temp root, with a COPY of the real generate-manifest.sh placed at
-# <sandbox>/scripts/ so the script's own BASH_SOURCE-derived GA_ROOT resolves to
-# the sandbox, never the live ~/.glass-atrium tree. The ambient git/jq/shasum
-# are used (no stub bin needed — none of them is masked here).
+# generate-manifest.sh suite — pins the manifest contract: version stamped from the
+# ATRIUM_VERSION SoT (not a literal); every files[] path carries a 64-hex sha256 in
+# the parallel hashes map (count parity; hash == direct shasum); files[] stays an
+# array of STRINGS (installer/doctor backward-compat); --check exit codes (0 match ·
+# 1 orphan/missing/version/hash divergence · 6 empty set); regeneration deterministic.
+# Hermetic: per-test standalone git repo under a pwd -P temp root, with a COPY of the
+# real script at <sandbox>/scripts/ so its BASH_SOURCE-derived GA_ROOT resolves to the
+# sandbox, never the live ~/.glass-atrium tree. Ambient git/jq/shasum (none masked).
 
 bats_require_minimum_version 1.5.0
 

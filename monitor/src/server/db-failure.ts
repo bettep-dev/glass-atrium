@@ -1,8 +1,6 @@
-// Shared DB-failure taxonomy for route catch blocks — replaces the per-route
-// blanket 503 `database_unavailable` mapping. Client-input faults (SQLSTATE
-// class 22/23, e.g. bigint overflow / FK violation) → 400 with reason at WARN;
-// availability faults and unknowns stay 503 at ERROR with the SQLSTATE +
-// classification in the structured log (real outages no longer masked).
+// Shared DB-failure taxonomy for route catch blocks — replaces the per-route blanket 503 mapping.
+// Client-input faults (SQLSTATE class 22/23: bigint overflow / FK violation) → 400 + reason at WARN.
+// Availability faults + unknowns stay 503 at ERROR with SQLSTATE + classification logged (real outages no longer masked).
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 

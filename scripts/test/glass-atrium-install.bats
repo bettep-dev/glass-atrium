@@ -1,50 +1,28 @@
 #!/usr/bin/env bats
-# install.sh suite (P2-T1/P2-T4 acceptance — plan test family 2) — pins the
-# no-.git bundle-install contract of the root install.sh, driven hermetically
-# through its documented test seam (GA_INSTALL_SRC_BUNDLE + GA_INSTALL_SRC_MANIFEST:
-# both set → install from a local bundle + manifest verbatim, no gh/network).
-#
-# The 7 cases pinned here:
-#   1. fresh install from a locally-built bundle+manifest  → a runnable no-.git
-#      tree: lib/ga-core.sh, monitor/ tree, config.toml.example,
-#      requirements.txt, executable launcher, persisted install manifest
-#      {version}, and NO .git directory
-#   2. reinstall over an existing tree is merge-not-wipe   → the preserve-set
-#      (agents-bak/, wiki/, secrets/, rendered/, data/, config.toml,
-#      .update-state) stays BYTE-INTACT across a version-bump extract-in-place
-#   3. idempotency                                         → same version +
-#      passing verify is the documented no-op ("already installed … no extract
-#      needed"), zero content churn in GA_DIR
-#   4. same-version-different-bytes                        → per-file SHA-256
-#      verify rejects loudly with the named exit code 15 (EXIT_VERIFY_FAILED)
-#      and writes NOTHING into GA_DIR
-#   5. release scope                                       → the file list built
-#      the way the release builds it (generate-manifest.sh → manifest.files →
-#      tar -T) carries NO agents-bak/wiki/secrets/rendered/data member, even
-#      when those state dirs are adversarially git-tracked (SCOPE_PATHS is the
-#      structural exclusion layer; .gitignore is only belt-and-suspenders)
-#   6. consent gate holds on manifest-only                  → a prior EXTRACT
-#      (manifest.json present, ZERO GA-pointing facade links — the curl|bash
-#      then exit-the-menu-without-installing corner) never fires the mirror
-#      farm on a re-run: `agents-only` is not invoked, the facade stays empty
-#   7. consent gate arms on links                           → GA-pointing
-#      facade links (the artifact only the consented menu Install creates)
-#      fire the reinstall-parity refresh (incident #58325 coverage preserved)
-#
-# Run via: bats scripts/test/glass-atrium-install.bats
-# Requires: bats >= 1.5.0, jq, tar, shasum (or sha256sum); cases 1-4 + 6-7 need
-#           macOS (install.sh's preflight loud-fails exit 10 elsewhere →
-#           skipped on Linux CI, same idiom as daemon-daily-restart.bats);
-#           case 5 needs git
-#
-# Hermetic strategy: a per-test mktemp sandbox holds a SYNTHETIC minimal source
-# tree (executable launcher + lib/ + monitor/ + config/deps stubs + a REAL copy
-# of scripts/lib/apply-spine.sh — load-bearing, because install.sh::verify_bundle
-# sources the spine FROM THE EXTRACTED bundle) and a release built exactly like
-# publish-release.sh::build_assets (manifest {version, files, hashes} +
-# `tar -czf … -C <root> -T <filelist>`). install.sh runs against a sandbox
-# GA_DIR under a sandbox HOME with GA_NO_RUN=1, so the live ~/.glass-atrium
-# install, the real HOME, launchd, and the launcher exec are NEVER touched.
+# install.sh suite (P2-T1/P2-T4 acceptance) — pins the no-.git bundle-install
+# contract of the root install.sh, driven hermetically through its test seam
+# (GA_INSTALL_SRC_BUNDLE + GA_INSTALL_SRC_MANIFEST: install from a local bundle +
+# manifest verbatim, no gh/network). The 7 cases:
+# 1. fresh install → runnable no-.git tree (launcher + monitor/ + config + persisted
+#    install manifest, NO .git).
+# 2. reinstall is merge-not-wipe → the preserve-set (agents-bak/wiki/secrets/rendered/
+#    data/config.toml/.update-state) stays BYTE-INTACT across a version-bump extract.
+# 3. idempotency → same version + passing verify is the documented no-op, zero churn.
+# 4. same-version-different-bytes → per-file SHA-256 verify rejects with exit 15
+#    (EXIT_VERIFY_FAILED), writing NOTHING into GA_DIR.
+# 5. release scope → SCOPE_PATHS (the structural exclusion layer, NOT .gitignore)
+#    keeps agents-bak/wiki/secrets/rendered/data out of files[]+bundle even when
+#    those state dirs are adversarially git-tracked.
+# 6. consent gate → a prior extract (manifest present, ZERO GA-pointing links) never
+#    fires the mirror farm on a re-run.
+# 7. consent gate → GA-pointing facade links arm the reinstall-parity refresh
+#    (incident #58325 coverage).
+# Hermetic: a per-test mktemp sandbox holds a SYNTHETIC source tree (launcher + lib/
+# + monitor/ + a REAL copy of scripts/lib/apply-spine.sh, load-bearing because
+# verify_bundle sources the spine FROM THE EXTRACTED bundle) + a release built like
+# publish-release.sh::build_assets. install.sh runs against a sandbox GA_DIR under a
+# sandbox HOME with GA_NO_RUN=1, so the live ~/.glass-atrium, real HOME, launchd, and
+# the launcher exec are NEVER touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -163,7 +141,7 @@ run_install() {
     bash "${INSTALL_SH}"
 }
 
-# --- 1. fresh install → runnable no-.git tree -------------------------------
+# 1. fresh install → runnable no-.git tree
 
 @test "fresh install from a local bundle+manifest (test seam) yields a runnable no-.git tree" {
   require_darwin
@@ -184,7 +162,7 @@ run_install() {
   [[ ! -e "${TARGET}/.git" ]] # no-.git topology — a bundle extract, not a clone
 }
 
-# --- 2. reinstall preserves runtime data byte-intact (merge-not-wipe) -------
+# 2. reinstall preserves runtime data byte-intact (merge-not-wipe)
 
 @test "reinstall over an existing tree keeps the preserve-set byte-intact (merge-not-wipe)" {
   require_darwin
@@ -230,7 +208,7 @@ run_install() {
   done
 }
 
-# --- 3. idempotency: same version + passing verify = no-op ------------------
+# 3. idempotency: same version + passing verify = no-op
 
 @test "idempotent reinstall: same version + passing verify is a documented no-op (zero churn)" {
   require_darwin
@@ -250,7 +228,7 @@ run_install() {
   [[ "$(jq -r '.version' "${TARGET}/manifest.json")" == "1.0.0-test" ]]
 }
 
-# --- 4. same-version-different-bytes → per-file verify rejects (exit 15) ----
+# 4. same-version-different-bytes → per-file verify rejects (exit 15)
 
 @test "same-version-different-bytes: per-file SHA-256 verify rejects loudly (exit 15), zero writes" {
   require_darwin
@@ -273,7 +251,7 @@ run_install() {
   [[ "$(jq -r '.version' "${TARGET}/manifest.json")" == "1.0.0-test" ]]
 }
 
-# --- 5. release scope: state dirs never enter files[] or the bundle ---------
+# 5. release scope: state dirs never enter files[] or the bundle
 
 @test "release scope: agents-bak/wiki/secrets/rendered/data never enter manifest.files or the bundle" {
   command -v git >/dev/null 2>&1 || skip "git required"
@@ -329,7 +307,7 @@ run_install() {
   grep -qx 'agents/alpha.md' <<<"${members}"
 }
 
-# --- 6. consent gate: manifest-present + zero-links → NO farm write ---------
+# 6. consent gate: manifest-present + zero-links → NO farm write
 
 @test "consent gate: a prior extract without a consented deploy never fires the mirror farm" {
   require_darwin
@@ -348,7 +326,7 @@ run_install() {
   [[ -z "$(ls -A "${FAKE_HOME}/.claude")" ]] # the facade saw zero writes
 }
 
-# --- 7. consent gate: GA-pointing links present → reinstall refresh fires ---
+# 7. consent gate: GA-pointing links present → reinstall refresh fires
 
 @test "consent gate: an existing consented deploy (GA-pointing links) arms the reinstall refresh" {
   require_darwin

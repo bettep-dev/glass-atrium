@@ -24,10 +24,9 @@ export interface DaemonStatusCard {
   cost_guard_state: CostGuardStateValue | null;
   staleness_minutes: number | null;
   is_stale: boolean;
-  // DB-derived "firing but failing auth" proxy: the daemon has recent activity
-  // (ran, not stale) AND its last run failed (non-ok status OR infra_fault) AND the
-  // shared GA-root claude-auth.env is absent. A never-run/disabled daemon stays false
-  // → no false remediation on idle rows. Distinct field, never overloads last_status.
+  // DB-derived "firing but failing auth" proxy: daemon has recent activity (ran, not stale)
+  // AND last run failed (non-ok status OR infra_fault) AND the shared GA-root claude-auth.env
+  // is absent. Never-run/disabled stays false (no false remediation); never overloads last_status.
   needs_auth: boolean;
   // Recovery pointer surfaced only when needs_auth — env-var NAME + instruction text
   // only, never the token value (core-security.md). null when needs_auth is false.
@@ -125,9 +124,8 @@ export interface HookFailureEntry {
 export interface HealthHookFailuresResponse {
   days: number;
   failures: HookFailureEntry[];
-  // Fixed-24h recency aggregates (days-param independent — `failures` is windowed
-  // + LIMIT-truncated, so the FE cannot derive these from the row list).
-  // Hook Chain tone source: warn = count_24h > 0 · crit = unretried_count_24h > 0.
+  // Fixed-24h recency aggregates (days-param independent — `failures` is windowed + LIMIT-
+  // truncated, so the FE cannot derive these). Tone: warn = count_24h > 0 · crit = unretried_count_24h > 0.
   count_24h: number;
   unretried_count_24h: number;
   // failures[].failure_ts is UTC ISO (PG Timestamptz → Date → toISOString).

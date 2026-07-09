@@ -1,44 +1,32 @@
-// Shared daemon next-fire computation — the single DST-correct source consumed by
-// dashboard.ts + health-detail.ts (replaces the two duplicated fixed-9h
-// computeNextFire copies). The next launchd fire is the next wall-clock
-// occurrence of hour:minute in the resolved day-bucket timezone.
+// Shared daemon next-fire computation — the single DST-correct source consumed by dashboard.ts +
+// health-detail.ts (replaces the two duplicated fixed-9h computeNextFire copies). The next launchd
+// fire is the next wall-clock occurrence of hour:minute in the resolved day-bucket timezone.
 //
-// DST primitive: a vanilla `Intl` two-pass offset-at-candidate-instant,
-// ZERO dependency (no luxon / @js-temporal / date-fns; a fixed numeric offset is
-// FORBIDDEN — it breaks every DST zone and every non-JST zone). The offset is
-// recomputed AT each candidate instant, so a spring-forward / fall-back day is
-// handled correctly.
+// DST primitive: a vanilla `Intl` two-pass offset-at-candidate-instant, ZERO dependency (no luxon /
+// @js-temporal / date-fns). A fixed numeric offset is FORBIDDEN — it breaks every DST/non-JST zone.
+// The offset is recomputed AT each candidate instant, so a spring-forward / fall-back day is handled correctly.
 //
-// NOTE: `Intl.DateTimeFormat#formatToParts` is introduced here as a NEW
-// server-side primitive — there is no prior server-side `formatToParts` usage to
-// mirror (the only existing use is the frontend ui.jsx display formatter). This
-// comment therefore does NOT claim the pattern "matches existing style".
+// `Intl.DateTimeFormat#formatToParts` is a NEW server-side primitive (the only prior use is the frontend
+// ui.jsx display formatter) — this does NOT claim the pattern "matches existing style".
 
-// Cron rule shape — daily-at + weekly-at. `hour`/`minute` are wall-clock fields
-// in the resolved timezone (the legacy `*Kst` suffix is dropped now that the zone
-// is host-resolved, not hardcoded KST). `dayOfWeek` is retained for weekly-at
-// (0=Sunday … 6=Saturday, matching launchd Weekday + JS Date#getUTCDay) though
-// currently dormant in the DAEMON_CRON_SCHEDULE consumers.
+// Cron rule shape — daily-at + weekly-at. `hour`/`minute` are wall-clock fields in the resolved timezone.
+// `dayOfWeek` (0=Sunday … 6=Saturday, matching launchd Weekday + JS Date#getUTCDay) is retained for weekly-at but currently dormant.
 export type CronRule =
   | { type: "daily-at"; hour: number; minute: number }
   | { type: "weekly-at"; dayOfWeek: number; hour: number; minute: number };
 
-// Raw daemon schedule source — the three config-derived wall-clock "HH:MM" strings
-// the backend consumes, rendered into monitor/.env (ATRIUM_SCHEDULE_*) by
-// render-monitor-env.sh. Each may be undefined (env key unset). This is the
-// injectable seam: the module-load default reads process.env, while unit tests pass
-// a fixed object so buildDaemonCronSchedule is exercised independent of ambient .env
-// (mirrors the HostTimezoneResolver seam in timezone.ts). Config.toml stays the upper
-// SoT; the backend never grows a second config.toml parser — it consumes rendered env.
+// Raw daemon schedule source — the three config-derived "HH:MM" strings rendered into monitor/.env
+// (ATRIUM_SCHEDULE_*) by render-monitor-env.sh. Each may be undefined (env unset). Injectable seam:
+// module-load default reads process.env, unit tests pass a fixed object (mirrors timezone.ts HostTimezoneResolver seam).
+// Config.toml stays the upper SoT — the backend consumes rendered env, never grows a second config.toml parser.
 export interface RawDaemonSchedule {
   autoagent?: string;
   wiki?: string;
   "daily-restart"?: string;
 }
 
-// The three logical schedule keys + their .env var names. The daily-restart key
-// fans out to TWO role-qualified rows downstream (one launchd job → two monitor
-// rows); the other two are 1:1. autoagent/wiki/daily-restart, in that fixed order.
+// The three logical schedule keys + .env var names (fixed order autoagent/wiki/daily-restart).
+// daily-restart fans out to TWO role-qualified rows (one launchd job → two monitor rows); the other two are 1:1.
 const SCHEDULE_KEYS = ["autoagent", "wiki", "daily-restart"] as const;
 type ScheduleKey = (typeof SCHEDULE_KEYS)[number];
 
@@ -48,21 +36,17 @@ const ENV_NAME: Record<ScheduleKey, string> = {
   "daily-restart": "ATRIUM_SCHEDULE_DAILY_RESTART",
 };
 
-// Dev fallback (= current config truth, incl. the CORRECTED wiki 04:50) fired only
-// on a totally-absent injected source. Setting it to the config truth means the
-// fallback itself cannot re-introduce the wiki drift this fix removes. Schedule
-// analogue of timezone.ts LAST_RESORT_TIMEZONE.
+// Dev fallback = current config truth (incl. wiki 04:50), fired only on a totally-absent injected source.
+// Setting it to config truth means the fallback itself cannot re-introduce wiki drift (analogue of timezone.ts LAST_RESORT_TIMEZONE).
 const DEV_FALLBACK_SCHEDULE: Record<ScheduleKey, string> = {
   autoagent: "04:30",
   wiki: "04:50",
   "daily-restart": "05:30",
 };
 
-// Build the 4-row schedule map from an injectable raw source, applying the
-// daily-restart fan-out. Loud-fail policy mirrors timezone.ts: a present-but-malformed
-// value throws at module load with the env-var name (boot loud-fail in the launchd
-// log); a partial-presence source throws (never mix a rendered value with a fallback);
-// only a TOTALLY-absent source degrades to the visible dev fallback + one stderr warning.
+// Build the 4-row schedule map from an injectable raw source, applying the daily-restart fan-out.
+// Loud-fail (mirrors timezone.ts): a present-but-malformed value throws at module load with the env-var name.
+// Partial-presence throws (never mix rendered + fallback); only a TOTALLY-absent source degrades to the dev fallback + one stderr warning.
 export function buildDaemonCronSchedule(source: RawDaemonSchedule): Record<string, CronRule> {
   const presentKeys = SCHEDULE_KEYS.filter((key) => isPresent(source[key]));
 
@@ -93,20 +77,15 @@ export function buildDaemonCronSchedule(source: RawDaemonSchedule): Record<strin
   });
 }
 
-// Daemon schedule -> next-fire source of truth, imported by dashboard.ts and
-// health-detail.ts (the two former byte-identical local copies are unified here).
-// Built from the rendered ATRIUM_SCHEDULE_* env at module load behind the
-// buildDaemonCronSchedule seam — the export NAME, the 4 keys, and the
-// Record<string, CronRule> shape are UNCHANGED, so both consumers import it as-is.
+// Daemon schedule → next-fire SoT, imported by dashboard.ts + health-detail.ts.
+// Built from the rendered ATRIUM_SCHEDULE_* env at module load behind the buildDaemonCronSchedule seam.
 export const DAEMON_CRON_SCHEDULE: Record<string, CronRule> = buildDaemonCronSchedule({
   autoagent: process.env.ATRIUM_SCHEDULE_AUTOAGENT,
   wiki: process.env.ATRIUM_SCHEDULE_WIKI,
   "daily-restart": process.env.ATRIUM_SCHEDULE_DAILY_RESTART,
 });
 
-// Assemble the 4 CronRule rows from validated raw HH:MM strings. daily-restart is
-// the one fan-out: its single value feeds BOTH daily-restart-autoagent and
-// daily-restart-wiki at the identical time (one launchd job, two logical rows).
+// Assemble the 4 CronRule rows from validated HH:MM strings (daily-restart fans out to two identical-time rows).
 function assembleSchedule(raw: Record<ScheduleKey, string>): Record<string, CronRule> {
   const autoagent = parseHhMm(raw.autoagent, ENV_NAME.autoagent);
   const wiki = parseHhMm(raw.wiki, ENV_NAME.wiki);
@@ -127,10 +106,8 @@ function assembleSchedule(raw: Record<ScheduleKey, string>): Record<string, Cron
   };
 }
 
-// Split a "HH:MM" wall-clock string into {hour, minute}, throwing with the env-var
-// name on malformed/out-of-range input. Validation mirrors render-launchd-plists.sh
-// lifecycle_xml (regex ^([0-9]{1,2}):([0-9]{2})$ + hour<=23, minute<=59), keeping the
-// shell renderer and the backend on one validation contract.
+// Split a "HH:MM" wall-clock string into {hour, minute}, throwing with the env-var name on malformed/out-of-range input.
+// Validation mirrors render-launchd-plists.sh lifecycle_xml (regex ^([0-9]{1,2}):([0-9]{2})$ + hour<=23, minute<=59) — one cross-file validation contract.
 function parseHhMm(value: string, envVar: string): { hour: number; minute: number } {
   const match = /^([0-9]{1,2}):([0-9]{2})$/.exec(value.trim());
   if (match === null) {
@@ -148,9 +125,8 @@ function parseHhMm(value: string, envVar: string): { hour: number; minute: numbe
   return { hour, minute };
 }
 
-// Present = defined and non-blank. A whitespace-only or empty env value is treated
-// as absent (so a stray empty render counts toward the partial-presence loud-fail,
-// not as a malformed-time throw).
+// Present = defined and non-blank. A whitespace-only/empty env value counts as absent —
+// it feeds the partial-presence loud-fail rather than a malformed-time throw.
 function isPresent(value: string | undefined): boolean {
   return value !== undefined && value.trim() !== "";
 }
@@ -164,9 +140,8 @@ interface WallClockParts {
   second: number;
 }
 
-// Per-tz formatter cache: nextOccurrenceUtc calls getWallClockParts 3-5x with the
-// same tz, and a fresh Intl.DateTimeFormat is the dominant per-call cost. The
-// formatter is config-immutable for a given tz, so reuse is result-identical.
+// Per-tz formatter cache: nextOccurrenceUtc calls getWallClockParts 3-5x per tz, and a fresh Intl.DateTimeFormat is the dominant per-call cost.
+// The formatter is config-immutable for a given tz, so reuse is result-identical.
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
 
 function getFormatter(tz: string): Intl.DateTimeFormat {
@@ -208,9 +183,8 @@ function getWallClockParts(instant: Date, tz: string): WallClockParts {
   };
 }
 
-// Offset (ms) of `tz` AT the given UTC instant = (wall-clock reading interpreted
-// as UTC) − (actual UTC). Positive east of UTC (Asia/Seoul → +9h). Recomputed per
-// instant, so it reflects the zone's DST state at that exact moment.
+// Offset (ms) of `tz` AT the given UTC instant = (wall-clock reading as UTC) − (actual UTC); positive east (Asia/Seoul → +9h).
+// Recomputed per instant, so it reflects the zone's DST state at that exact moment.
 function getOffsetMsAt(utcMs: number, tz: string): number {
   const wall = getWallClockParts(new Date(utcMs), tz);
   const wallAsUtcMs = Date.UTC(
@@ -224,12 +198,9 @@ function getOffsetMsAt(utcMs: number, tz: string): number {
   return wallAsUtcMs - utcMs;
 }
 
-// Convert wall-clock components in `tz` to the corresponding UTC instant via the
-// two-pass offset-at-candidate. Pass 1 estimates the offset at the naive guess;
-// pass 2 re-evaluates it at the corrected instant (catching a guess that landed
-// on the far side of a DST transition). `Date.UTC` normalizes any day overflow
-// (e.g. day 32 → next month), which is what makes the wall-clock day rollover in
-// nextOccurrenceUtc safe.
+// Convert wall-clock components in `tz` to the UTC instant via a two-pass offset-at-candidate.
+// Pass 1 estimates the offset at the naive guess; pass 2 re-evaluates at the corrected instant (catches a guess on the far side of a DST transition).
+// `Date.UTC` normalizes day overflow (day 32 → next month), which makes the wall-clock day rollover in nextOccurrenceUtc safe.
 function wallClockToUtcMs(
   year: number,
   month: number, // 1-12
@@ -272,10 +243,8 @@ export function nextOccurrenceUtc(rule: CronRule, tz: string, now: Date): string
   );
 
   if (candidateUtcMs <= now.getTime()) {
-    // Already passed → roll the CALENDAR day forward in WALL-CLOCK space (daily
-    // +1, weekly +7) and re-run the two-pass on the new candidate. NEVER add
-    // 86_400_000 / 7×86_400_000 ms to the UTC instant — a fixed-ms add would
-    // re-introduce the ±1h DST bug across a transition day.
+    // Already passed → roll the CALENDAR day forward in WALL-CLOCK space (daily +1, weekly +7) and re-run the two-pass.
+    // NEVER add 86_400_000 / 7×86_400_000 ms to the UTC instant — a fixed-ms add re-introduces the ±1h DST bug across a transition day.
     const rollDays = rule.type === "weekly-at" ? 7 : 1;
     candidateUtcMs = wallClockToUtcMs(
       nowWall.year,

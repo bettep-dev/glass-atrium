@@ -747,10 +747,14 @@ ga_detect_claude_auth() {
   # deliberate: a poll cannot tell a running probe from an unreaped zombie and races the fork/exec. Probe
   # finishes first → watchdog killed+reaped (its rc drives the verdict); ceiling first → probe killed
   # (wait returns non-zero → unauthenticated; the stable signals above cover a genuinely authed user). Bash 3.2 clean.
-  local auth_rc=1 pid watchdog
+  local auth_rc=1 pid watchdog ceiling
+  ceiling="${GA_AUTH_PROBE_TIMEOUT_SECS:-10}"
   claude auth status </dev/null >/dev/null 2>&1 &
   pid=$!
-  { sleep 10 && kill "${pid}" 2>/dev/null; } &
+  # fds redirected: an un-redirected watchdog subshell leaks its orphaned `sleep` (survives the
+  # kill below) still holding the $() capture pipe write-end open, blocking the verdict the full
+  # ceiling AFTER it is decided — a real-user latency bug, not just test slowness.
+  { sleep "${ceiling}" && kill "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
   watchdog=$!
   # blocks until the probe exits naturally OR the watchdog kills it; either way we reap it.
   if wait "${pid}"; then

@@ -22,6 +22,18 @@ setup() {
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   TARGET="$(mktemp -d -t ga-doctor-bats.XXXXXX)"
   SETTINGS="${TARGET}/settings.json"
+  # Skip 3 assertion-IRRELEVANT heavy doctor sections via the existing test-mode seams.
+  # This suite asserts ONLY §6 hook-binding lines — never §8 manifest / auth self-test / §reports.
+  mkdir -p "${TARGET}/bin" "${TARGET}/empty-reports"
+  cat >"${TARGET}/bin/claude" <<'SH'
+#!/bin/bash
+echo OK
+exit 0
+SH
+  chmod +x "${TARGET}/bin/claude"
+  export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
+  export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p network call
+  export DOCTOR_AUTH_REPORTS_DIR="${TARGET}/empty-reports"     # empty dir → trivial daemon-reports scan
 }
 
 teardown() {

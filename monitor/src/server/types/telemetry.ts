@@ -1,20 +1,12 @@
-// Request/response shapes for /api/telemetry/* endpoints — orchestrator
-// agent-selection telemetry.
-//
-// Data model: core.skill_activations (prisma/schema.prisma model SkillActivation).
-// id (BigInt) is narrowed to number on JSON serialization — same pattern as
-// outcomes.ts / clauded-docs.ts (rows past Number.MAX_SAFE_INTEGER never occur
-// operationally).
-//
-// source is PG VARCHAR(32) free-form but the route layer enforces a 4-token
+// Request/response shapes for /api/telemetry/* — orchestrator agent-selection telemetry.
+// Data model: core.skill_activations (schema.prisma model SkillActivation); id (BigInt)
+// narrowed to number on serialization (outcomes.ts/clauded-docs.ts pattern; overflow never
+// occurs operationally). source is free-form VARCHAR(32) but the route enforces a 4-token
 // allowlist (orchestrator | subagent | hook | manual) for analysis SoT consistency.
 
-// ----- common --------------------------------------------------------------
+// common
 
-/**
- * source allowlist — schema is free-form VARCHAR but the route layer enforces it
- * for analysis consistency. Consider an enum once the pattern accumulates.
- */
+/** source allowlist — schema is free-form VARCHAR; route enforces it for analysis consistency. */
 export type ActivationSource = "orchestrator" | "subagent" | "hook" | "manual";
 
 /** Single activation row — shared by the POST response + GET list items. */
@@ -32,7 +24,7 @@ export interface ActivationRow {
   metadata: Record<string, unknown> | null;
 }
 
-// ----- POST /api/telemetry/activation --------------------------------------
+// POST /api/telemetry/activation
 
 export interface CreateActivationBody {
   source: ActivationSource;
@@ -51,7 +43,7 @@ export interface CreateActivationResponse {
   occurred_at: string;
 }
 
-// ----- GET /api/telemetry/activations --------------------------------------
+// GET /api/telemetry/activations
 
 export interface ListActivationsQuery {
   days?: string;
@@ -96,7 +88,7 @@ export interface ListActivationsResponse {
   fetched_at: string;
 }
 
-// ----- error responses -----------------------------------------------------
+// error responses
 
 export interface TelemetryErrorBody {
   error:

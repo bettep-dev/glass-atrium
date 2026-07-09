@@ -2,31 +2,23 @@
 # monitor-log-rotate.sh — size-triggered, fd-preserving rotation for monitor logs
 # Usage: monitor-log-rotate.sh
 #
-# Behavior:
-#   1. Iterate over the canonical monitor log paths (out + err).
-#   2. For each present log file, read its size; rotate only when size exceeds
-#      the threshold (default 50 MiB). Below threshold → skip silently.
-#   3. Copy the log to a timestamped sibling, gzip the copy, then truncate the
-#      original in place via `: > "${log}"`. Truncation (not unlink + recreate)
-#      is mandatory: launchd opens the StandardOutPath/StandardErrorPath file
-#      descriptors at daemon launch and never reopens them — replacing the
-#      inode would orphan the daemon's fd, silently swallowing subsequent log
-#      output until the daemon restarts.
-#   4. Prune .gz archives older than 30 days via `find -delete`. This is the
-#      one place the script removes files; `find -delete` over a glob-bounded
-#      pattern in a known directory is acceptable per the build-artifact
-#      exception in the harness rules.
+# Behavior: (1) iterate the canonical monitor logs (out + err); (2) rotate a log
+#   only when size exceeds the threshold (default 50 MiB), else skip silently;
+#   (3) copy to a timestamped sibling, gzip it, then truncate the original in place
+#      (`: > "${log}"`). Truncation (NOT unlink + recreate) is mandatory: launchd
+#      opens the StandardOutPath/StandardErrorPath fds at launch and never reopens
+#      them — replacing the inode orphans the daemon's fd, silently swallowing log
+#      output until restart.
+#   (4) prune .gz archives older than 30 days via `find -delete` — the one place
+#      files are removed; glob-bounded in a known dir, build-artifact exception.
 #
-# Rationale: monitor.out.log can accumulate 4 MiB+ in 3 days with
-# no rotation policy, masking the err.log stale-mtime diagnostic. A daily
-# size-triggered rotation keeps the active log small enough for grep + tail
-# while preserving historical evidence in compressed form.
+# Rationale: monitor.out.log can accumulate 4 MiB+ in 3 days, masking the err.log
+# stale-mtime diagnostic. Daily size-triggered rotation keeps the active log small
+# for grep + tail while preserving compressed history.
 #
-# Idempotency: safe to invoke repeatedly. Below-threshold runs are no-ops;
-# above-threshold runs produce a fresh timestamp suffix per second so
-# consecutive invocations within the same second would collide on the rotated
-# path — acceptable because launchd dispatches this script at 02:30 daily,
-# never concurrently with itself.
+# Idempotency: safe to re-invoke. Below-threshold = no-op; the per-second timestamp
+# suffix would collide only on same-second concurrent runs — acceptable since launchd
+# dispatches this at 02:30 daily, never concurrently.
 #
 # Invoked by: launchd (com.glass-atrium.monitor-log-rotate.plist) daily at 02:30 KST.
 # Manual invocation: bash monitor-log-rotate.sh
@@ -38,8 +30,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 readonly LOG_ROOT="${HOME}/.claude/logs"
-# 50 MiB threshold — chosen to keep the active log under a single grep buffer
-# while batching rotations to roughly weekly cadence at observed write rates.
+# 50 MiB threshold — keeps the active log under a single grep buffer, batching
+# rotations to ~weekly cadence at observed write rates.
 readonly MAX_SIZE_BYTES=$((50 * 1024 * 1024))
 # 30 days — compressed archive retention; older .gz files are pruned. Adjust
 # only if regulatory retention requirements change.
@@ -50,9 +42,8 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 rotate_one() {
   local log_path="$1"
 
-  # Missing file is the normal case for monitor.err.log when the daemon
-  # has emitted zero stderr lines since the last launchd reload — skip
-  # silently rather than warn.
+  # Missing file is normal for monitor.err.log (zero stderr since the last launchd
+  # reload) — skip silently rather than warn.
   if [[ ! -f "${log_path}" ]]; then
     return 0
   fi
@@ -81,9 +72,8 @@ rotate_one() {
 }
 
 prune_archives() {
-  # `|| true` is justified: find may emit a non-zero exit when the directory
-  # is empty or when concurrent deletion races us; either case is a no-op
-  # from our perspective and MUST NOT fail the rotation cycle.
+  # `|| true` justified: find exits non-zero on an empty dir or a concurrent-delete
+  # race — a no-op here that MUST NOT fail the rotation cycle.
   find "${LOG_ROOT}" -maxdepth 1 -name "*.gz" -mtime +"${ARCHIVE_RETENTION_DAYS}" -delete 2>/dev/null || true
 }
 

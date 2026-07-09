@@ -66,4 +66,10 @@ Applies to all agents.
 - `rebase -i` / `add -i` → **interactive mode is FORBIDDEN** (not supported)
 - AI agent `git push --force` without explicit user approval → FORBIDDEN (force-push rule applies even more strictly to autonomous agents)
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Git)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages · every change goes through a PR regardless of size |
+| "I'll squash the commits later" | "Later" = merge conflicts + lost context · write clean commits from the start |
+| "Tests are passing locally, no need to wait for CI" | Local env ≠ CI env · CI catches dependency + configuration issues local runs miss |

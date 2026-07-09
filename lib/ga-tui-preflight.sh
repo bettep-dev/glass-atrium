@@ -1,21 +1,18 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034,SC2154,SC2310,SC2312  # SC2154: reads shared globals (TTY/TTY_SAVED/PREFLIGHT_*/STEP_*/GRAND_TOTAL/INSTALL_PLAN_LEN/C_*/G_* etc.) declared + assigned by the glass-atrium loader; SC2034: assigns shared preflight/step-state globals (PREFLIGHT_NONINTERACTIVE/PREFLIGHT_TTY_OWNED/STEP_TOTAL/GRAND_TOTAL etc.) read at runtime by the loader + other TUI siblings; both present at runtime after the loader sources every TUI module, unresolvable when linted standalone; SC2310: `fn || rc=$?` is the intended exit-capture idiom (mirrors the loader's file-wide SC2310 disable); SC2312: detect/gate/render helpers are deliberately invoked inside command substitutions or conditionals (the masked return carries the intended signal) — mirrors the loader's file-wide SC2312 disable
-# Glass Atrium launcher — dependency-preflight + headless-auth module. SOURCED by the
-# glass-atrium entry point (never executed): the shebang, strict mode, IFS, traps and
-# every interleaved top-level const/stub (readonly PREFLIGHT_EXIT_BLOCKED, AUTH_FAIL_RE,
-# the PREFLIGHT_TTY_OWNED/PREFLIGHT_NONINTERACTIVE/PREFLIGHT_SUMMARY/PREFLIGHT_GROUP*_RUNNABLE
-# state stubs) stay loader-owned so re-sourcing never re-arms them. Owns the always-on
-# bare-Mac dependency preflight — the detect-then-skip bootstrap layer with its TTY/PATH/rc
-# helpers, the grouped-consent + guide gates, the launchd headless-auth token provisioning,
-# the fakechat + python-lib installs, and the boxed/scroll render orchestrators — reading
-# and mutating the loader's file-scope preflight/step globals at call time in the same
-# sourced shell. R6 fd-4/TTY lifecycle: preflight_ensure_tty opens fd 4 here, cleanup
+# Glass Atrium launcher — dependency-preflight + headless-auth module. SOURCED by the glass-atrium
+# entry point (never executed): shebang/strict-mode/IFS/traps + the top-level const/stub band
+# (readonly PREFLIGHT_EXIT_BLOCKED, AUTH_FAIL_RE, the PREFLIGHT_TTY_OWNED/PREFLIGHT_NONINTERACTIVE/
+# PREFLIGHT_SUMMARY/PREFLIGHT_GROUP*_RUNNABLE stubs) stay loader-owned so re-sourcing never re-arms.
+# Owns the always-on bare-Mac dependency preflight — the detect-then-skip bootstrap layer (TTY/PATH/rc
+# helpers, grouped-consent + guide gates, launchd headless-auth token provisioning, fakechat + python
+# installs, boxed/scroll render orchestrators) — reading/mutating the loader's file-scope preflight/step
+# globals in the same sourced shell. R6 fd-4/TTY lifecycle: preflight_ensure_tty opens fd 4 here, cleanup
 # (loader) closes it — same sourced shell, so the open/close pair spans the two files safely.
 
-# preflight_out / preflight_line — the preflight's chrome sink. Mirrors tty_out /
-# tty_line but targets the preflight TTY: the menu's fd 3 when ui_init engaged it,
-# else our own fd 4 (the passthrough path), else stderr in the non-interactive
-# fallback (where there is no chrome to draw, only the loud-fail message).
+# preflight_out / preflight_line — the preflight's chrome sink. Mirrors tty_out / tty_line but targets
+# the preflight TTY: the menu's fd 3 when ui_init engaged it, else our own fd 4 (passthrough), else
+# stderr in the non-interactive fallback (no chrome to draw, only the loud-fail message).
 preflight_out() {
   if [[ -n "${TTY}" ]]; then
     printf '%s' "$*" >"${TTY}"
@@ -36,12 +33,11 @@ preflight_line() {
   fi
 }
 
-# preflight_ensure_tty — make a TTY available for the preflight prompts/progress.
-# Interactive menu: ${TTY} (fd 3) is already open + TTY_SAVED captured by ui_init —
-# reuse it. Passthrough: open /dev/tty as fd 4 when readable, snapshot TTY_SAVED so
-# confirm_typed's cooked-mode toggle works, and route the TUI helpers at fd 4 via
-# a temporary TTY assignment. No controlling TTY at all -> PREFLIGHT_NONINTERACTIVE
-# so the missing-set path loud-fails instead of blocking on an unanswerable prompt.
+# preflight_ensure_tty — make a TTY available for the preflight prompts/progress. Interactive menu:
+# ${TTY} (fd 3) already open + TTY_SAVED captured by ui_init — reuse it. Passthrough: open /dev/tty as
+# fd 4 when readable, snapshot TTY_SAVED so confirm_typed's cooked-mode toggle works, route TUI helpers
+# at fd 4 via a temporary TTY assignment. No controlling TTY -> PREFLIGHT_NONINTERACTIVE so the
+# missing-set path loud-fails instead of blocking on an unanswerable prompt.
 preflight_ensure_tty() {
   # interactive menu already owns a TTY (fd 3 + TTY_SAVED) — nothing to acquire.
   if [[ -n "${TTY}" ]]; then
@@ -62,9 +58,8 @@ preflight_ensure_tty() {
   PREFLIGHT_NONINTERACTIVE=true
 }
 
-# preflight_release_tty — close the passthrough-opened fd 4 + unset the borrowed
-# ${TTY} so the rest of the passthrough run does not write to a closed fd. A no-op
-# when the interactive menu owned the TTY (we only release what WE opened).
+# preflight_release_tty — close the passthrough-opened fd 4 + unset the borrowed ${TTY} so the rest of
+# the run does not write to a closed fd. No-op when the menu owned the TTY (release only what WE opened).
 preflight_release_tty() {
   if [[ "${PREFLIGHT_TTY_OWNED}" == "true" ]]; then
     exec 4>&- 2>/dev/null || true
@@ -73,11 +68,10 @@ preflight_release_tty() {
   fi
 }
 
-# preflight_eval_brew_shellenv — put a freshly-installed brew on PATH for the rest
-# of the run (Apple-Silicon installs to /opt/homebrew, which is NOT on a stock
-# PATH, so a later `brew install` would not resolve without this). ga_cmd_brew_shellenv
-# echoes the `<prefix>/bin/brew shellenv` line; we eval its OUTPUT (the env exports),
-# guarded so a missing brew binary is a no-op rather than a set -e abort.
+# preflight_eval_brew_shellenv — put a freshly-installed brew on PATH for the rest of the run
+# (Apple-Silicon installs to /opt/homebrew, NOT on a stock PATH, so a later `brew install` would not
+# resolve). ga_cmd_brew_shellenv echoes the `<prefix>/bin/brew shellenv` line; we eval its OUTPUT (the
+# env exports), guarded so a missing brew binary is a no-op rather than a set -e abort.
 preflight_eval_brew_shellenv() {
   local shellenv_cmd
   shellenv_cmd="$(ga_cmd_brew_shellenv)"
@@ -91,9 +85,8 @@ preflight_eval_brew_shellenv() {
   return 0
 }
 
-# preflight_shell_rc — echo the login-shell rc file to persist PATH lines into.
-# Default ~/.zshrc (macOS default login shell since Catalina) when $SHELL is unset
-# or unrecognized. Echo-only (no mutation) so callers can grep-guard the append.
+# preflight_shell_rc — echo the login-shell rc file to persist PATH lines into. Default ~/.zshrc
+# (macOS default since Catalina) when $SHELL is unset/unrecognized. Echo-only so callers grep-guard the append.
 preflight_shell_rc() {
   case "${SHELL:-}" in
     */zsh) printf '%s\n' "${HOME}/.zshrc" ;;
@@ -102,15 +95,12 @@ preflight_shell_rc() {
   esac
 }
 
-# preflight_persist_rc_line — append ONE line to the login-shell rc file IF not
-# already present (grep -qxF whole-line idempotency). The line MUST be write-time-
-# EXPANDED (never a `$(brew --prefix …)` subshell — that re-forks every startup).
-# Best-effort: a non-writable rc is a silent no-op (the in-session export already
-# covered THIS run; the rc line is a FUTURE-shell convenience, never abort-worthy).
-#
-# OWNERSHIP MARKER: the trailing ` # glass-atrium` marker lets uninstall
-# (remove_rc_lines) remove EXACTLY GA's lines. The marker is part of the written
-# line, so the caller passes the bare export and this appends the marker once.
+# preflight_persist_rc_line — append ONE line to the login-shell rc file IF not already present
+# (grep -qxF whole-line idempotency). The line MUST be write-time-EXPANDED (never a `$(brew --prefix …)`
+# subshell — that re-forks every startup). Best-effort: a non-writable rc is a silent no-op (the
+# in-session export covered THIS run; the rc line is a FUTURE-shell convenience, never abort-worthy).
+# OWNERSHIP MARKER: the trailing ` # glass-atrium` lets uninstall (remove_rc_lines) remove EXACTLY GA's
+# lines; the marker is part of the written line, so the caller passes the bare export + this appends it once.
 preflight_persist_rc_line() {
   local line="$1" rc marked
   [[ -n "${line}" ]] || return 0
@@ -122,11 +112,10 @@ preflight_persist_rc_line() {
   return 0
 }
 
-# preflight_path_prepend — put one bin dir on the CURRENT session PATH (idempotent
-# prepend, so a same-session downstream `command -v` resolves it) AND persist the
-# matching rc line for FUTURE shells. The rc line is write-time-EXPANDED ${dir} +
-# LITERAL runtime $PATH (no subshell — never re-forks at startup). $1 = bin dir.
-# Shared by the keg-only and native-installer PATH injects (same 5-line sequence).
+# preflight_path_prepend — put one bin dir on the CURRENT session PATH (idempotent prepend, so a
+# same-session `command -v` resolves it) AND persist the matching rc line for FUTURE shells. The rc
+# line is write-time-EXPANDED ${dir} + LITERAL runtime $PATH (no subshell — never re-forks). $1 = bin
+# dir. Shared by the keg-only and native-installer PATH injects.
 preflight_path_prepend() {
   local dir="$1"
   case ":${PATH}:" in
@@ -136,12 +125,10 @@ preflight_path_prepend() {
   preflight_persist_rc_line "export PATH=\"${dir}:\$PATH\""
 }
 
-# preflight_keg_path_inject — prepend a keg-only brew formula's bin to PATH (current
-# session + rc) via preflight_path_prepend. WHY: versioned formulae (node@24,
-# postgresql@N) are keg-only — `brew shellenv` does NOT add their bins to PATH, so a
-# fresh `brew install node@24` leaves `node` unresolved this session without this.
-# No-op when the formula is absent (an nvm-node / no-brew-pg machine is untouched) or
-# the prefix is unresolvable. $1 = brew formula name (e.g. node@24, postgresql@18).
+# preflight_keg_path_inject — prepend a keg-only brew formula's bin to PATH (current session + rc) via
+# preflight_path_prepend. WHY: versioned formulae (node@24, postgresql@N) are keg-only — `brew shellenv`
+# does NOT add their bins to PATH, so a fresh `brew install node@24` leaves `node` unresolved this
+# session. No-op when the formula/prefix is absent (nvm-node / no-brew-pg untouched). $1 = brew formula.
 preflight_keg_path_inject() {
   local formula="$1" prefix
   [[ "$(ga_brew_formula_present "${formula}")" == "yes" ]] || return 0
@@ -155,8 +142,7 @@ preflight_keg_path_inject() {
 # the HIGHEST installed brew postgresql@N via ga_pg_keg_major (brew-keg-first, NOT the psql-client-first
 # ga_pg_installed_major — a stale lower-major psql on PATH must not pick the wrong keg), defaulting to
 # the fresh-install pin @18 when none resolves (the post-consent brew batch just added postgresql@18 but
-# its keg-only psql is not yet on PATH). Replaces the former literal `postgresql@17` inject so a
-# present-but-down PG14 injects @14 and a fresh @18 injects @18. The single-major node@24 keg stays literal.
+# its keg-only psql is not yet on PATH). A present-but-down PG14 injects @14, a fresh @18 injects @18; the single-major node@24 keg stays literal.
 preflight_keg_path_inject_pg() {
   local major
   major="$(ga_pg_keg_major)"
@@ -164,18 +150,18 @@ preflight_keg_path_inject_pg() {
   preflight_keg_path_inject "postgresql@${major}"
 }
 
-# preflight_pg_utc_guard — intercept a FOREIGN/BROKEN postgres squatting the peer-auth socket
-# BEFORE the service/role steps (and the downstream monitor) trust it. ga_detect_postgres=='present'
-# is satisfied by a bare SELECT 1, but an orphaned postmaster from a now-deleted keg (lost tzdata)
-# ANSWERS SELECT 1 yet REJECTS `SET timezone='UTC'` (pg 22023) — and the monitor's UTC-gated pool
-# then FATALs the 30s bootstrap health gate. Discriminate via ga_detect_postgres_utc:
+# preflight_pg_utc_guard — intercept a FOREIGN/BROKEN postgres squatting the peer-auth socket BEFORE
+# the service/role steps (and the monitor) trust it. ga_detect_postgres=='present' is satisfied by a
+# bare SELECT 1, but an orphaned postmaster from a deleted keg (lost tzdata) ANSWERS SELECT 1 yet
+# REJECTS `SET timezone='UTC'` (pg 22023) — and the monitor's UTC-gated pool then FATALs the 30s
+# bootstrap health gate. Discriminate via ga_detect_postgres_utc:
 #   * not 'broken' (ok / down / absent) → clean, nothing to do (return 0).
-#   * 'broken' + a brew-managed keg present → RESTART the resolved keg + re-verify (self-heal a
-#     brew-owned server; a plain start is a no-op on an already-running broken server, hence restart).
+#   * 'broken' + a brew-managed keg present → RESTART the resolved keg + re-verify (self-heal; a plain
+#     start is a no-op on an already-running broken server, hence restart).
 #   * 'broken' + NO brew keg (an UNMANAGED orphan of a deleted keg) → LOUD-FAIL with concrete
-#     remediation and return non-zero — NEVER silently proceed into the downstream 30s FATAL.
-# Runs after the keg-inject (psql is on PATH), in BOTH preflight paths. Returns 0 on a clean/healed
-# socket, non-zero on an unrecoverable squatter (the caller bails exactly like the other steps).
+#     remediation + non-zero — NEVER silently proceed into the downstream 30s FATAL.
+# Runs after the keg-inject (psql on PATH), in BOTH preflight paths. Returns 0 on a clean/healed socket,
+# non-zero on an unrecoverable squatter (the caller bails like the other steps).
 preflight_pg_utc_guard() {
   [[ "$(ga_detect_postgres_utc)" == "broken" ]] || return 0
   preflight_line "$(c "${C_ALERT}" "[warn]") a postgres on ${PG_SOCKET}/.s.PGSQL.5432 answers but REJECTS SET timezone='UTC' (broken/foreign server)."
@@ -188,12 +174,10 @@ preflight_pg_utc_guard() {
       return 0
     fi
   fi
-  # unmanaged orphan, OR a brew restart that did not clear it → attempt an install-scoped clear
-  # of the genuine orphan (SIGINT + stale-socket removal), then re-verify. A freshly-cleared
-  # socket reads 'down' (not 'ok'), so the success check is `!= broken` (mirrors the brew-restart
-  # re-verify above), NEVER `== ok` — else a genuinely-cleared orphan would fall to the loud-fail.
-  # A DRY_RUN / sandbox clear is a no-op inside the helper, so the orphan stays 'broken' here and
-  # correctly reaches the loud-fail below (never a false 'cleared').
+  # unmanaged orphan, OR a brew restart that did not clear it → attempt an install-scoped clear (SIGINT
+  # + stale-socket removal), then re-verify. A freshly-cleared socket reads 'down' not 'ok', so the
+  # success check is `!= broken` (mirrors the restart re-verify above), NEVER `== ok` — else a cleared
+  # orphan falls to loud-fail. A DRY_RUN/sandbox clear is a no-op, so the orphan stays 'broken' and correctly reaches the loud-fail (never a false 'cleared').
   preflight_line "$(c "${C_DIM}" "[info]") no brew-managed keg (or restart did not clear it) — clearing the unmanaged orphan on the socket."
   clear_unmanaged_pg_orphan
   if [[ "$(ga_detect_postgres_utc)" != "broken" ]]; then
@@ -210,14 +194,11 @@ preflight_pg_utc_guard() {
   return 1
 }
 
-# preflight_run_cmd — run ONE install command STRING (from a ga_cmd_* builder) as a
-# labelled run_step. The string is word-split into argv under a local space-IFS
-# (the file-wide IFS is $'\n\t'). Returns the step's exit code. Used for the
-# consented auto-installs; the command never originates from user input (every
-# ga_cmd_* echoes a fixed, harness-authored line). The local-space-IFS save /
-# word-split / restore-$'\n\t' sequence intentionally mirrors run_plan's per-step
-# split (same SC2086 disable) — both consume a single whitespace-joined command
-# string; keep the two in sync if the IFS-restore value ever changes.
+# preflight_run_cmd — run ONE install command STRING (from a ga_cmd_* builder) as a labelled run_step.
+# The string is word-split into argv under a local space-IFS (file-wide IFS is $'\n\t'). Returns the
+# step's exit code. The command never originates from user input (every ga_cmd_* echoes a fixed,
+# harness-authored line). The space-IFS save / word-split / restore-$'\n\t' sequence mirrors run_plan's
+# per-step split (same SC2086 disable) — keep the two in sync if the IFS-restore value changes.
 preflight_run_cmd() {
   local label="$1" cmd="$2" rc=0
   local IFS=' '
@@ -228,12 +209,10 @@ preflight_run_cmd() {
   return "${rc}"
 }
 
-# preflight_run_or_bail — run ONE consented install step and, on failure, release
-# the preflight-owned TTY before propagating the EXACT step exit code. The single
-# release-on-failure guard the auto-install steps (Homebrew/brew batch/pg/claude
-# CLI) share, so each step is `preflight_run_or_bail … || return $?` instead of a
-# hand-pasted release-and-return block (rc captured BEFORE the release so the
-# precise install exit code survives). Step guards + post-actions stay inline.
+# preflight_run_or_bail — run ONE consented install step and, on failure, release the preflight-owned
+# TTY before propagating the EXACT step exit code (rc captured BEFORE the release so the precise install
+# exit code survives). The single release-on-failure guard the auto-install steps (Homebrew/brew batch/
+# pg/claude CLI) share — each step is `preflight_run_or_bail … || return $?`. Step guards + post-actions stay inline.
 preflight_run_or_bail() {
   local rc=0
   preflight_run_cmd "$1" "$2" || rc=$?
@@ -241,35 +220,30 @@ preflight_run_or_bail() {
   return "${rc}"
 }
 
-# preflight_run_or_bail_framed — run ONE consented NON-INTERACTIVE install step through
-# the FRAMED install-progress render path, then release-on-failure exactly like
-# preflight_run_or_bail (which it delegates to). Framing = install RENDER_MODE in run_step:
-# fd 1 AND fd 2 are captured into STEP_LOG and classify-folded, and a single live
-# spinner/label row replaces the raw scrolling flood — so a noisy `brew install` / `npm i`
-# stdout does not swamp the terminal. RENDER_MODE is FUNCTION-local here (bash 3.2 has no
-# block scope, but this wrapper's only job IS the framed call), so ONLY this step is
-# framed and it auto-reverts on return — nothing leaks to sibling steps. Used for the
-# brew batch / pg service+role / claude CLI steps, which are non-interactive once
-# HOMEBREW_NO_ASK + NONINTERACTIVE are exported. DELIBERATELY NOT used for the Homebrew
-# installer step (D3): that step has a LIVE sudo password prompt (lib/ga-deps.sh
-# ga_homebrew_install) that fd-capture would swallow, so it stays on the visible raw path.
+# preflight_run_or_bail_framed — run ONE consented NON-INTERACTIVE install step through the FRAMED
+# install-progress render path, then release-on-failure like preflight_run_or_bail (delegated). Framing
+# = install RENDER_MODE in run_step: fd 1 AND fd 2 captured into STEP_LOG + classify-folded, a single
+# live spinner/label row replacing the raw scrolling flood so a noisy `brew install` / `npm i` does not
+# swamp the terminal. RENDER_MODE is FUNCTION-local (bash 3.2 has no block scope, but this wrapper's
+# only job IS the framed call), so ONLY this step is framed + it auto-reverts on return. Used for the
+# brew batch / pg service+role / claude CLI steps (non-interactive once HOMEBREW_NO_ASK + NONINTERACTIVE
+# are exported). DELIBERATELY NOT the Homebrew installer step (D3): its LIVE sudo password prompt
+# (ga_homebrew_install) would be swallowed by fd-capture, so it stays on the visible raw path.
 preflight_run_or_bail_framed() {
   local RENDER_MODE="install"
   preflight_run_or_bail "$1" "$2"
 }
 
-# preflight_bracket — run ONE interactive preflight gate in cooked-mode scrollback, bracketed by
-# an alt-screen drop/re-enter (mirrors _confirm_pregate). MENU context only (the boxed orchestrator
-# calls it): a gate's preflight_line guidance + confirm_typed prompt cannot render inside the dimmed
-# work box, so drop rmcup + restore cooked stty for the gate, then re-enter smcup + raw on return.
-# Leaves a CLEARED alt-screen (like _confirm_pregate) — the caller repaints the frame
-# (enter_run_state) when a box render follows. $1.. = the gate function + its args. Returns the
-# gate's EXACT exit code (set -e is already off here — run_gate_quiet wrapped the whole preflight).
+# preflight_bracket — run ONE interactive preflight gate in cooked-mode scrollback, bracketed by an
+# alt-screen drop/re-enter (mirrors _confirm_pregate). MENU context only: a gate's preflight_line
+# guidance + confirm_typed prompt cannot render inside the dimmed work box, so drop rmcup + restore
+# cooked stty, then re-enter smcup + raw on return. Leaves a CLEARED alt-screen — the caller repaints
+# the frame (enter_run_state) when a box render follows. $1.. = the gate function + its args. Returns
+# the gate's EXACT exit code (set -e off here — run_gate_quiet wrapped the whole preflight).
 preflight_bracket() {
   local rc=0
   # SINGLE-ACTIVE-SPINNER + torn-down-frame guard: stop any running idle spinner BEFORE rmcup, so no
-  # idle child keeps painting into the alt-screen frame this bracket is about to drop (KEEP-4d full-
-  # screen consent stays flicker-clean). Idempotent no-op when no idle window is open.
+  # idle child keeps painting into the alt-screen frame this bracket drops (KEEP-4d flicker-clean). Idempotent no-op when none open.
   stop_idle_spinner
   tp rmcup
   tp cnorm
@@ -287,18 +261,16 @@ preflight_bracket() {
   return "${rc}"
 }
 
-# preflight_panel_step — render ONE non-interactive preflight command as a single-step (1/1) panel
-# unit inside the engaged work box (menu context only). Mirrors the token/monitor/purge single-step
-# panel vocabulary: set the 1/1 STEP scaffolding + the ITEM-4 bar, repaint the box body, then run
-# the command as a RENDER_MODE=panel run_step (fd1+fd2 captured + suppressed, the spinner owning the
-# box body row). $1 = past/resolved label · $2 = present-progressive ACTIVE label (empty → falls back
-# to $1) · $3 = command string. Returns the step's EXACT exit code; the caller decides bail vs warn.
+# preflight_panel_step — render ONE non-interactive preflight command as a panel step inside the
+# engaged work box (menu context only). Mirrors the token/monitor/purge panel vocabulary: set the STEP
+# scaffolding + ITEM-4 bar, repaint the box body, then run the command as a RENDER_MODE=panel run_step
+# (fd1+fd2 captured + suppressed, the spinner owning the box body row). $1 = past/resolved label · $2 =
+# present-progressive ACTIVE label (empty → $1) · $3 = command. Returns the EXACT exit code; caller decides bail vs warn.
 preflight_panel_step() {
   local resolved="$1" active="$2" cmd="$3" rc=0
-  # shared step counter fix: advance the SHARED step counter set up-front by preflight_count_and_gate instead of the
-  # old 1/1 single-step hardcode — each framed box step is step i of the shared N. STEP_TOTAL is
-  # fixed for the whole preflight (do NOT reset it here). Default STEP_INDEX to 0 when unset so a
-  # stray direct call still renders a sane counter.
+  # shared step counter: advance the SHARED counter set up-front by preflight_count_and_gate — each
+  # framed box step is step i of the shared N. STEP_TOTAL is fixed for the whole preflight (do NOT reset
+  # here). Default STEP_INDEX to 0 when unset so a stray direct call still renders a sane counter.
   STEP_INDEX=$((${STEP_INDEX:-0} + 1))
   # Default STEP_TOTAL to the current index when the count pass never set it (a lone direct call →
   # i/i), then CLAMP i <= N so an imperfect estimate degrades to an N/N tail, never "7/5".
@@ -312,16 +284,14 @@ preflight_panel_step() {
   # run_step both see "panel" and route into the fixed workbox body row (rail-safe inner paint).
   local RENDER_MODE="panel"
   preflight_run_cmd "${resolved}" "${cmd}" || rc=$?
-  # shared step counter fix: clear ONLY the per-step render detail (label/bar), PRESERVING the shared STEP_INDEX/
-  # STEP_TOTAL counter so the NEXT framed step advances i rather than resetting to 1/1. The whole
-  # counter is swept once by _run_dependency_preflight_boxed's teardown after the final step.
+  # shared step counter: clear ONLY the per-step render detail (label/bar), PRESERVING the shared
+  # STEP_INDEX/STEP_TOTAL so the NEXT step advances i (not reset to 1/1). Swept once by _run_dependency_preflight_boxed's teardown after the final step.
   STEP_LABEL_ACTIVE_CUR=""
   STEP_BAR_CUR=""
   STEP_BAR_ACCENT_CUR=""
   STEP_SUPPRESS_SPINNER=""
-  # The boxed path surfaces NO per-step log (clean UI), so sweep the panel FAIL temp run_step
-  # parked in STEP_LAST_FAIL_LOG rather than leaking it (the passthrough path retains full inline
-  # step logs for diagnosis). rc stays the sole pass/fail signal.
+  # The boxed path surfaces NO per-step log (clean UI), so sweep the panel FAIL temp in STEP_LAST_FAIL_LOG
+  # rather than leaking it (the passthrough path retains full inline logs for diagnosis). rc stays the sole signal.
   if [[ "${rc}" -ne 0 && -n "${STEP_LAST_FAIL_LOG}" && -f "${STEP_LAST_FAIL_LOG}" ]]; then
     rm -f "${STEP_LAST_FAIL_LOG}"
     STEP_LAST_FAIL_LOG=""
@@ -329,10 +299,9 @@ preflight_panel_step() {
   return "${rc}"
 }
 
-# preflight_panel_step_or_bail — preflight_panel_step + the release-on-failure guard the bailing
-# ENGAGE1 steps (brew batch / pg service+role / claude CLI) share (the panel analogue of
-# preflight_run_or_bail_framed). release_tty is a no-op in the menu context — the menu owns fd3 —
-# but is kept for symmetry. rc is captured BEFORE the release so the precise step exit code survives.
+# preflight_panel_step_or_bail — preflight_panel_step + the release-on-failure guard the bailing ENGAGE1
+# steps (brew batch / pg service+role / claude CLI) share (panel analogue of preflight_run_or_bail_framed).
+# release_tty is a no-op in the menu context (menu owns fd3), kept for symmetry. rc captured BEFORE the release so the precise step exit code survives.
 preflight_panel_step_or_bail() {
   local rc=0
   preflight_panel_step "$1" "$2" "$3" || rc=$?
@@ -340,11 +309,10 @@ preflight_panel_step_or_bail() {
   return "${rc}"
 }
 
-# preflight_guide_xcode_clt — GUIDE-USER gate (install ORDER step 1). The CLT
-# installer is a GUI dialog the user clicks through, so we PRINT the trigger
-# command, then POLL ga_detect_xcode_clt until it reports present (a hard
-# prerequisite for Homebrew). Returns 0 once present, non-zero if the user cancels
-# the poll. No mutation here — xcode-select --install opens the OS dialog itself.
+# preflight_guide_xcode_clt — GUIDE-USER gate (install ORDER step 1). The CLT installer is a GUI dialog
+# the user clicks through, so PRINT the trigger command, then POLL ga_detect_xcode_clt until present (a
+# hard Homebrew prerequisite). Returns 0 once present, non-zero if the user cancels the poll. No
+# mutation here — xcode-select --install opens the OS dialog itself.
 preflight_guide_xcode_clt() {
   [[ "$(ga_detect_xcode_clt)" == "present" ]] && return 0
 
@@ -370,10 +338,9 @@ preflight_guide_xcode_clt() {
   return 0
 }
 
-# preflight_grouped_consent — the SINGLE grouped consent gate (install ORDER steps
-# 2,3,4,5,8). Summarizes the EXACT commands the auto-with-consent set will run, then
-# gates the whole batch on ONE confirm_typed. $1.. = the human-readable command
-# lines to display. Returns 0 to proceed, non-zero on decline.
+# preflight_grouped_consent — the SINGLE grouped consent gate (install ORDER steps 2,3,4,5,8).
+# Summarizes the EXACT commands the auto-with-consent set will run, then gates the whole batch on ONE
+# confirm_typed. $1.. = the human-readable command lines. Returns 0 to proceed, non-zero on decline.
 preflight_grouped_consent() {
   preflight_line ""
   preflight_line "$(c "${C_STRONG}" "The following will be installed (one consent for the whole set):")"
@@ -386,14 +353,12 @@ preflight_grouped_consent() {
   confirm_typed "install" "Install the dependencies listed above (system mutation)."
 }
 
-# preflight_guide_claude_auth — GUIDE-USER HARD GATE (install ORDER step 6). claude
-# auth cannot be automated, so we PRINT the login instruction, then loop: re-detect
-# auth, and require a typed confirmation to proceed only once auth is established.
-# Detection NEVER reads ~/.claude/.credentials.json contents (presence-only, in
-# ga_detect_claude_auth). Returns 0 once authenticated, non-zero if the user
-# abandons the gate. Once interactive auth is established, the headless provisioning
-# step (preflight_provision_headless_token) runs so the launchd daemons get a
-# keychain-bypassing CLAUDE_CODE_OAUTH_TOKEN.
+# preflight_guide_claude_auth — GUIDE-USER HARD GATE (install ORDER step 6). claude auth cannot be
+# automated, so PRINT the login instruction, then loop: re-detect auth, require a typed confirmation to
+# proceed only once auth is established. Detection NEVER reads ~/.claude/.credentials.json contents
+# (presence-only, ga_detect_claude_auth). Returns 0 once authenticated, non-zero if the user abandons.
+# Once interactive auth is established, preflight_provision_headless_token runs so the launchd daemons
+# get a keychain-bypassing CLAUDE_CODE_OAUTH_TOKEN.
 preflight_guide_claude_auth() {
   if [[ "$(ga_detect_claude_auth)" == "present" ]]; then
     # already interactively authenticated — still ensure the headless credential so
@@ -425,29 +390,23 @@ preflight_guide_claude_auth() {
   done
 }
 
-# ga_render_auth_script / ga_claude_auth_env_lib — resolve the Stage-A scripts from
-# OUR install tree (GA_DIR, the source-of-truth checkout being installed), so the
-# gate renders + self-tests against the exact scripts the deploy will symlink.
+# ga_render_auth_script / ga_claude_auth_env_lib — resolve the Stage-A scripts from OUR install tree
+# (GA_DIR, the SoT checkout being installed) so the gate renders + self-tests against the exact scripts the deploy will symlink.
 ga_render_auth_script() { printf '%s\n' "${GA_DIR}/scripts/render-claude-auth.sh"; }
 
 ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.sh"; }
 
-# headless_auth_selftest — source the rendered secrets file (claude_auth_load_env)
-# and run a minimal `claude -p` in a keychain-bypassing manner; return 0 iff the CLI
-# answers (rc 0 AND no 401/credential signature in its output). This is THE gate
-# signal: a green self-test means the launchd daemons will authenticate headlessly.
-#
-# Keychain-bypass: claude_auth_load_env exports CLAUDE_CODE_OAUTH_TOKEN from the
-# secrets file; the env credential takes precedence over the keychain OAuth item for
-# a `claude -p` call, so a successful probe proves the env path (not the keychain).
-# The probe output is scanned for the daemon_cycle.py auth signatures (401/403 /
-# "Invalid authentication credentials" / "Failed to authenticate") so a non-zero-
-# masking CLI that still 401s is caught. Output is otherwise DISCARDED (never
-# logged) — it could echo the rejected credential. Returns 2 when the lib is absent.
-#
-# CLAUDE bin + lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN /
-# GA_AUTH_ENV_LIB) so the bats suite can drive both the pass and the 401 path
-# without a real credential or a real `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
+# headless_auth_selftest — source the rendered secrets file (claude_auth_load_env) and run a minimal
+# `claude -p` in a keychain-bypassing manner; return 0 iff the CLI answers (rc 0 AND no 401/credential
+# signature in its output). This is THE gate signal: a green self-test means the launchd daemons will
+# authenticate headlessly. Keychain-bypass: claude_auth_load_env exports CLAUDE_CODE_OAUTH_TOKEN from
+# the secrets file; the env credential takes precedence over the keychain OAuth item for a `claude -p`
+# call, so a successful probe proves the env path (not the keychain). The probe output is scanned for
+# the daemon_cycle.py auth signatures (401/403 / "Invalid authentication credentials" / "Failed to
+# authenticate") so a non-zero-masking CLI that still 401s is caught. Output is otherwise DISCARDED
+# (never logged) — it could echo the rejected credential. Returns 2 when the lib is absent. CLAUDE bin +
+# lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
+# drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
   local claude_bin env_lib probe_out probe_rc=0
   claude_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
@@ -458,11 +417,10 @@ headless_auth_selftest() {
     return 2
   fi
 
-  # Run the source + probe in a SUBSHELL so the exported credential never leaks into
-  # the install process environment beyond the probe (and set -a side effects are
-  # contained). The lib's claude_auth_load_env warns + returns 0 when the secrets
-  # file is absent, so an unprovisioned machine self-tests against the keychain (and
-  # will 401 under launchd) — exactly the state the gate must detect and fix.
+  # Run the source + probe in a SUBSHELL so the exported credential never leaks into the install
+  # process environment beyond the probe (set -a side effects contained). The lib's claude_auth_load_env
+  # warns + returns 0 when the secrets file is absent, so an unprovisioned machine self-tests against the
+  # keychain (and will 401 under launchd) — exactly the state the gate must detect and fix.
   probe_out="$(
     # disable the file-scope ERR trap inside the probe: a non-zero `claude -p` (the
     # 401 case the gate explicitly handles) is an EXPECTED outcome here, not a script
@@ -477,9 +435,8 @@ headless_auth_selftest() {
   if [[ "${probe_rc}" -ne 0 ]]; then
     return 1
   fi
-  # rc 0 but a 401/credential signature in the body → still an auth failure (the
-  # CLI can exit 0 while reporting an API error in-band). Match the daemon_cycle.py
-  # _HAIKU_AUTH_PATTERNS set (case-insensitive).
+  # rc 0 but a 401/credential signature in the body → still an auth failure (the CLI can exit 0 while
+  # reporting an API error in-band). Match the daemon_cycle.py _HAIKU_AUTH_PATTERNS set (case-insensitive).
   if printf '%s' "${probe_out}" \
     | grep -qiE "${AUTH_FAIL_RE}"; then
     return 1
@@ -487,20 +444,15 @@ headless_auth_selftest() {
   return 0
 }
 
-# sanitize_setup_token — extract the bare OAuth value from `claude setup-token`'s
-# TTY-wrapped output (ANSI color + trailing CR + guidance lines all stripped) so the
-# value clears render-claude-auth.sh's control-char guard (which exit-7s on any
-# survivor). $1 = the raw captured stream; the clean value is printed to stdout.
-#
+# sanitize_setup_token — extract the bare OAuth value from `claude setup-token`'s TTY-wrapped output
+# (ANSI color + trailing CR + guidance lines stripped) so the value clears render-claude-auth.sh's
+# control-char guard (exit-7s on any survivor). $1 = the raw captured stream; the clean value to stdout.
 # Pipeline (bash 3.2 / BSD-portable — no GNU-only flags):
 #   tr -d '\r'                          delete carriage returns
-#   strip_csi                           strip CSI escape sequences (shared helper —
-#                                        the SAME stripper visible_len uses, so the
-#                                        two cannot drift; value stays in a var, off-argv)
-#   grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' first match by fixed prefix (no `head`
-#                                        pipe → no SIGPIPE under pipefail/ERR-trap)
-# FALLBACK (vendor format drift — the grep finds nothing): the last non-empty CLEAN
-# line of the same scrubbed stream (mirrors the prior awk last-line behavior).
+#   strip_csi                           strip CSI escape sequences (shared helper — the SAME stripper
+#                                        visible_len uses, so the two cannot drift; value in a var, off-argv)
+#   grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' first match by fixed prefix (no `head` pipe → no SIGPIPE)
+# FALLBACK (vendor format drift — the grep finds nothing): the last non-empty CLEAN line of the scrubbed stream.
 # SECURITY: value stays on stdout of a command substitution captured into a local —
 # never argv, never logged.
 sanitize_setup_token() {
@@ -519,17 +471,13 @@ sanitize_setup_token() {
   printf '%s\n' "${cleaned}" | awk 'NF{last=$0} END{if (last != "") print last}'
 }
 
-# preflight_provision_headless_token — the AUTH-gate headless-provisioning step.
-# IDEMPOTENT: when the secrets file already exists AND the self-test already passes,
-# SKIP (no re-prompt). Only when the self-test 401s OR the secrets file is missing
-# does it run `claude setup-token` (interactive — the user approves in the browser),
-# capture the emitted credential, and pipe it to render-claude-auth.sh via STDIN
-# (never argv, never echoed). Loud-fails on a real failure (named return codes); the
-# EXISTING interactive auth guidance is preserved as the fallback. Non-fatal to the
-# install: a failure here WARNs (the daemons keep the keychain fallback) rather than
-# aborting the install — the launchd 401 is a daemon-only issue, not an interactive-
-# install blocker.
-#
+# preflight_provision_headless_token — the AUTH-gate headless-provisioning step. IDEMPOTENT: when the
+# secrets file exists AND the self-test passes, SKIP (no re-prompt). Only when the self-test 401s OR the
+# secrets file is missing does it run `claude setup-token` (interactive — the user approves in the
+# browser), capture the emitted credential, and pipe it to render-claude-auth.sh via STDIN (never argv,
+# never echoed). Loud-fails on a real failure (named return codes); the interactive auth guidance is the
+# fallback. Non-fatal: a failure WARNs (the daemons keep the keychain fallback) rather than aborting —
+# the launchd 401 is a daemon-only issue, not an interactive-install blocker.
 # Return codes (all surfaced via stderr/preflight chrome — no silent absorption):
 #   0 — provisioned (or already valid, idempotent skip)
 #   1 — secrets file present but the self-test still 401s after a (re)provision attempt
@@ -545,15 +493,13 @@ preflight_provision_headless_token() {
   preflight_line ""
   preflight_line "$(c "${C_INFO}" "── headless launchd auth (CLAUDE_CODE_OAUTH_TOKEN) ──")"
 
-  # IDEMPOTENT FAST-PATH: a present secrets file + a passing self-test means the
-  # daemons already authenticate headlessly — nothing to do.
+  # IDEMPOTENT FAST-PATH: present secrets file + passing self-test = daemons already authenticate headlessly.
   if [[ -f "${secrets_file}" ]] && headless_auth_selftest; then
     preflight_line "$(c "${C_OK}" "[ok]") headless auth already provisioned + self-test passes — skipping."
     return 0
   fi
 
-  # Stage-A scripts must be present to render/self-test. Absent → loud WARN (the
-  # daemons fall back to the keychain; the install is not blocked).
+  # Stage-A scripts must be present to render/self-test. Absent → loud WARN (daemons fall back to keychain; install not blocked).
   if [[ ! -f "${render_script}" || ! -f "$(ga_claude_auth_env_lib)" ]]; then
     preflight_line "$(c "${C_ALERT}" "[warn]") headless-auth scripts missing — skipping provisioning (daemons use keychain)."
     return 2
@@ -563,11 +509,10 @@ preflight_provision_headless_token() {
   preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' — approve in the browser, then return here.")"
   preflight_line ""
 
-  # Capture the setup-token output. `claude setup-token` emits a long-lived value to
-  # stdout (interactive browser approval). It is captured into a LOCAL var and piped
-  # to render-claude-auth.sh via STDIN — it NEVER touches argv (ps exposure) and is
-  # NEVER echoed/logged. stderr is left attached so the browser-approval prompts
-  # reach the user; only stdout (the value) is captured.
+  # Capture the setup-token output. `claude setup-token` emits a long-lived value to stdout (interactive
+  # browser approval), captured into a LOCAL var + piped to render-claude-auth.sh via STDIN — it NEVER
+  # touches argv (ps exposure) and is NEVER echoed/logged. stderr stays attached so the browser-approval
+  # prompts reach the user; only stdout (the value) is captured.
   captured_value="$("${setup_bin}" setup-token)" || st_rc=$?
   if [[ "${st_rc}" -ne 0 ]]; then
     preflight_line "$(c "${C_ALERT}" "[warn]") 'claude setup-token' exited ${st_rc} — headless auth NOT provisioned."

@@ -1,87 +1,46 @@
 #!/usr/bin/env bash
 # generate-manifest.sh — regenerate manifest.json from git ls-files.
-# This script is the manifest SoT generator: manifest.json MUST never be
-# hand-edited, only regenerated here (or verified with --check).
+# manifest.json is the SoT: never hand-edited, only regenerated here (or --check).
 #
-# Schema (v1.0.0 — version + per-file integrity added for the update system):
-#   {
-#     "version": "1.0.0",            top-level SINGLE Atrium system version SoT
-#     "_doc_settings_json": "…",     settings.json never-touch contract doc
-#     "files": ["agents/foo.md", …], DEPLOY LIST — array of path STRINGS (the
-#                                    installer symlink farm + doctor read this
-#                                    shape verbatim; kept byte-compatible)
-#     "hashes": {                    PARALLEL per-file SHA-256 map (path → hash)
-#       "agents/foo.md": "<64-hex>", one entry per files[] path, same count;
-#       …                            O(1) hashes[path] lookup for the update
-#     }                              skill's hash-diff sync + integrity verify
-#   }
-# Schema rationale (parallel map, NOT files-as-objects): keeping files[] an
-# array of strings leaves the installer (lib/ga-core.sh read_manifest_files /
-# remove_manifest_links / doctor), validate-compliance-matrix.sh, and the
-# acceptance/e2e suites — all of which do `jq -r '.files[]'` — working
-# UNCHANGED. The hashes map adds integrity without breaking those consumers and
-# gives downstream a direct hashes[path] lookup.
+# Schema (v1.0.0):
+#   version              single Atrium system version SoT
+#   _doc_settings_json   settings.json never-touch contract doc
+#   files                DEPLOY LIST — array of path STRINGS e.g. "agents/foo.md"
+#   hashes               parallel {path: sha256} map, one entry per files[] path
+# files[] stays a string array (NOT files-as-objects) so every `jq -r '.files[]'`
+# consumer (ga-core.sh read/remove_manifest_links + doctor, validate-compliance-matrix,
+# acceptance/e2e) works UNCHANGED; hashes adds integrity + O(1) hashes["agents/foo.md"] lookup.
 #
-# Deploy-scope policy (codified HERE — the single authority). manifest.files is
-# BOTH the release-bundle member list (publish-release.sh tars exactly this set)
-# AND the ~/.claude symlink-farm source — so it now carries TWO categories:
-#   INCLUDE-A  SYMLINKED harness components — git-TRACKED files under the dirs the
-#            engine farms into ~/.claude: agents/ autoagent/ rules/ scripts/ skills/.
-#   INCLUDE-B  INSTALL-INTERNAL runtime — BUNDLED + per-file hash-verified like
-#            everything else, but consumed IN PLACE from ~/.glass-atrium and thus
-#            NEVER symlinked into ~/.claude (lib/ga-core.sh::is_symlink_excluded
-#            SYMLINK_EXCLUDE_PREFIXES/EXACT filters them out of the farm). Members:
-#              * hooks/ + scoped/ (settings.json hook command paths and the
-#                inject-scope-rules / validate-compliance-matrix SCOPED source
-#                read them from ~/.glass-atrium directly),
-#              * agent-registry.json + the top-level glass-atrium launcher
-#                (monitor registry.ts default and the launcher consumers resolve
-#                them in ~/.glass-atrium),
-#              * lib/ (ga-core.sh + ga-deps.sh, the install/uninstall/update
-#                ENGINE the launcher SOURCES from its own resolved dir),
-#              * config.toml.example (render_config template),
-#              * requirements.txt (python deps), and
-#              * monitor/ (the dashboard app the one-stop bootstrap BUILDS with
-#                `cd monitor && npm run build` + runs in-place as
-#                `node dist/server/main.js`, and whose scripts/oss-db-setup.sh the
-#                DB bootstrap runs — `npm ci` there regenerates node_modules from
-#                the bundled package-lock.json). Its gitignored data/* contents,
-#                node_modules, and dist/ are auto-excluded by git ls-files; its
-#                test tree (monitor/test/*) is dropped by EXCLUDE_RE below.
-#            Before this set was added, a fresh no-.git bundle install was
-#            dead-on-arrival: the launcher's `source ${GA_DIR}/lib/ga-core.sh` had
-#            no bundled target, and the bootstrap's monitor build/run (exit 20)
-#            had no monitor/ source.
-#   EXCLUDE  dev-only artifacts that must never deploy to ~/.claude:
-#            */test/* trees + test_*.py / *.bats / *.test.js basenames (bats,
-#            pytest, and node test suites run from the repo checkout, nothing
-#            under ~/.claude consumes them), */archive/* (historical
-#            snapshots, not live runtime), and publish-release.sh (the
-#            maintainer/CI-only release-cutting tool — git-tracked for version
-#            control but never deployed to a consumer ~/.claude).
-#   Untracked/gitignored files are excluded by construction (git ls-files):
-#   a fresh clone cannot contain them, so listing one hard-fails doctor §4
-#   ("manifest source missing") on every fresh install.
+# Deploy-scope policy (single authority). manifest.files is BOTH the release-bundle
+# member list AND the ~/.claude symlink-farm source, so it carries two categories:
+#   INCLUDE-A  SYMLINKED harness — git-tracked agents/ autoagent/ rules/ scripts/
+#              skills/ (farmed into ~/.claude).
+#   INCLUDE-B  INSTALL-INTERNAL runtime — bundled + hash-verified but consumed IN PLACE
+#              from ~/.glass-atrium, NEVER symlinked (ga-core.sh::is_symlink_excluded
+#              SYMLINK_EXCLUDE_PREFIXES/EXACT filters them out): hooks/ scoped/,
+#              agent-registry.json + the glass-atrium launcher, lib/ (the
+#              install/update ENGINE the launcher SOURCES), config.toml.example,
+#              requirements.txt, monitor/ (dashboard built + run in place; its
+#              gitignored data/node_modules/dist + monitor/test/* auto-excluded).
+#              Without lib/ + monitor/ a fresh no-.git bundle is dead-on-arrival
+#              (launcher source + monitor build/run have no target).
+#   EXCLUDE    dev-only: */test/* + test_*.py/*.bats/*.test.js basenames, */archive/*,
+#              publish-release.sh (maintainer/CI-only). Untracked/gitignored excluded
+#              by construction — listing one hard-fails doctor §4 on a fresh clone.
 #
-# settings.json stays OUT of .files by contract (user-owned config the
-# installer must never overwrite) — the rationale doc lives in the manifest's
-# _doc_settings_json key, which regeneration carries over verbatim.
+# settings.json stays OUT of .files (user-owned config the installer must never
+# overwrite) — rationale in _doc_settings_json, carried over verbatim on regen.
 #
-# Output is LC_ALL=C sorted (deterministic, diff-friendly) and written
-# atomically (temp + jq re-validation + mv — never a half file).
+# Output is LC_ALL=C sorted and written atomically (temp + jq re-validation + mv).
 #
 # Usage:
 #   generate-manifest.sh           regenerate manifest.json in place
-#   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta
-#                                  listing when the tracked manifest diverges
-#                                  from the generated set — orphan/missing
-#                                  paths, a VERSION mismatch, OR a per-file
-#                                  HASH mismatch (content changed, path
-#                                  unchanged) all diverge (CI/acceptance gate)
+#   generate-manifest.sh --check   verify-only: exit 1 + both-direction delta on
+#                                  orphan/missing paths, VERSION mismatch, OR per-file
+#                                  HASH mismatch (content changed, path unchanged)
 #
-# Named exit codes: 1=--check divergence · 3=git absent or not a work tree ·
-# 4=jq or sha256 tool absent · 5=manifest or _doc_settings_json missing ·
-# 6=empty generation.
+# Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
+# 4=jq or sha256 tool absent · 5=manifest or _doc_settings_json missing · 6=empty generation.
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -303,7 +262,7 @@ run_generate() {
   refresh_deployed_farm
 }
 
-# --- deployed-facade refresh (maintainer flow — incident #58325) -------------
+# deployed-facade refresh (maintainer flow — incident #58325)
 # A dev-added file enters the regenerated manifest above, but nothing re-ran
 # the ~/.claude symlink farm — the facade drifted until the next incidental
 # agent add/delete (the doctor only REPORTS undeployed entries). When THIS repo

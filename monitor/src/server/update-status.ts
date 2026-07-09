@@ -1,25 +1,16 @@
-// Update-availability resolver (plan D2 / E2 T05). Tells the dashboard whether a
-// newer Atrium RELEASE exists, by comparing the local installed version
-// (version.ts getAtriumVersion → manifest.json `version`) against the LATEST
-// GitHub Release's manifest.json `version`, fetched over HTTPS.
+// Update-availability resolver — tells the dashboard whether a newer Atrium RELEASE exists, comparing the
+// local installed version (version.ts → manifest.json `version`) against the LATEST GitHub Release's
+// manifest.json `version`, fetched over HTTPS.
 //
-// Safety / robustness contract (every branch degrades, NEVER throws on the
-// dashboard path):
-//   - source-dev tree (the symlinked maintainer checkout) → "source-dev", the
-//     check is SUPPRESSED so the badge never fires on the dev machine (plan B11/Q5).
-//     Grounded marker: the release bundle is `tar … -T <manifest.files>` (publish-
-//     release.sh build_assets), and manifest.files comes from `git ls-files`, which
-//     NEVER includes `.git/`. So a relocated consumer install has no `.git`; the
-//     maintainer source tree does → `.git` presence == source-dev.
-//   - release repo unconfigured (no GitHub repo yet) → "unknown" (no badge).
-//   - network / parse failure → "unknown", logged warn-once.
-//   - read from a TAGGED RELEASE asset over HTTPS, NEVER raw `main` (gate G5).
-//   - the remote check is CACHED with a TTL so the dashboard does not hit GitHub
-//     on every load.
+// Safety contract — every branch degrades, NEVER throws on the dashboard path:
+//   - source-dev tree (symlinked maintainer checkout) → "source-dev", check SUPPRESSED (badge never fires on
+//     the dev machine). Grounded marker: the release bundle is `tar … -T <manifest.files>` and manifest.files
+//     comes from `git ls-files`, which NEVER includes `.git/` — so a relocated install has no `.git`, the maintainer tree does → `.git` presence == source-dev.
+//   - release repo unconfigured → "unknown"; network / parse failure → "unknown", logged warn-once.
+//   - read from a TAGGED RELEASE asset over HTTPS, NEVER raw `main` (gate G5); the remote check is TTL-CACHED.
 //
-// Transport convention mirrors scripts/publish-release.sh: the release tag is
-// `v<manifest.version>` and the release carries a `manifest.json` asset; the repo
-// slug resolves ATRIUM_RELEASE_REPO env → config.toml [release].repo.
+// Transport mirrors publish-release.sh: release tag `v<manifest.version>` carrying a `manifest.json` asset;
+// repo slug resolves ATRIUM_RELEASE_REPO env → config.toml [release].repo.
 
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -150,10 +141,9 @@ function build(
   };
 }
 
-// ----- source-dev detection --------------------------------------------------
+// source-dev detection
 
-// ATRIUM_ROOT env override (test hook) → ~/.glass-atrium (matches
-// compute-arch-drift.ts ATRIUM_ROOT). The default install root.
+// ATRIUM_ROOT env override (test hook) → ~/.glass-atrium default install root (matches compute-arch-drift.ts ATRIUM_ROOT).
 function resolveAtriumRoot(): string {
   const override = process.env.ATRIUM_ROOT;
   if (typeof override === "string" && override.length > 0) {
@@ -164,8 +154,7 @@ function resolveAtriumRoot(): string {
 
 async function defaultIsSourceDev(): Promise<boolean> {
   try {
-    // `.git` (dir or file) present at the Atrium root == the maintainer source
-    // tree; a relocated consumer install (extracted release bundle) has none.
+    // `.git` (dir or file) at the Atrium root == maintainer source tree; a relocated consumer install (extracted bundle) has none.
     await access(join(resolveAtriumRoot(), ".git"));
     return true;
   } catch {
@@ -173,10 +162,9 @@ async function defaultIsSourceDev(): Promise<boolean> {
   }
 }
 
-// ----- release repo slug -----------------------------------------------------
+// release repo slug
 
-// ATRIUM_RELEASE_REPO env → config.toml [release].repo → null. Mirrors
-// publish-release.sh repo_slug() (env overrides config); null == unconfigured.
+// ATRIUM_RELEASE_REPO env → config.toml [release].repo → null (mirrors publish-release.sh repo_slug; null == unconfigured).
 async function defaultReleaseSlug(): Promise<string | null> {
   const fromEnv = process.env.ATRIUM_RELEASE_REPO;
   if (typeof fromEnv === "string" && fromEnv.trim().length > 0) {
@@ -185,8 +173,7 @@ async function defaultReleaseSlug(): Promise<string | null> {
   return readReleaseRepoFromConfig(resolveConfigTomlPath());
 }
 
-// ATRIUM_CONFIG_TOML env (test/sandbox override) → <root>/config.toml. Mirrors
-// scripts/lib/atrium-config.sh atrium_config_file().
+// ATRIUM_CONFIG_TOML env (test/sandbox override) → <root>/config.toml (mirrors atrium-config.sh atrium_config_file()).
 function resolveConfigTomlPath(): string {
   const override = process.env.ATRIUM_CONFIG_TOML;
   if (typeof override === "string" && override.length > 0) {
@@ -195,9 +182,8 @@ function resolveConfigTomlPath(): string {
   return join(resolveAtriumRoot(), "config.toml");
 }
 
-// Minimal table-scoped read of [release].repo (no TOML-parser dependency —
-// mirrors atrium-config.sh's awk approach for one key). A repo slug never
-// contains '#', so splitting an inline comment on '#' is safe for this key.
+// Minimal table-scoped read of [release].repo (no TOML-parser dependency — mirrors atrium-config.sh's awk approach).
+// A repo slug never contains '#', so splitting an inline comment on '#' is safe for this key.
 async function readReleaseRepoFromConfig(path: string): Promise<string | null> {
   let raw: string;
   try {
@@ -225,7 +211,7 @@ async function readReleaseRepoFromConfig(path: string): Promise<string | null> {
   return null;
 }
 
-// ----- remote release fetch (HTTPS, tagged release asset, never raw main) -----
+// remote release fetch (HTTPS, tagged release asset, never raw main)
 
 interface GithubReleaseAsset {
   name?: unknown;
@@ -236,8 +222,7 @@ interface GithubRelease {
   assets?: unknown;
 }
 
-// Reads the latest GitHub Release's version: prefer the manifest.json asset's
-// `.version`, fall back to the release tag (`v<version>` per publish-release.sh).
+// Reads the latest GitHub Release's version: prefer the manifest.json asset's `.version`, else the release tag (v<version> per publish-release.sh).
 // Returns null (NOT throw) on any HTTP / network / parse failure.
 async function fetchLatestReleaseVersion(
   slug: string,
@@ -306,7 +291,7 @@ async function fetchManifestVersion(url: string, timeoutMs: number): Promise<str
   }
 }
 
-// ----- semver compare (v-prefix tolerant, SemVer 2.0.0 precedence) ------------
+// semver compare (v-prefix tolerant, SemVer 2.0.0 precedence)
 
 interface ParsedSemver {
   major: number;
@@ -420,7 +405,7 @@ function comparePrerelease(a: string[], b: string[]): number {
   return a.length < b.length ? -1 : 1;
 }
 
-// ----- env + warn helpers ----------------------------------------------------
+// env + warn helpers
 
 function resolveTtlMs(): number {
   return readPositiveIntEnv("ATRIUM_UPDATE_CHECK_TTL_MS", DEFAULT_TTL_MS);

@@ -1,35 +1,30 @@
 #!/usr/bin/env bash
 # gate-audit.sh — Plan Direction Verification Gate post-hoc audit (measurement tool).
 #
-# Purpose (measurement instrument):
-#   Post-hoc audit of core.outcomes to check whether the complex-plan workflow's
-#   stage-2 "verification team (qa-code-reviewer + DEV)" gate actually ran per CID.
-#   Among CID groups where intel-planner participated or task_type=plan, flag any
-#   group with no qa-code-reviewer record on the same CID as a "gate miss". Also
-#   record DEV participation (the hard gate).
+# Purpose (measurement instrument): post-hoc audit of core.outcomes — did the
+#   complex-plan stage-2 "verification team (qa-code-reviewer + DEV)" gate run per
+#   CID? Among CID groups with intel-planner or task_type=plan, flag any with no
+#   qa-code-reviewer record on the same CID as a "gate miss"; also record DEV
+#   participation (the hard gate).
 #
-# This script is measurement-only — it changes no state (read-only SELECT).
-#   monitor/src/server/routes/improvement.ts is left untouched (avoids dirtying other sessions).
+# Measurement-only — no state change (read-only SELECT); improvement.ts untouched
+#   (avoids dirtying other sessions).
 #
-# CID identification:
-#   coalesce(cid, correlation_id) — outcome-record prefers cid, falling back to
-#   correlation_id (the schema carries both). With 97.5% single-agent chains,
-#   most groups have one record, but only multi-agent CIDs are gate targets.
+# CID: coalesce(cid, correlation_id) — prefers cid, falls back to correlation_id
+#   (schema carries both). With 97.5% single-agent chains most groups have one
+#   record; only multi-agent CIDs are gate targets.
 #
-# PG access (socket-only invariant):
-#   psql "dbname=glass_atrium" — Unix socket only. NEVER -h / -p / host= / 127.0.0.1.
-#   Precedent: _pg_dual_write.py header (socket-only invariant).
+# PG access (socket-only invariant): psql "dbname=glass_atrium" — Unix socket only,
+#   NEVER -h / -p / host= / 127.0.0.1 (precedent: _pg_dual_write.py).
 #
 # Usage:
 #   gate-audit.sh [--days N] [--format table|csv|json]
 #     --days N    lookback window (default 14). record_ts >= now() - N days.
 #     --format    output format (default table). csv/json for pipeline ingestion.
 #
-# Output:
-#   list of gate-miss CIDs + summary counts. exit 0 even with 0 misses (normal = audit pass).
-#   PG unreachable / psql missing → explicit stderr error + exit 1 (a measurement tool
-#   loud-fails — it is not a hook, so no fail-open. Silencing a measurement failure
-#   would produce a false "pass").
+# Output: gate-miss CIDs + summary counts. exit 0 even with 0 misses (normal = pass).
+#   PG unreachable / psql missing → stderr error + exit 1 (measurement tool loud-fails,
+#   not a hook — silencing would produce a false "pass").
 
 set -Eeuo pipefail
 IFS=$'\n\t'

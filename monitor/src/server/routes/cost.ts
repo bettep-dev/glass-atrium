@@ -564,7 +564,7 @@ async function handleCostKpi(
   }
 }
 
-// ----- helpers ---------------------------------------------------------------
+// helpers
 
 function parseDaysParam(raw: string | undefined): CostWindowDays | null {
   // Days is required for all 4 cost endpoints (no fallback) — empty value rejected.

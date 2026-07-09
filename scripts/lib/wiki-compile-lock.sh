@@ -3,17 +3,15 @@
 # stage runners (wiki-dedup.sh, wiki-deadlinks.sh). Sourced, not executable.
 #
 # run_under_compile_lock <log_tag> -- <cmd...> runs <cmd> under the wiki-compile
-# lock, picking the branch by ancestor-lock state:
+# lock, branching on ancestor-lock state:
 #   * WIKI_COMPILE_LOCK_HELD=1 → an ancestor (wiki-daemon-cycle.sh) already holds
-#     wiki-compile and serializes this stage. wiki-compile is non-reentrant, so a
-#     self-`with` here would block the ancestor's own lock to timeout → run direct.
-#   * lock script not executable → no lock available → run direct (WARN).
+#     the non-reentrant wiki-compile lock; a self-`with` would deadlock it to
+#     timeout → run direct.
+#   * lock script not executable → no lock → run direct (WARN).
 #   * else → wiki-lock.sh with wiki-compile 30 -- <cmd>.
-# The inner command's rc is captured via `<cmd> || rc=$?` and returned as this
-# function's exit code, so the caller surfaces it unchanged (stage=… rc=N).
-#
-# wiki-lock.sh resolves one level up from this lib dir, mirroring the callers'
-# own LOCK_SCRIPT="${SCRIPT_DIR}/wiki-lock.sh" resolution.
+# The inner rc is captured via `<cmd> || rc=$?` and returned unchanged, so the
+# caller surfaces it (stage=… rc=N). wiki-lock.sh resolves one level up from this
+# lib dir, mirroring the callers' own LOCK_SCRIPT resolution.
 
 WIKI_COMPILE_LOCK_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly WIKI_COMPILE_LOCK_LIB_DIR
@@ -27,10 +25,9 @@ run_under_compile_lock() {
     shift
   fi
 
-  # No internal set -e: this is a sourced function running in the caller's
-  # shell, so toggling errexit would leak into the caller and abort it on the
-  # non-zero-rc path before it captures RC. `<cmd> || rc=$?` is errexit-neutral
-  # (the `||` suppresses -e for the command) and captures the rc unconditionally.
+  # No internal set -e: this sourced function runs in the caller's shell, so
+  # toggling errexit would leak + abort the caller before it captures RC.
+  # `<cmd> || rc=$?` is errexit-neutral (`||` suppresses -e) and always captures rc.
   local rc=0
   if [[ "${WIKI_COMPILE_LOCK_HELD:-0}" -eq 1 ]]; then
     "$@" || rc=$?

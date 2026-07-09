@@ -1,29 +1,20 @@
 #!/usr/bin/env bats
 # daemon-daily-restart.sh regression suite — pins:
-#   * pg_write_run        — daemon_name is role-qualified (daily-restart-<role>)
-#     so the two roles do not collide on the (run_date, daemon_name) UPSERT key.
-#   * quota_reset_passed  — a pane without a "resets …" footer must NOT fire the
-#     inherited ERR trap (pipefail + grep no-match inside the command
-#     substitution); the WARN fallback + proceed (rc 0) is the only signal.
-#   * supervision-death family (DR-1) — kill-after-verify (missing/dangling
-#     claude aborts BEFORE kill-session), bootstrap retry with backoff instead
-#     of terminal teardown, and the restart-window symlink lock (single-flight
-#     across kill→recreate, exit 7 on a live concurrent holder).
-#   * pre-restart quota gate (caller) — the parse-failure fallback proceeds but
-#     must log "quota status unknown", never assert the reset time passed as
-#     fact (the gate's WARN line is the primary signal).
-#
-# Run via: bats scripts/test/daemon-daily-restart.bats
-# Requires: bats >= 1.5.0 (brew install bats-core), bash 3.2+, python3
-#
-# Hermetic strategy: unit tests awk-extract one function from the real script
-# into a sourceable shim; full-flow tests copy the script + lib/daemon-lock.sh
-# + lib/atrium-config.sh
-# into a sandbox with stub siblings (healthcheck/bootstrap) and stub PATH
-# binaries (tmux/launchctl/timeout/claude), role=wiki so the real autoagent
-# quota marker in /tmp is never touched, and HOME/LOG_FILE/DAEMON_LOCK_DIR all
-# point into the sandbox. No tmux session, PG connection, launchd job, or live
-# log is touched.
+# pg_write_run: role-qualified daemon_name (daily-restart-<role>) so the two roles
+# do not collide on the (run_date, daemon_name) UPSERT key.
+# quota_reset_passed: a footer-less pane must NOT fire the inherited ERR trap
+# (pipefail + grep no-match in the command substitution); WARN + proceed (rc 0) is
+# the only signal.
+# supervision-death family (DR-1): kill-after-verify (dangling claude aborts BEFORE
+# kill-session), bootstrap retry with backoff, restart-window symlink lock
+# (single-flight across kill→recreate, exit 7 on a live concurrent holder).
+# pre-restart quota gate: the parse-failure fallback proceeds but logs "quota status
+# unknown", never asserting the reset time passed as fact.
+# Hermetic: unit tests awk-extract one function into a sourceable shim; full-flow
+# tests copy the script + libs into a sandbox with stub siblings + stub PATH binaries
+# (tmux/launchctl/timeout/claude), role=wiki so the real autoagent quota marker is
+# never touched, HOME/LOG_FILE/DAEMON_LOCK_DIR all in the sandbox. No tmux session,
+# PG connection, launchd job, or live log is touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -53,9 +44,7 @@ extract_fn() {
   [[ -s "${shim}" ]] || skip "function extraction yielded an empty shim: ${fn_name}"
 }
 
-# ---------------------------------------------------------------------------
 # pg_write_run — role-qualified daemon_name in the PG envelope
-# ---------------------------------------------------------------------------
 
 # Stub helper echoing the envelope back; pg_write_run pipes helper output into
 # LOG_FILE, so the envelope lands there for assertion.
@@ -108,9 +97,7 @@ set_pg_globals() {
   run ! grep -qF '"daemon_name":"daily-restart"' "${LOG_FILE}"
 }
 
-# ---------------------------------------------------------------------------
 # quota_reset_passed — no spurious ERR-trap fire on a footer-less quota pane
-# ---------------------------------------------------------------------------
 
 # Harness reproducing the real script's runtime: strict mode + the same ERR
 # trap, tmux mocked to replay a pane fixture. Run as a separate bash process
@@ -193,9 +180,7 @@ SH
   run ! grep -qF 'WARN: quota reset timestamp parse failed' "${WORK}/quota.log"
 }
 
-# ---------------------------------------------------------------------------
 # verify_claude_runnable — kill-after-verify probe (unit, command shadowed)
-# ---------------------------------------------------------------------------
 
 # Runs the extracted probe with `command -v` shadowed to return FAKE_CLAUDE —
 # the only way to exercise the dereferencing -x branch deterministically (PATH
@@ -223,9 +208,7 @@ run_verify_with_fake_claude() {
   [[ "${status}" -eq 1 ]]
 }
 
-# ---------------------------------------------------------------------------
 # Full-flow sandbox (DR-1 supervision-death family)
-# ---------------------------------------------------------------------------
 
 # Sandboxed copy of the real script + lib/daemon-lock.sh with stub siblings and
 # stub PATH binaries. Role=wiki keeps the flow off the real autoagent quota
@@ -359,9 +342,7 @@ run_flow() {
   [[ ! -f "${BOOTSTRAP_CALLS}" ]]
 }
 
-# ---------------------------------------------------------------------------
 # Pre-restart quota gate (caller) — parse-failure fallback wording
-# ---------------------------------------------------------------------------
 
 @test "quota gate parse-failure fallback: proceeds, logs quota-status-unknown (never asserts reset passed)" {
   make_flow_sandbox
@@ -376,13 +357,11 @@ run_flow() {
   grep -qF 'daily restart completed successfully' "${FLOW_LOG}"
 }
 
-# ---------------------------------------------------------------------------
 # Timezone resolution — the daemon resolves [meta].timezone via the shared
 # atrium_resolve_timezone helper so a literal 'auto' (the config default) never
 # reaches a TZ=… date call. Host detection is injected (readlink shadow) so the
 # auto/host path is deterministic regardless of the runner's ambient tz (under
 # launchd the TZ pin would otherwise shadow it).
-# ---------------------------------------------------------------------------
 
 # Shadow `readlink` so the auto cascade's TZ-immune primary (lib/atrium-config.sh
 # atrium_get_host_timezone, reads /etc/localtime) resolves to a FIXED IANA zone.

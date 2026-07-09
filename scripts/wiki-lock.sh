@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
 # wiki-lock.sh — advisory lock helper for wiki write operations.
 #
-# Why: Concurrent wiki-curator writes (manual run vs cron 04:00, or future
-# parallel batches) can corrupt master-index.md and wiki notes. Provides a
-# portable lock primitive usable from shell scripts.
+# Why: concurrent wiki-curator writes (manual vs cron 04:00, or parallel batches)
+# can corrupt master-index.md + notes. Portable lock primitive for shell scripts.
 #
-# Strategy: atomic `mkdir` advisory lock — POSIX-portable and race-free since
-# mkdir of an existing dir fails atomically. Stock macOS ships no flock(1), so
-# this is the only path (no flock fast-path exists).
+# Strategy: atomic `mkdir` advisory lock — POSIX-portable + race-free (mkdir of an
+# existing dir fails atomically). Stock macOS has no flock(1), so this is the only path.
 #
-# Owner model (the exclusion-critical detail): the lock records the PID of the
-# REAL holder, then a stale lock is reaped only when kill -0 shows that holder
-# dead. For the bare `acquire`/`release` subcommands the holder is the CALLER
-# shell ($PPID), because this helper exits the instant the subcommand returns —
-# recording the helper's own $$ would record an already-dead PID and let the next
-# acquirer reap a live lock. The `with` form records $$ instead: that helper
-# stays alive for the wrapped command's lifetime, so it IS the holder.
+# Owner model (exclusion-critical): the lock records the REAL holder's PID; a stale
+# lock is reaped only when kill -0 shows that holder dead. Full rationale at acquire_lock().
 #
 # Interface:
 #   wiki-lock.sh acquire <name> [timeout_sec]   # exit 0 on success, 2 on timeout

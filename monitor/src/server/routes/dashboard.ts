@@ -293,7 +293,7 @@ async function handleDaemonStatus(
   }
 }
 
-// ----- helpers ---------------------------------------------------------------
+// helpers
 
 function parseDaysParam(
   raw: string | undefined,
@@ -372,13 +372,10 @@ function invalidParam(name: string): DashboardErrorBody {
   return { error: "invalid_param", param: name };
 }
 
-// ===========================================================================
-// P3-T3 — POST /api/dashboard/update (single atomic apply) + GET
-// /api/dashboard/update-job. The route NEVER runs the long apply in-process:
-// apply enqueues a DECOUPLED one-shot launchd job (scripts/update.sh renders
-// the plist; launchctl bootstrap loads it) and returns immediately, so the
-// install-parity `kickstart -k` monitor restart cannot kill the update runner.
-// ===========================================================================
+// POST /api/dashboard/update (single atomic apply) + GET /api/dashboard/update-job. The route
+// NEVER runs the long apply in-process: apply enqueues a DECOUPLED one-shot launchd job
+// (scripts/update.sh renders the plist; launchctl bootstrap loads it) and returns immediately,
+// so the install-parity `kickstart -k` monitor restart cannot kill the update runner.
 
 const execFileAsync = promisify(execFile);
 
@@ -599,7 +596,7 @@ function mapJobStatus(status: "in_progress" | "failed" | "completed"): UpdateJob
   return status === "in_progress" ? "in-progress" : status;
 }
 
-// ----- update.sh + launchctl invocation (fixed home-dir paths, env-seamed) -----
+// update.sh + launchctl invocation (fixed home-dir paths, env-seamed)
 
 // Live install root — ATRIUM_ROOT env override (mirrors update-status.ts /
 // compute-arch-drift.ts) → ~/.glass-atrium. Never request-derived.
@@ -767,7 +764,7 @@ async function isExecutable(candidate: string): Promise<boolean> {
   }
 }
 
-// ----- preview-output parsing + nonce ---------------------------------------
+// preview-output parsing + nonce
 
 // Parse update.sh --preview stdout (apply-gate.sh gate_render_diff format) into
 // structured per-file diffs. Each block: `=== <path> ===`, an optional new-file
@@ -822,8 +819,8 @@ function computeNonce(version: string, files: UpdateFileDiff[]): string {
   return hash.digest("hex");
 }
 
-// ----- execFile output normalization (stdout/stderr — like improvement.ts /
-// agents.ts, minus the exit-code field this update path never branches on) -----
+// execFile output normalization (stdout/stderr — like improvement.ts / agents.ts,
+// minus the exit-code field this update path never branches on)
 
 function parseExecErr(error: unknown): { stdout: string; stderr: string } {
   if (typeof error !== "object" || error === null) {

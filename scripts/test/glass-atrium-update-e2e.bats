@@ -1,30 +1,24 @@
 #!/usr/bin/env bats
 # glass-atrium-update E2E suite (T23) — drives the FULL update flow ONCE in a
-# hermetic sandbox, combining all four change kinds in a single release so the
-# end-to-end orchestration (not just each piece in isolation) is pinned:
-#   (a) a changed NON-AGENT file            -> deterministic spine sync (replace)
-#   (b) an agent with an ONLY-VENDOR region -> E4 take-release (updated)
-#   (c) an agent with a BOTH-CHANGED region -> E4 net-new diff3, Haiku-gated
-#                                              (merged-OR-gated; here gated/rolled
-#                                              back via a failing claude stub)
-#   (d) a release-only agent (ROSTER ADD)   -> deferred to the agent_lifecycle
-#                                              ceremony (never written in-band)
-# and asserts the cross-cutting invariants: the pause flag is SET during the run
-# then CLEARED on exit, and the daemon .apply-lock is released.
-#
-# Run via: bats scripts/test/glass-atrium-update-e2e.bats
-# Requires: bats >= 1.5.0, jq, python3, diff, shasum/sha256sum — git is NOT
-# required: the whole flow (spine sync + git-free git_txn_apply merge) runs
-# without any git invocation, by design (no-.git consumer install, P2-T2).
-#
-# Hermetic strategy (identical to glass-atrium-update.bats): a per-test mktemp
-# sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR /
-# ATRIUM_UPDATE_STATE_DIR redirected into it; the libs source from the REAL
-# install (REAL_LIB_ROOT). The gh download is bypassed via ATRIUM_UPDATE_SRC_DIR,
-# the confirm is injected via ATRIUM_UPDATE_CONFIRM_ANSWER, and the both-changed
-# Haiku improvement-verify is pointed at a hermetic claude STUB (AUTOAGENT_CLAUDE_BIN)
-# that contacts no network — /dev/tty, gh, and the real claude CLI are never touched.
-# The live install / daemon / monitor are never modified.
+# hermetic sandbox, combining all four change kinds in one release so the end-to-end
+# orchestration (not just each piece) is pinned:
+#   (a) changed NON-AGENT file      -> deterministic spine sync (replace)
+#   (b) agent, ONLY-VENDOR region   -> E4 take-release (updated, no Haiku)
+#   (c) agent, BOTH-CHANGED region  -> E4 net-new diff3, Haiku-gated (here gated/
+#                                      rolled back via a failing claude stub)
+#   (d) release-only agent (ROSTER ADD) -> deferred to the agent_lifecycle ceremony,
+#                                      never written in-band
+# plus the cross-cutting invariants: the pause flag is SET during the run then CLEARED
+# on exit, and the daemon .apply-lock is released. git is NOT required — the whole
+# flow (spine sync + git-free git_txn_apply merge) runs without any git invocation
+# (no-.git consumer install, P2-T2).
+# Hermetic (as glass-atrium-update.bats): a per-test mktemp sandbox with GA_ROOT /
+# AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
+# into it; libs source from the REAL install. gh download bypassed via
+# ATRIUM_UPDATE_SRC_DIR, confirm injected via ATRIUM_UPDATE_CONFIRM_ANSWER, the
+# both-changed Haiku verify pointed at a hermetic claude STUB (AUTOAGENT_CLAUDE_BIN)
+# that contacts no network — /dev/tty, gh, the real claude CLI, and the live install /
+# daemon / monitor are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -132,14 +126,14 @@ VENDOR changed both goal
 vendor NEW rules'
 
 @test "E2E (T23): one release combining a non-agent change, an only-vendor merge, a both-changed merge, and a roster add" {
-  # --- install (the live tree being updated) -------------------------------
+  # install (the live tree being updated)
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"    # (a)
   seed_file "${INSTALL}" "agents/dev-vendor.md" "${VENDOR_BASE}" # (b) local == base
   seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"    # (c) local learned
   seed_base_store "dev-vendor.md" "${VENDOR_BASE}"               # (b) base anchor
   seed_base_store "dev-both.md" "${BOTH_BASE}"                   # (c) base anchor
 
-  # --- new release tree (the test-seam source) -----------------------------
+  # new release tree (the test-seam source)
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool content"       # (a)
   seed_file "${NEWSRC}" "agents/dev-vendor.md" "${VENDOR_RELEASE}" # (b)
   seed_file "${NEWSRC}" "agents/dev-both.md" "${BOTH_RELEASE}"     # (c)
@@ -212,10 +206,8 @@ STUB
   [[ -f "${STATE}/update-state/base-agents/dev-vendor.md" ]]
 }
 
-# ---------------------------------------------------------------------------
 # SIGTERM mid-run → update_cleanup (the EXIT INT TERM trap) releases the
 # .apply-lock and clears the pause flag — no stranded writer-serialization
-# ---------------------------------------------------------------------------
 
 @test "SIGTERM mid-merge releases the .apply-lock and clears the pause flag (trap path)" {
   # Minimal fixture that reaches the both-changed Haiku verify: one non-agent

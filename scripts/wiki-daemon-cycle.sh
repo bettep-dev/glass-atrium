@@ -49,12 +49,11 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # This wrapper only orchestrates sub-stages (wiki_daemon_cycle.py, wiki-dedup.sh,
-# wiki-deadlinks.sh) and writes no JSON/JSONL itself — OUT_PATH is the shared
-# aggregation path the sub-stage scripts consume. The dual-write block below
-# reads the completed JSON and pushes the aggregate to PG
-# core.daemon_runs(wiki). The daemon-reports/wiki-*.json write lives in
-# wiki_daemon_cycle.py (emit_report) + wiki-dedup.sh / wiki-deadlinks.sh.
-# -- Resolve script + module paths -----------------------------------------
+# wiki-deadlinks.sh) and writes no JSON itself — OUT_PATH is the shared aggregation
+# path they consume. The dual-write block below reads the completed JSON and pushes
+# the aggregate to PG core.daemon_runs(wiki); the wiki-*.json write lives in the
+# sub-stages (wiki_daemon_cycle.py emit_report + wiki-dedup.sh / wiki-deadlinks.sh).
+# Resolve script + module paths
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_MODULE="${SCRIPT_DIR}/wiki_daemon_cycle.py"
@@ -74,7 +73,7 @@ if [[ ! -f "${PY_MODULE}" ]]; then
     exit 2
 fi
 
-# -- Parse CLI args --------------------------------------------------------
+# Parse CLI args
 
 LIMIT="${WIKI_DAEMON_LIMIT:-0}"
 DRY_RUN=0
@@ -158,7 +157,7 @@ if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 
-# -- Locate python3 --------------------------------------------------------
+# Locate python3
 
 PYTHON_BIN="${WIKI_DAEMON_PYTHON_BIN:-python3}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -166,13 +165,13 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     exit 3
 fi
 
-# -- Self-test short-circuit -----------------------------------------------
+# Self-test short-circuit
 
 if [[ "${SELF_TEST}" -eq 1 ]]; then
     exec "${PYTHON_BIN}" "${PY_MODULE}" --self-test
 fi
 
-# -- Resolve output destination --------------------------------------------
+# Resolve output destination
 
 CYCLE_DATE="$(date -u +%Y-%m-%d)"
 CYCLE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -190,7 +189,7 @@ fi
 # Ensure reports directory exists for non-dry-run paths.
 mkdir -p "$(dirname "${OUT_PATH}")"
 
-# -- Stage runners ---------------------------------------------------------
+# Stage runners
 #
 # Each stage runs with `set +e` locally so a non-zero exit doesn't abort the
 # pipeline — we capture and report it instead. Stages share OUT_PATH so the
@@ -255,7 +254,7 @@ run_deadlinks_stage() {
     return "${rc}"
 }
 
-# -- Concurrency guard (wiki-compile lock) ---------------------------------
+# Concurrency guard (wiki-compile lock)
 #
 # Share the SAME lock name as the 04:50 cron (wiki-daily-compile.sh) so a /loop
 # tick and the cron mutually exclude: both contend for the date-keyed OUT_PATH
@@ -280,7 +279,7 @@ if [[ -x "${LOCK_SCRIPT}" ]]; then
     export WIKI_COMPILE_LOCK_HELD=1
 fi
 
-# -- Dispatch --------------------------------------------------------------
+# Dispatch
 
 set +e
 case "${STAGE_MODE}" in
@@ -305,13 +304,11 @@ case "${STAGE_MODE}" in
 esac
 set -e
 
-# After all stages have written to OUT_PATH (the daily JSON), mirror an
-# aggregate row into core.daemon_runs(daemon_name='wiki') + the full JSON
-# blob into core.daemon_run_payload. Skip on dry-run (per stage runners) and
-# when the report file is absent (e.g. cycle stage failed before writing).
-# Helper itself swallows failures (fail-loud-and-skip).
-# pg_rc is captured separately so the start/end/rc trace surfaces in the loop log
-# while the silent-fail (|| true) behavior is preserved.
+# After all stages write OUT_PATH (the daily JSON), mirror an aggregate row into
+# core.daemon_runs(daemon_name='wiki') + the full JSON into core.daemon_run_payload.
+# Skip on dry-run or when the report file is absent (cycle failed before writing).
+# Helper swallows failures (fail-loud-and-skip); pg_rc captured separately so the
+# start/end/rc trace surfaces in the loop log while || true is preserved.
 PG_PUSH_PY="${SCRIPT_DIR}/_pg_push_wiki_cycle.py"
 if [[ "${DRY_RUN}" -eq 0 && -f "${OUT_PATH}" && -f "${PG_PUSH_PY}" ]]; then
     printf '[wiki-daemon-cycle] PG_PUSH start out=%s date=%s started=%s\n' \

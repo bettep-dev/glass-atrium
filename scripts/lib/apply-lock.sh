@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# SC2034: apply_lock_acquired is the result global CONSUMED by the sourcing
-# scripts (daemon-apply.sh acquire site + update.sh update_serialize_begin), not
-# inside this lib — the unused-variable warning is a structural false positive,
-# the same contract daemon-lock.sh documents.
+# SC2034: apply_lock_acquired is the result global CONSUMED by sourcing scripts
+# (daemon-apply.sh + update.sh update_serialize_begin), not this lib — structural
+# false positive, same contract daemon-lock.sh documents.
 # shellcheck disable=SC2034
 #
 # apply-lock.sh — stale-reclaim guard for the shared mkdir-directory .apply-lock

@@ -1,52 +1,19 @@
 #!/usr/bin/env bats
 # apply-lock.sh suite (P1-T7) — pins the shared stale-reclaim guard for the
 # mkdir-directory .apply-lock held by BOTH writers (daemon-apply.sh apply stage +
-# update.sh update_serialize_begin). This is the permanent replacement for the
-# retired mid-apply signals (update_head_is_wip / [WIP-AUTO] HEAD): a mid-apply
-# daemon is now a LIVE lock holder; a SIGKILLed daemon leaves a stale/dead lock the
-# guard reclaims instead of wedging every future run.
+# update.sh update_serialize_begin). Permanent replacement for the retired mid-apply
+# signals (update_head_is_wip / [WIP-AUTO] HEAD): a mid-apply daemon is now a LIVE
+# holder; a SIGKILLed daemon leaves a stale/dead lock the guard reclaims instead of
+# wedging future runs. Core contract = two-signal reclaim (not-live AND stale); a
+# live / fresh / verified-fingerprint holder always blocks. Cases 9-19 pin the
+# incident #58325 mutual-exclusion hardenings (pid-less locks, recycled pids,
+# single-winner TOCTOU reclaim, loud-fail owner-record write with rc still 0).
 #
-# The 8 P1-T7 cases pinned here:
-#   1. uncontended acquire                     -> apply_lock_acquired=true, lock dir
-#   2. LIVE holder                             -> blocked (acquired=false), NOT reclaimed
-#   3. DEAD holder past the TTL                -> reclaimed (crashed-holder residue)
-#   4. DEAD holder within the TTL              -> still held (fresh mid-acquire racer)
-#   5. path-guard                              -> a mis-derived non-.apply-lock dir is
-#                                                 NEVER rm'd (reclaim + release refuse)
-#   6. ownership-gated release                 -> removes our own lock, refuses a foreign
-#                                                 live holder's
-#   7. mkdir-directory primitive               -> a real dir (not a symlink), NO `ln -s`
-#   8. pid recorded INSIDE the dir             -> temp+rename, single numeric pid, no
-#                                                 leftover temp file
-#
-# Incident #58325 defect pins (mutual-exclusion hardenings, cases 9-19):
-#   9. pid-less FRESH lock                     -> held (crashed-before-pid-write racer)
-#  10. pid-less STALE lock                     -> reclaimed (TTL bounds a record-less lock)
-#  11. release with absent/empty pid           -> treated as our own partial lock, removed
-#  12. RECYCLED pid (live, wrong fingerprint)  -> not-live; stale age -> reclaimed (no wedge)
-#  13. RECYCLED pid but FRESH                  -> held (TTL age gate still applies)
-#  14. live holder, MATCHING fingerprint       -> held even past the TTL (verified live)
-#  15. legacy fingerprint-less LIVE holder     -> held even past the TTL (bare kill -0
-#                                                 fallback; never insta-reclaimed)
-#  16. fingerprint recorded on acquire         -> temp+rename, matches ps lstart, no residue
-#  17. single-winner reclaim (late loser)      -> a reclaimer acting on an outdated stale
-#                                                 decision cannot destroy the winner's
-#                                                 fresh lock (atomic restore, no tomb left)
-#  18. single-winner reclaim (winner)          -> genuinely stale dir taken over; tomb
-#                                                 removed, no residue
-#  19. owner-record write failure              -> loud named ERROR, partial dir released,
-#                                                 acquired=false, rc still 0 (contract)
-#
-# Run via: bats scripts/test/apply-lock.bats
-# Requires: bats >= 1.5.0, python3
-#
-# Hermetic: every test runs against a per-test mktemp sandbox; the shared lib is
-# sourced under full `set -Eeuo pipefail` in disposable `bash -c` children (proving
-# strict-mode safety — apply-lock.sh installs no ERR trap, so no trap leaks into the
-# bats shell) and the acquire RESULT is read from the apply_lock_acquired global it
-# echoes. The live ~/.claude/data/daemon-reports/.apply-lock is NEVER touched. TTL is
-# steered via ATRIUM_APPLY_LOCK_TTL_SECS and mtime via python3 os.utime — never
-# BSD/GNU-divergent `touch -d` / `stat -f` / `stat -c`.
+# Hermetic: per-test mktemp sandbox; the lib is sourced under set -Eeuo pipefail in
+# disposable `bash -c` children (proving strict-mode — apply-lock.sh installs no ERR
+# trap, so none leaks into the bats shell). The live ~/.claude/data/daemon-reports/
+# .apply-lock is NEVER touched. TTL is steered via ATRIUM_APPLY_LOCK_TTL_SECS and
+# mtime via python3 os.utime — never BSD/GNU-divergent `touch -d` / `stat -f` / `stat -c`.
 
 bats_require_minimum_version 1.5.0
 
@@ -83,7 +50,7 @@ backdate_secs() {
   python3 -c 'import os,sys,time; d=float(sys.argv[2]); t=time.time()-d; os.utime(sys.argv[1],(t,t))' "$1" "$2"
 }
 
-# --- 1. uncontended acquire ------------------------------------------------
+# 1. uncontended acquire
 
 @test "uncontended acquire creates the lock dir and sets apply_lock_acquired=true" {
   run bash -c '
@@ -97,7 +64,7 @@ backdate_secs() {
   [[ -d "${LOCK}" ]] # the lock is a real directory (the mutual-exclusion primitive)
 }
 
-# --- 2. LIVE holder blocks (no reclaim) ------------------------------------
+# 2. LIVE holder blocks (no reclaim)
 
 @test "a LIVE holder blocks acquire (apply_lock_acquired=false) and is NOT reclaimed" {
   mkdir -p "${LOCK}"
@@ -113,7 +80,7 @@ backdate_secs() {
   [[ "$(cat "${LOCK}/pid")" == "$$" ]]  # original live holder untouched (not reclaimed)
 }
 
-# --- 3. DEAD + STALE holder reclaimed --------------------------------------
+# 3. DEAD + STALE holder reclaimed
 
 @test "a DEAD holder aged past the TTL is reclaimed (crashed-holder residue)" {
   local dead
@@ -134,7 +101,7 @@ backdate_secs() {
   [[ "$(cat "${LOCK}/pid")" != "${dead}" ]] # pid replaced by the reclaimer's own
 }
 
-# --- 4. DEAD + FRESH holder held -------------------------------------------
+# 4. DEAD + FRESH holder held
 
 @test "a DEAD holder within the TTL is still held (fresh lock, not reclaimed)" {
   local dead
@@ -155,7 +122,7 @@ backdate_secs() {
   [[ "$(cat "${LOCK}/pid")" == "${dead}" ]] # untouched
 }
 
-# --- 5. path-guard refuses a non-.apply-lock dir ---------------------------
+# 5. path-guard refuses a non-.apply-lock dir
 
 @test "path-guard: a mis-derived non-.apply-lock dir is NEVER rm'd (reclaim + release refuse)" {
   local notlock="${REPORTS}/notlock" # deliberately does NOT end in .apply-lock
@@ -182,7 +149,7 @@ backdate_secs() {
   [[ -d "${notlock}" ]]
 }
 
-# --- 6. ownership-gated release --------------------------------------------
+# 6. ownership-gated release
 
 @test "release is ownership-gated: removes our own lock, refuses a foreign live holder's" {
   # positive: acquire + release in the SAME shell removes the lock
@@ -206,7 +173,7 @@ backdate_secs() {
   [[ "$(cat "${LOCK}/pid")" == "$$" ]] # holder pid untouched
 }
 
-# --- 7. mkdir-directory primitive, NO symlink ------------------------------
+# 7. mkdir-directory primitive, NO symlink
 
 @test "mkdir-directory primitive: an acquired lock is a real dir (not a symlink), no ln -s" {
   run bash -c 'set -Eeuo pipefail; source "'"${LIB}"'"; apply_lock_acquire "'"${LOCK}"'"'
@@ -221,7 +188,7 @@ backdate_secs() {
   [[ -z "${output}" ]]
 }
 
-# --- 8. pid recorded INSIDE the lock dir -----------------------------------
+# 8. pid recorded INSIDE the lock dir
 
 @test "the holder pid is recorded INSIDE the lock dir (temp+rename, single numeric pid)" {
   run bash -c '
@@ -247,7 +214,7 @@ fingerprint_of() {
   bash -c 'source "'"${LIB}"'"; _apply_lock_pid_fingerprint "$1"' _ "$1"
 }
 
-# --- 9. pid-less FRESH lock held --------------------------------------------
+# 9. pid-less FRESH lock held
 
 @test "a pid-less FRESH lock is held (crashed-before-pid-write racer, not insta-reclaimed)" {
   mkdir -p "${LOCK}" # no pid file at all — holder crashed after mkdir, before pid write
@@ -262,7 +229,7 @@ fingerprint_of() {
   [[ -d "${LOCK}" ]]                    # untouched
 }
 
-# --- 10. pid-less STALE lock reclaimed --------------------------------------
+# 10. pid-less STALE lock reclaimed
 
 @test "a pid-less STALE lock is reclaimed (TTL bounds a record-less lock)" {
   mkdir -p "${LOCK}" # no pid file
@@ -283,7 +250,7 @@ fingerprint_of() {
   [ "$status" -ne 0 ]
 }
 
-# --- 11. release with absent/empty pid --------------------------------------
+# 11. release with absent/empty pid
 
 @test "release treats an absent/empty pid as our own partial lock and removes it" {
   # absent pid file
@@ -299,7 +266,7 @@ fingerprint_of() {
   [[ ! -d "${LOCK}" ]]
 }
 
-# --- 12. recycled pid + stale age -> reclaimed -------------------------------
+# 12. recycled pid + stale age -> reclaimed
 
 @test "a RECYCLED pid (live pid, mismatching fingerprint) past the TTL is reclaimed" {
   mkdir -p "${LOCK}"
@@ -317,7 +284,7 @@ fingerprint_of() {
   [[ "$(cat "${LOCK}/pid")" != "$$" ]] # record replaced by the reclaimer's own
 }
 
-# --- 13. recycled pid but FRESH -> held (TTL gate still applies) -------------
+# 13. recycled pid but FRESH -> held (TTL gate still applies)
 
 @test "a RECYCLED pid on a FRESH lock is still held (TTL age gate precedes reclaim)" {
   mkdir -p "${LOCK}"
@@ -335,7 +302,7 @@ fingerprint_of() {
   [[ "$(cat "${LOCK}/pid")" == "$$" ]] # untouched
 }
 
-# --- 14. matching fingerprint -> live holder blocks past the TTL -------------
+# 14. matching fingerprint -> live holder blocks past the TTL
 
 @test "a live holder with a MATCHING fingerprint blocks even past the TTL" {
   mkdir -p "${LOCK}"
@@ -353,7 +320,7 @@ fingerprint_of() {
   [[ "$(cat "${LOCK}/pid")" == "$$" ]] # untouched
 }
 
-# --- 15. legacy fingerprint-less LIVE holder -> old semantics preserved ------
+# 15. legacy fingerprint-less LIVE holder -> old semantics preserved
 
 @test "a legacy fingerprint-less LIVE holder blocks even past the TTL (bare kill -0 fallback)" {
   mkdir -p "${LOCK}"
@@ -370,7 +337,7 @@ fingerprint_of() {
   [[ "$(cat "${LOCK}/pid")" == "$$" ]]
 }
 
-# --- 16. fingerprint recorded on acquire ------------------------------------
+# 16. fingerprint recorded on acquire
 
 @test "acquire records the holder fingerprint (temp+rename, matches ps lstart, no residue)" {
   run bash -c '
@@ -392,7 +359,7 @@ fingerprint_of() {
   [ "$status" -ne 0 ]
 }
 
-# --- 17. single-winner reclaim: late loser cannot destroy the winner's lock --
+# 17. single-winner reclaim: late loser cannot destroy the winner's lock
 
 @test "single-winner reclaim: a late reclaimer on an outdated stale decision cannot destroy the winner's fresh lock" {
   # The winner's FRESH lock: live pid + correct fingerprint (as if reclaimer A just
@@ -414,7 +381,7 @@ fingerprint_of() {
   [ "$status" -ne 0 ] # restored, no tomb leaked
 }
 
-# --- 18. single-winner reclaim: genuinely stale dir is taken over ------------
+# 18. single-winner reclaim: genuinely stale dir is taken over
 
 @test "single-winner reclaim: a genuinely stale dir is taken over and the tomb removed" {
   local dead
@@ -435,7 +402,7 @@ fingerprint_of() {
   [ "$status" -ne 0 ] # tomb removed, no residue
 }
 
-# --- 19. owner-record write failure -> loud-fail, dir released ---------------
+# 19. owner-record write failure -> loud-fail, dir released
 
 @test "acquire loud-fails with a named ERROR and releases the dir when the owner record cannot be written" {
   # umask 0777 makes acquire's own mkdir create the lock dir mode 000 -> the pid

@@ -5,9 +5,9 @@
 export interface KpiResponse {
   today_cost_usd: number;
   yesterday_cost_usd: number;
-  // Yesterday cumulative cut at the current KST wall-clock time — like-for-like
-  // delta basis ('어제 동시각 대비') so a morning reading never compares today's
-  // partial day against yesterday's full day. Always ⊆ the full-day aggregates.
+  // Yesterday cumulative cut at the current KST wall-clock time — like-for-like delta
+  // basis ('어제 동시각 대비') so a partial today never compares against yesterday's full
+  // day. Always ⊆ the full-day aggregates.
   yesterday_same_time_cost_usd: number;
   yesterday_same_time_session_count: number;
   // Legacy fail+blocked 1h merge — superseded by the 24h split below; kept one release.
@@ -103,19 +103,16 @@ export type DashboardErrorBody =
   | { error: "invalid_input"; reason: string }
   | { error: "invalid_param"; param: string };
 
-// ---------------------------------------------------------------------------
-// POST /api/dashboard/update (single atomic apply) + GET /api/dashboard/update-job
-// (P3-T3). The DB literal status values ('in-progress' carries a hyphen — see the
-// core.UpdateJobStatus enum @map). String-union (not `string`) so the React client
-// can compile-time pattern-match the three states for dual-encoded badges.
-// ---------------------------------------------------------------------------
+// POST /api/dashboard/update (single atomic apply) + GET /api/dashboard/update-job.
+// DB literal status values ('in-progress' carries a hyphen — core.UpdateJobStatus enum
+// @map); string-union (not `string`) so the React client can compile-time pattern-match
+// the three states for dual-encoded badges.
 
 export type UpdateJobStatusValue = "in-progress" | "failed" | "completed";
 
-// One changed file parsed from the update.sh --preview dry-run. `diff` is the raw
-// unified-diff body update.sh renders per file; `is_new` flags a first-time add
-// (no current version). Used INTERNALLY by the apply path to detect the
-// up-to-date case + compute the record nonce; no longer surfaced in the response.
+// One changed file parsed from the update.sh --preview dry-run. `diff` = raw unified-diff
+// body; `is_new` flags a first-time add. Used internally by the apply path (up-to-date
+// detection + record nonce); not surfaced in the response.
 export interface UpdateFileDiff {
   path: string;
   diff: string;

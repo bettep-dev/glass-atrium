@@ -3,29 +3,21 @@
 #
 #   curl -fsSL <raw-url>/install.sh | bash
 #
-# It DOWNLOADS the latest published release bundle and EXTRACTS it into
-# ~/.glass-atrium (a plain directory tree, NO .git), then hands off to the
-# interactive launcher (./glass-atrium). It is a thin front door — every real
-# install step (deps, symlink farm, hook wiring, DB, monitor build, health gate,
-# launchd) stays inside the existing TUI, which owns its own consent + auth gates.
+# DOWNLOADS the latest release bundle and EXTRACTS it into ~/.glass-atrium (a plain
+# tree, NO .git), then hands off to the interactive launcher (./glass-atrium), which
+# owns every real install step + its own consent/auth gates. Safe both piped
+# (curl|bash — stdin is the pipe, NOT the terminal) and run as a file, independent of
+# its own on-disk location.
 #
-# No git: the install is a release-bundle download+extract — the tree has no .git.
-# Integrity is a PER-FILE SHA-256 check of every extracted file against the release
-# manifest.hashes (reusing scripts/lib/apply-spine.sh, sourced post-extract). The
-# extracted tree IS the runtime: the symlink farm creates ~/.claude/<rel> files
-# pointing INTO ~/.glass-atrium and the harness updates itself in place — so the
-# tree lives at ~/.glass-atrium and moving/deleting it breaks the links. No git
-# remote is required, and the in-place update path needs no working repository.
+# No git: integrity is a PER-FILE SHA-256 check of every extracted file against the
+# release manifest.hashes (reusing scripts/lib/apply-spine.sh, sourced post-extract).
+# The extracted tree IS the runtime — the symlink farm points ~/.claude/<rel> INTO it
+# and the harness updates in place, so moving/deleting the tree breaks the links.
 #
-# Additive by design: the extract writes ONLY the verified bundle members, never
-# `rm -rf ~/.glass-atrium`. A re-install over an existing tree preserves runtime
-# data (agents-bak/, wiki/, secrets/, data/, rendered/, config.toml, .update-state)
-# byte-intact. Re-install is idempotent, keyed on the persisted install manifest
-# {version}: an unchanged version is a no-op, a changed version extracts in place.
-#
-# Safe both piped (curl|bash, where stdin is the script pipe, NOT the terminal)
-# and run as a file. It does NOT depend on its own on-disk location, so a piped
-# invocation (empty/garbage BASH_SOURCE) works identically to `bash install.sh`.
+# Additive by design: extract writes ONLY verified bundle members, NEVER
+# `rm -rf ~/.glass-atrium`, so a re-install preserves runtime data (agents-bak/, wiki/,
+# secrets/, data/, config.toml, .update-state) byte-intact. Idempotent on the persisted
+# install manifest {version}: unchanged → no-op, changed → extract in place.
 #
 # SECURITY: handles NO tokens/secrets, reads no .env, echoes no credentials, and
 # runs no third-party `curl | sh`. It downloads a GitHub Release asset via `gh`
@@ -62,7 +54,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# --- named exit codes ------------------------------------------------------
+# named exit codes
 readonly EXIT_NOT_MACOS=10
 readonly EXIT_MISSING_TOOL=11
 readonly EXIT_NO_RELEASE_REPO=12
@@ -73,22 +65,21 @@ readonly EXIT_NO_LAUNCHER=16
 readonly EXIT_EXTRACT_FAILED=17
 readonly EXIT_FARM_FAILED=18
 
-# --- parameters (env-overridable) ------------------------------------------
-# The release repo slug is a REAL wired default (the documented one-liner installs
-# with zero env config); GA_RELEASE_REPO overrides it, and ATRIUM_RELEASE_REPO (the
-# codebase-wide release env the updater + publisher use) is honored for parity.
+# parameters (env-overridable)
+# The release repo slug is a REAL wired default (the one-liner installs with zero env
+# config); GA_RELEASE_REPO overrides it, ATRIUM_RELEASE_REPO honored for parity.
 readonly GA_RELEASE_REPO_DEFAULT="bettep-dev/glass-atrium"
 GA_RELEASE_REPO="${GA_RELEASE_REPO:-${ATRIUM_RELEASE_REPO:-${GA_RELEASE_REPO_DEFAULT}}}"
 GA_RELEASE_TAG="${GA_RELEASE_TAG:-}"
 GA_DIR="${GA_DIR:-${HOME}/.glass-atrium}"
 GA_NO_RUN="${GA_NO_RUN:-}"
 
-# --- run state (global for the EXIT-trap cleanup) --------------------------
+# run state (global for the EXIT-trap cleanup)
 # The download/verify/merge scratch tree. Declared here so the trap sees a defined
 # origin under strict mode and cleans it on ANY early-exit path.
 _ga_workdir=""
 
-# --- leaf logging (stderr only; mirrors lib/ga-core.sh) --------------------
+# leaf logging (stderr only; mirrors lib/ga-core.sh)
 # Progress/diagnostics go to stderr so they never collide with a future exec of
 # the launcher and stay visible under curl|bash.
 log() { printf '%s\n' "$*" >&2; }
@@ -115,7 +106,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-# --- tool preconditions (loud-fail, no silent 2>/dev/null swallowing) -------
+# tool preconditions (loud-fail, no silent 2>/dev/null swallowing)
 require_tool() {
   command -v "$1" >/dev/null 2>&1 \
     || die "${EXIT_MISSING_TOOL}" "required tool not found: $1 — install it and re-run."
@@ -129,7 +120,7 @@ require_sha256() {
   die "${EXIT_MISSING_TOOL}" "no SHA-256 tool (shasum/sha256sum) on PATH — install one and re-run."
 }
 
-# --- preflight (loud-fail) --------------------------------------------------
+# preflight (loud-fail)
 # Verify the hard preconditions before touching the filesystem: macOS + the tools
 # the download/verify/extract needs. (gh is required only on the network path and
 # is checked in fetch_release, so the local-bundle test seam needs no gh.)
@@ -143,12 +134,11 @@ preflight() {
   require_sha256
 }
 
-# --- foreign-dir guard (no-rm-rf clobber refusal, keyed on the manifest) ----
+# foreign-dir guard (no-rm-rf clobber refusal, keyed on the manifest)
 # Fail fast BEFORE downloading: an existing GA_DIR that is neither empty nor a
-# recognized Glass Atrium install (no root manifest.json) is foreign content we
-# refuse to extract a bundle on top of. There is no git origin to compare in a
-# no-.git flow — the persisted install manifest is the sole "this is ours" signal.
-# NEVER rm -rf the target (no-rm-rf clobber-refusal posture, preserved by this rewrite).
+# recognized Glass Atrium install (no root manifest.json) is foreign content — the
+# persisted install manifest is the sole "this is ours" signal (no git origin to
+# compare in a no-.git flow). NEVER rm -rf the target (no-rm-rf clobber refusal).
 assert_installable_target() {
   [[ -e "${GA_DIR}" ]] || return 0 # absent → fresh install
   if [[ ! -d "${GA_DIR}" ]]; then
@@ -165,15 +155,11 @@ assert_installable_target() {
   fi
 }
 
-# --- download + extract the release bundle ---------------------------------
-# Fetch manifest.json + glass-atrium-bundle-<version>.tar.gz into $1 (download dir)
-# and extract the bundle into $2 (scratch new-release tree). On the network path
-# the gh asset patterns + bundle glob MIRROR scripts/update.sh::update_fetch_release
-# (lines 184-212) rather than sourcing it: on a fresh curl|bash install NOTHING is
-# on disk yet, so the updater's libs cannot be sourced pre-download — the bootstrap
-# forces mirroring for the download step ONLY. The integrity VERIFY, by contrast,
-# reuses the extracted apply-spine.sh with no inline duplication (see verify_bundle).
-# A divergent gh invocation here would be the anti-pattern this comment guards.
+# download + extract the release bundle
+# Fetch manifest.json + glass-atrium-bundle-<version>.tar.gz into $1 (download dir),
+# extract the bundle into $2 (scratch new-release tree). The gh asset patterns MIRROR
+# update.sh::update_fetch_release rather than sourcing it — on a fresh curl|bash
+# install nothing is on disk yet, so the updater's libs can't be sourced pre-download.
 fetch_release() {
   local dl_dir="$1" new_tree="$2" slug bundle
 
@@ -225,14 +211,13 @@ fetch_release() {
     || die "${EXIT_EXTRACT_FAILED}" "bundle extraction failed: ${bundle}"
 }
 
-# --- per-file integrity verify (reused spine lib) --------------------------
-# Verify every extracted file's SHA-256 against manifest.hashes[path]. BOOTSTRAP:
-# the verify REUSES the shared spine lib rather than inlining the hash loop, but
-# the lib is itself a bundle member and only exists AFTER extract — so it is sourced
-# post-extract from the just-unpacked scratch tree (the "common sourced lib factor"
-# the plan mandates over an inline duplicate). The trust anchor is the authenticated
-# gh release + slug; this per-file check is the integrity gate against a corrupt or
-# partial download. Args: $1 = new-release tree · $2 = manifest.json · $3 = staging.
+# per-file integrity verify (reused spine lib)
+# Verify every extracted file's SHA-256 against manifest.hashes[path]. BOOTSTRAP: the
+# verify REUSES the shared spine lib rather than inlining the hash loop, but the lib is
+# itself a bundle member existing only AFTER extract — so it is sourced post-extract
+# from the scratch tree. The trust anchor is the authenticated gh release + slug; this
+# per-file check is the integrity gate against a corrupt/partial download.
+# Args: $1 = new-release tree · $2 = manifest.json · $3 = staging.
 verify_bundle() {
   local new_tree="$1" manifest="$2" staging="$3" spine_lib
   spine_lib="${new_tree}/scripts/lib/apply-spine.sh"
@@ -251,16 +236,14 @@ verify_bundle() {
   fi
 }
 
-# --- merge/additive install into GA_DIR (idempotent, no-origin) ------------
-# Extract-in-place is an ADDITIVE cp of the VERIFIED STAGING tree — it writes only
-# the hash-verified manifest.files members, NEVER rm -rf, so runtime data outside
-# the bundle stays byte-intact. INSTALLED == VERIFIED: the copy source is the
-# spine_stage_and_verify output (exactly manifest.files, each SHA-256 checked), NOT
-# the raw extracted tarball — so any UNLISTED tarball member (which was never
-# hash-gated) is structurally excluded from the install, not silently deployed.
-# Idempotency keys on the persisted install manifest {version} (there is no git
-# origin to compare): same version → no-op, changed/absent version → extract in place.
-# Args: $1 = verified staging tree · $2 = the downloaded manifest.json.
+# merge/additive install into GA_DIR (idempotent, no-origin)
+# Extract-in-place is an ADDITIVE cp of the VERIFIED STAGING tree — writes only the
+# hash-verified manifest.files members, NEVER rm -rf, so runtime data outside the
+# bundle stays byte-intact. INSTALLED == VERIFIED: the copy source is the
+# spine_stage_and_verify output (exactly manifest.files), NOT the raw tarball — so any
+# UNLISTED tarball member (never hash-gated) is structurally excluded, not deployed.
+# Idempotency keys on the persisted install manifest {version}: same → no-op, changed →
+# extract in place. Args: $1 = verified staging tree · $2 = downloaded manifest.json.
 install_tree() {
   local staged_tree="$1" dl_manifest="$2" release_version installed_version
   release_version="$(jq -r '.version // "unknown"' -- "${dl_manifest}")"
@@ -276,12 +259,10 @@ install_tree() {
     log "Installing Glass Atrium ${release_version} into ${GA_DIR} (fresh extract)."
   fi
 
-  # Additive merge: cp -Rp copies the CONTENTS of the verified staging tree into
-  # GA_DIR, preserving modes (spine_stage_and_verify staged each file with cp -p, so
-  # ${GA_DIR}/glass-atrium stays executable). It writes only verified manifest.files
-  # members, so agents-bak/, wiki/, secrets/, data/, rendered/, config.toml (none of
-  # them bundle members) are untouched. This is the codebase idiom used by update.sh's
-  # local-source seam (cp -Rp -- "${SRC}/." "${DST}/").
+  # Additive merge: cp -Rp copies the verified staging tree into GA_DIR, preserving modes
+  # (each file was staged with cp -p, so ${GA_DIR}/glass-atrium stays executable). Writes
+  # only verified manifest.files members, so agents-bak/, wiki/, secrets/, data/,
+  # config.toml (none bundle members) are untouched. Codebase idiom from update.sh.
   mkdir -p -- "${GA_DIR}"
   cp -Rp -- "${staged_tree}/." "${GA_DIR}/" \
     || die "${EXIT_EXTRACT_FAILED}" "failed to write the verified staging tree into ${GA_DIR}."
@@ -293,27 +274,19 @@ install_tree() {
     || die "${EXIT_EXTRACT_FAILED}" "failed to persist the install manifest to ${GA_DIR}/manifest.json."
 }
 
-# --- facade mirror-farm refresh (reinstall parity) --------------------------
-# incident #58325 systemic fix: a reinstall-over-existing lands NEW release
-# files in GA_DIR, but the per-file symlink farm only ran at first install
-# (menu Install) — so each new file shipped WITHOUT its ~/.claude mirror. When
-# a prior CONSENTED deploy is detected (the facade already holds GA-pointing
-# symlinks — the artifact only the menu Install / agents-only consent path
-# creates), re-run the farm via the shared lib -> the canonical
-# `glass-atrium agents-only` entrypoint (idempotent: swap_symlink skips
-# already-correct links, refuses foreign symlinks + real user files, never
-# deletes user data). A pre-existing install manifest is deliberately NOT a
-# consent signal: install_tree persists it on a plain EXTRACT, so it proves
-# only a prior download+unpack (curl|bash then exiting the menu without
-# installing) — arming the refresh on it would farm into a real ~/.claude
-# without the declared consent path. Link-less machines skip; the menu Install
-# stays the consented full-deploy path. The link probe is safe post-copy: the
-# extract writes only into GA_DIR, never the facade, so the signal cannot be
-# self-induced. Runs BEFORE handoff so the GA_NO_RUN / no-controlling-tty
-# exits are covered too.
-# BOOTSTRAP: the shared lib is a bundle member sourced post-extract (the
-# verify_bundle apply-spine.sh idiom); an OLDER release bundle without it
-# degrades to a loud WARN + manual hint, never a silent skip.
+# facade mirror-farm refresh (reinstall parity)
+# Reinstall parity: a reinstall-over-existing lands NEW release files in GA_DIR, but
+# the per-file symlink farm only ran at first install — so new files ship WITHOUT their
+# ~/.claude mirror. Refresh the farm ONLY on a prior CONSENTED deploy, detected by
+# GA-pointing facade symlinks (the artifact only the menu Install / agents-only consent
+# path creates; idempotent — swap_symlink refuses foreign symlinks + real user files,
+# never deletes user data). A pre-existing install manifest is deliberately NOT a
+# consent signal: install_tree persists it on a plain EXTRACT, so arming the refresh on
+# it would farm into a real ~/.claude without the declared consent path. The link probe
+# is safe post-copy (extract writes only into GA_DIR, never the facade). Runs BEFORE
+# handoff so GA_NO_RUN / no-tty exits are covered.
+# BOOTSTRAP: the shared lib is a bundle member sourced post-extract; an OLDER bundle
+# without it degrades to a loud WARN + manual hint, never a silent skip.
 refresh_mirror_farm() {
   local rc=0 linked
   local farm_lib="${GA_DIR}/scripts/lib/mirror-farm.sh"
@@ -340,12 +313,11 @@ refresh_mirror_farm() {
   fi
 }
 
-# --- hand off to the interactive launcher ----------------------------------
-# THE tricky part under curl|bash: stdin is the script pipe, so the menu cannot
-# read keys from it. Reconnect to the controlling terminal (/dev/tty) and EXEC
-# the launcher so the TUI owns the terminal directly. With no controlling tty
-# (CI / non-interactive) or GA_NO_RUN set, do NOT launch a key-driven menu —
-# print the run hint and exit 0.
+# hand off to the interactive launcher
+# THE tricky part under curl|bash: stdin is the script pipe, so the menu cannot read
+# keys from it. Reconnect to the controlling terminal (/dev/tty) and EXEC the launcher
+# so the TUI owns the terminal. With no controlling tty (CI) or GA_NO_RUN set, print
+# the run hint and exit 0 instead of launching a key-driven menu.
 handoff() {
   local launcher="${GA_DIR}/glass-atrium"
   [[ -x "${launcher}" ]] \
@@ -386,9 +358,8 @@ main() {
   fetch_release "${dl_dir}" "${new_tree}"
   manifest="${dl_dir}/manifest.json"
   verify_bundle "${new_tree}" "${manifest}" "${staging}"
-  # Install from the VERIFIED staging tree (spine_stage_and_verify output), NOT the
-  # raw extracted ${new_tree}: installed == verified == manifest.files, so an
-  # unlisted/unverified tarball member is never deployed (closes the hash-gate bypass).
+  # Install from the VERIFIED staging tree, NOT the raw ${new_tree}: installed ==
+  # verified == manifest.files, so an unlisted tarball member is never deployed.
   install_tree "${staging}" "${manifest}"
 
   # The scratch tree is done with; remove it BEFORE handoff since exec never returns
@@ -396,8 +367,8 @@ main() {
   rm -rf -- "${_ga_workdir}"
   _ga_workdir=""
 
-  # Refresh the ~/.claude facade mirrors on a prior consented deployment
-  # (incident #58325) — new release files must never ship without their mirror.
+  # Refresh the ~/.claude facade mirrors on a prior consented deployment — new release
+  # files must never ship without their mirror.
   refresh_mirror_farm
 
   handoff

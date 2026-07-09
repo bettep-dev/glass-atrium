@@ -170,7 +170,7 @@ _run_parser() {
     python3 -c "${parser_body}"
 }
 
-# --- Case 1: known model + fresh baseline → priced + SILENT advisory-wise ---
+# Case 1: known model + fresh baseline → priced + SILENT advisory-wise
 
 @test "known model with fresh baseline prices silently (no pricing advisory) and exits 0" {
   local tx stderr_file
@@ -187,7 +187,7 @@ _run_parser() {
   [[ ! "${err}" =~ "DATA-183" ]]
 }
 
-# --- Case 2: unknown model → advisory names the model + resolution label ---
+# Case 2: unknown model → advisory names the model + resolution label
 
 @test "unknown model emits STDERR advisory with resolution=fallback plus structured DATA-183" {
   local tx stderr_file
@@ -211,7 +211,7 @@ _run_parser() {
   [[ ! "${err}" =~ "pricing baseline stale" ]]
 }
 
-# --- Case 3: stale baseline → staleness advisory with age + window ---
+# Case 3: stale baseline → staleness advisory with age + window
 
 @test "stale pricing baseline emits a STDERR staleness advisory and exits 0" {
   local tx stderr_file
@@ -230,7 +230,7 @@ _run_parser() {
   [[ ! "${err}" =~ "model=unknown" ]]
 }
 
-# --- Case 4: cost math regression guard (known model) ---
+# Case 4: cost math regression guard (known model)
 
 @test "known opus-4-8 1000in/500out computes cost_usd=0.0175 (corrected opus rates)" {
   local tx
@@ -244,7 +244,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 5: unknown model is NOT zero-priced (fable-5 fallback records cost) ---
+# Case 5: unknown model is NOT zero-priced (fable-5 fallback records cost)
 
 @test "unknown model still records cost via most-expensive fable-5 fallback (not zero-priced)" {
   local tx
@@ -261,7 +261,7 @@ _run_parser() {
   [[ "${output}" == *'claude-foobar-9-9'* ]]
 }
 
-# --- Case 6: dated snapshot id resolves to its base row (NOT the fallback) ---
+# Case 6: dated snapshot id resolves to its base row (NOT the fallback)
 
 @test "dated claude-haiku-4-5-20251001 prices at haiku rates (0.0035), no unknown advisory" {
   local tx stderr_file
@@ -281,7 +281,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 7: fable-5 is a first-class SoT row at 10/50 rates ---
+# Case 7: fable-5 is a first-class SoT row at 10/50 rates
 
 @test "claude-fable-5 prices at 10/50 rates (0.035) with no unknown advisory" {
   local tx stderr_file
@@ -301,7 +301,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 8: harness-synthetic model is allowlisted (no advisory, no DATA-183) ---
+# Case 8: harness-synthetic model is allowlisted (no advisory, no DATA-183)
 
 @test "harness-synthetic model emits no unknown advisory and no DATA-183, records \$0 row" {
   local tx stderr_file
@@ -324,7 +324,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 9: empty model (field absent) is allowlisted (no advisory, no DATA-183) ---
+# Case 9: empty model (field absent) is allowlisted (no advisory, no DATA-183)
 
 @test "missing model field emits no unknown advisory and no DATA-183, records \$0 row" {
   local tx stderr_file
@@ -349,7 +349,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 10: sonnet-5 launch-window boundary (intro rate through 2026-08-31) ---
+# Case 10: sonnet-5 launch-window boundary (intro rate through 2026-08-31)
 
 @test "claude-sonnet-5 prices intro 0.007 on 2026-08-31 and standard 0.0105 on 2026-09-01" {
   local tx
@@ -368,7 +368,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 11: family-matched new id → family_latest rate + LOUD advisory ---
+# Case 11: family-matched new id → family_latest rate + LOUD advisory
 
 @test "family-matched claude-opus-4-9 prices at opus-4-8 rate with resolution=family_latest advisory and DATA-183" {
   local tx stderr_file
@@ -393,7 +393,7 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# --- Case 12: corrupt pricing SoT → LOUD parser-crash failure ---
+# Case 12: corrupt pricing SoT → LOUD parser-crash failure
 
 @test "corrupt pricing SoT fails loud: PricingSotError on stderr, DATA-184, non-zero non-2 exit" {
   local tx stderr_file
@@ -420,7 +420,7 @@ _run_parser() {
   [[ ! "${err}" =~ '"error_code":"DATA-181"' ]]
 }
 
-# --- Case 13: symlinked invocation resolves lib through the REAL script path ---
+# Case 13: symlinked invocation resolves lib through the REAL script path
 
 @test "symlinked hook invocation imports pricing_loader via canonicalized BASH_SOURCE (no DATA-184)" {
   local link_dir tx stderr_file err

@@ -1,61 +1,38 @@
 #!/usr/bin/env bash
-# apply-gate.sh — the foreground diff-preview + explicit-confirm gate for the
-# Glass Atrium update system (plan E3 / design C, task T12 / gate G3). Pure,
-# sourced library: function definitions ONLY, no top-level side effects, no
-# executable entry point — the same convention as scripts/lib/apply-spine.sh
-# and scripts/lib/atrium-config.sh.
+# apply-gate.sh — foreground diff-preview + explicit-confirm gate for the Glass
+# Atrium update system. Pure sourced library: function defs only, no top-level
+# side effects (same convention as apply-spine.sh / atrium-config.sh).
 #
-# IMPORTANT — strict mode is the CALLER's responsibility (sourced-lib convention)
-# This file deliberately does NOT run `set -Eeuo pipefail`: a sourced file must
-# not mutate the caller's shell options. Every function here is written to be
-# SAFE under a caller that has already set `set -Eeuo pipefail` + `IFS=$'\n\t'`
-# (separated local declarations, explicit `|| …` where a non-zero status is
-# expected, bash-3.2-safe C-style loops + array expansions for the macOS stock
-# shell). The bats suite sources this lib under full strict mode to prove that.
+# Strict mode is the CALLER's responsibility — a sourced lib must not mutate the
+# caller's shell options; every fn is safe under `set -Eeuo pipefail` (the bats
+# suite sources it under strict mode to prove that).
 #
-# Role (plan S2 / T12 → T17): this is the SINGLE confirmation gate every apply
-# path MUST pass through — BOTH the deterministic non-agent file sync (T13,
-# proposed bytes = the verified new-release tree) AND the agent EDITABLE-region
-# three-anchor merge (T17/T18/T19, proposed bytes = the merged result). It is
-# deliberately agnostic to HOW the proposed content was produced: it consumes a
-# uniform change-record stream (label / current-file / proposed-file) so both
-# producers feed the same gate.
+# Role: the SINGLE confirmation gate every apply path passes through (both the
+# deterministic non-agent sync and the agent EDITABLE-region merge), agnostic to
+# HOW the proposed content was produced — both producers feed one uniform
+# change-record stream.
 #
-# Contract (the G3 guarantee):
-#   * a per-file UNIFIED DIFF preview is rendered for every change BEFORE any
-#     write,
-#   * the gate HALTS for explicit user confirmation on the controlling TTY,
-#   * declining performs ZERO writes — and the higher-order `gate_apply_confirmed`
-#     makes that STRUCTURAL (the write callback is never invoked on decline),
-#   * the flow is FOREGROUND only — there is no background mass-replace path.
+# G3 contract: per-file unified-diff preview BEFORE any write · HALT for explicit
+# TTY confirmation · decline performs ZERO writes, made STRUCTURAL by
+# gate_apply_confirmed (the callback is never invoked on decline). Foreground
+# only — no background mass-replace path.
 #
-# Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): a
-# missing proposed-content file is a non-zero return with an explicit stderr
-# line, never a silent skip. Fail-closed: when no controlling TTY is available
-# and no answer is injected, the gate DECLINES (zero writes), never assumes yes.
+# Loud-fail + fail-closed (shared-self-improve-hygiene Precondition Loud-Fail):
+# a missing proposed file is a non-zero return + stderr, never a silent skip; no
+# TTY and no injected answer → DECLINE (zero writes), never an implicit yes.
 #
-# Change-record stream format (one record per line, TAB-separated):
-#   <label>\t<current_path>\t<proposed_path>
-#     label         — the relative path / human identifier shown in the preview
-#     current_path  — the live file being replaced; EMPTY when none exists yet
-#                     (rendered as a brand-new file, diffed against /dev/null)
-#     proposed_path — the file holding the content that WOULD be written
+# Change-record stream (TSV, one record/line): <label>\t<current>\t<proposed> —
+# current EMPTY when no live file exists (previewed as new vs /dev/null),
+# proposed holds the bytes that WOULD be written.
 #
-# Test / non-interactive seam: ATRIUM_UPDATE_CONFIRM_ANSWER, when SET (even to
-# an empty string), is used verbatim as the typed answer instead of reading
-# /dev/tty — the only injection point, so production interactive behavior is
-# never silently bypassed.
+# ATRIUM_UPDATE_CONFIRM_ANSWER, when SET (even empty), is the ONLY injection seam
+# (used verbatim instead of /dev/tty) — prod interactive is never silently bypassed.
 
-# ---------------------------------------------------------------------------
 # Diff preview
-# ---------------------------------------------------------------------------
 
-# Render a single file's unified-diff preview. Args: $1 = label · $2 = current
-# file path (empty/absent → treated as a new file, diffed against /dev/null) ·
-# $3 = proposed-content file path (MUST exist — loud-fail rc 1 otherwise).
-# `diff -u` returns 1 when the files differ; that is the EXPECTED outcome for a
-# change set, not an error, so it is explicitly absorbed (`|| true`). Portable
-# across BSD (macOS) and GNU diff.
+# Render one file's unified-diff preview. Args: $1 label · $2 current (empty/absent
+# → new file vs /dev/null) · $3 proposed file (MUST exist — loud-fail rc 1).
+# `diff -u` rc 1 = files differ = EXPECTED for a change set, absorbed via `|| true`.
 gate_render_diff() {
   local label="$1" current="$2" proposed="$3" old_src
   if [[ ! -f "${proposed}" ]]; then
@@ -74,15 +51,12 @@ gate_render_diff() {
   printf '\n'
 }
 
-# ---------------------------------------------------------------------------
 # Confirmation read (TTY / injected)
-# ---------------------------------------------------------------------------
 
-# Echo the user's typed answer. Precedence: ATRIUM_UPDATE_CONFIRM_ANSWER env
-# (the test/non-interactive injection seam — used verbatim, even when empty) →
-# a readable /dev/tty → fail-closed empty string (no TTY, no injection → the
-# caller treats empty as a decline, never an implicit yes). Reads from /dev/tty
-# (NOT stdin) because stdin carries the change-record stream.
+# Echo the typed answer. Precedence: ATRIUM_UPDATE_CONFIRM_ANSWER (injection seam,
+# verbatim even when empty) → readable /dev/tty → fail-closed empty (caller treats
+# empty as decline, never implicit yes). Reads /dev/tty NOT stdin (stdin carries
+# the change-record stream).
 gate_read_answer() {
   local answer=""
   if [[ -n "${ATRIUM_UPDATE_CONFIRM_ANSWER+x}" ]]; then
@@ -95,10 +69,8 @@ gate_read_answer() {
   printf '%s\n' "${answer}"
 }
 
-# Prompt for explicit confirmation and map the answer to a return code. Only
-# `y`/`yes` (case-insensitive) confirm; EVERYTHING else — including an empty
-# answer — declines (fail-closed). Arg: $1 = change count (for the prompt).
-# rc 0 = confirmed · rc 1 = declined.
+# Prompt for confirmation → return code. Only `y`/`yes` (case-insensitive) confirm;
+# everything else including empty declines (fail-closed). Arg $1 = change count.
 gate_prompt_confirm() {
   local count="$1" answer
   printf '\n%s file(s) will be changed. Apply these updates? [y/N] ' \
@@ -113,15 +85,12 @@ gate_prompt_confirm() {
   esac
 }
 
-# ---------------------------------------------------------------------------
 # Change-record building (non-agent sync bridge)
-# ---------------------------------------------------------------------------
 
-# Bridge spine_find_changed_files output → gate change-record stream for the
-# NON-AGENT sync path. Reads relative paths (one per line) from STDIN; emits a
-# TAB-separated record per path. current = install_root/path (EMPTY field when
-# the file is absent locally → previewed as a new file); proposed = new_dir/path.
-# Args: $1 = new-release tree root · $2 = live install root.
+# Bridge spine_find_changed_files → change-record stream (NON-AGENT sync path).
+# Reads relative paths from STDIN, emits a TSV record each: current =
+# install_root/path (EMPTY when absent locally → new file), proposed = new_dir/path.
+# Args: $1 new-release root · $2 live install root.
 gate_build_nonagent_records() {
   local new_dir="$1" install_root="$2" path current proposed
   while IFS= read -r path; do
@@ -136,15 +105,11 @@ gate_build_nonagent_records() {
   done
 }
 
-# ---------------------------------------------------------------------------
 # The gate
-# ---------------------------------------------------------------------------
 
-# Render every change's diff preview then prompt ONCE for confirmation. Reads
-# the change-record stream (TSV: label\tcurrent\tproposed) from STDIN. This is
-# the decision-only callable: it performs NO writes — it returns a verdict the
-# caller acts on. rc 0 = confirmed (caller MAY now write) · rc 1 = declined
-# (caller MUST write nothing) · rc 2 = empty change set (nothing to confirm).
+# Render every diff preview then prompt ONCE. Reads the TSV change-record stream
+# from STDIN. Decision-only — performs NO writes, returns a verdict: rc 0 confirmed
+# · rc 1 declined · rc 2 empty change set.
 gate_confirm_changes() {
   local -a labels=() currents=() proposeds=()
   local label current proposed n i
@@ -165,13 +130,11 @@ gate_confirm_changes() {
   gate_prompt_confirm "${n}"
 }
 
-# Structural zero-write-on-decline wrapper — the callable the skill (T09) wraps.
-# Buffers the change-record stream from STDIN (freeing stdin for the callback),
-# renders + confirms it, and ONLY on explicit confirmation invokes the apply
-# callback "$@". On decline (rc 1) or an empty set (rc 2) the callback is NEVER
-# called, so "zero writes on decline" is guaranteed by control flow rather than
-# by caller discipline. rc: 0 = applied (callback rc 0) · 1 = declined · 2 =
-# nothing to do · otherwise the callback's own non-zero rc (apply failure).
+# Structural zero-write-on-decline wrapper. Buffers the STDIN change-record stream
+# (freeing stdin for the callback), renders + confirms, and invokes the apply
+# callback "$@" ONLY on confirmation — on decline/empty the callback is NEVER
+# called, so zero-writes-on-decline holds by control flow, not caller discipline.
+# rc: 0 applied · 1 declined · 2 nothing to do · else the callback's own non-zero rc.
 gate_apply_confirmed() {
   local changeset rc=0
   changeset="$(cat)"

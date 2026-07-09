@@ -94,9 +94,8 @@ export interface TurnStatsRow {
   max_turns: number;
   // Events contributing to the turn aggregate (num_turns > 0).
   turn_event_count: number;
-  // True per-session aggregate: AVG over SUM(num_turns) per session_id — the
-  // owner sizes maxTurns budgets with this, not the per-event mean. 0 when no
-  // qualifying session exists in window.
+  // True per-session aggregate: AVG over SUM(num_turns) per session_id — owner sizes
+  // maxTurns budgets with this, not the per-event mean. 0 when no qualifying session in window.
   avg_turns_per_session: number;
   // Sessions contributing to avg_turns_per_session.
   turn_session_count: number;
@@ -111,7 +110,7 @@ export interface TurnStatsResponse {
   fetched_at: string;
 }
 
-// ----- GET /api/cost/kpi --------------------------------------------------------
+// GET /api/cost/kpi
 // Top KPI band of the cost screen: 오늘 비용 · 7일 비용 · 시간당 burn (3h) ·
 // 성공 작업당 비용. Day buckets KST-pinned; the 3h burn window is rolling
 // (liveness-style signal, not a calendar rate aggregate).

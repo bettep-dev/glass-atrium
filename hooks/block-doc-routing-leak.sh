@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
 # block-doc-routing-leak.sh — PreToolUse(Write) ADDITIONAL backstop against the
-# doc-routing leak (intel-reporter/intel-planner writing a document to a local
-# file instead of POSTing it to the monitor clauded-docs API).
+# doc-routing leak (intel-reporter/intel-planner writing a document to a local file
+# instead of POSTing it to the monitor clauded-docs API).
 #
-# DESIGN INVARIANT (T11) — this hook is an ADDITIONAL PreToolUse(Write) backstop,
-# NOT the primary doc-routing control. The default is FAIL-OPEN (exit 0): any
-# uncertainty — absent agent_id (main session), unrecoverable agent_type, absent
-# jq, unresolved monitor root, or any internal error (ERR trap) — passes the
-# write. A BLOCK (channel-a: stderr emit_error + exit 2) fires ONLY when all FOUR
-# conditions deterministically hold:
-#   (1) the tool is Write,
-#   (2) the recovered agent_type ∈ {intel-reporter, intel-planner},
-#   (3) the file extension ∈ {.md,.yaml,.yml,.json,.txt},
-#   (4) the (normalized) target path is OUTSIDE the deterministic allowlist.
-# PreToolUse PRE-blocks the write — the file is never created, so no leaked-file
-# cleanup guidance is needed; stderr only instructs routing to the monitor API.
-# Asymmetric-cost rationale: a false-block on the high-frequency Write tool costs
-# more (broad regression surface) than a rare leak slipping past this backstop,
-# so the conservative default is FAIL-OPEN.
+# DESIGN INVARIANT (T11) — ADDITIONAL PreToolUse(Write) backstop, NOT the primary
+# control. Default FAIL-OPEN (exit 0) on any uncertainty (absent agent_id, unrecoverable
+# agent_type, absent jq, unresolved monitor root, ERR trap). A BLOCK (channel-a: stderr
+# emit_error + exit 2) fires ONLY when all FOUR conditions hold:
+#   (1) tool is Write,
+#   (2) recovered agent_type ∈ {intel-reporter, intel-planner},
+#   (3) file extension ∈ {.md,.yaml,.yml,.json,.txt},
+#   (4) the normalized target path is OUTSIDE the deterministic allowlist.
+# PreToolUse PRE-blocks the write (file never created) → stderr only routes to the
+# monitor API, no leaked-file cleanup. Asymmetric-cost: a false-block on the high-
+# frequency Write tool costs more than a rare leak past this backstop, so FAIL-OPEN.
 #
-# Block channel = stderr emit_error + exit 2 (channel-a) — mirrors
-# enforce-delegation.sh's verified PreToolUse(Write|Edit) block (non-substitutable
-# with the stdout decision channel — see shared-hook-capability-contract.md).
+# Block channel = stderr emit_error + exit 2 (channel-a) — mirrors enforce-delegation.sh's
+# verified PreToolUse(Write|Edit) block (non-substitutable with the stdout decision
+# channel — see shared-hook-capability-contract.md).
 #
-# agent_type recovery mirrors track-outcome.sh recover_agent_type_from_sidecar:
-# sidecar file = agent-<agent_id>.meta.json, JSON key = "agentType"; resolved
-# either co-located with transcript_path's dirname, or via a bounded glob keyed by
-# session_id + agent_id (cwd-independent — no hardcoded projects path).
+# agent_type recovery mirrors track-outcome.sh recover_agent_type_from_sidecar: sidecar =
+# agent-<agent_id>.meta.json, key "agentType"; resolved co-located with transcript_path's
+# dirname, or via a bounded glob keyed by session_id + agent_id (cwd-independent).
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -35,9 +30,8 @@ IFS=$'\n\t'
 trap 'printf "[block-doc-routing-leak] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
 # Firing-trace log override — captured BEFORE sourcing hook-utils.sh (which assigns
-# HOOK_DATA_DIR) so the default resolves to the real runtime path; the override is
-# for Bats fail-safe testing (mirrors enforce-workflow-verify-stage.sh's
-# WORKFLOW_GATE_FIRED_LOG pattern).
+# HOOK_DATA_DIR) so the default resolves to the real runtime path; the override is for
+# Bats fail-safe testing (mirrors enforce-workflow-verify-stage.sh's WORKFLOW_GATE_FIRED_LOG).
 DOC_ROUTING_LEAK_FIRED_LOG="${DOC_ROUTING_LEAK_FIRED_LOG:-${HOME}/.claude/data/doc-routing-leak-fired.log}"
 
 # Instant kill switch — non-empty disables without touching settings.json.
@@ -48,16 +42,16 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # shellcheck source=lib/hook-utils.sh
 source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 
-# POST-API hint port (guidance text only — never a block-verdict dependency).
-# Derived via the hook_monitor_port wrapper (ADR-1: env → monitor/.env → config →
-# 16145) — carries NO literal fallback here (the single default lives in the resolver);
-# a resolver failure degrades to '' (cosmetic in the guidance string only).
+# POST-API hint port (guidance text only — never a block-verdict dependency). Derived via
+# the hook_monitor_port wrapper (ADR-1: env → monitor/.env → config → 16145) — NO literal
+# fallback here (the single default lives in the resolver); a resolver failure degrades to
+# '' (cosmetic in the guidance string only).
 monitor_port="$(hook_monitor_port || true)"
 
-# Normalize a POSIX path by collapsing "." and ".." segments without touching the
-# filesystem (the target file may not exist yet). Traversal-safety: "memory/../x"
-# resolves to "x", so a "memory" segment cannot be forged via "..".
-# Mirrors enforce-delegation.sh normalize_path. Args: $1 = path. Echoes normalized.
+# Normalize a POSIX path by collapsing "." and ".." segments without touching the filesystem
+# (the target may not exist yet). Traversal-safety: "memory/../x" resolves to "x", so a
+# "memory" segment cannot be forged via "..". Mirrors enforce-delegation.sh normalize_path.
+# Args: $1 = path. Echoes normalized.
 normalize_path() {
   local path="${1}" seg
   local -a out=()
@@ -96,8 +90,8 @@ normalize_path() {
 }
 
 # Recover agentType from the .meta.json sidecar — ALGORITHMICALLY EQUIVALENT to
-# track-outcome.sh recover_agent_type_from_sidecar (reimplemented in bash + jq, not
-# copied). Echoes the agentType on success, empty on any failure (caller fail-opens).
+# track-outcome.sh recover_agent_type_from_sidecar (reimplemented in bash + jq, not copied).
+# Echoes agentType on success, empty on any failure (caller fail-opens).
 # Args: $1 = transcript_path · $2 = session_id · $3 = sanitized agent_key.
 recover_agent_type() {
   local transcript_val="${1}" session_val="${2}" agent_key="${3}"
@@ -119,11 +113,10 @@ recover_agent_type() {
     fi
   fi
 
-  # (2) bounded glob keyed by session_id + agent_id (cwd-independent). Two layouts:
-  #     the flat subagents/ dir + the workflow-nested location used by Dynamic-
-  #     Workflow agents. agent_key is already path-safe (hook_path_safe_key); the
-  #     session_id glob segment is a wildcard-bounded lookup, never interpolated raw
-  #     into a traversal-capable position.
+  # (2) bounded glob keyed by session_id + agent_id (cwd-independent). Two layouts: the flat
+  #     subagents/ dir + the workflow-nested location for Dynamic-Workflow agents. agent_key is
+  #     already path-safe (hook_path_safe_key); the session_id glob segment is wildcard-bounded,
+  #     never interpolated raw into a traversal-capable position.
   if [[ -n "${session_val}" ]]; then
     local session_key match
     session_key="$(hook_path_safe_key "${session_val}")"
@@ -150,9 +143,9 @@ recover_agent_type() {
   return 0
 }
 
-# Append one fail-SAFE firing-trace line (T10). The verdict is decided BEFORE this
-# runs; every failure mode here is swallowed so the trace can NEVER alter the exit
-# code or verdict. Subshell + `|| true` isolates the ERR trap.
+# Append one fail-SAFE firing-trace line (T10). The verdict is decided BEFORE this runs; every
+# failure mode here is swallowed so the trace can NEVER alter the exit code or verdict. Subshell
+# + `|| true` isolates the ERR trap.
 # Args: $1=tool_name · $2=agent_id_present(yes/no) · $3=agent_type · $4=file_path · $5=verdict.
 emit_trace() {
   local tool_name="${1}" id_present="${2}" agent_type="${3}" file_path="${4}" verdict="${5}"
@@ -167,9 +160,9 @@ emit_trace() {
   ) 2>/dev/null || true
 }
 
-# Allow-and-exit shorthand for the post-condition-(2) allowlist branches, where the
-# trace prefix is fixed (Write · agent present · recovered AGENT_TYPE · FILE_PATH) and
-# only the verdict label varies. Args: $1 = verdict label. Traces then exits 0 (ALLOW).
+# Allow-and-exit shorthand for the allowlist branches, where the trace prefix is fixed (Write ·
+# agent present · recovered AGENT_TYPE · FILE_PATH) and only the verdict label varies.
+# Args: $1 = verdict label. Traces then exits 0 (ALLOW).
 allow() {
   emit_trace "Write" "yes" "${AGENT_TYPE}" "${FILE_PATH}" "${1}"
   exit 0
@@ -184,8 +177,8 @@ if [[ "${TOOL_NAME:-}" != "Write" ]]; then
   exit 0
 fi
 
-# agent_id gate — absent = main session (orchestrator), fail-open. The presence of
-# agent_id is the subagent-context signal (mirrors advisory-subagent-budget.sh).
+# agent_id gate — absent = main session (orchestrator), fail-open. agent_id presence is the
+# subagent-context signal (mirrors advisory-subagent-budget.sh).
 AGENT_ID="$(hook_get_field "${INPUT}" "agent_id")"
 if [[ -z "${AGENT_ID}" ]]; then
   emit_trace "Write" "no" "n/a" "n/a" "fail-open-no-agent-id"
@@ -237,8 +230,8 @@ esac
 # session-state segment (traversal guard, mirrors enforce-delegation.sh).
 NORM_PATH="$(normalize_path "${FILE_PATH}")"
 
-# (a) session-state file under any */memory/progress-* — the legitimate progress
-#     file write the doc agents legitimately hold in their frozen allowlist.
+# (a) session-state file under any */memory/progress-* — the progress-file write the
+#     doc agents hold in their frozen allowlist.
 case "/${NORM_PATH}" in
   */memory/progress-*) allow "allow-memory-progress" ;;
   *) : ;; # fall through to the next allowlist check

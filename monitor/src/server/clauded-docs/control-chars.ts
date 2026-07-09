@@ -1,25 +1,19 @@
 // Illegal control-character stripper for stored document bodies.
 //
 // Problem:
-//   - HTML/plain bodies POSTed to clauded-docs can carry raw C0 control chars
-//     (form-feed U+000C, vertical-tab U+000B, NUL, etc.) -- usually accidental
-//     paste artifacts from PDFs/terminals. DOMPurify normalizes HTML structure
-//     but does NOT remove these code points, so they reach disk + DB.
-//   - The JSON string grammar (RFC 8259) forbids unescaped U+0000-U+001F. A
-//     strict-but-thin serializer (e.g. fast-json-stringify under a response
-//     schema) leaves them raw -> invalid JSON -> every `curl | jq` consumer
-//     breaks (observed: orchestrator done-transition recipe `jq -r '.body'`).
+//   - HTML/plain bodies POSTed to clauded-docs can carry raw C0 control chars (FF U+000C,
+//     VT U+000B, NUL, etc.) from PDF/terminal paste. DOMPurify normalizes HTML but does
+//     NOT remove these code points, so they reach disk + DB.
+//   - The JSON string grammar (RFC 8259) forbids unescaped U+0000-U+001F; a strict-thin
+//     serializer (fast-json-stringify) leaves them raw -> invalid JSON -> every `curl | jq`
+//     consumer breaks (orchestrator done-transition `jq -r '.body'`).
 //
 // Policy -- strip, do NOT escape:
-//   - In HTML/text the only semantically meaningful C0 whitespace controls are
-//     TAB (U+0009), LF (U+000A), CR (U+000D). All other C0 controls, DEL
-//     (U+007F), and the C1 control block (U+0080-U+009F) carry no rendered
-//     meaning -> removing them preserves document fidelity (identical render)
-//     while making the body valid for strict JSON. This mirrors the XML 1.0
-//     restricted-char rule. Escaping would retain meaningless bytes; stripping
-//     is the clean fix.
-//   - Deterministic + idempotent -> safe to feed into content_hash (SHA256) and
-//     indexable-text extraction without breaking the hash-stability contract.
+//   - Only TAB (U+0009), LF (U+000A), CR (U+000D) carry rendered meaning; all other C0
+//     controls, DEL (U+007F), C1 block (U+0080-U+009F) are meaningless -> stripping preserves
+//     render fidelity while making the body valid for strict JSON (mirrors XML 1.0 restricted-char).
+//   - Deterministic + idempotent -> safe for content_hash (SHA256) + indexable-text without
+//     breaking hash-stability.
 
 // Build the class via String.fromCharCode so the source stays ASCII-only (no
 // literal invisible control bytes in the file). Class members:
@@ -50,22 +44,16 @@ const ILLEGAL_CONTROL_CHARS = new RegExp(ILLEGAL_CONTROL_CLASS, "g");
 const ILLEGAL_CONTROL_CHARS_TEST = new RegExp(ILLEGAL_CONTROL_CLASS);
 
 /**
- * Remove illegal control characters from a stored document body.
+ * Remove illegal control characters from a stored document body. Keeps the JSON-/HTML-legal
+ * whitespace controls (TAB/LF/CR) + every printable code point; removes all other C0 controls,
+ * DEL, and the C1 control block.
  *
- * Keeps the JSON-/HTML-legal whitespace controls (TAB/LF/CR) and every printable
- * code point; removes all other C0 controls, DEL, and the C1 control block.
+ * Perf: a global-regex `.replace` scans + allocates on every call regardless of matches. This
+ * route is GET-polled, so the strip is gated behind the stateless presence pre-test — a clean
+ * body returns the same instance with zero allocation.
  *
- * `String.prototype.replace` with a global regex SCANS + allocates on every call
- * regardless of whether anything matches — so it is not free for clean bodies.
- * This route is GET-polled by the viewer, so the strip is gated behind a stateless
- * presence pre-test: when no illegal char is present the original string instance
- * is returned with zero allocation, and `.replace` runs only on an actually-dirty
- * body.
- *
- * @param value - raw body string (HTML or plain) before persistence, or a body
- *   read back from disk for an existing row
- * @returns the body with illegal control chars removed (the same instance when
- *   none present)
+ * @param value - raw body string before persistence, or a body read back from disk
+ * @returns the body with illegal control chars removed (same instance when none present)
  */
 export function stripIllegalControlChars(value: string): string {
   if (value.length === 0) return "";

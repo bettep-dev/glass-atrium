@@ -96,7 +96,7 @@ for line in sys.stdin:
 ' 2>/dev/null
 }
 
-# --- Per-assertion gate helpers (the bats body is NOT under set -e — see header note). ---
+# Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
     echo "expected status ${1}, got ${status} (output: ${output})" >&2
@@ -118,7 +118,7 @@ assert_ctx_not_contains() {
   }
 }
 
-# --- (a) a NAMING_AGENTS DEV member (dev-react) receives the naming block ---
+# (a) a NAMING_AGENTS DEV member (dev-react) receives the naming block
 
 @test "dev-react (NAMING_AGENTS member) → naming block injected, exit 0" {
   run_hook "glass-atrium-dev-react"
@@ -132,7 +132,7 @@ assert_ctx_not_contains() {
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
 
-# --- (b) qa-code-reviewer (the QA enforcement surface) receives the naming block ---
+# (b) qa-code-reviewer (the QA enforcement surface) receives the naming block
 
 @test "qa-code-reviewer (NAMING_AGENTS member) → naming block injected, exit 0" {
   run_hook "glass-atrium-qa-code-reviewer"
@@ -140,7 +140,7 @@ assert_ctx_not_contains() {
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
 
-# --- (c) qa-debugger AND dev-swift do NOT receive it (deliberately absent from NAMING_AGENTS) ---
+# (c) qa-debugger AND dev-swift do NOT receive it (deliberately absent from NAMING_AGENTS)
 
 @test "qa-debugger (NOT in NAMING_AGENTS) → no naming block, exit 0" {
   run_hook "glass-atrium-qa-debugger"
@@ -164,7 +164,7 @@ assert_ctx_not_contains() {
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
-# --- (d) fail-open: naming markers absent → no hard error, naming block omitted, OTHER blocks emit ---
+# (d) fail-open: naming markers absent → no hard error, naming block omitted, OTHER blocks emit
 
 @test "naming markers absent → fail-open exit 0, naming omitted, comment-logging block still emits" {
   # A naming source WITHOUT the NAMING markers + a comment-logging source WITH its block.
@@ -206,7 +206,7 @@ assert_ctx_not_contains() {
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
-# --- (d2) always-on [COMPLETION] emit-format directive (PRIMARY emit-side fix, T2/T3). ---
+# (d2) always-on [COMPLETION] emit-format directive (PRIMARY emit-side fix, T2/T3).
 # The directive is delivered to EVERY agent independent of SUBAGENT_BUDGET_METER_OFF and of maxTurns,
 # and is ordered before the four droppable scope blocks so it survives the ~2KB persistence preview.
 # These assertions key on the 8192-byte ceiling and directive-first ordering, NOT on the 2KB preview.
@@ -274,7 +274,7 @@ assert_ctx_max_bytes() {
   assert_ctx_max_bytes 8192
 }
 
-# --- (e) meter-first assembly + universal 8KB byte-ceiling drop order (P1-T1 / P1-T2). ---
+# (e) meter-first assembly + universal 8KB byte-ceiling drop order (P1-T1 / P1-T2).
 # Unlike run_hook (which suppresses the meter), these tests ENABLE it: they build a maxTurns
 # frontmatter fixture + all four scope-block sources, then assert the meter is assembled FIRST and
 # the 8KB ceiling drops blocks in the pinned order naming → style-ref → minimalism → comment-logging
@@ -415,7 +415,7 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
-# --- (f) T1 numeric preview-survival guard: EMIT + METER combined MUST fit the ~2KB persistence
+# (f) T1 numeric preview-survival guard: EMIT + METER combined MUST fit the ~2KB persistence
 # preview (Claude Code delivers only a ~2KB preview of additionalContext, so both non-droppable
 # blocks must lead within that budget). This is the ACTUAL constraint the emit/meter-first ordering
 # protects — no other @test asserts it numerically. Drive the meter ENABLED (maxTurns frontmatter)

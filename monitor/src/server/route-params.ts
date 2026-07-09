@@ -1,7 +1,6 @@
-// Shared numeric route-param parsers — single SoT for :id / offset / folder_id
-// parsing across route files. Number.isSafeInteger cap closes two holes:
-// 2^53..2^63 digit strings float-round to a DIFFERENT integer (wrong-row lookup)
-// and >2^63 values overflow pg bigint (22003 → false 503). null = caller emits 400.
+// Shared numeric route-param parsers (:id / offset / folder_id) — single SoT; null = caller emits 400.
+// Number.isSafeInteger caps two holes: 2^53..2^63 float-rounds to a DIFFERENT integer (wrong-row lookup).
+// >2^63 overflows pg bigint (22003 → false 503).
 
 /** Path/query id (pg bigint, positive). null = invalid → 400. */
 export function parseIdParam(raw: string): number | null {

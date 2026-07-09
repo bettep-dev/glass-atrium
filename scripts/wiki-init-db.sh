@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # wiki-init-db.sh — idempotent SQLite FTS5 index initializer.
-#
-# Creates ${WIKI_ROOT}/index/wiki.sqlite if missing and
-# applies wiki-schema.sql. Safe to run repeatedly: schema uses
-# "CREATE ... IF NOT EXISTS" throughout.
+# Creates ${WIKI_ROOT}/index/wiki.sqlite (if missing) + applies wiki-schema.sql;
+# idempotent (schema is CREATE ... IF NOT EXISTS throughout).
 #
 # Usage:
 #   wiki-init-db.sh            # init or migrate in place

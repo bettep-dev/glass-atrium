@@ -1,22 +1,7 @@
-// Audit-log middleware: auto-insert monitor.audit_log for every mutating /api/* response.
-//
-// Records every state-mutating request reaching the covered routes (clauded-docs +
-// improvement). Registered in main.ts after registerRoutes(), before app.listen().
-//
-// Core invariants (safety bar):
-//   - Zero added response latency — INSERT is fire-and-forget (not awaited).
-//   - A failed/slow audit INSERT must NEVER block, delay, or fail the underlying mutation.
-//   - Hook failure = silent log only.
-//
-// Scope:
-//   - Only mutating methods (POST/PUT/PATCH/DELETE) — reads never produce an audit row.
-//   - Only covered route prefixes (clauded-docs + improvement) — other routes ignored.
-//
-// Column convention:
-//   - actor       = 'monitor-web' (single origin; the monitor web server is the sole actor).
-//   - action_kind = '<resource>.<verb>' derived from route+method (e.g. 'clauded-docs.delete').
-//   - result_code = success (2xx) | blocked (4xx) | error (5xx) — the AuditResultCode enum.
-//   - event_ts    = NOW() server-side literal (avoids adapter-pg Date serialization).
+// Audit-log middleware: fire-and-forget monitor.audit_log INSERT for every mutating /api/* response.
+// Registered in main.ts after registerRoutes(), before app.listen(); covers clauded-docs + improvement routes.
+// Safety bar: INSERT is not awaited (zero added latency); a failed/slow audit must NEVER block/delay/fail the mutation.
+// Hook failure = silent log only. Scope: mutating methods (POST/PUT/PATCH/DELETE) on covered routes only (reads/other routes ignored).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getPrisma } from "../db.js";
@@ -24,16 +9,12 @@ import { getPrisma } from "../db.js";
 // Single audit actor — the monitor web server is the sole write-action origin.
 const AUDIT_ACTOR = "monitor-web";
 
-// VarChar64 ceiling on the action_kind column — defensive cap (resource+verb never reaches it,
-// but a malformed/oversized route key must not throw a length-constraint error into the path).
+// VarChar64 defensive cap on action_kind — resource+verb never reaches it, but a malformed/oversized route key must not throw a length error into the path.
 const ACTION_KIND_MAX = 64;
 
-// Covered mutation routes. Each entry maps a route key (Fastify routeOptions.url, with the
-// dynamic :id/:rootId segments preserved) to the resource label used in action_kind.
-//
-// Hand-maintained — a newly added mutation route must register here or it goes silently
-// un-audited. The coverage-drift guard test fails when a registered mutating route is
-// missing from this map, so the map MUST stay a superset of audited routes.
+// Covered mutation routes → resource label (route key = Fastify routeOptions.url, :id/:rootId preserved).
+// Hand-maintained superset: a new mutation route unregistered here goes silently un-audited.
+// The coverage-drift guard test fails when a registered mutating route is missing from this map.
 export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/clauded-docs", "clauded-docs"],
   ["/api/clauded-docs/:id", "clauded-docs"],
@@ -47,10 +28,8 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/model-config", "model-config"],
 ]);
 
-// Single-writer enrichment seam: a covered handler may attach a curated old→new diff
-// (never the raw request body — PII/secret guard stays intact) that this middleware
-// merges into the payload. The middleware remains the ONLY audit-row writer for the
-// route (model-config AC-9: exactly 1 row per PUT, with the old→new payload).
+// Single-writer enrichment seam: a covered handler may attach a curated old→new diff — never the raw request body (PII/secret guard).
+// The middleware merges it and stays the ONLY audit-row writer for the route (model-config AC-9: exactly 1 row per PUT).
 export interface AuditChangeCarrier {
   auditChange?: Record<string, unknown>;
 }
@@ -109,8 +88,7 @@ function deriveActionKind(routeKey: string, method: string, resource: string): s
   const segments = routeKey.split("/").filter((s) => s.length > 0);
   const last = segments[segments.length - 1] ?? "";
   // A literal trailing segment (not a :param, not the resource root) is the specific verb.
-  // Root check compares against the entry's own resource label (resource-generic) — a
-  // collection-root route like /api/model-config must fall through to the method verb.
+  // Root check compares against the entry's resource label — a collection-root route (/api/model-config) falls through to the method verb.
   const literalVerb =
     last.length > 0 && !last.startsWith(":") && last !== resource ? last : null;
   const verb = literalVerb ?? METHOD_VERB[method] ?? method.toLowerCase();
@@ -144,11 +122,9 @@ function extractTargetId(request: FastifyRequest): bigint | null {
 }
 
 /**
- * Build a minimal, PII-free payload. Only structural identifiers are recorded:
- * the HTTP method, the matched route key, and the status code. The request body
- * is NOT included — it can carry document content / user data (PII + secrets risk).
- * A handler-attached AuditChangeCarrier diff (curated, never the raw body) merges
- * under `change`.
+ * Build a minimal, PII-free payload — only structural identifiers (method, matched route key, status).
+ * The request body is NOT included (document content / user data = PII + secrets risk). A handler-attached
+ * AuditChangeCarrier diff (curated, never the raw body) merges under `change`.
  */
 function buildPayload(
   method: string,
@@ -162,12 +138,8 @@ function buildPayload(
 
 /**
  * Register the audit-log hook. Called by main.ts after registerRoutes(), before app.listen().
- *
- * Behavior:
- *   1. onResponse — fires after the response is sent (zero latency impact).
- *   2. Non-mutating methods + unmatched / uncovered routes return immediately.
- *   3. INSERT is fire-and-forget (not awaited) — never blocks or delays the response.
- *   4. INSERT failure = silent log + swallow — the mutation already completed.
+ * onResponse (post-send, zero latency) → skip non-mutating/uncovered routes → fire-and-forget INSERT
+ * (not awaited) → INSERT failure = silent log + swallow (the mutation already completed).
  */
 export function registerAuditLogHook(app: FastifyInstance): void {
   app.addHook("onResponse", async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
@@ -213,9 +185,8 @@ export function registerAuditLogHook(app: FastifyInstance): void {
 }
 
 /**
- * Async INSERT — server-side NOW() for event_ts (avoids adapter-pg Date
- * serialization). On failure, silent log + swallow. Separated so the inner-most
- * try/catch absorbs every throw off the request path.
+ * Async INSERT — server-side NOW() for event_ts (avoids adapter-pg Date serialization).
+ * On failure, silent log + swallow. Separated so the inner try/catch absorbs every throw off the request path.
  */
 async function insertAudit(app: FastifyInstance, snapshot: AuditSnapshot): Promise<void> {
   try {

@@ -527,7 +527,6 @@ PY
   [ "${output}" = "done_with_concerns" ]
 }
 
-# --------------------------------------------------------------------------
 # Inline single-line [COMPLETION] tolerance (T4/T5)
 #
 # Ultracode/workflow schema-mode subagents emit the whole [COMPLETION] block as ONE line —
@@ -543,7 +542,6 @@ PY
 # delimiter set is emitted as explicit UTF-8 bytes so the exact codepoint is unambiguous regardless
 # of editor encoding. result=done is the distinguishing recovery signal — the synthesis branch can
 # only ever produce done_with_concerns (or blocked), never done.
-# --------------------------------------------------------------------------
 
 # bats 1.13 checks only the LAST command's status, so a bare intermediate `[[ ]]` assertion is
 # silently ignored (a false one never fails the test). oc/no echo a diagnostic + return non-zero

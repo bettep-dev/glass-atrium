@@ -52,7 +52,7 @@ const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 // flag, so the tmux session inherits the settings.json model (D3).
 const INHERIT_SETTINGS_LABEL = "inherit (settings.json)";
 
-// ----- external-surface path resolution (env overrides = test seams) ----------
+// external-surface path resolution (env overrides = test seams)
 
 function getDaemonConfigPath(): string {
   return (
@@ -77,7 +77,7 @@ export async function registerModelConfigRoutes(app: FastifyInstance): Promise<v
   app.put("/api/model-config", handlePut);
 }
 
-// ----- GET ---------------------------------------------------------------------
+// GET
 
 async function handleGet(
   request: FastifyRequest,
@@ -246,7 +246,7 @@ function computeDaemonConfigSync(
   return "ok";
 }
 
-// ----- PUT ---------------------------------------------------------------------
+// PUT
 
 async function handlePut(
   request: FastifyRequest<{ Body: ModelConfigPutBody }>,
@@ -255,7 +255,7 @@ async function handlePut(
   const start = Date.now();
   const prisma = getPrisma();
 
-  // --- validate-all-first: any failure → 400 with zero DB/file writes (AC-2/AC-3) ---
+  // validate-all-first: any failure → 400 with zero DB/file writes
   const body = request.body;
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return reply.code(400).send(invalidBody("body", "must be a JSON object"));
@@ -319,7 +319,7 @@ async function handlePut(
       } satisfies ModelConfigErrorBody);
     }
 
-    // --- single DB transaction over the changed rows -----------------------------
+    // single DB transaction over the changed rows
     const upserts = new Map<string, string>([...modelChanges, ...budgetChanges]);
     const changes: Record<string, { old: string | null; new: string }> = {};
     const writes = [];
@@ -345,7 +345,7 @@ async function handlePut(
     // handler only attaches the old→new diff for payload enrichment.
     (request as FastifyRequest & AuditChangeCarrier).auditChange = { changes };
 
-    // --- render side effects — full desired state, so a re-save heals prior drift ---
+    // render side effects — full desired state, so a re-save heals prior drift
     const merged = new Map(current);
     for (const [key, value] of upserts) {
       merged.set(key, value);
@@ -383,7 +383,7 @@ async function handlePut(
   }
 }
 
-// ----- surface readers -----------------------------------------------------------
+// surface readers
 
 /** null = missing or unparseable (GET degrades to 'file-missing' / drift-safe nulls). */
 async function readDaemonConfig(): Promise<Record<string, unknown> | null> {
@@ -456,7 +456,7 @@ async function readFrontmatterModel<T extends null | undefined>(
   }
 }
 
-// ----- frontmatter writer (D4) -----------------------------------------------------
+// frontmatter writer
 
 async function renderDevFrontmatter(desired: string): Promise<SurfaceResult> {
   const names = await listDevAgentFiles();
@@ -559,7 +559,7 @@ function extractModelLine(block: string): string | null {
   return match === null ? null : match[1];
 }
 
-// ----- daemon-config.json render engine (D2) ---------------------------------------
+// daemon-config.json render engine
 
 /**
  * Write-through render of the full daemon-consumed desired state. Unknown keys
@@ -623,7 +623,7 @@ async function renderDaemonConfig(desired: Map<string, string>): Promise<Surface
   return { surface: "daemon-config.json", status: "ok" };
 }
 
-// ----- shared fs/format helpers -----------------------------------------------------
+// shared fs/format helpers
 
 /** Temp file + rename inside the target's own directory (atomic on the same volume). */
 async function atomicWrite(resolvedPath: string, content: string): Promise<void> {

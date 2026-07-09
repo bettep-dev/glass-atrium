@@ -34,7 +34,7 @@ run_agent() {
   run bash -c 'printf "%s" "$1" | bash "$2"' _ "${payload}" "${HOOK_SH}"
 }
 
-# ─── Runtime-DATA exemption (NEW behavior — RED before T11, GREEN after) ───
+# Runtime-DATA exemption (NEW behavior — RED before T11, GREEN after)
 # A read-only reference to a runtime-data subdir must NOT force foreground.
 
 @test "tilde ~/.claude/data/ reference + bg=true → NOT blocked (case a)" {
@@ -62,7 +62,7 @@ run_agent() {
   [[ "${status}" -eq 0 ]]
 }
 
-# ─── Preserved CONFIG-write protection (GREEN before AND after) ───
+# Preserved CONFIG-write protection (GREEN before AND after)
 
 @test "tilde ~/.claude/hooks/x.sh + bg=true → STILL blocked (case b)" {
   run_agent 'Write the new hook to ~/.claude/hooks/x.sh and register it.' true
@@ -84,7 +84,7 @@ run_agent() {
   [[ "${status}" -eq 2 ]]
 }
 
-# ─── BASENAME exemption preserved (case d — GREEN before AND after) ───
+# BASENAME exemption preserved (case d — GREEN before AND after)
 
 @test "CLAUDE.md basename at harness root + bg=true → NOT blocked" {
   run_agent 'Append the project note to ~/.claude/CLAUDE.md then stop.' true
@@ -101,7 +101,7 @@ run_agent() {
   [[ "${status}" -eq 0 ]]
 }
 
-# ─── Path-form arms still classify CONFIG correctly (case e — GREEN both) ───
+# Path-form arms still classify CONFIG correctly (case e — GREEN both)
 
 @test "absolute-\$HOME /.claude/hooks/ config + bg=true → STILL blocked (arm intact)" {
   run_agent "Write ${HOME}/.claude/hooks/new.sh and wire it." true
@@ -113,7 +113,7 @@ run_agent() {
   [[ "${status}" -eq 2 ]]
 }
 
-# ─── Memory-dir protection under projects/ (Open Q #6 — GREEN before AND after) ───
+# Memory-dir protection under projects/ (Open Q #6 — GREEN before AND after)
 # The memory dir is nested at projects/<proj>/memory/. projects/ is on the
 # runtime-DATA denylist, so the fix MUST NOT let a memory write slip through:
 # a /memory/ path segment keeps the match protected.
@@ -128,14 +128,14 @@ run_agent() {
   [[ "${status}" -eq 2 ]]
 }
 
-# ─── Mixed prompt: any non-exempt match still blocks (GREEN before AND after) ───
+# Mixed prompt: any non-exempt match still blocks (GREEN before AND after)
 
 @test "data/ (exempt) + hooks/ (config) in one prompt + bg=true → BLOCKED" {
   run_agent 'Read ~/.claude/data/outcomes/x.md, then write ~/.claude/hooks/y.sh.' true
   [[ "${status}" -eq 2 ]]
 }
 
-# ─── Orthogonal guards intact (GREEN before AND after) ───
+# Orthogonal guards intact (GREEN before AND after)
 
 @test "foreground (bg=false) with a config path → NOT blocked (Rule-2 only on bg)" {
   run_agent 'Write ~/.claude/hooks/x.sh.' false

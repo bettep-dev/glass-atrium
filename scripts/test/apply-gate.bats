@@ -1,24 +1,12 @@
 #!/usr/bin/env bats
 # apply-gate.sh suite — pins the E3 T12 foreground diff/confirm gate contract:
-#   * gate_render_diff           — per-file unified diff preview; new file vs
-#                                  /dev/null; loud-fail on a missing proposed file
-#   * gate_build_nonagent_records — spine_find_changed_files → TSV record bridge
-#   * gate_confirm_changes       — render-all + confirm; rc 0 confirm / 1 decline
-#                                  / 2 empty; declines on empty / non-yes answers
-#   * gate_apply_confirmed       — structural zero-write-on-decline (the callback
-#                                  is invoked ONLY on explicit confirmation),
-#                                  covering BOTH the non-agent sync AND the agent
-#                                  EDITABLE-region merge via the same gate
-#
-# Run via: bats scripts/test/apply-gate.bats
-# Requires: bats >= 1.5.0, diff
-#
-# Hermetic strategy: every test runs inside a per-test mktemp sandbox. The
-# confirmation answer is injected via ATRIUM_UPDATE_CONFIRM_ANSWER (passed as a
-# positional and exported inside the sourced subshell) so /dev/tty is never read
-# — the gate's only test/non-interactive seam. Pipelines run in a `bash -c`
-# subshell that sources the lib under full `set -Eeuo pipefail`, proving the
-# functions are strict-mode-safe (the same pattern as apply-spine.bats).
+# render_diff (loud-fail on missing proposed) · build_nonagent_records (TSV bridge)
+# · confirm_changes (rc 0 confirm / 1 decline / 2 empty) · apply_confirmed
+# (structural zero-write-on-decline: callback runs ONLY post-confirm, covering both
+# non-agent sync and the agent EDITABLE-region merge via the same gate).
+# Hermetic: the confirm answer is injected via ATRIUM_UPDATE_CONFIRM_ANSWER so
+# /dev/tty is never read (the sole test seam); pipelines run `bash -c` sourcing the
+# lib under set -Eeuo pipefail, proving the functions strict-mode-safe.
 
 bats_require_minimum_version 1.5.0
 
@@ -38,7 +26,7 @@ teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# --- helpers ---------------------------------------------------------------
+# helpers
 
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.
 seed_file() {
@@ -57,9 +45,7 @@ gate() {
   "$@"
 }
 
-# ===========================================================================
 # gate_render_diff
-# ===========================================================================
 
 @test "render: shows a unified diff between current and proposed" {
   seed_file "${LIVE}" "hooks/a.sh" "old line"
@@ -85,9 +71,7 @@ gate() {
   [[ "${output}" == *"proposed content missing for hooks/a.sh"* ]]
 }
 
-# ===========================================================================
 # gate_build_nonagent_records
-# ===========================================================================
 
 @test "build: bridges relative paths into label/current/proposed TSV records" {
   seed_file "${LIVE}" "hooks/a.sh" "old"
@@ -106,9 +90,7 @@ gate() {
   [[ "${output}" == *"scripts/fresh.sh"$'\t'$'\t'"${NEW}/scripts/fresh.sh"* ]]
 }
 
-# ===========================================================================
 # gate_confirm_changes
-# ===========================================================================
 
 @test "confirm: 'yes' confirms the change set (rc 0)" {
   seed_file "${LIVE}" "hooks/a.sh" "old"
@@ -147,9 +129,7 @@ gate() {
   [[ "${output}" == *"no changes to apply"* ]]
 }
 
-# ===========================================================================
 # gate_apply_confirmed — structural zero-write-on-decline
-# ===========================================================================
 
 @test "apply: confirmation invokes the write callback (files written)" {
   seed_file "${LIVE}" "hooks/a.sh" "old"

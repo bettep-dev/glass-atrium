@@ -57,7 +57,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# --- self-resolution + engine source ---------------------------------------
+# self-resolution + engine source
 # Resolve our own dir so lib/ga-core.sh is found whether invoked from the repo
 # root or via a symlink farm into ~/.claude. readlink -f is unavailable on BSD,
 # so walk the symlink chain manually. GA_DIR is OUR var name (the lib owns GA_ROOT,
@@ -116,7 +116,7 @@ source "${GA_DIR}/lib/ga-tui-dispatch.sh"
 # shellcheck source=lib/ga-tui-preflight.sh
 source "${GA_DIR}/lib/ga-tui-preflight.sh"
 
-# --- temp + cleanup --------------------------------------------------------
+# temp + cleanup
 # The engine functions assign these atomic-write staging temps (swap_symlink sets
 # STAGE_TMP; render_config/wire_hooks set RENDER_TMP; bootstrap_health_gate sets
 # GATE_LOG). As the SOLE entry point we now own their trap sweep so an INT/TERM
@@ -171,7 +171,7 @@ MONITOR_PLIST_PATH=""  # captured at stop so restore can re-bootstrap without re
 # real stderr there (no run_gate_quiet wrap on that path).
 GATE_QUIET_LOG=""
 
-# --- global UI state (set by ui_init / drawn by render loop) ---------------
+# global UI state (set by ui_init / drawn by render loop)
 TTY_SAVED=""      # stty -g snapshot, restored on every exit path
 RAW_ACTIVE=false  # true while raw mode + alt-screen are engaged
 SELECTED=0        # current menu index
@@ -324,7 +324,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-# --- menu model (parallel arrays — bash-3.2 has no assoc arrays) ------------
+# menu model (parallel arrays — bash-3.2 has no assoc arrays)
 # Index-aligned: label / description / action keyword / destructive flag. MENU_COUNT
 # MUST equal every array's length; redraw_frame_inplace repositions by cursor save/restore so
 # it is immune to the count, but draw_menu iterates [0, MENU_COUNT) — keep them in sync.
@@ -359,7 +359,7 @@ readonly -a MENU_DESTRUCTIVE=(
 )
 readonly MENU_COUNT=5
 
-# === the Lithograph one-plate system =======================================
+# the Lithograph one-plate system
 # ONE canonical inner-width SoT (plate_inner) + ONE row/top/bottom emitter trio
 # (plate_row / plate_top / plate_bot) shared by the wordmark, the menu, and the
 # run-plan section/outcome panels. Before this, three disagreeing width models
@@ -397,7 +397,7 @@ PLATE_LEFT="${PLATE_MARGIN}"
 # by draw_menu's fullscreen branch around the block, cleared after.
 MENU_INNER_OVERRIDE=""
 
-# === low-level terminal output ============================================
+# low-level terminal output
 # All launcher chrome is written DIRECTLY to /dev/tty (TTY), never stdout/stderr,
 # so an engine step's STDERR log() stream can never scribble over our frozen
 # header. tty_out is the single sink for the menu + wordmark.

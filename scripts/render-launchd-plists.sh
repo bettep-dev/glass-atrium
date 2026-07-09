@@ -2,15 +2,15 @@
 # render-launchd-plists.sh — render the 8 com.glass-atrium.* launchd plists
 # from the rendered config.toml (single upper SoT — see config.toml.example).
 #
-# RENDER-ONLY contract (T32): writes plist FILES into an output dir; NEVER
-# touches launchctl or ~/Library/LaunchAgents. Loading the rendered plists
-# stays a manual user action (scripts/daemon-README.md "Loading the launchd
-# Plists"); the engine's only launchctl mutation stays behind --repoint-launchd.
+# RENDER-ONLY contract (T32): writes plist FILES into an output dir; NEVER touches
+# launchctl or ~/Library/LaunchAgents. Loading stays a manual user action
+# (scripts/daemon-README.md "Loading the launchd Plists"); the engine's only
+# launchctl mutation stays behind --repoint-launchd.
 #
-# Every absolute path in the output derives from config values — the target
-# user's HOME is the parent of [paths].target_home, NOT the running $HOME —
-# so rendering a config prepared for ANOTHER user yields only target-user
-# paths. A foreign render containing the running user's HOME loud-fails.
+# Every absolute path derives from config values — the target user's HOME is the
+# parent of [paths].target_home, NOT the running $HOME — so a config prepared for
+# ANOTHER user yields only target-user paths; a foreign render that leaks the
+# running user's HOME loud-fails (exit 6).
 #
 # Env overrides (mirror the engine's GA_* sandbox pattern):
 #   GA_CONFIG_TOML  config to read            (default <GA root>/config.toml)
@@ -22,11 +22,10 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # bash 5.2+ turns patsub_replacement ON by default, making a bare '&' in a
-# ${var//pat/repl} REPLACEMENT expand to the matched text — that corrupts
-# xml_escape's entity strings (e.g. ${s//</&lt;} → '<lt;', dropping the '&').
-# Disable it so '&' is a literal replacement char on every bash. Guarded so
-# bash 3.2 (which has no such option) is a harmless no-op — NOT '\&' escaping,
-# which bash 3.2 would emit literally.
+# ${var//pat/repl} REPLACEMENT expand to the matched text — corrupting xml_escape's
+# entities (${s//</&lt;} → '<lt;', dropping '&'). Disable it so '&' stays literal
+# on every bash; guarded so bash 3.2 (no such option) is a harmless no-op (NOT '\&'
+# escaping, which bash 3.2 would emit literally).
 shopt -u patsub_replacement 2>/dev/null || true
 
 # GA root = parent of this script's scripts/ dir (portable, same idiom as the engine)
@@ -36,11 +35,10 @@ readonly CONFIG_TOML="${GA_CONFIG_TOML:-${GA_ROOT}/config.toml}"
 readonly OUT_DIR="${GA_PLIST_OUT:-${GA_ROOT}/rendered/launchd}"
 readonly LABEL_PREFIX="com.glass-atrium"
 
-# Shared timezone resolver (atrium_resolve_timezone) — resolves the 'auto'
-# sentinel to a concrete host IANA zone so the rendered plist NEVER embeds 'auto'
-# (launchd + the monitor consume the literal value). Sourced relative to this
-# script so the symlink-farm copy finds its lib. Sourcing only defines functions
-# (no top-level commands), so it is side-effect-free under strict mode.
+# Shared timezone resolver (atrium_resolve_timezone) — resolves the 'auto' sentinel
+# to a concrete host IANA zone so the rendered plist NEVER embeds 'auto' (launchd +
+# monitor consume the literal). Sourced relative to this script (symlink-farm copy
+# finds its lib); side-effect-free under strict mode (only defines functions).
 SCRIPT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 readonly SCRIPT_SELF_DIR
 # shellcheck source=lib/atrium-config.sh
@@ -57,7 +55,7 @@ readonly -a JOBS=(
   daemon-daily-restart
 )
 
-# --- temp + cleanup ----------------------------------------------------------
+# temp + cleanup
 CUR_TMP=""
 cleanup() {
   local exit_code=$?
@@ -67,7 +65,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-# --- logging -----------------------------------------------------------------
+# logging
 log() { printf 'render-launchd-plists: %s\n' "$*" >&2; }
 die() {
   local code="$1"
@@ -79,7 +77,7 @@ die() {
 [[ -f "${CONFIG_TOML}" ]] \
   || die 3 "config not found: ${CONFIG_TOML} (run 'glass-atrium render-config' first)"
 
-# --- TOML value extraction (table-scoped, same idiom as render-monitor-env.sh)
+# TOML value extraction (table-scoped, same idiom as render-monitor-env.sh)
 # awk tracks the active table header so a same-named key in another section is
 # never matched. Args: $1 = table header literal · $2 = key name.
 extract_toml_value() {
@@ -113,11 +111,10 @@ require_abs_path() {
   printf '%s\n' "${val}"
 }
 
-# --- config load ---------------------------------------------------------------
-# [meta].timezone may be the 'auto' sentinel (host-default) — resolve it to a
-# CONCRETE IANA name here so the rendered plist NEVER embeds 'auto'. The
-# require_toml_value read still loud-fails (exit 4) on an absent key; resolution
-# is build-time host detection via the shared helper's TZ-immune symlink read.
+# config load
+# [meta].timezone may be 'auto' (host-default) — resolve to a CONCRETE IANA name
+# so the plist never embeds 'auto'; require_toml_value still loud-fails (exit 4) on
+# an absent key. Resolution is build-time host detection (TZ-immune symlink read).
 TIMEZONE_CONFIGURED="$(require_toml_value "[meta]" "timezone")"
 TIMEZONE="$(atrium_resolve_timezone "${TIMEZONE_CONFIGURED}")"
 ROOT_PATH="$(require_abs_path "[paths]" "root")"
@@ -140,7 +137,7 @@ NODE_DIR="$(dirname -- "${NODE_BIN}")"
 readonly PATH_VALUE="${NODE_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 readonly WIKI_ROOT="${ROOT_PATH}/wiki"
 
-# --- XML escaping --------------------------------------------------------------
+# XML escaping
 xml_escape() {
   local s="$1"
   s="${s//&/&amp;}"
@@ -159,7 +156,7 @@ E_TZ="$(xml_escape "${TIMEZONE}")"
 E_WIKI="$(xml_escape "${WIKI_ROOT}")"
 readonly E_HOME E_PATH E_ROOT E_MONITOR E_NODE E_LOGROOT E_TZ E_WIKI
 
-# --- XML fragment helpers --------------------------------------------------------
+# XML fragment helpers
 # one <string> element per argument (ProgramArguments entries)
 arg_xml() { printf '\t\t<string>%s</string>\n' "$@"; }
 # one <key>/<string> pair (EnvironmentVariables entries)
@@ -207,7 +204,7 @@ XML
 XML
 }
 
-# --- per-job render ---------------------------------------------------------------
+# per-job render
 # Shapes mirror the proven live plists 1:1. /tmp log paths are deliberate
 # (machine-shared, no user path; the daemon healthcheck scripts tail them).
 render_job() {

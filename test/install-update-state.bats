@@ -61,6 +61,19 @@ setup() {
   export EBATS_DRY="false"   # per-test override for DRY_RUN
   export EBATS_PURGE="false" # per-test override for PURGE_CONFIG
 
+  # Skip 3 assertion-IRRELEVANT heavy doctor sections via the existing test-mode seams.
+  # T27 asserts ONLY §9 pause-flag lines — never §8 manifest / auth self-test / §reports.
+  mkdir -p "${SANDBOX}/bin" "${SANDBOX}/empty-reports"
+  cat >"${SANDBOX}/bin/claude" <<'SH'
+#!/bin/bash
+echo OK
+exit 0
+SH
+  chmod +x "${SANDBOX}/bin/claude"
+  export GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
+  export GA_AUTH_CLAUDE_BIN="${SANDBOX}/bin/claude"             # echo-OK stub → no live claude -p network call
+  export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"     # empty dir → trivial daemon-reports scan
+
   # Clean-subprocess engine runner: a FRESH source + ga_init_env each invocation so
   # the lib's `readonly GA_ROOT` can never leak between tests, and the strict-mode
   # source stays isolated to this child (never the Bats shell). Reads its sandbox env

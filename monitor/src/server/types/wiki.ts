@@ -1,15 +1,10 @@
-// Response shapes for /api/wiki/* — the dedicated wiki-monitoring page (PG-only,
-// zero filesystem coupling).
+// Response shapes for /api/wiki/* — the dedicated wiki-monitoring page (PG-only, zero
+// filesystem coupling). Sources: wiki.notes → notes_total/by_type; wiki.dirty_flag →
+// index freshness; core.daemon_runs → cycle throughput/status/p95; core.daemon_run_payload
+// → dedup/deadlink explorer data.
 //
-// Source split:
-//   - wiki.notes        → notes_total + by_type (raw / source-summary)
-//   - wiki.dirty_flag   → master-index freshness signal
-//   - core.daemon_runs  → wiki cycle throughput + status mix + p95 duration
-//   - core.daemon_run_payload → latest dedup/deadlink proposal explorer data
-//
-// Duration is derived (ended_at - started_at), NOT compile_ms: the
-// daemon_runs.compile_ms column is 100% NULL for wiki rows (partial-upsert never
-// writes it).
+// Duration is derived (ended_at - started_at), NOT compile_ms — daemon_runs.compile_ms is
+// 100% NULL for wiki rows (partial-upsert never writes it).
 
 // Mirrors core.DaemonStatus enum — duplicated locally per "Module independence"
 // (small util duplication > fragile cross-route import of the generated enum).
@@ -22,12 +17,11 @@ export type WikiDaemonStatusValue =
   | "stale"
   | "quota_exceeded";
 
-// ----- GET /api/wiki/summary --------------------------------------------------
+// GET /api/wiki/summary
 
 export interface WikiSummary {
-  // Latest per-cycle compiled note count (daemon_runs.compiled_count of the most
-  // recent wiki row). Independent from notes_total — per-cycle. null when the
-  // cycle row is absent or carries no count (FE renders '—', never a fake 0).
+  // Latest per-cycle compiled note count (daemon_runs.compiled_count, most recent wiki row).
+  // Independent from notes_total; null when the cycle row is absent/countless (FE renders '—').
   latest_compiled_count: number | null;
   // wiki.notes COUNT — the cumulative indexed-note total.
   notes_total: number;
@@ -38,8 +32,8 @@ export interface WikiSummary {
   cycle_p95_window_days: number;
   // Status of the most recent wiki cycle (narrowed enum; null when no rows).
   last_status: WikiDaemonStatusValue | null;
-  // Whole days between MAX(run_date) and CURRENT_DATE. null when no rows.
-  // Day-granularity legacy — hours_since_last_cycle is the hour-precision source.
+  // Whole days between MAX(run_date) and CURRENT_DATE (day-granularity legacy;
+  // hours_since_last_cycle is the hour-precision source). null when no rows.
   days_since_last_cycle: number | null;
   // ISO of the most recent cycle's run_date (UTC midnight slice). null when none.
   last_run_date: string | null;
@@ -50,7 +44,7 @@ export interface WikiSummary {
   timezone: "UTC";
 }
 
-// ----- GET /api/wiki/cycles ---------------------------------------------------
+// GET /api/wiki/cycles
 
 export interface WikiCycle {
   run_date: string;
@@ -72,7 +66,7 @@ export interface WikiCyclesResponse {
   timezone: "UTC";
 }
 
-// ----- GET /api/wiki/index-metrics --------------------------------------------
+// GET /api/wiki/index-metrics
 
 export interface WikiNoteTypeBucket {
   note_type: string;
@@ -82,35 +76,29 @@ export interface WikiNoteTypeBucket {
 export interface WikiIndexMetrics {
   // wiki.notes GROUP BY note_type.
   by_type: WikiNoteTypeBucket[];
-  // wiki.notes COUNT. An INDEPENDENT count from latest_compiled_total — NOT a
-  // ratio/drift (the gap is expected).
+  // wiki.notes COUNT. INDEPENDENT from latest_compiled_total — NOT a ratio/drift (gap expected).
   notes_total: number;
-  // Latest per-cycle compiled_total (daemon_runs). Independent count. null when
-  // the cycle row is absent or carries no count (FE renders '—', never a fake 0).
+  // Latest per-cycle compiled_total (daemon_runs). Independent count; null when the
+  // cycle row is absent/countless (FE renders '—', never a fake 0).
   latest_compiled_total: number | null;
   // wiki.dirty_flag.dirty — master-index regeneration pending signal.
   dirty: boolean;
-  // wiki.dirty_flag.last_dirty normalized to epoch MILLISECONDS at the route
-  // boundary (daemon writes seconds). null only when the row is absent.
+  // wiki.dirty_flag.last_dirty normalized to epoch MILLISECONDS at the route boundary
+  // (daemon writes seconds). null only when the row is absent.
   last_dirty_ms: number | null;
   timezone: "UTC";
 }
 
-// ----- GET /api/wiki/backlog --------------------------------------------------
+// GET /api/wiki/backlog
 
-// The latest wiki payload's management-backlog slice. The named fields surface
-// the explicit shapes the FE renders directly.
-//
-// JSONB shapes:
-//   dedup_proposals  = object { errors:[], proposals:[], ... }
-//   deadlink_dryrun  = array
-//   deadlink_fixes   = array
-//   raw_processed    = number
+// The latest wiki payload's management-backlog slice. JSONB shapes: dedup_proposals =
+// object { errors:[], proposals:[], ... }; deadlink_dryrun/deadlink_fixes = array;
+// raw_processed = number.
 export interface WikiBacklog {
   // run_date of the latest payload row (date-only slice). null when no payload.
   run_date: string | null;
-  // Verbatim pass-through of the dedup_proposals object (errors + proposals + ...).
-  // `unknown` — schema varies by cycle; the FE explorer renders it generically.
+  // Verbatim pass-through of dedup_proposals. `unknown` — schema varies by cycle; the
+  // FE explorer renders it generically.
   dedup_proposals: unknown;
   // Verbatim pass-through of the deadlink_dryrun array.
   deadlink_dryrun: unknown;
@@ -130,7 +118,7 @@ export interface WikiBacklogResponse {
   timezone: "UTC";
 }
 
-// ----- shared error body (mirrors HealthDetailErrorBody) ----------------------
+// shared error body (mirrors HealthDetailErrorBody)
 
 export type WikiErrorBody =
   | { error: "internal" }

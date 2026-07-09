@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
 # PostToolUse(Write) — Outcome → progress.md status sync.
-#
-# Why: GLOBAL_RULES Cross-Session Continuity says progress files must be
-# auto-marked completed when their owning task finishes. The signal is the
-# Outcome Record (result: done). This hook watches Write events for new
-# outcome files, then flips the status of any open progress file whose
-# slug is referenced by the outcome.
-#
-# Matching rule (conservative — false positives are worse than misses):
-#   1. Outcome file path must end in /.claude/data/outcomes/*.md (canonical)
-#      OR /memory/outcomes/*.md (deprecated — kept only for stray legacy file
-#      matches; primary sink is PG core.outcomes, not the file system).
-#   2. Outcome frontmatter must contain `result: done`
-#   3. We scan the open progress files (via progress_list_open) and mark a
-#      slug "matched" only when the slug (length >= 4) appears verbatim
-#      in the outcome's body or frontmatter. Short slugs (< 4 chars) are
-#      ignored to avoid noise.
-#
-# Always exits 0 so it never blocks downstream PostToolUse hooks.
+# Why: GLOBAL_RULES Cross-Session Continuity auto-completes a progress file when its owning
+# task's Outcome Record = `result: done`. This hook watches Write events for new outcome files,
+# then flips the status of any open progress file whose slug the outcome references.
+# Matching rule (conservative — false positives worse than misses):
+#   1. path ends in /.claude/data/outcomes/*.md (canonical) OR /memory/outcomes/*.md (deprecated
+#      legacy stray matches; primary sink is PG core.outcomes, not the file system).
+#   2. frontmatter contains `result: done`.
+#   3. slug (length >= 4) appears verbatim in the outcome body/frontmatter; short slugs ignored
+#      to avoid noise ("api"/"ui").
+# Always exits 0 — never blocks downstream PostToolUse hooks.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -39,9 +31,8 @@ TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 FILE_PATH="$(hook_get_tool_input "${INPUT}" "file_path")"
 [[ -n "${FILE_PATH}" ]] || exit 0
 
-# Path filter — outcome records only. Priority: canonical
-# `~/.claude/data/outcomes/...md` first, then legacy
-# `/memory/outcomes/...md` (deprecated but still matched for stray writes).
+# Path filter — outcome records only (canonical /.claude/data/outcomes/*.md · deprecated
+# legacy /memory/outcomes/*.md for stray writes).
 case "${FILE_PATH}" in
   */.claude/data/outcomes/*.md) ;;
   */memory/outcomes/*.md) ;;

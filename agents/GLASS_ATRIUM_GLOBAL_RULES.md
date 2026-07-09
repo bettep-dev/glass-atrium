@@ -22,9 +22,9 @@ This file is the **system charter** for all agents — it governs behaviors unco
 
 ## Absolute Rules [ALL]
 
-- All responses in **Korean** · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
+- All responses are answered in the **user's question language**. · Technical terms in original language + parenthetical explanation on first occurrence · **No guessing** → Ask when unclear (1 issue = 1 question):
   Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
-  Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies stay in Korean.
+  Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
 - File names, class names, lines, APIs → Use **only verified** references
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission) · No API keys in handoff payloads · Sensitive info in logs MUST be masked
@@ -162,30 +162,12 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 - **Rollback**: Identify problematic hook → Remove entry from `settings.json` → Restart session
 - **Pre-deployment verification**: Confirm blocking behavior with intentional violation input before applying
 
-## Rationalization Rejection Table (Central) [ALL]
+## Rationalization Rejection [ALL]
 
-Single source of truth for all excuse→rebuttal pairs. Domain-scoped rule files (core-git-workflow.md · shared-performance.md · shared-search-first.md · core-security.md · shared-testing.md) reference this table via pointer blockquote.
+Reject trading an established practice for a shortcut: name the excuse → apply the rebuttal. Domain excuse→rebuttal pairs live in each home rule file (git-workflow · security · performance · search-first · testing); the cross-domain **Decision** case below is all-scope, stays here.
 
-| Domain | Excuse | Rebuttal |
-|--------|--------|----------|
-| Git | "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages. Every change goes through a PR regardless of size. |
-| Git | "I'll squash the commits later" | "Later" creates merge conflicts and lost context. Write clean commits from the start. |
-| Git | "Tests are passing locally, no need to wait for CI" | Local environment ≠ CI environment. CI catches dependency and configuration issues that local runs miss. |
-| Performance | "This optimization is obvious, no measurement needed" | Obvious optimizations are often wrong. CPU-bound assumptions fail when I/O is the bottleneck. Profile first. |
-| Performance | "We can optimize later if it's slow" | Performance debt compounds. N+1 queries at 10 rows work fine; at 10K rows they cause outages. Fix known anti-patterns now. |
-| Performance | "Premature optimization is the root of all evil" | The full Knuth quote adds "in 97% of cases." Known anti-patterns (N+1, missing indexes) are the other 3%. Fix those immediately. |
-| Search | "I already know how to implement this" | Knowledge ≠ awareness of existing implementations. The project may already have a utility for this. 5 minutes of searching saves hours of duplication. |
-| Search | "It's faster to just write it" | Writing is fast; maintaining duplicates is slow. Search first, then write only if nothing exists. |
-| Search | "This is too simple to search for" | Simple utilities are the most commonly duplicated code. grep for the function name before creating a new one. |
-| Security | "This is an internal API, no security review needed" | Internal APIs are the #1 lateral movement vector. All endpoints need input validation regardless of exposure. |
-| Security | "I'll add input validation later" | Unvalidated code in production is a live vulnerability. Validation is part of the implementation, not a follow-up. |
-| Security | "The framework handles security automatically" | Frameworks provide defaults, not guarantees. Misconfiguration is OWASP A05. Verify each security control explicitly. |
-| Security | "This data isn't sensitive" | Data classification changes. PII can appear in unexpected fields. Validate at boundaries regardless of perceived sensitivity. |
-| Testing | "Too simple to need tests" | Even simple code regresses · tests serve as documentation |
-| Testing | "Will add tests later due to time constraints" | "Later" never comes · test debt = technical debt |
-| Testing | "This part is hard to test" | Difficulty testing = design problem signal → fix the design |
-| Testing | "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
-| Testing | "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
-| Decision | "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper**. Auth, schema-as-SoT, type safety, complete loading are the right path; shortcuts become future debt. (BLOB-on-disk decisions like WAV are essential-fit calls, not shortcuts — distinguish.) |
+| Excuse | Rebuttal |
+|--------|----------|
+| "Let's keep it simple — skip auth / load partial / use raw SQL / drop type safety" | "Simple/avoidance vs. proper" framing → **always recommend proper** · auth, schema-as-SoT, type safety, complete loading = the right path, shortcuts become future debt · (BLOB-on-disk like WAV = essential-fit call, not a shortcut — distinguish) |
 
 > Per-scope file mapping: See [core-compliance-matrix.md#Compliance Matrix](../rules/glass-atrium/core-compliance-matrix.md#compliance-matrix) for the full rule-to-agent matrix

@@ -36,7 +36,15 @@ Applies to all DEV agents.
 - **Red → Green → Refactor**: (1) write a failing test (2) write minimal code to pass (3) refactor. Violating this order is FORBIDDEN
 - Bug fixes → a failing test MUST be written, executed, and confirmed BEFORE modifying code
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Testing)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "Too simple to need tests" | Even simple code regresses · tests serve as documentation |
+| "Will add tests later due to time constraints" | "Later" never comes · test debt = technical debt |
+| "This part is hard to test" | Difficulty testing = design problem signal → fix the design |
+| "I verified it manually" | Manual verification ≠ validation · non-reproducible = invalid |
+| "Writing code first as a reference" | Code written before tests MUST be **deleted and rewritten** |
 
 ## 3-Tier Test Hierarchy
 
