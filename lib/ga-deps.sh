@@ -759,18 +759,21 @@ ga_detect_claude_auth() {
   # (wait returns non-zero → unauthenticated; the stable signals above cover a genuinely authed user). Bash 3.2 clean.
   local auth_rc=1 pid watchdog ceiling
   ceiling="${GA_AUTH_PROBE_TIMEOUT_SECS:-10}"
+  # fds+stdin to /dev/null so the probe can never block on a prompt nor hold a $() capture pipe.
   claude auth status </dev/null >/dev/null 2>&1 &
   pid=$!
-  # fds redirected: an un-redirected watchdog subshell leaks its orphaned `sleep` (survives the
-  # kill below) still holding the $() capture pipe write-end open, blocking the verdict the full
-  # ceiling AFTER it is decided — a real-user latency bug, not just test slowness.
   { sleep "${ceiling}" && kill "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
   watchdog=$!
   # blocks until the probe exits naturally OR the watchdog kills it; either way we reap it.
   if wait "${pid}"; then
     auth_rc=0
   fi
-  # probe done — cancel+reap the watchdog (a no-op if it already fired at the ceiling).
+  # probe done — tear down the watchdog. `kill "${watchdog}"` ends only the subshell; its `sleep`
+  # child is reparented (orphaned) and lives out the full ceiling. That lingering orphan is benign
+  # for the $() caller (its fds are /dev/null) but a harness that waits on ALL background
+  # descendants (bats `run`) blocks on it for the whole ceiling after the verdict is already known.
+  # pkill -P reaps the sleep child FIRST (while its ppid is still the live watchdog), so no orphan.
+  pkill -P "${watchdog}" 2>/dev/null || true
   kill "${watchdog}" 2>/dev/null || true
   wait "${watchdog}" 2>/dev/null || true
   if [[ "${auth_rc}" -eq 0 ]]; then
