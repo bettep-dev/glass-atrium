@@ -1073,8 +1073,9 @@ SH
   mkdir -p "${home}/.claude"
   export GA_STUB_SEC_RC=44 # errSecItemNotFound — no Keychain item
   export GA_STUB_AUTH_RC=1 # auth status: unauthenticated
-  # no sleep stub: the bounded probe BLOCKS on the child (wait), so a fast-exiting stub
-  # returns at once; the watchdog is killed before its real 10s sleep matters.
+  # no sleep stub: the fast-exiting claude stub makes `wait` on the probe return at once;
+  # the watchdog subshell's fds are redirected (>/dev/null) so its orphaned `sleep` no longer
+  # holds the $() capture pipe — the verdict returns without paying the ceiling.
   [[ "$(HOME="${home}" PATH="${stub}:${PATH}" ga_detect_claude_auth)" == "absent" ]]
   # the auth-status probe WAS the deciding signal (Keychain missed) — modelled specifically.
   [[ -e "${SANDBOX}/authstatus-called" ]]
