@@ -425,7 +425,7 @@
     "hooks/enforce-delegation.sh": "9a44cb36e542ffea7264ab2be04eb07c855615a7da94abeff5d2c8cf32ce50cf",
     "hooks/enforce-foreground-harness.sh": "4da8e13871c18ba6a34a955a230fdc5ea4ac64f721a654333227f8863e04db2a",
     "hooks/enforce-verification-gate.sh": "9bf9432c87b3d5a8c581add51b5171596f249faeb611a8ad7f8e982e1f43b615",
-    "hooks/enforce-workflow-verify-stage.sh": "6eb42f8ef15e37ebc805de59feabdc54a6c1dea479ad770dac4474ff9f85b6d5",
+    "hooks/enforce-workflow-verify-stage.sh": "f15ab5471db9f57336628b595e90e37c7c27486425d04159cc94b578e6431186",
     "hooks/hook-utils.sh": "cf4cab01bf88ff97a4c426f00217e20e9f1f2bf50026357452c044f0a3e7e456",
     "hooks/inject-scope-rules.sh": "0c6e695960a262a48056c659770023b85b1b21e97674808eee1771d35c773ebe",
     "hooks/inject-session-context.sh": "9d0f7d5ed9a72aaacd47e88c9520af0ee2749cfeb2cfb048bef3b754d72f76f8",

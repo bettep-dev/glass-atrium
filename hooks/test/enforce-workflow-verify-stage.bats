@@ -300,6 +300,95 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
 }
 
 # =====================================================================================================
+# SECTION D2 — string-mask extraction scan (stolen-match regression family). The extraction BLANKS
+#   string-masked chars to spaces BEFORE any sentinel scan: previously the block finditer ran over RAW
+#   src with post-hoc start filtering, so a string-resident OPENING sentinel stole a non-greedy match
+#   through the REAL block's closer and a genuine declaration was mis-read as unterminated
+#   (BLOCK_GRAMMAR). These fixtures pin coexistence of string mentions WITH real blocks in every state.
+# =====================================================================================================
+
+# (i) The live-defect shape: a string-resident opening-sentinel mention BEFORE a valid comment block.
+# Pre-fix this BLOCKED as malformed-declaration (stolen match → unterminated); it must PASS.
+@test "extract(mask): string opening-sentinel mention BEFORE a valid comment block → PASS (stolen-match repair)" {
+  run_hook "const NOTE = 'mentions the [AGENT-COMPOSITION] contract token in prose'
+${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# (ii) A string-resident COMPLETE pair coexisting with a valid comment block stays inert → PASS (pin).
+@test "extract(mask): string-resident COMPLETE pair before a valid comment block → PASS (pair stays inert)" {
+  run_hook "const EXAMPLE = 'worked example: [AGENT-COMPOSITION] verify: qa, dev [/AGENT-COMPOSITION]'
+${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# (iii) A string-only OPENING mention with NO real block anywhere is still ABSENT → BLOCK_NODECL
+# (complements the complete-pair string-residency pin in SECTION C).
+@test "extract(mask): string-resident OPENING mention only, NO real block → BLOCK_NODECL (mention inert)" {
+  run_hook "const NOTE = 'the [AGENT-COMPOSITION] token appears only inside this string'
+agent('glass-atrium-dev-shell',{goal:'implement'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"missing composition declaration"* ]] || return 1
+  assert_trace block-nodecl || return 1
+}
+
+# (iv) Duplicate-detection integrity: pre-fix, a string mention BETWEEN two real blocks let the stolen
+# match swallow block 2 → hidden duplicate bypass ('ok'). Post-fix both real blocks are seen → duplicate.
+@test "extract(mask): 2 real blocks with a string mention BETWEEN → BLOCK_GRAMMAR (duplicate not bypassed)" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+const NOTE = 'prose mentioning [AGENT-COMPOSITION] between two real blocks'
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-react
+impl: glass-atrium-dev-react
+[/AGENT-COMPOSITION] */
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"malformed composition declaration"* ]] || return 1
+  assert_trace block-grammar || return 1
+}
+
+# (v) Coexistence preserves genuine-unterminated detection: a string mention plus a REAL open sentinel
+# with no closer still lands on unterminated → BLOCK_GRAMMAR.
+@test "extract(mask): string mention + genuinely unterminated real block → BLOCK_GRAMMAR (unterminated kept)" {
+  run_hook "const NOTE = 'prose mentioning [AGENT-COMPOSITION] ahead of a broken block'
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs */
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-grammar || return 1
+}
+
+# (vi) Companion-site pin (span-exact excision at body_only_src): under the upstream form, a string
+# mention BEFORE the block must not let a raw-src COMPOSITION_RE.sub over-delete the plan-ref citation
+# sitting BETWEEN them — only the real block span is excised, so the citation survives → PASS.
+@test "extract(mask): upstream form, string mention before block, plan-ref cited between → PASS (span-exact excision)" {
+  run_hook "const NOTE = 'prose mentioning [AGENT-COMPOSITION] before the declaration'
+log('plan-ref: clauded-docs/3')
+/* [AGENT-COMPOSITION]
+verify: upstream clauded-docs/3
+impl: glass-atrium-dev-shell
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+agent('glass-atrium-qa-code-reviewer',{goal:'final review'});agent('glass-atrium-dev-shell',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# =====================================================================================================
 # SECTION E — BLOCK_NOVERIFYDEV (the Stage-2 DEV hard-gate lives in the grammar validator: a team-form
 #   verify clause naming NO dev-* partner is rejected).
 # =====================================================================================================
@@ -1198,8 +1287,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 102 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 102 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 108 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 108 @test, found ${actual}" >&2
     return 1
   }
 }
