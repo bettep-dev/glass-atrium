@@ -377,13 +377,22 @@ preflight_guide_claude_auth() {
   # re-prompts rather than proceeding (the hard gate).
   while true; do
     if confirm_typed "ok" "Type ok AFTER you have signed in (anything else aborts)."; then
-      if [[ "$(ga_detect_claude_auth)" == "present" ]]; then
+      local verdict
+      verdict="$(ga_detect_claude_auth)"
+      if [[ "${verdict}" == "present" ]]; then
         preflight_line "$(c "${C_OK}" "[ok]") Claude authentication detected."
         # interactive auth confirmed — now provision the headless launchd credential.
         preflight_provision_headless_token
         return 0
       fi
-      preflight_line "$(c "${C_ALERT}" "still not authenticated — sign in, then type ok again.")"
+      # 'present-but-down' is a DISTINCT failure from 'absent': no creds file AND no Keychain item AND
+      # claude is not on PATH — the CLI is missing, not the login. Diagnose that specifically so a
+      # claude-off-PATH user is not looped on a sign-in message that does not apply to their situation.
+      if [[ "${verdict}" == "present-but-down" ]]; then
+        preflight_line "$(c "${C_ALERT}" "claude CLI not found on PATH — install Claude Code and/or add it to PATH, then type ok again.")"
+      else
+        preflight_line "$(c "${C_ALERT}" "still not authenticated — sign in, then type ok again.")"
+      fi
     else
       return 1
     fi
