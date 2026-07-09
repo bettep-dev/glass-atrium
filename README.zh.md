@@ -141,7 +141,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 ### 卸载
 
-在菜单中选择 **Uninstall**。它会移除已安装的符号链接并删除 GA 数据库，把 Atrium 从你既有的 Claude 系统中干净地剥离，既不改动任何用户自有文件，也不留下残余痕迹。但请注意，**数据库删除时不做备份**，只有在重新安装时才会重新创建。
+在菜单中选择 **Uninstall**。它会移除已安装的符号链接并删除 GA 数据库，把 Atrium 从你既有的 Claude 系统中干净地剥离，既不改动任何用户自有文件，也不留下残余痕迹。但请注意，**数据库会先留下备份再删除**（转储保存在 `~/.claude/backups/postgres/`），重新安装时会创建一个新的数据库。备份不会自动恢复，如需旧数据，请用 `pg_restore` 手动恢复。
 
 ### 如何撰写 Atrium Monitor 文档
 
