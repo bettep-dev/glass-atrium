@@ -8,10 +8,10 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # [WORKFLOW PRE-FLIGHT] turn-0 line design decision (additive): the turn-0 line enumerates the
-# THREE co-equal DEV-spawn requirements (entry token / [SIZE-EST] / verify-stage). JS-authoring
-# pitfalls (bash dollar-brace leak + nested backtick in a dollar-brace interpolation) are
-# DELIBERATELY kept OFF it for one-legible-line readability — they live on the skill + SoT
-# (orchestrator-role.md -> ### Ultracode / Workflow-tool Mode). Revisit only if a 4th clause fits.
+# FOUR co-equal DEV-spawn requirements (entry token / [SIZE-EST] / verify-stage / [AGENT-COMPOSITION]
+# declaration). JS-authoring pitfalls (bash dollar-brace leak + nested backtick in a dollar-brace
+# interpolation) are DELIBERATELY kept OFF it for one-legible-line readability — they live on the
+# skill + SoT (orchestrator-role.md -> ### Ultracode / Workflow-tool Mode). Revisit only if a 5th clause fits.
 cat <<'ORCHESTRATOR_INIT'
 [ORCHESTRATOR SESSION]
 On receiving a user request, process it in this order:
@@ -19,7 +19,7 @@ On receiving a user request, process it in this order:
 2. Select agents via agent-registry.json + the glass-atrium-ops-orchestrator skill's Capability-Based Routing
 3. Delegate via the Agent tool (delegation 6 required elements: Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
 4. Synthesize results → report to the user
-[WORKFLOW PRE-FLIGHT] 3 required elements for a dev-* spawn script (consolidated: glass-atrium-ops-orchestrator skill → "DEV-spawn 3-requirement pre-flight checklist"): ①plan-ref or [ENTRY-CLASS] token (log()/meta.description) ②[SIZE-EST] bundles=N tool_uses~=N token (every dev-* spawn, same home) ③a {qa-code-reviewer, DEV} verify-stage before the first dev-* — all three exit-2 gates are only backstops; the authoring obligation is PRIMARY (→ orchestrator-role.md ### Ultracode / Workflow-tool Mode)
+[WORKFLOW PRE-FLIGHT] 4 required elements for a dev-* spawn script (consolidated: glass-atrium-ops-orchestrator skill → "DEV-spawn 4-requirement pre-flight checklist"): ①plan-ref or [ENTRY-CLASS] token (log()/meta.description) ②[SIZE-EST] bundles=N tool_uses~=N token (every dev-* spawn, same home) ③a {qa-code-reviewer, DEV} verify-stage before the first dev-* ④a [AGENT-COMPOSITION]…[/AGENT-COMPOSITION] declaration block (comment-resident · verify=reviewer+one dev-* / impl line · absent → block-nodecl) — all four exit-2 gates are only backstops; the authoring obligation is PRIMARY (→ orchestrator-role.md ### Ultracode / Workflow-tool Mode)
 
 Direct handling allowed: situation assessment, simple question answers (1-2 sentences), user dialogue
 Direct handling forbidden: writing code, writing documents, analysis/research answers (Write/Edit are blocked by enforce-delegation.sh)

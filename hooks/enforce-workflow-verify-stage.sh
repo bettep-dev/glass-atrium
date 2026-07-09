@@ -1,57 +1,101 @@
 #!/usr/bin/env bash
-# enforce-workflow-verify-stage.sh — PreToolUse(Workflow) static verify-stage gate.
+# enforce-workflow-verify-stage.sh — PreToolUse(Workflow) static composition-declaration gate.
 #
-# WHY: under ultracode the Workflow engine's agent() spawns fire NO PreToolUse(Agent) event, so
-# enforce-verification-gate.sh is bypassed → the {qa-code-reviewer, DEV} Plan Direction Verification
-# (Stage-2) gate is honor-system on that path. This hook closes the gap: a MECHANICAL check on the OUTER
-# Workflow invocation — statically scans tool_input.script, BLOCKS (exit 2) when the script spawns
-# DEV-impl agents (agentType dev-*) with NO qa-code-reviewer verify-stage preceding them.
+# WHY: under ultracode the Workflow engine's internal agent() spawns fire NO PreToolUse(Agent)
+# event, so enforce-verification-gate.sh is bypassed and the {qa-code-reviewer, DEV} Plan Direction
+# Verification (Stage-2) gate is honor-system only on that path. This hook closes that gap on the
+# OUTER Workflow tool invocation with a SELF-ATTESTATION mechanism (mechanism parity with the
+# [ENTRY-CLASS] / [SIZE-EST] / [DOC-ROUTE] / plan-ref tokens): a DEV-spawning workflow MUST carry an
+# [AGENT-COMPOSITION] declaration block; the gate consistency-checks that declaration against the
+# code. Truthfulness of the declaration is NOT mechanically verifiable — identical honor-system
+# trust model as the sibling attestation tokens. This REPLACES the prior shape-inference machinery
+# (co-location window / parallel-group pairing / pipeline stage-adjacency): role information (which
+# dev is the verify partner vs the gated implementation dev) does NOT exist in the code, so any
+# inference was a guess. The author declares; the hook checks presence + consistency.
 #
-# SECOND detection pass (doc-routing leak) — WEAKEST layer, NOT the confidence anchor: flags an
-# intel-reporter / intel-planner spawn hardcoding a local FS path as Target with NO monitor-POST /
-# clauded-docs routing. Workflow-script mirror of the runtime primary guard block-doc-routing-leak.sh;
-# reuses the same comment-strip helper + fail-open-dominant posture (every uncertainty → PASS). Limits
-# and rationale are documented inline at the doc-routing helper. Defense-in-depth, not detection confidence.
+# DECLARATION GRAMMAR (raw-scanned, but the opening sentinel must NOT sit inside a string literal so
+# an incidental prompt/goal mention is not mistaken for a declaration; canonical home = a /* */
+# block comment):
+#   [AGENT-COMPOSITION]
+#   verify: <glass-atrium-qa-code-reviewer AND exactly one glass-atrium-dev-*>  (in-script Stage-2 pair)
+#           | upstream clauded-docs/<N>                                         (executes a verified plan)
+#   impl: <literal dev agentType spawn(s)>            (comma-separated) | none
+#   impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array>
+#   [/AGENT-COMPOSITION]
+# STRICT LINE GRAMMAR (the Stage-2 DEV hard-gate lives HERE): key set {verify, impl, impl-computed};
+# ONE line per key; agent names validated against the runtime DEV_SET argument (never a second
+# roster) plus the reviewer literal; free text admitted only after a spaced-dash delimiter; a
+# well-formed sentinel pair whose lines are garbage (unknown/duplicate key, unknown name, unterminated
+# block, 2+ blocks, a verify team naming 2+ dev types) is a DECIDABLE author error → BLOCK_GRAMMAR. A
+# team-form verify clause that names NO dev-* partner → BLOCK_NOVERIFYDEV (the DEV hard-gate).
+# Consistency checks (all fail-OPEN on any parse uncertainty):
+#   (a) every declared literal role (verify reviewer/dev + impl dev) maps to a Tier-B spawn-position
+#       token in the code                                                        -> else BLOCK_DECLSPAWN
+#   (b) every Tier-B dev spawn in the code is covered by the declaration         -> else BLOCK_UNDECL
+#   (b-prime) every Tier-A quoted dev literal type appears in the declaration (closes the undeclared
+#        config-array fan-out hole AND the prose-mention case)                   -> else BLOCK_UNDECL
+#   (c) every declared impl-computed agentType has a Tier-A data-literal presence -> else BLOCK_COMPUTED
+#   (d) declared verify spawn positions precede declared impl positions, on the GREEDY-EARLIEST
+#       same-type dual-role binding (computed spawns -> declared-order honor-system) -> else BLOCK_ORDER
+#   (e) an upstream clauded-docs/<N> verify clause requires the SAME id cited by a plan-ref token in
+#       the script BODY (outside the declaration)                                -> else BLOCK_UPSTREAM
+# UPSTREAM SCOPE (decision codified): the upstream form waives the in-script verify pair-mapping AND
+# ordering ONLY — the BLOCK_NOREV zero-reviewer hard guarantee is evaluated INDEPENDENTLY of the
+# declaration form and SURVIVES upstream (a fake upstream line can NEVER delete reviewer presence).
+# RETAINED verbatim: Tier-A/Tier-B token classification (Tier-B is the code-side operand of the
+# consistency check), the BLOCK_NOREV zero-reviewer hard guarantee, the entry-miss gate, the
+# [SIZE-EST] size-attestation gate, the doc-routing-leak pass (BLOCK_DOCROUTE, the WEAKEST layer),
+# the fail-open ERR-trap posture, and the two-line emit contract.
 #
-# HONEST SCOPE — STATIC HEURISTIC (string/pattern scan of the JS, NOT a full parse). Detail rationale
-# lives inline at each helper (F3 block, block_and_exit, the python3 verdict helper). Key properties:
-#   - JS comments (//, /* */) STRIPPED before the qa-code-reviewer token is scanned → a comment-only
-#     mention no longer satisfies the gate (string-aware: a // or /* inside a string literal is kept).
-#   - ASYMMETRIC SCAN (P0): spawn/agentType tokens (qa-code-reviewer, dev-*, doc-agent) + the leak
-#     TRIGGER (local Target shape) scan the comment-STRIPPED source (anti-gaming — a commented spawn is
-#     not real); author-attestation/suppressor tokens ([ENTRY-CLASS], [SIZE-EST], plan-ref, monitor-POST)
-#     scan RAW, matching the manual gate's raw grep (identical evidentiary weight in a comment or string).
-#   - BEST-EFFORT ordering: the reviewer verify-spawn must precede the first DEV impl spawn.
-#   - DEV-verifier co-location HEURISTIC (R5, NOT DEV-verdict enforcement): canonical Stage-2 =
-#     parallel(qa-code-reviewer, dev-*); verify-DEV and impl-DEV share the IDENTICAL dev-* token, so
-#     CO-LOCATION (dev-* in the reviewer's parallel group, proximity-window fallback) is the only sound
-#     signal. Reviewer present but NO co-located dev-* verifier → BLOCK (DEV hard-gate absent); presence/
-#     co-location only, NOT a runtime `feasible`-verdict check (that value does not exist statically).
-# Fail-OPEN DOMINANT on ANY ambiguity (python3 absent · helper error · stdout outside the enumerated
-# BLOCK_* tokens → exit 0): a false-block of a legitimate workflow is worse than a missed bypass. Does NOT
-# validate gating-expression correctness or DEV-verdict presence — the orchestrator's authoring obligation.
-# Enforces ONLY when a DEV agentType is actually spawned (no DEV impl → exempt).
+# SECOND DETECTION PASS (doc-routing-leak, the WEAKEST layer — NOT the confidence anchor): flags an
+# intel-reporter / intel-planner spawn hardcoding a local FS path as a Target with NO monitor-POST /
+# clauded-docs routing instruction. Workflow-script mirror of the runtime PreToolUse(Write) hook
+# (block-doc-routing-leak.sh); defense-in-depth, fail-open dominant. Details at the doc-routing helper.
+#
+# HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
+# enforcement. It verifies the declaration is PRESENT and CONSISTENT with the code's spawns; it does
+# NOT verify a feasible verdict was emitted or that a gating expression consumes it (those stay the
+# orchestrator's honor-system authoring obligation). ASYMMETRIC SCAN (P0): spawn/target tokens scan
+# the comment-STRIPPED source (a commented spawn is not a real one); author self-attestation tokens
+# ([ENTRY-CLASS], [SIZE-EST], plan-ref, monitor-POST) scan RAW src (identical weight in a comment or
+# a string). The [AGENT-COMPOSITION] block scans RAW-but-not-inside-a-string. FAIL-OPEN DOMINANT: any
+# ambiguity (python3 absent · helper error · output outside the enumerated BLOCK_* tokens) → exit 0.
+#
+# KNOWN LIMITATION / ACCEPTED FALSE-NEGATIVE (reported honestly): a fully-COMPUTED spawn whose
+# agentType resolves only at runtime (e.g. agent('x', {agentType: chosen})) with ZERO dev-* literals
+# ANYWHERE is invisible to Tier A, so the script reads as non-DEV → Stage-2 EXEMPT → PASS. This is a
+# PRE-EXISTING blind spot (Tier-A-blind by construction), retained UNCHANGED by the declaration
+# contract and accepted as a fail-open false-negative (a missed bypass beats a false BLOCK of a
+# legitimate workflow); pinned by the F7 accepted-FN bats fixture. The prior "co-located DEV cannot be
+# proven a verifier" false-negative is GONE — roles are DECLARED now, not inferred from layout.
+# DEV-verdict correctness itself stays the orchestrator honor-system authoring obligation.
+#
+# STRICTNESS-SWITCH BOUNDARY: fail-open protects an honest author from HOOK/ENVIRONMENT uncertainty
+# (tooling absent, undecodable envelope, parser crash) — those stay PASS. A well-formed sentinel pair
+# containing garbage is NOT hook uncertainty; it is a broken contract artifact, fully decidable, with
+# a deterministic fix → strict BLOCK. The switch lives INSIDE the found-sentinel branch, so a crash
+# BEFORE a non-string opening sentinel is detected stays fail-open (accepted residual).
 #
 # CONDITIONAL ACTIVATION (unverified binding): whether the harness fires PreToolUse(Workflow) with
-# tool_input.script exposed is NOT empirically confirmed — fail-open by design, so wiring is SAFE even if
-# the event never fires (no-ops on any envelope mismatch). Verify firing with a runtime probe.
+# tool_input.script exposed is NOT empirically confirmed. Fail-open by design, so wiring is SAFE even
+# if the event never fires — it no-ops on any envelope mismatch. Verify firing with a runtime probe.
 #
-# FIRING INSTRUMENTATION (passive probe): every invocation reaching the Workflow decision point appends
-# one trace line to ${HOME}/.claude/data/workflow-gate-fired.log (ts · tool_name · verdict · script-len).
-# The NEXT real ultracode run self-records firing (the orchestrator cannot trigger one). Two honest
-# log-interpretation branches: (a) a trace after a real run → the event DOES fire with script exposed → a
-# REAL active mechanism; (b) NO trace despite ultracode runs → the event does NOT fire → the gap is
-# structurally UNCLOSED and the in-script verify-stage (honor-system, orchestrator-role.md "### Ultracode
-# / Workflow-tool Mode") is the SOLE backstop — do NOT claim mechanical enforcement in branch (b). The
-# trace is fail-SAFE: the verdict is decided first, any logging error is best-effort and swallowed.
+# FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
+# one-line trace is appended to ${HOME}/.claude/data/workflow-gate-fired.log (timestamp · tool_name ·
+# verdict · script-length). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
+# block-norev · block-noverifydev · block-declspawn · block-undecl · block-computed · block-order ·
+# block-upstream · block-docroute · block-entry · block-sizeest; python3-absent / helper-error
+# fallbacks emit bare "pass". How to check: `cat ~/.claude/data/workflow-gate-fired.log`. The trace is
+# fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
 #
-# Exit codes: 0 = pass/fail-open · 2 = BLOCK. Four independent exit-2 verdicts share the block channel:
-# missing-verify-stage (clear) · doc-routing leak (weakest string heuristic) · entry-miss (DEV spawn with
-# NO plan-ref AND NO [ENTRY-CLASS] simple-task token — ultracode equiv of enforce-verification-gate.sh's
-# entry-miss; decoupled from the verify-stage verdict, never fires with a plan-ref/token or on a non-DEV
-# workflow) · size-attestation-miss (would-be-PASS DEV spawn under ENTRY_OK with NO [SIZE-EST] token in
-# RAW source — DEV-gated AND ENTRY_OK-gated so entry-miss keeps priority). Reason on STDERR. fail-open:
-# script absent/empty/unparseable · no DEV spawn · qa-code-reviewer present · wrong tool_name · any internal error.
+# Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
+#   missing-declaration (block-nodecl) · malformed-declaration (block-grammar) · the five
+#   consistency-check causes above · zero-reviewer (block-norev) · verify-team-lacks-DEV
+#   (block-noverifydev) · doc-routing leak (block-docroute) · entry-miss (block-entry) ·
+#   size-attestation-miss (block-sizeest).
+# Channel: STDERR for the block reason (PreToolUse block surface) · exit 2 signals the block.
+# fail-open: script absent/empty/unparseable · no DEV spawn (simple workflow, Stage-2 exempt) ·
+#            wrong tool_name · any internal error → exit 0.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -59,18 +103,24 @@ IFS=$'\n\t'
 # fail-open ERR trap — a gate that errors MUST NOT block a legitimate workflow.
 trap 'printf "[enforce-workflow-verify-stage] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-# DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents (space-separated for bash 3.2,
-# no declare -A). AUTO-SYNCED from the scope-dev.md roster by agent_lifecycle (sync-gate-roster) — do NOT
-# hand-edit. Mirrors the DEV_SET in enforce-verification-gate.sh.
+# DEV-set — core-compliance-matrix.md Scope Legend canonical DEV agents. Space-separated tokens for
+# bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
+# add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit. Mirrors
+# the DEV_SET in enforce-verification-gate.sh. The declaration grammar validates agent names against
+# THIS single runtime roster (never a second hardcoded list) so a newly created dev agent is accepted
+# the moment sync-gate-roster runs.
 readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
 
-# Firing-trace log path (passive probe) — lives in the runtime data dir alongside session-spawns/. The
-# WORKFLOW_GATE_FIRED_LOG override exists for Bats fail-safe testing only; default = real runtime path.
+# Firing-trace log path (passive probe). Lives in the live runtime data dir alongside
+# session-spawns/. WORKFLOW_GATE_FIRED_LOG override exists for Bats fail-safe testing only —
+# default resolves to the real runtime path.
 WORKFLOW_GATE_FIRED_LOG="${WORKFLOW_GATE_FIRED_LOG:-${HOME}/.claude/data/workflow-gate-fired.log}"
 
-# Firing-trace line cap. emit_trace appends one line per firing with no rotation/reaper → unbounded
-# growth. The trace is observability-only (never read for a verdict), so pruning to the most-recent N
-# lines is verdict-safe BY CONSTRUCTION. Mirrors enforce-verification-gate.sh's marker cap.
+# Firing-trace line cap. emit_trace appends one line per Workflow firing with no rotation, so a
+# long-lived install grows the log unboundedly (no SessionStart reaper sweeps it). The trace is
+# observability-only — never read for a verdict — so the prune is verdict-safe BY CONSTRUCTION
+# (no line carries decision signal; bounding to the most-recent N lines changes nothing the gate
+# reads). Mirrors enforce-verification-gate.sh's marker cap.
 readonly DEFAULT_TRACE_LINE_CAP=1000
 trace_line_cap="${WORKFLOW_GATE_FIRED_LOG_CAP:-${DEFAULT_TRACE_LINE_CAP}}"
 # Non-integer / zero override → default (fail-safe: a bad cap must never disable trace pruning).
@@ -78,10 +128,11 @@ if [[ ! "${trace_line_cap}" =~ ^[1-9][0-9]*$ ]]; then
   trace_line_cap="${DEFAULT_TRACE_LINE_CAP}"
 fi
 
-# emit_trace VERDICT SCRIPT_LEN — append one firing-trace line, FAIL-SAFE. The verdict is decided before
-# this runs; every failure mode (unwritable dir, mkdir/printf error) is swallowed so the trace can NEVER
-# alter the exit code or verdict. Subshell + `|| true` isolates the fail-open ERR trap and blocks a
-# non-zero status leaking into `set -e`. Best-effort only.
+# emit_trace VERDICT SCRIPT_LEN — append one firing-trace line, FAIL-SAFE.
+# The verdict is ALWAYS decided before this runs; every failure mode here (unwritable dir, mkdir
+# refusal, printf error) is swallowed so the trace can NEVER alter the hook's exit code or verdict.
+# Subshell + `|| true` isolates the ERR trap: a logging error must not trip the fail-open trap and
+# must not leak a non-zero status into `set -e`. Best-effort only.
 emit_trace() {
   local verdict="${1}" script_len="${2}"
   (
@@ -92,8 +143,9 @@ emit_trace() {
     printf '%s\ttool_name=%s\tverdict=%s\tscript_len=%s\n' \
       "${ts}" "Workflow" "${verdict}" "${script_len}" \
       >>"${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null || exit 0
-    # Fail-safe prune — bound the trace log to trace_line_cap lines (most-recent retention);
-    # observability-only, so any error is swallowed and never alters a verdict. Empty-pattern grep -c
+    # Fail-safe prune — bound the trace log to trace_line_cap lines (most-recent retention). The
+    # log is observability-only, so this can NEVER alter a verdict; any error here is swallowed
+    # (the log stays as-is) so pruning never breaks the trace it bounds. Empty-pattern grep -c
     # counts lines without the `|| echo 0` "0\n0" trap.
     local line_count
     line_count="$(grep -c '' "${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null || true)"
@@ -112,27 +164,30 @@ emit_trace() {
 }
 
 # block_and_exit REASON TRACE_TAG — terminal block: stderr reason + firing trace + exit 2. Shared by
-# every exit-2 verdict (entry-miss · doc-routing leak · size-attestation-miss · the three verify-stage
-# cause tags); only the reason text + trace tag differ. ${script_len} is read from the global.
+# every exit-2 verdict — only the reason text and the trace tag differ. ${script_len} is read from
+# the global set after the script decode.
 #
-# CENTRALIZED ENTRY ADDENDUM (message-only): when a block SUPPRESSES the dedicated entry-miss nudge (the
-# verify-stage cause tags + the "block-docroute" verdict pre-empt entry-miss) AND the entry signal is
-# missing (${entry_marker:-} == ENTRY_ADVISORY), append the entry-format requirement to the SAME message
-# so the author resolves both in one pass. ALLOWLIST gate (ADR-2): explicit enumeration block-norev |
-# block-noverifydev | block-order | block-docroute — NO block-* glob; "block-entry" is EXCLUDED (already
-# prints full entry guidance), "block-sizeest" is EXCLUDED (fires ONLY under ENTRY_OK, where the
-# entry-miss block already exited on ENTRY_ADVISORY → the addendum is structurally inert); a future block
-# path must opt IN deliberately (fail-safe vs silent scope-creep). Reads the GLOBAL entry_marker via
-# ${entry_marker:-} — NO `local` (a local would shadow the global with an empty value and silently
-# disable the addendum); the :- default is mandatory for set -u safety since this runs under the
-# fail-open ERR trap (an unbound-var error would fail-open to exit 0 and drop a legitimate block). The
-# addendum is a single-quoted heredoc (injection-safe). MESSAGE-ONLY: verdict logic, branch conditions,
-# the exit code (always 2), and emit_trace tag semantics are unchanged.
+# CENTRALIZED ENTRY ADDENDUM (message-only) — when the block is one that SUPPRESSES the dedicated
+# entry-miss nudge (a composition/verify cause tag or the docroute verdict all pre-empt the entry-miss
+# block) AND the entry signal is missing (${entry_marker:-} == ENTRY_ADVISORY), append the entry-format
+# requirement to the SAME message so the author resolves both needs in one pass. ALLOWLIST gate
+# (ADR-2): explicit enumeration — NO block-* glob; "block-entry" is EXCLUDED (it already prints full
+# entry guidance) and "block-sizeest" is EXCLUDED (deliberate ADR-2 opt-OUT: block-sizeest fires ONLY
+# under ENTRY_OK — the entry-miss block above has already exited on ENTRY_ADVISORY — so the entry
+# addendum is structurally inert on it), and a future block path must opt IN deliberately (fail-safe
+# vs silent scope-creep). block-grammar is opt-IN: a malformed declaration on an entry-missing DEV
+# workflow needs both fixes surfaced together.
+# Reads the GLOBAL entry_marker via ${entry_marker:-} — NO `local entry_marker` (a local would shadow
+# the global with an empty value and silently disable the addendum on every path); the :- default is
+# mandatory for set -u safety because this function runs under the fail-open ERR trap (an unbound-var
+# error would fail-open to exit 0 and silently drop a legitimate block). The addendum is a
+# single-quoted heredoc (no expansion -> injection-safe). MESSAGE-ONLY: verdict logic, branch
+# conditions, the exit code (always 2), and emit_trace tag semantics are all unchanged.
 block_and_exit() {
   local reason="${1}"
   local addendum_allowed
   case "${2}" in
-    block-norev | block-noverifydev | block-order | block-docroute) addendum_allowed=true ;;
+    block-nodecl | block-grammar | block-norev | block-noverifydev | block-declspawn | block-undecl | block-computed | block-order | block-upstream | block-docroute) addendum_allowed=true ;;
     *) addendum_allowed=false ;;
   esac
   if [[ "${addendum_allowed}" == true && "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
@@ -147,18 +202,21 @@ EOF
   exit 2
 }
 
-# emit_resilience_advisory — ADVISORY-ONLY (exit 0, stderr, NEVER blocks). A schema-mode agent() THROWS
-# on non-emit (uncaught → crashes the run); the .catch(() => null) in robustAgent is the load-bearing
-# catcher that converts the throw to a retry-handled null, so every schema-mode agent() MUST be wrapped
-# in the robustAgent retry-once-on-null idiom (copy-verbatim skeleton:
-# skills/glass-atrium-ops-orchestrator.md "### Resilient Workflow Authoring"). A per-call-site "absence
-# of convention" scan is not soundly decidable AND a BLOCK would violate the fail-open-DOMINANT posture,
-# so this is a WHOLE-SCRIPT token-presence nudge: a DEV-spawning script carrying a 'schema' token but
-# ZERO 'robustAgent'/'catch' → one-line stderr advisory. Reads the GLOBAL script_src + DEV_SET, NEVER
-# exits / alters the verdict; DECOUPLED from the [SIZE-EST] / entry / verify-stage / docroute verdicts.
+# emit_resilience_advisory — ADVISORY-ONLY (exit 0, stderr, NEVER blocks). A schema-mode workflow
+# agent() THROWS on non-emit (uncaught → crashes the run); the .catch(() => null) in robustAgent is the
+# load-bearing catcher that converts the throw to a null the retry handles, so every schema-mode agent()
+# MUST be wrapped in the robustAgent retry-once-on-null / isolated-failure idiom (copy-verbatim
+# skeleton: skills/glass-atrium-ops-orchestrator.md "### Resilient Workflow Authoring"). A per-call-site
+# "absence of convention" scan is NOT soundly decidable (unbounded valid idioms) AND a BLOCK would
+# violate this file's fail-open-DOMINANT posture — so this is a decidable WHOLE-SCRIPT token-presence
+# nudge: a DEV-spawning script carrying a 'schema' token but ZERO 'robustAgent'/'catch' tokens anywhere
+# → one-line stderr advisory. It reads the GLOBAL script_src + DEV_SET, emits nothing out of scope, and
+# NEVER exits / NEVER alters the verdict — the block/pass decisions below own the exit code. DECOUPLED
+# from the [SIZE-EST] / entry / verify-stage / docroute verdicts (a separate, purely additive check).
 emit_resilience_advisory() {
-  # DEV-spawn gate — only a dev-* agentType script is in scope (mirrors the entry / size DEV-gating).
-  # local IFS=' ' splits the space-separated DEV_SET (file-global $'\n\t' won't split on space); load-bearing.
+  # DEV-spawn gate — only a script referencing a dev-* agentType is in scope (mirrors the entry / size
+  # attestation DEV-gating). local IFS=' ' splits the space-separated DEV_SET; the file-global IFS is
+  # $'\n\t', which would NOT split on space, so the local override is load-bearing (restored on return).
   local dev_tok found_dev=false
   local IFS=' '
   for dev_tok in ${DEV_SET}; do
@@ -224,55 +282,35 @@ fi
 # Script body is known from here — length feeds the trace's script_len field.
 script_len="${#script_src}"
 
-# RESILIENCE ADVISORY (fail-open, stderr-only) — runs BEFORE the verdict dispatch, NEVER changes the exit
-# code; nudges when a DEV workflow spawns a schema-mode agent() with no robustAgent/.catch. Decoupled.
+# RESILIENCE ADVISORY (fail-open, stderr-only) — runs BEFORE the verdict dispatch and NEVER changes
+# the exit code. Emits a one-line nudge when a DEV workflow spawns a schema-mode agent() with no
+# robustAgent / .catch resilience idiom; silent otherwise. Decoupled from every block/pass verdict.
 emit_resilience_advisory
 
-# F3 hardened heuristic (string-aware, fail-open dominant). Three bypasses of the prior presence-only
-# scan are closed: (a) a qa-code-reviewer token in a COMMENT → comments are STRIPPED (string-aware: //
-# and /* */ only outside string literals) before the reviewer token is scanned; (b) reviewer-after-dev
-# passed → the reviewer verify-spawn must appear BEFORE the first DEV impl spawn, else it is missing;
-# (c) firing with no DEV spawn → already exempt.
+# DECLARATION-CONSISTENCY MODEL (replaces the prior shape-inference machinery). The gate no longer
+# GUESSES which dev-* is the verify partner vs the gated implementer — that role information does not
+# exist in the code. Instead the author DECLARES it in an [AGENT-COMPOSITION] block and the helper
+# checks the declaration against the code:
+#   TIER A — broad quoted-literal presence scan. Feeds PRESENCE gates (dev_present + reviewer-existence
+#     for BLOCK_NOREV + entry + size-est) AND supplies the Tier-A dev TYPE SET for consistency check
+#     (b-prime). A data-array config field like agent:'dev-*' counts here, so a data-literal-only script is
+#     NOT exempt.
+#   TIER B — spawn-position scan (agent-call first-arg OR agentType field-value). The CODE-SIDE
+#     OPERAND of the consistency check: it yields the (position, agent-type) of every real dev/reviewer
+#     spawn. A data-field literal is DATA and excluded from Tier B.
+# The [AGENT-COMPOSITION] block is extracted from RAW src with a string-literal guard (an incidental
+# prompt/goal mention of the sentinel is NOT a declaration). The consistency checks (a)-(e), the b'
+# Tier-A coverage rule, and the Stage-2 DEV hard-gate are documented in the file header.
+# Comment-stripping is RETAINED for the spawn/target token scans (a commented spawn is not a real one;
+# string-aware so a URL inside a goal string does not false-strip a reviewer line).
 #
-# R5 — DEV-verifier co-location / co-group HEURISTIC, NOT DEV-verdict enforcement. The {qa-code-reviewer,
-# DEV} team's DEV half is required, but verify-DEV and impl-DEV share the IDENTICAL dev-* token
-# (indistinguishable). Two sound signals that a dev-* is the verify-DEV: (1) CO-LOCATION — within
-# COLOCATION_WINDOW chars of ANY reviewer span (finditer over ALL reviewers, not just the first); (2)
-# CO-MEMBERSHIP — sharing a balanced-paren parallel(...) group with a reviewer, DISTANCE-INDEPENDENT. The
-# helper partitions dev-* into the verify-DEV (either signal) and the impl dev-* (else), then decides:
-#   - reviewer(s) present but NO co-located / co-grouped verifier → reviewer alone → DEV hard-gate → BLOCK.
-#   - verify-DEV present AND every impl dev-* preceded by SOME reviewer → PASS (ORDER-INDEPENDENT since
-#     the verify-DEV is EXCLUDED from the impl set: parallel(reviewer, dev) and parallel(dev, reviewer) both pass).
-#   - an impl dev-* NO reviewer precedes → ran un-gated → BLOCK.
-#
-# TWO FALSE-POSITIVE FIXES (bypass-free per the Stage-2 red-team): (FP1, multi-reviewer) key the
-# verify-DEV check on EVERY reviewer (finditer), so a leading audit/Phase-1 reviewer no longer decides a
-# genuine later {qa,dev} pair; (FP2, window-blowout) recognize the verify pair STRUCTURALLY via
-# parallel(...) group bounds, so a multi-sentence goal string past COLOCATION_WINDOW does not break
-# detection. NO precede-fallback: the red team proved "absorb the first impl dev as a phantom verify-DEV
-# when dev-*>=2 and a reviewer precedes" OPENS A BYPASS (audit reviewer + 2+ scattered impl devs + no
-# genuine parallel(qa,dev) pair would wrongly PASS), so the verify-DEV signal is co-location/group-bounds
-# ONLY. The fix only WIDENS the PASS set for genuine verify-stages; it NEVER admits a zero-genuine-verify-
-# pair DEV-impl workflow. Presence/co-location only — NEVER a runtime feasible verdict (nonexistent at
-# static-scan time); a wide window + fail-open-biased group scan keep it FAIL-OPEN DOMINANT.
-#
-# KNOWN LIMITATION (honest): because verify-DEV and impl-DEV are the same token, this cannot prove the
-# co-located DEV acts as a verifier not an implementer. A lone dev-* within COLOCATION_WINDOW of the
-# reviewer reads as a verify-DEV (a verify-only stage, or a dev-then-reviewer pair with nothing after,
-# both PASS) — an accepted fail-open false-negative (a missed bypass beats a false BLOCK). DEV-verdict
-# correctness stays the orchestrator's honor-system authoring obligation.
-#
-# Detection + comment-strip + co-location + ordering run in ONE python3 helper emitting a cause-split
-# verdict token (BLOCK_NOREV | BLOCK_NOVERIFYDEV | BLOCK_ORDER | BLOCK_DOCROUTE | BLOCK_SIZEEST | PASS).
-# CRITICAL — FAIL-OPEN DOMINANT: python3 absent · helper error · any stdout outside the enumerated
-# BLOCK_* tokens → PASS (exit 0). Only a confident cause token blocks: BLOCK_NOREV (DEV spawned, no
-# non-comment qa-code-reviewer anywhere) · BLOCK_NOVERIFYDEV (reviewer present, NO co-located/co-grouped
-# dev-* verifier) · BLOCK_ORDER (an impl dev-* the reviewer does not precede) · BLOCK_SIZEEST (would-be-
-# PASS DEV workflow under ENTRY_OK, NO [SIZE-EST] delegation-size token in the RAW source).
-#
-# String-awareness rationale: a naive // strip would corrupt a URL inside a goal string
-# (`'http://x'`) and could erase a real reviewer token sharing that line → false BLOCK. The helper tracks
-# '/"/backtick string state (with \ escapes) so // and /* inside a string literal are NOT comment starts.
+# The helper emits a two-line output: line 1 = verdict token (BLOCK_NODECL | BLOCK_GRAMMAR |
+# BLOCK_NOREV | BLOCK_NOVERIFYDEV | BLOCK_DECLSPAWN | BLOCK_UNDECL | BLOCK_COMPUTED | BLOCK_ORDER |
+# BLOCK_UPSTREAM | BLOCK_DOCROUTE | BLOCK_SIZEEST | PASS), line 2 = entry marker (ENTRY_OK |
+# ENTRY_ADVISORY). CRITICAL — FAIL-OPEN DOMINANT: python3 absent, the helper erroring, OR any stdout
+# outside the enumerated tokens → treated as PASS (exit 0). A false-BLOCK of a legitimate workflow is
+# worse than a missed bypass, so every uncertainty resolves to allow. HONESTY: declaration truthfulness
+# is NOT mechanically verifiable — identical honor-system trust model as the sibling attestation tokens.
 #
 # python3 absent is a system misconfiguration — fail-open (never block on a tooling gap).
 if ! command -v python3 >/dev/null 2>&1; then
@@ -280,22 +318,14 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-# Verdict helper — reads DEV_SET (arg 1) + the script (stdin). Any internal exception → the helper
-# prints PASS (belt-and-suspenders fail-open), and the bash side ALSO treats a non-"BLOCK" helper as PASS.
+# Verdict helper. Reads DEV_SET (arg 1) + the script (stdin). Prints exactly a verdict token + marker.
+# Any internal exception → the helper itself prints PASS (belt-and-suspenders fail-open), and the bash
+# side ALSO treats a non-enumerated / errored helper as PASS.
 verdict_py="$(
   cat <<'PY'
 import sys, re
 
-# Proximity-window half-width in chars for the DEV-verifier co-location heuristic. A dev-* token
-# within this many chars of the reviewer token counts as the DEV half of the verify team. Generous
-# on purpose: a wider window reads MORE workflows as having a co-located DEV verifier, so it yields
-# FEWER BLOCKs and stays fail-open dominant. Sized to comfortably span the canonical verify stage
-# parallel block holding qa-code-reviewer plus the primary-domain dev agent side by side, INCLUDING
-# a realistic multi-sentence reviewer goal string (~500+ chars) between the co-located pair.
-COLOCATION_WINDOW = 1000
-
-# Inline copy of enforce-verification-gate.sh references_plan()'s structured regex (Path A predicate);
-# keep in sync. Scanned RAW (attestation_src) for the ADDITIVE entry-advisory signal — see alias defs.
+# --- retained: plan-ref / attestation literals (entry + size + docroute) ---
 PLAN_REF_RE = re.compile(
     r"clauded-docs/[0-9]+"
     r"|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html"
@@ -303,114 +333,55 @@ PLAN_REF_RE = re.compile(
     r"|plan-[0-9]+"
     r"|[0-9]+-plan"
 )
-# Entry-classification literal — the orchestrator's conscious "this DEV task is simple/exempt" signal.
-# Anchored bracketed literal (substring, not a bare 'simple') — mirrors has_simple_task_token().
 ENTRY_CLASS_LITERAL = "[ENTRY-CLASS] simple-task"
-# Delegation-size self-attestation literal — the SIBLING of ENTRY_CLASS_LITERAL. Same P0 attestation
-# class (author self-attestation — identical evidentiary weight in a comment or a string) so it is
-# raw-scanned on attestation_src, NOT the comment-stripped source. Bracketed anchor only (presence-only,
-# per the existence-only contract — the bundles=/tool_uses~= estimate CORRECTNESS is never checked, same
-# boundary as [ENTRY-CLASS]): any [SIZE-EST] token counts. Canonical form:
-# log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'); contract SoT: orchestrator-role.md ### Spawn
-# Budget -> Delegation-size discipline [SIZE-EST] bullet.
 SIZE_EST_LITERAL = "[SIZE-EST]"
-
-# Doc-routing local-destination attestation literal — the sanctioned carrier of the "user explicitly
-# requested a local destination" exception (new file OR an edit of an existing user file). Canonical
-# stamped form: log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>'). Same P0
-# attestation class as ENTRY_CLASS_LITERAL / MONITOR_POST_RE (author self-attestation — identical
-# evidentiary weight in a comment or a string) → raw-scanned on attestation_src.
 DOC_ROUTE_LOCAL_LITERAL = "[DOC-ROUTE] user-requested-local:"
-# Shared local-FS path SHAPE — single source for the four path-shape sites (TOKEN_LINE_RE +
-# LOCAL_TARGET_RE A4a/A4b/A4c). A3 deliberately diverges (looser legacy charclass — see the A3 line).
 LOCAL_PATH_SHAPE = r"(?:~|\$HOME|\$\{HOME\}|/)[A-Za-z0-9_./-]*"
-# Shared left-boundary lookbehind (A3 + A4a): an inner slash of a RELATIVE path must not anchor a match.
 LEFT_BOUNDARY = r"(?<![A-Za-z0-9_.-])"
-# Stamped-path extractor for the [DOC-ROUTE] suppressor. A CONCRETE file path including a
-# dot-extension is REQUIRED after the colon (no capture → nothing suppressed — a bare stamp never
-# clears the gate; a bare tilde, a bare slash, or an extensionless directory extracts nothing,
-# because a degenerate short capture would substring-match every tilde/slash scan line and
-# reintroduce the forbidden blanket suppression through the capture group). Path/line-scoping safety
-# semantics (what a stamp may and may not clear) live at the detect_docroute_leak suppressor comment.
-# Honor-system limit (accepted, same class as [ENTRY-CLASS] / plan-ref): an honest and a dishonest
-# stamp of the same path are statically indistinguishable. NOTE bash-3.2 $(...)-scan constraint:
-# comments in this heredoc must keep quote chars in immediate balanced pairs (no bare apostrophes)
-# or the outer command substitution mis-parses on stock macOS bash.
+# NOTE bash-3.2 $(...)-scan constraint: comments in this heredoc must keep quote chars in immediate
+# balanced pairs (no bare apostrophes) and parens balanced, or the outer command substitution
+# mis-parses on stock macOS bash.
 TOKEN_LINE_RE = re.compile(
-    re.escape(DOC_ROUTE_LOCAL_LITERAL)
-    + r"\s*(" + LOCAL_PATH_SHAPE + r"\.[A-Za-z0-9]+)"
+    re.escape(DOC_ROUTE_LOCAL_LITERAL) + r"\s*(" + LOCAL_PATH_SHAPE + r"\.[A-Za-z0-9]+)"
 )
-
-# Document-authoring agentTypes whose Workflow spawn prompts route to the monitor clauded-docs store
-# by default. A hardcoded local FS Target in one of these spawns, with no monitor-POST instruction,
-# is the doc-routing leak this SECOND (weakest) pass flags. Keep in sync with the REPORT/PLANNING
-# scope agents in core-compliance-matrix.md.
 DOC_AGENT_SET = ("glass-atrium-intel-reporter", "glass-atrium-intel-planner")
-
-# Generic local-FS-path SHAPE signals — username-agnostic by construction (NO baked-in user dir).
-# A doc-routing leak hardcodes a local path as the deliverable DESTINATION; these match the SHAPE,
-# never a specific username. Run on the comment-stripped source so a path inside a comment does not
-# trip the heuristic. DESTINATION-GATED: a mere MENTION of a local doc path (an edit-existing target,
-# a read-context reference) is NOT a leak — a bare-path .md alternative flags any mention, so every
-# .md alternative requires destination framing (verb+preposition or a noun header).
-#   - A1 "Target file:" — the forensic leak phrasing, SINGULAR ONLY: the plural "Target files:" is
-#     the standard 6-element edit-delegation header of the orchestrator and stays a non-match.
-#   - A2 mkdir-then-Write — the "mkdir -p <dir> && Write" / "mkdir -p ... then Write" leak shape.
-#   - A3 write/output + "to" + local path, any doc ext. "output" is gated HERE (verb + "to"), NOT as
-#     a bare A4a verb: output-as-noun is read-context vocabulary ("follow the Output Format Routing
-#     in <path>") and must not anchor a match without the "to" preposition.
-#   - A4a destination verb (save|deliver|store|persist) + preposition (to|into|under|as) + .md path.
-#     EXCLUDED verbs — "target": the plural-header FP above (A1 stays singular-only for the same
-#     reason) · "emit"/"place": harness-standard delegation vocabulary ("emit StructuredOutput" /
-#     "edit in place"). EXCLUDED prepositions — "at"/"in": reference-mention framings ("the document
-#     at <path>" / "Routing in <path>") whose inclusion would re-block the edit-existing + wiki-store
-#     cases. Left-boundary lookbehind (?<![A-Za-z0-9_.-]) on A3 + A4a: an inner slash of a RELATIVE
-#     path no longer anchors a match, so the GLOBAL_RULES-mandated checkpoint phrasing "save/write
-#     your progress notes to memory/progress-x.md" passes. Preposition-less "save <path>" is an accepted
-#     static FN — the runtime Write hook (block-doc-routing-leak.sh) is the primary guard for .md.
-#   - A4b bare local path, .html/.markdown ONLY — deliberately lookbehind-FREE and verb-free (full
-#     bare-path static strength). LAYER COUPLING: block-doc-routing-leak.sh covers only
-#     {.md,.yaml,.yml,.json,.txt}, so .html/.markdown are runtime-BLIND. A4b may be narrowed to a
-#     verb gate ONLY after that runtime extension set is widened to include .html/.markdown (the
-#     deferred T4 ticket) — until then, narrowing static .html detection removes the sole mechanical
-#     net for HTML document leaks. Known residual FP: an edit-existing MENTION of a .html/.markdown
-#     path still blocks (relief: the [DOC-ROUTE] token when user-requested, else T4).
-#   - A4c verb-free noun-header destination framing ("Deliverable:" / "Destination:" /
-#     "final location:") + local .md path — html/markdown noun-headers ride the A4b bare-path match.
 LOCAL_TARGET_RE = re.compile(
-    r"target\s+file\s*:"                                  # A1 — "Target file:" (singular only)
-    + r"|mkdir\s+-p[^\n]{0,200}?(?:&&|;|then)[^\n]{0,80}?\bwrite\b"  # A2 — mkdir -p ... && Write shape
-    + r"|\b(?:write|output)\b[^\n]{0,80}?\bto\b[^\n]{0,80}?" + LEFT_BOUNDARY + r"(?:~|\$HOME|/)[^\s'\"]*\.(?:md|markdown|html|yaml|yml|json|txt)"  # A3 — write/output ... to <local path>.<doc ext>; deliberate looser charclass, NOT LOCAL_PATH_SHAPE — do not unify
-    + r"|\b(?:save|deliver|store|persist)\b[^\n]{0,80}?\b(?:to|into|under|as)\b[^\n]{0,60}?" + LEFT_BOUNDARY + LOCAL_PATH_SHAPE + r"\.md\b"  # A4a — destination verb+prep, .md
-    + r"|" + LOCAL_PATH_SHAPE + r"\.(?:html|markdown)\b"  # A4b — bare path, runtime-blind exts
-    + r"|\b(?:deliverable|destination|final\s+location)\s*:[^\n]{0,120}?" + LOCAL_PATH_SHAPE + r"\.md\b",  # A4c — noun-header destination, .md only
+    r"target\s+file\s*:"
+    + r"|mkdir\s+-p[^\n]{0,200}?(?:&&|;|then)[^\n]{0,80}?\bwrite\b"
+    + r"|\b(?:write|output)\b[^\n]{0,80}?\bto\b[^\n]{0,80}?" + LEFT_BOUNDARY + r"(?:~|\$HOME|/)[^\s'\"]*\.(?:md|markdown|html|yaml|yml|json|txt)"
+    + r"|\b(?:save|deliver|store|persist)\b[^\n]{0,80}?\b(?:to|into|under|as)\b[^\n]{0,60}?" + LEFT_BOUNDARY + LOCAL_PATH_SHAPE + r"\.md\b"
+    + r"|" + LOCAL_PATH_SHAPE + r"\.(?:html|markdown)\b"
+    + r"|\b(?:deliverable|destination|final\s+location)\s*:[^\n]{0,120}?" + LOCAL_PATH_SHAPE + r"\.md\b",
+    re.IGNORECASE,
+)
+MONITOR_POST_RE = re.compile(
+    r"clauded-docs" r"|/api/clauded-docs" r"|monitor[- ]?post"
+    r"|POST[^\n]{0,40}?(?:monitor|clauded)" r"|127\.0\.0\.1:16145"
+    r"|html_body" r"|doc_status",
     re.IGNORECASE,
 )
 
-# Monitor-POST / clauded-docs routing SIGNALS — presence of ANY one means the spawn DID instruct
-# monitor routing, so the local path is a staging buffer (the intel-planner /tmp-then-curl normal
-# pattern), NOT a leak → fail-open to PASS. Broad on purpose (any one signal suppresses the flag).
-MONITOR_POST_RE = re.compile(
-    r"clauded-docs"                                       # the API path / store name
-    r"|/api/clauded-docs"
-    r"|monitor[- ]?post"
-    r"|POST[^\n]{0,40}?(?:monitor|clauded)"               # "POST to the monitor" / "POST ... clauded"
-    r"|127\.0\.0\.1:16145"                                # monitor base URL (port from convention)
-    r"|html_body"                                         # the PUT/POST body field name
-    r"|doc_status",                                       # the clauded-docs lifecycle field
-    re.IGNORECASE,
-)
+# --- [AGENT-COMPOSITION] declaration grammar ---
+COMPOSITION_RE = re.compile(r"\[AGENT-COMPOSITION\](.*?)\[/AGENT-COMPOSITION\]", re.DOTALL)
+OPEN_SENTINEL_RE = re.compile(r"\[AGENT-COMPOSITION\]")
+UPSTREAM_RE = re.compile(r"^upstream\s+(clauded-docs/[0-9]+|plan-ref)$", re.IGNORECASE)
+REVIEWER_LITERAL = "glass-atrium-qa-code-reviewer"
+# Strict key set. impl-computed BEFORE impl so the longer prefix wins the startswith scan.
+KNOWN_KEYS = ("verify", "impl-computed", "impl")
+# Free-text delimiter: a spaced dash (em-dash / en-dash / hyphen) — agent-name hyphens are never
+# spaced, so this never mis-splits an agent list. — / – keep the source ASCII.
+FREE_TEXT_RE = re.compile(r"\s[—–-]\s")
+
 
 def strip_comments(src):
-    # String-aware removal of // line comments and /* */ block comments. Tracks single/double/
-    # backtick string state with backslash escapes so a // or /* inside a string is preserved.
-    # Newlines are preserved inside BOTH comment kinds so the output keeps source-line identity
-    # (the [DOC-ROUTE] suppressor is line-scoped and must never see two source lines merged).
+    # String-aware removal of // line comments and /* */ block comments. Newlines are preserved inside
+    # BOTH comment kinds so the output keeps source-line identity (the [DOC-ROUTE] suppressor is
+    # line-scoped and must never see two source lines merged).
     out = []
     i, n = 0, len(src)
-    in_str = None          # active string quote char, or None
-    in_line_c = False      # inside a // comment
-    in_block_c = False     # inside a /* */ comment
+    in_str = None
+    in_line_c = False
+    in_block_c = False
     while i < n:
         c = src[i]
         nxt = src[i + 1] if i + 1 < n else ''
@@ -431,7 +402,7 @@ def strip_comments(src):
             continue
         if in_str is not None:
             out.append(c)
-            if c == '\\':            # escape — copy next char verbatim
+            if c == '\\':
                 if nxt:
                     out.append(nxt)
                     i += 2
@@ -440,7 +411,6 @@ def strip_comments(src):
                 in_str = None
             i += 1
             continue
-        # not in a string or comment
         if c in ("'", '"', '`'):
             in_str = c
             out.append(c)
@@ -458,290 +428,379 @@ def strip_comments(src):
         i += 1
     return ''.join(out)
 
-def is_colocated(rev_start, rev_end, dev_start):
-    # Is a dev-* token within COLOCATION_WINDOW chars of the reviewer token? Co-location is the one
-    # sound static signal that a dev-* is the verify-DEV: in the canonical verify stage the reviewer
-    # and its primary-domain dev agent sit side by side inside the same parallel verify block, and
-    # parallel() is order-independent so the dev may precede OR follow the reviewer. A wide window
-    # keeps the heuristic fail-open biased.
-    lo = rev_start - COLOCATION_WINDOW
-    hi = rev_end + COLOCATION_WINDOW
-    return lo <= dev_start <= hi
 
-def is_colocated_any(rev_spans, dev_start):
-    # Generalized co-location: a dev-* is a verify-DEV if it is within COLOCATION_WINDOW of ANY
-    # reviewer span, not just the FIRST. Keying on every reviewer (finditer) is what kills the
-    # multi-reviewer FP — a leading audit/Phase-1 qa-code-reviewer no longer determines the verdict
-    # for a genuine {qa,dev} pair that appears later in the script.
-    return any(is_colocated(rs, re_, dev_start) for (rs, re_) in rev_spans)
-
-def parallel_group_spans(stripped):
-    # Find the balanced-paren bounds of every `parallel( ... )` group. Returns a list of (start, end)
-    # half-open char ranges covering the parenthesized argument list of each parallel call. Used for
-    # the DISTANCE-INDEPENDENT verify-pair signal: a parallel group containing BOTH a qa-code-reviewer
-    # AND a dev-* spawn is the canonical verify stage REGARDLESS of how long the inline goal strings
-    # are. This is the structural fix for the window-blowout FP (a multi-sentence goal string pushing
-    # the genuine qa+dev pair past COLOCATION_WINDOW must NOT break detection). String-aware: a `(` or
-    # `)` inside a string literal does not move the depth counter, so a paren inside a goal string
-    # cannot mis-bound a group. Runs on the already comment-stripped source.
-    spans = []
-    n = len(stripped)
-    for m in re.finditer(r"\bparallel\s*\(", stripped):
-        # Start scanning at the char AFTER the opening paren of `parallel(`.
-        depth = 1
-        i = m.end()
-        body_start = i
-        in_str = None
-        while i < n and depth > 0:
-            c = stripped[i]
-            if in_str is not None:
-                if c == '\\':
-                    i += 2          # escape — skip the next char verbatim
-                    continue
-                if c == in_str:
-                    in_str = None
-                i += 1
-                continue
-            if c in ("'", '"', '`'):
-                in_str = c
-            elif c == '(':
-                depth += 1
-            elif c == ')':
-                depth -= 1
-                if depth == 0:
-                    spans.append((body_start, i))
-                    break
+def _string_mask(src):
+    # True at char positions INSIDE a JS string literal (single/double/backtick, backslash-aware).
+    # Comment content is NOT masked, so a sentinel inside a /* */ comment stays extractable while a
+    # sentinel inside a string literal is masked out (inert). This is the provenance discriminator: a
+    # worked example quoted into a delegation prompt lives in a string and can never bind.
+    mask = bytearray(len(src))
+    i, n = 0, len(src)
+    in_str = None
+    in_line_c = in_block_c = False
+    while i < n:
+        c = src[i]
+        nxt = src[i + 1] if i + 1 < n else ''
+        if in_line_c:
+            if c == '\n':
+                in_line_c = False
             i += 1
-        else:
-            # Unbalanced (truncated script) → the group runs to EOF. Fail-open biased: a wider span
-            # reads MORE devs as co-grouped verify-DEVs, yielding fewer BLOCKs.
-            if depth > 0:
-                spans.append((body_start, n))
-    return spans
+            continue
+        if in_block_c:
+            if c == '*' and nxt == '/':
+                in_block_c = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if in_str is not None:
+            mask[i] = 1
+            if c == '\\' and nxt:
+                mask[i + 1] = 1
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        if c in ("'", '"', '`'):
+            in_str = c
+            i += 1
+            continue
+        if c == '/' and nxt == '/':
+            in_line_c = True
+            i += 2
+            continue
+        if c == '/' and nxt == '*':
+            in_block_c = True
+            i += 2
+            continue
+        i += 1
+    return mask
 
-def in_verify_parallel_group(group_spans, has_rev_in_group, pos):
-    # Is `pos` inside a parallel() group that ALSO contains a reviewer? group_spans is the list of
-    # (start, end) parallel bounds; has_rev_in_group is the parallel-aligned bool list.
-    for idx, (gs, ge) in enumerate(group_spans):
-        if has_rev_in_group[idx] and gs <= pos <= ge:
-            return True
-    return False
+
+def extract_composition(raw_src):
+    # Extract the [AGENT-COMPOSITION] body from RAW src with a string-literal guard. Returns
+    # (body, status):
+    #   "ok"           -> body is the declaration text between the sentinels.
+    #   "none"         -> no non-string opening sentinel -> caller BLOCK_NODECL on a DEV workflow.
+    #   "unterminated" -> a non-string opening sentinel with NO matching close -> BLOCK_GRAMMAR
+    #                     (the author opted INTO the contract; fail-opening would silently void it).
+    #   "duplicate"    -> 2+ non-string complete blocks -> BLOCK_GRAMMAR (ambiguous authority).
+    # A sentinel that opens INSIDE a string literal is treated as absent (an incidental prompt/goal
+    # mention is not a declaration).
+    mask = _string_mask(raw_src)
+    blocks = [m for m in COMPOSITION_RE.finditer(raw_src) if not mask[m.start()]]
+    if len(blocks) >= 2:
+        return None, "duplicate"
+    if len(blocks) == 1:
+        return blocks[0].group(1), "ok"
+    for om in OPEN_SENTINEL_RE.finditer(raw_src):
+        if not mask[om.start()]:
+            return None, "unterminated"
+    return None, "none"
+
+
+def parse_composition(body, dev_set):
+    # STRICT line-grammar validator. Returns (decl, err): decl is the structured roles dict on success,
+    # err is None on success or a short reason string on a decidable author error (caller BLOCK_GRAMMAR).
+    # Every non-empty line MUST start with a known key + colon; ONE line per key; names validated
+    # against dev_set + the reviewer literal; free text only after a spaced-dash delimiter.
+    dev_valid = set(d for d in dev_set if d)
+    seen = set()
+    verify_reviewers = []
+    verify_devs = []
+    impl_devs = []
+    impl_computed = []
+    upstream = False
+    upstream_ref_text = None
+    verify_seen = False
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        low = line.lower()
+        this_key = None
+        for k in KNOWN_KEYS:
+            if low.startswith(k + ":"):
+                this_key = k
+                break
+        if this_key is None:
+            return None, "unknown-or-malformed-line"
+        if this_key in seen:
+            return None, "duplicate-key"
+        seen.add(this_key)
+        val = line.split(":", 1)[1]
+        agents_part = FREE_TEXT_RE.split(val, 1)[0].strip()
+        if this_key == "verify":
+            verify_seen = True
+            um = UPSTREAM_RE.match(agents_part)
+            if um:
+                upstream = True
+                upstream_ref_text = um.group(0)
+                continue
+            if agents_part.lower().startswith("upstream"):
+                return None, "malformed-upstream"
+            names = [t.strip() for t in agents_part.split(",") if t.strip()]
+            if not names:
+                return None, "empty-verify"
+            for t in names:
+                if t == REVIEWER_LITERAL:
+                    verify_reviewers.append(t)
+                elif t in dev_valid:
+                    verify_devs.append(t)
+                else:
+                    return None, "unknown-name"
+            if len(set(verify_devs)) > 1:
+                return None, "verify-multiple-dev-types"
+        elif this_key == "impl-computed":
+            names = [t.strip() for t in agents_part.split(",") if t.strip()]
+            for t in names:
+                if t in dev_valid:
+                    impl_computed.append(t)
+                else:
+                    return None, "unknown-name"
+        elif this_key == "impl":
+            names = [t.strip() for t in agents_part.split(",") if t.strip()]
+            for t in names:
+                if t.lower() == "none":
+                    continue
+                if t in dev_valid:
+                    impl_devs.append(t)
+                else:
+                    return None, "unknown-name"
+    if not verify_seen:
+        return None, "missing-verify"
+    return {
+        "upstream": upstream,
+        "upstream_ref_text": upstream_ref_text,
+        "verify_reviewers": verify_reviewers,
+        "verify_devs": verify_devs,
+        "impl_devs": impl_devs,
+        "impl_computed": impl_computed,
+    }, None
+
 
 def detect_docroute_leak(antigaming_src, attestation_src):
-    # SECOND (weakest) detection pass — doc-routing leak. Raw-vs-stripped per source arg — see alias
-    # defs. Returns True ONLY when ALL hold:
-    #   (1) an intel-reporter / intel-planner spawn token is present (antigaming_src),
-    #   (2) a hardcoded local-FS-path SHAPE used as a Target/destination is present (antigaming_src;
-    #       username-agnostic — LOCAL_TARGET_RE matches the shape, never a specific user dir),
-    #   (3) NO monitor-POST / clauded-docs routing signal anywhere (attestation_src suppressor), AND
-    #   (4) the leak line is NOT covered by a [DOC-ROUTE] user-requested-local: <path> stamp
-    #       (attestation_src, path/line-scoped — see TOKEN_LINE_RE).
-    # FAIL-OPEN DOMINANT: any one condition unmet → False (PASS). A monitor-POST signal suppresses the
-    # flag (the local path is then a staging buffer, not a leak — the intel-planner /tmp-then-curl
-    # normal pattern). STRING HEURISTIC, defense-in-depth NOT a confidence anchor — the runtime
-    # PreToolUse(Write) hook (block-doc-routing-leak.sh) is the primary guard; a missed leak beats a
-    # false BLOCK of a legitimate workflow.
-    doc_re = re.compile(
-        r"['\"](" + '|'.join(re.escape(a) for a in DOC_AGENT_SET) + r")['\"]"
-    )
+    # SECOND (weakest) detection pass — doc-routing leak. Returns True ONLY when a doc-agent spawn is
+    # present, a hardcoded local-FS Target shape is present, NO monitor-POST signal exists, and the
+    # leak line is NOT covered by a [DOC-ROUTE] user-requested-local stamp. FAIL-OPEN DOMINANT.
+    doc_re = re.compile(r"['\"](" + '|'.join(re.escape(a) for a in DOC_AGENT_SET) + r")['\"]")
     if not doc_re.search(antigaming_src):
-        return False                       # no doc-agent spawn → out of scope → PASS
+        return False
     if MONITOR_POST_RE.search(attestation_src):
-        return False                       # monitor routing instructed (raw) → local path is staging → PASS
-    # [DOC-ROUTE] attestation suppressor — path/line-scoped, NEVER a blanket early-return: one stamp
-    # must not clear the leak of a DIFFERENT spawn. Stamped paths are extracted from RAW attestation_src
-    # (author self-attestation class — see alias defs); ONLY the scan-source lines carrying a stamped
-    # path are dropped, then LOCAL_TARGET_RE re-runs on the residual. A bare stamp with no path after
-    # the colon extracts nothing and suppresses nothing. Line identity holds: strip_comments preserves
-    # newlines inside BOTH comment kinds, so splitlines() below maps 1:1 to source lines — a /* */
-    # comment spanning from a stamped line onto a DIFFERENT spawn leak line can never merge them.
-    # The min-length filter excludes the 3-char anchor-only captures the regex still admits
-    # (e.g. ~.x); TOKEN_LINE_RE already guarantees a non-empty dotted capture, so length is the sole
-    # residual constraint.
+        return False
     scan_src = antigaming_src
     stamped_paths = [p for p in TOKEN_LINE_RE.findall(attestation_src) if len(p) >= 4]
     if stamped_paths:
         scan_src = "\n".join(
-            line
-            for line in antigaming_src.splitlines()
+            line for line in antigaming_src.splitlines()
             if not any(p in line for p in stamped_paths)
         )
     if not LOCAL_TARGET_RE.search(scan_src):
-        return False                       # no local destination shape on the residual → PASS
+        return False
     return True
 
-# Two-line output contract: line 1 = the verdict token
-# (BLOCK_NOREV|BLOCK_NOVERIFYDEV|BLOCK_ORDER|BLOCK_DOCROUTE|BLOCK_SIZEEST|PASS) — this helper NEVER
-# emits a BLOCK_ENTRY; the entry-miss block is promoted BASH-side from line 2. line 2 = the entry marker
-# (ENTRY_OK|ENTRY_ADVISORY): on a PASS verdict it drives the bash entry-miss promotion (block-entry,
-# exit 2); on a BLOCK_* verdict it only selects the entry addendum text (allowlisted trace tags).
-# Both are emitted once at the end so the verdict line is always first.
+
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
     sys.exit(0)
 
+
 try:
     dev_set = sys.argv[1].split()
     src = sys.stdin.read()
     stripped = strip_comments(src)
-
-    # ASYMMETRIC SCAN (P0) — SINGLE home of the raw-vs-stripped policy + rationale. Two source aliases
-    # name the two evidentiary classes so every call site reads its INTENT, not a bare stripped/src
-    # choice. The aliases ARE literally stripped/src, so behavior is unchanged:
-    #   antigaming_src (comment-STRIPPED) — tokens where a comment must NOT count, because a commented
-    #     spawn/target is not a real one: the dev-*/qa-code-reviewer/doc-agent spawn tokens, the
-    #     LOCAL_TARGET leak TRIGGER, and the parallel(...) group machinery. Stripping IS the anti-gaming
-    #     property — a commented-out spawn can neither satisfy nor trip the gate.
-    #   attestation_src (RAW src) — author self-attestation / suppressor tokens whose evidentiary weight
-    #     is IDENTICAL in a comment or a string: [ENTRY-CLASS], the plan-ref (PLAN_REF_RE), and the
-    #     monitor-POST suppressor (MONITOR_POST_RE). Raw-scanned to MATCH the raw grep of the manual gate
-    #     (enforce-verification-gate.sh references_plan greps the raw prompt, which has no comment
-    #     concept) — stripping them would only false-BLOCK a legitimate workflow.
-    antigaming_src = stripped
-    attestation_src = src
+    antigaming_src = stripped   # spawn/target tokens: a commented spawn is not a real one
+    attestation_src = src       # author self-attestation: same weight in comment or string
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
-    # Quote-bounded DEV agentType token (antigaming_src — see alias defs).
-    dev_re = re.compile(r"['\"](" + dev_alt + r")['\"]")
-    rev_re = re.compile(r"['\"]glass-atrium-qa-code-reviewer['\"]")
-    dev_starts = [m.start() for m in dev_re.finditer(antigaming_src)]
-    dev_present = bool(dev_starts)
 
-    # Entry signal (attestation_src raw — see alias defs): a DEV-spawning script carrying NEITHER a
-    # plan-reference NOR the entry literal is the silent entry-miss case. entry_ok is OR-composed so
-    # either affirmative entry-token silences it. DEV-GATED — a non-DEV (doc-only) workflow can never
-    # be an entry-miss, so its marker is forced ENTRY_OK regardless of plan-ref/token. The marker is
-    # the SOLE input to the BLOCK_ENTRY promotion below; gating it on dev_present keeps a non-DEV
-    # workflow from ever being entry-blocked.
+    # TIER A — broad quoted-literal presence. Feeds dev_present / reviewer-existence / entry / size,
+    # AND supplies the Tier-A dev TYPE SET consumed by consistency check (b-prime).
+    dev_re_present = re.compile(r"['\"](" + dev_alt + r")['\"]")
+    rev_re_present = re.compile(r"['\"]" + REVIEWER_LITERAL + r"['\"]")
+    tier_a_dev_types = set(m.group(1) for m in dev_re_present.finditer(antigaming_src))
+    dev_present = bool(tier_a_dev_types)
+
+    # TIER B — spawn-position (agent-call first-arg OR agentType field value). The code-side operand
+    # of the declaration consistency check. Captures (position, agent-type). bash-3.2 $(...)-scan
+    # constraint: the literal open paren is injected via chr(40) so the source stays balanced.
+    _agent_open = r"agent" + "\\" + chr(40) + r"\s*"
+    _agenttype = r"agentType\s*:\s*"
+    _dev_tok = r"['\"](" + dev_alt + r")['\"]"
+    _rev_tok = r"['\"](" + REVIEWER_LITERAL + r")['\"]"
+    dev_re = re.compile(_agent_open + _dev_tok + r"|" + _agenttype + _dev_tok)
+    rev_re = re.compile(_agent_open + _rev_tok + r"|" + _agenttype + _rev_tok)
+
+    def _typed_starts(rx):
+        out = []
+        for m in rx.finditer(antigaming_src):
+            g = next((x for x in m.groups() if x is not None), None)
+            out.append((m.start(), g))
+        return out
+
+    dev_spawns = _typed_starts(dev_re)          # [(pos, type)]
+    rev_spawns = _typed_starts(rev_re)
+    rev_starts = [p for (p, _) in rev_spawns]
+
+    # Entry + size-est (Tier-A gated) — retained verbatim.
     plan_ref_found = bool(PLAN_REF_RE.search(attestation_src))
-    entry_token_found = ENTRY_CLASS_LITERAL in attestation_src
-    entry_ok = (not dev_present) or plan_ref_found or entry_token_found
+    entry_literal_found = ENTRY_CLASS_LITERAL in attestation_src
+    entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
-
-    # Delegation-size self-attestation (attestation_src RAW — same P0 author-self-attestation class as
-    # [ENTRY-CLASS] / plan-ref: identical evidentiary weight in a comment or a string, so a commented
-    # [SIZE-EST] token counts too). size_est_missing gates the BLOCK_SIZEEST promotion at the would-be
-    # PASS emits below. THREE conjuncts:
-    #   dev_present     — DEV-gated: a non-DEV (doc-only) workflow can never miss a delegation-size
-    #                     token, so it is never block-sizeest;
-    #   entry_ok        — ENTRY_OK-gated so entry-miss keeps PRIORITY: an entry-missing DEV script has
-    #                     entry_ok False here, so it is NOT promoted to BLOCK_SIZEEST — it falls through
-    #                     to PASS and the bash entry-miss block claims it (block-entry, not block-sizeest);
-    #   SIZE-EST absent — the [SIZE-EST] delegation-size token is not in the RAW source.
-    # Presence-only per the existence-only contract — the bundles=/tool_uses~= estimate CORRECTNESS is
-    # never checked, same boundary as [ENTRY-CLASS]. Promotion happens ONLY on a would-be PASS
-    # (decoupled from the verify-stage verdict exactly like the bash entry-miss block), so a
-    # verify-stage BLOCK always keeps priority over block-sizeest.
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
 
-    # SECOND detection pass (doc-routing leak) — INDEPENDENT of the verify-stage check below and run
-    # FIRST so it can fire on a doc-only workflow that spawns no DEV agent. A leak emits its OWN
-    # verdict token (BLOCK_DOCROUTE) so the bash side prints a distinct stderr reason while keeping
-    # the SAME exit-2 block channel. When no leak is detected, control falls through to the
-    # pre-existing verify-stage logic unchanged (the docroute pass is order-independent of entry).
+    def pass_or_size():
+        return "BLOCK_SIZEEST" if size_est_missing else "PASS"
+
+    # SECOND detection pass (doc-routing leak) — independent, runs first.
     if detect_docroute_leak(antigaming_src, attestation_src):
         emit("BLOCK_DOCROUTE", entry_marker)
 
-    if not dev_starts:
-        # No DEV spawn at all → simple workflow → Stage-2 exempt → pass.
+    # No DEV literal anywhere (Tier A) → simple workflow → Stage-2 exempt.
+    if not dev_present:
         emit("PASS", entry_marker)
-    rev_matches = list(rev_re.finditer(antigaming_src))
-    if not rev_matches:
-        # DEV spawn present, NO non-comment qa-code-reviewer anywhere → clear omission → block.
-        # ZERO-REVIEWER HARD GUARANTEE — preserved verbatim across the FP fix.
+
+    # DEV workflow → a declaration is REQUIRED. Distinguish ABSENT (nodecl) from a MALFORMED /
+    # unterminated / duplicated block (grammar). The strictness switch lives HERE — inside the
+    # found-sentinel branch — so a crash before this point stays fail-open.
+    body, status = extract_composition(attestation_src)
+    if status == "none":
+        emit("BLOCK_NODECL", entry_marker)
+    if status in ("unterminated", "duplicate"):
+        emit("BLOCK_GRAMMAR", entry_marker)
+    decl, gerr = parse_composition(body, dev_set)
+    if gerr is not None:
+        emit("BLOCK_GRAMMAR", entry_marker)
+
+    # ZERO-REVIEWER HARD GUARANTEE — evaluated INDEPENDENTLY of declaration form, BEFORE the
+    # upstream/in-script split, so the upstream form can NEVER waive it (R1). dev_present (Tier A) +
+    # zero Tier-A reviewer literal anywhere → block.
+    if not rev_re_present.search(antigaming_src):
         emit("BLOCK_NOREV", entry_marker)
-    # Span of EVERY reviewer token (finditer, not the first match only). Keying on all reviewers is
-    # what kills the multi-reviewer FP — a leading audit/Phase-1 qa-code-reviewer no longer decides
-    # the verdict for a genuine {qa,dev} pair that appears later in the script.
-    rev_spans = [(m.start(), m.end()) for m in rev_matches]
-    rev_starts = [s for (s, _) in rev_spans]
 
-    # parallel(...) group bounds + whether each group also holds a reviewer. This is the DISTANCE-
-    # INDEPENDENT verify-pair signal: a parallel group containing BOTH a reviewer AND a dev-* is the
-    # canonical verify stage no matter how long the inline goal strings are — the structural fix for
-    # the window-blowout FP that a wide char-window alone cannot cover.
-    group_spans = parallel_group_spans(antigaming_src)
-    has_rev_in_group = [
-        any(gs <= rs <= ge for rs in rev_starts) for (gs, ge) in group_spans
-    ]
+    # Plan-ref evidence OUTSIDE the declaration span (so an `upstream clauded-docs/N` verify clause
+    # cannot self-satisfy check (e) with its own text). Remove the extracted block, then re-scan.
+    body_only_src = COMPOSITION_RE.sub("\n", attestation_src)
 
-    # A dev-* is a verify-DEV (the DEV half of the {qa-code-reviewer, DEV} team) iff EITHER signal
-    # holds: (1) it is co-located with ANY reviewer span (generalized R5 window), OR (2) it shares a
-    # parallel(...) group with a reviewer (group-bounds — distance-independent). Co-location is the
-    # only sound static discriminator because the verify-DEV and the impl-DEV use the IDENTICAL
-    # dev-* agentType token. NO precede-fallback: the red team proved the "absorb the first impl dev
-    # as a phantom verify-DEV" fallback OPENS A BYPASS (audit reviewer + 2+ impl devs + no genuine
-    # parallel pair would wrongly PASS), so the verify-DEV signal is co-location/group-bounds ONLY.
-    def is_verify_dev(d):
-        return is_colocated_any(rev_spans, d) or in_verify_parallel_group(
-            group_spans, has_rev_in_group, d
-        )
+    # Code-side spawn type maps + declared type sets.
+    dev_types_present = set(t for (_, t) in dev_spawns)
+    declared_verify_dev_types = set(decl["verify_devs"])
+    declared_impl_dev_types = set(decl["impl_devs"])
+    declared_computed_types = set(decl["impl_computed"])
+    declared_all_dev_types = declared_verify_dev_types | declared_impl_dev_types | declared_computed_types
 
-    impl_dev_starts = [d for d in dev_starts if not is_verify_dev(d)]
-    has_verify_dev = len(impl_dev_starts) < len(dev_starts)
-    if not has_verify_dev:
-        # Reviewer(s) present but NO co-located / co-grouped dev-* verifier → reviewer is alone → DEV
-        # hard-gate absent → block. This is the case the red-team bypass (stray audit reviewer + 2+
-        # scattered impl devs, NO genuine parallel(qa,dev) pair) lands in → BLOCK, no phantom absorb.
+    def check_tier_a_coverage():
+        # (b-prime) every Tier-A quoted dev literal type must appear in the declaration. Closes the
+        # undeclared config-array fan-out hole (R3) AND the prose-mention case (an exact-quoted dev-*
+        # name in a goal/prose string with zero Tier-B spawns). No new FP class — Tier-A presence
+        # already activates the current gates. Positioned AFTER the per-branch hard-gate so the DEV-less
+        # verify team (adv4) still resolves to BLOCK_NOVERIFYDEV, not BLOCK_UNDECL.
+        for t in tier_a_dev_types:
+            if t not in declared_all_dev_types:
+                emit("BLOCK_UNDECL", entry_marker)
+
+    if decl["upstream"]:
+        # UPSTREAM form — waives the in-script verify pair-mapping + ordering ONLY (NOREV already
+        # enforced above). (e) the referenced plan id must be cited by a plan-ref token in the BODY.
+        ref = decl["upstream_ref_text"] or ""
+        idm = re.search(r"clauded-docs/([0-9]+)", ref)
+        if idm:
+            upstream_ok = ("clauded-docs/" + idm.group(1)) in body_only_src
+        else:
+            upstream_ok = bool(PLAN_REF_RE.search(body_only_src))
+        if not upstream_ok:
+            emit("BLOCK_UPSTREAM", entry_marker)
+        # (a) declared literal impl devs must map to a Tier-B spawn.
+        for t in declared_impl_dev_types:
+            if t not in dev_types_present:
+                emit("BLOCK_DECLSPAWN", entry_marker)
+        # (c) declared computed devs must have Tier-A presence.
+        for t in declared_computed_types:
+            if not re.search(r"['\"]" + re.escape(t) + r"['\"]", antigaming_src):
+                emit("BLOCK_COMPUTED", entry_marker)
+        # (b) every Tier-B dev spawn covered by the declaration.
+        for (_, t) in dev_spawns:
+            if t not in declared_all_dev_types:
+                emit("BLOCK_UNDECL", entry_marker)
+        # (b-prime) Tier-A coverage — closes the config-array fan-out behind an honest upstream facade.
+        check_tier_a_coverage()
+        # ordering waived under upstream (verify happened upstream).
+        emit(pass_or_size(), entry_marker)
+
+    # IN-SCRIPT verify form. NOREV already guaranteed above.
+    # DEV hard-gate moved INTO the validator: verify team MUST name qa-code-reviewer AND a dev-*.
+    if not decl["verify_reviewers"] or not declared_verify_dev_types:
         emit("BLOCK_NOVERIFYDEV", entry_marker)
-    if not impl_dev_starts:
-        # Every dev-* is a verify-DEV (verify-only, no separate implementation dev) → nothing to gate
-        # → would-be PASS (fail-open; finer gating correctness stays an author obligation). The
-        # size-est promotion still applies: a DEV workflow under ENTRY_OK with no [SIZE-EST] token
-        # blocks here (BLOCK_SIZEEST), matching every other would-be-PASS DEV path.
-        emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
-    # Ordering on the IMPLEMENTATION dev-* (NOT the verify-DEV): SOME reviewer verify-spawn must
-    # precede the first implementation dev-*. Order-independent within the verify parallel block —
-    # parallel(reviewer, dev) and parallel(dev, reviewer) both pass because the verify-DEV is excluded
-    # from impl_dev_starts. An implementation dev-* that NO reviewer precedes ran un-gated → block.
-    if min(rev_starts) < min(impl_dev_starts):
-        # Valid verify-stage ordering → would-be PASS, subject to the size-est promotion (DEV +
-        # ENTRY_OK + no [SIZE-EST] → BLOCK_SIZEEST; otherwise PASS).
-        emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
-    emit("BLOCK_ORDER", entry_marker)
+    # (a) every declared literal role (verify reviewer + verify dev + impl dev) → a Tier-B spawn.
+    if not rev_spawns:
+        emit("BLOCK_DECLSPAWN", entry_marker)
+    for t in (declared_verify_dev_types | declared_impl_dev_types):
+        if t not in dev_types_present:
+            emit("BLOCK_DECLSPAWN", entry_marker)
+    # (c) declared computed devs → Tier-A presence.
+    for t in declared_computed_types:
+        if not re.search(r"['\"]" + re.escape(t) + r"['\"]", antigaming_src):
+            emit("BLOCK_COMPUTED", entry_marker)
+    # (b) every Tier-B dev spawn covered.
+    for (_, t) in dev_spawns:
+        if t not in declared_all_dev_types:
+            emit("BLOCK_UNDECL", entry_marker)
+    # (b-prime) Tier-A coverage — after the DEV hard-gate + (a)/(b) so adv4 keeps BLOCK_NOVERIFYDEV.
+    check_tier_a_coverage()
+    # (d) ordering — GREEDY-EARLIEST same-type dual-role binding. Allocate one earliest Tier-B
+    # position per verify-dev type as the verify slot; the rest of the declared-impl-type positions
+    # are impl slots; SOME reviewer must precede the first impl slot. Computed impls have no positions
+    # → declared-order honor-system (skipped).
+    dev_pos_by_type = {}
+    for (p, t) in dev_spawns:
+        dev_pos_by_type.setdefault(t, []).append(p)
+    for t in dev_pos_by_type:
+        dev_pos_by_type[t].sort()
+    verify_slot_positions = set()
+    for t in declared_verify_dev_types:
+        if dev_pos_by_type.get(t):
+            verify_slot_positions.add(dev_pos_by_type[t][0])
+    impl_positions = []
+    for t in declared_impl_dev_types:
+        for p in dev_pos_by_type.get(t, []):
+            if p not in verify_slot_positions:
+                impl_positions.append(p)
+    if impl_positions and rev_starts:
+        if not (min(rev_starts) < min(impl_positions)):
+            emit("BLOCK_ORDER", entry_marker)
+    emit(pass_or_size(), entry_marker)
 except SystemExit:
     raise
 except Exception:
-    # Any parse/regex error → fail-open. Emit a conservative entry marker too: ENTRY_OK suppresses
-    # the advisory so an internal error never produces a spurious entry nudge (advisory stays quiet
-    # on the same uncertainty the verdict fails open on).
     emit("PASS", "ENTRY_OK")
 PY
 )"
 
-# Run the helper. It prints TWO lines: line 1 = verdict token
-# (BLOCK_NOREV|BLOCK_NOVERIFYDEV|BLOCK_ORDER|BLOCK_DOCROUTE|BLOCK_SIZEEST|PASS), line 2 = entry marker
+# Run the helper. It prints TWO lines: line 1 = verdict token, line 2 = entry marker
 # (ENTRY_OK|ENTRY_ADVISORY). A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK).
 helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK'
 
-# Verdict = FIRST line only. Parameter expansion can never fail, so it cannot trip the set -e ERR trap.
+# Verdict = FIRST line. Entry marker = SECOND line (collapses to verdict if helper emitted one line).
 verdict="${helper_out%%$'\n'*}"
-# Entry marker = SECOND line (after the first newline). Single-line helper output (truncated) → entry_marker
-# collapses to the verdict token and the ENTRY_ADVISORY test never matches → no advisory (fail-safe-to-silent).
-# Pure expansion, no command → set -e safe.
 entry_marker="${helper_out#*$'\n'}"
 [[ "${entry_marker}" == "${helper_out}" ]] && entry_marker="ENTRY_OK"
 
-# ENTRY-MISS BLOCK (stderr reason + exit 2). Fires ONLY when the verdict is NOT already a BLOCK_* (unquoted
-# BLOCK* glob — DECOUPLED: an existing verify-stage/docroute BLOCK's own stderr + exit 2 below subsumes
-# this) AND the entry signal is ENTRY_ADVISORY (DEV spawn, no plan-ref AND no [ENTRY-CLASS] token). NEVER
-# fires when entry_ok holds (non-DEV / plan-ref / token). Fail-open preserved: a helper error yields
-# PASS + ENTRY_OK (the except clause), so an internal error never produces a spurious entry-block.
+# ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
+# NOT already a BLOCK_* (unquoted BLOCK* glob — fully DECOUPLED) AND the entry signal is
+# ENTRY_ADVISORY (DEV spawn with no plan-ref AND no [ENTRY-CLASS] token). It can NEVER fire when
+# entry_ok holds. Any python helper error yields PASS + ENTRY_OK (fail-open), so an internal error
+# never produces a spurious entry-block.
 if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
   entry_reason="$(
     cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). INLINE-PLAN note: a plan authored INLINE in this script (a one-shot author+verify+implement workflow) does NOT clear this gate, and the right fix is to PERSIST the plan first — not to widen the gate — because (i) this is a STATIC pre-execution scan that can NEVER see a runtime-minted clauded-docs id, so an inline one-shot plan is structurally invisible to the gate; (ii) the downstream Document-Driven lifecycle (plan↔implementation coverage reconciliation; doc_status completion) NEEDS the persisted plan artifact; (iii) the Stage-2 revision loop requires plan/implementation SEPARATION that a one-shot author+verify+implement workflow defeats. Two ways to clear this gate: (1) PERSIST the inline plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple — i.e. NONE of these sizable criteria hold (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) — record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script (canonical form: a string, e.g. log('[ENTRY-CLASS] simple-task: <reason>'), or in meta.description). CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — that is a NEW 편법 (a fresh loophole, not a fix); persist a REAL plan. Placement is not enforced (the entry / plan tokens are raw-scanned), so a commented token also satisfies this gate.
+[enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this gate: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. Placement is not enforced (raw-scanned), so a commented token also satisfies this gate.
 
-COPY-PASTE SCAFFOLD (the compliant path is fewer keystrokes than overriding — fill the <…> placeholders, persist the plan, then paste path (1) OR (2) into the script):
+COPY-PASTE SCAFFOLD (fill the <…> placeholders, persist the plan, then paste path (1) OR (2) into the script):
 
   --- path (1): persisted plan (sizable DEV work — the DEFAULT) ---
-  // 1. POST the plan body to the monitor, capture the minted id:
-  //    DOC_ID=$(curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs \
-  //      -H 'content-type: application/json' \
-  //      --data "$(jq -n --arg b '<plan markdown body>' '{html_body:$b, doc_status:"progress"}')" \
-  //      | jq -r '.id')
-  // 2. reference the minted id in the workflow script (any placement — raw-scanned):
   log('plan-ref: clauded-docs/<DOC_ID>');
 
   --- path (2): genuinely simple, none of the sizable criteria hold ---
@@ -751,61 +810,133 @@ EOF
   block_and_exit "${entry_reason}" "block-entry"
 fi
 
-# SECOND-PASS VIOLATION (doc-routing leak): an intel-reporter / intel-planner spawn hardcodes a local-FS
-# Target AND carries no monitor-POST / clauded-docs routing. Distinct stderr reason, SAME exit-2 channel.
-# WEAKEST layer (string heuristic) — the stderr names the runtime PreToolUse(Write) hook as primary guard
-# so the reason is not a confidence anchor. Checked BEFORE the verify-stage pass branch so BLOCK_DOCROUTE
-# never falls through to exit 0.
-if [[ "${verdict}" == "BLOCK_DOCROUTE" ]]; then
-  docroute_reason="$(
-    cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (doc-routing leak): this Workflow script spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. A document deliverable defaults to the monitor clauded-docs store (POST /api/clauded-docs) unless the user explicitly requested a local/other format — do NOT frame "Write-then-StructuredOutput to <local path>" as the deliverable. Route the document to the monitor clauded-docs API instead; if a local path is only a /tmp staging buffer cat-piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing.
-
-USER-REQUESTED LOCAL DESTINATION (escape hatch): when the USER explicitly requested this local destination — a NEW file OR an EDIT of an existing user file — stamp the workflow script with the canonical attestation form log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>'). The stamp is path/line-scoped: it clears ONLY the lines carrying the stamped path, and a bare stamp without a path clears nothing; the stamped path must be a CONCRETE file path including a dot-extension (a bare tilde, a bare slash, or an extensionless directory clears nothing). CAUTION: stamp ONLY when the user explicitly requested the local destination — stamping to silence this gate is a violation; the runtime Write hook (block-doc-routing-leak.sh) and Monitoring-phase verification remain in force; the token clears THIS STATIC GATE only.
-
-HONEST LIMIT — this is a STRING HEURISTIC (the WEAKEST of the defense-in-depth layers), NOT the primary guard: the runtime PreToolUse(Write) hook (block-doc-routing-leak.sh) is the mechanical write-time backstop. A path-shape match cannot prove intent, and this scan fail-opens on any uncertainty (no doc-agent spawn / no hardcoded path shape / any monitor-POST signal present). Do NOT treat the absence of this block as proof the routing is correct.
-EOF
-  )"
-  block_and_exit "${docroute_reason}" "block-docroute"
-fi
-
-# SIZE-ATTESTATION MISS (block-sizeest): a would-be-PASS DEV workflow under ENTRY_OK (entry-miss already
-# cleared via plan-ref / [ENTRY-CLASS]) carrying NO [SIZE-EST] delegation-size token in the RAW source.
-# DEV-gated + ENTRY_OK-gated + decoupled from the verify-stage verdict (promoted only at a would-be PASS,
-# so a verify-stage BLOCK keeps priority). OWN distinct remediation reason, SAME exit-2 channel; checked
-# BEFORE the cause-split so BLOCK_SIZEEST never falls through to exit 0. The block_and_exit addendum is
-# inert here (fires only under ENTRY_OK, so entry_marker is never ENTRY_ADVISORY) — see the ADR-2 allowlist comment.
-if [[ "${verdict}" == "BLOCK_SIZEEST" ]]; then
-  sizeest_reason="$(
-    cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow script spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. The orchestrator MUST record its own pre-spawn size estimate at EVERY DEV spawn so an oversized single delegation cannot slip past the split discipline (a truncation-then-no-[COMPLETION] failure). Add the token (canonical home: a top-of-script log() string or meta.description):
-
-  log('[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>');
-
-where bundles = count of {implement, write-tests, run-full-suite, report-consolidation} categories packed into THIS delegation, and tool_uses~=N = your rough pre-spawn tool_use estimate. HONESTY (orchestrator-role.md Spawn Budget): under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline) — on a borderline count, round UP and prefer the split-leaning call. Placement is not enforced (the token is raw-scanned), so a commented token also satisfies this gate. Existence-only contract: only presence is recorded; the estimate CORRECTNESS is never checked (same boundary as [ENTRY-CLASS]).
-EOF
-  )"
-  block_and_exit "${sizeest_reason}" "block-sizeest"
-fi
-
-# Cause-split dispatch — map each verify-stage cause token → its trace tag + ONE PREPENDED cause line (the
-# shared base reason below is NEVER rewritten; downstream asserts key on it). Case default = strict
-# enumerated fail-open: any verdict outside the BLOCK_* tokens (PASS, unknown/future) → emit_trace "pass" +
-# exit 0. BLOCK_DOCROUTE never reaches here (handled above).
+# Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* token carries its own dedicated stderr
+# remediation. Default (PASS / any unenumerated token) → fail-open: emit_trace "pass" + exit 0. The
+# `*)` default is the VERDICT-PLUMBING TRAP guard's other half: every python-side BLOCK token MUST
+# have a case arm here (AND a block_and_exit ADR-2 allowlist entry AND a trace tag) or it silently
+# falls to PASS — the enumerated arms below cover the identical token set the helper can emit.
 trace_tag=""
-cause=""
+reason=""
 case "${verdict}" in
+  BLOCK_NODECL)
+    trace_tag="block-nodecl"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [ENTRY-CLASS] / [SIZE-EST], the composition declaration is a MANDATORY author self-attestation — its ABSENCE on a DEV workflow is a hard block (presence parity). It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
+
+COPY-PASTE SCAFFOLD — pick ONE form (canonical home: a /* */ block comment):
+
+  --- in-script verify form (the Stage-2 {qa-code-reviewer, DEV} pair lives in THIS script) ---
+  /* [AGENT-COMPOSITION]
+  verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+  impl: glass-atrium-dev-nestjs
+  [/AGENT-COMPOSITION] */
+
+  --- upstream form (this workflow EXECUTES an already-verified persisted plan; waives the in-script pair) ---
+  /* [AGENT-COMPOSITION]
+  verify: upstream clauded-docs/<N>
+  impl: glass-atrium-dev-shell
+  impl-computed: glass-atrium-dev-node
+  [/AGENT-COMPOSITION] */
+
+Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV hard-gate is enforced HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
+EOF
+    )"
+    ;;
+  BLOCK_GRAMMAR)
+    trace_tag="block-grammar"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (malformed composition declaration): this Workflow script carries an [AGENT-COMPOSITION] block, but its contents are not well-formed. A well-formed sentinel pair means you opted INTO the contract, so a decidable author error is a hard block (NOT fail-open) — silently ignoring a typo would run unvalidated DEV work while you believe the gate validated it. One of these decidable errors was detected: an unterminated block (opening sentinel with no [/AGENT-COMPOSITION] close); 2+ comment-resident blocks (ambiguous authority); a line that does not begin with a known key + colon; a duplicate key; an unknown agent name (validated against the runtime DEV_SET + the reviewer literal); a malformed `verify: upstream …` clause; or a team-form verify clause naming MORE THAN ONE dev-* type. Fix the block to the strict grammar below, then retry. HONESTY: only presence + grammar + code-consistency are mechanical; role truthfulness is honor-system.
+
+STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys drawn from {verify, impl, impl-computed}; agent names must be the reviewer literal or a runtime-DEV_SET dev-*; free text is admitted ONLY after a spaced-dash delimiter (e.g. `impl-computed: glass-atrium-dev-node — over the BATCHES array`):
+
+  /* [AGENT-COMPOSITION]
+  verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+  impl: glass-atrium-dev-nestjs
+  [/AGENT-COMPOSITION] */
+
+  --- upstream form ---
+  /* [AGENT-COMPOSITION]
+  verify: upstream clauded-docs/<N>
+  impl: glass-atrium-dev-shell
+  [/AGENT-COMPOSITION] */
+
+verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns).
+EOF
+    )"
+    ;;
   BLOCK_NOREV)
     trace_tag="block-norev"
-    cause="no non-comment qa-code-reviewer token anywhere"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (no reviewer, zero-reviewer hard guarantee): this DEV workflow contains NO glass-atrium-qa-code-reviewer spawn token ANYWHERE. This guarantee is UNCONDITIONAL — it is evaluated independently of the declaration form, so the upstream form does NOT waive it: even a workflow executing an already-verified plan must still carry a real reviewer spawn somewhere. Either add the reviewer verify spawn (in-script verify form), OR — if this workflow only EXECUTES an already-verified persisted plan AND still spawns a reviewer — keep the reviewer and use the upstream form (verify: upstream clauded-docs/<N>, cited by a plan-ref token in the body).
+EOF
+    )"
     ;;
   BLOCK_NOVERIFYDEV)
     trace_tag="block-noverifydev"
-    cause="reviewer present but no dev-* verifier either co-located (within ~1000 comment-stripped chars) OR sharing a parallel() group with a reviewer — add the DEV verifier to the verify parallel()"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (verify team lacks the DEV half — Stage-2 DEV hard-gate): the [AGENT-COMPOSITION] verify clause does NOT name BOTH glass-atrium-qa-code-reviewer AND a glass-atrium-dev-* partner. The Plan Direction Verification (Stage-2) gate REQUIRES a DEV verdict (feasible|infeasible) alongside the reviewer verdict — a reviewer-only verify team is rejected. Fix the declaration: verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>. If there is NO genuine in-script verify DEV (e.g. a lone audit reviewer plus scattered implementation devs), this is the correct block — add a real {qa, dev} verify pair, or use the upstream form if executing an already-verified plan. HONESTY: this checks the DECLARATION names a DEV; it does NOT verify a feasible verdict was emitted (honor-system, same as the attestation tokens).
+EOF
+    )"
+    ;;
+  BLOCK_DECLSPAWN)
+    trace_tag="block-declspawn"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (declared role never spawned): a literal agent role declared in [AGENT-COMPOSITION] (a verify-team member or an impl: spawn) has NO matching spawn-position token in the code (agent('<type>', …) first-arg OR agentType: '<type>'). The declaration must describe the ACTUAL spawns — a phantom verify team is falsifiable against code and blocks. Either add the missing spawn, correct the declared agentType, or (if the spawn is computed/indirect) move it to an impl-computed: line so it is checked via data-literal presence instead.
+EOF
+    )"
+    ;;
+  BLOCK_UNDECL)
+    trace_tag="block-undecl"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (undeclared DEV spawn): a glass-atrium-dev-* type appears in the code whose agentType is NOT covered by any verify / impl / impl-computed clause in [AGENT-COMPOSITION]. Every DEV type MUST be declared (so a silently-added implementation dev cannot bypass the verify contract). This fires on TWO shapes: (1) a real Tier-B spawn (agent('glass-atrium-dev-*', …) OR agentType: '…') that is undeclared — add its agentType to an impl: (or impl-computed:) line, or remove the spawn; (2) PROSE-MENTION / config-array coverage (b-prime): an exact-quoted dev-* name that is NOT a real spawn — e.g. a dev-* name quoted inside a goal/prose string, or a dev literal parked in a data config array (agentType: b.agent over a BATCHES array) with ZERO agent() spawn positions. ONE-EDIT remediation for shape (2): if the quoted name is merely a MENTION, reword it so the dev-* name is NOT a quote-bounded literal (drop the quotes / paraphrase); if it IS a real (computed) spawn, declare its type on an impl-computed: line.
+EOF
+    )"
+    ;;
+  BLOCK_COMPUTED)
+    trace_tag="block-computed"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (declared computed spawn absent): an impl-computed: agentType declared in [AGENT-COMPOSITION] does NOT appear as a data-literal anywhere in the code (e.g. inside the config array the computed agentType selects over). A computed/indirect spawn (agentType: b.agent / a ternary) is verified by the presence of its declared agent-type literals in the data. Add the agent-type literal to the config data, or correct the declared type.
+EOF
+    )"
     ;;
   BLOCK_ORDER)
     trace_tag="block-order"
-    cause="a dev-* token textually precedes EVERY qa-code-reviewer (the min(rev_starts) < min(impl_dev_starts) ordering check fails), so the gate classifies it as an un-gated implementation dev-* — but the flagged token MAY be an earlier Discovery/Design analysis dev-*, NOT the implement stage. Two lawful fixes: (a) use a NON-DEV agent (glass-atrium-intel-researcher / glass-atrium-intel-planner / Explore) for the pre-verify Discovery/Design work so no dev-* precedes the reviewer; OR (b) front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-* (a REAL {qa,dev} verify, not a lone reviewer placed only to satisfy ordering)"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (ordering): a declared implementation dev-* spawn textually precedes EVERY glass-atrium-qa-code-reviewer spawn, so the implementation is not gated by the verify stage. On the greedy-earliest same-type binding (the first Tier-B spawn of a declared verify-dev type is the verify slot; the rest of the declared impl-type positions are implementation slots), some reviewer MUST precede the first implementation slot. Reorder so the {qa-code-reviewer, DEV} verify stage runs BEFORE the implementation agent(); OR, if the earlier dev-* is a pre-verify Discovery/Design step, use a NON-DEV agent for it (glass-atrium-intel-researcher / glass-atrium-intel-planner) so no dev-* precedes the reviewer; OR front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-*. (Computed/indirect impl spawns have no static position → ordering is honor-system for those.)
+EOF
+    )"
+    ;;
+  BLOCK_UPSTREAM)
+    trace_tag="block-upstream"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (upstream plan not cited): the [AGENT-COMPOSITION] verify clause uses the upstream form (verify: upstream clauded-docs/<N>) but the referenced plan id is NOT cited by a plan-ref token in the script BODY (outside the declaration). The upstream form waives the in-script {qa, dev} verify PAIR-MAPPING and ORDERING ONLY — it does NOT waive the zero-reviewer hard guarantee, and it is honest ONLY for a workflow that genuinely executes an already-verified persisted plan. So the script must reference that plan. Add a plan-ref citation, e.g. log('plan-ref: clauded-docs/<N>'), matching the declared id; or switch to the in-script verify form. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — reference a REAL, already-verified persisted plan (same honor-system floor as a fake plan-ref).
+EOF
+    )"
+    ;;
+  BLOCK_DOCROUTE)
+    trace_tag="block-docroute"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (doc-routing leak): this Workflow spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. Route the document to the monitor clauded-docs API (POST /api/clauded-docs); if a local path is only a /tmp staging buffer piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing. USER-REQUESTED LOCAL: stamp log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>') (path/line-scoped; concrete dotted path required). HONEST LIMIT: this is the WEAKEST string-heuristic layer; the runtime PreToolUse(Write) hook (block-doc-routing-leak.sh) is the primary guard.
+EOF
+    )"
+    ;;
+  BLOCK_SIZEEST)
+    trace_tag="block-sizeest"
+    reason="$(
+      cat <<'EOF'
+[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at EVERY DEV spawn: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
+EOF
+    )"
     ;;
   *)
     emit_trace "pass" "${script_len}"
@@ -813,26 +944,4 @@ case "${verdict}" in
     ;;
 esac
 
-# VIOLATION (clear case): DEV-implementation spawn present AND the {qa-code-reviewer, DEV} verify
-# team is incomplete — the cause token above names which omission. All are missing-verify-stage
-# omissions sharing this base reason.
-reason="$(
-  cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED: this Workflow script spawns DEV-implementation agent(s) (agentType dev-*) but is missing its mandatory {qa-code-reviewer, DEV} verify-stage — either NO qa-code-reviewer verify-spawn precedes the first DEV implementation, OR a qa-code-reviewer is present but has NO co-located dev-* verifier (the DEV hard-gate half of the verify team is absent). A complex-plan workflow MUST encode a {qa-code-reviewer, DEV} Plan Direction Verification stage BEFORE the first DEV implementation stage, with implementation gated on the combined pass+feasible verdict (orchestrator-role.md Stage-2 gate; skills/glass-atrium-ops-orchestrator.md "In-script verify-stage" skeleton). Note: this is a presence/co-location HEURISTIC, not DEV-verdict enforcement.
-
-How to fix — insert a verify stage ahead of the DEV implementation agent(), e.g.:
-
-  pipeline(
-    agent('glass-atrium-intel-planner', { goal: 'author plan' }),
-    parallel(
-      agent('glass-atrium-qa-code-reviewer', { goal: 'judge implementation/test-feasibility -> pass|revise' }),
-      agent('glass-atrium-dev-nestjs',       { goal: 'judge technical validity/approach -> feasible|infeasible' }),
-    ),
-    agent('glass-atrium-dev-nestjs', { goal: 'implement per verified plan' }),  // gated on pass+feasible
-  )
-
-If this is a SIMPLE workflow (typo/import/config — no real implementation), the gate is exempt; this static heuristic fires only on a DEV-spawn-without-any-qa-code-reviewer script. Add a qa-code-reviewer verify-stage and retry.
-EOF
-)"
-
-block_and_exit "[enforce-workflow-verify-stage] CAUSE (${trace_tag}): ${cause}"$'\n'"${reason}" "${trace_tag}"
+block_and_exit "${reason}" "${trace_tag}"
