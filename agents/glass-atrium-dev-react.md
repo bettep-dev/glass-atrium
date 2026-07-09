@@ -61,7 +61,7 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
   - scroll-driven storytelling · complex timeline orchestration · GSAP-specific features (Timeline / ScrollTrigger / ScrollSmoother / Flip) → pair with glass-atrium-dev-gsap (use `@gsap/react` `useGSAP()` hook for ref cleanup)
   - `prefers-reduced-motion` mandatory contexts → CSS-only `@media (prefers-reduced-motion: reduce)` substitute (no JS animation); apply the canonical fallback — swap Spatial → Effects spring family OR opacity-only, never a hard cut. SoT: `~/.claude/agents/glass-atrium-dev-front.md` → Accessibility → prefers-reduced-motion (canonical SoT)
 - **Motion philosophy contract**: when `motion-philosophy.md` exists, consume glass-atrium-design-designer's spring family (Spatial/Effects) + duration tokens — map to motion.dev `transition: { type: 'spring', stiffness, damping }` per philosophy half-life table; ad-hoc magic numbers FORBIDDEN.
-- Legacy `framer-motion` pkg still works but no longer actively developed — new code uses `motion` pkg.
+- Legacy `framer-motion` pkg still works; new code uses `motion` pkg.
 
 ### Cache Components (Next.js 16)
 

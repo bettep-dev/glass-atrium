@@ -25,7 +25,7 @@ const FIXTURE_PARTIAL_COMPATIBILITY = {
       domains: ["nodejs", "esm"],
       phase: "implementation",
       dual_phase: true,
-      compatibility: "monitor running at 127.0.0.1:7842",
+      compatibility: "monitor running at 127.0.0.1:16145",
     },
     reporter: {
       domains: ["report", "html-emit"],
@@ -92,7 +92,7 @@ test("loadAgentRegistry: compatibility 선언 agent → 값 그대로", async ()
   const entries = await loadAgentRegistry();
   const nodejsDev = entries.get("nodejs-dev");
   assert.ok(nodejsDev !== undefined);
-  assert.strictEqual(nodejsDev.compatibility, "monitor running at 127.0.0.1:7842");
+  assert.strictEqual(nodejsDev.compatibility, "monitor running at 127.0.0.1:16145");
 });
 
 test("loadAgentRegistry: compatibility 미선언 agent → null (backwards-compat invariant)", async () => {

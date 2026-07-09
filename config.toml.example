@@ -31,7 +31,7 @@ timezone = "auto"
 
 [ports]
 # Atrium Monitor web app — single fixed port
-monitor = 7842
+monitor = 16145
 # fakechat channel-plugin HTTP servers (daemon inject endpoints, 127.0.0.1-
 # bound) — consumed by the daemon bootstrap/healthcheck/inject scripts; keys
 # absent → stock defaults below

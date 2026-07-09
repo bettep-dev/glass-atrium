@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 # glass-atrium `bootstrap` one-stop path — unit coverage for the engine's
-# run_bootstrap that no other suite exercised as-a-unit (audit gap oss-install/T3):
+# run_bootstrap that no other suite exercised as-a-unit (bootstrap unit-coverage audit gap):
 #   * dry-run: run_bootstrap with DRY_RUN=true short-circuits before build/health.
 #   * exit 20 (BOOTSTRAP_EXIT_BUILD): `npm run build` failure is a loud-fail.
 #   * exit 21 (BOOTSTRAP_EXIT_HEALTH): no /api/health 200 in the window.
 #   * health-gate PASS: build ok + /api/health 200 → rc 0 + the [3/3] PASS log.
 #   * env-port fallback: bootstrap_health_gate reads ATRIUM_MONITOR_PORT from
-#     monitor/.env, else defaults to 7842 — the curl target proves which port.
+#     monitor/.env, else defaults to 16145 — the curl target proves which port.
 #
 # Hermetic strategy (mirrors scripts/test/daemon-bootstrap-supervise.bats): copy
 # lib/ga-core.sh into a sandbox GA_ROOT (resolving the sandbox monitor/.env),
@@ -36,6 +36,16 @@ setup() {
   # sandbox monitor/.env; the engine logic (not a thin entry point) is what these
   # bootstrap tests exercise.
   cp "${REAL_LIB}" "${GA_SBX}/lib/ga-core.sh"
+  # ga-core.sh is now a THIN LOADER that sources its 7 domain siblings; copy them
+  # alongside so the sandbox source resolves the full engine (absent -> loud-fail).
+  cp "${GA}/lib/ga-env.sh" \
+    "${GA}/lib/ga-symlink.sh" \
+    "${GA}/lib/ga-config-hooks.sh" \
+    "${GA}/lib/ga-launchd.sh" \
+    "${GA}/lib/ga-db.sh" \
+    "${GA}/lib/ga-daemons.sh" \
+    "${GA}/lib/ga-doctor.sh" \
+    "${GA_SBX}/lib/"
   # ga_init_env now HARD-requires the E5 update-system libs (atrium-config.sh /
   # apply-spine.sh / update-pause-flag.sh) under <GA_ROOT>/scripts/lib and die()s
   # ("E5 lib missing") when they are absent. Provision them into the sandbox so
@@ -56,8 +66,9 @@ teardown() {
 # npm    : `npm run build` succeeds unless STUB_NPM_BUILD_FAIL=1.
 # node   : the monitor server stand-in — sleeps so the gate's kill/wait path is
 #          exercised against a real child PID (never actually serves HTTP).
-# curl   : logs the requested URL, then returns the health body keyed on
-#          STUB_HEALTH (200|fail). 200 → write 200 to stdout via -w; fail → 000.
+# curl   : logs the requested URL, then returns the health response keyed on
+#          STUB_HEALTH (200|fail). 200 → a db:open BODY + the 200 code (the db-field gate
+#          needs the body, not just the status); fail → 000.
 # sleep  : the FIRST call (the gate's early-liveness `sleep 1` probe) does a tiny
 #          REAL settle so the just-backgrounded stub node is scheduled to write its
 #          up-marker before polling starts; EVERY subsequent call (the poll loop)
@@ -103,7 +114,11 @@ if [[ ! -f "${SANDBOX}/monitor-up.marker" ]]; then
   printf '000'; exit 0
 fi
 if [[ "\${STUB_HEALTH:-fail}" == "200" ]]; then
-  printf '200'; exit 0
+  # healthy monitor: emit the /api/health BODY (db:open) THEN the http_code on its own
+  # trailing line, matching the gate's -w '\n%{http_code}' parse (body = all-but-last line).
+  # A bare '200' (no db:open body) now FAILS the db-field gate (lib/ga-core.sh STEP 5 db-open),
+  # so the healthy-path stub must report a db-open monitor to reach the PASS branch.
+  printf '{"db":"open"}\n200'; exit 0
 fi
 [[ "\${fail_mode}" == "1" ]] && exit 22
 printf '000'; exit 0
@@ -210,16 +225,16 @@ source_and_call() {
   printf 'ATRIUM_MONITOR_PORT=18888\n' >"${GA_SBX}/monitor/.env"
   STUB_HEALTH=200 source_and_call bootstrap_health_gate
   [[ "${status}" -eq 0 ]]
-  # the stubbed curl logged the URL it was handed — assert the .env port, not 7842.
+  # the stubbed curl logged the URL it was handed — assert the .env port, not the 16145 default.
   grep -q 'http://127.0.0.1:18888/api/health' "${CURL_URL_LOG}"
-  run ! grep -q '127.0.0.1:7842' "${CURL_URL_LOG}"
+  run ! grep -q '127.0.0.1:16145' "${CURL_URL_LOG}"
 }
 
-# === env-port fallback — absent .env defaults to 7842 ========================
-@test "bootstrap_health_gate falls back to port 7842 when monitor/.env is absent" {
+# === env-port fallback — absent .env defaults to 16145 ======================
+@test "bootstrap_health_gate falls back to port 16145 when monitor/.env is absent" {
   # no monitor/.env written → the gate keeps its default port. STUB_HEALTH=fail
   # exits 21 after the (instant-sleep) poll loop, having probed the default port.
   STUB_HEALTH=fail source_and_call bootstrap_health_gate
   [[ "${status}" -eq 21 ]]
-  grep -q 'http://127.0.0.1:7842/api/health' "${CURL_URL_LOG}"
+  grep -q 'http://127.0.0.1:16145/api/health' "${CURL_URL_LOG}"
 }

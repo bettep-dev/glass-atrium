@@ -103,4 +103,4 @@ Any token name NOT present in this spec MUST be flagged inline (e.g. suffix the 
 
 ### Golden reference component
 
-A single reference component rendered across ALL 5 interactive states (default / hover / active / focus / disabled), each state naming its tokens — replaces the prose "Bad examples".
+A single reference component rendered across ALL 5 interactive states (default / hover / active / focus / disabled), each state naming its tokens.

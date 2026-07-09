@@ -13,7 +13,7 @@ Applies to all agents.
 ### Subject Line
 
 - **Compression target, not a hard cap**: aim for ~50 characters as a recommended target (GitHub UI truncation point, `git log --oneline` ergonomics). The author's job is to find the most compressed phrasing that conveys the change's purpose — counting characters is the wrong frame.
-- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); Korean subjects are no longer used — this is a public OSS repository. Bodies are English as well.
+- **Language & tone (English)**: write subjects in English imperative mood (`Add login button`, not `Added login button`); bodies are English as well (public OSS repository, no Korean subjects).
 - **Conventional Commits prefix** (`feat:`, `fix:`, etc.): optional. When used, place after the checkbox: `- [x] feat: <description>`.
 
 ### Subject and Body
@@ -66,4 +66,10 @@ Applies to all agents.
 - `rebase -i` / `add -i` → **interactive mode is FORBIDDEN** (not supported)
 - AI agent `git push --force` without explicit user approval → FORBIDDEN (force-push rule applies even more strictly to autonomous agents)
 
-> See the central **Rationalization Rejection Table** in [[GLASS_ATRIUM_GLOBAL_RULES#Rationalization Rejection Table (Central)]]
+## Rationalization Rejection (Git)
+
+| Excuse | Rebuttal |
+|--------|----------|
+| "It's just a small fix, I'll push directly to main" | Small fixes cause the largest outages · every change goes through a PR regardless of size |
+| "I'll squash the commits later" | "Later" = merge conflicts + lost context · write clean commits from the start |
+| "Tests are passing locally, no need to wait for CI" | Local env ≠ CI env · CI catches dependency + configuration issues local runs miss |

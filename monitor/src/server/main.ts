@@ -1,7 +1,5 @@
-// Fastify server entry point — single-origin localhost (127.0.0.1:7842).
-// Bind: 127.0.0.1 ONLY (single-origin; never 0.0.0.0 / ::).
-// Static: public/ at root /, API at /api/*.
-// Graceful shutdown: SIGINT/SIGTERM -> app.close() + prisma.$disconnect().
+// Fastify server entry — single-origin localhost; bind 127.0.0.1 ONLY (never 0.0.0.0 / ::).
+// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> app.close() + prisma.$disconnect().
 
 import "dotenv/config";
 
@@ -18,10 +16,9 @@ import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 
-// Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 로 렌더(scripts/render-monitor-env.sh)
-// 미설정 → 7842 default · PORT = generic fallback
+// Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 7842);
+const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 16145);
 // Reject a non-bindable port loudly — never silently bind a wrong port.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
@@ -92,10 +89,8 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
-  await app.listen({ host: HOST, port: PORT });
-  app.log.info(`listening on http://${HOST}:${PORT}`);
-
-  // pg session timezone UTC 검증 (Pool startup options 적용 확인) · UTC 아니면 fatal exit → launchd restart → drift 무음 지속 차단
+  // pg session timezone UTC 검증을 app.listen 이전 실행 = DB gate: DB unavailable 이면 :16145 bind 전 fatal exit(1) → launchd respawn.
+  // db.ts connectionTimeoutMillis:5000 이 pre-listen connect 를 5s bound → bootstrap early-liveness probe 통과; UTC 아니어도 fatal exit → drift 무음 지속 차단.
   try {
     await assertSessionTimezoneIsUtc();
     app.log.info("pg session timezone verification passed (UTC)");
@@ -104,13 +99,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // boot-stage pool pre-warm — cold-start latency 제거
-  // db.ts idleTimeoutMillis:0 + min:1 은 reactive only (close 방지)이고 커넥션 미생성 → 여기서 첫 커넥션 생성 → min:1 floor 유지 대상 확보
-  // Prisma 7 client 는 첫 실행 시 per-query-shape JS compile 지불 → boot self-call 로 미리 컴파일 → 실제 첫 요청은 compile 비용 미지불
+  // boot-stage pool pre-warm — cold-start latency 제거 (app.listen 이전, DB gate 직후).
+  // db.ts idleTimeoutMillis:0 + min:1 은 reactive only → 여기서 첫 커넥션 생성; Prisma 7 per-query-shape JS compile 을 미리 지불해 실제 첫 요청은 무비용.
   await prewarmPool(app);
 
-  // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를
-  // 부팅 시점에 loud 하게 표면화 (/api/health browser 필드 + health 화면 카드)
+  // DB gate + pre-warm 통과 후에만 포트 bind — DB unavailable 은 여기 도달 전 exit
+  await app.listen({ host: HOST, port: PORT });
+  app.log.info(`listening on http://${HOST}:${PORT}`);
+
+  // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);
 
   // boot-stage html_path ↔ document-root 정합 감사 — root 이동 후 잔존 행을 기동 시점에 loud 표면화 (비치명)
@@ -143,9 +140,7 @@ async function prewarmPool(app: FastifyInstance): Promise<void> {
   try {
     // 1) 커넥션 생성 + SELECT 1 shape compile (min:1 floor 가 유지할 첫 커넥션 확보)
     await getPrisma().$queryRaw`SELECT 1`;
-    // 2) hot-route self-call — boot 시 각 route 의 $queryRaw shape 컴파일
-    //    app.inject = Fastify in-process injection → 외부 TCP/port 노출 없이 handler 실행
-    //    Promise.allSettled = route 한 곳 실패가 다른 warmup 미차단
+    // 2) hot-route self-call — app.inject = 외부 TCP/port 노출 없이 in-process handler 실행 · Promise.allSettled = 한 route 실패가 다른 warmup 미차단
     await Promise.allSettled([
       app.inject({ method: "GET", url: "/api/improvement" }),
       app.inject({ method: "GET", url: "/api/clauded-docs" }),

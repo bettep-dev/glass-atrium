@@ -3,31 +3,21 @@
 # secrets file the launchd-spawned daemons source before calling `claude`.
 # Usage: render-claude-auth.sh [VALUE]
 #
-# Value source (priority): $1 arg → CLAUDE_CODE_OAUTH_TOKEN env → stdin (read
-# one line). The auth-gate captures the value from `claude setup-token` (or a
-# user paste) and passes it here; the env/stdin paths keep it off the process
-# argv (where `ps` would expose it).
+# Value source (priority): $1 arg → CLAUDE_CODE_OAUTH_TOKEN env → stdin (one line).
+# The auth-gate captures the value from `claude setup-token`; env/stdin keep it
+# off the process argv (where `ps` would expose it).
 #
-# Why a secrets FILE, not the plist: a launchd-spawned `claude -p` (non-GUI
-# session) authenticating ONLY via the macOS Keychain OAuth item returns 401,
-# while the SAME value works interactively. Injecting the env var into the
-# daemons' environment makes the CLI use it and bypass the keychain. The value
-# must NEVER enter the plist (world-readable EnvironmentVariables) or git — it
-# lives only in this 0600 file. Mirrors render-monitor-env.sh's "render into a
-# file, never edit the plist" pattern.
+# Why a secrets FILE, not the plist: a launchd-spawned `claude -p` (non-GUI)
+# authenticating ONLY via the macOS Keychain OAuth item returns 401, while the
+# SAME value works interactively — the env var makes the CLI use it and bypass
+# the keychain. The value must NEVER enter the plist (world-readable
+# EnvironmentVariables) or git — it lives only in this 0600 file (mirrors
+# render-monitor-env.sh's "render into a file, never edit the plist").
 #
-# Behavior:
-#   1. Resolve the value from arg/env/stdin; validate non-empty + plausible shape.
-#   2. Upsert the KEY=value line into the 0600 secrets file (replace in place if
-#      present, append otherwise — idempotent re-render).
-#   3. The confirmation line reports the KEY name + a redaction only — never the
-#      value (the value would leak to the install transcript / launchd log).
-#
-# Secret hygiene: value in the 0600 file only (and transiently here). Never in
-# the plist, never in git (gitignored), never echoed/logged, never hardcoded.
-#
-# Idempotency: safe to invoke repeatedly — upsert replaces the same key in place;
-# the secrets file stays 0600 across re-renders.
+# Secret hygiene: value in the 0600 file only (and transiently here) — never in
+# the plist, git (gitignored), logs, or hardcoded; the confirmation redacts it
+# (a raw value would leak to the install transcript / launchd log). Idempotent:
+# repeated invocation upserts the same key in place, staying 0600.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -44,10 +34,9 @@ trap 'echo "render-claude-auth: ERROR line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 #   7 — value failed the plausible-shape guard
 #   8 — secrets file write/chmod failed
 
-# --- 1. resolve the value (arg → env → stdin) --------------------------------
+# 1. resolve the value (arg → env → stdin)
 # Read stdin only when neither arg nor env supplied a value, so an interactive
-# invocation without a piped value still fails loud (exit 6) rather than blocking
-# forever on a terminal read.
+# call without a piped value fails loud (exit 6) rather than blocking on a tty read.
 oauth_value=""
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   oauth_value="$1"
@@ -67,12 +56,10 @@ if [[ -z "${oauth_value}" ]]; then
   exit 6
 fi
 
-# --- 2. plausible-shape guard ------------------------------------------------
-# Deliberately loose: the OAuth value format is vendor-internal and may change,
-# so over-constraining (exact prefix/length) would reject a valid future value.
-# Guard only against the obvious garbage classes — whitespace inside the value,
-# control chars, or an implausibly short string — to catch a fat-fingered paste
-# without coupling to an undocumented format.
+# 2. plausible-shape guard
+# Deliberately loose: the OAuth format is vendor-internal and may change, so
+# over-constraining would reject a valid future value. Guard only obvious garbage
+# (inner whitespace, control chars, implausibly short) to catch a fat-fingered paste.
 if [[ "${oauth_value}" == *[[:space:]]* ]]; then
   echo "render-claude-auth: value contains whitespace — likely a malformed paste" >&2
   exit 7
@@ -86,7 +73,7 @@ if [[ "${oauth_value}" =~ [[:cntrl:]] ]]; then
   exit 7
 fi
 
-# --- 3. ensure the 0600 secrets file -----------------------------------------
+# 3. ensure the 0600 secrets file
 # umask 077 around dir+file creation so neither is ever group/other-readable for
 # even a moment (a chmod-after-write leaves a brief world-readable window).
 umask 077

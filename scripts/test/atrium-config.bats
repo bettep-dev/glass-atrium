@@ -1,13 +1,9 @@
 #!/usr/bin/env bats
 # atrium-config.sh unit suite — pins the shared config.toml accessor contract:
-#   * defaults when the config file or key is absent (fresh-clone safety)
-#   * table-scoped extraction (same key in another section never collides)
-#   * quote + trailing-comment stripping
-#   * port guard — non-integer / out-of-range configured value → rc 1 (loud)
-#   * ATRIUM_CONFIG_TOML override selects the config file
-#   * atrium_ere_escape — metachar value embeds literally under grep -E
-#
-# Run via: bats scripts/test/atrium-config.bats
+# fresh-clone default safety (missing file/key → default), table-scoped extraction
+# (same key in another section never collides), quote + trailing-comment stripping,
+# port guard (non-integer / out-of-range → rc 1 loud), ATRIUM_CONFIG_TOML override,
+# atrium_ere_escape (metachar value embeds literally under grep -E).
 # Hermetic: fixtures live under mktemp WORK; the lib is sourced read-only.
 
 bats_require_minimum_version 1.5.0
@@ -29,7 +25,7 @@ write_fixture() {
 [meta]
 timezone = "America/New_York" # trailing comment
 [ports]
-monitor = 7842
+monitor = 16145
 wiki_fakechat = 18788
 [paths]
 monitor = "/some/path"
@@ -64,7 +60,7 @@ lib_call() {
 @test "table-scoped: [paths].monitor never collides with [ports].monitor" {
   write_fixture
   lib_call "${WORK}/config.toml" atrium_toml_get '[ports]' monitor
-  [[ "${output}" == "7842" ]]
+  [[ "${output}" == "16145" ]]
   lib_call "${WORK}/config.toml" atrium_toml_get '[paths]' monitor
   [[ "${output}" == "/some/path" ]]
 }
@@ -97,4 +93,71 @@ lib_call() {
     printf "resets June 12 at 11pm (Etc/GMT+9)\n" | grep -qE "resets .* \(${esc}\)"
   ' _ "${REAL_LIB}"
   [[ "${status}" -eq 0 ]]
+}
+
+# atrium_monitor_port resolver (ADR-1 precedence chain, AC-S1.1)
+
+# Runs atrium_monitor_port in a fresh bash with the resolver inputs pinned.
+# Args: $1 = ATRIUM_MONITOR_ENV path · $2 = ATRIUM_CONFIG_TOML path.
+# ATRIUM_MONITOR_PORT is explicitly UNSET so only the .env/config/default
+# branches are exercised (the env-prefer branch has its own tests below).
+resolver_call() {
+  run env -u ATRIUM_MONITOR_PORT \
+    ATRIUM_MONITOR_ENV="$1" ATRIUM_CONFIG_TOML="$2" \
+    bash -c 'source "$1"; atrium_monitor_port' _ "${REAL_LIB}"
+}
+
+@test "resolver: exported ATRIUM_MONITOR_PORT wins over .env and config" {
+  write_fixture
+  printf 'ATRIUM_MONITOR_PORT=23456\n' >"${WORK}/.env"
+  run env ATRIUM_MONITOR_PORT=25000 \
+    ATRIUM_MONITOR_ENV="${WORK}/.env" ATRIUM_CONFIG_TOML="${WORK}/config.toml" \
+    bash -c 'source "$1"; atrium_monitor_port' _ "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "25000" ]]
+}
+
+@test "resolver: rendered monitor/.env value wins over config.toml" {
+  write_fixture
+  printf 'DATABASE_URL=postgres:///x\nATRIUM_MONITOR_PORT=23456\n' >"${WORK}/.env"
+  resolver_call "${WORK}/.env" "${WORK}/config.toml"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "23456" ]]
+}
+
+@test "resolver: config.toml [ports].monitor when no env and no .env" {
+  printf '[ports]\nmonitor = 19999\n' >"${WORK}/config.toml"
+  resolver_call "${WORK}/nonexistent.env" "${WORK}/config.toml"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "19999" ]]
+}
+
+@test "resolver: terminal default 16145 when env, .env and config all absent" {
+  resolver_call "${WORK}/nonexistent.env" "${WORK}/nonexistent.toml"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "16145" ]]
+}
+
+@test "resolver: invalid exported port → rc 1 + loud stderr" {
+  run env ATRIUM_MONITOR_PORT=notaport \
+    ATRIUM_MONITOR_ENV="${WORK}/nonexistent.env" ATRIUM_CONFIG_TOML="${WORK}/nonexistent.toml" \
+    bash -c 'source "$1"; atrium_monitor_port' _ "${REAL_LIB}"
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"invalid ATRIUM_MONITOR_PORT=notaport"* ]]
+}
+
+@test "resolver: out-of-range .env port → rc 1 + loud stderr" {
+  printf 'ATRIUM_MONITOR_PORT=70000\n' >"${WORK}/.env"
+  resolver_call "${WORK}/.env" "${WORK}/nonexistent.toml"
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"invalid ATRIUM_MONITOR_PORT=70000"* ]]
+}
+
+@test "resolver default 16145 is the sole shell terminal literal (AC-S1.3a)" {
+  # The default DEFAULT literal is the quoted arg form "'16145'"; it appears in
+  # exactly one code location (the resolver terminal default). Prose comments
+  # mention 16145 unquoted and are not counted.
+  run grep -cF "'16145'" "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "1" ]]
 }

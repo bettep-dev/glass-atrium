@@ -1,37 +1,36 @@
 #!/usr/bin/env bash
-# inject-scope-rules.sh — SubagentStart hook: inject scope-rule cores + a budget meter into subagents.
+# inject-scope-rules.sh — SubagentStart hook: inject scope-rule cores + a budget
+# meter + the [COMPLETION] emit-format contract into subagents.
 #
-# On a DEV(12)/QA(2) spawn, extracts the AGENT-INJECT block from shared-comment-logging.md and
-# delivers it as hookSpecificOutput.additionalContext (the subagent otherwise gets only the
-# comment-logging pointer token, not the body). Beyond comment-logging, THREE additional scope
-# blocks are appended: for DEV(12) ONLY (excludes QA), two blocks from scope-dev.md — the
-# AGENT-INJECT:STYLE-REF block (style_ref is DEV-scoped, and the pointer token alone left the emit
-# obligation unfollowed — PG core.outcomes style_ref ~0% emit) and the AGENT-INJECT:MINIMALISM block
-# (the minimalism reflex, likewise a DEV-scoped per-response behavior the pointer token alone did not
-# deliver); plus the AGENT-INJECT:NAMING block (next paragraph) for DEV(12, excluding dev-swift) +
-# qa-code-reviewer.
+# On a DEV(12)/QA(2) spawn, extracts the AGENT-INJECT block from
+# shared-comment-logging.md and delivers it as hookSpecificOutput.additionalContext
+# (the subagent otherwise gets only the comment-logging pointer token, not the body).
+# DEV(12) ONLY (excludes QA) also gets two blocks from
+# scope-dev.md — STYLE-REF (style_ref DEV-scoped; the pointer token alone left it
+# ~0% emitted) and MINIMALISM (the DEV-scoped minimalism reflex the pointer did not
+# deliver). The NAMING block (glass-atrium-dev-naming
+# SKILL.md) goes to the 13 agents whose frontmatter declares that skill — DEV(12,
+# excl dev-swift) + qa-code-reviewer (the enforcement surface). Its NAMING_AGENTS
+# roster is DELIBERATELY narrower than INJECT_AGENTS (no qa-debugger, no dev-swift)
+# and is AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked array — a
+# new DEV agent is wired into naming injection automatically.
 #
-# Also appends the AGENT-INJECT:NAMING block (from the glass-atrium-dev-naming SKILL.md) for the 13
-# agents whose frontmatter declares that skill: DEV(12, excluding dev-swift) + qa-code-reviewer.
-# This block raises recall of the user-specific naming convention (review-side qa-code-reviewer is
-# the enforcement surface). Its NAMING_AGENTS roster is DELIBERATELY narrower than INJECT_AGENTS
-# (no qa-debugger, no dev-swift). Under the HYBRID design NAMING_AGENTS is now AUTO-RECONCILED by the
-# agent_lifecycle inject_sync tooling as a 4th tracked array (alongside INJECT_AGENTS / STYLEREF /
-# MINIMALISM rosters) — a newly created DEV agent is wired into naming injection automatically, no
-# manual edit of this array required.
+# Two NON-DROPPABLE universal blocks (ALL subagents, not DEV/QA-scoped), INDEPENDENT
+# of each other and of the scope blocks:
+#   * [COMPLETION] emit-format (ALWAYS-ON, assembled FIRST — the PRIMARY fix):
+#     schema-mode/workflow spawns emit the block as a SINGLE inline line, which
+#     track-outcome.sh (anchors every parse tier on a newline after the tag) matches
+#     no tier → fields discarded → outcome synthesized (done_with_concerns/low).
+#     Delivered to EVERY agent_type, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF +
+#     maxTurns; FIRST so it survives the ~2KB preview.
+#   * Budget-meter (subagents with a maxTurns frontmatter): a subagent has NO runtime
+#     turn meter, so the "stop at ~80% of maxTurns" rule is dead text — it runs to the
+#     hard-cap, dies mid-tool-use → no [COMPLETION] → orchestrator SendMessage-recover.
+#     This block supplies the meter (maxTurns N + checkpoint-at-80%).
 #
-# Budget-meter block (ALL subagents with a maxTurns frontmatter — universal, not DEV/QA-scoped):
-# a subagent has NO runtime turn meter, so the documented "stop at ~80% of maxTurns" rule is dead
-# text — the agent runs to the maxTurns hard-cap, which kills it mid-tool-use → no [COMPLETION]
-# block → the orchestrator must SendMessage-recover. This block SUPPLIES the meter the rule assumes
-# the agent already has: it states the agent's maxTurns budget N (read from its own frontmatter) and
-# the checkpoint-at-80% instruction. It is INDEPENDENT of the four scope blocks above (a non-DEV/QA
-# agent still receives the meter; a missing meter must not suppress a scope block, vice-versa).
-#
-# Other agents → no injection, exit 0.
-# fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty extraction)
-# → exit 0 + 1 stderr diagnostic line, injecting whatever IS available (the five blocks are
-# independent — a missing block must NOT suppress the others).
+# fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty
+# extraction) → exit 0 + 1 stderr diagnostic, injecting whatever IS available (a
+# missing block must NOT suppress the others).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -42,28 +41,26 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 # fail-open ERR trap — no internal error must break subagent spawn.
 trap 'printf "[inject-scope-rules] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-# Instant kill switch for the budget-meter block ONLY (the scope-rule injection is unaffected) —
-# set a non-empty value to suppress the meter without removing the hook. WHY a per-block switch:
-# the meter is the newest, least-proven block; an operator may want it off while keeping the
-# established comment-logging / style_ref injection live.
+# Instant kill switch for the budget-meter block ONLY (scope-rule injection unaffected):
+# non-empty suppresses the meter without removing the hook — the meter is the newest,
+# least-proven block, so an operator may want it off while keeping the rest live.
 SUBAGENT_BUDGET_METER_OFF="${SUBAGENT_BUDGET_METER_OFF:-}"
 
 # Agents-dir root — frontmatter source for the maxTurns lookup. Env-overridable for the Bats
 # sandbox (the test points it at a fixture dir). Canonical SoT root = ~/.glass-atrium/agents.
 readonly AGENTS_DIR="${INJECT_SCOPE_RULES_AGENTS_DIR:-${HOME}/.glass-atrium/agents}"
 
-# Comment-logging source rule file — env-overridable (test fail-open branch). scoped/ is DROPPED
-# from the ~/.claude farm and consumed IN PLACE from ~/.glass-atrium/scoped; these SessionStart-
-# adjacent hooks are client-fired so the DEFAULT constant (not an env block) carries the new path.
+# Comment-logging source rule file — env-overridable (test fail-open branch). scoped/ is
+# consumed IN PLACE from ~/.glass-atrium/scoped (not the ~/.claude farm), so the DEFAULT
+# constant carries the new path (these client-fired hooks have no env block).
 readonly SRC_FILE="${INJECT_SCOPE_RULES_SRC:-${HOME}/.glass-atrium/scoped/shared-comment-logging.md}"
 
 # style_ref source rule file — DEV-only injection; same env-override + ~/.glass-atrium/scoped default.
 readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-atrium/scoped/scope-dev.md}"
 
-# naming source SKILL file — DEV(12)+qa-code-reviewer injection; same env-override pattern. UNLIKE
-# SRC_FILE/STYLEREF_SRC_FILE (relocated to ~/.glass-atrium/scoped), skills STAY FARMED into
-# ~/.claude/skills, so this default keeps the ~/.claude/skills path (a symlink into the canonical
-# ~/.glass-atrium store).
+# naming source SKILL file — DEV(12)+qa-code-reviewer. UNLIKE SRC_FILE/STYLEREF_SRC_FILE
+# (relocated to ~/.glass-atrium/scoped), skills STAY FARMED into ~/.claude/skills, so this
+# default keeps that path (a symlink into the canonical ~/.glass-atrium store).
 readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skills/glass-atrium-dev-naming/SKILL.md}"
 
 # Comment-logging AGENT-INJECT block boundaries — literal anchors (stable across file edits).
@@ -93,22 +90,21 @@ readonly STYLEREF_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-a
 # minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
 readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
 
-# naming scope-match — the 13 agents whose frontmatter declares glass-atrium-dev-naming: DEV(12,
-# EXCLUDING dev-swift) + qa-code-reviewer. Space-padded. DELIBERATELY NOT INJECT_AGENTS: that set
-# wrongly adds qa-debugger + dev-swift, neither of which declares the naming skill (frontmatter-
-# verified). Under HYBRID this array is AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th
-# tracked array (it parses all 4 named arrays, naming included) — a new DEV agent is wired in
-# automatically; the narrower roster is enforced by a dedicated naming membership predicate
-# (dev_roster − {dev-swift} ∪ {qa-code-reviewer}), NOT the generic DEV/QA rosters.
+# naming scope-match — the 13 agents whose frontmatter declares glass-atrium-dev-naming:
+# DEV(12, EXCLUDING dev-swift) + qa-code-reviewer. Space-padded. DELIBERATELY NOT
+# INJECT_AGENTS, which wrongly adds qa-debugger + dev-swift (neither declares the skill,
+# frontmatter-verified). AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked
+# array via a dedicated predicate (dev_roster − {dev-swift} ∪ {qa-code-reviewer}) — a new
+# DEV agent is wired in automatically.
 readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
-# Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c). WHY: the
-# engine persists any SubagentStart hook additionalContext larger than ~10KB (10240 bytes) to a
-# file and delivers only a ~2KB preview to the model — so an oversized assembly silently strips the
-# meter, the exact failure this hook repairs. 8192 bytes stays clear of that 10KB persistence
+# Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c).
+# WHY: the engine persists any SubagentStart additionalContext larger than ~10KB (10240
+# bytes) to a file and delivers only a ~2KB preview — so an oversized assembly silently
+# strips the meter (the exact failure this hook repairs). 8192 stays clear of the 10KB
 # trigger, and the ~800B meter fits even the 2KB preview, so meter delivery holds in every
-# degradation mode. UNIVERSAL: the SubagentStart envelope carries no spawn-mode discriminator, so
-# engine/schema-mode spawns are indistinguishable from manual ones and all are bounded identically.
+# degradation mode. UNIVERSAL: the envelope carries no spawn-mode discriminator, so
+# engine/schema-mode spawns are bounded identically to manual ones.
 readonly INJECT_CTX_MAX_BYTES=8192
 
 INPUT="$(hook_read_input)"
@@ -117,23 +113,15 @@ INPUT="$(hook_read_input)"
 AGENT_TYPE="$(hook_get_field "${INPUT}" "agent_type")"
 [[ -z "${AGENT_TYPE}" ]] && exit 0
 
-# Scope match — exact-token on space boundaries. Recorded as a flag (not an early exit): the
-# budget meter applies to ALL subagents, so a non-DEV/QA agent must still proceed to the meter
-# block. Only the comment-logging / style_ref blocks gate on this flag.
-IS_INJECT_AGENT=0
-if [[ "${INJECT_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  IS_INJECT_AGENT=1
-fi
-
 # Absent jq = system misconfiguration — fail-open.
 if ! command -v jq >/dev/null 2>&1; then
   printf '[inject-scope-rules] jq not found on PATH; skipping injection (agent=%s)\n' "${AGENT_TYPE}" >&2
   exit 0
 fi
 
-# Extract a marked block from a rule file, dropping the two marker lines (must not reach the child).
-# sed range + grep -vxF (not awk flag-range) for BSD/GNU portability. Returns empty on any failure
-# (file/markers absent) — the caller treats empty as "this block unavailable", never as a hard error.
+# Extract a marked block from a rule file, dropping the two marker lines (must not reach the
+# child). sed range + grep -vxF (not awk flag-range) for BSD/GNU portability. Empty on any
+# failure (file/markers absent) — the caller treats empty as "block unavailable", not an error.
 # Args: $1=src_file $2=marker_start $3=marker_end · stdout: block text (may be empty).
 extract_block() {
   local src="${1}" start="${2}" end="${3}"
@@ -142,7 +130,22 @@ extract_block() {
     | grep -vxF "${start}" | grep -vxF "${end}" || true
 }
 
-# Read the maxTurns integer from an agent's frontmatter. fail-open: agent_type un-derivable,
+# Extract a droppable scope block WHEN AGENT_TYPE is in the roster, emitting one fail-open
+# diagnostic on an empty extraction (markers/file absent). Consolidates the four scope-block
+# sites; blocks stay independent — an empty one self-skips (a non-matching roster yields empty
+# with no diagnostic). Args: $1=roster $2=src_file $3=marker_start $4=marker_end $5=label.
+extract_scope_block() {
+  local roster="${1}" src="${2}" start="${3}" end="${4}" label="${5}" block=""
+  if [[ "${roster}" == *" ${AGENT_TYPE} "* ]]; then
+    block="$(extract_block "${src}" "${start}" "${end}")"
+    if [[ -z "${block}" ]]; then
+      printf '[inject-scope-rules] %s block empty or markers absent in %s (agent=%s)\n' "${label}" "${src}" "${AGENT_TYPE}" >&2
+    fi
+  fi
+  printf '%s' "${block}"
+}
+
+# Read the maxTurns integer from an agent's frontmatter. fail-open: un-derivable agent_type,
 # file absent, or field missing/non-integer → empty stdout (caller treats empty as "no meter").
 # agent_type is sanitized to a path-safe basename before interpolation (LLM01 — the SubagentStart
 # envelope is external payload; a forged agent_type must not escape AGENTS_DIR via "../").
@@ -159,25 +162,38 @@ read_max_turns() {
   printf '%s\n' "${raw}"
 }
 
-# Build the budget-meter advisory text for a known maxTurns budget. The 80%-checkpoint figure is
-# the documented working-ceiling (GLOBAL_RULES Turn Budget & Graceful Exit) — stated in TURNS
-# (the meter's honest unit; maxTurns is a turn cap, not a tool_use cap). The injected line is the
-# meter the agent otherwise lacks at runtime.
+# Build the budget-meter advisory for a known maxTurns budget. The 80%-checkpoint figure is
+# the documented working-ceiling (GLOBAL_RULES Turn Budget & Graceful Exit), stated in TURNS
+# (maxTurns is a turn cap, not a tool_use cap) — the meter the agent otherwise lacks at runtime.
 # Args: $1=max_turns (integer) · stdout: the meter block text.
 build_meter_block() {
   local max_turns="${1}" ceiling=0
-  # 80% working ceiling, integer floor (e.g. 40→32, 25→20, 3→2). Native integer math (max_turns is
-  # already digit-stripped to a non-empty positive integer by read_max_turns). Layer 2: ceiling is
-  # default-initialized above so no arithmetic edge leaves it unbound under set -u. Layer 1: force
-  # base-10 — a leading-zero frontmatter value like 040 is a valid digit string but a bare $(( 040 ))
-  # re-reads as OCTAL; 10# keeps it decimal (consistency with advisory-subagent-budget.sh).
+  # 80% working ceiling, integer floor (e.g. 40→32, 25→20, 3→2). max_turns is already digit-
+  # stripped to a non-empty positive integer by read_max_turns; ceiling is default-initialized
+  # above so no arithmetic edge leaves it unbound under set -u. Force base-10: a leading-zero
+  # value like 040 re-reads as OCTAL under a bare $(( 040 )); 10# keeps it decimal (consistency
+  # with advisory-subagent-budget.sh).
   ceiling=$((10#${max_turns} * 8 / 10))
   printf '%s\n' \
     "**Turn-budget meter (auto-injected · GLOBAL_RULES Turn Budget & Graceful Exit)**" \
     "- Your maxTurns hard cap is ${max_turns} TURNS (a TURN cap, not a tool_use cap). The hard cap kills you mid-tool-use → no [COMPLETION] block → costly orchestrator recovery." \
     "- Working ceiling = ${ceiling} turns (80% of cap). As you APPROACH ${ceiling}: STOP, do NOT push to the hard cap." \
-    "- On approach: finish the current write to a valid state (no partial files), checkpoint done/remaining to memory/progress-{task}.md, then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary." \
+    "- On approach: finish the current write to a valid state (no partial files), checkpoint done/remaining to memory/progress-{task}.md, then emit a terminal [COMPLETION] block with result: needs_context and a 1-line resume point in summary. (schema-mode/workflow agents: STILL call StructuredOutput as the terminal action even on a needs_context exit — print this [COMPLETION] block first, then emit StructuredOutput; ending on the prose block alone throws.)" \
     "- Splitting > truncation: a clean needs_context handoff resumes cleanly; a hard-cap kill does not."
+}
+
+# Build the always-on [COMPLETION] emit-format directive. Static text (no args) for EVERY
+# subagent, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF + maxTurns (NOT folded into build_meter_block
+# / read_max_turns, whose kill-switch + maxTurns coupling would leave workflow subagents
+# uncovered). WHY: schema-mode spawns emit the block as a SINGLE inline line, which the recorder
+# (parse tiers anchored on a newline after the tag) cannot match → fields discarded → synthesized.
+# This delivers the strict multi-line contract the recorder can parse. stdout: block text.
+build_emit_format_block() {
+  printf '%s\n' \
+    "**[COMPLETION] emit format (auto-injected · REQUIRED by the outcome recorder)**" \
+    "- Print the [COMPLETION] block MULTI-LINE: the [COMPLETION] tag ALONE on its own line, EACH field (result / task_type / metric_pass / confidence / summary / …) on its OWN line, closed by a [/COMPLETION] sentinel ALONE on its own line." \
+    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form." \
+    "- SCHEMA-MODE / WORKFLOW (ultracode) agents: your StructuredOutput call IS the terminal deliverable — you MUST call StructuredOutput as the LAST action. Print this multi-line [COMPLETION] block as a dedicated text turn IMMEDIATELY BEFORE the StructuredOutput call (print-block-then-emit). Do NOT treat printing the prose [COMPLETION] block as \"done\" and stop — a schema-mode run that ends without calling StructuredOutput is a hard engine error (the run throws), not a graceful finish."
 }
 
 # Byte length of a string (wc -c counts bytes, locale-independent); tr strips BSD wc's leading
@@ -198,18 +214,21 @@ join_block() {
   fi
 }
 
-# Assemble additionalContext with the METER BLOCK FIRST (never dropped), then the four droppable
-# scope blocks in display order (comment-logging, style_ref, minimalism, naming), each gated by its
-# keep-flag argument. Reads the module-level *_BLOCK variables. Meter-first is load-bearing: even in
-# the 2KB persistence-preview degradation mode the meter must reach the model, so it can never sit
-# behind a larger block that pushes it past the preview cut.
+# Assemble additionalContext: the two NON-DROPPABLE blocks first (EMIT-FORMAT, then METER),
+# followed by the four droppable scope blocks in display order (comment-logging, style_ref,
+# minimalism, naming), each gated by its keep-flag. Reads the module-level *_BLOCK variables.
+# Emit-first/meter-second is load-bearing: both must survive the 2KB preview, so neither may sit
+# behind a larger droppable block. Emit leads as the PRIMARY fix.
 # Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming (each 0/1)
 # stdout: the assembled context (no trailing newline).
 assemble_ctx() {
   local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}"
   local ctx=""
+  if [[ -n "${EMIT_BLOCK}" ]]; then
+    ctx="${EMIT_BLOCK}"
+  fi
   if [[ -n "${METER_BLOCK}" ]]; then
-    ctx="${METER_BLOCK}"
+    ctx="$(join_block "${ctx}" "${METER_BLOCK}")"
   fi
   if [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${COMMENT_BLOCK}")"
@@ -226,44 +245,21 @@ assemble_ctx() {
   printf '%s' "${ctx}"
 }
 
-# Comment-logging block — DEV + QA only (gated on the scope flag).
-COMMENT_BLOCK=""
-if [[ "${IS_INJECT_AGENT}" -eq 1 ]]; then
-  COMMENT_BLOCK="$(extract_block "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}")"
-  if [[ -z "${COMMENT_BLOCK}" ]]; then
-    printf '[inject-scope-rules] comment-logging block empty or markers absent in %s (agent=%s)\n' "${SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
+# Four droppable scope blocks — each extracted only when AGENT_TYPE is in that block's roster (an
+# empty extraction self-skips with a fail-open diagnostic; see extract_scope_block). Rosters DIFFER:
+# comment-logging = DEV+QA · style_ref/minimalism = DEV-only (shared scope-dev.md source) · naming =
+# DEV(12)+qa-code-reviewer. Blocks are independent — a missing one never suppresses the others (see
+# the *_AGENTS definitions above for exact rosters + rationale).
+COMMENT_BLOCK="$(extract_scope_block "${INJECT_AGENTS}" "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}" "comment-logging")"
+STYLEREF_BLOCK="$(extract_scope_block "${STYLEREF_AGENTS}" "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}" "style_ref")"
+MINIMALISM_BLOCK="$(extract_scope_block "${MINIMALISM_AGENTS}" "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}" "minimalism")"
+NAMING_BLOCK="$(extract_scope_block "${NAMING_AGENTS}" "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}" "naming")"
 
-# style_ref block — DEV only (QA excluded). Independent of the comment block: its absence must
-# NOT suppress the comment block, and vice-versa.
-STYLEREF_BLOCK=""
-if [[ "${STYLEREF_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  STYLEREF_BLOCK="$(extract_block "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}")"
-  if [[ -z "${STYLEREF_BLOCK}" ]]; then
-    printf '[inject-scope-rules] style_ref block empty or markers absent in %s (agent=%s)\n' "${STYLEREF_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
-
-# minimalism block — DEV only (QA excluded). Sourced from the same scope-dev.md file as the
-# style_ref block. Independent of the other blocks: its absence must NOT suppress them, vice-versa.
-MINIMALISM_BLOCK=""
-if [[ "${MINIMALISM_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  MINIMALISM_BLOCK="$(extract_block "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}")"
-  if [[ -z "${MINIMALISM_BLOCK}" ]]; then
-    printf '[inject-scope-rules] minimalism block empty or markers absent in %s (agent=%s)\n' "${STYLEREF_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
-
-# naming block — DEV(12)+qa-code-reviewer (gated on NAMING_AGENTS membership). Sourced from the
-# naming SKILL.md. Independent of the other blocks: its absence must NOT suppress them, vice-versa.
-NAMING_BLOCK=""
-if [[ "${NAMING_AGENTS}" == *" ${AGENT_TYPE} "* ]]; then
-  NAMING_BLOCK="$(extract_block "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}")"
-  if [[ -z "${NAMING_BLOCK}" ]]; then
-    printf '[inject-scope-rules] naming block empty or markers absent in %s (agent=%s)\n' "${NAMING_SRC_FILE}" "${AGENT_TYPE}" >&2
-  fi
-fi
+# Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Unconditional:
+# independent of SUBAGENT_BUDGET_METER_OFF + read_max_turns (the two coupling holes that would
+# leave workflow/schema subagents uncovered). Static text → never fails to build, NEVER a drop
+# candidate.
+EMIT_BLOCK="$(build_emit_format_block)"
 
 # Budget-meter block — ALL subagents (universal), independent of the four scope blocks above.
 # Kill-switch + un-derivable maxTurns → empty (no meter). A missing meter must not suppress a
@@ -278,11 +274,11 @@ if [[ -z "${SUBAGENT_BUDGET_METER_OFF}" ]]; then
   fi
 fi
 
-# Combine available blocks with the METER FIRST, then enforce the universal byte ceiling. assemble_ctx
-# places the meter first and appends the kept droppable blocks; the drop loop below removes the
-# lowest-value blocks in the PINNED order naming → style-ref → minimalism → comment-logging until the
-# total fits INJECT_CTX_MAX_BYTES. The meter is never a drop candidate (its absence is the fatal
-# failure this hook exists to fix), so under extreme pressure the meter alone survives.
+# Combine blocks (EMIT-FORMAT first, METER second), then enforce the byte ceiling. assemble_ctx
+# places the two non-droppable blocks first + appends the kept droppable blocks; the drop loop
+# below removes the lowest-value blocks in the PINNED order naming → style-ref → minimalism →
+# comment-logging until the total fits INJECT_CTX_MAX_BYTES. Neither emit-format nor meter is a
+# drop candidate, so under extreme pressure only those two survive.
 keep_comment=1
 keep_styleref=1
 keep_minimalism=1

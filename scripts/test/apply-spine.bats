@@ -1,24 +1,15 @@
 #!/usr/bin/env bats
 # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
-#   T13  spine_find_changed_files — hash-diff change selection, with the
-#        agents/**/*.md + *.local.md + config.toml exclusions, and the
-#        missing-locally → changed rule
-#   T11  spine_stage_and_verify  — stage + per-file SHA-256 verify; loud-fail
-#        on a hash mismatch with ZERO install mutation
-#        spine_commit_staged     — snapshot + swap success, and rollback to the
-#        pre-swap state on a mid-swap failure (existing files restored, newly
-#        created files removed)
-#        spine_apply             — full verify-then-commit transaction
-#   T14  spine_set_baseline / spine_get_baseline — capture + read the
-#        base@install anchor (absence → rc 1, the `get` contract)
-#
-# Run via: bats scripts/test/apply-spine.bats
-# Requires: bats >= 1.5.0, jq, shasum (or sha256sum)
-#
-# Hermetic strategy: every test operates inside a per-test mktemp sandbox; the
-# baseline state dir is pinned to the sandbox via ATRIUM_UPDATE_STATE_DIR so the
-# live ~/.claude/data/update tree is NEVER touched. The lib is sourced under
-# full `set -Eeuo pipefail` to prove its functions are strict-mode-safe.
+# T13 spine_find_changed_files — hash-diff selection, excluding agents/**/*.md +
+# *.local.md + config.toml, with the missing-locally → changed rule.
+# T11 spine_stage_and_verify (per-file SHA-256 verify; loud-fail on a hash mismatch
+# with ZERO install mutation) · spine_commit_staged (swap + rollback to pre-swap:
+# existing files restored, newly created files DELETED) · spine_apply (full
+# verify-then-commit transaction). T14 spine_set/get_baseline — capture + read the
+# base@install anchor (absence → rc 1, the `get` contract).
+# Hermetic: baseline state dir pinned via ATRIUM_UPDATE_STATE_DIR so the live
+# ~/.claude/data/update tree is NEVER touched; the lib is sourced under
+# set -Eeuo pipefail proving its functions strict-mode-safe.
 
 bats_require_minimum_version 1.5.0
 
@@ -42,7 +33,7 @@ teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# --- helpers ---------------------------------------------------------------
+# helpers
 
 sha256_of() {
   if command -v shasum >/dev/null 2>&1; then
@@ -87,9 +78,7 @@ spine() {
   "$@"
 }
 
-# ===========================================================================
 # T13 — spine_find_changed_files
-# ===========================================================================
 
 @test "T13: detects a content hash diff (changed file selected)" {
   seed_file "${NEW}" "hooks/a.sh" "new-content"
@@ -154,9 +143,7 @@ spine() {
   [[ "${output}" == *"no hash for hooks/a.sh"* ]]
 }
 
-# ===========================================================================
 # T11 — spine_stage_and_verify
-# ===========================================================================
 
 @test "T11 stage: staged copies verify against the manifest hashes" {
   seed_file "${NEW}" "hooks/a.sh" "alpha"
@@ -206,9 +193,7 @@ spine() {
   [[ "${output}" == *"staged source missing"* ]]
 }
 
-# ===========================================================================
 # T11 — spine_commit_staged (swap success + rollback on failure)
-# ===========================================================================
 
 @test "T11 commit: swaps staged files into the live install" {
   seed_file "${WORKDIR}/staging" "hooks/a.sh" "NEW-a"
@@ -263,9 +248,7 @@ spine() {
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
 }
 
-# ===========================================================================
 # T11 — spine_apply (full transaction)
-# ===========================================================================
 
 @test "T11 apply: verify-then-commit applies the whole change set" {
   seed_file "${NEW}" "hooks/a.sh" "applied-a"
@@ -299,9 +282,7 @@ spine() {
   [[ "$(cat "${LIVE}/hooks/a.sh")" == "live-original" ]]
 }
 
-# ===========================================================================
 # T14 — baseline capture + read
-# ===========================================================================
 
 @test "T14: capture stores the manifest and read returns its path" {
   build_manifest "${WORK}/manifest.json" "${NEW}"

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # wiki-daemon-bootstrap.sh — thin role wrapper for the Wiki curator daemon.
 # Invoked by: launchd (com.glass-atrium.wiki-daemon.plist) at boot/login.
-# Behavior: ensures the `claude-wiki-daemon` tmux session exists, then either
-# enters the self-health loop (supervise, default) or returns the inject rc
-# (return mode). The shared bootstrap flow lives in lib/daemon-bootstrap-common.sh;
-# this wrapper only sets the wiki role parameters and delegates.
+# Behavior: ensures the `claude-wiki-daemon` tmux session exists, then supervises
+# (self-health loop, default) or returns the inject rc (return mode). Shared flow
+# in lib/daemon-bootstrap-common.sh; this wrapper only sets wiki role params.
 #
 # wiki vs autoagent: wiki binds [ports].wiki_fakechat (default 8788) and does
 # NOT write a quota marker on inject rc=2 (its quota scheme is decoupled — only

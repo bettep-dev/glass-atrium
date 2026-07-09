@@ -25,7 +25,7 @@ write_as_orchestrator() {
   ' _ "${1}" "${HOOK_SH}"
 }
 
-# --- BLOCKED: protected harness dir with a nested memory/ segment (FIX-MEM) ---
+# BLOCKED: protected harness dir with a nested memory/ segment (FIX-MEM)
 
 @test "agents/memory/x.md → BLOCKED (agent prompt surface, not session-state)" {
   write_as_orchestrator "/Users/x/.claude/agents/memory/x.md"
@@ -62,7 +62,7 @@ write_as_orchestrator() {
   [[ "${status}" -ne 0 ]]
 }
 
-# --- BLOCKED: traversal cannot spoof a session-state memory root ---
+# BLOCKED: traversal cannot spoof a session-state memory root
 
 @test "agents/memory/../x.md traversal → BLOCKED (normalizes to agents/x.md)" {
   write_as_orchestrator "/Users/x/.claude/agents/memory/../scope-dev.md"
@@ -74,7 +74,7 @@ write_as_orchestrator() {
   [[ "${status}" -ne 0 ]]
 }
 
-# --- PASS: legitimate session-state memory roots stay allowed ---
+# PASS: legitimate session-state memory roots stay allowed
 
 @test "personal-dir memory/MEMORY.md → PASS (session-state root)" {
   write_as_orchestrator "/Users/x/.claude-personal/projects/-Users-x/memory/MEMORY.md"
@@ -91,14 +91,14 @@ write_as_orchestrator() {
   [[ "${status}" -eq 0 ]]
 }
 
-# --- BLOCKED: a plain harness-config write (no memory segment) — regression guard ---
+# BLOCKED: a plain harness-config write (no memory segment) — regression guard
 
 @test "rules/scope-dev.md → BLOCKED (plain harness config, no memory exception)" {
   write_as_orchestrator "/Users/x/.claude/rules/scope-dev.md"
   [[ "${status}" -ne 0 ]]
 }
 
-# --- PASS: allowed basenames + subagent context (orthogonal guards intact) ---
+# PASS: allowed basenames + subagent context (orthogonal guards intact)
 
 @test "CLAUDE.md basename → PASS regardless of harness dir" {
   write_as_orchestrator "/Users/x/.claude/agents/CLAUDE.md"
@@ -112,7 +112,7 @@ write_as_orchestrator() {
   [[ "${status}" -eq 0 ]]
 }
 
-# --- H-3: python3-absent fail-closed (extraction degrades to EMPTY) ---
+# H-3: python3-absent fail-closed (extraction degrades to EMPTY)
 # Without python3, hook_get_tool_input returns empty → the legacy
 # `[[ -z FILE_PATH ]] && exit 0` would ALLOW an orchestrator harness write. The
 # fix blocks on non-trivial input but must NOT over-block genuinely-empty input.

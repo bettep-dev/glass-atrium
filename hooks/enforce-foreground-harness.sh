@@ -2,37 +2,31 @@
 # enforce-foreground-harness.sh — PreToolUse(Agent) gate enforcing
 # Harness Path Protection Rule 2 (orchestrator-role.md).
 #
-# Purpose:
-#   Block sub-agent delegations that target ~/.claude/, ~/.claude-work/, or
-#   ~/.claude-personal/ with run_in_background=true. The user MUST inspect
-#   harness/memory writes in real time — background spawns hide diffs and
-#   silently break future sessions. This hook is the deterministic runtime
-#   gateway that an LLM-side self-check cannot guarantee.
+# Blocks sub-agent delegations targeting ~/.claude/, ~/.claude-work/, or ~/.claude-personal/ with
+# run_in_background=true. The user MUST inspect harness/memory writes in real time — background spawns
+# hide diffs and silently break future sessions; this hook is the deterministic runtime gateway an
+# LLM-side self-check cannot guarantee. Trigger: matcher "Agent" (registered in ~/.claude/settings.json).
 #
-# Trigger:
-#   PreToolUse hook with matcher "Agent" (registered in ~/.claude/settings.json).
-#
-# Contract:
-#   stdin  — JSON payload from Claude Code (tool_name, tool_input{prompt,
-#            run_in_background}).
-#   stdout — JSON {"decision":"block","reason":"..."} on violation; silent on
-#            pass.
-#   exit 2 — block (Rule 2 violation). exit 0 — pass / fail-open on internal
-#            error (defense-in-depth: this is one of several enforcement layers,
-#            never break the user's session on infrastructure failure).
+# Contract: stdin = JSON (tool_name, tool_input{prompt, run_in_background}) · stdout = JSON
+#   {"decision":"block","reason":"..."} on violation, silent on pass · exit 2 = block · exit 0 = pass /
+#   fail-open on internal error (defense-in-depth — one of several layers, never break the session).
 #
 # BASENAME exception:
 #   CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md may be written directly. If every
-#   harness-path occurrence in the prompt resolves to one of these basenames,
-#   the call is exempt.
+#   harness-path occurrence in the prompt resolves to one of these basenames, the call is exempt.
+#
+# Runtime-DATA exclusion: Rule 2 protects harness CONFIG writes (agents/, hooks/, skills/,
+#   settings*.json, the memory dir). Runtime-DATA subdirs (data/, projects/, logs/, todos/,
+#   shell-snapshots/, statsig/) hold transcripts/logs/caches that CANNOT misconfigure a future session,
+#   so a bare reference (a text scan cannot tell READ from WRITE) must not force foreground. The memory
+#   dir nests under projects/ and stays protected via a /memory/ segment guard, never leaking into memory writes.
 #
 # Source: rules/orchestrator-role.md → Harness Path Protection.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Diagnostic ERR trap — stderr only, never blocks. The cleanup ensures any
-# unexpected failure exits 0 (fail-open) rather than blocking the user.
+# Diagnostic ERR trap — stderr only, fail-open (exit 0), never blocks the user.
 trap 'printf "[enforce-foreground-harness] internal error at line %d: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
 # Drain stdin into a variable. cat failure is tolerated (empty input → fail-open).
@@ -46,8 +40,7 @@ if [[ -z "${input}" ]]; then
   exit 0
 fi
 
-# jq absence would be a system misconfiguration; fail-open with a stderr note
-# rather than blocking every Agent call.
+# jq absence = system misconfiguration → fail-open with a stderr note, not a block.
 if ! command -v jq >/dev/null 2>&1; then
   printf '[enforce-foreground-harness] jq not found on PATH; skipping check\n' >&2
   exit 0
@@ -60,9 +53,8 @@ if [[ "${tool_name}" != "Agent" ]]; then
   exit 0
 fi
 
-# Extract delegation prompt body (string) and run_in_background flag.
-# Default run_in_background to "false" when absent — matches Claude Code
-# semantics (parameter is optional, foreground is the default).
+# Extract prompt body + run_in_background flag. Absent run_in_background → "false"
+# (Claude Code semantics: optional param, foreground is the default).
 prompt=""
 prompt="$(printf '%s' "${input}" | jq -r '.tool_input.prompt // ""' 2>/dev/null)" || prompt=""
 run_bg=""
@@ -90,20 +82,14 @@ if [[ -n "${home_dir}" ]]; then
   home_re="$(printf '%s' "${home_dir}" | sed -e 's/[][\\.^$*+?(){}|/]/\\&/g')"
 fi
 
-# Scan the prompt for harness path occurrences. Each match is a path token
-# starting at one of the four roots and continuing through the next whitespace
-# or quote boundary.
+# Scan the prompt for harness path occurrences — each match is a path token from one of the four
+# roots up to the next whitespace / quote / backtick / closing paren-or-bracket (so we can resolve
+# its basename). grep -oE prints one match per line; sort -u dedupes. `|| true` absorbs grep's
+# exit-1 no-match so pipefail does not trip the ERR trap when there are no harness paths.
 #
-# Regex captures the path-after-root (everything up to whitespace / quote /
-# backtick / closing paren-or-bracket) so we can resolve its basename.
-# grep -oE prints one match per line; sort -u dedupes identical occurrences.
-# `|| true` on grep absorbs the exit-1 no-match case so pipefail does not
-# trip the ERR trap when the prompt has no harness paths.
-#
-# Three alternations: tilde form (`~/.claude.../`) always; absolute-home form
-# (`${HOME}/.claude.../`) only when $HOME is known — built from the
-# regex-escaped runtime home so it matches the installing user, never a
-# hardcoded developer identity; and a CWD-relative form (`.claude.../`).
+# Three alternations: tilde form (`~/.claude.../`) always; absolute-home form (`${HOME}/.claude.../`)
+# only when $HOME is known (regex-escaped runtime home — installing user, never a hardcoded identity);
+# and a CWD-relative form (`.claude.../`).
 #
 # Relative-form arm closes the prior blind spot: a prompt that first changes
 # directory to $HOME (`cd ~ && edit .claude/agents/x.md`) references the harness
@@ -133,21 +119,15 @@ if [[ -z "${matches}" ]]; then
   exit 0
 fi
 
-# BASENAME exception evaluation:
-# A match is "exempt" when its first path segment after the harness root is one
-# of {CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md} — i.e. the prompt references the
-# allowlisted root-level files directly. If EVERY match is exempt, the call is
-# exempt as a whole.
-#
-# Implementation: for each match, strip the harness root prefix, then take the
-# first '/'-separated segment. If that segment is one of the three allowed
-# basenames, the match is exempt. Any non-exempt match → BLOCK.
+# BASENAME exception: a match is exempt when its first segment after the harness root is one
+# of {CLAUDE.md, MEMORY.md, GLASS_ATRIUM_GLOBAL_RULES.md} — the prompt references an allowlisted
+# root-level file directly. EVERY match exempt → the call is exempt. Implementation: strip the
+# harness root prefix, take the first '/'-separated segment, compare; any non-exempt match → BLOCK.
 all_exempt=true
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
-  # The relative-form arm's boundary group captures one leading separator byte
-  # (space / quote / backtick / paren / angle) — trim it so the prefix-strips
-  # below see a clean path token. IFS=$'\n\t' read already trims a leading TAB.
+  # The relative-form arm captures one leading separator byte (space/quote/backtick/paren/angle) —
+  # trim it so the prefix-strips below see a clean path token (IFS read already trims a leading TAB).
   path="${path#[[:space:]]}"
   path="${path#\"}"
   path="${path#\'}"
@@ -155,9 +135,8 @@ while IFS= read -r path; do
   path="${path#(}"
   path="${path#<}"
   path="${path#>}"
-  # Strip leading root prefix. The pattern MUST be quoted — unquoted `~/...`
-  # in `${var#pattern}` triggers tilde expansion and the literal `~/` prefix
-  # never matches, leaving the path unstripped.
+  # Strip leading root prefix. The pattern MUST be quoted — unquoted `~/...` in `${var#pattern}`
+  # triggers tilde expansion so the literal `~/` prefix never matches, leaving the path unstripped.
   remainder="${path#"~/.claude/"}"
   remainder="${remainder#"~/.claude-work/"}"
   remainder="${remainder#"~/.claude-personal/"}"
@@ -174,6 +153,18 @@ while IFS= read -r path; do
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
     CLAUDE.md | MEMORY.md | GLASS_ATRIUM_GLOBAL_RULES.md) continue ;;
+    data | projects | logs | todos | shell-snapshots | statsig)
+      # Runtime-DATA subdir → not config, does not force foreground. But the memory dir nests under
+      # projects/ (projects/<proj>/memory/…), so a /memory/ path segment keeps the match protected —
+      # this exclusion cannot un-protect a memory write. `/${remainder}/` frames the glob boundaries.
+      case "/${remainder}/" in
+        */memory/*)
+          all_exempt=false
+          break
+          ;;
+        *) continue ;;
+      esac
+      ;;
     *)
       all_exempt=false
       break
@@ -185,7 +176,6 @@ if [[ "${all_exempt}" == "true" ]]; then
   exit 0
 fi
 
-# Non-exempt harness path detected with run_in_background=true → BLOCK.
-# Emit JSON decision on stdout (Claude Code hook contract) and exit 2.
+# Non-exempt harness path with run_in_background=true → BLOCK (JSON decision on stdout, exit 2).
 printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 violation: foreground MANDATORY for ~/.claude/, ~/.claude-work/, ~/.claude-personal/ writes. Set run_in_background=false (or omit). Source: rules/orchestrator-role.md."}'
 exit 2

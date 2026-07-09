@@ -2,44 +2,30 @@
 # render-monitor-env.sh — render config.toml values into monitor/.env
 # Usage: render-monitor-env.sh
 #
-# Renders six keys (all gitignored render outputs of config.toml, the upper
-# SoT — see config.toml header):
+# Renders six gitignored keys from config.toml (upper SoT — see config.toml header):
 #   ATRIUM_MONITOR_PORT     ← [ports].monitor          (bindable integer 1-65535)
 #   CLAUDED_DOCS_HTML_ROOT  ← [paths].monitor_docs_html_root  (absolute dir path)
-#   ATRIUM_TIMEZONE         ← [meta].timezone RESOLVED  ('auto'→host IANA via the
-#                             shared resolver; explicit name used verbatim)
+#   ATRIUM_TIMEZONE         ← [meta].timezone RESOLVED  ('auto'→host IANA; explicit verbatim)
 #   ATRIUM_SCHEDULE_AUTOAGENT     ← [daemon.autoagent-cycle].time      ("HH:MM" 24h)
 #   ATRIUM_SCHEDULE_WIKI          ← [daemon.wiki-compile].time         ("HH:MM" 24h)
 #   ATRIUM_SCHEDULE_DAILY_RESTART ← [daemon.daemon-daily-restart].time ("HH:MM" 24h)
 #
-# The three ATRIUM_SCHEDULE_* keys mirror the proven ATRIUM_TIMEZONE render-then-
-# consume path: config.toml [daemon.*].time is the upper SoT, the monitor reads
-# env only, and schedule-next-fire.ts builds DAEMON_CRON_SCHEDULE from these env
-# values at module load — so the monitor's "next due" can never again drift from
-# the launchd reality that render-launchd-plists.sh derives from the SAME config.
+# The three ATRIUM_SCHEDULE_* keys mirror the ATRIUM_TIMEZONE render-then-consume
+# path: config.toml [daemon.*].time is SoT, the monitor reads env only, and
+# schedule-next-fire.ts builds DAEMON_CRON_SCHEDULE from these at module load — so
+# the monitor's "next due" can never drift from the launchd reality that
+# render-launchd-plists.sh derives from the SAME config.
 #
-# Behavior:
-#   1. Parse each value from its config.toml table via the shared table-scoped
-#      extractor (lib/atrium-config.sh atrium_toml_get — no TOML-parser
-#      dependency; a same-named key in another section can never collide,
-#      [ports].monitor vs [paths].monitor).
-#   2. Validate (port = integer range · html-root = existing absolute dir).
-#   3. Upsert KEY=<value> into monitor/.env (replace if present, append if
-#      absent).
-#
-# Rationale: config.toml is the declarative SoT; the running monitor reads env
-# only. dist/server/main.js loads monitor/.env via `dotenv/config`, so writing
-# the rendered values here is the lowest-friction wiring — the launchd plist runs
-# `node dist/server/main.js` directly (no wrapper to hook), and the plist lives
-# outside the git repo. Keeping the render in .env avoids editing the plist.
+# Why .env: config.toml is the declarative SoT; the running monitor reads env only.
+# dist/server/main.js loads monitor/.env via dotenv/config, and the launchd plist
+# runs `node dist/server/main.js` directly (no wrapper, plist outside git) — so
+# rendering into .env is the lowest-friction wiring and avoids editing the plist.
 #
 # CLAUDED_DOCS_MD_ROOT (Obsidian vault, legacy read-only) is deliberately NOT
-# rendered — storage.ts's built-in default is correct and migration left it
-# unchanged.
+# rendered — storage.ts's built-in default is correct.
 #
-# Idempotency: safe to invoke repeatedly — upsert replaces the same key in place.
-# Re-run after any change to the rendered config.toml keys; no rebuild needed
-# (env is read at process start) — only a monitor restart picks up new values.
+# Idempotency: safe to re-run — upsert replaces the same key in place; env is read
+# at process start, so only a monitor restart picks up new values.
 set -euo pipefail
 
 readonly GA_ROOT="${GA_ROOT:-${HOME}/.glass-atrium}"
@@ -65,16 +51,14 @@ upsert_env() {
   local env_key="$1" env_val="$2"
   touch "${ENV_FILE}"
   if grep -qE "^${env_key}=" "${ENV_FILE}"; then
-    # Rewrite the matching line via awk, passing the value through ENVIRON (the
-    # process environment) rather than sed's replacement string. WHY: sed's
-    # replacement interprets `&` (whole-match backreference), `\`, and the `|`
-    # delimiter — a path value containing `&` (e.g. /Users/a&b/docs, a legal macOS
-    # path) would corrupt/duplicate the line, so the monitor would read a wrong
-    # HTML root. awk's ENVIRON[] is read byte-for-byte with NO metachar
-    # interpretation (unlike `-v val=`, which DOES process backslash escapes like
-    # `\b` — so it is also unsafe for paths). The key is a fixed internal constant
-    # → safe to pass via -v; match on an exact key field (split at first `=`) so
-    # the rewrite cannot misfire on a key prefix.
+    # Rewrite the matching line via awk, passing the value through ENVIRON (process
+    # environment) not sed's replacement string. WHY: sed's replacement interprets
+    # `&`/`\`/the `|` delimiter — a path with `&` (e.g. /Users/a&b/docs, legal on
+    # macOS) would corrupt the line, so the monitor reads a wrong HTML root. awk's
+    # ENVIRON[] is byte-for-byte with NO metachar interpretation (unlike `-v val=`,
+    # which processes `\b`-style escapes — also unsafe for paths). The key is a fixed
+    # internal constant → safe via -v; exact-key match (split at first `=`) cannot
+    # misfire on a key prefix.
     local tmp
     tmp="$(mktemp)"
     UPSERT_VAL="${env_val}" awk -v key="${env_key}" '
@@ -95,15 +79,13 @@ upsert_env() {
   echo "render-monitor-env: ${env_key}=${env_val} → ${ENV_FILE}"
 }
 
-# Read + validate a [daemon.<job>].time value, storing the validated "HH:MM"
-# string in the SCHEDULE_TIME global (REPLY-style out-param). HH:MM + range
-# validation mirrors render-launchd-plists.sh lifecycle_xml exactly
-# (^([0-9]{1,2}):([0-9]{2})$ + hour<=23, minute<=59) so the two renderers agree.
-# Loud-fail on missing/malformed: distinct named exit + stderr. MUST be called
-# DIRECTLY (never inside "$(...)") — an `exit` inside a command-substitution
-# subshell would terminate only the subshell, not this script.
-# Args: $1 = table header literal (e.g. "[daemon.wiki-compile]") · $2 = exit code
-# for a MISSING key · $3 = exit code for a MALFORMED/out-of-range value.
+# Read + validate a [daemon.<job>].time, storing validated "HH:MM" in the
+# SCHEDULE_TIME global (REPLY-style out-param). Range validation mirrors
+# render-launchd-plists.sh lifecycle_xml exactly so the two renderers agree.
+# MUST be called DIRECTLY (never inside "$(...)") — an `exit` in a command-sub
+# subshell would terminate only the subshell, not this script. Loud-fail on
+# missing/malformed (distinct named exit + stderr). Args: $1=table header,
+# $2=exit for MISSING key, $3=exit for MALFORMED/out-of-range value.
 require_schedule_time() {
   local section="$1" exit_missing="$2" exit_malformed="$3"
   local val hour minute
@@ -126,7 +108,7 @@ require_schedule_time() {
   SCHEDULE_TIME="${val}"
 }
 
-# --- 1. ATRIUM_MONITOR_PORT ← [ports].monitor --------------------------------
+# 1. ATRIUM_MONITOR_PORT ← [ports].monitor
 PORT="$(atrium_toml_get "[ports]" "monitor")"
 [[ -n "${PORT}" ]] || {
   echo "render-monitor-env: [ports].monitor not found in ${CONFIG_TOML}" >&2
@@ -139,7 +121,7 @@ if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
   exit 7
 fi
 
-# --- 2. CLAUDED_DOCS_HTML_ROOT ← [paths].monitor_docs_html_root ---------------
+# 2. CLAUDED_DOCS_HTML_ROOT ← [paths].monitor_docs_html_root
 DOCS_HTML_ROOT="$(atrium_toml_get "[paths]" "monitor_docs_html_root")"
 [[ -n "${DOCS_HTML_ROOT}" ]] || {
   echo "render-monitor-env: [paths].monitor_docs_html_root not found in ${CONFIG_TOML}" >&2
@@ -153,16 +135,14 @@ if [[ "${DOCS_HTML_ROOT}" != /* ]] || [[ ! -d "${DOCS_HTML_ROOT}" ]]; then
   exit 9
 fi
 
-# --- 3. ATRIUM_TIMEZONE ← [meta].timezone (RESOLVED) --------------------------
-# Read the configured value (default 'auto' when the key is absent) then RESOLVE
-# it to a CONCRETE IANA name — the rendered ATRIUM_TIMEZONE must NEVER carry the
-# literal 'auto' (the monitor reads env verbatim and feeds it to Intl/PG, where
-# 'auto' is not a valid zone). Host detection runs HERE at build time via the
-# shared resolver's TZ-immune /etc/localtime read, sidestepping the launchd
-# TZ=UTC pin that shadows the monitor's runtime Intl. An explicit value triggers
-# the resolver's OD-2 stderr warning when it differs from the host zone.
-# Authoritative IANA validation stays server-side (timezone.ts boot guard); here
-# only a charset guard blocks values that could corrupt the .env line.
+# 3. ATRIUM_TIMEZONE ← [meta].timezone (RESOLVED)
+# Read the configured value ('auto' default when absent) then RESOLVE to a CONCRETE
+# IANA name — rendered ATRIUM_TIMEZONE must NEVER carry literal 'auto' (the monitor
+# feeds env verbatim to Intl/PG, where 'auto' is invalid). Host detection runs HERE
+# at build time via the resolver's TZ-immune /etc/localtime read, sidestepping the
+# launchd TZ=UTC pin that shadows the monitor's runtime Intl. Authoritative IANA
+# validation stays server-side (timezone.ts boot guard); here only a charset guard
+# blocks values that could corrupt the .env line.
 TZ_CONFIGURED="$(atrium_config_get "[meta]" "timezone" "auto")"
 TZ_VALUE="$(atrium_resolve_timezone "${TZ_CONFIGURED}")"
 if ! [[ "${TZ_VALUE}" =~ ^[A-Za-z0-9_+/-]+$ ]]; then
@@ -170,15 +150,12 @@ if ! [[ "${TZ_VALUE}" =~ ^[A-Za-z0-9_+/-]+$ ]]; then
   exit 10
 fi
 
-# --- 4. ATRIUM_SCHEDULE_* ← [daemon.*].time -----------------------------------
-# Read + validate ALL THREE daemon schedule times BEFORE any upsert below, so a
-# missing/malformed time loud-fails with ZERO schedule keys written (no partial
-# render — the whole upsert block runs only after every value is validated).
-# Distinct exit codes per (key, failure-mode) continue the existing 5-10 ladder.
-# The shell owns the config-job-name → monitor-logical-env-key transform; the
-# backend (schedule-next-fire.ts) fans ATRIUM_SCHEDULE_DAILY_RESTART out to both
-# daily-restart rows. Concrete values render here; the monitor never re-parses
-# config.toml.
+# 4. ATRIUM_SCHEDULE_* ← [daemon.*].time
+# Validate ALL THREE schedule times BEFORE any upsert, so a missing/malformed time
+# loud-fails with ZERO keys written (no partial render). Distinct exit codes per
+# (key, failure-mode) continue the 5-10 ladder. schedule-next-fire.ts fans
+# ATRIUM_SCHEDULE_DAILY_RESTART to both daily-restart rows; concrete values render
+# here, the monitor never re-parses config.toml.
 require_schedule_time "[daemon.autoagent-cycle]" 11 12
 SCHED_AUTOAGENT="${SCHEDULE_TIME}"
 require_schedule_time "[daemon.wiki-compile]" 13 14
@@ -186,7 +163,7 @@ SCHED_WIKI="${SCHEDULE_TIME}"
 require_schedule_time "[daemon.daemon-daily-restart]" 15 16
 SCHED_DAILY_RESTART="${SCHEDULE_TIME}"
 
-# --- render all keys -----------------------------------------------------------
+# render all keys
 upsert_env "ATRIUM_MONITOR_PORT" "${PORT}"
 upsert_env "CLAUDED_DOCS_HTML_ROOT" "${DOCS_HTML_ROOT}"
 upsert_env "ATRIUM_TIMEZONE" "${TZ_VALUE}"

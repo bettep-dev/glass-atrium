@@ -22,6 +22,18 @@ setup() {
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   TARGET="$(mktemp -d -t ga-doctor-bats.XXXXXX)"
   SETTINGS="${TARGET}/settings.json"
+  # Skip 3 assertion-IRRELEVANT heavy doctor sections via the existing test-mode seams.
+  # This suite asserts ONLY §6 hook-binding lines — never §8 manifest / auth self-test / §reports.
+  mkdir -p "${TARGET}/bin" "${TARGET}/empty-reports"
+  cat >"${TARGET}/bin/claude" <<'SH'
+#!/bin/bash
+echo OK
+exit 0
+SH
+  chmod +x "${TARGET}/bin/claude"
+  export GA_GENERATE_MANIFEST="${TARGET}/no-such-manifest-gen" # nonexistent → §8 SHA hashing skipped
+  export GA_AUTH_CLAUDE_BIN="${TARGET}/bin/claude"             # echo-OK stub → no live claude -p network call
+  export DOCTOR_AUTH_REPORTS_DIR="${TARGET}/empty-reports"     # empty dir → trivial daemon-reports scan
 }
 
 teardown() {
@@ -49,6 +61,7 @@ write_full_settings() {
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
+      { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] },
       { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-prompt.sh" } ] },
@@ -133,6 +146,16 @@ run_doctor_sandbox() {
   [[ "${output}" != *"dormant hook binding(s)"* ]]
 }
 
+@test "Workflow-matcher binding -> reported bound (lint-workflow-template-literal)" {
+  # lint-workflow-template-literal.sh is the SECOND hook under the Workflow matcher —
+  # its bound status must be reported independently of enforce-workflow-verify-stage
+  # (neither Workflow-matcher hook masks the other), no dormant.
+  write_full_settings
+  run_doctor_sandbox
+  [[ "${output}" == *"ok   : hook bound — PreToolUse -> lint-workflow-template-literal.sh (matcher=Workflow)"* ]]
+  [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
 @test "Workflow-matcher binding -> missing one reported dormant" {
   # drop ONLY the Workflow enforce-workflow-verify-stage group; every other
   # binding stays. The new event/matcher tuple must surface as DORMANT.
@@ -182,15 +205,16 @@ run_doctor_sandbox() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 42-binding set across all 7 events
-  # (PreToolUse 20 / PostToolUse 7 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 43-binding set across all 7 events
+  # (PreToolUse 21 / PostToolUse 7 / SessionStart 4 / Stop 3 / SubagentStart 3 /
   # SubagentStop 4 / PreCompact 1). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh binds under TWO matchers
-  # (Write|Edit AND Bash), and several hooks recur across events (agent-tracker.sh,
-  # post-edit-typecheck.sh, telemetry-activation.sh, advisory-preedit-facts.sh) — each
-  # occurrence is a distinct leaf. With settings.json absent, every leaf is unwired,
-  # so all 42 report dormant.
-  [[ "${output}" == *"42 dormant hook binding(s)"* ]]
+  # (Write|Edit AND Bash), two hooks share the Workflow matcher (enforce-workflow-
+  # verify-stage.sh AND lint-workflow-template-literal.sh), and several hooks recur
+  # across events (agent-tracker.sh, post-edit-typecheck.sh, telemetry-activation.sh,
+  # advisory-preedit-facts.sh) — each occurrence is a distinct leaf. With settings.json
+  # absent, every leaf is unwired, so all 43 report dormant.
+  [[ "${output}" == *"43 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

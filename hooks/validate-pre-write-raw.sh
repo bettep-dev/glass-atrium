@@ -17,9 +17,8 @@ TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 FILE_PATH=$(printf "%s" "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [ -z "$FILE_PATH" ] && exit 0
 
-# Trigger condition: a write into the wiki raw/ store. Matches the WIKI_ROOT-
-# derived path (env-overridable for tests) plus the literal glass-atrium store
-# as a belt-and-suspenders default; both resolve to the same path by default.
+# Trigger: a write into the wiki raw/ store — WIKI_ROOT-derived path (env-overridable
+# for tests) plus the literal glass-atrium store as a belt-and-suspenders default.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 WIKI_RAW_DIR="${WIKI_ROOT}/raw"
 case "$FILE_PATH" in

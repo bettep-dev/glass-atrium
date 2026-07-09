@@ -35,7 +35,7 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 @test "dir mode: clean tree -> exit 0" {
-  printf 'port = 7842\npath = "/usr/local/share"\n' >"${WORK}/clean.toml"
+  printf 'port = 16145\npath = "/usr/local/share"\n' >"${WORK}/clean.toml"
   run bash "${SCANNER}" "${WORK}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"worktree-clean: PASS"* ]]

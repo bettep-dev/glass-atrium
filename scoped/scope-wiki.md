@@ -6,7 +6,7 @@
 
 Rules specific to WIKI agents: glass-atrium-wiki-curator.
 
-> **Wiki store (canonical)**: the wiki is an Atrium-internal, git-ignored, **LLM-only** knowledge store at `~/.glass-atrium/wiki/` (subdirs `raw/`, `notes/`, `index/`). Its single source of truth is the filesystem notes plus the `index/wiki.sqlite` BM25 index — there is no Obsidian vault and no Obsidian SoT. BM25 `wiki-query.sh` is the sole consumer; human Obsidian browsing is not a supported path.
+> **Wiki store (canonical)**: the wiki is an Atrium-internal, git-ignored, **LLM-only** knowledge store at `~/.glass-atrium/wiki/` (subdirs `raw/`, `notes/`, `index/`). Its single source of truth is the filesystem notes plus the `index/wiki.sqlite` BM25 index, whose sole consumer is `wiki-query.sh`; there is no Obsidian vault.
 
 ## Absolute Rules [WIKI]
 

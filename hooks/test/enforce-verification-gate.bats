@@ -87,7 +87,7 @@ assert_empty() {
   }
 }
 
-# --- (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2) ---
+# (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2)
 
 @test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2 + stderr JSON)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
@@ -102,11 +102,11 @@ assert_empty() {
   assert_contains "entry-miss"
 }
 
-# --- (a') SYNCED-ROSTER MEMBERSHIP PROBE — a real synced DEV member (dev-swift) is gated; a
+# (a') SYNCED-ROSTER MEMBERSHIP PROBE — a real synced DEV member (dev-swift) is gated; a
 # non-member (intel-reporter) is not. Proves the gate keys on DEV_SET membership: dev-swift is the
 # agent whose DEV_SET absence originally motivated the gate-roster auto-sync (agent_lifecycle
 # add/delete + `sync-gate-roster`). This case fails RED if dev-swift is ever dropped from DEV_SET,
-# confirming the gate actually reads the synced list rather than a stale hand-edited copy. ---
+# confirming the gate actually reads the synced list rather than a stale hand-edited copy.
 
 @test "synced member dev-swift, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
   run_hook "glass-atrium-dev-swift" "implement the SwiftUI settings flow across modules [SIZE-EST] bundles=2 tool_uses~=22 — swiftui settings flow"
@@ -120,7 +120,7 @@ assert_empty() {
   assert_empty
 }
 
-# --- (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked) ---
+# (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked)
 
 @test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer advisory + exit 0 (NOT entry-miss block)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
@@ -136,7 +136,7 @@ assert_empty() {
   assert_empty
 }
 
-# --- (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch) ---
+# (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch)
 
 @test "dev spawn with [ENTRY-CLASS] simple-task token (SIZE-EST present) → silent, exit 0, no output" {
   run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
@@ -151,8 +151,8 @@ assert_empty() {
   assert_not_contains "entry-miss"
 }
 
-# --- (c') SIZE-EST gate: orchestrator-origin DEV spawn MUST carry a [SIZE-EST] token; guarded by
-# hook_is_subagent so a nested sub-worker origin (agent_id present) is never blocked. ---
+# (c') SIZE-EST gate: orchestrator-origin DEV spawn MUST carry a [SIZE-EST] token; guarded by
+# hook_is_subagent so a nested sub-worker origin (agent_id present) is never blocked.
 
 @test "orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2, size gate reachable for plan-bearing spawns)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234"
@@ -182,7 +182,7 @@ assert_empty() {
   assert_empty
 }
 
-# --- (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV) ---
+# (d) ALLOW: non-dev spawn → exit 0 (gate only blocks DEV)
 
 @test "non-dev subagent_type, no plan-ref, no token → silent, exit 0 (not a DEV spawn)" {
   run_hook "glass-atrium-intel-planner" "draft a plan for the auth refactor"
@@ -196,7 +196,7 @@ assert_empty() {
   assert_empty
 }
 
-# --- (e) FAIL-OPEN on the hook's OWN errors → exit 0 (never block on internal/input faults) ---
+# (e) FAIL-OPEN on the hook's OWN errors → exit 0 (never block on internal/input faults)
 
 @test "fail-open: empty payload → exit 0 silent" {
   run bash -c 'printf "%s" "" | HOOK_DATA_DIR="$2" bash "$1"' _ "${HOOK_SH}" "${DATA_DIR}"

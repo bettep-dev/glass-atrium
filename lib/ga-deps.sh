@@ -1,30 +1,19 @@
 # shellcheck shell=bash
 # Glass Atrium — bare-Mac dependency-bootstrap DETECTION + command-string layer.
-#
-# SOURCED ONLY by the entry point (glass-atrium), after ga_init_env. Pure: every
-# function is either a read-only DETECT (stdout status verdict, always exit 0) or an
-# install-COMMAND-string BUILDER (echoes the command line for the entry point to run
-# after its own consent gate). No TUI here (no prompts, run_step, /dev/tty) — consent
-# orchestration and interactive chrome live in the entry point.
-#
-# Detect contract (mirrors ga-core.sh is_never_touch): each ga_detect_* echoes ONE
-# status token and ALWAYS exits 0, so the entry point's ERR trap never fires on an
-# expected "absent" and no set +e bracketing is needed at the call site. Tokens:
+# SOURCED ONLY by the entry point (glass-atrium) after ga_init_env; pure — each fn is a
+# read-only DETECT (stdout token, always exit 0) or an install-COMMAND-string BUILDER. No TUI
+# (prompts/run_step/consent live in the entry point).
+# Detect contract (mirrors ga-core.sh is_never_touch): ONE status token, ALWAYS exit 0, so the
+# entry point's ERR trap never fires on 'absent' + no set +e bracketing is needed. Tokens:
 #   present          — installed + usable as-is (SKIP it)
 #   absent           — not installed (install candidate)
 #   wrong-version    — installed but fails the version gate (e.g. node major != 24)
 #   present-but-down — installed but a required runtime is not live (e.g. pg server)
-#
-# FAIL-SAFE-SKIP: on UNCERTAIN detection, return 'present' so the entry point skips it
-# (never auto-install over an uncertain-but-likely-present dep). Non-present verdicts
-# fire only on a POSITIVE absence/mismatch signal.
-#
-# HARD CONSTRAINT: bash 3.2 (macOS /bin/bash 3.2.57). No associative arrays, mapfile,
-# fractional read -t, or ${var^^}. BSD stat/date only.
-#
-# SC2312 is disabled file-wide by design (mirrors the entry point + ga-core.sh): the
-# ga_detect_*/ga_*_present helpers always exit 0 by contract, so consuming them as
-# `[[ "$(ga_detect_x)" == "absent" ]]` masks the (always-0) return on purpose.
+# FAIL-SAFE-SKIP: uncertain detection → 'present' (never auto-install over a likely-present dep);
+# non-present verdicts fire only on a POSITIVE absence/mismatch signal.
+# HARD CONSTRAINT: bash 3.2 (macOS 3.2.57) — no assoc arrays/mapfile/fractional read -t/${var^^}; BSD stat/date only.
+# SC2312 disabled file-wide (mirrors entry point + ga-core.sh): the always-exit-0 detect contract
+# makes consuming as `[[ "$(ga_detect_x)" == "absent" ]]` mask the return on purpose.
 # shellcheck disable=SC2312
 
 # PG_SOCKET — the peer-auth Unix-socket dir, single SoT in ga-core.sh (the engine's
@@ -33,7 +22,7 @@
 # sourced standalone (keeps it independently sourceable + linter-clean).
 : "${PG_SOCKET:=/tmp}"
 
-# === [1] generic binary / version primitives ==============================
+# [1] generic binary / version primitives
 
 # ga_major_version — echo the major component of the first integer in a version string
 # on stdin (e.g. "v24.3.1" -> 24, "psql (PostgreSQL) 14.11" -> 14), empty when none.
@@ -58,7 +47,7 @@ ga_join_lines() {
   printf '%s' "${joined}"
 }
 
-# === [2] Xcode Command Line Tools (GUIDE-USER) ============================
+# [2] Xcode Command Line Tools (GUIDE-USER)
 
 # ga_detect_xcode_clt — 'present' when the active developer dir is set + exists.
 # FAIL-SAFE-SKIP: emit 'absent' ONLY on the clear not-installed signal (xcode-select -p
@@ -93,7 +82,7 @@ ga_cmd_xcode_clt() {
   printf 'xcode-select --install\n'
 }
 
-# === [3] Homebrew (AUTO-WITH-CONSENT, dual-prefix probe) ==================
+# [3] Homebrew (AUTO-WITH-CONSENT, dual-prefix probe)
 
 # ga_brew_prefix — echo the active Homebrew prefix, probing both /opt/homebrew (Apple
 # Silicon) and /usr/local (Intel). Prefers a brew on PATH (its --prefix is authoritative),
@@ -129,14 +118,24 @@ ga_detect_homebrew() {
   fi
 }
 
-# ga_cmd_homebrew_install — the official install line. The script prompts for sudo + a
-# keyboard pause; the entry point's consent gate fronts it, and the user clears the
-# script's own sudo prompt live.
+# ga_homebrew_install — install Homebrew IN-PROCESS via the official one-liner. The $(curl ...)
+# substitution MUST expand in THIS shell (so the installer RUNS): the entry point's word-split
+# argv runner (preflight_run_cmd word-splits WITHOUT eval, execs "$@") cannot express a command
+# substitution — an emitted `/bin/bash -c "$(curl …)"` STRING splits into a broken argv, so housing
+# it in a real fn is the only word-split-safe form (same pattern as ga_claude_install / ga_pg_ensure_role).
+# NONINTERACTIVE=1 (consented preflight) drops the installer's RETURN pause; its LIVE sudo prompt is
+# kept OFF the framed install-capture path so it stays visible.
+# SECURITY: curl|bash from the official Homebrew install URL is the vendor-documented
+# install path (HTTPS, -f fails on 4xx/5xx; no secrets read or echoed).
+ga_homebrew_install() {
+  # real execution: the $(curl ...) is expanded in THIS shell, not emitted as text.
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+}
+
+# ga_cmd_homebrew_install — emit the one-word function token ga_homebrew_install for in-process
+# run_step (worker above; the consent/summary print substitutes a human-readable label, not this token).
 ga_cmd_homebrew_install() {
-  # the $(curl ...) is INTENTIONALLY literal — this string is the command the entry
-  # point RUNS, not one we expand here; single quotes required.
-  # shellcheck disable=SC2016
-  printf '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"\n'
+  printf 'ga_homebrew_install\n'
 }
 
 # ga_cmd_brew_shellenv — the eval line that puts a freshly-installed brew on PATH for the
@@ -150,7 +149,7 @@ ga_cmd_brew_shellenv() {
   printf '%s/bin/brew shellenv\n' "${prefix}"
 }
 
-# === [4] brew formula detection + batch builder ==========================
+# [4] brew formula detection + batch builder
 
 # ga_brew_formula_present — 'yes' if a brew formula is installed (brew list --versions is
 # the cheap idempotent probe), 'no' when brew itself is absent (caller then treats the
@@ -168,45 +167,38 @@ ga_brew_formula_present() {
   fi
 }
 
-# GA_PG14_EOL_WARNED — module-global one-shot guard so a preflight probing postgres
-# several times shows the PG14 EOL note at most once. Persists reliably because the
-# advisory fires from a DIRECT main-shell call (ga_warn_postgres_version), NOT from the
-# always-subshelled ga_detect_postgres where a $(...) copy could never dedupe.
+# GA_PG14_EOL_WARNED — module-global one-shot guard (PG14 EOL note at most once). Dedupes ONLY
+# because it fires from the DIRECT main-shell ga_warn_postgres_version, never the subshelled
+# ga_detect_postgres (a $(...) copy could not persist the flag).
 GA_PG14_EOL_WARNED=""
 
-# ga_warn_pg14_eol — emit the PostgreSQL 14 EOL advisory ONCE to STDERR. PG14 stays a
-# PRESENT dep (no block/reinstall/new daemon); a pure note → stderr only, never the
-# stdout status token (the detect's single-token contract).
+# ga_warn_pg14_eol — emit the PG14 EOL advisory ONCE to STDERR. PG14 stays PRESENT (no
+# block/reinstall/new daemon); pure note → stderr only, never the stdout status token.
 ga_warn_pg14_eol() {
   [[ -n "${GA_PG14_EOL_WARNED}" ]] && return 0
   GA_PG14_EOL_WARNED=1
   printf 'NOTE: PostgreSQL 14 reaches end-of-life 2026-11-12 — migrate to PostgreSQL 15+ (pg_dumpall | psql, or pg_upgrade) before then.\n' >&2
 }
 
-# GA_PG_TOO_OLD_WARNED — module-global one-shot guard for the too-old-PG upgrade GUIDE,
-# same persistence rationale as GA_PG14_EOL_WARNED (fired from the DIRECT main-shell
-# ga_warn_postgres_version, not the subshelled ga_detect_postgres).
+# GA_PG_TOO_OLD_WARNED — module-global one-shot guard for the too-old-PG upgrade GUIDE (same
+# direct-main-shell persistence rationale as GA_PG14_EOL_WARNED).
 GA_PG_TOO_OLD_WARNED=""
 
-# ga_warn_pg_too_old — emit the unsupported (major < 14) PostgreSQL UPGRADE GUIDE once to
-# STDERR. The major<14 'wrong-version' verdict is GUIDE-only: postgres auto-install is
-# absent-only, so a too-old PG is never auto-replaced — GA will NOT stack a second
-# postgresql@17 daemon (port 5432 collision); the user upgrades the existing cluster
-# first. Pure note → STDERR only, never the stdout status token. No missing-set add, no block.
+# ga_warn_pg_too_old — emit the unsupported (major < 14) PostgreSQL UPGRADE GUIDE once to STDERR.
+# major<14 'wrong-version' is GUIDE-only (postgres add is absent-only) → GA never stacks a second
+# postgresql@18 daemon over it (port 5432 collision); user upgrades first. Stderr only, no missing-set add.
 ga_warn_pg_too_old() {
   [[ -n "${GA_PG_TOO_OLD_WARNED}" ]] && return 0
   GA_PG_TOO_OLD_WARNED=1
-  printf 'GUIDE: PostgreSQL <14 detected (unsupported) — upgrade to 17 before continuing.\n' >&2
+  printf 'GUIDE: PostgreSQL <14 detected (unsupported) — upgrade to 18 before continuing.\n' >&2
   printf '       GA will not auto-install a second daemon over it (port 5432 collision);\n' >&2
   printf '       migrate the existing cluster first (pg_dumpall | psql, or pg_upgrade), then re-run.\n' >&2
 }
 
-# ga_warn_postgres_version — emit the ONE-SHOT PostgreSQL version advisory for the
-# installed psql, dispatching on numeric major: < 14 → too-old UPGRADE guide, == 14 → EOL
-# note, >= 15 → nothing. MUST be called DIRECTLY in a main-shell context
-# (preflight_build_summary), never via $(...) — the ga_warn_* once-guards are module
-# globals a subshell call could not persist across the several detects one preflight runs.
-# STDERR-only (the two leaf warns own the output); the verdict token stays ga_detect_postgres'.
+# ga_warn_postgres_version — ONE-SHOT PG version advisory for the installed psql, dispatching on
+# numeric major: <14 → too-old UPGRADE guide, ==14 → EOL note, >=15 → nothing. MUST be called
+# DIRECTLY in the main shell (preflight_build_summary), NEVER via $(...): the ga_warn_* once-guards
+# are module globals a subshell could not persist. Stderr-only; the verdict token stays ga_detect_postgres'.
 ga_warn_postgres_version() {
   command -v psql >/dev/null 2>&1 || return 0
   local major
@@ -214,8 +206,7 @@ ga_warn_postgres_version() {
   if [[ -z "${major}" ]]; then
     return 0
   fi
-  # NUMERIC compare (octal-safe on the guaranteed-digit major), mirroring the floor in
-  # ga_detect_postgres so the dispatch boundary stays a single SoT.
+  # NUMERIC compare (octal-safe), mirroring ga_detect_postgres's floor (single-SoT dispatch boundary).
   if [[ "${major}" -lt 14 ]]; then
     ga_warn_pg_too_old
   elif [[ "${major}" -eq 14 ]]; then
@@ -235,6 +226,10 @@ ga_warn_postgres_version() {
 # Probe order: binary -> major floor -> live server on ${PG_SOCKET} (the engine's
 # setup_database probes the same SoT, so detect + setup agree).
 ga_detect_postgres() {
+  # PGCONNECT_TIMEOUT-bounded detect connect: bound the CONNECT phase so a starting/half-dead cluster never blocks the render loop unbounded.
+  # local -x reaches the $(...) psql child + auto-unsets on return; covers every psql connect in this fn; ~2s (libpq floors <2 at 2); bash-3.2 clean.
+  # 2nd-tier hardening (out of scope here): lib/ga-db.sh db_exists probes (setup_database ~111, uninstall ~180) are also untimed.
+  local -x PGCONNECT_TIMEOUT=2
   if ! command -v psql >/dev/null 2>&1; then
     printf 'absent\n'
     return 0
@@ -272,6 +267,8 @@ ga_detect_postgres() {
 #   present-but-down — server not answering (cannot evaluate the role yet)
 # Gated on a live server; reads catalog membership only, never credentials.
 ga_detect_postgres_role() {
+  # PGCONNECT_TIMEOUT-bounded connects: bound both connects on the role path (rolname query + the SELECT-1 re-probe) — see ga_detect_postgres.
+  local -x PGCONNECT_TIMEOUT=2
   if ! command -v psql >/dev/null 2>&1; then
     printf 'present-but-down\n'
     return 0
@@ -344,18 +341,42 @@ ga_detect_bun() {
   ga_detect_cli_tool bun
 }
 
+# ga_detect_sqlite_fts5 — sqlite3 CAPABILITY verdict gated on the FTS5 extension (NOT bare presence):
+# the wiki needs sqlite3 + FTS5, and a stock-macOS sqlite3 can ship WITHOUT the FTS5 module. Verdict:
+#   absent        — no sqlite3 binary at all
+#   wrong-version — sqlite3 present but the FTS5 module is not compiled in
+#   present       — sqlite3 present AND FTS5 is available
+# Probe = a CHEAP read-only in-memory test: create a throwaway FTS5 virtual table in a `:memory:` db
+# (no file/disk/server), exit 0 only when FTS5 is compiled in. Both non-present verdicts route the brew
+# `sqlite` formula (built WITH FTS5) into the missing-set; a system sqlite3 that already has FTS5 is untouched.
+ga_detect_sqlite_fts5() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    printf 'absent\n'
+    return 0
+  fi
+  # in-memory FTS5 probe — no file, no mutation; exit 0 only when FTS5 is compiled in.
+  if sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(x)' >/dev/null 2>&1; then
+    printf 'present\n'
+    return 0
+  fi
+  # sqlite3 exists but lacks the FTS5 module — the wiki needs it, so the FTS5-enabled
+  # brew formula is the fix. GUIDE the capability failure via the same missing-set path
+  # a version gate uses (add on wrong-version), never a silent 'present' that would skip.
+  printf 'wrong-version\n'
+}
+
 # GA_BREW_CLI_TOOLS — the CLI-tools set the brew batch may install. Each entry maps
 # a probe COMMAND to its brew FORMULA via the "cmd:formula" form (most are 1:1; the
 # split lets a future cmd!=formula case stay declarative). bash 3.2: plain indexed
-# array (NO associative array). postgresql@17 / node@24 / bun are version-gated
-# above and handled separately; this list is the genuinely-missing utility set.
+# array (NO associative array). postgresql@18 / node@24 / bun are version-gated and
+# sqlite is FTS5-CAPABILITY-gated (ga_detect_sqlite_fts5) above — all handled
+# separately; this list is the genuinely-missing bare-presence utility set.
 GA_BREW_CLI_TOOLS=(
   "tmux:tmux"
   "jq:jq"
   "git:git"
   "curl:curl"
   "lsof:lsof"
-  "sqlite3:sqlite"
   "rsync:rsync"
 )
 
@@ -368,15 +389,13 @@ GA_BREW_CLI_TOOLS=(
 ga_brew_missing_set() {
   local missing="" entry cmd formula verdict
 
-  # postgresql@17 — fresh-install pin, added to the missing-set ONLY when postgres is
-  # truly ABSENT. ABSENT-ONLY (not absent||wrong-version): a present-but-old (major <
-  # 14 → 'wrong-version') or present-but-down PG must NOT auto-get a second @17 daemon
-  # — that collides on port 5432. Those cases route to the GUIDE path (later group),
-  # not this auto-install set. Contrast node@24 below, which keeps absent||wrong-version
-  # (keg-only node is parallel-installable; a postgres daemon is not).
+  # postgresql@18 — fresh-install pin, added ONLY when postgres is truly ABSENT. ABSENT-ONLY (not
+  # absent||wrong-version): a present-but-old (<14 → 'wrong-version') or present-but-down PG must NOT
+  # auto-get a second @18 daemon (port 5432 collision) — those route to the GUIDE path. Contrast node@24
+  # below (absent||wrong-version: keg-only node is parallel-installable; a postgres daemon is not).
   verdict="$(ga_detect_postgres)"
   if [[ "${verdict}" == "absent" ]]; then
-    missing="${missing}postgresql@17"$'\n'
+    missing="${missing}postgresql@18"$'\n'
   fi
 
   # node@24 — add on absent OR wrong-version (a present node 25 fails the major gate).
@@ -388,6 +407,15 @@ ga_brew_missing_set() {
   # bun — add when absent.
   if [[ "$(ga_detect_bun)" == "absent" ]]; then
     missing="${missing}bun"$'\n'
+  fi
+
+  # sqlite — FTS5-CAPABILITY gate (NOT bare presence): add the brew formula (built WITH
+  # FTS5) on absent OR wrong-version (sqlite3 present but no FTS5 module). A system
+  # sqlite3 that already HAS FTS5 is 'present' and NEVER added — do not silently force
+  # brew sqlite over a working capability. The wiki requires sqlite3 + FTS5.
+  verdict="$(ga_detect_sqlite_fts5)"
+  if [[ "${verdict}" == "absent" || "${verdict}" == "wrong-version" ]]; then
+    missing="${missing}sqlite"$'\n'
   fi
 
   # CLI-tools set — add each genuinely-missing utility by its brew formula name.
@@ -426,15 +454,12 @@ EOF
   printf 'brew install %s\n' "${joined}"
 }
 
-# === [5] PostgreSQL service + peer-auth role command strings ==============
+# [5] PostgreSQL service + peer-auth role command strings
 
-# ga_pg_installed_major — resolve the installed PostgreSQL major at RUNTIME so the
-# service-start builder names the actual formula (PG14 present-but-down → 14, a fresh
-# postgresql@17 → 17) instead of a hardcoded pin. Order mirrors ga_detect_postgres'
-# own probe: the psql client major first (authoritative for a present-but-down server
-# the detect already version-gated), then the HIGHEST brew-installed postgresql@N
-# formula (covers a freshly-installed keg-only @N whose psql is not yet on PATH). Empty
-# only when neither resolves (the caller then defaults to the fresh-install pin).
+# ga_pg_installed_major — resolve the installed PostgreSQL major at RUNTIME so the service-start
+# builder NAMES the actual formula (PG14-down → 14, fresh @18 → 18), never a hardcoded pin. psql-client
+# FIRST (authoritative for a present-but-down server the detect already gated), then the HIGHEST
+# brew-installed postgresql@N (covers a keg-only @N whose psql is not yet on PATH). Empty → caller pins.
 ga_pg_installed_major() {
   local major brew_major
   if command -v psql >/dev/null 2>&1; then
@@ -453,28 +478,175 @@ ga_pg_installed_major() {
   printf ''
 }
 
+# ga_pg_keg_major — resolve the PostgreSQL major to KEG-PATH-inject: the HIGHEST installed brew
+# postgresql@N keg. DISTINCT from ga_pg_installed_major (which is psql-client-FIRST, for NAMING the
+# service to start): the keg-inject purpose is to prepend a freshly-installed keg's bin to PATH, so
+# a stale lower-major psql already on PATH must NOT decide the inject — that would prepend the wrong
+# (or a non-existent) keg. brew-keg-first is therefore correct HERE. Empty when no brew postgresql@N
+# keg is installed (the caller then injects the fresh-install pin, whose keg-inject self-guards on
+# formula presence → a no-op when even the pin is absent). Read-only (brew list), always exit 0.
+ga_pg_keg_major() {
+  local brew_major
+  if command -v brew >/dev/null 2>&1; then
+    brew_major="$(brew list --versions 2>/dev/null | sed -n 's/^postgresql@\([0-9][0-9]*\).*/\1/p' | sort -rn | head -n1 || true)"
+    printf '%s' "${brew_major}"
+    return 0
+  fi
+  printf ''
+}
+
 # ga_cmd_pg_service_start — start (idempotent) the installed postgresql@N brew service,
 # N resolved at runtime (ga_pg_installed_major) — never a hardcoded @14 — so a
-# present-but-down PG14 emits @14 and a freshly-installed @17 emits @17. `brew services
+# present-but-down PG14 emits @14 and a freshly-installed @18 emits @18. `brew services
 # start` is a no-op when already running, so it is safe to emit on present-but-down.
 ga_cmd_pg_service_start() {
   local major
   major="$(ga_pg_installed_major)"
   # default to the fresh-install pin (B1) when nothing resolves — the post-consent
-  # install just added postgresql@17 but its keg-only psql is not yet on PATH.
-  [[ -z "${major}" ]] && major="17"
+  # install just added postgresql@18 but its keg-only psql is not yet on PATH.
+  [[ -z "${major}" ]] && major="18"
   printf 'brew services start postgresql@%s\n' "${major}"
 }
 
-# ga_pg_ensure_role — IDEMPOTENT create of the OS-user superuser peer-auth role.
-# createuser exits 1 on an already-existing role (no --if-not-exists flag), which
-# would block the install; this guard is a clean no-op when the role exists.
-# Mechanism: a stdin-fed query interpolates :'rolename' (the -c path does NOT — see
-# ga_detect_postgres_role), then \gexec runs the generated CREATE ROLE only when the
-# SELECT yields a row, i.e. only when the role is ABSENT. format('%I', …) server-side
-# quote-idents the name (injection-safe; the role name = `id -un` so peer auth on the
-# Unix socket maps the OS user in). ON_ERROR_STOP=1 makes a genuine psql/SQL error a
-# real non-zero exit (loud-fail — no swallowed failure).
+# ga_cmd_pg_service_restart — RESTART (not just start) the installed postgresql@N brew
+# service, N resolved at runtime (ga_pg_installed_major) — never a hardcoded pin. Used by
+# the foreign/broken-pg guard: a brew-managed server that ANSWERS but REJECTS
+# `SET timezone='UTC'` needs a full restart (a plain `brew services start` is a no-op on an
+# already-running server, so it would NOT clear the broken state). Same runtime-major +
+# default-18 resolution as ga_cmd_pg_service_start.
+ga_cmd_pg_service_restart() {
+  local major
+  major="$(ga_pg_installed_major)"
+  [[ -z "${major}" ]] && major="18"
+  printf 'brew services restart postgresql@%s\n' "${major}"
+}
+
+# ga_pg_data_dir — echo the brew postgresql@N cluster DATA DIR, N resolved via
+# ga_pg_keg_major (brew-keg-first — the keg just installed, NOT a stale psql on PATH),
+# defaulting to the fresh-install pin @18 when none resolves. Path convention is Homebrew's
+# `<prefix>/var/postgresql@N` (the same dir `brew services start postgresql@N` boots from).
+# Empty when no brew prefix resolves (the caller then treats it as "nothing to initialize").
+# Read-only, always exit 0.
+ga_pg_data_dir() {
+  local major prefix
+  major="$(ga_pg_keg_major)"
+  [[ -z "${major}" ]] && major="18"
+  prefix="$(ga_brew_prefix)"
+  [[ -z "${prefix}" ]] && {
+    printf ''
+    return 0
+  }
+  printf '%s/var/postgresql@%s' "${prefix}" "${major}"
+}
+
+# ga_pg_data_dir_initialized — 'yes'/'no' on whether the brew postgresql@N cluster data dir is ALREADY
+# initialized, keyed on the PG_VERSION marker initdb writes. 'yes' (initdb SKIPPED) in two cases: (1) no
+# brew postgresql@N keg — a system/non-brew cluster owns its own data dir, so GA must NOT initdb an
+# unused brew path; (2) the keg's data dir already has PG_VERSION. 'no' ONLY when a brew keg exists but
+# lacks the marker — the confirmed "@18 install 중단" bug (`brew install postgresql@18` pours binaries
+# but post_install fails to init the data dir). Read-only, always exit 0.
+ga_pg_data_dir_initialized() {
+  local major dir
+  major="$(ga_pg_keg_major)"
+  # no brew keg to own → nothing for GA to initialize (skip the initdb step).
+  if [[ -z "${major}" ]]; then
+    printf 'yes\n'
+    return 0
+  fi
+  dir="$(ga_pg_data_dir)"
+  if [[ -n "${dir}" && -f "${dir}/PG_VERSION" ]]; then
+    printf 'yes\n'
+  else
+    printf 'no\n'
+  fi
+}
+
+# ga_pg_initdb — IN-PROCESS fallback init of an UNINITIALIZED brew postgresql@N cluster data dir
+# (the confirmed "@18 install 중단": `brew install postgresql@18` errors post_install with "unknown
+# install step: init_data_dir" on older Homebrew → binaries pour but the data dir is never made → no
+# server/socket → the install hangs at the monitor health gate). Runs `initdb -D <datadir> --encoding=UTF8`.
+# In-process (word-split argv can't express a guarded multi-statement command; same pattern as ga_pg_ensure_role).
+# SELF-GUARDED + NON-DESTRUCTIVE: an existing PG_VERSION → already initialized, hard-skip (re-initdb over
+# live data is DESTRUCTIVE); a missing brew prefix is a non-fatal no-op.
+ga_pg_initdb() {
+  local dir
+  dir="$(ga_pg_data_dir)"
+  if [[ -z "${dir}" ]]; then
+    printf 'ga_pg_initdb: no brew prefix resolved — skipping initdb (nothing to initialize)\n' >&2
+    return 0
+  fi
+  # DESTRUCTIVE-GUARD: never re-initdb over an already-initialized cluster.
+  if [[ -f "${dir}/PG_VERSION" ]]; then
+    printf 'ga_pg_initdb: %s already initialized (PG_VERSION present) — skipping\n' "${dir}" >&2
+    return 0
+  fi
+  initdb -D "${dir}" --encoding=UTF8
+}
+
+# ga_cmd_pg_initdb — emit the one-word function token ga_pg_initdb for in-process run_step (worker above).
+ga_cmd_pg_initdb() {
+  printf 'ga_pg_initdb\n'
+}
+
+# ga_detect_postgres_utc — DISCRIMINATING liveness verdict a plain SELECT-1 'present' misses:
+#   ok     — server answers the socket AND accepts `SET timezone='UTC'`
+#   broken — server ANSWERS SELECT 1 but REJECTS `SET timezone='UTC'` (pg 22023 invalid_parameter_value;
+#            e.g. an orphaned postmaster from a now-deleted keg that lost its tzdata). ga_detect_postgres
+#            reports 'present' for this squatter (SELECT 1 succeeds), so service/role steps would trust it —
+#            then the monitor's UTC-gated pool (POOL_STARTUP_OPTIONS="-c timezone=UTC") FATALs the 30s gate.
+#   down   — no server on the socket (the normal absent/present-but-down path handles it, no false 'broken').
+# Read-only, single-token, exit 0. Same PG_SOCKET SoT; ON_ERROR_STOP=1 makes the UTC SET a real non-zero on rejection.
+ga_detect_postgres_utc() {
+  # PGCONNECT_TIMEOUT-bounded connects: bound both connects here (SELECT-1 + the SET timezone='UTC' probe) — see ga_detect_postgres.
+  local -x PGCONNECT_TIMEOUT=2
+  if ! command -v psql >/dev/null 2>&1; then
+    printf 'down\n'
+    return 0
+  fi
+  if ! psql -h "${PG_SOCKET}" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+    printf 'down\n'
+    return 0
+  fi
+  if psql -h "${PG_SOCKET}" -d postgres -v ON_ERROR_STOP=1 -tAc "SET timezone='UTC'" >/dev/null 2>&1; then
+    printf 'ok\n'
+  else
+    printf 'broken\n'
+  fi
+}
+
+# ga_pg_wait_ready — BOUNDED in-process poll for a live PostgreSQL server on the peer-auth socket,
+# run AFTER an attempted service start. `brew services start` returns BEFORE the postmaster accepts
+# connections, so the role detect + setup_database would race a not-yet-ready server (spurious
+# 'present-but-down' / failed first connect). Polls until the server answers or a HARD ~15s counter
+# ceiling elapses (non-zero on timeout). The ceiling is MANDATORY — an unbounded until-loop is itself a
+# NEW infinite-hang path (the class this preflight hardens against). pg_isready is the cheap probe; a
+# psql SELECT 1 on ${PG_SOCKET} is the fallback for a minimal libpq without pg_isready (same verdict
+# boundary as ga_detect_postgres). In-process; bash 3.2 clean (integer counter, no fractional read -t).
+ga_pg_wait_ready() {
+  # PGCONNECT_TIMEOUT-bounded connect: bound the psql SELECT-1 fallback connect so a single poll iteration can never block past the deadline — see ga_detect_postgres.
+  local -x PGCONNECT_TIMEOUT=2
+  local waited=0
+  local ceiling=15
+  while [[ "${waited}" -lt "${ceiling}" ]]; do
+    if command -v pg_isready >/dev/null 2>&1; then
+      if pg_isready -h "${PG_SOCKET}" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif psql -h "${PG_SOCKET}" -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# ga_pg_ensure_role — IDEMPOTENT create of the OS-user superuser peer-auth role (createuser exits 1
+# on an existing role — no --if-not-exists — which would block the install; this is a clean no-op).
+# Mechanism: a stdin-fed query interpolates :'rolename' (the -c path does NOT — see ga_detect_postgres_role),
+# then \gexec runs the generated CREATE ROLE only when the SELECT yields a row (role ABSENT). format('%I',…)
+# server-side quote-idents the name (injection-safe; name = `id -un` for peer-auth OS-user mapping).
+# ON_ERROR_STOP=1 makes a genuine psql/SQL error a real non-zero (loud-fail).
 ga_pg_ensure_role() {
   local osuser
   osuser="$(id -un)"
@@ -486,16 +658,13 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'rolename')
 SQL
 }
 
-# ga_cmd_pg_create_role — emit the idempotent ensure-role step as a single bare token
-# (the function name). preflight_run_cmd word-splits the command string into argv and
-# run_step invokes "$@", so a one-word function name is called directly in-process —
-# keeping the single-builder pattern while the actual work (an idempotent stdin-fed
-# psql, which cannot be a word-split one-line argv) lives in ga_pg_ensure_role above.
+# ga_cmd_pg_create_role — emit the one-word function token ga_pg_ensure_role for in-process
+# run_step (worker above; a stdin-fed psql cannot be a word-split one-line argv).
 ga_cmd_pg_create_role() {
   printf 'ga_pg_ensure_role\n'
 }
 
-# === [6] claude CLI binary (AUTO-WITH-CONSENT, npm -g) ====================
+# [6] claude CLI binary (AUTO-WITH-CONSENT, npm -g)
 
 # ga_detect_claude_cli — 'present'/'absent' claude-binary probe. 'present' when claude
 # is on PATH (npm-global install) OR at the native-installer location
@@ -509,15 +678,13 @@ ga_detect_claude_cli() {
   fi
 }
 
-# ga_claude_install — install the claude CLI in-process: PRIMARY the official native
-# installer (curl | sh, which drops the binary at ~/.local/bin/claude), FALLBACK the
-# global npm package when the native installer fails. Runs IN-PROCESS (emitted as a
-# single function token by ga_cmd_claude_cli_install, exactly like ga_pg_ensure_role):
-# a `curl | sh` pipe CANNOT survive the entry point's word-split argv command runner,
-# so the pipe lives here as a real shell pipeline. The native installer is the official
-# method (https://claude.ai/install.sh); `npm i -g` is the documented fallback. Runs
-# under the entry point's run_step (set +e there), so a failed PRIMARY is captured, not
-# a set -e abort. SECURITY: curl|sh from the official Anthropic install URL is the
+# ga_claude_install — install the claude CLI in-process: PRIMARY the official native installer
+# (curl | sh → ~/.local/bin/claude), FALLBACK the global npm package on failure. IN-PROCESS: a
+# `curl | sh` pipe CANNOT survive the word-split argv runner, so it lives here as a real pipeline
+# (same token pattern as ga_pg_ensure_role). Native = the official method
+# (https://claude.ai/install.sh); `npm i -g` is the documented fallback. Under run_step (set +e) so
+# a failed PRIMARY is captured, not a set -e abort.
+# SECURITY: curl|sh from the official Anthropic install URL is the
 # vendor-documented install path (no secrets read/echoed; HTTPS, -f fails on 4xx/5xx).
 ga_claude_install() {
   # PRIMARY — official native installer. A real pipeline (not a word-split argv), so it
@@ -530,49 +697,73 @@ ga_claude_install() {
   npm i -g @anthropic-ai/claude-code
 }
 
-# ga_cmd_claude_cli_install — emit the single function token ga_claude_install (a one-
-# word builder token the entry point runs in-process via run_step, exactly like
-# ga_cmd_pg_create_role -> ga_pg_ensure_role). The actual work (native-installer-first,
-# npm fallback, a real curl|sh pipe) lives in ga_claude_install above, because a curl|sh
-# pipe cannot be expressed as the entry point's word-split single-line argv command.
+# ga_cmd_claude_cli_install — emit the one-word function token ga_claude_install for in-process
+# run_step (worker above; a curl|sh pipe cannot be a word-split single-line argv).
 ga_cmd_claude_cli_install() {
   printf 'ga_claude_install\n'
 }
 
-# === [7] claude AUTH (GUIDE-USER HARD GATE) ===============================
+# [7] claude AUTH (GUIDE-USER HARD GATE)
 
-# ga_detect_claude_auth — authentication verdict via TWO independent signals,
-# NEITHER of which reads the credentials file contents (a NEVER-TOUCH path):
+# ga_detect_claude_auth — authentication verdict via THREE stable-first signals, NONE reading the
+# credentials file contents or retrieving a secret:
 #   1. ~/.claude/.credentials.json PRESENCE only (test -e — never cat/read/parse).
-#   2. a classified non-interactive `claude` probe (the binary self-reports auth
-#      state with a fast non-interactive subcommand; exit 0 = authenticated).
-# Verdict:
-#   present — credentials file exists OR the probe classifies as authenticated
-#   absent  — no credentials file AND the probe classifies as unauthenticated
-#   present-but-down — the claude binary itself is missing (cannot evaluate auth)
-# SECURITY: the credentials file is read-presence-only via test -e; its bytes are
-# NEVER opened. The probe is the corroborating signal, not a contents read.
+#   2. macOS Keychain PRESENCE probe (Darwin only): `security find-generic-password` WITHOUT -w —
+#      attributes only, no secret retrieved, no unlock GUI. The STABLE macOS signal (the OAuth token
+#      lives in the Keychain, which the file check misses), so it runs BEFORE the subprocess probe.
+#   3. corroborating non-interactive `claude auth status`, TIME-BOUNDED so a cold-start hang cannot
+#      wedge the gate (exit 0 = authenticated).
+# Verdict: present — creds file OR Keychain item OR the bounded probe authenticates; absent — none of
+# those; present-but-down — the claude binary is missing (cannot evaluate auth).
+# SECURITY: the credentials file is read-presence-only via test -e (bytes NEVER opened); `security`
+# runs WITHOUT -w (no secret read/retrieved/logged); the auth-status output is DISCARDED (exit-code
+# only — its JSON carries account/subscription PII, kept out of context).
 ga_detect_claude_auth() {
   if ! command -v claude >/dev/null 2>&1; then
     printf 'present-but-down\n'
     return 0
   fi
-  # PRESENCE-ONLY probe of the NEVER-TOUCH credentials path — test -e never reads
-  # the file's contents.
+  # (1) PRESENCE-ONLY probe of the NEVER-TOUCH credentials path (test -e never reads contents).
   local creds="${HOME}/.claude/.credentials.json"
   if [[ -e "${creds}" ]]; then
     printf 'present\n'
     return 0
   fi
-  # corroborating non-interactive probe: a fast, non-prompting subcommand that
-  # exits 0 only when authenticated. Output is DISCARDED (classification by exit
-  # code only) so no credential text enters context — the status JSON carries
-  # account/subscription fields, so exit-code-only classification keeps it out.
-  # 'claude auth status' exits 0 for a Keychain/GUI-authenticated session in
-  # ~0.2s (non-interactive, no credentials-file side-effect), non-zero when truly
-  # unauthenticated. stdin is pinned to /dev/null (this runs inside a command
-  # substitution) so it can never block on a prompt.
-  if claude auth status </dev/null >/dev/null 2>&1; then
+  # (2) macOS Keychain-first STABLE signal — the OAuth credential lives in the login Keychain
+  # (service "Claude Code-credentials"), which the file check misses. Attributes-only lookup (NO -w):
+  # exit 0 = item exists, no secret retrieved, no unlock GUI. Runs BEFORE the cold-start-prone subprocess.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1; then
+      printf 'present\n'
+      return 0
+    fi
+  fi
+  # (3) corroborating non-interactive probe (fallback for non-macOS / macOS-without-Keychain):
+  # 'claude auth status' exits 0 only when authenticated. Output DISCARDED (exit-code only) so no
+  # account/subscription PII enters context. BOUNDED against a cold-start hang: macOS ships no
+  # `timeout`/`gtimeout`, so — same idiom as ga_marketplace_add — background the probe (fds + stdin to
+  # /dev/null so it can never block on a prompt) + a background WATCHDOG that SIGKILLs it after a hard
+  # ceiling, then a BLOCKING wait captures the real exit code. The blocking wait (not a kill -0 poll) is
+  # deliberate: a poll cannot tell a running probe from an unreaped zombie and races the fork/exec. Probe
+  # finishes first → watchdog killed+reaped (its rc drives the verdict); ceiling first → probe killed
+  # (wait returns non-zero → unauthenticated; the stable signals above cover a genuinely authed user). Bash 3.2 clean.
+  local auth_rc=1 pid watchdog ceiling
+  ceiling="${GA_AUTH_PROBE_TIMEOUT_SECS:-10}"
+  claude auth status </dev/null >/dev/null 2>&1 &
+  pid=$!
+  # fds redirected: an un-redirected watchdog subshell leaks its orphaned `sleep` (survives the
+  # kill below) still holding the $() capture pipe write-end open, blocking the verdict the full
+  # ceiling AFTER it is decided — a real-user latency bug, not just test slowness.
+  { sleep "${ceiling}" && kill "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
+  watchdog=$!
+  # blocks until the probe exits naturally OR the watchdog kills it; either way we reap it.
+  if wait "${pid}"; then
+    auth_rc=0
+  fi
+  # probe done — cancel+reap the watchdog (a no-op if it already fired at the ceiling).
+  kill "${watchdog}" 2>/dev/null || true
+  wait "${watchdog}" 2>/dev/null || true
+  if [[ "${auth_rc}" -eq 0 ]]; then
     printf 'present\n'
     return 0
   fi
@@ -587,7 +778,7 @@ ga_cmd_claude_auth_guide() {
   printf 'claude login\n'
 }
 
-# === [8] fakechat plugin (AUTO-NO-CONSENT, post-auth) =====================
+# [8] fakechat plugin (AUTO-NO-CONSENT, post-auth)
 
 # ga_marketplace_present — 'yes' when the official plugin marketplace is registered.
 # An unauthenticated / marketplace-absent claude cannot resolve the plugin, so the
@@ -619,19 +810,71 @@ ga_detect_fakechat() {
   fi
 }
 
-# ga_cmd_marketplace_add — register the official marketplace (the fakechat install
-# prerequisite). Emitted only when ga_marketplace_present returned 'no'.
+# ga_marketplace_add — register the official plugin marketplace IN-PROCESS, working around a live
+# hang: a COLD `claude plugin marketplace add` prints success + registers WITHOUT the process exiting,
+# so a foreground run_step would block forever. Background the add with stdout/stderr → /dev/null
+# (MANDATORY fd hygiene: the backgrounded claude must not write into run_step's STEP_LOG, where a
+# post-kill flush could corrupt the classify read), POLL ga_marketplace_present, kill+reap on
+# registration (success) or on a 120s ceiling (failure). In-process (background+poll can't survive
+# the word-split argv runner). Single-pid kill suffices (no surviving children). NON-FATAL; bash 3.2 clean.
+ga_marketplace_add() {
+  local pid waited=0
+  claude plugin marketplace add anthropics/claude-plugins-official >/dev/null 2>&1 &
+  pid=$!
+  while [[ "${waited}" -lt 120 ]]; do
+    if [[ "$(ga_marketplace_present)" == "yes" ]]; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # timeout — reap the stuck adder and report failure (NON-FATAL to the caller).
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  return 1
+}
+
+# ga_cmd_marketplace_add — emit the one-word function token ga_marketplace_add for in-process
+# run_step (worker above). Emitted only when ga_marketplace_present returned 'no'.
 ga_cmd_marketplace_add() {
-  printf 'claude plugin marketplace add anthropics/claude-plugins-official\n'
+  printf 'ga_marketplace_add\n'
 }
 
-# ga_cmd_fakechat_install — install the fakechat plugin from the official marketplace.
-# The entry point runs ga_cmd_marketplace_add FIRST when the marketplace is absent.
+# ga_fakechat_install — install the fakechat plugin IN-PROCESS, working around a live hang (confirmed
+# on a cold Mac): `claude plugin install fakechat@claude-plugins-official` prints "Successfully
+# installed" + registers but the process does NOT exit (an already-installed re-run exits fast), so a
+# foreground run_step blocks forever on a fresh install. Same mechanism as ga_marketplace_add:
+# background with fds → /dev/null (MANDATORY hygiene — keep the backgrounded claude out of run_step's
+# STEP_LOG), POLL ga_detect_fakechat, kill+reap on registration (success) or a 120s ceiling (failure).
+# NON-FATAL; bash 3.2 clean.
+ga_fakechat_install() {
+  local pid waited=0
+  claude plugin install fakechat@claude-plugins-official >/dev/null 2>&1 &
+  pid=$!
+  while [[ "${waited}" -lt 120 ]]; do
+    if [[ "$(ga_detect_fakechat)" == "present" ]]; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # timeout — reap the stuck installer and report failure (NON-FATAL to the caller).
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  return 1
+}
+
+# ga_cmd_fakechat_install — emit the one-word function token ga_fakechat_install for in-process
+# run_step (worker above). The entry point runs ga_cmd_marketplace_add FIRST when the marketplace is absent.
 ga_cmd_fakechat_install() {
-  printf 'claude plugin install fakechat@claude-plugins-official\n'
+  printf 'ga_fakechat_install\n'
 }
 
-# === [9] python libraries (AUTO-WITH-CONSENT, PEP-668 aware) ==============
+# [9] python libraries (AUTO-WITH-CONSENT, PEP-668 aware)
 
 # GA_PYTHON_IMPORTS — the import-NAME : pip-PACKAGE pairs the python libs step needs.
 # The import name (what `python3 -c "import X"` uses) often differs from the pip

@@ -75,7 +75,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **Sub-agent spawn**: defer to the general Sub-Agent Spawn Policy (GLASS_ATRIUM_GLOBAL_RULES) — do NOT bias designed prompts toward fewer spawns. Spawn when tasks are parallelizable AND independent (fan out across items / read multiple files in one turn); use default spawn behavior otherwise.
 - **Few-shot**: 3-5 examples in `<example>` tags
 - **Verbosity**: `Provide concise, focused responses. Skip non-essential context, and keep examples minimal.` (positive > negative)
-- **Opus 4.8 specifics**: more direct/opinionated tone (voice-sensitive product → re-evaluate vs baseline) · fewer tools + more reasoning by default (raise effort to increase tool use) · better tool triggering (4.8 fixed the 4.7 skip-required-tool bug) · self-updates in long traces (REMOVE legacy "summarize every 3 tool calls" scaffolding)
+- **Opus 4.8 specifics**: more direct/opinionated tone (voice-sensitive product → re-evaluate vs baseline) · fewer tools + more reasoning by default (raise effort to increase tool use) · reliable required-tool triggering · self-updates in long traces (REMOVE "summarize every 3 tool calls" scaffolding)
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->

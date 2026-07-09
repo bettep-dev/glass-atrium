@@ -28,11 +28,11 @@ setup() {
 # UNCHANGED provisioning call. The reduced point-of-need cue lives here, and
 # nothing else must print in this out-of-frame window.
 cooked_segment() {
-  awk '/^  tp rmcup$/{f=1} f{print} /preflight_provision_headless_token \|\| status=/{exit}' "${REAL_GA}"
+  awk '/^  tp rmcup$/{f=1} f{print} /preflight_provision_headless_token \|\| status=/{exit}' "${GA}"/lib/ga-tui-*.sh
 }
 
 @test "reduced cue: the single point-of-need line is present next to the URL" {
-  run grep -F -- "${REDUCED_LINE}" "${REAL_GA}"
+  run grep -F -- "${REDUCED_LINE}" "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
   [[ "${status}" -eq 0 ]]
 }
 
@@ -52,7 +52,7 @@ cooked_segment() {
 }
 
 @test "framed pre-cue intact: run-state opener before the drop is unchanged" {
-  run grep -F 'STEP_LABEL_ACTIVE_CUR="Opening browser for OAuth approval…"' "${REAL_GA}"
+  run grep -F 'STEP_LABEL_ACTIVE_CUR="Opening browser for OAuth approval…"' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
   [[ "${status}" -eq 0 ]]
   run grep -qF 'enter_run_state' "${REAL_GA}"
   [[ "${status}" -eq 0 ]]
@@ -60,7 +60,7 @@ cooked_segment() {
 
 @test "framed return intact: smcup re-entry + done-digest render preserved" {
   local body
-  body="$(awk '/^dispatch_action_token_panel\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "${REAL_GA}")"
+  body="$(awk '/^dispatch_action_token_panel\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh)"
   printf '%s\n' "${body}" | grep -qF 'tp smcup'
   printf '%s\n' "${body}" | grep -qF 'parse_token_summary "${status}"'
   printf '%s\n' "${body}" | grep -qF 'status_line "${status}" "Token Setup"'
@@ -68,7 +68,7 @@ cooked_segment() {
 
 @test "digest mapping unchanged: return code drives parse_token_summary" {
   # preflight return code -> status -> parse_token_summary must be byte-for-byte.
-  run grep -F 'preflight_provision_headless_token || status=$?' "${REAL_GA}"
+  run grep -F 'preflight_provision_headless_token || status=$?' "${REAL_GA}" "${GA}"/lib/ga-tui-*.sh
   [[ "${status}" -eq 0 ]]
 }
 
@@ -76,6 +76,6 @@ cooked_segment() {
   # The reduced cue names the env var, never a token value.
   printf '%s\n' "${REDUCED_LINE}" | grep -qF 'CLAUDE_CODE_OAUTH_TOKEN'
   # The cooked segment must not cat/read the secrets file into the terminal.
-  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} /preflight_provision_headless_token \\|\\| status=/{exit}' '${REAL_GA}'); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
+  run bash -c "cooked=\$(awk '/^  tp rmcup\$/{f=1} f{print} /preflight_provision_headless_token \\|\\| status=/{exit}' ${GA}/lib/ga-tui-*.sh); printf '%s' \"\${cooked}\" | grep -E 'cat .*claude-auth|printf.*OAUTH_TOKEN=[^ ]'"
   [[ "${status}" -ne 0 ]]
 }

@@ -59,12 +59,9 @@ import type {
 const ALLOWED_DAYS: ReadonlyArray<AgentsWindowDays> = [7, 30, 90];
 const ALLOWED_DAYS_SET: ReadonlySet<number> = new Set<number>(ALLOWED_DAYS);
 
-// Defensive cap for success-rate matrix:
-//   9 task_types × 90 days × ~12 agents = 9720 → set 10000 to absorb +1 agent burst.
-// Saturating the cap surfaces `truncated: true` in the response so the FE can
-// disclose missing data instead of silently rendering an incomplete matrix.
-// Test-visible export — the truncated-flag contract test compares a live
-// group-count oracle against this cap.
+// Defensive cap: 9 task_types × 90 days × ~12 agents = 9720 → 10000 absorbs a +1 agent burst.
+// Saturating surfaces `truncated: true` so the FE discloses missing data, not a silent partial matrix.
+// Test-visible export — the truncated-flag contract test compares a live group-count oracle to this cap.
 export const SUCCESS_RATE_LIMIT = 10000;
 
 // Hard cap for failure-patterns: top-N agents by total_breakages.
@@ -1579,15 +1576,13 @@ function invalidRangeParam(name: string, min: number, max: number): AgentsErrorB
   return { error: "invalid_param", param: name, reason: `must be integer in [${min}, ${max}]` };
 }
 
-// ===========================================================================
 // DELETE /api/agents/:name — writable DEV-agent DELETE via the agent_lifecycle
 // CLI. The CLI owns the registry-mutation lock (single owner); this route only
 // invokes it and maps the named exit codes to HTTP states.
-// ===========================================================================
 
 const execFileAsync = promisify(execFile);
 
-// ----- server-startup seams (NEVER request-derived) ------------------------
+// server-startup seams (NEVER request-derived)
 
 // Python interpreter + the agent_lifecycle package cwd are pinned at server
 // startup. `python -m agent_lifecycle` resolves the package only when cwd is the
@@ -1612,7 +1607,7 @@ function resolveAgentLifecycleCwd(): string {
   return path.join(homedir(), ".glass-atrium", "scripts");
 }
 
-// ----- timeout + exit-code contract ----------------------------------------
+// timeout + exit-code contract
 
 // Generous ceiling for the long commit path — manifest regenerate + symlink
 // swap dominate and can run several seconds on a cold farm. Well above the
@@ -1643,7 +1638,7 @@ const NAME_RE = /^[a-z0-9-]+$/;
 const RECONCILE_SKILL = "glass-atrium-ops-reconcile-inject";
 const RECONCILE_HINT = "run: python -m agent_lifecycle orphan-scan --mode reconcile";
 
-// ----- execFile invocation + exit-code → state mapping ---------------------
+// execFile invocation + exit-code → state mapping
 
 interface CliInvocation {
   code: number;
@@ -1736,9 +1731,7 @@ function truncateCli(text: string): string {
   return oneLine.length > 400 ? `${oneLine.slice(0, 399)}…` : oneLine;
 }
 
-// ===========================================================================
 // T2 — DELETE /api/agents/:name — gated DEV-agent DELETE via the CLI `delete`.
-// ===========================================================================
 
 // The delete dry-run report (delete.py render_dry_run) carries `-> ALLOWED` or
 // `-> REFUSED` on its first line, the reason on the `reason:` line, and the

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# PreToolUse(Write|Edit) — block the orchestrator's direct file modification
+# PreToolUse(Write|Edit) — block the orchestrator's direct file modification across ~/.claude/,
+# ~/.claude-work/, ~/.claude-personal/ (only sub-agents may modify).
 # Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) pass; everything else is blocked with exit 2
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
-# POLICY: ~/.claude/, ~/.claude-work/, ~/.claude-personal/ all enforce delegation — only sub-agents may modify
 #
 # memory/* path-prefix exception (clauded-doc #8478 T6): the orchestrator MAY directly Write/Edit
 # session-state files under any */memory/* segment — low-risk transient state, not a delegation surface.
@@ -16,10 +16,9 @@ IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# Normalize a POSIX path by collapsing "." and ".." segments without touching the
-# filesystem (the target file may not exist yet). Traversal-safety: "memory/../hooks/x.sh"
-# resolves to "hooks/x.sh", so a "memory" segment cannot be forged via "..".
-# Args: $1 = path. Echoes the normalized path.
+# Normalize a POSIX path — collapse "." / ".." segments without touching the filesystem
+# (target may not exist yet). Traversal-safety: "memory/../hooks/x.sh" resolves to "hooks/x.sh",
+# so a "memory" segment cannot be forged via "..". Args: $1 = path. Echoes normalized path.
 normalize_path() {
   local path="${1}" seg
   local -a out=()
@@ -60,12 +59,9 @@ normalize_path() {
 INPUT=$(hook_read_input)
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.
-# WHY: hook_get_tool_input degrades to EMPTY without python3, which the
-# `[[ -z FILE_PATH ]] && exit 0` below would misread as "no file" and ALLOW an
-# orchestrator harness-config write. Distinguish the two empty causes: genuinely
-# empty input (stdin empty → hook_read_input returns "{}") is nothing to guard →
-# exit 0 stays correct; a NON-trivial INPUT whose extraction we cannot trust
-# (python3 absent) MUST block.
+# WHY: without python3, hook_get_tool_input degrades to EMPTY — which the `[[ -z FILE_PATH ]] && exit 0`
+# below would misread as "no file" → ALLOW an orchestrator harness write. Empty input ("{}") stays
+# exit 0 (nothing to guard); a non-trivial INPUT whose extraction we cannot trust MUST block.
 case "${INPUT}" in
   "" | "{}" | "{ }") : ;; # nothing to guard — empty-input case stays exit 0
   *) hook_require_python3 "DEL-002" \
@@ -84,11 +80,10 @@ case "${BASENAME}" in
 esac
 
 # 3. Allow direct orchestrator writes to session-state files under any */memory/* segment.
-#    Normalize first so "memory/../hooks/x.sh" (traversal) cannot spoof the segment.
-#    A "memory/" segment nested directly under a protected harness dir
-#    (agents/, rules/, hooks/, skills/, autoagent/, monitor/, scripts/) is NOT a
-#    session-state root — those stay BLOCKED so a harness-config write cannot bypass
-#    the gate via a "memory" segment (e.g. agents/memory/x.md must route through delegation).
+#    Normalize first so "memory/../hooks/x.sh" cannot spoof the segment. A "memory/" nested
+#    directly under a protected harness dir (agents/, rules/, hooks/, skills/, autoagent/,
+#    monitor/, scripts/) is NOT a session-state root — those stay BLOCKED so a harness write
+#    cannot bypass via a "memory" segment (e.g. agents/memory/x.md must route through delegation).
 NORM_PATH=$(normalize_path "${FILE_PATH}")
 case "/${NORM_PATH}/" in
   */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \

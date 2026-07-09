@@ -2,7 +2,7 @@
 // Runner: npx tsx --test test/clauded-docs.load-more.e2e.test.ts
 //
 // DB: real Postgres — every seeded row tagged `load-more-test-${uuid}` 마커, after() 가 LIKE 일괄 cleanup.
-// App: stripped Fastify (fastify-static + clauded-docs routes) on ephemeral port (production 7842 미간섭) · Browser: Playwright chromium headless, NO mocking.
+// App: stripped Fastify (fastify-static + clauded-docs routes) on ephemeral port (production 16145 미간섭) · Browser: Playwright chromium headless, NO mocking.
 // Chromium 미설치 시 loud-fail — `npx playwright install chromium` 선행 필요 (in-test guard 없음).
 
 import test, { after, before } from "node:test";
@@ -88,7 +88,7 @@ before(async () => {
   });
   await registerClaudedDocsRoutes(app);
   await app.ready();
-  // listen on ephemeral port — production 7842 미간섭.
+  // listen on ephemeral port — production 16145 미간섭.
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   // address 는 "http://127.0.0.1:PORT" 형식 — 그대로 사용 가능.
   serverUrl = address;

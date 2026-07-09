@@ -53,8 +53,6 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT use `grep -c ... || echo 0` (produces `"0\n0"`) — see Key Patterns `grep -c` zero-match trap for the correct form
 - MUST NOT use `--external-sources=true` in ShellCheck (macOS requires bare `--external-sources`)
 - MUST NOT source strict-mode scripts into Bats tests without isolating ERR traps (use subshell or `trap - ERR`)
-- MUST NOT use `--external-sources=true` in ShellCheck (macOS requires bare `--external-sources`)
-- MUST NOT source strict-mode scripts into Bats tests without isolating ERR traps (use subshell or `trap - ERR`)
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
 <!-- EDITABLE:END -->
 
@@ -161,7 +159,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 metric_pass=true requires shellcheck + shfmt + bash-n all green (Bats optional when no test file present).
 
-- **ShellCheck DFA engine note (2024+)**: SC2317 (unreachable command) false-positive rate dropped substantially with the data-flow analysis engine; before adding a manual `# shellcheck disable=SC2317` annotation, verify the latest ShellCheck version still flags the line.
+- **ShellCheck DFA engine note (2024+)**: before adding a manual `# shellcheck disable=SC2317` (unreachable command) annotation, verify the latest ShellCheck version still flags the line — the data-flow analysis engine reduced SC2317 false positives.
 
 ## Prohibitions
 

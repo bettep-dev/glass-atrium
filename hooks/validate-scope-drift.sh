@@ -7,13 +7,15 @@ IFS=$'\n\t'
 
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source=lib/hook-utils.sh
+source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 
 # Monitor-API config — env-overridable (test isolation), loopback-pinned.
-# Default-URL port consumed from the config-rendered env key (config.toml
-# [ports].monitor → ATRIUM_MONITOR_PORT); non-numeric → default (URL-injection
-# guard). A full SCOPE_DRIFT_MONITOR_URL override wins over the derived default.
-monitor_port="${ATRIUM_MONITOR_PORT:-7842}"
-[[ "${monitor_port}" =~ ^[0-9]+$ ]] || monitor_port=7842
+# Default-URL port derived via the hook_monitor_port wrapper (ADR-1: env →
+# monitor/.env → config → 16145); NO literal fallback here (the single default lives
+# in the resolver). A full SCOPE_DRIFT_MONITOR_URL override wins over the derived
+# default; a resolver failure degrades to '' (non-bindable URL, fire-and-forget).
+monitor_port="$(hook_monitor_port || true)"
 MONITOR_URL="${SCOPE_DRIFT_MONITOR_URL:-http://127.0.0.1:${monitor_port}/api/clauded-docs}"
 CURL_TIMEOUT="${SCOPE_DRIFT_CURL_TIMEOUT:-2}"
 
@@ -63,7 +65,6 @@ extract_target_files_section() {
     | sed -n 's/.*<section[^>]*id="target-files"[^>]*>\(.*\)/\1/p')"
   [[ -z "${from_open}" ]] && return 0
 
-  # Slice up to the first </section>.
   sliced="$(printf '%s' "${from_open}" | sed 's/<\/section>.*//')"
   [[ -z "${sliced}" ]] && return 0
 

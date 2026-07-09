@@ -1,37 +1,26 @@
 // Clauded-docs API: CRUD + tsvector search for monitor.documents.
 //
-// Storage model:
-//   - meta in Postgres (monitor.documents)
-//   - HTML body on FS (HTML primary only — no MD companion)
-//   - SHA256(HTML) recorded in DB for integrity + optimistic-lock
+// Storage: meta in Postgres (monitor.documents); HTML body on FS (HTML primary only, no MD
+// companion); SHA256(HTML) recorded in DB for integrity + optimistic-lock.
 //
 // Sync write contract:
-//   - POST/PUT does NOT respond until the HTML file is durable AND the DB row
-//     is committed. No background queue, no eventual consistency.
-//   - Order of operations: write HTML → DB insert/update. DB write is last so
-//     a row never points at a path that does not exist.
-//   - DB: single-statement Prisma $queryRaw — row-level atomicity is sufficient.
-//   - FS: temp-file + POSIX rename(2) atomic write. On DB failure, rollback via
-//     the pre-write snapshot (POST = unlink new file, PUT = rewrite prev content).
-//   - md_copy_path stays nullable (deprecated) — rows always store NULL; the
-//     column remains in the contract for backwards compatibility.
+//   - POST/PUT does NOT respond until the HTML file is durable AND the DB row is committed
+//     (no background queue, no eventual consistency).
+//   - Order: write HTML → DB insert/update (DB last, so a row never points at a missing path).
+//   - DB: single-statement Prisma $queryRaw — row-level atomicity suffices.
+//   - FS: temp-file + POSIX rename(2) atomic write. On DB failure, rollback via the pre-write
+//     snapshot (POST = unlink new file, PUT = rewrite prev content).
+//   - md_copy_path stays nullable (deprecated) — rows store NULL; column kept for backcompat.
 //
-// Security pipeline:
-//   - POST/PUT html_body → DOMPurify sanitize first, so SHA256/indexable derive
-//     from sanitized HTML. Raw user HTML never touches disk/DB.
-//   - GET that returns HTML body applies `Content-Security-Policy: sandbox;
-//     frame-ancestors 'self'`. Sanitize policy detail → clauded-docs/sanitize.ts.
+// Security:
+//   - POST/PUT html_body → DOMPurify sanitize FIRST, so SHA256/indexable derive from sanitized
+//     HTML. Raw user HTML never touches disk/DB.
+//   - GET returning HTML applies `Content-Security-Policy: sandbox; frame-ancestors 'self'`
+//     (sanitize policy detail → clauded-docs/sanitize.ts).
 //
-// Search:
-//   - Uses websearch_to_tsquery for user-friendly query syntax (quoted phrases,
-//     OR, -negation). Short single-term fallback (pg_trgm word_similarity) is
-//     handled at the FE recommend surface, not here.
-//
-// Errors:
-//   - structured envelope `{ error: <code>, ...details }`
-//   - 4xx for client problems (validation, conflict, not found, unsupported HTML)
-//   - 5xx for server problems (DB unreachable, FS unavailable)
-//   - secrets / PII never logged; request id flows through Fastify's request.log
+// Search: websearch_to_tsquery for user-friendly syntax; short single-term fallback (pg_trgm)
+//   lives at the FE recommend surface, not here.
+// Errors: structured `{ error, ...details }`; 4xx client / 5xx server; secrets/PII never logged.
 
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
@@ -1061,22 +1050,16 @@ function encodeRfc5987(value: string): string {
   );
 }
 
-// GET /api/clauded-docs/:id/html-export — single-doc offline self-contained HTML
+// GET /api/clauded-docs/:id/html-export — single-doc offline self-contained HTML.
+// Renders the stored sanitized body via Playwright into an OFFLINE self-contained .html; a
+// non-HTML row gets a minimal dark shell wrap (no browser). Render contract → html-export.ts.
 //
-// Render the stored sanitized body via Playwright into an OFFLINE self-contained
-// single .html. A non-HTML row gets a minimal dark shell wrap (no browser).
-// Render contract → clauded-docs/html-export.ts.
+// CRITICAL INVARIANT — rendered result holds live <svg>; NEVER re-apply sanitizeHtmlBody
+// (sanitize.ts FORBID_TAGS strips svg → diagrams destroyed). This handler runs no sanitizer.
 //
-// CRITICAL INVARIANT — rendered result holds live <svg> → never re-apply
-// sanitizeHtmlBody (sanitize.ts FORBID_TAGS strips svg → diagrams destroyed);
-// this handler calls no sanitizer beyond the stored body read.
-//
-// error mapping:
-//   - missing row             → 404 {error:not_found,id}
-//   - stored-file read failure → 503 {error:filesystem_unavailable,reason:html_export_read: <msg>}
-//   - path-escape / unknown   → 500 {error:internal}
-//   - HtmlExportError(stage)  → 503 {error:filesystem_unavailable,reason:html_export_<stage>: <msg>}
-//
+// error mapping: missing row → 404 not_found · stored-file read fail → 503
+// filesystem_unavailable(html_export_read) · path-escape/unknown → 500 internal ·
+// HtmlExportError(stage) → 503 filesystem_unavailable(html_export_<stage>).
 // ETag: sha256(storedBody + "|html-export-v1") quoted · If-None-Match → 304.
 
 // ETag salt — render-pipeline version id. Bump on render-logic/driver changes to invalidate cache.
@@ -1153,24 +1136,17 @@ async function handleHtmlExportSingle(
   return reply.code(200).send(rendered);
 }
 
-// POST /api/clauded-docs/html-export — multi-export selected docs → single .zip
+// POST /api/clauded-docs/html-export — multi-export selected docs → single .zip.
+// Render each selected doc to an offline self-contained .html FIRST, then start the zip stream.
+// body {ids:number[]} length 1..50. Render SEQUENTIALLY per id (one BrowserContext at a time —
+// no Promise.all: resource blowup + weakened isolation). Each id → one <slug-or-doc-id>.html;
+// missing/render-failed ids skip the file but record the reason in _manifest.json.
 //
-// Render each selected doc to an offline self-contained .html FIRST, then start
-// the zip stream. body {ids:number[]} length 1..50. Render SEQUENTIALLY per id
-// (one BrowserContext at a time on the shared browser — no Promise.all: resource
-// blowup + weakened isolation). Each id → one file <slug-or-doc-id>.html.
-// Missing / render-failed ids skip the file but record the reason in _manifest.json.
-//
-// Render-before-stream keeps the status code free until every doc is decided:
-//   - zero includable ids → JSON `export_failed` envelope (404 all-not_found /
-//     503 otherwise), NEVER a 200 with a doc-less zip (silent-failure guard —
-//     e.g. chromium binary drift after a playwright upgrade).
-//   - ≥1 included → 200 zip; X-Included-Count header lets the client warn on a
-//     partial export without parsing _manifest.json out of the blob.
-//
-// Response: application/zip + Content-Disposition attachment filename clauded-docs-<YYYY-MM-DD>.zip.
-// Streaming idiom: set headers via reply.header() → reply.send(archive readable) → archive.finalize().
-// All headers MUST be set before finalize.
+// Render-before-stream keeps the status code free until every doc is decided: zero includable
+// → JSON export_failed envelope (404 all-not_found / 503 otherwise), NEVER a 200 with a doc-less
+// zip (silent-failure guard, e.g. chromium drift after a playwright upgrade); ≥1 → 200 zip +
+// X-Included-Count header. Response: application/zip + Content-Disposition. Streaming: set all
+// headers via reply.header() BEFORE reply.send(archive) → archive.finalize().
 
 interface HtmlExportMultiBody {
   ids: number[];
@@ -2239,30 +2215,23 @@ interface InsertClaudedDocArgs {
 }
 
 /**
- * Single-statement INSERT … RETURNING. Throws on DB error so the caller can
- * trigger the FS rollback path (this stays a thin wrapper so the rollback
- * orchestration lives next to the handler).
- *
+ * Single-statement INSERT … RETURNING. Throws on DB error so the caller can trigger the FS
+ * rollback path (thin wrapper — rollback orchestration lives next to the handler).
  * md_copy_path / last_synced_at are always NULL for new rows (no MD companion).
  *
- * CTE branch:
- *   - supersedesId === null → plain INSERT … RETURNING
- *   - supersedesId !== null → single-statement CTE that also UPDATEs the
- *     predecessor's doc_status → 'done'. No transaction needed (a PostgreSQL
- *     single statement is one snapshot). Idempotent if predecessor already
- *     done; a missing predecessor is blocked by the FK at INSERT (caller
- *     fetch-validates first, so unreachable).
+ * CTE branch: supersedesId === null → plain INSERT; !== null → single-statement CTE that also
+ * UPDATEs the predecessor doc_status → 'done' (no transaction — one PG statement is one
+ * snapshot; idempotent if already done; a missing predecessor is FK-blocked at INSERT).
  */
 async function insertClaudedDocRow(
   prisma: ReturnType<typeof getPrisma>,
   args: InsertClaudedDocArgs,
 ): Promise<ClaudedDocDbRow> {
   const { parsed, createdAt, conversion, bodyPath, audience, supersedesId, docStatus, folderId } = args;
-  // supersedesId null → plain INSERT path. Otherwise a single-statement CTE:
-  // `WITH ins AS (... RETURNING *)` surfaces the INSERT result for the follow-up
-  // UPDATE to join; `, _upd AS (UPDATE ... RETURNING 1)` is side-effect only —
-  // the final SELECT returns ins columns. RETURNING column set matches the
-  // SELECT/UPDATE/DELETE sites (drift guard); both branches share the same enum.
+  // supersedesId null → plain INSERT. Otherwise a single-statement CTE: `WITH ins AS (...
+  // RETURNING *)` feeds the follow-up `_upd AS (UPDATE ... RETURNING 1)` (side-effect only);
+  // the final SELECT returns ins columns. RETURNING set matches the SELECT/UPDATE/DELETE sites
+  // (drift guard).
   const rows = supersedesId === null
     ? await prisma.$queryRaw<ClaudedDocDbRow[]>`
         INSERT INTO monitor.documents

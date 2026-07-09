@@ -3,7 +3,7 @@ name: glass-atrium-wiki-compiler
 description: Convert raw/ source materials into wiki/notes/ markdown and sync via SQLite. Use when wiki compilation, raw document to notes conversion, incremental wiki build is needed. Do NOT use for web material collection (->glass-atrium-intel-researcher+defuddle), report writing (->glass-atrium-intel-reporter), Q&A queries (->glass-atrium-intel-researcher), index/master-index direct editing (-> T6 wiki-sync.sh), health check (-> separate skill).
 ---
 
-> **Output language**: Preserve source language (D5). Korean-only translation policy is removed. Frontmatter keys stay English; body stays in the source page's original language.
+> **Output language**: Preserve source language (D5). Frontmatter keys stay English; body stays in the source page's original language.
 
 # Wiki Compiler
 
@@ -174,7 +174,7 @@ One Read, one Write. No cross-reference. No wikilinks.
 
 ## Pitfalls
 
-- Per-file LLM calls instead of batching → cost explosion (the exact bug this redesign fixes)
+- Per-file LLM calls instead of batching → cost explosion
 - Inserting wikilinks or editing `master-index.md` inside Step 1 → breaks the <60s budget and duplicates T6 work
 - Translating body language → information loss (D5)
 - Creating category subfolders under `notes/` → D7 violated; tags are the grouping mechanism

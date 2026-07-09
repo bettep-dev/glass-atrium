@@ -4,12 +4,12 @@
 > **Inherits**: Tier 1 (Core)
 > **See**: [core-compliance-matrix.md → Loading Tiers](core-compliance-matrix.md#loading-tiers)
 
-Authoritative per-event capability contract for Claude Code lifecycle hooks. A hook author MUST consult this before assuming an event can read prose, mutate output, or block via a given channel. Capability claims here are verified against the actual hooks in `~/.claude/hooks/` + `hook-utils.sh` + `settings.json` (do NOT infer beyond what the event actually exposes — a wrong capability assumption is the root cause this contract prevents).
+Authoritative per-event capability contract for Claude Code lifecycle hooks. A hook author MUST consult this before assuming an event can read prose, mutate output, or block via a given channel. Capability claims here are verified against the actual hooks in `~/.claude/hooks/` + `hook-utils.sh` + `settings.json` (do NOT infer beyond what the event actually exposes).
 
 ## Why This Exists
 
 - Hook events differ in what they can **observe**, what they can **mutate**, and **which block channel** they may use — these are NOT uniform across events.
-- A prior design error assumed `PostToolUse` could mutate model-visible tool output (it cannot — observe + block/append only, no `updatedOutput`). This contract pins the gap so it is not re-derived.
+- `PostToolUse` cannot mutate model-visible tool output — observe + block/append only, no `updatedOutput`.
 - The two block channels are **non-substitutable** (stderr `emit_error`+`exit 2` vs. stdout `{"decision":...}`) — picking the wrong one silently no-ops the block.
 
 ## Per-Event Capability Table
@@ -19,7 +19,7 @@ Rows = lifecycle event · columns = capability surface. `mutate` = can change mo
 | Event | Mutate-capable surface | Observe surface | Block channel | Notes |
 |-------|------------------------|-----------------|---------------|-------|
 | PreToolUse | `tool_input` only (via `updatedInput` mechanism) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel-a (stderr `emit_error`+`exit 2`) AND/OR channel-b (stdout `{"decision":"block"}`) | mutate-capable: ONLY `tool_input`. CANNOT read the agent's prose/reasoning — only `tool_input`/`session_id`/`agent_id` are visible. |
-| PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel-a (`exit 2`) OR channel-b (stdout `{"decision":"block"\|"advisory"}`) | CANNOT mutate model-visible tool output. May only block/append/advise after the tool ran. This is the prior-design-error gap. |
+| PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel-a (`exit 2`) OR channel-b (stdout `{"decision":"block"\|"advisory"}`) | CANNOT mutate model-visible tool output. May only block/append/advise after the tool ran. |
 | `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | post-completion accounting only (e.g. `cost-tracker.sh`, `track-outcome.sh`). No payload to mutate. |
 | `SessionStart` | injects turn-0 context via stdout (additive, not a mutation of existing data) | drained stdin (payload unused by current hooks) | none (advisory — `exit 0` contract) | stdout text is injected into session context (`inject-session-context.sh`). `validate-compliance-matrix.sh` is advisory-only here. |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the comment-rule block to DEV/QA children. Fail-open (`exit 0`) always. |

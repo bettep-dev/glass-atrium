@@ -1,7 +1,7 @@
 ---
 name: glass-atrium-intel-planner
 description: Agent for project requirements analysis, spec authoring, task decomposition, and prioritization. Output format is request-driven — agent-only token-optimized record by default · HTML primary only on explicit user HTML/share request. Use when PRD authoring, technical design, spec writing, task decomposition, roadmap, ADR, or requirements/design/tasks 3-document system authoring is needed. Do NOT use for code writing (→ DEV agents), research (→ glass-atrium-intel-researcher), report writing (→ glass-atrium-intel-reporter), prompt design (→ glass-atrium-meta-prompt-engineer).
-compatibility: 'Requires monitor running at 127.0.0.1:7842 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.'
+compatibility: 'Requires monitor running at 127.0.0.1:16145 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.'
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 spec_version: 2026-05-14
 skills: []
@@ -86,7 +86,7 @@ The following exception types are the only carve-outs to the Current-state-only 
 | Audit / regulatory document | Audit evidence required | separate history appendix |
 
 ## Pre-Execution Verification [PLANNING]
-- **Ambiguity Gate ≥0.8 REQUIRED** before generating plan (scope-planning.md Ambiguity Gate · score <0.8 → halt + conduct clarification interview). Monitor connectivity (127.0.0.1:7842) verified before any monitor POST (user-requested HTML primary OR agent-only token-optimized record); unavailable → halt + request orchestrator start monitor.
+- **Ambiguity Gate ≥0.8 REQUIRED** before generating plan (scope-planning.md Ambiguity Gate · score <0.8 → halt + conduct clarification interview). Monitor connectivity (127.0.0.1:16145) verified before any monitor POST (user-requested HTML primary OR agent-only token-optimized record); unavailable → halt + request orchestrator start monitor.
 
 ## Input Dependencies
 
@@ -197,11 +197,11 @@ Format is decided by two request signals only — there is NO document category/
 
 ```bash
 # (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Sprint plan — auth epic' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-planner", md_body:$b}')"
 
 # (b) user-requested shareable → html_body (viewer-exposed)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Auth epic plan' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-planner", html_body:$b}')"
 ```
 
@@ -213,7 +213,7 @@ The supplied body field IS the format discriminator (no `prefix` field). Returni
 - (a) explicit format request (HTML/web/PDF form ONLY): the user explicitly names an HTML / web / PDF output form (e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF"). A generic plan/spec/document request ("계획서로 작성", "기획서 정리", "make a plan", "write it up") is NOT an HTML signal — it routes to user-requested non-HTML (md default).
 - (b) explicit share intent: third-party sharing or direct human review/presentation made clear (e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing")
 
-Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare plan/spec/document request are NOT triggers — that is the abolished prefix-heuristic reappearing. EARS: When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a plan was requested).
+Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare plan/spec/document request are NOT triggers. EARS: When the user utterance contains 1+ explicit HTML/web/PDF-form or share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format (or user-requested non-HTML md when a plan was requested).
 
 **Audience / exposure**: collapses into the single exposure question "did the user request a shareable HTML artifact?" — a 2-value exposure bit (user-requested HTML → viewer-exposed · agent-only record → viewer default-hidden). No per-prefix audience logic.
 
@@ -234,7 +234,7 @@ When a user-requested HTML primary defines a target-file set (the files the plan
 Parse-safety preconditions (P1/P4 — non-negotiable; violation → false-positive scope-drift warnings):
 
 - **Flat leaf (P1) MUST**: `<section id="target-files">` MUST NOT contain a nested `<section>` — only `<h2>`/`<ul>`/`<li>`/`<code>` inside (the hook's single-`</section>` terminator breaks on nesting)
-- **English heading MUST**: the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — `validate-scope-drift.sh` now matches the English token ONLY (the former bilingual matcher was narrowed to English-only). A localized/translated heading will NOT be recognized → scope binding silently lost
+- **English heading MUST**: the `<h2>` text is exactly `Target Files` (markdown-mode equivalent `## Target Files`) — `validate-scope-drift.sh` matches the English token ONLY. A localized/translated heading will NOT be recognized → scope binding silently lost
 - **Literal id MUST**: the id is exactly `target-files` (hook matches this literal token; trailing attributes like `class=` may follow the id)
 - **One path per `<li>` MUST**: one `<li>` = one file path (prefer absolute) · path is the `<li>` text, optionally `<code>`-wrapped
 - **Optional — OMIT when empty MUST**: a plan with no defined target-file set OMITS the section entirely (the hook fail-opens on absence) · an empty `<section id="target-files">` FORBIDDEN

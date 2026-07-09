@@ -90,7 +90,6 @@ cat >"${TARGET}/settings.json" <<'JSON'
 }
 JSON
 cp -p "${TARGET}/settings.json" "${SANDBOX}/user-settings.ORIGINAL.json"
-USER_ORIG_NORM="$(jq -S . "${SANDBOX}/user-settings.ORIGINAL.json")"
 
 # seed a COLLIDING user-owned agent file (a real Atrium agent basename)
 COLLIDE_REL="$(jq -r '.files[]' "${GA}/manifest.json" | grep '^agents/.*\.md$' | head -1)"
@@ -216,13 +215,17 @@ done
 MYHOOK="$(jq '[ .hooks.PreToolUse[]? | .hooks[]? | .command | select(endswith("/my-own-hook.sh")) ] | length' "${TARGET}/settings.json")"
 [[ "${MYHOOK}" -eq 1 ]] && ok "user's own hook (my-own-hook.sh) preserved" || no "user hook lost (count=${MYHOOK})"
 # all Atrium bindings added — expected count derived from the EXPECTED_HOOK_BINDINGS
-# array (the SoT), which now lives in lib/ga-core.sh declared INSIDE ga_init_env
+# array (the SoT), which now lives in lib/ga-env.sh declared INSIDE ga_init_env
 # (indented, two-step `ARR=(...)` then `readonly ARR` — the bash-3.2 cross-fn
 # nounset-safe idiom). The awk range matches the indented `EXPECTED_HOOK_BINDINGS=(`
 # open line through its closing `)` (the `^readonly -a` anchor no longer applies).
-GACORE="${GA}/lib/ga-core.sh"
+GACORE="${GA}/lib/ga-env.sh"
 EXPECTED_BINDING_COUNT="$(awk '/EXPECTED_HOOK_BINDINGS=\(/,/^[[:space:]]*\)/' "${GACORE}" | grep -c "$(printf '\t')")"
-ATRIUM_BOUND="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.claude/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
+# hook-repoint: wire_hooks now emits "$HOME/.glass-atrium/hooks/<basename>" (the in-place
+# consumer), NOT the legacy ~/.claude/hooks farm — so the bound-command match keys on
+# /.glass-atrium/hooks/ (canonical per test/wire-hooks-merge.bats). Pre-repoint /.claude/hooks/
+# matched zero and false-failed this additive-merge assertion.
+ATRIUM_BOUND="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.glass-atrium/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
 printf '  Atrium hook commands bound: %s (expect %s)\n' "${ATRIUM_BOUND}" "${EXPECTED_BINDING_COUNT}"
 [[ "${ATRIUM_BOUND}" -eq "${EXPECTED_BINDING_COUNT}" ]] && ok "exactly ${EXPECTED_BINDING_COUNT} Atrium bindings added" || no "Atrium bindings = ${ATRIUM_BOUND} != ${EXPECTED_BINDING_COUNT}"
 # backup taken
@@ -258,8 +261,9 @@ printf '  run#2: %s skip-already-correct, %s new links\n' "${SKIPS}" "${NEWLINKS
 [[ "${NEWLINKS}" -eq 0 ]] && ok "idempotent: zero new symlinks on re-run" || no "${NEWLINKS} new symlinks on re-run"
 grep -q 'already wired' "${SANDBOX}/install2.log" && ok "idempotent: hooks already wired (no dup)" || no "hooks re-wired on second run"
 grep -q 'already fully expanded — skip' "${SANDBOX}/install2.log" && ok "idempotent: config render no-op on re-run" || no "config re-rendered on second run"
-# count Atrium bindings still matches the SoT count (no duplicates)
-ATRIUM_BOUND2="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.claude/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
+# count Atrium bindings still matches the SoT count (no duplicates) — repointed
+# /.glass-atrium/hooks/ match (see the AC3 note above; pre-repoint /.claude/hooks/ counted 0).
+ATRIUM_BOUND2="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.glass-atrium/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
 [[ "${ATRIUM_BOUND2}" -eq "${EXPECTED_BINDING_COUNT}" ]] && ok "still exactly ${EXPECTED_BINDING_COUNT} Atrium bindings (no duplicates)" || no "binding count drifted to ${ATRIUM_BOUND2}"
 
 # =============================================================================
@@ -276,44 +280,33 @@ MAL_HASH_AFTER="$(shasum "${MSAND}/settings.json" | awk '{print $1}')"
 rm -rf -- "${MSAND}"
 
 # =============================================================================
-hdr "STEP 6 — uninstall (AC5: symlinks gone + hooks un-wired + user keys restored)"
-"${GA_BIN}" uninstall >"${SANDBOX}/uninstall.log" 2>&1
-UNINST_RC=$?
-[[ "${UNINST_RC}" -eq 0 ]] && ok "uninstall rc=0" || { no "uninstall rc=${UNINST_RC}"; tail -20 "${SANDBOX}/uninstall.log"; }
-# symlinks gone
-GA_LINKS_AFTER="$(find "${TARGET}" -type l -lname "${GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
-[[ "${GA_LINKS_AFTER}" -eq 0 ]] && ok "zero GA symlinks after uninstall" || no "${GA_LINKS_AFTER} GA symlinks remain"
-# Atrium hooks un-wired
-ATRIUM_AFTER="$(jq '[ .hooks[]?[]? | .hooks[]? | .command | select(contains("/.claude/hooks/")) | select(endswith("/my-own-hook.sh") | not) ] | length' "${TARGET}/settings.json")"
-[[ "${ATRIUM_AFTER}" -eq 0 ]] && ok "zero Atrium hook bindings after un-wire" || no "${ATRIUM_AFTER} Atrium bindings remain"
-# user hook + user keys restored to ORIGINAL (byte-compare, modulo backup files)
-NOW_NORM="$(jq -S . "${TARGET}/settings.json")"
-[[ "${NOW_NORM}" == "${USER_ORIG_NORM}" ]] \
-  && ok "settings.json restored byte-identical to user's ORIGINAL (normalized)" \
-  || { no "settings.json differs from original after uninstall"; diff <(printf '%s' "${USER_ORIG_NORM}") <(printf '%s' "${NOW_NORM}"); }
-# colliding user file still intact
-COLLIDE_FINAL="$(shasum "${TARGET}/${COLLIDE_REL}" | awk '{print $1}')"
-[[ "${COLLIDE_FINAL}" == "${COLLIDE_HASH_BEFORE}" ]] && ok "colliding user file intact after uninstall" || no "colliding user file changed"
-
-# =============================================================================
-hdr "STEP 7 — uninstall re-run (idempotency) + --verify-clean + --purge-config"
-"${GA_BIN}" uninstall >"${SANDBOX}/uninstall2.log" 2>&1
-UNINST2_RC=$?
-[[ "${UNINST2_RC}" -eq 0 ]] && ok "second uninstall rc=0 (no-op)" || no "second uninstall rc=${UNINST2_RC}"
-grep -q 'already absent' "${SANDBOX}/uninstall2.log" && ok "un-wire idempotent (bindings already absent)" || no "un-wire not idempotent"
-# --verify-clean
-"${GA_BIN}" uninstall --verify-clean >"${SANDBOX}/verifyclean.log" 2>&1
-VC_RC=$?
-tail -4 "${SANDBOX}/verifyclean.log"
-[[ "${VC_RC}" -eq 0 ]] && ok "--verify-clean PASS (zero symlinks + zero Atrium bindings)" || no "--verify-clean FAIL rc=${VC_RC}"
-# --purge-config
-[[ -f "${CONFIG_OUT}" ]] && ok "config left in place pre-purge (default leaves it)" || no "config gone before purge"
-"${GA_BIN}" uninstall --purge-config >"${SANDBOX}/purge.log" 2>&1
-PURGE_RC=$?
-[[ "${PURGE_RC}" -eq 0 ]] && ok "--purge-config rc=0" || no "--purge-config rc=${PURGE_RC}"
-[[ ! -f "${CONFIG_OUT}" ]] && ok "config.toml removed from sandbox after --purge-config" || no "config still present after purge"
-TRASHED="$(find "${HOME}/.Trash" -name 'config.toml.ga-purged.*' -newermt '-2 minutes' 2>/dev/null | tail -1)"
-[[ -n "${TRASHED}" ]] && { ok "config moved to Trash (not rm'd): ${TRASHED}"; rm -f -- "${TRASHED}"; } || printf '  NOTE: trash entry not located (mv to Trash still succeeded per log)\n'
+# STEP 6-7 — the DESTRUCTIVE full-uninstall path (AC5 + idempotency + --verify-clean
+# + --purge-config) is intentionally NOT exercised here.
+#
+# WHY SKIPPED (hermeticity, not a real-uninstall regression): this harness is the
+# LIGHT sandbox — it overrides only GA_TARGET_HOME (+ GA_CONFIG_TOML / GA_MANIFEST),
+# reusing the REAL $HOME and $GA_ROOT. But `glass-atrium uninstall` (a) requires an
+# explicit --yes (initial-commit destructive-consent gate — NOT a monitor-build/TUI-session change) and
+# (b) its run_uninstall path calls drop_databases (REAL peer-auth socket + real DB
+# name), remove_node_modules (rm -rf ${GA_ROOT}/monitor/node_modules — GA_ROOT is
+# readonly + non-overridable, so this is the real worktree tree), and
+# stop_detached_daemons — NONE of which the GA_TARGET_HOME seam redirects. The light
+# sandbox therefore cannot isolate them, so on any live-install / built-worktree
+# machine the full uninstall would touch real resources. Additionally the old AC5
+# "settings.json restored byte-identical" assertion predates the ~/.claude/hooks ->
+# ~/.glass-atrium/hooks command repoint (install now repoints a farm-dir binding),
+# so it encodes a superseded model.
+#
+# COVERAGE LIVES ELSEWHERE: hermetic full-uninstall parity (symlinks gone, bindings
+# un-wired, throwaway db dropped, launchd sandbox-guarded) is exercised by
+# test/oss-e2e-bootstrap.sh — a FULL-$HOME sandbox with a throwaway db + --yes. The
+# un-wire logic itself is unit-covered by test/unwire-hooks.bats. This harness owns
+# the install-mechanism ACs (STEP 0-5) + the real-target safety guard (STEP 8).
+hdr "STEP 6-7 — full uninstall (SKIPPED: requires a clean/hermetic machine)"
+printf '  SKIP: destructive uninstall (real db drop + %s/monitor/node_modules rm -rf +\n' "${GA}"
+printf '        detached-daemon teardown) is not isolatable in this light GA_TARGET_HOME sandbox.\n'
+printf '  SKIP: hermetic full-uninstall coverage — test/oss-e2e-bootstrap.sh (isolated HOME + throwaway db + --yes);\n'
+printf '        un-wire unit coverage — test/unwire-hooks.bats.\n'
 
 # =============================================================================
 hdr "STEP 8 — SAFETY GUARD: real ~/.claude + real config.toml UNTOUCHED"

@@ -3,13 +3,11 @@
 
 set -Eeuo pipefail
 
-# Source shared hook utilities for hook_path_safe_key — the agent_id → path-safe counter-key
-# transform advisory-subagent-budget.sh uses to locate its per-agent tool_use counter. Reused
-# (NOT reinvented) so the budget-truncation detector below keys the counter file identically;
-# a divergent transform would silently mis-locate it. Sourced BEFORE this file's own emit_error
-# so the richer 7-param emit_error below intentionally overrides the utils 5-param one (last
-# definition wins). Guarded so a missing sibling never crashes this fail-open hook — the detector
-# fails open when hook_path_safe_key is unavailable.
+# Source hook-utils for hook_path_safe_key: the agent_id → path-safe counter-key transform
+# advisory-subagent-budget.sh uses to locate its per-agent tool_use counter — reused NOT reinvented
+# so the budget-truncation detector keys the same counter file (a divergent transform mis-locates it).
+# Sourced BEFORE emit_error → the richer 7-param override wins (last-def-wins); guarded, so a missing
+# sibling never crashes this fail-open hook.
 # shellcheck source=hook-utils.sh
 [[ -r "${BASH_SOURCE%/*}/hook-utils.sh" ]] && source "${BASH_SOURCE%/*}/hook-utils.sh"
 
@@ -19,21 +17,15 @@ emit_error() {
     "${code}" "${severity}" "$(basename "${0}" .sh)" "${msg_en}" "${msg_ko}" "${suggest_en}" "${suggest_ko}" "${ctx}" >&2
 }
 
-# require_safety_marker <flag-name>
-# Returns 0 (marker present → authorized) ONLY when the marker file
+# require_safety_marker <flag-name> — returns 0 (authorized) ONLY when the marker file
 #   ${SAFETY_OVERRIDE_DIR:-${HOME}/.claude/data/safety-overrides}/<flag>.authorized
-# exists and is a readable regular file. Any other condition → return 1 (absent).
-#
-# Marker-path convention (MUST stay identical to the Python sibling
-# learning-aggregator.py): ~/.claude/data/safety-overrides/<flag>.authorized.
-# SAFETY_OVERRIDE_DIR is a test-sandbox override (default = the live path).
-#
-# Fail-SAFE toward the SAFE state: this is consumed by safety DISABLE switches, so
-# the safe direction is "marker absent → switch stays ON". Any read ambiguity
-# (path unreadable, stat error) is therefore treated as ABSENT (return 1), never
-# as authorized. SECURITY: this gates ACCIDENTAL/casual env-disable only — an
-# operator with filesystem access can still create the marker; it bounds the
-# control to "not silently/accidentally off", not "tamper-proof".
+# exists and is a readable regular file; any other condition → return 1 (absent).
+# Marker-path convention MUST stay identical to the Python sibling learning-aggregator.py
+# (~/.claude/data/safety-overrides/<flag>.authorized); SAFETY_OVERRIDE_DIR is a test-sandbox override.
+# Fail-SAFE: consumed by safety DISABLE switches, so "marker absent → switch stays ON"; any read
+# ambiguity (path unreadable, stat error) resolves to ABSENT (return 1), never authorized.
+# SECURITY: this gates ACCIDENTAL/casual env-disable only — an operator with filesystem access can
+# still create the marker; it bounds the control to "not silently/accidentally off", not "tamper-proof".
 require_safety_marker() {
   local flag="${1:-}"
   [[ -z "${flag}" ]] && return 1
@@ -67,6 +59,15 @@ cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
 KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal'}
+
+# Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
+# match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
+_INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summary'}
+# Closed inline-delimiter set, enumerated by codepoint so the exact members are unambiguous and a
+# new variant is a conscious addition (never editor-encoding drift): pipe U+007C · middot U+00B7 ·
+# bullet U+2022 · dot-operator U+22C5. Built from ints → the source stays ASCII (no non-ASCII byte
+# to mis-encode). None of the four is regex-special inside a character class.
+_INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
 
 def diag(msg):
     line = f"[outcome-record] DIAG: {msg}"
@@ -186,7 +187,20 @@ def _effective_transcript_path(payload_d):
     # transcript_path. Single resolution point reused by the [COMPLETION] parse,
     # the tool_use count, and the write-target collection so all three read the
     # same (subagent) source rather than the parent transcript.
-    return _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
+    own = _resolve_subagent_transcript(payload_d)
+    if own:
+        return own
+    # Subagent (agent_id present) whose OWN transcript is unresolvable — e.g. a
+    # workflow-controller/root SubagentStop: on SubagentStop the payload
+    # transcript_path points at the PARENT (see _resolve_subagent_transcript), so
+    # falling back to it would count the PARENT's tool_use / summary against this
+    # spawn, synthesizing a polluted phantom row. Suppress the parent fallback for
+    # that case → the tool_use count degrades to 0 and the row is phantom-dropped
+    # instead of synthesized. Keep the fallback for the main-session / non-subagent
+    # case (no agent_id), where transcript_path IS the correct own transcript.
+    if payload_d.get('agent_id', ''):
+        return ''
+    return payload_d.get('transcript_path', '') or ''
 
 
 def _last_assistant_text_from_transcript(transcript_path):
@@ -364,6 +378,29 @@ else:
         parse_tier = 2
         completion = parse_completion_body(m_tier2.group(1))
 
+# Inline single-line tolerance (ultracode/workflow schema-mode) — recover ONLY after the multi-line
+# tiers miss (their precedence is unchanged). These subagents emit the whole block as ONE line: tag
+# + delimiter-joined fields, NO newline after the tag, NO [/COMPLETION] close — so _T1/_T2 (both
+# require a newline right after the tag) miss it and the structured fields would be discarded →
+# synthesized. LINE-ANCHORED + NON-DOTALL (MULTILINE only, unlike _T1/_T2) so `.+`/`$` never span
+# into following transcript lines. A COMPLETE recovered block is given parse_tier=1 (complete-block
+# semantics) so it is never re-labelled truncated_completion downstream.
+if parse_tier == 0:
+    m_inline = re.search(r'^[ \t]*\[COMPLETION\][ \t]+(.+)$', msg, re.MULTILINE)
+    if m_inline:
+        inline_body = m_inline.group(1)
+        # Strip an optional same-line [/COMPLETION] sentinel before splitting.
+        inline_body = re.sub(r'[ \t]*\[/COMPLETION\][ \t]*$', '', inline_body)
+        # Delimiters → newlines, then reuse parse_completion_body. Greedy left-to-right: the leading
+        # known fields (result/task_type/metric_pass/confidence) bind before a summary value that
+        # itself carries a delimiter — a segment with no KNOWN_FIELD colon appends to the current value.
+        inline_fields = parse_completion_body(re.sub(_INLINE_DELIM_CLASS, '\n', inline_body))
+        # Guard: require >=1 CORE field so prose merely mentioning [COMPLETION] with a stray
+        # delimiter does NOT match (parse_completion_body already drops unknown keys).
+        if _INLINE_CORE_FIELDS & set(inline_fields):
+            parse_tier = 1
+            completion = inline_fields
+
 if parse_tier == 0:
     parse_tier = 3  # keyword-based inference fallback
 
@@ -498,7 +535,13 @@ def _transcript_readable(transcript_val):
 
 
 _pred_recovered = (agent_type not in ('subagent_stop_missing', 'agent_id_missing', '', 'unknown'))
-_pred_transcript = _transcript_readable(d.get('transcript_path', ''))
+# Predicate (ii) keys on the SUBAGENT's OWN transcript, not the raw payload
+# transcript_path: on SubagentStop the payload transcript_path is the PARENT, so a
+# readable parent would falsely satisfy (ii) and keep a phantom workflow-controller
+# row alive (REAL_AGENT=1 → the quiet phantom-drop below is defeated and a polluted
+# row is synthesized). A real continuation still resolves its own transcript, so (ii)
+# stays true for it — no regression to leaf / recovered / happy paths.
+_pred_transcript = _transcript_readable(_resolve_subagent_transcript(d))
 _pred_summary = not _is_stub_summary(summary)
 real_agent = '1' if (_pred_recovered or _pred_transcript or _pred_summary) else '0'
 
@@ -980,17 +1023,14 @@ fi
 REVISION_COUNT="${S_REVISION_COUNT}"
 # Seed from raw [COMPLETION] value (preserves 0-vs-absent); regex fallback overrides to -1 below
 EVALUATIVE_SIGNAL="${C_EVALUATIVE_SIGNAL}"
-# FILES feeds the PG files_modified column (text[]). FORWARD-ONLY population fix:
-#   OLD (discontinuity): the agent-declared path left FILES="" unconditionally, so every
-#   agent-emitted row landed with an empty files_modified — the per-type file fallback in the
-#   grader (and the feature verified_pass check) had nothing to read.
-#   NEW: populate from GRADER_FILES_WIDE (the already-extracted [COMPLETION] files: field) so a
-#   feature row's test-file path reaches the grader + the DB. Newlines/tabs → spaces, then runs
-#   of separators collapse to ", " — yielding a clean comma list for _pg_outcome_dualwrite.py's
-#   _norm_text_array (which splits on commas). The synthesized path below still overrides FILES
-#   from SYNTH_FILES (synthesized rows have no [COMPLETION] block, so GRADER_FILES_WIDE is empty).
-#   HISTORICAL rows already persisted with empty files_modified are NOT repaired here — the Step 6
-#   re-grade defaults those feature rows to 'unverified' (acknowledged data loss, NOT a hidden fail).
+# FILES feeds the PG files_modified column (text[]). FORWARD-ONLY fix: the agent-declared path once
+# left FILES="" unconditionally, so every agent row landed with empty files_modified — the grader
+# per-type file fallback + the feature verified_pass check had nothing to read. Now populate from
+# GRADER_FILES_WIDE (the already-extracted [COMPLETION] files: field) so a feature row's test-file path
+# reaches the grader + DB (newlines/tabs → spaces, separator runs collapse to ", " — a clean comma
+# list for _pg_outcome_dualwrite.py's _norm_text_array). The synthesized path below still overrides
+# FILES from SYNTH_FILES (synthesized rows have no [COMPLETION] block). HISTORICAL empty-files rows are
+# NOT repaired — the Step 6 re-grade defaults those feature rows to 'unverified' (acknowledged data loss, NOT a hidden fail).
 FILES=""
 if [ -n "${GRADER_FILES_WIDE}" ]; then
   # newlines/tabs (multi-line files:) → commas, then collapse separator runs (a run of 2+
@@ -1048,12 +1088,11 @@ case "${AGENT_TYPE:-}" in
   *) ;;
 esac
 
-# phantom-termination record-gate. A subagent_stop_missing row with NO real-agent
-# signal (REAL_AGENT==0: agent_type unrecovered + no on-disk transcript + stub summary)
-# is a phantom SubagentStop — zero on-disk lifecycle, never a real agent. Drop it the
-# same way the conversation-only / all-signals-absent paths do (diag + exit 0,
-# hook stays non-blocking). Real continuations keep a transcript file (predicate ii)
-# and main-session/recovered/agent_id_missing rows never reach this branch.
+# phantom-termination record-gate: a subagent_stop_missing row with NO real-agent signal
+# (REAL_AGENT==0 — agent_type unrecovered + no on-disk transcript + stub summary) is a phantom
+# SubagentStop (zero on-disk lifecycle, never a real agent). Drop it like the conversation-only /
+# all-signals-absent paths (diag + exit 0, hook stays non-blocking). Real continuations keep a
+# transcript file (predicate ii); main-session/recovered/agent_id_missing rows never reach this branch.
 if [ "${ATTRIBUTION_SOURCE}" = "subagent-stop-missing" ] && [ "${REAL_AGENT}" -eq 0 ]; then
   printf '[outcome-record] skip: phantom subagent-stop (no recovery, no transcript, stub summary), agent=%s\n' \
     "${AGENT_TYPE}" >&2
@@ -1096,13 +1135,12 @@ if [ "${PARSE_TIER}" = "3" ] \
   && [ "${TOOL_USE_COUNT}" -eq 0 ] \
   && [ "${HAS_STRUCTURED}" != "true" ]; then
   ATTRIBUTION_SOURCE="conversation-only"
-  # T2 loud-fail (shared-self-improve-hygiene "Precondition Loud-Fail Principle"): a real
-  # SubagentStop that yields ZERO recorded outcomes is the payload-drift regression signature
-  # — the subagent ran but neither its [COMPLETION] block nor any tool_use could be sourced
-  # (e.g. the transcript-source fallback failed to resolve agent-<id>.jsonl). Surface it as a
-  # VISIBLE warn marker rather than silently absorbing it. A genuine main-session conversational
-  # turn (Stop/PreCompact/SessionStart) is NOT a SubagentStop → stays the quiet info skip.
-  # Exit stays 0: this is observability, not a blocking gate (hook non-blocking contract).
+  # T2 loud-fail (shared-self-improve-hygiene "Precondition Loud-Fail Principle"): a real SubagentStop
+  # yielding ZERO recorded outcomes is the payload-drift regression signature — the subagent ran but
+  # neither its [COMPLETION] block nor any tool_use could be sourced (transcript-source fallback failed
+  # to resolve agent-<id>.jsonl). Surface a VISIBLE warn marker, not silent absorption; a genuine
+  # main-session turn (Stop/PreCompact/SessionStart) is NOT a SubagentStop → stays the quiet info skip.
+  # Exit stays 0: observability, not a blocking gate (hook non-blocking contract).
   if [ "${HOOK_EVENT}" = "SubagentStop" ]; then
     printf '[outcome-record] LOUD-FAIL: SubagentStop yielded 0 records (parse_tier=3, tool_use=0, no [COMPLETION] sourced from transcript) agent=%s session=%s agent_id=%s\n' \
       "${AGENT_TYPE}" "${SESSION_ID}" "${AGENT_ID}" >&2
@@ -1126,15 +1164,13 @@ if [ "${PARSE_TIER}" = "3" ] \
 fi
 
 # detect_budget_truncation — PRIMARY hard-kill discriminator for the completion-synthesized branch.
-# A [COMPLETION]-absent, tool_use≥1 turn whose cumulative per-agent_id tool_use counter (persisted
-# by advisory-subagent-budget.sh) sits at/over the SUBAGENT_TOOL_BUDGET threshold is a budget/turn
-# HARD-KILL — the agent was killed at its cap mid-work — NOT a "forgot the [COMPLETION] block"
-# completion. Reads the counter with the SAME hook_path_safe_key transform + env contract
-# advisory-subagent-budget.sh uses (single SoT; a divergent key mis-locates the file). Returns
-# 0 = budget-truncation · 1 = fail-open (not a budget kill, OR any signal absent/unreadable, OR
-# advisory disabled). NEVER errors — every failure mode returns 1, so the caller keeps
-# completion-synthesized. Origin discriminator (hook_is_subagent contract): agent_id present ⇒
-# nested sub-worker; absent ⇒ main-session orchestrator, which carries no per-agent tool budget.
+# A [COMPLETION]-absent, tool_use≥1 turn whose cumulative per-agent_id tool_use counter (persisted by
+# advisory-subagent-budget.sh) sits at/over SUBAGENT_TOOL_BUDGET is a budget/turn HARD-KILL (killed at
+# its cap mid-work), NOT a "forgot the [COMPLETION] block". Reads the counter with the SAME
+# hook_path_safe_key transform + env contract advisory-subagent-budget.sh uses (single SoT; a divergent
+# key mis-locates the file). Returns 0=budget-truncation, 1=fail-open (not a budget kill / signal
+# absent/unreadable / advisory disabled) — NEVER errors, so the caller keeps completion-synthesized.
+# Origin discriminator (hook_is_subagent): agent_id present ⇒ nested sub-worker; absent ⇒ main-session orchestrator (no per-agent tool budget).
 detect_budget_truncation() {
   # Kill-switch parity: advisory disabled ⇒ the counter is not maintained ⇒ no reliable signal.
   [[ -n "${SUBAGENT_TOOL_BUDGET_OFF:-}" ]] && return 1
@@ -1167,19 +1203,27 @@ detect_budget_truncation() {
 
 # completion-synthesized path: [COMPLETION] absent + tool_use≥1 (passed the conversation-only
 # skip) = a deliverable-producing turn. Synthesize the record from the transcript instead of
-# keyword inference. Three distinguishable attribution values arise here:
+# keyword inference. Four distinguishable attribution values can hold on entry here:
+#   truncated_completion     — a tier-2 open-no-close block ALREADY relabelled above (:1121)
 #   structuredoutput-derived — terminal successfully-consumed StructuredOutput (schema-mode emit)
 #   budget-truncation        — the on-disk tool_use counter confirms a budget/turn HARD-KILL
 #   completion-synthesized   — the default: work delivered, [COMPLETION] simply absent (daemon signal)
 if [[ "${HAS_STRUCTURED}" != "true" ]]; then
-  # Discriminator ORDER: structuredoutput-derived BEFORE budget-truncation. The budget counter is a
-  # cumulative >=40 HEURISTIC, while a terminal consumed StructuredOutput is DIRECT evidence of
-  # non-truncation — a hard-kill cannot leave a paired non-error tool_result in terminal position.
-  # Successful schema runs routinely sit at/over 40 tool_uses (the 40-52 band); budget-first would
-  # keep exactly those rows budget-truncation and pollute daemon_cycle's clusterable negatives.
-  # if/elif keeps the three labels mutually exclusive by construction — no path before this block
-  # sets any of them, so a later arm can never clobber an earlier assignment.
-  if [[ "${TERMINAL_SO}" = "1" ]]; then
+  # MONOTONIC single precedence ladder — no synthesis label ever clobbers an EXISTING one.
+  # truncated_completion (set at the :1121 tier-2 relabel) is ALREADY-claimed: it takes top precedence
+  # so a later arm cannot flip it. The pre-fix bug was exactly this clobber — a tier-2 open block
+  # (HAS_STRUCTURED=false) fell through to completion-synthesized (or budget-truncation), erasing the
+  # truncation signal. Below the guard the order holds: structuredoutput-derived > budget-truncation >
+  # completion-synthesized. ORDER rationale (structuredoutput-derived FIRST): the budget counter is a
+  # cumulative >=40 HEURISTIC, while a terminal consumed StructuredOutput is DIRECT non-truncation
+  # evidence — a hard-kill cannot leave a paired non-error tool_result in terminal position, and
+  # successful schema runs sit in the 40-52 band, so budget-first would mislabel exactly those rows +
+  # pollute daemon_cycle's clusterable negatives. structuredoutput-derived needs parse_tier=3 and
+  # truncated_completion parse_tier=2 → structurally exclusive; the guard's live interaction is with
+  # budget-truncation (both co-occur on a tier-2 block at/over budget). if/elif keeps the four mutually exclusive.
+  if [[ "${ATTRIBUTION_SOURCE}" = "truncated_completion" ]]; then
+    : # keep the existing tier-2 truncation label — never downgraded to a synthesis label
+  elif [[ "${TERMINAL_SO}" = "1" ]]; then
     ATTRIBUTION_SOURCE="structuredoutput-derived"
   elif detect_budget_truncation; then
     ATTRIBUTION_SOURCE="budget-truncation"
@@ -1212,12 +1256,10 @@ DOWNGRADE_ORIGIN=""
 # The Korean glob patterns in guess_task_type are language tokenizers over the transcript text.
 JUDGE_TEXT=$(printf '%s %s' "$MSG_HEAD" "$MSG_TAIL" | tr '[:upper:]' '[:lower:]')
 
-# role_default_task_type — non-code agent's role-appropriate fallback task_type.
-# SINGLE SoT alignment: must match _pg_outcome_dualwrite.py::_role_default_task_type and the
-# core-outcome-record.md Role → Allowed task_types table. Prefix-match so a versioned/suffixed
-# agent id still resolves. Code agents (dev-*) and any unmatched agent → empty (caller falls
-# back to keyword inference / 'feature'). The grader unknown-case branch is the third consumer
-# that MUST agree with these two.
+# role_default_task_type — non-code agent's role-appropriate fallback task_type. SINGLE SoT: must
+# match _pg_outcome_dualwrite.py::_role_default_task_type and the core-outcome-record.md Role → Allowed
+# table. Prefix-match so a versioned/suffixed agent id resolves; code agents (dev-*) + any unmatched →
+# empty (caller falls back to keyword inference / 'feature'). The grader unknown-case branch is the third consumer that MUST agree.
 role_default_task_type() {
   case "${AGENT_TYPE:-}" in
     glass-atrium-qa-code-reviewer*) echo "review" ;;
@@ -1232,14 +1274,12 @@ role_default_task_type() {
   esac
 }
 
-# role_task_type_allowed — is task_type $1 within ${AGENT_TYPE}'s Role → Allowed allowlist?
-# SINGLE SoT alignment with the core-outcome-record.md Role → Allowed task_types table and the
-# _pg_outcome_dualwrite.py::_role_task_type_allowed mirror. Echoes "1" (allowed) / "0" (off-role).
-# A role NOT enumerated here (dev-* / unknown) has no constraining allowlist → always "1" (the
-# DEV allowlist is broad: bug-fix/feature/refactor/cleanup/research/plan). Prefix-match so a
-# versioned/suffixed agent id resolves. This is the LAYER-3 mis-classification guard: an off-role
-# writer task_type (e.g. intel-planner emitting bug-fix) is reclassified to its role default
-# BEFORE grading, so the grader never runs a code regex on a non-code deliverable.
+# role_task_type_allowed — is task_type $1 within ${AGENT_TYPE}'s Role → Allowed allowlist? SINGLE
+# SoT with the core-outcome-record.md Role → Allowed table and the _pg_outcome_dualwrite.py mirror.
+# Echoes "1" (allowed) / "0" (off-role). A role NOT enumerated (dev-* / unknown) has no constraining
+# allowlist → always "1" (DEV allowlist is broad: bug-fix/feature/refactor/cleanup/research/plan).
+# Prefix-match so a versioned/suffixed id resolves. LAYER-3 mis-classification guard: an off-role
+# writer task_type is reclassified to its role default BEFORE grading, so the grader never runs a code regex on a non-code deliverable.
 role_task_type_allowed() {
   local _tt="${1:-}"
   case "${AGENT_TYPE:-}" in
@@ -1263,14 +1303,11 @@ role_task_type_allowed() {
   esac
 }
 
-# task_type_has_hard_test_bar — echoes "1" when $1 is a task_type carrying a block-resident
-# hard test bar, "0" otherwise (the no-test-bar set). The hard-bar set is EXACTLY {bug-fix,
-# feature} — the SAME conceptual SoT as lib/code-based-grader.sh, whose per-task-type case
-# promotes ONLY bug-fix (test+pass phrasing) and feature (test/spec file path) to verified_pass;
-# every other type (refactor/plan/research + the 4 non-code review/diagnosis/doc/cleanup) has no
-# hard bar and defaults to unverified. Expressed as the 2-element complement (NOT a re-listed
-# 7-element no-test-bar set) so there is no new divergent task_type list to drift — the no-test-bar
-# membership is derived as "not bug-fix and not feature", mirroring the grader's check structure.
+# task_type_has_hard_test_bar — echoes "1" when $1 carries a block-resident hard test bar, "0"
+# otherwise. The hard-bar set is EXACTLY {bug-fix, feature} — SAME conceptual SoT as
+# lib/code-based-grader.sh (which promotes ONLY bug-fix via test+pass phrasing and feature via a
+# test/spec file path to verified_pass; every other type defaults unverified). Expressed as the
+# 2-element complement (NOT a re-listed 7-element no-test-bar set) so no divergent list drifts — membership is "not bug-fix and not feature", mirroring the grader's check structure.
 task_type_has_hard_test_bar() {
   case "${1:-}" in
     bug-fix | feature) echo "1" ;;
@@ -1312,16 +1349,14 @@ else
   TASK_TYPE=$(guess_task_type)
 fi
 
-# LAYER-3 Role → Allowed allowlist enforcement (BEFORE grading). A 9-set-valid writer task_type
-# is still off-role when it falls outside the agent's allowlist (e.g. intel-planner emitting
-# bug-fix, meta-prompt-engineer emitting feature). Honoring it unconditionally lets the grader
-# run a code regex against a non-code deliverable → structurally guaranteed false fail/pass. So an
-# off-role type is reclassified to the agent's role default; if the role has no default (dev-* /
-# unknown — broad allowlist, never off-role here), TASK_TYPE is left unchanged.
-# WAS_OFF_ROLE preserves the off-role determination for the downstream review_flag gate (the
-# polar-mismatch trigger must not fire on a structurally-expected metric_pass=false from an
-# off-role writer). Captured from role_task_type_allowed (the SoT) BEFORE reclassification rewrites
-# TASK_TYPE to the role default — same single allowlist authority, no divergent list.
+# LAYER-3 Role → Allowed allowlist enforcement (BEFORE grading). A 9-set-valid writer task_type is
+# still off-role when outside the agent's allowlist (e.g. intel-planner emitting bug-fix). Honoring it
+# unconditionally would let the grader run a code regex against a non-code deliverable → a structurally
+# guaranteed false fail/pass, so an off-role type is reclassified to the agent's role default; if the
+# role has no default (dev-* / unknown — broad allowlist, never off-role) TASK_TYPE is left unchanged.
+# WAS_OFF_ROLE preserves the off-role determination for the downstream review_flag gate (the polar-
+# mismatch trigger must not fire on a structurally-expected metric_pass=false), captured from
+# role_task_type_allowed (the SoT) BEFORE reclassification — same single allowlist authority, no divergent list.
 WAS_OFF_ROLE="false"
 if [[ "$(role_task_type_allowed "${TASK_TYPE}")" == "0" ]]; then
   WAS_OFF_ROLE="true"
@@ -1337,12 +1372,10 @@ if [[ "$(role_task_type_allowed "${TASK_TYPE}")" == "0" ]]; then
   fi
 fi
 
-# Regex correction-signal fallback (capture-only).
-# Fires ONLY when the agent emitted no correction field (AGENT_PROVIDED_CORRECTION==0) — the
-# agent value always wins. The regex captures a candidate; the aggregation-layer write-gate
-# does the real filtering (over-capture permitted). On match → directive_hint + revision_count +
-# evaluative_signal=-1. find_prior_revision_count is authoritative for the numeric delta here.
-# T9_CORRECTION_DETECTION=false disables the pipeline.
+# Regex correction-signal fallback (capture-only). Fires ONLY when the agent emitted no correction
+# field (AGENT_PROVIDED_CORRECTION==0) — the agent value always wins. The regex captures a candidate;
+# the aggregation-layer write-gate does the real filtering (over-capture permitted). On match →
+# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is authoritative for the numeric delta. T9_CORRECTION_DETECTION=false disables the pipeline.
 T9_CORRECTION_DETECTION="${T9_CORRECTION_DETECTION:-true}"
 
 if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}" -eq 0 ]; then
@@ -1542,12 +1575,10 @@ PYEOF
         '' | *[!0-9]*) T9_NEW_COUNT=1 ;;
       esac
 
-      # Stage 1 match = CANDIDATE captured → record revision_count + evaluative_signal=-1
-      # (records THAT a correction occurred). directive_hint stays EMPTY on this regex
-      # fallback: the only value available here is the raw user message, and writing raw
-      # text would violate the English-only directive_hint invariant (core-outcome-record.md)
-      # and leak Korean transcript/PII. A distilled English directive_hint can only come from
-      # the agent's own [COMPLETION] emit.
+      # Stage 1 match = CANDIDATE captured → record revision_count + evaluative_signal=-1 (records
+      # THAT a correction occurred). directive_hint stays EMPTY on this regex fallback: the only value
+      # here is the raw user message, and writing it would violate the English-only directive_hint
+      # invariant (core-outcome-record.md) + leak Korean transcript/PII. A distilled hint can only come from the agent's own [COMPLETION] emit.
       T9_FINAL_DETECTED="1"
       REVISION_COUNT="${T9_NEW_COUNT}"
       EVALUATIVE_SIGNAL="-1"
@@ -1584,26 +1615,20 @@ if [ "$HAS_STRUCTURED" = "true" ]; then
       "Ensure the [COMPLETION] block includes metric_pass: true|false"
   fi
 else
-  # completion-synthesized path — [COMPLETION] absent + tool_use ≥1.
-  # Reachability guarantee: the conversation-only skip already exited above → here is always
-  # deliverable-producing. Use transcript-accurate synthesis instead of crude keyword inference.
-  #
-  # However, rate-limit / timeout / quota / context-window termination is a legitimate blocked signal,
-  # so it takes priority over synthesized done_with_concerns (a turn cut off by rate-limit is not a successful deliverable).
-  # All other deliverable-producing turns → done_with_concerns (writes ≥1 AND analysis-only writes 0):
-  #   the agent completed work but emitted no [COMPLETION] block, so the deliverable is delivered-but-unverified.
-  #   needs_context is reserved for genuine "agent asked the user a question" cases — an analysis-only
-  #   synthesized turn IS a delivered result, not a question to the user, so it must not record needs_context.
-  # WHY done_with_concerns (not needs_review): OutcomeResult enum =
-  #   {done, done_with_concerns, blocked, needs_context, fail}. needs_review is absent from
-  #   the enum → _pg_outcome_dualwrite._norm_result silent-maps it to done = re-introducing the
-  #   overconfident done that synthesis tried to block. done_with_concerns is enum-valid + carries
-  #   the "delivered but unverified" meaning → passes the PG INSERT without the overconfident done.
+  # completion-synthesized path — [COMPLETION] absent + tool_use ≥1. Reachability: the conversation-only
+  # skip already exited above → here is always deliverable-producing; use transcript-accurate synthesis,
+  # not crude keyword inference. Rate-limit / timeout / quota / context-window termination is a legitimate
+  # blocked signal → takes priority over synthesized done_with_concerns (a rate-limit-cut turn is not a
+  # successful deliverable). All other deliverable-producing turns → done_with_concerns (delivered but
+  # unverified — work done, no [COMPLETION] block); needs_context is reserved for a genuine "agent asked
+  # the user a question" — an analysis-only synthesized turn IS a delivered result, not a question.
+  # WHY done_with_concerns not needs_review: OutcomeResult enum = {done, done_with_concerns, blocked,
+  # needs_context, fail}; needs_review is absent → _pg_outcome_dualwrite._norm_result silent-maps it to
+  # done (re-introducing the overconfident done synthesis blocks), whereas done_with_concerns is enum-valid + means "delivered but unverified" → passes the PG INSERT.
   if [ "${ATTRIBUTION_SOURCE}" = "structuredoutput-derived" ]; then
-    # A terminal successfully-consumed StructuredOutput IS the delivered result (the engine
-    # consumes only that call — schema-mode contract). RESULT=done SUPERSEDES the JUDGE_TEXT
-    # rate-limit keyword heuristic: a successfully consumed emit refutes the rate-limit-cut
-    # hypothesis, and qa reviewers legitimately write "rate limit" in prose.
+    # A terminal successfully-consumed StructuredOutput IS the delivered result (engine consumes only
+    # that call — schema-mode contract). RESULT=done SUPERSEDES the JUDGE_TEXT rate-limit keyword
+    # heuristic: a consumed emit refutes the rate-limit-cut hypothesis, and qa reviewers write "rate limit" in prose.
     RESULT="done"
   else
     case "$JUDGE_TEXT" in
@@ -1619,10 +1644,9 @@ else
   CONFIDENCE="low"
   # Block absent = no agent metric_pass claim → explicit false (distinct from EMPTY).
   METRIC_PASS="false"
-  # concerns synthesis — synthesized rows otherwise carry an empty concerns column (the
-  # Python extractor only fills concerns from a real [COMPLETION] "## Concerns" block). Make the
-  # monitor's concerns column honest about why the row landed here. The R2 done row needs its
-  # OWN arm — the done_with_concerns gate below never fires for RESULT=done.
+  # concerns synthesis — synthesized rows otherwise carry an empty concerns column (the Python
+  # extractor fills concerns only from a real [COMPLETION] "## Concerns" block); make the monitor's
+  # column honest. The R2 done row needs its OWN arm — the done_with_concerns gate never fires for RESULT=done.
   if [ "${ATTRIBUTION_SOURCE}" = "structuredoutput-derived" ] && [ -z "${CONCERNS}" ]; then
     CONCERNS="[synthesized] deliverable was a StructuredOutput tool call — schema-validated, writer-unverified"
   elif [ "${RESULT}" = "done_with_concerns" ] && [ -z "${CONCERNS}" ]; then
@@ -1641,40 +1665,33 @@ else
   fi
 fi
 
-# review_flag auto-computation: tag true when confidence and metric_pass disagree.
-# Exposed in frontmatter so learning-aggregator can collect the evaluation-vs-measurement gap as a learning signal.
-# - high + false → self-overconfidence candidate (subjective judgment says success but the mechanical check fails)
-# - low + true → underestimation candidate (the mechanical check passes but confidence is reported low)
-# - metric_pass EMPTY → writer-side reporting deficit; flagging it review-needed surfaces
-#   instruction ambiguity for the self-improvement loop.
-# - Instrumentation row (attribution_source = subagent-stop-missing / agent-id-missing /
-#   completion-missing) is NOT a writer-side ambiguity signal even when metric_pass is EMPTY
-#   (the writer is absent to begin with) → do NOT assign review_flag. hook-input and
-#   cron-derived are legitimate writer-side / cron-side signals, so they keep review_flag=true
-#   on EMPTY metric_pass.
-# - otherwise (matching cases like high/true, medium/true, low/false) → false
-# Code-Based grader cross-verify runs here (after RESULT/CONFIDENCE/METRIC_PASS finalize,
-# just before REVIEW_FLAG computation): a deterministic check on the author-side metric_pass=true
-# claim. A mismatch (writer-true + check-false) sets review_flag=true. An infra row
-# (orchestrator/subagent_stop_missing/unknown attribution) is a pass-through. The function
-# always exits 0 — returns only the verdict on stdout (pass|fail|skip).
-# files: field is extracted directly from the [COMPLETION] body (via sed — macOS BSD awk consistent).
+# review_flag auto-computation — tag true when confidence and metric_pass disagree; exposed in
+# frontmatter so learning-aggregator collects the evaluation-vs-measurement gap as a learning signal.
+# - high + false → self-overconfidence candidate (judgment says success, mechanical check fails)
+# - low + true → underestimation candidate (check passes but confidence reported low)
+# - metric_pass EMPTY → writer-side reporting deficit; flagging it surfaces instruction ambiguity.
+# - Instrumentation row (subagent-stop-missing / agent-id-missing / completion-missing) is NOT a
+#   writer-side ambiguity signal even on EMPTY metric_pass (no writer present) → do NOT flag;
+#   hook-input / cron-derived are legitimate writer/cron signals → keep review_flag=true on EMPTY.
+# - otherwise (high/true, medium/true, low/false) → false.
+# Code-Based grader cross-verify runs here (after RESULT/CONFIDENCE/METRIC_PASS finalize, before
+# REVIEW_FLAG): a deterministic check on the metric_pass=true claim; a mismatch (writer-true + check-
+# false) sets review_flag=true. An infra row (orchestrator/subagent_stop_missing/unknown) is a pass-
+# through; the function always exits 0, returning the verdict on stdout (pass|fail|skip). files: is extracted directly from the [COMPLETION] body (sed — macOS BSD awk consistent).
 if [[ "${HAS_STRUCTURED}" = "true" ]]; then
-  # CODE_BASED_GATE=off env branch — bypasses the grader call on a rollback trigger
-  # (false-negative rate ≥ 15% over 1 week). Case-insensitive ("off"/"OFF"/"Off") all
-  # request the disable. Empty / unset = active default (fail-closed: only an intentional
-  # disable is even considered). Single SoT with rollback-3tier.sh.
+  # CODE_BASED_GATE=off env branch — bypasses the grader on a rollback trigger (false-negative rate
+  # ≥ 15% over 1 week). Case-insensitive; empty/unset = active default (fail-closed: only an intentional
+  # disable is considered). Single SoT with rollback-3tier.sh.
   _CBG_FLAG="${CODE_BASED_GATE:-}"
   _CBG_FLAG_LC="$(printf '%s' "${_CBG_FLAG}" | tr '[:upper:]' '[:lower:]')"
-  # The env-only disable is not sufficient: disabling the grader-PRIMARY safety control ALSO
-  # requires a one-time authorization marker (~/.claude/data/safety-overrides/code-based-gate.authorized).
+  # The env-only disable is not sufficient: disabling the grader-PRIMARY safety control ALSO requires a
+  # one-time authorization marker (~/.claude/data/safety-overrides/code-based-gate.authorized).
   # require_safety_marker is fail-safe-to-ON: any read ambiguity resolves to ABSENT, so an
   # unreadable/missing marker keeps the grader ACTIVE (the safe direction). Two off-paths:
-  #   off + marker present  → grader SKIPPED (authorized disable; consequence WARN).
-  #   off + marker absent   → off IGNORED, grader stays ACTIVE + loud WARN naming how to
-  #                           authorize. This blocks an accidental/unauthorized env-disable.
-  # SECURITY: the marker bounds the control to "not silently/accidentally off" — an operator
-  # with filesystem access can still create the marker (not a tamper-proof gate).
+  #   off + marker present → grader SKIPPED (authorized disable; consequence WARN).
+  #   off + marker absent  → off IGNORED, grader stays ACTIVE + loud WARN naming how to authorize (blocks an accidental/unauthorized env-disable).
+  # SECURITY: the marker bounds the control to "not silently/accidentally off" — an operator with
+  # filesystem access can still create the marker (not a tamper-proof gate).
   _CBG_SKIP="false"
   if [[ "${_CBG_FLAG_LC}" = "off" ]]; then
     if require_safety_marker "code-based-gate"; then
@@ -1728,14 +1745,12 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
 fi
 
 # D1 — task_type-aware polar-mismatch gate. The high+false overconfidence trigger compares two
-# NON-COMPARABLE fields: confidence = writer self-report on WORK quality vs metric_pass = a
-# per-task-type completion BAR. For a no-test-bar task_type OR an off-role row, metric_pass=false
-# is STRUCTURALLY EXPECTED even on perfect work (no hard test bar exists / the deliverable is not a
-# code artifact) — so high+false there is a definitional non-signal, not overconfidence. Gate it
-# off for those structural rows; keep it for a GENUINE code row (dev-* on-role bug-fix/feature),
-# where high+false is a real overconfidence signal. Predicate (the SAME SoT the python D2 stage
-# mirrors):  STRUCTURAL  ==  (task_type_has_hard_test_bar == 0)  OR  (WAS_OFF_ROLE == true).
-# The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED.
+# NON-COMPARABLE fields: confidence = writer self-report on WORK quality vs metric_pass = a per-task-
+# type completion BAR. For a no-test-bar task_type OR an off-role row, metric_pass=false is STRUCTURALLY
+# EXPECTED even on perfect work → high+false there is a definitional non-signal, not overconfidence.
+# Gate it off for those structural rows; keep it for a GENUINE code row (dev-* on-role bug-fix/feature).
+# Predicate (SAME SoT the python D2 mirrors): STRUCTURAL == (task_type_has_hard_test_bar == 0) OR
+# (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED.
 REVIEW_FLAG="false"
 if [[ "${CONFIDENCE}" = "high" ]] && [[ "${METRIC_PASS}" = "false" ]]; then
   if [[ "$(task_type_has_hard_test_bar "${TASK_TYPE}")" == "0" ]] || [[ "${WAS_OFF_ROLE:-false}" == "true" ]]; then
@@ -1761,12 +1776,11 @@ elif [[ -z "${METRIC_PASS}" ]]; then
   esac
 fi
 
-# Code-Based grader verdict is ADVISORY only. metric_pass is the WRITER self-report and is
-# NEVER force-overwritten. A grader/writer disagreement is surfaced via review_flag + the
-# separate grader_verdict / downgrade_origin columns, never by silently rewriting the writer
-# value (core-outcome-record.md: grader is a separate column).
-#   verified_fail → review_flag=true (disagreement surfaced; writer metric_pass left intact)
-#   verified_pass / unverified → no review_flag effect (preserve polar-mismatch / EMPTY branches)
+# Code-Based grader verdict is ADVISORY only. metric_pass is the WRITER self-report and is NEVER
+# force-overwritten — a grader/writer disagreement is surfaced via review_flag + the separate
+# grader_verdict / downgrade_origin columns, never by rewriting the writer value (core-outcome-record.md:
+# grader is a separate column). verified_fail → review_flag=true (writer metric_pass left intact);
+# verified_pass / unverified → no review_flag effect (preserve the polar-mismatch / EMPTY branches).
 if [[ "${GRADER_VERDICT}" = "verified_fail" ]]; then
   REVIEW_FLAG="true"
   emit_error "DATA-100" "info" \
@@ -1777,13 +1791,11 @@ if [[ "${GRADER_VERDICT}" = "verified_fail" ]]; then
     "{\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\",\"verdict\":\"verified_fail\"}"
 fi
 
-# DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass
-# mutation). Decision order:
-#   synthesized record (no [COMPLETION]) → 'synthesized'
-#   writer metric_pass=false (honest negative) → 'writer_false'
-#   writer metric_pass=true AND grader verified_fail → 'writer_true_downgraded'
-#     (the mis-measurement case — logged, not silently force-flipped)
-#   otherwise (verified_pass / unverified, or no positive claim) → empty → NULL (no downgrade)
+# DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
+# Decision order: synthesized record (no [COMPLETION]) → 'synthesized'; writer metric_pass=false
+# (honest negative) → 'writer_false'; writer metric_pass=true AND grader verified_fail →
+# 'writer_true_downgraded' (the mis-measurement case — logged, not silently force-flipped);
+# otherwise (verified_pass / unverified, or no positive claim) → empty → NULL (no downgrade).
 if [[ "${HAS_STRUCTURED}" != "true" ]]; then
   DOWNGRADE_ORIGIN="synthesized"
 elif [[ "${METRIC_PASS}" = "false" ]]; then
@@ -1812,13 +1824,11 @@ TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 # T9_PY_FILE is created by Stage 1 detection (:- fallback when unset).
 trap 'rm -f "$PY_SCRIPT_FILE" "${T9_PY_FILE:-}"' EXIT INT TERM
 
-# Build the markdown body passed to PG as the body_md column. Frontmatter is omitted —
-# frontmatter fields are stored as first-class columns in core.outcomes (record_ts, agent,
-# task_type, etc.), so embedding them in body_md would be redundant; the renderer CLI
-# re-synthesizes frontmatter from columns for human-readable output.
-# NOTE: the body labels below (Agent/Task type/Result/Summary) are an intentional output
-# contract — `core-outcome-record.md` requires the `## Summary` section and the renderer/daemon
-# consume these labels; they are record content, not dev comments.
+# Build the markdown body passed to PG as the body_md column. Frontmatter is omitted — its fields are
+# stored as first-class columns in core.outcomes (record_ts, agent, task_type, ...), so embedding them
+# in body_md would be redundant; the renderer CLI re-synthesizes frontmatter from columns for output.
+# NOTE: the body labels below (Agent/Task type/Result/Summary) are an intentional output contract —
+# `core-outcome-record.md` requires the `## Summary` section and the renderer/daemon consume these labels (record content, not dev comments).
 BODY_MD=$(
   printf '# Outcome Record\n\n'
   printf '%s\n' "- **Agent**: ${AGENT_TYPE}"
@@ -1847,30 +1857,23 @@ emit_error "DATA-070" "info" \
   "{\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\",\"result\":\"${RESULT}\"}"
 
 # PHASE3-OUTCOME-DUALWRITE-BEGIN
-# Write to PostgreSQL — PG is the single sink. The body_md column carries the full
-# markdown body so the renderer CLI can reconstruct human-readable output on demand.
-# The signals[] envelope below is the single sink for correction-detection events.
-# DB contract: psycopg.connect("dbname=glass_atrium") only — no -h/host/localhost.
-# Sibling-of-this-script resolution — hooks are consumed in place from the store
-# (~/.claude/hooks is no longer farmed), so a HOME-anchored path breaks fresh installs.
+# Write to PostgreSQL — PG is the single sink; the body_md column carries the full markdown body so
+# the renderer CLI can reconstruct output, and the signals[] envelope below is the single sink for
+# correction-detection events. DB contract: psycopg.connect("dbname=glass_atrium") only — no -h/host.
+# Sibling-of-this-script resolution — hooks run in place from the store (not farmed), so a HOME-anchored path breaks fresh installs.
 PG_HELPER="${BASH_SOURCE%/*}/_pg_outcome_dualwrite.py"
 if [ -x "${PG_HELPER}" ]; then
-  # Build JSON envelope: outcome dict mirrors frontmatter (parameter-name 3-layer
-  # discipline), plus the correction signal (if detected) and an empty learning_hint
-  # (learning-aggregator backfill is a separate sub-phase).
-  # jq -n with --arg/--argjson keeps all values quoted-safe — no shell injection.
-  # attribution_source: passes the branch result (hook-input/cron-derived/
-  # agent-id-missing/completion-missing) to the PG core.outcomes.attribution_source
-  # column. Empty-string → null: jq if-then-else writes a NULL column on empty
-  # values explicitly (not relying on the text_or_null normalizer in the helper).
+  # Build JSON envelope: outcome dict mirrors frontmatter (parameter-name 3-layer discipline) + the
+  # correction signal (if detected) + an empty learning_hint (learning-aggregator backfill is a separate
+  # sub-phase). jq -n with --arg/--argjson keeps all values quoted-safe — no shell injection.
+  # attribution_source passes the branch result to the PG core.outcomes.attribution_source column;
+  # empty-string → null via jq if-then-else (explicit NULL, not relying on the helper's text_or_null normalizer).
   #
-  # SIG_EMIT — correction-signal gate: the signals[] envelope fires on ANY correction
-  # signal, not only the regex (sig_stage1). Fires when:
-  #   (regex matched) OR (revision_count>0) OR (evaluative_signal==-1)
-  #   OR (directive_hint non-empty).
-  # This lets the agent-emitted correction populate core.correction_signals.
-  # SIG_DELTA = the numeric delta: prior+1 from the hook on the regex path
-  # (authoritative cross-outcome accumulation), else the agent-reported REVISION_COUNT.
+  # SIG_EMIT — correction-signal gate: the signals[] envelope fires on ANY correction signal, not only
+  # the regex (sig_stage1). Fires when (regex matched) OR (revision_count>0) OR (evaluative_signal==-1)
+  # OR (directive_hint non-empty), letting an agent-emitted correction populate core.correction_signals.
+  # SIG_DELTA = the numeric delta: prior+1 from the hook on the regex path (authoritative cross-outcome
+  # accumulation), else the agent-reported REVISION_COUNT.
   SIG_EMIT=0
   if [ "${T9_STAGE1:-0}" = "1" ] \
     || { [ -n "${REVISION_COUNT}" ] && [ "${REVISION_COUNT}" -gt 0 ]; } \

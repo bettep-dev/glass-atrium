@@ -1,29 +1,17 @@
 #!/usr/bin/env bash
 # progress-tracker.sh — Cross-session progress file management.
 #
-# Why: GLOBAL_RULES "Cross-Session Continuity" mandates that long tasks
-# (3+ turns) maintain a memory/progress-{slug}.md file. This library
-# centralises slug derivation, atomic init, status updates, completion
-# marking, and listing of open files so hooks and scripts share one
-# implementation.
+# GLOBAL_RULES "Cross-Session Continuity" mandates long tasks (3+ turns) keep a
+# memory/progress-{slug}.md; this library centralises slug derivation, atomic
+# init, status update, completion, and open-file listing for hooks and scripts.
 #
-# Interface (functions exported when sourced):
-#   progress_init       <task_name> [slug_override]
-#                       Creates the progress file if missing. Idempotent —
-#                       never overwrites an existing in_progress file.
-#                       Echoes the resulting absolute path on stdout.
-#   progress_update     <slug>
-#                       Refreshes the last_updated frontmatter field.
-#   progress_complete   <slug>
-#                       Flips status to "completed" and updates last_updated.
-#                       No-op if the file is missing or already completed.
-#   progress_list_open  Prints absolute paths of all status: in_progress
-#                       files, newest first (mtime sort). Silent if none.
+# Interface (exported when sourced; CLI dispatcher uses same names as $1):
+#   progress_init <task_name> [slug]  idempotent create, echoes abs path
+#   progress_update <slug>            refresh last_updated frontmatter
+#   progress_complete <slug>          flip status:completed (no-op if missing/done)
+#   progress_list_open                print in_progress abs paths, newest first
 #
-# CLI dispatcher: same names as positional first arg.
-#
-# Compatibility: Bash 3.2+ (macOS stock), no external deps beyond hook-utils.sh
-# (python3 is reused for safe YAML writes — same dep already required).
+# Compatibility: Bash 3.2+ (macOS stock); only dep is hook-utils.sh (+ its python3).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -37,11 +25,9 @@ if [[ -n "${_PROGRESS_TRACKER_LOADED:-}" ]]; then
 fi
 readonly _PROGRESS_TRACKER_LOADED=1
 
-# Resolve the REAL script directory: scripts/ is consumed in place from the
-# store, so ../hooks resolves to the sibling store hooks/ dir (hook-utils.sh).
-# readlink -f stays defensive — if the script ever arrives through a symlink it
-# still lands on the real tree (macOS 12.3+ ships readlink -f; same realpath
-# discipline as cost-tracker.sh).
+# Resolve the REAL script dir: scripts/ runs in place from the store, so ../hooks
+# resolves to the sibling store hooks/ (hook-utils.sh). readlink -f is defensive
+# against symlink arrival (macOS 12.3+; same realpath discipline as cost-tracker.sh).
 _progress_self="$(readlink -f -- "${BASH_SOURCE[0]}")" || _progress_self="${BASH_SOURCE[0]}"
 _PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${_progress_self}")" && pwd)"
 
@@ -50,23 +36,16 @@ _PROGRESS_SCRIPT_DIR="$(cd -- "$(dirname -- "${_progress_self}")" && pwd)"
 # shellcheck source=/dev/null
 source "${_PROGRESS_SCRIPT_DIR}/../hooks/hook-utils.sh"
 
-# Progress files live alongside MEMORY.md in the user's auto-memory project.
-# This path is fixed by GLOBAL_RULES Cross-Session Continuity rule.
-# Claude-Code project-dir cwd encoding: $HOME with '/' -> '-' (leading '-').
+# Progress files live alongside MEMORY.md; path fixed by GLOBAL_RULES Cross-Session
+# Continuity. Claude-Code project-dir cwd encoding: $HOME '/' -> '-' (leading '-').
 _proj_dir="-${HOME#/}"
 _proj_dir="${_proj_dir//\//-}"
 readonly PROGRESS_DIR="${HOME}/.claude-personal/projects/${_proj_dir}/memory"
 readonly PROGRESS_TEMPLATE="${HOME}/.claude/agents/templates/progress.md"
 
-# ----------------------------------------------------------------------------
-# Slug derivation — sanitize a free-form task name into [a-z0-9-]+.
-# Rules (matches spec convention progress-{slug}.md):
-#   1. Lowercase
-#   2. Replace any run of non-alnum with a single hyphen
-#   3. Strip leading/trailing hyphens
-#   4. Cap at 60 chars (longer slugs harm readability and shell argv limits)
-#   5. Empty result falls back to "task-<epoch>" so callers always get a slug
-# ----------------------------------------------------------------------------
+# Slug derivation — free-form task name → [a-z0-9-]+ (spec: progress-{slug}.md):
+# lowercase → non-alnum runs to single hyphen → trim hyphens → cap 60 chars
+# (argv limits) → empty falls back to "task-<epoch>" so callers always get a slug.
 progress_slug_from_name() {
   local raw="${1:-}"
   local slug
@@ -89,26 +68,20 @@ progress_slug_from_name() {
   printf '%s\n' "${slug}"
 }
 
-# ----------------------------------------------------------------------------
 # Path helper — absolute progress file path for a slug.
-# ----------------------------------------------------------------------------
 progress_path_for_slug() {
   local slug="${1:?slug required}"
   printf '%s/progress-%s.md\n' "${PROGRESS_DIR}" "${slug}"
 }
 
-# ----------------------------------------------------------------------------
-# Atomic write helper — writes content to dest via .tmp + mv (POSIX atomic
-# rename within the same FS). Permissions: rely on umask (typically 0644).
-# ----------------------------------------------------------------------------
+# Atomic write helper — content → dest via tmp + mv (POSIX atomic rename,
+# same FS). Permissions rely on umask (typically 0644).
 _progress_atomic_write() {
   local dest="${1:?dest required}"
   local content="${2:-}"
   local tmp
   tmp="$(mktemp -t "progress-XXXXXX")"
-  # Cleanup tmp on any failure path. Trap is local to the function via
-  # subshell discipline at the call site (functions inherit caller traps,
-  # so we install a one-shot trap that restores RETURN behaviour).
+  # Clean up tmp on the mv-failure path; a successful rename leaves dest in place.
   printf '%s' "${content}" >"${tmp}"
   if ! mv -f -- "${tmp}" "${dest}"; then
     rm -f -- "${tmp}" 2>/dev/null || true
@@ -117,11 +90,8 @@ _progress_atomic_write() {
   return 0
 }
 
-# ----------------------------------------------------------------------------
-# progress_init — create progress file when absent, no-op when present.
-# Args: $1=task_name (required, free-form), $2=slug (optional override)
-# Echoes absolute path on stdout. Returns 0 always (idempotency contract).
-# ----------------------------------------------------------------------------
+# progress_init — create file when absent, no-op when present. Idempotency
+# contract: always returns 0, echoes abs path. $1=task_name, $2=slug override.
 progress_init() {
   local task_name="${1:-}"
   if [[ -z "${task_name}" ]]; then
@@ -159,9 +129,8 @@ progress_init() {
   local now_iso
   now_iso="$(date +%Y-%m-%dT%H:%M)"
 
-  # YAML safety: task_name may contain " or \, which would break the
-  # double-quoted scalar in the template. Escape via python3 (already a
-  # required dep for hook-utils.sh) — bash parameter expansion alone
+  # YAML safety: task_name may contain " or \ that break the quoted scalar.
+  # Escape via python3 (already a hook-utils.sh dep) — bash param expansion
   # cannot handle backslash-then-quote ordering reliably.
   local task_name_escaped
   if ! task_name_escaped="$(
@@ -181,12 +150,9 @@ sys.stdout.write(
     return 1
   fi
 
-  # Substitute the four template placeholders. Bash parameter expansion
-  # avoids sed escaping pitfalls (task_name may legitimately contain /, &).
-  # Order matters only for {task_name} (used both bare in body and quoted
-  # in frontmatter); the escaped form is identical in both contexts since
-  # the body sits inside a markdown heading and any escape sequence is
-  # printed literally — acceptable trade-off for a single substitution path.
+  # Substitute placeholders via bash param expansion (avoids sed escaping pitfalls
+  # since task_name may contain /, &). The escaped {task_name} form is identical
+  # bare-in-body and quoted-in-frontmatter — acceptable for a single path.
   rendered="${rendered//\{task_name\}/${task_name_escaped}}"
   rendered="${rendered//\{slug\}/${slug}}"
   rendered="${rendered//\{timestamp\}/${now_iso}}"
@@ -201,11 +167,8 @@ sys.stdout.write(
   return 0
 }
 
-# ----------------------------------------------------------------------------
-# Frontmatter mutation helper — replaces a single key's value within the
-# top YAML block. Atomic via tmp+mv. Used by update/complete.
-# Args: $1=path, $2=key, $3=new_value
-# ----------------------------------------------------------------------------
+# Frontmatter mutation helper — replace a single key's value in the top YAML
+# block, atomic via tmp+mv. Used by update/complete. $1=path $2=key $3=value.
 _progress_set_field() {
   local path="${1:?path required}"
   local key="${2:?key required}"
@@ -215,9 +178,8 @@ _progress_set_field() {
     return 1
   fi
 
-  # python3 is the safest tool for YAML mutation — sed regex on multi-line
-  # frontmatter is brittle (delimiters, escaping). We rewrite only the
-  # frontmatter block, never the body.
+  # python3 for YAML mutation (sed regex on multi-line frontmatter is brittle);
+  # rewrites only the frontmatter block, never the body.
   local updated
   if ! updated="$(
     PROGRESS_FILE="${path}" \
@@ -291,10 +253,7 @@ PYEOF
   _progress_atomic_write "${path}" "${updated}"
 }
 
-# ----------------------------------------------------------------------------
-# progress_update — bump last_updated to now. Used to keep ordering signal
-# fresh during long sessions.
-# ----------------------------------------------------------------------------
+# progress_update — bump last_updated to now (keeps the ordering signal fresh).
 progress_update() {
   local slug="${1:?slug required}"
   local path
@@ -307,10 +266,8 @@ progress_update() {
   _progress_set_field "${path}" "last_updated" "${now_iso}"
 }
 
-# ----------------------------------------------------------------------------
-# progress_complete — flip status: completed and refresh last_updated.
-# Returns 0 on success or no-op (file missing / already completed).
-# ----------------------------------------------------------------------------
+# progress_complete — flip status:completed + refresh last_updated. Returns 0
+# on success or no-op (file missing / already completed).
 progress_complete() {
   local slug="${1:?slug required}"
   local path
@@ -334,10 +291,8 @@ progress_complete() {
   return 0
 }
 
-# ----------------------------------------------------------------------------
-# progress_list_open — print absolute paths of in_progress files, newest
-# first by mtime. Silent (no output, exit 0) when none exist.
-# ----------------------------------------------------------------------------
+# progress_list_open — print abs paths of in_progress files, newest first by
+# mtime. Silent (no output, exit 0) when none exist.
 progress_list_open() {
   if [[ ! -d "${PROGRESS_DIR}" ]]; then
     return 0
@@ -376,10 +331,7 @@ progress_list_open() {
   done | xargs -0 ls -t 2>/dev/null
 }
 
-# ----------------------------------------------------------------------------
-# CLI dispatcher — only runs when the script is executed directly,
-# not when sourced.
-# ----------------------------------------------------------------------------
+# CLI dispatcher — runs only when executed directly, not when sourced.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   if [[ $# -lt 1 ]]; then
     cat >&2 <<'USAGE'

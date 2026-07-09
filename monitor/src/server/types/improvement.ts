@@ -229,16 +229,10 @@ export interface ImprovementResponse {
   outcome_summary: ImprovementOutcomeSummary;
   ctm_epm_buckets: ImprovementCtmEpmBuckets;
   proposals: ImprovementProposalRow[];
-  // Status-aware actionable feed for the Kanban "Awaiting approval" column.
-  // status ∈ {pending, snoozed} AND safety-tier ONLY (auto-tier is terminal by
-  // construction — no auto actionable row), fetched WITHOUT the recency LIMIT that
-  // bounds `proposals` — so actionable rows are never crowded out of the action
-  // surface by the most-recent-50 terminal slice. `proposals` stays the
-  // Applied/Rejected history feed (LIMIT-bounded). FE wires THIS key into
-  // groupByColumnI (safety column); `proposals` drives history.
-  // Same row shape as `proposals` (ImprovementProposalRow). Bounded by a generous
-  // defensive cap (ACTIONABLE_FETCH_CAP) — at the ~80-row proposals scale every
-  // actionable row fits; the cap only guards a pathological backlog.
+  // Status-aware actionable feed for the Kanban "Awaiting approval" column: status ∈
+  // {pending, snoozed} AND safety-tier ONLY (auto-tier is terminal — no actionable row),
+  // fetched WITHOUT the LIMIT that bounds `proposals` so actionable rows are never crowded
+  // out. Same row shape; bounded by ACTIONABLE_FETCH_CAP (guards only a pathological backlog).
   actionable_proposals: ImprovementProposalRow[];
   join_meta: ImprovementJoinMeta;
   // Project Convention Probe telemetry. Always present; empty `agents` array +
@@ -251,14 +245,13 @@ export interface ImprovementResponse {
   // COUNT(*) FILTER on missing column would error; route gates query on column
   // presence via try/catch fallback OR migration apply confirmed via /api/health).
   tier_breakdown_30d: ImprovementTierBreakdown;
-  // confidence_observed × promotion_tier distribution. Isolated SELECT
-  // (Promise.allSettled) — touches late-added NULL-heavy columns, so a column
-  // gap degrades to empty buckets, not a 503.
-  // Always present (empty buckets array during forward-looking NULL phase).
+  // confidence_observed × promotion_tier distribution. Isolated SELECT (Promise.allSettled)
+  // — touches late-added NULL-heavy columns, so a column gap degrades to empty buckets, not a
+  // 503. Always present (empty buckets during the forward-looking NULL phase).
   confidence_distribution: ImprovementConfidenceDistribution;
 }
 
-// ----- /api/improvement/stats (UI cards) -------------------------------------
+// /api/improvement/stats (UI cards)
 
 export interface ImprovementStatsResponse {
   fetched_at: string;
@@ -283,15 +276,11 @@ export interface ImprovementStatsResponse {
   cycles_nothing_generated_7d: number;
 }
 
-// ----- orphan learning-table read surfaces -----------------------------------
+// orphan learning-table read surfaces
 //
-// These 3 core tables are populated by hooks/daemons (learning-aggregator.py +
-// autoagent loop) but NO route queried them; the improvement screen re-derived
-// CTM/EPM from proposals+outcomes instead of the canonical learning_log.
-// Read-only surfacing, monitor matches system — no behavior change.
-//
-// All 3 are bounded (LIMIT) + recency-ordered (ORDER BY) + summarized (aggregate
-// rollups alongside recent rows), mirroring the /api/improvement/stats card shape.
+// 3 core tables populated by hooks/daemons (learning-aggregator.py + autoagent loop),
+// surfaced read-only. All 3 are bounded (LIMIT) + recency-ordered (ORDER BY) + summarized
+// (aggregate rollups alongside recent rows), mirroring the /api/improvement/stats card shape.
 
 // GET /api/improvement/learning-log — canonical learning-aggregator patterns
 // (core.learning_log). Replaces the proposals+outcomes CTM/EPM re-derivation as
@@ -375,7 +364,7 @@ export interface ImprovementLoopEventsResponse {
   events: ImprovementLoopEventRow[];
 }
 
-// ----- error envelope --------------------------------------------------------
+// error envelope
 
 // Discriminated union — every branch carries the `error` literal as discriminator.
 export type ImprovementErrorBody =

@@ -123,7 +123,7 @@ export async function resetBrowserForTests(): Promise<void> {
   launchHealth = { status: "unprobed" };
 }
 
-// ----- internals -------------------------------------------------------------
+// internals
 
 async function launchBrowser(): Promise<Browser> {
   try {

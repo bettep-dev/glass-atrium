@@ -1,41 +1,36 @@
 #!/usr/bin/env bash
 # Stop — session token/cost tracking
 #
-# Stop hook stdin payload only carries {session_id, transcript_path, cwd,
-# permission_mode, hook_event_name} per Claude Code's official spec — it does
-# NOT carry token usage. This hook opens transcript_path and aggregates usage
-# directly from the transcript jsonl. Pricing is resolved through the shared
-# pricing_loader (lib/pricing_loader.py) over the pricing.json SoT — the hook
-# owns advisory emission keyed on the loader's resolution label.
+# Stop hook stdin carries {session_id, transcript_path, cwd, permission_mode,
+# hook_event_name} (Claude Code spec) but NOT token usage → this hook opens
+# transcript_path and aggregates usage from the jsonl directly. Pricing resolves
+# via the shared pricing_loader (lib/pricing_loader.py) over the pricing.json SoT;
+# the hook owns advisory emission keyed on the loader's resolution label.
 #
 # Token-collection-completeness model:
-#   * MAIN turn row — the CURRENT turn only (the segment between this Stop and
-#     the previous REAL-user boundary). A real-user boundary is a type=="user"
-#     record with NO tool_result block in message.content (tool_result records
-#     are ALSO type=="user" with a LIST content carrying {type:"tool_result"};
-#     they are NOT turn boundaries). The boundary record's top-level `uuid`
-#     keys the row as the stable dedup_key → re-firing the same turn UPSERTs the
-#     same row (kind='turn').
-#   * SUBAGENT rows — Task/workflow agent tokens live in SEPARATE files under
-#     <session_dir>/subagents/**/agent-*.jsonl (flat + nested workflows/). One
-#     row per file, keyed by the agent file id (kind='subagent', stop_reason
-#     NULL, num_turns 0 → no turn-stats pollution). A recursive glob is
-#     mandatory (a flat glob misses the nested workflow agents).
-#   * SUM-invariance: per-turn rows partition the same msg.id-dedup'd set, so the
+#   * MAIN turn row — the CURRENT turn only (this Stop back to the previous
+#     REAL-user boundary). Boundary = type=="user" with NO tool_result block
+#     (tool_result records are also type=="user" but carry a LIST content with
+#     {type:"tool_result"} → NOT boundaries). The boundary `uuid` is the stable
+#     dedup_key → re-firing the turn UPSERTs the same row (kind='turn').
+#   * SUBAGENT rows — agent tokens live in SEPARATE files under
+#     <session_dir>/subagents/**/agent-*.jsonl. One row per file keyed by agent
+#     id (kind='subagent', stop_reason NULL, num_turns 0 → no turn-stats
+#     pollution). Recursive glob mandatory — a flat glob misses nested workflows.
+#   * SUM-invariance: per-turn rows partition the same msg.id-dedup'd set → the
 #     SUM read recovers the full session total; subagent rows ADD on top.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# Shared pricing loader import seam: __file__ is absent under `python3 -c`, so
-# the parser heredoc locates hooks/lib through this env var (sys.path insert)
-# instead. Exported into the parser env below; the .bats _parser_body runner
-# sets the same variable (plus a fixture PRICING_SOT_PATH + remote kill-switch).
-# BASH_SOURCE MUST be canonicalized first: production invokes this hook via the
-# ~/.claude/hooks/cost-tracker.sh symlink, and the unresolved dirname points at
-# ~/.claude/hooks/lib — a real dir WITHOUT pricing_loader.py → import crash
-# (DATA-184 on every Stop). Same realpath discipline as the monitor.
+# Pricing loader import seam: __file__ is absent under `python3 -c`, so the
+# parser locates hooks/lib via this env var (sys.path insert); the .bats
+# _parser_body runner sets the same var (+ fixture PRICING_SOT_PATH + remote
+# kill-switch). BASH_SOURCE MUST be canonicalized first — production invokes this
+# hook through the ~/.claude/hooks/cost-tracker.sh symlink, whose unresolved
+# dirname points at ~/.claude/hooks/lib (a real dir WITHOUT pricing_loader.py) →
+# import crash (DATA-184 on every Stop). Realpath discipline matches the monitor.
 COST_TRACKER_REAL="$(readlink -f -- "${BASH_SOURCE[0]}")"
 PRICING_LIB_DIR="${COST_TRACKER_REAL%/*}/lib"
 export PRICING_LIB_DIR
@@ -51,8 +46,7 @@ SESSION_ID="${CLAUDE_SESSION_ID:-orchestrator}"
 
 INPUT=$(hook_read_input)
 
-# Stop hook stdin spec (verified):
-#   { session_id, transcript_path, cwd, permission_mode, hook_event_name }
+# Extract the two fields consumed here (full verified Stop stdin spec in header).
 HOOK_SESSION_ID=$(hook_get_field "${INPUT}" "session_id")
 TRANSCRIPT_PATH=$(hook_get_field "${INPUT}" "transcript_path")
 
@@ -62,38 +56,36 @@ if [[ -n "${HOOK_SESSION_ID}" ]]; then
   SESSION_ID="${HOOK_SESSION_ID}"
 fi
 
-# Per-session subagent mtime cache (cost optimization, NOT correctness). Maps
-# agent-id → last-scanned file mtime so an unchanged subagent file is skipped on
-# re-fire. Because the write path UPSERTs on (session_id, dedup_key), a stale or
-# absent cache only causes a harmless full re-scan — correctness never depends
-# on it. Sanitised filename: session_id may legitimately be a uuid, but guard
-# against path traversal by stripping anything but the safe id charset.
+# Per-session subagent mtime cache (optimization, NOT correctness): agent-id →
+# last-scanned mtime so an unchanged subagent file is skipped on re-fire. The
+# write path UPSERTs on (session_id, dedup_key), so a stale/absent cache only
+# forces a harmless full re-scan — correctness never depends on it. SAFE_SID
+# strips all but the safe id charset: session_id may be a uuid, but guard the
+# filename against path traversal.
 SAFE_SID="${SESSION_ID//[^A-Za-z0-9._-]/_}"
 MTIME_CACHE_DIR="${HOOK_LOG_DIR}/cost-subagent-mtime"
 MTIME_CACHE_FILE="${MTIME_CACHE_DIR}/${SAFE_SID}.json"
 
-# Parser stderr goes to a temp file (not /dev/null) so the intentional pricing
-# advisories — non-sot resolution (unknown model), multi-model, and
-# pricing-staleness — are RELAYED to real stderr below instead of being
-# silently discarded. Fail-open: trap cleans up the temp file on any exit.
+# Parser stderr → temp file (not /dev/null) so the intentional advisories
+# (non-sot resolution / multi-model / pricing-staleness) are RELAYED to real
+# stderr below instead of discarded. Trap cleans the temp file on any exit.
 PARSER_STDERR=$(mktemp "${TMPDIR:-/tmp}/cost-tracker-stderr.XXXXXX")
 trap 'rm -f "${PARSER_STDERR}"' EXIT INT TERM
 
-# Aggregate usage from transcript_path. Shell variables are passed via os.environ
-# to dodge SC2259 (heredoc + -c stdin conflict) AND to neutralise injection risk
-# from path strings containing quotes. The parser emits ONE JSON object per line:
-#   * exactly one MAIN row (kind='turn' on success, OR a parse_error / zero row);
-#   * zero or more SUBAGENT rows (kind='subagent'), one per scanned agent file.
-# The bash dual-write loop below feeds each emitted line to the PG writer.
-# Guarded capture: a non-zero parser exit (uncaught PricingSotError on a
-# corrupt/missing pricing.json SoT is the reachable trigger) inside a bare
-# command-substitution assignment would abort the hook under set -e BEFORE
-# the stderr relay below, and the EXIT trap would delete PARSER_STDERR —
-# destroying the loud-fail diagnostic. `|| PARSER_STATUS=$?` preserves the
-# exact exit code + any partial stdout so execution continues to the relay
-# and the DATA-184 loud-fail branch. The failure signal is PARSER_STATUS,
-# NOT PARSED emptiness (a late crash leaves partial valid JSON lines —
-# python flushes stdout at shutdown).
+# Aggregate usage from transcript_path. Shell vars cross via os.environ — dodges
+# SC2259 (heredoc + -c stdin conflict) AND neutralises injection from
+# quote-bearing path strings. Parser emits ONE JSON object per line: exactly one
+# MAIN row (kind='turn', or a parse_error / zero row) + zero or more SUBAGENT
+# rows (kind='subagent', one per agent file); the dual-write loop below feeds
+# each to the PG writer.
+# Guarded capture `|| PARSER_STATUS=$?`: a non-zero parser exit (reachable via an
+# uncaught PricingSotError on a corrupt/missing pricing.json SoT) inside a bare
+# command substitution would abort under set -e BEFORE the stderr relay, and the
+# EXIT trap would then delete PARSER_STDERR — destroying the loud-fail
+# diagnostic. Capturing the status preserves the exact exit code + partial stdout
+# so execution reaches the relay + the DATA-184 branch. The failure signal is
+# PARSER_STATUS, NOT PARSED-emptiness (a late crash still leaves partial valid
+# JSON — python flushes stdout at shutdown).
 # SC2016: the python body is single-quoted ON PURPOSE — values cross via
 # os.environ, never shell expansion (SC2259 + injection-hardening pattern).
 PARSER_STATUS=0
@@ -515,24 +507,22 @@ if cache_dirty and mtime_cache_file:
         pass
 ' 2>"${PARSER_STDERR}") || PARSER_STATUS=$?
 
-# Relay the parser's stderr (pricing advisories: unknown-model / multi-model /
-# staleness / subagent-read warnings — and, on a crash, the PricingSotError
-# traceback) to real stderr so they surface on the dashboard + logs. Empty
-# file → no-op. MUST precede the crash branch below: the diagnostic reaches
-# real stderr before any non-zero exit.
+# Relay parser stderr (advisories: unknown-model / multi-model / staleness /
+# subagent-read warnings — and, on a crash, the PricingSotError traceback) to
+# real stderr for dashboard + logs. Empty file → no-op. MUST precede the crash
+# branch below: the diagnostic reaches real stderr before any non-zero exit.
 if [[ -s "${PARSER_STDERR}" ]]; then
   cat -- "${PARSER_STDERR}" >&2
 fi
 
-# Parser crash → loud-fail on a DISTINCT persisted class. DATA-184 = "parser
-# crashed / pricing SoT invalid" (DATA-182 = python3-fallback empty output,
-# DATA-183 keys on model=unknown — different classes), so a pricing.json typo
-# is distinguishable on the monitor. Partial stdout is DISCARDED (a crashed
-# parser's row set is untrustworthy; the next successful fire re-emits
-# idempotently via the (session_id, dedup_key) UPSERT) and replaced by ONE
-# synthesized parse_error row with a crash-distinct dedup key so the failure
-# still reaches core.cost_events. The non-zero exit happens at the END of the
-# hook (never 2 — Stop-hook exit 2 has blocking semantics).
+# Parser crash → loud-fail on a DISTINCT persisted class: DATA-184 = "parser
+# crashed / pricing SoT invalid" (vs DATA-182 = python3-fallback empty, DATA-183
+# = model=unknown), so a pricing.json typo is distinguishable on the monitor.
+# Partial stdout is DISCARDED (a crashed parser's rows are untrustworthy; the
+# next successful fire re-emits idempotently via the (session_id, dedup_key)
+# UPSERT) and replaced by ONE synthesized parse_error row with a crash-distinct
+# dedup key so the failure still reaches core.cost_events. The non-zero exit
+# fires at the END of the hook (never 2 — Stop-hook exit 2 has blocking semantics).
 if [[ "${PARSER_STATUS}" -ne 0 ]]; then
   emit_error "DATA-184" "warn" \
     "cost-tracker parser crashed (exit ${PARSER_STATUS}) — pricing SoT invalid/unreadable or loader import failed; PricingSotError detail relayed on stderr" \
@@ -542,10 +532,10 @@ if [[ "${PARSER_STATUS}" -ne 0 ]]; then
 fi
 
 # Unknown-model advisory → persisted hook-failure path. stderr alone is
-# session-local; emit_error + a best-effort core.hook_failures row make a new
-# model id surface on the monitor the same day. Distinct ids joined with ","
-# and allowlist-sanitized — the value is interpolated into literal JSON below.
-# grep no-match exits 1 under pipefail → "|| true" keeps the no-unknowns path alive.
+# session-local; emit_error + a best-effort core.hook_failures row surface a new
+# model id on the monitor the same day. Distinct ids joined with "," and
+# allowlist-sanitized before interpolation into the literal JSON below. grep
+# no-match exits 1 under pipefail → "|| true" keeps the no-unknowns path alive.
 UNKNOWN_MODELS=""
 if [[ -s "${PARSER_STDERR}" ]]; then
   UNKNOWN_MODELS=$(grep -oE 'model=unknown:[^[:space:]]+' "${PARSER_STDERR}" \
@@ -584,12 +574,11 @@ except Exception:
 ' || true
 fi
 
-# PG core.cost_events is the single sink. Structured stderr emit_error calls are
-# observability signals, not file sinks. The parser emits one JSON object PER
-# LINE (one main turn row + N subagent rows); we surface a parse-error / fallback
-# advisory based on the FIRST line (the main row), matching the prior contract.
-# The DATA-181/182 signals key on a SUCCESSFUL parser run's output shape — a
-# crash is already classified DATA-184 above (never double-signaled here).
+# PG core.cost_events is the single sink; emit_error calls are observability
+# signals, not file sinks. The parser emits one JSON object per line (one main
+# turn row + N subagent rows); the parse-error / fallback advisory keys on the
+# FIRST line (the main row). DATA-181/182 key on a SUCCESSFUL run's output shape
+# — a crash is already classified DATA-184 above (never double-signaled here).
 if [[ "${PARSER_STATUS}" -eq 0 ]]; then
   FIRST_LINE=""
   if [[ -n "${PARSED}" ]]; then
@@ -611,24 +600,23 @@ if [[ "${PARSER_STATUS}" -eq 0 ]]; then
 fi
 
 # PHASE1-DUALWRITE-BEGIN
-# Dual-write each emitted parser line into core.cost_events. Failure here MUST
-# NOT block the hook. The PG envelope is built in python (avoids hand-rolled JSON
-# quoting bugs) per emitted line; the writer (_pg_dual_write.py) UPSERTs on
-# (session_id, dedup_key). When PARSED is empty we still emit one parse_error row
-# so the failure signal is carried. Const-12 / Const-16: psycopg via Unix socket
-# only — never -h.
+# Dual-write each parser line into core.cost_events; failure here MUST NOT block
+# the hook. The PG envelope is built in python per line (avoids hand-rolled JSON
+# quoting bugs); the writer (_pg_dual_write.py) UPSERTs on (session_id,
+# dedup_key). Empty PARSED still emits one parse_error row so the failure signal
+# is carried. Const-12 / Const-16: psycopg via Unix socket only — never -h.
 if [[ -z "${PARSED}" ]]; then
   # python3 fallback path — synthesise a minimal parse_error line so the failure
   # record reaches PG with a stable dedup_key.
   PARSED="{\"date\":\"${DATE}\",\"time\":\"${TIME}\",\"session_id\":\"${SESSION_ID}\",\"kind\":\"turn\",\"dedup_key\":\"parse_error:${SESSION_ID}@${DATE}T${TIME}\",\"parse_error\":true}"
 fi
 
-# Feed the whole multi-line parser output to a single python writer-driver via an
-# env var (same security pattern as the parser — no shell interpolation of the
-# JSON). The driver splits on newlines and writes each row through the helper.
-# PG_HELPER: sibling of the CANONICALIZED script path (same realpath discipline as
-# PRICING_LIB_DIR above — an unresolved dirname under a symlinked invocation would
-# point at a dir without the helper). Passed via env: __file__ absent under -c.
+# Feed the whole multi-line parser output to one python writer-driver via an env
+# var (same pattern as the parser — no shell interpolation of the JSON). The
+# driver splits on newlines and writes each row through the helper. PG_HELPER =
+# sibling of the CANONICALIZED script path (realpath discipline like
+# PRICING_LIB_DIR — a symlinked invocation's unresolved dirname would point at a
+# dir without the helper). Passed via env: __file__ absent under -c.
 # shellcheck disable=SC2016
 PG_LINES="${PARSED}" \
   SESSION_ID="${SESSION_ID}" \

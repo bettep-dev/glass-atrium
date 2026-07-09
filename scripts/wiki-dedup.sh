@@ -30,10 +30,8 @@ PY_MODULE="${SCRIPT_DIR}/wiki_dedup.py"
 # shellcheck source=lib/wiki-compile-lock.sh
 source "${SCRIPT_DIR}/lib/wiki-compile-lock.sh"
 
-# WIKI_ROOT: single source of truth for the wiki data root. Default = the
-# glass-atrium store. The python module's DEFAULT_WIKI_ROOT also reads this env
-# (authoritative seam); threading --wiki-root below is the belt-and-suspenders
-# explicit forward.
+# WIKI_ROOT: single source of truth for the wiki data root (default = glass-atrium store).
+# The python module's DEFAULT_WIKI_ROOT reads the same env (authoritative seam); --wiki-root below is the explicit forward.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 
 if [[ ! -f "${PY_MODULE}" ]]; then
@@ -41,7 +39,7 @@ if [[ ! -f "${PY_MODULE}" ]]; then
     exit 2
 fi
 
-# -- Parse CLI args ----------------------------------------------------------
+# Parse CLI args
 
 SKIP_LLM=0
 DRY_RUN=0
@@ -107,7 +105,7 @@ if ! [[ "${MAX_LLM_CALLS}" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 
-# -- Python binary -----------------------------------------------------------
+# Python binary
 
 PYTHON_BIN="${WIKI_DAEMON_PYTHON_BIN:-python3}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -115,13 +113,13 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     exit 3
 fi
 
-# -- Self-test short-circuit -------------------------------------------------
+# Self-test short-circuit
 
 if [[ "${SELF_TEST}" -eq 1 ]]; then
     exec "${PYTHON_BIN}" "${PY_MODULE}" --self-test
 fi
 
-# -- Resolve output JSON path ------------------------------------------------
+# Resolve output JSON path
 
 CYCLE_DATE="$(date -u +%Y-%m-%d)"
 REPORTS_DIR="${HOME}/.claude/data/daemon-reports"
@@ -135,7 +133,7 @@ fi
 # Ensure reports dir exists (no-op if present).
 mkdir -p "${REPORTS_DIR}"
 
-# -- Build Python argument list ----------------------------------------------
+# Build Python argument list
 
 PY_ARGS=("--wiki-root" "${WIKI_ROOT}" "--out-json" "${OUT_PATH}" "--max-llm-calls" "${MAX_LLM_CALLS}")
 
@@ -147,7 +145,7 @@ if [[ -n "${NOTES_DIR_OVERRIDE}" ]]; then
     PY_ARGS+=("--notes-dir" "${NOTES_DIR_OVERRIDE}")
 fi
 
-# -- Acquire shared lock + run -----------------------------------------------
+# Acquire shared lock + run
 
 set +e
 run_under_compile_lock wiki-dedup -- "${PYTHON_BIN}" "${PY_MODULE}" "${PY_ARGS[@]}"

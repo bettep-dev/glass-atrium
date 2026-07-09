@@ -1,6 +1,5 @@
-// Single SoT for model-config validation + pricing_known + per-call budget-cap math
-// (spec doc 36166). Consumed by routes/model-config.ts (GET/PUT validation + render) —
-// duplicating any of these sets in a consumer is a defect.
+// Single SoT for model-config validation + pricing_known + per-call budget-cap math (spec doc 36166).
+// Consumed by routes/model-config.ts — duplicating any of these sets in a consumer is a defect.
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -12,7 +11,7 @@ import type {
   ModelDomainKey,
 } from "./types/model-config.js";
 
-// ----- SoT-derived known-model roster (pricing.json, D3) ---------------------------
+// SoT-derived known-model roster (pricing.json, D3)
 
 // env override = test seam; default = the hooks-side pricing SoT the cost stack reads.
 function resolvePricingSotPath(): string {
@@ -24,15 +23,11 @@ function resolvePricingSotPath(): string {
 }
 
 /**
- * Known-model roster derived from the pricing SoT's `models` key set — the former
- * hardcoded KNOWN_MODEL_IDS mirror is deleted, so no lockstep copy survives (D3).
- * Read fresh per call, no cache: the SoT self-mutates out-of-band (pricing_loader F3
- * refresh + operator edits), and the sibling GET surfaces (settings.json /
- * daemon-config.json / frontmatter) are already read uncached per request — a ~1KB
- * read on a low-frequency config GET is cheaper than serving a stale roster until
- * restart. Fail-open: an unreadable/malformed SoT logs loudly and degrades THIS call
- * to an empty roster — known_models: [] + pricing_known: false — a config screen must
- * not hard-crash (500) on a missing committed file; the next call simply retries.
+ * Known-model roster derived from the pricing SoT's `models` key set (D3). Read fresh per call, no cache:
+ * the SoT self-mutates out-of-band (pricing_loader refresh + operator edits), and a ~1KB read on a
+ * low-frequency config GET beats serving a stale roster until restart. Fail-open: an unreadable/malformed
+ * SoT logs loudly and degrades THIS call to an empty roster (known_models: [] + pricing_known: false) —
+ * a config screen must not hard-crash (500) on a missing file; the next call simply retries.
  */
 export async function loadKnownModelIds(): Promise<ReadonlySet<string>> {
   const sotPath = resolvePricingSotPath();
@@ -53,23 +48,18 @@ export async function loadKnownModelIds(): Promise<ReadonlySet<string>> {
   }
 }
 
-// Legacy harness shorthand aliases — REMOVED as accepted values. Kept only as an
-// explicit reject-list (D2): the bare words still match FREE_TEXT_MODEL_PATTERN, so
-// dropping the accept branch alone would silently 200 them as free-text ids; this
-// guard turns them into a remediation 400 instead.
+// Explicit reject-list (D2): bare alias words still match FREE_TEXT_MODEL_PATTERN.
+// Dropping the accept branch alone would silently 200 them as free-text ids; this guard returns a remediation 400 instead.
 export const REJECTED_ALIAS_VALUES: ReadonlySet<string> = new Set(["sonnet", "haiku", "opus"]);
 
-// 'inherit' = no explicit model on the surface (frontmatter line removed / REPL key removed
-// → settings.json model governs).
+// 'inherit' = no explicit model on the surface (frontmatter/REPL key removed → settings.json model governs).
 export const INHERIT_VALUE = "inherit";
 
-// Free-text escape hatch — lowercase alnum + dot/hyphen/bracket, ≤128 (covers variant
-// suffixes like 'claude-fable-5[1m]').
+// Free-text escape hatch — lowercase alnum + dot/hyphen/bracket, ≤128 (covers variant suffixes like 'claude-fable-5[1m]').
 export const FREE_TEXT_MODEL_PATTERN = /^[a-z0-9.\-[\]]{1,128}$/;
 
-// Per-call budget caps are positive 2-decimal STRINGS end-to-end — daemon_config.py
-// passes them verbatim to `claude -p --max-budget-usd <value>`, so a JSON number 0.5
-// would drift from the validated '0.50' literal and break the CLI cap.
+// Per-call budget caps stay 2-decimal STRINGS end-to-end (daemon_config.py passes them verbatim to `claude -p --max-budget-usd`).
+// A JSON number 0.5 would drift from the validated '0.50' literal and break the CLI cap.
 export const BUDGET_VALUE_PATTERN = /^\d+\.\d{2}$/;
 
 // Max integer digits before the decimal — a per-call cap above this band is a fat-finger,
@@ -128,10 +118,8 @@ export interface BudgetDomainDef {
   applyMode: ApplyMode;
 }
 
-// Per-call hard-cap budgets the monitor write-throughs to daemon-config.json. Both keys are
-// read fresh at daemon module-init each launchd cycle → an edit applies next cycle, no restart.
-// haiku cap governs BOTH the autoagent generation call AND the wiki compile call (shared key);
-// pre-verify cap governs the autoagent pre-verify call only.
+// Per-call hard-cap budgets written through to daemon-config.json; both keys read fresh at daemon module-init each launchd cycle (edit applies next cycle, no restart).
+// haiku cap governs BOTH the autoagent generation AND wiki compile calls (shared key); pre-verify cap governs the autoagent pre-verify call only.
 export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
   {
     key: "budget.haiku_max_usd",
@@ -145,11 +133,9 @@ export const BUDGET_DOMAINS: ReadonlyArray<BudgetDomainDef> = [
   },
 ];
 
-// daemon-config.json keys the monitor once write-throughed but no longer manages — the
-// aggregate-limit pair the budget rework dropped in favor of per-call BUDGET_DOMAINS caps.
-// renderDaemonConfig deletes these so a single PUT self-heals a live file still carrying them
-// (the merge semantics preserve unknown external keys like _comment, so an explicit
-// deprecation list is the only clean removal path). Append future deprecations here.
+// daemon-config.json keys the monitor no longer manages (aggregate-limit pair dropped for per-call BUDGET_DOMAINS caps).
+// renderDaemonConfig deletes these so a single PUT self-heals a live file still carrying them.
+// Merge preserves unknown keys (_comment), so an explicit deprecation list is the only clean removal path — append future deprecations here.
 export const DEPRECATED_DAEMON_CONFIG_KEYS: ReadonlyArray<string> = [
   "cost_daily_limit_usd",
   "cost_monthly_limit_usd",
@@ -165,11 +151,9 @@ export function normalizeModelId(value: string): string {
 }
 
 /**
- * pricing_known: the pricing SoT carries a row for the value (after normalization),
- * or the value inherits the settings model. Anything else — bare aliases included,
- * the alias resolution branch is removed — → false (metered at the conservative
- * fallback rate — advisory warning in UI). Caller supplies the SoT roster
- * (loadKnownModelIds) so this stays a sync pure predicate.
+ * pricing_known: the pricing SoT carries a row for the value (after normalization), or the value inherits
+ * the settings model. Anything else (bare aliases included) → false — metered at the conservative fallback
+ * rate (advisory warning in UI). Caller supplies the SoT roster so this stays a sync pure predicate.
  */
 export function isPricingKnown(value: string | null, knownModelIds: ReadonlySet<string>): boolean {
   if (value === null) {
@@ -204,9 +188,8 @@ export function validateModelValue(def: ModelDomainDef, value: unknown): string 
 }
 
 /**
- * Validation reason for a per-call budget-cap value, or null when valid. Each cap is
- * validated INDEPENDENTLY — there is no cross-field invariant (the removed daily≤monthly
- * limit-pair semantics has no analogue for independent single-call caps).
+ * Validation reason for a per-call budget-cap value, or null when valid. Each cap is validated
+ * INDEPENDENTLY — no cross-field invariant (single-call caps have no daily≤monthly-style pairing).
  */
 export function validateBudgetValue(value: unknown): string | null {
   if (typeof value !== "string") {

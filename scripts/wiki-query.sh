@@ -35,7 +35,7 @@ readonly TOP_K=5
 
 log_err() { printf '[wiki-query] %s\n' "$*" >&2; }
 
-# ---- Parse args -----------------------------------------------------------
+# Parse args
 QUERY=""
 FILTER_TAG=""
 FILTER_TYPE=""
@@ -75,12 +75,10 @@ if [[ -z "${QUERY}" && -z "${FILTER_TAG}" && -z "${FILTER_TYPE}" ]]; then
   exit 0
 fi
 
-# ---- DB presence check ----------------------------------------------------
-# Distinguish a legitimately-empty store from a relocation-miss (Precondition
-# Loud-Fail): if the index/ dir exists but the .sqlite is absent, the configured
-# WIKI_ROOT points at a store whose DB went missing (e.g. a botched cutover) —
-# fail loud (exit 1) instead of silently reporting "empty". If index/ itself is
-# absent, the store was never initialized → legitimately empty (exit 0).
+# DB presence check
+# Loud-Fail: index/ present but .sqlite absent = relocation-miss (DB went
+# missing) → exit 1, not a silent "empty". index/ itself absent = never
+# initialized → legitimately empty, exit 0.
 if [[ ! -f "${DB_PATH}" ]]; then
   if [[ -d "${INDEX_DIR}" ]]; then
     log_err "index dir exists but DB is absent: ${DB_PATH}"
@@ -93,7 +91,7 @@ fi
 
 command -v python3 >/dev/null 2>&1 || { log_err "python3 not in PATH"; exit 1; }
 
-# ---- TTY color detection (passed to Python via env) -----------------------
+# TTY color detection (passed to Python via env)
 if [[ -t 1 ]]; then
   export WIKI_QUERY_TTY=1
 else

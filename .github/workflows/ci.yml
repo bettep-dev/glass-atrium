@@ -233,9 +233,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
   # git-txn / daemon-apply suites. `bats --recursive` over the 4 test roots
-  # picks up ALL 32 suites (8 test/ + 6 hooks/test/ + 14 scripts/test/ +
-  # 4 autoagent/test/) — a strict coverage increase over the old flat job's 13
-  # explicit paths, which silently omitted 19 suites. Every suite is hermetic
+  # picks up ALL 66 suites (30 test/ + 14 hooks/test/ + 17 scripts/test/ +
+  # 5 autoagent/test/) — a strict coverage increase over the old flat job's
+  # hand-listed explicit paths, which silently omitted any suite not on the list.
+  # Every suite is hermetic
   # (mktemp sandboxes + PATH-prepended stub binaries for
   # psql/createdb/launchctl/tmux/claude), so this job needs neither Postgres nor
   # launchd nor the claude CLI. None of the suites load bats-support/bats-assert
@@ -261,6 +262,11 @@ jobs:
       - name: Install bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
 
+      # `bats --jobs` shells out to GNU parallel; without it bats silently degrades
+      # to serial. Install it explicitly so the parallel invocation below is honored.
+      - name: Install GNU parallel (bats --jobs dependency)
+        run: sudo apt-get update && sudo apt-get install -y parallel
+
       # bats `-o/--output <dir>` requires the directory to ALREADY EXIST (per
       # `bats --help`: "Directory to write report files (must exist)"), so we
       # mkdir it first. `--report-formatter junit` KEEPS the pretty console
@@ -271,7 +277,16 @@ jobs:
       - name: Run bats suites (recursive over the 4 roots)
         run: |
           mkdir -p reports/bats
-          bats --recursive \
+          # File-level parallelism: --jobs $(nproc) runs files concurrently while
+          # --no-parallelize-within-files keeps tests WITHIN a file sequential
+          # (setup_file-once + ordered-side-effect semantics preserved). Derives
+          # jobs from the runner core count (2-4 on GitHub), NOT a local constant.
+          # Sequential fallback if parallelism is ever suspected of a flake — drop
+          # the --jobs/--no-parallelize-within-files pair:
+          #   bats --recursive \
+          #     --report-formatter junit --output reports/bats \
+          #     test/ hooks/test/ scripts/test/ autoagent/test/
+          bats --jobs "$(nproc)" --no-parallelize-within-files --recursive \
             --report-formatter junit --output reports/bats \
             test/ hooks/test/ scripts/test/ autoagent/test/
 

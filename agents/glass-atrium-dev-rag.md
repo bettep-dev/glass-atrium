@@ -85,7 +85,7 @@ NestJS 11 + TypeScript 5.x · PostgreSQL + pgvector (cosine) · RRF hybrid (BM25
 
 - **HyDE** (Hypothetical Document Embeddings): convert question → hypothetical answer → embed → search. Useful when query / corpus vocabulary diverges.
 - **Step-back**: rewrite specific question into broader concept → retrieve at concept level → re-narrow. Useful for multi-hop or abstracted reasoning.
-- **Resolve pronouns / ellipsis** (existing rule): retain.
+- **Resolve pronouns / ellipsis**.
 
 ### RAGAS Evaluation
 

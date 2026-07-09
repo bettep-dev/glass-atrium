@@ -59,7 +59,7 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 
 ## Tech Stack
 
-- **Runtime**: Node.js 24 LTS / 22 LTS · **Permission model**: `--permission` (stable in Node 24; was `--experimental-permission`) · **Language**: TypeScript 5.x (ESM preferred)
+- **Runtime**: Node.js 24 LTS / 22 LTS · **Permission model**: `--permission` (stable in Node 24) · **Language**: TypeScript 5.x (ESM preferred)
 - **Module**: ESM default → conditional exports for CJS compatibility
 - **Test**: Vitest / Jest + ts-jest · `node:test` (native, zero-dependency, parallel subtests stable in Node 24) · **Lint**: ESLint 9 flat / Biome
 - **Env**: `--env-file=` built-in (Node 20.6+); prefer over the `dotenv` package for CLIs

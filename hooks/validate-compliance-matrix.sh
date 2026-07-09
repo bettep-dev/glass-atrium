@@ -23,17 +23,13 @@
 #   exits 0. Format drift MUST NOT exit-2 false-block a session — only a
 #   CONFIRMED inconsistency in a parseable matrix warrants exit 2.
 #
-# Trigger (REGISTERED — settings.json SessionStart array):
-#   Fires once per session start. SessionStart has no PreToolUse-style block
-#   channel; exit 2 here is an audit-grade signal (visible in logs, asserted by
-#   the Bats suite + manual/CI invocation), not a session abort.
+# Trigger (REGISTERED — settings.json SessionStart array): fires once per session
+#   start. SessionStart has no block channel; exit 2 here is an audit-grade signal
+#   (logs + Bats + manual/CI), not a session abort.
 #
-# Testability:
-#   The matrix path is overridable via COMPLIANCE_MATRIX_FILE so the Bats suite
-#   can drive Layer B against controlled fixtures (flipped Tier-1 ✓, orphan
-#   marker, format-drift) without touching the live matrix. The filesystem dirs
-#   (Layer A) are likewise overridable via COMPLIANCE_RULES_DIR /
-#   COMPLIANCE_SCOPED_DIR.
+# Testability: COMPLIANCE_MATRIX_FILE (Layer B) + COMPLIANCE_RULES_DIR /
+#   COMPLIANCE_SCOPED_DIR (Layer A) are env-overridable so the Bats suite drives
+#   controlled fixtures without touching the live matrix.
 #
 # Exit codes:
 #   0 = no inconsistency (or fail-open: unparseable matrix / missing inputs)
@@ -78,17 +74,14 @@ if [[ ! -t 0 ]]; then
   cat >/dev/null 2>&1 || true
 fi
 
-# --- Guards (fail-open: missing inputs never fail the session) -----------------
-
+# Guards (fail-open: missing inputs never fail the session).
 if [[ ! -r "${MATRIX_FILE}" ]]; then
   printf '[compliance-matrix-drift] skipped: matrix file unreadable (%s)\n' "${MATRIX_FILE}"
   exit 0
 fi
 
-# ==============================================================================
-# Layer B — MATRIX-INTERNAL CONSISTENCY (enforcement; exit 2 on confirmed fault)
+# Layer B — MATRIX-INTERNAL CONSISTENCY (enforcement; exit 2 on confirmed fault).
 # Runs FIRST so a confirmed inconsistency surfaces even if Layer A is skipped.
-# ==============================================================================
 
 # Slice the Compliance Matrix table (the `## Compliance Matrix` section's
 # pipe-delimited block). Returns the header row + data rows, header-separator
@@ -183,7 +176,7 @@ run_layer_b() {
   local block
   block="$(matrix_table_block)"
 
-  # --- Fail-OPEN parse guards -------------------------------------------------
+  # Fail-OPEN parse guards.
   # Need a header row + at least one data row; an absent table or a header-only
   # slice is format drift, NOT a confirmed inconsistency → advise + exit 0.
   local row_count
@@ -207,7 +200,7 @@ run_layer_b() {
 
   local violations=""
 
-  # --- B1: Tier-1 Core rules keep ALL-column ✓ --------------------------------
+  # B1: Tier-1 Core rules keep ALL-column ✓.
   local tier1 rule all_cell
   tier1="$(tier1_core_rules)"
   if [[ -z "${tier1}" ]]; then
@@ -224,7 +217,7 @@ run_layer_b() {
     fi
   done <<<"${tier1}"
 
-  # --- B2: marker ↔ footnote 1:1 ---------------------------------------------
+  # B2: marker ↔ footnote 1:1.
   # Cell markers: each FOOTNOTE_MARKERS glyph present anywhere in a table cell.
   # Footnote definitions: a `> MARKER ` blockquote line. Mismatch either way.
   local marker in_cells has_footnote
@@ -247,7 +240,7 @@ run_layer_b() {
     fi
   done <<<"${FOOTNOTE_MARKERS}"
 
-  # --- B3: every matrix column header is a legal legend scope ------------------
+  # B3: every matrix column header is a legal legend scope.
   local legend cols col
   legend="$(legend_scopes)"
   cols="$(matrix_header_scopes "${block}")"
@@ -262,7 +255,7 @@ run_layer_b() {
     fi
   done <<<"${cols}"
 
-  # --- Verdict ----------------------------------------------------------------
+  # Verdict.
   if [[ -n "${violations}" ]]; then
     printf '[compliance-matrix-consistency] CONFIRMED inconsistency:\n' >&2
     printf '%s' "${violations}" | sed '/^$/d; s/^/  - /' >&2
@@ -283,10 +276,7 @@ else
   layer_b_rc=$?
 fi
 
-# ==============================================================================
-# Layer A — FILENAME-SET DRIFT (advisory; exit 0)
-# ==============================================================================
-
+# Layer A — FILENAME-SET DRIFT (advisory; exit 0).
 if [[ ! -d "${RULES_DIR}" ]]; then
   printf '[compliance-matrix-drift] skipped: rules dir missing (%s)\n' "${RULES_DIR}"
   exit "${layer_b_rc}"

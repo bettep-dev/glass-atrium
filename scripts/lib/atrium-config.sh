@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # atrium-config.sh — read-only config.toml accessors shared by shell consumers
 # (daemon bootstraps/healthchecks, inject, daily-restart, wiki-compile,
-# render-monitor-env.sh). Sourced, not executable. config.toml is the upper SoT
-# (see config.toml.example header); every accessor takes a caller-supplied
-# default so a checkout WITHOUT a rendered config.toml — or with the key absent
-# — preserves stock behavior (fresh-clone safety, no hard config dependency).
+# render-monitor-env.sh). Sourced, not executable. config.toml is the upper SoT;
+# every accessor takes a caller-supplied default, so a checkout without a rendered
+# config.toml (or a missing key) preserves stock behavior (fresh-clone safety).
 #
-# Parsing: table-scoped awk (no TOML-parser dependency) — a same-named key in
-# another section can never collide ([ports].monitor vs [paths].monitor).
-#
-# Config file resolution: ATRIUM_CONFIG_TOML env (test/sandbox override) →
-# ${GA_ROOT:-$HOME/.glass-atrium}/config.toml.
+# Parsing: table-scoped awk (no TOML-parser dep) — a same-named key in another
+# section can never collide ([ports].monitor vs [paths].monitor). Config path:
+# ATRIUM_CONFIG_TOML (test override) → ${GA_ROOT:-$HOME/.glass-atrium}/config.toml.
 
 # Resolved config.toml path (may not exist — accessors degrade to defaults).
 atrium_config_file() {
@@ -48,9 +45,8 @@ atrium_config_get() {
   fi
 }
 
-# Port read: defaulted + bindable-integer guard. A CONFIGURED invalid value is
-# a user error — loud fail (stderr + rc 1, caller exits), never a silent
-# fallback that masks the misconfiguration.
+# Port read: defaulted + bindable-integer guard. A CONFIGURED invalid is a user
+# error — loud fail (rc 1), never a silent fallback that masks the misconfig.
 atrium_config_port() {
   local section="$1" key="$2" default="$3" val
   val="$(atrium_config_get "${section}" "${key}" "${default}")"
@@ -62,6 +58,66 @@ atrium_config_port() {
   printf '%s\n' "${val}"
 }
 
+# Private bindable-port predicate — integer 1-65535. Returns 0/1, no output.
+# Shared by atrium_monitor_port for the env / rendered-.env value guards
+# (atrium_config_port keeps its own inline check untouched).
+_atrium_port_is_valid() {
+  local val="$1"
+  [[ "${val}" =~ ^[0-9]+$ ]] && ((val >= 1 && val <= 65535))
+}
+
+# Resolved rendered monitor/.env path (may not exist — the resolver degrades to
+# config.toml then the terminal default). ATRIUM_MONITOR_ENV env overrides for
+# test/sandbox, mirroring the ATRIUM_CONFIG_TOML override on atrium_config_file.
+atrium_monitor_env_file() {
+  printf '%s\n' "${ATRIUM_MONITOR_ENV:-${GA_ROOT:-${HOME}/.glass-atrium}/monitor/.env}"
+}
+
+# Extract ATRIUM_MONITOR_PORT from a rendered monitor/.env (sibling idiom of
+# lib/ga-db.sh). Echoes the value (empty when absent); last assignment wins
+# (env-file override). Args: $1 = env file path (assumed to exist).
+atrium_monitor_env_port() {
+  local env_file="$1" val
+  val="$(grep -E '^ATRIUM_MONITOR_PORT=[0-9]+$' -- "${env_file}" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
+  printf '%s\n' "${val}"
+}
+
+# Resolve the effective monitor port — the single shell SoT for the live port.
+# Precedence (ADR-1): exported ATRIUM_MONITOR_PORT (the running monitor's bound
+# value) → rendered monitor/.env → config.toml [ports].monitor → terminal default
+# 16145. A CONFIGURED invalid (env or .env) is a user error → loud fail (rc 1),
+# never a silent fallback. The literal 16145 lives HERE and NOWHERE else in shell.
+atrium_monitor_port() {
+  local val env_file
+  # 1. exported env — the live monitor's bound value.
+  if [[ -n "${ATRIUM_MONITOR_PORT:-}" ]]; then
+    val="${ATRIUM_MONITOR_PORT}"
+    if ! _atrium_port_is_valid "${val}"; then
+      printf 'atrium-config: invalid ATRIUM_MONITOR_PORT=%s (env) — must be an integer 1-65535\n' \
+        "${val}" >&2
+      return 1
+    fi
+    printf '%s\n' "${val}"
+    return 0
+  fi
+  # 2. rendered monitor/.env value.
+  env_file="$(atrium_monitor_env_file)"
+  if [[ -f "${env_file}" ]]; then
+    val="$(atrium_monitor_env_port "${env_file}")"
+    if [[ -n "${val}" ]]; then
+      if ! _atrium_port_is_valid "${val}"; then
+        printf 'atrium-config: invalid ATRIUM_MONITOR_PORT=%s in %s — must be an integer 1-65535\n' \
+          "${val}" "${env_file}" >&2
+        return 1
+      fi
+      printf '%s\n' "${val}"
+      return 0
+    fi
+  fi
+  # 3. config.toml [ports].monitor, terminal default 16145 (loud-fails invalids).
+  atrium_config_port '[ports]' 'monitor' '16145'
+}
+
 # Escape ERE metacharacters so a config value embeds literally in a grep -E
 # pattern (IANA tz ids may carry '+', e.g. Etc/GMT+9 — unescaped, detection
 # would silently mismatch).
@@ -69,13 +125,12 @@ atrium_ere_escape() {
   printf '%s' "$1" | sed -e 's/[][\.^$|?*+(){}\\]/\\&/g'
 }
 
-# Detect the host IANA timezone from the /etc/localtime symlink target, ANCHORED
-# on the '/zoneinfo/' path segment: the zone is everything AFTER '/zoneinfo/'.
-# Echoes the zone, empty on any failure. The anchor is portable — macOS resolves
-# the link under /var/db/timezone/zoneinfo/<Zone>, Linux under
-# /usr/share/zoneinfo/<Zone> — whereas a fixed-prefix strip would break on the
-# other OS. TZ-IMMUNE: a symlink read cannot be shadowed by the launchd TZ=UTC
-# pin that fools runtime Intl, so this is the build-time PRIMARY host detector.
+# Detect the host IANA timezone from the /etc/localtime symlink, ANCHORED on the
+# '/zoneinfo/' segment (zone = everything after it). Echoes the zone, empty on
+# failure. The anchor is portable — macOS links under /var/db/timezone/zoneinfo/,
+# Linux under /usr/share/zoneinfo/ — a fixed-prefix strip would break cross-OS.
+# TZ-IMMUNE: a symlink read cannot be shadowed by the launchd TZ=UTC pin that
+# fools runtime Intl, so this is the build-time PRIMARY host detector.
 atrium_get_host_timezone() {
   local link zone
   # `|| true` absorbs a readlink failure INSIDE the substitution so a consumer
@@ -110,19 +165,14 @@ _atrium_detect_host_tz() {
   printf '%s\n' "${host_tz}"
 }
 
-# Resolve a configured [meta].timezone value to a CONCRETE IANA zone name.
-# 'auto'/empty → the host-detection cascade; an explicit value is returned
-# verbatim. NEVER echoes the literal 'auto' — downstream render outputs (.env,
-# launchd plists) must carry a concrete zone (the monitor reads the value
-# verbatim and feeds it to Intl/PG, where 'auto' is not a valid zone).
-#
+# Resolve a configured [meta].timezone to a CONCRETE IANA zone. 'auto'/empty →
+# the host-detection cascade; an explicit value is returned verbatim. NEVER echoes
+# literal 'auto' — downstream renders (.env, launchd plists) need a concrete zone
+# (the monitor feeds it to Intl/PG, where 'auto' is invalid).
 # Auto-path cascade: /etc/localtime symlink (TZ-immune primary) → Node Intl
-# (secondary) → Asia/Seoul (last-resort, backward-compat). Never hard-fails.
-#
+# (secondary) → Asia/Seoul (last-resort, backward-compat); never hard-fails.
 # An EXPLICIT value diverging from the detected host zone emits a one-line stderr
-# WARNING (loud divergence surface); the explicit value is still used. The auto
-# path has no explicit value, so it never warns.
-#
+# WARNING (loud), then uses the explicit value; the auto path never warns.
 # Args: $1 = configured value ('auto' | '' | explicit IANA name).
 atrium_resolve_timezone() {
   local configured="${1:-}" host_tz
@@ -142,12 +192,11 @@ atrium_resolve_timezone() {
 }
 
 # Resolve the effective ATRIUM_TIMEZONE for the quota-detection consumers
-# (daemon-daily-restart.sh, wiki-daily-compile.sh): honor a pre-set/env
-# ATRIUM_TIMEZONE verbatim, else read [meta].timezone (default 'auto') and
-# resolve it to a concrete host IANA zone. WHY a concrete zone: the REPL prints
-# quota reset times in the HOST timezone, so detection must key on the resolved
-# zone — a literal 'auto' (the config default) would never match the quota greps,
-# and a hardcoded Asia/Seoul silently breaks detection on non-KST deploys.
+# (daemon-daily-restart.sh, wiki-daily-compile.sh): honor a pre-set ATRIUM_TIMEZONE
+# verbatim, else resolve [meta].timezone (default 'auto') to a concrete host zone.
+# WHY concrete: the REPL prints quota reset times in the HOST tz, so detection
+# keys on the resolved zone — literal 'auto' never matches the quota greps, and a
+# hardcoded Asia/Seoul silently breaks detection on non-KST deploys.
 atrium_load_timezone() {
   printf '%s\n' "${ATRIUM_TIMEZONE:-$(atrium_resolve_timezone "$(atrium_config_get '[meta]' 'timezone' 'auto')")}"
 }

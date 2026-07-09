@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # pre-compact.sh — backup transcript + emit a "survival packet" before context compaction.
-#
 # Gathers open progress files + recent outcomes + active correlation IDs into a markdown packet
-# a future SessionStart can re-inject — without it, auto-compact drops "what was unfinished".
+# a future SessionStart re-injects — without it, auto-compact drops "what was unfinished".
 # Side-effect only — never blocks, exit 0 always.
 
 set -Eeuo pipefail

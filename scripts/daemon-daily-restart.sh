@@ -3,56 +3,46 @@
 # Usage: bash daemon-daily-restart.sh {autoagent|wiki}
 #
 # Behavior:
-#   1. Validate role argument and resolve session/log paths.
-#   2. Kill-after-verify preflight: tmux/bootstrap/healthcheck AND a runnable
-#      claude binary (dangling-symlink probe) — abort while the session is
-#      still untouched if a replacement REPL could never start.
-#   3. Pre-restart healthcheck (warn-only — an already-broken daemon is still
-#      a valid input, the whole point is to recover it).
-#   3.7 Acquire the restart-window lock (lib/daemon-lock.sh) — the supervise
-#      bootstrap honors it before respawn-create, so the kill→recreate below
-#      cannot duplicate-race a launchd-respawned supervisor.
-#   4. Kill the tmux session (tmux kill-session) → this terminates the claude
-#      child process, releasing its audit token so the kernel reassigns TCC
-#      responsibility on the next launch.
-#   5. Poll until `tmux has-session` reports the session gone (bounded wait).
-#   6. Invoke ${ROLE}-daemon-bootstrap.sh in `return` mode to recreate the
-#      session from scratch, retrying with linear backoff on failure (rc not in
-#      {0,2}). Bootstrap internally: pre-spawns the fakechat MCP server, creates
-#      the tmux session + exec claude, waits for the REPL/HTTP to warm up, then
-#      calls daemon-inject-entry.sh to re-submit /loop. In `return` mode it
-#      RETURNS the inject result as its exit code (rather than entering its own
-#      step-6 self-health loop), so we regain control and run the post-restart
-#      healthcheck. We do NOT call daemon-inject-entry.sh directly here because
-#      its internal healthcheck requires the session to already exist. After
-#      the recreate window closes, `launchctl kickstart` (no -k) resurrects the
-#      supervisor job if it is dead (a live one is untouched).
-#   7. Post-restart healthcheck to verify new session alive and cron registered.
-#   8. Log everything to /tmp/daemon-daily-restart-<role>.log.
+#   1. Validate role, resolve session/log paths.
+#   2. Kill-after-verify preflight: tmux/bootstrap/healthcheck AND a runnable claude
+#      (dangling-symlink probe) — abort while the session is untouched if the REPL
+#      could never restart.
+#   3. Pre-restart healthcheck (warn-only — an already-broken daemon is a valid input).
+#   3.7 Acquire the restart-window lock (lib/daemon-lock.sh) — the supervise bootstrap
+#      honors it, so the kill→recreate cannot duplicate-race a launchd-respawned supervisor.
+#   4. Kill the tmux session → terminates the claude child, releasing its audit token so
+#      the kernel reassigns TCC responsibility on next launch.
+#   5. Poll until `tmux has-session` reports gone (bounded wait).
+#   6. Invoke ${ROLE}-daemon-bootstrap.sh in `return` mode to recreate + re-submit /loop,
+#      retrying with linear backoff on failure (rc not in {0,2}). `return` mode RETURNS
+#      the inject rc (not its own self-health loop), so we regain control for the post-
+#      restart healthcheck. NOT daemon-inject-entry.sh directly: its healthcheck needs
+#      the session to already exist. After recreate, `launchctl kickstart` (no -k)
+#      resurrects a dead supervisor (a live one is untouched).
+#   7. Post-restart healthcheck (new session alive + cron registered).
+#   8. Log to /tmp/daemon-daily-restart-<role>.log.
 #
 # Invoked by: launchd (com.glass-atrium.daemon-daily-restart.plist) daily at 05:30 KST.
 # Manual invocation: bash daemon-daily-restart.sh autoagent
 #
-# Rationale: macOS 26.3.1 tightened TCC responsible-process attribution, causing
-# long-lived claude processes to lose access to ~/Documents and /Volumes/* over
-# time. Unlike daemon-weekly-clear.sh (which only sends /clear and keeps the
-# process alive), a full kill + recreate forces the kernel to allocate fresh
-# audit tokens and restores TCC-protected path access.
+# Rationale: macOS 26.3.1 tightened TCC responsible-process attribution, so long-
+# lived claude processes lose ~/Documents and /Volumes/* access over time. Unlike
+# daemon-weekly-clear.sh (only /clear, process stays alive), a full kill + recreate
+# forces fresh audit tokens and restores TCC-protected path access.
 #
-# CAVEAT: Killing the tmux session terminates any in-progress /loop turn in that
-# daemon. This is acceptable because /loop is cron-driven and self-resuming —
-# the next scheduled tick after restart re-runs the pending work. Do NOT run
-# this during known critical batch windows if avoidable.
+# CAVEAT: killing the session terminates any in-progress /loop turn — acceptable
+# since /loop is cron-driven + self-resuming (the next tick re-runs pending work).
+# Avoid running during known critical batch windows.
 #
 # Exit codes:
 #   0 = success (killed + recreated + post-restart healthcheck pass)
 #   1 = unrecoverable error (bad role, bootstrap fail, post-healthcheck fail)
-#   6 = bootstrap timeout backstop fired (run_with_timeout rc 124/137) — an
-#       anomaly path: return mode normally exits within entry-injection time.
-#   7 = concurrent restart window: the restart-window lock (lib/daemon-lock.sh)
-#       is held by a live sibling — the single-flight authority for double-fire
-# Note: healthcheck timeout falls through to the attempt 1/2/3 cascade → fatal()
-# → exit 1; it has no dedicated exit code (the cascade is authoritative).
+#   6 = bootstrap timeout backstop (run_with_timeout rc 124/137) — anomaly: return
+#       mode normally exits within entry-injection time.
+#   7 = concurrent restart window: restart-window lock held by a live sibling
+#       (single-flight authority for double-fire).
+# Note: healthcheck timeout falls through the attempt cascade → fatal() → exit 1
+# (no dedicated code; the cascade is authoritative).
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -70,9 +60,9 @@ source "${SCRIPT_DIR}/lib/atrium-config.sh"
 ATRIUM_TIMEZONE="$(atrium_load_timezone)"
 readonly ATRIUM_TIMEZONE
 
-# Max seconds to wait for tmux session teardown after kill-session. tmux usually
-# reports has-session=false within ~100ms of kill-session returning, but under
-# heavy load or with zombie panes it can take longer. 10s is generous.
+# Max wait for tmux session teardown after kill-session. tmux usually reports
+# has-session=false within ~100ms, but zombie panes / heavy load can take longer;
+# 10s is generous.
 readonly KILL_TIMEOUT_SEC=10
 
 # Poll interval while waiting for kill confirmation.
@@ -619,27 +609,21 @@ if [[ "${ROLE}" == "autoagent" ]]; then
   fi
 fi
 
-# 7. Post-bootstrap wait. The healthcheck's cron-registration check (Step 5 in
-#    the healthcheck script) requires the /loop Skill to have completed its
-#    CronCreate round-trip and emitted "Scheduled <8-hex-id>" into the pane.
-#    Without this wait, the healthcheck may race the Skill and report a false
-#    negative.
+# 7. Post-bootstrap wait. The healthcheck's cron check (Step 5) needs the /loop
+#    Skill's CronCreate round-trip + "Scheduled <8-hex-id>" in the pane; without
+#    this wait the healthcheck races the Skill → false negative.
 sleep "${POST_BOOTSTRAP_WAIT_SEC}"
 
-# 8. Post-restart healthcheck. Authoritative verification: session exists +
-#    pane_pid alive + pane_cmd is claude + cron registered in scrollback.
-# 3-attempt retry loop (plugin/MCP bootstrap is
-# event-loop async + /loop Skill round-trip varies 60-90s; retries absorb that
-# without weakening the failure signal). Healthcheck stderr → LOG_FILE for
-# post-mortem; a pre-fail pane snapshot disambiguates race-vs-Skill-bypass.
-# Attempt 1 uses --skip-cron-watchdog to verify session/pane/process health
-# WITHOUT requiring CronCreate evidence, decoupling "daemon revived" from "/loop
-# completed CronCreate" (cron may not yet be in scrollback if the Skill is mid-
-# flight). Attempts 2/3 run the full check (cron required) — if that still fails,
-# the session is alive but the Skill genuinely bypassed CronCreate = the real
-# error. Each invocation is wrapped in timeout(1) because tmux capture-pane on a
-# zombie pane can block uninterruptibly; a timeout is treated as a regular
-# failure feeding the retry/fatal cascade.
+# 8. Post-restart healthcheck. Authoritative: session exists + pane_pid alive +
+#    pane_cmd is claude + cron registered. 3-attempt retry (plugin/MCP bootstrap is
+#    async + /loop round-trip varies 60-90s). Attempt 1 uses --skip-cron-watchdog to
+#    verify session/pane/process WITHOUT CronCreate evidence, decoupling "daemon
+#    revived" from "/loop completed CronCreate" (cron may be mid-flight). Attempts 2/3
+#    run the full check (cron required) — still failing = session alive but the Skill
+#    genuinely bypassed CronCreate = the real error. Each is timeout(1)-wrapped since
+#    capture-pane on a zombie pane can block uninterruptibly (timeout → retry/fatal
+#    cascade). Healthcheck stderr → LOG_FILE; a pre-fail pane snapshot disambiguates
+#    race-vs-Skill-bypass.
 # Helper: run healthcheck under timeout, return its rc (124/137 = timeout).
 run_healthcheck() {
   local rc=0

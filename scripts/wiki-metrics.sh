@@ -67,7 +67,7 @@ done
 
 log() { printf '[wiki-metrics] %s\n' "$*" >&2; }
 
-# ---------- trace log selection ----------
+# trace log selection
 select_logs() {
   local -a all=()
   local f
@@ -94,7 +94,7 @@ select_logs() {
   fi
 }
 
-# ---------- KPI parsing (single awk pass) ----------
+# KPI parsing (single awk pass)
 # Input: newline-separated trace log file list. Output: "files tools total_cost avg_time_s"
 parse_logs() {
   local -a logs=()
@@ -146,7 +146,7 @@ parse_logs() {
   ' "${logs[@]}"
 }
 
-# ---------- wiki-query benchmark ----------
+# wiki-query benchmark
 bench_query() {
   local n=5
   local i total=0 t0 t1 dt_ms
@@ -164,7 +164,7 @@ bench_query() {
   printf '%d\n' $(( total / n ))
 }
 
-# ---------- index automation check ----------
+# index automation check
 check_index() {
   if [[ ! -f "${INDEX_FILE}" ]]; then
     printf 'MISSING\n'
@@ -179,7 +179,7 @@ check_index() {
   fi
 }
 
-# ---------- verdict helper ----------
+# verdict helper
 verdict() {
   # $1=value $2=target $3=mode(lt|eq)
   local v="$1" t="$2" m="$3"
@@ -189,7 +189,7 @@ verdict() {
   esac
 }
 
-# ---------- integration healthcheck ----------
+# integration healthcheck
 run_health() {
   local -a results=()
   local status
@@ -257,7 +257,7 @@ run_health() {
   printf '%s\n' "${results[@]}"
 }
 
-# ---------- report rendering ----------
+# report rendering
 render_report() {
   local files="$1" tools="$2" total_cost="$3" avg_time="$4" query_ms="$5" index_state="$6"
   local today
@@ -319,7 +319,6 @@ EOF
   fi
 }
 
-# ---------- main ----------
 main() {
   local logs parsed files tools total_cost avg_time query_ms index_state
   logs="$(select_logs)"

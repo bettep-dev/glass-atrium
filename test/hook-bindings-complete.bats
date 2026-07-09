@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Guard: EXPECTED_HOOK_BINDINGS (lib/ga-core.sh) completeness vs the architecture
+# Guard: EXPECTED_HOOK_BINDINGS (lib/ga-env.sh) completeness vs the architecture
 # invariant (monitor/src/server/architecture/arch-invariants.ts). wire_hooks
 # iterates this array, so a SHORT array silently leaves deployed hooks DORMANT
 # (the 15->42 install-wiring gap this test locks down — 3 whole events,
@@ -28,14 +28,14 @@
 # Requires: bats (brew install bats-core), awk, sed, grep (BSD or GNU), bash 3.2+
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
-CORE="${GA}/lib/ga-core.sh"
+CORE="${GA}/lib/ga-env.sh"
 ARCH="${GA}/monitor/src/server/architecture/arch-invariants.ts"
 
 # the 7 settings.json hook events arch-invariants.ts HookEventCounts declares.
 EVENTS=(PreToolUse PostToolUse SessionStart Stop SubagentStart SubagentStop PreCompact)
 
 setup() {
-  [[ -f "${CORE}" ]] || skip "ga-core.sh not found: ${CORE}"
+  [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
   [[ -f "${ARCH}" ]] || skip "arch-invariants.ts not found: ${ARCH}"
 }
 
@@ -89,7 +89,7 @@ arch_event_count() {
   done
 }
 
-@test "total: array leaf count == 42 == sum(arch-invariants.ts hooks)" {
+@test "total: array leaf count == 43 == sum(arch-invariants.ts hooks)" {
   local ev m total arch_sum=0
   total="$(array_rows | wc -l | tr -d ' ')"
   for ev in "${EVENTS[@]}"; do
@@ -100,12 +100,12 @@ arch_event_count() {
     fi
     arch_sum=$((arch_sum + m))
   done
-  if [[ "${total}" != "42" ]]; then
-    echo "array leaf total=${total}, expected 42"
+  if [[ "${total}" != "43" ]]; then
+    echo "array leaf total=${total}, expected 43"
     return 1
   fi
-  if [[ "${arch_sum}" != "42" ]]; then
-    echo "arch-invariants hooks sum=${arch_sum}, expected 42"
+  if [[ "${arch_sum}" != "43" ]]; then
+    echo "arch-invariants hooks sum=${arch_sum}, expected 43"
     return 1
   fi
 }

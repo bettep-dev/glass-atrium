@@ -1,7 +1,6 @@
-// Response/request shapes for /api/clauded-docs/* endpoints — backed by
-// monitor.documents (single table) with the HTML body on FS only (hybrid).
-// Format derives from the provided body field; audience is a 2-value exposure
-// bit; lifecycle is the single doc_status axis with supersede chains on the
+// Response/request shapes for /api/clauded-docs/* — backed by monitor.documents (single
+// table, HTML body on FS only = hybrid). Format derives from the body field; audience is a
+// 2-value exposure bit; lifecycle is the doc_status axis with supersede chains on the
 // supersedes_id FK. bigint ids coerce to JSON-safe number via bigintToNumber.
 
 // Group cascade target. Same-folder_id rows bulk-update on PUT doc_status
@@ -20,13 +19,11 @@ export type DocFormatToken = "html" | "md" | "yaml" | "json" | "txt";
 // (ops/public→exposed · agent-only→hidden) absorbed by read-side normalize.
 export type AudienceLiteral = "exposed" | "hidden";
 
-// Body-field 5-way discriminator — format derives from the provided field:
-// html_body → HTML primary (user-requested visual/shared artifact) · md/yaml/
-// json/txt_body → plain primary (agent-only token-optimized record). ≥2 body
-// fields → 400 invalid_body (mutually exclusive, no silent fallback). audience
-// unspecified → null (read-side 'exposed'). A doc_type field is silently ignored
-// (no schema column). doc_status POST default 'progress'; supersede auto-transitions
-// the predecessor to 'done'.
+// Body-field 5-way discriminator — format derives from the provided field: html_body →
+// HTML primary (user-requested visual/shared) · md/yaml/json/txt_body → plain primary
+// (agent-only token-optimized). ≥2 body fields → 400 invalid_body (mutually exclusive, no
+// silent fallback). audience unspecified → null (read-side 'exposed'); doc_type silently
+// ignored (no column). doc_status POST default 'progress'; supersede auto-transitions predecessor to 'done'.
 export interface CreateClaudedDocBody {
   title: string;
   author: string;
@@ -57,9 +54,8 @@ export interface CreateClaudedDocBody {
   // 'progress' | 'done' allowed). chain-root / folder_id NULL rows = cascade scope 1.
   doc_status?: DocStatusLiteral;
 }
-// Group display ordering excluded from create/update body — ordering SoT is the
-// PATCH /group/:rootId/reorder endpoint. Accepting it here without a persistence
-// path = silent-drop (no-silent-fallback) → not accepted.
+// Group display ordering excluded from create/update body — ordering SoT is the PATCH
+// /group/:rootId/reorder endpoint. Accepting it without a persistence path = silent-drop.
 
 export interface ListClaudedDocsQuery {
   author?: string;
@@ -128,10 +124,9 @@ export interface ListClaudedDocsResponse {
   fetched_at: string;
 }
 
-// folder grouping list. Same query params as /api/clauded-docs (filter composes
-// at doc-level). Split-path UNION ALL: grouped (folder_id NOT NULL) → 1 group per
-// folder_id, representative = DISTINCT ON (folder_id, created_at DESC, id DESC) ·
-// ungrouped (folder_id NULL) → 1 group per row (group_key = -id, member_count=1).
+// folder grouping list. Same query params as /api/clauded-docs (doc-level filter). Split-path
+// UNION ALL: grouped (folder_id NOT NULL) → 1 group per folder_id, representative = DISTINCT ON
+// (folder_id, created_at DESC, id DESC) · ungrouped → 1 group per row (group_key = -id, count 1).
 // limit = 50 group/page default, max 200.
 export interface ListClaudedDocsGroupsQuery {
   // deprecation alias (silent ignore — backward-compat).
@@ -215,11 +210,10 @@ export interface GetClaudedDocResponse {
   body: string;
 }
 
-// Optimistic-lock contract — caller passes the last-fetched hash; a differing
-// stored hash → 409 (concurrent edit). Body discriminator is audience-conditional:
-// exposed → html_body required · hidden → one of md/yaml/json/txt_body. Omitting
-// audience preserves the existing value; changing it requires the new audience +
-// a matching body field together. ≥2 of the 5 body fields → 400 invalid_body.
+// Optimistic-lock contract — caller passes the last-fetched hash; a differing stored hash
+// → 409 (concurrent edit). Body discriminator is audience-conditional: exposed → html_body
+// required · hidden → one of md/yaml/json/txt_body. Omitting audience preserves it; changing
+// it requires the new audience + a matching body field. ≥2 of the 5 body fields → 400 invalid_body.
 export interface UpdateClaudedDocBody {
   expected_hash: string;
   // Required on HTML primary update.
@@ -247,11 +241,10 @@ export interface DeleteClaudedDocResponse {
   deleted: true;
 }
 
-// User-driven grouping UX endpoints — all 3 use a single-statement CTE (no
-// multi-row $transaction). 1-member auto-ungroup: when a source group's
-// member_count drops to 1 after ungroup / move-group, that lone member's
-// folder_id is also set to NULL — done via an application-layer follow-up UPDATE
-// (avoids CTE branch bloat + surfaces an audit log via `auto_ungrouped_id`).
+// User-driven grouping UX endpoints — all 3 use a single-statement CTE (no multi-row
+// $transaction). 1-member auto-ungroup: when a source group's member_count drops to 1
+// after ungroup/move-group, that lone member's folder_id is also nulled — via an
+// application-layer follow-up UPDATE (avoids CTE branch bloat; audit via `auto_ungrouped_id`).
 
 // POST /api/clauded-docs/group — bind member_ids into one group. root =
 // MAX(updated_at) member, its id becoming the shared folder_id. member_ids:
@@ -308,13 +301,11 @@ export interface MoveGroupResponse {
   auto_ungrouped_id: number | null;
 }
 
-// PATCH /api/clauded-docs/group/:rootId/reorder — persist drag-and-drop order.
-// rootId = group folder_id; ordered_ids = all members in desired display order.
-// Single-statement CTE: ordered_ids MUST exactly match all folder_id == rootId
-// members (missing / extra / foreign-group id → 400 invalid_body or 404
-// members_not_found), assigning display_order = 0-based array index. Unlike
-// Group* / MoveGroup*, order is meaningful → normalizeMemberIds NOT applied; a
-// dedicated parser preserves order + rejects duplicates only.
+// PATCH /api/clauded-docs/group/:rootId/reorder — persist drag-and-drop order. rootId =
+// group folder_id; ordered_ids = all members in desired order. Single-statement CTE:
+// ordered_ids MUST exactly match all folder_id == rootId members (missing/extra/foreign →
+// 400 invalid_body or 404 members_not_found), assigning display_order = 0-based index.
+// Order is meaningful → normalizeMemberIds NOT applied; dedicated parser rejects duplicates only.
 export interface ReorderGroupBody {
   /** all member ids in 0-based display order. No duplicates · positive integers. */
   ordered_ids: number[];
@@ -395,10 +386,9 @@ export interface PlaceholderResidueError {
   };
 }
 
-// D8 P2 style-lint failure. `details.findings` reports ALL violations (not
-// first-only); each is either line-anchored (carries `line`) or document-level.
-// `rule` mirrors the validator's frozen StyleRule allowlist as a plain string to
-// avoid leaking the internal alias into the shared types surface.
+// D8 P2 style-lint failure. `details.findings` reports ALL violations (not first-only); each
+// is line-anchored (carries `line`) or document-level. `rule` mirrors the validator's frozen
+// StyleRule allowlist as a plain string to avoid leaking the internal alias into shared types.
 export interface D8StyleViolationError {
   error: {
     code: "d8_style_violation";

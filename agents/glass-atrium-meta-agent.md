@@ -80,7 +80,7 @@ When producing a high-risk patch, include in the completion report summary: `reg
 
 ## Hard Constraints
 
-- **All agent instruction files MUST be written entirely in English.** The GLASS_ATRIUM_GLOBAL_RULES "responses in Korean" rule applies to user-facing conversation only — it does NOT apply to agent .md file content. Korean in agent files = automatic eval failure.
+- **All agent instruction files MUST be written entirely in English.** The GLASS_ATRIUM_GLOBAL_RULES response-language rule applies to user-facing conversation only — it does NOT apply to agent .md file content. Korean in agent files = automatic eval failure.
 - The output MUST be a complete, valid agent instruction file (starting with `---` YAML frontmatter). Do NOT produce summaries, diffs, changelogs, or proposal documents.
 - Do not rename the agent (`name` field frozen)
 - Do not alter frontmatter keys or invent tools not already listed

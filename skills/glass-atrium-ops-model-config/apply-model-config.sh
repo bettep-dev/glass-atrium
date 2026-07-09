@@ -22,7 +22,6 @@
 #   - the foreground caller (main session) MUST confirm with the user before --apply-settings
 set -euo pipefail
 
-MC_API="${MC_API:-http://127.0.0.1:7842/api/model-config}"
 SETTINGS_PATH="${MODEL_CONFIG_SETTINGS_PATH:-${HOME}/.claude/settings.json}"
 RESTART_SCRIPT="${GLASS_ATRIUM_RESTART_SCRIPT:-${HOME}/.glass-atrium/scripts/daemon-daily-restart.sh}"
 PY="${PYTHON_BIN:-/usr/bin/python3}"
@@ -32,15 +31,37 @@ die() {
   exit 1
 }
 
+# Monitor port derives via the shared atrium_monitor_port resolver (ADR-1: env →
+# monitor/.env → config.toml → 16145) — never a literal here. MC_ATRIUM_CONFIG_LIB
+# overrides the resolver path for test isolation; an explicit MC_API short-circuits
+# resolution entirely (verbatim override). No literal fallback (the single default
+# lives in the resolver).
+MC_ATRIUM_CONFIG_LIB="${MC_ATRIUM_CONFIG_LIB:-${HOME}/.glass-atrium/scripts/lib/atrium-config.sh}"
+mc_monitor_port() {
+  if [[ -n "${ATRIUM_MONITOR_PORT:-}" ]]; then
+    printf '%s\n' "${ATRIUM_MONITOR_PORT}"
+    return 0
+  fi
+  [[ -f "${MC_ATRIUM_CONFIG_LIB}" ]] || return 1
+  # shellcheck source=/dev/null
+  . "${MC_ATRIUM_CONFIG_LIB}"
+  atrium_monitor_port
+}
+if [[ -z "${MC_API:-}" ]]; then
+  MONITOR_PORT="$(mc_monitor_port)" \
+    || die "cannot resolve the monitor port (atrium-config.sh at ${MC_ATRIUM_CONFIG_LIB}?) — set MC_API or ATRIUM_MONITOR_PORT"
+  MC_API="http://127.0.0.1:${MONITOR_PORT}/api/model-config"
+fi
+
 fetch_config() {
   # GET the model-config contract. This endpoint never returns secrets (D5 guard:
   # route serializes only model + effortLevel from settings.json, never the env block).
   command -v curl >/dev/null 2>&1 || die "curl not on PATH"
   local body
   body="$(curl -sf -m 8 "${MC_API}" 2>/dev/null)" \
-    || die "GET ${MC_API} failed — is the monitor running on 127.0.0.1:7842?"
+    || die "GET ${MC_API} failed — is the monitor running at that URL?"
   # Loud-fail on an empty body so python never sees a 0-byte stdin (Precondition Loud-Fail).
-  [[ -n "${body}" ]] || die "monitor returned an empty body — is it running at 127.0.0.1:7842?"
+  [[ -n "${body}" ]] || die "monitor returned an empty body — is it running at ${MC_API}?"
   printf '%s' "${body}"
 }
 

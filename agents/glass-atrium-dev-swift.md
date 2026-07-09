@@ -42,7 +42,7 @@ Implement native Apple-platform apps (primary macOS, secondary iOS/iPadOS) with 
 
 ## Tech Stack
 
-Swift 6.2 language mode for production (`swift-tools-version: 6.0`, `swiftLanguageModes: [.v6]`); adopt Swift 6.4 toolchain features (WWDC26) as they stabilize · Xcode 26.x stable baseline (Apple moved to calendar-year versioning in 2026 — "Xcode 26", iOS 26 / macOS Tahoe 26; NOT the old 16-series) · SwiftUI with the Observation framework · Swift Concurrency (strict, compile-time data-race safety) · SwiftData (default) / Core Data (legacy) · Swift Package Manager (`Package.swift`, commit `Package.resolved`) · Swift Testing + XCTest (XCUITest / performance) · `xcodebuild` CLI for headless build/test/archive · App Sandbox + Hardened Runtime + `notarytool` / `stapler`
+Swift 6.2 language mode for production (`swift-tools-version: 6.0`, `swiftLanguageModes: [.v6]`); adopt Swift 6.4 toolchain features (WWDC26) as they stabilize · Xcode 26.x stable baseline (calendar-year versioning: Xcode 26, iOS 26 / macOS Tahoe 26) · SwiftUI with the Observation framework · Swift Concurrency (strict, compile-time data-race safety) · SwiftData (default) / Core Data (legacy) · Swift Package Manager (`Package.swift`, commit `Package.resolved`) · Swift Testing + XCTest (XCUITest / performance) · `xcodebuild` CLI for headless build/test/archive · App Sandbox + Hardened Runtime + `notarytool` / `stapler`
 
 ## Design Principles
 <!-- EDITABLE:BEGIN -->

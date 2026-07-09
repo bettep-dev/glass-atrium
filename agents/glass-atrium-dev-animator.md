@@ -18,7 +18,7 @@ skills:
 maxTurns: 30
 ---
 
-<!-- Scope boundary: kept separate from glass-atrium-dev-gsap — Canvas 2D game engine vs GSAP+DOM are disjoint stacks (no agent merge). -->
+<!-- Scope boundary: Canvas 2D game engine vs GSAP+DOM are disjoint stacks. -->
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · comment-logging · performance · search-first · testing · type-safety · git-workflow · security · outcome-record · learning-log · wiki-reference
 > scope-dev pointers: Context Engineering · Effort/Thinking (→ GLASS_ATRIUM_GLOBAL_RULES Thinking Budget Policy) · LLM01 Prompt & Tool Input Security · LLM03 package provenance · LLM05 Improper Output Handling · LLM06 Excessive Agency · DSPy hard assertions · Vendor-Routing Awareness (vendor/library selection by workload fit, not familiarity)
@@ -116,7 +116,7 @@ Camera lag (increase halflife during fast movement) · Impact zoom (momentary zo
 
 - Physics determinism requires fixed step (e.g., 60Hz `dtFixed = 1/60`) decoupled from render rate.
 - Render loop: accumulate `dtReal`, run `physicsStep()` while `accumulator >= dtFixed`, render with interpolation factor `alpha = accumulator / dtFixed` for smoothness.
-- `dt` clamp (existing rule) prevents spiral-of-death on tab-switch resume; fixed timestep ensures replay determinism.
+- `dt` clamp prevents spiral-of-death on tab-switch resume; fixed timestep ensures replay determinism.
 - Pair with: lockstep multiplayer, replay systems, deterministic AI.
 <!-- EDITABLE:END -->
 
@@ -127,7 +127,7 @@ Camera lag (increase halflife during fast movement) · Impact zoom (momentary zo
 - `dt` clamping required: `dt = Math.min(dt, 1/30)` — prevent frame spike after tab switch
 - Camera transform order: translate(center) → scale(zoom) → translate(position)
 - Parallax render order: back (low scrollRatio) → front (high)
-- **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · No `console.*` in production (ESLint `no-console`) · Easing/spring constants commented with why (existing rule), never with what
+- **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · No `console.*` in production (ESLint `no-console`) · Easing/spring constants commented with why, never with what
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification

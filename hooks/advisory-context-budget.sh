@@ -1,33 +1,18 @@
 #!/usr/bin/env bash
-# advisory-context-budget.sh — PreToolUse(Agent) per-turn context-occupancy advisory hook.
+# advisory-context-budget.sh — PreToolUse(Agent) per-turn context-occupancy advisory.
 #
-# Fires a non-blocking advisory once the session's MOST-RECENT-turn context occupancy crosses a
-# threshold, nudging the orchestrator toward the GLOBAL_RULES Context Engineering discipline
-# (compact completed sections, summarize before 80% consumption, drop redundant tool results).
+# Non-blocking STDERR advisory when the most-recent-turn context occupancy crosses a threshold,
+# nudging toward GLOBAL_RULES Context Engineering (compact/summarize before the 80% boundary).
+# Honest distinctness from advisory-spawn-cost.sh: that sums LIFETIME session tokens (delegation
+# truncation risk); THIS reads only the LATEST event's cache_read (current-turn context) for CONTEXT
+# DRIFT — different measure + advisory, so the co-fire on one Agent event is intentional.
+# ADVISORY ONLY, never blocks — behavioral acts (progress.md creation, snip/micro/auto compaction)
+# stay honor-system. cache_read is a proxy; the persisted row lags the live turn by ~1 turn.
+# Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent).
 #
-# WHY THIS IS NOT A DUPLICATE OF advisory-spawn-cost.sh (honest distinctness — the whole point):
-#   advisory-spawn-cost.sh sums LIFETIME session tokens (input+output+cache_read+cache_creation
-#   across EVERY event) and warns about over-packed DELEGATIONS (truncation risk). That lifetime SUM
-#   grows unboundedly across a long-but-healthy session and says NOTHING about whether the CURRENT
-#   context window is near full — its own comment admits "per-turn context occupancy is the true
-#   driver" it cannot measure. THIS hook fills exactly that gap: it reads only the LATEST event's
-#   cache_read_tokens (≈ the context carried into the current turn) and warns about CONTEXT DRIFT /
-#   compaction discipline (GLOBAL_RULES "Context drift at 80K+ tokens" / "80% context consumption").
-#   Distinct measurement (latest-turn occupancy, not lifetime SUM), distinct advisory (compact-now,
-#   not split-the-delegation). Co-fire on the same Agent event is intentional and complementary.
-#
-# WHAT THIS CANNOT DO (honest limits — no fake enforcement):
-#   - It is ADVISORY ONLY and NEVER blocks. Behavioral context-engineering acts (progress.md
-#     creation, snip/micro/auto compaction) stay HONOR-SYSTEM — they are irreducibly behavioral and
-#     this hook makes NO claim to enforce them.
-#   - cache_read_tokens is a PROXY for live context occupancy, and the cost_events row is written by
-#     cost-tracker.sh on Stop, so the latest persisted row LAGS the live turn by ~1 turn.
-#   - Manual-path only — the ultracode/Workflow agent() spawn does not fire PreToolUse(Agent).
-#
-# Cost source: PG core.cost_events latest row by session_id (read-only). Channel: STDERR advisory +
-# exit 0 (PreToolUse schema accepts only approve/block; STDERR creates no validation surface).
-# fail-open: ANY DB error/timeout/absent psycopg/corrupted payload → exit 0 silently. SELECT
-# double-capped (connect 1s + statement 1500ms). psycopg Unix-socket only, never -h/-p.
+# Cost source: PG core.cost_events latest row by session_id (read-only). fail-open: ANY DB
+# error/timeout/absent psycopg/corrupted payload → exit 0 silently. SELECT double-capped (connect 1s
+# + statement 1500ms). psycopg Unix-socket only, never -h/-p.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -38,11 +23,8 @@ trap 'printf "[context-budget-advisory] internal error at line %d: %s — fail-o
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# TUNE: per-turn context occupancy threshold (tokens). Anchored on GLOBAL_RULES "Context drift at
-# 80K+ tokens" (the empirical drift onset) — but set well above it so the advisory speaks only when
-# the current turn is carrying a genuinely heavy context, not on routine 80-200k cache reads. 350k
-# ≈ a large fraction of the working window: heavy enough that compaction discipline is warranted,
-# quiet on normal operation. Env-overridable for recalibration as core.cost_events accumulates.
+# TUNE: per-turn occupancy threshold (tokens). Set far above the GLOBAL_RULES "Context drift at
+# 80K+" onset so it speaks only on a genuinely heavy turn, not routine cache reads. Env-overridable.
 readonly DEFAULT_CONTEXT_TOKEN_THRESHOLD=350000
 context_threshold="${CONTEXT_BUDGET_ADVISORY_THRESHOLD:-${DEFAULT_CONTEXT_TOKEN_THRESHOLD}}"
 # Non-integer override → default (silent). Input-validation failure must not block the spawn.
@@ -50,10 +32,9 @@ if [[ ! "${context_threshold}" =~ ^[0-9]+$ ]]; then
   context_threshold="${DEFAULT_CONTEXT_TOKEN_THRESHOLD}"
 fi
 
-# Read the LATEST event's context occupancy (cache_read_tokens) — echoes 1 integer line.
-# STUBBABLE: CONTEXT_ADVISORY_TEST_TOKENS bypasses the live PG read (Bats). fail-open: ANY DB
-# error/timeout/absent psycopg → '0'. session_id passed via env-var (neutralizes injection;
-# parameterized %s binding).
+# Read the LATEST event's cache_read_tokens (1 integer line). STUBBABLE via
+# CONTEXT_ADVISORY_TEST_TOKENS (Bats). fail-open → '0'. session_id via env-var + parameterized %s
+# binding (neutralizes injection).
 read_latest_context_tokens() {
   local sid="${1:-}"
   if [[ -n "${CONTEXT_ADVISORY_TEST_TOKENS:-}" ]]; then
@@ -80,8 +61,7 @@ try:
         "dbname=glass_atrium", connect_timeout=1, options="-c statement_timeout=1500"
     ) as conn:
         with conn.cursor() as cur:
-            # Latest-turn occupancy proxy: cache_read_tokens of the most recent event for this
-            # session (the context re-read into the current turn). NOT a lifetime SUM.
+            # Latest-turn occupancy proxy: cache_read_tokens of the most recent event. NOT a SUM.
             cur.execute(
                 "SELECT COALESCE(cache_read_tokens,0) FROM core.cost_events "
                 "WHERE session_id=%s ORDER BY inserted_at DESC LIMIT 1",

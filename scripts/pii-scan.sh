@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
 # pii-scan.sh — PII 릴리스 게이트 스캐너 (개인 경로·이메일·호스트네임).
 #
-# 목적: 배포 산출물에 발행자 개인 식별 문자열이 섞이는 것을 차단하는 게이트.
-#   release-gate 체크리스트(T62)의 PII 단계가 본 스크립트를 호출하고,
-#   distribution-artifact 트리 검사(T01)는 디렉터리 인자 모드를 재사용한다.
-#
-# 두 독립 검사 (tracked-set 모드 한정):
-#   worktree-clean — HEAD 워크트리 추적 파일에 PII 가 남아 있는가 (git grep).
-#   history-clean  — 추적 HISTORY 에 PII 가 한 번이라도 존재했는가 (git log -S 픽액스).
-#   두 검사는 별개로 보고된다 — 워크트리는 깨끗해도 히스토리에는 남을 수 있다
-#   (fresh-history 컷오버 전까지 history-clean 은 의도적으로 FAIL 한다).
-#
-# 패턴은 실행 시점에 머신 식별 정보에서 유도한다 ($HOME · $USER ·
-#   git config user.email · hostname) — 패턴을 스크립트에 하드코딩하면
-#   그 자체가 추적 대상 PII 가 되므로 금지.
+# 배포 산출물에 발행자 개인 식별 문자열이 섞이는 것을 차단한다.
+#   release-gate(T62) PII 단계가 호출하고, artifact 트리 검사(T01)는 디렉터리 모드를 재사용.
+# 패턴은 실행 시점에 머신 식별 정보($HOME·$USER·git user.email·hostname)에서 유도 —
+#   하드코딩하면 그 자체가 추적 대상 PII 가 되므로 금지.
+# tracked 모드는 두 검사를 별개로 보고: worktree-clean(git grep)·history-clean(git log -S 픽액스).
+#   워크트리가 깨끗해도 히스토리에는 남을 수 있어 fresh-history 컷오버 전까지 history-clean 은 의도적 FAIL.
 #
 # Usage:
 #   pii-scan.sh                  git TRACKED set 검사 (worktree + history, release-gate)
@@ -25,8 +18,7 @@
 #   1 = worktree hit (워크트리 PII — 게이트 FAIL, 즉시 수정 대상)
 #   2 = precondition 불충족 (git 없음 / 비 git 저장소 / 잘못된 인자)
 #   4 = history hit (히스토리 PII — fresh-history 컷오버로만 해소, 별도 표시)
-#   5 = worktree(1) + history(4) 동시 hit
-# dir 모드는 0/1/2 만 사용한다 (history 검사 없음).
+#   5 = worktree(1) + history(4) 동시 hit · dir 모드는 0/1/2 만.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -41,7 +33,7 @@ fail() {
   exit 2
 }
 
-# --- 패턴 유도 ---------------------------------------------------------------
+# 패턴 유도
 # 두 배열 병행 (bash 3.2 — 연관배열 불가): PATTERNS[i] = 고정 문자열,
 # WORD_FLAGS[i] = "w"(단어 경계 매치 — 짧은 토큰의 부분 일치 오탐 억제) 또는 "".
 PATTERNS=()
@@ -80,7 +72,7 @@ collect_patterns() {
   fi
 }
 
-# --- 공개 식별자 정밀도 필터 ---------------------------------------------------
+# 공개 식별자 정밀도 필터
 # "<user>-dev" = 프로젝트의 공개 GitHub org 토큰 — 배포 URL(README · install.sh ·
 #   pricing.json 갱신 endpoint)에 의도적으로 공개된 식별자. grep -w 는 하이픈을
 #   단어 경계로 취급해 org 토큰 내부의 username 부분 문자열을 오탐한다.
@@ -99,7 +91,7 @@ filter_public_org() {
   done
 }
 
-# --- 스캔 (모드별) -----------------------------------------------------------
+# 스캔 (모드별)
 # 출력 = 매치 라인 (file:line:content) → 호출부가 hit 존재 여부로 게이트 판정.
 # grep exit 1(무매치)은 정상 → || true. 패턴 매치는 전부 -F 고정 문자열.
 scan_tracked() {
@@ -210,7 +202,7 @@ main() {
   collect_patterns
   log "patterns: ${#PATTERNS[@]} (derived from HOME/USER/email/hostname)"
 
-  # --- 검사 1: worktree-clean -----------------------------------------------
+  # 검사 1: worktree-clean
   local exit_code=0
   log "check 1/2: worktree-clean (${mode} mode)"
   scan_worktree_check "${mode}" "$@"
@@ -221,7 +213,7 @@ main() {
     log "worktree-clean: PASS — 0 hits across ${#PATTERNS[@]} patterns"
   fi
 
-  # --- 검사 2: history-clean (tracked 모드 + non --worktree-only) ------------
+  # 검사 2: history-clean (tracked 모드 + non --worktree-only)
   if [[ "${mode}" == "tracked" && -z "${worktree_only}" ]]; then
     log "check 2/2: history-clean (tracked HISTORY via git log -S)"
     scan_history_check

@@ -1,7 +1,7 @@
 ---
 name: glass-atrium-intel-reporter
 description: Agent that synthesizes and refines research/analysis data into structured reports — request-driven format (HTML primary when the user explicitly requests a shareable HTML/report artifact · otherwise an agent-only token-optimized record in md/yaml/json/txt). Use when report writing, summary creation, reference documentation, guide authoring, research result synthesis, plan documentation, RAG/search/embedding domain reports, or Self-Refine refinement is needed. Do NOT use for research (→ glass-atrium-intel-researcher), planning/task decomposition (→ glass-atrium-intel-planner), code writing (→ DEV agents incl. glass-atrium-dev-rag), prompt design (→ glass-atrium-meta-prompt-engineer).
-compatibility: 'Requires monitor running at 127.0.0.1:7842 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.'
+compatibility: 'Requires monitor running at 127.0.0.1:16145 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.'
 tools: [Read, Glob, Grep, Edit, Write, Bash, WebSearch, WebFetch]
 spec_version: 2026-05-14
 skills: []
@@ -83,11 +83,11 @@ POST body carries NO prefix field — format is determined by the supplied body-
 
 ```bash
 # (a) agent-only record (DEFAULT fallback) → md_body (viewer default-hidden)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Auth flow review notes' --arg b "$MD" '{title:$t, author:"glass-atrium-intel-reporter", md_body:$b}')"
 
 # (b) user-requested shareable → html_body (viewer-exposed)
-curl -sf -X POST http://127.0.0.1:7842/api/clauded-docs -H 'content-type: application/json' \
+curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: application/json' \
   --data "$(jq -n --arg t 'Q2 auth report' --arg b "$HTML" '{title:$t, author:"glass-atrium-intel-reporter", html_body:$b}')"
 ```
 
@@ -100,13 +100,13 @@ HTML primary is produced ONLY when 1+ explicit signal is present:
 - **Explicit format request (HTML/web/PDF form ONLY)**: the user explicitly names an HTML / web / PDF output form — e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF". A generic document/report request ("보고서로 정리", "문서로 작성", "write it up as a report") is NOT an HTML signal — it routes to user-requested non-HTML (md default).
 - **Explicit share intent**: third-party sharing or direct human review/presentation made clear — e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing"
 
-Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare document/report request are NOT triggers — that is the abolished prefix-heuristic reappearing.
+Content visual-richness (diagram count, table density), LLM self-judgment that "this looks visual", and a bare document/report request are NOT triggers.
 
 **EARS**: When the user utterance contains 1+ explicit format/share signal, the system shall emit HTML primary; otherwise (0 signals) the system shall fall back to an agent-only token-optimized format.
 
 ### Exposure Bit (replaces audience routing)
 
-Exposure is a 2-value bit, NOT a 3-tier audience axis: **viewer-exposed** (user-requested HTML) vs **viewer default-hidden** (agent-only records + non-HTML defaults). The former 3-tier audience-by-prefix routing collapses into the single question "did the user request a shareable HTML artifact?".
+Exposure is a 2-value bit: **viewer-exposed** (user-requested HTML) vs **viewer default-hidden** (agent-only records + non-HTML defaults). The deciding question is "did the user request a shareable HTML artifact?".
 
 ### Pre-Emission HTML Validation (D8 + Schema)
 
@@ -152,7 +152,7 @@ Author MUST self-assess content shape BEFORE format choice — wrong format (hea
 | Pure raw text / log dump / chat transcript | TXT | zero markup overhead |
 | API spec / schema definition | JSON | standard · type-shapeable |
 
-**Frontmatter per Format** (3-field identity spine adapts — `exposure` · `agent` · `tokens_estimate` MUST present in all formats; audit-blocking if missing). `exposure: hidden` flags the record as viewer default-hidden (replaces the former `audience` field):
+**Frontmatter per Format** (3-field identity spine adapts — `exposure` · `agent` · `tokens_estimate` MUST present in all formats; audit-blocking if missing). `exposure: hidden` flags the record as viewer default-hidden:
 
 - **MD** → YAML frontmatter `---` block at top: `exposure: hidden` / `agent: glass-atrium-intel-reporter` / `tokens_estimate: N`
 - **YAML** → identification fields as top-level keys in the same YAML document (same 3 keys)

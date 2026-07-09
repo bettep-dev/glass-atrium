@@ -1,22 +1,15 @@
 #!/usr/bin/env bats
 # glass-atrium-dispatch suite — pins the T08 `glass-atrium update` subcommand
-# dispatch contract on the BINARY side (the updater engine-function side lives in
-# glass-atrium-update.bats):
-#   * `glass-atrium update [args]` dispatches to the updater (ATRIUM_UPDATE_SCRIPT
-#     test override), forwarding args VERBATIM and propagating the updater's exit code
-#   * `--help` is forwarded to the updater, NOT consumed by ga_parse_args (the
-#     installer flag parser, which loud-dies on an unknown flag)
-#   * a missing / non-executable updater loud-fails (die → rc 1, no silent absorb)
-#   * manifest-hash consistency (doctor §8): the tracked manifest hash for
-#     `glass-atrium` equals the live file sha256, the update.sh script is listed at
-#     its post-P1-T0 scripts/ path, and generate-manifest --check reports no drift
-#
-# Run via: bats scripts/test/glass-atrium-dispatch.bats
-# Requires: bats >= 1.5.0, jq, git, shasum/sha256sum
-#
-# Hermetic strategy: the dispatch tests run the REAL binary against a per-test
-# mktemp fake updater (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are
-# never touched. The manifest tests read the tracked manifest read-only.
+# dispatch contract on the BINARY side (updater engine-function side lives in
+# glass-atrium-update.bats): dispatch to the updater (ATRIUM_UPDATE_SCRIPT test
+# override) forwarding args VERBATIM + propagating its exit code; `--help` forwarded
+# to the updater, NOT consumed by ga_parse_args (the installer parser loud-dies on an
+# unknown flag); a missing / non-executable updater loud-fails (die → rc 1);
+# manifest-hash consistency (doctor §8): tracked hash for `glass-atrium` == live
+# sha256, update.sh listed at its post-P1-T0 scripts/ path, --check reports no drift.
+# Hermetic: dispatch tests run the REAL binary against a per-test mktemp fake updater
+# (ATRIUM_UPDATE_SCRIPT) — gh / /dev/tty / the live skill are never touched; manifest
+# tests read the tracked manifest read-only.
 
 bats_require_minimum_version 1.5.0
 
@@ -56,7 +49,7 @@ EOF
   chmod +x "${path}"
 }
 
-# --- subcommand dispatch ---------------------------------------------------
+# subcommand dispatch
 
 @test "glass-atrium update dispatches to the updater, forwards args, propagates the exit code" {
   local fake="${WORK}/fake-update.sh"
@@ -91,7 +84,7 @@ EOF
   [[ "$output" == *"not executable"* ]]
 }
 
-# --- manifest-hash consistency (doctor §8) ---------------------------------
+# manifest-hash consistency (doctor §8)
 
 @test "manifest records the live binary sha256 (binary content == hashes[glass-atrium])" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
@@ -103,11 +96,10 @@ EOF
 
 @test "manifest lists update.sh at its scripts/ path (moved from the skill dir; subcommand target deployed)" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/. The manifest
-  # must list the NEW path and no longer carry the retired skill-dir path.
-  # NOTE: this test goes GREEN only AFTER the PHASE-end manifest regen
-  # (generate-manifest.sh) — until then the tracked manifest still carries the old
-  # skill path, so BOTH assertions below are expected RED in a pre-regen run.
+  # P1-T0 moved update.sh from skills/glass-atrium-update/ to scripts/; the manifest
+  # must list the NEW path and drop the retired skill-dir path. Goes GREEN only AFTER
+  # the PHASE-end manifest regen — pre-regen the tracked manifest still carries the old
+  # skill path, so both assertions below are expected RED.
   run jq -e '.files | index("scripts/update.sh")' "${MANIFEST}"
   [ "$status" -eq 0 ]                                                  # new path present
   run jq -e '.files | index("skills/glass-atrium-update/update.sh")' "${MANIFEST}"

@@ -113,7 +113,7 @@ test("rowToSummaryItem: invocations_30d 추가 무관 · 기존 필드 (runs / s
   const ctx = makeCtx({
     p95ByAgent: new Map([["react-dev", 1234]]),
     invocationsByAgent: new Map([["react-dev", 471]]),
-    compatibility: "monitor running at 127.0.0.1:7842",
+    compatibility: "monitor running at 127.0.0.1:16145",
   });
   const item = rowToSummaryItem(row, ctx);
 
@@ -124,7 +124,7 @@ test("rowToSummaryItem: invocations_30d 추가 무관 · 기존 필드 (runs / s
   assert.strictEqual(item.success_pct, 95);
   assert.strictEqual(item.cost, null);
   assert.strictEqual(item.p95_ms, 1234);
-  assert.strictEqual(item.compatibility, "monitor running at 127.0.0.1:7842");
+  assert.strictEqual(item.compatibility, "monitor running at 127.0.0.1:16145");
   // 신규 필드.
   assert.strictEqual(item.invocations_30d, 471);
 });
