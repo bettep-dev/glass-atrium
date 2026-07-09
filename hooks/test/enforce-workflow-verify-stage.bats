@@ -950,3 +950,115 @@ continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report
   [[ "${output}" == *"CAUSE (block-norev)"* ]]
   [[ "${output}" != *"size-attestation miss"* ]]
 }
+
+# --- (t) TWO-TIER + PIPELINE-ADJACENCY + W2000 regression fixtures (F1-F9). Pins both real
+# false-positive shapes (case A config-array pipeline with a member-expression agentType dev stage;
+# case B parallel-reviewers + sequential dev), the must-stay-BLOCKED red-team variants the adjacency
+# rule introduces, the composed pair+ordering path, and the operand-consistency discriminator.
+# CORPUS PROVENANCE — the three real scripts are archived verbatim by T0 under hooks/test/corpus/,
+# byte-identical to the ephemeral jobs-tmp originals (T6 runs them as the durable acceptance corpus):
+#   blocked_9599.js         (case A, fired 2026-07-08T15:32Z) sha256 21b289e32f79ac1eedcd6b09706506af1cf35c167316871090e72165e032e607
+#   blocked_7938.js         (case B, fired 2026-07-07T13:39Z) sha256 6b6b2cb5069212fee433b8305aab0feafca39d8db66c18820918b60a6e60ae16
+#   passed_9599_resubmit.js (resubmission stays PASS)         sha256 74f51ad700b1b519da3e0f322feec45f688b7a6799ff93d50bb6e602f91f34ef
+# ---
+
+# F1 (case-A shape PASS): colon-field dev DATA literals (Tier-A present, Tier-B excluded) + a pipeline
+# stage-1 reviewer spawn + a stage-2 member-expression agentType dev stage → PASS via T2 adjacency
+# pair (T1-alone keeps it blocked; T2 is the load-bearing flip).
+@test "F1 case-A: colon-field dev DATA + pipeline reviewer stage + member-expr agentType dev stage → PASS" {
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+const BATCHES=[{id:'H1',agent:'glass-atrium-dev-shell'},{id:'M1',agent:'glass-atrium-dev-node'}]
+const out = await pipeline(BATCHES, (b)=>agent('reviewer prompt',{agentType:'glass-atrium-qa-code-reviewer'}), (rv,b)=>agent('dev prompt',{agentType: b.agent}))"
+  [[ "${status}" -eq 0 ]]
+}
+
+# F2 (case-A no-reviewer negative): same colon-field dev DATA + variable-agentType spawn but the
+# reviewer stage removed → BLOCK_NOREV. Proves exempt-on-Tier-A: even with an EMPTY Tier-B dev set the
+# script is NOT Stage-2 exempt (Tier A sees the data literals), so the zero-reviewer guarantee fires.
+@test "F2 case-A no-reviewer: colon-field dev DATA + member-expr agentType dev stage, NO reviewer → BLOCK_NOREV" {
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+const BATCHES=[{id:'H1',agent:'glass-atrium-dev-shell'},{id:'M1',agent:'glass-atrium-dev-node'}]
+const out = await pipeline(BATCHES, (rv,b)=>agent('dev prompt',{agentType: b.agent}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-norev)"* ]]
+}
+
+# F3 (case-B shape PASS): parallel reviewers + a sequential literal-agentType dev sitting in the
+# 1000-2000 band from its nearest reviewer → PASS at W2000 (would BLOCK at the old W1000). Exercises
+# the T3 window widen (the case-B lever — no pipeline, no data literals).
+@test "F3 case-B: parallel reviewers + sequential dev within 2000 (not 1000) of a reviewer → PASS (window)" {
+  local padA padB
+  padA="$(python3 -c "print('a'*1300)")"
+  padB="$(python3 -c "print('b'*1300)")"
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+const reviews = await parallel([1,2].map(d => () => agent('dim '+d,{agentType:'glass-atrium-qa-code-reviewer'})))
+const mid='${padA}'
+const applied = await agent('apply findings',{agentType:'glass-atrium-dev-shell'})
+const tail='${padB}'
+const finalRev = await agent('final review',{agentType:'glass-atrium-qa-code-reviewer'})"
+  [[ "${status}" -eq 0 ]]
+}
+
+# F4 (window-boundary negative): a reviewer + a lone dev pushed BEYOND 2000 comment-stripped chars via
+# real filler code → BLOCK_NOVERIFYDEV. Locks the W2000 ceiling (the red-team must-BLOCK distance).
+@test "F4 window-boundary: reviewer + lone dev pushed beyond 2000 via filler → BLOCK_NOVERIFYDEV (ceiling)" {
+  local f
+  f="$(filler 45)"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge feasibility'}),${f},agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-noverifydev)"* ]]
+}
+
+# F5 (red-team adjacency variant): a stray audit reviewer + 2 scattered spawn-position impl devs inside
+# ONE whole-script pipeline with filler STAGES between the reviewer stage and the dev stages → BLOCK.
+# The filler stages break stage-adjacency, so the pipeline-pair rule does NOT absorb the devs — the
+# discriminator the adjacency rule introduces (F5 devs are spawn-position, so Tier-A == Tier-B here).
+@test "F5 red-team: stray audit reviewer + scattered spawn-position impl devs in ONE pipeline, filler stages between → BLOCK" {
+  local f
+  f="$(filler 45)"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('glass-atrium-dev-nestjs',{goal:'impl1'}),${f},agent('glass-atrium-dev-react',{goal:'impl2'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-noverifydev)"* ]]
+}
+
+# F6 (literal first-arg dev spawn, no reviewer): proves spawn-position awareness does NOT blind a
+# literal agent('dev-*') first-arg spawn → BLOCK_NOREV (the zero-reviewer hard guarantee holds).
+@test "F6 literal first-arg dev spawn, NO reviewer → BLOCK_NOREV (spawn-awareness does not blind literal spawns)" {
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+pipeline(agent('glass-atrium-dev-nestjs',{goal:'implement the module'}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-norev)"* ]]
+}
+
+# F7 (accepted-FN pin, Q2 accept): a fully computed agentType impl spawn with ZERO dev literals
+# anywhere is invisible to Tier A → Stage-2 exempt → PASS. Pre-existing blind spot, posture unchanged.
+@test "F7 accepted-FN: computed agentType impl + ZERO dev literals anywhere → PASS (pre-existing blind spot, Q2)" {
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+const chosen = pickAgent()
+pipeline(agent('build it',{agentType: chosen}))"
+  [[ "${status}" -eq 0 ]]
+}
+
+# F8 (composed-path PASS): an adjacency verify pair (reviewer stage → non-literal-agentType stage) PLUS
+# a LATER literal impl dev pushed beyond 2000 → PASS via pair recognition, with the reviewer-first
+# ordering check running on a NON-EMPTY impl_dev_starts (the composed pair+ordering interplay).
+@test "F8 composed-path: adjacency verify pair + a LATER literal impl dev beyond 2000 → PASS (ordering on non-empty impl)" {
+  local f
+  f="$(filler 45)"
+  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'plan ${PLAN_REF} ${SIZE_EST}'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge feasibility'}),agent('dev verify',{agentType: chosenDev}),${f},agent('glass-atrium-dev-nestjs',{goal:'implement'}))"
+  [[ "${status}" -eq 0 ]]
+}
+
+# F9 (operand-consistency discriminator): config-array dev DATA literals + a stray NON-adjacent
+# reviewer + an indirect non-literal-agentType spawn NOT adjacent to any reviewer stage (no genuine
+# pair) → BLOCK_NOVERIFYDEV. Separates a correct Tier-B-consistent has_verify_dev (0 < 0 = False) from
+# a naive Tier-A count shortcut (0 < 2 = True) that would wrongly PASS — a bypass F5 cannot catch.
+@test "F9 operand-consistency: config-array dev DATA + stray non-adjacent reviewer + non-adjacent indirect spawn, NO pair → BLOCK_NOVERIFYDEV" {
+  local f
+  f="$(filler 45)"
+  run_hook "log('plan-ref: ${PLAN_REF} ${SIZE_EST}')
+const BATCHES=[{id:'H1',agent:'glass-atrium-dev-shell'},{id:'M1',agent:'glass-atrium-dev-node'}]
+pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'AUDIT phase'}),${f},agent('impl',{agentType: BATCHES[0].agent}))"
+  [[ "${status}" -eq 2 ]]
+  [[ "${output}" == *"CAUSE (block-noverifydev)"* ]]
+}

@@ -286,45 +286,53 @@ emit_resilience_advisory
 #       spawn does not gate that implementation and is treated as missing.
 #   (c) the gate fired heuristics even with no DEV spawn → already exempt (still is).
 #
-# R5 — DEV-verifier co-location / co-group HEURISTIC, NOT DEV-verdict enforcement. The DEV half
-# of the {qa-code-reviewer, DEV} verify team is required, but the verify-DEV and the impl-DEV
-# share the IDENTICAL dev-* agentType token, so they are token-indistinguishable. The two sound
-# static signals that a dev-* is the verify-DEV are: (1) CO-LOCATION — within COLOCATION_WINDOW
-# chars of ANY reviewer span (generalized over ALL reviewers via finditer, not just the first
-# match); and (2) CO-MEMBERSHIP — sharing a balanced-paren parallel(...) group with a reviewer,
-# DISTANCE-INDEPENDENT so a long inline goal string cannot break detection. The helper partitions
-# the dev-* tokens into the verify-DEV (either signal holds) and the implementation dev-* tokens
-# (everything else), then decides:
-#   - reviewer(s) present but NO co-located / co-grouped dev-* verifier → reviewer is alone → DEV
-#     hard-gate absent → BLOCK.
-#   - a verify-DEV present AND every implementation dev-* is preceded by SOME reviewer → PASS.
-#     Because the verify-DEV is EXCLUDED from the implementation set, the verify pair is
-#     ORDER-INDEPENDENT: both parallel(reviewer, dev) and parallel(dev, reviewer) pass.
+# CLASSIFIER SIGNAL SET (recognized-shape CLOSED SET) — a two-tier token model plus a small closed
+# set of canonical verify-stage shapes, NOT DEV-verdict enforcement. The DEV half of the
+# {qa-code-reviewer, DEV} verify team is required, but the verify-DEV and the impl-DEV share the
+# IDENTICAL dev-* agentType token, so they are token-indistinguishable by name. TWO-TIER MODEL:
+#   TIER A — broad quote-bounded scan feeds PRESENCE gates ONLY (dev_present → exemption / entry /
+#     size-est; reviewer existence → BLOCK_NOREV). A data-array config field like agent:'dev-*' counts
+#     here, so a data-literal-only script is NOT Stage-2 exempt and still BLOCK_NOREVs with no reviewer.
+#   TIER B — spawn-position scan (agent-call first-arg OR agentType field-value) feeds impl-dev
+#     membership + verify-pair candidacy + ordering ONLY; a data-field literal is DATA and excluded.
+# A dev-* is the verify-DEV iff it matches one of the FOUR recognized shapes (the CLOSED SET):
+#   (1) CO-LOCATION — a Tier-B dev within 2000 comment-stripped chars of ANY reviewer span
+#       (generalized over all reviewers via finditer, not just the first match).
+#   (2) PARALLEL CO-MEMBERSHIP — a Tier-B dev sharing a balanced-paren parallel(...) group with a
+#       reviewer (DISTANCE-INDEPENDENT so a long inline goal string cannot break detection).
+#   (3) PIPELINE STAGE-ADJACENCY — a reviewer-bearing pipeline stage IMMEDIATELY followed by a stage
+#       holding a Tier-B dev spawn OR a NON-literal agentType (identifier / member / ternary); the
+#       computed-agentType spawn is recognized in THAT adjacent stage ONLY. Canonical engine
+#       pipeline(items, reviewerStage, devStage) signature.
+#   (4) TWO-TIER DATA-FIELD EXCLUSION — the Tier-A/Tier-B split above: a dev literal parked in a data
+#       config field is DATA, never an impl-dev or a pair operand.
+# The helper partitions the Tier-B dev-* tokens into the verify-DEV (any recognized shape holds) and
+# the implementation dev-* tokens (everything else), then decides:
+#   - reviewer(s) present but NO verify-DEV by any recognized shape → DEV hard-gate absent → BLOCK.
+#   - a verify-DEV present AND every implementation dev-* is preceded by SOME reviewer → PASS
+#     (ORDER-INDEPENDENT within a pair: the verify-DEV is EXCLUDED from the implementation set).
 #   - an implementation dev-* that NO reviewer precedes → it ran un-gated → BLOCK.
 #
-# TWO FALSE-POSITIVE FIXES (both bypass-free per the Stage-2 red-team):
-#   (FP1, multi-reviewer) keying the verify-DEV check on EVERY reviewer (finditer), not the FIRST
-#     match, so a leading audit/Phase-1 reviewer no longer determines the verdict for a genuine
-#     later {qa,dev} pair.
-#   (FP2, window-blowout) recognizing the verify pair STRUCTURALLY via parallel(...) group bounds,
-#     so a multi-sentence goal string pushing the genuine qa+dev pair past COLOCATION_WINDOW does
-#     not break detection. NO precede-fallback is used: the red team proved a "absorb the first
-#     impl dev as a phantom verify-DEV when dev-*>=2 and a reviewer precedes" fallback OPENS A
-#     BYPASS (audit reviewer + 2+ scattered impl devs + no genuine parallel(qa,dev) pair would
-#     wrongly PASS), so it is deliberately NOT present — the verify-DEV signal is co-location /
-#     group-bounds ONLY. The fix only WIDENS the PASS set for genuine verify-stages; it NEVER
-#     admits a zero-genuine-verify-pair DEV-impl workflow.
+# STANDING REJECTION (phantom-absorption): NO precede-fallback — the red team proved a "absorb the
+# first impl dev as a phantom verify-DEV when dev-*>=2 and a reviewer precedes" fallback OPENS A
+# BYPASS (audit reviewer + 2+ scattered impl devs + no genuine pair would wrongly PASS). The
+# sanctioned alternative is shape (3) adjacency, CONFINED to the reviewer-adjacent stage — a filler
+# stage between the reviewer stage and a dev stage BREAKS the pair, and group-wide indirection
+# pairing is deliberately NOT present. The fix only WIDENS the PASS set for genuine verify-stages;
+# it NEVER admits a zero-genuine-verify-pair DEV-impl workflow. Multi-reviewer + window-blowout FPs
+# are both covered (finditer over every reviewer + the parallel-group / pipeline-adjacency signals).
 # A presence/co-location heuristic only — it NEVER inspects a runtime feasible verdict (which does
 # not exist at static-scan time) and is labeled HEURISTIC, not enforcement. A wide window plus the
 # fail-open-biased group scan keep it FAIL-OPEN DOMINANT.
 #
-# KNOWN LIMITATION (reported honestly): because verify-DEV and impl-DEV are the same token, this
-# heuristic cannot prove the co-located DEV is acting as a verifier rather than an implementer.
-# A compact script that places a lone dev-* within COLOCATION_WINDOW chars of the reviewer reads
-# as a verify-DEV (so a verify-only stage with no separate implementation, OR a dev-then-reviewer
-# pair with nothing after, both PASS). That is an accepted fail-open false-negative: a missed
-# bypass is preferred over a false BLOCK of a legitimate workflow. The DEV-verdict correctness
-# itself remains the orchestrator's honor-system authoring obligation.
+# KNOWN LIMITATION / ACCEPTED FALSE-NEGATIVES (reported honestly): because verify-DEV and impl-DEV
+# share the same token, this heuristic cannot prove a co-located DEV is a verifier rather than an
+# implementer (a lone dev-* within the window, or a dev-then-reviewer pair with nothing after, both
+# PASS). And a fully computed agentType with ZERO dev literals ANYWHERE is invisible to Tier A, so
+# the script is Stage-2 exempt — a PRE-EXISTING blind spot, posture UNCHANGED by the two-tier fix.
+# Both are accepted fail-open false-negatives: a missed bypass is preferred over a false BLOCK of a
+# legitimate workflow. The DEV-verdict correctness itself remains the orchestrator honor-system
+# authoring obligation.
 #
 # The detection + comment-strip + co-location + ordering runs in ONE python3 helper that emits a
 # cause-split verdict token
@@ -355,13 +363,22 @@ verdict_py="$(
   cat <<'PY'
 import sys, re
 
+# String-literal opening quote chars (single / double / template backtick) — shared by every
+# string-aware scanner so the backtick literal appears once.
+_STR_QUOTES = ("'", '"', '`')
+
 # Proximity-window half-width in chars for the DEV-verifier co-location heuristic. A dev-* token
 # within this many chars of the reviewer token counts as the DEV half of the verify team. Generous
 # on purpose: a wider window reads MORE workflows as having a co-located DEV verifier, so it yields
-# FEWER BLOCKs and stays fail-open dominant. Sized to comfortably span the canonical verify stage
-# parallel block holding qa-code-reviewer plus the primary-domain dev agent side by side, INCLUDING
-# a realistic multi-sentence reviewer goal string (~500+ chars) between the co-located pair.
-COLOCATION_WINDOW = 1000
+# FEWER BLOCKs and stays fail-open dominant. Sized to span the canonical verify stage parallel block
+# holding qa-code-reviewer plus the primary-domain dev agent side by side INCLUDING a multi-sentence
+# reviewer goal string, AND the sequential reviewer-to-dev distance of the real case-B fan-out shape.
+# Validated safe band 1196-2849: a real case-B dev sits 1196-1617 chars from its trailing reviewer,
+# while the red-team must-BLOCK fixture keeps its scattered devs ~2789-2850 chars out — so 2000
+# admits case B while the red-team stays BLOCKED, with a disclosed ~789-char margin to that fixture.
+# Widening past ~2850 reopens the red-team bypass; the durable fix for the residual case-B gap is the
+# deferred assignment-taint signal, not a wider window.
+COLOCATION_WINDOW = 2000
 
 # Inline copy of enforce-verification-gate.sh references_plan()'s structured regex (Path A predicate);
 # keep in sync. Scanned RAW (attestation_src) for the ADDITIVE entry-advisory signal — see alias defs.
@@ -544,19 +561,19 @@ def is_colocated_any(rev_spans, dev_start):
     # for a genuine {qa,dev} pair that appears later in the script.
     return any(is_colocated(rs, re_, dev_start) for (rs, re_) in rev_spans)
 
-def parallel_group_spans(stripped):
-    # Find the balanced-paren bounds of every `parallel( ... )` group. Returns a list of (start, end)
-    # half-open char ranges covering the parenthesized argument list of each parallel call. Used for
-    # the DISTANCE-INDEPENDENT verify-pair signal: a parallel group containing BOTH a qa-code-reviewer
-    # AND a dev-* spawn is the canonical verify stage REGARDLESS of how long the inline goal strings
-    # are. This is the structural fix for the window-blowout FP (a multi-sentence goal string pushing
-    # the genuine qa+dev pair past COLOCATION_WINDOW must NOT break detection). String-aware: a `(` or
-    # `)` inside a string literal does not move the depth counter, so a paren inside a goal string
-    # cannot mis-bound a group. Runs on the already comment-stripped source.
+def _balanced_call_bodies(stripped, open_re):
+    # Balanced-paren body span of every call whose opening name-paren matches open_re — open_re MUST
+    # end AT the opening paren. Returns a list of (start, end) half-open char ranges covering the
+    # parenthesized argument list of each such call. String-aware: a paren inside a string literal
+    # does not move the depth counter, so a paren inside a goal string cannot mis-bound a body.
+    # Fail-open biased: an unbalanced/truncated call runs its body to EOF (a wider span reads MORE
+    # devs as co-grouped verify-DEVs, yielding fewer BLOCKs). Shared by parallel_group_spans and the
+    # pipeline stage splitter so both use the identical scanning discipline. Runs on comment-stripped
+    # source.
     spans = []
     n = len(stripped)
-    for m in re.finditer(r"\bparallel\s*\(", stripped):
-        # Start scanning at the char AFTER the opening paren of `parallel(`.
+    for m in re.finditer(open_re, stripped):
+        # Start scanning at the char AFTER the opening paren.
         depth = 1
         i = m.end()
         body_start = i
@@ -571,7 +588,7 @@ def parallel_group_spans(stripped):
                     in_str = None
                 i += 1
                 continue
-            if c in ("'", '"', '`'):
+            if c in _STR_QUOTES:
                 in_str = c
             elif c == '(':
                 depth += 1
@@ -582,11 +599,77 @@ def parallel_group_spans(stripped):
                     break
             i += 1
         else:
-            # Unbalanced (truncated script) → the group runs to EOF. Fail-open biased: a wider span
-            # reads MORE devs as co-grouped verify-DEVs, yielding fewer BLOCKs.
             if depth > 0:
                 spans.append((body_start, n))
     return spans
+
+def parallel_group_spans(stripped):
+    # Balanced-paren bounds of every parallel( ... ) group — the DISTANCE-INDEPENDENT verify-pair
+    # signal: a parallel group containing BOTH a qa-code-reviewer AND a dev-* spawn is the canonical
+    # verify stage REGARDLESS of how long the inline goal strings are (the structural fix for the
+    # window-blowout FP). Delegates the balanced-paren scan to _balanced_call_bodies.
+    return _balanced_call_bodies(stripped, r"\bparallel\s*\(")
+
+def split_top_level_args(stripped, body_start, body_end):
+    # Split a call body from body_start up to body_end into top-level argument char-spans, cutting
+    # ONLY at a comma at combined-bracket-depth 0 (string-aware). Any of open paren / bracket / brace
+    # increases depth and its close decreases it, so a comma inside a nested call, array, or object
+    # never splits. The top-level args of a pipeline call ARE its stages.
+    args = []
+    depth = 0
+    in_str = None
+    i = body_start
+    arg_start = body_start
+    while i < body_end:
+        c = stripped[i]
+        if in_str is not None:
+            if c == '\\':
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        if c in _STR_QUOTES:
+            in_str = c
+        elif c == '(' or c == '[' or c == '{':
+            depth += 1
+        elif c == ')' or c == ']' or c == '}':
+            depth -= 1
+        elif c == ',' and depth == 0:
+            args.append((arg_start, i))
+            arg_start = i + 1
+        i += 1
+    args.append((arg_start, body_end))
+    return args
+
+def pipeline_verify_pair_stages(stripped, rev_spawn_re, dev_spawn_re, nonlit_re):
+    # Pipeline STAGE-ADJACENCY verify-pair recognition — the sound salvage of the canonical engine
+    # composition signature pipeline(items, reviewerStage, devStage). For each pipeline call, split
+    # its body into top-level stage args; a reviewer-bearing stage IMMEDIATELY followed by a stage
+    # holding either a Tier-B dev spawn OR an agent-call with a NON-literal agentType value is a
+    # verify pair. Returns the char-spans of each such dev-half stage.
+    # CONFINED to the immediately-adjacent stage ONLY — NEVER whole-group co-membership: a phantom
+    # indirect spawn anywhere inside a reviewer-bearing whole-script pipeline must NOT count, or the
+    # recorded red-team bypass reopens. A filler stage between the reviewer stage and the dev stage
+    # breaks the adjacency and the pair is not recognized.
+    pair_dev_spans = []
+    for bs, be in _balanced_call_bodies(stripped, r"\bpipeline\s*\("):
+        args = split_top_level_args(stripped, bs, be)
+        for idx in range(len(args) - 1):
+            rs, r_end = args[idx]
+            if rev_spawn_re.search(stripped[rs:r_end]):
+                ns, n_end = args[idx + 1]
+                nxt = stripped[ns:n_end]
+                if dev_spawn_re.search(nxt) or nonlit_re.search(nxt):
+                    pair_dev_spans.append((ns, n_end))
+    return pair_dev_spans
+
+def in_pipeline_pair_stage(pair_dev_spans, pos):
+    # Is pos inside the dev-half stage of a pipeline adjacency verify pair? A Tier-B dev LITERAL there
+    # is the verify-DEV, excluded from the implementation set exactly like a co-located / co-grouped
+    # one.
+    return any(ps <= pos <= pe for ps, pe in pair_dev_spans)
 
 def in_verify_parallel_group(group_spans, has_rev_in_group, pos):
     # Is `pos` inside a parallel() group that ALSO contains a reviewer? group_spans is the list of
@@ -671,11 +754,39 @@ try:
     attestation_src = src
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
-    # Quote-bounded DEV agentType token (antigaming_src — see alias defs).
-    dev_re = re.compile(r"['\"](" + dev_alt + r")['\"]")
-    rev_re = re.compile(r"['\"]glass-atrium-qa-code-reviewer['\"]")
+
+    # TWO-TIER TOKEN MODEL (see the CLASSIFIER SIGNAL SET comment block above).
+    #   TIER A — broad quote-bounded scan. Feeds PRESENCE gates ONLY: dev_present drives the Stage-2
+    #     exemption + entry + size-est gating, and the reviewer-EXISTENCE guarantee drives BLOCK_NOREV.
+    #     ANY quoted dev/reviewer literal counts here, INCLUDING a data-array config field such as
+    #     agent: 'glass-atrium-dev-shell' — so a script whose dev literals are all data fields is NOT
+    #     Stage-2 exempt, and BLOCK_NOREV still fires when its reviewer literal is absent. Byte-identical
+    #     to the pre-two-tier scan.
+    #   TIER B — spawn-position scan. Feeds impl-dev membership, verify-pair candidacy, and the ordering
+    #     check ONLY. A dev/reviewer literal counts as a SPAWN iff it sits in an agent-call
+    #     first-argument position OR an agentType field-value position; a data-field literal is DATA and
+    #     excluded. The exemption branch and BLOCK_NOREV NEVER key on Tier B — exempt-on-Tier-B is
+    #     forbidden: it would silently PASS a data-literal + reviewer + non-adjacent-indirection script
+    #     that today correctly BLOCK_NOVERIFYDEVs.
+    dev_re_present = re.compile(r"['\"](" + dev_alt + r")['\"]")
+    rev_re_present = re.compile(r"['\"]glass-atrium-qa-code-reviewer['\"]")
+    dev_starts_present = [m.start() for m in dev_re_present.finditer(antigaming_src)]
+    dev_present = bool(dev_starts_present)
+
+    # Tier-B spawn-position match: a dev/reviewer literal counts iff it sits right after an agent-call
+    # open paren OR an agentType option value. Two full alternatives joined at the top level with a
+    # bare pipe — NO non-capturing group — so the alternation needs no wrapping parens. bash-3.2
+    # $(...)-scan constraint on this heredoc: a source-level escaped open paren unbalances the scanner,
+    # so the literal open paren is injected via chr(40) — itself a balanced source token; the compiled
+    # regex is identical to the escaped-paren form. _dev_tok / _rev_tok mirror the balanced group
+    # parens of the Tier-A scan above.
+    _agent_open = r"agent" + "\\" + chr(40) + r"\s*"
+    _agenttype = r"agentType\s*:\s*"
+    _dev_tok = r"['\"](" + dev_alt + r")['\"]"
+    _rev_tok = r"['\"]glass-atrium-qa-code-reviewer['\"]"
+    dev_re = re.compile(_agent_open + _dev_tok + r"|" + _agenttype + _dev_tok)
+    rev_re = re.compile(_agent_open + _rev_tok + r"|" + _agenttype + _rev_tok)
     dev_starts = [m.start() for m in dev_re.finditer(antigaming_src)]
-    dev_present = bool(dev_starts)
 
     # Entry signal (attestation_src raw — see alias defs): a DEV-spawning script carrying NEITHER a
     # plan-reference NOR the entry literal is the silent entry-miss case. entry_ok is OR-composed so
@@ -712,61 +823,74 @@ try:
     if detect_docroute_leak(antigaming_src, attestation_src):
         emit("BLOCK_DOCROUTE", entry_marker)
 
-    if not dev_starts:
-        # No DEV spawn at all → simple workflow → Stage-2 exempt → pass.
+    if not dev_starts_present:
+        # No DEV literal ANYWHERE (Tier A) → simple workflow → Stage-2 exempt → pass. Keys on Tier A:
+        # a script whose only dev literals are data-array config fields is NOT exempt — Tier A sees
+        # them — and falls through to the reviewer / pair logic. exempt-on-Tier-B is forbidden.
         emit("PASS", entry_marker)
-    rev_matches = list(rev_re.finditer(antigaming_src))
+    rev_matches = list(rev_re_present.finditer(antigaming_src))
     if not rev_matches:
-        # DEV spawn present, NO non-comment qa-code-reviewer anywhere → clear omission → block.
-        # ZERO-REVIEWER HARD GUARANTEE — preserved verbatim across the FP fix.
+        # DEV literal present (Tier A), NO non-comment qa-code-reviewer literal anywhere → clear
+        # omission → block. ZERO-REVIEWER HARD GUARANTEE — keys on Tier A, preserved verbatim.
         emit("BLOCK_NOREV", entry_marker)
-    # Span of EVERY reviewer token (finditer, not the first match only). Keying on all reviewers is
-    # what kills the multi-reviewer FP — a leading audit/Phase-1 qa-code-reviewer no longer decides
-    # the verdict for a genuine {qa,dev} pair that appears later in the script.
-    rev_spans = [(m.start(), m.end()) for m in rev_matches]
+
+    # Tier-B reviewer SPAWNS (spawn-position) feed the co-location / pair / ordering logic — distinct
+    # from the Tier-A rev_matches presence gate above: a reviewer literal in a data field satisfies
+    # BLOCK_NOREV but cannot anchor a verify pair. finditer over EVERY Tier-B reviewer kills the
+    # multi-reviewer FP: a leading audit reviewer no longer decides the verdict for a later pair.
+    rev_spans = [(m.start(), m.end()) for m in rev_re.finditer(antigaming_src)]
     rev_starts = [s for (s, _) in rev_spans]
 
-    # parallel(...) group bounds + whether each group also holds a reviewer. This is the DISTANCE-
-    # INDEPENDENT verify-pair signal: a parallel group containing BOTH a reviewer AND a dev-* is the
-    # canonical verify stage no matter how long the inline goal strings are — the structural fix for
-    # the window-blowout FP that a wide char-window alone cannot cover.
+    # parallel(...) group bounds + whether each group also holds a Tier-B reviewer. DISTANCE-
+    # INDEPENDENT verify-pair signal (the canonical parallel verify stage regardless of goal length).
     group_spans = parallel_group_spans(antigaming_src)
     has_rev_in_group = [
         any(gs <= rs <= ge for rs in rev_starts) for (gs, ge) in group_spans
     ]
 
-    # A dev-* is a verify-DEV (the DEV half of the {qa-code-reviewer, DEV} team) iff EITHER signal
-    # holds: (1) it is co-located with ANY reviewer span (generalized R5 window), OR (2) it shares a
-    # parallel(...) group with a reviewer (group-bounds — distance-independent). Co-location is the
-    # only sound static discriminator because the verify-DEV and the impl-DEV use the IDENTICAL
-    # dev-* agentType token. NO precede-fallback: the red team proved the "absorb the first impl dev
-    # as a phantom verify-DEV" fallback OPENS A BYPASS (audit reviewer + 2+ impl devs + no genuine
-    # parallel pair would wrongly PASS), so the verify-DEV signal is co-location/group-bounds ONLY.
+    # pipeline STAGE-ADJACENCY verify pairs (T2) — the canonical engine pipeline(items, reviewer, dev)
+    # signature. A reviewer-bearing stage immediately followed by a stage holding a Tier-B dev spawn
+    # OR a non-literal agentType is the pair; its dev-half stage spans mark verify-DEVs. nonlit_re =
+    # an agentType option whose value is NOT a quoted literal (identifier / member / ternary / paren)
+    # — the computed-agentType dev spawn co-location cannot see. Confined to the adjacent stage.
+    nonlit_re = re.compile(r"agentType\s*:\s*(?!['\"])")
+    pair_dev_spans = pipeline_verify_pair_stages(antigaming_src, rev_re, dev_re, nonlit_re)
+    pipeline_pair_found = bool(pair_dev_spans)
+
+    # A dev-* is a verify-DEV (the DEV half of the team) iff ANY signal holds: co-located with a
+    # Tier-B reviewer span, sharing a reviewer parallel(...) group, OR sitting in the dev-half stage
+    # of a pipeline adjacency pair. All three anchor on Tier-B reviewers. NO precede-fallback (the
+    # dropped absorb-first-impl-dev fallback opened a bypass); the pipeline-pair signal is confined to
+    # the adjacent stage, so the gaming floor stays at a one-line lie.
     def is_verify_dev(d):
-        return is_colocated_any(rev_spans, d) or in_verify_parallel_group(
-            group_spans, has_rev_in_group, d
+        return (
+            is_colocated_any(rev_spans, d)
+            or in_verify_parallel_group(group_spans, has_rev_in_group, d)
+            or in_pipeline_pair_stage(pair_dev_spans, d)
         )
 
+    # OPERAND-CONSISTENCY (load-bearing): impl_dev_starts and BOTH sides of the count comparison take
+    # Tier-B spawn-position devs ONLY. Reusing the Tier-A broad count on either side would pass a
+    # config-array + stray-reviewer + indirection script for the WRONG reason (a count mismatch, not a
+    # recognized pair) and reopen a bypass. has_verify_dev is OR-ed with pipeline_pair_found so the
+    # case-A shape (reviewer stage → non-literal-agentType stage, ZERO dev literals) flips even when
+    # the Tier-B count comparison is 0 < 0.
     impl_dev_starts = [d for d in dev_starts if not is_verify_dev(d)]
-    has_verify_dev = len(impl_dev_starts) < len(dev_starts)
+    has_verify_dev = (len(impl_dev_starts) < len(dev_starts)) or pipeline_pair_found
     if not has_verify_dev:
-        # Reviewer(s) present but NO co-located / co-grouped dev-* verifier → reviewer is alone → DEV
-        # hard-gate absent → block. This is the case the red-team bypass (stray audit reviewer + 2+
-        # scattered impl devs, NO genuine parallel(qa,dev) pair) lands in → BLOCK, no phantom absorb.
+        # Reviewer(s) present but NO verify-DEV by any signal → DEV hard-gate absent → block. The
+        # recorded red-team bypass (stray audit reviewer + scattered impl devs separated by filler
+        # stages, NO genuine pair) lands here → BLOCK, no phantom absorb.
         emit("BLOCK_NOVERIFYDEV", entry_marker)
     if not impl_dev_starts:
-        # Every dev-* is a verify-DEV (verify-only, no separate implementation dev) → nothing to gate
-        # → would-be PASS (fail-open; finer gating correctness stays an author obligation). The
-        # size-est promotion still applies: a DEV workflow under ENTRY_OK with no [SIZE-EST] token
-        # blocks here (BLOCK_SIZEEST), matching every other would-be-PASS DEV path.
+        # Every Tier-B dev is a verify-DEV (verify-only, no separate implementation) → would-be PASS.
+        # The size-est promotion still applies (DEV + ENTRY_OK + no [SIZE-EST] → BLOCK_SIZEEST).
         emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
-    # Ordering on the IMPLEMENTATION dev-* (NOT the verify-DEV): SOME reviewer verify-spawn must
-    # precede the first implementation dev-*. Order-independent within the verify parallel block —
-    # parallel(reviewer, dev) and parallel(dev, reviewer) both pass because the verify-DEV is excluded
-    # from impl_dev_starts. An implementation dev-* that NO reviewer precedes ran un-gated → block.
+    # Ordering on the IMPLEMENTATION dev-* (NOT the verify-DEV): SOME reviewer must precede the first
+    # impl dev-*. Order-independent within a verify pair (the verify-DEV is excluded from impl). An
+    # impl dev-* that NO reviewer precedes ran un-gated → block.
     if min(rev_starts) < min(impl_dev_starts):
-        # Valid verify-stage ordering → would-be PASS, subject to the size-est promotion (DEV +
-        # ENTRY_OK + no [SIZE-EST] → BLOCK_SIZEEST; otherwise PASS).
+        # Valid verify-stage ordering → would-be PASS, subject to the size-est promotion.
         emit("BLOCK_SIZEEST" if size_est_missing else "PASS", entry_marker)
     emit("BLOCK_ORDER", entry_marker)
 except SystemExit:
@@ -879,7 +1003,7 @@ case "${verdict}" in
     ;;
   BLOCK_NOVERIFYDEV)
     trace_tag="block-noverifydev"
-    cause="reviewer present but no dev-* verifier either co-located (within ~1000 comment-stripped chars) OR sharing a parallel() group with a reviewer — add the DEV verifier to the verify parallel()"
+    cause="reviewer present but no dev-* verifier: none co-located (within ~2000 comment-stripped chars), none sharing a parallel() group with a reviewer, and no reviewer-stage to immediately-adjacent pipeline-stage pair — add the DEV verifier to the verify parallel(), OR place the dev spawn in the pipeline stage immediately adjacent to the reviewer stage (the canonical pipeline(items, reviewerStage, devStage) signature, computed agentType recognized there)"
     ;;
   BLOCK_ORDER)
     trace_tag="block-order"
