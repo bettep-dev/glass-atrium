@@ -480,9 +480,15 @@ def _string_mask(src):
 
 
 def extract_composition(raw_src):
-    # Extract the [AGENT-COMPOSITION] body from RAW src with a string-literal guard. Returns
-    # (body, status):
-    #   "ok"           -> body is the declaration text between the sentinels.
+    # Extract the [AGENT-COMPOSITION] body with a string-literal guard. String-masked characters are
+    # BLANKED to spaces BEFORE any sentinel scan — masked_src is offset-preserving, so match spans
+    # stay valid against raw_src for downstream position use. Scanning RAW src with post-hoc start
+    # filtering let a string-resident OPENING sentinel steal a non-greedy DOTALL match through the
+    # REAL block closing sentinel, mis-reading a genuine declaration as unterminated; BOTH the block
+    # finditer AND the stray-open fallback therefore run over the SAME masked_src. Comment interiors
+    # are never masked, so a comment-resident body is byte-identical. Returns (body, status, span):
+    #   "ok"           -> body is the declaration text between the sentinels; span = its (start, end)
+    #                     offsets in raw_src.
     #   "none"         -> no non-string opening sentinel -> caller BLOCK_NODECL on a DEV workflow.
     #   "unterminated" -> a non-string opening sentinel with NO matching close -> BLOCK_GRAMMAR
     #                     (the author opted INTO the contract; fail-opening would silently void it).
@@ -490,15 +496,15 @@ def extract_composition(raw_src):
     # A sentinel that opens INSIDE a string literal is treated as absent (an incidental prompt/goal
     # mention is not a declaration).
     mask = _string_mask(raw_src)
-    blocks = [m for m in COMPOSITION_RE.finditer(raw_src) if not mask[m.start()]]
+    masked_src = "".join(" " if mask[i] else c for i, c in enumerate(raw_src))
+    blocks = list(COMPOSITION_RE.finditer(masked_src))
     if len(blocks) >= 2:
-        return None, "duplicate"
+        return None, "duplicate", None
     if len(blocks) == 1:
-        return blocks[0].group(1), "ok"
-    for om in OPEN_SENTINEL_RE.finditer(raw_src):
-        if not mask[om.start()]:
-            return None, "unterminated"
-    return None, "none"
+        return blocks[0].group(1), "ok", blocks[0].span()
+    if OPEN_SENTINEL_RE.search(masked_src):
+        return None, "unterminated", None
+    return None, "none", None
 
 
 def parse_composition(body, dev_set):
@@ -666,7 +672,7 @@ try:
     # DEV workflow → a declaration is REQUIRED. Distinguish ABSENT (nodecl) from a MALFORMED /
     # unterminated / duplicated block (grammar). The strictness switch lives HERE — inside the
     # found-sentinel branch — so a crash before this point stays fail-open.
-    body, status = extract_composition(attestation_src)
+    body, status, decl_span = extract_composition(attestation_src)
     if status == "none":
         emit("BLOCK_NODECL", entry_marker)
     if status in ("unterminated", "duplicate"):
@@ -681,9 +687,12 @@ try:
     if not rev_re_present.search(antigaming_src):
         emit("BLOCK_NOREV", entry_marker)
 
-    # Plan-ref evidence OUTSIDE the declaration span (so an `upstream clauded-docs/N` verify clause
-    # cannot self-satisfy check (e) with its own text). Remove the extracted block, then re-scan.
-    body_only_src = COMPOSITION_RE.sub("\n", attestation_src)
+    # Plan-ref evidence OUTSIDE the declaration span (so an upstream clauded-docs/N verify clause
+    # cannot self-satisfy check (e) with its own text). Excise EXACTLY the extracted block span from
+    # RAW attestation_src: a raw-src COMPOSITION_RE.sub can be stolen by a string-resident opening
+    # sentinel (over-deleting code between it and the real block), and subbing over masked_src would
+    # drop string-resident plan-ref evidence, which legitimately counts (raw-scanned attestation).
+    body_only_src = attestation_src[:decl_span[0]] + "\n" + attestation_src[decl_span[1]:]
 
     # Code-side spawn type maps + declared type sets.
     dev_types_present = set(t for (_, t) in dev_spawns)
