@@ -52,25 +52,29 @@ build_full_stub() {
   done
 }
 
+# setup_file — build the INVARIANT stub bin ONCE per file (was rebuilt per-test): the whole-
+# PATH command mirror + the faithful psql stand-in are pure functions of $PATH + runtime STUB_*
+# env, byte-identical across all 9 tests, so their ~2.5s of repeated symlinking is hoisted here.
+# BATS_FILE_TMPDIR (auto-available in every scope, no export needed) anchors the shared bin
+# OUTSIDE per-test WORK, so per-test teardown's `rm -rf WORK` can never remove it.
+setup_file() {
+  [[ -f "${REAL_SCRIPT}" ]] || return 0
+  local shared_stub="${BATS_FILE_TMPDIR}/bin"
+  mkdir -p "${shared_stub}"
+  build_full_stub "${shared_stub}"
+  install_psql_stub "${shared_stub}"
+}
+
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not found: ${REAL_SCRIPT}"
   WORK="$(cd -- "$(mktemp -d -t daemon-apply-sd-bats.XXXXXX)" && pwd -P)"
-  STUB="${WORK}/bin"
+  # STUB points at the file-scoped bin pre-built once in setup_file; only per-test fixture
+  # state (git repo, reports, psql log) is created here under the throwaway WORK.
+  STUB="${BATS_FILE_TMPDIR}/bin"
   AGENTS="${WORK}/agents"
   REPORTS="${WORK}/reports"
   PSQL_LOG="${WORK}/psql-invocations.log"
-  mkdir -p "${STUB}" "${AGENTS}" "${REPORTS}"
-
-  # Stub bin = a whole-PATH mirror of every real command EXCEPT psql (which the
-  # faithful stand-in below supplies). The mirror replaces the former hand-
-  # maintained allowlist: the git-free daemon + its sourced libs (git-txn.sh /
-  # apply-lock.sh) call a broad, evolving coreutils set (basename/mv/stat/cp/…),
-  # and an allowlist that misses one makes the daemon exit 127 before the guard,
-  # failing every test opaquely. psql is skipped (never mirrored) so the install_
-  # psql_stub `cat >` below writes a FRESH file rather than following a symlink
-  # onto the real psql binary.
-  build_full_stub "${STUB}"
-  install_psql_stub
+  mkdir -p "${AGENTS}" "${REPORTS}"
 
   git -C "${AGENTS}" init -q
   git -C "${AGENTS}" config user.email bats@test.local
@@ -84,7 +88,8 @@ teardown() {
 
 # install_psql_stub — write the faithful PG stand-in into the stub bin.
 install_psql_stub() {
-  cat >"${STUB}/psql" <<'STUB'
+  local bin="$1"
+  cat >"${bin}/psql" <<'STUB'
 #!/usr/bin/env bash
 # Faithful PG stand-in for daemon-apply single-mode tests. Dispatches on the SQL
 # received on stdin + the -v bindings, logs every invocation, and emits canned
@@ -129,7 +134,7 @@ case "${sql}" in
 esac
 exit 0
 STUB
-  chmod +x "${STUB}/psql"
+  chmod +x "${bin}/psql"
 }
 
 # make_probe — write the probe.md fixture (protected Absolute-Rules section +
