@@ -507,6 +507,46 @@ PY
   [ "${output}" = "done_with_concerns" ]
 }
 
+@test "RACE: paired tool_result flushed DURING the re-read window ⇒ structuredoutput-derived (not killed-mid-call)" {
+  # The transcript starts as a TRUE orphan on disk (SO call, paired result absent) —
+  # the exact single-snapshot shape T9 sees. But here a background writer appends the
+  # paired SUCCESS tool_result ~250ms after launch, INSIDE the hook's bounded re-read
+  # window (3×200ms), reproducing the SubagentStop flush lag. The re-read must observe
+  # the late pair and derive the structured path — NOT the killed-mid-call synthesis.
+  write_transcript no-block-orphan
+  write_payload
+  # SO_ID in the fixture is "toolu_sm_so01" (write_transcript). Append its paired
+  # success result on a delay that lands within the retry window (before give-up).
+  (
+    sleep 0.25
+    printf '%s\n' '{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_sm_so01", "content": "ok"}]}}' \
+      >>"${TRANSCRIPT}"
+  ) &
+  local appender_pid=$!
+
+  run_hook
+  wait "${appender_pid}" 2>/dev/null || true
+  [ "${status}" -eq 0 ] || return 1
+  # DB-free rescue regression (unconditional): the re-read paired the late-flushed SO
+  # result → terminal_so=1 LANDS structuredoutput-derived on the stderr channel,
+  # computed BEFORE the PG INSERT. A single-snapshot read would have mislabeled this
+  # as completion-synthesized (the pre-fix bug). Routed through oc/no so each is
+  # load-bearing before the skip gate.
+  oc "terminal_structuredoutput=1" "${output}" || return 1
+  oc "attribution=structuredoutput-derived" "${output}" || return 1
+  no "attribution=completion-synthesized" "${output}" || return 1
+
+  # Gate ONLY the DB-row assertions on the live CHECK — the INSERT writes the token.
+  # bats checks only the last command, so each `[ ]` carries `|| return 1` to gate.
+  skip_unless_live_check_allows_r2_token
+  run count_rows
+  [ "${output}" = "1" ] || return 1
+  run fetch_col result
+  [ "${output}" = "done" ] || return 1
+  run fetch_col attribution_source
+  [ "${output}" = "structuredoutput-derived" ] || return 1
+}
+
 @test "T10 budget pin: counter at budget (40) + errored StructuredOutput ⇒ budget-truncation" {
   write_transcript no-block-so-error
   write_payload

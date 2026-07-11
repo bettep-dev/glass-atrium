@@ -131,10 +131,30 @@ RENDER_HOME="$(dirname -- "${TARGET_HOME_PATH}")"
   || die 4 "cannot derive target HOME from [paths].target_home='${TARGET_HOME_PATH}'"
 readonly RENDER_HOME
 
-# launchd jobs get a minimal fixed PATH; the node dir leads (config-derived,
-# no hardcoded Homebrew assumption)
+# launchd jobs get a minimal fixed PATH; the node dir leads (config-derived, no
+# hardcoded Homebrew assumption). The Homebrew bin dir is derived from
+# [paths].claude_bin's dirname and inserted after the node dir — the launchd jobs
+# shell out to tmux/claude/bun/lsof (daily-restart + daemon supervisors) which live
+# there; omitting it silently killed every daily restart when node_bin sits outside
+# Homebrew. Fall back to the canonical /opt/homebrew/bin when claude_bin is absent —
+# inert on Intel (and any host without that dir), since a non-existent PATH entry is
+# simply ignored.
 NODE_DIR="$(dirname -- "${NODE_BIN}")"
-readonly PATH_VALUE="${NODE_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+CLAUDE_BIN_CONFIGURED="$(extract_toml_value "[paths]" "claude_bin")"
+if [[ "${CLAUDE_BIN_CONFIGURED}" == /* ]]; then
+  BREW_DIR="$(dirname -- "${CLAUDE_BIN_CONFIGURED}")"
+else
+  BREW_DIR="/opt/homebrew/bin"
+fi
+# Skip the BREW_DIR segment when it already equals NODE_DIR — otherwise the PATH
+# carries a duplicate '/opt/homebrew/bin:/opt/homebrew/bin:' (node + claude in the
+# same Homebrew bin). Ordering and fallback are unchanged; only the redundant repeat
+# is dropped.
+if [[ "${BREW_DIR}" == "${NODE_DIR}" ]]; then
+  readonly PATH_VALUE="${NODE_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+else
+  readonly PATH_VALUE="${NODE_DIR}:${BREW_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+fi
 readonly WIKI_ROOT="${ROOT_PATH}/wiki"
 
 # XML escaping
@@ -337,6 +357,29 @@ ${env_xml}
 PLIST
 }
 
+# Same-host dependency probe (recurrence guard for the PATH_VALUE fix): the rendered
+# launchd jobs shell out to tmux/claude/bun/lsof (daily-restart + daemon supervisors),
+# which resolve ONLY if PATH_VALUE lists their bin dir. Probe resolvability against
+# PATH_VALUE and WARN loudly on a miss — never die. This stays a RENDER-ONLY script
+# (T32) that must still succeed for foreign-user / CI / hermetic renders, so the probe
+# is gated to SAME-HOST renders (RENDER_HOME == running $HOME, mirroring the leak gate)
+# and disabled by GA_SKIP_DEP_PROBE=1 for hermetic tests.
+probe_launchd_deps() {
+  [[ "${GA_SKIP_DEP_PROBE:-}" == "1" ]] && return 0
+  [[ "${RENDER_HOME}" == "${HOME}" ]] || return 0
+  local tool missing=0
+  for tool in tmux claude bun lsof; do
+    if ! PATH="${PATH_VALUE}" command -v "${tool}" >/dev/null 2>&1; then
+      log "WARN: '${tool}' does not resolve against the rendered PATH — launchd jobs needing it may fail"
+      missing=1
+    fi
+  done
+  if [[ "${missing}" -eq 0 ]]; then
+    log "dependency probe: tmux/claude/bun/lsof all resolve against the rendered PATH"
+  fi
+  return 0
+}
+
 main() {
   mkdir -p -- "${OUT_DIR}"
   local job dest
@@ -369,6 +412,7 @@ main() {
       || die 6 "authoring-user path leaked into foreign render: ${leaks}"
     log "foreign-user render verified: 0 authoring-user path hits (target home=${RENDER_HOME})"
   fi
+  probe_launchd_deps
   log "done — ${#JOBS[@]} plists in ${OUT_DIR} (loading stays manual: scripts/daemon-README.md)"
 }
 

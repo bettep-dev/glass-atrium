@@ -673,35 +673,41 @@ diag(f"synth_has_writes={synth_has_writes} synth_file_count={len(synth_files)}")
 # Scan gate mirrors detect_budget_truncation's subagent-origin contract: SubagentStop-origin
 # + raw agent_id present + no parsed [COMPLETION] (parse_tier 3) — main-session
 # Stop/PreCompact/SessionStart never pay the scan, and a parsed block always wins.
-def detect_terminal_structuredoutput(d):
-    import os as _os
-    if hook_event in MAIN_SESSION_HOOKS:
-        return '0'
-    if not (d.get('agent_id') or ''):
-        return '0'
-    if parse_tier != 3:
-        return '0'
-    items = next((d[k] for k in ('messages', 'transcript', 'conversation')
-                  if isinstance(d.get(k), list) and d.get(k)), [])
-    from_transcript = False
+def _read_transcript_items(tpath):
+    # Read a JSONL transcript into a list. Returns (items, tail_partial): items is
+    # None on an OS error (caller keeps the old synthesis path); tail_partial is True
+    # when the LAST non-empty physical line failed to parse — the signature of a write
+    # still in flight (a partial JSON line the flusher has not finished appending).
+    items = []
+    tail_partial = False
+    try:
+        with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    items.append(json.loads(_line))
+                    tail_partial = False
+                except (ValueError, json.JSONDecodeError):
+                    # Only the TRAILING unparsable line matters (a later good line
+                    # resets the flag); mid-file junk is pre-existing, not a race.
+                    tail_partial = True
+                    continue
+    except (OSError, IOError):
+        return None, False
+    return items, tail_partial
+
+
+def _classify_terminal_so(items, from_transcript, tail_partial=False):
+    # Classify the terminal StructuredOutput pairing on ONE transcript snapshot.
+    # Returns (verdict, race): verdict is '1' (terminal SO paired with a NON-error
+    # tool_result) else '0'. race is True only when a '0' could be a transcript-flush
+    # artifact worth a re-read — an ORPHAN terminal SO (paired result not yet flushed)
+    # or a still-partial trailing line hiding the real terminal. A paired-error result
+    # and a settled non-SO terminal are DEFINITIVE (race False → the caller stops).
     if not items:
-        tpath = _effective_transcript_path(d)
-        if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
-            from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
-                return '0'
-    if not items:
-        return '0'
+        return '0', tail_partial
     window = _current_turn_window(items, from_transcript)
     # Terminal = the run's LAST tool_use. "Later superseding assistant action" means a
     # SUBSEQUENT tool_use — trailing plain assistant text does NOT supersede the emit.
@@ -726,21 +732,65 @@ def detect_terminal_structuredoutput(d):
                 if isinstance(rid, str) and rid:
                     results_by_id[rid] = c
     if not isinstance(last_tool_use, dict) or last_tool_use.get('name') != 'StructuredOutput':
-        return '0'
+        # No terminal SO visible. If the trailing line is still flushing, the real
+        # terminal SO may not be parseable yet → race; else a settled non-SO run.
+        return '0', tail_partial
     tu_id = last_tool_use.get('id')
     # Pair by tool_use_id, NEVER adjacency — an id-less tool_use cannot pair strictly →
     # no match, caller keeps the old synthesis path (safe direction for odd transcripts).
     if not isinstance(tu_id, str) or not tu_id:
-        return '0'
+        return '0', False
     paired = results_by_id.get(tu_id)
-    # Absent paired tool_result = kill mid-call → no match.
     if paired is None:
-        return '0'
+        # Orphan terminal SO: the classic SubagentStop flush race — the paired
+        # tool_result may still be in flight. A hard kill can NEVER later produce a
+        # paired NON-error result, so a re-read is safe (idempotent) and only helps
+        # the race case; it can never manufacture a false consumed verdict.
+        return '0', True
     # Success = is_error NOT truthy — absent OR false both = success (both shapes observed
     # live); an equality-to-false check would misread the absent shape as an error.
     if paired.get('is_error') or paired.get('isError'):
+        # A consumed-with-error emit is a REAL outcome, not a flush race → definitive.
+        return '0', False
+    return '1', False
+
+
+def detect_terminal_structuredoutput(d):
+    import os as _os
+    import time as _time
+    if hook_event in MAIN_SESSION_HOOKS:
         return '0'
-    return '1'
+    if not (d.get('agent_id') or ''):
+        return '0'
+    if parse_tier != 3:
+        return '0'
+    # Inline payload messages cannot change between reads → evaluate once, no retry.
+    inline_items = next((d[k] for k in ('messages', 'transcript', 'conversation')
+                         if isinstance(d.get(k), list) and d.get(k)), [])
+    if inline_items:
+        return _classify_terminal_so(inline_items, from_transcript=False)[0]
+    tpath = _effective_transcript_path(d)
+    if not (isinstance(tpath, str) and tpath and _os.path.isfile(tpath)):
+        return '0'
+    # SubagentStop transcript-flush race: the engine appends the StructuredOutput
+    # tool_result ~60ms+ after the tool_use, so a SINGLE snapshot can read an unpaired
+    # (orphan) terminal SO — or a still-partial terminal line — while the write is in
+    # flight, mislabeling a DELIVERED schema run as killed-mid-call. Re-read the
+    # transcript up to _SO_REREAD_RETRIES times (idempotent, read-only) until the
+    # pairing settles. A verdict of '1' or a DEFINITIVE negative returns immediately;
+    # only a flush-race candidate sleeps + retries (worst case +600ms, under budget).
+    _SO_REREAD_RETRIES, _SO_REREAD_DELAY_S = 3, 0.2
+    for _attempt in range(_SO_REREAD_RETRIES + 1):
+        items, tail_partial = _read_transcript_items(tpath)
+        if items is None:  # OS error → keep the old synthesis path
+            return '0'
+        verdict, race = _classify_terminal_so(
+            items, from_transcript=True, tail_partial=tail_partial)
+        if verdict == '1' or not race:
+            return verdict
+        if _attempt < _SO_REREAD_RETRIES:
+            _time.sleep(_SO_REREAD_DELAY_S)
+    return '0'
 
 terminal_so = detect_terminal_structuredoutput(d)
 diag(f"terminal_structuredoutput={terminal_so}")
