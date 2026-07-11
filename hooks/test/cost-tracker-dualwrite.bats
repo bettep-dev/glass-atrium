@@ -64,6 +64,11 @@ setup_file() {
   export EPH_HOOK_SH
   EPH_HOOK_SH="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)/cost-tracker.sh"
 
+  # The batch writer, driven DIRECTLY (bypassing cost-tracker.sh) so the
+  # partial-success test can feed it a hand-built mixed [good, bad, good] batch.
+  export EPH_WRITER_PY
+  EPH_WRITER_PY="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)/_pg_dual_write.py"
+
   # Production baseline total (default socket; PGHOST/PGPORT are never exported,
   # so this hits production) — informational only, reported in teardown_file.
   export EPH_PROD_BEFORE
@@ -184,6 +189,110 @@ _assert_prod_isolated() {
   tok="$(_eph_q "SELECT coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) FROM core.cost_events;")" || return 1
   [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "rows doubled: ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
   [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "tokens additive: ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
+
+  _assert_prod_isolated || return 1
+}
+
+@test "batch path fires exactly ONE writer subprocess per Stop (perf-invariant)" {
+  _eph_q "TRUNCATE core.cost_events;" || return 1
+
+  # Count writer subprocesses via a python3 shim on PATH. The parser + driver run
+  # as `python3 -c ...` (no helper-path arg → no match); ONLY the writer runs as
+  # `python3 .../_pg_dual_write.py`. The old per-row fan-out fired N writers (3
+  # here — 1 turn + 2 subagent); the batch path MUST collapse it to exactly 1.
+  local shimbin="${BATS_TEST_TMPDIR}/shimbin"
+  local countfile="${BATS_TEST_TMPDIR}/writer.count"
+  local real_py3
+  real_py3="$(command -v python3)"
+  mkdir -p "${shimbin}"
+  : >"${countfile}"
+  cat >"${shimbin}/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\${a}" in
+    *_pg_dual_write.py) printf 'x' >>"${countfile}" ;;
+  esac
+done
+exec "${real_py3}" "\$@"
+EOF
+  chmod +x "${shimbin}/python3"
+
+  rm -rf "${EPH_HOME}/.claude/logs/cost-subagent-mtime" 2>/dev/null || true
+  local stdin_json
+  stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
+    "${EPH_SID}" "${EPH_TX}")"
+  env PATH="${shimbin}:${PATH}" HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+    PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    PRICING_REMOTE_DISABLE=1 COST_TRACKER_TODAY="2026-07-02" CLAUDE_SESSION_ID='' \
+    bash -c 'printf "%s" "$1" | "$2" 2>/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}" || return 1
+
+  local writer_calls
+  writer_calls="$(wc -c <"${countfile}" | tr -d '[:space:]')"
+  [[ "${writer_calls}" -eq 1 ]] || { echo "writer subprocess count ${writer_calls} != 1 (batch not single-invocation)" >&2; return 1; }
+
+  # The single batch invocation still lands the full 3-row / 2600-token partition.
+  local rows tok
+  rows="$(_eph_q "SELECT count(*) FROM core.cost_events;")" || return 1
+  tok="$(_eph_q "SELECT coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) FROM core.cost_events;")" || return 1
+  [[ "${rows}" -eq "${EPH_EXPECT_ROWS}" ]] || { echo "row count ${rows} != ${EPH_EXPECT_ROWS}" >&2; return 1; }
+  [[ "${tok}" -eq "${EPH_EXPECT_TOKENS}" ]] || { echo "token sum ${tok} != ${EPH_EXPECT_TOKENS}" >&2; return 1; }
+
+  _assert_prod_isolated || return 1
+}
+
+@test "partial-success: a mid-batch execute failure commits both siblings, exits 3, loud-fails the bad row" {
+  _eph_q "TRUNCATE core.cost_events;" || return 1
+
+  # A mixed [good, bad, good] batch fed DIRECTLY to _pg_dual_write.py. The middle
+  # row keeps an allowlisted target + columns (so it PASSES the identifier gate)
+  # but carries a non-numeric input_tokens, so it fails at execute against the
+  # bigint column — the riskiest partial-success path. `session_id` = EPH_SID so
+  # the isolation gate covers these rows too; distinct dedup_keys avoid the
+  # (session_id, dedup_key) UPSERT collapsing the two good rows into one.
+  local envelope
+  envelope=$(
+    cat <<JSON
+{"hook_name":"cost-tracker","target_table":"core.cost_events","payload_ref":"${EPH_SID}","rows":[
+{"event_date":"2026-07-02","event_time":"12:00:00","session_id":"${EPH_SID}","kind":"turn","dedup_key":"partial-good-1","input_tokens":1000,"output_tokens":500,"cache_read_tokens":100,"cache_creation_tokens":200,"cost_usd":0.01,"duration_ms":100,"num_turns":1,"parse_error":false},
+{"event_date":"2026-07-02","event_time":"12:00:00","session_id":"${EPH_SID}","kind":"turn","dedup_key":"partial-bad","input_tokens":"not-a-number","output_tokens":500,"cache_read_tokens":0,"cache_creation_tokens":0,"cost_usd":0.01,"duration_ms":100,"num_turns":1,"parse_error":false},
+{"event_date":"2026-07-02","event_time":"12:00:00","session_id":"${EPH_SID}","kind":"turn","dedup_key":"partial-good-2","input_tokens":2000,"output_tokens":100,"cache_read_tokens":50,"cache_creation_tokens":0,"cost_usd":0.01,"duration_ms":100,"num_turns":1,"parse_error":false}
+]}
+JSON
+  )
+
+  # Positional args into `bash -c` avoid any interpolation injection. The pipeline
+  # exit is the writer's (last stage), so ${status} is the writer's exit code.
+  local writer_stderr="${BATS_TEST_TMPDIR}/partial.stderr"
+  run env HOME="${EPH_HOME}" PYTHONPATH="${EPH_USER_SITE}" \
+    PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    bash -c 'printf "%s" "$1" | python3 "$2" 2>"$3"' _ "${envelope}" "${EPH_WRITER_PY}" "${writer_stderr}"
+
+  # Named partial-success exit code (3) — the batch had a failed row.
+  [[ "${status}" -eq 3 ]] || { echo "writer exit ${status} != 3 (partial-success code)"; cat "${writer_stderr}"; return 1; }
+
+  # BOTH valid siblings committed — the good-row count is exactly 2.
+  local good_rows
+  good_rows="$(_eph_q "SELECT count(*) FROM core.cost_events;")" || return 1
+  [[ "${good_rows}" -eq 2 ]] || { echo "committed rows ${good_rows} != 2 (siblings did not both survive)"; return 1; }
+
+  # The row AFTER the failure committed — the definitive proof that autocommit=True
+  # keeps the mid-batch failure from poisoning the connection for later rows.
+  local after_row
+  after_row="$(_eph_q "SELECT count(*) FROM core.cost_events WHERE dedup_key = 'partial-good-2';")" || return 1
+  [[ "${after_row}" -eq 1 ]] || { echo "post-failure row missing (aborted-transaction poisoning)"; return 1; }
+
+  # The row BEFORE the failure also committed.
+  local before_row
+  before_row="$(_eph_q "SELECT count(*) FROM core.cost_events WHERE dedup_key = 'partial-good-1';")" || return 1
+  [[ "${before_row}" -eq 1 ]] || { echo "pre-failure row missing"; return 1; }
+
+  # The failing row never landed.
+  local bad_row
+  bad_row="$(_eph_q "SELECT count(*) FROM core.cost_events WHERE dedup_key = 'partial-bad';")" || return 1
+  [[ "${bad_row}" -eq 0 ]] || { echo "the bad row unexpectedly committed"; return 1; }
+
+  # The structured per-row loud-fail line fired for the failed row (stderr JSON).
+  grep -q '"dedup_key":"partial-bad"' "${writer_stderr}" || { echo "no structured per-row stderr for the failed row"; cat "${writer_stderr}"; return 1; }
 
   _assert_prod_isolated || return 1
 }
