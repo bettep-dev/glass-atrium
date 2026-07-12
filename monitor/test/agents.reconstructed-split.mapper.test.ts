@@ -9,7 +9,7 @@
 //   (a) each per-agent mapper passes reconstructed_count through (bigint→number).
 //   (b) reconstructed_count is CLAMPED to its headline count so writer-emitted
 //       (headline - reconstructed) can never go negative on a malformed row.
-//   (c) the shared reconstructedRowFilterSql() binds the discriminator literals as
+//   (c) the shared buildReconstructedRowFilter() binds the discriminator literals as
 //       PARAMETERS (Prisma.join), never string-concatenated — the reuse point that
 //       keeps every aggregation on one discriminator (do-not-reimplement).
 
@@ -26,7 +26,7 @@ import {
   COMPLETION_SYNTHESIZED_SOURCE,
   RECONSTRUCTED_ATTRIBUTION_SOURCES,
   RECONSTRUCTED_DOWNGRADE_ORIGIN,
-  reconstructedRowFilterSql,
+  buildReconstructedRowFilter,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 } from "../src/server/attribution-sources.js";
 
@@ -151,8 +151,8 @@ test("mapFailurePatternRows: reconstructed_count passes through + clamped to tot
 
 // (c) discriminator reuse — one shared fragment, parameter-bound.
 
-test("reconstructedRowFilterSql: binds the discriminator literals as PARAMETERS (no string concat)", () => {
-  const frag = reconstructedRowFilterSql();
+test("buildReconstructedRowFilter: binds the discriminator literals as PARAMETERS (no string concat)", () => {
+  const frag = buildReconstructedRowFilter();
   // Prisma.Sql exposes bound values separately from the SQL text — proves parameterized binding.
   assert.ok(Array.isArray(frag.values), "fragment carries a bound-values array");
   // downgrade_origin literal + the 3 synthesis attribution literals are all bound values.

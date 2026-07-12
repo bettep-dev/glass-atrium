@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
-import { reconstructedRowFilterSql } from "../attribution-sources.js";
+import { buildReconstructedRowFilter } from "../attribution-sources.js";
 import {
   buildAgentMembershipFilter,
   loadAgentRegistry,
@@ -294,7 +294,7 @@ async function handleSuccessRate(
         )::bigint                                                      AS failure_count,
         COUNT(*)::bigint                                               AS total_count,
         COUNT(*) FILTER (
-          WHERE ${reconstructedRowFilterSql()}
+          WHERE ${buildReconstructedRowFilter()}
         )::bigint                                                      AS reconstructed_count,
         CASE
           WHEN COUNT(*) FILTER (
@@ -593,7 +593,7 @@ async function handleReviewFlagByAgent(
         COUNT(*) FILTER (
           WHERE review_flag = true
             AND result::text IN ('done', 'done_with_concerns', 'blocked', 'fail')
-            AND ${reconstructedRowFilterSql()}
+            AND ${buildReconstructedRowFilter()}
         )::bigint                                                    AS reconstructed_count,
         CASE
           WHEN COUNT(*) FILTER (
@@ -703,7 +703,7 @@ async function handleFailurePatterns(
           COUNT(*) FILTER (WHERE result::text = 'blocked')::bigint AS blocked_count,
           COUNT(*)::bigint                                          AS total_breakages,
           COUNT(*) FILTER (
-            WHERE ${reconstructedRowFilterSql()}
+            WHERE ${buildReconstructedRowFilter()}
           )::bigint                                                 AS reconstructed_count,
           MAX(record_ts)                                            AS last_breakage_at
         FROM core.outcomes

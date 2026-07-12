@@ -20,7 +20,11 @@ import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import { nextOccurrenceUtc, DAEMON_CRON_SCHEDULE } from "../schedule-next-fire.js";
-import { resolveDaemonStatuses, type DaemonAggRow } from "../architecture/live-overlay.js";
+import {
+	queryInstallAnchor,
+	resolveDaemonStatuses,
+	type DaemonAggRow,
+} from "../architecture/live-overlay.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { getUpdateStatus } from "../update-status.js";
 import type {
@@ -249,7 +253,8 @@ async function handleDaemonStatus(
     // DISTINCT ON yields the latest row per daemon by started_at desc — index-friendly
     // (matches @@index([daemonName, runDate(sort: Desc)]) in schema).
     // WHERE clause aligns with DAEMON_BOARD.
-    const rows = await prisma.$queryRaw<DaemonAggRow[]>`
+    const [rows, installAnchor] = await Promise.all([
+      prisma.$queryRaw<DaemonAggRow[]>`
       SELECT DISTINCT ON (daemon_name)
         daemon_name::text AS daemon_name,
         started_at AS last_run_at,
@@ -257,8 +262,10 @@ async function handleDaemonStatus(
       FROM core.daemon_runs
       WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
       ORDER BY daemon_name, started_at DESC
-    `;
-    const items = buildDaemonStatusItems(rows, new Date());
+    `,
+      queryInstallAnchor(prisma),
+    ]);
+    const items = buildDaemonStatusItems(rows, new Date(), installAnchor);
 
     request.log.info(
       { route: "/api/dashboard/daemon-status", durationMs: Date.now() - start },
@@ -276,9 +283,15 @@ async function handleDaemonStatus(
 // SAME synthesized 'missing'/'stale' semantics as the architecture overlay + health board
 // (a never-run daemon → 'missing', an overdue one → 'stale') instead of the raw last_status
 // this route used to leak — then attaches the dashboard-only next-fire field.
-export function buildDaemonStatusItems(rows: DaemonAggRow[], now: Date): DaemonStatusItem[] {
+export function buildDaemonStatusItems(
+  rows: DaemonAggRow[],
+  now: Date,
+  installAnchor: Date | null,
+): DaemonStatusItem[] {
   const statusByName = new Map(
-    resolveDaemonStatuses(rows, now.getTime()).map((d) => [d.daemon_name, d] as const),
+    resolveDaemonStatuses(rows, now.getTime(), installAnchor).map(
+      (d) => [d.daemon_name, d] as const,
+    ),
   );
   return DAEMON_BOARD.map((name) => {
     const resolved = statusByName.get(name);

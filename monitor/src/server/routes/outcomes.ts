@@ -7,7 +7,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import {
   BUDGET_TRUNCATION_SOURCE,
   COMPLETION_SYNTHESIZED_SOURCE,
-  reconstructedRowFilterSql,
+  buildReconstructedRowFilter,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 } from "../attribution-sources.js";
 import {
@@ -679,7 +679,7 @@ async function handleCrossAnalysis(
             result::text     AS result,
             COUNT(*)::bigint AS count,
             (COUNT(*) FILTER (
-              WHERE ${reconstructedRowFilterSql()}
+              WHERE ${buildReconstructedRowFilter()}
             ))::bigint       AS reconstructed_count
           FROM core.outcomes
           ${analyticsWhere}
@@ -691,7 +691,7 @@ async function handleCrossAnalysis(
             agent,
             COUNT(*)::bigint AS count,
             (COUNT(*) FILTER (
-              WHERE ${reconstructedRowFilterSql()}
+              WHERE ${buildReconstructedRowFilter()}
             ))::bigint       AS reconstructed_count
           FROM core.outcomes
           ${analyticsWhere}

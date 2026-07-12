@@ -37,6 +37,6 @@ export const RECONSTRUCTED_ATTRIBUTION_SOURCES: readonly string[] = [
 // `FILTER (WHERE <other> AND <this>)` clause without precedence surprises. All
 // current call sites query `core.outcomes` un-aliased, so bare column names are
 // used; parameter binding (Prisma.join) keeps the literal list injection-safe.
-export function reconstructedRowFilterSql(): Prisma.Sql {
+export function buildReconstructedRowFilter(): Prisma.Sql {
   return Prisma.sql`(downgrade_origin::text = ${RECONSTRUCTED_DOWNGRADE_ORIGIN} OR attribution_source IN (${Prisma.join(RECONSTRUCTED_ATTRIBUTION_SOURCES)}))`;
 }

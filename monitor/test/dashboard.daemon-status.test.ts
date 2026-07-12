@@ -43,15 +43,15 @@ function itemOf(items: ReturnType<typeof buildDaemonStatusItems>, name: string) 
 }
 
 test("board carries all four daemons in fixed order (route shape preserved)", () => {
-  const items = buildDaemonStatusItems([], NOW);
+  const items = buildDaemonStatusItems([], NOW, null);
   assert.deepStrictEqual(
     items.map((i) => i.daemon_name),
     [...DAEMON_BOARD],
   );
 });
 
-test("never-reported daemon (zero rows) → synthesized 'missing' (was raw null pre-fix)", () => {
-  const items = buildDaemonStatusItems([], NOW);
+test("never-reported daemon (zero rows) + null anchor → synthesized 'missing' (was raw null pre-fix)", () => {
+  const items = buildDaemonStatusItems([], NOW, null);
   for (const name of DAEMON_BOARD) {
     const item = itemOf(items, name);
     assert.strictEqual(item.last_status, "missing", `${name} → 'missing'`);
@@ -59,10 +59,23 @@ test("never-reported daemon (zero rows) → synthesized 'missing' (was raw null 
   }
 });
 
-test("NULL last_run_at row → 'missing' (no fabricated staleness)", () => {
+test("never-fired daemon + old install anchor → board escalates to 'stale' (shares live-overlay anchor logic)", () => {
+  const oldAnchor = minutesAgo(CADENCE_MIN + 1); // system older than one cadence
+  const items = buildDaemonStatusItems([], NOW, oldAnchor);
+  for (const name of DAEMON_BOARD) {
+    assert.strictEqual(
+      itemOf(items, name).last_status,
+      "stale",
+      `${name} installed-but-never-fired → crit on the board too`,
+    );
+  }
+});
+
+test("NULL last_run_at row + null anchor → 'missing' (no fabricated staleness)", () => {
   const items = buildDaemonStatusItems(
     [row("autoagent", { last_run_at: null, last_status: "ok" })],
     NOW,
+    null,
   );
   assert.strictEqual(itemOf(items, "autoagent").last_status, "missing");
 });
@@ -72,6 +85,7 @@ test("overdue daemon (staleness > cadence × 1.5) → synthesized 'stale' (was s
   const items = buildDaemonStatusItems(
     [row("wiki", { last_run_at: minutesAgo(overdueMin), last_status: "ok" })],
     NOW,
+    null,
   );
   assert.strictEqual(
     itemOf(items, "wiki").last_status,
@@ -84,12 +98,13 @@ test("within-cadence daemon → real last_status passes through (no 'stale' synt
   const items = buildDaemonStatusItems(
     [row("autoagent", { last_run_at: minutesAgo(CADENCE_MIN), last_status: "partial" })],
     NOW,
+    null,
   );
   assert.strictEqual(itemOf(items, "autoagent").last_status, "partial");
 });
 
 test("every board item carries a next-fire schedule (dashboard-only field attached)", () => {
-  const items = buildDaemonStatusItems([], NOW);
+  const items = buildDaemonStatusItems([], NOW, null);
   for (const item of items) {
     assert.ok(item.expected_next_at !== null, `${item.daemon_name} carries expected_next_at`);
   }

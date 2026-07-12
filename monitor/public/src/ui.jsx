@@ -562,8 +562,9 @@ function formatKstFull(iso) {
 // 데몬 status enum → tone/라벨 SoT (A2) — dashboard·health·architecture 공용 단일 테이블.
 // 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded + 합성 missing/stale) — 미발행 키 보유 금지.
 // quota_exceeded = 외부 한도 원인 → neutral 'Usage limit' (장애 아님).
-// missing = 실행 행 0개 → info (신규 설치 안전 기본값). '설치됐으나 한 번도 안 뜀' → crit 승격은
-// payload 에 없는 앵커(monitor 최초 부팅/설치 timestamp OR min(started_at)) 필요 → follow-up.
+// missing = 실행 행 0개 → info (신규 설치 안전 기본값). '설치됐으나 한 번도 안 뜀' 은
+// 서버(resolveDaemonStatuses)가 설치 앵커(min(started_at)) 기준 시스템이 1 cadence 초과로
+// 떠 있으면 stale(crit)로 승격 — 진짜 신규 설치(cadence 미만)만 info 유지.
 const DAEMON_STATUS_TONE = {
   ok:             { tone: 'ok',      label: 'Healthy' },
   partial:        { tone: 'warn',    label: 'Warning' },
