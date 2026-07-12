@@ -194,8 +194,14 @@ if [[ -z "${AGENT_KEY}" ]]; then
   exit 0
 fi
 
-TRANSCRIPT_PATH="$(hook_get_field "${INPUT}" "transcript_path")"
-SESSION_ID="$(hook_get_field "${INPUT}" "session_id")"
+# Single-pass batch of the two always-co-read top-level fields (one python3, not two). Safe:
+# both sit AFTER every early-exit above and have no early-exit between them, so batching cannot
+# read a field an early-exit would skip. tool_name/agent_id stay separate — each is early-exit-gated.
+{
+  IFS= read -r -d '' TRANSCRIPT_PATH
+  IFS= read -r -d '' SESSION_ID
+} \
+  < <(hook_get_fields "${INPUT}" transcript_path session_id || true)
 
 # Condition (2): recover agent_type; unrecoverable → fail-open.
 AGENT_TYPE="$(recover_agent_type "${TRANSCRIPT_PATH}" "${SESSION_ID}" "${AGENT_KEY}")"
