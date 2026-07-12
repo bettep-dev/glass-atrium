@@ -54,21 +54,22 @@ stop_launchd_monitor_for_install() {
   # Masked: an already-gone job must not abort the stop.
   launchctl bootout "gui/${UID}/${label}" 2>/dev/null \
     || launchctl unload -w "${MONITOR_PLIST_PATH}" 2>/dev/null || true
-  # poll until the port frees (bounded ~5s); a still-bound port → the gate would see the stale
-  # instance, so loud-fail. -sTCP:LISTEN polls the LISTENER only (a lingering client connection
-  # would keep a bare lsof non-empty → false timeout).
-  local waited=0
-  while [[ "${waited}" -lt 5 ]]; do
+  # poll until the port frees, bounded by a SECONDS-delta wall-clock ceiling (~5s default,
+  # GA_MONITOR_PORT_FREE_TIMEOUT_SECS): an iteration count drifts when a probe blocks, the SECONDS
+  # anchor caps true elapsed. A still-bound port → the gate would see the stale instance, so
+  # loud-fail. -sTCP:LISTEN polls the LISTENER only (a lingering client connection would keep a
+  # bare lsof non-empty → false timeout).
+  local ceiling="${GA_MONITOR_PORT_FREE_TIMEOUT_SECS:-5}" started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
     [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]] && return 0
     sleep 1
-    waited=$((waited + 1))
   done
   if [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]]; then
     return 0
   fi
   # port never freed — restore what we stopped, surface loudly, and signal abort.
   printf 'ERROR: launchd monitor stop left :%s bound after %ss — install aborted to avoid validating the stale instance. Restoring the monitor.\n' \
-    "${port}" "${waited}" >&2
+    "${port}" "${ceiling}" >&2
   restore_launchd_monitor
   return 1
 }
@@ -93,14 +94,18 @@ restore_launchd_monitor() {
   # corrupt the exit code).
   local port
   port="$(atrium_monitor_port 2>/dev/null || true)"
-  local waited=0
-  while [[ "${waited}" -lt "${BOOTSTRAP_HEALTH_WINDOW_SECS}" ]]; do
-    if curl -sf -o /dev/null "http://127.0.0.1:${port}/api/health" 2>/dev/null; then
+  # SECONDS-delta wall-clock ceiling (BOOTSTRAP_HEALTH_WINDOW_SECS, no new magic number): an
+  # iteration count drifts because each curl probe can itself cost up to --max-time, the SECONDS
+  # anchor caps true elapsed. --connect-timeout/--max-time bound each probe so a stalled
+  # connection can never block a poll iteration past the deadline (an uncapped curl could hang
+  # indefinitely on a half-open socket).
+  local ceiling="${BOOTSTRAP_HEALTH_WINDOW_SECS}" started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
+    if curl -sf -o /dev/null --connect-timeout 2 --max-time 5 "http://127.0.0.1:${port}/api/health" 2>/dev/null; then
       log "== install: launchd monitor restored (now serving the rebuilt dist) =="
       return 0
     fi
     sleep 1
-    waited=$((waited + 1))
   done
   # restore could not be verified — NEVER silent: print the exact manual remediation.
   printf 'ERROR: launchd monitor did not answer /api/health 200 within %ss after restore. Restore it manually: launchctl bootstrap gui/%s %s\n' \
@@ -185,16 +190,17 @@ stop_orphan_monitor_for_install() {
     return 1
   fi
   log "== install: NON-launchd OUR-monitor stray on :${port} (pid ${orphan_pid}) — stopping it so the health gate port is free =="
-  # SIGTERM the verified our-stray listener pid, then poll until :${port} frees (bounded ~5s).
+  # SIGTERM the verified our-stray listener pid, then poll until :${port} frees, bounded by a
+  # SECONDS-delta wall-clock ceiling (~5s default, GA_MONITOR_PORT_FREE_TIMEOUT_SECS — same bound
+  # as stop_launchd_monitor_for_install): an iteration count drifts when a probe blocks.
   kill "${orphan_pid}" 2>/dev/null || true
-  local waited=0
-  while [[ "${waited}" -lt 5 ]]; do
+  local ceiling="${GA_MONITOR_PORT_FREE_TIMEOUT_SECS:-5}" started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
     [[ -z "$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)" ]] && {
       log "== install: orphan stopped — :${port} is now free for the health gate =="
       return 0
     }
     sleep 1
-    waited=$((waited + 1))
   done
   # still bound after SIGTERM → escalate to SIGKILL on the SAME verified pid. Re-derive the
   # listener pid first so a port reclaimed by a DIFFERENT pid is never -9'd blindly.

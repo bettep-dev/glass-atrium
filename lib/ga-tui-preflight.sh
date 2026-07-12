@@ -326,12 +326,17 @@ preflight_guide_xcode_clt() {
   xcode-select --install >/dev/null 2>&1 || true
 
   preflight_out "$(c "${C_DIM}" "waiting for the toolchain to appear (press Ctrl-C to abort) …")"
-  local waited=0
-  # poll once per second; ga_detect_xcode_clt is a cheap path-existence check.
+  # poll once per second; ga_detect_xcode_clt is a cheap path-existence check. User-driven wait —
+  # intentionally UNBOUNDED (the toolchain install is user-paced; Ctrl-C aborts).
+  local last_dot="${SECONDS}"
   while [[ "$(ga_detect_xcode_clt)" != "present" ]]; do
     /bin/sleep 1
-    waited=$((waited + 1))
-    [[ $((waited % 5)) -eq 0 ]] && preflight_out "$(c "${C_DIM}" ".")"
+    # heartbeat dot every ~5 WALL-CLOCK seconds (SECONDS-delta anchor — a per-iteration counter
+    # drifts if a probe stalls).
+    if [[ "$((SECONDS - last_dot))" -ge 5 ]]; then
+      preflight_out "$(c "${C_DIM}" ".")"
+      last_dot="${SECONDS}"
+    fi
   done
   preflight_line ""
   preflight_line "$(c "${C_OK}" "[ok]") Xcode Command Line Tools present."

@@ -84,13 +84,14 @@ clear_unmanaged_pg_orphan() {
     done <<EOF
 ${pids}
 EOF
-    # bounded poll (~10s) until the socket frees — an unbounded wait would be a new hang path.
-    local waited=0
-    while [[ "${waited}" -lt 10 ]]; do
+    # bounded poll until the socket frees, by a SECONDS-delta wall-clock ceiling (~10s default,
+    # GA_PG_SOCKET_FREE_TIMEOUT_SECS): an iteration count drifts when a probe blocks, the SECONDS
+    # anchor caps true elapsed. An unbounded wait would be a new hang path.
+    local ceiling="${GA_PG_SOCKET_FREE_TIMEOUT_SECS:-10}" started="${SECONDS}"
+    while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
       [[ -e "${sock}" ]] || break
       [[ -z "$(lsof -t -- "${sock}" 2>/dev/null || true)" ]] && break
       sleep 1
-      waited=$((waited + 1))
     done
   fi
   # (layer-3) remove a stale socket left by the killed postmaster so a fresh install binds clean.
