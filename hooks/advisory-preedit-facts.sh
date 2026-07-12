@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# advisory-preedit-facts.sh — Stop/SubagentStop Pre-Edit Facts advisory.
+# advisory-preedit-facts.sh — Stop Pre-Edit Facts advisory.
 #
 # Post-turn ADVISORY for the scope-dev.md "Pre-Edit Facts Disclosure" rule: surfaces files
 # Write/Edit-ed without a `Pre-Edit Facts:` declaration. WARN only, NEVER blocks. Facts come from the
-# transcript (Stop/SubagentStop supply only a transcript_path, not the inline last_assistant_message).
-# Registered on Stop AND SubagentStop (matcher ""), firing alongside track-outcome.sh.
-# Advisory-only because Stop/SubagentStop have NO block channel — a finished turn cannot be rewound
+# transcript (Stop supplies only a transcript_path, not the inline last_assistant_message).
+# Registered on Stop ONLY (matcher ""), firing alongside cost-tracker.sh. NOT on SubagentStop: the
+# parent transcript visible there predates the subagent's own edits, so it has nothing to advise on.
+# Advisory-only because Stop has NO block channel — a finished turn cannot be rewound
 # by exit 2 (rules/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
+#
+# The transcript is read as a BOUNDED tail (last ~1 MiB), never a full stream: the current turn's edits +
+# declarations always fall in that tail, so a long session no longer re-reads the whole file each turn-end.
 #
 # Declaration format (scope-dev.md rule): a block headed `Pre-Edit Facts: <file_path>` then
 # `importers:` / `affected API:` / `data schemas:` / `user instruction:`. The advisory keys on the
 # <file_path> header PRESENCE per edited file, NOT fact quality/accuracy.
-# Per shared-hook-capability-contract.md the Stop/SubagentStop lifecycle is advisory accounting only.
+# Per shared-hook-capability-contract.md the Stop lifecycle is advisory accounting only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -64,6 +68,11 @@ _HEADER_RE = re.compile(
 # Tools whose tool_use marks a file as edited this turn.
 _EDIT_TOOLS = ("Write", "Edit", "MultiEdit")
 
+# Bounded tail window (bytes). Only the last _TAIL_WINDOW_BYTES of the transcript are scanned —
+# the current turn's edits + declarations are always in that tail, so a long session is not re-read
+# in full each turn-end. 1 MiB comfortably covers a normal turn (many tool_uses + a large Write).
+_TAIL_WINDOW_BYTES = 1 << 20
+
 
 def _content_list(entry):
     """Return the content list from a transcript entry (top-level OR nested under message)."""
@@ -79,43 +88,63 @@ def _norm(path):
     return path.strip(chr(96) + "'\" ")
 
 
+def _read_tail(tpath):
+    """Return the transcript's last _TAIL_WINDOW_BYTES as \\n-split lines.
+
+    Reads at most _TAIL_WINDOW_BYTES (+ one partial line) via a byte-offset seek —
+    NOT the whole file. On a mid-file seek the first line is likely partial, so it
+    is dropped. For a file at or under the window, start == 0 and the entire file
+    is read (byte-identical to a full stream read).
+    """
+    size = os.path.getsize(tpath)
+    start = size - _TAIL_WINDOW_BYTES if size > _TAIL_WINDOW_BYTES else 0
+    with open(tpath, "rb") as fh:
+        if start:
+            fh.seek(start)
+        blob = fh.read()
+    lines = blob.decode("utf-8", errors="replace").split("\n")
+    if start and lines:
+        del lines[0]
+    return lines
+
+
 def scan_transcript(tpath):
-    """Collect edited file_paths + Pre-Edit Facts declared paths from the transcript.
+    """Collect edited file_paths + Pre-Edit Facts declared paths from the transcript tail.
 
     Returns (edited_paths set, declared_paths set). Declarations are parsed
     from assistant text chunks; edits from Write/Edit/MultiEdit tool_use chunks.
+    Only the bounded tail (see _read_tail) is scanned.
     """
     edited = set()
     declared = set()
-    with open(tpath, "r", encoding="utf-8", errors="replace") as fh:
-        for raw_line in fh:
-            raw_line = raw_line.strip()
-            if not raw_line:
+    for raw_line in _read_tail(tpath):
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        content = _content_list(entry)
+        if content is None:
+            continue
+        for chunk in content:
+            if not isinstance(chunk, dict):
                 continue
-            try:
-                entry = json.loads(raw_line)
-            except (ValueError, json.JSONDecodeError):
-                continue
-            content = _content_list(entry)
-            if content is None:
-                continue
-            for chunk in content:
-                if not isinstance(chunk, dict):
-                    continue
-                ctype = chunk.get("type")
-                if ctype == "tool_use" and chunk.get("name") in _EDIT_TOOLS:
-                    tool_input = chunk.get("input", {})
-                    if isinstance(tool_input, dict):
-                        fpath = tool_input.get("file_path", "")
-                        if isinstance(fpath, str) and fpath:
-                            edited.add(_norm(fpath))
-                elif ctype == "text":
-                    text = chunk.get("text", "")
-                    if isinstance(text, str) and text:
-                        for m in _HEADER_RE.finditer(text):
-                            cand = _norm(m.group(1))
-                            if cand:
-                                declared.add(cand)
+            ctype = chunk.get("type")
+            if ctype == "tool_use" and chunk.get("name") in _EDIT_TOOLS:
+                tool_input = chunk.get("input", {})
+                if isinstance(tool_input, dict):
+                    fpath = tool_input.get("file_path", "")
+                    if isinstance(fpath, str) and fpath:
+                        edited.add(_norm(fpath))
+            elif ctype == "text":
+                text = chunk.get("text", "")
+                if isinstance(text, str) and text:
+                    for m in _HEADER_RE.finditer(text):
+                        cand = _norm(m.group(1))
+                        if cand:
+                            declared.add(cand)
     return edited, declared
 
 

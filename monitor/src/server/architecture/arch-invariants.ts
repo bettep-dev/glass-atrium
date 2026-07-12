@@ -48,7 +48,7 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 		SessionStart: 4,
 		SubagentStart: 3,
 		Stop: 3,
-		SubagentStop: 4,
+		SubagentStop: 3,
 		PreCompact: 1,
 	},
 };
