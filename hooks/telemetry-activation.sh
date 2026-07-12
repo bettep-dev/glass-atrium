@@ -4,8 +4,10 @@
 # (data source for measuring agent-instruction improvement effect).
 #   - PreToolUse(Agent): source=orchestrator, agent_name=subagent_type, trigger_phrase=prompt[:500]
 #   - SubagentStart:     source=subagent, agent_name=agent_type, cid=extracted from prompt
-# fire-and-forget: monitor down/503 has zero impact (silent), curl --max-time 2, every error logs
-# 1 stderr line then exit 0. Security: loopback-only URL, jq --arg escaping, no -K env leak.
+# detached fire-and-forget: the POST runs in a backgrounded, fd-severed subshell so the
+# agent-spawn path never blocks on curl (or the --max-time window); the http_code outcome is
+# appended to a log file (stderr is gone once detached). monitor down/503 has zero impact.
+# Security: loopback-only URL, jq --arg escaping, no -K env leak.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -141,32 +143,55 @@ if [[ -z "${payload}" ]]; then
   exit 0
 fi
 
-# 6. fire-and-forget POST. Body discarded; `|| true` keeps a curl failure from interfering.
-http_code=""
-http_code="$(curl -sS -o /dev/null \
-  -w '%{http_code}' \
-  -X POST \
-  -H 'Content-Type: application/json' \
-  -d "${payload}" \
-  --max-time "${CURL_TIMEOUT}" \
-  "${MONITOR_URL}" 2>/dev/null || true)"
+# 6. Detached fire-and-forget POST — the network call MUST NOT block the agent-spawn path
+#    (PreToolUse(Agent) / SubagentStart both fire this hook). curl runs in a backgrounded
+#    subshell whose stdin/stdout/stderr are severed from the hook's inherited fds
+#    (</dev/null + log sink), so the harness reading the hook's stdout sees EOF the instant
+#    the hook exits — it never waits on curl (nor the --max-time window). Because stderr is
+#    gone by the time the detached curl returns, the http_code diagnostic (formerly a stderr
+#    line) is appended to a log file instead of being dropped.
+telemetry_log_dir="${TELEMETRY_ACTIVATION_LOG_DIR:-${HOME}/.claude/logs}"
+telemetry_log_sink="/dev/null"
+# Conscious drop: if the log dir cannot be created, the diagnostic goes to /dev/null (worker
+# outcome unrecorded) rather than failing the hook — the telemetry POST is best-effort and
+# the sink is not a POST precondition.
+if mkdir -p "${telemetry_log_dir}" 2>/dev/null; then
+  telemetry_log_sink="${telemetry_log_dir}/telemetry-activation.log"
+fi
 
-# Diagnostic log — 1 stderr line, 201 success / otherwise failure.
-case "${http_code}" in
-  201)
-    printf '[telemetry-activation] ok event=%s source=%s agent=%s\n' \
-      "${hook_event}" "${source_label}" "${agent_name:-_}" >&2
-    ;;
-  "" | 000)
-    # Monitor down / unreachable — intended silent-fail.
-    printf '[telemetry-activation] monitor unreachable (event=%s); silently ignored\n' \
-      "${hook_event}" >&2
-    ;;
-  *)
-    # 4xx / 5xx — monitor responded but POST failed (DB down / validation).
-    printf '[telemetry-activation] post failed http=%s event=%s source=%s agent=%s\n' \
-      "${http_code}" "${hook_event}" "${source_label}" "${agent_name:-_}" >&2
-    ;;
-esac
+{
+  # Runs after the hook has exited (orphaned). fds are severed by the group redirect below,
+  # so nothing here keeps the spawn's read of the hook's stdout/stderr open. `|| true` on
+  # each network/date call keeps a failure from tripping the inherited ERR trap.
+  ta_http_code=""
+  ta_http_code="$(curl -sS -o /dev/null \
+    -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/json' \
+    -d "${payload}" \
+    --max-time "${CURL_TIMEOUT}" \
+    "${MONITOR_URL}" 2>/dev/null || true)"
+
+  ta_ts=""
+  ta_ts="$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || true)"
+  case "${ta_http_code}" in
+    201)
+      printf '%s [telemetry-activation] ok event=%s source=%s agent=%s\n' \
+        "${ta_ts}" "${hook_event}" "${source_label}" "${agent_name:-_}"
+      ;;
+    "" | 000)
+      # Monitor down / unreachable — intended silent-fail (recorded, not surfaced).
+      printf '%s [telemetry-activation] monitor unreachable (event=%s); silently ignored\n' \
+        "${ta_ts}" "${hook_event}"
+      ;;
+    *)
+      # 4xx / 5xx — monitor responded but POST failed (DB down / validation).
+      printf '%s [telemetry-activation] post failed http=%s event=%s source=%s agent=%s\n' \
+        "${ta_ts}" "${ta_http_code}" "${hook_event}" "${source_label}" "${agent_name:-_}"
+      ;;
+  esac
+} </dev/null >>"${telemetry_log_sink}" 2>&1 &
+# Detach the worker from the job table so the hook never reaps/waits on it.
+disown 2>/dev/null || true
 
 exit 0
