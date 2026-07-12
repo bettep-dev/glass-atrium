@@ -77,10 +77,12 @@ const SETTINGS_PATH = path.join(HOME_DIR, ".claude", "settings.json");
 const GA_ROOT_DIR = process.env.GA_ROOT ?? path.join(HOME_DIR, ".glass-atrium");
 const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env");
 
-// needs_auth recovery pointer — env-var NAME + instruction only, never the token
-// value (core-security.md Secret Management). Exported for the no-secret-content test.
+// needs_auth recovery pointer — names the concrete GA_ROOT-aware launcher command
+// so the card is actionable (a GA_ROOT override yields the real absolute path).
+// env-var NAME + instruction only, never the token value (core-security.md Secret
+// Management). Exported for the no-secret-content test.
 export const NEEDS_AUTH_REMEDIATION =
-  "Run: launcher → Token Setup (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN";
+  `Run ${GA_ROOT_DIR}/glass-atrium and choose "Token Setup" (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN`;
 
 // Why hard-coded daemon list: status cards render in fixed order.
 // daily-restart runs are role-qualified (one row per restarted daemon) so each
