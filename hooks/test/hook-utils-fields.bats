@@ -92,6 +92,35 @@ py_spawn_count() {
   [[ "${got[6]}" == "  q\"x\\y café  " ]] || return 1  # spaces + quote + backslash + unicode intact
 }
 
+@test "parity: embedded-NUL value stripped → batch byte-identical to hook_get_field (no truncation)" {
+  # Regression guard for the NUL-truncation divergence. A JSON string CAN hold \u0000 — json.load
+  # decodes it to a REAL NUL, the very delimiter the `IFS= read -r -d ''` consumer stops on.
+  # hook_get_field captures via $() which DROPS NUL bytes → "os.system(x)"; the batch emitter must
+  # .replace('\x00','') to match. Pre-fix the un-stripped NUL split the batch stream: nulval read
+  # TRUNCATED to "os." and the trailing NUL fragment shifted every later field — so got had 3 elems
+  # (not 2) and got[0] != the $()-capture. This asserts BOTH: parity of the value AND that the field
+  # AFTER nulval still arrives intact (the delimiter stream was not corrupted).
+  # shellcheck source=/dev/null
+  source "${REAL_LIB}"
+  local json='{"nulval":"os.\u0000system(x)","after":"present"}'
+  local -a got=()
+  local v
+  while IFS= read -r -d '' v; do got+=("$v"); done \
+    < <(hook_get_fields "${json}" nulval after || true)
+  [[ "${#got[@]}" -eq 2 ]] || {
+    printf 'expected 2 fields, got %s (NUL split the stream?): %s\n' "${#got[@]}" "${got[*]}" >&2
+    return 1
+  }
+  local exp
+  exp="$(hook_get_field "${json}" nulval)"
+  [[ "${got[0]}" == "${exp}" ]] || {
+    printf 'batch=[%s] single=[%s]\n' "${got[0]}" "${exp}" >&2
+    return 1
+  }
+  [[ "${got[0]}" == "os.system(x)" ]] || return 1 # NUL removed, surrounding text preserved
+  [[ "${got[1]}" == "present" ]] || return 1       # field after the NUL value still intact
+}
+
 @test "perf invariant: hook_get_fields spawns exactly ONE python3 for N fields" {
   make_counting_python3
   : >"${WORK}/pycount"

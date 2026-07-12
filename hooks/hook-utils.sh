@@ -47,10 +47,13 @@ print(d.get('tool_input', {}).get(sys.argv[1], ''))
 # Single-pass multi-field extractor for TOP-LEVEL fields — parses the hook JSON input ONCE and
 # emits each requested field's value in ONE python3 invocation (one interpreter cold-start instead
 # of N). Per-field output is byte-identical to hook_get_field for the same key: str() of the value,
-# missing key → empty, trailing newlines stripped to mirror the $() command-substitution capture,
-# NUL-terminated in argument order (NUL keeps embedded-newline values intact — the one delimiter a
-# JSON string cannot contain). Fail-open: python3 absent / malformed JSON / non-object root → every
-# field degrades to empty, matching N sequential hook_get_field calls.
+# missing key → empty, trailing newlines AND NUL bytes stripped to mirror the $() command-substitution
+# capture (bash drops NUL bytes), then NUL-terminated in argument order. The replace('\x00','') is
+# required: json PERMITS \u0000 in a string (json.load decodes it to a real NUL) - a NUL is NOT a
+# delimiter a JSON string cannot contain — and an un-stripped embedded NUL would truncate the
+# `read -r -d ''` consumer mid-value, diverging from hook_get_field's $()-capture. Fail-open: python3
+# absent / malformed JSON / non-object root → every field degrades to empty, matching N sequential
+# hook_get_field calls.
 # Args: $1=json_input; $2..=top-level field names.
 # Consume with one `IFS= read -r -d '' var` per field, e.g.:
 #   { IFS= read -r -d '' a; IFS= read -r -d '' b; } < <(hook_get_fields "${input}" a b)
@@ -71,7 +74,7 @@ except Exception:
     d = {}
 out = sys.stdout
 for f in sys.argv[1:]:
-    out.write(str(d.get(f, "")).rstrip("\n"))
+    out.write(str(d.get(f, "")).rstrip("\n").replace("\x00", ""))
     out.write("\0")
 ' "$@" 2>/dev/null || {
     # python3 absent / hard failure → N empty NUL-terminated values (parity with N× hook_get_field).

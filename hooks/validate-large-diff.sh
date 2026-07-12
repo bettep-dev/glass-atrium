@@ -6,12 +6,15 @@ IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-git rev-parse --is-inside-work-tree &>/dev/null || exit 0
-
 # Threshold per ~/.claude/rules/core-git-workflow.md "PR 400-line split" rule
 readonly LARGE_DIFF_THRESHOLD=400
 
-LINES=$(git diff --numstat 2>/dev/null | awk '{s+=$1+$2} END {print s+0}')
+# Fold the repo-detection into the first diff: `git diff` itself exits non-zero outside a work
+# tree, so its exit code replaces the standalone `git rev-parse --is-inside-work-tree` probe —
+# 2 git subprocesses per edit instead of 3 (1 on the non-repo path, which short-circuits here).
+# Non-repo / bare repo → exit 0 (non-blocking advisory, unchanged). The unstaged + staged churn
+# sum and the >threshold verdict are byte-identical to the prior separate-diff computation.
+LINES=$(git diff --numstat 2>/dev/null | awk '{s+=$1+$2} END {print s+0}') || exit 0
 STAGED=$(git diff --cached --numstat 2>/dev/null | awk '{s+=$1+$2} END {print s+0}')
 TOTAL=$((LINES + STAGED))
 

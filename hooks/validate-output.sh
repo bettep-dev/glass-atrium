@@ -16,10 +16,38 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
-TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
-TOOL_RESPONSE=$(printf '%s\n' "${INPUT}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(str(d.get('tool_response',''))[:2000])" 2>/dev/null)
+# Single-pass parse: tool_name + tool_response[:2000] in ONE python3 (was two — a
+# hook_get_field spawn plus an inline python3). NUL-delimited so an embedded newline in
+# tool_response survives the read; str()/[:2000]/rstrip('\n')/replace('\x00','') reproduce the
+# prior hook_get_field + inline-python captures byte-for-byte (print()'s str-coerce, the 2000-char
+# truncation, and $()'s trailing-newline AND NUL strip). replace('\x00','') is load-bearing: a JSON
+# string CAN hold a NUL via \u0000 (json.load decodes it to a real \x00), which would truncate the
+# `read -r -d ''` consumer mid-value and silently disarm the detector (block bypass); stripping it
+# AFTER [:2000] mirrors the old $()-capture (bash drops NUL bytes), so os.system( reassembles across
+# the NUL instead of splitting into a harmless "os." fragment.
+# No fail-open handler by design: malformed /
+# non-object JSON, or python3 absent → python3 exits non-zero → the reads hit EOF → set -e
+# exits non-zero, preserving the prior fail-hard (loud-fail) behavior on bad input exactly.
+# SC2312: the reads deliberately propagate that python3 failure through set -e — the <( )
+# boundary hides the exit code from ShellCheck, so the check is silenced (not a masked bug).
+# shellcheck disable=SC2312
+{
+  IFS= read -r -d '' TOOL_NAME
+  IFS= read -r -d '' TOOL_RESPONSE
+} < <(python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+o = sys.stdout
+o.write(str(d.get("tool_name", "")).rstrip("\n").replace("\x00", ""))
+o.write("\0")
+o.write(str(d.get("tool_response", ""))[:2000].rstrip("\n").replace("\x00", ""))
+o.write("\0")
+' <<<"${INPUT}" 2>/dev/null)
 
-# LLM07: system-prompt reverse-leak patterns
+# LLM07: system-prompt reverse-leak patterns. Joined into one ERE alternation so a single
+# grep -E pass replaces the former per-pattern loop (1 grep instead of up to 8). Every pattern
+# is a literal (no ERE metacharacter), so the alternation matches the exact same input set; the
+# advisory is pattern-independent (emit_error records no per-pattern detail).
 LEAK_PATTERNS=(
   'your system prompt is'
   'my instructions are'
@@ -30,18 +58,20 @@ LEAK_PATTERNS=(
   'my configuration states'
   'i am programmed to'
 )
+LEAK_ALTERNATION=$(
+  IFS='|'
+  printf '%s' "${LEAK_PATTERNS[*]}"
+)
 RESPONSE_LOWER=$(printf '%s\n' "${TOOL_RESPONSE}" | tr '[:upper:]' '[:lower:]')
-for pattern in "${LEAK_PATTERNS[@]}"; do
-  if printf '%s\n' "${RESPONSE_LOWER}" | grep -q "${pattern}"; then
-    emit_error "SEC-072" "advisory" \
-      "System prompt leak pattern detected" \
-      "시스템 프롬프트 역유출 패턴 감지" \
-      "Review output; ensure system instructions are not disclosed" \
-      "출력을 검토하세요; 시스템 지침이 노출되지 않는지 확인" \
-      "{\"pattern\":\"${pattern}\"}"
-    exit 0
-  fi
-done
+if printf '%s\n' "${RESPONSE_LOWER}" | grep -Eq "${LEAK_ALTERNATION}"; then
+  emit_error "SEC-072" "advisory" \
+    "System prompt leak pattern detected" \
+    "시스템 프롬프트 역유출 패턴 감지" \
+    "Review output; ensure system instructions are not disclosed" \
+    "출력을 검토하세요; 시스템 지침이 노출되지 않는지 확인" \
+    "{\"pattern\":\"leak\"}"
+  exit 0
+fi
 
 # LLM05: code-injection output patterns (Bash tool only — Block)
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
