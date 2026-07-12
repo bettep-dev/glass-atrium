@@ -61,8 +61,8 @@ import sys, json, re
 # qa_score + concerns are included so an emitted `qa_score:`/`concerns:` line starts its own
 # field instead of folding into the preceding value: parse_completion_body treats any line whose
 # `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
-# silently corrupts (e.g.) the summary value. concerns is already consumed (see the concerns
-# fallback below) + persisted; qa_score capture is PG-persistence-deferred (no column yet).
+# silently corrupts (e.g.) the summary value. Both are consumed (concerns via its "## Concerns"
+# fallback below; qa_score direct from the [COMPLETION] field) and carried to the PG dual-write.
 KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
@@ -426,8 +426,8 @@ _T2 = r'^[ \t]*\[COMPLETION\][ \t]*\n(.*?)(?=\n#|\Z)'
 # reverse-scan the earlier matches for the first whose result IS valid; if none validates,
 # keep the last (downstream synthesis / tier labels unchanged). _T2 + inline tier untouched.
 # m_tier1/m_tier2 stay bound to the SELECTED match for the downstream _block_text grader-body
-# extraction — the pre-refactor re.search left m_tier1 always defined, so leaving it unset
-# would NameError that path; None-init keeps both defined on every branch.
+# extraction. Both are None-init'd so every branch below leaves them defined — the downstream
+# _block_text read references m_tier1/m_tier2 unconditionally and must never hit an unbound name.
 m_tier1 = None
 m_tier2 = None
 _t1_matches = list(re.finditer(_T1, msg, re.DOTALL | re.MULTILINE))
@@ -498,6 +498,10 @@ if not concerns and completion.get('result', '') == 'done_with_concerns':
         if cm:
             concerns = cm.group(1).strip()
             break
+
+# qa_score: [COMPLETION] field only (QA agents; shape cov=N,ins=N,instr=N,clar=N). No body
+# fallback — unlike concerns there is no "## " section form. A KNOWN_FIELD, so it self-delimits.
+qa_score = completion.get('qa_score', '')
 
 # directive_hint: scan the most-recent user message for a correction signal (regex fallback path).
 # Matchers require verb+imperative combos, not plain substrings, and reject quoted mentions.
@@ -859,6 +863,7 @@ out('c_confidence', completion.get('confidence', ''))
 out('c_summary', summary)
 out('lesson', clamp(lesson, 500))
 out('concerns', clamp(concerns, 800))
+out('qa_score', clamp(qa_score, 64))
 # directive_hint: [COMPLETION] value wins over transcript scrape
 out('directive_hint', clamp(completion.get('directive_hint') or directive, 500))
 # c_directive_hint: RAW [COMPLETION] value only (no fallback) — isolates the agent correction flag
@@ -1013,6 +1018,7 @@ S_CONFIDENCE=$(extract_field c_confidence)
 S_SUMMARY=$(extract_field c_summary)
 LESSON=$(extract_field lesson)
 CONCERNS=$(extract_field concerns)
+QA_SCORE=$(extract_field qa_score)
 DIRECTIVE_HINT=$(extract_field directive_hint)
 # C_DIRECTIVE_HINT: raw [COMPLETION] value only (correction-flag input), no transcript fallback
 C_DIRECTIVE_HINT=$(extract_field c_directive_hint)
@@ -2101,6 +2107,7 @@ if [ -x "${PG_HELPER}" ]; then
     --arg directive_hint "${DIRECTIVE_HINT:-}" \
     --arg lesson "${LESSON:-}" \
     --arg concerns "${CONCERNS:-}" \
+    --arg qa_score "${QA_SCORE:-}" \
     --arg correlation_id "${CID:-}" \
     --arg cid "${CID:-}" \
     --arg summary "${SUMMARY}" \
@@ -2124,6 +2131,7 @@ if [ -x "${PG_HELPER}" ]; then
         confidence: $confidence, metric_pass: $metric_pass,
         revision_count: $revision_count, evaluative_signal: $evaluative_signal,
         directive_hint: $directive_hint, lesson: $lesson, concerns: $concerns,
+        qa_score: (if $qa_score == "" then null else $qa_score end),
         correlation_id: $correlation_id, cid: $cid, summary: $summary,
         review_flag: $review_flag, body_md: $body_md,
         files_modified: $files_modified,
