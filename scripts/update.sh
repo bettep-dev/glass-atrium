@@ -30,6 +30,11 @@
 #   5. DETERMINISTIC NON-AGENT SYNC (T13): snapshot + swap + rollback via the
 #      apply-spine (spine_commit_staged). Agent EDITABLE-region merge is EXCLUDED
 #      here and left as a documented CALL SEAM for E4 (T17-T19).
+#   5b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
+#      files the prior-vendor baseline shipped but this release DROPPED (provenance
+#      -clean only; a user-edited drop is PRESERVED) to Trash, previewed through the
+#      SAME confirm gate. Runs before the baseline capture (still-old anchor) and
+#      the mirror-farm refresh (a removed file gains no dangling mirror).
 #   6. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
 #      base@install anchor for the next update's 3-anchor merge.
 #   7. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
@@ -84,7 +89,9 @@
 # not refreshed — run `glass-atrium agents-only`; no rollback of applied files) ·
 # 12 hook-binding wiring failed (files APPLIED + mirror refreshed, but the
 # settings.json event->hook bindings were NOT reconciled to the new release — run
-# `glass-atrium wire-hooks`; no rollback of applied files).
+# `glass-atrium wire-hooks`; no rollback of applied files) · 13 vendor-removal
+# sweep failed (files APPLIED, but a vendor-DROPPED file could not be moved to
+# Trash — remove it manually; no rollback of applied files).
 #
 # DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
 # the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
@@ -97,7 +104,8 @@
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_MONITOR_DIR ·
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
-# ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base).
+# ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base) ·
+# ATRIUM_UPDATE_TRASH_DIR (vendor-removal Trash sink; default ${HOME}/.Trash).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -185,11 +193,23 @@ update_require_tools() {
 # callback + the trap cleanup; declared here so strict mode + shellcheck see a
 # defined origin).
 _update_pause_created=0
+# Background pause-flag heartbeat refresher pid (finding #14) — set by
+# update_pause_refresher_start, killed+cleared by update_cleanup so a long confirm
+# wait cannot let the flag age past its TTL and un-pause the daemon mid-update.
+_update_pause_refresher_pid=""
 _update_lock_acquired=0
 _update_workdir=""
 _update_clean_paths=""
 _update_staging=""
 _update_snapshot=""
+# Vendor-removal sweep (#14) run state: the confirmed removal set + per-run Trash
+# sink + install root. SET in update_sweep_removed_files, READ by the removal
+# commit callback — which runs on the confirm gate's pipe-RHS subshell, so the
+# values travel through globals (the gate owns stdin; the same carrier pattern as
+# _update_clean_paths for the swap callback).
+_update_removal_paths=""
+_update_removal_root=""
+_update_removal_dest=""
 
 # P3 headless / web-triggered orchestration run state (see the file header). Mode
 # flag + DB update_job tracking state + the resolved running-script dir (for the
@@ -211,10 +231,43 @@ _update_state_dir=""
 _update_agent_install_root=""
 _update_agent_backup_dir=""
 _update_agent_records_file=""
+# Per-run agent-merge OUTCOME ledger (finding #9): one basename per line = the
+# base-content store MAY advance for that file (its merge actually landed — applied
+# GIT_TXN_OK, byte-identical, or resolved with no net change). Every other outcome
+# (declined / rolled-back / refused / structural / plan-failed) is ABSENT, so the
+# capture keeps its prior base entry. File-backed (not a shell var) because the
+# commit callback runs on the gate's pipe-RHS subshell.
+_update_agent_outcomes_file=""
 _update_agent_verify_local=""
 _update_agent_verify_release=""
 _update_agent_verify_agent=""
 _update_agent_verify_target=""
+
+# Preserve a failed/interrupted apply's pre-swap snapshot so the operator keeps a
+# rollback source after the workdir is torn down (finding #7). No-op when the
+# snapshot is unset, missing, or EMPTY (the swap never mutated a live file, so
+# there is nothing to recover). Copies — never moves — the snapshot into a
+# persistent, timestamped dir BESIDE the agents-bak rollback store (cross-FS-safe:
+# the workdir lives under $TMPDIR while agents-bak sits in the install area) and
+# prints the path. Best-effort + fully guarded so a cleanup trap never aborts on it.
+update_preserve_snapshot() {
+  local snap="${_update_snapshot}" root base parent dest ts probe
+  [[ -n "${snap}" && -d "${snap}" ]] || return 0
+  # Empty snapshot → nothing was swapped → nothing worth preserving.
+  probe="$(find "${snap}" -mindepth 1 -print -quit 2>/dev/null || true)"
+  [[ -n "${probe}" ]] || return 0
+  root="$(update_ga_root)"
+  base="$(update_agents_bak_base "${root}")"
+  parent="$(dirname -- "${base}")"
+  ts="$(date +%Y%m%d-%H%M%S)"
+  dest="${parent}/update-failed-snapshots/${ts}_$$"
+  if mkdir -p -- "${dest}" 2>/dev/null && cp -Rp -- "${snap}/." "${dest}/" 2>/dev/null; then
+    update_log "PRESERVED pre-swap snapshot from a failed/interrupted apply → ${dest}"
+    update_log "  recover by restoring those files back under ${root}"
+  else
+    update_log "WARN: could not preserve the pre-swap snapshot (${snap}) — inspect it before it is removed"
+  fi
+}
 
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
 # EXIT INT TERM so the pause flag clears and the daemon resumes on any exit path —
@@ -236,11 +289,26 @@ update_cleanup() {
     apply_lock_release "$(update_apply_lock_dir)"
     _update_lock_acquired=0
   fi
+  # Stop the pause-flag heartbeat refresher BEFORE removing the flag (finding #14):
+  # kill-before-remove so the background refresher can never recreate the flag after
+  # update_pause_remove deletes it — closing the recreate-after-removal race on every
+  # EXIT/INT/TERM path (including a declined update_die and Ctrl-C).
+  update_pause_refresher_stop
   if [[ "${_update_pause_created}" -eq 1 ]]; then
     update_pause_remove
     _update_pause_created=0
   fi
   if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
+    # Snapshot preservation (finding #7): a swap that BEGAN but did NOT commit
+    # cleanly leaves the pre-swap snapshot as the ONLY rollback source, yet the
+    # workdir rm below would destroy it. The committing callback drops a
+    # `.commit-ok` marker on a clean apply; its ABSENCE beside a non-empty snapshot
+    # means a failed/interrupted apply — preserve that snapshot BESIDE agents-bak
+    # before tearing the workdir down (no-op when the snapshot is empty = nothing
+    # was swapped).
+    if [[ ! -f "${_update_workdir}/.commit-ok" ]]; then
+      update_preserve_snapshot
+    fi
     rm -rf -- "${_update_workdir}"
     _update_workdir=""
   fi
@@ -252,7 +320,12 @@ update_cleanup() {
 # mkdir loud-fails and we abort (the trap clears the flag we just set).
 update_serialize_begin() {
   local lock_dir
-  update_pause_create >/dev/null
+  # Set _update_pause_created ONLY on create success. A refusal (rc 1) means a fresh
+  # flag is already held by a live foreign updater → abort WITHOUT touching it; the
+  # flag stays 0 so the EXIT trap skips removal and the winner's flag survives.
+  if ! update_pause_create >/dev/null; then
+    update_die "another apply is in progress (pause flag held by a live updater)"
+  fi
   _update_pause_created=1
   # Ensure the reports dir exists (same as daemon-apply.sh) so the lock mkdir
   # fails ONLY on genuine contention, not a missing parent.
@@ -267,6 +340,50 @@ update_serialize_begin() {
     update_die "another apply is in progress (lock held): ${lock_dir}"
   fi
   _update_lock_acquired=1
+  # Start the pause-flag heartbeat refresher LAST, once the flag + lock are held, so a
+  # long interactive confirm wait cannot let the flag age past its TTL (finding #14).
+  update_pause_refresher_start
+}
+
+# Start ONE liveness-guarded background refresher for the whole serialized section
+# (finding #14): re-write the pause flag every tick so its mtime never ages past the
+# 1800s TTL during a long interactive confirm wait — which would otherwise let the
+# daemon treat the flag as crashed-updater residue and un-pause mid-update. The
+# `kill -0 "${updater_pid}"` parent guard PRESERVES the TTL's crash-safety purpose: a
+# SIGKILLed updater (no EXIT trap) makes the next tick's guard fail, the refresher
+# exits within one tick, the flag then ages out and update_pause_is_active reclaims
+# it. `$$` inside a ( ) subshell stays the PARENT updater pid, so the refresher's
+# update_pause_create takes the own-pid heartbeat-refresh path (never the finding #15
+# live-foreign-owner refusal). Tick default 600s (ample margin under the TTL);
+# ATRIUM_UPDATE_PAUSE_REFRESH_SECS overrides for tests. Arg: $1 = pid to watch
+# (default $$ — the updater), a test seam for the parent-death path.
+update_pause_refresher_start() {
+  local updater_pid="${1:-$$}" tick="${ATRIUM_UPDATE_PAUSE_REFRESH_SECS:-600}"
+  # fd1/fd2 are detached to /dev/null so the background subshell (and its sleep child)
+  # NEVER hold an inherited stdout pipe open — else a captured pipe (the bats harness
+  # reads the parent's pipe to EOF) would wedge for a full tick after the parent exits.
+  # The TERM trap kills the in-flight sleep child too, so update_pause_refresher_stop's
+  # `kill` leaves NO stray sleep process (killing the subshell alone would orphan it).
+  (
+    trap 'if [[ -n "${_ga_sleep_pid:-}" ]]; then kill "${_ga_sleep_pid}" 2>/dev/null || true; fi; exit 0' TERM
+    while kill -0 "${updater_pid}" 2>/dev/null; do
+      update_pause_create >/dev/null 2>&1 || true
+      sleep "${tick}" &
+      _ga_sleep_pid=$!
+      wait "${_ga_sleep_pid}" 2>/dev/null || true
+    done
+  ) >/dev/null 2>&1 &
+  _update_pause_refresher_pid=$!
+}
+
+# Stop the background pause-flag refresher (finding #14): kill + reap + clear the pid.
+# Idempotent (no refresher running → rc 0). Called from update_cleanup BEFORE the flag
+# is removed so the refresher can never recreate the flag after removal.
+update_pause_refresher_stop() {
+  [[ -n "${_update_pause_refresher_pid}" ]] || return 0
+  kill "${_update_pause_refresher_pid}" 2>/dev/null || true
+  wait "${_update_pause_refresher_pid}" 2>/dev/null || true
+  _update_pause_refresher_pid=""
 }
 
 # ---------------------------------------------------------------------------
@@ -521,6 +638,62 @@ update_roster_gate() {
   update_die "roster changes are NOT auto-applied — run the agent_lifecycle human-pause ceremony (python -m agent_lifecycle add|extend|delete) to add or remove an agent, then re-run the update (override for an explicit, non-silent apply: ATRIUM_UPDATE_ALLOW_ROSTER=1)"
 }
 
+# Fail-closed consistency check for the ATRIUM_UPDATE_ALLOW_ROSTER override (finding
+# #16). When the override proceeds past a detected roster ADD, the deterministic sync
+# WOULD swap in the release agent-registry.json, but the E4 merge SKIPS a release-only
+# ADD's agents/<name>.md — so registering the agent WITHOUT its body leaves a
+# PERMANENTLY half-applied roster (a registry key whose .md never landed, thereafter
+# masked by the union-based local roster on every later update). Emit (one per line)
+# the new-registry agent NAMES whose live agents/<name>.md is absent — the orphan-adds
+# whose presence means the registry sync MUST be withheld. Empty when the incoming
+# registry is absent/unparseable or every referenced body is present locally. Args:
+# $1 = new-tree agent-registry.json · $2 = install root.
+update_roster_orphan_registry_adds() {
+  local new_registry="$1" install_root="$2" name
+  [[ -f "${new_registry}" ]] || return 0
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    [[ -e "${install_root}/agents/${name}.md" ]] && continue
+    printf '%s\n' "${name}"
+  done < <(update_roster_keys_from_registry "${new_registry}")
+}
+
+# Symmetric REMOVE-direction counterpart to update_roster_orphan_registry_adds
+# (finding #16). Under ATRIUM_UPDATE_ALLOW_ROSTER a release that DROPS a vendor
+# agent correctly swaps in the new (agent-less) registry — but agents/<name>.md is
+# USER-EDITABLE, deliberately EXCLUDED from the vendor sweep, so the body LINGERS on
+# disk with no registry key: a silent orphan the roster gate never re-detects (it
+# keys removals on the prior-vendor baseline, which the just-advanced baseline no
+# longer carries). Emit (one per line) each prior-vendor agent NAME the new release
+# dropped whose agents/<name>.md is still present — the leftover bodies to surface
+# for MANUAL review (NOT auto-removed; the registry is NOT withheld — the drop is
+# intended). Provenance-scoped like the gate's remove side: a USER-added local-only
+# agent (never in the baseline) is not a vendor drop and never appears here. Empty
+# when no vendor drop has a lingering body. Args: $1 = new manifest · $2 = new
+# registry · $3 = install root · $4 = prior-vendor baseline manifest.
+update_roster_orphan_registry_removes() {
+  local new_manifest="$1" new_registry="$2" install_root="$3" baseline_manifest="${4:-}"
+  local new_list prior_vendor name
+  new_list="$(update_roster_new "${new_manifest}" "${new_registry}")"
+  prior_vendor="$(update_roster_prior_vendor "${baseline_manifest}")"
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    [[ -e "${install_root}/agents/${name}.md" ]] || continue
+    printf '%s\n' "${name}"
+  done < <(LC_ALL=C comm -23 <(printf '%s\n' "${prior_vendor}") <(printf '%s\n' "${new_list}"))
+}
+
+# Remove the exact whole-line path $2 from the clean apply-set file $1 (finding #16
+# registry withholding). Fixed-string, whole-line match (a manifest-relative path);
+# atomic temp+rename. Best-effort: a no-match / now-empty set is a normal result.
+update_filter_clean_path() {
+  local clean_file="$1" drop="$2" tmp
+  [[ -f "${clean_file}" ]] || return 0
+  tmp="${clean_file}.filter.$$"
+  grep -vxF -- "${drop}" "${clean_file}" >"${tmp}" 2>/dev/null || true
+  mv -f -- "${tmp}" "${clean_file}"
+}
+
 # ---------------------------------------------------------------------------
 # Agent EDITABLE-region merge — E4 (T17-T19), the live integration
 # ---------------------------------------------------------------------------
@@ -621,6 +794,15 @@ _update_agent_verify() {
   return 0
 }
 
+# Record a base-content ADVANCE for an agent basename in the per-run outcome ledger
+# (finding #9). Append-only; a no-op when no ledger is active (a caller that ran no
+# merge). Called from BOTH the parent merge loop (pre-gate advances) and the commit
+# callback's pipe-RHS subshell — the file append is the shared-state carrier.
+update_agent_outcome_advance() {
+  [[ -n "${_update_agent_outcomes_file}" ]] || return 0
+  printf '%s\n' "$1" >>"${_update_agent_outcomes_file}"
+}
+
 # The committing callback the foreground gate invokes ONLY on explicit confirm.
 # Iterates the collected candidate records (TSV: logical, real, candidate,
 # release, agent) and drives each through git_txn_apply. Each file is an
@@ -659,6 +841,11 @@ _update_agent_commit_callback() {
     case "${GIT_TXN_RC}" in
       "${GIT_TXN_OK}")
         update_log "agent merged + applied: ${logical}"
+        # Applied cleanly → the base-content store may advance for this file
+        # (finding #9). Any other GIT_TXN outcome leaves the file at its local
+        # version, so it is deliberately NOT recorded (the capture keeps its prior
+        # base entry). File append survives this pipe-RHS subshell.
+        update_agent_outcome_advance "${logical##*/}"
         ;;
       "${GIT_TXN_VERIFY_FAIL}")
         update_log "WARN: agent merge verify failed — ${logical} restored from its before-image (left at local version)"
@@ -699,6 +886,17 @@ update_merge_agent_editable_regions() {
   records_file="${merge_dir}/records.tsv"
   : >"${records_file}"
 
+  # Fresh per-run base-content outcome ledger (finding #9). It must OUTLIVE
+  # merge_dir (rm'd below, before update_capture_base_content reads the ledger), so
+  # anchor it in the run workdir (torn down by the EXIT trap — no leak); a caller
+  # with no workdir (direct unit test) gets an mktemp fallback.
+  if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
+    _update_agent_outcomes_file="${_update_workdir}/agent-outcomes.ledger"
+  else
+    _update_agent_outcomes_file="$(mktemp -t glass-atrium-agent-outcomes.XXXXXX)"
+  fi
+  : >"${_update_agent_outcomes_file}"
+
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
   # top-level only (references/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md charter excluded,
   # same scoping as the roster scan).
@@ -711,8 +909,12 @@ update_merge_agent_editable_regions() {
       update_log "agent merge: ${base} is release-only (ADD) — defer to the agent_lifecycle ceremony, skipping"
       continue
     fi
-    # Byte-identical → nothing to merge (equivalent to plan changed=False).
-    cmp -s -- "${local_file}" "${file}" && continue
+    # Byte-identical → nothing to merge (equivalent to plan changed=False). Local
+    # already equals the release, so the base-content store may advance (finding #9).
+    if cmp -s -- "${local_file}" "${file}"; then
+      update_agent_outcome_advance "${base}"
+      continue
+    fi
 
     candidate="${merge_dir}/${base}.candidate"
     plan_err="${merge_dir}/${base}.planerr"
@@ -739,6 +941,8 @@ update_merge_agent_editable_regions() {
     fi
     if [[ "${changed}" != 'True' ]]; then
       update_log "agent merge: agents/${base} resolves with no net change (regions kept local) — no write"
+      # No net change → the resolved body is stable, so the base may advance (finding #9).
+      update_agent_outcome_advance "${base}"
       continue
     fi
 
@@ -838,20 +1042,52 @@ update_base_store_dir() {
 # splits). Non-recursive (references/ excluded, same as the roster dir scan). A
 # best-effort copy: a single failed body is warned and skipped, never aborting the
 # already-completed apply. Arg: $1 = new-release tree root.
+#
+# OUTCOME-KEYED (finding #9): the base store advances ONLY for a file whose merge
+# actually LANDED — recorded in the per-run ledger update_merge_agent_editable_regions
+# built (applied GIT_TXN_OK, byte-identical, or no net change). A declined /
+# rolled-back / refused / structural / plan-failed merge is ABSENT from the ledger, so
+# its prior base entry is KEPT untouched — blindly advancing it to the un-accepted
+# release body would make the NEXT 3-way merge treat that vendor change as already in
+# the base and silently swallow it forever. With no ledger (a direct caller that ran
+# no merge) the prior blanket advance is preserved so a legacy caller is unchanged.
 update_capture_base_content() {
-  local new_dir="$1" store file base count=0
+  local new_dir="$1" store file base count=0 kept=0
+  local ledger="${_update_agent_outcomes_file}"
   store="$(update_base_store_dir)"
   mkdir -p -- "${store}"
+  # Load the per-run merge ledger ONCE (bash `$(<file)` — zero forks) into a
+  # newline-wrapped string, then test membership per file with a fork-free `[[ ==
+  # pattern ]]` whole-line scan (the newline anchors mirror `grep -qxF`). Replaces
+  # the prior per-file grep fork (O(files) subprocesses), matching the diff's own
+  # fork-free hoist pattern (spine_find_removed_files). `declare -A` is NOT usable —
+  # stock macOS bash 3.2 has no associative arrays. ledger_active gates the lookup:
+  # with no active ledger (a direct/legacy caller that ran no merge) the prior
+  # blanket advance is preserved.
+  local ledger_active=0 ledger_lines=""
+  if [[ -n "${ledger}" && -f "${ledger}" ]]; then
+    ledger_active=1
+    ledger_lines=$'\n'"$(<"${ledger}")"$'\n'
+  fi
   for file in "${new_dir}"/agents/*.md; do
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
+    # An active ledger that does NOT list this basename → the file's merge did not
+    # land → keep its prior base entry (do not advance).
+    if [[ "${ledger_active}" -eq 1 && "${ledger_lines}" != *$'\n'"${base}"$'\n'* ]]; then
+      kept=$((kept + 1))
+      continue
+    fi
     if cp -p -- "${file}" "${store}/${base}"; then
       count=$((count + 1))
     else
       update_log "WARN: base-content capture failed for ${base} (next update falls back to gated 2-way for it)"
     fi
   done
-  update_log "base-content store updated: ${count} agent body(ies) → ${store}"
+  update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base → ${store}"
+  # One-shot ledger: reset so a later capture in the same process never reads a
+  # stale set (the workdir teardown removes the file itself).
+  _update_agent_outcomes_file=""
 }
 
 # ---------------------------------------------------------------------------
@@ -1352,11 +1588,19 @@ update_render_parity() {
   local render_launchd render_monitor_env
   render_launchd="${ATRIUM_UPDATE_RENDER_LAUNCHD:-${_update_script_dir}/render-launchd-plists.sh}"
   render_monitor_env="${ATRIUM_UPDATE_RENDER_MONITOR_ENV:-${_update_script_dir}/render-monitor-env.sh}"
+  # Loud-fail an absent/non-executable render script (Precondition Loud-Fail Principle) — a SILENT
+  # skip here is exactly how the monitor boots without ATRIUM_* env → dev-fallback schedules + UTC
+  # day-bucket under the launchd TZ=UTC shadow (Next-due 9h late). The WARN persists via update_log
+  # (stderr → the one-shot job's StandardErrorPath log), so the skip is diagnosable, never invisible.
   if [[ -x "${render_launchd}" ]]; then
     "${render_launchd}" >/dev/null 2>&1 || update_log "WARN: render-launchd-plists failed — launchd parity skipped"
+  else
+    update_log "WARN: render-launchd-plists.sh missing or non-executable (${render_launchd}) — launchd parity SKIPPED; plists not re-rendered"
   fi
   if [[ -x "${render_monitor_env}" ]]; then
     "${render_monitor_env}" >/dev/null 2>&1 || update_log "WARN: render-monitor-env failed — monitor env parity skipped"
+  else
+    update_log "WARN: render-monitor-env.sh missing or non-executable (${render_monitor_env}) — monitor env parity SKIPPED; ATRIUM_* env NOT rendered (monitor will fall back to dev schedules + UTC day-bucket)"
   fi
   update_render_oneshot_plist >/dev/null 2>&1 || update_log "WARN: one-shot plist render failed"
 }
@@ -1484,14 +1728,27 @@ _update_agents_bak_guard() {
 # Prune per-run before-image dirs older than the 14-day retention. Age via python3
 # mtime (portable — NEVER the BSD/GNU-divergent stat / find -mtime). Best-effort.
 update_prune_agents_bak() {
-  local root base dir age_days retention="${ATRIUM_UPDATE_AGENTS_BAK_RETENTION_DAYS:-14}"
+  local root base dir age_days newest="" retention="${ATRIUM_UPDATE_AGENTS_BAK_RETENTION_DAYS:-14}"
   root="$(update_ga_root)"
   base="$(update_agents_bak_base "${root}")"
   [[ -d "${base}" ]] || return 0
+  # Newest-anchor protection (finding #12): find the newest per-run subdir by mtime
+  # (bash `-nt`, no external stat — mirrors daemon-apply.sh prune_backup_retention)
+  # and NEVER prune it, even when an idle install ages every dir past the retention.
+  # It is the most-recent rollback anchor --restore-agents reads.
   for dir in "${base}"/*/; do
     [[ -d "${dir}" ]] || continue
     dir="${dir%/}"
     _update_agents_bak_guard "${dir}" || continue
+    if [[ -z "${newest}" || "${dir}" -nt "${newest}" ]]; then
+      newest="${dir}"
+    fi
+  done
+  for dir in "${base}"/*/; do
+    [[ -d "${dir}" ]] || continue
+    dir="${dir%/}"
+    _update_agents_bak_guard "${dir}" || continue
+    [[ "${dir}" == "${newest}" ]] && continue # protect the newest rollback anchor
     age_days="$(
       python3 - "${dir}" <<'PY' 2>/dev/null || true
 import os, sys, time
@@ -1575,6 +1832,7 @@ update_finalize_success() {
 update_preview() {
   local root work dl_dir new_dir manifest changed clean_paths sensitive_paths
   local records label current proposed path
+  local rm_baseline rm_removed rm_path
   root="$(update_ga_root)"
   # git is NOT required: the whole flow (spine sync + git-free git_txn_apply
   # merge) runs without any git invocation, by design (no-.git consumer install).
@@ -1586,6 +1844,20 @@ update_preview() {
   update_fetch_release "${dl_dir}" "${new_dir}"
   manifest="${dl_dir}/manifest.json"
   update_log "preview: dry-run diff for release version $(jq -r '.version // "unknown"' "${manifest}" 2>/dev/null || printf 'unknown')"
+  # Vendor-removal preview (#14): list files the prior-vendor baseline shipped but
+  # this release DROPS (provenance-clean only) — a dry-run MUST surface impending
+  # deletions, not just content diffs, so the headless/web confirm is not blind.
+  # No baseline → nothing to list; a detection failure degrades to no listing
+  # (spine's own stderr is loud), never an aborted preview.
+  rm_baseline="$(spine_get_baseline || true)"
+  if [[ -n "${rm_baseline}" && -f "${rm_baseline}" ]]; then
+    if rm_removed="$(spine_find_removed_files "${rm_baseline}" "${manifest}" "${root}")" \
+      && [[ -n "${rm_removed}" ]]; then
+      while IFS= read -r rm_path; do
+        [[ -n "${rm_path}" ]] && update_log "  (would be removed -> Trash) ${rm_path}"
+      done <<<"${rm_removed}"
+    fi
+  fi
   changed="$(spine_find_changed_files "${manifest}" "${root}")" \
     || update_die "preview: change selection failed (manifest hash gap)"
   if [[ -z "${changed}" ]]; then
@@ -1643,14 +1915,174 @@ USAGE
 # The committing callback the foreground gate invokes ONLY on explicit confirm.
 # Reads the clean change set (one path per line) from STDIN and snapshot+swaps via
 # the spine. Globals carry the paths the gate cannot (the gate owns stdin).
+#
+# Drops a `.commit-ok` FILE marker on a clean swap (finding #7). It MUST be a file,
+# not a shell var: the gate runs this callback on a pipe RHS (a subshell), so a var
+# set here would never reach the parent's EXIT trap — but the marker file survives.
+# Its presence tells update_cleanup the swap committed cleanly (snapshot is safe to
+# delete); its absence beside a non-empty snapshot means a failed/interrupted apply
+# whose snapshot must be preserved. A spine failure is remapped to rc 3 (finding #8) —
+# DISJOINT from the gate's own 1=declined / 2=empty verdicts it propagates verbatim —
+# so a rolled-back apply is never mislabeled "declined".
 update_commit_callback() {
+  local rc=0
   printf '%s\n' "${_update_clean_paths}" \
-    | spine_commit_staged "${_update_staging}" "$(update_ga_root)" "${_update_snapshot}"
+    | spine_commit_staged "${_update_staging}" "$(update_ga_root)" "${_update_snapshot}" || rc=$?
+  if [[ "${rc}" -eq 0 ]]; then
+    if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
+      : >"${_update_workdir}/.commit-ok"
+    fi
+    return 0
+  fi
+  # spine_commit_staged failed and rolled back the partial swap (finding #8). Map ANY
+  # non-zero spine rc to 3 — DISJOINT from gate_apply_confirmed's own 1 (declined) /
+  # 2 (empty set) verdicts, which it propagates VERBATIM from this callback. Without
+  # the remap a spine rc 1 collided with the gate's 1=declined, so update_run
+  # mislabeled a rolled-back apply "declined at the confirm gate — no files written".
+  # Mirrors the agent path's _update_agent_commit_callback rc-3 convention.
+  return 3
+}
+
+# ---------------------------------------------------------------------------
+# Vendor-removal sweep (#14) — the deletion counterpart of the non-agent sync
+# ---------------------------------------------------------------------------
+#
+# spine_find_changed_files selects files the release ADDS or CHANGES; nothing
+# handled the files a release DROPS, so a vendor-retired file lingered forever
+# (the "no deletion pass" gap). spine_find_removed_files (apply-spine.sh) is the
+# provenance-gated DETECTION half — the non-agent files the PRIOR-VENDOR baseline
+# shipped but the new release dropped, restricted to still-pristine copies (live
+# hash == baseline hash); a USER-edited dropped file is PRESERVED (never listed).
+# Below is the caller-side REMOVAL half: sensitive-partition the list, preview it
+# through the SAME confirm gate as the sync, and MOVE each confirmed file to a
+# per-run Trash sink (File Deletion Policy: rm is FORBIDDEN for source/config — mv
+# to ~/.Trash on macOS). Removal policy stays caller-side — the same split as
+# spine_find_changed_files -> update_commit_callback.
+
+# The macOS Trash dir the sweep moves vendor-dropped files into. ATRIUM_UPDATE_TRASH_DIR
+# overrides for hermetic tests; default ${HOME}/.Trash.
+update_trash_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_TRASH_DIR:-${HOME}/.Trash}"
+}
+
+# The removal confirm gate's committing callback — invoked ONLY on explicit
+# confirm. Moves each vendor-dropped file to the per-run Trash sink preserving its
+# relative path (atomic mv into one recovery bundle). Reads the removal set + sink
+# from globals: it runs on the gate's pipe-RHS subshell (which owns no stdin — the
+# gate consumed it), the same carrier pattern as update_commit_callback. Loud-fail
+# rc 3 on ANY move failure — DISJOINT from gate_apply_confirmed's own 1 (declined)
+# / 2 (empty set) verdicts it propagates verbatim — so the caller maps a genuine
+# move failure to its named exit code without colliding with "declined".
+#
+# shellcheck disable=SC2329
+#   Passed by NAME to gate_apply_confirmed ("$@"), never called by () here.
+_update_removal_commit_callback() {
+  local path src dest rc=0
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    src="${_update_removal_root}/${path}"
+    # Already gone (concurrent sweep / manual delete) → nothing to move.
+    [[ -e "${src}" ]] || continue
+    dest="${_update_removal_dest}/${path}"
+    if mkdir -p -- "$(dirname -- "${dest}")" && mv -f -- "${src}" "${dest}"; then
+      update_log "vendor-dropped file removed → Trash: ${path}"
+    else
+      update_log "WARN: could NOT move ${src} to Trash (${dest}) — left in place"
+      rc=3
+    fi
+  done <<<"${_update_removal_paths}"
+  return "${rc}"
+}
+
+# Drive the vendor-removal sweep for a completed apply. No prior-vendor baseline
+# (first-ever update / relocated install) → empty set → no-op (degrade-safe: never
+# sweep without vendor provenance, the same stance as the roster gate's remove
+# side). A DETECTION failure (corrupt baseline hash gap) is LOUD but NON-fatal —
+# it WARNs and skips so the run still captures a fresh baseline that self-heals the
+# corrupt anchor (aborting here would only re-abort next run). A confirmed move
+# that FAILS is a named loud-fail (exit 13) so a stale-file leftover surfaces with
+# an actionable cause (never 2>/dev/null-absorbed); the applied sync is never
+# rolled back. Args: $1 = prior-vendor baseline manifest (may be empty/absent) ·
+# $2 = new manifest · $3 = live install root.
+update_sweep_removed_files() {
+  local baseline_manifest="${1:-}" manifest="$2" root="$3"
+  local removed clean_removals sensitive_removals records empty_proposed
+  local path label current ts rc=0
+  # No provenance anchor → refuse to sweep anything.
+  [[ -n "${baseline_manifest}" && -f "${baseline_manifest}" ]] || return 0
+  if ! removed="$(spine_find_removed_files "${baseline_manifest}" "${manifest}" "${root}")"; then
+    update_log "WARN: vendor-removal selection failed (baseline hash gap) — skipping the deletion pass; a fresh baseline will be captured next"
+    return 0
+  fi
+  [[ -n "${removed}" ]] || return 0
+
+  # Sensitive-partition the removal set: a vendor-dropped harness file (plist,
+  # security rule, credential) is REPORTED for manual review, never auto-Trashed —
+  # the same fail-closed carve-out the non-agent sync applies to changed files.
+  clean_removals="$(mktemp -t glass-atrium-remove-clean.XXXXXX)"
+  sensitive_removals="$(mktemp -t glass-atrium-remove-sens.XXXXXX)"
+  printf '%s\n' "${removed}" \
+    | update_partition_sensitive "${clean_removals}" "${sensitive_removals}"
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] && update_log "  (sensitive vendor-drop, NOT removed — review manually) ${path}"
+  done <"${sensitive_removals}"
+  if [[ ! -s "${clean_removals}" ]]; then
+    rm -f -- "${clean_removals}" "${sensitive_removals}"
+    return 0
+  fi
+
+  # Per-run Trash sink: a timestamped subdir so one run's removals form a single
+  # recovery bundle and same-basename drops never collide.
+  ts="$(date +%Y%m%d-%H%M%S)"
+  _update_removal_root="${root}"
+  _update_removal_dest="$(update_trash_dir)/glass-atrium-update-removed-${ts}_$$"
+  _update_removal_paths="$(cat "${clean_removals}")"
+
+  # Preview each removal through the SAME confirm gate as the sync (structural
+  # zero-write-on-decline). A removal has no proposed content, so an EMPTY file is
+  # the diff RHS — the preview renders every line of the doomed file as removed.
+  empty_proposed="$(mktemp -t glass-atrium-remove-empty.XXXXXX)"
+  : >"${empty_proposed}"
+  records=""
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    current="${root}/${path}"
+    label="REMOVE ${path} (-> Trash)"
+    records="${records}$(printf '%s\t%s\t%s' "${label}" "${current}" "${empty_proposed}")"$'\n'
+  done <"${clean_removals}"
+
+  printf '%s' "${records}" | gate_apply_confirmed _update_removal_commit_callback || rc=$?
+  rm -f -- "${clean_removals}" "${sensitive_removals}" "${empty_proposed}"
+  case "${rc}" in
+    0) update_log "vendor-removal sweep complete" ;;
+    1) update_log "vendor-removal sweep declined — dropped files left in place" ;;
+    2) update_log "vendor-removal sweep: nothing to remove" ;;
+    3) update_die_code 13 "vendor-removal sweep FAILED to move one or more dropped files to Trash — update files applied, but stale vendor files remain; remove them manually (see the WARN lines above)" ;;
+    *) update_die_code 13 "vendor-removal sweep failed (rc ${rc}) — update files applied; stale vendor files may remain" ;;
+  esac
+}
+
+# The merge → vendor-sweep → baseline-capture → base-content-capture finalize
+# sequence, shared by the main post-apply path and both early-return paths
+# (already-up-to-date / all-sensitive). ORDER is load-bearing: the sweep keys off
+# the STILL-OLD baseline, so it MUST precede update_capture_baseline advancing the
+# anchor, and update_capture_base_content follows once the manifest is the new base.
+# finding #9 (anchors advance for landed agent merges even on an agent-only /
+# sensitive-only update) + finding #14 (a drop-only release still sweeps). Args: $1
+# = new-release tree · $2 = manifest · $3 = install root · $4 = prior-vendor
+# baseline manifest.
+update_finalize_merge_and_anchors() {
+  local new_dir="$1" manifest="$2" root="$3" baseline_manifest="$4"
+  update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
+  update_sweep_removed_files "${baseline_manifest}" "${manifest}" "${root}"
+  update_capture_baseline "${manifest}"
+  update_capture_base_content "${new_dir}"
 }
 
 update_run() {
   local root work dl_dir new_dir manifest staging snapshot baseline_manifest
-  local changed clean_paths sensitive_paths n_sensitive records rc=0 path
+  local changed clean_paths sensitive_paths n_sensitive records rc=0 path name
+  local withhold_registry=0 orphan_adds orphan_removes
   root="$(update_ga_root)"
   # git is NOT required (see update_preview) — requiring it would loud-fail the
   # git-less no-.git consumer install Phase 2 exists to enable.
@@ -1701,6 +2133,37 @@ update_run() {
   # beside the manifest's agent files; the prior-vendor baseline scopes removals.
   update_roster_gate "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}"
 
+  # Step 2.5b — finding #16 (ATRIUM_UPDATE_ALLOW_ROSTER fail-closed roster consistency).
+  # The override just proceeded past a detected add/remove, but the E4 merge SKIPS a
+  # release-only ADD's agents/<name>.md — so letting the deterministic sync swap in the
+  # release agent-registry.json would register an agent whose body never landed (a
+  # permanently half-applied roster the union-based local roster then masks forever).
+  # Fail-closed: mark agent-registry.json to be WITHHELD from the apply set (Step 3)
+  # whenever the incoming registry references an agent whose live .md is absent, keeping
+  # files and registry consistent (both without the un-installed agent). Only under the
+  # override — the un-set path already died at the gate on any roster change.
+  if [[ -n "${ATRIUM_UPDATE_ALLOW_ROSTER:-}" ]]; then
+    orphan_adds="$(update_roster_orphan_registry_adds "${new_dir}/agent-registry.json" "${root}")"
+    if [[ -n "${orphan_adds}" ]]; then
+      withhold_registry=1
+      update_log "ATRIUM_UPDATE_ALLOW_ROSTER: WITHHOLDING agent-registry.json sync — the agent body is NOT installed for:"
+      while IFS= read -r path; do
+        [[ -n "${path}" ]] && update_log "  ${path} (run the agent_lifecycle ceremony to install it, then re-run update)"
+      done <<<"${orphan_adds}"
+    fi
+    # Symmetric REMOVE half (finding #16): the release dropped a vendor agent whose
+    # USER-EDITABLE body still lingers on disk (agents/*.md is excluded from the
+    # vendor sweep). Do NOT withhold the registry (the drop is intended) and do NOT
+    # auto-remove the body — emit a loud WARN so the leftover is not silently masked.
+    orphan_removes="$(update_roster_orphan_registry_removes "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}")"
+    if [[ -n "${orphan_removes}" ]]; then
+      update_log "ATRIUM_UPDATE_ALLOW_ROSTER: WARN — the release DROPPED an agent whose body still lingers on disk (USER-EDITABLE, not auto-removed) — review for manual removal:"
+      while IFS= read -r name; do
+        [[ -n "${name}" ]] && update_log "  ${root}/agents/${name}.md (registry key gone; delete via the agent_lifecycle ceremony if the removal is intended)"
+      done <<<"${orphan_removes}"
+    fi
+  fi
+
   # Step 2.6 — claude -p precondition (headless): BEFORE the merge stage, verify the
   # decoupled job env + the rendered monitor/one-shot plist PATH resolve the claude
   # binary — loud-fail exit 7 if not, so the merge cannot fail cryptically mid-flight.
@@ -1712,7 +2175,10 @@ update_run() {
     || update_die "change selection failed (manifest hash gap) — refusing to apply"
   if [[ -z "${changed}" ]]; then
     update_log "already up to date — no non-agent files changed"
-    update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
+    # Agent-only release path (finding #9 / #14): still advance the anchors for
+    # landed merges (outcome-keyed) and sweep a drop-only release, even with no
+    # non-agent content change.
+    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
     update_finalize_success 0
     return 0
   fi
@@ -1728,9 +2194,17 @@ update_run() {
       [[ -n "${path}" ]] && update_log "  (sensitive, skipped) ${path}"
     done <"${sensitive_paths}"
   fi
+  # finding #16: drop agent-registry.json from the apply set when withheld above, so the
+  # deterministic sync cannot register an agent whose body was not installed. Runs after
+  # the sensitive partition so the `! -s` empty-set branch below fires if this empties it.
+  if [[ "${withhold_registry}" -eq 1 ]]; then
+    update_filter_clean_path "${clean_paths}" "agent-registry.json"
+  fi
   if [[ ! -s "${clean_paths}" ]]; then
     update_log "no auto-syncable files remain after the sensitive partition — nothing to apply"
-    update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
+    # Sensitive-only path (finding #9 / #14): advance anchors for landed merges
+    # (outcome-keyed) and sweep a drop-only release on the all-sensitive path too.
+    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
     update_finalize_success 0
     return 0
   fi
@@ -1752,17 +2226,18 @@ update_run() {
     0) update_log "non-agent sync applied" ;;
     1) update_die "declined at the confirm gate — no files written" ;;
     2) update_log "no changes to confirm" ;;
+    3) update_die "apply failed — the spine rolled back the partial swap (no files changed)" ;;
     *) update_die "apply failed (rc ${rc}) — the spine rolled back any partial swap" ;;
   esac
 
-  # Agent EDITABLE-region merge — the active E4 agent-merge integration.
-  update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
-
-  # Step 6 — capture the applied manifest as the base@install anchor (T24 seam),
-  # then persist the new-release agent bodies into the base-content store so the
-  # NEXT update has real base TEXT for a true 3-way merge (T24 base-content capture).
-  update_capture_baseline "${manifest}"
-  update_capture_base_content "${new_dir}"
+  # Steps 5b/5c/6 — agent EDITABLE-region merge (E4), then the vendor-removal sweep
+  # (#14: drops keyed off the STILL-OLD baseline, previewed through the same confirm
+  # gate), then capture the applied manifest as the base@install anchor + persist the
+  # new-release agent bodies into the base-content store (T24 — real base TEXT for the
+  # next 3-way merge). Ordering is load-bearing: the sweep runs BEFORE the baseline
+  # advance and BEFORE the mirror-farm refresh below, so a removed file gains no
+  # dangling mirror.
+  update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
 
   # Step 7 — facade mirror-farm refresh (incident #58325): persist the new
   # manifest, then re-run the per-file symlink farm so every newly-shipped file
