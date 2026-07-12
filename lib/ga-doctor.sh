@@ -306,12 +306,39 @@ run_doctor() {
     fi
   fi
 
+  # 10. inject-scope-rules drop marker (recurrence surface). inject-scope-rules.sh compresses the four
+  #     AGENT-INJECT source blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; if a
+  #     future block edit re-inflates the assembly past the ceiling, a scope block is dropped SILENTLY
+  #     (Claude Code discards SubagentStart hook stderr), so the hook persists each drop to a
+  #     HOME-relative diag log. Surface it as a WARN (never a FAIL): a recorded drop means a scope
+  #     block stopped reaching subagents — recompress the AGENT-INJECT source blocks. Mutation-free.
+  local drop_events=0
+  local inject_drop_log="${TARGET_HOME}/.claude/logs/inject-scope-rules.diag.log"
+  if [[ -f "${inject_drop_log}" ]]; then
+    # grep -c prints "0" + exits 1 on zero matches → `|| true` swallows the rc without double-counting
+    # (masked substitution rc keeps set -e intact; SC2312 fires only for the lib's lack of file-scope set -e).
+    # shellcheck disable=SC2312
+    drop_events="$(grep -c 'inject-scope-rules] DROP' "${inject_drop_log}" 2>/dev/null || true)"
+    [[ -n "${drop_events}" ]] || drop_events=0
+    if [[ "${drop_events}" -gt 0 ]]; then
+      log "  warn : ${drop_events} inject-scope-rules block-drop event(s) recorded (${inject_drop_log}) — a scope block exceeded INJECT_CTX_MAX_BYTES and was NOT injected into subagents; recompress the AGENT-INJECT source blocks"
+      local last_drop
+      # shellcheck disable=SC2312
+      last_drop="$(grep 'inject-scope-rules] DROP' "${inject_drop_log}" 2>/dev/null | tail -n1 || true)"
+      [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
+    else
+      log "  ok   : no inject-scope-rules block-drop events recorded"
+    fi
+  else
+    log "  ok   : no inject-scope-rules drop log (no block-drop events)"
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop warning(s) — see above) =="
     fi
     return 0
   fi

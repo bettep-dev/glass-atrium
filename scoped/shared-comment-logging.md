@@ -7,23 +7,23 @@ Applies to all DEV and QA agents.
 > The block between the `AGENT-INJECT` markers is extracted verbatim by a SubagentStart hook and injected into DEV/QA subagents. Edit it here only.
 
 <!-- AGENT-INJECT:START -->
-**Comment-rule core (auto-injected for DEV/QA agents · full rule: `~/.claude/scoped/shared-comment-logging.md`)**
+**Comment-rule core (auto-injected DEV/QA · full: `~/.claude/scoped/shared-comment-logging.md`)**
 
-TOP PROHIBITIONS (most-violated — read first):
-- **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO format. **No commented-out dead code** "for rollback" → DELETE (git restores).
-- **Density gate (ceiling, not floor)**: comment ONLY when "why" is non-obvious from names/types/context · self-evident code → NO comment · appending `— because …` does NOT license it · when in doubt → omit.
-- **One essence line default → `/** */` on overflow**: state the non-obvious "why" in ONE concise `//` line — verbose/rambling prose FORBIDDEN (code shows "what"). "Why" too big for one line, on a declaration-attached function/method/class → formal `/** */` docblock (summary + structured semantics), NEVER stacked `//` continuation lines nor a sprawling paragraph. `/** */` triggers = two orthogonal axes: public-API/exported scope OR a declaration's internal "why" over one line. One-line-sufficient internal note stays `//`; a single variable whose why overflows → compress/extract (block = OVERKILL). Distinct points → separate one-line `//` comments. Non-`/** */` langs use the idiomatic block (Python: PEP 8 `#`, docstrings for module/class/def only).
-- **NO mid-sentence line-wrap** — one clause per `//` line; never split ONE sentence across continuation lines. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple separate one-line comments.
+TOP PROHIBITIONS (read first):
+- **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.
+- **Density gate (ceiling, not floor)**: comment ONLY when "why" is non-obvious from names/types/context · self-evident code → NO comment · `— because …` does NOT license it · in doubt → omit.
+- **One essence line → `/** */` on overflow**: non-obvious "why" in ONE concise `//` line; verbose prose FORBIDDEN. Overflow on a declaration (function/method/class) → `/** */` docblock, NEVER stacked `//` nor a paragraph. `/** */` triggers: public-API/exported OR a declaration's internal "why" >1 line. One-line internal note stays `//`; a variable whose why overflows → compress/extract (not a block). Distinct points → separate `//` comments. Non-`/** */` langs → idiomatic block (Python: `#`, docstrings for module/class/def only).
+- **NO mid-sentence line-wrap** — one clause per `//` line; never split ONE sentence across continuation lines. Compress causality with `→ — , +`, bullet/noun-phrase only. Does NOT forbid the 1–3-sentence header nor multiple one-line comments.
 - **NO `console.*` in production** (test files exempt) → framework logger.
 
 REMAINING RULES:
-- Comment language precedence (highest wins): user-specified language in task/CLAUDE.md → new comment = Korean (default) → editing existing = match its language. Identifiers/API names keep original form. Governs COMMENT language only — server logs stay English.
-- Explain **"why"** · comments restating code FORBIDDEN · stale comments worse than none → sync with code.
-- Log level: error=action-required/failed · warn=potential issue · info=normal state change · debug=dev-only (off in prod). Error logs need what+why+context.
+- Comment language (highest wins): user-specified in task/CLAUDE.md → new = Korean (default) → editing existing = match its language. Identifiers/API names keep original form. COMMENT language only — server logs stay English.
+- Explain **"why"**; restating code FORBIDDEN · stale comments worse than none → sync with code.
+- Log level: error=action-required/failed · warn=potential issue · info=state change · debug=dev-only (off in prod). Error logs need what+why+context.
 - JSDoc: semantics only, MUST NOT duplicate types (`@param value - desc`, never `@param {type}`).
 - TODO: `// TODO(owner/TICKET): reason` — owner+ticket REQUIRED.
 - **File/module header = 1–3-sentence purpose limit** · prose-dump FORBIDDEN · complexity-proportional (self-evident module → omit).
-- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density or header prose; sibling violates the rules → author COMPLIANT comments. Two code-form carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, `// prettier-ignore`, `// #region`, `//<editor-fold>`, codegen anchors) AND a header passing the Justified-header test (architectural role / scope boundary / rejected alternative / usage contract).
+- **Mirror = code form only** (naming/imports/error+log) — NEVER copy a sibling's comment density or header prose; sibling violates → author COMPLIANT comments. Two carve-outs (reproduce): tooling/pragma directives (`// @ts-expect-error`, `/* eslint-disable */`, `// prettier-ignore`, `// #region`, `//<editor-fold>`, codegen anchors) AND a header passing the Justified-header test (architectural role / scope boundary / rejected alternative / usage contract).
 <!-- AGENT-INJECT:END -->
 
 ## Comment Principles

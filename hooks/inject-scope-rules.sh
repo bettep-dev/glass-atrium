@@ -101,11 +101,24 @@ readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atr
 # Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c).
 # WHY: the engine persists any SubagentStart additionalContext larger than ~10KB (10240
 # bytes) to a file and delivers only a ~2KB preview — so an oversized assembly silently
-# strips the meter (the exact failure this hook repairs). 8192 stays clear of the 10KB
-# trigger, and the ~800B meter fits even the 2KB preview, so meter delivery holds in every
-# degradation mode. UNIVERSAL: the envelope carries no spawn-mode discriminator, so
-# engine/schema-mode spawns are bounded identically to manual ones.
-readonly INJECT_CTX_MAX_BYTES=8192
+# strips the meter (the exact failure this hook repairs). 9728 stays clear of the 10240
+# trigger (512B margin), and the ~900B meter fits even the 2KB preview, so meter delivery
+# holds in every degradation mode. The four AGENT-INJECT source blocks are compressed so the
+# worst-case DEV assembly (all six blocks) fits under this ceiling with headroom — a ceiling
+# raise ALONE cannot fit the pre-compression ~11540B sum, since no compliant ceiling can hold
+# it under the 10240 persist threshold; the fit is compression + ceiling together. The zero-
+# drop invariant is pinned by hooks/test/inject-scope-rules-nodrop.bats against the real repo
+# sources. UNIVERSAL: the envelope carries no spawn-mode discriminator, so engine/schema-mode
+# spawns are bounded identically to manual ones.
+readonly INJECT_CTX_MAX_BYTES=9728
+
+# Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
+# SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
+# track-outcome.sh's _append_diag_log — a bounded append (1 MiB truncate-on-exceed soft rotation)
+# under a HOME-relative logs dir (the Bats HOME override redirects it clear of the real
+# ~/.claude/logs). `glass-atrium doctor` (§10) surfaces the count. Env-overridable for the Bats sandbox.
+readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOME}/.claude/logs/inject-scope-rules.diag.log}"
+readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -203,6 +216,26 @@ byte_len() {
   printf '%s' "${1}" | wc -c | tr -cd '0-9'
 }
 
+# Append a persisted drop-marker line. Fail-open: EVERY statement is guarded (|| true / || return 0
+# / if-then) so a logging glitch can NEVER trip set -e → the ERR trap → a spawn-suppressing exit
+# (a logging failure must not cost the injection). Bounded: the log is removed once it crosses
+# INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=ctx_bytes at drop.
+append_drop_log() {
+  local block="${1}" ctx_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts=""
+  mkdir -p "${log_dir}" 2>/dev/null || return 0
+  if [[ -f "${INJECT_DROP_LOG}" ]]; then
+    sz="$(wc -c < "${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
+    if [[ -n "${sz}" && "${sz}" -gt "${INJECT_DROP_LOG_MAX_BYTES}" ]]; then
+      rm -f "${INJECT_DROP_LOG}" 2>/dev/null || true
+    fi
+  fi
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  printf '%s [inject-scope-rules] DROP agent=%s block=%s ctx_bytes=%s ceiling=%s\n' \
+    "${ts}" "${AGENT_TYPE}" "${block}" "${ctx_bytes}" "${INJECT_CTX_MAX_BYTES}" \
+    >>"${INJECT_DROP_LOG}" 2>/dev/null || true
+  return 0
+}
+
 # Join two context fragments with a blank-line delimiter, tolerating an empty left side (so the
 # first present block seeds the context without a leading blank line).
 # Args: $1=existing ctx $2=block to append · stdout: joined text (no trailing newline).
@@ -297,6 +330,7 @@ for drop_block in naming styleref minimalism comment; do
   CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}")"
   ctx_bytes="$(byte_len "${CTX}")"
   printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
+  append_drop_log "${drop_block}" "${ctx_bytes}"
 done
 
 # All blocks empty → nothing to inject, fail-open exit.

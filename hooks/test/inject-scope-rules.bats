@@ -209,7 +209,7 @@ assert_ctx_not_contains() {
 # (d2) always-on [COMPLETION] emit-format directive (PRIMARY emit-side fix, T2/T3).
 # The directive is delivered to EVERY agent independent of SUBAGENT_BUDGET_METER_OFF and of maxTurns,
 # and is ordered before the four droppable scope blocks so it survives the ~2KB persistence preview.
-# These assertions key on the 8192-byte ceiling and directive-first ordering, NOT on the 2KB preview.
+# These assertions key on the 9728-byte ceiling and directive-first ordering, NOT on the 2KB preview.
 
 # Drive the hook with the meter ENABLED (kill-switch explicitly unset) but AGENTS_DIR absent, so
 # read_max_turns returns empty → METER_BLOCK is empty. All scope sources absent. This isolates the
@@ -267,17 +267,17 @@ assert_ctx_max_bytes() {
   assert_ctx_order "${EMIT_NEEDLE}" "${NAMING_NEEDLE}"
 }
 
-@test "assembled additionalContext stays <= 8192 bytes with emit block included, under drop pressure" {
+@test "assembled additionalContext stays <= 9728 bytes with emit block included, under drop pressure" {
   run_hook_full "glass-atrium-dev-react" 5000 5000 5000 5000
   assert_status 0
   assert_ctx_contains "${EMIT_NEEDLE}"
-  assert_ctx_max_bytes 8192
+  assert_ctx_max_bytes 9728
 }
 
-# (e) meter-first assembly + universal 8KB byte-ceiling drop order (P1-T1 / P1-T2).
+# (e) meter-first assembly + universal 9728-byte ceiling drop order (P1-T1 / P1-T2).
 # Unlike run_hook (which suppresses the meter), these tests ENABLE it: they build a maxTurns
 # frontmatter fixture + all four scope-block sources, then assert the meter is assembled FIRST and
-# the 8KB ceiling drops blocks in the pinned order naming → style-ref → minimalism → comment-logging
+# the 9728-byte ceiling drops blocks in the pinned order naming → style-ref → minimalism → comment-logging
 # while never dropping the meter. Distinct needles per block make each assertion mutation-falsifiable.
 
 METER_NEEDLE="Turn-budget meter"
@@ -371,7 +371,7 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
   assert_ctx_order "${METER_NEEDLE}" "${NAMING_NEEDLE}"
 }
 
-@test "small blocks under 8KB ceiling — meter + all four scope blocks retained (P1-T2 baseline)" {
+@test "small blocks under the 9728-byte ceiling — meter + all four scope blocks retained (P1-T2 baseline)" {
   run_hook_full "glass-atrium-dev-react"
   assert_status 0
   assert_ctx_contains "${METER_NEEDLE}"
@@ -381,10 +381,10 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
   assert_ctx_contains "${NAMING_NEEDLE}"
 }
 
-@test "over 8KB by one block — naming dropped FIRST, meter + other three retained (P1-T2 order 1)" {
-  # Pad sized so the four-block total clears 8192 by less than one block: dropping naming alone
+@test "over the 9728 ceiling by one block — naming dropped FIRST, meter + other three retained (P1-T2 order 1)" {
+  # Pad sized so the four-block total clears 9728 by less than one block: dropping naming alone
   # (the first drop candidate) restores the ceiling, keeping comment + style-ref + minimalism + meter.
-  run_hook_full "glass-atrium-dev-react" 1800 1800 1800 1800
+  run_hook_full "glass-atrium-dev-react" 2200 2200 2200 2200
   assert_status 0
   assert_ctx_contains "${METER_NEEDLE}"
   assert_ctx_contains "${COMMENT_NEEDLE}"
@@ -393,7 +393,7 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
   assert_ctx_not_contains "${NAMING_NEEDLE}"
 }
 
-@test "far over 8KB — drops naming, style-ref, minimalism in order; keeps comment + meter (P1-T2)" {
+@test "far over the 9728 ceiling — drops naming, style-ref, minimalism in order; keeps comment + meter (P1-T2)" {
   run_hook_full "glass-atrium-dev-react" 5000 5000 5000 5000
   assert_status 0
   assert_ctx_contains "${METER_NEEDLE}"
@@ -404,9 +404,9 @@ sys.exit(0 if (ia != -1 and ib != -1 and ia < ib) else 1)
 }
 
 @test "meter is NEVER dropped — a single oversized block cannot evict it (P1-T2 invariant)" {
-  # comment alone = 9000B > ceiling; after dropping naming/style-ref/minimalism the comment+meter is
-  # still over, so comment is dropped too — but the meter is not a drop candidate and MUST survive.
-  run_hook_full "glass-atrium-dev-react" 9000 5000 5000 5000
+  # comment alone = 10000B > the 9728 ceiling; after dropping naming/style-ref/minimalism the comment+meter
+  # is still over, so comment is dropped too — but the meter is not a drop candidate and MUST survive.
+  run_hook_full "glass-atrium-dev-react" 10000 5000 5000 5000
   assert_status 0
   assert_ctx_contains "${METER_NEEDLE}"
   assert_ctx_not_contains "${COMMENT_NEEDLE}"

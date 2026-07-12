@@ -173,12 +173,12 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
 > The block below (between the `AGENT-INJECT:STYLE-REF` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the DEV subagents (NOT QA). It is a self-contained restatement of the Project Convention Probe `style_ref` obligation above — keep the two in sync; this file is the single source of truth, zero drift. The marker name differs from `shared-comment-logging.md`'s plain `AGENT-INJECT:START/END` so the two blocks never collide.
 
 <!-- AGENT-INJECT:STYLE-REF:START -->
-**style_ref emit (auto-injected for DEV agents · full rule: `~/.claude/scoped/scope-dev.md` Project Convention Probe)**
-- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-directory + same-extension sibling of the first-touch file to learn local conventions (naming case / import order / error+log pattern).
-- Mirror covers **code form only** (naming / imports / error+log / file layout). It does NOT cover comment density or header length: never reproduce a sibling's comment volume or prose-dump header to match it — when the sibling's comments violate `shared-comment-logging.md` (prose-dump, history/attribution, over-commenting), author COMPLIANT comments instead; the comment rules OVERRIDE. Two carve-outs (each earned on its own merit, NOT mirror-licensed): tooling-directive / pragma comments (`// @ts-expect-error`, `/* eslint-disable */`, `// prettier-ignore`, `// #region`, `//<editor-fold>`, codegen anchors) are code-form — reproduce them like any code convention; and a genuinely justified + load-bearing header (per the `shared-comment-logging.md` Justified-header test — architectural role / scope boundary / rejected alternative / usage contract) stays allowed, even when its content overlaps the sibling's. Emitting `style_ref` for a sibling whose non-compliant header you did NOT copy is correct, not a defection (the hook checks only that the path was Read).
-- Then emit `style_ref: <relative/path/to/the/sibling/you/Read>` in your `[COMPLETION]` block. The path MUST be a file you actually Read THIS turn — a PreToolUse hook cross-checks against your Read calls, so a fabricated path is rejected.
+**style_ref emit (auto-injected for DEV agents · full: `~/.claude/scoped/scope-dev.md` Project Convention Probe)**
+- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-directory + same-extension sibling of the first-touch file for local conventions (naming case / import order / error+log).
+- Mirror covers **code form only** (naming / imports / error+log / file layout), NOT comment density or header — the comment-logging core (also injected) governs comments and OVERRIDES; its pragma-directive + Justified-header carve-outs live there. Author COMPLIANT comments even when the sibling's violate.
+- Then emit `style_ref: <relative/path/to/sibling/you/Read>` in `[COMPLETION]`. The path MUST be a file you actually Read THIS turn — a PreToolUse hook cross-checks your Read calls, so a fabricated path is rejected.
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
-- Advisory, not blocking: probe failure (glob/read error) → proceed, do not block. This is an emit obligation, not a result gate.
+- Advisory, not blocking: probe failure (glob/read error) → proceed. An emit obligation, not a result gate.
 <!-- AGENT-INJECT:STYLE-REF:END -->
 - **Gap Table on Missing Info**: when 1+ of the Pre-Execution Verification check items is found missing → prose response FORBIDDEN · table-format emit MUST · ask exactly one question immediately after emitting the table (aligns with GLASS_ATRIUM_GLOBAL_RULES "1 issue = 1 question") · writing code before receiving the user's answer forbidden:
 
@@ -237,25 +237,13 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 
 <!-- AGENT-INJECT:MINIMALISM:START -->
-**Minimalism reflex (auto-injected for DEV agents · full rules: ~/.claude/scoped/scope-dev.md)**
-This is a reflex on every response, not an opt-in analysis mode — every decision to add a
-function / file / dependency / abstraction passes the "can this be smaller?" gate before you write.
-- Stop at the first rung that holds (YAGNI -> reuse -> minimal): YAGNI (build it at all?) ->
-  stdlib/native -> framework-bundled -> installed third-party -> one line -> minimum code LAST.
-  Atrium prepend: grep existing project code/util before reaching for any of these (search-first).
-- Deletion over addition: bias toward deleting or consolidating into an existing file over adding a
-  new file/layer/helper. "Can I remove this?" before "should I add this?". Fewest files — keep one
-  coherent file until it genuinely splits into distinct concerns; don't split early.
-- No unrequested scope: no abstractions, boilerplate, or dependencies the request did not ask for.
-  Minimize UNREQUESTED breadth — orthogonal to the Complete Implementation Principle, which still
-  requires the REQUESTED change be finished fully (no TODOs, no partial APIs, no skipped edge cases).
-  Minimize where you change, not how completely.
-- Question over-complex requests: if a requirement carries heavy machinery (queue, state machine,
-  cache, multi-step orchestration), ask first. Default assertiveness = offer a one-line simpler alt.
-- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility,
-  and error-handling are NEVER the target of the reflex, and one runnable check stays (the smallest
-  thing that fails if the logic breaks). Mark a deliberate simplification with its ceiling + upgrade
-  path in a comment (ponytail convention); Atrium binding: an UNMARKED simplification is silent rot.
+**Minimalism reflex (auto-injected for DEV agents · full: ~/.claude/scoped/scope-dev.md)**
+A reflex every response, not opt-in — adding any function/file/dependency/abstraction passes the "can this be smaller?" gate first.
+- First rung that holds: YAGNI (build it at all?) -> stdlib/native -> framework-bundled -> installed third-party -> one line -> minimum code LAST. Atrium prepend: grep existing project code/util first (search-first).
+- Deletion over addition: prefer deleting/consolidating into an existing file over a new file/layer/helper. "Can I remove this?" before "should I add this?". Fewest files — keep one coherent file until it splits into distinct concerns; don't split early.
+- No unrequested scope: no abstractions/boilerplate/dependencies the request did not ask for. Minimize UNREQUESTED breadth — but still finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases): minimize breadth, not completeness.
+- Question over-complex requests: heavy machinery (queue, state machine, cache, multi-step orchestration) → ask first. Default = offer a one-line simpler alt.
+- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays (smallest thing that fails if the logic breaks). Mark a deliberate simplification with its ceiling + upgrade path in a comment (ponytail convention); an UNMARKED simplification is silent rot.
 <!-- AGENT-INJECT:MINIMALISM:END -->
 
 ## Common Error Recovery [DEV]
