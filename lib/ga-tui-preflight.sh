@@ -728,10 +728,21 @@ doctor_headless_auth_advisory() {
   #    Look at the newest few report JSON (mtime-sorted) for the failure signatures
   #    daemon_cycle.py emits. A hit means a real nightly auth outage was recorded.
   if [[ -d "${reports_dir}" ]]; then
-    local hit=0 latest report_count=0
+    local hit=0 latest report_count=0 sorted
     # mtime-newest-first; bash 3.2 has no mapfile — iterate the find stream. -print0
     # is avoided (no readarray); a plain newline stream is fine (report names have
     # no newlines). Limit the scan to the newest 5 to keep doctor fast.
+    #
+    # Materialize the sorted list into a var, then iterate it via a here-string —
+    # a `done < <(… | cut -f2-)` process sub keeps cut writing live, so an early break
+    # (a signature match / the >5 limit) closes the read end mid-write → cut dies on
+    # SIGPIPE (141) → pipefail fires the file-scope ERR trap ("ERROR: line …: cut -f2-").
+    # A fully drained command sub has no live writer to signal; `|| true` preserves the
+    # process-sub form's already-ignored pipeline status (empty → the ok/no-history path).
+    sorted="$(find "${reports_dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+      | while IFS= read -r f; do
+        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
+      done | sort -rn | cut -f2-)" || true
     while IFS= read -r latest; do
       [[ -n "${latest}" ]] || continue
       report_count=$((report_count + 1))
@@ -743,10 +754,7 @@ doctor_headless_auth_advisory() {
         hit=1
         break
       fi
-    done < <(find "${reports_dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-      | while IFS= read -r f; do
-        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
-      done | sort -rn | cut -f2-)
+    done <<<"${sorted}"
     if [[ "${hit}" -eq 1 ]]; then
       log "  warn : a recent daemon report shows an auth-failure / infra_fault / haiku-exit-1 — run the install auth step / 'claude setup-token'"
       advise=1
