@@ -58,7 +58,12 @@ trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
-KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal'}
+# qa_score + concerns are included so an emitted `qa_score:`/`concerns:` line starts its own
+# field instead of folding into the preceding value: parse_completion_body treats any line whose
+# `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
+# silently corrupts (e.g.) the summary value. concerns is already consumed (see the concerns
+# fallback below) + persisted; qa_score capture is PG-persistence-deferred (no column yet).
+KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
 # match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
@@ -407,12 +412,36 @@ if not msg.strip():
 # 3-tier [COMPLETION] parsing — line anchors (^/$ + MULTILINE) reject inline prose mentions
 parse_tier = 0
 completion = {}
+# Valid single-token result whitelist — mirror of the shell-side HAS_STRUCTURED validity case
+# (the `done | done_with_concerns | blocked | needs_context | fail` branch). Keep the two in
+# sync: a divergence would let this parser prefer a block the shell then rejects, or vice versa.
+_VALID_RESULTS = {'done', 'done_with_concerns', 'blocked', 'needs_context', 'fail'}
 _T1 = r'^[ \t]*\[COMPLETION\][ \t]*\n(.*?)\n[ \t]*\[/COMPLETION\][ \t]*$'
 _T2 = r'^[ \t]*\[COMPLETION\][ \t]*\n(.*?)(?=\n#|\Z)'
-m_tier1 = re.search(_T1, msg, re.DOTALL | re.MULTILINE)
-if m_tier1:
+# Validity-aware LAST-preference over ALL tier-1 matches. Quoting the emit-format template
+# (whose [COMPLETION] block carries a pipe-joined `result: done|...|fail` placeholder) BEFORE
+# the real block would otherwise bind the FIRST match under a bare re.search — the template's
+# result is not a single valid token, so the row synthesizes and the writer signal is lost.
+# Prefer the LAST complete block; when its parsed result is not a valid single token,
+# reverse-scan the earlier matches for the first whose result IS valid; if none validates,
+# keep the last (downstream synthesis / tier labels unchanged). _T2 + inline tier untouched.
+# m_tier1/m_tier2 stay bound to the SELECTED match for the downstream _block_text grader-body
+# extraction — the pre-refactor re.search left m_tier1 always defined, so leaving it unset
+# would NameError that path; None-init keeps both defined on every branch.
+m_tier1 = None
+m_tier2 = None
+_t1_matches = list(re.finditer(_T1, msg, re.DOTALL | re.MULTILINE))
+if _t1_matches:
     parse_tier = 1
+    m_tier1 = _t1_matches[-1]
     completion = parse_completion_body(m_tier1.group(1))
+    if completion.get('result', '').strip() not in _VALID_RESULTS:
+        for _m in reversed(_t1_matches[:-1]):
+            _cand = parse_completion_body(_m.group(1))
+            if _cand.get('result', '').strip() in _VALID_RESULTS:
+                m_tier1 = _m
+                completion = _cand
+                break
 else:
     m_tier2 = re.search(_T2, msg, re.DOTALL | re.MULTILINE)
     if m_tier2:
