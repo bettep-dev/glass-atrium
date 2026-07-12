@@ -39,6 +39,9 @@ recreate_db_gate() {
   # pg_dump of DB_NAME, NEVER live glass_atrium), drains connections, drops, then runs
   # the full createdb + .env + migrate-deploy path against the recreated DB.
   [[ -f "${DB_SETUP_SCRIPT}" ]] || die "DB setup script missing: ${DB_SETUP_SCRIPT}"
+  # SEAM GUARD (fail-closed): oss-db-setup.sh hardcodes PG_SOCKET=/tmp + ignores GA_PG_SOCKET.
+  # A non-/tmp seam socket would delegate against the LIVE /tmp cluster (silent probe/mutate split) → refuse.
+  [[ "${PG_SOCKET}" == "/tmp" ]] || die "GA_PG_SOCKET seam active (${PG_SOCKET}) but oss-db-setup.sh is /tmp-only — set GA_SKIP_DB_SETUP=1 (or GA_DB_NAME) for DB isolation"
   log "== DB recreate: oss-db-setup.sh GA_DB_RECREATE=1 (cwd=${GA_ROOT}/monitor) =="
   # preserve the child's named exit code (5/6/7/8) — a CI/dashboard wrapper branches on them (not die's generic 1).
   local db_rc
@@ -62,6 +65,9 @@ recreate_db_gate() {
 # idempotent: createdb skip / .env preserve / migrate deploy applies pending only).
 run_db_setup() {
   [[ -f "${DB_SETUP_SCRIPT}" ]] || die "DB setup script missing: ${DB_SETUP_SCRIPT}"
+  # SEAM GUARD (fail-closed): oss-db-setup.sh hardcodes PG_SOCKET=/tmp + ignores GA_PG_SOCKET.
+  # A non-/tmp seam socket would delegate against the LIVE /tmp cluster (silent probe/mutate split) → refuse.
+  [[ "${PG_SOCKET}" == "/tmp" ]] || die "GA_PG_SOCKET seam active (${PG_SOCKET}) but oss-db-setup.sh is /tmp-only — set GA_SKIP_DB_SETUP=1 (or GA_DB_NAME) for DB isolation"
   log "== DB bootstrap: oss-db-setup.sh (cwd=${GA_ROOT}/monitor) =="
   # cwd precondition of the script: monitor project root (prisma.config.ts)
   # preserve the child's named exit code (3/4/5/6) — a CI/dashboard wrapper branches on them.
@@ -103,8 +109,13 @@ setup_database() {
     || return 1
   # presence probe only — a server-down/unreachable socket falls through to the full setup path (createdb loud-fails with a named code).
   local db_exists
-  db_exists="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
-    "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null || true)"
+  # SECURITY: parameterized bind — DB_NAME via psql -v + :'dbname' over STDIN, never SQL-string concat.
+  # STDIN not -c: psql expands :'var' only for stdin/-f (mirrors ga_detect_postgres_role; core-security.md).
+  db_exists="$(
+    psql -h "${PG_SOCKET}" -d postgres -v dbname="${DB_NAME}" -tA 2>/dev/null <<'SQL' || true
+SELECT 1 FROM pg_database WHERE datname=:'dbname'
+SQL
+  )"
   if [[ "${db_exists}" == "1" ]]; then
     # SAME-NAME CONFLICT: --recreate-db requested AND the DB exists. Default (no flag) = bare skip (idempotent re-run).
     if "${RECREATE_DB}"; then
@@ -163,8 +174,13 @@ drop_databases() {
   # Scope is EXACTLY the two GA databases — never a wildcard, never "drop all".
   for db in "${DB_NAME}" "${DB_NAME}_shadow"; do
     # Absent DB or a FAILED probe (server unreachable) → skip dump AND drop, data-preserving (loud warn).
-    if ! probe="$(psql -h "${PG_SOCKET}" -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname='${db}'" 2>/dev/null)"; then
+    # SECURITY: parameterized bind — ${db} via psql -v + :'dbname' over STDIN, never SQL-string concat.
+    # NO `|| true`: a failed psql (server unreachable) keeps its non-zero exit → fail-closed skip-drop below.
+    if ! probe="$(
+      psql -h "${PG_SOCKET}" -d postgres -v dbname="${db}" -tA 2>/dev/null <<'SQL'
+SELECT 1 FROM pg_database WHERE datname=:'dbname'
+SQL
+    )"; then
       log "  warn: existence probe for '${db}' failed (server unreachable?) — drop skipped (data preserved)"
       continue
     fi
