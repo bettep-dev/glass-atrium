@@ -125,6 +125,105 @@ load_lib() {
   [ ! -e "${STATE}/autoagent-pause.flag" ]
 }
 
+# --- ownership guard: concurrent-writer safety (finding #15) ----------------
+# Regression pins for the race where a LOSING concurrent updater's create/cleanup
+# clobbers + deletes the WINNING updater's pause flag. In bats `$$` is the (stable)
+# test-process pid, so a payload written with a foreign pid models a rival updater.
+# Assertions are `|| return 1`-gated (loud-fail, matching publish-release.bats).
+
+@test "create REFUSES (rc1) a fresh flag held by a live FOREIGN updater" {
+  load_lib
+  local foreign
+  sleep 30 &
+  foreign=$! # a real live pid distinct from $$
+  mkdir -p -- "${STATE}"
+  printf 'pid=%s created=%s\n' "${foreign}" "$(date -u +%s)" >"${STATE}/autoagent-pause.flag"
+  run update_pause_create
+  kill "${foreign}" 2>/dev/null || true
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"REFUSING create"* ]] || return 1
+  # the winner's payload is untouched (never clobbered)
+  grep -q "pid=${foreign}" "${STATE}/autoagent-pause.flag" || return 1
+}
+
+@test "create OVERWRITES a DEAD-owner flag (crashed-updater residue)" {
+  load_lib
+  mkdir -p -- "${STATE}"
+  local dead=999999 # a pid with no live process → kill -0 fails → overwrite path
+  while kill -0 "${dead}" 2>/dev/null; do dead=$((dead - 1)); done
+  printf 'pid=%s created=%s\n' "${dead}" "$(date -u +%s)" >"${STATE}/autoagent-pause.flag"
+  run update_pause_create
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -q "pid=$$" "${STATE}/autoagent-pause.flag" || return 1 # now owned by us
+}
+
+@test "create OVERWRITES a STALE flag even with a live foreign owner (TTL recovery)" {
+  load_lib
+  export ATRIUM_PAUSE_TTL_SECS=1
+  mkdir -p -- "${STATE}"
+  local foreign
+  sleep 30 &
+  foreign=$!
+  printf 'pid=%s created=%s\n' "${foreign}" "$(date -u +%s)" >"${STATE}/autoagent-pause.flag"
+  touch -t 202001010000 "${STATE}/autoagent-pause.flag" # age >> 1s TTL
+  run update_pause_create
+  kill "${foreign}" 2>/dev/null || true
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -q "pid=$$" "${STATE}/autoagent-pause.flag" || return 1
+}
+
+@test "create OVERWRITES its own-pid flag (heartbeat refresh)" {
+  load_lib
+  update_pause_create >/dev/null # first create → pid=$$
+  run update_pause_create        # refresh → still $$, rc0
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -q "pid=$$" "${STATE}/autoagent-pause.flag" || return 1
+}
+
+@test "remove LEAVES a flag owned by a live FOREIGN updater (the core fix)" {
+  load_lib
+  mkdir -p -- "${STATE}"
+  local foreign
+  sleep 30 &
+  foreign=$!
+  printf 'pid=%s created=%s\n' "${foreign}" "$(date -u +%s)" >"${STATE}/autoagent-pause.flag"
+  run update_pause_remove
+  kill "${foreign}" 2>/dev/null || true
+  [[ "${status}" -eq 0 ]] || return 1                  # idempotent, no error
+  [[ -e "${STATE}/autoagent-pause.flag" ]] || return 1 # NOT deleted — winner survives
+}
+
+@test "remove DELETES a flag we own (payload pid == \$\$)" {
+  load_lib
+  update_pause_create >/dev/null # pid=$$
+  run update_pause_remove
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -e "${STATE}/autoagent-pause.flag" ]] || return 1
+}
+
+@test "remove DELETES a flag with an unparseable / ownerless payload" {
+  load_lib
+  mkdir -p -- "${STATE}"
+  printf 'garbage no pid here\n' >"${STATE}/autoagent-pause.flag"
+  run update_pause_remove
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -e "${STATE}/autoagent-pause.flag" ]] || return 1
+}
+
+@test "flag_pid parses the payload pid; empty on absent / unparseable" {
+  load_lib
+  run update_pause_flag_pid "${STATE}/autoagent-pause.flag" # absent
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ -z "${output}" ]] || return 1
+  mkdir -p -- "${STATE}"
+  printf 'pid=4242 created=1\n' >"${STATE}/autoagent-pause.flag"
+  run update_pause_flag_pid "${STATE}/autoagent-pause.flag"
+  [[ "${output}" = "4242" ]] || return 1
+  printf 'nope\n' >"${STATE}/autoagent-pause.flag"
+  run update_pause_flag_pid "${STATE}/autoagent-pause.flag"
+  [[ -z "${output}" ]] || return 1
+}
+
 # --- age-check (python3 mtime, NEVER stat -f / -c) -------------------------
 
 @test "age-check loud-fails (rc1) on an absent flag" {

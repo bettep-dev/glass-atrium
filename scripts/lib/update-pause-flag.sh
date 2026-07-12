@@ -28,6 +28,13 @@
 # BSD/GNU-divergent `stat -f` / `stat -c`. python3 is already a hard daemon
 # dependency (daemon-cycle.sh exits 3 when absent).
 
+# SC2312 (command substitution masks a return value) is an --enable=all INFO check
+# that flags this lib's deliberate `"$(resolver)"` argument-capture idiom (the path
+# + pid resolvers feed the next command). set -e already propagates a
+# command-substitution failure, so SC2312 carries no real signal here — matching the
+# sibling libs (scripts/lib/mirror-farm.sh, scripts/update.sh) that disable it.
+# shellcheck disable=SC2312
+
 # Path resolution
 
 # Echo the update-state dir holding the pause flag. Precedence:
@@ -80,15 +87,55 @@ print(int(age) if age > 0 else 0)
 PY
 }
 
+# Ownership parse (payload pid)
+
+# Echo the owner pid recorded in the flag payload ($1 = flag path), or empty when
+# the flag is absent OR its first line has no parseable `pid=<int>` field. Bash 3.2
+# parameter-expansion parse (no arrays, no stat -f/-c per this lib's portability
+# rule). `|| :` keeps a no-trailing-newline read from wiping the captured line.
+update_pause_flag_pid() {
+  local p="$1" line="" pid=""
+  [[ -e "${p}" ]] || return 0
+  IFS= read -r line <"${p}" 2>/dev/null || :
+  case "${line}" in
+    pid=*)
+      pid="${line#pid=}"
+      pid="${pid%% *}"
+      ;;
+    *) ;; # no parseable pid= field → empty owner (unowned / legacy payload)
+  esac
+  [[ "${pid}" =~ ^[0-9]+$ ]] || pid=""
+  printf '%s\n' "${pid}"
+}
+
 # Updater-side helpers (create / remove)
 
 # Create the canonical pause flag atomically (temp + mv). Writes a small payload
 # (pid + unix-second mtime anchor). Echoes the created path. Arg: $1 = optional
 # state-dir override.
+#
+# OWNERSHIP GUARD (concurrent-writer safety): REFUSE (rc 1 + loud stderr) to clobber
+# a flag that is FRESH (age <= TTL) AND owned by a LIVE FOREIGN updater (payload pid
+# != $$ AND kill -0 succeeds). A losing racer must never overwrite the winner's
+# payload — doing so would let the racer's own EXIT trap delete the winner's flag.
+# Own-pid heartbeat refresh (update.sh), a stale flag (age > TTL), a dead-owner
+# flag, and an unparseable payload all FALL THROUGH and overwrite as before —
+# preserving the TTL crashed-updater recovery and the heartbeat-refresh path.
 update_pause_create() {
-  local dir flag tmp
+  local dir flag tmp owner ttl age
   dir="$(update_pause_state_dir "${1:-}")"
   flag="${dir}/autoagent-pause.flag"
+  if [[ -e "${flag}" ]]; then
+    owner="$(update_pause_flag_pid "${flag}")"
+    if [[ -n "${owner}" && "${owner}" != "$$" ]] && kill -0 "${owner}" 2>/dev/null; then
+      ttl="$(update_pause_ttl_secs)"
+      if age="$(update_pause_flag_age_secs "${flag}")" && [[ "${age}" -le "${ttl}" ]]; then
+        printf '[update-pause] REFUSING create: fresh flag held by live updater (pid=%s age=%ss ttl=%ss): %s\n' \
+          "${owner}" "${age}" "${ttl}" "${flag}" >&2
+        return 1
+      fi
+    fi
+  fi
   mkdir -p -- "${dir}"
   tmp="${flag}.tmp.$$"
   printf 'pid=%s created=%s\n' "$$" "$(date -u +%s)" >"${tmp}"
@@ -98,10 +145,21 @@ update_pause_create() {
 
 # Remove the pause flag. Idempotent (absent flag → rc 0, a normal not-an-error
 # result). Arg: $1 = optional state-dir override.
+#
+# OWNERSHIP GATE (defense-in-depth, mirrors apply_lock_release): remove ONLY a flag
+# WE own (payload pid == $$) or one with no parseable owner. A flag owned by another
+# pid is left intact so a losing concurrent updater's cleanup can never delete the
+# winning updater's flag. Effective because create (above) no longer clobbers a
+# live foreign owner, so the payload pid stays the true owner's. Stale foreign
+# residue is still reclaimed by the TTL guard in update_pause_is_active.
 update_pause_remove() {
-  local flag
+  local flag owner
   flag="$(update_pause_flag_path "${1:-}")"
-  rm -f -- "${flag}"
+  [[ -e "${flag}" ]] || return 0
+  owner="$(update_pause_flag_pid "${flag}")"
+  if [[ -z "${owner}" || "${owner}" == "$$" ]]; then
+    rm -f -- "${flag}"
+  fi
 }
 
 # Daemon-side honor predicate
