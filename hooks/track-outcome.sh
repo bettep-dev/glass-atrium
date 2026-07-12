@@ -1446,12 +1446,23 @@ if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}"
     T9_PY_FILE=$(mktemp -t outcome-t9-XXXXXX.py)
     trap 'rm -f "$PY_SCRIPT_FILE" "$T9_PY_FILE"' EXIT INT TERM
     cat >"$T9_PY_FILE" <<'PYEOF'
-import sys, json, re, os, glob, time
+import sys, json, re, os, glob, time, tempfile
 from datetime import datetime, timezone, timedelta
 
 TRANSCRIPT = os.environ.get('T9_TRANSCRIPT', '')
 CWD_ENV = os.environ.get('T9_CWD', '')
 TASK_TYPE_ENV = os.environ.get('T9_TASK_TYPE', '')
+SESSION_ID_ENV = os.environ.get('T9_SESSION_ID', '')
+
+# Bounded reverse tail-read window (bytes). The last (most recent) user message sits
+# near EOF, so a bounded tail avoids a full read of a large parent transcript. Env-
+# overridable so the test suite can shrink it to force the window-miss fallback path.
+try:
+    _TAIL_WINDOW_BYTES = int(os.environ.get('T9_TAIL_WINDOW_BYTES', '') or '65536')
+except ValueError:
+    _TAIL_WINDOW_BYTES = 65536
+if _TAIL_WINDOW_BYTES < 1:
+    _TAIL_WINDOW_BYTES = 65536
 
 # Stage 1 regex — 80-char leading window over Korean/English correction-intent phrases.
 # Precision contract: the token `다시` ("again") alone is NOT a correction — it counts
@@ -1476,16 +1487,11 @@ def out(k, v):
     s = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
     sys.stdout.write(f"@@{k}@@{s}\n")
 
-def find_last_user_message(transcript_path):
-    """Scan transcript jsonl in reverse, return the last non-isMeta user message.
-    Returns: (text, ts_iso) or (None, None)."""
-    if not transcript_path or not os.path.isfile(transcript_path):
-        return (None, None)
-    try:
-        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()
-    except (OSError, IOError):
-        return (None, None)
+def _scan_lines_for_last_user(lines):
+    """Reverse-scan JSONL lines; return (text, ts_iso) of the last non-isMeta,
+    non-command user message, or (None, None). The ONE selection path shared by the
+    bounded tail-read and the full-read fallback, so both resolve byte-identically
+    (identical filtering / reversed-order semantics to the prior full-read loop)."""
     for line in reversed(lines):
         line = line.strip()
         if not line:
@@ -1514,6 +1520,113 @@ def find_last_user_message(transcript_path):
             continue
         return (content, entry.get('timestamp', ''))
     return (None, None)
+
+
+def _read_tail_lines(transcript_path, window_bytes):
+    """Read the last `window_bytes` of the transcript. Returns (lines, whole_file):
+    whole_file is True when the window covered the ENTIRE file (a scan miss is then
+    authoritative, no fallback needed). When only a tail was read the first fragment
+    starts mid-line (window boundary) and is dropped — it can never be the most-recent
+    user message (that sits at EOF). Returns (None, False) on OSError."""
+    try:
+        with open(transcript_path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size <= window_bytes:
+                f.seek(0)
+                whole_file = True
+            else:
+                f.seek(size - window_bytes)
+                whole_file = False
+            data = f.read()
+    except (OSError, IOError):
+        return (None, False)
+    lines = data.decode('utf-8', errors='replace').split('\n')
+    if not whole_file and lines:
+        lines = lines[1:]
+    return (lines, whole_file)
+
+
+def _read_full_lines(transcript_path):
+    """Full read (single .read(), split) — the correctness fallback when the bounded
+    tail window held no qualifying user message. Text mode matches the prior
+    readlines() universal-newline handling. Returns list of lines, None on OSError."""
+    try:
+        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read().split('\n')
+    except (OSError, IOError):
+        return None
+
+
+def find_last_user_message(transcript_path):
+    """Return (text, ts_iso) of the last non-isMeta user message, or (None, None).
+    Perf: scan a bounded reverse tail window first (avoids a full read of a large
+    transcript). CORRECTNESS: if the window did NOT cover the whole file AND yielded no
+    qualifying user message (rare — a long assistant/tool tail after the last user turn),
+    fall back to the full read; the resolved message is thus byte-identical to the
+    full-read baseline in every case."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return (None, None)
+    lines, whole_file = _read_tail_lines(transcript_path, _TAIL_WINDOW_BYTES)
+    if lines is not None:
+        text, ts = _scan_lines_for_last_user(lines)
+        if text is not None:
+            return (text, ts)
+        if whole_file:
+            # Window covered the entire file → the miss is authoritative, no fallback.
+            return (None, None)
+    # Tail-read OSError, OR the bounded window held no user message → full read.
+    full = _read_full_lines(transcript_path)
+    if full is None:
+        return (None, None)
+    return _scan_lines_for_last_user(full)
+
+
+def _cache_path(session_id):
+    """Per-session cache file for the resolved last-user-message, or None when there is
+    no session_id (→ caching disabled, live resolve every fire)."""
+    if not session_id:
+        return None
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', session_id)[:80]
+    return os.path.join(tempfile.gettempdir(), 'outcome-t9-lastuser-' + safe + '.json')
+
+
+def resolve_last_user_message(transcript_path, session_id):
+    """find_last_user_message with a per-session filesystem cache keyed on the
+    transcript's (path, size, mtime) fingerprint. A cache hit (same fingerprint) reuses
+    the prior resolve so repeated hook fires in one session skip the tail read. Fail-open:
+    a missing session_id, any cache read/write error, or a fingerprint mismatch → live
+    resolve — the cache only ever stores a value the live path already produced, so the
+    correction verdict is identical whether served from cache or resolved fresh."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return (None, None)
+    try:
+        st = os.stat(transcript_path)
+        fp_size, fp_mtime = st.st_size, st.st_mtime
+    except OSError:
+        return find_last_user_message(transcript_path)
+    cpath = _cache_path(session_id)
+    if cpath and os.path.isfile(cpath):
+        try:
+            with open(cpath, 'r', encoding='utf-8') as cf:
+                c = json.load(cf)
+            if (c.get('path') == transcript_path
+                    and c.get('size') == fp_size
+                    and c.get('mtime') == fp_mtime):
+                return (c.get('text'), c.get('ts') or '')
+        except (OSError, IOError, ValueError):
+            pass  # stale/corrupt cache → fail-open to live resolve
+    text, ts = find_last_user_message(transcript_path)
+    if cpath:
+        try:
+            tmp = cpath + '.' + str(os.getpid()) + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as cf:
+                json.dump({'path': transcript_path, 'size': fp_size,
+                           'mtime': fp_mtime, 'text': text, 'ts': ts}, cf)
+            os.replace(tmp, cpath)  # atomic same-dir swap
+        except (OSError, IOError):
+            pass  # cache write is best-effort
+    return (text, ts)
 
 def is_message_too_old(ts_iso, hours=2):
     """True if ts_iso is older than `hours`. On parse failure → False
@@ -1581,7 +1694,7 @@ def find_prior_revision_count(cwd, task_type, max_age_secs=3600):
     return 0
 
 # --- main pipeline ---
-last_user_text, last_user_ts = find_last_user_message(TRANSCRIPT)
+last_user_text, last_user_ts = resolve_last_user_message(TRANSCRIPT, SESSION_ID_ENV)
 
 if not last_user_text:
     out('stage1_matched', '0')
@@ -1618,7 +1731,7 @@ out('prior_revision_count', str(prior_count))
 out('new_revision_count', str(new_count))
 PYEOF
 
-    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_CWD="${CWD}" T9_TASK_TYPE="${TASK_TYPE}" python3 "$T9_PY_FILE" 2>/dev/null || true)
+    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_CWD="${CWD}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
 
     t9_extract() {
       printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1
