@@ -169,6 +169,16 @@ run_doctor() {
     # shellcheck disable=SC2312
     while IFS= read -r rel; do
       [[ -n "${rel}" ]] || continue
+      # install-internal payload (is_symlink_excluded: lib/ monitor/ hooks/ scoped/ scripts/ autoagent/
+      # + the exact tail) is bundled + §4-hash-verified but consumed IN PLACE from GA_ROOT — never a
+      # ~/.claude symlink — so a target-side deploy check can NEVER find it. Skip it here, matching the
+      # write-side run_symlink_farm / removal-side remove_manifest_links choke point; without this the
+      # ~278 internal entries wrongly report "not deployed" and FAIL doctor on a healthy install.
+      # is_symlink_excluded is a stdout verdict (exits 0) → SC2311 masking intentional (no file-scope set -e).
+      # shellcheck disable=SC2310,SC2311,SC2312
+      if [[ "$(is_symlink_excluded "${rel}")" == "yes" ]]; then
+        continue
+      fi
       total=$((total + 1))
       dst="${TARGET_HOME}/${rel}"
       if [[ -L "${dst}" ]]; then
@@ -200,21 +210,51 @@ run_doctor() {
     log "  warn : target-side reconciliation skipped (manifest unreadable, jq absent, or target home missing)"
   fi
 
-  # 8. manifest drift gate (D-T2) — advisory-but-loud. generate-manifest.sh --check fails (exit 1)
-  #    on a source-vs-manifest divergence (a tracked in-scope file missing from .files, or a listed
-  #    entry no longer tracked). Surfaced as a WARNING (doctor still PASSes on §1-7) so a healthy
-  #    install isn't blocked; skipped (not a fail) when the generator is absent.
+  # 8. manifest drift gate (D-T2) — advisory-but-loud, git-presence-routed. generate-manifest.sh
+  #    --check is git-backed (git ls-files is its file-list SoT) and HARD-EXITS 3 on a non-git root
+  #    BEFORE any comparison — so on a deployed consumer install (~/.glass-atrium ships no .git) the
+  #    gate read that exit-3 as DRIFT and false-warned on EVERY install. Route on `.git` presence
+  #    (mirrors §9b): a source-dev tree keeps the git-backed --check; a consumer install falls back to
+  #    a git-INDEPENDENT hash reconciliation (sha256 each manifest.hashes entry vs its on-disk file),
+  #    which catches real content drift + a listed-but-missing file without needing git. Still a
+  #    WARNING either way (doctor PASSes on §1-7); a skip (missing tool/generator) stays loud.
   local drift=0
-  if [[ -x "${GENERATE_MANIFEST}" ]]; then
-    if bash "${GENERATE_MANIFEST}" --check >/dev/null 2>&1; then
-      log "  ok   : manifest matches generated set (generate-manifest --check)"
+  if [[ -e "${GA_ROOT}/.git" ]]; then
+    if [[ -x "${GENERATE_MANIFEST}" ]]; then
+      if bash "${GENERATE_MANIFEST}" --check >/dev/null 2>&1; then
+        log "  ok   : manifest matches generated set (generate-manifest --check)"
+      else
+        log "  warn : manifest DRIFT — source-vs-manifest divergence (run scripts/generate-manifest.sh to regenerate)"
+        log "         detail: bash scripts/generate-manifest.sh --check"
+        drift=1
+      fi
     else
-      log "  warn : manifest DRIFT — source-vs-manifest divergence (run scripts/generate-manifest.sh to regenerate)"
-      log "         detail: bash scripts/generate-manifest.sh --check"
-      drift=1
+      log "  warn : manifest drift gate skipped (generator not executable: ${GENERATE_MANIFEST})"
     fi
+  elif ! command -v jq >/dev/null 2>&1 || [[ ! -f "${MANIFEST}" ]]; then
+    log "  warn : manifest drift gate skipped (consumer install — manifest unreadable or jq absent)"
   else
-    log "  warn : manifest drift gate skipped (generator not executable: ${GENERATE_MANIFEST})"
+    # consumer install (no .git): resolve the sha256 tool as generate-manifest.sh does (shasum →
+    # sha256sum), then run the git-independent reconciliation. An absent tool is a loud skip, never
+    # a silent pass (Precondition Loud-Fail Principle).
+    local drift_sha=()
+    if command -v shasum >/dev/null 2>&1; then
+      drift_sha=(shasum -a 256)
+    elif command -v sha256sum >/dev/null 2>&1; then
+      drift_sha=(sha256sum)
+    fi
+    if [[ "${#drift_sha[@]}" -eq 0 ]]; then
+      log "  warn : manifest drift gate skipped (consumer install — no shasum/sha256sum for hash reconciliation)"
+    else
+      # manifest_hash_drift logs each drift to stderr + echoes the drift count (stdout verdict).
+      # shellcheck disable=SC2311,SC2312
+      drift="$(manifest_hash_drift "${drift_sha[@]}")"
+      if [[ "${drift}" -eq 0 ]]; then
+        log "  ok   : manifest matches on-disk hashes (git-independent consumer-install reconciliation)"
+      else
+        log "  ---- ${drift} manifest hash drift(s) on this consumer install (regenerate on the source tree, then re-release) ----"
+      fi
+    fi
   fi
 
   # 9. update-system advisory (E5 — T22/T27). PASS-compatible by design: every line is info, a
@@ -344,6 +384,43 @@ run_doctor() {
   fi
   log "== doctor: FAIL =="
   return 1
+}
+
+# consumer-install manifest hash reconciliation (git-independent) — run_doctor §8 helper.
+# generate-manifest.sh --check is git-backed (git ls-files) and hard-exits 3 on a non-git root; this
+# reconciles the manifest WITHOUT git so a deployed consumer install (no .git) still gets a real
+# integrity gate instead of a false DRIFT warn. $@ = the sha256 command (e.g. `shasum -a 256` /
+# `sha256sum`). For every manifest.hashes entry a DRIFT is flagged when the listed path is
+# missing/unreadable on disk OR its content hash differs from the recorded one; each drift is logged
+# to stderr (log → fd2) and the total is the stdout verdict (mirrors is_hook_bound). Detects real
+# content drift + a dropped file; it CANNOT see a NEW untracked file (needs git ls-files) — an
+# accepted gap off a dev tree. Callers pre-verify jq + MANIFEST presence.
+manifest_hash_drift() {
+  local sha_path sha_hash actual abs drift=0
+  # jq streams `path\thash`; process substitution keeps the counter in this shell (mirrors §7).
+  # shellcheck disable=SC2312
+  while IFS=$'\t' read -r sha_path sha_hash; do
+    [[ -n "${sha_path}" ]] || continue
+    abs="${GA_ROOT}/${sha_path}"
+    if [[ ! -e "${abs}" ]]; then
+      log "  warn : manifest DRIFT — listed file missing on disk: ${sha_path}"
+      drift=$((drift + 1))
+      continue
+    fi
+    if [[ ! -r "${abs}" ]]; then
+      log "  warn : manifest DRIFT — listed file not readable: ${sha_path}"
+      drift=$((drift + 1))
+      continue
+    fi
+    # first whitespace field of the sha tool output is the hex digest (drop the trailing filename).
+    actual="$("$@" -- "${abs}")"
+    actual="${actual%% *}"
+    if [[ "${actual}" != "${sha_hash}" ]]; then
+      log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
+      drift=$((drift + 1))
+    fi
+  done < <(jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}")
+  printf '%d\n' "${drift}"
 }
 
 # verify-clean (parity doctor)
