@@ -617,17 +617,19 @@ ga_detect_postgres_utc() {
 # ga_pg_wait_ready — BOUNDED in-process poll for a live PostgreSQL server on the peer-auth socket,
 # run AFTER an attempted service start. `brew services start` returns BEFORE the postmaster accepts
 # connections, so the role detect + setup_database would race a not-yet-ready server (spurious
-# 'present-but-down' / failed first connect). Polls until the server answers or a HARD ~15s counter
-# ceiling elapses (non-zero on timeout). The ceiling is MANDATORY — an unbounded until-loop is itself a
+# 'present-but-down' / failed first connect). Polls until the server answers or a HARD ~15s WALL-CLOCK
+# ceiling (SECONDS-delta) elapses (non-zero on timeout). Wall-clock, NOT an iteration count: each poll's
+# probe can itself cost up to PGCONNECT_TIMEOUT, so an N-iteration bound drifted to ~3N s worst case; the
+# SECONDS anchor caps true elapsed time. The ceiling is MANDATORY — an unbounded until-loop is itself a
 # NEW infinite-hang path (the class this preflight hardens against). pg_isready is the cheap probe; a
 # psql SELECT 1 on ${PG_SOCKET} is the fallback for a minimal libpq without pg_isready (same verdict
-# boundary as ga_detect_postgres). In-process; bash 3.2 clean (integer counter, no fractional read -t).
+# boundary as ga_detect_postgres). In-process; bash 3.2 clean (SECONDS builtin, no fractional read -t).
 ga_pg_wait_ready() {
   # PGCONNECT_TIMEOUT-bounded connect: bound the psql SELECT-1 fallback connect so a single poll iteration can never block past the deadline — see ga_detect_postgres.
   local -x PGCONNECT_TIMEOUT=2
-  local waited=0
-  local ceiling=15
-  while [[ "${waited}" -lt "${ceiling}" ]]; do
+  local ceiling="${GA_PG_WAIT_TIMEOUT_SECS:-15}"
+  local started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
     if command -v pg_isready >/dev/null 2>&1; then
       if pg_isready -h "${PG_SOCKET}" >/dev/null 2>&1; then
         return 0
@@ -636,7 +638,6 @@ ga_pg_wait_ready() {
       return 0
     fi
     sleep 1
-    waited=$((waited + 1))
   done
   return 1
 }
@@ -753,7 +754,9 @@ ga_detect_claude_auth() {
   # account/subscription PII enters context. BOUNDED against a cold-start hang: macOS ships no
   # `timeout`/`gtimeout`, so — same idiom as ga_marketplace_add — background the probe (fds + stdin to
   # /dev/null so it can never block on a prompt) + a background WATCHDOG that SIGKILLs it after a hard
-  # ceiling, then a BLOCKING wait captures the real exit code. The blocking wait (not a kill -0 poll) is
+  # ceiling (kill -KILL is UNCATCHABLE, so a TERM-trapping probe can never leave the blocking `wait`
+  # hung — the genuinely-hard ceiling the comment promises), then a BLOCKING wait captures the real
+  # exit code. The blocking wait (not a kill -0 poll) is
   # deliberate: a poll cannot tell a running probe from an unreaped zombie and races the fork/exec. Probe
   # finishes first → watchdog killed+reaped (its rc drives the verdict); ceiling first → probe killed
   # (wait returns non-zero → unauthenticated; the stable signals above cover a genuinely authed user). Bash 3.2 clean.
@@ -762,7 +765,7 @@ ga_detect_claude_auth() {
   # fds+stdin to /dev/null so the probe can never block on a prompt nor hold a $() capture pipe.
   claude auth status </dev/null >/dev/null 2>&1 &
   pid=$!
-  { sleep "${ceiling}" && kill "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
+  { sleep "${ceiling}" && kill -KILL "${pid}" 2>/dev/null; } >/dev/null 2>&1 &
   watchdog=$!
   # blocks until the probe exits naturally OR the watchdog kills it; either way we reap it.
   if wait "${pid}"; then
@@ -828,23 +831,28 @@ ga_detect_fakechat() {
 # so a foreground run_step would block forever. Background the add with stdout/stderr → /dev/null
 # (MANDATORY fd hygiene: the backgrounded claude must not write into run_step's STEP_LOG, where a
 # post-kill flush could corrupt the classify read), POLL ga_marketplace_present, kill+reap on
-# registration (success) or on a 120s ceiling (failure). In-process (background+poll can't survive
-# the word-split argv runner). Single-pid kill suffices (no surviving children). NON-FATAL; bash 3.2 clean.
+# registration (success) or on a 120s WALL-CLOCK ceiling (SECONDS-delta, not iteration count — the poll
+# probe's own cost is charged against the bound). The reap escalates SIGTERM → SIGKILL (stop_step_spinner
+# idiom) so a TERM-ignoring adder can never leave `wait` blocking forever. In-process (background+poll
+# can't survive the word-split argv runner). NON-FATAL; bash 3.2 clean.
 ga_marketplace_add() {
-  local pid waited=0
+  local pid started ceiling
+  ceiling="${GA_PLUGIN_INSTALL_TIMEOUT_SECS:-120}"
   claude plugin marketplace add anthropics/claude-plugins-official >/dev/null 2>&1 &
   pid=$!
-  while [[ "${waited}" -lt 120 ]]; do
+  started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
     if [[ "$(ga_marketplace_present)" == "yes" ]]; then
       kill "${pid}" 2>/dev/null || true
+      kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true
       wait "${pid}" 2>/dev/null || true
       return 0
     fi
     sleep 2
-    waited=$((waited + 2))
   done
   # timeout — reap the stuck adder and report failure (NON-FATAL to the caller).
   kill "${pid}" 2>/dev/null || true
+  kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true
   wait "${pid}" 2>/dev/null || true
   return 1
 }
@@ -860,23 +868,26 @@ ga_cmd_marketplace_add() {
 # installed" + registers but the process does NOT exit (an already-installed re-run exits fast), so a
 # foreground run_step blocks forever on a fresh install. Same mechanism as ga_marketplace_add:
 # background with fds → /dev/null (MANDATORY hygiene — keep the backgrounded claude out of run_step's
-# STEP_LOG), POLL ga_detect_fakechat, kill+reap on registration (success) or a 120s ceiling (failure).
-# NON-FATAL; bash 3.2 clean.
+# STEP_LOG), POLL ga_detect_fakechat, kill+reap on registration (success) or a 120s WALL-CLOCK ceiling —
+# same SECONDS-delta bound + SIGTERM→SIGKILL escalation reap as ga_marketplace_add. NON-FATAL; bash 3.2 clean.
 ga_fakechat_install() {
-  local pid waited=0
+  local pid started ceiling
+  ceiling="${GA_PLUGIN_INSTALL_TIMEOUT_SECS:-120}"
   claude plugin install fakechat@claude-plugins-official >/dev/null 2>&1 &
   pid=$!
-  while [[ "${waited}" -lt 120 ]]; do
+  started="${SECONDS}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
     if [[ "$(ga_detect_fakechat)" == "present" ]]; then
       kill "${pid}" 2>/dev/null || true
+      kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true
       wait "${pid}" 2>/dev/null || true
       return 0
     fi
     sleep 2
-    waited=$((waited + 2))
   done
   # timeout — reap the stuck installer and report failure (NON-FATAL to the caller).
   kill "${pid}" 2>/dev/null || true
+  kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true
   wait "${pid}" 2>/dev/null || true
   return 1
 }
