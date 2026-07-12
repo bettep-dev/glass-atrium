@@ -88,8 +88,11 @@ code_based_grader_check() {
   # Only a block-resident structured field promotes; absence → unverified, NEVER verified_fail (step 5 only).
   case "${TASK_TYPE:-}" in
     bug-fix)
-      # block-resident: test/spec co-occurring with pass / green / "exit 0".
-      if [[ "${body}" =~ (test|spec) ]] && [[ "${body}" =~ (pass(ed|ing)?|green|exit[[:space:]]0) ]]; then
+      # block-resident: test/spec (word-bounded, common inflections) co-occurring
+      # with pass / green / "exit 0". Boundaries stop bare-substring false promotes
+      # ("laTEST passWORD" no longer matches).
+      if [[ "${body}" =~ (^|[^[:alpha:]])(test|spec)(s|ed|ing)?([^[:alpha:]]|$) ]] \
+        && [[ "${body}" =~ (^|[^[:alpha:]])(pass(es|ed|ing)?|green|exit[[:space:]]0)([^[:alpha:]]|$) ]]; then
         printf 'verified_pass\n'
       else
         printf 'unverified\n'
@@ -98,7 +101,9 @@ code_based_grader_check() {
     feature)
       # test/spec file path in files: → verified_pass; absence → unverified.
       # (Empty files_modified defaults here — acknowledged data loss, NOT a fail.)
-      if [[ "${files}" =~ (test|spec)[^[:space:],]*\.(ts|tsx|js|jsx|py|sh|bats|rb|go|java|kt) ]]; then
+      # word-bounded test/spec (same technique as bug-fix) so an embedded substring
+      # ("latest.ts", "respect.rb") no longer false-promotes; "foo.test.ts" still does.
+      if [[ "${files}" =~ (^|[^[:alpha:]])(test|spec)(s|ed|ing)?([^[:space:],[:alpha:]][^[:space:],]*)?\.(ts|tsx|js|jsx|py|sh|bats|rb|go|java|kt) ]]; then
         printf 'verified_pass\n'
       else
         printf 'unverified\n'
