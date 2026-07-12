@@ -32,14 +32,34 @@ test("sanitizeHtmlBody: CDN allowlist <script src> 통과 (tailwindcss)", () => 
   );
 });
 
-test("sanitizeHtmlBody: CDN allowlist <script src> 통과 (jsdelivr)", () => {
+test("sanitizeHtmlBody: jsdelivr 핀 경로 (mermaid 번들) <script src> 통과", () => {
+  // OWN-BUNDLE 문서가 싣는 유일한 정당한 jsdelivr 스크립트 — public/index.html:58 과 동일.
+  const out = sanitizeHtmlBody(
+    '<head><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></head>',
+  );
+  assert.ok(
+    /https:\/\/cdn\.jsdelivr\.net\/npm\/mermaid@11\/dist\/mermaid\.min\.js/i.test(out),
+    "pinned jsdelivr mermaid bundle preserved",
+  );
+});
+
+test("sanitizeHtmlBody: jsdelivr 비-mermaid 경로 (lodash) → 제거 (SSRF 핀)", () => {
+  // whole-origin jsdelivr 허용이 SSRF 벡터였음 — mermaid 외 /npm/<pkg> 는 이제 거부.
   const out = sanitizeHtmlBody(
     '<head><script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21"></script></head>',
   );
   assert.ok(
-    /https:\/\/cdn\.jsdelivr\.net\/npm\/lodash/i.test(out),
-    "jsdelivr cdn script preserved",
+    !/cdn\.jsdelivr\.net/i.test(out),
+    `non-mermaid jsdelivr script must be removed — actual: ${out.slice(0, 200)}`,
   );
+});
+
+test("sanitizeHtmlBody: jsdelivr 경로 우회 시도 (dist/../../evil) → 제거", () => {
+  // URL 정규화가 `..` 를 먼저 해소 → /npm/evil@1/dist/x.js 로 접힘 → 핀 미매치 → 거부.
+  const out = sanitizeHtmlBody(
+    '<head><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/../../evil@1/dist/x.js"></script></head>',
+  );
+  assert.ok(!/evil@1/i.test(out), "path-traversal escape past the mermaid pin must be rejected");
 });
 
 test("sanitizeHtmlBody: non-allowlist <script src> 제거", () => {
@@ -166,11 +186,12 @@ test("sanitizeHtmlBody: style 속성 보존 (인라인 스타일 화이트리스
 // routes/clauded-docs.ts 책임으로 본 모듈 scope 밖.
 
 test("sanitizeHtmlBody: Chart.js CDN injection 시도 제거", () => {
-  // jsdelivr prefix allowlist 라 src 자체는 통과 — 실질 검증은 아래 d3/plotly.
+  // jsdelivr 는 mermaid 핀 경로만 허용 → chart.js /npm 스크립트는 제거된다.
   const out = sanitizeHtmlBody(
     '<head><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head>',
   );
-  assert.ok(out.length > 0);
+  assert.ok(!/chart\.js/i.test(out), "non-mermaid jsdelivr chart.js script must be removed");
+  assert.ok(!/cdn\.jsdelivr\.net/i.test(out), "jsdelivr host must not survive for a non-mermaid path");
 });
 
 test("sanitizeHtmlBody: D3 CDN (d3js.org) 비-allowlist → 제거", () => {
