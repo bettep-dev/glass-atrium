@@ -215,8 +215,13 @@ if ((is_crossing == 1)); then
   # crossed_pct: integer percentage at the crossing (100 at budget, +20% per default-budget step).
   crossed_pct=$((new_count * 100 / budget_n))
   # transcript_path + session_id are read lazily HERE — needed only for sidecar recovery on a crossing.
-  transcript_path="$(hook_get_field "${input}" "transcript_path")"
-  session_id="$(hook_get_field "${input}" "session_id")"
+  # Single-pass extraction of both (one python3, not two) — kept inside the crossing branch so the
+  # common no-crossing path still pays zero interpreter cold-starts for them.
+  {
+    IFS= read -r -d '' transcript_path
+    IFS= read -r -d '' session_id
+  } \
+    < <(hook_get_fields "${input}" transcript_path session_id || true)
   agent_type="$(recover_agent_type "${transcript_path}" "${session_id}" "${agent_key}")"
   record_overage "${agent_id}" "${agent_type}" "${new_count}" "${budget_n}" "${crossed_pct}"
 fi

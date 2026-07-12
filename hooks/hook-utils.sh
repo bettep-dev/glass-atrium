@@ -44,6 +44,43 @@ print(d.get('tool_input', {}).get(sys.argv[1], ''))
 " "${field}" 2>/dev/null || printf '%s\n' ""
 }
 
+# Single-pass multi-field extractor for TOP-LEVEL fields — parses the hook JSON input ONCE and
+# emits each requested field's value in ONE python3 invocation (one interpreter cold-start instead
+# of N). Per-field output is byte-identical to hook_get_field for the same key: str() of the value,
+# missing key → empty, trailing newlines stripped to mirror the $() command-substitution capture,
+# NUL-terminated in argument order (NUL keeps embedded-newline values intact — the one delimiter a
+# JSON string cannot contain). Fail-open: python3 absent / malformed JSON / non-object root → every
+# field degrades to empty, matching N sequential hook_get_field calls.
+# Args: $1=json_input; $2..=top-level field names.
+# Consume with one `IFS= read -r -d '' var` per field, e.g.:
+#   { IFS= read -r -d '' a; IFS= read -r -d '' b; } < <(hook_get_fields "${input}" a b)
+hook_get_fields() {
+  local input="${1}" _f
+  shift
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  printf '%s\n' "${input}" \
+    | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    if not isinstance(d, dict):
+        d = {}
+except Exception:
+    d = {}
+out = sys.stdout
+for f in sys.argv[1:]:
+    out.write(str(d.get(f, "")).rstrip("\n"))
+    out.write("\0")
+' "$@" 2>/dev/null || {
+    # python3 absent / hard failure → N empty NUL-terminated values (parity with N× hook_get_field).
+    for _f in "$@"; do
+      printf '\0'
+    done
+  }
+}
+
 # Emit a structured JSON error object to stderr.
 # Args: $1=error_code $2=severity $3=message
 #       $4=suggestion (optional) $5=context_json (optional, default "{}")
