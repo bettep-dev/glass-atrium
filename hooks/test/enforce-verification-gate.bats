@@ -102,6 +102,24 @@ assert_empty() {
   assert_contains "entry-miss"
 }
 
+# (a'') PLAN-REF WORD-BOUNDARY (#28) — the plan-slug alternations are word-anchored so an incidental
+# token that merely CONTAINS the slug (workplan-2026) does NOT silently satisfy references_plan and
+# thereby convert an entry-miss BLOCK into a pass; a real slug (plan-6569) still matches. Keep-in-sync
+# with the enforce-workflow-verify-stage.sh PLAN_REF_RE mirror.
+
+@test "plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss BLOCK" {
+  run_hook "glass-atrium-dev-nestjs" "advance the workplan-2026 milestone across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service work"
+  assert_status 2
+  assert_contains "entry-miss"
+}
+
+@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer advisory, exit 0" {
+  run_hook "glass-atrium-dev-react" "implement per plan-6569 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  assert_status 0
+  assert_contains "no qa-code-reviewer recorded"
+  assert_not_contains "entry-miss"
+}
+
 # (a') SYNCED-ROSTER MEMBERSHIP PROBE — a real synced DEV member (dev-swift) is gated; a
 # non-member (intel-reporter) is not. Proves the gate keys on DEV_SET membership: dev-swift is the
 # agent whose DEV_SET absence originally motivated the gate-roster auto-sync (agent_lifecycle
