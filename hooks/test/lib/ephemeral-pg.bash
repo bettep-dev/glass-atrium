@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ephemeral-pg.bash — throwaway single-file Postgres cluster + cost-tracker
-# fixture for the dual-write characterization suite.
+# ephemeral-pg.bash — throwaway single-file Postgres cluster + cost-tracker /
+# agent-tracker fixture for the dual-write characterization suites.
 #
 # WHY an ephemeral cluster: _pg_dual_write.py connects host/port-less via
 # psycopg.connect("dbname=glass_atrium"), which libpq resolves through the
@@ -23,10 +23,16 @@
 export EPH_EXPECT_TOKENS=2600
 export EPH_EXPECT_ROWS=3
 
-# core.cost_events DDL mirrored from production (verified column set + the
-# cost_events_session_dedup_key UNIQUE(session_id, dedup_key) index that is the
-# ON CONFLICT arbiter _pg_dual_write.py's UPSERT targets). id/inserted_at are
-# auto-assigned exactly as in production.
+# core.cost_events + core.agent_events DDL mirrored from production
+# (monitor/prisma/migrations/.../migration.sql).
+#   cost_events  — verified column set + the cost_events_session_dedup_key
+#                  UNIQUE(session_id, dedup_key) ON CONFLICT arbiter. id/inserted_at
+#                  are auto-assigned exactly as in production.
+#   agent_events — exact 4-column set _pg_dual_write.py writes (event_ts, event_name,
+#                  agent_id, agent_type) + the agent_events_dedup UNIQUE(event_ts,
+#                  agent_id, event_name) index that is the ON CONFLICT DO NOTHING
+#                  arbiter for agent-tracker's single-row UPSERT. id BIGSERIAL PK
+#                  matches production; there is NO inserted_at column on this table.
 eph_pg_schema_sql() {
   cat <<'SQL'
 CREATE SCHEMA IF NOT EXISTS core;
@@ -52,6 +58,15 @@ CREATE TABLE core.cost_events (
 );
 CREATE UNIQUE INDEX cost_events_session_dedup_key
   ON core.cost_events (session_id, dedup_key);
+CREATE TABLE core.agent_events (
+  id         bigserial PRIMARY KEY,
+  event_ts   timestamptz(6) NOT NULL,
+  event_name varchar(64) NOT NULL,
+  agent_id   text NOT NULL,
+  agent_type varchar(64) NOT NULL
+);
+CREATE UNIQUE INDEX agent_events_dedup
+  ON core.agent_events (event_ts, agent_id, event_name);
 SQL
 }
 
