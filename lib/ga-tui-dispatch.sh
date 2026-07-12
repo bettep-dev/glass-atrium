@@ -147,9 +147,9 @@ dispatch_action_token_panel() {
   # already bracket this segment).
   # SECURITY: env-var NAME only — the OAuth token value is never printed here.
   tty_line "$(c "${C_DIM}" "approve in your browser, then return here (env-var CLAUDE_CODE_OAUTH_TOKEN only — never the token value)")"
-  # preflight_provision_headless_token UNCHANGED: runs `claude setup-token`, renders the 0600
-  # secrets file, self-tests. Its return code drives the box digest — a non-zero is a rendered
-  # status, never a launcher crash.
+  # preflight_provision_headless_token (unchanged call site + 0-4 return-code contract): provisions the
+  # 0600 secrets file from a pasted token (or an exported env value), then self-tests. Its return code
+  # drives the box digest — a non-zero is a rendered status, never a launcher crash.
   preflight_provision_headless_token || status=$?
 
   # Re-enter the alt-screen + raw mode for the box done-state.
