@@ -413,7 +413,9 @@ ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.
 # call, so a successful probe proves the env path (not the keychain). The probe output is scanned for
 # the daemon_cycle.py auth signatures (401/403 / "Invalid authentication credentials" / "Failed to
 # authenticate") so a non-zero-masking CLI that still 401s is caught. Output is otherwise DISCARDED
-# (never logged) — it could echo the rejected credential. Returns 2 when the lib is absent. CLAUDE bin +
+# (never logged) — it could echo the rejected credential. The probe is BOUNDED by run_with_timeout
+# (GA_AUTH_SELFTEST_TIMEOUT_SECS, default 30s) so a hung CLI on this menu hot path cannot stall the
+# install — a timeout (exit 124) is treated as a self-test failure. Returns 2 when the lib is absent. CLAUDE bin +
 # lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
 # drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
@@ -438,9 +440,15 @@ headless_auth_selftest() {
     # shellcheck source=scripts/lib/claude-auth-env.sh
     . "${env_lib}" 2>/dev/null
     claude_auth_load_env >/dev/null 2>&1 || true
-    "${claude_bin}" -p --output-format text "reply with OK" 2>&1
+    # BOUNDED probe: this self-test runs on menu hot paths, so the `claude -p` call MUST have a hard
+    # ceiling — run_with_timeout (ga-env.sh) kills the whole process group on expiry (exit 124) so a
+    # hung CLI (network stall / stuck credential prompt) can never freeze the install. stdin is pinned
+    # to /dev/null so the CLI cannot block reading it. exit 124 is non-zero → caught by the probe_rc
+    # gate below as a self-test failure (identical handling to the 401 / non-zero-exit case).
+    run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" "${claude_bin}" -p --output-format text "reply with OK" </dev/null 2>&1
   )" || probe_rc=$?
 
+  # probe_rc != 0 covers BOTH a non-zero `claude -p` exit AND a run_with_timeout expiry (exit 124).
   if [[ "${probe_rc}" -ne 0 ]]; then
     return 1
   fi
