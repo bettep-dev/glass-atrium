@@ -143,3 +143,67 @@ emit_error() {
   local suggestion="${4:-}" ctx="${5:-"{}"}"
   hook_emit_error "${code}" "${severity}" "${message}" "${suggestion}" "${ctx}"
 }
+
+# Short-TTL single-integer read cache for best-effort advisory hooks. Optimization ONLY — lets a hook
+# skip an expensive live source (a fresh DB connect) when the same value was read within the TTL.
+# Read side. On a valid, fresh hit sets the global HOOK_CACHE_VALUE (the cached integer) and returns
+# 0; ANY anomaly (unreadable / non-integer epoch-or-value / expired / future epoch / bad TTL) returns
+# 1 → the caller MUST fall back to the live read (a real advisory value is never suppressed by a bad
+# cache). Value domain is non-negative integers (token counts) — matching the advisory sources.
+# The global-var return channel (not stdout) is deliberate: the caller invokes this DIRECTLY in an
+# if-condition (`if hook_cache_read ...; then`), which disables set -e inside the function so the
+# internal `return 1` miss paths never trip a caller's fail-open ERR trap — the same convention as
+# scope_drift_read_cache (CACHED_* globals). A `$( )` capture would re-arm ERR in the subshell.
+# File layout mirrors scope_drift_read_cache: line1=epoch, line2=value. Args: $1=cache_file $2=ttl_s.
+hook_cache_read() {
+  local cache_file="${1}" ttl="${2}"
+  [[ -r "${cache_file}" ]] || return 1
+  [[ "${ttl}" =~ ^[0-9]+$ ]] || return 1
+
+  local cached_epoch cached_value now age
+  {
+    IFS= read -r cached_epoch || return 1
+    IFS= read -r cached_value || return 1
+  } <"${cache_file}"
+
+  # Corrupt header/value (non-integer) → live read.
+  [[ "${cached_epoch}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${cached_value}" =~ ^[0-9]+$ ]] || return 1
+
+  # TTL freshness. A future epoch (clock skew) is treated as stale. Non-final-in-&&-list arithmetic,
+  # so set -e/ERR ignore its false-exit (identical pattern to scope_drift_read_cache).
+  now="$(date +%s)"
+  [[ "${now}" =~ ^[0-9]+$ ]] || return 1
+  ((now < cached_epoch)) && return 1
+  age=$((now - cached_epoch))
+  ((age > ttl)) && return 1
+
+  # Cross-file return channel — consumed by the caller in the true-branch. SC2034: used elsewhere.
+  # shellcheck disable=SC2034
+  HOOK_CACHE_VALUE="${cached_value}"
+  return 0
+}
+
+# Short-TTL single-integer read cache — write side. Atomic temp+rename (same-FS). Best-effort: the
+# caller swallows a non-zero return, so a write failure only forces a harmless live re-read next time.
+# Args: $1=cache_file  $2=value (already-normalized integer).
+hook_cache_write() {
+  local cache_file="${1}" value="${2}"
+  local cache_dir tmp now
+  cache_dir="$(dirname "${cache_file}")"
+  mkdir -p "${cache_dir}" || return 1
+  now="$(date +%s)"
+  tmp="${cache_file}.tmp.$$"
+  if ! {
+    printf '%s\n' "${now}"
+    printf '%s\n' "${value}"
+  } >"${tmp}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  mv -f "${tmp}" "${cache_file}" || {
+    rm -f "${tmp}"
+    return 1
+  }
+  return 0
+}
