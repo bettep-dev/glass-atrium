@@ -203,6 +203,58 @@ def _effective_transcript_path(payload_d):
     return payload_d.get('transcript_path', '') or ''
 
 
+# --------------------------------------------------------------------------
+# Single transcript read+parse (perf consolidation). All four collectors below
+# (terminal-text, tool_use count, write-target collection, terminal-SO
+# classification) read the SAME subagent transcript resolved by
+# _effective_transcript_path — so open()+json.loads it ONCE and memoize the
+# parsed records, sharing them across all four (was up to 4 opens per fire).
+# The StructuredOutput flush-race retry (detect_terminal_structuredoutput)
+# deliberately BYPASSES this cache on attempts >0: the file may still be
+# flushing, so a settling re-read MUST see fresh bytes — a cached parse would
+# defeat the retry the schema-mode RACE test pins.
+# --------------------------------------------------------------------------
+def _read_transcript_items(tpath):
+    # Read a JSONL transcript into a list. Returns (items, tail_partial): items is
+    # None on an OS error (caller keeps the old synthesis path); tail_partial is True
+    # when the LAST non-empty physical line failed to parse — the signature of a write
+    # still in flight (a partial JSON line the flusher has not finished appending).
+    items = []
+    tail_partial = False
+    try:
+        with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    items.append(json.loads(_line))
+                    tail_partial = False
+                except (ValueError, json.JSONDecodeError):
+                    # Only the TRAILING unparsable line matters (a later good line
+                    # resets the flag); mid-file junk is pre-existing, not a race.
+                    tail_partial = True
+                    continue
+    except (OSError, IOError):
+        return None, False
+    return items, tail_partial
+
+
+_TRANSCRIPT_CACHE = {}
+
+
+def _read_subagent_transcript_once(tpath):
+    # Memoized (items, tail_partial) for the subagent transcript at tpath. The first
+    # caller pays the open()+parse; every later collector reuses that one parse. The
+    # collectors only READ items (iterate / slice), never mutate, so sharing one list
+    # is safe. Mutating a module-level dict needs no `global` (rebinding would).
+    if tpath in _TRANSCRIPT_CACHE:
+        return _TRANSCRIPT_CACHE[tpath]
+    parsed = _read_transcript_items(tpath)
+    _TRANSCRIPT_CACHE[tpath] = parsed
+    return parsed
+
+
 def _last_assistant_text_from_transcript(transcript_path):
     # Reconstruct the terminal assistant message text from a transcript jsonl.
     # Each assistant text/tool_use lands in its own entry, so the terminal
@@ -213,10 +265,8 @@ def _last_assistant_text_from_transcript(transcript_path):
     if not isinstance(transcript_path, str) or not transcript_path \
             or not _os.path.isfile(transcript_path):
         return ''
-    try:
-        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as _f:
-            _lines = _f.readlines()
-    except (OSError, IOError):
+    _parsed, _ = _read_subagent_transcript_once(transcript_path)
+    if _parsed is None:  # OS error → fail-open, caller keeps its input
         return ''
 
     def _assistant_text(entry):
@@ -240,15 +290,6 @@ def _last_assistant_text_from_transcript(transcript_path):
             )
         return ''
 
-    _parsed = []
-    for _line in _lines:
-        _line = _line.strip()
-        if not _line:
-            continue
-        try:
-            _parsed.append(json.loads(_line))
-        except (ValueError, json.JSONDecodeError):
-            continue
     for _entry in reversed(_parsed):
         _txt = _assistant_text(_entry)
         if _txt and '[COMPLETION]' in _txt:
@@ -575,18 +616,10 @@ def count_tool_use_current_turn(d):
         tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
             from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
+            cached, _ = _read_subagent_transcript_once(tpath)
+            if cached is None:  # OS error → same 0 as the old per-open except
                 return 0
+            items = cached
     if not items:
         return 0
     window = _current_turn_window(items, from_transcript)
@@ -620,18 +653,10 @@ def collect_write_targets_current_turn(d):
         tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
             from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
+            cached, _ = _read_subagent_transcript_once(tpath)
+            if cached is None:  # OS error → same [] as the old per-open except
                 return []
+            items = cached
     if not items:
         return []
     window = _current_turn_window(items, from_transcript)
@@ -673,32 +698,8 @@ diag(f"synth_has_writes={synth_has_writes} synth_file_count={len(synth_files)}")
 # Scan gate mirrors detect_budget_truncation's subagent-origin contract: SubagentStop-origin
 # + raw agent_id present + no parsed [COMPLETION] (parse_tier 3) — main-session
 # Stop/PreCompact/SessionStart never pay the scan, and a parsed block always wins.
-def _read_transcript_items(tpath):
-    # Read a JSONL transcript into a list. Returns (items, tail_partial): items is
-    # None on an OS error (caller keeps the old synthesis path); tail_partial is True
-    # when the LAST non-empty physical line failed to parse — the signature of a write
-    # still in flight (a partial JSON line the flusher has not finished appending).
-    items = []
-    tail_partial = False
-    try:
-        with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if not _line:
-                    continue
-                try:
-                    items.append(json.loads(_line))
-                    tail_partial = False
-                except (ValueError, json.JSONDecodeError):
-                    # Only the TRAILING unparsable line matters (a later good line
-                    # resets the flag); mid-file junk is pre-existing, not a race.
-                    tail_partial = True
-                    continue
-    except (OSError, IOError):
-        return None, False
-    return items, tail_partial
-
-
+# _read_transcript_items (the shared JSONL reader) is defined once near the top,
+# alongside _read_subagent_transcript_once (the memoized wrapper the collectors share).
 def _classify_terminal_so(items, from_transcript, tail_partial=False):
     # Classify the terminal StructuredOutput pairing on ONE transcript snapshot.
     # Returns (verdict, race): verdict is '1' (terminal SO paired with a NON-error
@@ -781,7 +782,16 @@ def detect_terminal_structuredoutput(d):
     # only a flush-race candidate sleeps + retries (worst case +600ms, under budget).
     _SO_REREAD_RETRIES, _SO_REREAD_DELAY_S = 3, 0.2
     for _attempt in range(_SO_REREAD_RETRIES + 1):
-        items, tail_partial = _read_transcript_items(tpath)
+        if _attempt == 0:
+            # First attempt reuses the shared up-front parse (no extra open()) —
+            # in the common (settled) case this is the ONLY read this path costs.
+            items, tail_partial = _read_subagent_transcript_once(tpath)
+        else:
+            # Flush-race retry: the file may still be flushing → re-read FRESH,
+            # BYPASSING the memo cache, so a late-appended tool_result becomes
+            # visible. A cached parse here would defeat the retry the schema-mode
+            # RACE test pins (paired result flushed inside the re-read window).
+            items, tail_partial = _read_transcript_items(tpath)
         if items is None:  # OS error → keep the old synthesis path
             return '0'
         verdict, race = _classify_terminal_so(
