@@ -8,19 +8,25 @@
 # suite sources it under strict mode to prove that).
 #
 # Scope (E3 capabilities): spine_find_changed_files (T13, non-agent hash-diff
-# selection) · spine_stage_and_verify + spine_commit_staged + spine_apply (T11,
-# stage + per-file SHA-256 verify, then swap with rollback) · spine_set_baseline
-# + spine_get_baseline (T14, base@install anchor capture/read).
+# selection) · spine_find_removed_files (T13, vendor-removal provenance selection
+# — files the prior baseline shipped but the new release dropped) ·
+# spine_stage_and_verify + spine_commit_staged + spine_apply (T11, stage +
+# per-file SHA-256 verify, then atomic swap with rollback) · spine_set_baseline +
+# spine_get_baseline (T14, base@install anchor capture/read).
 #
 # Manifest schema (from generate-manifest.sh, v1.0.0):
 #   { "version": "1.0.0", "files": ["agents/foo.md", …],
 #     "hashes": { "agents/foo.md": "<64-hex sha256>", … } }
 # expected content hash = hashes[path] (O(1) lookup).
 #
-# Atomicity caveat (accurate): the apply is STAGED and ROLLBACK-GUARDED, NOT a
-# single atomic cross-file transaction. Each file is swapped by a plain copy (not
-# atomic in isolation); a mid-swap failure restores every already-swapped file
-# from a pre-swap snapshot. No cross-file all-or-nothing kernel primitive exists.
+# Atomicity caveat (accurate): each per-file swap AND each rollback restore is
+# atomic — a sibling temp in the destination dir is written, then rename(2)-moved
+# over the target (same FS → no EXDEV). A process holding the old inode open
+# (e.g. the RUNNING update.sh / glass-atrium launcher mid self-update) keeps its
+# now-unlinked inode intact and reaches clean EOF — never a truncated tail an
+# in-place cp would expose. NOT atomic is the CROSS-file set: the apply is STAGED
+# and ROLLBACK-GUARDED, and a mid-swap failure restores every already-swapped
+# file from a pre-swap snapshot. No cross-file all-or-nothing primitive exists.
 #
 # Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): every
 # verify mismatch, missing source, or missing manifest hash returns non-zero +
@@ -121,6 +127,64 @@ spine_find_changed_files() {
   done < <(jq -r '.files[]' -- "${manifest}")
 }
 
+# T13 — vendor-removal provenance selection
+
+# Emit (one relative path per line) the NON-AGENT files that the PRIOR-VENDOR
+# baseline shipped but the new release DROPPED, restricted to files still holding
+# their pristine vendor content — i.e. safe to sweep. A live file whose content
+# diverges from the baseline hash is a USER edit and is PRESERVED (never listed).
+# The agent/overlay/config exclusions apply (those paths are owned by the E4
+# merge / user, not the vendor sync). A path already absent locally is a no-op.
+# This is the detection half of the deletion pass; the CALLER wires the list into
+# the confirm-gate preview + the Trash removal (removal policy stays caller-side,
+# same split as spine_find_changed_files → update_commit_callback). Args: $1 =
+# prior-vendor baseline manifest.json · $2 = new-release manifest.json · $3 = live
+# install root. Loud-fails (rc 1) on a missing manifest or a baseline path that
+# carries no hash.
+spine_find_removed_files() {
+  local baseline_manifest="$1" new_manifest="$2" install_root="$3"
+  local path want live target new_files
+  spine_require_tools jq || return 1
+  if [[ ! -f "${baseline_manifest}" ]]; then
+    printf 'apply-spine: removal scan needs a baseline manifest: %s\n' \
+      "${baseline_manifest}" >&2
+    return 1
+  fi
+  if [[ ! -f "${new_manifest}" ]]; then
+    printf 'apply-spine: removal scan needs a new-release manifest: %s\n' \
+      "${new_manifest}" >&2
+    return 1
+  fi
+  # Materialise the new release's file set ONCE for a fork-free membership test.
+  new_files="$(jq -r '.files[]' -- "${new_manifest}")" || return 1
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # agent/overlay/config paths are owned by other merge paths, never swept.
+    if spine_is_excluded_path "${path}"; then
+      continue
+    fi
+    # Still shipped by the new release → not a removal. Quoted pattern = literal.
+    case $'\n'"${new_files}"$'\n' in
+      *$'\n'"${path}"$'\n'*) continue ;;
+      *) ;; # dropped by the new release → fall through to the provenance check
+    esac
+    target="${install_root}/${path}"
+    # Already gone (or not a regular file we own) → nothing to remove.
+    [[ -f "${target}" ]] || continue
+    want="$(spine_get_manifest_hash "${baseline_manifest}" "${path}")"
+    if [[ -z "${want}" ]]; then
+      printf 'apply-spine: baseline has no hash for %s\n' "${path}" >&2
+      return 1
+    fi
+    live="$(spine_sha256_of "${target}")" || return 1
+    # User-modified vs the prior-vendor baseline → PRESERVE (never sweep an edit).
+    if [[ "${live}" != "${want}" ]]; then
+      continue
+    fi
+    printf '%s\n' "${path}"
+  done < <(jq -r '.files[]' -- "${baseline_manifest}")
+}
+
 # T11 — staged apply + rollback
 
 # Phase 1: copy each changed file from the new-release tree into a staging dir
@@ -157,6 +221,23 @@ spine_stage_and_verify() {
   done
 }
 
+# Atomic file swap — the SINGLE source of truth for every install/baseline write
+# in this lib (commit swap, rollback restore, baseline capture). Writes a sibling
+# temp in the dst dir then rename(2)-moves it over dst: same FS → atomic, and a
+# process holding the old inode open (a self-updating update.sh / launcher) keeps
+# its now-unlinked inode intact and reaches clean EOF — never a truncated tail an
+# in-place cp would expose. On any failure the partial temp is removed and rc 1
+# returned; the CALLER owns the failure policy (warn-and-continue / break-and-
+# rollback / set -e abort). Args: $1 = src file · $2 = dst path.
+spine_atomic_swap() {
+  local src="$1" dst="$2" tmp
+  tmp="${dst}.tmp.$$"
+  if ! { cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+}
+
 # Restore the live install to its pre-swap state from the snapshot dir. For each
 # touched path: a snapshot copy exists → restore it; no snapshot → the file was
 # newly created by the swap → remove it. Args: $1 = install root · $2 = snapshot
@@ -171,7 +252,8 @@ spine_rollback() {
     snap="${snapshot}/${path}"
     dst="${install_root}/${path}"
     if [[ -f "${snap}" ]]; then
-      cp -p -- "${snap}" "${dst}" \
+      # Atomic restore via the shared swap (sibling temp + rename, never in-place).
+      spine_atomic_swap "${snap}" "${dst}" \
         || printf 'apply-spine: rollback restore FAILED: %s\n' "${path}" >&2
     else
       rm -f -- "${dst}" \
@@ -183,9 +265,10 @@ spine_rollback() {
 # Phase 2: snapshot then swap each staged file into the live install, rolling
 # back on ANY failure mid-swap. Reads the change set (one relative path per line)
 # from STDIN. Processing order, per file: snapshot the live target (if it
-# exists) → mark it touched → copy the staged file into place. On the first
-# failure, every touched file is rolled back to its pre-swap state and rc 1 is
-# returned. Args: $1 = staging dir · $2 = install root · $3 = snapshot dir.
+# exists) → mark it touched → atomically swap the staged file into place (sibling
+# temp + rename). On the first failure, every touched file is rolled back to its
+# pre-swap state and rc 1 is returned. Args: $1 = staging dir · $2 = install root
+# · $3 = snapshot dir.
 spine_commit_staged() {
   local staging="$1" install_root="$2" snapshot="$3"
   local -a paths=() touched=()
@@ -214,7 +297,10 @@ spine_commit_staged() {
     fi
     touched+=("${path}")
     mkdir -p -- "$(dirname -- "${dst}")"
-    if ! cp -p -- "${src}" "${dst}"; then
+    # Atomic swap via the shared helper — the running update.sh / launcher keeps
+    # its old, now-unlinked inode and reaches clean EOF, never a half-written tail
+    # of the script being self-updated.
+    if ! spine_atomic_swap "${src}" "${dst}"; then
       failed="${path}"
       rc=1
       break
@@ -274,7 +360,7 @@ spine_baseline_path() {
 # manifest.json · $2 = optional state-dir override. Loud-fails (rc 1) when the
 # source manifest is missing.
 spine_set_baseline() {
-  local manifest="$1" dir dst tmp
+  local manifest="$1" dir dst
   if [[ ! -f "${manifest}" ]]; then
     printf 'apply-spine: baseline source manifest missing: %s\n' "${manifest}" >&2
     return 1
@@ -282,9 +368,8 @@ spine_set_baseline() {
   dir="$(spine_baseline_dir "${2:-}")"
   mkdir -p -- "${dir}"
   dst="${dir}/baseline-manifest.json"
-  tmp="${dst}.tmp.$$"
-  cp -p -- "${manifest}" "${tmp}"
-  mv -f -- "${tmp}" "${dst}"
+  # Atomic capture via the shared swap (temp + rename); set -e aborts on failure.
+  spine_atomic_swap "${manifest}" "${dst}"
   printf '%s\n' "${dst}"
 }
 
