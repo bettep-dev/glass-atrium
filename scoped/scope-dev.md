@@ -118,7 +118,7 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
   ```
 
 - Each fact MUST carry investigated content — `unknown` / `N/A` only after an actual Glob/Grep/Read confirms the absence (fabricated or skipped investigation FORBIDDEN); the 4 keys are fixed and ordered as shown
-- **Checked post-hoc** by a `Stop`/`SubagentStop` advisory hook (`advisory-preedit-facts.sh`) — it reads the turn transcript + emits a WARNING for any edited file lacking a `Pre-Edit Facts:` declaration · advisory only, it NEVER blocks an edit
+- **Checked post-hoc** by a `Stop` advisory hook (`advisory-preedit-facts.sh`) — it reads the turn transcript + emits a WARNING for any edited file lacking a `Pre-Edit Facts:` declaration · advisory only, it NEVER blocks an edit
 - EARS: "When a turn ends in which a DEV agent edited a non-trivial file without a `Pre-Edit Facts:` block, the system shall WARN (advisory, non-blocking)"
 - Exempt: simple tasks (typo / import / config) — matches the Ambiguity Gate / Assumptions exemption condition
 - Rationale: investigation creates awareness that self-eval never did (Karpathy) — surfacing concrete importer / API / schema / instruction facts before editing prevents blind edits (same family as Assumptions Disclosure above, applied at the per-file first-edit boundary)
