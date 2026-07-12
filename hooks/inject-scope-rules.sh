@@ -2,10 +2,10 @@
 # inject-scope-rules.sh — SubagentStart hook: inject scope-rule cores + a budget
 # meter + the [COMPLETION] emit-format contract into subagents.
 #
-# On a DEV(12)/QA(2) spawn, extracts the AGENT-INJECT block from
+# On a DEV(13)/QA(2) spawn, extracts the AGENT-INJECT block from
 # shared-comment-logging.md and delivers it as hookSpecificOutput.additionalContext
 # (the subagent otherwise gets only the comment-logging pointer token, not the body).
-# DEV(12) ONLY (excludes QA) also gets two blocks from
+# DEV(13) ONLY (excludes QA) also gets two blocks from
 # scope-dev.md — STYLE-REF (style_ref DEV-scoped; the pointer token alone left it
 # ~0% emitted) and MINIMALISM (the DEV-scoped minimalism reflex the pointer did not
 # deliver). The NAMING block (glass-atrium-dev-naming
