@@ -10,6 +10,9 @@
 # (single-flight across kill→recreate, exit 7 on a live concurrent holder).
 # pre-restart quota gate: the parse-failure fallback proceeds but logs "quota status
 # unknown", never asserting the reset time passed as fact.
+# pre-flight fatal mirror: a pre-flight fatal (tmux absent) mirrors an 'error' status
+# row before exit 1 — STARTED_AT + pg_write_run sit above the pre-flight block, so a
+# genuine failure surfaces as 'error/Down', not 'missing/No data'.
 # Hermetic: unit tests awk-extract one function into a sourceable shim; full-flow
 # tests copy the script + libs into a sandbox with stub siblings + stub PATH binaries
 # (tmux/launchctl/timeout/claude), role=wiki so the real autoagent quota marker is
@@ -305,6 +308,32 @@ run_flow() {
   if [[ -f "${TMUX_CALLS}" ]]; then
     run ! grep -q '^kill-session' "${TMUX_CALLS}"
   fi
+}
+
+@test "pre-flight fatal (tmux absent): mirrors an 'error' status row before exit 1" {
+  make_flow_sandbox
+  # pg-helper stub echoes the JSON envelope into LOG_FILE so the PG mirror is
+  # observable; PG_HELPER resolves to ${SCRIPT_DIR}/_pg_dual_write_daemon.py.
+  cat >"${SANDBOX}/_pg_dual_write_daemon.py" <<'PY'
+#!/usr/bin/env python3
+import sys
+sys.stdout.write(sys.stdin.read())
+PY
+  chmod +x "${SANDBOX}/_pg_dual_write_daemon.py"
+  # Drop tmux so pre-flight `command -v tmux` fails → fatal("tmux not on PATH").
+  rm -f "${STUB_BIN}/tmux"
+  if env PATH="${STUB_BIN}:/usr/bin:/bin" bash -c 'command -v tmux' >/dev/null 2>&1; then
+    skip "tmux unexpectedly reachable via /usr/bin:/bin"
+  fi
+  : >"${SESSION_MARKER}"
+  run_flow -- wiki
+  [[ "${status}" -eq 1 ]] || return 1
+  [[ "${output}" == *"tmux not on PATH"* ]] || return 1
+  # The relocation makes STARTED_AT + pg_write_run available at pre-flight-fatal
+  # time → the 'error' row is mirrored (was silently skipped → 'missing/No data').
+  grep -qF '"status":"error"' "${FLOW_LOG}" || return 1
+  grep -qF '"daemon_name":"daily-restart-wiki"' "${FLOW_LOG}" || return 1
+  grep -qF '"notes":"fatal: tmux not on PATH"' "${FLOW_LOG}" || return 1
 }
 
 @test "bootstrap retry: transient failure recovers on attempt 2, lock released, kickstart issued" {
