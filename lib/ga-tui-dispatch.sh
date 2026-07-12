@@ -293,6 +293,15 @@ _confirm_pregate() {
 _panel_abort() {
   STEP_FAIL_LOG_PERSISTED=""
   status_line "$1" "Install" "0" "0"
+  # counter-state leak sweep: an aborted install (blocked preflight / stuck :16145) funnels through
+  # here with the shared step counters (GRAND_TOTAL / STEP_INDEX_BASE / STEP_TOTAL / STEP_INDEX) left
+  # FROZEN — _run_dependency_preflight_boxed only clears them on its SUCCESS tail (the deliberate
+  # GRAND_TOTAL+base handoff), and a later gate abort likewise leaves the preflight's preserved values
+  # behind. The next menu action's build_run_bar would then render a stale grand denominator (e.g.
+  # Token Setup showing 1/19). This is the single install-panel abort funnel, so sweep here. The done
+  # line above already rendered its explicit 0/0 (the done state never consults build_run_bar), so the
+  # clear cannot alter this abort's own frame.
+  _clear_step_state
   IFS= read -rsn1 _ <"${TTY}" || true
   enter_nav_state
 }

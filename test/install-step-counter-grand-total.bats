@@ -238,3 +238,78 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
   [ "${len}" = "14" ]
   [ "${len}" = "${fn_count}" ]
 }
+
+# === (8) ABORT boundary — _panel_abort sweeps the leaked counter state (abort -> next action) ====
+# An aborted install (blocked preflight / stuck :16145) funnels through _panel_abort with the shared
+# counters left FROZEN (the boxed preflight only clears on its SUCCESS tail; a later gate abort keeps
+# the preflight's preserved handoff values). The next menu action's build_run_bar then renders a stale
+# GRAND_TOTAL denominator (the Token-Setup 1/19 symptom). Fix: _panel_abort calls _clear_step_state.
+# Falsifiability: pre-fix GRAND_TOTAL=19 survives => the next 1-step bar reads 1/19; post-fix 1/1.
+
+@test "abort sweep: _panel_abort clears the leaked step counters so the NEXT action's bar reads 1/1 (not 1/19)" {
+  extract_launcher_fn _clear_step_state
+  extract_launcher_fn _panel_abort
+  extract_launcher_fn build_run_bar
+  _stub_bar_collaborators
+  # _panel_abort's own render/input/nav collaborators -> no-ops (this test asserts STATE, not chrome).
+  status_line() { :; }
+  enter_nav_state() { :; }
+  TTY="/dev/null"
+  # LEAKED state from an aborted boxed preflight: a frozen grand total + carried base + step totals.
+  GRAND_TOTAL=19
+  STEP_INDEX_BASE=6
+  STEP_TOTAL=6
+  STEP_INDEX=6
+  STEP_LABEL_ACTIVE_CUR="stale"
+  STEP_BAR_CUR="stale"
+  STEP_BAR_ACCENT_CUR="stale"
+  # call DIRECTLY (not `run`) so the global sweep persists into the test shell for assertion.
+  _panel_abort "blocked preflight" || return 1
+  # every shared counter is swept on the abort boundary.
+  [[ -z "${GRAND_TOTAL}" ]] || return 1
+  [[ -z "${STEP_INDEX_BASE}" ]] || return 1
+  [[ -z "${STEP_TOTAL}" ]] || return 1
+  [[ -z "${STEP_INDEX}" ]] || return 1
+  # the NEXT menu action (e.g. Token Setup) enters RUN state with a single-step bar.
+  STEP_INDEX=1
+  STEP_TOTAL=1
+  run build_run_bar
+  [[ "${status}" -eq 0 ]] || return 1
+  # pre-fix: leaked GRAND_TOTAL=19 => build_run_bar renders 1/19; post-fix swept => 1/1.
+  [[ "$(_denom "${output}")" = "1" ]] || return 1
+}
+
+# === (9) SUCCESS tail — the boxed preflight PRESERVES GRAND_TOTAL + base (characterization) ======
+# The install handoff DEPENDS on _run_dependency_preflight_boxed's success tail preserving GRAND_TOTAL
+# + STEP_INDEX_BASE (the fix must NOT over-clear the success path — that would reintroduce the 6->19
+# denominator jump). This pins that the abort sweep and the success handoff stay disjoint.
+
+@test "success handoff: the boxed preflight SUCCESS tail PRESERVES GRAND_TOTAL + STEP_INDEX_BASE (no over-clear)" {
+  extract_launcher_fn _run_dependency_preflight_boxed
+  # minimal all-present success path: no auto-work, no interactive bracket, no framed step -> the
+  # function runs straight to its success tail. Stub every collaborator the tail's predecessors call.
+  preflight_count_and_gate() {
+    PREFLIGHT_GROUP1_RUNNABLE=0
+    PREFLIGHT_GROUP2_RUNNABLE=0
+    STEP_TOTAL=6
+    STEP_INDEX=""
+    GRAND_TOTAL=20 # (g1+g2 = 6) + INSTALL_PLAN_LEN (14)
+  }
+  ga_detect_xcode_clt() { printf 'present'; }
+  preflight_has_auto_work() { printf 'no'; }
+  ga_detect_claude_auth() { printf 'present'; }
+  token_already_provisioned() { return 0; }
+  _preflight_fakechat_boxed() { return 0; }
+  ga_detect_python_libs() { printf 'present'; }
+  # the `[[ -x "${HOME}/.local/bin/claude" ]]` guard must be false -> point HOME at an empty dir.
+  HOME="$(mktemp -d -t ga-empty-home.XXXXXX)"
+  STEP_INDEX_BASE="sentinel"
+  _run_dependency_preflight_boxed || return 1
+  # the deliberate install handoff: GRAND_TOTAL + base SURVIVE (NOT reset on the success path).
+  [[ "${GRAND_TOTAL}" = "20" ]] || return 1
+  # no framed step ran (all-present) => final STEP_INDEX was "" => base carries "0".
+  [[ "${STEP_INDEX_BASE}" = "0" ]] || return 1
+  # the render-detail counters ARE swept so no stale i/N leaks into dispatch's install run_plan.
+  [[ -z "${STEP_INDEX}" ]] || return 1
+  [[ -z "${STEP_TOTAL}" ]] || return 1
+}
