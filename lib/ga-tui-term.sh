@@ -31,7 +31,9 @@ restore_terminal() {
 # input
 # Read one key from /dev/tty. Decode arrow keys (ESC [ A/B) and j/k/Enter/q.
 # Returns one of: up down enter quit none. bash-3.2: no fractional read -t, so
-# we read 1 byte then, on ESC, read the 2-byte CSI tail in canonical chunks.
+# on ESC the CSI tail read carries a 1s integer timeout — a bare ESC resolves to
+# 'none' within 1s instead of blocking, and a tilde-terminated tail (ESC [ N ~)
+# is drained so its '~' isn't misread as the next key.
 read_key() {
   local key rest
   IFS= read -rsn1 key <"${TTY}" || {
@@ -40,10 +42,18 @@ read_key() {
   }
   case "${key}" in
     $'\x1b') # ESC — possible arrow CSI sequence
-      IFS= read -rsn2 rest <"${TTY}" || rest=""
+      # 1s integer timeout: a bare ESC has no CSI tail, so an unbounded read here
+      # blocks forever — the timeout lets it fall through to 'none' within 1s.
+      IFS= read -rsn2 -t 1 rest <"${TTY}" || rest=""
       case "${rest}" in
         '[A') printf 'up' ;;
         '[B') printf 'down' ;;
+        '['[0-9])
+          # Tilde-terminated CSI (Home/End/PgUp = ESC [ N ~): drain the trailing
+          # '~' so it isn't consumed as the next keypress; still an unhandled key.
+          IFS= read -rsn1 -t 1 _ <"${TTY}" || true
+          printf 'none'
+          ;;
         *) printf 'none' ;; # bare ESC or unknown sequence
       esac
       ;;
