@@ -139,8 +139,10 @@ SQL
 # backup_db_to_file precedent) SKIPS the drop for THAT database — loud log, data preserved,
 # uninstall continues; applied uniformly (the shadow may dump near-empty, same gate governs).
 # Pre-uninstall dumps are KEEP-FOREVER: no rotation here, and pg-backup.sh's 14-dump keep-window
-# never trashes them ('pre-' sorts above every dated glass_atrium-* name in its DESCENDING
-# keep-window — load-bearing ordering, do not rename without re-checking that glob). An absent
+# excludes them from its rotation candidate glob (`glass_atrium-[0-9]*.dump` matches only the dated
+# nightly form, never this `-pre-uninstall-` name) — so they neither rotate nor consume a nightly
+# slot. Load-bearing: keep this name NON-digit-initial after `glass_atrium-`, else that glob would
+# recapture it. An absent
 # database skips both dump and drop silently (--if-exists semantics).
 # SECURITY: peer-auth Unix socket ONLY (-h ${PG_SOCKET}), never a host/port + credentials, never reads/echoes a secret.
 # IDEMPOTENT (absent DB → clean no-op). GRACEFUL: a missing binary or unreachable server logs a
