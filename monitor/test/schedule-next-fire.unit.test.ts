@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   buildDaemonCronSchedule,
   nextOccurrenceUtc,
+  type ConfigAlarmSink,
   type CronRule,
   type RawDaemonSchedule,
 } from "../src/server/schedule-next-fire.js";
@@ -257,4 +258,38 @@ test("buildDaemonCronSchedule: 전부 부재({}) → dev fallback {04:30,04:50,0
   assert.deepStrictEqual(schedule, EXPECTED_SCHEDULE);
   assert.match(stderr, /WARNING/, "totally-absent 경로는 silent 가 아니라 loud warning");
   assert.match(stderr, /dev-fallback/, "경고에 dev-fallback 식별자 포함");
+});
+
+// ── production boot guard: NODE_ENV=production + ATRIUM_SCHEDULE_* 전부 부재 ──
+// prod 에서 전부 부재 → render-monitor-env.sh 미실행 misconfiguration → lost stderr line 대신
+// prominent/surfaced alarm 로 escalate(config-truth fallback 은 그대로 렌더돼 대시보드 유지). dev 불변.
+
+// 주입 alarm sink — 발화 메시지를 in-process 로 포착(기본 logger.error 미사용, 결정론적).
+function captureAlarm(): { sink: ConfigAlarmSink; calls: string[] } {
+  const calls: string[] = [];
+  return { sink: (message) => calls.push(message), calls };
+}
+
+test("buildDaemonCronSchedule: prod + 전부 부재 → prominent alarm(stderr 아님) + config-truth fallback", () => {
+  const alarm = captureAlarm();
+  let schedule: Record<string, CronRule> | undefined;
+  const stderr = captureStderr(() => {
+    schedule = buildDaemonCronSchedule({}, "production", alarm.sink);
+  });
+  assert.deepStrictEqual(schedule, EXPECTED_SCHEDULE, "prod 에서도 config-truth fallback 을 렌더해 대시보드 유지");
+  assert.strictEqual(stderr, "", "prod 경로는 lost stderr line 을 쓰지 않음");
+  assert.strictEqual(alarm.calls.length, 1, "prod 부재는 silent 아니라 prominent alarm 1회");
+  assert.match(alarm.calls[0] ?? "", /NODE_ENV=production/, "alarm 메시지에 prod 컨텍스트 포함");
+  assert.match(alarm.calls[0] ?? "", /render-monitor-env\.sh/, "alarm 메시지에 remediation 포함");
+});
+
+test("buildDaemonCronSchedule: dev(NODE_ENV=development) + 전부 부재 → stderr 경고 그대로, alarm 미발화", () => {
+  const alarm = captureAlarm();
+  let schedule: Record<string, CronRule> | undefined;
+  const stderr = captureStderr(() => {
+    schedule = buildDaemonCronSchedule({}, "development", alarm.sink);
+  });
+  assert.deepStrictEqual(schedule, EXPECTED_SCHEDULE);
+  assert.match(stderr, /WARNING/, "dev 경로는 기존 loud stderr 경고 유지(불변)");
+  assert.strictEqual(alarm.calls.length, 0, "dev 경로는 prod alarm 을 발화하지 않음");
 });

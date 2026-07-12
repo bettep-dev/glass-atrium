@@ -31,10 +31,13 @@ function isDaemonStale(d) {
 }
 
 // 데몬 행 → 표시 tone/label — stale 판정이 last_status 보다 우선 (crit 'STALE'),
-// null status(실행 행 없음) = info 'No data'. dashboard·health 동일 소비 (F04).
+// null status(실행 행 없음) = 'missing' 매핑 위임 → ui.jsx DAEMON_STATUS_TONE 단일 SoT.
+// 로컬 리터럴 금지: info/'No data' 도 공용 테이블에서만 결정 (screen 간 정합, F04).
 function resolveDaemonDisplayMeta(d) {
   if (isDaemonStale(d)) return { tone: 'crit', label: 'STALE' };
-  if (d == null || d.last_status == null) return { tone: 'info', label: 'No data' };
+  if (d == null || d.last_status == null) {
+    return { tone: window.UI.daemonStatusTone('missing'), label: window.UI.daemonStatusLabel('missing') };
+  }
   return { tone: window.UI.daemonStatusTone(d.last_status), label: window.UI.daemonStatusLabel(d.last_status) };
 }
 

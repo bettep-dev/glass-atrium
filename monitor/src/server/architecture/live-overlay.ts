@@ -17,6 +17,11 @@ import type {
 import type { PrismaClient } from "../../generated/prisma/client.js";
 import { DAEMON_NODE_BINDINGS } from "./diagrams-source.js";
 import { createTtlCache } from "./ttl-cache.js";
+import {
+	DAEMON_CRON_SCHEDULE,
+	STALE_MULTIPLIER,
+	expectedIntervalMinutes,
+} from "../schedule-next-fire.js";
 
 export interface OverlayLogger {
 	warn(obj: object, msg?: string): void;
@@ -32,14 +37,20 @@ const DAEMON_NAMES = [
 	"daily-restart-wiki",
 ] as const;
 
-// Expected run cadence per daemon (minutes) — all four are daily launchd jobs.
-// Server-declared so the FE never hardcodes cadence assumptions (F35/F39).
-const EXPECTED_CADENCE_MINUTES: Record<(typeof DAEMON_NAMES)[number], number> = {
-	autoagent: 1440,
-	wiki: 1440,
-	"daily-restart-autoagent": 1440,
-	"daily-restart-wiki": 1440,
-};
+// Expected run cadence per daemon (minutes) — DERIVED from the shared cron schedule
+// (DAEMON_CRON_SCHEDULE → expectedIntervalMinutes), NOT a parallel literal, so a schedule
+// change (daily→weekly) auto-updates the overdue threshold. Server-declared so the FE
+// never hardcodes cadence assumptions (F35/F39).
+const EXPECTED_CADENCE_MINUTES = Object.fromEntries(
+	DAEMON_NAMES.map((name) => [
+		name,
+		expectedIntervalMinutes(DAEMON_CRON_SCHEDULE[name]),
+	]),
+) as Record<(typeof DAEMON_NAMES)[number], number>;
+
+// STALE_MULTIPLIER (overdue threshold factor: staleness > cadence × this ⇒ synthesized
+// 'stale') is imported from schedule-next-fire.ts — one SoT with health-detail.ts so both
+// surfaces call a daemon overdue at the same point (36h for the daily jobs).
 
 // Soft-deprecated daemon types — enum value kept in core.DaemonType for the
 // audit trail but no longer surfaced in the live overlay. Rows accidentally
@@ -98,7 +109,7 @@ const WRITERS: ReadonlyArray<WriterDescriptor> = [
 // Process-local cache for marker scan results — populated lazily on first call.
 let markerCache: Map<string, boolean> | null = null;
 
-interface DaemonAggRow {
+export interface DaemonAggRow {
 	daemon_name: string;
 	last_run_at: Date | null;
 	last_status: string | null;
@@ -210,18 +221,32 @@ async function getLiveOverlayUncached(
 // ----- queries --------------------------------------------------------------
 
 async function queryDaemons(prisma: PrismaClient): Promise<DaemonLiveStatus[]> {
-	// Latest row per daemon within the past 24h (DISTINCT ON pattern, index-friendly
-	// against daemon_runs_name_date_idx). Daemons with no row in the window appear
-	// as 'missing' with null timestamps.
+	// Latest row per daemon EVER (DISTINCT ON, mirrors health-detail.ts) — no run_date
+	// window, so staleness/last_run_at are computable whenever any run exists. Filter to
+	// the surfaced daemon set; index-friendly against daemon_runs_name_date_idx. 'missing'
+	// is reserved for daemons with zero rows (resolveDaemonStatuses).
 	const rows = await prisma.$queryRaw<DaemonAggRow[]>`
     SELECT DISTINCT ON (daemon_name)
       daemon_name::text AS daemon_name,
       started_at AS last_run_at,
       status::text AS last_status
     FROM core.daemon_runs
-    WHERE run_date >= CURRENT_DATE - 1
+    WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
     ORDER BY daemon_name, started_at DESC
   `;
+	return resolveDaemonStatuses(rows, Date.now());
+}
+
+/**
+ * Pure row → DaemonLiveStatus resolution (DB-free seam, unit-tested).
+ * Status precedence: zero rows ⇒ 'missing' ('No data') · last run present AND
+ * staleness > cadence × STALE_MULTIPLIER ⇒ synthesized 'stale' ('Overdue', crit) ·
+ * within cadence ⇒ the real last_status. No new enum — 'stale' reuses DAEMON_STATUS_TONE.
+ */
+export function resolveDaemonStatuses(
+	rows: DaemonAggRow[],
+	now: number,
+): DaemonLiveStatus[] {
 	const byName = new Map<string, DaemonAggRow>();
 	for (const row of rows) {
 		// Drop soft-deprecated enum values (e.g., health-check) — defense in depth
@@ -231,9 +256,9 @@ async function queryDaemons(prisma: PrismaClient): Promise<DaemonLiveStatus[]> {
 		}
 		byName.set(row.daemon_name, row);
 	}
-	const now = Date.now();
 	return DAEMON_NAMES.map((name): DaemonLiveStatus => {
 		const row = byName.get(name);
+		const cadence = EXPECTED_CADENCE_MINUTES[name];
 		if (row === undefined || row.last_run_at === null) {
 			return {
 				daemon_name: name,
@@ -241,19 +266,20 @@ async function queryDaemons(prisma: PrismaClient): Promise<DaemonLiveStatus[]> {
 				last_run_at: null,
 				staleness_minutes: null,
 				node_ids: [...(DAEMON_NODE_BINDINGS[name] ?? [])],
-				expected_cadence_minutes: EXPECTED_CADENCE_MINUTES[name],
+				expected_cadence_minutes: cadence,
 			};
 		}
 		const stalenessMinutes = Math.floor(
 			(now - row.last_run_at.getTime()) / 60_000,
 		);
+		const isOverdue = stalenessMinutes > cadence * STALE_MULTIPLIER;
 		return {
 			daemon_name: name,
-			status: row.last_status ?? "missing",
+			status: isOverdue ? "stale" : (row.last_status ?? "missing"),
 			last_run_at: row.last_run_at.toISOString(),
 			staleness_minutes: stalenessMinutes,
 			node_ids: [...(DAEMON_NODE_BINDINGS[name] ?? [])],
-			expected_cadence_minutes: EXPECTED_CADENCE_MINUTES[name],
+			expected_cadence_minutes: cadence,
 		};
 	});
 }
