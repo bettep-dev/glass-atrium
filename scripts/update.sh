@@ -91,7 +91,9 @@
 # settings.json event->hook bindings were NOT reconciled to the new release — run
 # `glass-atrium wire-hooks`; no rollback of applied files) · 13 vendor-removal
 # sweep failed (files APPLIED, but a vendor-DROPPED file could not be moved to
-# Trash — remove it manually; no rollback of applied files).
+# Trash — remove it manually; no rollback of applied files) · 14 release bundle
+# asset resolution failed BEFORE apply (zero, ambiguous multiple, or a
+# version-mismatched glass-atrium-bundle-*.tar.gz — nothing was applied).
 #
 # DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
 # the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
@@ -418,9 +420,34 @@ update_fetch_release() {
     || update_die "gh release download failed for ${slug}"
   [[ -f "${dl_dir}/manifest.json" ]] \
     || update_die "release asset manifest.json missing after download"
-  bundle="$(find "${dl_dir}" -maxdepth 1 -name 'glass-atrium-bundle-*.tar.gz' -print -quit)"
-  [[ -n "${bundle}" ]] \
-    || update_die "release bundle asset (glass-atrium-bundle-*.tar.gz) missing after download"
+
+  # Derive the EXPECTED bundle name from the downloaded manifest's version (the release
+  # this update targets) — the bundle is named glass-atrium-bundle-<version>.tar.gz by
+  # publish-release.sh from the SAME manifest version, so a mismatch is a corrupt release.
+  local version expected
+  version="$(jq -r '.version // empty' "${dl_dir}/manifest.json")"
+  [[ -n "${version}" ]] \
+    || update_die_code 14 "release manifest.json carries no .version — cannot derive the expected bundle name"
+  expected="glass-atrium-bundle-${version}.tar.gz"
+
+  # Resolve EVERY candidate bundle (never silently take the first): zero OR more-than-one
+  # match is a loud, named-code failure (14) rather than a guess. Sorted for a stable msg.
+  local -a bundles=()
+  local b
+  while IFS= read -r b; do
+    [[ -n "${b}" ]] && bundles+=("${b}")
+  done < <(find "${dl_dir}" -maxdepth 1 -type f -name 'glass-atrium-bundle-*.tar.gz' | LC_ALL=C sort)
+  if [[ "${#bundles[@]}" -eq 0 ]]; then
+    update_die_code 14 "no release bundle asset matched glass-atrium-bundle-*.tar.gz (expected ${expected}) after download"
+  fi
+  if [[ "${#bundles[@]}" -gt 1 ]]; then
+    update_die_code 14 "ambiguous release: ${#bundles[@]} bundle assets matched glass-atrium-bundle-*.tar.gz — expected exactly one (${expected}), refusing to guess: ${bundles[*]}"
+  fi
+  bundle="${bundles[0]}"
+  # the single resolved bundle MUST be the manifest-derived name (version of record).
+  [[ "${bundle##*/}" == "${expected}" ]] \
+    || update_die_code 14 "release bundle ${bundle##*/} does not match the manifest version bundle ${expected} — refusing a version-mismatched bundle"
+
   tar -xzf "${bundle}" -C "${new_dir}" \
     || update_die "bundle extraction failed: ${bundle}"
 }

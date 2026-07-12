@@ -808,9 +808,22 @@ passthrough() {
       local doctor_rc=0
       run_doctor || doctor_rc=$?
       doctor_headless_auth_advisory
-      return "${doctor_rc}"
+      # `exit` (NOT `return`) the doctor rc — a non-zero `return` under set -e would
+      # trip the echo-only ERR trap, printing a spurious `ERROR: line …: return …` on
+      # top of a legitimate doctor FAIL. `exit` propagates the code cleanly (cleanup()
+      # EXIT trap preserves $? → the returned code is unchanged) and never trips ERR,
+      # mirroring the `update` passthrough branch above.
+      exit "${doctor_rc}"
       ;;
-    preflight) run_doctor ;;
+    preflight)
+      # preflight is a doctor alias — capture rc + `exit` it (NOT a bare terminal
+      # `run_doctor`, whose non-zero doctor FAIL would trip the echo-only ERR trap with
+      # a spurious `ERROR: line …: run_doctor`). Same idiom as the doctor branch; no
+      # auth advisory on this alias.
+      local pf_rc=0
+      run_doctor || pf_rc=$?
+      exit "${pf_rc}"
+      ;;
     wire-hooks) wire_hooks ;;
     render-config) render_config ;;
     render-plists) render_plists ;;
