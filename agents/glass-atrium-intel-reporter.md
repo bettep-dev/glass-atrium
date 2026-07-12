@@ -93,6 +93,8 @@ curl -sf -X POST http://127.0.0.1:16145/api/clauded-docs -H 'content-type: appli
 
 The supplied body field IS the format discriminator (no `prefix` field). Returning the deliverable as local-file / chat text instead of this POST = HARD VIOLATION (see the binding blockquote above).
 
+**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the report/reference body, NEVER inside a POSTed `*_body` field, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). This double-keys the injected recorder directive so it is honored in schema mode, without leaking the machine record artifact into the POSTed document.
+
 ### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
 HTML primary is produced ONLY when 1+ explicit signal is present:

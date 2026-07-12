@@ -273,6 +273,8 @@ Legacy nameless mood references. New projects MUST select from the 5 Directions 
 | DESIGN.md           | Design system spec                 | .md (Stitch-compatible sections, including AI Model Guidelines; OPTIONAL for full design-systems: 3-tier token tables + multi-mode matrix + per-widget keyboard/ARIA contract, citing the 4 `references/design-*.md` docs) |
 | AI Model Guidelines | MCP/codegen consumption rules      | .md (within DESIGN.md — non-negotiable vs flexible tokens + 2-3 "Bad" anchors)                                                                                                                                             |
 
+**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the deliverable above is complete (and any monitor POST by the composing author has succeeded), print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the design/spec body, NEVER inside a POSTed body field, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). This double-keys the injected recorder directive so it is honored in schema mode, without leaking the machine record artifact into the deliverable.
+
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
