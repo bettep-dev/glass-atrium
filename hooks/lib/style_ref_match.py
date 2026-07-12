@@ -12,10 +12,208 @@
 # ABSOLUTE): basename equality OR bidirectional substring containment. Identical
 # to style-ref-verify.sh's original inline rule — do not diverge.
 #
-# Compatibility: Python 3 (stdlib only — json/os, no third-party).
+# collect_read_paths uses a per-session INCREMENTAL cache (below): a repeated fire
+# on the SAME growing transcript reuses the Read-path set accumulated from earlier
+# bytes instead of re-reading the whole file. Correctness invariant — the returned
+# set is ALWAYS the full-scan set: the cache only supplies the already-scanned
+# [0, consumed) prefix, and the [consumed, EOF) tail is scanned fresh every fire.
+# A bounded TAIL-read accessor is deliberately NOT used: it would drop early-session
+# Reads and produce FALSE Gaming-the-Judge WARNs. Any cache miss / fingerprint
+# mismatch / truncation / cache-layer error falls open to a full scan.
+#
+# Compatibility: Python 3 (stdlib only — json/os/hashlib, no third-party).
 
+import hashlib as _srm_hashlib
 import json as _srm_json
 import os as _srm_os
+
+# Cache format version — bump on any stored-schema change so stale entries are
+# rejected by fingerprint validation (→ safe full rescan).
+_SRM_CACHE_SCHEMA = 1
+
+# Bytes of the file head hashed as an in-place-rewrite guard (append-only logs keep
+# their head byte-stable; a changed head invalidates the incremental prefix).
+_SRM_HEADER_FP_BYTES = 512
+
+
+def _srm_sha(data_bytes):
+    return _srm_hashlib.sha1(data_bytes).hexdigest()
+
+
+def _srm_cache_enabled():
+    """False when the kill switch STYLE_REF_READCACHE_OFF is set (any non-empty)."""
+    return not _srm_os.environ.get("STYLE_REF_READCACHE_OFF", "").strip()
+
+
+def _srm_cache_dir():
+    """Resolve the incremental read-path cache dir. Precedence:
+    STYLE_REF_READCACHE_DIR override (empty → caching off) → TMPDIR fallback.
+    The tmp fallback keeps runtime writes out of ~/.claude while still giving the
+    two consumer processes (track-outcome.sh + style-ref-verify.sh) a shared key.
+    """
+    override = _srm_os.environ.get("STYLE_REF_READCACHE_DIR", None)
+    if override is not None:
+        return override.strip()
+    tmp = _srm_os.environ.get("TMPDIR", "").strip() or "/tmp"
+    return _srm_os.path.join(tmp, "glass-atrium-style-ref-readcache")
+
+
+def _srm_cache_file(cache_dir, transcript_path):
+    digest = _srm_sha(transcript_path.encode("utf-8", "replace"))
+    return _srm_os.path.join(cache_dir, "v%d-%s.json" % (_SRM_CACHE_SCHEMA, digest))
+
+
+def _srm_load_cache(cache_file):
+    """Return the prior cache dict, or None on missing/corrupt (→ full rescan)."""
+    try:
+        with open(cache_file, "r", encoding="utf-8") as fh:
+            obj = _srm_json.load(fh)
+    except (OSError, IOError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _srm_store_cache(cache_file, obj):
+    """Atomic best-effort persist (temp + os.replace, same dir → same FS). A write
+    failure only costs a re-scan next fire, so all errors are swallowed."""
+    try:
+        _srm_os.makedirs(_srm_os.path.dirname(cache_file), exist_ok=True)
+        tmp = "%s.tmp.%d" % (cache_file, _srm_os.getpid())
+        with open(tmp, "w", encoding="utf-8") as fh:
+            _srm_json.dump(obj, fh)
+        _srm_os.replace(tmp, cache_file)
+    except (OSError, IOError, ValueError):
+        pass
+
+
+def _srm_fingerprint_offset(prev, st, header_fp):
+    """Validated `consumed` byte offset when prev matches the current file for an
+    incremental scan, else None (→ full scan). Conservative: ANY mismatch → None.
+    Guards: schema · device+inode (file replaced) · size monotonicity (truncation)
+    · header hash (in-place rewrite of an append-only log)."""
+    try:
+        if int(prev.get("schema", -1)) != _SRM_CACHE_SCHEMA:
+            return None
+        if int(prev.get("dev", -1)) != int(st.st_dev):
+            return None
+        if int(prev.get("ino", -1)) != int(st.st_ino):
+            return None
+        consumed = int(prev.get("consumed", -1))
+    except (TypeError, ValueError):
+        return None
+    if consumed < 0 or consumed > st.st_size:
+        return None
+    if prev.get("header_fp") != header_fp:
+        return None
+    return consumed
+
+
+def _srm_split_committed(chunk):
+    """Split raw bytes at the LAST newline → (committed_bytes, tail_bytes).
+    committed = complete lines safe to cache + advance past; tail = the trailing
+    newline-less segment, parsed fresh each fire but never advanced past (a later
+    append completing it is re-read without loss)."""
+    nl = chunk.rfind(b"\n")
+    if nl == -1:
+        return b"", chunk
+    return chunk[: nl + 1], chunk[nl + 1:]
+
+
+def _srm_read_paths_from_bytes(chunk):
+    """Extract Read tool_use file_path values from a bytes chunk of jsonl.
+
+    Faithful to a text-mode per-line scan: decode (errors=replace), normalize
+    universal newlines, strip each line, skip blanks + unparseable JSON. Returns a
+    list in file order (duplicates preserved) so committed+tail concatenation is
+    byte-identical to a full-file scan of the same bytes.
+    """
+    text = chunk.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+    paths = []
+    for raw_line in text.split("\n"):
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = _srm_json.loads(raw_line)
+        except (ValueError, _srm_json.JSONDecodeError):
+            continue
+        content = entry.get("content")
+        if content is None:
+            msg_obj = entry.get("message")
+            content = msg_obj.get("content") if isinstance(msg_obj, dict) else None
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "tool_use":
+                continue
+            if item.get("name") != "Read":
+                continue
+            tool_input = item.get("input", {})
+            if not isinstance(tool_input, dict):
+                continue
+            fpath = tool_input.get("file_path", "")
+            if isinstance(fpath, str) and fpath:
+                paths.append(fpath)
+    return paths
+
+
+def _srm_collect_incremental(transcript_path):
+    """Cache-assisted collection. Returns a list, or None when caching is disabled
+    (caller does the plain full scan). Transcript read errors (OSError/IOError)
+    propagate — the caller's fail-open contract is preserved. Cache-layer errors
+    are contained here → they degrade to a within-function full scan, never a
+    partial set."""
+    if not _srm_cache_enabled():
+        return None
+    cache_dir = _srm_cache_dir()
+    if not cache_dir:
+        return None
+
+    # stat OSError = genuine transcript error → propagate (matches original open()).
+    st = _srm_os.stat(transcript_path)
+
+    cache_file = _srm_cache_file(cache_dir, transcript_path)
+    prev = _srm_load_cache(cache_file)
+
+    # Single transcript open. open() OSError = genuine transcript error → propagate.
+    with open(transcript_path, "rb") as fh:
+        header = fh.read(_SRM_HEADER_FP_BYTES)
+        header_fp = _srm_sha(header)
+
+        consumed = 0
+        base_paths = []
+        if prev is not None:
+            offset = _srm_fingerprint_offset(prev, st, header_fp)
+            if offset is not None:
+                prior = prev.get("paths", [])
+                if isinstance(prior, list):
+                    consumed = offset
+                    base_paths = prior
+
+        fh.seek(consumed)
+        chunk = fh.read()
+
+    committed, tail = _srm_split_committed(chunk)
+    all_committed = base_paths + _srm_read_paths_from_bytes(committed)
+    tail_paths = _srm_read_paths_from_bytes(tail)
+
+    _srm_store_cache(
+        cache_file,
+        {
+            "schema": _SRM_CACHE_SCHEMA,
+            "path": transcript_path,
+            "dev": st.st_dev,
+            "ino": st.st_ino,
+            "consumed": consumed + len(committed),
+            "header_fp": header_fp,
+            "paths": all_committed,
+        },
+    )
+
+    # all_committed + tail_paths == full-file order (dups + order preserved).
+    return all_committed + tail_paths
 
 
 def collect_read_paths(transcript_path):
@@ -23,37 +221,25 @@ def collect_read_paths(transcript_path):
 
     Returns a list of file_path strings (may be empty). Raises OSError/IOError on
     an unreadable transcript — the caller decides fail-open behavior.
+
+    Backed by the per-session incremental cache above; the returned set is always
+    the full-scan set (a cache miss / mismatch / any cache-layer defect falls open
+    to a full scan — never a partial set, never a false Gaming-the-Judge WARN).
     """
-    paths = []
-    with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
-        for raw_line in fh:
-            raw_line = raw_line.strip()
-            if not raw_line:
-                continue
-            try:
-                entry = _srm_json.loads(raw_line)
-            except (ValueError, _srm_json.JSONDecodeError):
-                continue
-            content = entry.get("content")
-            if content is None:
-                msg_obj = entry.get("message")
-                content = msg_obj.get("content") if isinstance(msg_obj, dict) else None
-            if not isinstance(content, list):
-                continue
-            for chunk in content:
-                if not isinstance(chunk, dict):
-                    continue
-                if chunk.get("type") != "tool_use":
-                    continue
-                if chunk.get("name") != "Read":
-                    continue
-                tool_input = chunk.get("input", {})
-                if not isinstance(tool_input, dict):
-                    continue
-                fpath = tool_input.get("file_path", "")
-                if isinstance(fpath, str) and fpath:
-                    paths.append(fpath)
-    return paths
+    try:
+        cached = _srm_collect_incremental(transcript_path)
+    except (OSError, IOError):
+        # Genuine transcript read error → preserve the raise contract.
+        raise
+    except Exception:  # noqa: BLE001 — any CACHE-layer defect → fall open to full scan
+        cached = None
+    if cached is not None:
+        return cached
+
+    # Cache disabled/unavailable → plain full scan (may raise OSError/IOError).
+    with open(transcript_path, "rb") as fh:
+        data = fh.read()
+    return _srm_read_paths_from_bytes(data)
 
 
 def style_ref_matches(style_ref, read_paths):
