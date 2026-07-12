@@ -37,7 +37,8 @@
 #
 # Named exit codes: 2=usage · 3=required tool absent (jq/tar/generator) ·
 # 4=manifest --check failed (stale manifest, refuse to release) · 5=release repo
-# not configured (the pending user step) · 6=gh CLI absent.
+# not configured (the pending user step) · 6=gh CLI absent · 7=release consistency
+# gate failed (GA_ROOT not a work tree, dirty tree, or tag != v<manifest.version>).
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -138,6 +139,36 @@ verify_manifest() {
   fi
 }
 
+# Refuse to publish an inconsistent release. The bundle is tarred from the WORKING
+# TREE (build_assets), so the released bytes must already exist in a commit, and the
+# release tag must be the manifest version of record. Two fail-closed gates:
+#   (1) CLEAN-TREE  — GA_ROOT is a git work tree with no unstaged/staged changes
+#                     (whole-tree, so manifest.json — uploaded but outside the
+#                     manifest SCOPE_PATHS — is covered too).
+#   (2) TAG-VERSION — the release tag equals v<manifest.version> (mirrors the
+#                     release.yml tag-assert so the version of record cannot drift
+#                     from the asset it ships).
+# Both git probes use the `if ! ...` set -e exception. Loud-fails with exit 7.
+verify_publish_consistency() {
+  local tag="$1" version="$2"
+
+  # (1) CLEAN-TREE
+  if ! git -C "${GA_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    err "GA_ROOT is not a git work tree: ${GA_ROOT}"
+    exit 7
+  fi
+  if ! git -C "${GA_ROOT}" diff --quiet -- || ! git -C "${GA_ROOT}" diff --cached --quiet --; then
+    err "working tree dirty — commit before publishing (released bytes must exist in a commit)"
+    exit 7
+  fi
+
+  # (2) TAG-VERSION
+  if [[ "${tag}" != "v${version}" ]]; then
+    err "--tag ${tag} != v${version} (manifest version of record)"
+    exit 7
+  fi
+}
+
 # Stage manifest.json + the hashed bundle (exactly the manifest.files set) into
 # the out dir. Echoes nothing; assets land at deterministic names the caller
 # reconstructs from the version.
@@ -194,9 +225,16 @@ cmd_publish() {
     exit 5
   fi
   verify_manifest
-  build_assets "${out}"
   version="$(manifest_version)"
+  [[ -n "${version}" ]] || {
+    err "manifest carries no version — regenerate first"
+    exit 4
+  }
   [[ -n "${tag}" ]] || tag="v${version}"
+  # Fail-closed BEFORE building the bundle: a dirty tree or a tag/version mismatch
+  # must never produce release assets (exit 7).
+  verify_publish_consistency "${tag}" "${version}"
+  build_assets "${out}"
   bundle="${out}/${BUNDLE_PREFIX}-${version}.tar.gz"
 
   # The exact upload command. gh resolves owner/repo against the authenticated
