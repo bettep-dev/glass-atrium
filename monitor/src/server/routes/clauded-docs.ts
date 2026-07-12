@@ -1094,10 +1094,10 @@ async function handleHtmlExportSingle(
   try {
     storedBody = await readFileUtf8(row.html_path);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown filesystem error";
+    // Keep the html_export_read stage prefix; drop the path-bearing raw message (red-team #21).
     request.log.error({ err: error, route: "/api/clauded-docs/:id/html-export", id }, "html export — stored body read failed");
     reply.code(503);
-    return { error: "filesystem_unavailable", reason: `html_export_read: ${reason}` };
+    return { error: "filesystem_unavailable", reason: prefixedFsReason("html_export_read", error, "stored file read failed") };
   }
 
   // ETag is keyed on stored body + pipeline-version salt — unchanged body → 304.
@@ -1207,8 +1207,8 @@ async function handleHtmlExportMulti(
       assertPathInsideRoot(row.html_path, getHtmlRoot());
       storedBody = await readFileUtf8(row.html_path);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "read failed";
-      manifest.push({ id, included: false, reason: `read: ${reason}` });
+      // Preserve the read: stage prefix; drop the path-bearing raw message (red-team #21).
+      manifest.push({ id, included: false, reason: prefixedFsReason("read", error, "stored file read failed") });
       continue;
     }
     const format = exportFormatFromPath(row.html_path);
@@ -1218,13 +1218,14 @@ async function handleHtmlExportMulti(
       rendered = await renderSelfContainedHtml(storedBody, format);
     } catch (error) {
       const stage = error instanceof HtmlExportError ? error.stage : "render";
-      const reason = error instanceof Error ? error.message : "render failed";
       // Any render failure (incl. mermaid zero-<svg>) → skip + record in manifest (never abort the zip).
+      // Keep the <stage> discriminator; drop the raw render/Playwright message — it can embed
+      // absolute local paths and the manifest is response-visible (red-team #21, same class as failWithHtmlExport).
       request.log.warn(
         { err: error, route: "/api/clauded-docs/html-export", id, stage },
         "multi html export — per-doc render skipped",
       );
-      manifest.push({ id, included: false, reason: `${stage}: ${reason}` });
+      manifest.push({ id, included: false, reason: prefixedFsReason(stage, error, "render failed") });
       continue;
     }
     entries.push({ name: buildZipEntryName(row, usedNames), html: rendered });
@@ -1317,13 +1318,14 @@ function failWithHtmlExport(
   error: unknown,
 ): ClaudedDocsErrorBody {
   const stage = error instanceof HtmlExportError ? error.stage : "render";
-  const reason = error instanceof Error ? error.message : "html export failed";
+  // Keep the html_export_<stage> discriminator; drop the raw message — render /
+  // Playwright errors can embed absolute local paths (red-team #21).
   request.log.error(
     { err: error, route: "/api/clauded-docs/:id/html-export", id, stage },
     "html export failed",
   );
   reply.code(503);
-  return { error: "filesystem_unavailable", reason: `html_export_${stage}: ${reason}` };
+  return { error: "filesystem_unavailable", reason: prefixedFsReason(`html_export_${stage}`, error, "export failed") };
 }
 
 /** formatFromPath (DocFormatToken) → ExportFormatToken — safe since both unions share members. */
@@ -1569,11 +1571,15 @@ async function handleUpdateHtmlBody(
 
   let updated: ClaudedDocDbRow;
   try {
-    updated = await updateClaudedDocRow(getPrisma(), {
+    const result = await updateClaudedDocRow(getPrisma(), {
       id, parsed, existing, conversion,
       newBodyPath: needsPathSwap ? bodyPath : null,
       newAudience: sameAudience ? null : targetAudience,
     });
+    if (result.kind === "cas_conflict") {
+      return replyUpdateCasConflict(request, reply, getPrisma(), id, parsed.expected_hash, restoreArgs);
+    }
+    updated = result.row;
   } catch (error) {
     await restoreHtmlBody(request.log, restoreArgs);
     return failWithDb(request, reply, "/api/clauded-docs/:id (PUT)", error);
@@ -1690,11 +1696,15 @@ async function handleUpdatePlainBody(
 
   let updated: ClaudedDocDbRow;
   try {
-    updated = await updateClaudedDocRow(getPrisma(), {
+    const result = await updateClaudedDocRow(getPrisma(), {
       id, parsed, existing, conversion,
       newBodyPath: needsPathSwap ? bodyPath : null,
       newAudience: sameAudience ? null : finalAudience,
     });
+    if (result.kind === "cas_conflict") {
+      return replyUpdateCasConflict(request, reply, getPrisma(), id, parsed.expected_hash, restoreArgs);
+    }
+    updated = result.row;
   } catch (error) {
     await restoreHtmlBody(request.log, restoreArgs);
     return failWithDb(request, reply, `/api/clauded-docs/:id (PUT ${format})`, error);
@@ -2469,7 +2479,7 @@ export async function restoreHtmlBody(log: FastifyBaseLogger, args: HtmlRestoreA
   }
 }
 
-interface UpdateClaudedDocArgs {
+export interface UpdateClaudedDocArgs {
   id: number;
   parsed: UpdateClaudedDocBody;
   existing: ClaudedDocDbRow;
@@ -2481,9 +2491,19 @@ interface UpdateClaudedDocArgs {
   newAudience: AudienceLiteral | null;
 }
 
+// Typed outcome of the atomic compare-and-set UPDATE (red-team #20). `cas_conflict`
+// = the guarded WHERE matched no row (deleted or hash moved after the fast-path
+// check) → the caller restores the body file + re-SELECTs, never a generic 5xx.
+export type UpdateRowResult =
+  | { kind: "updated"; row: ClaudedDocDbRow }
+  | { kind: "cas_conflict" };
+
 /**
- * Single-statement UPDATE … RETURNING. Throws on DB error so the caller
- * triggers the restoreHtmlBody rollback.
+ * Single-statement UPDATE … RETURNING with an atomic compare-and-set guard on the
+ * CLIENT-supplied expected_hash (red-team #20 — closes the TOCTOU window between
+ * the fast-path check and this write). Throws on DB error so the caller triggers
+ * the restoreHtmlBody rollback; a guarded-WHERE miss returns a typed cas_conflict
+ * (not a throw) so the caller can restore + re-SELECT to resolve delete vs. race.
  *
  * last_synced_at is fixed NULL (it tracked MD companion sync, now meaningless);
  * md_copy_path is left untouched for legacy-row compatibility.
@@ -2496,10 +2516,10 @@ interface UpdateClaudedDocArgs {
  * RETURNING must include audience — omitting it forces audience=null in the
  * response (MD-primary-row regression); column set matches SELECT/INSERT.
  */
-async function updateClaudedDocRow(
+export async function updateClaudedDocRow(
   prisma: ReturnType<typeof getPrisma>,
   args: UpdateClaudedDocArgs,
-): Promise<ClaudedDocDbRow> {
+): Promise<UpdateRowResult> {
   const { id, parsed, existing, conversion, newBodyPath, newAudience } = args;
   const titleNew = parsed.title ?? existing.title;
   // Resolve values in the route layer (no SQL-side branching) to keep Prisma
@@ -2519,14 +2539,56 @@ async function updateClaudedDocRow(
       html_path = ${htmlPathNew},
       audience = ${audienceNew},
       last_synced_at = ${null}
-    WHERE id = ${BigInt(id)}
+    WHERE id = ${BigInt(id)} AND content_hash = ${parsed.expected_hash}
     RETURNING ${CLAUDED_DOC_SELECT_COLUMNS}
   `;
   const row = rows[0];
+  // Guarded-WHERE miss ⟺ the row was deleted OR its content_hash moved after the
+  // fast-path check (a lost optimistic-lock race). Signal a typed conflict — the
+  // caller restores the already-overwritten body then re-SELECTs to reply.
   if (row === undefined) {
-    throw new Error("UPDATE did not return a row");
+    return { kind: "cas_conflict" };
   }
-  return row;
+  return { kind: "updated", row };
+}
+
+/**
+ * Resolves an atomic compare-and-set miss on the PUT UPDATE (red-team #20). The
+ * body file was already overwritten before the guarded UPDATE, so restore it
+ * FIRST — else the loser's content persists on disk while the DB keeps the
+ * winner's hash (DB/FS divergence). A fresh SELECT then separates a concurrent
+ * delete (row gone → 404 not_found) from a lost hash race (row present → 409
+ * hash_conflict with the winner's current content_hash as `actual`; the caller's
+ * `existing.content_hash` equals `expected` here and would be self-contradictory).
+ * Exposed for tests.
+ */
+export async function replyUpdateCasConflict(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  prisma: ReturnType<typeof getPrisma>,
+  id: number,
+  expectedHash: string,
+  restoreArgs: HtmlRestoreArgs,
+): Promise<ClaudedDocsErrorBody> {
+  await restoreHtmlBody(request.log, restoreArgs);
+  let fresh: ClaudedDocDbRow | undefined;
+  try {
+    const rows = await prisma.$queryRaw<ClaudedDocDbRow[]>`
+      SELECT ${CLAUDED_DOC_SELECT_COLUMNS}
+      FROM monitor.documents
+      WHERE id = ${BigInt(id)}
+      LIMIT 1
+    `;
+    fresh = rows[0];
+  } catch (error) {
+    return failWithDb(request, reply, "/api/clauded-docs/:id (PUT CAS re-select)", error);
+  }
+  if (fresh === undefined) {
+    reply.code(404);
+    return { error: "not_found", id };
+  }
+  reply.code(409);
+  return { error: "hash_conflict", expected: expectedHash, actual: fresh.content_hash };
 }
 
 /**
@@ -3071,17 +3133,44 @@ function failWithDb(
   return respondDbFailure(request, reply, route, error, "clauded-docs DB query failed");
 }
 
+/**
+ * errno token (ENOENT / EACCES / …) from a Node fs error, or undefined for a
+ * non-errno error. The raw error.message embeds absolute filesystem paths (info
+ * leak, red-team #21) and MUST NOT reach the response body — the errno code
+ * carries no path. Callers always log the full error server-side.
+ */
+export function fsErrnoCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Path-free reason for failWithFs — errno form or a generic fallback. */
+export function buildFsFailReason(error: unknown): string {
+  const code = fsErrnoCode(error);
+  return code !== undefined ? `fs error (${code})` : "filesystem operation failed";
+}
+
+/**
+ * Stage-prefixed, path-free fs error reason. Keeps the caller's discriminator
+ * prefix (e.g. html_export_read) — pinned by the html-export tests — while
+ * dropping the path-bearing raw message: the errno code, or a path-free fallback
+ * when the error carries no code (render / Playwright errors).
+ */
+export function prefixedFsReason(prefix: string, error: unknown, fallback: string): string {
+  return `${prefix}: ${fsErrnoCode(error) ?? fallback}`;
+}
+
 function failWithFs(
   request: FastifyRequest,
   reply: FastifyReply,
   route: string,
   error: unknown,
 ): ClaudedDocsErrorBody {
-  // Pull a short reason for the response body without leaking full stack/path.
-  const reason = error instanceof Error ? error.message : "unknown filesystem error";
+  // Response reason is path-free (errno only); the full error — which embeds the
+  // absolute path — is logged server-side, never returned (red-team #21).
   request.log.error({ err: error, route }, "clauded-docs FS operation failed");
   reply.code(503);
-  return { error: "filesystem_unavailable", reason };
+  return { error: "filesystem_unavailable", reason: buildFsFailReason(error) };
 }
 
 // CSP for HTML-body responses only: sandbox blocks script/form/popups and
