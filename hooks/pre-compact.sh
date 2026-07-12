@@ -48,37 +48,109 @@ SURVIVAL_PATH="${BACKUP_DIR}/${TIMESTAMP}_${SESSION_ID}_survival.md"
 SURVIVAL_TMP="$(mktemp -t "compact-survival-XXXXXX")"
 trap 'rm -f -- "${SURVIVAL_TMP}" 2>/dev/null || true' EXIT
 
-# 3a. Collect outcome candidates once (shared by 3d + 3e). Path priority mirrors track-outcome.sh:
-#   1. ~/.claude/data/outcomes/*.md (canonical) 2. ${PWD}/memory/outcomes/*.md (deprecated legacy).
-# nullglob makes "no matches" expand to zero args.
-prev_nullglob="$(shopt -p nullglob 2>/dev/null || printf '%s' '')"
-shopt -s nullglob
-outcome_candidates=()
-if [[ -d "${HOME}/.claude/data/outcomes" ]]; then
-  for f in "${HOME}"/.claude/data/outcomes/*.md; do
-    outcome_candidates+=("${f}")
-  done
-fi
-if [[ -d "${PWD}/memory/outcomes" ]]; then
-  for f in "${PWD}"/memory/outcomes/*.md; do
-    outcome_candidates+=("${f}")
-  done
-fi
-if [[ -n "${prev_nullglob}" ]]; then
-  eval "${prev_nullglob}" || true
+# 3a. Collect + sort ALL outcome paths ONCE, newest-first (shared by 3d summary + 3e correlation).
+# Path priority mirrors track-outcome.sh: 1. ~/.claude/data/outcomes/*.md (canonical)
+#   2. ${PWD}/memory/outcomes/*.md (deprecated legacy).
+# Bounded fan-out: one `find | xargs stat | sort` (a CONSTANT number of processes — NOT a stat fork
+# per file; mirrors the retention-prune pattern below), yielding every outcome path newest-first. The
+# perf win is the single sort + single-pass awk (3b), NOT a head-cap — so no head slice bounds the
+# corpus. The `2>/dev/null` here is best-effort scanning (the packet degrades to `(none)`/`?`), NOT an
+# error-signal path — so it is not a new suppression on a loud-fail path.
+#
+# Coverage: correlation reads the FULL corpus so an active CID older than the newest few outcomes
+# still surfaces (a multi-wave session can hold a CID active well below the recent-summary window).
+# The two consumers window independently in 3d/3e: SUMMARY_LIMIT windows the recent-outcomes TABLE
+# only, while CORRELATION_LIMIT is an OPTIONAL operator safety bound (PRECOMPACT_CORRELATION_LIMIT)
+# that windows the active-CID scan to the newest K WITHOUT ever truncating the summary. Empty / unset
+# / non-integer / 0 = unbounded (full corpus) — the default.
+SUMMARY_LIMIT=5
+CORRELATION_LIMIT="${PRECOMPACT_CORRELATION_LIMIT:-0}"
+# Non-integer / negative operator input → unbounded; also guards the -gt comparison in 3e.
+[[ "${CORRELATION_LIMIT}" =~ ^[0-9]+$ ]] || CORRELATION_LIMIT=0
+
+outcome_dirs=()
+[[ -d "${HOME}/.claude/data/outcomes" ]] && outcome_dirs+=("${HOME}/.claude/data/outcomes")
+[[ -d "${PWD}/memory/outcomes" ]] && outcome_dirs+=("${PWD}/memory/outcomes")
+
+sorted_paths=()
+if [[ ${#outcome_dirs[@]} -gt 0 ]]; then
+  # `{ ...; } || true` absorbs a benign non-zero pipe status under pipefail (e.g. stat racing a
+  # vanished file, or empty-input xargs); the scan degrades to empty, which the guard below tolerates.
+  # Command-sub + here-string read keeps `sorted_paths` in the current shell (a `| while` would
+  # populate a lost subshell).
+  sorted_raw="$(
+    {
+      find "${outcome_dirs[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null \
+        | xargs -0 stat -f '%m %N' 2>/dev/null \
+        | sort -rn \
+        | awk '{ $1=""; sub(/^ /, ""); print }'
+    } || true
+  )"
+  if [[ -n "${sorted_raw}" ]]; then
+    while IFS= read -r outcome_path; do
+      [[ -n "${outcome_path}" ]] && sorted_paths+=("${outcome_path}")
+    done <<<"${sorted_raw}"
+  fi
 fi
 
-# 3b. Sort outcome paths newest-first via stat -f (macOS BSD has no GNU find -printf).
-sorted_outcome_paths=""
-if [[ ${#outcome_candidates[@]} -gt 0 ]]; then
-  sorted_outcome_paths="$(
-    for f in "${outcome_candidates[@]}"; do
-      stat -f '%m %N' -- "${f}" 2>/dev/null || true
-    done | sort -rn | awk '{ $1=""; sub(/^ /, ""); print }'
+# 3b. Single awk pass over the full sorted corpus → one `path<TAB>result<TAB>cid` tuple per file
+# (newest first). One awk process regardless of corpus size (replaces the prior per-file awk fork —
+# one per outcome, ×2 for summary + correlation). `result` = first result: in the opening
+# frontmatter. `cid` is emitted only once the closing frontmatter fence (#2) is seen — so an
+# unterminated frontmatter yields no correlation.
+outcome_tuples=""
+if [[ ${#sorted_paths[@]} -gt 0 ]]; then
+  outcome_tuples="$(
+    awk '
+      function flush() {
+        if (have) { printf "%s\t%s\t%s\n", cur, result, (closed ? cid : "") }
+      }
+      FNR == 1 {
+        flush()
+        cur = FILENAME
+        have = 1
+        in_fm = 0
+        fence = 0
+        done_fm = 0
+        closed = 0
+        got_result = 0
+        got_cid = 0
+        result = ""
+        cid = ""
+      }
+      done_fm { next }
+      /^---[[:space:]]*$/ {
+        fence++
+        if (fence == 1) {
+          in_fm = 1
+          next
+        }
+        if (fence == 2) {
+          closed = 1
+          done_fm = 1
+          next
+        }
+      }
+      in_fm && !got_result && /^result:[[:space:]]*/ {
+        line = $0
+        sub(/^result:[[:space:]]*/, "", line)
+        gsub(/[[:space:]]*$/, "", line)
+        result = line
+        got_result = 1
+      }
+      in_fm && !got_cid && /^correlation_id:[[:space:]]*/ {
+        line = $0
+        sub(/^correlation_id:[[:space:]]*/, "", line)
+        gsub(/[[:space:]]*$/, "", line)
+        gsub(/^"/, "", line)
+        gsub(/"$/, "", line)
+        cid = line
+        got_cid = 1
+      }
+      END { flush() }
+    ' "${sorted_paths[@]}" 2>/dev/null || true
   )"
 fi
-# `|| true` absorbs the benign SIGPIPE when head closes stdin early (set -o pipefail would abort).
-recent_outcomes="$( { printf '%s\n' "${sorted_outcome_paths}" 2>/dev/null | head -n 5; } || true)"
 
 # 3c. Open-progress block. progress_list_open prints absolute paths newest-first or stays silent.
 open_progress_block=""
@@ -91,73 +163,40 @@ if [[ "${PROGRESS_TRACKER_AVAILABLE}" -eq 1 ]]; then
   fi
 fi
 
-# 3d. Recent-outcomes table rows.
+# 3d + 3e. Format the recent-outcomes table + active-correlation lines from the single tuple stream —
+# no per-file fork. The two windows are INDEPENDENT: the summary is always the newest SUMMARY_LIMIT
+# rows, while the correlation scan covers the FULL corpus by default (an optional CORRELATION_LIMIT
+# windows only the active-CID scan to the newest K, never the summary). Active = result in
+# {done_with_concerns, blocked, needs_context} with a non-empty CID. Both read the same newest-first
+# tuple order.
 recent_outcome_rows=""
-if [[ -n "${recent_outcomes}" ]]; then
-  while IFS= read -r outcome_path; do
-    [[ -z "${outcome_path}" ]] && continue
-    # First `result:` in the YAML frontmatter (between the leading and second '---').
-    result_value="$(
-      awk '
-        BEGIN { in_fm = 0; fence_count = 0 }
-        /^---[[:space:]]*$/ {
-          fence_count++
-          if (fence_count == 1) { in_fm = 1; next }
-          if (fence_count == 2) { exit }
-        }
-        in_fm && /^result:[[:space:]]*/ {
-          sub(/^result:[[:space:]]*/, "")
-          gsub(/[[:space:]]*$/, "")
-          print
-          exit
-        }
-      ' "${outcome_path}" 2>/dev/null || printf '?'
-    )"
-    [[ -z "${result_value}" ]] && result_value="?"
-    recent_outcome_rows+="| ${result_value} | ${outcome_path} |"$'\n'
-  done <<<"${recent_outcomes}"
-fi
-
-# 3e. Active correlation IDs. "Active" = result in {done_with_concerns, blocked, needs_context}.
-# Single awk pass extracts result + correlation_id from frontmatter; empty CIDs skipped (legacy).
 active_cid_lines=""
-if [[ -n "${sorted_outcome_paths}" ]]; then
-  while IFS= read -r outcome_path; do
-    [[ -z "${outcome_path}" ]] && continue
-    pair="$(
-      awk '
-        BEGIN { in_fm = 0; fence_count = 0; result = ""; cid = "" }
-        /^---[[:space:]]*$/ {
-          fence_count++
-          if (fence_count == 1) { in_fm = 1; next }
-          if (fence_count == 2) {
-            gsub(/^"/, "", cid); gsub(/"$/, "", cid)
-            printf "%s\t%s", result, cid
-            exit
-          }
-        }
-        in_fm && /^result:[[:space:]]*/ {
-          sub(/^result:[[:space:]]*/, "")
-          gsub(/[[:space:]]*$/, "")
-          result = $0
-        }
-        in_fm && /^correlation_id:[[:space:]]*/ {
-          sub(/^correlation_id:[[:space:]]*/, "")
-          gsub(/[[:space:]]*$/, "")
-          cid = $0
-        }
-      ' "${outcome_path}" 2>/dev/null || printf '\t'
-    )"
-    result_value="${pair%%	*}"
-    cid_value="${pair#*	}"
-    [[ -z "${cid_value}" ]] && continue
-    case "${result_value}" in
+summary_seen=0
+scan_pos=0
+if [[ -n "${outcome_tuples}" ]]; then
+  while IFS=$'\t' read -r t_path t_result t_cid; do
+    [[ -z "${t_path}" ]] && continue
+    scan_pos=$((scan_pos + 1))
+    # Summary window — exactly the newest SUMMARY_LIMIT rows, decoupled from CORRELATION_LIMIT.
+    if [[ "${summary_seen}" -lt "${SUMMARY_LIMIT}" ]]; then
+      row_result="${t_result}"
+      [[ -z "${row_result}" ]] && row_result="?"
+      recent_outcome_rows+="| ${row_result} | ${t_path} |"$'\n'
+      summary_seen=$((summary_seen + 1))
+    fi
+    # Correlation window — full corpus by default; a positive operator bound windows the active-CID
+    # scan to the newest CORRELATION_LIMIT without touching the summary above.
+    if [[ "${CORRELATION_LIMIT}" -gt 0 && "${scan_pos}" -gt "${CORRELATION_LIMIT}" ]]; then
+      continue
+    fi
+    [[ -z "${t_cid}" ]] && continue
+    case "${t_result}" in
       done_with_concerns | blocked | needs_context)
-        active_cid_lines+="- ${cid_value} (status: ${result_value})"$'\n'
+        active_cid_lines+="- ${t_cid} (status: ${t_result})"$'\n'
         ;;
       *) ;;
     esac
-  done <<<"${sorted_outcome_paths}"
+  done <<<"${outcome_tuples}"
 fi
 
 # 3f. Single survival-packet write — all sections in one redirect block (avoids SC2129).
@@ -177,7 +216,7 @@ fi
   fi
   printf '\n'
 
-  printf '## Recent outcomes (newest 5)\n\n'
+  printf '## Recent outcomes (newest %s)\n\n' "${SUMMARY_LIMIT}"
   printf '| result | path |\n'
   printf '|--------|------|\n'
   if [[ -n "${recent_outcome_rows}" ]]; then
