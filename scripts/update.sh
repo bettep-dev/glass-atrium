@@ -1078,6 +1078,22 @@ update_capture_base_content() {
       kept=$((kept + 1))
       continue
     fi
+    # finding #9 part 4: before overwriting a PRIOR base entry, snapshot it beside
+    # this run's live before-image (<name>.md.base.bak next to <name>.md.bak) so
+    # --restore-agents can reverse the base store, not just the live body. Gated on
+    # the live before-image existing: ONLY a git_txn-APPLIED file is restorable, so
+    # only it needs a base snapshot — a byte-identical / no-net-change advance has no
+    # <name>.md.bak and is never restored. The gate also guarantees the cycle dir
+    # exists (it holds that .bak). A prior base entry MUST exist to snapshot; its
+    # absence is the "first base for this agent" case restore reverses by DELETING
+    # the entry. Best-effort + LOUD: a failed snapshot degrades that file's restore
+    # to the safe base-DELETE fallback (gated 2-way), never aborts the capture.
+    if [[ -n "${_update_agent_backup_dir}" &&
+      -f "${_update_agent_backup_dir}/${base}.bak" &&
+      -f "${store}/${base}" ]]; then
+      spine_atomic_swap "${store}/${base}" "${_update_agent_backup_dir}/${base}.base.bak" \
+        || update_log "WARN: prior base snapshot failed for ${base} — --restore-agents will DELETE its base entry (safe gated 2-way fallback)"
+    fi
     if cp -p -- "${file}" "${store}/${base}"; then
       count=$((count + 1))
     else
@@ -1765,11 +1781,46 @@ PY
   done
 }
 
+# Reverse the base-content store entry for a just-restored agent (finding #9 part
+# 4). A restore that reverts the live agent body WITHOUT reverting its base entry
+# leaves the NEXT update's 3-way merge keyed on the wrong (release) base. A
+# <name>.md.base.bak snapshot beside the live before-image (captured pre-advance in
+# update_capture_base_content) → restore it atomically (temp+rename); its ABSENCE
+# (the release created the FIRST base for this agent, or the capture-time snapshot
+# failed) → DELETE the live base entry so load_base_text returns None and the next
+# merge falls back to the deterministic gated 2-way present-both path (strictly
+# safer than a poisoned diff3 base). Args: $1 = <name>.md · $2 = restore cycle dir
+# · $3 = base-content store dir. rc 1 on a revert/delete failure — LOUD, never
+# silent (the caller marks the whole restore failed).
+update_restore_base_entry() {
+  local name="$1" restore_dir="$2" store="$3" base_bak base_target
+  base_bak="${restore_dir}/${name}.base.bak"
+  base_target="${store}/${name}"
+  if [[ -f "${base_bak}" ]]; then
+    if spine_atomic_swap "${base_bak}" "${base_target}"; then
+      update_log "reverted base-content store entry for ${name}"
+    else
+      update_log "WARN: base-content store revert FAILED for ${name}"
+      return 1
+    fi
+  elif [[ -e "${base_target}" ]]; then
+    if rm -f -- "${base_target}"; then
+      update_log "deleted base-content store entry for ${name} (no prior base snapshot → safe gated 2-way next merge)"
+    else
+      update_log "WARN: base-content store delete FAILED for ${name}"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 # Restore agent md from a <cycle-id> before-image set. Serializes (writes live agent
 # files) via the same pause+lock. Atomic per-file (temp+rename). Loud-fail (exit 10)
-# on a bad cycle-id or missing snapshot dir. Prune runs first (retention).
+# on a bad cycle-id or missing snapshot dir. Prune runs first (retention). Each
+# reverted live body ALSO reverses its base-content store entry (finding #9 part 4)
+# so the next 3-way merge is not left keyed on the reverted-away release base.
 update_restore_agents() {
-  local cycle_id="${1:-}" root base restore_dir bak name target real count=0 fail=0
+  local cycle_id="${1:-}" root base restore_dir bak name target real store count=0 fail=0
   [[ -n "${cycle_id}" ]] || update_die_code 10 "--restore-agents requires a <cycle-id>"
   # SECURITY: reject path separators / traversal in the request-supplied cycle-id.
   case "${cycle_id}" in
@@ -1783,7 +1834,13 @@ update_restore_agents() {
   restore_dir="${base}/${cycle_id}"
   [[ -d "${restore_dir}" ]] \
     || update_die_code 10 "no agents-bak snapshot for cycle-id '${cycle_id}' (${restore_dir})"
+  # base-content store dir (same resolution the forward capture used) — the base
+  # reversal target (finding #9 part 4).
+  store="$(update_base_store_dir)"
   update_serialize_begin
+  # The *.md.bak glob matches ONLY the live before-images — a sibling *.md.base.bak
+  # ends in .base.bak, not .md.bak, so it is never iterated here (it is consumed by
+  # update_restore_base_entry below, keyed on the live file's <name>).
   for bak in "${restore_dir}"/*.md.bak; do
     [[ -e "${bak}" ]] || continue
     name="${bak##*/}"
@@ -1794,6 +1851,9 @@ update_restore_agents() {
       && mv -f -- "${real}.restore.$$" "${real}" 2>/dev/null; then
       update_log "restored agents/${name} from ${cycle_id} before-image"
       count=$((count + 1))
+      # base reversal AFTER the live body reverted — keep base + live in lock-step
+      # (a base revert without its live revert would desync the next merge anchor).
+      update_restore_base_entry "${name}" "${restore_dir}" "${store}" || fail=1
     else
       rm -f -- "${real}.restore.$$" 2>/dev/null || true
       update_log "WARN: restore FAILED for agents/${name}"
@@ -1994,6 +2054,44 @@ _update_removal_commit_callback() {
   return "${rc}"
 }
 
+# Retire the settings.json BINDINGS of any HOOK files the vendor-removal sweep just
+# Trashed (#13). A dropped hooks/<name> file whose event->hook binding LINGERS still
+# points at the now-absent file → the hook ERRORS when its event fires. wire_hooks only
+# ADDS bindings, so the launcher's targeted `retire-hook-bindings` subcommand (a jq
+# surgical per-basename removal) is invoked — via the SAME launcher-subprocess model as
+# update_wire_hooks_post_apply (sourcing ga-core.sh in-process collides on readonly
+# GA_ROOT + bare log()/die()). Best-effort + LOUD: a retire failure WARNs (the file is
+# already removed; doctor's hook-binding check surfaces a dangling binding), NEVER rolls
+# back the applied sync. Args: $1 = confirmed-removed paths (newline-separated) · $2 =
+# live install root.
+update_retire_swept_hook_bindings() {
+  local removed_paths="$1" root="$2" path launcher
+  local -a basenames=()
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # a BOUND hook is a TOP-LEVEL hooks/<basename> file — bindings key on the flat
+    # basename, so hooks/lib/*, hooks/test/* etc. are never bound and are skipped.
+    case "${path}" in
+      hooks/*/*) continue ;; # nested (lib/test/…) — not a bound hook
+      hooks/*) basenames+=("${path#hooks/}") ;;
+      *) continue ;; # non-hook file
+    esac
+  done <<<"${removed_paths}"
+  [[ "${#basenames[@]}" -gt 0 ]] || return 0
+  launcher="${root}/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing (${launcher}) — could NOT retire the settings.json binding(s) for removed hook(s): ${basenames[*]}; run '${launcher} retire-hook-bindings ${basenames[*]}' after repairing the install"
+    return 0
+  fi
+  # if-condition suppresses set -e; a launcher die/non-zero is a plain rc here (never
+  # aborts the parent) → WARN, do not roll back the already-applied sync.
+  if "${launcher}" retire-hook-bindings "${basenames[@]}"; then
+    update_log "retired settings.json binding(s) for removed hook(s): ${basenames[*]}"
+  else
+    update_log "WARN: retire of settings.json binding(s) for removed hook(s) FAILED (${basenames[*]}) — the dropped hook file(s) were removed but a dangling binding may remain; run '${launcher} retire-hook-bindings ${basenames[*]}' manually"
+  fi
+}
+
 # Drive the vendor-removal sweep for a completed apply. No prior-vendor baseline
 # (first-ever update / relocated install) → empty set → no-op (degrade-safe: never
 # sweep without vendor provenance, the same stance as the roster gate's remove
@@ -2054,7 +2152,13 @@ update_sweep_removed_files() {
   printf '%s' "${records}" | gate_apply_confirmed _update_removal_commit_callback || rc=$?
   rm -f -- "${clean_removals}" "${sensitive_removals}" "${empty_proposed}"
   case "${rc}" in
-    0) update_log "vendor-removal sweep complete" ;;
+    0)
+      update_log "vendor-removal sweep complete"
+      # #13: only on a CONFIRMED sweep (all dropped files moved to Trash) retire the
+      # settings.json bindings of any removed hook files — a declined/failed sweep left
+      # the files in place, so their bindings MUST stay.
+      update_retire_swept_hook_bindings "${_update_removal_paths}" "${root}"
+      ;;
     1) update_log "vendor-removal sweep declined — dropped files left in place" ;;
     2) update_log "vendor-removal sweep: nothing to remove" ;;
     3) update_die_code 13 "vendor-removal sweep FAILED to move one or more dropped files to Trash — update files applied, but stale vendor files remain; remove them manually (see the WARN lines above)" ;;

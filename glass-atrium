@@ -748,6 +748,23 @@ passthrough() {
     exit "${update_rc}"
   fi
 
+  # retire-hook-bindings: the `glass-atrium update` vendor-removal sweep forwards the
+  # basenames of vendor-DROPPED hook files here so their now-dangling settings.json
+  # bindings are retired (the dropped file is Trashed; an un-retired binding still
+  # points at the absent file and ERRORS when its event fires — #13). Detected on the
+  # RAW tokens BEFORE the position-independent split below (which loud-dies on a 2nd
+  # non-flag token), exactly like the `update` forward above — the basenames are
+  # positional args, each passed to the targeted retire primitive.
+  if [[ "$1" == "retire-hook-bindings" ]]; then
+    shift
+    local rhb
+    for rhb in "$@"; do
+      [[ -n "${rhb}" ]] || continue
+      retire_hook_binding "${rhb}"
+    done
+    return 0
+  fi
+
   # Position-independent token split (non-update engine subcommands): the SUBCOMMAND is
   # the first NON-flag token (anything not matching -*), every other token is a flag
   # routed to ga_parse_args. This accepts both `prune` and the natural flag-first
