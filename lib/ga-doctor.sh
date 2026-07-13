@@ -373,12 +373,71 @@ run_doctor() {
     log "  ok   : no inject-scope-rules drop log (no block-drop events)"
   fi
 
+  # 11. launchd deploy-drift gate (recurrence guard for the stale-deployed PATH incident). The plist
+  #     renderer (render-launchd-plists.sh) is RENDER-ONLY (T32): it writes plists into RENDERED_PLIST_DIR
+  #     but NEVER deploys/reloads them — deploy+reload is a SEPARATE step (load_launchd_jobs / --load-launchd).
+  #     So a renderer change (e.g. a PATH fix) that is re-rendered but NEVER re-deployed leaves the plists
+  #     ACTUALLY LOADED under ${LAUNCH_AGENTS} diverged from what the current renderer produces — the jobs
+  #     run for days on stale content (the exact PATH-drift incident). Render-time probe_launchd_deps()
+  #     guards only render-time resolvability, NOT this deploy gap. Detect it: re-render the CURRENT
+  #     expected plists into a TEMP dir (GA_PLIST_OUT override — side-effect-free per the render-only
+  #     contract, never touches RENDERED_PLIST_DIR) and sha256-compare each DEPLOYED plist against its
+  #     temp-rendered twin. A mismatch is advisory-but-loud (feeds `warns`, never a hard FAIL — same
+  #     treatment as §8 manifest drift): a legitimately-drifted deployed install is FLAGGED, not failed.
+  #     Mutation-free w.r.t. install state (temp scratch render + read-only compare; the temp dir is
+  #     removed after). Skips are LOUD, never silent OKs (Precondition Loud-Fail Principle): NO deployed
+  #     com.glass-atrium plists (not-yet-loaded install) is a CLEAN skip (not a warn); a missing renderer,
+  #     no sha tool, or a failed reference-render is a WARN-style skip.
+  local launchd_drift=0
+  local deployed_count=0 ld_job ld_label
+  for ld_job in "${LAUNCHD_JOBS[@]}"; do
+    ld_label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+    [[ -f "${LAUNCH_AGENTS}/${ld_label}.plist" ]] && deployed_count=$((deployed_count + 1))
+  done
+  if [[ "${deployed_count}" -eq 0 ]]; then
+    log "  ok   : no deployed com.glass-atrium launchd plists (not-yet-loaded install — deploy-drift check skipped)"
+  elif [[ ! -f "${PLIST_RENDERER}" ]]; then
+    log "  warn : launchd deploy-drift check skipped — plist renderer missing (${PLIST_RENDERER})"
+  else
+    local ld_sha=()
+    if command -v shasum >/dev/null 2>&1; then
+      ld_sha=(shasum -a 256)
+    elif command -v sha256sum >/dev/null 2>&1; then
+      ld_sha=(sha256sum)
+    fi
+    if [[ "${#ld_sha[@]}" -eq 0 ]]; then
+      log "  warn : launchd deploy-drift check skipped — no shasum/sha256sum for plist comparison"
+    else
+      local ld_tmp
+      ld_tmp="$(mktemp -d -t ga-doctor-launchd.XXXXXX)"
+      # Re-render the current expected plists into the temp dir. GA_PLIST_OUT redirects the write
+      # (render-only contract → RENDERED_PLIST_DIR untouched); GA_CONFIG_TOML pins THIS install's
+      # config (same input load_launchd_jobs deployed from); GA_SKIP_DEP_PROBE silences the same-host
+      # tool probe. A render failure (config missing/invalid, lint, path-leak) is a LOUD skip, never a
+      # false OK — its non-zero exit routes to the else branch.
+      if GA_CONFIG_TOML="${CONFIG_TOML}" GA_PLIST_OUT="${ld_tmp}" GA_SKIP_DEP_PROBE=1 \
+        bash "${PLIST_RENDERER}" >/dev/null 2>&1; then
+        # launchd_deploy_drift logs each drift to stderr + echoes the drift count (stdout verdict).
+        # shellcheck disable=SC2311,SC2312
+        launchd_drift="$(launchd_deploy_drift "${ld_tmp}" "${ld_sha[@]}")"
+        if [[ "${launchd_drift}" -eq 0 ]]; then
+          log "  ok   : ${deployed_count} deployed launchd plist(s) match the current renderer output"
+        else
+          log "  ---- ${launchd_drift} stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy ----"
+        fi
+      else
+        log "  warn : launchd deploy-drift check skipped — reference re-render failed (config missing/invalid? run 'glass-atrium render-plists')"
+      fi
+      [[ -n "${ld_tmp}" && -d "${ld_tmp}" ]] && rm -rf -- "${ld_tmp}"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift warning(s) — see above) =="
     fi
     return 0
   fi
@@ -420,6 +479,41 @@ manifest_hash_drift() {
       drift=$((drift + 1))
     fi
   done < <(jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}")
+  printf '%d\n' "${drift}"
+}
+
+# launchd deploy-drift comparison — run_doctor §11 helper. For each com.glass-atrium.* job whose plist
+# is DEPLOYED under ${LAUNCH_AGENTS}, sha256-compare the deployed file against its freshly re-rendered
+# twin in $1 (the temp render dir). A deployed plist whose content diverges from the current renderer
+# output is STALE — rendered-but-never-redeployed drift (the PATH-incident recurrence surface). Each
+# drift is logged to stderr (log → fd2) and the total is the stdout verdict (mirrors manifest_hash_drift).
+# $1 = temp render dir · $2.. = the sha256 command (e.g. `shasum -a 256`). A job with NO deployed plist is
+# skipped (partial-load is not this check's drift); a missing twin is a renderer anomaly, logged not
+# counted. Callers pre-verify the reference render ran + the sha tool resolves.
+launchd_deploy_drift() {
+  local tmp_dir="$1"
+  shift
+  local ld_job label deployed twin dep_hash twin_hash drift=0
+  for ld_job in "${LAUNCHD_JOBS[@]}"; do
+    label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
+    deployed="${LAUNCH_AGENTS}/${label}.plist"
+    twin="${tmp_dir}/${label}.plist"
+    # only DEPLOYED jobs are in scope — a not-loaded job is not this check's drift.
+    [[ -f "${deployed}" ]] || continue
+    if [[ ! -f "${twin}" ]]; then
+      log "  warn : launchd deploy-drift — no rendered reference for ${label} (renderer anomaly)"
+      continue
+    fi
+    # first whitespace field of the sha tool output is the hex digest (drop the trailing filename).
+    dep_hash="$("$@" -- "${deployed}")"
+    dep_hash="${dep_hash%% *}"
+    twin_hash="$("$@" -- "${twin}")"
+    twin_hash="${twin_hash%% *}"
+    if [[ "${dep_hash}" != "${twin_hash}" ]]; then
+      log "  warn : stale-deployed launchd plist drift: ${label} — re-render + --load-launchd to redeploy"
+      drift=$((drift + 1))
+    fi
+  done
   printf '%d\n' "${drift}"
 }
 
