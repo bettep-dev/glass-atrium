@@ -238,11 +238,9 @@ run_doctor() {
     # sha256sum), then run the git-independent reconciliation. An absent tool is a loud skip, never
     # a silent pass (Precondition Loud-Fail Principle).
     local drift_sha=()
-    if command -v shasum >/dev/null 2>&1; then
-      drift_sha=(shasum -a 256)
-    elif command -v sha256sum >/dev/null 2>&1; then
-      drift_sha=(sha256sum)
-    fi
+    # empty resolver → read hits EOF (rc 1); || true keeps set -e off so the empty-array loud-skip fires.
+    # shellcheck disable=SC2310
+    read -ra drift_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#drift_sha[@]}" -eq 0 ]]; then
       log "  warn : manifest drift gate skipped (consumer install — no shasum/sha256sum for hash reconciliation)"
     else
@@ -400,11 +398,9 @@ run_doctor() {
     log "  warn : launchd deploy-drift check skipped — plist renderer missing (${PLIST_RENDERER})"
   else
     local ld_sha=()
-    if command -v shasum >/dev/null 2>&1; then
-      ld_sha=(shasum -a 256)
-    elif command -v sha256sum >/dev/null 2>&1; then
-      ld_sha=(sha256sum)
-    fi
+    # empty resolver → read hits EOF (rc 1); || true keeps set -e off so the empty-array loud-skip fires.
+    # shellcheck disable=SC2310
+    read -ra ld_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#ld_sha[@]}" -eq 0 ]]; then
       log "  warn : launchd deploy-drift check skipped — no shasum/sha256sum for plist comparison"
     else
@@ -453,6 +449,28 @@ run_doctor() {
   return 1
 }
 
+# sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens
+# (`shasum -a 256` → `sha256sum`, generate-manifest.sh's order) as a whitespace line for a
+# `read -ra`, or NOTHING when neither tool exists. Callers keep their own empty-array loud-skip
+# (Precondition Loud-Fail Principle); this centralizes only the resolution order.
+_resolve_sha256_cmd() {
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s\n' 'shasum -a 256'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s\n' 'sha256sum'
+  fi
+}
+
+# sha256 hex-digest extract (manifest_hash_drift / launchd_deploy_drift shared) — runs the passed
+# sha command and echoes ONLY its first whitespace field (the hex digest, dropping the trailing
+# filename). `|| return` propagates a sha failure to the caller, matching the abort semantics of the
+# inline form it replaces. Usage: _sha_hex "${sha[@]}" -- "${file}".
+_sha_hex() {
+  local out
+  out="$("$@")" || return
+  printf '%s\n' "${out%% *}"
+}
+
 # consumer-install manifest hash reconciliation (git-independent) — run_doctor §8 helper.
 # generate-manifest.sh --check is git-backed (git ls-files) and hard-exits 3 on a non-git root; this
 # reconciles the manifest WITHOUT git so a deployed consumer install (no .git) still gets a real
@@ -479,9 +497,9 @@ manifest_hash_drift() {
       drift=$((drift + 1))
       continue
     fi
-    # first whitespace field of the sha tool output is the hex digest (drop the trailing filename).
-    actual="$("$@" -- "${abs}")"
-    actual="${actual%% *}"
+    # _sha_hex propagates a sha failure via || return (the assignment rc still trips set -e); SC2311 masking is moot.
+    # shellcheck disable=SC2311
+    actual="$(_sha_hex "$@" -- "${abs}")"
     if [[ "${actual}" != "${sha_hash}" ]]; then
       log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
       drift=$((drift + 1))
@@ -512,11 +530,11 @@ launchd_deploy_drift() {
       log "  warn : launchd deploy-drift — no rendered reference for ${label} (renderer anomaly)"
       continue
     fi
-    # first whitespace field of the sha tool output is the hex digest (drop the trailing filename).
-    dep_hash="$("$@" -- "${deployed}")"
-    dep_hash="${dep_hash%% *}"
-    twin_hash="$("$@" -- "${twin}")"
-    twin_hash="${twin_hash%% *}"
+    # _sha_hex propagates a sha failure via || return (the assignment rc still trips set -e); SC2311 masking is moot.
+    # shellcheck disable=SC2311
+    dep_hash="$(_sha_hex "$@" -- "${deployed}")"
+    # shellcheck disable=SC2311
+    twin_hash="$(_sha_hex "$@" -- "${twin}")"
     if [[ "${dep_hash}" != "${twin_hash}" ]]; then
       log "  warn : stale-deployed launchd plist drift: ${label} — re-render + --load-launchd to redeploy"
       drift=$((drift + 1))

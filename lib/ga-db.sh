@@ -2,6 +2,28 @@
 # shellcheck disable=SC2154  # references shared globals (DB_NAME/DB_SETUP_SCRIPT/RECREATE_DB/RECREATE_YES/PG_SOCKET/GA_ROOT/DRY_RUN/LOAD_LAUNCHD/BOOTSTRAP_EXIT_HEALTH/BOOTSTRAP_HEALTH_WINDOW_SECS) assigned by ga_init_env in ga-env.sh — present at runtime after lib/ga-core.sh sources every domain, unresolvable when linted standalone
 # Glass Atrium — database provisioning/recreate + drop-with-backup + monitor health gate domain. Sourced in-process by lib/ga-core.sh; no file-scope strict mode / traps (owned by the entry point).
 
+# DB-setup precondition guard (recreate_db_gate / run_db_setup shared) — asserts the oss-db-setup.sh
+# script exists AND the /tmp-seam guard holds, dying with the exact remediation on either; both callers
+# invoke it first so the two preconditions always travel together.
+# SEAM GUARD (fail-closed): oss-db-setup.sh hardcodes PG_SOCKET=/tmp + ignores GA_PG_SOCKET. A non-/tmp
+# seam socket would delegate against the LIVE /tmp cluster (silent probe/mutate split) → refuse.
+_require_db_setup_ready() {
+  [[ -f "${DB_SETUP_SCRIPT}" ]] || die "DB setup script missing: ${DB_SETUP_SCRIPT}"
+  [[ "${PG_SOCKET}" == "/tmp" ]] || die "GA_PG_SOCKET seam active (${PG_SOCKET}) but oss-db-setup.sh is /tmp-only — set GA_SKIP_DB_SETUP=1 (or GA_DB_NAME) for DB isolation"
+}
+
+# GA-database existence probe (setup_database / drop_databases shared) — the single injection-safe
+# audit surface. SECURITY: parameterized bind — $1 via psql -v dbname + the :'dbname' quoted
+# substitution fed over STDIN, never SQL-string concat. STDIN not -c: psql expands :'var' only for
+# stdin/-f (mirrors ga_detect_postgres_role; core-security.md). Echoes "1" when present, empty when
+# absent; psql is the LAST command so its exit code surfaces to a caller's fail-closed gate (a failed
+# server-unreachable probe stays non-zero).
+_pg_database_exists_probe() {
+  psql -h "${PG_SOCKET}" -d postgres -v dbname="$1" -tA 2>/dev/null <<'SQL'
+SELECT 1 FROM pg_database WHERE datname=:'dbname'
+SQL
+}
+
 # same-name conflict recreate gate (--recreate-db)
 # Backs up + drops + recreates an EXISTING DB. SANDBOX-ONLY by construction:
 #   * refuses on the live DB 'glass_atrium' unless GA_DB_NAME points the whole DB path at a
@@ -38,10 +60,7 @@ recreate_db_gate() {
   # delegate to oss-db-setup.sh with GA_DB_RECREATE=1: it backs up (parameterized
   # pg_dump of DB_NAME, NEVER live glass_atrium), drains connections, drops, then runs
   # the full createdb + .env + migrate-deploy path against the recreated DB.
-  [[ -f "${DB_SETUP_SCRIPT}" ]] || die "DB setup script missing: ${DB_SETUP_SCRIPT}"
-  # SEAM GUARD (fail-closed): oss-db-setup.sh hardcodes PG_SOCKET=/tmp + ignores GA_PG_SOCKET.
-  # A non-/tmp seam socket would delegate against the LIVE /tmp cluster (silent probe/mutate split) → refuse.
-  [[ "${PG_SOCKET}" == "/tmp" ]] || die "GA_PG_SOCKET seam active (${PG_SOCKET}) but oss-db-setup.sh is /tmp-only — set GA_SKIP_DB_SETUP=1 (or GA_DB_NAME) for DB isolation"
+  _require_db_setup_ready
   log "== DB recreate: oss-db-setup.sh GA_DB_RECREATE=1 (cwd=${GA_ROOT}/monitor) =="
   # preserve the child's named exit code (5/6/7/8) — a CI/dashboard wrapper branches on them (not die's generic 1).
   local db_rc
@@ -64,10 +83,7 @@ recreate_db_gate() {
 # full DB path, regardless of DB presence — safe to repeat (oss-db-setup.sh is
 # idempotent: createdb skip / .env preserve / migrate deploy applies pending only).
 run_db_setup() {
-  [[ -f "${DB_SETUP_SCRIPT}" ]] || die "DB setup script missing: ${DB_SETUP_SCRIPT}"
-  # SEAM GUARD (fail-closed): oss-db-setup.sh hardcodes PG_SOCKET=/tmp + ignores GA_PG_SOCKET.
-  # A non-/tmp seam socket would delegate against the LIVE /tmp cluster (silent probe/mutate split) → refuse.
-  [[ "${PG_SOCKET}" == "/tmp" ]] || die "GA_PG_SOCKET seam active (${PG_SOCKET}) but oss-db-setup.sh is /tmp-only — set GA_SKIP_DB_SETUP=1 (or GA_DB_NAME) for DB isolation"
+  _require_db_setup_ready
   log "== DB bootstrap: oss-db-setup.sh (cwd=${GA_ROOT}/monitor) =="
   # cwd precondition of the script: monitor project root (prisma.config.ts)
   # preserve the child's named exit code (3/4/5/6) — a CI/dashboard wrapper branches on them.
@@ -109,13 +125,9 @@ setup_database() {
     || return 1
   # presence probe only — a server-down/unreachable socket falls through to the full setup path (createdb loud-fails with a named code).
   local db_exists
-  # SECURITY: parameterized bind — DB_NAME via psql -v + :'dbname' over STDIN, never SQL-string concat.
-  # STDIN not -c: psql expands :'var' only for stdin/-f (mirrors ga_detect_postgres_role; core-security.md).
-  db_exists="$(
-    psql -h "${PG_SOCKET}" -d postgres -v dbname="${DB_NAME}" -tA 2>/dev/null <<'SQL' || true
-SELECT 1 FROM pg_database WHERE datname=:'dbname'
-SQL
-  )"
+  # server-down/unreachable socket → || true → empty db_exists → falls through to the full setup path.
+  # shellcheck disable=SC2310,SC2311
+  db_exists="$(_pg_database_exists_probe "${DB_NAME}" || true)"
   if [[ "${db_exists}" == "1" ]]; then
     # SAME-NAME CONFLICT: --recreate-db requested AND the DB exists. Default (no flag) = bare skip (idempotent re-run).
     if "${RECREATE_DB}"; then
@@ -176,13 +188,9 @@ drop_databases() {
   # Scope is EXACTLY the two GA databases — never a wildcard, never "drop all".
   for db in "${DB_NAME}" "${DB_NAME}_shadow"; do
     # Absent DB or a FAILED probe (server unreachable) → skip dump AND drop, data-preserving (loud warn).
-    # SECURITY: parameterized bind — ${db} via psql -v + :'dbname' over STDIN, never SQL-string concat.
-    # NO `|| true`: a failed psql (server unreachable) keeps its non-zero exit → fail-closed skip-drop below.
-    if ! probe="$(
-      psql -h "${PG_SOCKET}" -d postgres -v dbname="${db}" -tA 2>/dev/null <<'SQL'
-SELECT 1 FROM pg_database WHERE datname=:'dbname'
-SQL
-    )"; then
+    # NO `|| true`: a failed psql keeps its non-zero exit (helper's last command) → fail-closed skip-drop.
+    # shellcheck disable=SC2310,SC2311
+    if ! probe="$(_pg_database_exists_probe "${db}")"; then
       log "  warn: existence probe for '${db}' failed (server unreachable?) — drop skipped (data preserved)"
       continue
     fi
