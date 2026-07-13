@@ -526,6 +526,21 @@ _provision_render_selftest() {
   return 1
 }
 
+# _provision_tty_gate_ok — is the launcher's INHERITED stdin+stdout a real terminal? The in-place
+# setup-token auto-run inherits fd 0/1 (the kqueue-able pty SLAVES, /dev/ttysNNN) so Bun's node:tty
+# WriteStream can kqueue them; the ${TTY} /dev/tty handle (/dev/fd/3|4, a BSD-fdesc dup of
+# open("/dev/tty")) throws EINVAL and crashes setup-token. Gate on fd 0 AND fd 1 only — fd 2 is
+# DELIBERATELY not tested: in the menu install path it is run_gate_quiet's GATE_QUIET_LOG temp file
+# (legitimately non-tty). GA_AUTH_FORCE_TTY is a test seam (the bats harness / a subagent has NO
+# controlling terminal): 1 = force pass, 0 = force fail, unset = probe the real fds.
+_provision_tty_gate_ok() {
+  case "${GA_AUTH_FORCE_TTY:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+    *) [[ -t 0 && -t 1 ]] ;;
+  esac
+}
+
 # preflight_provision_headless_token — the AUTH-gate headless-provisioning step. IDEMPOTENT: when the
 # secrets file exists AND the self-test passes, SKIP (no re-prompt). Otherwise it acquires a long-lived
 # OAuth token from the FIRST source that yields a value passing render + self-test, in order:
@@ -537,11 +552,13 @@ _provision_render_selftest() {
 #      long token across the 80-col boundary, so sanitize_setup_token's `sk-ant-oat…` grep extracts only
 #      a TRUNCATED fragment (renders OK, then 401s — the exact user-reported failure). Retained for older
 #      CLIs / CI where the capture is byte-clean; any failure falls through to (C);
-#   C) the INTERACTIVE path — offer [1] run `claude setup-token` IN PLACE (its std fds ARE the TTY, so
-#      stdout stays a real terminal and the token prints UNWRAPPED; the launcher NEVER reads that stdout)
-#      or [2] paste a token from `claude setup-token` in another terminal (default). Either way the value
-#      is read SILENTLY off the TTY (no echo → never in the scrollback / transcript), sanitized, piped to
-#      render via STDIN — never on argv / a pipe / a log.
+#   C) the INTERACTIVE path — AUTO-RUN `claude setup-token` IN PLACE when the launcher's INHERITED fd 0/1
+#      are real terminals (the kqueue-able pty SLAVES; the ${TTY} /dev/tty handle crashes Bun's node:tty
+#      WriteStream with EINVAL). The child INHERITS fd 0/1 (NO ${TTY} redirect) with stderr merged via
+#      2>&1; the launcher NEVER reads that stdout. When the gate is false (passthrough / piped / CI) OR the
+#      run exits non-zero, it falls back to a manual paste from `claude setup-token` in another terminal.
+#      Either way the value is read SILENTLY off the TTY (no echo → never in the scrollback / transcript),
+#      sanitized, piped to render via STDIN — never on argv / a pipe / a log.
 # Loud-fails on a real failure (named return codes); non-fatal (a failure WARNs, daemons keep the keychain
 # fallback) — the launchd 401 is a daemon-only issue, not an interactive-install blocker. The token value
 # never touches argv, is never echoed/logged, and dies with the enclosing local.
@@ -552,7 +569,7 @@ _provision_render_selftest() {
 #   3 — no usable value from ANY source (auto-capture + paste both empty / no TTY to prompt)
 #   4 — render-claude-auth.sh rejected the value (its own exit 6/7/8 propagated)
 preflight_provision_headless_token() {
-  local secrets_file render_script env_val sanitized captured_value pasted tty_mode choice setup_bin st_rc=0 pv_rc=0
+  local secrets_file render_script env_val sanitized captured_value pasted tty_mode setup_bin st_rc=0 pv_rc=0
   secrets_file="${GA_ROOT:-${HOME}/.glass-atrium}/secrets/claude-auth.env"
   render_script="$(ga_render_auth_script)"
 
@@ -624,7 +641,7 @@ preflight_provision_headless_token() {
     return 3
   fi
 
-  # COOKED mode for the whole interactive segment (choice → optional in-place setup-token → silent paste).
+  # COOKED mode for the whole interactive segment (optional in-place setup-token → silent paste).
   # Reached from BOTH a cooked caller (menu dispatch) and a RAW one (right after confirm_typed, which
   # leaves the TTY raw): in raw mode Enter delivers CR (not LF), so a default `read` never terminates;
   # TTY_SAVED (the cooked snapshot with icrnl) makes Enter deliver LF. Snapshot the pre-segment mode and
@@ -635,31 +652,39 @@ preflight_provision_headless_token() {
   tty_mode="$(stty -g <"${TTY}" 2>/dev/null || true)"
   stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
 
-  # Offer the choice. Default (empty / anything but 1) = the reliable manual paste, so a bare Enter never
-  # triggers an unexpected browser OAuth flow — only an explicit 1 runs setup-token in place.
   preflight_line ""
   preflight_line "$(c "${C_STRONG}" "  Provision the headless token:")"
-  preflight_line "$(c "${C_DIM}" "    [1] run 'claude setup-token' right here — approve in the browser + paste the auth code in place")"
-  preflight_line "$(c "${C_DIM}" "    [2] paste a token you already have (default) — from 'claude setup-token' in another terminal")"
-  preflight_out "  $(c "${C_INFO}" "choose [1/2] ▸ ")"
-  choice=""
-  IFS= read -r choice <"${TTY}" || true
-  preflight_line ""
 
-  if [[ "${choice}" == "1" ]]; then
-    # OPTION 1 — hand the terminal to setup-token: its std fds ARE the TTY, so its stdout stays a real
-    # terminal and the token prints UNWRAPPED (a non-TTY stdout triggers the v2.1.207 80-col wrap the
-    # capture path hit). The launcher NEVER reads that stdout — the value reaches it only via the silent
-    # paste-back below, so the token never lands on argv / a pipe / a log. A non-zero setup-token exit is
-    # non-fatal (the user can still paste a token they have), hence `|| true`.
+  # AUTO-RUN (default, no menu): hand the terminal to `claude setup-token` in place. The child MUST inherit
+  # fd 0/1 (the launcher's pty SLAVES, /dev/ttysNNN) — the ONLY fds Bun's node:tty WriteStream can kqueue;
+  # the ${TTY} /dev/tty handle (/dev/fd/3|4) throws EINVAL and crashes it, so there is deliberately NO
+  # `<>"${TTY}"` redirect. Merge stderr into the inherited stdout with `2>&1`: REQUIRED because in the menu
+  # path fd 2 is run_gate_quiet's GATE_QUIET_LOG temp file — a bare run (or `2>&2`) would route
+  # setup-token's browser-URL/prompt into that HIDDEN log (silent hang) AND leak stderr to a persistent
+  # temp file (secret-hygiene risk); `2>&1` keeps it on the VISIBLE pty-slave stdout (kqueue-able, leaking
+  # nothing) in BOTH the standalone token panel (fd 2 already a terminal) and the menu path. The launcher
+  # NEVER reads that stdout — the value reaches it only via the silent paste-back below, so the token never
+  # lands on argv / a pipe / a log. st_rc reset to 0 first (Source-B autocapture fall-through can leave a
+  # stale non-zero); the `|| st_rc=$?` LHS suppresses set -e / the ERR trap. NOTE: the real-Bun-binary
+  # kqueue SUCCESS path is NOT auto-verifiable in the bats suite (a test harness / subagent has no
+  # controlling terminal) — it needs a user real-terminal check; the graceful fallback below guarantees a
+  # crash never strands the user.
+  if _provision_tty_gate_ok; then
     setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
     preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' — approve in the browser, paste the auth code when prompted.")"
-    # shellcheck disable=SC2094  # ${TTY} is a terminal device — reading + writing the same tty is intended
-    "${setup_bin}" setup-token <"${TTY}" >"${TTY}" 2>"${TTY}" || true
+    st_rc=0
+    "${setup_bin}" setup-token 2>&1 || st_rc=$?
+    if [[ "${st_rc}" -ne 0 ]]; then
+      # GRACEFUL FALLBACK: a crashed/declined setup-token must never strand the user — drop to the reliable
+      # manual paste. The raw stderr stack is deliberately NOT suppressed (that would also hide the
+      # success-case token, now merged onto the inherited stdout); a clean line frames the fall-through.
+      preflight_line "$(c "${C_ALERT}" "[warn]") 'claude setup-token' did not complete (exit ${st_rc}) — paste a token instead."
+    fi
     preflight_line ""
     preflight_line "$(c "${C_STRONG}" "  copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
   else
-    # OPTION 2 (default) — the reliable manual paste from another terminal (unchanged path).
+    # GATE FALSE (passthrough / piped / CI — fd 0/1 are not terminals, exactly why fd 4 was opened): an
+    # in-place setup-token would inherit pipes and re-crash, so route to the reliable manual paste.
     preflight_line "$(c "${C_STRONG}" "  Paste a token (reliable):")"
     preflight_line "$(c "${C_DIM}" "  1) in another terminal run:") $(c "${C_INFO}" "claude setup-token")"
     preflight_line "$(c "${C_DIM}" "  2) approve in the browser + paste the auth code there;")"

@@ -48,8 +48,8 @@ setup() {
   # the libs are strict-mode when sourced whole; suspend any inherited ERR trap before eval.
   trap - ERR
 
-  # never let an ambient value short-circuit the source-A env path or the paste flow.
-  unset CLAUDE_CODE_OAUTH_TOKEN GA_AUTH_SETUP_TOKEN_AUTOCAPTURE
+  # never let an ambient value short-circuit the source-A env path, the paste flow, or the tty gate.
+  unset CLAUDE_CODE_OAUTH_TOKEN GA_AUTH_SETUP_TOKEN_AUTOCAPTURE GA_AUTH_FORCE_TTY
 
   SANDBOX="$(mktemp -d -t ga-token-paste.XXXXXX)"
   # GA_DIR resolves the Stage-A scripts (render + env lib); GA_ROOT anchors the sandbox secrets file.
@@ -123,6 +123,7 @@ load_fns() {
   extract_fn sanitize_setup_token || return 1
   extract_fn headless_auth_selftest || return 1
   extract_fn _provision_render_selftest || return 1
+  extract_fn _provision_tty_gate_ok || return 1
   extract_fn preflight_provision_headless_token || return 1
 }
 
@@ -135,10 +136,8 @@ stored_secret() {
 }
 
 # open_tty / close_tty — model a single terminal STREAM with a regular file. The provisioning function
-# now reads TWICE off the TTY (the [1/2] choice, then the paste); a fresh `<file` per read would re-read
-# line 1. Opening the file ONCE as fd 9 and pointing TTY at /dev/fd/9 makes both reads SHARE fd 9's
-# offset (macOS /dev/fd dup semantics), so they consume sequentially like a real terminal. `<>` (rw) so a
-# choice-1 in-place run's `>"${TTY}"` redirect also resolves (a dup write does not truncate the backing file).
+# reads the paste ONCE off the TTY. Opening the file as fd 9 and pointing TTY at /dev/fd/9 gives the
+# silent read a stable offset. `<>` (rw) so any tty write resolves without truncating the backing file.
 open_tty() {
   exec 9<>"$1"
   TTY="/dev/fd/9"
@@ -165,7 +164,8 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
 
 @test "paste-after: a pasted full token renders byte-correct + the self-test passes (return 0)" {
   load_fns || return 1
-  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), then the pasted token
+  GA_AUTH_FORCE_TTY=0                           # no inherited terminal → paste-only path
+  printf '%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # the pasted token
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
@@ -180,9 +180,10 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
 @test "fallback: opt-in auto-capture truncates+401s under v2.1.207, then the paste path recovers" {
   load_fns || return 1
   GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1
+  GA_AUTH_FORCE_TTY=0     # Source-C routes to paste-only after Source-B autocapture fails
   GA_STUB_SHAPE="wrapped" # setup-token emits the wrapped (broken) shape
   export GA_STUB_SHAPE
-  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), the user's clean paste
+  printf '%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # the user's clean paste
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
@@ -209,7 +210,8 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
 
 @test "render-reject: an implausibly short paste is rejected by render-claude-auth (return 4)" {
   load_fns || return 1
-  printf '2\nnope\n' >"${SANDBOX}/tin" # choice 2 (paste); 4-char token → render's <16 guard exit 7 → return 4
+  GA_AUTH_FORCE_TTY=0            # paste-only path
+  printf 'nope\n' >"${SANDBOX}/tin" # 4-char token → render's <16 guard exit 7 → return 4
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
@@ -222,7 +224,8 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
 
 @test "empty-paste: an empty paste yields no usable value (return 3)" {
   load_fns || return 1
-  printf '2\n' >"${SANDBOX}/tin" # choice 2 (paste), then EOF → empty paste
+  GA_AUTH_FORCE_TTY=0        # paste-only path
+  : >"${SANDBOX}/tin"       # empty stream → EOF → empty paste
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
@@ -284,7 +287,8 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   local stale_val="sk-ant-oat01batsSTALEwrong9999cccc8888dddd"
   export "${oauth_env}=${stale_val}"
   # Source A renders the stale token → self-test 401s → falls through to the reliable paste path.
-  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), the user's fresh correct paste
+  GA_AUTH_FORCE_TTY=0                           # paste-only path
+  printf '%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # the user's fresh correct paste
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
