@@ -537,9 +537,11 @@ _provision_render_selftest() {
 #      long token across the 80-col boundary, so sanitize_setup_token's `sk-ant-oat…` grep extracts only
 #      a TRUNCATED fragment (renders OK, then 401s — the exact user-reported failure). Retained for older
 #      CLIs / CI where the capture is byte-clean; any failure falls through to (C);
-#   C) the RELIABLE PASTE path — the user runs `claude setup-token` in a REAL terminal (stdout = TTY,
-#      where it works), then PASTES the printed `sk-ant-oat…` token; read SILENTLY off the TTY (no echo →
-#      the value never lands in the scrollback / install transcript), sanitized, piped to render via STDIN.
+#   C) the INTERACTIVE path — offer [1] run `claude setup-token` IN PLACE (its std fds ARE the TTY, so
+#      stdout stays a real terminal and the token prints UNWRAPPED; the launcher NEVER reads that stdout)
+#      or [2] paste a token from `claude setup-token` in another terminal (default). Either way the value
+#      is read SILENTLY off the TTY (no echo → never in the scrollback / transcript), sanitized, piped to
+#      render via STDIN — never on argv / a pipe / a log.
 # Loud-fails on a real failure (named return codes); non-fatal (a failure WARNs, daemons keep the keychain
 # fallback) — the launchd 401 is a daemon-only issue, not an interactive-install blocker. The token value
 # never touches argv, is never echoed/logged, and dies with the enclosing local.
@@ -550,7 +552,7 @@ _provision_render_selftest() {
 #   3 — no usable value from ANY source (auto-capture + paste both empty / no TTY to prompt)
 #   4 — render-claude-auth.sh rejected the value (its own exit 6/7/8 propagated)
 preflight_provision_headless_token() {
-  local secrets_file render_script env_val sanitized captured_value pasted tty_mode st_rc=0 pv_rc=0
+  local secrets_file render_script env_val sanitized captured_value pasted tty_mode choice setup_bin st_rc=0 pv_rc=0
   secrets_file="${GA_ROOT:-${HOME}/.glass-atrium}/secrets/claude-auth.env"
   render_script="$(ga_render_auth_script)"
 
@@ -594,7 +596,6 @@ preflight_provision_headless_token() {
   # into a LOCAL + piped to render via STDIN — never argv, never echoed. Under v2.1.207 the non-TTY
   # capture truncates the token → self-test fails → falls through to the paste path.
   if [[ "${GA_AUTH_SETUP_TOKEN_AUTOCAPTURE:-0}" == "1" ]]; then
-    local setup_bin
     setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
     preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' (auto-capture) — approve in the browser, then return here.")"
     st_rc=0
@@ -615,31 +616,63 @@ preflight_provision_headless_token() {
     captured_value=""
   fi
 
-  # ── SOURCE C: the RELIABLE PASTE path. No controlling TTY → cannot prompt; loud-fail (no value). ──
+  # ── SOURCE C: the INTERACTIVE path — run setup-token in place OR paste an existing token. No
+  # controlling TTY → cannot prompt; loud-fail (no value). ──
   if [[ -z "${TTY}" ]]; then
-    preflight_line "$(c "${C_ALERT}" "[warn]") no terminal to prompt for a token paste — headless auth NOT provisioned."
+    preflight_line "$(c "${C_ALERT}" "[warn]") no terminal to prompt for a token — headless auth NOT provisioned."
     preflight_line "$(c "${C_DIM}" "  fallback: the daemons use the keychain (may 401 under launchd). Re-run 'glass-atrium install' to retry.")"
     return 3
   fi
 
-  preflight_line ""
-  preflight_line "$(c "${C_STRONG}" "  Provision the headless token by PASTE (reliable):")"
-  preflight_line "$(c "${C_DIM}" "  1) in another terminal run:") $(c "${C_INFO}" "claude setup-token")"
-  preflight_line "$(c "${C_DIM}" "  2) approve in the browser + paste the auth code there;")"
-  preflight_line "$(c "${C_DIM}" "  3) copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
-  preflight_out "  $(c "${C_INFO}" "paste token ▸ ")"
-
-  # Restore COOKED mode for the read: this function is reached from BOTH a cooked context (menu dispatch)
-  # and a RAW one (the install-guide path calls it right after confirm_typed, which leaves the TTY raw).
-  # In raw mode Enter delivers CR (not LF), so a default `read` (LF delimiter) would never terminate;
-  # TTY_SAVED (the cooked snapshot with icrnl) makes Enter deliver LF. Snapshot the pre-read mode and
-  # restore it after, so a raw-mode caller is left exactly as it was.
+  # COOKED mode for the whole interactive segment (choice → optional in-place setup-token → silent paste).
+  # Reached from BOTH a cooked caller (menu dispatch) and a RAW one (right after confirm_typed, which
+  # leaves the TTY raw): in raw mode Enter delivers CR (not LF), so a default `read` never terminates;
+  # TTY_SAVED (the cooked snapshot with icrnl) makes Enter deliver LF. Snapshot the pre-segment mode and
+  # restore it after, so a raw-mode caller is left exactly as it was. The alt-screen is ALREADY dropped by
+  # every caller (preflight_bracket / the token panel's rmcup pre-gate / the passthrough scroll path), so
+  # there is deliberately NO nested rmcup/smcup here — a second drop would re-enter the alt-screen and hide
+  # the setup-token output the user must read.
   tty_mode="$(stty -g <"${TTY}" 2>/dev/null || true)"
   stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
+
+  # Offer the choice. Default (empty / anything but 1) = the reliable manual paste, so a bare Enter never
+  # triggers an unexpected browser OAuth flow — only an explicit 1 runs setup-token in place.
+  preflight_line ""
+  preflight_line "$(c "${C_STRONG}" "  Provision the headless token:")"
+  preflight_line "$(c "${C_DIM}" "    [1] run 'claude setup-token' right here — approve in the browser + paste the auth code in place")"
+  preflight_line "$(c "${C_DIM}" "    [2] paste a token you already have (default) — from 'claude setup-token' in another terminal")"
+  preflight_out "  $(c "${C_INFO}" "choose [1/2] ▸ ")"
+  choice=""
+  IFS= read -r choice <"${TTY}" || true
+  preflight_line ""
+
+  if [[ "${choice}" == "1" ]]; then
+    # OPTION 1 — hand the terminal to setup-token: its std fds ARE the TTY, so its stdout stays a real
+    # terminal and the token prints UNWRAPPED (a non-TTY stdout triggers the v2.1.207 80-col wrap the
+    # capture path hit). The launcher NEVER reads that stdout — the value reaches it only via the silent
+    # paste-back below, so the token never lands on argv / a pipe / a log. A non-zero setup-token exit is
+    # non-fatal (the user can still paste a token they have), hence `|| true`.
+    setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
+    preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' — approve in the browser, paste the auth code when prompted.")"
+    # shellcheck disable=SC2094  # ${TTY} is a terminal device — reading + writing the same tty is intended
+    "${setup_bin}" setup-token <"${TTY}" >"${TTY}" 2>"${TTY}" || true
+    preflight_line ""
+    preflight_line "$(c "${C_STRONG}" "  copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
+  else
+    # OPTION 2 (default) — the reliable manual paste from another terminal (unchanged path).
+    preflight_line "$(c "${C_STRONG}" "  Paste a token (reliable):")"
+    preflight_line "$(c "${C_DIM}" "  1) in another terminal run:") $(c "${C_INFO}" "claude setup-token")"
+    preflight_line "$(c "${C_DIM}" "  2) approve in the browser + paste the auth code there;")"
+    preflight_line "$(c "${C_DIM}" "  3) copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
+  fi
+  preflight_out "  $(c "${C_INFO}" "paste token ▸ ")"
+
   # SILENT read (-s → no echo REGARDLESS of the cooked echo bit, so the secret never reaches the terminal
-  # scrollback / install transcript). `|| true` keeps a value pasted WITHOUT a trailing newline (read
-  # returns 1 at EOF but still sets the var) and prevents set -e abort. The value stays in this LOCAL,
-  # sanitized, then piped via STDIN below.
+  # scrollback / install transcript). Re-assert cooked first — an in-place setup-token may have left the
+  # TTY in a different mode. `|| true` keeps a value pasted WITHOUT a trailing newline (read returns 1 at
+  # EOF but still sets the var) and prevents set -e abort. The value stays in this LOCAL, sanitized, then
+  # piped via STDIN below.
+  stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
   pasted=""
   IFS= read -rs pasted <"${TTY}" || true
   if [[ -n "${tty_mode}" ]]; then
@@ -660,7 +693,7 @@ preflight_provision_headless_token() {
   pasted="" # scrub the local copy ASAP (defence-in-depth; the var dies with the function).
   case "${pv_rc}" in
     0)
-      preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned (paste) + self-test passes (launchd daemons will authenticate)."
+      preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned + self-test passes (launchd daemons will authenticate)."
       return 0
       ;;
     4)

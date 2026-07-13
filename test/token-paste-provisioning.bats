@@ -134,6 +134,17 @@ stored_secret() {
   printf '%s' "${line#*=}"
 }
 
+# open_tty / close_tty — model a single terminal STREAM with a regular file. The provisioning function
+# now reads TWICE off the TTY (the [1/2] choice, then the paste); a fresh `<file` per read would re-read
+# line 1. Opening the file ONCE as fd 9 and pointing TTY at /dev/fd/9 makes both reads SHARE fd 9's
+# offset (macOS /dev/fd dup semantics), so they consume sequentially like a real terminal. `<>` (rw) so a
+# choice-1 in-place run's `>"${TTY}"` redirect also resolves (a dup write does not truncate the backing file).
+open_tty() {
+  exec 9<>"$1"
+  TTY="/dev/fd/9"
+}
+close_tty() { exec 9<&- 2>/dev/null || true; }
+
 # === (a) FAIL-BEFORE — sanitize truncates the v2.1.207-wrapped shape ============================
 
 @test "fail-before: sanitize_setup_token truncates a wrapped (non-TTY) token to the first line" {
@@ -154,10 +165,11 @@ stored_secret() {
 
 @test "paste-after: a pasted full token renders byte-correct + the self-test passes (return 0)" {
   load_fns || return 1
-  TTY="${SANDBOX}/paste-in"
-  printf '%s\n' "${FULL_VAL}" >"${TTY}"
+  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), then the pasted token
+  open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
+  close_tty
   [[ "${rc}" -eq 0 ]] || return 1
   # the rendered secret is the FULL value, byte-for-byte — not a truncated fragment.
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
@@ -170,10 +182,11 @@ stored_secret() {
   GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1
   GA_STUB_SHAPE="wrapped" # setup-token emits the wrapped (broken) shape
   export GA_STUB_SHAPE
-  TTY="${SANDBOX}/paste-in"
-  printf '%s\n' "${FULL_VAL}" >"${TTY}" # the user's clean paste from a real terminal
+  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), the user's clean paste
+  open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
+  close_tty
   # auto-capture rendered a truncated token (self-test failed) → paste path overwrote with the correct one.
   [[ "${rc}" -eq 0 ]] || return 1
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
@@ -196,10 +209,11 @@ stored_secret() {
 
 @test "render-reject: an implausibly short paste is rejected by render-claude-auth (return 4)" {
   load_fns || return 1
-  TTY="${SANDBOX}/paste-in"
-  printf '%s\n' 'nope' >"${TTY}" # 4 chars → render's <16 guard exit 7 → return 4
+  printf '2\nnope\n' >"${SANDBOX}/tin" # choice 2 (paste); 4-char token → render's <16 guard exit 7 → return 4
+  open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
+  close_tty
   [[ "${rc}" -eq 4 ]] || return 1
   [[ ! -f "${SECRETS_FILE_PATH}" ]] || return 1
 }
@@ -208,10 +222,11 @@ stored_secret() {
 
 @test "empty-paste: an empty paste yields no usable value (return 3)" {
   load_fns || return 1
-  TTY="${SANDBOX}/paste-in"
-  : >"${TTY}" # empty file → read gets nothing
+  printf '2\n' >"${SANDBOX}/tin" # choice 2 (paste), then EOF → empty paste
+  open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
+  close_tty
   [[ "${rc}" -eq 3 ]] || return 1
 }
 
@@ -269,10 +284,11 @@ stored_secret() {
   local stale_val="sk-ant-oat01batsSTALEwrong9999cccc8888dddd"
   export "${oauth_env}=${stale_val}"
   # Source A renders the stale token → self-test 401s → falls through to the reliable paste path.
-  TTY="${SANDBOX}/paste-in"
-  printf '%s\n' "${FULL_VAL}" >"${TTY}" # the user's fresh, correct paste from a real terminal
+  printf '2\n%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # choice 2 (paste), the user's fresh correct paste
+  open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
+  close_tty
   # the pasted value WINS: the stored secret is the PASTED FULL_VAL, never the stale exported value.
   [[ "${rc}" -eq 0 ]] || return 1
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
