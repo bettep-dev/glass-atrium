@@ -140,8 +140,8 @@ _write_stub_claude() {
   local body
   body="$(awk '/^headless_auth_selftest\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-tui-preflight.sh")" || return 1
   [[ -n "${body}" ]] || return 1
-  # the bounded, stdin-pinned probe.
-  [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" "${claude_bin}" -p --output-format text "reply with OK" </dev/null 2>&1'* ]] || return 1
+  # the bounded, stdin-pinned, credential-isolated, cheap-model-pinned probe.
+  [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${haiku_model}" "reply with OK" </dev/null 2>&1'* ]] || return 1
   # the OLD unbounded probe (no run_with_timeout, no stdin pin) is GONE.
   [[ "${body}" != *'"${claude_bin}" -p --output-format text "reply with OK" 2>&1'* ]] || return 1
   # the AUTH_FAIL_RE body scan is UNCHANGED (still gates the rc-0-masking 401).
