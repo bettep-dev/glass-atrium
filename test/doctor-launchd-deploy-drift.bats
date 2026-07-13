@@ -146,3 +146,50 @@ run_doctor_sandbox() {
   [[ "${output}" == *"no deployed com.glass-atrium launchd plists"* ]] || return 1
   [[ "${output}" != *"stale-deployed launchd plist drift"* ]] || return 1
 }
+
+# === 4. mktemp failure -> loud skip, renderer NEVER invoked ====================
+
+# fail-before/pass-after: a failed mktemp leaves ld_tmp EMPTY. The renderer resolves an empty
+# GA_PLIST_OUT via ${GA_PLIST_OUT:-<default>} to its PRODUCTION default (<GA root>/rendered/launchd),
+# so the PRE-guard body would re-render into the LIVE rendered dir — breaking §11's temp-isolation
+# contract (§11 must NEVER touch the real rendered dir). The guard skips the render when ld_tmp is
+# empty/non-dir, emitting a LOUD skip instead. This case stubs mktemp to emit an empty string (exit 0,
+# so strict mode does not abort the assignment) and asserts: (a) §11 emits the loud skip warn, and
+# (b) the renderer is NEVER invoked — proven output-only by the ABSENCE of every render-verdict line
+# (the ok "match" line, the drift line, and the "renderer anomaly" line launchd_deploy_drift "" emits),
+# so the production rendered dir is never written. Pre-guard, the render runs -> the ok "match" line
+# appears and the loud skip warn does not, failing (a)+(b).
+
+# Run run_doctor with a stubbed mktemp on PATH (emits empty, exit 0) so §11's ld_tmp is empty.
+# mktemp is used by run_doctor ONLY at §11, so stubbing it does not disturb any other section; the
+# reference render in setup ran earlier with the real mktemp (before this stub is on PATH).
+run_doctor_sandbox_mktemp_empty() {
+  local stub_dir="${SANDBOX}/stub-bin"
+  mkdir -p -- "${stub_dir}"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${stub_dir}/mktemp" # emits empty stdout, exit 0
+  chmod +x "${stub_dir}/mktemp"
+
+  run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+    GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
+    GA_GENERATE_MANIFEST="${GEN_STUB}" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$1"
+      run_doctor
+    ' _ "${GA}"
+}
+
+@test "mktemp failure -> §11 loud skip, renderer never invoked (production dir untouched)" {
+  deploy_all # deployed_count > 0 so §11 reaches the mktemp branch (not the empty-install skip)
+
+  run_doctor_sandbox_mktemp_empty
+
+  # (a) loud skip warn fired (never a silent swallow / false OK)
+  [[ "${output}" == *"temp render dir unavailable (mktemp failed)"* ]] || return 1
+  # (b) renderer NEVER invoked -> none of the render-verdict lines appear (had the render run into the
+  #     production default, one of these would). This is the "production rendered dir never written" proof.
+  [[ "${output}" != *"match the current renderer output"* ]] || return 1
+  [[ "${output}" != *"stale-deployed launchd plist"* ]] || return 1
+  [[ "${output}" != *"renderer anomaly"* ]] || return 1
+}

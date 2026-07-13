@@ -410,12 +410,20 @@ run_doctor() {
     else
       local ld_tmp
       ld_tmp="$(mktemp -d -t ga-doctor-launchd.XXXXXX)"
+      # A failed mktemp leaves ld_tmp EMPTY; the renderer resolves an empty GA_PLIST_OUT via
+      # ${GA_PLIST_OUT:-<default>} to its PRODUCTION default (<GA root>/rendered/launchd), so rendering
+      # with an empty ld_tmp would MUTATE the live rendered dir — violating §11's temp-isolation /
+      # render-only contract. The end-of-block cleanup already guards the same [-n && -d]; guard it
+      # BEFORE the render too. A missing temp dir is a LOUD skip (Precondition Loud-Fail), never a
+      # false OK or a live write.
+      if [[ -z "${ld_tmp}" || ! -d "${ld_tmp}" ]]; then
+        log "  warn : launchd deploy-drift check skipped — temp render dir unavailable (mktemp failed)"
       # Re-render the current expected plists into the temp dir. GA_PLIST_OUT redirects the write
       # (render-only contract → RENDERED_PLIST_DIR untouched); GA_CONFIG_TOML pins THIS install's
       # config (same input load_launchd_jobs deployed from); GA_SKIP_DEP_PROBE silences the same-host
       # tool probe. A render failure (config missing/invalid, lint, path-leak) is a LOUD skip, never a
       # false OK — its non-zero exit routes to the else branch.
-      if GA_CONFIG_TOML="${CONFIG_TOML}" GA_PLIST_OUT="${ld_tmp}" GA_SKIP_DEP_PROBE=1 \
+      elif GA_CONFIG_TOML="${CONFIG_TOML}" GA_PLIST_OUT="${ld_tmp}" GA_SKIP_DEP_PROBE=1 \
         bash "${PLIST_RENDERER}" >/dev/null 2>&1; then
         # launchd_deploy_drift logs each drift to stderr + echoes the drift count (stdout verdict).
         # shellcheck disable=SC2311,SC2312
