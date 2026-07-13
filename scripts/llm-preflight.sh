@@ -15,15 +15,15 @@
 
 PREFLIGHT_CLAUDE="${AUTOAGENT_CLAUDE_BIN:-claude}"
 
-# Resolve the haiku model id from daemon-config.json (SoT) to avoid dated-pin drift;
-# jq/file/key missing → fall back to the alias literal claude-haiku-4-5 (matches
-# daemon_config.py). Resolved once for both paths (ping happens only in Check B).
-PREFLIGHT_DAEMON_CONFIG="${HOME}/.claude/data/daemon-config.json"
-PREFLIGHT_HAIKU_MODEL="claude-haiku-4-5"
-if command -v jq >/dev/null 2>&1 && [[ -f "${PREFLIGHT_DAEMON_CONFIG}" ]]; then
-  _preflight_cfg_model="$(jq -r '.haiku_model // empty' "${PREFLIGHT_DAEMON_CONFIG}" 2>/dev/null || true)"
-  [[ -n "${_preflight_cfg_model}" ]] && PREFLIGHT_HAIKU_MODEL="${_preflight_cfg_model}"
-fi
+# Shared config accessors (atrium_resolve_haiku_model) — resolved relative to this
+# script so both standalone (`bash llm-preflight.sh`) and legacy-sourced modes find the lib.
+LLM_PREFLIGHT_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/atrium-config.sh
+. "${LLM_PREFLIGHT_SELF_DIR}/lib/atrium-config.sh"
+
+# Haiku cheap-model id from the daemon-config.json SoT, via atrium_resolve_haiku_model.
+# PREFLIGHT_DAEMON_CONFIG override hook → canonical default when empty (ping happens only in Check B).
+PREFLIGHT_HAIKU_MODEL="$(atrium_resolve_haiku_model "${PREFLIGHT_DAEMON_CONFIG:-}")"
 
 # Compute today's accumulated cost from PG core.cost_events (live single sink):
 # SUM(cost_usd) WHERE event_date = current_date, echoed as "%.2f" USD on stdout.

@@ -74,18 +74,10 @@ fi
 # cap the daemon REPL otherwise hits). haiku_model is the SAME SoT the monitor
 # "Daemon cycle helper" menu writes (model-config-consts.ts daemonConfigKey
 # "haiku_model") and daemon_cycle.py already runs its cycle calls on — reading it
-# here keeps ONE model knob for the whole daemon. Resolution mirrors
-# wiki-daily-compile.sh / llm-preflight.sh: jq the key from the daemon-config.json
-# SoT, fall back to the literal alias when jq/file/key is absent. DAEMON_CONFIG
-# default matches those siblings; env-overridable as a test seam (this file's own
-# `: "${VAR:=default}"` idiom).
-: "${DAEMON_CONFIG:=${HOME}/.claude/data/daemon-config.json}"
-readonly DAEMON_CONFIG
-HAIKU_MODEL="claude-haiku-4-5"
-if command -v jq >/dev/null 2>&1 && [[ -f "${DAEMON_CONFIG}" ]]; then
-  _cfg_model="$(jq -r '.haiku_model // empty' "${DAEMON_CONFIG}" 2>/dev/null || true)"
-  [[ -n "${_cfg_model}" ]] && HAIKU_MODEL="${_cfg_model}"
-fi
+# here keeps ONE model knob for the whole daemon. Resolved via
+# atrium_resolve_haiku_model (lib/atrium-config.sh, sourced by the wrapper before
+# this lib). DAEMON_CONFIG override hook → canonical default when empty (test seam).
+HAIKU_MODEL="$(atrium_resolve_haiku_model "${DAEMON_CONFIG:-}")"
 readonly HAIKU_MODEL
 
 # Env-overridable cold-start constants — shared default budget for BOTH roles.

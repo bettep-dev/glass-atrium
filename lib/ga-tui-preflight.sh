@@ -429,7 +429,7 @@ ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.
 # lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
 # drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
-  local claude_bin env_lib probe_out probe_rc=0 haiku_config haiku_model
+  local claude_bin env_lib probe_out probe_rc=0 haiku_model
   claude_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
   env_lib="${GA_AUTH_ENV_LIB:-$(ga_claude_auth_env_lib)}"
 
@@ -439,19 +439,11 @@ headless_auth_selftest() {
   fi
 
   # CHEAP-MODEL PIN: verify auth on the daemons' configured haiku model, never the default Fable-class
-  # model — resolved from the daemon-config.json SoT exactly like wiki-daily-compile.sh / llm-preflight.sh
-  # (jq '.haiku_model // empty', alias-literal fallback when jq/file/key is absent) so the self-test and
-  # the nightly daemons authenticate against the SAME model id (no dated-pin drift). GA_AUTH_DAEMON_CONFIG
-  # is a bats test seam (mirrors GA_AUTH_CLAUDE_BIN / DOCTOR_AUTH_REPORTS_DIR).
-  haiku_config="${GA_AUTH_DAEMON_CONFIG:-${HOME}/.claude/data/daemon-config.json}"
-  haiku_model="claude-haiku-4-5"
-  if command -v jq >/dev/null 2>&1 && [[ -f "${haiku_config}" ]]; then
-    local cfg_model
-    cfg_model="$(jq -r '.haiku_model // empty' "${haiku_config}" 2>/dev/null || true)"
-    if [[ -n "${cfg_model}" ]]; then
-      haiku_model="${cfg_model}"
-    fi
-  fi
+  # model — resolved from the daemon-config.json SoT via atrium_resolve_haiku_model (sourced at startup
+  # by ga-env.sh's E5 loop) so the self-test and the nightly daemons authenticate against the SAME model
+  # id (no dated-pin drift). GA_AUTH_DAEMON_CONFIG override hook is a bats test seam (mirrors
+  # GA_AUTH_CLAUDE_BIN / DOCTOR_AUTH_REPORTS_DIR); empty → the helper's canonical default.
+  haiku_model="$(atrium_resolve_haiku_model "${GA_AUTH_DAEMON_CONFIG:-}")"
 
   # Run the source + probe in a SUBSHELL so the exported credential never leaks into the install
   # process environment beyond the probe (set -a side effects contained). The lib's claude_auth_load_env

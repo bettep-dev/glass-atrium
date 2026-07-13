@@ -36,6 +36,10 @@ setup() {
   command -v perl >/dev/null 2>&1 || skip "perl not on PATH (run_with_timeout needs it)"
   # the libs are strict-mode when sourced whole; suspend any inherited ERR trap before eval.
   trap - ERR
+  # atrium_resolve_haiku_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
+  # it so the eval'd headless_auth_selftest can call it (ga-env.sh's E5 loop does this at runtime).
+  # shellcheck source=../scripts/lib/atrium-config.sh
+  source "${GA}/scripts/lib/atrium-config.sh"
   SANDBOX="$(mktemp -d -t ga-auth-isolation.XXXXXX)"
   # the daemon_cycle.py auth-signature set, verbatim from the launcher (glass-atrium:249).
   AUTH_FAIL_RE='API Error: *(401|403)|HTTP *(401|403)|Invalid authentication credentials|Failed to authenticate'
@@ -254,12 +258,24 @@ _write_daemon_config() {
   [[ -n "${body}" ]] || return 1
   # the isolation wrap strips BOTH competing Anthropic credential env vars, before the claude bin.
   [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p'* ]] || return 1
-  # the cheap-model pin resolves from the daemon-config SoT (alias-literal fallback) + reaches --model.
-  [[ "${body}" == *"jq -r '.haiku_model // empty'"* ]] || return 1
-  [[ "${body}" == *'haiku_model="claude-haiku-4-5"'* ]] || return 1
+  # the cheap-model pin delegates to the centralized resolver (own seam passed as the arg) + reaches --model.
+  [[ "${body}" == *'haiku_model="$(atrium_resolve_haiku_model "${GA_AUTH_DAEMON_CONFIG:-}")"'* ]] || return 1
   [[ "${body}" == *'--model "${haiku_model}"'* ]] || return 1
   # the diagnostic disambiguation asserts token PRESENCE, never reads the value into a var.
   [[ "${body}" == *'[[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]'* ]] || return 1
   [[ "${body}" == *"provisioning did not deliver a token"* ]] || return 1
   [[ "${body}" == *"token delivered to claude but rejected"* ]] || return 1
+}
+
+# === (9) STATIC — the centralized jq idiom + alias literal now live in atrium_resolve_haiku_model =====
+
+@test "resolver(static): atrium_resolve_haiku_model owns the jq idiom + the claude-haiku-4-5 fallback literal" {
+  local body
+  body="$(awk '/^atrium_resolve_haiku_model\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/scripts/lib/atrium-config.sh")" || return 1
+  [[ -n "${body}" ]] || return 1
+  # the jq key read + alias-literal fallback moved OUT of the 4 call sites INTO this single resolver.
+  [[ "${body}" == *"jq -r '.haiku_model // empty'"* ]] || return 1
+  [[ "${body}" == *'model="claude-haiku-4-5"'* ]] || return 1
+  # the config path is a parameter (each caller passes its own seam), defaulting to the canonical path.
+  [[ "${body}" == *'local config_path="${1:-${HOME}/.claude/data/daemon-config.json}"'* ]] || return 1
 }

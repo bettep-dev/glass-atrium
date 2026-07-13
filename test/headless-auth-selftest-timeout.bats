@@ -30,6 +30,10 @@ setup() {
   command -v perl >/dev/null 2>&1 || skip "perl not on PATH (run_with_timeout needs it)"
   # the libs are strict-mode when sourced whole; suspend any inherited ERR trap before eval.
   trap - ERR
+  # atrium_resolve_haiku_model (pure) lives in atrium-config.sh, which extract_fn does not scan — source
+  # it so the eval'd headless_auth_selftest can call it (ga-env.sh's E5 loop does this at runtime).
+  # shellcheck source=../scripts/lib/atrium-config.sh
+  source "${GA}/scripts/lib/atrium-config.sh"
   SANDBOX="$(mktemp -d -t ga-auth-selftest.XXXXXX)"
   # the daemon_cycle.py auth-signature set, verbatim from the launcher (glass-atrium:249).
   AUTH_FAIL_RE='API Error: *(401|403)|HTTP *(401|403)|Invalid authentication credentials|Failed to authenticate'

@@ -19,6 +19,7 @@ REAL_AUTOAGENT_BOOTSTRAP="${GA}/scripts/autoagent-daemon-bootstrap.sh"
 REAL_BOOTSTRAP_LIB="${GA}/scripts/lib/daemon-bootstrap-common.sh"
 REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
+REAL_FAKECHAT_LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
 REAL_AUTH_LIB="${GA}/scripts/lib/claude-auth-env.sh"
 
 setup() {
@@ -104,6 +105,7 @@ sandbox_copy() {
   cp "${REAL_BOOTSTRAP_LIB}" "${SANDBOX}/lib/daemon-bootstrap-common.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${REAL_FAKECHAT_LIB}" "${SANDBOX}/lib/fakechat-cleanup.sh"
   printf '%s\n' "${SANDBOX}/${base}"
 }
 
