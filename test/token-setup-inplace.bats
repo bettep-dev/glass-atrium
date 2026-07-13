@@ -111,6 +111,7 @@ load_fns() {
   extract_fn headless_auth_selftest || return 1
   extract_fn _provision_render_selftest || return 1
   extract_fn _provision_tty_gate_ok || return 1
+  extract_fn _read_pasted_token || return 1
   extract_fn preflight_provision_headless_token || return 1
 }
 
@@ -145,8 +146,9 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   [[ "${body}" != *'2>"${TTY}"'* ]] || return 1
   # the auto-run is gated on the stubbable fd 0/1 terminal seam.
   [[ "${body}" == *'if _provision_tty_gate_ok; then'* ]] || return 1
-  # the rendered value still flows ONLY via the shared silent paste read → STDIN pipe.
-  [[ "${body}" == *'IFS= read -rs pasted <"${TTY}"'* ]] || return 1
+  # the rendered value still flows ONLY via the shared silent multi-line capture helper → STDIN pipe.
+  [[ "${body}" == *'_read_pasted_token'* ]] || return 1
+  [[ "${body}" == *'pasted="${REPLY}"'* ]] || return 1
   [[ "${body}" == *'printf '"'"'%s\n'"'"' "${pasted}" | _provision_render_selftest'* ]] || return 1
 }
 
@@ -202,6 +204,27 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   ! grep -qF "render-claude-auth" "${ARGV_LOG}" || return 1
   # the value did reach the 0600 secrets file (via the STDIN render path).
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
+}
+
+# === (wrapped) a WRAPPED multi-line paste is captured whole + never lands on argv ==============
+
+@test "wrapped-paste: a value split across two lines renders byte-correct + never on argv (return 0)" {
+  load_fns || return 1
+  GA_AUTH_FORCE_TTY=1 # auto-run gate true; the paste-back models the copied WRAPPED display
+  local wrap_a="sk-ant-oat01batsfakevalue0000" wrap_b="aaaa1111bbbb"
+  # the copied wrapped display arrives as TWO lines split at the wrap column (wrap_a+wrap_b == FULL_VAL).
+  printf '%s\n%s\n' "${wrap_a}" "${wrap_b}" >"${SANDBOX}/tin"
+  open_tty "${SANDBOX}/tin"
+  local rc=0
+  preflight_provision_headless_token || rc=$?
+  close_tty
+  # the WHOLE paste was captured + rejoined → the full value rendered byte-for-byte (not the wrap_a fragment).
+  [[ "${rc}" -eq 0 ]] || return 1
+  [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
+  [[ "$(stored_secret)" != "${wrap_a}" ]] || return 1
+  # the value never appears on any `claude` argv despite the multi-line capture.
+  ! grep -qF "${FULL_VAL}" "${ARGV_LOG}" || return 1
+  ! grep -qF "${wrap_a}" "${ARGV_LOG}" || return 1
 }
 
 # === (fallback) gate-true + a crashing setup-token drops to paste (clean message, token still renders) ===

@@ -19,9 +19,12 @@
 # auto source that fails render/self-test FALLS BACK to the reliable paste path.
 #
 # Falsifiability:
-#   (a) fail-before — sanitize_setup_token on a v2.1.207-WRAPPED shape returns a TRUNCATED value.
+#   (a) fix-verify — sanitize_setup_token RECONSTRUCTS a v2.1.207-WRAPPED shape into the full token (before
+#       the co-defect fix its line-oriented grep stopped at the newline and returned only the first fragment).
 #   (b) paste-after — the full function renders a BYTE-CORRECT token from a simulated paste + the
 #       (stubbed) self-test passes.
+#   (b2) wrapped-paste — a token SPLIT across two lines is captured WHOLE by the multi-line read + rejoined
+#       by the whitespace-collapse → renders byte-correct (fails against the old single-line read).
 #   (headline) auto-capture on the wrapped shape 401s → the paste path recovers the correct token.
 #
 # Hermetic: the functions under test are EVAL'd into the test shell (extract_fn). The REAL
@@ -124,6 +127,7 @@ load_fns() {
   extract_fn headless_auth_selftest || return 1
   extract_fn _provision_render_selftest || return 1
   extract_fn _provision_tty_gate_ok || return 1
+  extract_fn _read_pasted_token || return 1
   extract_fn preflight_provision_headless_token || return 1
 }
 
@@ -144,20 +148,22 @@ open_tty() {
 }
 close_tty() { exec 9<&- 2>/dev/null || true; }
 
-# === (a) FAIL-BEFORE — sanitize truncates the v2.1.207-wrapped shape ============================
+# === (a) FIX-VERIFY — sanitize REJOINS a wrapped v2.1.207 shape into the full value ==============
 
-@test "fail-before: sanitize_setup_token truncates a wrapped (non-TTY) token to the first line" {
+@test "fix-verify: sanitize_setup_token rejoins a wrapped (multi-line) value into the full token" {
   extract_fn strip_csi || return 1
   extract_fn sanitize_setup_token || return 1
-  # the exact broken shape: a URL banner then the long token WRAPPED across two lines.
+  # the exact broken shape: a URL banner then the long value WRAPPED across two lines. Before the co-defect
+  # fix the line-oriented grep stopped at the newline and returned only WRAP_A (the truncation bug); the
+  # whitespace-collapse now splices the wrap-split segments back into one full contiguous value.
   local wrapped
   wrapped="$(printf '%s\n%s\n%s\n%s\n' \
     'Visit https://claude.ai/oauth to authorize.' 'Your credential:' "${WRAP_A}" "${WRAP_B}")"
   local out
   out="$(sanitize_setup_token "${wrapped}")"
-  # the grep stops at the newline → only the first fragment survives (the bug).
-  [[ "${out}" == "${WRAP_A}" ]] || return 1
-  [[ "${out}" != "${FULL_VAL}" ]] || return 1
+  # the full value is reconstructed — NOT the first-line fragment (this assertion fails on the old grep).
+  [[ "${out}" == "${FULL_VAL}" ]] || return 1
+  [[ "${out}" != "${WRAP_A}" ]] || return 1
 }
 
 # === (b) PASTE-AFTER — a byte-correct paste renders + self-tests green (return 0) ===============
@@ -175,20 +181,43 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
 }
 
-# === (headline) FALLBACK — auto-capture 401s on the wrapped shape, paste recovers ==============
+# === (b2) WRAPPED PASTE — a value split across two lines is captured whole + rejoined ===========
 
-@test "fallback: opt-in auto-capture truncates+401s under v2.1.207, then the paste path recovers" {
+@test "wrapped-paste: a value split across two lines is captured whole + renders byte-correct (return 0)" {
   load_fns || return 1
-  GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1
-  GA_AUTH_FORCE_TTY=0     # Source-C routes to paste-only after Source-B autocapture fails
-  GA_STUB_SHAPE="wrapped" # setup-token emits the wrapped (broken) shape
-  export GA_STUB_SHAPE
-  printf '%s\n' "${FULL_VAL}" >"${SANDBOX}/tin" # the user's clean paste
+  GA_AUTH_FORCE_TTY=0 # no inherited terminal → paste-only path
+  # the user copies the WRAPPED display: it arrives as TWO lines split at the wrap column (WRAP_A+WRAP_B ==
+  # FULL_VAL). The old single-line read + line-oriented grep captured only WRAP_A → render → 401.
+  printf '%s\n%s\n' "${WRAP_A}" "${WRAP_B}" >"${SANDBOX}/tin"
   open_tty "${SANDBOX}/tin"
   local rc=0
   preflight_provision_headless_token || rc=$?
   close_tty
-  # auto-capture rendered a truncated token (self-test failed) → paste path overwrote with the correct one.
+  [[ "${rc}" -eq 0 ]] || return 1
+  # the FULL value is reconstructed byte-for-byte — not the first-line WRAP_A fragment.
+  [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
+  [[ "$(stored_secret)" != "${WRAP_A}" ]] || return 1
+}
+
+# === (headline) AUTO-CAPTURE REJOIN — Source B rejoins the wrap + authenticates directly ========
+# The whitespace-collapse now REJOINS the wrapped auto-capture stream, so Source B renders the FULL token
+# and returns 0 BEFORE the paste block is reached. A garbage paste (which must never be consumed) is the
+# discriminator: on the OLD line-oriented sanitize, Source B truncated → 401 → the garbage paste WAS
+# reached → 401 again → rc != 0. On the fixed code Source B short-circuits, so the garbage is never read.
+
+@test "auto-capture-rejoin: a wrapped auto-capture stream rejoins + authenticates via Source B (no paste)" {
+  load_fns || return 1
+  GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1
+  GA_AUTH_FORCE_TTY=0     # if Source B failed, Source C would route to the (garbage) paste
+  GA_STUB_SHAPE="wrapped" # setup-token emits the wrapped shape (the token split across two lines)
+  export GA_STUB_SHAPE
+  # a garbage paste that MUST NEVER be consumed — if Source B short-circuits, this is never read.
+  printf '%s\n' 'garbage-must-not-reach-paste' >"${SANDBOX}/tin"
+  open_tty "${SANDBOX}/tin"
+  local rc=0
+  preflight_provision_headless_token || rc=$?
+  close_tty
+  # Source B rejoined the wrap → rendered the FULL token + self-test passed → return 0, garbage never read.
   [[ "${rc}" -eq 0 ]] || return 1
   [[ "$(stored_secret)" == "${FULL_VAL}" ]] || return 1
 }
@@ -250,10 +279,23 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   body="$(awk '/^preflight_provision_headless_token\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
     "${GA}/lib/ga-tui-preflight.sh")" || return 1
   [[ -n "${body}" ]] || return 1
-  # the reliable paste path: a silent (-s, no echo) read off the TTY.
-  [[ "${body}" == *'IFS= read -rs pasted <"${TTY}"'* ]] || return 1
+  # the reliable paste path: the WHOLE (possibly wrapped, multi-line) paste is captured via the shared
+  # silent-read helper, whose value is copied out of REPLY (never left in a global).
+  [[ "${body}" == *'_read_pasted_token'* ]] || return 1
+  [[ "${body}" == *'pasted="${REPLY}"'* ]] || return 1
   # cooked-mode restore around the read (raw-mode Enter=CR would else never terminate the read).
   [[ "${body}" == *'stty "${TTY_SAVED}" <"${TTY}"'* ]] || return 1
+  # the capture helper reads SILENTLY (-s, no echo) on every segment so the secret never reaches scrollback.
+  local reader
+  reader="$(awk '/^_read_pasted_token\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+    "${GA}/lib/ga-tui-preflight.sh")" || return 1
+  [[ -n "${reader}" ]] || return 1
+  [[ "${reader}" == *'IFS= read -rs line <"${TTY}"'* ]] || return 1
+  [[ "${reader}" == *'IFS= read -rs -t 1 line <"${TTY}"'* ]] || return 1
+  # the terminal is UNCONDITIONALLY restored out of bracketed-paste mode after the drain — a dropped
+  # ESC[?2004l would strand the terminal in bracketed-paste mode; pinned so a refactor cannot silently drop it.
+  [[ "${reader}" == *'preflight_out "${bp_off}"'* ]] || return 1
+  [[ "${reader}" == *'2004l'* ]] || return 1
   # the value reaches render ONLY via STDIN through the shared helper — never on argv.
   [[ "${body}" == *'printf '"'"'%s\n'"'"' "${pasted}" | _provision_render_selftest'* ]] || return 1
   # the legacy `$(claude setup-token)` capture is GATED opt-in (default OFF).

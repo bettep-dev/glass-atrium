@@ -473,18 +473,26 @@ headless_auth_selftest() {
 #   tr -d '\r'                          delete carriage returns
 #   strip_csi                           strip CSI escape sequences (shared helper — the SAME stripper
 #                                        visible_len uses, so the two cannot drift; value in a var, off-argv)
+#   tr -d '[:space:]'                   collapse ALL whitespace/newlines → rejoin a display-WRAPPED token
+#                                        whose copy carries hard wrap-newlines (a real OAuth value has none)
 #   grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' first match by fixed prefix (no `head` pipe → no SIGPIPE)
 # FALLBACK (vendor format drift — the grep finds nothing): the last non-empty CLEAN line of the scrubbed stream.
 # SECURITY: value stays on stdout of a command substitution captured into a local —
 # never argv, never logged.
 sanitize_setup_token() {
-  local raw="$1" cleaned extracted
+  local raw="$1" cleaned collapsed extracted
   # tr -d removes CR (no value on its argv); strip_csi receives the value as a function
   # arg (a var, not a command line) and strips every CSI run via pure-bash glob math.
   cleaned="$(strip_csi "$(printf '%s' "${raw}" | tr -d '\r')")"
+  # Rejoin a display-WRAPPED value: a boxed/narrow `claude setup-token` render wraps the ~100-char token
+  # across the terminal width, so a copy of the wrapped display carries hard newline(s) and a line-oriented
+  # grep would stop at the first ~80-char segment (renders OK, then 401s). A real OAuth value has NO
+  # internal whitespace, so collapsing every space/tab/newline splices the wrap-split segments back into
+  # one contiguous string. Hardens ALL three sources (env / auto-capture / paste) uniformly.
+  collapsed="$(printf '%s' "${cleaned}" | tr -d '[:space:]')"
   # `-m1` (BSD/GNU) stops after the first match and exits 0 → no `head` pipe, so no
   # SIGPIPE; `|| true` swallows the no-match exit-1 so pipefail doesn't fire the ERR trap.
-  extracted="$(printf '%s\n' "${cleaned}" | { grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' || true; })"
+  extracted="$(printf '%s\n' "${collapsed}" | { grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' || true; })"
   if [[ -n "${extracted}" ]]; then
     printf '%s\n' "${extracted}"
     return 0
@@ -541,6 +549,70 @@ _provision_tty_gate_ok() {
   esac
 }
 
+# _read_pasted_token — capture a possibly WRAPPED, multi-line token paste SILENTLY off ${TTY} into REPLY.
+# Root cause it fixes: a boxed/narrow `claude setup-token` render wraps the ~100-char token across the
+# terminal width; a copy of the wrapped display carries hard newline(s), so the previous single-line `read`
+# captured only the first ~80-char segment → a truncated token that renders OK but 401s on the headless
+# self-test. This reads the WHOLE paste. Bash 3.2 / macOS (no fractional `read -t`, no `-t 0` poll, no
+# char-by-char):
+#   1. Enable bracketed-paste mode (ESC[?2004h): a supporting terminal FRAMES the whole paste as one
+#      ESC[200~ … ESC[201~ chunk, so the drain STOPS the instant the end marker appears — zero added idle
+#      latency on a modern terminal (the common case), single- OR multi-line alike.
+#   2. The first segment BLOCKS (no -t) for the paste + Enter; each drain read uses -t 1 (bash 3.2's
+#      shortest integer idle). A wrapped paste's continuation lines are ALREADY buffered so they read
+#      back-to-back with no wait; the 1 s idle only ever elapses on a terminal WITHOUT bracketed-paste
+#      support (graceful degradation), never on a modern one. `|| break` guarantees termination on
+#      timeout OR EOF.
+#   3. Restore the terminal (ESC[?2004l) UNCONDITIONALLY, then STRIP the ESC[200~/ESC[201~ markers —
+#      strip_csi (in sanitize) CANNOT: it treats the `~` terminator as a CSI param and would eat the
+#      token's first letter. The marker-free value (wrap-newlines PRESERVED) goes to sanitize_setup_token,
+#      whose whitespace-collapse is the single rejoin point across all three value sources.
+# SECURITY: every read is -s (no echo) so the secret never reaches the scrollback / install transcript;
+# the value lives only in a local + REPLY (never argv / a pipe / a log) and the caller scrubs REPLY.
+# NOTE: the bracketed-paste FAST path is not auto-verifiable in the bats suite (a harness / subagent has no
+# controlling terminal); the file-stub drive exercises the timeout/EOF drain — the correctness-critical
+# path — while the bracketed marker handling is an additive real-terminal latency win needing a user check.
+_read_pasted_token() {
+  local acc="" line nl bp_on bp_off bp_start bp_end
+  nl=$'\n'
+  bp_on=$'\033[?2004h'
+  bp_off=$'\033[?2004l'
+  bp_start=$'\033[200~'
+  bp_end=$'\033[201~'
+
+  # Step 1 — ask a bracketed-paste-capable terminal to FRAME the paste (a plain terminal ignores the CSI).
+  # Routed through preflight_out, NOT a raw `>"${TTY}"`: in production `>` on the char-device /dev/tty does
+  # not truncate (O_TRUNC is a no-op on a char device), so either form is safe; but the bats suite STUBS
+  # preflight_out to a no-op, and a raw write would O_TRUNC the regular-FILE TTY stub mid-read. Keep the
+  # stub (and this indirection) when refactoring the harness.
+  preflight_out "${bp_on}"
+
+  # Step 2 — first segment BLOCKS for the paste + Enter (silent). `read` returns 1 on a value with no
+  # trailing newline but still sets `line`, so capture it regardless of the exit status.
+  IFS= read -rs line <"${TTY}" || true
+  acc="${line}"
+
+  # Step 3 — drain the remaining wrapped segments. Stop the instant the bracketed END marker appears (a
+  # modern terminal → no idle wait); else a 1 s idle / EOF ends it on a terminal without bracketed paste.
+  while [[ "${acc}" != *"${bp_end}"* ]]; do
+    if IFS= read -rs -t 1 line <"${TTY}"; then
+      acc="${acc}${nl}${line}"
+    else
+      break
+    fi
+  done
+
+  # Step 4 — restore the terminal UNCONDITIONALLY out of bracketed-paste mode (via the same preflight_out
+  # sink), then STRIP the bracketed framing (strip_csi would corrupt the `~` terminator, eating the token's
+  # first letter). The restore must never be skipped — a dropped ESC[?2004l strands the terminal in
+  # bracketed-paste mode.
+  preflight_out "${bp_off}"
+  acc="${acc//"${bp_start}"/}"
+  acc="${acc//"${bp_end}"/}"
+
+  REPLY="${acc}"
+}
+
 # preflight_provision_headless_token — the AUTH-gate headless-provisioning step. IDEMPOTENT: when the
 # secrets file exists AND the self-test passes, SKIP (no re-prompt). Otherwise it acquires a long-lived
 # OAuth token from the FIRST source that yields a value passing render + self-test, in order:
@@ -548,17 +620,20 @@ _provision_tty_gate_ok() {
 #      `export CLAUDE_CODE_OAUTH_TOKEN` line; a user who ran it in THIS shell already has it) —
 #      reliable, no capture, no leak;
 #   B) OPT-IN legacy `$(claude setup-token)` auto-capture (GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1) — DEFAULT
-#      OFF because command-substitution makes the CLI's stdout a NON-TTY pipe: v2.1.207 then wraps the
-#      long token across the 80-col boundary, so sanitize_setup_token's `sk-ant-oat…` grep extracts only
-#      a TRUNCATED fragment (renders OK, then 401s — the exact user-reported failure). Retained for older
-#      CLIs / CI where the capture is byte-clean; any failure falls through to (C);
+#      OFF. command-substitution makes the CLI's stdout a NON-TTY pipe on which v2.1.207 wraps the long
+#      token across the 80-col boundary; sanitize_setup_token's whitespace-collapse now REJOINS that wrap
+#      and returns the FULL token, so the original truncate→401 cause is RESOLVED (no longer a correctness
+#      reason to disable it). It stays OFF as a UX / conservatism choice — path C's in-place run shows the
+#      browser-approval flow in a real terminal, and changing a long-standing default is a user call. Any
+#      failure still falls through to (C);
 #   C) the INTERACTIVE path — AUTO-RUN `claude setup-token` IN PLACE when the launcher's INHERITED fd 0/1
 #      are real terminals (the kqueue-able pty SLAVES; the ${TTY} /dev/tty handle crashes Bun's node:tty
 #      WriteStream with EINVAL). The child INHERITS fd 0/1 (NO ${TTY} redirect) with stderr merged via
 #      2>&1; the launcher NEVER reads that stdout. When the gate is false (passthrough / piped / CI) OR the
 #      run exits non-zero, it falls back to a manual paste from `claude setup-token` in another terminal.
-#      Either way the value is read SILENTLY off the TTY (no echo → never in the scrollback / transcript),
-#      sanitized, piped to render via STDIN — never on argv / a pipe / a log.
+#      Either way the WHOLE paste is read SILENTLY off the TTY (no echo → never in the scrollback /
+#      transcript) — a boxed render WRAPS the token across lines, so _read_pasted_token captures every
+#      segment — then sanitized, piped to render via STDIN — never on argv / a pipe / a log.
 # Loud-fails on a real failure (named return codes); non-fatal (a failure WARNs, daemons keep the keychain
 # fallback) — the launchd 401 is a daemon-only issue, not an interactive-install blocker. The token value
 # never touches argv, is never echoed/logged, and dies with the enclosing local.
@@ -610,8 +685,9 @@ preflight_provision_headless_token() {
 
   # ── SOURCE B: OPT-IN legacy `$(claude setup-token)` auto-capture (default OFF — see the header). ──
   # stderr stays attached so browser-approval prompts reach the user; only stdout (the value) is captured
-  # into a LOCAL + piped to render via STDIN — never argv, never echoed. Under v2.1.207 the non-TTY
-  # capture truncates the token → self-test fails → falls through to the paste path.
+  # into a LOCAL + piped to render via STDIN — never argv, never echoed. Under v2.1.207 the non-TTY capture
+  # WRAPS the token, but sanitize's whitespace-collapse rejoins it → the FULL token renders + authenticates
+  # directly; the collapse removed the old truncate→401 fall-through (any OTHER invalid value still falls to paste).
   if [[ "${GA_AUTH_SETUP_TOKEN_AUTOCAPTURE:-0}" == "1" ]]; then
     setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
     preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' (auto-capture) — approve in the browser, then return here.")"
@@ -692,14 +768,18 @@ preflight_provision_headless_token() {
   fi
   preflight_out "  $(c "${C_INFO}" "paste token ▸ ")"
 
-  # SILENT read (-s → no echo REGARDLESS of the cooked echo bit, so the secret never reaches the terminal
-  # scrollback / install transcript). Re-assert cooked first — an in-place setup-token may have left the
-  # TTY in a different mode. `|| true` keeps a value pasted WITHOUT a trailing newline (read returns 1 at
-  # EOF but still sets the var) and prevents set -e abort. The value stays in this LOCAL, sanitized, then
-  # piped via STDIN below.
+  # SILENT multi-line capture (-s on every read → no echo REGARDLESS of the cooked echo bit, so the secret
+  # never reaches the terminal scrollback / install transcript). Re-assert cooked first — an in-place
+  # setup-token may have left the TTY in a different mode. _read_pasted_token reads the WHOLE paste: a boxed
+  # render WRAPS the ~100-char token across lines, so a single-line read would capture only the first
+  # segment → a truncated token that renders OK then 401s. It returns the value via REPLY; copy it into
+  # this LOCAL and scrub REPLY. The value is sanitized (CR/CSI strip + wrap-newline collapse), then piped
+  # via STDIN below.
   stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
   pasted=""
-  IFS= read -rs pasted <"${TTY}" || true
+  _read_pasted_token
+  pasted="${REPLY}"
+  REPLY=""
   if [[ -n "${tty_mode}" ]]; then
     stty "${tty_mode}" <"${TTY}" 2>/dev/null || true
   fi
@@ -727,6 +807,7 @@ preflight_provision_headless_token() {
       ;;
     *)
       preflight_line "$(c "${C_ALERT}" "[warn]") headless credential rendered but the self-test still failed (401) — daemons may 401 under launchd."
+      preflight_line "$(c "${C_DIM}" "  the token may have WRAPPED when copied (a boxed render splits it across lines) — re-copy the FULL sk-ant-oat… value and retry.")"
       preflight_line "$(c "${C_DIM}" "  re-run 'glass-atrium install' or paste a fresh 'claude setup-token' value to retry.")"
       return 1
       ;;
