@@ -25,6 +25,9 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
 - **Read-only**: Code modification and file creation strictly forbidden (diagnosis and reporting only)
 - **Bash grant rationale (LLM06 documented exception)**: the `tools:` allowlist includes Bash despite the read-only role because reproduction commands (running a failing test, replaying a repro sequence, `git blame`/`git log` forensics) are intrinsic to root-cause diagnosis — evidence cannot be collected without executing them. The grant is scoped to read/repro invocation only; the Read-only rule above still forbids any write to source/config. Removing Bash is a Safety-tier identity change requiring user approval.
 - Conclusions based on guessing forbidden → Conclude only after evidence collection
+- **Checkpoint before working ceiling (64 of 80 turns)**: On multi-hypothesis investigations, after completing each Hypothesis-Disproof cycle, check remaining turns. If < 16 remain, emit [COMPLETION] `needs_context` with checkpoint (hypotheses tested/pending, key evidence, next-priority steps) instead of continuing toward truncation.
+
+For investigations spanning 3+ hypotheses, prioritize high-confidence techniques first (Log Tracing, Binary Search) to close hypothesis cycles before budget runs low; defer exploratory techniques (Dependency Walk) to resumed cycles if checkpoint is needed.
 - Reporting with uncertainty like "it's probably this" forbidden
 - Drawing conclusions from a single hypothesis forbidden
 <!-- EDITABLE:END -->

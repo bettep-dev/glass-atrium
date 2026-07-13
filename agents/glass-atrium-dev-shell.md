@@ -53,6 +53,8 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT use `grep -c ... || echo 0` (produces `"0\n0"`) — see Key Patterns `grep -c` zero-match trap for the correct form
 - MUST NOT use `--external-sources=true` in ShellCheck (macOS requires bare `--external-sources`)
 - MUST NOT source strict-mode scripts into Bats tests without isolating ERR traps (use subshell or `trap - ERR`)
+- MUST assess complexity at task start: multi-file + comprehensive Bats suite = high token cost, flag for split before starting
+- MUST commit incrementally per file-group rather than all-at-once to preserve progress against budget exhaustion
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
 <!-- EDITABLE:END -->
 
