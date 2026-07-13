@@ -659,7 +659,7 @@
     "scripts/render-monitor-env.sh": "f9be5a4288eb8e27766c2675171c6d317d6d73f4e9ab1e7d02730da4d9b4f15a",
     "scripts/run-bats-parallel.sh": "6981915bc0268e47a4a23d6882e74a0b71a4d0f984cba0d0b42eb2c800b30f73",
     "scripts/sync-registry-tools.sh": "d60f3efe31891f9192986dd379ea734664b231f72a1b8d8386f3bb7f9b44a90b",
-    "scripts/update.sh": "7913434a6d0c2ce7050c64dbb7647167e3dab7ca139d741dafda384aba32fd0a",
+    "scripts/update.sh": "fbd1b2d068e36cf82783e04f431721806d4b16f97426271edf9f081931bd02da",
     "scripts/wiki-daemon-bootstrap.sh": "9c06c74154ad5b3ef398949744e48db83b16edd9ef1d52d08ea376e105f32135",
     "scripts/wiki-daemon-cycle.sh": "9dd9ef673fd7296a4473aed75d1fd43ed387fd38fdba22b549a4e919bcfd3f14",
     "scripts/wiki-daemon-entry-prompt.md": "a1ae6a9c74676335698afed9c67a03383fbef06d7ead3a67d979caf21e2df6b9",
