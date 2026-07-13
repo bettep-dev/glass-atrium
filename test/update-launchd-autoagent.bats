@@ -1,9 +1,14 @@
 #!/usr/bin/env bats
-# update.sh -> update_refresh_autoagent_launchd: the post-apply reload of the
-# com.glass-atrium.autoagent-cycle launchd job. Its ProgramArguments were
-# repointed to the store-path daemon-cycle.sh, so a bare kickstart would re-run
-# the STALE loaded definition — the new path takes effect ONLY by re-copying the
-# freshly rendered plist over the LaunchAgents copy then bootout+bootstrap.
+# update.sh -> update_refresh_resident_launchd, exercised through the
+# com.glass-atrium.autoagent-cycle resident job. autoagent-cycle's ProgramArguments were
+# repointed to the store-path daemon-cycle.sh, so a bare kickstart would re-run the STALE
+# loaded definition — the new path takes effect ONLY by re-copying the freshly rendered
+# plist over the LaunchAgents copy then bootout+bootstrap. The dedicated autoagent-cycle
+# reload was GENERALIZED into update_refresh_resident_launchd (every resident already-loaded
+# com.glass-atrium.* job whose deployed plist drifted); this suite pins the autoagent-cycle
+# path's edge cases (loaded reload, not-loaded skip, launchctl-unresolvable graceful, rendered
+# missing skip). The full incident matrix (the 6 other jobs, drift gate, wiring) lives in
+# scripts/test/update-resident-launchd-redeploy.bats.
 #
 # Run via: bats test/update-launchd-autoagent.bats
 # Requires: bats (brew install bats-core), bash 3.2+
@@ -11,9 +16,10 @@
 # Hermetic strategy: update.sh is SOURCED inside a `run bash -c` subshell so its
 # `set -Eeuo pipefail` + ERR trap stay contained (never leak into the bats shell),
 # and the file's BASH_SOURCE==$0 guard keeps update_main from executing. launchctl
-# is a recording stub selected via the ATRIUM_UPDATE_LAUNCHCTL seam; the plist
-# src/dst are mktemp paths via the ATRIUM_UPDATE_AUTOAGENT_*_PLIST seams. Nothing
-# touches the real ~/Library/LaunchAgents or the live daemon.
+# is a recording stub selected via the ATRIUM_UPDATE_LAUNCHCTL seam; the rendered /
+# deployed plist dirs are mktemp paths via the ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR /
+# ATRIUM_UPDATE_LAUNCH_AGENTS_DIR seams. Nothing touches the real ~/Library/LaunchAgents
+# or the live daemon.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_UPDATE="${GA}/scripts/update.sh"
@@ -22,14 +28,17 @@ setup() {
   [[ -f "${REAL_UPDATE}" ]] || skip "updater not found: ${REAL_UPDATE}"
   SANDBOX="$(mktemp -d -t ga-update-launchd.XXXXXX)"
   STUB_LOG="${SANDBOX}/launchctl-calls.log"
-  SRC="${SANDBOX}/rendered/com.glass-atrium.autoagent-cycle.plist"
-  DST="${SANDBOX}/LaunchAgents/com.glass-atrium.autoagent-cycle.plist"
-  mkdir -p "${SANDBOX}/rendered" "${SANDBOX}/LaunchAgents"
+  RENDERED="${SANDBOX}/rendered"
+  AGENTS="${SANDBOX}/LaunchAgents"
+  SRC="${RENDERED}/com.glass-atrium.autoagent-cycle.plist"
+  DST="${AGENTS}/com.glass-atrium.autoagent-cycle.plist"
+  mkdir -p "${RENDERED}" "${AGENTS}"
   # a rendered-parity SoT the reload must re-copy (store-path ProgramArguments)
   printf 'RENDERED-STORE-PATH-PLIST\n' >"${SRC}"
 
   # recording launchctl stub — logs its subcommand, drives the `print` (loaded)
-  # probe via STUB_PRINT_RC, always succeeds on bootout/bootstrap.
+  # probe via STUB_PRINT_RC, and returns empty `list` output so the settle poll sees
+  # the label ABSENT (fast). Always succeeds on bootout/bootstrap.
   STUB="${SANDBOX}/launchctl"
   cat >"${STUB}" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -47,33 +56,34 @@ teardown() {
 }
 
 # Source update.sh in an isolated subshell (contains set -e + ERR trap) and call
-# the reload function. Env seams are exported by the caller before invoking.
+# the generalized reload. Env seams are exported by the caller before invoking.
 call_refresh() {
-  run bash -c 'source "${REAL_UPDATE}"; update_refresh_autoagent_launchd' _
+  run bash -c 'source "${REAL_UPDATE}"; update_refresh_resident_launchd' _
 }
 
-@test "loaded job -> re-copy rendered plist + bootout + bootstrap" {
+@test "loaded autoagent-cycle -> re-copy rendered plist + bootout + bootstrap" {
   export REAL_UPDATE STUB_LOG
   export ATRIUM_UPDATE_LAUNCHCTL="${STUB}"
-  export ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST="${SRC}"
-  export ATRIUM_UPDATE_AUTOAGENT_PLIST="${DST}"
+  export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="${RENDERED}"
+  export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${AGENTS}"
   export STUB_PRINT_RC=0 # loaded
   call_refresh
   [[ "${status}" -eq 0 ]]
-  # the rendered plist was staged over the LaunchAgents copy (repoint takes effect)
+  # the rendered plist was staged over the LaunchAgents copy (repoint takes effect);
+  # a deployed plist absent from the sandbox is drift → re-copy fires.
   [[ -f "${DST}" ]]
   [[ "$(cat "${DST}")" == "RENDERED-STORE-PATH-PLIST" ]]
   # the reload half ran: probe, then bootout, then bootstrap
   grep -q '^print gui/' "${STUB_LOG}"
-  grep -q '^bootout gui/' "${STUB_LOG}"
-  grep -q '^bootstrap gui/' "${STUB_LOG}"
+  grep -q '^bootout gui/.*/com.glass-atrium.autoagent-cycle' "${STUB_LOG}"
+  grep -q '^bootstrap gui/.*com.glass-atrium.autoagent-cycle.plist' "${STUB_LOG}"
 }
 
-@test "not-loaded job -> untouched (user opt-in load preserved)" {
+@test "not-loaded autoagent-cycle -> untouched (user opt-in load preserved)" {
   export REAL_UPDATE STUB_LOG
   export ATRIUM_UPDATE_LAUNCHCTL="${STUB}"
-  export ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST="${SRC}"
-  export ATRIUM_UPDATE_AUTOAGENT_PLIST="${DST}"
+  export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="${RENDERED}"
+  export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${AGENTS}"
   export STUB_PRINT_RC=1 # not loaded
   call_refresh
   [[ "${status}" -eq 0 ]]
@@ -87,8 +97,8 @@ call_refresh() {
 @test "launchctl unresolvable -> graceful skip, no crash" {
   export REAL_UPDATE STUB_LOG
   export ATRIUM_UPDATE_LAUNCHCTL="${SANDBOX}/no-such-launchctl"
-  export ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST="${SRC}"
-  export ATRIUM_UPDATE_AUTOAGENT_PLIST="${DST}"
+  export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="${RENDERED}"
+  export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${AGENTS}"
   call_refresh
   [[ "${status}" -eq 0 ]]
   [[ ! -e "${DST}" ]]
@@ -98,8 +108,10 @@ call_refresh() {
 @test "loaded but rendered plist missing -> warn, skip reload (existence guard)" {
   export REAL_UPDATE STUB_LOG
   export ATRIUM_UPDATE_LAUNCHCTL="${STUB}"
-  export ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST="${SANDBOX}/rendered/absent.plist"
-  export ATRIUM_UPDATE_AUTOAGENT_PLIST="${DST}"
+  # an EMPTY rendered dir → every resident job's rendered plist is absent
+  mkdir -p "${SANDBOX}/rendered-absent"
+  export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="${SANDBOX}/rendered-absent"
+  export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="${AGENTS}"
   export STUB_PRINT_RC=0 # loaded
   call_refresh
   [[ "${status}" -eq 0 ]]

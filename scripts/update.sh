@@ -103,7 +103,9 @@
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
 # ATRIUM_UPDATE_DB=off (disable tracking) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
-# ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_MONITOR_DIR ·
+# ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
+# (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
+# (<GA root>/rendered/launchd) · ATRIUM_UPDATE_MONITOR_DIR ·
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
 # ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base) ·
@@ -1519,17 +1521,17 @@ update_oneshot_plist_path() {
   printf '%s\n' "${ATRIUM_UPDATE_ONESHOT_PLIST:-$(update_ga_root)/rendered/launchd/com.glass-atrium.update-oneshot.plist}"
 }
 
-# autoagent-cycle plist paths (NEVER request-derived). Overrides for tests.
-#   *_path        = the launchd-canonical ~/Library/LaunchAgents copy launchctl loads.
-#   *_rendered    = the render-parity SoT re-copied over the canonical copy so a
-#                   repointed ProgramArguments (store-path daemon-cycle.sh) takes
-#                   effect on reload. Mirrors load_launchd_jobs' rendered->LaunchAgents
-#                   staging.
-update_autoagent_plist_path() {
-  printf '%s\n' "${ATRIUM_UPDATE_AUTOAGENT_PLIST:-${HOME}/Library/LaunchAgents/com.glass-atrium.autoagent-cycle.plist}"
+# launchd plist dirs (NEVER request-derived). Overrides for tests.
+#   deployed dir  = the launchd-canonical ~/Library/LaunchAgents copies launchctl loads.
+#   rendered dir  = the render-parity SoT (render_parity writes the 8 com.glass-atrium.*
+#                   plists here); re-copied over the deployed copy so a repointed
+#                   EnvironmentVariables/PATH/ProgramArguments takes effect on reload.
+#                   Mirrors load_launchd_jobs' rendered->LaunchAgents staging.
+update_launch_agents_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_LAUNCH_AGENTS_DIR:-${HOME}/Library/LaunchAgents}"
 }
-update_autoagent_rendered_plist_path() {
-  printf '%s\n' "${ATRIUM_UPDATE_AUTOAGENT_RENDERED_PLIST:-$(update_ga_root)/rendered/launchd/com.glass-atrium.autoagent-cycle.plist}"
+update_rendered_launchd_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR:-$(update_ga_root)/rendered/launchd}"
 }
 
 # Minimal XML entity escape for the plist string values (patsub_replacement is
@@ -1605,9 +1607,11 @@ PLIST
 
 # ---------------------------------------------------------------------------
 # P3 — install-parity post-step (headless success only): rebuild the monitor then
-# refresh its launchd job, mirroring install.sh, so a web-triggered update lands
-# byte-identical to a fresh install. Runs INSIDE the decoupled one-shot job, so
-# `kickstart -k` restarting the monitor does NOT kill this runner.
+# refresh the resident launchd jobs (monitor kickstart + re-deploy/reload every other
+# already-loaded com.glass-atrium.* job whose plist drifted), mirroring install.sh, so
+# a web-triggered update lands byte-identical to a fresh install. Runs INSIDE the
+# decoupled one-shot job, so `kickstart -k` restarting the monitor does NOT kill this
+# runner.
 # ---------------------------------------------------------------------------
 
 # Build the monitor (tsc + build:assets + build:client via `npm run build`). Returns
@@ -1653,7 +1657,7 @@ update_render_parity() {
 # non-idempotent when unloaded, so the probe picks the correct verb). Best-effort +
 # loud — a launchd hiccup must not fail an already-applied update.
 update_refresh_monitor_launchd() {
-  local launchctl_bin uid label domain plist
+  local launchctl_bin uid label domain plist rendered
   launchctl_bin="${ATRIUM_UPDATE_LAUNCHCTL:-launchctl}"
   if ! command -v "${launchctl_bin}" >/dev/null 2>&1; then
     update_log "post-step: launchctl not resolvable (${launchctl_bin}) — monitor needs a manual restart"
@@ -1663,6 +1667,25 @@ update_refresh_monitor_launchd() {
   label="com.glass-atrium.monitor"
   domain="gui/${uid}"
   plist="$(update_monitor_plist_path)"
+  # Stage the freshly-rendered monitor plist over the deployed copy so the deployed
+  # FILE tracks the current EnvironmentVariables/PATH — kickstart -k restarts the
+  # service for the NEW BUILD but re-execs the ALREADY-LOADED definition (a kickstart
+  # alone never picks up a plist env change), so this re-copy keeps the deployed plist
+  # current for the next full definition reload (daemon-daily-restart / reboot /
+  # --load-launchd). Guarded on the rendered SoT: a render gap warns, never aborts, and
+  # an unchanged plist is a no-op — the kickstart/bootstrap probe below is unchanged.
+  rendered="$(update_rendered_launchd_dir)/${label}.plist"
+  # Guard the mkdir so a create failure WARNs + skips the re-copy rather than aborting —
+  # the never-aborts contract must hold even called directly (not only via the caller's
+  # `if ! update_post_step`, which disables set -e across the tree).
+  if [[ -f "${rendered}" ]] && ! cmp -s -- "${rendered}" "${plist}"; then
+    if mkdir -p -- "$(dirname -- "${plist}")"; then
+      cp -f -- "${rendered}" "${plist}" \
+        || update_log "WARN: failed to stage monitor plist (${rendered} -> ${plist}) — deployed plist left stale"
+    else
+      update_log "WARN: failed to create monitor plist dir ($(dirname -- "${plist}")) — deployed plist left stale"
+    fi
+  fi
   if "${launchctl_bin}" print "${domain}/${label}" >/dev/null 2>&1; then
     update_log "post-step: monitor loaded — kickstart -k ${domain}/${label}"
     "${launchctl_bin}" kickstart -k "${domain}/${label}" >/dev/null 2>&1 \
@@ -1674,49 +1697,111 @@ update_refresh_monitor_launchd() {
   fi
 }
 
-# Refresh the autoagent-cycle launchd job — ONLY when already loaded (review-first:
-# an unloaded job stays the user's opt-in, never auto-bootstrapped here). Unlike the
-# monitor, this job's ProgramArguments were repointed to the store-path daemon-cycle.sh,
-# so a `kickstart -k` would re-run the STALE loaded definition; the new path takes
-# effect ONLY by RE-COPYING the freshly rendered plist over the LaunchAgents copy then
-# bootout+bootstrap (reload the definition). render-parity already re-rendered the plist
-# FILE; this is the missing reload half. Best-effort + loud — a launchd hiccup must not
-# fail an already-applied update.
-update_refresh_autoagent_launchd() {
-  local launchctl_bin uid label domain src dst
+# Settle poll (mirrors lib/ga-launchd.sh load_launchd_jobs) — block until `label` is
+# ABSENT from launchctl's domain, or a wall-clock ceiling elapses, closing the async
+# `bootout` rc=5 race where an IMMEDIATE re-bootstrap hits a still-terminating job. bash
+# 3.2-safe: a SECONDS-delta ceiling (an iteration count drifts when a probe blocks), awk
+# for the TAB-delimited `launchctl list` $3 label column, sleep 0.2 keeps the poll
+# responsive under the cap. A not-loaded label passes on the first iteration.
+_update_launchd_settle() {
+  local launchctl_bin="$1" label="$2"
+  local started="${SECONDS}" ceiling="${GA_LAUNCHD_SETTLE_TIMEOUT_SECS:-10}"
+  while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]; do
+    if ! "${launchctl_bin}" list 2>/dev/null | awk -v l="${label}" '$3 == l { found = 1 } END { exit found ? 0 : 1 }'; then
+      break
+    fi
+    sleep 0.2
+  done
+}
+
+# Re-deploy + reload EVERY resident (already-loaded) com.glass-atrium.* launchd job whose
+# deployed plist has DRIFTED from the freshly-rendered SoT, so a renderer / PATH /
+# EnvironmentVariables fix from render-parity actually reaches the loaded definition.
+# render-parity re-renders the plist FILES; this is the missing reload half for the
+# NON-monitor daemons (the monitor is kickstart-refreshed by update_refresh_monitor_launchd).
+# EVERY resident job must reload-on-drift, not just one: render-parity refreshes only the
+# rendered FILES, so any job whose deployed plist is never re-copied + definition-reloaded
+# runs indefinitely on stale EnvironmentVariables/PATH — a scheduled job re-execs its
+# DEPLOYED plist each fire, so the rendered SoT alone never reaches it.
+# Per job: probe `launchctl print` — NOT loaded → clean skip (review-first: an unloaded
+# job stays the user's opt-in, never auto-bootstrapped); loaded + deployed==rendered →
+# no reload (a scheduled job re-execs the current plist on its next fire; only a plist
+# change needs a definition reload); loaded + drift → re-copy rendered → LaunchAgents,
+# then bootout → settle-poll → bootstrap (mirrors load_launchd_jobs' rc=5 race handling).
+# Best-effort + loud — a launchd hiccup WARNs the named job + remediation (never a silent
+# `|| true`), but never aborts an already-applied update (the post-step contract).
+update_refresh_resident_launchd() {
+  local launchctl_bin uid domain rendered_dir agents_dir
   launchctl_bin="${ATRIUM_UPDATE_LAUNCHCTL:-launchctl}"
   if ! command -v "${launchctl_bin}" >/dev/null 2>&1; then
-    update_log "post-step: launchctl not resolvable (${launchctl_bin}) — autoagent-cycle needs a manual reload"
+    update_log "post-step: launchctl not resolvable (${launchctl_bin}) — resident daemons need a manual reload"
     return 0
   fi
   uid="$(id -u)"
-  label="com.glass-atrium.autoagent-cycle"
   domain="gui/${uid}"
-  src="$(update_autoagent_rendered_plist_path)"
-  dst="$(update_autoagent_plist_path)"
-  # PROBE — only refresh a LOADED job; not loaded → leave it to the user's opt-in load.
-  if ! "${launchctl_bin}" print "${domain}/${label}" >/dev/null 2>&1; then
-    update_log "post-step: autoagent-cycle NOT loaded — leaving user opt-in load untouched"
-    return 0
-  fi
-  # the render-parity SoT must exist to re-copy — a render gap warns, never aborts.
-  if [[ ! -f "${src}" ]]; then
-    update_log "WARN: rendered autoagent-cycle plist absent (${src}) — reload skipped"
-    return 0
-  fi
-  if ! cp -f -- "${src}" "${dst}"; then
-    update_log "WARN: failed to stage autoagent-cycle plist (${src} -> ${dst}) — reload skipped"
-    return 0
-  fi
-  update_log "post-step: autoagent-cycle loaded — bootout + bootstrap ${domain}/${label}"
-  # bootout is ASYNCHRONOUS; a single transient retry (mirrors load_launchd_jobs) closes
-  # the rc=5 race where launchd has not fully released the domain slot yet.
-  "${launchctl_bin}" bootout "${domain}/${label}" </dev/null >/dev/null 2>&1 || true
-  if ! "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1; then
-    sleep 1
-    "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1 \
-      || update_log "WARN: bootstrap failed — autoagent-cycle may need a manual reload"
-  fi
+  rendered_dir="$(update_rendered_launchd_dir)"
+  agents_dir="$(update_launch_agents_dir)"
+
+  # Resident daemon set = lib/ga-env.sh LAUNCHD_JOBS (8) MINUS `monitor` (kickstart-
+  # refreshed above). update.sh runs standalone (never sources ga-env.sh — a readonly
+  # collision would abort), so the set is inlined; drift vs that SoT / render-launchd-
+  # plists.sh JOBS is a redeploy gap. bash 3.2 + set -u: iterate a function-local array.
+  local jobs=(
+    autoagent-daemon
+    wiki-daemon
+    monitor-log-rotate
+    pg-backup
+    autoagent-cycle
+    wiki-compile
+    daemon-daily-restart
+  )
+  [[ "${#jobs[@]}" -gt 0 ]] || return 0
+
+  local job label src dst
+  for job in "${jobs[@]}"; do
+    label="com.glass-atrium.${job}"
+    src="${rendered_dir}/${label}.plist"
+    dst="${agents_dir}/${label}.plist"
+
+    # PROBE — only refresh a LOADED job; not loaded stays the user's opt-in load.
+    if ! "${launchctl_bin}" print "${domain}/${label}" >/dev/null 2>&1; then
+      update_log "post-step: ${label} NOT loaded — leaving user opt-in load untouched"
+      continue
+    fi
+    # the render-parity SoT must exist to re-copy — a render gap warns, never aborts.
+    if [[ ! -f "${src}" ]]; then
+      update_log "WARN: rendered plist absent (${src}) — ${label} reload skipped"
+      continue
+    fi
+    # DRIFT gate — an unchanged deployed plist needs no reload (cmp missing dst = drift).
+    if cmp -s -- "${src}" "${dst}"; then
+      update_log "post-step: ${label} deployed plist current — no reload"
+      continue
+    fi
+    # STEP1 — stage the freshly-rendered plist into the launchd-canonical location. Guard
+    # the mkdir so a create failure WARNs + skips the job rather than aborting — the
+    # never-aborts contract must hold even called directly (not only via the caller's
+    # `if ! update_post_step`, which disables set -e across the tree).
+    if ! mkdir -p -- "${agents_dir}"; then
+      update_log "WARN: failed to create ${agents_dir} — ${label} reload skipped"
+      continue
+    fi
+    if ! cp -f -- "${src}" "${dst}"; then
+      update_log "WARN: failed to stage ${label} plist (${src} -> ${dst}) — reload skipped"
+      continue
+    fi
+    # STEP2 — idempotent reload: bootout, WAIT out the async unload (settle poll), then
+    # bootstrap with a single transient retry. stdio hygiene — detach stdin/stdout/stderr
+    # so no inherited fd reaches launchctl; the flow keys on EXIT CODE only.
+    update_log "post-step: ${label} drifted — bootout + bootstrap ${domain}/${label}"
+    "${launchctl_bin}" bootout "${domain}/${label}" </dev/null >/dev/null 2>&1 || true
+    _update_launchd_settle "${launchctl_bin}" "${label}"
+    if ! "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1; then
+      sleep 1
+      "${launchctl_bin}" bootstrap "${domain}" "${dst}" </dev/null >/dev/null 2>&1 \
+        || update_log "WARN: bootstrap failed — ${label} may need a manual reload"
+    fi
+  done
 }
 
 # The whole install-parity post-step, orchestrated. Heartbeats bracket the long
@@ -1731,7 +1816,7 @@ update_post_step() {
   update_heartbeat
   update_render_parity
   update_refresh_monitor_launchd
-  update_refresh_autoagent_launchd
+  update_refresh_resident_launchd
   update_log "post-step: install-parity complete"
   return 0
 }
