@@ -994,7 +994,6 @@ extract_field() {
 AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
-CWD=$(extract_field cwd)
 # HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
 HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
@@ -1470,7 +1469,7 @@ fi
 # Regex correction-signal fallback (capture-only). Fires ONLY when the agent emitted no correction
 # field (AGENT_PROVIDED_CORRECTION==0) — the agent value always wins. The regex captures a candidate;
 # the aggregation-layer write-gate does the real filtering (over-capture permitted). On match →
-# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is authoritative for the numeric delta. T9_CORRECTION_DETECTION=false disables the pipeline.
+# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is stubbed to 0 (no project-safe prior lookup in DB-only mode), so this fallback records a single correction (new_count=1). T9_CORRECTION_DETECTION=false disables the pipeline.
 T9_CORRECTION_DETECTION="${T9_CORRECTION_DETECTION:-true}"
 
 if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}" -eq 0 ]; then
@@ -1485,7 +1484,6 @@ import sys, json, re, os, glob, time, tempfile
 from datetime import datetime, timezone, timedelta
 
 TRANSCRIPT = os.environ.get('T9_TRANSCRIPT', '')
-CWD_ENV = os.environ.get('T9_CWD', '')
 TASK_TYPE_ENV = os.environ.get('T9_TASK_TYPE', '')
 SESSION_ID_ENV = os.environ.get('T9_SESSION_ID', '')
 
@@ -1677,55 +1675,20 @@ def is_message_too_old(ts_iso, hours=2):
     except (ValueError, TypeError):
         return False
 
-def find_prior_revision_count(cwd, task_type, max_age_secs=3600):
-    """Extract revision_count from the most recent same-cwd + task_type outcome
-    file within the last hour. Authoritative numeric-delta source on the regex
-    correction-fallback path (prior+1 cross-outcome accumulation).
-    Search-location priority:
-      1. ~/.claude/data/outcomes (canonical)
-      2. ${cwd}/memory/outcomes (cwd-local stray files only)
-      3. ~/.claude-personal/.../memory/outcomes (same rationale)
-    The primary sink is PG core.outcomes; these filesystem paths are read-only
-    fallbacks for the revision_count lookup."""
-    candidate_dirs = [os.path.expanduser('~/.claude/data/outcomes')]
-    if cwd:
-        candidate_dirs.append(os.path.join(cwd, 'memory', 'outcomes'))
-    # Claude-Code project-dir cwd encoding: $HOME with '/' -> '-'.
-    proj_dir = os.path.expanduser('~').replace('/', '-')
-    candidate_dirs.append(os.path.expanduser('~/.claude-personal/projects/' + proj_dir + '/memory/outcomes'))
+def find_prior_revision_count(task_type, max_age_secs=3600):
+    """Return 0 — the hook-side prior+1 cross-outcome accumulation is stubbed.
 
-    now_ts = time.time()
-    cutoff = now_ts - max_age_secs
-    candidates = []
-    for d in candidate_dirs:
-        if not os.path.isdir(d):
-            continue
-        # Filename rule: YYYY-MM-DD-HHMMSS_xxxx_{agent}_{task_type}.md
-        # task_type match on the filename tail _<task_type>.md
-        pattern = os.path.join(d, f'*_{task_type}.md')
-        for f in glob.glob(pattern):
-            try:
-                mtime = os.path.getmtime(f)
-            except OSError:
-                continue
-            if mtime >= cutoff:
-                candidates.append((mtime, f))
-    if not candidates:
-        return 0
-    # Parse revision_count from the most recent file
-    candidates.sort(reverse=True)
-    most_recent = candidates[0][1]
-    try:
-        with open(most_recent, 'r', encoding='utf-8', errors='replace') as f:
-            head = f.read(2048)  # frontmatter alone is enough
-    except (OSError, IOError):
-        return 0
-    m = re.search(r'^revision_count:\s*(\d+)', head, re.MULTILINE)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            return 0
+    Per-outcome .md records are retired and PG core.outcomes carries NO cwd/
+    project key, so a same-task_type + time-window lookup would count a correction
+    from a DIFFERENT project (the shared core.outcomes serves multiple projects at
+    once) as the prior — cross-project contamination of the revision/correction
+    signal. With no project-safe key available here, the cross-outcome revision
+    delta now relies on the agent-emitted `revision_count` field instead; a
+    project-keyed PG restoration (needs a cwd/project column) is a separate future
+    improvement. Returning 0 also keeps this pure-stdlib subprocess psycopg-free.
+
+    Signature is retained (task_type, max_age_secs) so a future project-keyed
+    lookup can drop back in without touching the caller."""
     return 0
 
 # --- main pipeline ---
@@ -1754,7 +1717,7 @@ if not (matched_kor or matched_eng):
 # Stage 1 match — bash decides on the Stage 2 LLM call.
 # Truncate the message to 1KB and derive revision_count from the prior-outcome lookup.
 truncated_msg = last_user_text[:1024]
-prior_count = find_prior_revision_count(CWD_ENV, TASK_TYPE_ENV)
+prior_count = find_prior_revision_count(TASK_TYPE_ENV)
 new_count = prior_count + 1
 
 out('stage1_matched', '1')
@@ -1766,7 +1729,7 @@ out('prior_revision_count', str(prior_count))
 out('new_revision_count', str(new_count))
 PYEOF
 
-    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_CWD="${CWD}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
+    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
 
     t9_extract() {
       printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # Outcome-record dual-write helper.
 #
-# Invoked from track-outcome.sh AFTER the .md frontmatter has been written; this
-# is the SECOND write, so its failure MUST NOT lose data and MUST NOT crash the
-# stop hook. The shell caller runs `... | python3 helper || true`, so it absorbs
+# Invoked from track-outcome.sh as the sole outcome-record sink. Per-outcome .md
+# files are retired; PG core.outcomes (body_md column carries the full markdown
+# body) is now the primary and ONLY write, so its failure MUST NOT lose data and
+# MUST NOT crash the stop hook. The shell caller runs `... | python3 helper || true`, so it absorbs
 # ANY exit code — the helper therefore reports its outcome via a NAMED exit code
 # (0 ok · non-zero = a specific failure class, see EXIT_* below) WITHOUT disrupting
 # the hook, and never silently swallows a DB-unreachable/write-failed case behind a
