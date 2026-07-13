@@ -57,6 +57,25 @@ if [[ -f "${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh" ]]; then
   claude_auth_load_env
 fi
 
+# Channels-session model — pin the `claude --channels` REPL to the menu-configured
+# daemon LLM tier instead of the settings.json default (Fable 5, whose low usage
+# cap the daemon REPL otherwise hits). haiku_model is the SAME SoT the monitor
+# "Daemon cycle helper" menu writes (model-config-consts.ts daemonConfigKey
+# "haiku_model") and daemon_cycle.py already runs its cycle calls on — reading it
+# here keeps ONE model knob for the whole daemon. Resolution mirrors
+# wiki-daily-compile.sh / llm-preflight.sh: jq the key from the daemon-config.json
+# SoT, fall back to the literal alias when jq/file/key is absent. DAEMON_CONFIG
+# default matches those siblings; env-overridable as a test seam (this file's own
+# `: "${VAR:=default}"` idiom).
+: "${DAEMON_CONFIG:=${HOME}/.claude/data/daemon-config.json}"
+readonly DAEMON_CONFIG
+HAIKU_MODEL="claude-haiku-4-5"
+if command -v jq >/dev/null 2>&1 && [[ -f "${DAEMON_CONFIG}" ]]; then
+  _cfg_model="$(jq -r '.haiku_model // empty' "${DAEMON_CONFIG}" 2>/dev/null || true)"
+  [[ -n "${_cfg_model}" ]] && HAIKU_MODEL="${_cfg_model}"
+fi
+readonly HAIKU_MODEL
+
 # Env-overridable cold-start constants — shared default budget for BOTH roles.
 # Cold-start delay: claude CLI takes ~2-3s to render the REPL after exec, but the
 # channel plugin needs extra time to load the Bun runtime, init the fakechat MCP
@@ -163,6 +182,7 @@ daemon_bootstrap_reclaim_port() {
 create_raced=false
 daemon_bootstrap_create_session() {
   log "creating session '${SESSION}' with fakechat channel plugin (port=${FAKECHAT_PORT_DEFAULT})"
+  log "channels REPL model=${HAIKU_MODEL} (daemon-config.json haiku_model, fallback claude-haiku-4-5)"
   # FAKECHAT_PORT is a NON-secret tmux set-env (server.ts reads process.env) — kept
   # on `-e`. The spawned claude inherits it and passes it to the bun MCP child.
   local tmux_env_args=("-e" "FAKECHAT_PORT=${FAKECHAT_PORT_DEFAULT}")
@@ -180,11 +200,16 @@ daemon_bootstrap_create_session() {
   # pane inherits (FAKECHAT_PORT et al.).
   local auth_lib="${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh"
   local pane_cmd
+  # --model pins the channels REPL to the resolved daemon LLM tier (HAIKU_MODEL,
+  # module-level). SECURITY: single-quoted inside the `bash -c` program (same idiom
+  # as source '<auth_lib>' below) so the id stays one literal token; HAIKU_MODEL is
+  # read from the local monitor-validated daemon-config.json, never external input.
+  # --model is additive — the OAuth-token source + fakechat channel stay intact.
   if [[ -f "${auth_lib}" ]]; then
-    pane_cmd="source '${auth_lib}'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official"
+    pane_cmd="source '${auth_lib}'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model '${HAIKU_MODEL}'"
   else
     # no auth lib on disk (deploy gap) — start claude directly; it uses the keychain.
-    pane_cmd="exec claude --channels plugin:fakechat@claude-plugins-official"
+    pane_cmd="exec claude --channels plugin:fakechat@claude-plugins-official --model '${HAIKU_MODEL}'"
   fi
   if ! tmux new-session -d -s "${SESSION}" -c "${HOME}" \
     "${tmux_env_args[@]}" \
