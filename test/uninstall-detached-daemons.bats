@@ -64,6 +64,15 @@ setup() {
   # record-only rm SAFETY BELT (never delete anything — protects the real /tmp socket).
   printf '#!/bin/bash\nprintf "rm %%s\\n" "$*" >>"%s"\nexit 0\n' "${REC}" >"${STUB_BIN}/rm"
   chmod +x "${STUB_BIN}/rm"
+  # fakechat port-free SAFETY BELT: kill_daemon_tmux_sessions now folds a lsof→kill
+  # port-free (fakechat-cleanup.sh) AFTER the tmux teardown. Default no-owner lsof +
+  # no-child pgrep stubs so the tmux-only tests (which do NOT stub lsof) reap NOTHING
+  # real; a 0s settle ceiling collapses the poll to instant. A per-test stub_lsof
+  # override refines this where the reap must be observed.
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/lsof"
+  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/pgrep"
+  chmod +x "${STUB_BIN}/lsof" "${STUB_BIN}/pgrep"
+  export FAKECHAT_PORT_FREE_TIMEOUT_SECS=0
   export PATH="${STUB_BIN}:${PATH}"
 }
 

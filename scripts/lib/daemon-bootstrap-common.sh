@@ -45,6 +45,18 @@ readonly DAEMON_BOOTSTRAP_LIB_DIR
 # shellcheck source=lib/daemon-lock.sh
 source "${DAEMON_BOOTSTRAP_LIB_DIR}/daemon-lock.sh"
 
+# fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
+# helper reaped in the stale-port reclaim (step 2.6). Loud-fail on absence (broken
+# install), matching the E5-lib contract in lib/ga-env.sh. log() is not yet defined
+# at this module scope, so the loud-fail prints directly to stderr.
+if [[ ! -f "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh" ]]; then
+  printf 'FATAL: fakechat-cleanup lib missing: %s (broken install — scripts/lib is incomplete)\n' \
+    "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh" >&2
+  exit 1
+fi
+# shellcheck source=lib/fakechat-cleanup.sh
+source "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh"
+
 # Headless claude auth (launchd keychain-bypass): source the 0600 secrets file
 # so CLAUDE_CODE_OAUTH_TOKEN is exported into THIS bootstrap shell (used by the
 # bootstrap's own probes). The tmux PANE re-sources the same file at startup so
@@ -144,32 +156,17 @@ daemon_bootstrap_preflight() {
 }
 
 # Step 2.6: stale-port reclaim. claude's own bun MCP child binds
-# 127.0.0.1:$FAKECHAT_PORT in step 3; a stale listener (orphan bun, manual
-# diagnostic spawn) would make that child hit EADDRINUSE and die → REPL has no
-# fakechat link. So clear the port FIRST. The lsof block catches the port-holding
-# bun; the helper sweep below reaps retired spawn-helper debris keyed on the same
-# port (port-keyed so a peer daemon's procs are left untouched).
-# `set +e` wraps lsof/pgrep: each exits 1 on no-match, which would else trip the
-# ERR trap (set +e does NOT disable it), so `|| true` forces exit 0 inside the
-# command substitution. `xargs` is a no-op on empty input.
+# 127.0.0.1:$FAKECHAT_PORT in step 3; a stale listener (orphan bun reparented to
+# PID 1, manual diagnostic spawn) would make that child hit EADDRINUSE and die →
+# REPL has no fakechat link. So clear the port FIRST via the shared, STRICTLY
+# PORT-SCOPED fakechat_free_port (fakechat-cleanup.sh): it reaps the port owner + its
+# descendant tree + the port-keyed spawn-helper debris, escalating TERM → KILL. It
+# NEVER matches on the plugin:fakechat@ cmdline — that would TERM the LIVE HEALTHY
+# PEER daemon, whose claude shares an IDENTICAL command line (only the tmux
+# `-e FAKECHAT_PORT=` env differs). FAKECHAT_PORT_DEFAULT is this role's own resolved
+# port (wrapper-injected via atrium_config_port), so the reap stays peer-safe.
 daemon_bootstrap_reclaim_port() {
-  local stale_pids stray_pids
-  set +e
-  stale_pids="$(lsof -iTCP:"${FAKECHAT_PORT_DEFAULT}" -sTCP:LISTEN -t 2>/dev/null || true)"
-  set -e
-  if [[ -n "${stale_pids}" ]]; then
-    log "killing stale fakechat listeners on port ${FAKECHAT_PORT_DEFAULT}: ${stale_pids//$'\n'/ }"
-    printf '%s\n' "${stale_pids}" | xargs kill 2>/dev/null || true
-    sleep 1
-  fi
-
-  set +e
-  stray_pids="$(pgrep -f "spawn-unix-fd.py ${FAKECHAT_PORT_DEFAULT} " 2>/dev/null || true)"
-  set -e
-  if [[ -n "${stray_pids}" ]]; then
-    log "reaping retired fakechat spawn-helper procs (port ${FAKECHAT_PORT_DEFAULT}): ${stray_pids//$'\n'/ }"
-    printf '%s\n' "${stray_pids}" | xargs kill 2>/dev/null || true
-  fi
+  fakechat_free_port "${FAKECHAT_PORT_DEFAULT}"
 }
 
 # Step 3 + 4: create the detached tmux session running claude with the fakechat

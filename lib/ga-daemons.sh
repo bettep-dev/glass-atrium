@@ -4,37 +4,62 @@
 
 # kill_daemon_tmux_sessions — kill the DETACHED daemon tmux sessions (GA_DAEMON_SESSIONS) that
 # run `claude --channels plugin:fakechat@...` and SURVIVE `launchctl bootout` (reparented to
-# PID 1). Shared by uninstall (stop_detached_daemons) + install-start (clear a stale session).
-# Guarded like unload_launchd_jobs: DRY_RUN report-only; is_sandbox_target skips the WHOLE kill
-# (the tmux server is a per-USER host resource shared with the real user regardless of HOME);
-# missing tmux = loud-log skip (Precondition Loud-Fail). Best-effort, returns 0.
+# PID 1), THEN free the daemon fakechat ports of any orphan bun reparented to PID 1 that still
+# holds them (the confirmed EADDRINUSE squatter). Shared by uninstall (stop_detached_daemons) +
+# install-start (clear a stale session); the port-free is folded HERE (not a separate step) so
+# both sites are covered by one edit — avoiding an uninstall double-free AND a new ga-tui-run.sh
+# STEP_LABEL/STEP_FN parallel-array entry. Guarded like unload_launchd_jobs: DRY_RUN report-only;
+# is_sandbox_target skips the WHOLE teardown (tmux server + fakechat ports are per-USER host
+# resources shared with the real user regardless of HOME, so a sandbox run must NEVER reap them);
+# missing tmux = loud-log skip (Precondition Loud-Fail) BUT the port-free still runs (it needs no
+# tmux — an orphan bun outlives its session). Best-effort, returns 0.
 kill_daemon_tmux_sessions() {
   if "${DRY_RUN}"; then
-    log "dry-run: skipping detached daemon tmux session teardown (${GA_DAEMON_SESSIONS[*]})"
+    log "dry-run: skipping detached daemon tmux session teardown + fakechat port-free (${GA_DAEMON_SESSIONS[*]})"
     return 0
   fi
   # is_sandbox_target returns 0 by contract (stdout verdict) → masking is intentional
   # shellcheck disable=SC2310,SC2311,SC2312
   if [[ "$(is_sandbox_target)" == "yes" ]]; then
-    log "sandbox target — detached daemon tmux sessions untouched"
+    log "sandbox target — detached daemon tmux sessions + fakechat ports untouched"
     return 0
   fi
-  if ! command -v tmux >/dev/null 2>&1; then
-    log "tmux not found — skipping detached daemon tmux session teardown"
-    return 0
-  fi
-  local sess
-  for sess in "${GA_DAEMON_SESSIONS[@]}"; do
-    if tmux has-session -t "${sess}" 2>/dev/null; then
-      if tmux kill-session -t "${sess}" 2>/dev/null; then
-        log "killed detached tmux session '${sess}'"
+  # (a) tmux session teardown — present-tmux only; absence is a loud-log skip, not a return,
+  #     so the port-free below still reaps a reparented orphan bun.
+  if command -v tmux >/dev/null 2>&1; then
+    local sess
+    for sess in "${GA_DAEMON_SESSIONS[@]}"; do
+      if tmux has-session -t "${sess}" 2>/dev/null; then
+        if tmux kill-session -t "${sess}" 2>/dev/null; then
+          log "killed detached tmux session '${sess}'"
+        else
+          log "tmux kill-session '${sess}' failed (continuing)"
+        fi
       else
-        log "tmux kill-session '${sess}' failed (continuing)"
+        log "no detached tmux session '${sess}' to kill"
       fi
-    else
-      log "no detached tmux session '${sess}' to kill"
-    fi
-  done
+    done
+  else
+    log "tmux not found — skipping detached daemon tmux session teardown"
+  fi
+  # (b) fakechat port-free — reap the orphan bun (reparented to PID 1) still holding each
+  #     daemon's fakechat port after its tmux session died. fakechat_free_port is STRICTLY
+  #     PORT-SCOPED (lsof-by-port owner tree + port-keyed spawn helper), the LOAD-BEARING reap;
+  #     the whole-system teardown has no peer to preserve, so uninstall additionally matches the
+  #     reparented orphan broadly in stop_detached_daemons. Ports resolve from config; a
+  #     CONFIGURED-invalid port (atrium_config_port rc 1) MUST NOT `die` a teardown — loud-log +
+  #     free the literal per-role default instead of aborting.
+  local aa_port wiki_port
+  aa_port="$(atrium_config_port '[ports]' 'autoagent_fakechat' 8787)" || {
+    log "invalid configured [ports].autoagent_fakechat — freeing the literal default 8787"
+    aa_port=8787
+  }
+  wiki_port="$(atrium_config_port '[ports]' 'wiki_fakechat' 8788)" || {
+    log "invalid configured [ports].wiki_fakechat — freeing the literal default 8788"
+    wiki_port=8788
+  }
+  fakechat_free_port "${aa_port}"
+  fakechat_free_port "${wiki_port}"
   return 0
 }
 
