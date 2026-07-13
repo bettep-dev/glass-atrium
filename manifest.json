@@ -646,7 +646,7 @@
     "scripts/lib/claude-auth-env.sh": "6d2becb8639ae2ca22001e4fb41199801ec313570aec711ece6427e34d7073fa",
     "scripts/lib/daemon-bootstrap-common.sh": "1324b2eead13181996c5a77a39b6dd6ba46b44ae7c2b631b13c407b8d6bbd790",
     "scripts/lib/daemon-lock.sh": "271d3e86ec31bfdfa39c7c029af8b63c282ea08161252b4d91ed31e649a3412f",
-    "scripts/lib/fakechat-cleanup.sh": "8040a05c64eb6ee00c41f96ba4ec941d9c07891426e9820b8de08f6eece59b05",
+    "scripts/lib/fakechat-cleanup.sh": "e38e83d3387900403ef154e9a222aae8334a4b957cc5ed2e673cc37be7edbc02",
     "scripts/lib/mirror-farm.sh": "393f8605a4b5f2323e339e83cffd3cf413e73cfd0ba91c34eb60897964ad88ab",
     "scripts/lib/sensitive-refusal.sh": "9fe5617777f12851194fafc2eab0292842c5f4d737b28dc54c14cdc4b40580b1",
     "scripts/lib/update-pause-flag.sh": "3a7fd3f488368c73a19634a9992c97304837a9154c0ebb8b94d3e2af67a9d406",

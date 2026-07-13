@@ -55,6 +55,19 @@ EOF
   return 0
 }
 
+# _fakechat_signal_pids SIGNAL PIDS — send SIGNAL (TERM/KILL) to each newline-separated
+# PID; `|| true`-guarded so a dead pid never trips a set -e / ERR-trap caller, blank
+# lines skipped, list consumed via the `while read <<EOF` here-doc idiom (no arrays).
+_fakechat_signal_pids() {
+  local signal="$1" pid
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    kill "-${signal}" "${pid}" 2>/dev/null || true
+  done <<EOF
+$2
+EOF
+}
+
 # fakechat_free_port PORT — reap whatever squats fakechat PORT: the lsof-identified
 # listener owner + its descendant tree + the port-keyed spawn-unix helper debris.
 # Escalates TERM → settle-poll → KILL → re-lsof race-closer. Best-effort: ALWAYS
@@ -97,14 +110,8 @@ EOF
   fi
 
   # 3. TERM the whole set.
-  local pid
   _fakechat_log "freeing fakechat port ${port} — TERM: ${uniq_pids//$'\n'/ }"
-  while IFS= read -r pid; do
-    [[ -n "${pid}" ]] || continue
-    kill -TERM "${pid}" 2>/dev/null || true
-  done <<EOF
-${uniq_pids}
-EOF
+  _fakechat_signal_pids TERM "${uniq_pids}"
 
   # settle-poll — bounded by a SECONDS-delta wall-clock ceiling (repo idiom, NOT a
   # bare (( )) that would exit a set -e caller on a 0 result). Re-snapshot the
@@ -119,12 +126,7 @@ EOF
 
   # 4. KILL any of the set that ignored TERM (a helper/descendant holds no port, so a
   #    port re-probe can't catch it — force it here).
-  while IFS= read -r pid; do
-    [[ -n "${pid}" ]] || continue
-    kill -KILL "${pid}" 2>/dev/null || true
-  done <<EOF
-${uniq_pids}
-EOF
+  _fakechat_signal_pids KILL "${uniq_pids}"
 
   # 5. Race-closer: re-lsof for the CURRENT owner and KILL it — a SO_REUSEADDR
   #    re-binder can grab the socket between the TERM and now.
@@ -132,12 +134,7 @@ EOF
   survivor="$(lsof -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -n "${survivor}" ]]; then
     _fakechat_log "fakechat port ${port} still held after settle — KILL: ${survivor//$'\n'/ }"
-    while IFS= read -r pid; do
-      [[ -n "${pid}" ]] || continue
-      kill -KILL "${pid}" 2>/dev/null || true
-    done <<EOF
-${survivor}
-EOF
+    _fakechat_signal_pids KILL "${survivor}"
   fi
   return 0
 }
