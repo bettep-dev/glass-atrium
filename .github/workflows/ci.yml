@@ -320,6 +320,11 @@ jobs:
           ROOT: ${{ matrix.root }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ matrix.shards }}
+          # Point every suite's mktemp -d sandbox (mktemp honors $TMPDIR) at the
+          # runner's tmpfs so the I/O-bound installer fixtures — copy/symlink farms
+          # + the doctor-auth 1500-file fixture — land in RAM. Linux-CI-only:
+          # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
+          TMPDIR: /dev/shm
         run: |
           mkdir -p reports/bats
           # File-level parallelism: --jobs $(nproc) runs files concurrently while
