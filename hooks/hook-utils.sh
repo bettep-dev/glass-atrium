@@ -220,3 +220,54 @@ hook_cache_write() {
   }
   return 0
 }
+
+# Cached-or-live single-integer advisory read — the shared body of the two PreToolUse(Agent) advisory
+# hooks (context-budget + spawn-cost), which differ only in env prefix, cache subdir, and live reader.
+# A fresh within-TTL cache hit SKIPS the caller's expensive live source (psycopg import + connect); a
+# miss/stale/unreadable/bypassed/error degrades to the live read (never suppresses the advisory, never
+# fabricates a value). The stored + returned value is integer-normalized (non-digit bytes stripped,
+# empty → 0) so a hit is byte-identical to the live path (verdict parity). Caching is disabled when the
+# session key sanitizes to empty (no shared key) or <PREFIX>_CACHE_BYPASS is set. Per-hook config is
+# resolved by ${!var} indirection (Bash 3.2-safe): <PREFIX>_CACHE_TTL (unset/non-integer → 10),
+# <PREFIX>_CACHE_DIR (unset → HOOK_LOG_DIR/<default_subdir>), <PREFIX>_CACHE_BYPASS.
+# live_fn MUST already be defined by the caller (dependency inversion) — it is dispatched as
+# `live_fn <sid>` and must print the raw integer on stdout.
+# Args: $1=env_prefix $2=default_cache_subdir $3=live_fn $4=session_id · stdout: the integer.
+hook_cached_int_read() {
+  local env_prefix="${1}" default_subdir="${2}" live_fn="${3}" sid="${4}"
+  local ttl_var="${env_prefix}_CACHE_TTL" dir_var="${env_prefix}_CACHE_DIR"
+  local bypass_var="${env_prefix}_CACHE_BYPASS"
+  local ttl cache_dir cache_file safe_sid value
+
+  ttl="${!ttl_var:-10}"
+  [[ "${ttl}" =~ ^[0-9]+$ ]] || ttl=10
+  safe_sid="$(hook_path_safe_key "${sid}")"
+  cache_dir="${!dir_var:-${HOOK_LOG_DIR}/${default_subdir}}"
+  cache_file=""
+  [[ -n "${safe_sid}" ]] && cache_file="${cache_dir}/${safe_sid}.cache"
+
+  # Cache hit → reuse (skips the caller's live source). Direct call in the if-condition (NOT $( )) so
+  # set -e is disabled inside hook_cache_read → its miss `return 1` never trips a caller's fail-open ERR
+  # trap; the hit value comes back via the global HOOK_CACHE_VALUE. Predicate call → SC2310.
+  if [[ -n "${cache_file}" ]] && [[ -z "${!bypass_var:-}" ]]; then
+    # shellcheck disable=SC2310
+    if hook_cache_read "${cache_file}" "${ttl}"; then
+      printf '%s\n' "${HOOK_CACHE_VALUE}"
+      return 0
+    fi
+  fi
+
+  # Live read + integer-normalize so the cached value equals the live value exactly.
+  value="$("${live_fn}" "${sid}")"
+  value="$(printf '%s' "${value}" | tr -cd '0-9')"
+  [[ -z "${value}" ]] && value=0
+
+  # Persist for subsequent same-session spawns (best-effort — a write failure only forces a re-read).
+  if [[ -n "${cache_file}" ]]; then
+    # shellcheck disable=SC2310
+    hook_cache_write "${cache_file}" "${value}" || true
+  fi
+
+  printf '%s\n' "${value}"
+  return 0
+}

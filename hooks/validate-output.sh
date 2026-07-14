@@ -58,10 +58,7 @@ LEAK_PATTERNS=(
   'my configuration states'
   'i am programmed to'
 )
-LEAK_ALTERNATION=$(
-  IFS='|'
-  printf '%s' "${LEAK_PATTERNS[*]}"
-)
+LEAK_ALTERNATION="$(hook_join_alt "${LEAK_PATTERNS[@]}")"
 RESPONSE_LOWER=$(printf '%s\n' "${TOOL_RESPONSE}" | tr '[:upper:]' '[:lower:]')
 if printf '%s\n' "${RESPONSE_LOWER}" | grep -Eq "${LEAK_ALTERNATION}"; then
   emit_error "SEC-072" "advisory" \

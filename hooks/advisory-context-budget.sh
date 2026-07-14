@@ -40,6 +40,8 @@ fi
 # Read the LATEST event's cache_read_tokens (1 integer line). STUBBABLE via
 # CONTEXT_ADVISORY_TEST_TOKENS (Bats). fail-open → '0'. session_id via env-var + parameterized %s
 # binding (neutralizes injection).
+# SC2329: invoked indirectly by name via hook_cached_int_read's dynamic dispatch — not dead code.
+# shellcheck disable=SC2329
 read_latest_context_tokens() {
   local sid="${1:-}"
   if [[ -n "${CONTEXT_ADVISORY_TEST_TOKENS:-}" ]]; then
@@ -82,50 +84,6 @@ except Exception:
 ' 2>/dev/null || printf '0\n'
 }
 
-# Cached-or-live latest-turn occupancy. A fresh within-TTL cache hit SKIPS the psycopg import +
-# connect entirely; a miss/stale/unreadable/error degrades to the live read (never suppresses the
-# advisory, never fabricates a value). The stored + returned value is the integer-normalized token
-# count, so a hit yields a value byte-identical to the live path (verdict parity). Caching is disabled
-# when the session key is empty (no shared key) or CONTEXT_BUDGET_ADVISORY_CACHE_BYPASS is set.
-# Default TTL 10s, env-overridable via CONTEXT_BUDGET_ADVISORY_CACHE_TTL (non-integer → default).
-read_latest_context_tokens_cached() {
-  local sid="${1}"
-  local safe_sid ttl cache_dir cache_file value
-
-  ttl="${CONTEXT_BUDGET_ADVISORY_CACHE_TTL:-10}"
-  [[ "${ttl}" =~ ^[0-9]+$ ]] || ttl=10
-  safe_sid="$(hook_path_safe_key "${sid}")"
-  cache_dir="${CONTEXT_BUDGET_ADVISORY_CACHE_DIR:-${HOOK_LOG_DIR}/context-budget-advisory-cache}"
-  cache_file=""
-  [[ -n "${safe_sid}" ]] && cache_file="${cache_dir}/${safe_sid}.cache"
-
-  # Cache hit → reuse (no psycopg import, no connect). Direct call in the if-condition (NOT $( )) so
-  # set -e is disabled inside hook_cache_read → its miss `return 1` never trips the fail-open ERR
-  # trap; the hit value comes back via the global HOOK_CACHE_VALUE. Predicate call → SC2310.
-  if [[ -n "${cache_file}" ]] && [[ -z "${CONTEXT_BUDGET_ADVISORY_CACHE_BYPASS:-}" ]]; then
-    # shellcheck disable=SC2310
-    if hook_cache_read "${cache_file}" "${ttl}"; then
-      printf '%s\n' "${HOOK_CACHE_VALUE}"
-      return 0
-    fi
-  fi
-
-  # Live read + integer-normalize (non-digit bytes stripped, empty → 0) — same normalization the
-  # uncached path applied inline, kept here so the cached value equals the live value exactly.
-  value="$(read_latest_context_tokens "${sid}")"
-  value="$(printf '%s' "${value}" | tr -cd '0-9')"
-  [[ -z "${value}" ]] && value=0
-
-  # Persist for subsequent same-session spawns (best-effort — a write failure only forces a re-read).
-  if [[ -n "${cache_file}" ]]; then
-    # shellcheck disable=SC2310
-    hook_cache_write "${cache_file}" "${value}" || true
-  fi
-
-  printf '%s\n' "${value}"
-  return 0
-}
-
 # 1. Read input + Agent tool gate.
 input="$(hook_read_input)"
 
@@ -140,8 +98,8 @@ fi
 [[ -z "${session_id}" ]] && exit 0
 
 # 3. Read latest-turn context occupancy (short-TTL per-session cache; any cache anomaly → live read).
-#    The helper returns the integer-normalized value, identical to the live path.
-context_tokens="$(read_latest_context_tokens_cached "${session_id}")"
+#    hook_cached_int_read (hook-utils.sh) returns the integer-normalized value, identical to the live path.
+context_tokens="$(hook_cached_int_read CONTEXT_BUDGET_ADVISORY context-budget-advisory-cache read_latest_context_tokens "${session_id}")"
 
 # 4. Threshold comparison — at-or-below threshold stays silent.
 if ((context_tokens <= context_threshold)); then
