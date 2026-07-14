@@ -657,7 +657,7 @@
     "scripts/pii-scan.sh": "629dc85ef01fe6b563644f6af735626717d2bc300a5ef31ee467a7de2d1c58f7",
     "scripts/progress-tracker.sh": "57385e6dc5b18c9d9167435f238be5e46a728de4753dbb0f1af20213e7f2f2d0",
     "scripts/render-claude-auth.sh": "cf85e912731c95dffe48ec04c4c556fc38fe317d4001f90d2884d89244549b43",
-    "scripts/render-launchd-plists.sh": "e6d20e1a137e72aa9f4a0ff03cf5cd5e4043af37f5c24dd312b10822fc0a4a14",
+    "scripts/render-launchd-plists.sh": "05fe434e7be5957e93f364162b669c040f841e8b56381d4e68eeca126a33973d",
     "scripts/render-monitor-env.sh": "f9be5a4288eb8e27766c2675171c6d317d6d73f4e9ab1e7d02730da4d9b4f15a",
     "scripts/run-bats-parallel.sh": "6981915bc0268e47a4a23d6882e74a0b71a4d0f984cba0d0b42eb2c800b30f73",
     "scripts/sync-registry-tools.sh": "d60f3efe31891f9192986dd379ea734664b231f72a1b8d8386f3bb7f9b44a90b",

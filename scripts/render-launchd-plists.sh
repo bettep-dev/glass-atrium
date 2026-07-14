@@ -150,11 +150,9 @@ fi
 # carries a duplicate '/opt/homebrew/bin:/opt/homebrew/bin:' (node + claude in the
 # same Homebrew bin). Ordering and fallback are unchanged; only the redundant repeat
 # is dropped.
-if [[ "${BREW_DIR}" == "${NODE_DIR}" ]]; then
-  readonly PATH_VALUE="${NODE_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-else
-  readonly PATH_VALUE="${NODE_DIR}:${BREW_DIR}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-fi
+PATH_LEAD="${NODE_DIR}:"
+[[ "${BREW_DIR}" != "${NODE_DIR}" ]] && PATH_LEAD="${NODE_DIR}:${BREW_DIR}:"
+readonly PATH_VALUE="${PATH_LEAD}/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 readonly WIKI_ROOT="${ROOT_PATH}/wiki"
 
 # XML escaping
