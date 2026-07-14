@@ -2968,7 +2968,6 @@ function buildQualityHealthRanking(revisionRows, reviewRows, topN) {
       reviewFlagRatio,
       // artifact sub-line 용 — flagged headline 중 합성 복구행 몫 (writer-emitted 분리 근거).
       reviewFlaggedReconstructed: sourceEntry ? (sourceEntry.reconstructed || 0) : 0,
-      reviewFlaggedWriter: sourceEntry ? (sourceEntry.flagged || 0) : 0,
       totalRevisions: rev.total,
       buckets: rev,
     });

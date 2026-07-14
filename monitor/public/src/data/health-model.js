@@ -35,10 +35,8 @@ function isDaemonStale(d) {
 // 로컬 리터럴 금지: info/'No data' 도 공용 테이블에서만 결정 (screen 간 정합, F04).
 function resolveDaemonDisplayMeta(d) {
   if (isDaemonStale(d)) return { tone: 'crit', label: 'STALE' };
-  if (d == null || d.last_status == null) {
-    return { tone: window.UI.daemonStatusTone('missing'), label: window.UI.daemonStatusLabel('missing') };
-  }
-  return { tone: window.UI.daemonStatusTone(d.last_status), label: window.UI.daemonStatusLabel(d.last_status) };
+  const status = d == null || d.last_status == null ? 'missing' : d.last_status;
+  return { tone: window.UI.daemonStatusTone(status), label: window.UI.daemonStatusLabel(status) };
 }
 
 // kind 별 사실(facts) 산출 — tone/isStale 등 집계 입력만. 표시 문자열은 화면 빌더 담당.
