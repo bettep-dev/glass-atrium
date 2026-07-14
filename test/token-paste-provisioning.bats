@@ -290,8 +290,9 @@ close_tty() { exec 9<&- 2>/dev/null || true; }
   reader="$(awk '/^_read_pasted_token\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
     "${GA}/lib/ga-tui-preflight.sh")" || return 1
   [[ -n "${reader}" ]] || return 1
-  [[ "${reader}" == *'IFS= read -rs line <"${TTY}"'* ]] || return 1
-  [[ "${reader}" == *'IFS= read -rs -t 1 line <"${TTY}"'* ]] || return 1
+  [[ "${reader}" == *'IFS= read -rs line'* ]] || return 1
+  [[ "${reader}" == *'IFS= read -rs -t 1 line'* ]] || return 1
+  [[ "${reader}" == *'} <"${TTY}"'* ]] || return 1
   # the terminal is UNCONDITIONALLY restored out of bracketed-paste mode after the drain — a dropped
   # ESC[?2004l would strand the terminal in bracketed-paste mode; pinned so a refactor cannot silently drop it.
   [[ "${reader}" == *'preflight_out "${bp_off}"'* ]] || return 1

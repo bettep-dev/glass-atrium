@@ -633,20 +633,23 @@ _read_pasted_token() {
   # stub (and this indirection) when refactoring the harness.
   preflight_out "${bp_on}"
 
-  # Step 2 — first segment BLOCKS for the paste + Enter (silent). `read` returns 1 on a value with no
-  # trailing newline but still sets `line`, so capture it regardless of the exit status.
-  IFS= read -rs line <"${TTY}" || true
-  acc="${line}"
-
-  # Step 3 — drain the remaining wrapped segments. Stop the instant the bracketed END marker appears (a
-  # modern terminal → no idle wait); else a 1 s idle / EOF ends it on a terminal without bracketed paste.
-  while [[ "${acc}" != *"${bp_end}"* ]]; do
-    if IFS= read -rs -t 1 line <"${TTY}"; then
-      acc="${acc}${nl}${line}"
-    else
-      break
-    fi
-  done
+  # Step 2+3 — read the paste from a SINGLE open of ${TTY}. The reads MUST share one open file description:
+  # macOS /dev/fd/N opens via dup() (shared, advancing offset), but Linux /dev/fd/N == /proc/self/fd/N reopens
+  # the backing file at offset 0, so a per-read `<"${TTY}"` re-reads the first segment forever and the -t 1
+  # drain never idles → an infinite spin on the headless Linux runner. One open advances to EOF on both.
+  # `read` returns 1 on a value with no trailing newline but still sets `line`, so capture it regardless of
+  # exit status; the -t 1 drain stops on the bracketed END marker (modern terminal, no idle) or on 1 s idle / EOF.
+  {
+    IFS= read -rs line || true
+    acc="${line}"
+    while [[ "${acc}" != *"${bp_end}"* ]]; do
+      if IFS= read -rs -t 1 line; then
+        acc="${acc}${nl}${line}"
+      else
+        break
+      fi
+    done
+  } <"${TTY}"
 
   # Step 4 — restore the terminal UNCONDITIONALLY out of bracketed-paste mode (via the same preflight_out
   # sink), then STRIP the bracketed framing (strip_csi would corrupt the `~` terminator, eating the token's

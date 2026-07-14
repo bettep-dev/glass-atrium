@@ -473,7 +473,7 @@
     "lib/ga-tui-dispatch.sh": "6a46e7ab20b5379acab0fc3de3c5cce93cccf0eacabe827435e29f3299b0b50d",
     "lib/ga-tui-frame.sh": "b142b09d0c5bfc669435b48fab1b24ad4cb1d4bca33b95b13e0a0c843c2549b7",
     "lib/ga-tui-monitor.sh": "8580c24d1f2a8589cc3ed280483f9e16a9f1d3cb9a0d3455ef9d210e9a078f4e",
-    "lib/ga-tui-preflight.sh": "0bcac860af20bb19f1d016738d29caa51c0d1d54006fd5e0b154db7f862c88e1",
+    "lib/ga-tui-preflight.sh": "88f55700a38121c15369a71831e9b47ca341339283abc7cc4f64836c614d1a60",
     "lib/ga-tui-primitives.sh": "2e96e6d38723c181ce422b9536a0994725cdd50152df5f43ed2c7833d56cda99",
     "lib/ga-tui-run.sh": "41a7de60e3e61d2c9eca41313cc92d014f20b0eae70bff57f6dc380eefb1828b",
     "lib/ga-tui-term.sh": "9e6033265382665143de9b01e31019065afa097f5688131ece3d6606dee7216a",
