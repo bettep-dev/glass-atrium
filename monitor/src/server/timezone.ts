@@ -8,25 +8,15 @@
 // Production boot guard (resolveDayBucketTimezone): under NODE_ENV=production an absent ATRIUM_TIMEZONE
 // refuses the DEV-ONLY fallback outright — it raises a prominent, monitor-surfaced alarm and pins the last-resort.
 
-import { logger } from "./logger.js";
+import { type ConfigAlarmSink, isProductionEnv, makeConfigAlarm } from "./config-alarm.js";
+
+// Re-exported so timezone.unit.test.ts's `import { type ConfigAlarmSink } from "./timezone.js"` seam stays intact.
+export type { ConfigAlarmSink };
 
 const LAST_RESORT_TIMEZONE = "Asia/Seoul";
 const AUTO_SENTINEL = "auto";
 
-// Prod-config alarm seam — escalates an absent-config misconfiguration from a lost raw-stderr line to the
-// monitor's structured logger at ERROR level (launchd-captured, greppable — the loud boot-signal channel
-// main.ts uses for the port/host guards). A unit test injects a capturing sink to assert the alarm fired.
-export type ConfigAlarmSink = (message: string) => void;
-
-const defaultConfigAlarm: ConfigAlarmSink = (message) => {
-  logger.error({ config: "ATRIUM_TIMEZONE" }, message);
-};
-
-// NODE_ENV=production is set on the monitor launchd job (render-launchd-plists.sh); the DEV-ONLY Intl
-// fallback must never silently run under it.
-function isProductionEnv(nodeEnv: string | undefined): boolean {
-  return nodeEnv === "production";
-}
+const defaultConfigAlarm = makeConfigAlarm("ATRIUM_TIMEZONE");
 
 // Injectable host-tz source seam — defaults to the runtime `Intl` resolver.
 // A unit test passes a fake resolver so the auto/host branch runs independent of the runner's ambient tz ('UTC' under the launchd TZ shadow → otherwise flaky).

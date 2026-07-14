@@ -7,6 +7,7 @@ import type { Browser } from "playwright";
 import { chromium } from "playwright";
 import type { FastifyInstance } from "fastify";
 import { logger } from "../logger.js";
+import { errnoCode } from "../errno.js";
 
 // Browser launch timeout (ms) — Playwright's documented default, explicit for review.
 export const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
@@ -136,8 +137,8 @@ export async function resetBrowserForTests(): Promise<void> {
  * launchBrowser's catch, never returned. Mirrors routes/clauded-docs buildFsFailReason.
  */
 export function buildLaunchFailReason(error: unknown): string {
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === "string" ? `launch error (${code})` : "chromium launch failed";
+  const code = errnoCode(error);
+  return code !== undefined ? `launch error (${code})` : "chromium launch failed";
 }
 
 async function launchBrowser(): Promise<Browser> {

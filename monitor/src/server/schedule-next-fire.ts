@@ -9,22 +9,12 @@
 // `Intl.DateTimeFormat#formatToParts` is a NEW server-side primitive (the only prior use is the frontend
 // ui.jsx display formatter) — this does NOT claim the pattern "matches existing style".
 
-import { logger } from "./logger.js";
+import { type ConfigAlarmSink, isProductionEnv, makeConfigAlarm } from "./config-alarm.js";
 
-// Prod-config alarm seam (mirrors timezone.ts ConfigAlarmSink) — escalates an absent-schedule
-// misconfiguration from a lost raw-stderr line to the monitor's structured logger at ERROR level
-// (launchd-captured, greppable). A unit test injects a capturing sink to assert the alarm fired.
-export type ConfigAlarmSink = (message: string) => void;
+// Re-exported so schedule-next-fire.unit.test.ts's `import { type ConfigAlarmSink }` seam stays intact.
+export type { ConfigAlarmSink };
 
-const defaultConfigAlarm: ConfigAlarmSink = (message) => {
-  logger.error({ config: "ATRIUM_SCHEDULE_*" }, message);
-};
-
-// NODE_ENV=production is set on the monitor launchd job (render-launchd-plists.sh); the dev-fallback
-// schedule must never silently run under it.
-function isProductionEnv(nodeEnv: string | undefined): boolean {
-  return nodeEnv === "production";
-}
+const defaultConfigAlarm = makeConfigAlarm("ATRIUM_SCHEDULE_*");
 
 // Cron rule shape — daily-at + weekly-at. `hour`/`minute` are wall-clock fields in the resolved timezone.
 // `dayOfWeek` (0=Sunday … 6=Saturday, matching launchd Weekday + JS Date#getUTCDay) is retained for weekly-at but currently dormant.

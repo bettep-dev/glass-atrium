@@ -225,11 +225,21 @@ async function getLiveOverlayUncached(
 // ----- queries --------------------------------------------------------------
 
 async function queryDaemons(prisma: PrismaClient): Promise<DaemonLiveStatus[]> {
-	// Latest row per daemon EVER (DISTINCT ON, mirrors health-detail.ts) — no run_date
-	// window, so staleness/last_run_at are computable whenever any run exists. Filter to
-	// the surfaced daemon set; index-friendly against daemon_runs_name_date_idx. 'missing'
-	// is reserved for daemons with zero rows (resolveDaemonStatuses).
-	const [rows, installAnchor] = await Promise.all([
+	const [rows, installAnchor] = await queryDaemonAggRows(prisma);
+	return resolveDaemonStatuses(rows, Date.now(), installAnchor);
+}
+
+/**
+ * Latest row per surfaced daemon (DISTINCT ON, mirrors health-detail.ts) paired with the install
+ * anchor, fetched in parallel — shared by the live overlay (queryDaemons) + the dashboard
+ * daemon-status route so both drive resolveDaemonStatuses/buildDaemonStatusItems off ONE query. No
+ * run_date window, so staleness/last_run_at are computable whenever any run exists; index-friendly
+ * against daemon_runs_name_date_idx. 'missing' is reserved for daemons with zero rows.
+ */
+export async function queryDaemonAggRows(
+	prisma: PrismaClient,
+): Promise<[DaemonAggRow[], Date | null]> {
+	return Promise.all([
 		prisma.$queryRaw<DaemonAggRow[]>`
     SELECT DISTINCT ON (daemon_name)
       daemon_name::text AS daemon_name,
@@ -241,7 +251,6 @@ async function queryDaemons(prisma: PrismaClient): Promise<DaemonLiveStatus[]> {
   `,
 		queryInstallAnchor(prisma),
 	]);
-	return resolveDaemonStatuses(rows, Date.now(), installAnchor);
 }
 
 /**

@@ -27,6 +27,7 @@ import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest }
 import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
+import { errnoCode } from "../errno.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
@@ -3133,16 +3134,9 @@ function failWithDb(
   return respondDbFailure(request, reply, route, error, "clauded-docs DB query failed");
 }
 
-/**
- * errno token (ENOENT / EACCES / …) from a Node fs error, or undefined for a
- * non-errno error. The raw error.message embeds absolute filesystem paths (info
- * leak, red-team #21) and MUST NOT reach the response body — the errno code
- * carries no path. Callers always log the full error server-side.
- */
-export function fsErrnoCode(error: unknown): string | undefined {
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === "string" ? code : undefined;
-}
+// Tested export name preserved (clauded-docs.optimistic-lock.test.ts) — delegates to the shared
+// path-free errno helper. See errno.ts for the info-leak (red-team #21) rationale.
+export const fsErrnoCode = errnoCode;
 
 /** Path-free reason for failWithFs — errno form or a generic fallback. */
 export function buildFsFailReason(error: unknown): string {

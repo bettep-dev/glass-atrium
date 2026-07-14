@@ -21,7 +21,7 @@ import { respondDbFailure } from "../db-failure.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import { nextOccurrenceUtc, DAEMON_CRON_SCHEDULE } from "../schedule-next-fire.js";
 import {
-	queryInstallAnchor,
+	queryDaemonAggRows,
 	resolveDaemonStatuses,
 	type DaemonAggRow,
 } from "../architecture/live-overlay.js";
@@ -250,21 +250,9 @@ async function handleDaemonStatus(
   const start = Date.now();
   const prisma = getPrisma();
   try {
-    // DISTINCT ON yields the latest row per daemon by started_at desc — index-friendly
-    // (matches @@index([daemonName, runDate(sort: Desc)]) in schema).
-    // WHERE clause aligns with DAEMON_BOARD.
-    const [rows, installAnchor] = await Promise.all([
-      prisma.$queryRaw<DaemonAggRow[]>`
-      SELECT DISTINCT ON (daemon_name)
-        daemon_name::text AS daemon_name,
-        started_at AS last_run_at,
-        status::text AS last_status
-      FROM core.daemon_runs
-      WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
-      ORDER BY daemon_name, started_at DESC
-    `,
-      queryInstallAnchor(prisma),
-    ]);
+    // Shared latest-row-per-daemon + install-anchor fetch (live-overlay.ts) so this board
+    // resolves off the SAME DISTINCT ON query as the architecture overlay. DAEMON_BOARD-aligned.
+    const [rows, installAnchor] = await queryDaemonAggRows(prisma);
     const items = buildDaemonStatusItems(rows, new Date(), installAnchor);
 
     request.log.info(
