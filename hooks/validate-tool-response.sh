@@ -107,12 +107,8 @@ EVASION_PATTERNS=(
 # alternation (top-level `|` is lowest precedence, so every pattern's internal (group)/{0,N}
 # stays self-contained → the alternation matches the exact same input set as the per-pattern
 # loop). The base64 class stays fixed-string via `grep -F` with one -e per marker.
-_join_alt() {
-  local IFS='|'
-  printf '%s' "$*"
-}
-EN_ALTERNATION=$(_join_alt "${PATTERNS[@]}")
-KO_ALTERNATION=$(_join_alt "${KO_PATTERNS[@]}")
+EN_ALTERNATION=$(hook_join_alt "${PATTERNS[@]}")
+KO_ALTERNATION=$(hook_join_alt "${KO_PATTERNS[@]}")
 b64_grep_args=()
 for _marker in "${EVASION_PATTERNS[@]}"; do
   b64_grep_args+=(-e "${_marker}")

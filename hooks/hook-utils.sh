@@ -134,6 +134,14 @@ hook_require_python3() {
 # Args: $1=raw_identifier · stdout: sanitized segment (may be empty).
 hook_path_safe_key() { printf '%s' "${1}" | tr -cd 'A-Za-z0-9_-'; }
 
+# Join all arguments into a single `|`-separated string — used to fold a pattern array into one ERE
+# alternation (top-level `|` is lowest precedence, so each pattern's internal groups stay intact).
+# Args: $@=strings · stdout: the joined string (no trailing newline).
+hook_join_alt() {
+  local IFS='|'
+  printf '%s' "$*"
+}
+
 HOOK_LOG_DIR="${HOME}/.claude/logs"
 HOOK_DATA_DIR="${HOME}/.claude/data"
 
@@ -184,19 +192,24 @@ hook_cache_read() {
   return 0
 }
 
-# Short-TTL single-integer read cache — write side. Atomic temp+rename (same-FS). Best-effort: the
-# caller swallows a non-zero return, so a write failure only forces a harmless live re-read next time.
-# Args: $1=cache_file  $2=value (already-normalized integer).
+# Short-TTL cache — write side. Atomic temp+rename (same-FS). Best-effort: the caller swallows a
+# non-zero return, so a write failure only forces a harmless live re-read next time. Prepends the
+# current epoch as line 1, then one line per value in argument order; a multi-line value (e.g. a
+# path list) MUST be the LAST arg so the read side's final slurp round-trips.
+# Args: $1=cache_file  $2..=values (each its own line; last may be multi-line).
 hook_cache_write() {
-  local cache_file="${1}" value="${2}"
-  local cache_dir tmp now
+  local cache_file="${1}"
+  shift
+  local cache_dir tmp now v
   cache_dir="$(dirname "${cache_file}")"
   mkdir -p "${cache_dir}" || return 1
   now="$(date +%s)"
   tmp="${cache_file}.tmp.$$"
   if ! {
     printf '%s\n' "${now}"
-    printf '%s\n' "${value}"
+    for v in "$@"; do
+      printf '%s\n' "${v}"
+    done
   } >"${tmp}"; then
     rm -f "${tmp}"
     return 1

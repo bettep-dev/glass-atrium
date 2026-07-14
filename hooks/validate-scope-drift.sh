@@ -137,29 +137,12 @@ scope_drift_read_cache() {
   return 0
 }
 
-# Per-session resolution cache — write side. Atomic temp+rename. Best-effort: the caller swallows a
-# non-zero return, so a write failure only forces a harmless re-resolve on the next edit.
+# Per-session resolution cache — write side. Delegates to the shared variadic writer: epoch is line 1,
+# plan_id line 2, and the (multi-line) allowed-files list stays LAST so the read side's slurp round-
+# trips. Best-effort — a write failure only forces a harmless re-resolve on the next edit.
 # Args: $1=cache_file  $2=plan_id  $3=allowed_files
 scope_drift_write_cache() {
-  local cache_file="${1}" plan_id="${2}" allowed_files="${3}"
-  local cache_dir tmp now
-  cache_dir="$(dirname "${cache_file}")"
-  mkdir -p "${cache_dir}" || return 1
-  now="$(date +%s)"
-  tmp="${cache_file}.tmp.$$"
-  if ! {
-    printf '%s\n' "${now}"
-    printf '%s\n' "${plan_id}"
-    printf '%s\n' "${allowed_files}"
-  } >"${tmp}"; then
-    rm -f "${tmp}"
-    return 1
-  fi
-  mv -f "${tmp}" "${cache_file}" || {
-    rm -f "${tmp}"
-    return 1
-  }
-  return 0
+  hook_cache_write "${1}" "${2}" "${3}"
 }
 
 # Drain stdin once — capture file_path before any branch (needed for the system-path
