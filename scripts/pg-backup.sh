@@ -52,7 +52,9 @@ if [[ ! -s "${DUMP_PATH}" ]]; then
   die "pg_dump produced empty file: ${DUMP_PATH}"
 fi
 
-dump_bytes="$(stat -f '%z' "${DUMP_PATH}")"
+# POSIX byte count (identical on BSD+GNU) — NOT `stat -f`/`stat -c` (BSD/GNU-divergent:
+# GNU `-f` means --file-system, so '%z' becomes a bad file operand and the ERR trap dies).
+dump_bytes="$(wc -c <"${DUMP_PATH}" | tr -d '[:space:]')"
 log "dump complete: ${DUMP_PATH} (${dump_bytes} bytes)"
 
 # 4. Rotation: keep ${RETAIN_COUNT} newest dumps; move the rest to ~/.Trash/.

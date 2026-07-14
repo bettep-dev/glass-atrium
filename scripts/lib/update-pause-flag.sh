@@ -162,6 +162,21 @@ update_pause_remove() {
   fi
 }
 
+# Force-remove the pause flag UNCONDITIONALLY (no ownership gate). Idempotent
+# (absent flag → rc 0). Arg: $1 = optional state-dir override.
+#
+# WHY separate from update_pause_remove: the two call-sites need different
+# semantics. update_pause_remove keeps the ownership gate so a losing concurrent
+# updater can never delete the winning updater's flag. Uninstall teardown has no
+# such peer — the whole install is being torn down, so any residual flag (INCLUDING
+# foreign crashed-updater residue with a live-looking owner pid) MUST be cleared
+# authoritatively; the lib still owns path resolution.
+update_pause_force_remove() {
+  local flag
+  flag="$(update_pause_flag_path "${1:-}")"
+  rm -f -- "${flag}"
+}
+
 # Daemon-side honor predicate
 
 # THE honor predicate the daemon entry points call.

@@ -48,16 +48,29 @@ passthrough "${SUB:-doctor}"
 DRV
   chmod +x "${DRIVER}"
 
-  # Pre-fix launcher = the committed HEAD (the only working-tree edits to glass-atrium are the
-  # doctor + preflight branch fixes), so HEAD carries BOTH faithful pre-fix forms: doctor's
-  # `return "${doctor_rc}"` AND `preflight) run_doctor ;;`. Both lib trees are symlinked so the
-  # copy at ${SANDBOX} resolves its launcher-libs (${GA_ROOT}/lib) AND script-libs
+  # HEAD carries the COMMITTED doctor+preflight fix (5d060b8): both passthrough arms already
+  # `exit "${doctor_rc}"` / `exit "${pf_rc}"`, so a raw `git show HEAD:glass-atrium` copy is the
+  # FIXED launcher — the fail-before assertions could never trip against it. The ${PREFIX} copy
+  # is therefore sed-reverted below to the pre-fix ERR-trap defect. Both lib trees are symlinked
+  # so the copy at ${SANDBOX} resolves its launcher-libs (${GA_ROOT}/lib) AND script-libs
   # (${GA_ROOT}/scripts/lib, e.g. atrium-config.sh) natively. git-absent → empty PREFIX +
   # fail-before tests skip.
   ln -s "${GA}/lib" "${SANDBOX}/lib"
   mkdir -p "${SANDBOX}/scripts"
   ln -s "${GA}/scripts/lib" "${SANDBOX}/scripts/lib"
   git -C "${GA}" show HEAD:glass-atrium >"${PREFIX}" 2>/dev/null || : >"${PREFIX}"
+  # Revert the committed fix in the ${PREFIX} copy so it reproduces the pre-fix defect: a
+  # non-zero `return` (NOT `exit`) as the branch's terminal command trips the echo-only ERR
+  # trap (identical defect class on both arms). Portable single-line s/// (BSD+GNU identical) —
+  # a multi-line preflight-collapse sed would diverge BSD vs GNU. Single-quoted program keeps
+  # ${doctor_rc}/${pf_rc} literal; each target string occurs exactly once in the launcher.
+  if [[ -s "${PREFIX}" ]]; then
+    sed -i.bak \
+      -e 's/exit "${doctor_rc}"/return "${doctor_rc}"/' \
+      -e 's/exit "${pf_rc}"/return "${pf_rc}"/' \
+      "${PREFIX}"
+    rm -f "${PREFIX}.bak"
+  fi
 }
 
 teardown() {

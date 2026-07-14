@@ -46,15 +46,14 @@ setup() {
     "${GA}/lib/ga-daemons.sh" \
     "${GA}/lib/ga-doctor.sh" \
     "${GA_SBX}/lib/"
-  # ga_init_env now HARD-requires the E5 update-system libs (atrium-config.sh /
-  # apply-spine.sh / update-pause-flag.sh) under <GA_ROOT>/scripts/lib and die()s
-  # ("E5 lib missing") when they are absent. Provision them into the sandbox so
-  # ga_init_env succeeds (the bootstrap path itself does not exercise them — this
-  # is a SOURCE-time dependency of init, not of run_bootstrap).
-  cp "${GA}/scripts/lib/atrium-config.sh" \
-    "${GA}/scripts/lib/apply-spine.sh" \
-    "${GA}/scripts/lib/update-pause-flag.sh" \
-    "${GA_SBX}/scripts/lib/"
+  # ga_init_env HARD-requires several scripts/lib libs under <GA_ROOT>/scripts/lib and die()s
+  # when any is absent: the E5 update-system set (atrium-config.sh / apply-spine.sh /
+  # update-pause-flag.sh) PLUS fakechat-cleanup.sh (the fakechat port-cleanup lib). Copy the
+  # WHOLE scripts/lib dir so the next mandatory-lib addition cannot re-break this test (the
+  # class already recurred: update-pause-flag, then fakechat-cleanup). ga_init_env sources only
+  # the named libs, so the extra copied libs sit unread — this is a SOURCE-time dependency of
+  # init, not of run_bootstrap.
+  cp "${GA}/scripts/lib/"*.sh "${GA_SBX}/scripts/lib/"
   install_stubs
 }
 
