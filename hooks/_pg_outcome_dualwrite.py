@@ -103,6 +103,11 @@ def _classify_error(exc):
     return "unknown"
 
 
+def _fmt_exc(exc):
+    """Truncate + escape an exception message for a one-line structured stderr field."""
+    return str(exc)[:200].replace('"', "'").replace("\n", " ")
+
+
 def _record_hook_failure(error_kind, payload_ref, retry_attempted):
     """Best-effort secondary INSERT into core.hook_failures. Returns True when the
     failure row landed, False otherwise.
@@ -137,7 +142,7 @@ def _record_hook_failure(error_kind, payload_ref, retry_attempted):
             '"message":"%s"}\n'
             % (
                 payload_ref,
-                str(exc)[:200].replace('"', "'").replace("\n", " "),
+                _fmt_exc(exc),
             )
         )
         return False
@@ -607,7 +612,7 @@ def main():
     # stop hook is not disrupted while the failure stays observable.
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
-    error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")
+    error_msg = _fmt_exc(last_exc)
     elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
 
     sys.stderr.write(

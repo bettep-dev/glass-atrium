@@ -155,6 +155,11 @@ def _classify_error(exc):
     return "unknown"
 
 
+def _fmt_exc(exc):
+    """Truncate + escape an exception message for a one-line structured stderr field."""
+    return str(exc)[:200].replace('"', "'").replace("\n", " ")
+
+
 def _build_conflict_clause(table, present_cols):
     """Build the ON CONFLICT tail for `table`.
 
@@ -307,7 +312,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
     if conn is None:
         error_kind = _classify_error(connect_exc)
         error_class = type(connect_exc).__name__
-        message = str(connect_exc)[:200].replace('"', "'").replace("\n", " ")
+        message = _fmt_exc(connect_exc)
         # Per-row stderr stays (each row stays individually visible in the loud
         # channel the aggregator consumes), but the DB is proven unreachable — so
         # emit stderr ONLY per row and record ONE aggregate hook_failures row for
@@ -345,7 +350,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
                 _emit_row_failure(
                     hook_name, target_table, payload_ref, "identifier_rejected",
                     "IdentifierRejected",
-                    str(exc)[:200].replace('"', "'").replace("\n", " "),
+                    _fmt_exc(exc),
                     False, dedup_key,
                 )
                 failed += 1
@@ -370,7 +375,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
                 _emit_row_failure(
                     hook_name, target_table, payload_ref, _classify_error(row_exc),
                     type(row_exc).__name__,
-                    str(row_exc)[:200].replace('"', "'").replace("\n", " "),
+                    _fmt_exc(row_exc),
                     retry_attempted, dedup_key,
                 )
                 failed += 1
@@ -398,7 +403,7 @@ def _run_single(hook_name, target_table, payload_ref, row, start_ns):
                 str(target_table).replace('"', "'"),
                 payload_ref,
                 elapsed_ms,
-                str(exc)[:200].replace('"', "'").replace("\n", " "),
+                _fmt_exc(exc),
             )
         )
         sys.stderr.write(
@@ -428,7 +433,7 @@ def _run_single(hook_name, target_table, payload_ref, row, start_ns):
     # Both attempts failed — fail loud and skip.
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
-    error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")
+    error_msg = _fmt_exc(last_exc)
     elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
 
     # Structured stderr line (consumed by daemon-reports / log aggregation).
