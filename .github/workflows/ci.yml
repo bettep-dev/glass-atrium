@@ -336,17 +336,20 @@ jobs:
         run: |
           mkdir -p reports/bats
           # One GNU parallel job per *.bats file (fed NUL-delimited so any odd
-          # path survives). --timeout 240 kills a single file running >240s (the
-          # diagnostic: name the hanging file); --no-parallelize-within-files
-          # keeps tests WITHIN a file sequential (setup_file-once + ordered side
-          # effects preserved); --jobs $(nproc) bounds concurrency to the runner
-          # core count; --tagstring '{}' tags every output line with the file
-          # path. parallel's non-zero exit (a failed OR timed-out file) rides the
-          # pipe out — pipefail is on via the GitHub default shell — to fail the
-          # leg, so the ci-pass gate sees the real code.
+          # path survives). parallel owns the file-level concurrency: --jobs
+          # $(nproc) bounds it to the runner core count; --timeout 240 kills a
+          # single file running >240s (the diagnostic: name the hanging file);
+          # --tagstring '{}' tags every output line with the file path. Each
+          # `bats {}` runs exactly ONE file with no --jobs, so bats stays serial
+          # WITHIN the file by DEFAULT (setup_file-once + ordered side effects
+          # preserved) — a within/across-file --no-parallelize flag is both
+          # redundant here AND rejected by bats (it requires --jobs>=2). parallel's
+          # non-zero exit (a failed OR timed-out file) rides the pipe out —
+          # pipefail is on via the GitHub default shell — to fail the leg, so the
+          # ci-pass gate sees the real code.
           run_bats() {
             parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' \
-              bats --no-parallelize-within-files {}
+              bats {}
           }
           if [[ "${SHARDS}" -gt 0 ]]; then
             # Sharded root: deterministic round-robin partition of this root's *.bats
