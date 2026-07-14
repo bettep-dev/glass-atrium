@@ -373,6 +373,11 @@ __ga_detect_stat_os() {
   fi
 }
 
+# Warm the flavor memo at load so `__GA_STAT_IS_BSD` is set in the sourcing shell — inherited by the
+# `$(...)` command-sub subshells in wrapper callers (ga-doctor.sh/ga-tui-preflight.sh), so the per-call
+# `uname` fork in the stat_dev/stat_perms/stat_mtime hot paths disappears (idempotent on re-source).
+__ga_detect_stat_os
+
 # stat_dev <path> — numeric st_dev (same %d specifier on both flavors).
 stat_dev() {
   __ga_detect_stat_os

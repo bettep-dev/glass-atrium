@@ -7,6 +7,16 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# OS-portable bulk stat args — BSD `-f '%m %N'` vs GNU `-c '%Y %n'` (both emit `<epoch> <path>`).
+# GNU `-f` = --file-system → bare BSD `-f '%m %N'` is misparsed as a path, giving garbage sort keys on Linux.
+# Detect ONCE at load: a plain var is inherited by the `$(...)`/xargs subshells, keeping the O(1)-fork scan.
+_GA_OS="$(uname -s 2>/dev/null || printf 'unknown')"
+if [[ "${_GA_OS}" == "Darwin" ]]; then
+  _GA_STAT_MP=(-f '%m %N')
+else
+  _GA_STAT_MP=(-c '%Y %n')
+fi
+
 _HOOK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # emit_error (structured stderr) — must precede any error path.
@@ -81,7 +91,7 @@ if [[ ${#outcome_dirs[@]} -gt 0 ]]; then
   sorted_raw="$(
     {
       find "${outcome_dirs[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null \
-        | xargs -0 stat -f '%m %N' 2>/dev/null \
+        | xargs -0 stat "${_GA_STAT_MP[@]}" 2>/dev/null \
         | sort -rn \
         | awk '{ $1=""; sub(/^ /, ""); print }'
     } || true
@@ -249,7 +259,7 @@ fi
 prune_old_backups() {
   local pattern="${1}"
   find "${BACKUP_DIR}" -maxdepth 1 -type f -name "${pattern}" -print0 2>/dev/null \
-    | xargs -0 stat -f '%m %N' 2>/dev/null \
+    | xargs -0 stat "${_GA_STAT_MP[@]}" 2>/dev/null \
     | sort -rn \
     | tail -n +6 \
     | awk '{ $1=""; sub(/^ /, ""); print }' \
