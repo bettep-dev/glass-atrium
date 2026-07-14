@@ -16,15 +16,35 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 
 INPUT=$(hook_read_input)
 
-# extract content + new_string combined
-CONTENT=$(printf '%s\n' "${INPUT}" | python3 -c "
+# Single-pass parse: extract content+new_string AND the zero-width suspect flag in ONE python3
+# (was two — the extraction spawn plus a separate zero-width scan). NUL-delimited so an embedded
+# newline in CONTENT survives the read; the combined string is `content + new_string` WITHOUT
+# str()-coercion so a non-string field TypeErrors to empty exactly as before. replace('\x00','')
+# is load-bearing: json.load decodes a JSON \u0000 escape to a real NUL, which would truncate the
+# `read -r -d ''` consumer mid-value and open a detection bypass; stripping it (then rstrip('\n'))
+# reproduces the prior $()-capture byte-for-byte (bash drops NUL bytes + trailing newlines).
+# Fail-OPEN by design (advisory, never block): python3 absent → the `|| printf` fallback emits two
+# empty NUL-terminated fields → CONTENT empty → exit 0, matching the prior `|| CONTENT=""` guard.
+CONTENT=""
+ZW_FLAG=""
+# shellcheck disable=SC2312
+{
+  IFS= read -r -d '' CONTENT
+  IFS= read -r -d '' ZW_FLAG
+} < <(python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d.get('tool_input', {}).get('content', '') + d.get('tool_input', {}).get('new_string', ''))
-except:
-    pass
-" 2>/dev/null) || CONTENT=""
+    combined = d.get("tool_input", {}).get("content", "") + d.get("tool_input", {}).get("new_string", "")
+except Exception:
+    combined = ""
+suspects = any(ord(c) in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x2060, 0x180E) for c in combined)
+o = sys.stdout
+o.write(combined.replace("\x00", "").rstrip("\n"))
+o.write("\0")
+o.write("1" if suspects else "0")
+o.write("\0")
+' <<<"${INPUT}" 2>/dev/null || printf '\0\0')
 
 [[ -z "${CONTENT}" ]] && exit 0
 
@@ -76,69 +96,63 @@ EVASION_PATTERNS=(
   'c3lzdGVtIHByb21wdHM' # base64("system prompts")
 )
 
+# Collapse each pattern CLASS into one scan: EN + KO patterns each join into a single ERE
+# alternation (top-level `|` is lowest precedence, so every pattern's internal (group)/{0,N}
+# stays self-contained → the alternation matches the exact same input set as the per-pattern
+# loop). The base64 class stays fixed-string via `grep -F` with one -e per marker.
+EN_ALTERNATION=$(hook_join_alt "${PATTERNS[@]}")
+KO_ALTERNATION=$(hook_join_alt "${KO_PATTERNS[@]}")
+b64_grep_args=()
+for _marker in "${EVASION_PATTERNS[@]}"; do
+  b64_grep_args+=(-e "${_marker}")
+done
+
 LOWER_CONTENT=$(printf '%s\n' "${CONTENT}" | tr '[:upper:]' '[:lower:]')
 
-# SEC-070 advisory: English injection pattern hit (case-insensitive on lowercased).
-for pattern in "${PATTERNS[@]}"; do
-  if printf '%s\n' "${LOWER_CONTENT}" | grep -qiE "${pattern}"; then
-    emit_error "SEC-070" "advisory" \
-      "Prompt injection pattern detected" \
-      "프롬프트 인젝션 패턴 감지" \
-      "Verify content is intentional; not an injection attempt" \
-      "의도된 내용인지 확인하세요; 인젝션 시도가 아닌지 점검"
-    exit 0
-  fi
-done
+# SEC-070 advisory: English injection pattern hit (case-insensitive on lowercased). -i is
+# load-bearing — the \[SYSTEM\]/\[INST\]/<<SYS>> patterns carry uppercase folded against the
+# lowercased content.
+if printf '%s\n' "${LOWER_CONTENT}" | grep -qiE "${EN_ALTERNATION}"; then
+  emit_error "SEC-070" "advisory" \
+    "Prompt injection pattern detected" \
+    "프롬프트 인젝션 패턴 감지" \
+    "Verify content is intentional; not an injection attempt" \
+    "의도된 내용인지 확인하세요; 인젝션 시도가 아닌지 점검"
+  exit 0
+fi
 
 # SEC-070 advisory: Korean injection pattern hit. Korean is caseless → match the
 # original content (lowercasing only folds ASCII and would not help here).
-for pattern in "${KO_PATTERNS[@]}"; do
-  if printf '%s\n' "${CONTENT}" | grep -qE "${pattern}"; then
-    emit_error "SEC-070" "advisory" \
-      "Prompt injection pattern detected (Korean)" \
-      "프롬프트 인젝션 패턴 감지 (한국어)" \
-      "Verify content is intentional; not an injection attempt" \
-      "의도된 내용인지 확인하세요; 인젝션 시도가 아닌지 점검"
-    exit 0
-  fi
-done
+if printf '%s\n' "${CONTENT}" | grep -qE "${KO_ALTERNATION}"; then
+  emit_error "SEC-070" "advisory" \
+    "Prompt injection pattern detected (Korean)" \
+    "프롬프트 인젝션 패턴 감지 (한국어)" \
+    "Verify content is intentional; not an injection attempt" \
+    "의도된 내용인지 확인하세요; 인젝션 시도가 아닌지 점검"
+  exit 0
+fi
 
 # SEC-072 advisory: encoding-evasion marker. base64 is case-significant → match
-# the original content (NOT the lowercased copy).
-for pattern in "${EVASION_PATTERNS[@]}"; do
-  if printf '%s\n' "${CONTENT}" | grep -qF "${pattern}"; then
-    emit_error "SEC-072" "advisory" \
-      "Encoded injection marker detected" \
-      "인코딩된 인젝션 마커 감지" \
-      "Verify base64/encoded payload is intentional, not an evasion attempt" \
-      "base64/인코딩 페이로드가 의도된 것인지 확인하세요; 우회 시도가 아닌지 점검"
-    exit 0
-  fi
-done
+# the original content (NOT the lowercased copy) as fixed strings.
+if printf '%s\n' "${CONTENT}" | grep -qF "${b64_grep_args[@]}"; then
+  emit_error "SEC-072" "advisory" \
+    "Encoded injection marker detected" \
+    "인코딩된 인젝션 마커 감지" \
+    "Verify base64/encoded payload is intentional, not an evasion attempt" \
+    "base64/인코딩 페이로드가 의도된 것인지 확인하세요; 우회 시도가 아닌지 점검"
+  exit 0
+fi
 
-# Zero-width / invisible Unicode detection (zero-width space, joiner, BOM, etc.).
-# The helper signals via a TRISTATE exit code, NOT a binary success/failure:
-#   0 = scanned clean (no suspects) · 1 = suspects found (fire advisory) ·
-#   any other code = a python tooling failure (interpreter absent, crash, OOM).
-# A tooling failure MUST NOT be conflated with a positive detection — the prior
-# `if python3 …; then pass; else advisory; fi` form fired a false SEC-071 on every
-# non-zero exit, so a python crash looked identical to a real zero-width hit.
-# Capturing the exact exit code lets a genuine error fail-open (no advisory),
-# matching the advisory-only, never-block contract.
-zw_rc=0
-printf '%s\n' "${CONTENT}" | python3 -c "
-import sys
-text = sys.stdin.read()
-suspects = [c for c in text if ord(c) in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x2060, 0x180E)]
-sys.exit(0 if not suspects else 1)
-" 2>/dev/null || zw_rc=$?
-
-if [[ "${zw_rc}" -eq 1 ]]; then
+# Zero-width / invisible Unicode detection (zero-width space, joiner, BOM, etc.) — the flag is
+# computed in the single extraction python3 above. A python tooling failure (interpreter absent /
+# crash) fails OPEN: the `|| printf` fallback blanks CONTENT → the hook exits before this point,
+# so a tooling failure can never be conflated with a positive detection.
+if [[ "${ZW_FLAG}" == "1" ]]; then
   emit_error "SEC-071" "advisory" \
     "Suspicious Unicode characters detected" \
     "유니코드 비정상 문자 감지" \
     "Verify zero-width/invisible characters are intentional" \
     "제로 폭/보이지 않는 문자가 의도된 것인지 확인하세요"
 fi
-# Clean (0) or tooling failure (other) → no advisory. Never block.
+# Clean (0) or tooling failure (empty) → no advisory. Never block.
 exit 0

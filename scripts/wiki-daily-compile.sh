@@ -85,15 +85,9 @@ LOG_FILE="$LOG_DIR/wiki-compile-$(date -u +%Y-%m-%d).log"
 LOCK_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-lock.sh"
 SYNC_SCRIPT="$WIKI_COMPILE_SELF_DIR/wiki-sync.sh"
 
-# Resolve the haiku model id from the daemon-config.json SoT (avoids dated-pin
-# drift). Missing jq/file/key → alias literal claude-haiku-4-5 fallback (same
-# policy as daemon_config.py).
-DAEMON_CONFIG="$HOME/.claude/data/daemon-config.json"
-HAIKU_MODEL="claude-haiku-4-5"
-if command -v jq >/dev/null 2>&1 && [ -f "$DAEMON_CONFIG" ]; then
-  _cfg_model=$(jq -r '.haiku_model // empty' "$DAEMON_CONFIG" 2>/dev/null || true)
-  [ -n "$_cfg_model" ] && HAIKU_MODEL="$_cfg_model"
-fi
+# Haiku cheap-model id from the daemon-config.json SoT, via atrium_resolve_haiku_model
+# (lib/atrium-config.sh). DAEMON_CONFIG override hook → canonical default when empty.
+HAIKU_MODEL="$(atrium_resolve_haiku_model "${DAEMON_CONFIG:-}")"
 
 # WIKI_STARTED_AT for the PG aggregate row.
 WIKI_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -116,6 +116,82 @@ run_render() {
   [[ "${output}" != *"launchctl"* ]]
 }
 
+# bats 1.13 checks ONLY the last command's status, so intermediate `[[ ]]` assertions
+# are non-gating — the new tests below carry `|| return 1` on every gating assertion.
+
+@test "rendered PATH carries the Homebrew bin dir (config-derived from claude_bin)" {
+  # Point node_bin at a NON-Homebrew dir so NODE_DIR alone cannot supply
+  # /opt/homebrew/bin — the fix must derive it from [paths].claude_bin's dirname.
+  # RED before the fix: PATH_VALUE had only NODE_DIR + /usr/local/bin + system dirs,
+  # so tmux/claude/bun/lsof could not resolve under launchd (daily restarts died).
+  sed -e 's|^node_bin = .*|node_bin = "/opt/ga-nonbrew/bin/node"|' \
+    -e 's|^claude_bin = .*|claude_bin = "/opt/homebrew/bin/claude"|' \
+    "${FAKE_CONFIG}" >"${FAKE_CONFIG}.brew"
+  mv -f "${FAKE_CONFIG}.brew" "${FAKE_CONFIG}"
+  GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 0 ]] || return 1
+  # every plist's PATH must carry the Homebrew bin dir (from claude_bin's dirname)
+  run grep -RlF '/opt/homebrew/bin' "${OUT}"
+  [[ "${#lines[@]}" -eq 8 ]] || return 1
+  # inside the monitor plist's PATH string specifically (positive control), and the
+  # configured non-brew node dir still leads the PATH (the strongest discriminator)
+  run grep -A1 '<key>PATH</key>' "${OUT}/com.glass-atrium.monitor.plist"
+  [[ "${output}" == *'/opt/ga-nonbrew/bin:/opt/homebrew/bin:'* ]] || return 1
+}
+
+@test "claude_bin absent -> PATH falls back to /opt/homebrew/bin (inert on Intel)" {
+  # Drop the claude_bin key entirely; the fallback must still list the canonical
+  # Homebrew bin dir (a non-existent dir is simply ignored by launchd).
+  sed -e '/^claude_bin = /d' \
+    -e 's|^node_bin = .*|node_bin = "/opt/ga-nonbrew/bin/node"|' \
+    "${FAKE_CONFIG}" >"${FAKE_CONFIG}.nobrew"
+  mv -f "${FAKE_CONFIG}.nobrew" "${FAKE_CONFIG}"
+  GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 0 ]] || return 1
+  run grep -RlF '/opt/homebrew/bin' "${OUT}"
+  [[ "${#lines[@]}" -eq 8 ]] || return 1
+}
+
+@test "dependency probe is WARN-only + honors same-host gate and GA_SKIP_DEP_PROBE" {
+  # Build a SAME-HOST config (target_home under the REAL $HOME) so the probe's
+  # same-host gate is active, then assert the render still SUCCEEDS (never die) and
+  # that GA_SKIP_DEP_PROBE=1 fully silences the probe (no WARN, no probe log).
+  local same_host_cfg="${SANDBOX}/config.samehost.toml"
+  sed -e "s|\${HOME}|${HOME}|g" \
+    -e 's|^timezone = .*|timezone = "Asia/Seoul"|' \
+    "${TEMPLATE}" >"${same_host_cfg}"
+  GA_SKIP_DEP_PROBE=1 GA_CONFIG_TOML="${same_host_cfg}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"WARN:"* ]] || return 1
+  [[ "${output}" != *"dependency probe:"* ]] || return 1
+}
+
+@test "same-host render runs the probe (WARN-only positive path, still exit 0)" {
+  # The silence-only tests above cover the two SKIP branches (kill-switch + foreign
+  # gate) but never let the probe body RUN — a regression making it die would go
+  # uncaught. Here a SAME-HOST render (RENDER_HOME == real $HOME) WITHOUT the
+  # kill-switch opens the probe, so it executes and must still exit 0.
+  # Machine-independent: with the probe running, EXACTLY one branch logs — a 'WARN:'
+  # on any unresolved tool, or the all-resolve 'dependency probe:' line — so the OR
+  # holds on any host regardless of which of tmux/claude/bun/lsof are installed.
+  local same_host_cfg="${SANDBOX}/config.samehost.toml"
+  sed -e "s|\${HOME}|${HOME}|g" \
+    -e 's|^timezone = .*|timezone = "Asia/Seoul"|' \
+    "${TEMPLATE}" >"${same_host_cfg}"
+  GA_CONFIG_TOML="${same_host_cfg}" GA_PLIST_OUT="${OUT}" run "${REAL_RENDERER}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"WARN:"* || "${output}" == *"dependency probe:"* ]] || return 1
+}
+
+@test "foreign-user render never triggers the dependency probe (RENDER-ONLY T32 intact)" {
+  # The default fake-user render is FOREIGN (FAKE_HOME != real $HOME); the probe must
+  # self-skip there regardless of the kill-switch, so no probe output ever appears.
+  run_render
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"WARN:"* ]] || return 1
+  [[ "${output}" != *"dependency probe:"* ]] || return 1
+}
+
 @test "glass-atrium render-plists subcommand renders into GA_PLIST_OUT (wiring)" {
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   GA_CONFIG_TOML="${FAKE_CONFIG}" GA_PLIST_OUT="${OUT}" run "${REAL_GA}" render-plists

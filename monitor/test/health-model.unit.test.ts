@@ -7,11 +7,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // health-model.js reads window.UI at call time — stub must exist BEFORE import.
+// Mirrors ui.jsx DAEMON_STATUS_TONE (the SoT). missing→info per F#38 fix.
 const DAEMON_TONE: Record<string, string> = {
   ok: "ok",
   partial: "warn",
   error: "crit",
-  missing: "crit",
+  missing: "info",
   stale: "crit",
   quota_exceeded: "neutral",
 };

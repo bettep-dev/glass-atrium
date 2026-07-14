@@ -13,6 +13,11 @@
 # Cost source: PG core.cost_events latest row by session_id (read-only). fail-open: ANY DB
 # error/timeout/absent psycopg/corrupted payload → exit 0 silently. SELECT double-capped (connect 1s
 # + statement 1500ms). psycopg Unix-socket only, never -h/-p.
+#
+# Latency: a short-TTL per-session read cache lets repeated spawns in one session reuse the last read
+# instead of re-importing psycopg + reconnecting each time (the value already lags ~1 turn, so a
+# few-second TTL adds no material staleness). Optimization ONLY — a miss/stale/error falls back to the
+# live read, so the advisory value/verdict is identical to the uncached path within the TTL.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -35,6 +40,8 @@ fi
 # Read the LATEST event's cache_read_tokens (1 integer line). STUBBABLE via
 # CONTEXT_ADVISORY_TEST_TOKENS (Bats). fail-open → '0'. session_id via env-var + parameterized %s
 # binding (neutralizes injection).
+# SC2329: invoked indirectly by name via hook_cached_int_read's dynamic dispatch — not dead code.
+# shellcheck disable=SC2329
 read_latest_context_tokens() {
   local sid="${1:-}"
   if [[ -n "${CONTEXT_ADVISORY_TEST_TOKENS:-}" ]]; then
@@ -90,10 +97,9 @@ if [[ -z "${session_id}" ]]; then
 fi
 [[ -z "${session_id}" ]] && exit 0
 
-# 3. Read latest-turn context occupancy + integer-normalize (non-digit bytes stripped, empty → 0).
-context_tokens="$(read_latest_context_tokens "${session_id}")"
-context_tokens="$(printf '%s' "${context_tokens}" | tr -cd '0-9')"
-[[ -z "${context_tokens}" ]] && context_tokens=0
+# 3. Read latest-turn context occupancy (short-TTL per-session cache; any cache anomaly → live read).
+#    hook_cached_int_read (hook-utils.sh) returns the integer-normalized value, identical to the live path.
+context_tokens="$(hook_cached_int_read CONTEXT_BUDGET_ADVISORY context-budget-advisory-cache read_latest_context_tokens "${session_id}")"
 
 # 4. Threshold comparison — at-or-below threshold stays silent.
 if ((context_tokens <= context_threshold)); then

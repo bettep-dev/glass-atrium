@@ -8,16 +8,26 @@ import DOMPurify, { type Config } from "isomorphic-dompurify";
 // CDN allowlist — allowed origins for <script src="…"> in the body. Origins
 // (scheme+host+port), not prefixes: a prefix startsWith match treats
 // "https://cdn.tailwindcss.com.evil.com/x.js" as allowed (suffix-host bypass).
-// Any path on a listed origin passes; any other host is rejected.
+// Any path on a listed origin passes; any other host is rejected. jsdelivr is
+// NOT here — a whole-origin grant let any /npm/<pkg> execute (SSRF vector);
+// it is constrained to the pinned mermaid bundle path below instead.
 const CDN_SCRIPT_ORIGIN_ALLOWLIST: ReadonlySet<string> = new Set(
   [
-    "https://cdn.jsdelivr.net/",
     "https://cdn.tailwindcss.com/",
     "https://fonts.googleapis.com/",
     "https://fonts.gstatic.com/",
     "https://ajax.googleapis.com/",
   ].map((entry) => new URL(entry).origin),
 );
+
+// jsdelivr is allowlisted ONLY for the pinned mermaid bundle path — the sole
+// legitimate jsdelivr <script src> a stored OWN-BUNDLE doc ships (mirrors the
+// live viewer public/index.html:58). Whole-origin jsdelivr let any /npm/<pkg>
+// (attacker-chosen) pass sanitize; pinning the path closes that without breaking
+// OWN-BUNDLE live-viewer diagrams. URL normalization (below) resolves `..`
+// BEFORE this test, so `/dist/../../evil` cannot slip past the prefix.
+const JSDELIVR_ORIGIN = "https://cdn.jsdelivr.net";
+const JSDELIVR_MERMAID_PATH_RE = /^\/npm\/mermaid@[^/]+\/dist\//;
 
 // Tags to remove. iframe is listed explicitly (DOMPurify passes it by default).
 // details/summary are NOT removed (sandbox-safe disclosure UI) — their handlers
@@ -78,16 +88,20 @@ const ADD_ATTR_LIST: readonly string[] = [
 ];
 
 // Origin-compares whether a CDN script src is in the allowlist. Parses the src
-// to its origin so only the exact host (any path/version) passes — an unparseable
-// src or a non-allowlisted host (incl. suffix-host bypass like *.evil.com) is rejected.
+// so only an exact allowlisted host passes — an unparseable src or a non-allowlisted
+// host (incl. suffix-host bypass like *.evil.com) is rejected. jsdelivr is the one
+// path-constrained origin: it passes ONLY on the pinned mermaid bundle path.
 function isAllowedCdnScript(src: string): boolean {
-  let origin: string;
+  let url: URL;
   try {
-    origin = new URL(src).origin;
+    url = new URL(src);
   } catch {
     return false;
   }
-  return CDN_SCRIPT_ORIGIN_ALLOWLIST.has(origin);
+  if (url.origin === JSDELIVR_ORIGIN) {
+    return JSDELIVR_MERMAID_PATH_RE.test(url.pathname);
+  }
+  return CDN_SCRIPT_ORIGIN_ALLOWLIST.has(url.origin);
 }
 
 // `uponSanitizeElement` hook — registered once at module import. Idempotency guard

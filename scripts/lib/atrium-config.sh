@@ -200,3 +200,19 @@ atrium_resolve_timezone() {
 atrium_load_timezone() {
   printf '%s\n' "${ATRIUM_TIMEZONE:-$(atrium_resolve_timezone "$(atrium_config_get '[meta]' 'timezone' 'auto')")}"
 }
+
+# Resolve the daemon "haiku" cheap-model id from the daemon-config.json SoT.
+# Echoes the configured .haiku_model when jq + the file + a non-empty key are all
+# present; else the alias-literal fallback. ALWAYS echoes a non-empty id and
+# returns 0 (safe under set -e / command substitution / an ERR trap).
+# Arg $1 = config path — each caller passes its OWN seam var; empty/absent → the
+# canonical default. daemon-config.json mirrors hooks/daemon_config.py (Python SoT).
+atrium_resolve_haiku_model() {
+  local config_path="${1:-${HOME}/.claude/data/daemon-config.json}"
+  local model="claude-haiku-4-5" cfg_model
+  if command -v jq >/dev/null 2>&1 && [[ -f "${config_path}" ]]; then
+    cfg_model="$(jq -r '.haiku_model // empty' "${config_path}" 2>/dev/null || true)"
+    [[ -n "${cfg_model}" ]] && model="${cfg_model}"
+  fi
+  printf '%s\n' "${model}"
+}

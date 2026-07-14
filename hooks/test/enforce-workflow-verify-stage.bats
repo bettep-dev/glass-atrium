@@ -440,6 +440,24 @@ agent('glass-atrium-dev-shell',{goal:'implement per the verified plan'})"
   assert_trace block-norev || return 1
 }
 
+# #26 pin: upstream form + a quote-bounded reviewer LITERAL that is a PROSE MENTION (Tier-A presence,
+# but NOT a real Tier-B agent('reviewer',…)/agentType:'reviewer' spawn) + a matching plan-ref → the
+# Tier-A NOREV check at :687 is satisfied by the quoted literal, but the upstream form must ADDITIONALLY
+# require a real Tier-B reviewer spawn → BLOCK_NOREV. Authored to FAIL before the fix (the upstream
+# branch previously PASSed on Tier-A presence alone, waiving the real-reviewer guarantee).
+@test "norev(#26): upstream form + reviewer PROSE-MENTION only (no real spawn) → BLOCK_NOREV" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: upstream clauded-docs/3
+impl: glass-atrium-dev-shell
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: clauded-docs/3')
+const REVIEWER_NOTE = 'glass-atrium-qa-code-reviewer'
+agent('glass-atrium-dev-shell',{goal:'implement per the verified plan'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-norev || return 1
+}
+
 # =====================================================================================================
 # SECTION G — consistency checks a / b / b' / c / d / e (declaration falsified against code) + the
 #   two PASS shapes (in-script team greedy binding; in-script team + impl-computed).
@@ -576,6 +594,40 @@ pipeline(CFG, (b) => agent('impl', { agentType: b.a }))"
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# (a-count / #27) SAME-TYPE DUAL-ROLE with a SINGLE spawn, impl-first — the type is declared in BOTH
+# verify: and impl: but has only ONE Tier-B spawn, so one declared role (verify partner OR impl) is
+# provably unspawned. The greedy binding would absorb the lone spawn as the verify slot → zero impl
+# positions → ordering check (d) vacuously passes (the bypass). The count facet of check (a) blocks it.
+# Authored to FAIL before the fix (single-spawn dual-role impl-first PASSed via the ordering vacuity).
+@test "consistency(a-count #27): same-type dual-role SINGLE spawn, impl-first → BLOCK_DECLSPAWN" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+agent('glass-atrium-dev-nestjs',{goal:'implement BEFORE review, the ONLY dual-role spawn'})
+agent('glass-atrium-qa-code-reviewer',{goal:'review after'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-declspawn || return 1
+}
+
+# (a-count / #27) REGRESSION GUARD — the HONEST dev-first-parallel dual-role team with TWO spawns of the
+# type (verify slot + impl slot) must still PASS. Guards against a future positional 'fix' that would
+# false-block a dev-* appearing textually before the reviewer inside the verify parallel.
+@test "consistency(a-count #27): honest dev-first-parallel dual-role, 2 spawns → PASS" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+parallel(agent('glass-atrium-dev-nestjs',{goal:'feasible verdict'}),agent('glass-atrium-qa-code-reviewer',{goal:'judge'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement per verified plan'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
 # =====================================================================================================
 # SECTION H — upstream form (waives the in-script pair-mapping + ordering ONLY).
 # =====================================================================================================
@@ -656,6 +708,68 @@ agent('glass-atrium-dev-node',{goal:'scattered impl 2'})"
 }
 
 # =====================================================================================================
+# SECTION I2 — JS REGEX-LITERAL LEXING (#29). strip_comments + _string_mask are regex-literal-aware so
+#   a // (or a quote/backtick) INSIDE a regex literal is not mis-lexed as a comment/string — the mis-lex
+#   otherwise blanks the rest of a source line (or desyncs string state) and false-BLOCKs a compliant
+#   workflow. The regression guard (iv) proves a genuine //-commented reviewer is still stripped.
+# =====================================================================================================
+
+# (i) a regex literal /\/\//g whose inner // used to trip the line-comment lexer, blanking the rest of
+# the line (the reviewer + dev parallel spawn) → block-norev. With regex awareness the whole line
+# survives → the reviewer spawn is seen → PASS. Authored to FAIL before the fix.
+@test "regex(#29 i): /\\/\\//g before the reviewer spawn on the same line → PASS (was block-norev)" {
+  run_hook "${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+const norm = (s) => s.replace(/\/\//g, '/'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# (ii) a regex literal containing a backtick char-class /[\`]/ that used to open a spurious template
+# string, which then paired with the real multi-line template's backticks and engulfed the declaration
+# block → block-nodecl. With regex awareness the backtick is regex content, the real template pairs
+# correctly, and the declaration is extracted → PASS. Authored to FAIL before the fix.
+@test "regex(#29 ii): backtick char-class regex + multi-line template before the declaration → PASS (was block-nodecl)" {
+  run_hook "const RE = /[\`]/
+const tpl = \`line1
+line2\`
+${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# (iii) a char-class regex /[/]/ (a slash INSIDE the character class) on a spawn-bearing line — the
+# class-aware termination must not stop the regex at the inner slash. Reviewer spawn survives → PASS.
+@test "regex(#29 iii): char-class regex /[/]/ on a spawn-bearing line → PASS" {
+  run_hook "${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+const SEP = /[/]/; parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  assert_trace pass || return 1
+}
+
+# (iv) REGRESSION GUARD — comment-stripping intent retained: a GENUINELY //-commented-out reviewer
+# spawn (a real line comment, nxt char is a slash so it is NOT a regex) with no live reviewer still
+# yields block-norev. The regex awareness must not swallow real line comments.
+@test "regex(#29 iv): genuinely //-commented reviewer, no live reviewer → BLOCK_NOREV" {
+  run_hook "${DECL_TEAM}
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+// agent('glass-atrium-qa-code-reviewer',{goal:'this reviewer spawn is commented out'})
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-norev || return 1
+}
+
+# =====================================================================================================
 # SECTION J — verdict plumbing (the VERDICT-PLUMBING TRAP: a python token missing from the bash case
 #   silently PASSes). Static set-equality across the emit set / case arms + the ADR-2 allowlist scope.
 # =====================================================================================================
@@ -715,6 +829,32 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atri
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ "${status}" -eq 0 ]] || return 1
   [[ ! "${output}" =~ "entry-miss" ]] || return 1
+}
+
+# #28 word-boundary (PLAN_REF_RE mirror): an incidental 'workplan-2026' token is NOT a plan-ref, so a
+# would-be-PASS DEV workflow whose ONLY entry signal is 'workplan-2026' still lands on BLOCK_ENTRY.
+# Authored to FAIL before the anchor fix (unanchored plan-[0-9]+ matched inside 'workplan-2026' → PASS).
+@test "entry(#28): 'workplan-2026' does NOT satisfy plan-ref → BLOCK_ENTRY" {
+  run_hook "${DECL_TEAM}
+log('${SIZE_EST}')
+log('advance the workplan-2026 milestone note')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" =~ "entry-miss" ]] || return 1
+  assert_trace block-entry || return 1
+}
+
+# #28 companion: a REAL 'plan-6569' slug still satisfies the plan-ref entry signal → PASS.
+@test "entry(#28): real 'plan-6569' slug satisfies plan-ref → PASS" {
+  run_hook "${DECL_TEAM}
+log('${SIZE_EST}')
+log('implement per plan-6569')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" =~ "entry-miss" ]] || return 1
+  assert_trace pass || return 1
 }
 
 # BLOCK_NODECL carries the entry addendum: a DEV workflow with NO declaration AND no entry signal
@@ -1068,6 +1208,50 @@ agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'})"
   assert_trace block-norev || return 1
 }
 
+# #45 per-site scan (moved into the python helper): the whole-script false-negative (ONE catch token
+# ANYWHERE silenced the advisory) is closed. These pin the per-site classification: partially-wrapped
+# fires; fully .catch-chained is silent; robustAgent-routed is silent.
+
+# PARTIALLY WRAPPED — one schema site is .catch-chained (handled), another is bare (unhandled) → the
+# advisory FIRES on the residual bare site. Authored to FAIL before the fix (the lone .catch silenced it).
+@test "resilience(#45 partial): one .catch-chained schema site + one bare schema site → PASS + advisory fires" {
+  run_hook "${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
+}
+
+# FULLY INLINE .catch-CHAINED — every schema-mode site is .catch-chained → HANDLED → silent.
+@test "resilience(#45 full-catch): every schema site .catch-chained → PASS, NO advisory" {
+  run_hook "${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge with schema'}).catch(()=>null),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement with a schema output'}).catch(()=>null)"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
+}
+
+# robustAgent-ROUTED — the schema spawn goes through the robustAgent wrapper (callee robustAgent, not
+# agent), and the wrapper body inner agent() call carries no literal schema → NO unhandled agent-call
+# site → silent. Declared impl-computed so the declaration is code-consistent (indirect spawn).
+@test "resilience(#45 robust): schema work routed through robustAgent wrapper → PASS, NO advisory" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl-computed: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+async function robustAgent(agentType, opts) { return agent(opts.goal, { ...opts, agentType }).catch(() => null); }
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
+}
+
 # =====================================================================================================
 # SECTION O — CORPUS (T8): the 3 undeclared originals are missing-declaration BLOCK pins; the 4
 #   declared variants (both declaration forms) are PASS pins. The real archived scripts are the
@@ -1287,8 +1471,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 108 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 108 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 120 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 120 @test, found ${actual}" >&2
     return 1
   }
 }

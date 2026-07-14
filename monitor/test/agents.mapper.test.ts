@@ -176,6 +176,7 @@ function makeSuccessRateRow(
     success_count: 3n,
     failure_count: 1n,
     total_count: 4n,
+    reconstructed_count: 0n,
     success_rate: null,
     ...overrides,
   } as Parameters<typeof mapSuccessRateRows>[0][number];

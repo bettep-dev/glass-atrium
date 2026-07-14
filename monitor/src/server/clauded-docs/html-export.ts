@@ -219,6 +219,27 @@ export async function renderSelfContainedHtml(
   return renderHtmlThroughBrowser(storedBody);
 }
 
+/**
+ * Render-time egress predicate for the export browser context (SSRF / LLM01
+ * trust boundary). The stored body is attacker-influenceable, so during export
+ * the context MUST fetch+execute NOTHING but the Tailwind Play CDN — its JIT
+ * runtime is the one resource genuinely required at render (see
+ * waitForTailwindStylesheet). Mermaid is injected locally (addScriptTag, no
+ * network) and webfonts are stripped from the output, so aborting every other
+ * host — across ALL request types (script/style/font/xhr) — is regression-free
+ * while eliminating server-side execution + network egress of any embedded
+ * attacker script. Fails CLOSED: an unparseable request URL is aborted.
+ */
+export function shouldAllowRenderRequest(requestUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(requestUrl).hostname;
+  } catch {
+    return false;
+  }
+  return host === TAILWIND_CDN_HOST;
+}
+
 async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
   let browser;
   try {
@@ -235,6 +256,16 @@ async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {
   let page: Page | null = null;
   try {
     context = await browser.newContext();
+
+    // SSRF / egress guard — abort every render-time request except the Tailwind
+    // Play CDN. Installed BEFORE newPage so it covers the very first subresource.
+    // See shouldAllowRenderRequest (covers script/style/font/xhr via **/* glob).
+    await context.route("**/*", (route) =>
+      shouldAllowRenderRequest(route.request().url())
+        ? route.continue()
+        : route.abort(),
+    );
+
     page = await context.newPage();
     page.setDefaultNavigationTimeout(PAGE_NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(PAGE_NAVIGATION_TIMEOUT_MS);

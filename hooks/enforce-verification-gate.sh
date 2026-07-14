@@ -129,13 +129,16 @@ is_dev_agent() {
 #   3) documents/<…>.html     — any HTML primary under a documents/ directory (monitor-internal root shape).
 #   4) plan-<digits> / <digits>-plan — an id-bearing topic-slug; the digit-adjacency is what makes
 #      it a structured REFERENCE rather than incidental hyphenated prose (cross-plan, well-planned).
+#      WORD-ANCHORED: the slug alternations are bounded by (^|[^A-Za-z0-9_]) … ([^A-Za-z0-9]|$) so an
+#      incidental token that merely CONTAINS the slug (workplan-2026) does NOT silently convert an
+#      entry-miss BLOCK into a pass, while a real reference (plan-6569, docs/plan-42, 2026-plan) matches.
 # Keep in sync with enforce-workflow-verify-stage.sh's inline PLAN_REF_RE copy — both raw-scan these
-# self-attestation tokens (P0), matching regardless of comment placement.
+# self-attestation tokens (P0), matching regardless of comment placement (the anchors are mirrored).
 references_plan() {
   local text="${1}"
   [[ -z "${text}" ]] && return 1
   printf '%s' "${text}" \
-    | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|plan-[0-9]+|[0-9]+-plan' 2>/dev/null
+    | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
 }
 
 # Entry-classification token — the orchestrator's conscious "this DEV task is simple/exempt"

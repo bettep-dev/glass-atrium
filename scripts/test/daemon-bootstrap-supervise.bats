@@ -19,6 +19,8 @@ REAL_AUTOAGENT_BOOTSTRAP="${GA}/scripts/autoagent-daemon-bootstrap.sh"
 REAL_BOOTSTRAP_LIB="${GA}/scripts/lib/daemon-bootstrap-common.sh"
 REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
+REAL_FAKECHAT_LIB="${GA}/scripts/lib/fakechat-cleanup.sh"
+REAL_AUTH_LIB="${GA}/scripts/lib/claude-auth-env.sh"
 
 setup() {
   [[ -f "${REAL_BOOTSTRAP_LIB}" ]] || skip "daemon-bootstrap-common.sh not found"
@@ -103,6 +105,7 @@ sandbox_copy() {
   cp "${REAL_BOOTSTRAP_LIB}" "${SANDBOX}/lib/daemon-bootstrap-common.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${REAL_FAKECHAT_LIB}" "${SANDBOX}/lib/fakechat-cleanup.sh"
   printf '%s\n' "${SANDBOX}/${base}"
 }
 
@@ -118,9 +121,11 @@ launch_bootstrap() {
   PATH="${STUB_BIN}:${PATH}" \
     DAEMON_LOCK_DIR="${LOCK_DIR}" \
     ATRIUM_CONFIG_TOML="${TMPROOT}/config.toml" \
+    DAEMON_CONFIG="${TMPROOT}/daemon-config.json" \
+    GA_ROOT="${TMPROOT}" \
     COLD_START_WAIT_SEC=0 \
     HTTP_READY_INTERVAL_SEC=0 \
-    MONITOR_INTERVAL_SEC=1 \
+    MONITOR_INTERVAL_SEC=0.5 \
     RESTART_LOCK_POLL_SEC=1 \
     TMUX_NEW_SESSION_MODE="${TMUX_NEW_SESSION_MODE:-ok}" \
     bash "${script}" "$@" >"${logf}" 2>&1 &
@@ -217,7 +222,7 @@ wait_for_log() {
     sleep 0.1
     waited=$((waited + 1))
   done
-  sleep 1
+  sleep 0.3
   alive=0
   if kill -0 "${pid_a}" 2>/dev/null; then alive=$((alive + 1)); fi
   if kill -0 "${pid_b}" 2>/dev/null; then alive=$((alive + 1)); fi
@@ -330,4 +335,62 @@ wait_for_log() {
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"atrium-config: invalid [ports].wiki_fakechat"* ]]
   [[ ! -f "${TMUX_CALLS}" ]]
+}
+
+# --channels REPL model injection (create path). The daemon REPL must run on the
+# menu-configured daemon LLM tier (daemon-config.json haiku_model) instead of the
+# settings.json default (Fable 5, whose usage cap the autoagent daemon hits). BOTH
+# pane_cmd branches (auth-load + plain) MUST carry --model; the value is the
+# resolved haiku_model, or the claude-haiku-4-5 fallback when the key/file/jq is
+# absent. The tmux stub records $* to TMUX_CALLS, so the new-session pane_cmd is
+# asserted directly. launch_bootstrap points DAEMON_CONFIG at the sandbox (hermetic).
+
+@test "model injection (plain branch, key absent): autoagent --channels carries --model fallback" {
+  local s pid
+  s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+  # no daemon-config.json fixture written → jq/file absent → literal fallback
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  pid="${LAUNCHED_PID}"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  grep -qF -- "--channels plugin:fakechat@claude-plugins-official --model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  # plain branch: no auth-lib source prefix (sandbox has no claude-auth-env.sh)
+  ! grep -qF -- "claude-auth-env.sh'; claude_auth_load_env" "${TMUX_CALLS}" || return 1
+  kill -0 "${pid}"
+}
+
+@test "model injection (plain branch, key present): --model carries the configured haiku_model" {
+  local s pid
+  s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+  printf '{"haiku_model":"claude-sonnet-4-5"}\n' >"${TMPROOT}/daemon-config.json"
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  pid="${LAUNCHED_PID}"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  grep -qF -- "--model 'claude-sonnet-4-5'" "${TMUX_CALLS}" || return 1
+  # the configured value overrides the fallback literal
+  ! grep -qF -- "--model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  kill -0 "${pid}"
+}
+
+@test "model injection (auth-load branch, key absent): source+auth prefix AND --model fallback" {
+  local s pid
+  s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+  # stage the auth lib so the auth-load pane_cmd branch is taken; GA_ROOT (set by
+  # launch_bootstrap) points the secrets lookup at the sandbox, so claude_auth_load_env
+  # warns + returns 0 — no real token is ever read.
+  cp "${REAL_AUTH_LIB}" "${SANDBOX}/lib/claude-auth-env.sh"
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  pid="${LAUNCHED_PID}"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  grep -qF -- "claude-auth-env.sh'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  kill -0 "${pid}"
+}
+
+@test "model injection (shared fix): wiki --channels also carries --model fallback" {
+  local s pid
+  s="$(sandbox_copy "${REAL_WIKI_BOOTSTRAP}")"
+  launch_bootstrap "${s}" "${TMPROOT}/boot.log"
+  pid="${LAUNCHED_PID}"
+  wait_for_log "${TMPROOT}/boot.log" "created successfully" 10
+  grep -qF -- "--model 'claude-haiku-4-5'" "${TMUX_CALLS}" || return 1
+  kill -0 "${pid}"
 }

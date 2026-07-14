@@ -608,19 +608,23 @@ extract_launcher_fn() {
 
 # === STEP 2 — ga_pg_wait_ready: bounded live-server poll after an attempted start ========
 
-@test "STEP2: ga_pg_wait_ready is defined + bounded (hard ceiling, no unbounded until-loop)" {
-  declare -F ga_pg_wait_ready
+@test "STEP2: ga_pg_wait_ready is defined + bounded (hard WALL-CLOCK ceiling, no unbounded until-loop)" {
+  declare -F ga_pg_wait_ready || return 1
   local body
   body="$(declare -f ga_pg_wait_ready)"
-  # a HARD counter ceiling gates the loop — the mandatory bound against a NEW infinite-hang path.
-  [[ "${body}" == *'ceiling=15'* ]]
-  [[ "${body}" == *'-lt "${ceiling}"'* ]]
-  [[ "${body}" == *'waited=$((waited + 1))'* ]]
+  # a HARD WALL-CLOCK ceiling gates the loop (SECONDS-delta, env-overridable seam) — the mandatory
+  # bound against a NEW infinite-hang path, anchored to real elapsed time so per-poll probe cost cannot
+  # drift it past ~ceiling (finding #3: an iteration count drifted to ~3N s worst case).
+  [[ "${body}" == *'ceiling="${GA_PG_WAIT_TIMEOUT_SECS:-15}"'* ]] || return 1
+  [[ "${body}" == *'started="${SECONDS}"'* ]] || return 1
+  [[ "${body}" == *'"$((SECONDS - started))" -lt "${ceiling}"'* ]] || return 1
+  # the OLD iteration counter is GONE (the drift-to-worst-case bug this fix removes).
+  [[ "${body}" != *'waited='* ]] || return 1
   # probes: pg_isready primary, psql SELECT 1 fallback — both on the peer-auth socket SoT.
-  [[ "${body}" == *'pg_isready -h "${PG_SOCKET}"'* ]]
-  [[ "${body}" == *"psql -h \"\${PG_SOCKET}\" -d postgres -tAc 'SELECT 1'"* ]]
+  [[ "${body}" == *'pg_isready -h "${PG_SOCKET}"'* ]] || return 1
+  [[ "${body}" == *"psql -h \"\${PG_SOCKET}\" -d postgres -tAc 'SELECT 1'"* ]] || return 1
   # non-zero on timeout (the caller bails loudly).
-  [[ "${body}" == *'return 1'* ]]
+  [[ "${body}" == *'return 1'* ]] || return 1
 }
 
 @test "STEP2(live): ga_pg_wait_ready returns 0 as soon as pg_isready reports ready" {
@@ -635,19 +639,20 @@ extract_launcher_fn() {
   [[ "${rc}" -eq 0 ]]
 }
 
-@test "STEP2(live): ga_pg_wait_ready TIMES OUT non-zero when the server never answers" {
+@test "STEP2(live): ga_pg_wait_ready TIMES OUT non-zero on the WALL-CLOCK ceiling when the server never answers" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
-  # a pg_isready that NEVER reports ready + a psql that never connects → runs to the ceiling.
+  # a pg_isready that NEVER reports ready + a psql that never connects → runs to the wall-clock ceiling.
   printf '#!/bin/bash\nexit 1\n' >"${stub}/pg_isready"
   printf '#!/bin/bash\nexit 1\n' >"${stub}/psql"
   chmod +x "${stub}/pg_isready" "${stub}/psql"
-  # collapse the poll interval to instant so the 15-iteration ceiling completes at once.
-  sleep() { return 0; }
+  # a 1s WALL-CLOCK ceiling (env seam) with the REAL `sleep 1` poll → the SECONDS-delta trips after ~1s.
+  # NOT a no-op sleep stub: wall-anchoring needs real elapsed time (a stubbed sleep would busy-spin the
+  # full ceiling), which is exactly the iteration-vs-wall-clock distinction finding #3 fixes.
   PG_SOCKET="/tmp"
   local rc=0
-  PATH="${stub}:${PATH}" ga_pg_wait_ready || rc=$?
-  [[ "${rc}" -eq 1 ]]
+  GA_PG_WAIT_TIMEOUT_SECS=1 PATH="${stub}:${PATH}" ga_pg_wait_ready || rc=$?
+  [[ "${rc}" -eq 1 ]] || return 1
 }
 
 @test "STEP2(static): both run-sites wait for readiness INSIDE the present-but-down start block" {
@@ -781,22 +786,27 @@ extract_launcher_fn() {
   declare -F ga_marketplace_add
 }
 
-@test "hang-guard(body): ga_fakechat_install backgrounds w/ fd hygiene, polls, KILLS on success AND timeout, reaps" {
+@test "hang-guard(body): ga_fakechat_install backgrounds w/ fd hygiene, polls, TERM→KILL-reaps on success AND timeout" {
   local body
   body="$(awk '/^ga_fakechat_install\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DEPS_SH}")"
-  [[ -n "${body}" ]]
+  [[ -n "${body}" ]] || return 1
   # background the claude install with BOTH fds to /dev/null (STEP_LOG hygiene), capture the pid.
-  [[ "${body}" == *'>/dev/null 2>&1 &'* ]]
-  [[ "${body}" == *'pid=$!'* ]]
-  # poll the detect verdict with a >=2s interval under a 120s ceiling.
-  [[ "${body}" == *'ga_detect_fakechat'* ]]
-  [[ "${body}" == *'sleep 2'* ]]
-  [[ "${body}" == *'-lt 120'* ]]
-  # kill on BOTH success and timeout, then wait/reap — TWO kill+wait pairs, errors suppressed.
-  [[ "$(grep -c 'kill "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]]
-  [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]]
+  [[ "${body}" == *'>/dev/null 2>&1 &'* ]] || return 1
+  [[ "${body}" == *'pid=$!'* ]] || return 1
+  # poll the detect verdict with a >=2s interval under a 120s WALL-CLOCK ceiling (SECONDS-delta, env seam).
+  [[ "${body}" == *'ga_detect_fakechat'* ]] || return 1
+  [[ "${body}" == *'sleep 2'* ]] || return 1
+  [[ "${body}" == *'ceiling="${GA_PLUGIN_INSTALL_TIMEOUT_SECS:-120}"'* ]] || return 1
+  [[ "${body}" == *'"$((SECONDS - started))" -lt "${ceiling}"'* ]] || return 1
+  # the OLD iteration counter is GONE (wall-anchored, finding #3).
+  [[ "${body}" != *'waited='* ]] || return 1
+  # reap on BOTH success and timeout: a plain SIGTERM, THEN an escalation to the uncatchable SIGKILL
+  # (stop_step_spinner idiom) so a TERM-ignoring claude cannot leave `wait` hung (finding #0), then reap.
+  [[ "$(grep -c 'kill "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
+  [[ "$(grep -c 'kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
+  [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
   # NON-FATAL: the timeout tail returns failure (the caller ||true-s it).
-  [[ "${body}" == *'return 1'* ]]
+  [[ "${body}" == *'return 1'* ]] || return 1
 }
 
 @test "hang-guard(live): ga_fakechat_install exits 0 on stubbed-present, killing+reaping the hung bg pid" {
@@ -817,23 +827,38 @@ extract_launcher_fn() {
   [[ "${status}" -ne 0 ]]
 }
 
-@test "hang-guard(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the timeout ceiling" {
+@test "hang-guard(live): ga_fakechat_install is NON-FATAL (returns 1) + reaps the pid on the WALL-CLOCK ceiling" {
   local stub="${SANDBOX}/bin"
   mkdir -p "${stub}"
   # a live-forever 'claude' (UNIQUE sentinel) so the timeout branch has a real pid to reap.
   printf '#!/bin/bash\nexec sleep 918273646\n' >"${stub}/claude"
   chmod +x "${stub}/claude"
-  # detect NEVER reports present → the loop runs to the 120s ceiling.
+  # detect NEVER reports present → the loop runs to the ceiling.
   ga_detect_fakechat() { printf 'absent\n'; }
-  # collapse the poll interval to instant so the 60-iteration ceiling completes at once. NOT
-  # exported → the child 'claude' stub keeps the REAL sleep (stays alive to be killed at timeout).
-  sleep() { return 0; }
+  # a 1s WALL-CLOCK ceiling (env seam) + the REAL `sleep 2` poll → the SECONDS-delta trips after one real
+  # poll. NO sleep stub: wall-anchoring needs real elapsed time (a no-op sleep would busy-spin the full
+  # ceiling); the child 'claude' keeps its real sleep so it stays alive to be TERM→KILL-reaped at timeout.
   PATH="${stub}:${PATH}"
   local rc=0
-  ga_fakechat_install || rc=$?
-  [[ "${rc}" -eq 1 ]] # non-fatal failure verdict
+  GA_PLUGIN_INSTALL_TIMEOUT_SECS=1 ga_fakechat_install || rc=$?
+  [[ "${rc}" -eq 1 ]] || return 1 # non-fatal failure verdict
   run pgrep -f '918273646'
-  [[ "${status}" -ne 0 ]] # the live bg claude was killed+reaped at the ceiling
+  [[ "${status}" -ne 0 ]] || return 1 # the live bg claude was killed+reaped at the ceiling
+}
+
+@test "hang-guard(body): ga_marketplace_add mirrors the wall-clock ceiling + SIGTERM→SIGKILL escalation reap" {
+  # ga_marketplace_add is the co-located sibling the finding names alongside ga_fakechat_install; assert
+  # the SAME hardening applied (wall-clock bound + uncatchable-SIGKILL escalation, both success + timeout).
+  local body
+  body="$(awk '/^ga_marketplace_add\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DEPS_SH}")"
+  [[ -n "${body}" ]] || return 1
+  [[ "${body}" == *'ceiling="${GA_PLUGIN_INSTALL_TIMEOUT_SECS:-120}"'* ]] || return 1
+  [[ "${body}" == *'"$((SECONDS - started))" -lt "${ceiling}"'* ]] || return 1
+  [[ "${body}" != *'waited='* ]] || return 1
+  # SIGTERM then the uncatchable SIGKILL escalation, twice (success + timeout reap).
+  [[ "$(grep -c 'kill "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
+  [[ "$(grep -c 'kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
+  [[ "$(grep -c 'wait "${pid}" 2>/dev/null || true' <<<"${body}")" -eq 2 ]] || return 1
 }
 
 # === R1 — PostgreSQL @18 fresh pin + initdb fallback (uninitialized data dir) ============
@@ -1238,4 +1263,86 @@ SH
   [[ "${argv}" != *"-w"* ]]
   [[ "${argv}" == *'-s Claude Code-credentials'* ]]
   [ "${status}" -eq 0 ] && [ "${output}" = "present" ]
+}
+
+# === WATCHDOG — auth-probe ceiling is GENUINELY HARD via the uncatchable SIGKILL (finding #0) =========
+#
+# The auth-status corroboration probe is bounded by a background WATCHDOG (no macOS `timeout`). The bug:
+# the watchdog sent a bare SIGTERM while the comment promised SIGKILL — a probe that TRAPS/IGNORES SIGTERM
+# would survive the watchdog, so the following BLOCKING `wait "${pid}"` never returns = an unbounded hang.
+# The fix sends `kill -KILL` (uncatchable → `wait` is GUARANTEED to return). The happy path (probe exits
+# before the ceiling → watchdog reaped, never fires) is unchanged.
+
+@test "watchdog(static): the auth-probe watchdog escalates to the UNCATCHABLE kill -KILL (not bare SIGTERM)" {
+  local body
+  body="$(awk '/^ga_detect_claude_auth\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${DEPS_SH}")"
+  [[ -n "${body}" ]] || return 1
+  # the watchdog fires kill -KILL after the ceiling → the blocking wait is GUARANTEED to return.
+  [[ "${body}" == *'sleep "${ceiling}" && kill -KILL "${pid}" 2>/dev/null'* ]] || return 1
+  # the OLD bare-SIGTERM watchdog (which a TERM-trapping probe could survive → unbounded wait) is GONE.
+  [[ "${body}" != *'sleep "${ceiling}" && kill "${pid}" 2>/dev/null'* ]] || return 1
+}
+
+@test "watchdog(live): a TERM-IGNORING probe is SIGKILLed within the ceiling → bounded 'absent' (no unbounded wait)" {
+  local stub="${SANDBOX}/bin"
+  mkdir -p "${stub}"
+  # a claude whose 'auth status' IGNORES SIGTERM then hangs — ONLY SIGKILL can end it. A watchdog that
+  # sent mere SIGTERM (the finding-#0 bug) would never reap it → the blocking `wait` hangs forever, and
+  # the OUTER poll+kill bound below catches that as bounded=0 (fail-before). The SIGKILL fix reaps it fast.
+  # The hang is a SINGLE process blocking on the writer-less FIFO open (NOT a forked `sleep`), so SIGKILL
+  # leaves ZERO orphan to hold the bats harness fd — a `trap+sleep` stub would orphan its sleep child.
+  local fifo="${SANDBOX}/hangfifo"
+  mkfifo "${fifo}"
+  cat >"${stub}/claude" <<'SH'
+#!/bin/bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  trap '' TERM
+  exec 8< "${GA_HANG_FIFO}" # blocks in open() until a (never-arriving) writer or SIGKILL — no child
+  exit 0
+fi
+echo junk
+exit 0
+SH
+  # creds + Keychain MISS so the bounded auth-status probe is the deciding signal.
+  cat >"${stub}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "${GA_STUB_UNAME:-Darwin}"
+SH
+  cat >"${stub}/security" <<'SH'
+#!/bin/bash
+exit "${GA_STUB_SEC_RC:-44}"
+SH
+  chmod +x "${stub}/claude" "${stub}/uname" "${stub}/security"
+  local home="${SANDBOX}/home"
+  mkdir -p "${home}/.claude" # no creds file → the bounded auth-status probe decides
+  local out="${SANDBOX}/auth.out"
+  : >"${out}"
+  export GA_TEST_HOME="${home}" GA_TEST_STUB="${stub}" GA_TEST_DEPS="${DEPS_SH}" GA_HANG_FIFO="${fifo}"
+
+  # Background a FRESH shell (mirrors the pg-detect run_bounded idiom) that sources the lib + runs the
+  # detect under a 1s watchdog ceiling; poll for self-completion under an OUTER 8s bound. fd3 closed
+  # (3>&-) as a belt-and-suspenders against any background-fd hold.
+  bash -c '
+    export GA_STUB_SEC_RC=44
+    export GA_AUTH_PROBE_TIMEOUT_SECS=1
+    export HOME="${GA_TEST_HOME}"
+    export PATH="${GA_TEST_STUB}:${PATH}"
+    source "${GA_TEST_DEPS}"
+    ga_detect_claude_auth
+  ' >"${out}" 2>/dev/null 3>&- &
+  local pid=$! waited=0 bounded=0
+  # 40 x 0.2s = the same 8s outer bound, but a tighter poll exits ~0.8s sooner once the inner
+  # 1s-ceiling probe self-completes.
+  while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt 40 ]]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill "${pid}" 2>/dev/null || true
+  else
+    bounded=1
+  fi
+  wait "${pid}" 2>/dev/null || true
+  [[ "${bounded}" -eq 1 ]] || return 1            # self-completed (fail-before: killed at the 8s bound)
+  [[ "$(cat "${out}")" == "absent" ]] || return 1 # bounded probe → unauthenticated verdict
 }

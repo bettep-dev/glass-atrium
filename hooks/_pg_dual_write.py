@@ -155,6 +155,11 @@ def _classify_error(exc):
     return "unknown"
 
 
+def _fmt_exc(exc):
+    """Truncate + escape an exception message for a one-line structured stderr field."""
+    return str(exc)[:200].replace('"', "'").replace("\n", " ")
+
+
 def _build_conflict_clause(table, present_cols):
     """Build the ON CONFLICT tail for `table`.
 
@@ -181,20 +186,27 @@ def _build_conflict_clause(table, present_cols):
     return "ON CONFLICT (%s) DO UPDATE SET %s" % (arbiter, set_list)
 
 
-def _try_insert(table, row_dict, connect_timeout=1):
-    cols = list(row_dict.keys())
-    # Validate identifiers before building the SQL string — table + column names
-    # are %-interpolated below (psycopg cannot bind identifiers).
+def _build_insert_sql(table, cols):
+    """Validate identifiers, then build the parameterized UPSERT for `table` given
+    the present `cols`. Table + column names are %-interpolated (psycopg cannot
+    bind identifiers), so the allowlist check MUST run first. Shared by the
+    single-row and batch paths so both emit an identical statement + conflict
+    policy for the same row shape."""
     _validate_identifiers(table, cols)
     placeholders = ", ".join(["%s"] * len(cols))
     col_list = ", ".join(cols)
     conflict_clause = _build_conflict_clause(table, cols)
-    sql = "INSERT INTO %s (%s) VALUES (%s) %s" % (
+    return "INSERT INTO %s (%s) VALUES (%s) %s" % (
         table,
         col_list,
         placeholders,
         conflict_clause,
     )
+
+
+def _try_insert(table, row_dict, connect_timeout=1):
+    cols = list(row_dict.keys())
+    sql = _build_insert_sql(table, cols)
     values = [row_dict[c] for c in cols]
     with psycopg.connect("dbname=glass_atrium", connect_timeout=connect_timeout) as conn:
         with conn.cursor() as cur:
@@ -220,22 +232,161 @@ def _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry
         pass
 
 
-def main():
-    start_ns = time.monotonic_ns()
-    raw = sys.stdin.read()
-    try:
-        envelope = json.loads(raw)
-        hook_name = envelope["hook_name"]
-        target_table = envelope["target_table"]
-        payload_ref = envelope.get("payload_ref", "")
-        row = envelope["row"]
-    except Exception as exc:
-        # Malformed envelope = bash caller bug; log and exit 0 (jsonl is written).
-        sys.stderr.write(
-            '[_pg_dual_write] envelope parse failed: %s\n' % str(exc).replace('"', "'")
+def _emit_row_stderr(
+    hook_name, target_table, payload_ref, error_kind, error_class, message,
+    retry_attempted, dedup_key,
+):
+    """Write the structured per-row loud-fail stderr line — the PRIMARY failure
+    channel daemon-reports / log aggregation consume. No DB side effect: the
+    hook_failures record is split into the separate best-effort call below so the
+    connect-failure branch can emit N per-row stderr lines while recording only
+    ONE aggregate hook_failures row (never N connects to a proven-unreachable DB)."""
+    sys.stderr.write(
+        '{"hook":"%s","target_table":"%s","error_kind":"%s","error_class":"%s",'
+        '"payload_ref":"%s","dedup_key":"%s","retry_attempted":%s,"message":"%s"}\n'
+        % (
+            hook_name,
+            str(target_table).replace('"', "'"),
+            error_kind,
+            error_class,
+            payload_ref,
+            str(dedup_key).replace('"', "'")[:200],
+            "true" if retry_attempted else "false",
+            message,
         )
-        sys.exit(0)
+    )
 
+
+def _emit_row_failure(
+    hook_name, target_table, payload_ref, error_kind, error_class, message,
+    retry_attempted, dedup_key,
+):
+    """Loud-fail one batch row: structured stderr line (same error_kind channel
+    the single-row path uses, plus the row's dedup_key for triage) + best-effort
+    core.hook_failures record. Never raises — a failed row must not abort the
+    batch (partial-success contract)."""
+    _emit_row_stderr(
+        hook_name, target_table, payload_ref, error_kind, error_class, message,
+        retry_attempted, dedup_key,
+    )
+    _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry_attempted)
+
+
+def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1):
+    """Write every row in `rows` through ONE connection.
+
+    The single-row entry point pays a fresh process + psycopg import + connect PER
+    row, so a Stop firing N subagent rows forks N writers (the Stop-event latency
+    spike). This path forks one writer, imports psycopg once, connects once, then
+    upserts each row on a shared autocommit connection.
+
+    autocommit=True makes each row its own transaction, so one row's failure
+    neither leaves the connection in an aborted-transaction state nor drops the
+    rows around it — the per-row partial-success contract the single-row path had
+    via separate connections, preserved. Each failed row loud-fails (structured
+    stderr + best-effort hook_failures) exactly as the single-row path does; the
+    caller turns a nonzero return into a named exit code. Returns the count of
+    rows that failed after one retry (0 == full success)."""
+    if not rows:
+        # Empty batch → no work; skip the connection entirely. Defensive: the
+        # current caller guards with `if batch:`, so this only shields a future
+        # empty-batch caller from a pointless connect.
+        return 0
+    # Connect ONCE, retrying the connect a single time (100 ms backoff) to match
+    # the transient-failure tolerance the per-row path had per invocation. A total
+    # connect failure loud-fails every row via stderr and returns the full count.
+    conn = None
+    connect_exc = None
+    for attempt in (1, 2):
+        try:
+            conn = psycopg.connect(
+                "dbname=glass_atrium",
+                connect_timeout=connect_timeout,
+                autocommit=True,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 — classify + loud-fail below
+            connect_exc = exc
+            if attempt == 1:
+                time.sleep(0.1)  # backoff before the single connect retry
+    if conn is None:
+        error_kind = _classify_error(connect_exc)
+        error_class = type(connect_exc).__name__
+        message = _fmt_exc(connect_exc)
+        # Per-row stderr stays (each row stays individually visible in the loud
+        # channel the aggregator consumes), but the DB is proven unreachable — so
+        # emit stderr ONLY per row and record ONE aggregate hook_failures row for
+        # the whole batch, never a fresh per-row connect (~N wasted connect_timeout
+        # stalls). Mirrors the single-row path's one-record-per-failure; the named
+        # exit code + per-row loud signal are unchanged.
+        for row in rows:
+            dedup_key = row.get("dedup_key") if isinstance(row, dict) else None
+            _emit_row_stderr(
+                hook_name, target_table, payload_ref, error_kind, error_class,
+                message, True, dedup_key,
+            )
+        _record_hook_failure(hook_name, target_table, error_kind, payload_ref, True)
+        return len(rows)
+
+    failed = 0
+    try:
+        for row in rows:
+            if not isinstance(row, dict):
+                # A non-dict row is a caller bug, not a DB fault — loud-fail and
+                # skip; never abort the batch.
+                _emit_row_failure(
+                    hook_name, target_table, payload_ref, "unknown", "TypeError",
+                    "row is not an object", False, None,
+                )
+                failed += 1
+                continue
+            cols = list(row.keys())
+            dedup_key = row.get("dedup_key")
+            try:
+                sql = _build_insert_sql(target_table, cols)
+            except IdentifierRejected as exc:
+                # Identifier rejection is a caller bug — record once, skip the row,
+                # never consume a retry or misclassify it as a DB error.
+                _emit_row_failure(
+                    hook_name, target_table, payload_ref, "identifier_rejected",
+                    "IdentifierRejected",
+                    _fmt_exc(exc),
+                    False, dedup_key,
+                )
+                failed += 1
+                continue
+            values = [row[c] for c in cols]
+            row_exc = None
+            retry_attempted = False
+            # Fresh cursor per attempt — mirrors the single-row path (one cursor
+            # per write) and keeps a prior row's error from touching this one.
+            for attempt in (1, 2):
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(sql, values)  # autocommit → commits now
+                    row_exc = None
+                    break
+                except Exception as exc:  # noqa: BLE001 — classify + loud-fail below
+                    row_exc = exc
+                    if attempt == 1:
+                        retry_attempted = True
+                        time.sleep(0.1)  # backoff before the single retry
+            if row_exc is not None:
+                _emit_row_failure(
+                    hook_name, target_table, payload_ref, _classify_error(row_exc),
+                    type(row_exc).__name__,
+                    _fmt_exc(row_exc),
+                    retry_attempted, dedup_key,
+                )
+                failed += 1
+    finally:
+        conn.close()
+    return failed
+
+
+def _run_single(hook_name, target_table, payload_ref, row, start_ns):
+    """Original single-row write path (agent-tracker + any legacy caller), kept
+    byte-identical: one connection per invocation, one retry, exit 0 always."""
     # Validate identifiers before the DB retry loop: a rejection is a caller bug,
     # not a transient DB error, so skip the insert, record the failure once, and
     # exit 0 without consuming a retry or misclassifying it as a DB error.
@@ -252,7 +403,7 @@ def main():
                 str(target_table).replace('"', "'"),
                 payload_ref,
                 elapsed_ms,
-                str(exc)[:200].replace('"', "'").replace("\n", " "),
+                _fmt_exc(exc),
             )
         )
         sys.stderr.write(
@@ -282,7 +433,7 @@ def main():
     # Both attempts failed — fail loud and skip.
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
-    error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")
+    error_msg = _fmt_exc(last_exc)
     elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
 
     # Structured stderr line (consumed by daemon-reports / log aggregation).
@@ -307,6 +458,60 @@ def main():
 
     _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry_attempted)
     sys.exit(0)
+
+
+def main():
+    start_ns = time.monotonic_ns()
+    raw = sys.stdin.read()
+    try:
+        envelope = json.loads(raw)
+        hook_name = envelope["hook_name"]
+        target_table = envelope["target_table"]
+        payload_ref = envelope.get("payload_ref", "")
+    except Exception as exc:
+        # Malformed envelope = bash caller bug; log and exit 0 (jsonl is written).
+        sys.stderr.write(
+            '[_pg_dual_write] envelope parse failed: %s\n' % str(exc).replace('"', "'")
+        )
+        sys.exit(0)
+
+    # Dispatch on the row cardinality key: `rows` (a list) → batch path (one
+    # connection for the whole fire); `row` (a dict) → single-row path, kept
+    # byte-identical for agent-tracker + any legacy caller.
+    if "rows" in envelope:
+        rows = envelope.get("rows")
+        if not isinstance(rows, list):
+            sys.stderr.write(
+                '[_pg_dual_write] batch envelope "rows" is not a list — skipped\n'
+            )
+            sys.exit(0)
+        failed = _insert_batch(hook_name, target_table, payload_ref, rows)
+        elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        written = len(rows) - failed
+        sys.stderr.write(
+            "[%s] elapsed_ms=%d pg_batch=%s rows_written=%d rows_failed=%d\n"
+            % (
+                hook_name,
+                elapsed_ms,
+                "ok" if failed == 0 else "partial",
+                written,
+                failed,
+            )
+        )
+        # Named nonzero exit (3) is the loud-fail signal for a batch that had
+        # failed rows. The bash caller invokes this via subprocess without check
+        # and the hook's dual-write block is `|| true`, so the code is a
+        # diagnosable signal — it never blocks the Claude session.
+        sys.exit(0 if failed == 0 else 3)
+
+    try:
+        row = envelope["row"]
+    except Exception as exc:
+        sys.stderr.write(
+            '[_pg_dual_write] envelope parse failed: %s\n' % str(exc).replace('"', "'")
+        )
+        sys.exit(0)
+    _run_single(hook_name, target_table, payload_ref, row, start_ns)
 
 
 if __name__ == "__main__":

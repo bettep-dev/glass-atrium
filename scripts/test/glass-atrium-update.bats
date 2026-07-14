@@ -493,6 +493,25 @@ seed_baseline() {
     "${files%,}" >"${statedir}/baseline-manifest.json"
 }
 
+# Seed a prior-vendor baseline manifest with REAL hashes computed from the LIVE
+# install tree — the vendor-removal sweep (#14) needs a baseline hash to prove a
+# dropped file is still pristine (unmodified vs the vendor body). Unlike
+# seed_baseline (empty hashes; agent-only roster tests), this is for NON-agent
+# removals whose provenance check does a hash lookup. $1 = update-state dir, $2 =
+# install root, $3.. = relative paths (hashed from ${install}/<path>).
+seed_baseline_hashed() {
+  local statedir="$1" install_root="$2"
+  shift 2
+  local p files="" hashes=""
+  for p in "$@"; do
+    files="${files}$(printf '%s' "${p}" | jq -R .),"
+    hashes="${hashes}$(printf '%s' "${p}" | jq -R .):$(sha256_of "${install_root}/${p}" | jq -R .),"
+  done
+  mkdir -p -- "${statedir}"
+  printf '{"version":"1.0.0","files":[%s],"hashes":{%s}}\n' \
+    "${files%,}" "${hashes%,}" >"${statedir}/baseline-manifest.json"
+}
+
 @test "roster gate REFUSES an update that ADDS an agent (file-set signal)" {
   # The release introduces a brand-new agent file (dev-new) absent locally — a
   # roster ADD. The gate must refuse/defer BEFORE any sync and write nothing.
@@ -1452,4 +1471,480 @@ PLIST
   [ "$status" -eq 0 ]
   [[ ! -d "${WORK}/agents-bak/old_cycle" ]] # pruned (aged past 14d)
   [[ -d "${WORK}/agents-bak/fresh_cycle" ]] # kept (within retention)
+}
+
+# ---------------------------------------------------------------------------
+# finding #7 — the EXIT-trap workdir cleanup must NOT destroy the pre-swap
+# snapshot on a failed/interrupted apply (its sole rollback source). The
+# committing callback drops a `.commit-ok` FILE marker on a clean swap (a shell
+# var would be lost to the pipe-RHS subshell the gate runs the callback in); its
+# ABSENCE beside a non-empty snapshot means preserve, not destroy.
+# ---------------------------------------------------------------------------
+
+@test "finding#7: cleanup PRESERVES the pre-swap snapshot when the apply did NOT commit cleanly" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    # Simulate a failed/interrupted apply: a POPULATED snapshot, NO .commit-ok marker.
+    work="'"${WORK}"'/wk"; mkdir -p "${work}/snapshot/scripts"
+    printf "pre-swap body\n" >"${work}/snapshot/scripts/tool.sh"
+    _update_workdir="${work}"; _update_snapshot="${work}/snapshot"
+    update_cleanup
+    [[ ! -d "${work}" ]] && echo "WORKDIR_REMOVED"
+    base="$(update_agents_bak_base "'"${INSTALL}"'")"; parent="$(dirname -- "${base}")"
+    found="$(find "${parent}/update-failed-snapshots" -name tool.sh -print -quit 2>/dev/null || true)"
+    [[ -n "${found}" ]] && echo "PRESERVED"
+    [[ -n "${found}" && "$(cat "${found}")" == "pre-swap body" ]] && echo "CONTENT_OK"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WORKDIR_REMOVED"* ]] || return 1 # workdir torn down as before
+  [[ "$output" == *"PRESERVED"* ]] || return 1       # but the snapshot survived beside agents-bak
+  [[ "$output" == *"CONTENT_OK"* ]] || return 1      # with its exact pre-swap content
+}
+
+@test "finding#7: cleanup DELETES the snapshot when the apply committed cleanly (.commit-ok present)" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    work="'"${WORK}"'/wk"; mkdir -p "${work}/snapshot/scripts"
+    printf "pre-swap body\n" >"${work}/snapshot/scripts/tool.sh"
+    : >"${work}/.commit-ok" # clean-apply marker
+    _update_workdir="${work}"; _update_snapshot="${work}/snapshot"
+    update_cleanup
+    base="$(update_agents_bak_base "'"${INSTALL}"'")"; parent="$(dirname -- "${base}")"
+    found="$(find "${parent}/update-failed-snapshots" -name tool.sh -print -quit 2>/dev/null || true)"
+    [[ -z "${found}" ]] && echo "NO_PRESERVE"
+    [[ ! -d "${work}" ]] && echo "WORKDIR_REMOVED"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"NO_PRESERVE"* ]] || return 1 # clean apply → no forensic snapshot left behind
+  [[ "$output" == *"WORKDIR_REMOVED"* ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# finding #9 — base-content capture must key to per-file merge OUTCOMES. Only a
+# merge that actually LANDED (applied GIT_TXN_OK / byte-identical / no net
+# change) advances the base store; a declined/refused/rolled-back merge KEEPS its
+# prior base entry, else the next 3-way merge silently swallows the un-applied
+# vendor change forever. This single fixture proves BOTH sides in one run.
+# ---------------------------------------------------------------------------
+
+@test "finding#9: base-content advances ONLY the landed merge, keeps the REFUSED one at prior base" {
+  local ref_local='# dev-ref
+<!-- EDITABLE:BEGIN -->
+safe local line
+<!-- EDITABLE:END -->'
+  local ref_release='# dev-ref
+<!-- EDITABLE:BEGIN -->
+rm -rf /tmp/everything
+<!-- EDITABLE:END -->'
+  # dev-a: a clean, applied merge (region kept local, vendor structure taken).
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  # dev-ref: a sensitive diff → REFUSED (never applied).
+  seed_file "${INSTALL}" "agents/dev-ref.md" "${ref_local}"
+  seed_base_store "dev-ref.md" "REF PRIOR BASE"
+  seed_file "${NEWSRC}" "agents/dev-ref.md" "${ref_release}"
+  # a non-agent change so update_run reaches the base-content capture step.
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-a.md" "agents/dev-ref.md" "scripts/tool.sh"
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"REFUSED sensitive"* ]] || return 1
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new" ]] || return 1            # non-agent applied
+  [[ "$(cat "${INSTALL}/agents/dev-ref.md")" == "${ref_local}" ]] || return 1 # refused file untouched
+  # the LANDED merge advanced the base to the new (= base@install) release body …
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_RELEASE}" ]] || return 1
+  # … while the REFUSED file kept its prior base entry (NOT the un-accepted body).
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# finding #8 — a rolled-back NON-agent commit must NOT collide with the confirm
+# gate's 1=declined verdict. gate_apply_confirmed propagates the callback's rc
+# VERBATIM; update_commit_callback now remaps ANY spine failure to rc 3 (disjoint
+# from the gate's 1/2), so update_run reports "apply failed — rolled back" instead
+# of the wrong "declined at the confirm gate — no files written".
+# ---------------------------------------------------------------------------
+
+@test "finding#8: a rolled-back non-agent commit dies 'apply failed'/rolled-back, NOT 'declined'" {
+  # Force spine_commit_staged to fail on a CONFIRMED apply: the target's parent dir is
+  # read-only, so the atomic-swap sibling-temp write loud-fails → rollback (spine rc 1).
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+  chmod a-w "${INSTALL}/scripts" # the swap's sibling-temp write into this dir loud-fails
+
+  run_update y
+  chmod u+w "${INSTALL}/scripts" 2>/dev/null || true # restore BEFORE teardown rm -rf
+
+  # NOTE: every assertion is `|| return 1` — bats-core only enforces the LAST command
+  # of a test body, so a bare mid-body `[[ ]]` would be silently ignored.
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"apply failed"* ]] || return 1
+  [[ "$output" == *"rolled back"* ]] || return 1
+  [[ "$output" != *"declined at the confirm gate"* ]] || return 1 # the rc-collision mislabel is gone
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] || return 1 # never left half-swapped
+}
+
+@test "finding#8: update_commit_callback remaps a spine rollback to rc 3 (disjoint from 1/2) + no .commit-ok" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    work="'"${WORK}"'/wk"; mkdir -p "${work}/staging" "${work}/snapshot"
+    _update_workdir="${work}"; _update_staging="${work}/staging"; _update_snapshot="${work}/snapshot"
+    _update_clean_paths="scripts/tool.sh" # NO staged src for it → spine_commit_staged rc 1
+    rc=0; update_commit_callback || rc=$?
+    echo "RC=${rc}"
+    [[ ! -f "${work}/.commit-ok" ]] && echo "NO_MARKER"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"RC=3"* ]] || return 1     # remapped, not the raw spine rc 1
+  [[ "$output" == *"NO_MARKER"* ]] || return 1 # a failed commit never drops the clean-apply marker
+}
+
+# ---------------------------------------------------------------------------
+# finding #12 — the agents-bak retention prune must PROTECT the newest before-image
+# subdir (the most-recent rollback anchor --restore-agents reads) even when an idle
+# install has aged every dir past the retention window (daemon-apply.sh parity).
+# ---------------------------------------------------------------------------
+
+@test "finding#12: prune KEEPS the newest before-image anchor even when every dir is past retention" {
+  mkdir -p "${WORK}/agents-bak/older_cycle" "${WORK}/agents-bak/newer_cycle"
+  printf 'x' >"${WORK}/agents-bak/older_cycle/dev-a.md.bak"
+  printf 'x' >"${WORK}/agents-bak/newer_cycle/dev-a.md.bak"
+  # BOTH aged past the 14-day retention; newer_cycle (18d) is the newest by mtime.
+  python3 -c 'import os,sys,time; t=time.time()-30*86400; os.utime(sys.argv[1],(t,t))' \
+    "${WORK}/agents-bak/older_cycle"
+  python3 -c 'import os,sys,time; t=time.time()-18*86400; os.utime(sys.argv[1],(t,t))' \
+    "${WORK}/agents-bak/newer_cycle"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export AUTOAGENT_BACKUP_DIR="'"${WORK}"'/agents-bak"
+    update_prune_agents_bak
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ ! -d "${WORK}/agents-bak/older_cycle" ]] || return 1 # aged AND not newest → pruned
+  [[ -d "${WORK}/agents-bak/newer_cycle" ]] || return 1   # newest anchor → protected despite age
+}
+
+# ---------------------------------------------------------------------------
+# finding #14 — a long interactive confirm wait must NOT let the pause flag age past
+# its TTL and un-pause the daemon mid-update. A liveness-guarded background refresher
+# re-writes the flag every tick; update_cleanup kills it BEFORE removing the flag
+# (kill-before-remove closes the recreate-after-removal race).
+# ATRIUM_UPDATE_PAUSE_REFRESH_SECS shrinks the 600s tick for these tests.
+# ---------------------------------------------------------------------------
+
+@test "finding#14: the pause-flag refresher advances the flag mtime across a long wait (TTL not defeated)" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
+    flag="$(update_pause_create)"
+    m0="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
+    update_pause_refresher_start
+    rpid="${_update_pause_refresher_pid}"
+    [[ -n "${rpid}" ]] && echo "STARTED"
+    sleep 3 # ~3 ticks
+    m1="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
+    update_pause_refresher_stop
+    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "STOPPED"
+    python3 -c "import sys;sys.exit(0 if float(sys.argv[2])>float(sys.argv[1]) else 1)" "${m0}" "${m1}" \
+      && echo "MTIME_ADVANCED"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"STARTED"* ]] || return 1
+  [[ "$output" == *"MTIME_ADVANCED"* ]] || return 1 # heartbeat keeps the flag fresh under the TTL
+  [[ "$output" == *"STOPPED"* ]] || return 1        # stop killed the refresher cleanly
+}
+
+@test "finding#14: the refresher exits within one tick after its watched updater dies (TTL guard regains authority)" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
+    update_pause_create >/dev/null
+    ( sleep 30 ) & fake_updater=$! # stand-in updater the refresher watches
+    update_pause_refresher_start "${fake_updater}"
+    rpid="${_update_pause_refresher_pid}"
+    kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_ALIVE"
+    kill "${fake_updater}" 2>/dev/null || true # SIGKILL-equivalent updater death
+    wait "${fake_updater}" 2>/dev/null || true
+    sleep 3 # > one tick
+    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_EXITED"
+    kill "${rpid}" 2>/dev/null || true
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"REFRESHER_ALIVE"* ]] || return 1
+  [[ "$output" == *"REFRESHER_EXITED"* ]] || return 1 # parent-death guard → flag can age out (TTL recovery)
+}
+
+@test "finding#14: cleanup stops the refresher AND leaves no pause flag (no recreate-after-removal)" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
+    update_serialize_begin # sets flag + lock AND starts the refresher
+    flag="$(update_pause_flag_path)"
+    rpid="${_update_pause_refresher_pid}"
+    [[ -n "${rpid}" ]] && kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_RUNNING"
+    [[ -e "${flag}" ]] && echo "FLAG_SET"
+    update_cleanup
+    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_STOPPED"
+    sleep 2 # a would-be zombie refresher gets >1 tick to (wrongly) recreate the flag
+    [[ ! -e "${flag}" ]] && echo "FLAG_STAYS_CLEARED"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"REFRESHER_RUNNING"* ]] || return 1
+  [[ "$output" == *"FLAG_SET"* ]] || return 1
+  [[ "$output" == *"REFRESHER_STOPPED"* ]] || return 1
+  [[ "$output" == *"FLAG_STAYS_CLEARED"* ]] || return 1 # kill-before-remove: no recreate after removal
+}
+
+# ---------------------------------------------------------------------------
+# finding #16 — ATRIUM_UPDATE_ALLOW_ROSTER must NOT leave a half-applied roster. The
+# E4 merge SKIPS a release-only ADD's agents/<name>.md, so syncing the release
+# agent-registry.json alone would register an agent whose body never landed (masked
+# forever by the union-based local roster). Fail-closed: withhold the registry sync
+# while its referenced .md is absent, keeping files + registry consistent.
+# ---------------------------------------------------------------------------
+
+@test "finding#16: ALLOW_ROSTER WITHHOLDS agent-registry.json when the added agent body is not installed" {
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WITHHOLDING agent-registry.json"* ]] || return 1
+  [[ "$output" == *"dev-new"* ]] || return 1
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] || return 1 # the legit non-agent file still synced
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]] || return 1                 # the added body is still absent
+  # the live registry did NOT gain the orphan dev-new key (files ∪ registry stays consistent)
+  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
+  [[ "$output" == "dev-existing" ]] || return 1
+}
+
+@test "finding#16: ALLOW_ROSTER SYNCS agent-registry.json normally when the added body IS present locally" {
+  # Guard against over-withholding: when every new-registry agent has a live .md
+  # (dev-new was installed out-of-band), the registry sync must proceed unchanged.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_file "${INSTALL}" "agents/dev-new.md" "already here"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "already here"
+  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" != *"WITHHOLDING agent-registry.json"* ]] || return 1 # no orphan → no withhold
+  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"dev-new"* ]] || return 1 # registry synced to include dev-new (its body is present)
+}
+
+@test "finding#16: ALLOW_ROSTER WARNS about a vendor-dropped agent whose .md lingers on disk" {
+  # Symmetric REMOVE-direction orphan (the ADD guard's mirror). dev-b was a
+  # PRIOR-VENDOR agent (in the baseline) whose body is still on disk; the new
+  # release DROPS it from the registry. agents/*.md is USER-EDITABLE and excluded
+  # from the vendor sweep, so the body lingers with no registry key — a silent
+  # orphan. Under the override the registry drop is CORRECT (intended) but a loud
+  # WARN must surface the leftover agents/dev-b.md for manual review, and the body
+  # must NOT be auto-removed.
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md" "agents/dev-b.md"
+  seed_file "${INSTALL}" "agents/dev-a.md" "x"
+  seed_file "${INSTALL}" "agents/dev-b.md" "dropped vendor body still here"
+  seed_registry "${INSTALL}" "dev-a" "dev-b"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "x"
+  seed_registry "${NEWSRC}" "dev-a"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-a.md" "agent-registry.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WARN"* ]] || return 1               # loud WARN emitted
+  [[ "$output" == *"agents/dev-b.md"* ]] || return 1    # names the lingering orphan body
+  [[ -f "${INSTALL}/agents/dev-b.md" ]] || return 1     # NOT auto-removed (USER-EDITABLE)
+  [[ "$(cat "${INSTALL}/agents/dev-b.md")" == "dropped vendor body still here" ]] || return 1
+  # the intended registry drop still applied (dev-b key gone), files+registry aside
+  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
+  [[ "$output" != *"dev-b"* ]] || return 1
+}
+
+# vendor-removal sweep (#14)
+#
+# spine_find_removed_files (apply-spine.sh) already SELECTS the vendor-dropped,
+# provenance-clean files (unit-covered in apply-spine.bats); these pin the
+# caller-side REMOVAL half wired into update_run: the dropped file is previewed
+# through the SAME confirm gate and MOVED to a per-run Trash sink on confirm,
+# a user-edited drop is PRESERVED, a decline leaves it in place, and --preview
+# surfaces the impending deletion. ATRIUM_UPDATE_TRASH_DIR redirects the sink into
+# the sandbox so no real ~/.Trash is touched.
+
+@test "#14 sweep: a provenance-clean dropped file is MOVED to Trash on confirm" {
+  # baseline (prior vendor) ships hooks/old.sh; the new release DROPS it while
+  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash → pristine →
+  # swept to the per-run Trash sink (mv, not rm), not left dangling in the install.
+  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" # hooks/old.sh DROPPED
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # sync still applied
+  [[ ! -e "${INSTALL}/hooks/old.sh" ]] || return 1                         # dropped file removed
+  [[ "$output" == *"vendor-dropped file removed"* ]] || return 1
+  # moved to the per-run Trash sink (recovery bundle), preserving its relative path
+  run bash -c 'cat "'"${WORK}"'/trash"/glass-atrium-update-removed-*/hooks/old.sh'
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == "vendor-body" ]] || return 1
+}
+
+@test "#14 sweep: a USER-MODIFIED dropped file is PRESERVED (provenance guard)" {
+  # live hooks/old.sh diverges from the baseline (pristine) hash → a user edit →
+  # NEVER swept, even though the release dropped it. 100% user-edit preservation.
+  seed_file "${INSTALL}" "hooks/old.sh" "USER-EDITED"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${WORK}" "pristine" "vendor-body"
+  local pristine_hash
+  pristine_hash="$(sha256_of "${WORK}/pristine")"
+  mkdir -p "${STATE}/update-state"
+  printf '{"version":"1.0.0","files":["hooks/old.sh"],"hashes":{"hooks/old.sh":"%s"}}\n' \
+    "${pristine_hash}" >"${STATE}/update-state/baseline-manifest.json"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
+    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "USER-EDITED" ]] || return 1 # PRESERVED (not swept)
+}
+
+@test "#14 sweep: a drop-only release sweeps on the no-content-change path; decline leaves it" {
+  # No non-agent content change (scripts/tool.sh identical both sides) → update_run
+  # hits the "already up to date" early return, which STILL runs the sweep. Declining
+  # the removal gate leaves the dropped file untouched and the run stays rc 0.
+  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
+  seed_file "${INSTALL}" "scripts/tool.sh" "same"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "same"
+  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" # hooks/old.sh DROPPED
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
+    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"already up to date"* ]] || return 1                 # no content change → early return
+  [[ "$output" == *"declined"* ]] || return 1                           # removal gate declined
+  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1 # NOT removed
+}
+
+@test "#14 preview: --preview lists a vendor-dropped file as a would-be removal (zero writes)" {
+  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}" --preview
+
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"would be removed"* ]] || return 1
+  [[ "$output" == *"hooks/old.sh"* ]] || return 1
+  [[ -e "${INSTALL}/hooks/old.sh" ]] || return 1 # preview writes NOTHING
 }

@@ -1,0 +1,13 @@
+-- Add qa_score to core.outcomes — QA-review telemetry persistence.
+--
+-- The [COMPLETION] qa_score field (shape cov=N,ins=N,instr=N,clar=N, each 1-5) was
+-- parse-only (KNOWN_FIELDS) with no storage column; this completes the end-to-end
+-- persistence started in the KNOWN_FIELDS fold-in fix. Mirrors the concerns wire-up
+-- but as a SCALAR text column (concerns is text[]).
+--
+-- Additive + legacy-safe: nullable, no default. Every pre-existing row stays NULL
+-- (qa_score is emitted only by QA agents), and every non-QA outcome writes NULL —
+-- so no backfill and no NOT VALID CHECK is needed.
+--
+-- AlterTable
+ALTER TABLE "core"."outcomes" ADD COLUMN "qa_score" TEXT;

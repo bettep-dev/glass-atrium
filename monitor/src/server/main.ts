@@ -15,6 +15,7 @@ import { registerRoutes } from "./routes/index.js";
 import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
+import { isLoopbackHost } from "./host-guard.js";
 
 // Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
@@ -24,6 +25,15 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
     { port: process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT, resolved: PORT },
     "invalid ATRIUM_MONITOR_PORT/PORT — must be an integer 1-65535",
+  );
+  process.exit(1);
+}
+// Fail closed: the entire API is unauthenticated, so a non-loopback bind exposes it wholesale.
+// Refuse fatally unless HOST is loopback (127.0.0.0/8 / ::1) — no non-loopback opt-in without an auth layer.
+if (!isLoopbackHost(HOST)) {
+  logger.error(
+    { host: HOST, envVar: "ATRIUM_MONITOR_HOST" },
+    "refusing to bind a non-loopback HOST — the monitor API is unauthenticated; only loopback (127.0.0.0/8 / ::1) is permitted",
   );
   process.exit(1);
 }

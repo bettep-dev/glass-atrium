@@ -202,41 +202,17 @@ EOF
   exit 2
 }
 
-# emit_resilience_advisory — ADVISORY-ONLY (exit 0, stderr, NEVER blocks). A schema-mode workflow
-# agent() THROWS on non-emit (uncaught → crashes the run); the .catch(() => null) in robustAgent is the
-# load-bearing catcher that converts the throw to a null the retry handles, so every schema-mode agent()
-# MUST be wrapped in the robustAgent retry-once-on-null / isolated-failure idiom (copy-verbatim
-# skeleton: skills/glass-atrium-ops-orchestrator.md "### Resilient Workflow Authoring"). A per-call-site
-# "absence of convention" scan is NOT soundly decidable (unbounded valid idioms) AND a BLOCK would
-# violate this file's fail-open-DOMINANT posture — so this is a decidable WHOLE-SCRIPT token-presence
-# nudge: a DEV-spawning script carrying a 'schema' token but ZERO 'robustAgent'/'catch' tokens anywhere
-# → one-line stderr advisory. It reads the GLOBAL script_src + DEV_SET, emits nothing out of scope, and
-# NEVER exits / NEVER alters the verdict — the block/pass decisions below own the exit code. DECOUPLED
-# from the [SIZE-EST] / entry / verify-stage / docroute verdicts (a separate, purely additive check).
-emit_resilience_advisory() {
-  # DEV-spawn gate — only a script referencing a dev-* agentType is in scope (mirrors the entry / size
-  # attestation DEV-gating). local IFS=' ' splits the space-separated DEV_SET; the file-global IFS is
-  # $'\n\t', which would NOT split on space, so the local override is load-bearing (restored on return).
-  local dev_tok found_dev=false
-  local IFS=' '
-  for dev_tok in ${DEV_SET}; do
-    if [[ "${script_src}" == *"${dev_tok}"* ]]; then
-      found_dev=true
-      break
-    fi
-  done
-  if [[ "${found_dev}" != true ]]; then
-    return 0
-  fi
-  # No schema-mode agent() → no null-on-truncation risk → nothing to advise.
-  if [[ "${script_src}" != *schema* ]]; then
-    return 0
-  fi
-  # Resilience idiom already present (robustAgent wrapper OR any .catch) → compliant → stay quiet.
-  if [[ "${script_src}" == *robustAgent* || "${script_src}" == *catch* ]]; then
-    return 0
-  fi
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() but contains NO robustAgent / .catch() retry-on-null wrapper. A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). NOTE: this is a WHOLE-SCRIPT presence check — it cannot tell a fully-wrapped script from one carrying robustAgent in one stage and a bare agent({schema}) in another, so wrap EVERY schema-mode agent(), not just one stage. ADVISORY ONLY — this check NEVER blocks." >&2
+# print_resilience_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
+# DECISION of whether to fire moved INTO the python3 verdict helper (#45): the helper runs a PER-CALL-SITE
+# scan (a schema-mode agent spawn whose call is NOT .catch-chained, NOT inside a try block, and NOT
+# routed through a robustAgent-style wrapper counts as UNHANDLED) and returns a RESIL_ADVISE / RESIL_SILENT
+# flag on its THIRD output line. This function only PRINTS the nudge when the caller read RESIL_ADVISE.
+# Moving the scan into the helper closes the prior WHOLE-SCRIPT false-negative where ONE robustAgent/catch
+# token ANYWHERE silenced the advisory for N still-bare schema spawns. Per-site residual undecidability
+# (Promise.allSettled, custom-helper indirection) stays uncredited — which is exactly why this remains
+# advisory-only, fail-open (a surviving advisory MAY be a false alarm, and it NEVER blocks).
+print_resilience_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() with at least one UNHANDLED spawn site (not .catch-chained, not inside a try{}, not routed through a robustAgent wrapper). A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). PER-SITE scan with residual undecidability: Promise.allSettled + custom-helper indirection remain uncredited, so a surviving advisory MAY be a false alarm — ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -282,10 +258,10 @@ fi
 # Script body is known from here — length feeds the trace's script_len field.
 script_len="${#script_src}"
 
-# RESILIENCE ADVISORY (fail-open, stderr-only) — runs BEFORE the verdict dispatch and NEVER changes
-# the exit code. Emits a one-line nudge when a DEV workflow spawns a schema-mode agent() with no
-# robustAgent / .catch resilience idiom; silent otherwise. Decoupled from every block/pass verdict.
-emit_resilience_advisory
+# RESILIENCE ADVISORY (fail-open, stderr-only) — the fire/silent DECISION is computed by the python3
+# helper's per-site scan (#45) and returned on its THIRD output line; the nudge is PRINTED after the
+# helper runs (below, alongside the verdict dispatch) so it rides along with ANY verdict — never here,
+# never blocking. Decoupled from the [SIZE-EST] / entry / verify-stage / docroute verdicts.
 
 # DECLARATION-CONSISTENCY MODEL (replaces the prior shape-inference machinery). The gate no longer
 # GUESSES which dev-* is the verify partner vs the gated implementer — that role information does not
@@ -330,8 +306,8 @@ PLAN_REF_RE = re.compile(
     r"clauded-docs/[0-9]+"
     r"|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html"
     r"|documents/[A-Za-z0-9_./-]+\.html"
-    r"|plan-[0-9]+"
-    r"|[0-9]+-plan"
+    r"|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)"
+    r"|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)"
 )
 ENTRY_CLASS_LITERAL = "[ENTRY-CLASS] simple-task"
 SIZE_EST_LITERAL = "[SIZE-EST]"
@@ -371,6 +347,72 @@ KNOWN_KEYS = ("verify", "impl-computed", "impl")
 # Free-text delimiter: a spaced dash (em-dash / en-dash / hyphen) — agent-name hyphens are never
 # spaced, so this never mis-splits an agent list. — / – keep the source ASCII.
 FREE_TEXT_RE = re.compile(r"\s[—–-]\s")
+
+# --- JS regex-literal disambiguation (shared by strip_comments AND _string_mask, kept in parity) ---
+# A slash begins a regex literal only in an expression-start context; after a value it is division.
+# The bracket glyphs are injected via chr() so this heredoc stays balanced for the bash-3.2 $(...)-scan
+# (mirrors the chr(40) note below): chr(40)=open-paren, chr(91)=open-bracket, chr(123)/chr(125)=braces.
+_REGEX_PREV_CHARS = frozenset("=,:;!&|?+-*%^~<>" + chr(40) + chr(91) + chr(123) + chr(125))
+_REGEX_PREV_KEYWORDS = frozenset((
+    "return", "typeof", "instanceof", "in", "of", "new",
+    "delete", "void", "case", "do", "else", "yield", "await",
+))
+
+
+def _regex_allowed_before(src, i):
+    # Decide whether a slash at index i begins a JS regex literal (True) or is a division operator
+    # (False), from the last significant context before i. Regex-permitting: after an operator or an
+    # open bracket/paren/brace, after a regex-context keyword word, or at start-of-line/input. Division:
+    # after an identifier, a number, a close bracket/paren, or a string/regex end. Any division context
+    # returns False so the slash falls back to the pre-existing behavior (no NEW false positive).
+    j = i - 1
+    # Skip horizontal whitespace only; a newline (or input start) is a line boundary => regex-permitting.
+    while j >= 0 and src[j] in " \t\r\f\v":
+        j -= 1
+    if j < 0:
+        return True
+    ch = src[j]
+    if ch == "\n":
+        return True
+    if ch in _REGEX_PREV_CHARS:
+        return True
+    if ch.isalnum() or ch == "_" or ch == "$":
+        k = j
+        while k >= 0 and (src[k].isalnum() or src[k] == "_" or src[k] == "$"):
+            k -= 1
+        return src[k + 1:j + 1] in _REGEX_PREV_KEYWORDS
+    return False
+
+
+def _regex_literal_end(src, i):
+    # Shared JS-regex-literal span scanner for strip_comments AND _string_mask; keeping ONE scanner
+    # guarantees the two lexers stay in parity (the #29 requirement) so the sentinel-extraction mask
+    # never desyncs from the antigaming token scan. Precondition: src[i] is the opening regex slash.
+    # Returns the end index -- one past the unescaped closing slash, OR the terminating newline / EOF
+    # index (a JS regex literal cannot span a raw newline, so any mis-detection is bounded to one line).
+    # Escapes are honored; a slash inside a [...] character class does NOT terminate.
+    n = len(src)
+    j = i + 1
+    in_class = False
+    while j < n:
+        rc = src[j]
+        if rc == '\n':
+            break
+        if rc == '\\':
+            if j + 1 < n and src[j + 1] != '\n':
+                j += 2
+                continue
+            j += 1
+            continue
+        if rc == '[':
+            in_class = True
+        elif rc == ']':
+            in_class = False
+        elif rc == '/' and not in_class:
+            j += 1
+            break
+        j += 1
+    return j
 
 
 def strip_comments(src):
@@ -424,6 +466,15 @@ def strip_comments(src):
             in_block_c = True
             i += 2
             continue
+        if c == '/' and _regex_allowed_before(src, i):
+            # JS regex literal (division ruled out by the context check; nxt is neither / nor * here,
+            # those two branches already consumed). Emit VERBATIM so an inner // or /* or quote is NOT
+            # mis-lexed as a comment/string. Span + termination come from the shared _regex_literal_end
+            # (the single source of truth kept in parity with _string_mask).
+            end = _regex_literal_end(src, i)
+            out.append(src[i:end])
+            i = end
+            continue
         out.append(c)
         i += 1
     return ''.join(out)
@@ -474,6 +525,13 @@ def _string_mask(src):
         if c == '/' and nxt == '*':
             in_block_c = True
             i += 2
+            continue
+        if c == '/' and _regex_allowed_before(src, i):
+            # JS regex literal — leave UNMASKED (mask stays 0, the default) so a slash-heavy regex is NOT
+            # read as an opening string quote. Span + termination come from the shared _regex_literal_end
+            # (parity is load-bearing: the two lexers must agree, or the sentinel-extraction masked_src
+            # diverges from the antigaming_src token scan).
+            i = _regex_literal_end(src, i)
             continue
         i += 1
     return mask
@@ -608,9 +666,126 @@ def detect_docroute_leak(antigaming_src, attestation_src):
     return True
 
 
+def _chained_catch(struct, close_idx, n):
+    # Scan forward from the char after close_idx for a chained .then / .catch member; return True if a
+    # .catch member appears in the chain before the statement continuation. struct has string interiors
+    # blanked, so a member call arg list is paren-matched cleanly. Caller wraps this fail-open.
+    i = close_idx + 1
+    while i < n:
+        while i < n and struct[i] in " \t\r\n\f\v":
+            i += 1
+        if i >= n or struct[i] != ".":
+            return False
+        i += 1
+        j = i
+        while j < n and (struct[j].isalnum() or struct[j] == "_" or struct[j] == "$"):
+            j += 1
+        if struct[i:j] == "catch":
+            return True
+        k = j
+        while k < n and struct[k] in " \t\r\n\f\v":
+            k += 1
+        if k < n and struct[k] == chr(40):
+            depth = 0
+            while k < n:
+                if struct[k] == chr(40):
+                    depth += 1
+                elif struct[k] == chr(41):
+                    depth -= 1
+                    if depth == 0:
+                        break
+                k += 1
+            if k >= n:
+                return False
+            i = k + 1
+        else:
+            i = j
+    return False
+
+
+def resilience_advisory_needed(stripped, dev_set):
+    # ADVISORY-ONLY per-site schema-spawn resilience scan (never alters the verdict; the caller only
+    # prints a stderr nudge). Returns True when at least ONE UNHANDLED schema-mode agent-call site
+    # remains in a DEV workflow. FAIL-OPEN: dev-gate absent, no schema site, OR any parse uncertainty
+    # returns False (silent). A site is schema-mode when the literal token schema appears within its call
+    # arguments. A site is HANDLED when [a] a .catch member is chained onto its call, [b] it sits inside
+    # a try block, or [c] it sits inside a robustAgent-style wrapper body. A spawn routed THROUGH the
+    # wrapper [callee robustAgent, not agent] is not an agent-call site at all, so it is never counted.
+    try:
+        if not any(d and d in stripped for d in dev_set):
+            return False
+        # No schema token anywhere -> no per-site match is possible -> skip the full _string_mask scan
+        # (the docstring already lists no-schema-site as a fail-open False; advisory-only, verdict intact).
+        if "schema" not in stripped:
+            return False
+        smask = _string_mask(stripped)
+        # struct = stripped with string interiors blanked, so paren/brace matching ignores in-string
+        # delimiters. Positions align 1:1 with stripped, so the schema test reads stripped, not struct.
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        n = len(struct)
+
+        def match_close(open_idx, opench, closech):
+            depth = 0
+            k = open_idx
+            while k < n:
+                if struct[k] == opench:
+                    depth += 1
+                elif struct[k] == closech:
+                    depth -= 1
+                    if depth == 0:
+                        return k
+                k += 1
+            return None
+
+        # HANDLED-region spans: try blocks + robustAgent-style wrapper bodies, brace-matched over struct.
+        # chr(123)/chr(125) keep the heredoc balanced for the bash-3.2 dollar-paren scan.
+        handled_spans = []
+        for tm in re.finditer(r"(?<![A-Za-z0-9_$])try\b", struct):
+            k = tm.end()
+            while k < n and struct[k] in " \t\r\n\f\v":
+                k += 1
+            if k < n and struct[k] == chr(123):
+                end = match_close(k, chr(123), chr(125))
+                if end is not None:
+                    handled_spans.append((k, end))
+        for wm in re.finditer(r"(?<![A-Za-z0-9_$])robustAgent(?![A-Za-z0-9_$])", struct):
+            brace = struct.find(chr(123), wm.end())
+            if brace != -1:
+                end = match_close(brace, chr(123), chr(125))
+                if end is not None:
+                    handled_spans.append((brace, end))
+
+        unhandled = False
+        # The literal open paren is injected as an ESCAPED regex atom via "\\" + chr(40) (yielding the
+        # regex fragment for an escaped paren), so the source string carries no unbalanced open paren for
+        # the bash-3.2 dollar-paren scan (mirrors the _agent_open idiom below the try block).
+        for am in re.finditer(r"(?<![A-Za-z0-9_$])agent\s*" + "\\" + chr(40), struct):
+            open_idx = am.end() - 1
+            close_idx = match_close(open_idx, chr(40), chr(41))
+            if close_idx is None:
+                continue
+            if "schema" not in stripped[open_idx + 1:close_idx]:
+                continue
+            call_start = am.start()
+            if any(s <= call_start < e for (s, e) in handled_spans):
+                continue
+            if _chained_catch(struct, close_idx, n):
+                continue
+            unhandled = True
+        return unhandled
+    except Exception:
+        return False
+
+
+# RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
+# SILENT so a fail-open exit (an exception before the scan) never fires a spurious advisory.
+RESIL_FLAG = "RESIL_SILENT"
+
+
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
+    print(RESIL_FLAG)
     sys.exit(0)
 
 
@@ -620,6 +795,11 @@ try:
     stripped = strip_comments(src)
     antigaming_src = stripped   # spawn/target tokens: a commented spawn is not a real one
     attestation_src = src       # author self-attestation: same weight in comment or string
+
+    # Resilience advisory decision (#45) — computed early so EVERY emit path carries it on line 3. The
+    # scan is decoupled from the verdict: it only sets the advisory flag the bash side prints.
+    if resilience_advisory_needed(antigaming_src, dev_set):
+        RESIL_FLAG = "RESIL_ADVISE"
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
 
@@ -713,7 +893,15 @@ try:
 
     if decl["upstream"]:
         # UPSTREAM form — waives the in-script verify pair-mapping + ordering ONLY (NOREV already
-        # enforced above). (e) the referenced plan id must be cited by a plan-ref token in the BODY.
+        # enforced above via Tier-A presence). ADDITIONAL zero-reviewer hard guarantee under upstream:
+        # require a REAL Tier-B reviewer spawn (rev_spawns non-empty). The Tier-A presence check at
+        # BLOCK_NOREV above is satisfied by a mere quote-bounded reviewer literal (a prose mention in a
+        # goal string), which under the upstream form would otherwise slip through with ZERO real
+        # reviewer spawn — the in-script form already forbids this via the (a) rev_spawns check below,
+        # so this restores symmetry. Emits BLOCK_NOREV (the guarantee cause), not BLOCK_DECLSPAWN.
+        if not rev_spawns:
+            emit("BLOCK_NOREV", entry_marker)
+        # (e) the referenced plan id must be cited by a plan-ref token in the BODY.
         ref = decl["upstream_ref_text"] or ""
         idm = re.search(r"clauded-docs/([0-9]+)", ref)
         if idm:
@@ -768,6 +956,17 @@ try:
         dev_pos_by_type.setdefault(t, []).append(p)
     for t in dev_pos_by_type:
         dev_pos_by_type[t].sort()
+    # (a-count) SAME-TYPE DUAL-ROLE phantom check — the count facet of check (a). A type declared in
+    # BOTH verify: and impl: (literal impl only; impl-computed types have no Tier-B positions and stay
+    # honor-system) is filling TWO distinct roles: the verify partner AND the implementer are separate
+    # spawns, so that type MUST have at least 2 Tier-B spawn positions. A single spawn provably leaves
+    # one declared role unspawned (the greedy binding would absorb the lone spawn as the verify slot,
+    # leaving zero impl positions, so ordering check (d) below would vacuously pass — the bypass). This
+    # is the count generalization of check (a) declared-role-never-spawned, the one place a declaration
+    # is falsifiable against code. Honest 2-spawn dual-role teams (verify slot + impl slot) pass.
+    for t in (declared_verify_dev_types & declared_impl_dev_types):
+        if len(dev_pos_by_type.get(t, [])) < 2:
+            emit("BLOCK_DECLSPAWN", entry_marker)
     verify_slot_positions = set()
     for t in declared_verify_dev_types:
         if dev_pos_by_type.get(t):
@@ -788,14 +987,32 @@ except Exception:
 PY
 )"
 
-# Run the helper. It prints TWO lines: line 1 = verdict token, line 2 = entry marker
-# (ENTRY_OK|ENTRY_ADVISORY). A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK).
-helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK'
+# Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
+# (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
+# unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
+helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT'
 
-# Verdict = FIRST line. Entry marker = SECOND line (collapses to verdict if helper emitted one line).
-verdict="${helper_out%%$'\n'*}"
-entry_marker="${helper_out#*$'\n'}"
-[[ "${entry_marker}" == "${helper_out}" ]] && entry_marker="ENTRY_OK"
+# Parse the three lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+# EOF on a short (2-line legacy / fail-open) output from tripping the fail-open ERR trap; each field is
+# then normalized to a known value so a stray/absent line collapses to the safe default.
+verdict="PASS"
+entry_marker="ENTRY_OK"
+resil_flag="RESIL_SILENT"
+{
+  IFS= read -r verdict
+  IFS= read -r entry_marker
+  IFS= read -r resil_flag
+} <<<"${helper_out}" || true
+[[ -z "${verdict}" ]] && verdict="PASS"
+[[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+[[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
+
+# RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
+# schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
+# BLOCK below). This NEVER alters the exit code.
+if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
+  print_resilience_advisory
+fi
 
 # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
 # NOT already a BLOCK_* (unquoted BLOCK* glob — fully DECOUPLED) AND the entry signal is

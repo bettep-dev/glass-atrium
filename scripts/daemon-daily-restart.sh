@@ -322,34 +322,12 @@ verify_claude_runnable() {
   [[ -n "${claude_path}" && -x "${claude_path}" ]]
 }
 
-# 2. Pre-flight: binary + script existence.
-if ! command -v tmux >/dev/null 2>&1; then
-  fatal "tmux not on PATH"
-fi
-
-if [[ ! -x "${BOOTSTRAP_SCRIPT}" ]]; then
-  fatal "bootstrap script not executable: ${BOOTSTRAP_SCRIPT}"
-fi
-
-if [[ ! -x "${HEALTHCHECK}" ]]; then
-  fatal "healthcheck not executable: ${HEALTHCHECK}"
-fi
-
-# Kill-after-verify ordering: a session killed now could never be recreated if
-# claude cannot start — abort while it is still untouched.
-if ! verify_claude_runnable; then
-  fatal "claude missing or not runnable (dangling symlink?) — aborting before kill-session, session left untouched"
-fi
-
-# NOTE: single-flight double-fire protection is the ATOMIC restart-window lock
-# acquired at step 3.7 below, NOT a startup pgrep guard (see the rationale block
-# above the usage() function). The kill→recreate sequence is gated on that lock,
-# so no destructive step runs before single-flight is decided.
-
-log "starting daily restart for session=${SESSION}"
-
-# STARTED_AT for PG dual-write — ISO 8601 UTC (matches
-# core.daemon_runs.started_at TIMESTAMPTZ).
+# STARTED_AT / RUN_DATE / PG_HELPER for PG dual-write — ISO 8601 UTC (matches
+# core.daemon_runs.started_at TIMESTAMPTZ). MUST stay ABOVE pre-flight: a
+# pre-flight fatal() mirrors an 'error' row only when STARTED_AT is set and
+# pg_write_run is already defined (bash binds both at call time — a below-pre-flight
+# definition leaves fatal() unable to mirror, surfacing genuine failures as
+# 'missing/No data' instead of 'error/Down').
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_DATE="$(date +%Y-%m-%d)"
 PG_HELPER="${SCRIPT_DIR}/_pg_dual_write_daemon.py"
@@ -375,6 +353,32 @@ pg_write_run() {
   fi
   printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || true
 }
+
+# 2. Pre-flight: binary + script existence.
+if ! command -v tmux >/dev/null 2>&1; then
+  fatal "tmux not on PATH"
+fi
+
+if [[ ! -x "${BOOTSTRAP_SCRIPT}" ]]; then
+  fatal "bootstrap script not executable: ${BOOTSTRAP_SCRIPT}"
+fi
+
+if [[ ! -x "${HEALTHCHECK}" ]]; then
+  fatal "healthcheck not executable: ${HEALTHCHECK}"
+fi
+
+# Kill-after-verify ordering: a session killed now could never be recreated if
+# claude cannot start — abort while it is still untouched.
+if ! verify_claude_runnable; then
+  fatal "claude missing or not runnable (dangling symlink?) — aborting before kill-session, session left untouched"
+fi
+
+# NOTE: single-flight double-fire protection is the ATOMIC restart-window lock
+# acquired at step 3.7 below, NOT a startup pgrep guard (see the rationale block
+# above the usage() function). The kill→recreate sequence is gated on that lock,
+# so no destructive step runs before single-flight is decided.
+
+log "starting daily restart for session=${SESSION}"
 
 # write_daemon_run for the `autoagent` daemon (not `daily-restart-<role>`): the
 # alert evaluator filters on daemon_name='autoagent', so a 'daily-restart-<role>'

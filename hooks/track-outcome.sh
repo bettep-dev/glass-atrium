@@ -58,7 +58,12 @@ trap 'rm -f "$PY_SCRIPT_FILE"' EXIT INT TERM
 cat >"$PY_SCRIPT_FILE" <<'PYEOF'
 import sys, json, re
 
-KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal'}
+# qa_score + concerns are included so an emitted `qa_score:`/`concerns:` line starts its own
+# field instead of folding into the preceding value: parse_completion_body treats any line whose
+# `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
+# silently corrupts (e.g.) the summary value. Both are consumed (concerns via its "## Concerns"
+# fallback below; qa_score direct from the [COMPLETION] field) and carried to the PG dual-write.
+KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
 # match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
@@ -203,6 +208,58 @@ def _effective_transcript_path(payload_d):
     return payload_d.get('transcript_path', '') or ''
 
 
+# --------------------------------------------------------------------------
+# Single transcript read+parse (perf consolidation). All four collectors below
+# (terminal-text, tool_use count, write-target collection, terminal-SO
+# classification) read the SAME subagent transcript resolved by
+# _effective_transcript_path — so open()+json.loads it ONCE and memoize the
+# parsed records, sharing them across all four (was up to 4 opens per fire).
+# The StructuredOutput flush-race retry (detect_terminal_structuredoutput)
+# deliberately BYPASSES this cache on attempts >0: the file may still be
+# flushing, so a settling re-read MUST see fresh bytes — a cached parse would
+# defeat the retry the schema-mode RACE test pins.
+# --------------------------------------------------------------------------
+def _read_transcript_items(tpath):
+    # Read a JSONL transcript into a list. Returns (items, tail_partial): items is
+    # None on an OS error (caller keeps the old synthesis path); tail_partial is True
+    # when the LAST non-empty physical line failed to parse — the signature of a write
+    # still in flight (a partial JSON line the flusher has not finished appending).
+    items = []
+    tail_partial = False
+    try:
+        with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    items.append(json.loads(_line))
+                    tail_partial = False
+                except (ValueError, json.JSONDecodeError):
+                    # Only the TRAILING unparsable line matters (a later good line
+                    # resets the flag); mid-file junk is pre-existing, not a race.
+                    tail_partial = True
+                    continue
+    except (OSError, IOError):
+        return None, False
+    return items, tail_partial
+
+
+_TRANSCRIPT_CACHE = {}
+
+
+def _read_subagent_transcript_once(tpath):
+    # Memoized (items, tail_partial) for the subagent transcript at tpath. The first
+    # caller pays the open()+parse; every later collector reuses that one parse. The
+    # collectors only READ items (iterate / slice), never mutate, so sharing one list
+    # is safe. Mutating a module-level dict needs no `global` (rebinding would).
+    if tpath in _TRANSCRIPT_CACHE:
+        return _TRANSCRIPT_CACHE[tpath]
+    parsed = _read_transcript_items(tpath)
+    _TRANSCRIPT_CACHE[tpath] = parsed
+    return parsed
+
+
 def _last_assistant_text_from_transcript(transcript_path):
     # Reconstruct the terminal assistant message text from a transcript jsonl.
     # Each assistant text/tool_use lands in its own entry, so the terminal
@@ -213,10 +270,8 @@ def _last_assistant_text_from_transcript(transcript_path):
     if not isinstance(transcript_path, str) or not transcript_path \
             or not _os.path.isfile(transcript_path):
         return ''
-    try:
-        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as _f:
-            _lines = _f.readlines()
-    except (OSError, IOError):
+    _parsed, _ = _read_subagent_transcript_once(transcript_path)
+    if _parsed is None:  # OS error → fail-open, caller keeps its input
         return ''
 
     def _assistant_text(entry):
@@ -240,15 +295,6 @@ def _last_assistant_text_from_transcript(transcript_path):
             )
         return ''
 
-    _parsed = []
-    for _line in _lines:
-        _line = _line.strip()
-        if not _line:
-            continue
-        try:
-            _parsed.append(json.loads(_line))
-        except (ValueError, json.JSONDecodeError):
-            continue
     for _entry in reversed(_parsed):
         _txt = _assistant_text(_entry)
         if _txt and '[COMPLETION]' in _txt:
@@ -366,12 +412,36 @@ if not msg.strip():
 # 3-tier [COMPLETION] parsing — line anchors (^/$ + MULTILINE) reject inline prose mentions
 parse_tier = 0
 completion = {}
+# Valid single-token result whitelist — mirror of the shell-side HAS_STRUCTURED validity case
+# (the `done | done_with_concerns | blocked | needs_context | fail` branch). Keep the two in
+# sync: a divergence would let this parser prefer a block the shell then rejects, or vice versa.
+_VALID_RESULTS = {'done', 'done_with_concerns', 'blocked', 'needs_context', 'fail'}
 _T1 = r'^[ \t]*\[COMPLETION\][ \t]*\n(.*?)\n[ \t]*\[/COMPLETION\][ \t]*$'
 _T2 = r'^[ \t]*\[COMPLETION\][ \t]*\n(.*?)(?=\n#|\Z)'
-m_tier1 = re.search(_T1, msg, re.DOTALL | re.MULTILINE)
-if m_tier1:
+# Validity-aware LAST-preference over ALL tier-1 matches. Quoting the emit-format template
+# (whose [COMPLETION] block carries a pipe-joined `result: done|...|fail` placeholder) BEFORE
+# the real block would otherwise bind the FIRST match under a bare re.search — the template's
+# result is not a single valid token, so the row synthesizes and the writer signal is lost.
+# Prefer the LAST complete block; when its parsed result is not a valid single token,
+# reverse-scan the earlier matches for the first whose result IS valid; if none validates,
+# keep the last (downstream synthesis / tier labels unchanged). _T2 + inline tier untouched.
+# m_tier1/m_tier2 stay bound to the SELECTED match for the downstream _block_text grader-body
+# extraction. Both are None-init'd so every branch below leaves them defined — the downstream
+# _block_text read references m_tier1/m_tier2 unconditionally and must never hit an unbound name.
+m_tier1 = None
+m_tier2 = None
+_t1_matches = list(re.finditer(_T1, msg, re.DOTALL | re.MULTILINE))
+if _t1_matches:
     parse_tier = 1
+    m_tier1 = _t1_matches[-1]
     completion = parse_completion_body(m_tier1.group(1))
+    if completion.get('result', '').strip() not in _VALID_RESULTS:
+        for _m in reversed(_t1_matches[:-1]):
+            _cand = parse_completion_body(_m.group(1))
+            if _cand.get('result', '').strip() in _VALID_RESULTS:
+                m_tier1 = _m
+                completion = _cand
+                break
 else:
     m_tier2 = re.search(_T2, msg, re.DOTALL | re.MULTILINE)
     if m_tier2:
@@ -428,6 +498,10 @@ if not concerns and completion.get('result', '') == 'done_with_concerns':
         if cm:
             concerns = cm.group(1).strip()
             break
+
+# qa_score: [COMPLETION] field only (QA agents; shape cov=N,ins=N,instr=N,clar=N). No body
+# fallback — unlike concerns there is no "## " section form. A KNOWN_FIELD, so it self-delimits.
+qa_score = completion.get('qa_score', '')
 
 # directive_hint: scan the most-recent user message for a correction signal (regex fallback path).
 # Matchers require verb+imperative combos, not plain substrings, and reject quoted mentions.
@@ -575,18 +649,10 @@ def count_tool_use_current_turn(d):
         tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
             from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
+            cached, _ = _read_subagent_transcript_once(tpath)
+            if cached is None:  # OS error → same 0 as the old per-open except
                 return 0
+            items = cached
     if not items:
         return 0
     window = _current_turn_window(items, from_transcript)
@@ -620,18 +686,10 @@ def collect_write_targets_current_turn(d):
         tpath = _effective_transcript_path(d)
         if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
             from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
+            cached, _ = _read_subagent_transcript_once(tpath)
+            if cached is None:  # OS error → same [] as the old per-open except
                 return []
+            items = cached
     if not items:
         return []
     window = _current_turn_window(items, from_transcript)
@@ -673,35 +731,17 @@ diag(f"synth_has_writes={synth_has_writes} synth_file_count={len(synth_files)}")
 # Scan gate mirrors detect_budget_truncation's subagent-origin contract: SubagentStop-origin
 # + raw agent_id present + no parsed [COMPLETION] (parse_tier 3) — main-session
 # Stop/PreCompact/SessionStart never pay the scan, and a parsed block always wins.
-def detect_terminal_structuredoutput(d):
-    import os as _os
-    if hook_event in MAIN_SESSION_HOOKS:
-        return '0'
-    if not (d.get('agent_id') or ''):
-        return '0'
-    if parse_tier != 3:
-        return '0'
-    items = next((d[k] for k in ('messages', 'transcript', 'conversation')
-                  if isinstance(d.get(k), list) and d.get(k)), [])
-    from_transcript = False
+# _read_transcript_items (the shared JSONL reader) is defined once near the top,
+# alongside _read_subagent_transcript_once (the memoized wrapper the collectors share).
+def _classify_terminal_so(items, from_transcript, tail_partial=False):
+    # Classify the terminal StructuredOutput pairing on ONE transcript snapshot.
+    # Returns (verdict, race): verdict is '1' (terminal SO paired with a NON-error
+    # tool_result) else '0'. race is True only when a '0' could be a transcript-flush
+    # artifact worth a re-read — an ORPHAN terminal SO (paired result not yet flushed)
+    # or a still-partial trailing line hiding the real terminal. A paired-error result
+    # and a settled non-SO terminal are DEFINITIVE (race False → the caller stops).
     if not items:
-        tpath = _effective_transcript_path(d)
-        if isinstance(tpath, str) and tpath and _os.path.isfile(tpath):
-            from_transcript = True
-            try:
-                with open(tpath, 'r', encoding='utf-8', errors='replace') as _f:
-                    for _line in _f:
-                        _line = _line.strip()
-                        if not _line:
-                            continue
-                        try:
-                            items.append(json.loads(_line))
-                        except (ValueError, json.JSONDecodeError):
-                            continue
-            except (OSError, IOError):
-                return '0'
-    if not items:
-        return '0'
+        return '0', tail_partial
     window = _current_turn_window(items, from_transcript)
     # Terminal = the run's LAST tool_use. "Later superseding assistant action" means a
     # SUBSEQUENT tool_use — trailing plain assistant text does NOT supersede the emit.
@@ -726,21 +766,74 @@ def detect_terminal_structuredoutput(d):
                 if isinstance(rid, str) and rid:
                     results_by_id[rid] = c
     if not isinstance(last_tool_use, dict) or last_tool_use.get('name') != 'StructuredOutput':
-        return '0'
+        # No terminal SO visible. If the trailing line is still flushing, the real
+        # terminal SO may not be parseable yet → race; else a settled non-SO run.
+        return '0', tail_partial
     tu_id = last_tool_use.get('id')
     # Pair by tool_use_id, NEVER adjacency — an id-less tool_use cannot pair strictly →
     # no match, caller keeps the old synthesis path (safe direction for odd transcripts).
     if not isinstance(tu_id, str) or not tu_id:
-        return '0'
+        return '0', False
     paired = results_by_id.get(tu_id)
-    # Absent paired tool_result = kill mid-call → no match.
     if paired is None:
-        return '0'
+        # Orphan terminal SO: the classic SubagentStop flush race — the paired
+        # tool_result may still be in flight. A hard kill can NEVER later produce a
+        # paired NON-error result, so a re-read is safe (idempotent) and only helps
+        # the race case; it can never manufacture a false consumed verdict.
+        return '0', True
     # Success = is_error NOT truthy — absent OR false both = success (both shapes observed
     # live); an equality-to-false check would misread the absent shape as an error.
     if paired.get('is_error') or paired.get('isError'):
+        # A consumed-with-error emit is a REAL outcome, not a flush race → definitive.
+        return '0', False
+    return '1', False
+
+
+def detect_terminal_structuredoutput(d):
+    import os as _os
+    import time as _time
+    if hook_event in MAIN_SESSION_HOOKS:
         return '0'
-    return '1'
+    if not (d.get('agent_id') or ''):
+        return '0'
+    if parse_tier != 3:
+        return '0'
+    # Inline payload messages cannot change between reads → evaluate once, no retry.
+    inline_items = next((d[k] for k in ('messages', 'transcript', 'conversation')
+                         if isinstance(d.get(k), list) and d.get(k)), [])
+    if inline_items:
+        return _classify_terminal_so(inline_items, from_transcript=False)[0]
+    tpath = _effective_transcript_path(d)
+    if not (isinstance(tpath, str) and tpath and _os.path.isfile(tpath)):
+        return '0'
+    # SubagentStop transcript-flush race: the engine appends the StructuredOutput
+    # tool_result ~60ms+ after the tool_use, so a SINGLE snapshot can read an unpaired
+    # (orphan) terminal SO — or a still-partial terminal line — while the write is in
+    # flight, mislabeling a DELIVERED schema run as killed-mid-call. Re-read the
+    # transcript up to _SO_REREAD_RETRIES times (idempotent, read-only) until the
+    # pairing settles. A verdict of '1' or a DEFINITIVE negative returns immediately;
+    # only a flush-race candidate sleeps + retries (worst case +600ms, under budget).
+    _SO_REREAD_RETRIES, _SO_REREAD_DELAY_S = 3, 0.2
+    for _attempt in range(_SO_REREAD_RETRIES + 1):
+        if _attempt == 0:
+            # First attempt reuses the shared up-front parse (no extra open()) —
+            # in the common (settled) case this is the ONLY read this path costs.
+            items, tail_partial = _read_subagent_transcript_once(tpath)
+        else:
+            # Flush-race retry: the file may still be flushing → re-read FRESH,
+            # BYPASSING the memo cache, so a late-appended tool_result becomes
+            # visible. A cached parse here would defeat the retry the schema-mode
+            # RACE test pins (paired result flushed inside the re-read window).
+            items, tail_partial = _read_transcript_items(tpath)
+        if items is None:  # OS error → keep the old synthesis path
+            return '0'
+        verdict, race = _classify_terminal_so(
+            items, from_transcript=True, tail_partial=tail_partial)
+        if verdict == '1' or not race:
+            return verdict
+        if _attempt < _SO_REREAD_RETRIES:
+            _time.sleep(_SO_REREAD_DELAY_S)
+    return '0'
 
 terminal_so = detect_terminal_structuredoutput(d)
 diag(f"terminal_structuredoutput={terminal_so}")
@@ -770,6 +863,7 @@ out('c_confidence', completion.get('confidence', ''))
 out('c_summary', summary)
 out('lesson', clamp(lesson, 500))
 out('concerns', clamp(concerns, 800))
+out('qa_score', clamp(qa_score, 64))
 # directive_hint: [COMPLETION] value wins over transcript scrape
 out('directive_hint', clamp(completion.get('directive_hint') or directive, 500))
 # c_directive_hint: RAW [COMPLETION] value only (no fallback) — isolates the agent correction flag
@@ -900,7 +994,6 @@ extract_field() {
 AGENT_TYPE=$(extract_field agent_type)
 AGENT_ID=$(extract_field agent_id)
 SESSION_ID=$(extract_field session_id)
-CWD=$(extract_field cwd)
 # HOOK_EVENT: gates the T2 loud-fail marker (SubagentStop 0-record case) vs a quiet skip.
 HOOK_EVENT=$(extract_field hook_event)
 S_RESULT=$(extract_field c_result)
@@ -924,6 +1017,7 @@ S_CONFIDENCE=$(extract_field c_confidence)
 S_SUMMARY=$(extract_field c_summary)
 LESSON=$(extract_field lesson)
 CONCERNS=$(extract_field concerns)
+QA_SCORE=$(extract_field qa_score)
 DIRECTIVE_HINT=$(extract_field directive_hint)
 # C_DIRECTIVE_HINT: raw [COMPLETION] value only (correction-flag input), no transcript fallback
 C_DIRECTIVE_HINT=$(extract_field c_directive_hint)
@@ -1375,7 +1469,7 @@ fi
 # Regex correction-signal fallback (capture-only). Fires ONLY when the agent emitted no correction
 # field (AGENT_PROVIDED_CORRECTION==0) — the agent value always wins. The regex captures a candidate;
 # the aggregation-layer write-gate does the real filtering (over-capture permitted). On match →
-# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is authoritative for the numeric delta. T9_CORRECTION_DETECTION=false disables the pipeline.
+# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is stubbed to 0 (no project-safe prior lookup in DB-only mode), so this fallback records a single correction (new_count=1). T9_CORRECTION_DETECTION=false disables the pipeline.
 T9_CORRECTION_DETECTION="${T9_CORRECTION_DETECTION:-true}"
 
 if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}" -eq 0 ]; then
@@ -1386,12 +1480,22 @@ if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}"
     T9_PY_FILE=$(mktemp -t outcome-t9-XXXXXX.py)
     trap 'rm -f "$PY_SCRIPT_FILE" "$T9_PY_FILE"' EXIT INT TERM
     cat >"$T9_PY_FILE" <<'PYEOF'
-import sys, json, re, os, glob, time
+import sys, json, re, os, glob, time, tempfile
 from datetime import datetime, timezone, timedelta
 
 TRANSCRIPT = os.environ.get('T9_TRANSCRIPT', '')
-CWD_ENV = os.environ.get('T9_CWD', '')
 TASK_TYPE_ENV = os.environ.get('T9_TASK_TYPE', '')
+SESSION_ID_ENV = os.environ.get('T9_SESSION_ID', '')
+
+# Bounded reverse tail-read window (bytes). The last (most recent) user message sits
+# near EOF, so a bounded tail avoids a full read of a large parent transcript. Env-
+# overridable so the test suite can shrink it to force the window-miss fallback path.
+try:
+    _TAIL_WINDOW_BYTES = int(os.environ.get('T9_TAIL_WINDOW_BYTES', '') or '65536')
+except ValueError:
+    _TAIL_WINDOW_BYTES = 65536
+if _TAIL_WINDOW_BYTES < 1:
+    _TAIL_WINDOW_BYTES = 65536
 
 # Stage 1 regex — 80-char leading window over Korean/English correction-intent phrases.
 # Precision contract: the token `다시` ("again") alone is NOT a correction — it counts
@@ -1416,16 +1520,11 @@ def out(k, v):
     s = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
     sys.stdout.write(f"@@{k}@@{s}\n")
 
-def find_last_user_message(transcript_path):
-    """Scan transcript jsonl in reverse, return the last non-isMeta user message.
-    Returns: (text, ts_iso) or (None, None)."""
-    if not transcript_path or not os.path.isfile(transcript_path):
-        return (None, None)
-    try:
-        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()
-    except (OSError, IOError):
-        return (None, None)
+def _scan_lines_for_last_user(lines):
+    """Reverse-scan JSONL lines; return (text, ts_iso) of the last non-isMeta,
+    non-command user message, or (None, None). The ONE selection path shared by the
+    bounded tail-read and the full-read fallback, so both resolve byte-identically
+    (identical filtering / reversed-order semantics to the prior full-read loop)."""
     for line in reversed(lines):
         line = line.strip()
         if not line:
@@ -1455,6 +1554,113 @@ def find_last_user_message(transcript_path):
         return (content, entry.get('timestamp', ''))
     return (None, None)
 
+
+def _read_tail_lines(transcript_path, window_bytes):
+    """Read the last `window_bytes` of the transcript. Returns (lines, whole_file):
+    whole_file is True when the window covered the ENTIRE file (a scan miss is then
+    authoritative, no fallback needed). When only a tail was read the first fragment
+    starts mid-line (window boundary) and is dropped — it can never be the most-recent
+    user message (that sits at EOF). Returns (None, False) on OSError."""
+    try:
+        with open(transcript_path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size <= window_bytes:
+                f.seek(0)
+                whole_file = True
+            else:
+                f.seek(size - window_bytes)
+                whole_file = False
+            data = f.read()
+    except (OSError, IOError):
+        return (None, False)
+    lines = data.decode('utf-8', errors='replace').split('\n')
+    if not whole_file and lines:
+        lines = lines[1:]
+    return (lines, whole_file)
+
+
+def _read_full_lines(transcript_path):
+    """Full read (single .read(), split) — the correctness fallback when the bounded
+    tail window held no qualifying user message. Text mode matches the prior
+    readlines() universal-newline handling. Returns list of lines, None on OSError."""
+    try:
+        with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read().split('\n')
+    except (OSError, IOError):
+        return None
+
+
+def find_last_user_message(transcript_path):
+    """Return (text, ts_iso) of the last non-isMeta user message, or (None, None).
+    Perf: scan a bounded reverse tail window first (avoids a full read of a large
+    transcript). CORRECTNESS: if the window did NOT cover the whole file AND yielded no
+    qualifying user message (rare — a long assistant/tool tail after the last user turn),
+    fall back to the full read; the resolved message is thus byte-identical to the
+    full-read baseline in every case."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return (None, None)
+    lines, whole_file = _read_tail_lines(transcript_path, _TAIL_WINDOW_BYTES)
+    if lines is not None:
+        text, ts = _scan_lines_for_last_user(lines)
+        if text is not None:
+            return (text, ts)
+        if whole_file:
+            # Window covered the entire file → the miss is authoritative, no fallback.
+            return (None, None)
+    # Tail-read OSError, OR the bounded window held no user message → full read.
+    full = _read_full_lines(transcript_path)
+    if full is None:
+        return (None, None)
+    return _scan_lines_for_last_user(full)
+
+
+def _cache_path(session_id):
+    """Per-session cache file for the resolved last-user-message, or None when there is
+    no session_id (→ caching disabled, live resolve every fire)."""
+    if not session_id:
+        return None
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', session_id)[:80]
+    return os.path.join(tempfile.gettempdir(), 'outcome-t9-lastuser-' + safe + '.json')
+
+
+def resolve_last_user_message(transcript_path, session_id):
+    """find_last_user_message with a per-session filesystem cache keyed on the
+    transcript's (path, size, mtime) fingerprint. A cache hit (same fingerprint) reuses
+    the prior resolve so repeated hook fires in one session skip the tail read. Fail-open:
+    a missing session_id, any cache read/write error, or a fingerprint mismatch → live
+    resolve — the cache only ever stores a value the live path already produced, so the
+    correction verdict is identical whether served from cache or resolved fresh."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return (None, None)
+    try:
+        st = os.stat(transcript_path)
+        fp_size, fp_mtime = st.st_size, st.st_mtime
+    except OSError:
+        return find_last_user_message(transcript_path)
+    cpath = _cache_path(session_id)
+    if cpath and os.path.isfile(cpath):
+        try:
+            with open(cpath, 'r', encoding='utf-8') as cf:
+                c = json.load(cf)
+            if (c.get('path') == transcript_path
+                    and c.get('size') == fp_size
+                    and c.get('mtime') == fp_mtime):
+                return (c.get('text'), c.get('ts') or '')
+        except (OSError, IOError, ValueError):
+            pass  # stale/corrupt cache → fail-open to live resolve
+    text, ts = find_last_user_message(transcript_path)
+    if cpath:
+        try:
+            tmp = cpath + '.' + str(os.getpid()) + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as cf:
+                json.dump({'path': transcript_path, 'size': fp_size,
+                           'mtime': fp_mtime, 'text': text, 'ts': ts}, cf)
+            os.replace(tmp, cpath)  # atomic same-dir swap
+        except (OSError, IOError):
+            pass  # cache write is best-effort
+    return (text, ts)
+
 def is_message_too_old(ts_iso, hours=2):
     """True if ts_iso is older than `hours`. On parse failure → False
     (conservative: proceed with detection)."""
@@ -1469,59 +1675,24 @@ def is_message_too_old(ts_iso, hours=2):
     except (ValueError, TypeError):
         return False
 
-def find_prior_revision_count(cwd, task_type, max_age_secs=3600):
-    """Extract revision_count from the most recent same-cwd + task_type outcome
-    file within the last hour. Authoritative numeric-delta source on the regex
-    correction-fallback path (prior+1 cross-outcome accumulation).
-    Search-location priority:
-      1. ~/.claude/data/outcomes (canonical)
-      2. ${cwd}/memory/outcomes (cwd-local stray files only)
-      3. ~/.claude-personal/.../memory/outcomes (same rationale)
-    The primary sink is PG core.outcomes; these filesystem paths are read-only
-    fallbacks for the revision_count lookup."""
-    candidate_dirs = [os.path.expanduser('~/.claude/data/outcomes')]
-    if cwd:
-        candidate_dirs.append(os.path.join(cwd, 'memory', 'outcomes'))
-    # Claude-Code project-dir cwd encoding: $HOME with '/' -> '-'.
-    proj_dir = os.path.expanduser('~').replace('/', '-')
-    candidate_dirs.append(os.path.expanduser('~/.claude-personal/projects/' + proj_dir + '/memory/outcomes'))
+def find_prior_revision_count(task_type, max_age_secs=3600):
+    """Return 0 — the hook-side prior+1 cross-outcome accumulation is stubbed.
 
-    now_ts = time.time()
-    cutoff = now_ts - max_age_secs
-    candidates = []
-    for d in candidate_dirs:
-        if not os.path.isdir(d):
-            continue
-        # Filename rule: YYYY-MM-DD-HHMMSS_xxxx_{agent}_{task_type}.md
-        # task_type match on the filename tail _<task_type>.md
-        pattern = os.path.join(d, f'*_{task_type}.md')
-        for f in glob.glob(pattern):
-            try:
-                mtime = os.path.getmtime(f)
-            except OSError:
-                continue
-            if mtime >= cutoff:
-                candidates.append((mtime, f))
-    if not candidates:
-        return 0
-    # Parse revision_count from the most recent file
-    candidates.sort(reverse=True)
-    most_recent = candidates[0][1]
-    try:
-        with open(most_recent, 'r', encoding='utf-8', errors='replace') as f:
-            head = f.read(2048)  # frontmatter alone is enough
-    except (OSError, IOError):
-        return 0
-    m = re.search(r'^revision_count:\s*(\d+)', head, re.MULTILINE)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            return 0
+    Per-outcome .md records are retired and PG core.outcomes carries NO cwd/
+    project key, so a same-task_type + time-window lookup would count a correction
+    from a DIFFERENT project (the shared core.outcomes serves multiple projects at
+    once) as the prior — cross-project contamination of the revision/correction
+    signal. With no project-safe key available here, the cross-outcome revision
+    delta now relies on the agent-emitted `revision_count` field instead; a
+    project-keyed PG restoration (needs a cwd/project column) is a separate future
+    improvement. Returning 0 also keeps this pure-stdlib subprocess psycopg-free.
+
+    Signature is retained (task_type, max_age_secs) so a future project-keyed
+    lookup can drop back in without touching the caller."""
     return 0
 
 # --- main pipeline ---
-last_user_text, last_user_ts = find_last_user_message(TRANSCRIPT)
+last_user_text, last_user_ts = resolve_last_user_message(TRANSCRIPT, SESSION_ID_ENV)
 
 if not last_user_text:
     out('stage1_matched', '0')
@@ -1546,7 +1717,7 @@ if not (matched_kor or matched_eng):
 # Stage 1 match — bash decides on the Stage 2 LLM call.
 # Truncate the message to 1KB and derive revision_count from the prior-outcome lookup.
 truncated_msg = last_user_text[:1024]
-prior_count = find_prior_revision_count(CWD_ENV, TASK_TYPE_ENV)
+prior_count = find_prior_revision_count(TASK_TYPE_ENV)
 new_count = prior_count + 1
 
 out('stage1_matched', '1')
@@ -1558,7 +1729,7 @@ out('prior_revision_count', str(prior_count))
 out('new_revision_count', str(new_count))
 PYEOF
 
-    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_CWD="${CWD}" T9_TASK_TYPE="${TASK_TYPE}" python3 "$T9_PY_FILE" 2>/dev/null || true)
+    T9_RESULT=$(T9_TRANSCRIPT="${T9_TRANSCRIPT_PATH}" T9_TASK_TYPE="${TASK_TYPE}" T9_SESSION_ID="${SESSION_ID}" python3 "$T9_PY_FILE" 2>/dev/null || true)
 
     t9_extract() {
       printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1
@@ -1899,6 +2070,7 @@ if [ -x "${PG_HELPER}" ]; then
     --arg directive_hint "${DIRECTIVE_HINT:-}" \
     --arg lesson "${LESSON:-}" \
     --arg concerns "${CONCERNS:-}" \
+    --arg qa_score "${QA_SCORE:-}" \
     --arg correlation_id "${CID:-}" \
     --arg cid "${CID:-}" \
     --arg summary "${SUMMARY}" \
@@ -1922,6 +2094,7 @@ if [ -x "${PG_HELPER}" ]; then
         confidence: $confidence, metric_pass: $metric_pass,
         revision_count: $revision_count, evaluative_signal: $evaluative_signal,
         directive_hint: $directive_hint, lesson: $lesson, concerns: $concerns,
+        qa_score: (if $qa_score == "" then null else $qa_score end),
         correlation_id: $correlation_id, cid: $cid, summary: $summary,
         review_flag: $review_flag, body_md: $body_md,
         files_modified: $files_modified,

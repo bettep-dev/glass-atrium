@@ -21,6 +21,9 @@ export interface AgentSuccessRateRow {
   // result IN ('blocked', 'fail') — needs_context excluded (user-fault, not agent).
   failure_count: number;
   total_count: number;
+  // Reconstructed (harness-synthesized) portion of total_count — writer-emitted
+  // headline = total_count - reconstructed_count (0 <= reconstructed_count <= total_count).
+  reconstructed_count: number;
   // null when total_count = 0 (defensive — emitted rows always have ≥1 outcome).
   success_rate: number | null;
 }
@@ -79,6 +82,11 @@ export interface AgentReviewFlagByAgentRow {
   total_count: number;
   // review_flag=true count — set by outcome-record.sh on polar mismatch / empty signal.
   review_flagged_count: number;
+  // Reconstructed (harness-synthesized) portion of review_flagged_count — the
+  // synthesis backstop records metric_pass=EMPTY → review_flag=true, so this is
+  // the artifact share of the flagged headline. writer-emitted flagged =
+  // review_flagged_count - reconstructed_count (0 <= reconstructed_count <= review_flagged_count).
+  reconstructed_count: number;
   // review_flagged_count / total_count, 0.0-1.0. Never null — GROUP BY agent only
   // yields agents with ≥1 outcome.
   review_flag_ratio: number;
@@ -98,6 +106,9 @@ export interface AgentFailurePatternRow {
   blocked_count: number;
   // fail_count + blocked_count.
   total_breakages: number;
+  // Reconstructed (harness-synthesized) portion of total_breakages — writer-emitted
+  // headline = total_breakages - reconstructed_count (0 <= reconstructed_count <= total_breakages).
+  reconstructed_count: number;
   // Deprecated alias of breakage_rate (name implied fail-only while the numerator
   // includes blocked) — kept one release.
   fail_rate: number;

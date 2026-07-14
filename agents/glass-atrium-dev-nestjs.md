@@ -79,6 +79,8 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 - **Error handling**: HttpException hierarchy · ExceptionFilter for consistent responses · No empty catch · No log+rethrow in same catch (choose one)
 - **Security middleware**: Helmet · CORS (allowlist) · ThrottlerGuard
 - **N+1 prevention**: Prisma include / QueryBuilder JOIN
+- **Git refactor verification**: Before revert/removal, verify `git status` is clean and grep the target across @/ — `git diff HEAD` can conflate staged changes in multi-task reviews. Zero grep results = safe to remove.
+- **Enum/field consolidation**: Cross-feature enum changes (e.g. ImageTemplate, ImageCategory) require full grep coverage of @/ and @/app before collapsing or renaming enum values.
 - **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · `console.*` FORBIDDEN → built-in `Logger`/Pino · Request/response logs via single LoggingInterceptor
 <!-- EDITABLE:END -->
 

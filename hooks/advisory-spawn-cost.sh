@@ -9,6 +9,11 @@
 # harmless for an "already heavy" threshold). Channel: STDERR advisory + exit 0. fail-open: ANY DB
 # error/timeout/absent psycopg/corrupted payload → exit 0. SELECT double-capped (connect 1s +
 # statement 1500ms; no timeout binary on stock macOS). psycopg Unix-socket only, never -h/-p.
+#
+# Latency: a short-TTL per-session read cache lets repeated spawns in one session reuse the last read
+# instead of re-importing psycopg + reconnecting each time (the total already lags ~1 turn, so a
+# few-second TTL adds no material staleness). Optimization ONLY — a miss/stale/error falls back to the
+# live read, so the advisory value/verdict is identical to the uncached path within the TTL.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -25,6 +30,8 @@ readonly CUMULATIVE_TOKEN_THRESHOLD=2000000
 
 # Read cumulative session tokens (1 integer). STUBBABLE via COST_ADVISORY_TEST_TOKENS (Bats).
 # fail-open → '0'. session_id via env-var + parameterized %s binding (neutralizes injection).
+# SC2329: invoked indirectly by name via hook_cached_int_read's dynamic dispatch — not dead code.
+# shellcheck disable=SC2329
 read_session_tokens() {
   local sid="${1:-}"
   if [[ -n "${COST_ADVISORY_TEST_TOKENS:-}" ]]; then
@@ -80,10 +87,9 @@ if [[ -z "${session_id}" ]]; then
 fi
 [[ -z "${session_id}" ]] && exit 0
 
-# 3. Read cumulative tokens + integer-normalize (non-digit bytes stripped, empty → 0).
-total_tokens="$(read_session_tokens "${session_id}")"
-total_tokens="$(printf '%s' "${total_tokens}" | tr -cd '0-9')"
-[[ -z "${total_tokens}" ]] && total_tokens=0
+# 3. Read cumulative tokens (short-TTL per-session cache; any cache anomaly → live read).
+#    hook_cached_int_read (hook-utils.sh) returns the integer-normalized value, identical to the live path.
+total_tokens="$(hook_cached_int_read SPAWN_COST_ADVISORY spawn-cost-advisory-cache read_session_tokens "${session_id}")"
 
 # 4. Threshold comparison — applied uniformly to every Agent spawn (cost is agent-independent).
 if ((total_tokens < CUMULATIVE_TOKEN_THRESHOLD)); then

@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
+import { buildReconstructedRowFilter } from "../attribution-sources.js";
 import {
   buildAgentMembershipFilter,
   loadAgentRegistry,
@@ -140,6 +141,8 @@ interface SuccessRateDbRow {
   success_count: bigint;
   failure_count: bigint;
   total_count: bigint;
+  // FILTER sub-count of total_count — reconstructed (harness-synthesized) rows only.
+  reconstructed_count: bigint;
   success_rate: Prisma.Decimal | null;
 }
 
@@ -163,6 +166,9 @@ interface ReviewFlagByAgentDbRow {
   agent: string;
   total_count: bigint;
   review_flagged_count: bigint;
+  // FILTER sub-count of review_flagged_count — flagged rows that are reconstructed
+  // (harness-synthesized). writer-emitted flagged = review_flagged_count - reconstructed_count.
+  reconstructed_count: bigint;
   review_flag_ratio: Prisma.Decimal | null;
 }
 
@@ -171,6 +177,8 @@ interface FailurePatternsDbRow {
   fail_count: bigint;
   blocked_count: bigint;
   total_breakages: bigint;
+  // FILTER sub-count of total_breakages — reconstructed (harness-synthesized) breakages.
+  reconstructed_count: bigint;
   fail_rate: Prisma.Decimal | null;
   last_breakage_at: Date;
   top_concerns: string[];
@@ -285,6 +293,9 @@ async function handleSuccessRate(
           WHERE result::text IN ('blocked', 'fail')
         )::bigint                                                      AS failure_count,
         COUNT(*)::bigint                                               AS total_count,
+        COUNT(*) FILTER (
+          WHERE ${buildReconstructedRowFilter()}
+        )::bigint                                                      AS reconstructed_count,
         CASE
           WHEN COUNT(*) FILTER (
             WHERE result::text IN ('done', 'done_with_concerns', 'blocked', 'fail')
@@ -349,6 +360,7 @@ export function mapSuccessRateRows(
         success_count: bigintToNumber(row.success_count),
         failure_count: bigintToNumber(row.failure_count),
         total_count: bigintToNumber(row.total_count),
+        reconstructed_count: bigintToNumber(row.reconstructed_count),
         success_rate:
           row.success_rate === null ? null : decimalToNumber(row.success_rate),
       },
@@ -578,6 +590,11 @@ async function handleReviewFlagByAgent(
           WHERE review_flag = true
             AND result::text IN ('done', 'done_with_concerns', 'blocked', 'fail')
         )::bigint                                                    AS review_flagged_count,
+        COUNT(*) FILTER (
+          WHERE review_flag = true
+            AND result::text IN ('done', 'done_with_concerns', 'blocked', 'fail')
+            AND ${buildReconstructedRowFilter()}
+        )::bigint                                                    AS reconstructed_count,
         CASE
           WHEN COUNT(*) FILTER (
             WHERE result::text IN ('done', 'done_with_concerns', 'blocked', 'fail')
@@ -602,13 +619,7 @@ async function handleReviewFlagByAgent(
       ORDER BY total_count DESC, agent ASC
     `;
 
-    const mapped: AgentReviewFlagByAgentRow[] = rows.map((row) => ({
-      agent: row.agent,
-      total_count: bigintToNumber(row.total_count),
-      review_flagged_count: bigintToNumber(row.review_flagged_count),
-      review_flag_ratio:
-        row.review_flag_ratio === null ? 0 : decimalToNumber(row.review_flag_ratio),
-    }));
+    const mapped = mapReviewFlagByAgentRows(rows);
 
     request.log.info(
       {
@@ -623,6 +634,31 @@ async function handleReviewFlagByAgent(
   } catch (error) {
     return failWithDb(request, reply, "/api/agents/review-flag-by-agent", error);
   }
+}
+
+// Test-visible — bigint→number coercion + reconstructed sub-count pass-through.
+// reconstructed_count isolates the harness-synthesized portion of
+// review_flagged_count, so the FE defaults the flagged headline to writer-emitted
+// (review_flagged_count - reconstructed_count). Clamp keeps the derivation safe
+// (0 <= reconstructed_count <= review_flagged_count) even on a malformed row.
+export function mapReviewFlagByAgentRows(
+  rows: ReadonlyArray<ReviewFlagByAgentDbRow>,
+): AgentReviewFlagByAgentRow[] {
+  return rows.map((row) => {
+    const reviewFlaggedCount = bigintToNumber(row.review_flagged_count);
+    const reconstructedCount = Math.min(
+      bigintToNumber(row.reconstructed_count),
+      reviewFlaggedCount,
+    );
+    return {
+      agent: row.agent,
+      total_count: bigintToNumber(row.total_count),
+      review_flagged_count: reviewFlaggedCount,
+      reconstructed_count: reconstructedCount,
+      review_flag_ratio:
+        row.review_flag_ratio === null ? 0 : decimalToNumber(row.review_flag_ratio),
+    };
+  });
 }
 
 // GET /api/agents/failure-patterns?days={7|30|90}
@@ -666,6 +702,9 @@ async function handleFailurePatterns(
           COUNT(*) FILTER (WHERE result::text = 'fail')::bigint    AS fail_count,
           COUNT(*) FILTER (WHERE result::text = 'blocked')::bigint AS blocked_count,
           COUNT(*)::bigint                                          AS total_breakages,
+          COUNT(*) FILTER (
+            WHERE ${buildReconstructedRowFilter()}
+          )::bigint                                                 AS reconstructed_count,
           MAX(record_ts)                                            AS last_breakage_at
         FROM core.outcomes
         WHERE record_ts >= ${windowLowerBound}
@@ -717,6 +756,7 @@ async function handleFailurePatterns(
         b.fail_count,
         b.blocked_count,
         b.total_breakages,
+        b.reconstructed_count,
         (b.total_breakages::numeric / NULLIF(t.total_outcomes, 0))::numeric(8,6) AS fail_rate,
         b.last_breakage_at,
         COALESCE(c.top_concerns, ARRAY[]::text[]) AS top_concerns
@@ -727,20 +767,7 @@ async function handleFailurePatterns(
       LIMIT ${FAILURE_PATTERNS_LIMIT}
     `;
 
-    const mapped: AgentFailurePatternRow[] = rows.map((row) => ({
-      agent: row.agent,
-      fail_count: bigintToNumber(row.fail_count),
-      blocked_count: bigintToNumber(row.blocked_count),
-      total_breakages: bigintToNumber(row.total_breakages),
-      // breakage_rate NULL only if total_outcomes was 0 — impossible here because
-      // the breakages CTE proves at least one outcome exists for the agent. Coerce
-      // to 0 defensively rather than leak a null through the `number` field.
-      // fail_rate = deprecated alias (numerator includes blocked — name was wrong).
-      fail_rate: row.fail_rate === null ? 0 : decimalToNumber(row.fail_rate),
-      breakage_rate: row.fail_rate === null ? 0 : decimalToNumber(row.fail_rate),
-      last_breakage_at: row.last_breakage_at.toISOString(),
-      top_concerns: row.top_concerns,
-    }));
+    const mapped = mapFailurePatternRows(rows);
 
     request.log.info(
       {
@@ -755,6 +782,34 @@ async function handleFailurePatterns(
   } catch (error) {
     return failWithDb(request, reply, "/api/agents/failure-patterns", error);
   }
+}
+
+// Test-visible — bigint→number coercion + reconstructed sub-count pass-through.
+// reconstructed_count isolates the harness-synthesized portion of total_breakages
+// so the FE defaults the breakages headline to writer-emitted (total_breakages -
+// reconstructed_count). Clamp keeps 0 <= reconstructed_count <= total_breakages.
+export function mapFailurePatternRows(
+  rows: ReadonlyArray<FailurePatternsDbRow>,
+): AgentFailurePatternRow[] {
+  return rows.map((row) => {
+    const totalBreakages = bigintToNumber(row.total_breakages);
+    // breakage_rate NULL only if total_outcomes was 0 — impossible here because
+    // the breakages CTE proves at least one outcome exists for the agent. Coerce
+    // to 0 defensively rather than leak a null through the `number` field.
+    // fail_rate = deprecated alias (numerator includes blocked — name was wrong).
+    const breakageRate = row.fail_rate === null ? 0 : decimalToNumber(row.fail_rate);
+    return {
+      agent: row.agent,
+      fail_count: bigintToNumber(row.fail_count),
+      blocked_count: bigintToNumber(row.blocked_count),
+      total_breakages: totalBreakages,
+      reconstructed_count: Math.min(bigintToNumber(row.reconstructed_count), totalBreakages),
+      fail_rate: breakageRate,
+      breakage_rate: breakageRate,
+      last_breakage_at: row.last_breakage_at.toISOString(),
+      top_concerns: row.top_concerns,
+    };
+  });
 }
 
 // GET /api/agents/lifecycle-stats?days={7|30|90}

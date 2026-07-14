@@ -208,6 +208,21 @@ zero_evidence() {
   [[ "${output}" == "unverified" ]]
 }
 
+# Word-boundary regression pins (finding #30): bare-substring co-occurrence
+# ("laTEST" + "passWORD") must NOT promote, while a genuine "test passes" must.
+
+@test "bug-fix 'latest password' substrings → unverified (word-boundary guard)" {
+  grade bug-fix true "done" hook-input "summary: updated the latest password validation" "src/fix.ts" || return 1
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "unverified" ]] || return 1
+}
+
+@test "bug-fix 'test passes' → verified_pass (boundary preserves true positive)" {
+  grade bug-fix true "done" hook-input "test passes" "src/fix.ts" || return 1
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_pass" ]] || return 1
+}
+
 @test "feature with a test-file path in files: → verified_pass" {
   grade feature true "done" hook-input "new endpoint" "src/auth.ts, src/auth.test.ts"
   [[ "${status}" -eq 0 ]]
@@ -230,6 +245,18 @@ zero_evidence() {
   grade feature true "done" hook-input "new endpoint" "src/auth.ts, src/router.ts"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "unverified" ]]
+}
+
+@test "feature: embedded-substring 'latest.ts' does NOT false-promote → unverified" {
+  grade feature true "done" hook-input "new endpoint" "src/latest.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "unverified" ]] || return 1
+}
+
+@test "feature: word-bounded 'src/foo.test.ts' still promotes → verified_pass" {
+  grade feature true "done" hook-input "new endpoint" "src/foo.test.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_pass" ]] || return 1
 }
 
 @test "refactor → unverified by task_type (no trustworthy block-resident marker)" {

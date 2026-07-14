@@ -232,20 +232,24 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
-  # git-txn / daemon-apply suites. `bats --recursive` over the 4 test roots
-  # picks up ALL 66 suites (30 test/ + 14 hooks/test/ + 17 scripts/test/ +
-  # 5 autoagent/test/) — a strict coverage increase over the old flat job's
-  # hand-listed explicit paths, which silently omitted any suite not on the list.
-  # Every suite is hermetic
+  # git-txn / daemon-apply suites — split across a matrix into 6 legs so each runs
+  # on its OWN runner concurrently. test/ (49 suites, incl. the two heaviest files
+  # doctor-auth-report-scan-sigpipe + deps-preflight-noninteractive) is sharded
+  # 3-way by a deterministic round-robin over its sorted *.bats, so its wall-clock
+  # drops to ~1/3; hooks/test (35), scripts/test (19), autoagent/test (5) each run
+  # as a single leg. The shards + single legs cover ALL 108 suites in aggregate. A
+  # matrix job is a SINGLE node in the `needs` graph, so ci-pass observing
+  # `test-bash` already aggregates every leg (any one leg's failure reddens the
+  # whole test-bash node). Every suite is hermetic
   # (mktemp sandboxes + PATH-prepended stub binaries for
   # psql/createdb/launchctl/tmux/claude), so this job needs neither Postgres nor
   # launchd nor the claude CLI. None of the suites load bats-support/bats-assert
   # helper libraries, so a plain bats-core install suffices (no BATS_LIB_PATH).
   # ---------------------------------------------------------------------------
   test-bash:
-    name: "test: bats (hooks · scripts · installer · autoagent)"
+    name: "test: bats (${{ matrix.name }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       # mikepenz/action-junit-report posts inline PR annotations via a check-run
@@ -254,6 +258,40 @@ jobs:
       checks: write
     needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
     if: needs.detect-changes.outputs.bash == 'true'
+    strategy:
+      # fail-fast:false so a red leg does NOT cancel the others — each leg
+      # reports independently and ci-pass still observes the aggregate result.
+      fail-fast: false
+      matrix:
+        # test/ carries the two heaviest files and blows the per-leg timeout as a
+        # single root, so it is sharded 3-way (round-robin over its sorted *.bats,
+        # partitioned in the run step). The other three roots stay single legs —
+        # `shard:0`/`shards:0` selects the unsharded --recursive branch. 6 legs.
+        include:
+          - name: "test (shard 1/3)"
+            root: test
+            shard: 1
+            shards: 3
+          - name: "test (shard 2/3)"
+            root: test
+            shard: 2
+            shards: 3
+          - name: "test (shard 3/3)"
+            root: test
+            shard: 3
+            shards: 3
+          - name: hooks/test
+            root: hooks/test
+            shard: 0
+            shards: 0
+          - name: scripts/test
+            root: scripts/test
+            shard: 0
+            shards: 0
+          - name: autoagent/test
+            root: autoagent/test
+            shard: 0
+            shards: 0
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -267,28 +305,77 @@ jobs:
       - name: Install GNU parallel (bats --jobs dependency)
         run: sudo apt-get update && sudo apt-get install -y parallel
 
-      # bats `-o/--output <dir>` requires the directory to ALREADY EXIST (per
-      # `bats --help`: "Directory to write report files (must exist)"), so we
-      # mkdir it first. `--report-formatter junit` KEEPS the pretty console
-      # output AND writes a junit report.xml (NOT `--formatter junit`, which
-      # would replace the readable console log with raw XML). We do NOT wrap the
-      # bats call in `|| true`: the reporter step below runs on if:always() and
-      # the ci-pass gate must still observe a real bats failure exit code.
-      - name: Run bats suites (recursive over the 4 roots)
+      # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
+      # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
+      # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,
+      # so a file that HANGS never flushes — the CI log never names it, it just
+      # burns the 15-min leg timeout in silence. `parallel --timeout 240` kills
+      # any single file exceeding 240s (no legit file runs >~60s; the hang is
+      # ~900s) and prints a warning naming the killed command (which carries the
+      # file path), while `--tagstring '{}'` prefixes every output line with the
+      # file path — so the offender is unmistakable either way.
+      #
+      # junit output is intentionally dropped: concurrent per-file bats writes
+      # to one `--output` dir would collide. The annotate step tolerates a
+      # missing report (if:always + require_tests:false), and the ci-pass gate
+      # keys on parallel's exit code — NOT swallowed (no `|| true`), so a failed
+      # or timed-out file still reddens the leg.
+      - name: Run bats suite (${{ matrix.name }})
+        env:
+          # env-indirection: bind each matrix value to a shell var and dereference
+          # only "${ROOT}"/"${SHARD}"/"${SHARDS}" in the body (never interpolate
+          # ${{ }} into the run: text) — the expression-injection-safe shape ci-pass uses.
+          ROOT: ${{ matrix.root }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+          # Point every suite's mktemp -d sandbox (mktemp honors $TMPDIR) at the
+          # runner's tmpfs so the I/O-bound installer fixtures — copy/symlink farms
+          # + the doctor-auth 1500-file fixture — land in RAM. Linux-CI-only:
+          # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
+          TMPDIR: /dev/shm
         run: |
           mkdir -p reports/bats
-          # File-level parallelism: --jobs $(nproc) runs files concurrently while
-          # --no-parallelize-within-files keeps tests WITHIN a file sequential
-          # (setup_file-once + ordered-side-effect semantics preserved). Derives
-          # jobs from the runner core count (2-4 on GitHub), NOT a local constant.
-          # Sequential fallback if parallelism is ever suspected of a flake — drop
-          # the --jobs/--no-parallelize-within-files pair:
-          #   bats --recursive \
-          #     --report-formatter junit --output reports/bats \
-          #     test/ hooks/test/ scripts/test/ autoagent/test/
-          bats --jobs "$(nproc)" --no-parallelize-within-files --recursive \
-            --report-formatter junit --output reports/bats \
-            test/ hooks/test/ scripts/test/ autoagent/test/
+          # One GNU parallel job per *.bats file (fed NUL-delimited so any odd
+          # path survives). parallel owns the file-level concurrency: --jobs
+          # $(nproc) bounds it to the runner core count; --timeout 240 kills a
+          # single file running >240s (the diagnostic: name the hanging file);
+          # --tagstring '{}' tags every output line with the file path. Each
+          # `bats {}` runs exactly ONE file with no --jobs, so bats stays serial
+          # WITHIN the file by DEFAULT (setup_file-once + ordered side effects
+          # preserved) — a within/across-file --no-parallelize flag is both
+          # redundant here AND rejected by bats (it requires --jobs>=2). parallel's
+          # non-zero exit (a failed OR timed-out file) rides the pipe out —
+          # pipefail is on via the GitHub default shell — to fail the leg, so the
+          # ci-pass gate sees the real code.
+          run_bats() {
+            parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' \
+              bats {}
+          }
+          if [[ "${SHARDS}" -gt 0 ]]; then
+            # Sharded root: deterministic round-robin partition of this root's *.bats
+            # across SHARDS legs. `sort` gives a stable index; `find` covers nested
+            # dirs (test/comment-audit) AND auto-includes any newly-added file, so no
+            # hardcoded glob can silently drift out of coverage. Portable while-read
+            # (no bash-4 mapfile) keeps the partition Bash-3.2-safe.
+            targets=()
+            i=0
+            while IFS= read -r f; do
+              if [[ $((i % SHARDS + 1)) -eq "${SHARD}" ]]; then
+                targets+=("${f}")
+              fi
+              i=$((i + 1))
+            done < <(find "${ROOT}" -name '*.bats' | sort)
+            # Loud-fail: an empty shard means SHARDS exceeds the file count (a
+            # misconfigured matrix), not a benign no-op — surface it explicitly.
+            if [[ "${#targets[@]}" -eq 0 ]]; then
+              echo "FATAL: shard ${SHARD}/${SHARDS} of ${ROOT} matched 0 *.bats files" >&2
+              exit 1
+            fi
+            printf '%s\0' "${targets[@]}" | run_bats
+          else
+            # Unsharded root: every *.bats under the tree, one parallel job each.
+            find "${ROOT}" -name '*.bats' -print0 | sort -z | run_bats
+          fi
 
       # Inline PR annotations from the junit report. Separate step, if:always()
       # so annotations post even when bats failed — but this step does NOT
@@ -300,7 +387,9 @@ jobs:
         uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
         with:
           report_paths: reports/bats/report.xml
-          check_name: bats results
+          # Per-leg check_name → 6 distinct check runs (one per leg) instead of
+          # legs colliding on a single "bats results" check.
+          check_name: "bats results (${{ matrix.name }})"
           fail_on_failure: false
           require_tests: false
 
@@ -312,10 +401,12 @@ jobs:
       # zero steps; those are surfaced by ci-pass's skip=OK semantics instead).
       - name: Summarize bats results
         if: always()
+        env:
+          LABEL: ${{ matrix.name }}
         run: |
           report="reports/bats/report.xml"
           if [[ ! -f "${report}" ]]; then
-            echo "## bats — no junit report produced (suite did not run)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "## bats (${LABEL}) — no junit report produced (suite did not run)" >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           # Sum the attributes across all <testsuite> elements. grep -o keeps
@@ -330,7 +421,7 @@ jobs:
           skipped="$(extract_sum skipped)"
           passed="$(( tests - failures - errors - skipped ))"
           {
-            echo "## bats results"
+            echo "## bats results (${LABEL})"
             echo ""
             echo "| total | passed | failed | errors | skipped |"
             echo "|------:|-------:|-------:|-------:|--------:|"

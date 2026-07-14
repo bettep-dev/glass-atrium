@@ -979,6 +979,11 @@ function AgentStackedBarBody({ state, onRetry }) {
 function AgentStackedBarRow({ row }) {
   const { AgentBadge } = window.UI;
   const total = row.total;
+  // headline = writer-emitted (total - reconstructed) — 합성 복구행은 headline 에서 분리하고
+  // 옆의 artifact sub-note 로 노출 (KpiBucket 패턴). 분포 bar 는 전체 rows 기준 유지.
+  const reconstructed = Math.min(Number(row.reconstructed) || 0, total);
+  const writerEmitted = total - reconstructed;
+  const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
 
   // pseudo-agent (subagent_stop_missing 등) → ◇ 표식 + dim 처리로 실 agent 와 구분.
   const isPseudoAgent = isNonActionableAgentO(row.agent);
@@ -994,7 +999,19 @@ function AgentStackedBarRow({ row }) {
           {isPseudoAgent && <GlyphO name="diamond" className="mr-1"/>}
           {row.agent}
         </span>
-        <span className="font-mono text-dim fs-meta">{formatIntO(total)}</span>
+        {reconstructed > 0 && (
+          <span
+            className="font-mono fs-micro"
+            style={{ color: `rgb(var(${synthMeta.colorVar}))` }}
+            title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
+            {synthMeta.symbol} {formatIntO(reconstructed)}
+          </span>
+        )}
+        <span
+          className="font-mono text-dim fs-meta"
+          title={reconstructed > 0 ? `${writerEmitted} writer-emitted (of ${total} total, ${reconstructed} reconstructed)` : undefined}>
+          {formatIntO(writerEmitted)}
+        </span>
       </div>
       <div className="flex h-5 rounded overflow-hidden border border-line fs-micro font-mono text-white">
         {ANALYTICS_KPI_ORDER.map((key) => {
@@ -2831,6 +2848,8 @@ function buildByResultReconstructedMapO(byResult) {
 }
 
 // per-result cross-analysis x4 응답 → 에이전트별 카운트 stitch. 인덱스 = resultOrder.
+// reconstructed = 각 by_agent row 의 reconstructed_count 누적(합성 복구행) — headline 을
+// writer-emitted(total - reconstructed)로 분리, KpiBucket sub-line 과 동일 패턴. 필드 부재(구 응답) → 0.
 // 반환: total desc top-N.
 function buildAgentStackO(perResultPayloads, resultOrder, topN) {
   const byAgent = new Map();
@@ -2839,10 +2858,12 @@ function buildAgentStackO(perResultPayloads, resultOrder, topN) {
     const rows = Array.isArray(payload?.by_agent_top_10) ? payload.by_agent_top_10 : [];
     for (const row of rows) {
       if (!row || typeof row.agent !== 'string') continue;
-      const entry = byAgent.get(row.agent) || { agent: row.agent, byResult: {}, total: 0 };
+      const entry = byAgent.get(row.agent) || { agent: row.agent, byResult: {}, total: 0, reconstructed: 0 };
       const count = Number(row.count) || 0;
+      const reconstructed = Math.min(Number(row.reconstructed_count) || 0, count);
       entry.byResult[result] = count;
       entry.total += count;
+      entry.reconstructed += reconstructed;
       byAgent.set(row.agent, entry);
     }
   });

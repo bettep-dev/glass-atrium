@@ -20,6 +20,11 @@ import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import { nextOccurrenceUtc, DAEMON_CRON_SCHEDULE } from "../schedule-next-fire.js";
+import {
+	queryDaemonAggRows,
+	resolveDaemonStatuses,
+	type DaemonAggRow,
+} from "../architecture/live-overlay.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { getUpdateStatus } from "../update-status.js";
 import type {
@@ -77,12 +82,6 @@ interface TimeseriesRow {
   cache_creation_tokens: bigint;
   cost_usd: Prisma.Decimal;
   session_count: bigint;
-}
-
-interface DaemonRow {
-  daemon_name: string;
-  last_run_at: Date | null;
-  last_status: string | null;
 }
 
 export async function registerDashboardRoutes(app: FastifyInstance): Promise<void> {
@@ -251,36 +250,10 @@ async function handleDaemonStatus(
   const start = Date.now();
   const prisma = getPrisma();
   try {
-    // DISTINCT ON yields the latest row per daemon by started_at desc — index-friendly
-    // (matches @@index([daemonName, runDate(sort: Desc)]) in schema).
-    // WHERE clause aligns with DAEMON_BOARD.
-    const rows = await prisma.$queryRaw<DaemonRow[]>`
-      SELECT DISTINCT ON (daemon_name)
-        daemon_name::text AS daemon_name,
-        started_at AS last_run_at,
-        status::text AS last_status
-      FROM core.daemon_runs
-      WHERE daemon_name IN ('autoagent', 'wiki', 'daily-restart-autoagent', 'daily-restart-wiki')
-      ORDER BY daemon_name, started_at DESC
-    `;
-    const byName = new Map<string, DaemonRow>();
-    for (const row of rows) {
-      byName.set(row.daemon_name, row);
-    }
-
-    const now = new Date();
-    const items: DaemonStatusItem[] = DAEMON_BOARD.map((name) => {
-      const row = byName.get(name);
-      const lastRunAt = row?.last_run_at ?? null;
-      return {
-        daemon_name: name,
-        last_run_at: lastRunAt === null ? null : lastRunAt.toISOString(),
-        // Narrow PG `status::text` (string | null) → DaemonStatusValue union.
-        // Unknown enum values defensively coerce to null rather than leaking raw text.
-        last_status: narrowDaemonStatus(row?.last_status ?? null),
-        expected_next_at: nextOccurrenceUtc(DAEMON_CRON_SCHEDULE[name], DAY_BUCKET_TIMEZONE, now),
-      };
-    });
+    // Shared latest-row-per-daemon + install-anchor fetch (live-overlay.ts) so this board
+    // resolves off the SAME DISTINCT ON query as the architecture overlay. DAEMON_BOARD-aligned.
+    const [rows, installAnchor] = await queryDaemonAggRows(prisma);
+    const items = buildDaemonStatusItems(rows, new Date(), installAnchor);
 
     request.log.info(
       { route: "/api/dashboard/daemon-status", durationMs: Date.now() - start },
@@ -291,6 +264,34 @@ async function handleDaemonStatus(
   } catch (error) {
     return failWithDb(request, reply, "/api/dashboard/daemon-status", error);
   }
+}
+
+// Pure daemon rows → DaemonStatusItem[] seam (DB-free, unit-tested). Routes the rows
+// through the shared resolveDaemonStatuses (live-overlay F#38) so this board carries the
+// SAME synthesized 'missing'/'stale' semantics as the architecture overlay + health board
+// (a never-run daemon → 'missing', an overdue one → 'stale') instead of the raw last_status
+// this route used to leak — then attaches the dashboard-only next-fire field.
+export function buildDaemonStatusItems(
+  rows: DaemonAggRow[],
+  now: Date,
+  installAnchor: Date | null,
+): DaemonStatusItem[] {
+  const statusByName = new Map(
+    resolveDaemonStatuses(rows, now.getTime(), installAnchor).map(
+      (d) => [d.daemon_name, d] as const,
+    ),
+  );
+  return DAEMON_BOARD.map((name) => {
+    const resolved = statusByName.get(name);
+    return {
+      daemon_name: name,
+      last_run_at: resolved?.last_run_at ?? null,
+      // resolveDaemonStatuses already synthesized missing/stale; narrow the string union
+      // (unknown enum values defensively coerce to null rather than leaking raw text).
+      last_status: narrowDaemonStatus(resolved?.status ?? null),
+      expected_next_at: nextOccurrenceUtc(DAEMON_CRON_SCHEDULE[name], DAY_BUCKET_TIMEZONE, now),
+    };
+  });
 }
 
 // helpers

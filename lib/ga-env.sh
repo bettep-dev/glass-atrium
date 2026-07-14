@@ -206,7 +206,6 @@ ga_init_env() {
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
     "SubagentStart	telemetry-activation.sh	"
-    "SubagentStop	advisory-preedit-facts.sh	"
     "SubagentStop	agent-tracker.sh	"
     "SubagentStop	post-edit-typecheck.sh	"
     "SubagentStop	track-outcome.sh	"
@@ -248,6 +247,16 @@ ga_init_env() {
     # shellcheck source=/dev/null
     source "${LIB_DIR}/${_e5_lib}"
   done
+
+  # fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
+  # helper consumed by kill_daemon_tmux_sessions (install/uninstall teardown) to reap
+  # the orphan bun squatting a daemon fakechat port. Loud-fail (die) on an absent lib
+  # like the E5 libs — a missing lib is a broken install, never a silent skip
+  # (shared-self-improve-hygiene Precondition Loud-Fail Principle).
+  [[ -f "${LIB_DIR}/fakechat-cleanup.sh" ]] \
+    || die "fakechat-cleanup lib missing: ${LIB_DIR}/fakechat-cleanup.sh (broken install — scripts/lib is incomplete)"
+  # shellcheck source=/dev/null
+  source "${LIB_DIR}/fakechat-cleanup.sh"
 
   # run-mode flag DEFAULTS — plain (NON-readonly) vars so the caller's parse_args
   # can still set them. The lib defines the defaults; the entry point parses argv.
@@ -363,6 +372,11 @@ __ga_detect_stat_os() {
     __GA_STAT_IS_BSD=0
   fi
 }
+
+# Warm the flavor memo at load so `__GA_STAT_IS_BSD` is set in the sourcing shell — inherited by the
+# `$(...)` command-sub subshells in wrapper callers (ga-doctor.sh/ga-tui-preflight.sh), so the per-call
+# `uname` fork in the stat_dev/stat_perms/stat_mtime hot paths disappears (idempotent on re-source).
+__ga_detect_stat_os
 
 # stat_dev <path> — numeric st_dev (same %d specifier on both flavors).
 stat_dev() {

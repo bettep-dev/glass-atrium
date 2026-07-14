@@ -44,6 +44,46 @@ print(d.get('tool_input', {}).get(sys.argv[1], ''))
 " "${field}" 2>/dev/null || printf '%s\n' ""
 }
 
+# Single-pass multi-field extractor for TOP-LEVEL fields — parses the hook JSON input ONCE and
+# emits each requested field's value in ONE python3 invocation (one interpreter cold-start instead
+# of N). Per-field output is byte-identical to hook_get_field for the same key: str() of the value,
+# missing key → empty, trailing newlines AND NUL bytes stripped to mirror the $() command-substitution
+# capture (bash drops NUL bytes), then NUL-terminated in argument order. The replace('\x00','') is
+# required: json PERMITS \u0000 in a string (json.load decodes it to a real NUL) - a NUL is NOT a
+# delimiter a JSON string cannot contain — and an un-stripped embedded NUL would truncate the
+# `read -r -d ''` consumer mid-value, diverging from hook_get_field's $()-capture. Fail-open: python3
+# absent / malformed JSON / non-object root → every field degrades to empty, matching N sequential
+# hook_get_field calls.
+# Args: $1=json_input; $2..=top-level field names.
+# Consume with one `IFS= read -r -d '' var` per field, e.g.:
+#   { IFS= read -r -d '' a; IFS= read -r -d '' b; } < <(hook_get_fields "${input}" a b)
+hook_get_fields() {
+  local input="${1}" _f
+  shift
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  printf '%s\n' "${input}" \
+    | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    if not isinstance(d, dict):
+        d = {}
+except Exception:
+    d = {}
+out = sys.stdout
+for f in sys.argv[1:]:
+    out.write(str(d.get(f, "")).rstrip("\n").replace("\x00", ""))
+    out.write("\0")
+' "$@" 2>/dev/null || {
+    # python3 absent / hard failure → N empty NUL-terminated values (parity with N× hook_get_field).
+    for _f in "$@"; do
+      printf '\0'
+    done
+  }
+}
+
 # Emit a structured JSON error object to stderr.
 # Args: $1=error_code $2=severity $3=message
 #       $4=suggestion (optional) $5=context_json (optional, default "{}")
@@ -94,6 +134,14 @@ hook_require_python3() {
 # Args: $1=raw_identifier · stdout: sanitized segment (may be empty).
 hook_path_safe_key() { printf '%s' "${1}" | tr -cd 'A-Za-z0-9_-'; }
 
+# Join all arguments into a single `|`-separated string — used to fold a pattern array into one ERE
+# alternation (top-level `|` is lowest precedence, so each pattern's internal groups stay intact).
+# Args: $@=strings · stdout: the joined string (no trailing newline).
+hook_join_alt() {
+  local IFS='|'
+  printf '%s' "$*"
+}
+
 HOOK_LOG_DIR="${HOME}/.claude/logs"
 HOOK_DATA_DIR="${HOME}/.claude/data"
 
@@ -102,4 +150,124 @@ emit_error() {
   local code="${1}" severity="${2}" message="${3}"
   local suggestion="${4:-}" ctx="${5:-"{}"}"
   hook_emit_error "${code}" "${severity}" "${message}" "${suggestion}" "${ctx}"
+}
+
+# Short-TTL single-integer read cache for best-effort advisory hooks. Optimization ONLY — lets a hook
+# skip an expensive live source (a fresh DB connect) when the same value was read within the TTL.
+# Read side. On a valid, fresh hit sets the global HOOK_CACHE_VALUE (the cached integer) and returns
+# 0; ANY anomaly (unreadable / non-integer epoch-or-value / expired / future epoch / bad TTL) returns
+# 1 → the caller MUST fall back to the live read (a real advisory value is never suppressed by a bad
+# cache). Value domain is non-negative integers (token counts) — matching the advisory sources.
+# The global-var return channel (not stdout) is deliberate: the caller invokes this DIRECTLY in an
+# if-condition (`if hook_cache_read ...; then`), which disables set -e inside the function so the
+# internal `return 1` miss paths never trip a caller's fail-open ERR trap — the same convention as
+# scope_drift_read_cache (CACHED_* globals). A `$( )` capture would re-arm ERR in the subshell.
+# File layout mirrors scope_drift_read_cache: line1=epoch, line2=value. Args: $1=cache_file $2=ttl_s.
+hook_cache_read() {
+  local cache_file="${1}" ttl="${2}"
+  [[ -r "${cache_file}" ]] || return 1
+  [[ "${ttl}" =~ ^[0-9]+$ ]] || return 1
+
+  local cached_epoch cached_value now age
+  {
+    IFS= read -r cached_epoch || return 1
+    IFS= read -r cached_value || return 1
+  } <"${cache_file}"
+
+  # Corrupt header/value (non-integer) → live read.
+  [[ "${cached_epoch}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${cached_value}" =~ ^[0-9]+$ ]] || return 1
+
+  # TTL freshness. A future epoch (clock skew) is treated as stale. Non-final-in-&&-list arithmetic,
+  # so set -e/ERR ignore its false-exit (identical pattern to scope_drift_read_cache).
+  now="$(date +%s)"
+  [[ "${now}" =~ ^[0-9]+$ ]] || return 1
+  ((now < cached_epoch)) && return 1
+  age=$((now - cached_epoch))
+  ((age > ttl)) && return 1
+
+  # Cross-file return channel — consumed by the caller in the true-branch. SC2034: used elsewhere.
+  # shellcheck disable=SC2034
+  HOOK_CACHE_VALUE="${cached_value}"
+  return 0
+}
+
+# Short-TTL cache — write side. Atomic temp+rename (same-FS). Best-effort: the caller swallows a
+# non-zero return, so a write failure only forces a harmless live re-read next time. Prepends the
+# current epoch as line 1, then one line per value in argument order; a multi-line value (e.g. a
+# path list) MUST be the LAST arg so the read side's final slurp round-trips.
+# Args: $1=cache_file  $2..=values (each its own line; last may be multi-line).
+hook_cache_write() {
+  local cache_file="${1}"
+  shift
+  local cache_dir tmp now v
+  cache_dir="$(dirname "${cache_file}")"
+  mkdir -p "${cache_dir}" || return 1
+  now="$(date +%s)"
+  tmp="${cache_file}.tmp.$$"
+  if ! {
+    printf '%s\n' "${now}"
+    for v in "$@"; do
+      printf '%s\n' "${v}"
+    done
+  } >"${tmp}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  mv -f "${tmp}" "${cache_file}" || {
+    rm -f "${tmp}"
+    return 1
+  }
+  return 0
+}
+
+# Cached-or-live single-integer advisory read — the shared body of the two PreToolUse(Agent) advisory
+# hooks (context-budget + spawn-cost), which differ only in env prefix, cache subdir, and live reader.
+# A fresh within-TTL cache hit SKIPS the caller's expensive live source (psycopg import + connect); a
+# miss/stale/unreadable/bypassed/error degrades to the live read (never suppresses the advisory, never
+# fabricates a value). The stored + returned value is integer-normalized (non-digit bytes stripped,
+# empty → 0) so a hit is byte-identical to the live path (verdict parity). Caching is disabled when the
+# session key sanitizes to empty (no shared key) or <PREFIX>_CACHE_BYPASS is set. Per-hook config is
+# resolved by ${!var} indirection (Bash 3.2-safe): <PREFIX>_CACHE_TTL (unset/non-integer → 10),
+# <PREFIX>_CACHE_DIR (unset → HOOK_LOG_DIR/<default_subdir>), <PREFIX>_CACHE_BYPASS.
+# live_fn MUST already be defined by the caller (dependency inversion) — it is dispatched as
+# `live_fn <sid>` and must print the raw integer on stdout.
+# Args: $1=env_prefix $2=default_cache_subdir $3=live_fn $4=session_id · stdout: the integer.
+hook_cached_int_read() {
+  local env_prefix="${1}" default_subdir="${2}" live_fn="${3}" sid="${4}"
+  local ttl_var="${env_prefix}_CACHE_TTL" dir_var="${env_prefix}_CACHE_DIR"
+  local bypass_var="${env_prefix}_CACHE_BYPASS"
+  local ttl cache_dir cache_file safe_sid value
+
+  ttl="${!ttl_var:-10}"
+  [[ "${ttl}" =~ ^[0-9]+$ ]] || ttl=10
+  safe_sid="$(hook_path_safe_key "${sid}")"
+  cache_dir="${!dir_var:-${HOOK_LOG_DIR}/${default_subdir}}"
+  cache_file=""
+  [[ -n "${safe_sid}" ]] && cache_file="${cache_dir}/${safe_sid}.cache"
+
+  # Cache hit → reuse (skips the caller's live source). Direct call in the if-condition (NOT $( )) so
+  # set -e is disabled inside hook_cache_read → its miss `return 1` never trips a caller's fail-open ERR
+  # trap; the hit value comes back via the global HOOK_CACHE_VALUE. Predicate call → SC2310.
+  if [[ -n "${cache_file}" ]] && [[ -z "${!bypass_var:-}" ]]; then
+    # shellcheck disable=SC2310
+    if hook_cache_read "${cache_file}" "${ttl}"; then
+      printf '%s\n' "${HOOK_CACHE_VALUE}"
+      return 0
+    fi
+  fi
+
+  # Live read + integer-normalize so the cached value equals the live value exactly.
+  value="$("${live_fn}" "${sid}")"
+  value="$(printf '%s' "${value}" | tr -cd '0-9')"
+  [[ -z "${value}" ]] && value=0
+
+  # Persist for subsequent same-session spawns (best-effort — a write failure only forces a re-read).
+  if [[ -n "${cache_file}" ]]; then
+    # shellcheck disable=SC2310
+    hook_cache_write "${cache_file}" "${value}" || true
+  fi
+
+  printf '%s\n' "${value}"
+  return 0
 }

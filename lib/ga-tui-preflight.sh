@@ -326,12 +326,17 @@ preflight_guide_xcode_clt() {
   xcode-select --install >/dev/null 2>&1 || true
 
   preflight_out "$(c "${C_DIM}" "waiting for the toolchain to appear (press Ctrl-C to abort) …")"
-  local waited=0
-  # poll once per second; ga_detect_xcode_clt is a cheap path-existence check.
+  # poll once per second; ga_detect_xcode_clt is a cheap path-existence check. User-driven wait —
+  # intentionally UNBOUNDED (the toolchain install is user-paced; Ctrl-C aborts).
+  local last_dot="${SECONDS}"
   while [[ "$(ga_detect_xcode_clt)" != "present" ]]; do
     /bin/sleep 1
-    waited=$((waited + 1))
-    [[ $((waited % 5)) -eq 0 ]] && preflight_out "$(c "${C_DIM}" ".")"
+    # heartbeat dot every ~5 WALL-CLOCK seconds (SECONDS-delta anchor — a per-iteration counter
+    # drifts if a probe stalls).
+    if [[ "$((SECONDS - last_dot))" -ge 5 ]]; then
+      preflight_out "$(c "${C_DIM}" ".")"
+      last_dot="${SECONDS}"
+    fi
   done
   preflight_line ""
   preflight_line "$(c "${C_OK}" "[ok]") Xcode Command Line Tools present."
@@ -406,18 +411,25 @@ ga_render_auth_script() { printf '%s\n' "${GA_DIR}/scripts/render-claude-auth.sh
 ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.sh"; }
 
 # headless_auth_selftest — source the rendered secrets file (claude_auth_load_env) and run a minimal
-# `claude -p` in a keychain-bypassing manner; return 0 iff the CLI answers (rc 0 AND no 401/credential
+# `claude -p` (on the daemons' configured cheap haiku model, never the default Fable-class model) in a
+# keychain-bypassing manner; return 0 iff the CLI answers (rc 0 AND no 401/credential
 # signature in its output). This is THE gate signal: a green self-test means the launchd daemons will
 # authenticate headlessly. Keychain-bypass: claude_auth_load_env exports CLAUDE_CODE_OAUTH_TOKEN from
 # the secrets file; the env credential takes precedence over the keychain OAuth item for a `claude -p`
-# call, so a successful probe proves the env path (not the keychain). The probe output is scanned for
+# call, so a successful probe proves the env path (not the keychain). CREDENTIAL ISOLATION: the probe
+# runs under `env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN` so a competing higher-precedence
+# Anthropic credential in the install shell cannot SHADOW the rendered OAuth token (the false-401 root
+# cause). On failure it emits an ACTIONABLE stderr message disambiguating token-absent from token-
+# rejected — never printing the token value. The probe output is scanned for
 # the daemon_cycle.py auth signatures (401/403 / "Invalid authentication credentials" / "Failed to
 # authenticate") so a non-zero-masking CLI that still 401s is caught. Output is otherwise DISCARDED
-# (never logged) — it could echo the rejected credential. Returns 2 when the lib is absent. CLAUDE bin +
+# (never logged) — it could echo the rejected credential. The probe is BOUNDED by run_with_timeout
+# (GA_AUTH_SELFTEST_TIMEOUT_SECS, default 30s) so a hung CLI on this menu hot path cannot stall the
+# install — a timeout (exit 124) is treated as a self-test failure. Returns 2 when the lib is absent. CLAUDE bin +
 # lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
 # drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
-  local claude_bin env_lib probe_out probe_rc=0
+  local claude_bin env_lib probe_out probe_rc=0 haiku_model
   claude_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
   env_lib="${GA_AUTH_ENV_LIB:-$(ga_claude_auth_env_lib)}"
 
@@ -425,6 +437,13 @@ headless_auth_selftest() {
     echo "headless self-test: claude-auth-env lib absent (${env_lib})" >&2
     return 2
   fi
+
+  # CHEAP-MODEL PIN: verify auth on the daemons' configured haiku model, never the default Fable-class
+  # model — resolved from the daemon-config.json SoT via atrium_resolve_haiku_model (sourced at startup
+  # by ga-env.sh's E5 loop) so the self-test and the nightly daemons authenticate against the SAME model
+  # id (no dated-pin drift). GA_AUTH_DAEMON_CONFIG override hook is a bats test seam (mirrors
+  # GA_AUTH_CLAUDE_BIN / DOCTOR_AUTH_REPORTS_DIR); empty → the helper's canonical default.
+  haiku_model="$(atrium_resolve_haiku_model "${GA_AUTH_DAEMON_CONFIG:-}")"
 
   # Run the source + probe in a SUBSHELL so the exported credential never leaks into the install
   # process environment beyond the probe (set -a side effects contained). The lib's claude_auth_load_env
@@ -438,16 +457,56 @@ headless_auth_selftest() {
     # shellcheck source=scripts/lib/claude-auth-env.sh
     . "${env_lib}" 2>/dev/null
     claude_auth_load_env >/dev/null 2>&1 || true
-    "${claude_bin}" -p --output-format text "reply with OK" 2>&1
+    # CREDENTIAL ISOLATION: strip the higher-precedence Anthropic credential env vars so ONLY the
+    # just-rendered CLAUDE_CODE_OAUTH_TOKEN (loaded above) can authenticate this probe. The subshell
+    # inherits the FULL env of the install shell, and a competing ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+    # out-precedes the OAuth token → a FALSE 401 even though the rendered token is valid. `env -u`
+    # clears only those two — CLAUDE_CODE_OAUTH_TOKEN (the token under test) + CLAUDE_CONFIG_DIR (the
+    # config LOCATION, not a competing credential) are DELIBERATELY preserved. Residual shadow axis: a
+    # CLAUDE_CONFIG_DIR-scoped STORED credential can still out-precede the env token — the diagnostic
+    # branch below names it, but the API-key env vars are the primary competing axis this strips.
+    # BOUNDED probe: this self-test runs on menu hot paths, so the `claude -p` call MUST have a hard
+    # ceiling — run_with_timeout (ga-env.sh) kills the whole process group on expiry (exit 124) so a
+    # hung CLI (network stall / stuck credential prompt) can never freeze the install. `env` exec-chains
+    # into claude in the SAME process group, so the timeout still bounds it. stdin is pinned to /dev/null
+    # so the CLI cannot block reading it. exit 124 is non-zero → caught by the probe_rc gate below.
+    run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${haiku_model}" "reply with OK" </dev/null 2>&1
   )" || probe_rc=$?
 
+  # SELF-TEST FAILURE = a non-zero probe exit (a non-zero `claude -p` OR a run_with_timeout expiry,
+  # exit 124) OR a rc-0-masking 401/credential signature in the body (the CLI can exit 0 while
+  # reporting an API error in-band; matches the daemon_cycle.py _HAIKU_AUTH_PATTERNS set). Consolidated
+  # so the diagnostic disambiguation below runs for BOTH failure modes before the single return 1.
+  local failed=0
   if [[ "${probe_rc}" -ne 0 ]]; then
-    return 1
+    failed=1
+  elif printf '%s' "${probe_out}" | grep -qiE "${AUTH_FAIL_RE}"; then
+    failed=1
   fi
-  # rc 0 but a 401/credential signature in the body → still an auth failure (the CLI can exit 0 while
-  # reporting an API error in-band). Match the daemon_cycle.py _HAIKU_AUTH_PATTERNS set (case-insensitive).
-  if printf '%s' "${probe_out}" \
-    | grep -qiE "${AUTH_FAIL_RE}"; then
+
+  if ((failed)); then
+    # DIAGNOSTIC DISAMBIGUATION: turn the opaque "self-test still 401" into an actionable message by
+    # asserting whether the OAuth token actually reached the probe env. The token is exported ONLY inside
+    # the probe subshell (never leaks to the parent), so re-source in a throwaway subshell and test
+    # PRESENCE only — the value is NEVER read into a variable, printed, or logged. Branch:
+    #   (a) empty/unset → provisioning never delivered a token → point at Token Setup;
+    #   (b) non-empty + still failing → the token WAS delivered but rejected → a competing credential
+    #       shadowed it (or it is expired/revoked) → point at unsetting the competitor / re-issuing.
+    local token_present=1
+    if (
+      trap - ERR
+      # shellcheck source=scripts/lib/claude-auth-env.sh
+      . "${env_lib}" 2>/dev/null
+      claude_auth_load_env >/dev/null 2>&1 || true
+      [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]
+    ); then
+      token_present=0
+    fi
+    if ((token_present == 0)); then
+      echo "headless self-test: token delivered to claude but rejected — a competing credential (ANTHROPIC_API_KEY / keychain / CLAUDE_CONFIG_DIR) may shadow it, or the token is expired/revoked; unset the competing credential or re-issue the token" >&2
+    else
+      echo "headless self-test: provisioning did not deliver a token — re-run Token Setup" >&2
+    fi
     return 1
   fi
   return 0
@@ -460,18 +519,26 @@ headless_auth_selftest() {
 #   tr -d '\r'                          delete carriage returns
 #   strip_csi                           strip CSI escape sequences (shared helper — the SAME stripper
 #                                        visible_len uses, so the two cannot drift; value in a var, off-argv)
+#   tr -d '[:space:]'                   collapse ALL whitespace/newlines → rejoin a display-WRAPPED token
+#                                        whose copy carries hard wrap-newlines (a real OAuth value has none)
 #   grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' first match by fixed prefix (no `head` pipe → no SIGPIPE)
 # FALLBACK (vendor format drift — the grep finds nothing): the last non-empty CLEAN line of the scrubbed stream.
 # SECURITY: value stays on stdout of a command substitution captured into a local —
 # never argv, never logged.
 sanitize_setup_token() {
-  local raw="$1" cleaned extracted
+  local raw="$1" cleaned collapsed extracted
   # tr -d removes CR (no value on its argv); strip_csi receives the value as a function
   # arg (a var, not a command line) and strips every CSI run via pure-bash glob math.
   cleaned="$(strip_csi "$(printf '%s' "${raw}" | tr -d '\r')")"
+  # Rejoin a display-WRAPPED value: a boxed/narrow `claude setup-token` render wraps the ~100-char token
+  # across the terminal width, so a copy of the wrapped display carries hard newline(s) and a line-oriented
+  # grep would stop at the first ~80-char segment (renders OK, then 401s). A real OAuth value has NO
+  # internal whitespace, so collapsing every space/tab/newline splices the wrap-split segments back into
+  # one contiguous string. Hardens ALL three sources (env / auto-capture / paste) uniformly.
+  collapsed="$(printf '%s' "${cleaned}" | tr -d '[:space:]')"
   # `-m1` (BSD/GNU) stops after the first match and exits 0 → no `head` pipe, so no
   # SIGPIPE; `|| true` swallows the no-match exit-1 so pipefail doesn't fire the ERR trap.
-  extracted="$(printf '%s\n' "${cleaned}" | { grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' || true; })"
+  extracted="$(printf '%s\n' "${collapsed}" | { grep -oE -m1 'sk-ant-oat[A-Za-z0-9_-]+' || true; })"
   if [[ -n "${extracted}" ]]; then
     printf '%s\n' "${extracted}"
     return 0
@@ -480,24 +547,155 @@ sanitize_setup_token() {
   printf '%s\n' "${cleaned}" | awk 'NF{last=$0} END{if (last != "") print last}'
 }
 
+# _provision_render_selftest — render one headless token VALUE (read from STDIN) into the 0600 secrets
+# file, then POST-RENDER self-test it. The value enters render-claude-auth.sh via STDIN, kept off argv
+# (never $1 → no `ps` exposure, never echoed/logged); render's own confirmation prints the KEY + redaction,
+# never the value. render's value precedence is $1 → CLAUDE_CODE_OAUTH_TOKEN env → stdin, so an inherited
+# exported CLAUDE_CODE_OAUTH_TOKEN in the install shell (v2.1.207 `claude setup-token` prints an
+# `export CLAUDE_CODE_OAUTH_TOKEN` line) would SHADOW the piped value on the env axis; `env -u
+# CLAUDE_CODE_OAUTH_TOKEN` clears that inherited var so STDIN is AUTHORITATIVE — a fresh pasted token
+# always wins over a stale exported one. Safe for all three sources: each pipes its RESOLVED value via
+# STDIN (Source A reads the env var into a local FIRST, then pipes that), so clearing the inherited env
+# loses no source's value. GA_ROOT is passed EXPLICITLY (via env) because it is a readonly SHELL var, not
+# exported — without this the child render would fall back to its own ${HOME}/.glass-atrium default,
+# diverging from the GA_ROOT-anchored path the daemons' claude_auth_load_env reads (write-path and
+# read-path MUST agree on ONE location). SHARED by all three value sources (env / auto-capture / paste)
+# so the render+self-test gate cannot drift. Returns:
+#   0 — rendered + self-test passes (the success gate)
+#   1 — rendered but the self-test still 401s
+#   4 — render-claude-auth.sh rejected the value (its own exit 6/7/8 propagated)
+_provision_render_selftest() {
+  local render_script render_rc=0
+  render_script="$(ga_render_auth_script)"
+  env -u CLAUDE_CODE_OAUTH_TOKEN GA_ROOT="${GA_ROOT:-${HOME}/.glass-atrium}" "${render_script}" || render_rc=$?
+  if [[ "${render_rc}" -ne 0 ]]; then
+    preflight_line "$(c "${C_ALERT}" "[warn]") render-claude-auth.sh rejected the value (exit ${render_rc}) — headless auth NOT provisioned."
+    return 4
+  fi
+  # POST-RENDER self-test: confirm the rendered credential actually authenticates a keychain-bypassing
+  # `claude -p`. A green result is the gate's success signal.
+  if headless_auth_selftest; then
+    return 0
+  fi
+  return 1
+}
+
+# _provision_tty_gate_ok — is the launcher's INHERITED stdin+stdout a real terminal? The in-place
+# setup-token auto-run inherits fd 0/1 (the kqueue-able pty SLAVES, /dev/ttysNNN) so Bun's node:tty
+# WriteStream can kqueue them; the ${TTY} /dev/tty handle (/dev/fd/3|4, a BSD-fdesc dup of
+# open("/dev/tty")) throws EINVAL and crashes setup-token. Gate on fd 0 AND fd 1 only — fd 2 is
+# DELIBERATELY not tested: in the menu install path it is run_gate_quiet's GATE_QUIET_LOG temp file
+# (legitimately non-tty). GA_AUTH_FORCE_TTY is a test seam (the bats harness / a subagent has NO
+# controlling terminal): 1 = force pass, 0 = force fail, unset = probe the real fds.
+_provision_tty_gate_ok() {
+  case "${GA_AUTH_FORCE_TTY:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+    *) [[ -t 0 && -t 1 ]] ;;
+  esac
+}
+
+# _read_pasted_token — capture a possibly WRAPPED, multi-line token paste SILENTLY off ${TTY} into REPLY.
+# Root cause it fixes: a boxed/narrow `claude setup-token` render wraps the ~100-char token across the
+# terminal width; a copy of the wrapped display carries hard newline(s), so the previous single-line `read`
+# captured only the first ~80-char segment → a truncated token that renders OK but 401s on the headless
+# self-test. This reads the WHOLE paste. Bash 3.2 / macOS (no fractional `read -t`, no `-t 0` poll, no
+# char-by-char):
+#   1. Enable bracketed-paste mode (ESC[?2004h): a supporting terminal FRAMES the whole paste as one
+#      ESC[200~ … ESC[201~ chunk, so the drain STOPS the instant the end marker appears — zero added idle
+#      latency on a modern terminal (the common case), single- OR multi-line alike.
+#   2. The first segment BLOCKS (no -t) for the paste + Enter; each drain read uses -t 1 (bash 3.2's
+#      shortest integer idle). A wrapped paste's continuation lines are ALREADY buffered so they read
+#      back-to-back with no wait; the 1 s idle only ever elapses on a terminal WITHOUT bracketed-paste
+#      support (graceful degradation), never on a modern one. `|| break` guarantees termination on
+#      timeout OR EOF.
+#   3. Restore the terminal (ESC[?2004l) UNCONDITIONALLY, then STRIP the ESC[200~/ESC[201~ markers —
+#      strip_csi (in sanitize) CANNOT: it treats the `~` terminator as a CSI param and would eat the
+#      token's first letter. The marker-free value (wrap-newlines PRESERVED) goes to sanitize_setup_token,
+#      whose whitespace-collapse is the single rejoin point across all three value sources.
+# SECURITY: every read is -s (no echo) so the secret never reaches the scrollback / install transcript;
+# the value lives only in a local + REPLY (never argv / a pipe / a log) and the caller scrubs REPLY.
+# NOTE: the bracketed-paste FAST path is not auto-verifiable in the bats suite (a harness / subagent has no
+# controlling terminal); the file-stub drive exercises the timeout/EOF drain — the correctness-critical
+# path — while the bracketed marker handling is an additive real-terminal latency win needing a user check.
+_read_pasted_token() {
+  local acc="" line nl bp_on bp_off bp_start bp_end
+  nl=$'\n'
+  bp_on=$'\033[?2004h'
+  bp_off=$'\033[?2004l'
+  bp_start=$'\033[200~'
+  bp_end=$'\033[201~'
+
+  # Step 1 — ask a bracketed-paste-capable terminal to FRAME the paste (a plain terminal ignores the CSI).
+  # Routed through preflight_out, NOT a raw `>"${TTY}"`: in production `>` on the char-device /dev/tty does
+  # not truncate (O_TRUNC is a no-op on a char device), so either form is safe; but the bats suite STUBS
+  # preflight_out to a no-op, and a raw write would O_TRUNC the regular-FILE TTY stub mid-read. Keep the
+  # stub (and this indirection) when refactoring the harness.
+  preflight_out "${bp_on}"
+
+  # Step 2+3 — read the paste from a SINGLE open of ${TTY}. The reads MUST share one open file description:
+  # macOS /dev/fd/N opens via dup() (shared, advancing offset), but Linux /dev/fd/N == /proc/self/fd/N reopens
+  # the backing file at offset 0, so a per-read `<"${TTY}"` re-reads the first segment forever and the -t 1
+  # drain never idles → an infinite spin on the headless Linux runner. One open advances to EOF on both.
+  # `read` returns 1 on a value with no trailing newline but still sets `line`, so capture it regardless of
+  # exit status; the -t 1 drain stops on the bracketed END marker (modern terminal, no idle) or on 1 s idle / EOF.
+  {
+    IFS= read -rs line || true
+    acc="${line}"
+    while [[ "${acc}" != *"${bp_end}"* ]]; do
+      if IFS= read -rs -t 1 line; then
+        acc="${acc}${nl}${line}"
+      else
+        break
+      fi
+    done
+  } <"${TTY}"
+
+  # Step 4 — restore the terminal UNCONDITIONALLY out of bracketed-paste mode (via the same preflight_out
+  # sink), then STRIP the bracketed framing (strip_csi would corrupt the `~` terminator, eating the token's
+  # first letter). The restore must never be skipped — a dropped ESC[?2004l strands the terminal in
+  # bracketed-paste mode.
+  preflight_out "${bp_off}"
+  acc="${acc//"${bp_start}"/}"
+  acc="${acc//"${bp_end}"/}"
+
+  REPLY="${acc}"
+}
+
 # preflight_provision_headless_token — the AUTH-gate headless-provisioning step. IDEMPOTENT: when the
-# secrets file exists AND the self-test passes, SKIP (no re-prompt). Only when the self-test 401s OR the
-# secrets file is missing does it run `claude setup-token` (interactive — the user approves in the
-# browser), capture the emitted credential, and pipe it to render-claude-auth.sh via STDIN (never argv,
-# never echoed). Loud-fails on a real failure (named return codes); the interactive auth guidance is the
-# fallback. Non-fatal: a failure WARNs (the daemons keep the keychain fallback) rather than aborting —
-# the launchd 401 is a daemon-only issue, not an interactive-install blocker.
+# secrets file exists AND the self-test passes, SKIP (no re-prompt). Otherwise it acquires a long-lived
+# OAuth token from the FIRST source that yields a value passing render + self-test, in order:
+#   A) a pre-exported CLAUDE_CODE_OAUTH_TOKEN env var (v2.1.207 `claude setup-token` prints an
+#      `export CLAUDE_CODE_OAUTH_TOKEN` line; a user who ran it in THIS shell already has it) —
+#      reliable, no capture, no leak;
+#   B) OPT-IN legacy `$(claude setup-token)` auto-capture (GA_AUTH_SETUP_TOKEN_AUTOCAPTURE=1) — DEFAULT
+#      OFF. command-substitution makes the CLI's stdout a NON-TTY pipe on which v2.1.207 wraps the long
+#      token across the 80-col boundary; sanitize_setup_token's whitespace-collapse now REJOINS that wrap
+#      and returns the FULL token, so the original truncate→401 cause is RESOLVED (no longer a correctness
+#      reason to disable it). It stays OFF as a UX / conservatism choice — path C's in-place run shows the
+#      browser-approval flow in a real terminal, and changing a long-standing default is a user call. Any
+#      failure still falls through to (C);
+#   C) the INTERACTIVE path — AUTO-RUN `claude setup-token` IN PLACE when the launcher's INHERITED fd 0/1
+#      are real terminals (the kqueue-able pty SLAVES; the ${TTY} /dev/tty handle crashes Bun's node:tty
+#      WriteStream with EINVAL). The child INHERITS fd 0/1 (NO ${TTY} redirect) with stderr merged via
+#      2>&1; the launcher NEVER reads that stdout. When the gate is false (passthrough / piped / CI) OR the
+#      run exits non-zero, it falls back to a manual paste from `claude setup-token` in another terminal.
+#      Either way the WHOLE paste is read SILENTLY off the TTY (no echo → never in the scrollback /
+#      transcript) — a boxed render WRAPS the token across lines, so _read_pasted_token captures every
+#      segment — then sanitized, piped to render via STDIN — never on argv / a pipe / a log.
+# Loud-fails on a real failure (named return codes); non-fatal (a failure WARNs, daemons keep the keychain
+# fallback) — the launchd 401 is a daemon-only issue, not an interactive-install blocker. The token value
+# never touches argv, is never echoed/logged, and dies with the enclosing local.
 # Return codes (all surfaced via stderr/preflight chrome — no silent absorption):
-#   0 — provisioned (or already valid, idempotent skip)
-#   1 — secrets file present but the self-test still 401s after a (re)provision attempt
+#   0 — provisioned (any source) or already valid (idempotent skip)
+#   1 — a value was rendered but the self-test still 401s
 #   2 — claude-auth-env lib absent (Stage-A scripts not in the tree)
-#   3 — `claude setup-token` produced no usable value
+#   3 — no usable value from ANY source (auto-capture + paste both empty / no TTY to prompt)
 #   4 — render-claude-auth.sh rejected the value (its own exit 6/7/8 propagated)
 preflight_provision_headless_token() {
-  local secrets_file render_script setup_bin captured_value st_rc=0 render_rc=0
+  local secrets_file render_script env_val sanitized captured_value pasted tty_mode setup_bin st_rc=0 pv_rc=0
   secrets_file="${GA_ROOT:-${HOME}/.glass-atrium}/secrets/claude-auth.env"
   render_script="$(ga_render_auth_script)"
-  setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
 
   preflight_line ""
   preflight_line "$(c "${C_INFO}" "── headless launchd auth (CLAUDE_CODE_OAUTH_TOKEN) ──")"
@@ -515,55 +713,154 @@ preflight_provision_headless_token() {
   fi
 
   preflight_line "$(c "${C_DIM}" "  launchd-spawned 'claude -p' cannot use the GUI keychain (401 nightly).")"
-  preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' — approve in the browser, then return here.")"
-  preflight_line ""
 
-  # Capture the setup-token output. `claude setup-token` emits a long-lived value to stdout (interactive
-  # browser approval), captured into a LOCAL var + piped to render-claude-auth.sh via STDIN — it NEVER
-  # touches argv (ps exposure) and is NEVER echoed/logged. stderr stays attached so the browser-approval
-  # prompts reach the user; only stdout (the value) is captured.
-  captured_value="$("${setup_bin}" setup-token)" || st_rc=$?
-  if [[ "${st_rc}" -ne 0 ]]; then
-    preflight_line "$(c "${C_ALERT}" "[warn]") 'claude setup-token' exited ${st_rc} — headless auth NOT provisioned."
+  # ── SOURCE A: a pre-exported CLAUDE_CODE_OAUTH_TOKEN env var (reliable, no capture). ──
+  # sanitize defensively (a paste-into-shell may carry CR/CSI); value stays in a local, off argv.
+  env_val="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  if [[ -n "${env_val}" ]]; then
+    sanitized="$(sanitize_setup_token "${env_val}")"
+    if [[ -n "${sanitized}" ]]; then
+      preflight_line "$(c "${C_DIM}" "  found an exported CLAUDE_CODE_OAUTH_TOKEN — provisioning from it.")"
+      pv_rc=0
+      printf '%s\n' "${sanitized}" | _provision_render_selftest || pv_rc=$?
+      sanitized=""
+      if [[ "${pv_rc}" -eq 0 ]]; then
+        preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned from the exported token + self-test passes."
+        return 0
+      fi
+      # render-reject (4) or rendered-but-401 (1): fall through to the reliable paste path (fresh token).
+    fi
+  fi
+
+  # ── SOURCE B: OPT-IN legacy `$(claude setup-token)` auto-capture (default OFF — see the header). ──
+  # stderr stays attached so browser-approval prompts reach the user; only stdout (the value) is captured
+  # into a LOCAL + piped to render via STDIN — never argv, never echoed. Under v2.1.207 the non-TTY capture
+  # WRAPS the token, but sanitize's whitespace-collapse rejoins it → the FULL token renders + authenticates
+  # directly; the collapse removed the old truncate→401 fall-through (any OTHER invalid value still falls to paste).
+  if [[ "${GA_AUTH_SETUP_TOKEN_AUTOCAPTURE:-0}" == "1" ]]; then
+    setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
+    preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' (auto-capture) — approve in the browser, then return here.")"
+    st_rc=0
+    captured_value="$("${setup_bin}" setup-token)" || st_rc=$?
+    if [[ "${st_rc}" -eq 0 ]]; then
+      captured_value="$(sanitize_setup_token "${captured_value}")"
+      if [[ -n "${captured_value}" ]]; then
+        pv_rc=0
+        printf '%s\n' "${captured_value}" | _provision_render_selftest || pv_rc=$?
+        captured_value=""
+        if [[ "${pv_rc}" -eq 0 ]]; then
+          preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned (auto-capture) + self-test passes."
+          return 0
+        fi
+        preflight_line "$(c "${C_DIM}" "  auto-capture produced an invalid token (self-test failed) — falling back to paste.")"
+      fi
+    fi
+    captured_value=""
+  fi
+
+  # ── SOURCE C: the INTERACTIVE path — run setup-token in place OR paste an existing token. No
+  # controlling TTY → cannot prompt; loud-fail (no value). ──
+  if [[ -z "${TTY}" ]]; then
+    preflight_line "$(c "${C_ALERT}" "[warn]") no terminal to prompt for a token — headless auth NOT provisioned."
     preflight_line "$(c "${C_DIM}" "  fallback: the daemons use the keychain (may 401 under launchd). Re-run 'glass-atrium install' to retry.")"
     return 3
   fi
-  # setup-token writes to a TTY, so the value arrives wrapped in ANSI color + a
-  # trailing CR (and possibly guidance lines). Sanitize before it reaches
-  # render-claude-auth.sh (whose control-char guard exit-7s on any survivor). Still
-  # off-argv — the cleaned value stays in this local and is piped via stdin below.
-  captured_value="$(sanitize_setup_token "${captured_value}")"
-  if [[ -z "${captured_value}" ]]; then
-    preflight_line "$(c "${C_ALERT}" "[warn]") 'claude setup-token' produced no value — headless auth NOT provisioned."
+
+  # COOKED mode for the whole interactive segment (optional in-place setup-token → silent paste).
+  # Reached from BOTH a cooked caller (menu dispatch) and a RAW one (right after confirm_typed, which
+  # leaves the TTY raw): in raw mode Enter delivers CR (not LF), so a default `read` never terminates;
+  # TTY_SAVED (the cooked snapshot with icrnl) makes Enter deliver LF. Snapshot the pre-segment mode and
+  # restore it after, so a raw-mode caller is left exactly as it was. The alt-screen is ALREADY dropped by
+  # every caller (preflight_bracket / the token panel's rmcup pre-gate / the passthrough scroll path), so
+  # there is deliberately NO nested rmcup/smcup here — a second drop would re-enter the alt-screen and hide
+  # the setup-token output the user must read.
+  tty_mode="$(stty -g <"${TTY}" 2>/dev/null || true)"
+  stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
+
+  preflight_line ""
+  preflight_line "$(c "${C_STRONG}" "  Provision the headless token:")"
+
+  # AUTO-RUN (default, no menu): hand the terminal to `claude setup-token` in place. The child MUST inherit
+  # fd 0/1 (the launcher's pty SLAVES, /dev/ttysNNN) — the ONLY fds Bun's node:tty WriteStream can kqueue;
+  # the ${TTY} /dev/tty handle (/dev/fd/3|4) throws EINVAL and crashes it, so there is deliberately NO
+  # `<>"${TTY}"` redirect. Merge stderr into the inherited stdout with `2>&1`: REQUIRED because in the menu
+  # path fd 2 is run_gate_quiet's GATE_QUIET_LOG temp file — a bare run (or `2>&2`) would route
+  # setup-token's browser-URL/prompt into that HIDDEN log (silent hang) AND leak stderr to a persistent
+  # temp file (secret-hygiene risk); `2>&1` keeps it on the VISIBLE pty-slave stdout (kqueue-able, leaking
+  # nothing) in BOTH the standalone token panel (fd 2 already a terminal) and the menu path. The launcher
+  # NEVER reads that stdout — the value reaches it only via the silent paste-back below, so the token never
+  # lands on argv / a pipe / a log. st_rc reset to 0 first (Source-B autocapture fall-through can leave a
+  # stale non-zero); the `|| st_rc=$?` LHS suppresses set -e / the ERR trap. NOTE: the real-Bun-binary
+  # kqueue SUCCESS path is NOT auto-verifiable in the bats suite (a test harness / subagent has no
+  # controlling terminal) — it needs a user real-terminal check; the graceful fallback below guarantees a
+  # crash never strands the user.
+  if _provision_tty_gate_ok; then
+    setup_bin="${GA_AUTH_CLAUDE_BIN:-claude}"
+    preflight_line "$(c "${C_DIM}" "  running 'claude setup-token' — approve in the browser, paste the auth code when prompted.")"
+    st_rc=0
+    "${setup_bin}" setup-token 2>&1 || st_rc=$?
+    if [[ "${st_rc}" -ne 0 ]]; then
+      # GRACEFUL FALLBACK: a crashed/declined setup-token must never strand the user — drop to the reliable
+      # manual paste. The raw stderr stack is deliberately NOT suppressed (that would also hide the
+      # success-case token, now merged onto the inherited stdout); a clean line frames the fall-through.
+      preflight_line "$(c "${C_ALERT}" "[warn]") 'claude setup-token' did not complete (exit ${st_rc}) — paste a token instead."
+    fi
+    preflight_line ""
+    preflight_line "$(c "${C_STRONG}" "  copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
+  else
+    # GATE FALSE (passthrough / piped / CI — fd 0/1 are not terminals, exactly why fd 4 was opened): an
+    # in-place setup-token would inherit pipes and re-crash, so route to the reliable manual paste.
+    preflight_line "$(c "${C_STRONG}" "  Paste a token (reliable):")"
+    preflight_line "$(c "${C_DIM}" "  1) in another terminal run:") $(c "${C_INFO}" "claude setup-token")"
+    preflight_line "$(c "${C_DIM}" "  2) approve in the browser + paste the auth code there;")"
+    preflight_line "$(c "${C_DIM}" "  3) copy the printed sk-ant-oat… token, paste it below (input hidden), then Enter.")"
+  fi
+  preflight_out "  $(c "${C_INFO}" "paste token ▸ ")"
+
+  # SILENT multi-line capture (-s on every read → no echo REGARDLESS of the cooked echo bit, so the secret
+  # never reaches the terminal scrollback / install transcript). Re-assert cooked first — an in-place
+  # setup-token may have left the TTY in a different mode. _read_pasted_token reads the WHOLE paste: a boxed
+  # render WRAPS the ~100-char token across lines, so a single-line read would capture only the first
+  # segment → a truncated token that renders OK then 401s. It returns the value via REPLY; copy it into
+  # this LOCAL and scrub REPLY. The value is sanitized (CR/CSI strip + wrap-newline collapse), then piped
+  # via STDIN below.
+  stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
+  pasted=""
+  _read_pasted_token
+  pasted="${REPLY}"
+  REPLY=""
+  if [[ -n "${tty_mode}" ]]; then
+    stty "${tty_mode}" <"${TTY}" 2>/dev/null || true
+  fi
+  preflight_line "" # echo was off — move the cursor off the prompt line.
+
+  # Sanitize the paste (strip CR/CSI, extract the bare sk-ant-oat… value) before render's guard sees it.
+  pasted="$(sanitize_setup_token "${pasted}")"
+  if [[ -z "${pasted}" ]]; then
+    preflight_line "$(c "${C_ALERT}" "[warn]") no token pasted — headless auth NOT provisioned."
+    preflight_line "$(c "${C_DIM}" "  fallback: the daemons use the keychain (may 401 under launchd). Re-run 'glass-atrium install' to retry.")"
     return 3
   fi
 
-  # Render the 0600 secrets file. The value enters render-claude-auth.sh via STDIN
-  # ONLY (never $1, never the env beyond this pipe). render-claude-auth's own
-  # confirmation prints the KEY + redaction, never the value. GA_ROOT is passed
-  # EXPLICITLY (via env) because it is a readonly SHELL var, not exported — without
-  # this the child render would fall back to its own ${HOME}/.glass-atrium default,
-  # diverging from the GA_ROOT-anchored path the daemons' claude_auth_load_env reads
-  # (write-path and read-path MUST agree on one location). In production GA_ROOT IS
-  # ~/.glass-atrium, so this is a correctness pin + the sandbox-test hook.
-  printf '%s\n' "${captured_value}" \
-    | env GA_ROOT="${GA_ROOT:-${HOME}/.glass-atrium}" "${render_script}" || render_rc=$?
-  # scrub the local copy ASAP (defence-in-depth; the var dies with the function).
-  captured_value=""
-  if [[ "${render_rc}" -ne 0 ]]; then
-    preflight_line "$(c "${C_ALERT}" "[warn]") render-claude-auth.sh rejected the value (exit ${render_rc}) — headless auth NOT provisioned."
-    return 4
-  fi
-
-  # POST-RENDER self-test: confirm the rendered credential actually authenticates a
-  # keychain-bypassing `claude -p`. A green result is the gate's success signal.
-  if headless_auth_selftest; then
-    preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned + self-test passes (launchd daemons will authenticate)."
-    return 0
-  fi
-  preflight_line "$(c "${C_ALERT}" "[warn]") headless credential rendered but the self-test still failed (401) — daemons may 401 under launchd."
-  preflight_line "$(c "${C_DIM}" "  re-run 'glass-atrium install' or 'claude setup-token' to retry.")"
-  return 1
+  pv_rc=0
+  printf '%s\n' "${pasted}" | _provision_render_selftest || pv_rc=$?
+  pasted="" # scrub the local copy ASAP (defence-in-depth; the var dies with the function).
+  case "${pv_rc}" in
+    0)
+      preflight_line "$(c "${C_OK}" "[ok]") headless auth provisioned + self-test passes (launchd daemons will authenticate)."
+      return 0
+      ;;
+    4)
+      # _provision_render_selftest already WARNed with render's exit code.
+      return 4
+      ;;
+    *)
+      preflight_line "$(c "${C_ALERT}" "[warn]") headless credential rendered but the self-test still failed (401) — daemons may 401 under launchd."
+      preflight_line "$(c "${C_DIM}" "  the token may have WRAPPED when copied (a boxed render splits it across lines) — re-copy the FULL sk-ant-oat… value and retry.")"
+      preflight_line "$(c "${C_DIM}" "  re-run 'glass-atrium install' or paste a fresh 'claude setup-token' value to retry.")"
+      return 1
+      ;;
+  esac
 }
 
 # === doctor: headless-auth advisory (non-fatal) ==============================
@@ -619,10 +916,21 @@ doctor_headless_auth_advisory() {
   #    Look at the newest few report JSON (mtime-sorted) for the failure signatures
   #    daemon_cycle.py emits. A hit means a real nightly auth outage was recorded.
   if [[ -d "${reports_dir}" ]]; then
-    local hit=0 latest report_count=0
+    local hit=0 latest report_count=0 sorted
     # mtime-newest-first; bash 3.2 has no mapfile — iterate the find stream. -print0
     # is avoided (no readarray); a plain newline stream is fine (report names have
     # no newlines). Limit the scan to the newest 5 to keep doctor fast.
+    #
+    # Materialize the sorted list into a var, then iterate it via a here-string —
+    # a `done < <(… | cut -f2-)` process sub keeps cut writing live, so an early break
+    # (a signature match / the >5 limit) closes the read end mid-write → cut dies on
+    # SIGPIPE (141) → pipefail fires the file-scope ERR trap ("ERROR: line …: cut -f2-").
+    # A fully drained command sub has no live writer to signal; `|| true` preserves the
+    # process-sub form's already-ignored pipeline status (empty → the ok/no-history path).
+    sorted="$(find "${reports_dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+      | while IFS= read -r f; do
+        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
+      done | sort -rn | cut -f2-)" || true
     while IFS= read -r latest; do
       [[ -n "${latest}" ]] || continue
       report_count=$((report_count + 1))
@@ -634,10 +942,7 @@ doctor_headless_auth_advisory() {
         hit=1
         break
       fi
-    done < <(find "${reports_dir}" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-      | while IFS= read -r f; do
-        printf '%s\t%s\n' "$(stat_mtime "${f}" 2>/dev/null || printf '0')" "${f}"
-      done | sort -rn | cut -f2-)
+    done <<<"${sorted}"
     if [[ "${hit}" -eq 1 ]]; then
       log "  warn : a recent daemon report shows an auth-failure / infra_fault / haiku-exit-1 — run the install auth step / 'claude setup-token'"
       advise=1

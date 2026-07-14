@@ -296,6 +296,10 @@ model Outcome {
   directiveHint     String?       @map("directive_hint")
   lesson            String?
   concerns          String[]      @default([]) @db.Text
+  // qa_score — QA-review telemetry (glass-atrium-qa-code-reviewer / -debugger).
+  // Scalar text of shape cov=N,ins=N,instr=N,clar=N (each 1-5); NULL on every
+  // non-QA outcome. Writer self-emitted Model-Based signal, never a grader verdict.
+  qaScore           String?       @map("qa_score")
   filesModified     String[]      @default([]) @map("files_modified") @db.Text
   correlationId     String?       @map("correlation_id") @db.VarChar(96)
   cid               String?       @db.VarChar(96)

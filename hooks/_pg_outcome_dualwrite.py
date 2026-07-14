@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # Outcome-record dual-write helper.
 #
-# Invoked from track-outcome.sh AFTER the .md frontmatter has been written; this
-# is the SECOND write, so its failure MUST NOT lose data and MUST NOT crash the
-# stop hook. The shell caller runs `... | python3 helper || true`, so it absorbs
+# Invoked from track-outcome.sh as the sole outcome-record sink. Per-outcome .md
+# files are retired; PG core.outcomes (body_md column carries the full markdown
+# body) is now the primary and ONLY write, so its failure MUST NOT lose data and
+# MUST NOT crash the stop hook. The shell caller runs `... | python3 helper || true`, so it absorbs
 # ANY exit code — the helper therefore reports its outcome via a NAMED exit code
 # (0 ok · non-zero = a specific failure class, see EXIT_* below) WITHOUT disrupting
 # the hook, and never silently swallows a DB-unreachable/write-failed case behind a
@@ -102,6 +103,11 @@ def _classify_error(exc):
     return "unknown"
 
 
+def _fmt_exc(exc):
+    """Truncate + escape an exception message for a one-line structured stderr field."""
+    return str(exc)[:200].replace('"', "'").replace("\n", " ")
+
+
 def _record_hook_failure(error_kind, payload_ref, retry_attempted):
     """Best-effort secondary INSERT into core.hook_failures. Returns True when the
     failure row landed, False otherwise.
@@ -136,7 +142,7 @@ def _record_hook_failure(error_kind, payload_ref, retry_attempted):
             '"message":"%s"}\n'
             % (
                 payload_ref,
-                str(exc)[:200].replace('"', "'").replace("\n", " "),
+                _fmt_exc(exc),
             )
         )
         return False
@@ -351,6 +357,9 @@ def _build_outcome_row(outcome):
         "directive_hint": _norm_text_or_null(outcome.get("directive_hint")),
         "lesson": _norm_text_or_null(outcome.get("lesson")),
         "concerns": _norm_text_array(outcome.get("concerns")),
+        # qa_score — scalar text (shape cov=N,ins=N,instr=N,clar=N), QA-review only.
+        # Bounded (LLM10) + "" → None. Not text[] like concerns: a single scalar field.
+        "qa_score": _norm_varchar(outcome.get("qa_score", ""), 64) or None,
         "files_modified": _norm_text_array(outcome.get("files_modified")),
         "correlation_id": _norm_varchar(outcome.get("correlation_id", ""), 96) or None,
         "cid": _norm_varchar(outcome.get("cid", ""), 96) or None,
@@ -397,7 +406,7 @@ def _build_signal_row(signal, outcome_id):
 _OUTCOMES_INSERT_SQL = """
 INSERT INTO core.outcomes (
     record_ts, agent, task_type, result, confidence, metric_pass, metric_type,
-    revision_count, evaluative_signal, directive_hint, lesson, concerns,
+    revision_count, evaluative_signal, directive_hint, lesson, concerns, qa_score,
     files_modified, correlation_id, cid, summary, review_flag, body_md,
     attribution_source, style_ref, style_ref_verified,
     grader_verdict, downgrade_origin
@@ -406,7 +415,7 @@ INSERT INTO core.outcomes (
     %(result)s::core."OutcomeResult",
     %(confidence)s::core."Confidence",
     %(metric_pass)s, %(metric_type)s, %(revision_count)s,
-    %(evaluative_signal)s, %(directive_hint)s, %(lesson)s, %(concerns)s,
+    %(evaluative_signal)s, %(directive_hint)s, %(lesson)s, %(concerns)s, %(qa_score)s,
     %(files_modified)s, %(correlation_id)s, %(cid)s, %(summary)s,
     %(review_flag)s, %(body_md)s,
     %(attribution_source)s, %(style_ref)s, %(style_ref_verified)s,
@@ -423,6 +432,7 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     directive_hint = EXCLUDED.directive_hint,
     lesson = EXCLUDED.lesson,
     concerns = EXCLUDED.concerns,
+    qa_score = EXCLUDED.qa_score,
     files_modified = EXCLUDED.files_modified,
     correlation_id = EXCLUDED.correlation_id,
     cid = EXCLUDED.cid,
@@ -436,6 +446,46 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     downgrade_origin = EXCLUDED.downgrade_origin
 RETURNING id
 """
+
+# Transitional backward-compat (expand-phase). qa_score is added to core.outcomes by
+# migration 20260713000000_add_qa_score_to_outcomes, which runs at DEPLOY. Until that
+# ALTER lands in a given DB the column is absent, and naming it in the INSERT raises
+# UndefinedColumn — which would break EVERY outcome write during the pre-migration
+# window (and forces a strict migration-before-code deploy order). The legacy variant
+# below is DERIVED from the primary by stripping exactly the three qa_score fragments,
+# so the primary stays the single hand-maintained SoT (no drift). Both are STATIC
+# strings — the replaces carry no user data, so there is no injection surface. The
+# runtime picks the variant via a cached column probe (_outcomes_insert_sql). Remove
+# this shim once the migration is universally applied (contract phase).
+_OUTCOMES_INSERT_SQL_NO_QA = (
+    _OUTCOMES_INSERT_SQL
+    .replace("lesson, concerns, qa_score,", "lesson, concerns,")
+    .replace("%(lesson)s, %(concerns)s, %(qa_score)s,", "%(lesson)s, %(concerns)s,")
+    .replace("    qa_score = EXCLUDED.qa_score,\n", "")
+)
+assert "qa_score" not in _OUTCOMES_INSERT_SQL_NO_QA, \
+    "legacy INSERT derivation failed to strip qa_score"
+
+# Per-process cache: None = unprobed, bool = column present/absent. The hook spawns one
+# helper process per outcome, so this is probed at most once per outcome write.
+_qa_score_col_present = None
+
+
+def _outcomes_insert_sql(cur):
+    """Outcomes INSERT SQL matching the LIVE schema: the qa_score variant when the
+    column exists, else the pre-migration legacy form. The column probe is cached
+    per process and runs inside the caller's open transaction (read-only catalog
+    lookup, no lock)."""
+    global _qa_score_col_present
+    if _qa_score_col_present is None:
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'outcomes' "
+            "AND column_name = 'qa_score'"
+        )
+        _qa_score_col_present = cur.fetchone() is not None
+    return _OUTCOMES_INSERT_SQL if _qa_score_col_present else _OUTCOMES_INSERT_SQL_NO_QA
+
 
 _SIGNALS_INSERT_SQL = """
 INSERT INTO core.correction_signals (
@@ -477,7 +527,9 @@ def _do_transaction(envelope, attempt):
         ) as conn:
             with conn.cursor() as cur:
                 # --- outcomes UPSERT with RETURNING id ---
-                cur.execute(_OUTCOMES_INSERT_SQL, outcome_row)
+                # Schema-adaptive: the qa_score variant once the migration has landed,
+                # else the pre-migration legacy form (backward-compat, see above).
+                cur.execute(_outcomes_insert_sql(cur), outcome_row)
                 row = cur.fetchone()
                 if row is None:
                     raise RuntimeError("outcomes UPSERT returned no id")
@@ -560,7 +612,7 @@ def main():
     # stop hook is not disrupted while the failure stays observable.
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
-    error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")
+    error_msg = _fmt_exc(last_exc)
     elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
 
     sys.stderr.write(

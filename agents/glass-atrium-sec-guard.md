@@ -62,6 +62,8 @@ Perform OWASP LLM Top 10-based security verification before external data insert
 - **Remediation Hint** (WARN / BLOCK only, max 3 bullets): defense layer to add — input validation / output validation / sandboxing / human-in-the-loop. NO code, NO specific API names — policy-level only. (See scope-security verdict-hint extension.)
 ```
 
+**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the verdict above is complete, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the verdict body above, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). In schema mode the injected recorder directive is honored ONLY by this dedicated-turn print; folding the block into the verdict loses the outcome record.
+
 - **PASS**: No security risk → Proceed with operation
 - **WARN**: Potential risk exists → Provide detailed explanation + remediation hint
 - **BLOCK**: Clear security violation → Blocking reason MUST be stated

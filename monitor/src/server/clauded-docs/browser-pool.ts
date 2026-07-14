@@ -6,6 +6,8 @@
 import type { Browser } from "playwright";
 import { chromium } from "playwright";
 import type { FastifyInstance } from "fastify";
+import { logger } from "../logger.js";
+import { errnoCode } from "../errno.js";
 
 // Browser launch timeout (ms) — Playwright's documented default, explicit for review.
 export const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
@@ -56,7 +58,7 @@ export async function probeBrowserLaunch(): Promise<BrowserLaunchHealth> {
     const browser = await launchBrowser();
     await browser.close().catch(() => undefined);
   } catch {
-    // launchBrowser already recorded the failure in launchHealth.
+    // launchBrowser already logged the full error + recorded launchHealth.
   }
   return launchHealth;
 }
@@ -125,6 +127,20 @@ export async function resetBrowserForTests(): Promise<void> {
 
 // internals
 
+/**
+ * Path-free reason for the public browser_reason field (red-team #21 sibling
+ * site). A chromium launch failure — Playwright's "Executable doesn't exist at
+ * <path>" message or a spawn errno — embeds the browser binary's absolute path
+ * (server home-dir leak via the unauthenticated GET /api/health). The errno
+ * code (ENOENT / EACCES / …) carries no path; the generic fallback covers
+ * Playwright's own path-bearing message. Full error is logged server-side in
+ * launchBrowser's catch, never returned. Mirrors routes/clauded-docs buildFsFailReason.
+ */
+export function buildLaunchFailReason(error: unknown): string {
+  const code = errnoCode(error);
+  return code !== undefined ? `launch error (${code})` : "chromium launch failed";
+}
+
 async function launchBrowser(): Promise<Browser> {
   try {
     // No --no-sandbox flag — keep chromium's default security boundary.
@@ -142,7 +158,10 @@ async function launchBrowser(): Promise<Browser> {
     launchHealth = { status: "ok", checked_at: new Date().toISOString() };
     return browser;
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "chromium launch failed";
+    // Full diagnostic (incl. the chromium binary absolute path) stays server-side
+    // ONLY — probeBrowserLaunch swallows the throw, so this is the sole launch log.
+    logger.error({ err: error }, "chromium launch failed");
+    const reason = buildLaunchFailReason(error);
     launchHealth = { status: "failed", reason, checked_at: new Date().toISOString() };
     throw new BrowserPoolError(reason, error);
   }

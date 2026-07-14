@@ -101,3 +101,10 @@ test("remediation string carries only the env-var NAME, never a token value", ()
   assert.doesNotMatch(NEEDS_AUTH_REMEDIATION, /CLAUDE_CODE_OAUTH_TOKEN\s*=/);
   assert.doesNotMatch(NEEDS_AUTH_REMEDIATION, /sk-|Bearer\s|eyJ/);
 });
+
+test("remediation names the concrete launcher command + Token Setup menu item", () => {
+  // Actionable: the real GA_ROOT-aware launcher path, not the abstract word "launcher".
+  assert.match(NEEDS_AUTH_REMEDIATION, /\/glass-atrium and choose "Token Setup"/);
+  assert.match(NEEDS_AUTH_REMEDIATION, /\(headless OAuth\)/);
+  assert.doesNotMatch(NEEDS_AUTH_REMEDIATION, /Run: launcher/);
+});

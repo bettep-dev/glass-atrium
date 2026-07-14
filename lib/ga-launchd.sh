@@ -107,17 +107,18 @@ load_launchd_jobs() {
     # reaches launchctl or a daemon; the loop keys on EXIT CODE only, so suppressing stdio is safe.
     launchctl bootout "gui/${UID}/${label}" </dev/null >/dev/null 2>&1 || true
 
-    # settle poll — bounded wait (~10s, 50 × 0.2s) until the label is ABSENT from launchctl's
-    # domain; "already absent" exits on the first iteration. bash 3.2-safe: plain arithmetic loop,
-    # awk for the TAB-delimited `launchctl list` column match.
-    local settle_i=0
-    while [[ "${settle_i}" -lt 50 ]]; do
+    # settle poll — bounded by a SECONDS-delta wall-clock ceiling (~10s default,
+    # GA_LAUNCHD_SETTLE_TIMEOUT_SECS) until the label is ABSENT from launchctl's domain;
+    # "already absent" exits on the first iteration. bash 3.2-safe: the SECONDS builtin caps true
+    # elapsed (an iteration count drifts when a probe blocks), awk for the TAB-delimited
+    # `launchctl list` column match, sleep 0.2 keeps the poll responsive under the wall-clock cap.
+    local settle_started="${SECONDS}" settle_ceiling="${GA_LAUNCHD_SETTLE_TIMEOUT_SECS:-10}"
+    while [[ "$((SECONDS - settle_started))" -lt "${settle_ceiling}" ]]; do
       # shellcheck disable=SC2312  # awk exit code IS the verdict; pipe-masking is intentional
       if ! launchctl list 2>/dev/null | awk -v l="${label}" '$3 == l { found = 1 } END { exit found ? 0 : 1 }'; then
         break
       fi
       sleep 0.2
-      settle_i=$((settle_i + 1))
     done
 
     # bootstrap with a single transient retry — if the first attempt still hits the rc=5 race

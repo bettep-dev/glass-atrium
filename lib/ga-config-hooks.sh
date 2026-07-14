@@ -352,7 +352,7 @@ wire_hooks() {
 }
 
 # settings.json un-wire (remove ALL Atrium hook bindings).
-# Removes EVERY hook-group whose command resolves into EITHER Atrium hooks dir — the legacy farm (~/.claude/hooks) or the in-place consumer (~/.glass-atrium/hooks) — across ALL events. DELIBERATELY independent of EXPECTED_HOOK_BINDINGS: that array lists the install-wired set (42 entries), but the deployed farm can carry bindings outside it (a user may hand-wire an Atrium hook, or the array may drift), and iterating the array would leave the surplus bound (dead links after uninstall). Both dirs are Atrium-owned (legacy farm removed on uninstall; ~/.glass-atrium/hooks is the release tree the repointed wire template binds), so ANY binding into either is dead and must go; foreign user hooks survive.
+# Removes EVERY hook-group whose command resolves into EITHER Atrium hooks dir — the legacy farm (~/.claude/hooks) or the in-place consumer (~/.glass-atrium/hooks) — across ALL events. DELIBERATELY independent of EXPECTED_HOOK_BINDINGS: that array lists the install-wired set, but the deployed farm can carry bindings outside it (a user may hand-wire an Atrium hook, or the array may drift), and iterating the array would leave the surplus bound (dead links after uninstall). Both dirs are Atrium-owned (legacy farm removed on uninstall; ~/.glass-atrium/hooks is the release tree the repointed wire template binds), so ANY binding into either is dead and must go; foreign user hooks survive.
 # PATH-TOLERANT match (mirrors the doctor check's tilde-vs-absolute tolerance): after normalizing a leading '~' to $HOME, a command matches on the "$HOME/.claude/hooks/" OR "$HOME/.glass-atrium/hooks/" prefix — the tilde form (what real settings.json stores), the ${HOME}-expanded absolute, and the literal absolute ALL match, while a user hook elsewhere (~/my-hooks/x.sh) is preserved. Basename-independent — keys on the hooks DIR, not the (stale/partial) expected-basename list.
 # SAFETY CONTRACT (why this cannot remove user config):
 #   * SCOPED removal — a hook-group is deleted ONLY when it holds a command resolving into an Atrium hooks dir; a user's own hook (ANY other path, e.g. ~/my-hooks/x.sh) is never matched, so it survives.
@@ -444,6 +444,129 @@ unwire_hooks() {
   done < <(jq -r 'if (.hooks | type) == "object" then (.hooks | keys[]) else empty end' -- "${SETTINGS_JSON}")
 
   log "unwire_hooks: ${removed} Atrium binding-group(s) removed across all events (backup: ${backup})"
+}
+
+# settings.json TARGETED hook-binding retirement (#13) — retire the binding for ONE
+# specific vendor-REMOVED hook basename, across ALL events. The `glass-atrium update`
+# vendor-removal sweep Trashes a dropped hook FILE, but its settings.json event->hook
+# BINDING lingers and still points at the now-absent file, so the hook ERRORS when its
+# event fires. wire_hooks only ADDS bindings and unwire_hooks removes ALL of them (too
+# broad for an update) — this retires EXACTLY the dropped hook's binding. Arg: $1 = hook
+# basename (e.g. "foo-hook.sh").
+# SCOPE (surgical — narrower than unwire_hooks' remove-ALL): a hook-GROUP is dropped ONLY
+# when it holds a command that, tilde-normalized, EQUALS "$HOME/.claude/hooks/<basename>"
+# OR "$HOME/.glass-atrium/hooks/<basename>" — the exact command wire_hooks emitted for
+# that basename in EITHER Atrium dir. A same-basename hook at a FOREIGN path, and every
+# OTHER Atrium binding, is preserved byte-for-byte.
+# SAFETY CONTRACT (same as unwire_hooks): MERGE not overwrite (every other key flows
+# through `.`) · ATOMIC (temp + jq-revalidate + mv) · BACKED-UP once, LAZILY, before the
+# FIRST real write (a no-op retire stays a true zero-write) · KEY-PRUNE symmetry (prune a
+# key WE emptied, leave a pre-existing user-owned empty []) · INJECTION-SAFE (--arg only)
+# · LOUD-FAIL on malformed JSON · IDEMPOTENT (a re-run retires nothing) · DRY_RUN skip.
+retire_hook_binding() {
+  local hook="${1:-}"
+  [[ -n "${hook}" ]] || die "retire_hook_binding: a hook basename argument is required"
+  command -v jq >/dev/null 2>&1 || die "jq required to retire a hook binding from ${SETTINGS_JSON}"
+
+  if [[ ! -f "${SETTINGS_JSON}" ]]; then
+    log "retire_hook_binding: settings.json absent (${SETTINGS_JSON}) — nothing to retire for ${hook}"
+    return 0
+  fi
+  if ! jq -e . -- "${SETTINGS_JSON}" >/dev/null 2>&1; then
+    die "retire_hook_binding: ${SETTINGS_JSON} is not valid JSON — refusing to edit (fix or restore it first)"
+  fi
+
+  # DRY_RUN log-and-skip: no mutation, no backup (report intent only).
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping settings.json retire of ${hook} (${SETTINGS_JSON})"
+    return 0
+  fi
+
+  # Atrium hooks dirs (absolute, current $HOME) — DUAL: the legacy farm AND the in-place
+  # consumer the repointed wire template emits; a binding under EITHER is Atrium-owned.
+  local hooks_dir="${HOME}/.claude/hooks/"
+  local hooks_dir_new="${HOME}/.glass-atrium/hooks/"
+
+  # iterate EVERY event under .hooks; the key list is snapshotted from the pre-mutation
+  # file (process sub runs ONCE) and stays a valid superset since we only ever DELETE.
+  local backup="" removed=0 event
+  # jq output streamed via process substitution → loop stays in the current shell.
+  # shellcheck disable=SC2312
+  while IFS= read -r event; do
+    [[ -n "${event}" ]] || continue
+
+    local tmp
+    tmp="${SETTINGS_JSON}.ga-retire.$$"
+    # DROP every hook-group under this event whose command, tilde-normalized, EQUALS the
+    # exact wire_hooks command for this basename in EITHER Atrium dir. is_target normalizes
+    # a leading '~' to $HOME via string slicing (NEVER regex — a $HOME with metachars stays
+    # byte-safe), then exact-matches $dir+$base OR $dir2+$base; a foreign-path or
+    # different-basename command fails both and is preserved. --arg only → injection-safe;
+    # an absent/non-array .hooks[event] is a safe no-op (`else .` returns input).
+    jq --arg ev "${event}" --arg dir "${hooks_dir}" --arg dir2 "${hooks_dir_new}" \
+      --arg home "${HOME}" --arg base "${hook}" '
+      def is_target:
+        (. // "")
+        | (if startswith("~/") then $home + .[1:] else . end)
+        | (. == ($dir + $base)) or (. == ($dir2 + $base));
+      if (.hooks[$ev] | type) == "array" then
+        .hooks[$ev] |= map(
+          select(
+            ([ (.hooks // [])[]? | .command | is_target ] | any) | not
+          )
+        )
+      else . end
+    ' -- "${SETTINGS_JSON}" >"${tmp}"
+
+    if ! jq -e . -- "${tmp}" >/dev/null 2>&1; then
+      rm -f -- "${tmp}"
+      die "retire_hook_binding: edit produced invalid JSON for event ${event} — backup: ${backup:-(none taken — no mutation occurred)}"
+    fi
+
+    # group count before/after for this event — the real-removal delta.
+    local before after
+    before="$(jq --arg ev "${event}" '(.hooks[$ev] // []) | length' -- "${SETTINGS_JSON}")"
+    after="$(jq --arg ev "${event}" '(.hooks[$ev] // []) | length' -- "${tmp}")"
+
+    # no change under this event → discard the temp WITHOUT a write/backup (keep the
+    # no-op zero-write property; a basename bound under no event leaves settings.json
+    # byte-identical, no backup file).
+    if [[ "${before}" -eq "${after}" ]]; then
+      rm -f -- "${tmp}"
+      continue
+    fi
+
+    # KEY-PRUNE symmetry: wire_hooks CREATES an event key via `.hooks[$ev] //= []`, so a
+    # retire that empties it MUST prune the key (before>0 && after==0) to restore the
+    # user's original byte-identically; a pre-existing user-owned empty [] (before==0) is
+    # left untouched.
+    if [[ "${after}" -eq 0 && "${before}" -gt 0 ]]; then
+      local pruned
+      pruned="${SETTINGS_JSON}.ga-retire-prune.$$"
+      jq --arg ev "${event}" 'del(.hooks[$ev])' -- "${tmp}" >"${pruned}"
+      if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
+        rm -f -- "${pruned}" "${tmp}"
+        die "retire_hook_binding: prune produced invalid JSON for event ${event} — backup: ${backup:-(none taken — no mutation occurred)}"
+      fi
+      mv -f -- "${pruned}" "${tmp}"
+    fi
+
+    # lazy backup: taken EXACTLY once, immediately before the first real write. Every
+    # prior iteration was a before==after no-op (no write), so settings.json is still
+    # the pre-mutation original here → the backup captures it faithfully.
+    if [[ -z "${backup}" ]]; then
+      backup="${SETTINGS_JSON}.ga-backup.$(date +%Y%m%d-%H%M%S)"
+      cp -p -- "${SETTINGS_JSON}" "${backup}"
+      log "retire_hook_binding: backed up settings.json -> ${backup}"
+    fi
+
+    mv -f -- "${tmp}" "${SETTINGS_JSON}"
+    local delta=$((before - after))
+    log "  retired: ${event} — ${delta} binding-group(s) for ${hook}"
+    removed=$((removed + delta))
+  done < <(jq -r 'if (.hooks | type) == "object" then (.hooks | keys[]) else empty end' -- "${SETTINGS_JSON}")
+
+  log "retire_hook_binding: ${removed} binding-group(s) retired for ${hook} (backup: ${backup:-none — no mutation})"
 }
 
 # config.toml purge (opt-in, mv-to-Trash — never rm a config)

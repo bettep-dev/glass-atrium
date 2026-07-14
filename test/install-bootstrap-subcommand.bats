@@ -24,6 +24,34 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_LIB="${GA}/lib/ga-core.sh"
 
+# The engine lib tree (ga-core.sh + its 7 domain siblings + the whole scripts/lib) is READ-ONLY
+# across every test — the tests only SOURCE it — so build it ONCE here. Per-test setup() symlinks
+# it into a fresh sandbox GA_ROOT; each test still writes its OWN monitor/.env (config-port
+# isolation the env-port tests depend on is preserved). BATS_FILE_TMPDIR is auto-reaped by bats.
+setup_file() {
+  [[ -f "${REAL_LIB}" ]] || return 0
+  ENGINE_SRC="${BATS_FILE_TMPDIR}/engine"
+  export ENGINE_SRC
+  mkdir -p "${ENGINE_SRC}/lib" "${ENGINE_SRC}/scripts/lib"
+  # ga-core.sh is a THIN LOADER that sources its 7 domain siblings; copy them alongside so a
+  # sandbox source resolves the full engine (absent -> loud-fail).
+  cp "${REAL_LIB}" \
+    "${GA}/lib/ga-env.sh" \
+    "${GA}/lib/ga-symlink.sh" \
+    "${GA}/lib/ga-config-hooks.sh" \
+    "${GA}/lib/ga-launchd.sh" \
+    "${GA}/lib/ga-db.sh" \
+    "${GA}/lib/ga-daemons.sh" \
+    "${GA}/lib/ga-doctor.sh" \
+    "${ENGINE_SRC}/lib/"
+  # ga_init_env HARD-requires several scripts/lib libs under <GA_ROOT>/scripts/lib and die()s when
+  # any is absent (the E5 update-system set PLUS fakechat-cleanup.sh). Copy the WHOLE scripts/lib
+  # dir so the next mandatory-lib addition cannot re-break this (the class already recurred:
+  # update-pause-flag, then fakechat-cleanup). init sources only the named libs, so the extras sit
+  # unread — a SOURCE-time dependency of init, not of run_bootstrap.
+  cp "${GA}/scripts/lib/"*.sh "${ENGINE_SRC}/scripts/lib/"
+}
+
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "lib/ga-core.sh not found: ${REAL_LIB}"
   SANDBOX="$(mktemp -d -t install-bootstrap-bats.XXXXXX)"
@@ -31,30 +59,12 @@ setup() {
   STUB_BIN="${SANDBOX}/bin"
   # curl writes the URL it was asked to fetch here so a test can assert the port.
   CURL_URL_LOG="${SANDBOX}/curl-url.log"
-  mkdir -p "${GA_SBX}/monitor" "${GA_SBX}/lib" "${GA_SBX}/scripts/lib" "${STUB_BIN}"
-  # copy the engine into the sandbox so ga_init_env "${GA_SBX}" resolves the
-  # sandbox monitor/.env; the engine logic (not a thin entry point) is what these
-  # bootstrap tests exercise.
-  cp "${REAL_LIB}" "${GA_SBX}/lib/ga-core.sh"
-  # ga-core.sh is now a THIN LOADER that sources its 7 domain siblings; copy them
-  # alongside so the sandbox source resolves the full engine (absent -> loud-fail).
-  cp "${GA}/lib/ga-env.sh" \
-    "${GA}/lib/ga-symlink.sh" \
-    "${GA}/lib/ga-config-hooks.sh" \
-    "${GA}/lib/ga-launchd.sh" \
-    "${GA}/lib/ga-db.sh" \
-    "${GA}/lib/ga-daemons.sh" \
-    "${GA}/lib/ga-doctor.sh" \
-    "${GA_SBX}/lib/"
-  # ga_init_env now HARD-requires the E5 update-system libs (atrium-config.sh /
-  # apply-spine.sh / update-pause-flag.sh) under <GA_ROOT>/scripts/lib and die()s
-  # ("E5 lib missing") when they are absent. Provision them into the sandbox so
-  # ga_init_env succeeds (the bootstrap path itself does not exercise them — this
-  # is a SOURCE-time dependency of init, not of run_bootstrap).
-  cp "${GA}/scripts/lib/atrium-config.sh" \
-    "${GA}/scripts/lib/apply-spine.sh" \
-    "${GA}/scripts/lib/update-pause-flag.sh" \
-    "${GA_SBX}/scripts/lib/"
+  mkdir -p "${GA_SBX}/monitor" "${GA_SBX}/scripts" "${STUB_BIN}"
+  # symlink the read-only engine tree built once in setup_file (source-only). monitor/.env stays a
+  # real per-test dir so each test's config port is isolated; rm -rf of the sandbox drops the
+  # symlink entries only, never the shared engine tree they point at.
+  ln -s "${ENGINE_SRC}/lib" "${GA_SBX}/lib"
+  ln -s "${ENGINE_SRC}/scripts/lib" "${GA_SBX}/scripts/lib"
   install_stubs
 }
 

@@ -20,8 +20,12 @@ readonly DEFAULT_MARKER_DIR="${HOME}/.claude/data"
 marker_dir="${TYPECHECK_MARKER_DIR:-${DEFAULT_MARKER_DIR}}"
 
 INPUT="$(hook_read_input)"
-EVENT="$(hook_get_field "${INPUT}" "hook_event_name")"
-SESSION_ID="$(hook_get_field "${INPUT}" "session_id")"
+# Single-pass extraction of the two always-read top-level fields (one python3, not two).
+{
+  IFS= read -r -d '' EVENT
+  IFS= read -r -d '' SESSION_ID
+} \
+  < <(hook_get_fields "${INPUT}" hook_event_name session_id || true)
 
 # session_id absent → marker key impossible → fail-open.
 if [[ -z "${SESSION_ID}" ]]; then

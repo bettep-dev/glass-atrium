@@ -52,16 +52,25 @@ if [[ ! -s "${DUMP_PATH}" ]]; then
   die "pg_dump produced empty file: ${DUMP_PATH}"
 fi
 
-dump_bytes="$(stat -f '%z' "${DUMP_PATH}")"
+# POSIX byte count (identical on BSD+GNU) — NOT `stat -f`/`stat -c` (BSD/GNU-divergent:
+# GNU `-f` means --file-system, so '%z' becomes a bad file operand and the ERR trap dies).
+dump_bytes="$(wc -c <"${DUMP_PATH}" | tr -d '[:space:]')"
 log "dump complete: ${DUMP_PATH} (${dump_bytes} bytes)"
 
 # 4. Rotation: keep ${RETAIN_COUNT} newest dumps; move the rest to ~/.Trash/.
 #    Ordering is by filename (timestamp embedded), which equals mtime order
 #    by construction. macOS-safe: sort -r + awk 'NR>RETAIN' (no GNU head -n -N).
-#    Globbing dotfile-safe via explicit prefix `glass_atrium-*.dump`.
+#    Candidate glob is the DATED nightly form `glass_atrium-[0-9]*.dump` ONLY:
+#    keep-forever pre-uninstall dumps (`glass_atrium-pre-uninstall-*.dump`, set
+#    by lib/ga-db.sh drop_databases) begin with `p`, so they are excluded and
+#    never consume a rotation slot — else each would permanently shrink the
+#    nightly retention depth below ${RETAIN_COUNT}.
 #    Process-substitution avoids subshell variable scoping.
 shopt -s nullglob
-all_dumps=("${BACKUP_DIR}"/glass_atrium-*.dump)
+all_dumps=()
+for dump_file in "${BACKUP_DIR}"/glass_atrium-[0-9]*.dump; do
+  all_dumps+=("${dump_file}")
+done
 shopt -u nullglob
 
 dump_total="${#all_dumps[@]}"

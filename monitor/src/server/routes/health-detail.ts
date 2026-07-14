@@ -14,7 +14,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
-import { nextOccurrenceUtc, DAEMON_CRON_SCHEDULE, type CronRule } from "../schedule-next-fire.js";
+import {
+  nextOccurrenceUtc,
+  DAEMON_CRON_SCHEDULE,
+  STALE_MULTIPLIER,
+  expectedIntervalMinutes,
+} from "../schedule-next-fire.js";
 import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
   CostGuardStateValue,
@@ -77,10 +82,12 @@ const SETTINGS_PATH = path.join(HOME_DIR, ".claude", "settings.json");
 const GA_ROOT_DIR = process.env.GA_ROOT ?? path.join(HOME_DIR, ".glass-atrium");
 const CLAUDE_AUTH_ENV_PATH = path.join(GA_ROOT_DIR, "secrets", "claude-auth.env");
 
-// needs_auth recovery pointer — env-var NAME + instruction only, never the token
-// value (core-security.md Secret Management). Exported for the no-secret-content test.
+// needs_auth recovery pointer — names the concrete GA_ROOT-aware launcher command
+// so the card is actionable (a GA_ROOT override yields the real absolute path).
+// env-var NAME + instruction only, never the token value (core-security.md Secret
+// Management). Exported for the no-secret-content test.
 export const NEEDS_AUTH_REMEDIATION =
-  "Run: launcher → Token Setup (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN";
+  `Run ${GA_ROOT_DIR}/glass-atrium and choose "Token Setup" (headless OAuth) to provision CLAUDE_CODE_OAUTH_TOKEN`;
 
 // Why hard-coded daemon list: status cards render in fixed order.
 // daily-restart runs are role-qualified (one row per restarted daemon) so each
@@ -93,10 +100,6 @@ const DAEMON_BOARD: ReadonlyArray<DaemonStatusCard["daemon_name"]> = [
   "daily-restart-autoagent",
   "daily-restart-wiki",
 ];
-
-// Staleness multiplier: a daemon is "stale" once its silence exceeds 1.5x the
-// expected interval (daily-at → 24h, weekly-at → 7d).
-const STALE_MULTIPLIER = 1.5;
 
 interface DaemonRow {
   daemon_name: string;
@@ -640,18 +643,6 @@ function narrowHookErrorKind(raw: string): HookErrorKindValue {
 function formatDateOnly(date: Date): string {
   // Why manual UTC slice: PG DATE arrives as midnight UTC; toISOString preserves Y-M-D.
   return date.toISOString().slice(0, 10);
-}
-
-// expectedIntervalMinutes stays local (staleness heuristic, not next-fire math);
-// it consumes the shared CronRule via a type-only import so the daily-at /
-// weekly-at interval logic keeps compiling against the extracted type.
-function expectedIntervalMinutes(rule: CronRule): number {
-  switch (rule.type) {
-    case "daily-at":
-      return 24 * 60;
-    case "weekly-at":
-      return 7 * 24 * 60;
-  }
 }
 
 function isFsAbsentError(err: unknown): boolean {

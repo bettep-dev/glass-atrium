@@ -9,6 +9,13 @@
 // `Intl.DateTimeFormat#formatToParts` is a NEW server-side primitive (the only prior use is the frontend
 // ui.jsx display formatter) — this does NOT claim the pattern "matches existing style".
 
+import { type ConfigAlarmSink, isProductionEnv, makeConfigAlarm } from "./config-alarm.js";
+
+// Re-exported so schedule-next-fire.unit.test.ts's `import { type ConfigAlarmSink }` seam stays intact.
+export type { ConfigAlarmSink };
+
+const defaultConfigAlarm = makeConfigAlarm("ATRIUM_SCHEDULE_*");
+
 // Cron rule shape — daily-at + weekly-at. `hour`/`minute` are wall-clock fields in the resolved timezone.
 // `dayOfWeek` (0=Sunday … 6=Saturday, matching launchd Weekday + JS Date#getUTCDay) is retained for weekly-at but currently dormant.
 export type CronRule =
@@ -47,16 +54,33 @@ const DEV_FALLBACK_SCHEDULE: Record<ScheduleKey, string> = {
 // Build the 4-row schedule map from an injectable raw source, applying the daily-restart fan-out.
 // Loud-fail (mirrors timezone.ts): a present-but-malformed value throws at module load with the env-var name.
 // Partial-presence throws (never mix rendered + fallback); only a TOTALLY-absent source degrades to the dev fallback + one stderr warning.
-export function buildDaemonCronSchedule(source: RawDaemonSchedule): Record<string, CronRule> {
+export function buildDaemonCronSchedule(
+  source: RawDaemonSchedule,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+  alarm: ConfigAlarmSink = defaultConfigAlarm,
+): Record<string, CronRule> {
   const presentKeys = SCHEDULE_KEYS.filter((key) => isPresent(source[key]));
 
   if (presentKeys.length === 0) {
-    // Dev path: tsx watch with no rendered .env. Visible, one-shot warning — never silent.
-    process.stderr.write(
-      "[schedule] WARNING: no ATRIUM_SCHEDULE_* env present — using dev-fallback " +
-        "{autoagent 04:30, wiki 04:50, daily-restart 05:30}. Run render-monitor-env.sh " +
-        "to render concrete schedule values from config.toml.\n",
-    );
+    if (isProductionEnv(nodeEnv)) {
+      // Production boot guard: an absent ATRIUM_SCHEDULE_* set under NODE_ENV=production means
+      // render-monitor-env.sh never ran, so the dev-fallback schedule silently misrepresents
+      // Next-due (the UTC-shadow bug). Raise a prominent, monitor-surfaced alarm instead of a lost
+      // stderr line; the config-truth fallback still renders so the dashboard stays up — the alarm,
+      // not a silent wrong value, is the signal.
+      alarm(
+        "no ATRIUM_SCHEDULE_* env under NODE_ENV=production — the dev-fallback schedule " +
+          "{autoagent 04:30, wiki 04:50, daily-restart 05:30} would misrepresent Next-due. Run " +
+          "render-monitor-env.sh then restart the monitor to render the schedule from config.toml.",
+      );
+    } else {
+      // Dev path: tsx watch with no rendered .env. Visible, one-shot warning — never silent.
+      process.stderr.write(
+        "[schedule] WARNING: no ATRIUM_SCHEDULE_* env present — using dev-fallback " +
+          "{autoagent 04:30, wiki 04:50, daily-restart 05:30}. Run render-monitor-env.sh " +
+          "to render concrete schedule values from config.toml.\n",
+      );
+    }
     return assembleSchedule(DEV_FALLBACK_SCHEDULE);
   }
 
@@ -257,4 +281,25 @@ export function nextOccurrenceUtc(rule: CronRule, tz: string, now: Date): string
   }
 
   return new Date(candidateUtcMs).toISOString();
+}
+
+// Daemon staleness / cadence thresholds — the single SoT consumed by health-detail.ts
+// (card is_stale) + live-overlay.ts / dashboard.ts (synthesized 'stale'). Co-located with
+// the CronRule they derive from so a cadence/threshold change can't desync the surfaces
+// that decide a daemon is overdue.
+
+// A daemon is "overdue"/"stale" once its silence exceeds STALE_MULTIPLIER × its expected
+// interval (daily → 24h × 1.5 = 36h).
+export const STALE_MULTIPLIER = 1.5;
+
+// Expected run interval (minutes) implied by a cron rule — the staleness baseline
+// (daily-at → 24h, weekly-at → 7d). Distinct from nextOccurrenceUtc (next-fire math);
+// this is the cadence the overdue threshold multiplies.
+export function expectedIntervalMinutes(rule: CronRule): number {
+  switch (rule.type) {
+    case "daily-at":
+      return 24 * 60;
+    case "weekly-at":
+      return 7 * 24 * 60;
+  }
 }

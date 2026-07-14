@@ -1414,8 +1414,16 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge role="status" tone={failure.breakage_rate > BREAKAGE_RATE_CRIT_THRESHOLD ? 'crit' : 'warn'}>
-              {formatIntAg(failure.total_breakages)} breakages · {(failure.breakage_rate * 100).toFixed(1)}%
+              {formatIntAg(failure.total_breakages - (failure.reconstructed || 0))} breakages · {(failure.breakage_rate * 100).toFixed(1)}%
             </Badge>
+            {failure.reconstructed > 0 && (
+              <span
+                className="fs-micro font-mono"
+                style={{ color: 'rgb(var(--faint))' }}
+                title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
+                ↺ {formatIntAg(failure.reconstructed)} reconstructed
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
@@ -2291,7 +2299,7 @@ function QualityHealthTopRow({ rank, entry, onSelect }) {
       tabIndex={0}
       role="button"
       className="px-2 py-2 rounded border border-line hover:bg-sunken cursor-pointer transition-colors"
-      title={`${entry.agent} — health ${indexPct}% · reworks ${entry.totalRevisions} · review_flag ${(entry.reviewFlagRatio * 100).toFixed(1)}%`}>
+      title={`${entry.agent} — health ${indexPct}% (writer-emitted) · reworks ${entry.totalRevisions} · review_flag ${(entry.reviewFlagRatio * 100).toFixed(1)}%${entry.reviewFlaggedReconstructed > 0 ? ` · ${entry.reviewFlaggedReconstructed} reconstructed flag(s) excluded` : ''}`}>
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-faint fs-micro font-mono w-4 text-right">{rank}</span>
@@ -2300,6 +2308,14 @@ function QualityHealthTopRow({ rank, entry, onSelect }) {
         <span className={`font-mono fs-body font-semibold ${indexTone}`}>{indexPct}</span>
       </div>
       <RevisionInlineMiniBar buckets={entry.buckets} total={entry.totalRevisions}/>
+      {entry.reviewFlaggedReconstructed > 0 && (
+        <div
+          className="fs-micro font-mono mt-1"
+          style={{ color: 'rgb(var(--faint))' }}
+          title="Harness-reconstructed review_flags (recovery artifacts) excluded from the health score">
+          ↺ {formatIntAg(entry.reviewFlaggedReconstructed)} reconstructed flag(s) excluded
+        </div>
+      )}
     </div>
   );
 }
@@ -2869,9 +2885,15 @@ function buildRevisionMap(rows) {
 }
 
 // Project review_flag rows → per-agent aggregate (Health Index review_flag 성분).
-// 입력 row 구조: { agent?, total_count, review_flagged_count, ... } — agent 컬럼 유무로 분기.
+// 입력 row 구조: { agent?, total_count, review_flagged_count, reconstructed_count?, ... }.
 // 주 입력원 = /api/agents/review-flag-by-agent (agent 컬럼 보유 → per-agent ratio · CF1 P0).
 // agent 미포함 (legacy date-only) → __overall__ 단일 비율 fallback 유지.
+//
+// reconstructed_count = review_flagged_count 중 합성 복구행(harness-synthesized) 몫. 합성 backstop 이
+// metric_pass=EMPTY → review_flag=true 로 기록하므로 QA/intel/design 계열의 flagged 는 대부분 recording
+// artifact. 따라서 headline `flagged` + Health Index `ratio` 를 writer-emitted (flagged - reconstructed)
+// 로 기본 분리 — KpiBucket 패턴. rawFlagged/reconstructed 는 artifact sub-line 노출용으로 보존.
+// 필드 부재(구 응답) → reconstructed 0 (writer-emitted == raw, 분리 없음과 동일).
 function buildReviewFlagMap(rows) {
   const byAgent = new Map();
   if (!Array.isArray(rows)) return byAgent;
@@ -2882,27 +2904,38 @@ function buildReviewFlagMap(rows) {
   if (!hasAgentColumn) {
     // 전체 평균을 sentinel key 로 보관 (buildQualityHealthRanking 에서 fallback).
     let total = 0;
-    let flagged = 0;
+    let rawFlagged = 0;
+    let reconstructed = 0;
     for (const r of rows) {
       total += Number(r.total_count) || 0;
-      flagged += Number(r.review_flagged_count) || 0;
+      const rf = Number(r.review_flagged_count) || 0;
+      rawFlagged += rf;
+      reconstructed += Math.min(Number(r.reconstructed_count) || 0, rf);
     }
-    byAgent.set('__overall__', { total, flagged, ratio: total > 0 ? flagged / total : 0 });
+    const flagged = Math.max(0, rawFlagged - reconstructed);
+    byAgent.set('__overall__', {
+      total, flagged, rawFlagged, reconstructed,
+      ratio: total > 0 ? flagged / total : 0,
+    });
     return byAgent;
   }
 
-  // agent 컬럼 존재 시 (서버 변경 대비 forward-compat) — agent 별 집계.
+  // agent 컬럼 존재 시 — agent 별 집계.
   for (const r of rows) {
     if (!r || !r.agent) continue;
     let entry = byAgent.get(r.agent);
     if (!entry) {
-      entry = { total: 0, flagged: 0, ratio: 0 };
+      entry = { total: 0, flagged: 0, rawFlagged: 0, reconstructed: 0, ratio: 0 };
       byAgent.set(r.agent, entry);
     }
     entry.total += Number(r.total_count) || 0;
-    entry.flagged += Number(r.review_flagged_count) || 0;
+    const rf = Number(r.review_flagged_count) || 0;
+    entry.rawFlagged += rf;
+    entry.reconstructed += Math.min(Number(r.reconstructed_count) || 0, rf);
   }
   for (const entry of byAgent.values()) {
+    // headline/ratio = writer-emitted (합성 복구행 제외); reconstructed 는 sub-line 용 보존.
+    entry.flagged = Math.max(0, entry.rawFlagged - entry.reconstructed);
     entry.ratio = entry.total > 0 ? entry.flagged / entry.total : 0;
   }
   return byAgent;
@@ -2926,11 +2959,15 @@ function buildQualityHealthRanking(revisionRows, reviewRows, topN) {
     const reviewEntry = reviewMap.get(agent);
     // agent 별 review_flag 미존재 시 전체 평균 fallback (__overall__).
     const overallEntry = reviewMap.get('__overall__');
-    const reviewFlagRatio = reviewEntry ? reviewEntry.ratio : (overallEntry ? overallEntry.ratio : 0);
+    const sourceEntry = reviewEntry || overallEntry || null;
+    // ratio 는 이미 writer-emitted (buildReviewFlagMap 에서 flagged - reconstructed 기준).
+    const reviewFlagRatio = sourceEntry ? sourceEntry.ratio : 0;
     agentMetrics.push({
       agent,
       avgRevision,
       reviewFlagRatio,
+      // artifact sub-line 용 — flagged headline 중 합성 복구행 몫 (writer-emitted 분리 근거).
+      reviewFlaggedReconstructed: sourceEntry ? (sourceEntry.reconstructed || 0) : 0,
       totalRevisions: rev.total,
       buckets: rev,
     });
@@ -2958,10 +2995,17 @@ function buildFailureMap(rows) {
   if (!Array.isArray(rows)) return map;
   for (const r of rows) {
     if (!r || !r.agent) continue;
+    const totalBreakages = Number(r.total_breakages) || 0;
+    // reconstructed_count = total_breakages 중 합성 복구행 몫 (harness-synthesized). writer-emitted
+    // breakages = total_breakages - reconstructed. breakages 는 fail/blocked 이라 합성 backstop
+    // (done_with_concerns 기록)과 겹치는 경우가 드물지만, 판별식을 전 aggregation 에 균일 적용해
+    // headline 을 일관되게 writer-emitted 로 노출. 필드 부재(구 응답) → 0.
+    const reconstructed = Math.min(Number(r.reconstructed_count) || 0, totalBreakages);
     map.set(r.agent, {
       fail_count: Number(r.fail_count) || 0,
       blocked_count: Number(r.blocked_count) || 0,
-      total_breakages: Number(r.total_breakages) || 0,
+      total_breakages: totalBreakages,
+      reconstructed,
       // breakage_rate = (fail+blocked)/전체 — fail_rate 는 deprecated alias (동일값 · 1 release 유지).
       breakage_rate: Number(r.breakage_rate ?? r.fail_rate) || 0,
       // 서버 정확 타임스탬프 (MAX(record_ts) · blocked 포함). client event_date 도출보다 정확.

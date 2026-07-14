@@ -80,6 +80,71 @@ extract_target_files_section() {
     | sed 's/&amp;/\&/g; s/&lt;/</g; s/&gt;/>/g'
 }
 
+# Shared drift decision — match file_path against the resolved target list; on no-match emit the
+# SCOPE-070 advisory (exit 0, non-blocking). Called by BOTH the live-resolution and cache-hit
+# branches so the verdict is identical by construction, independent of where the list came from.
+# Args: $1=file_path  $2=allowed_files  $3=plan_id
+check_drift_and_emit() {
+  local file_path="${1}" allowed_files="${2}" plan_id="${3}"
+  # Intended predicate call (explicit return 0/1, no set -e reliance) → SC2310 disabled.
+  # shellcheck disable=SC2310
+  if ! match_file_against_allowed "${file_path}" "${allowed_files}"; then
+    emit_error "SCOPE-070" "advisory" \
+      "Scope drift: file not in plan target list" \
+      "Scope drift: file not in plan target list" \
+      "Update plan target files or confirm modification is intentional" \
+      "Update plan target files or confirm the modification is intentional" \
+      "{\"file\":\"${file_path}\",\"plan_id\":${plan_id}}"
+  fi
+}
+
+# Per-session resolution cache (plan id + target-file list) — read side. On a valid, fresh,
+# non-empty hit: sets CACHED_PLAN_ID + CACHED_ALLOWED_FILES and returns 0. Any anomaly (unreadable /
+# truncated / non-integer header / expired / no path-like token) returns 1 → the caller falls back
+# to the live loopback (fail-open — a real drift detection is never suppressed by a bad cache).
+# Args: $1=cache_file
+scope_drift_read_cache() {
+  local cache_file="${1}"
+  [[ -r "${cache_file}" ]] || return 1
+
+  local cached_epoch cached_plan_id cached_files now ttl age
+  {
+    IFS= read -r cached_epoch || return 1
+    IFS= read -r cached_plan_id || return 1
+    cached_files="$(cat)"
+  } <"${cache_file}"
+
+  # Corrupt header (non-integer epoch / id) → live lookup.
+  [[ "${cached_epoch}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${cached_plan_id}" =~ ^[0-9]+$ ]] || return 1
+
+  # TTL freshness bounds mid-session plan-supersede staleness. A future epoch (clock skew) is
+  # treated as stale. Default 300s, env-overridable; a non-integer override falls back to 300.
+  now="$(date +%s)"
+  [[ "${now}" =~ ^[0-9]+$ ]] || return 1
+  ttl="${SCOPE_DRIFT_CACHE_TTL:-300}"
+  [[ "${ttl}" =~ ^[0-9]+$ ]] || ttl=300
+  ((now < cached_epoch)) && return 1
+  age=$((now - cached_epoch))
+  ((age > ttl)) && return 1
+
+  # Re-validate the cached list exactly as the live path does (non-empty + a path-like token).
+  [[ -z "${cached_files}" ]] && return 1
+  printf '%s' "${cached_files}" | grep -q '[./]' || return 1
+
+  CACHED_PLAN_ID="${cached_plan_id}"
+  CACHED_ALLOWED_FILES="${cached_files}"
+  return 0
+}
+
+# Per-session resolution cache — write side. Delegates to the shared variadic writer: epoch is line 1,
+# plan_id line 2, and the (multi-line) allowed-files list stays LAST so the read side's slurp round-
+# trips. Best-effort — a write failure only forces a harmless re-resolve on the next edit.
+# Args: $1=cache_file  $2=plan_id  $3=allowed_files
+scope_drift_write_cache() {
+  hook_cache_write "${1}" "${2}" "${3}"
+}
+
 # Drain stdin once — capture file_path before any branch (needed for the system-path
 # short-circuit). Non-zero/empty input → fail-open.
 INPUT=$(cat 2>/dev/null) || exit 0
@@ -105,6 +170,28 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
 
   # file_path absent → no per-file matching → skip the API call.
   [[ -z "${FILE_PATH}" ]] && exit 0
+
+  # Per-session resolution cache (plan id + target-file list) — optimization only. A hit skips
+  # BOTH loopback curls + the HTML re-parse below; a miss / stale / corrupt / unreadable cache
+  # falls back to the live lookup (fail-open — a real drift detection is never suppressed).
+  # Keyed on session_id: a changed PLAN_FILE takes the branch above (cache untouched), and
+  # SCOPE_DRIFT_CACHE_BYPASS forces a fresh resolve (explicit refresh signal). Empty session id →
+  # caching disabled (no shared key) so distinct sessions never collide.
+  SESSION_ID=$(echo "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)
+  SAFE_SID="$(hook_path_safe_key "${SESSION_ID}")"
+  CACHE_DIR="${SCOPE_DRIFT_CACHE_DIR:-${HOOK_LOG_DIR}/scope-drift-plancache}"
+  CACHE_FILE=""
+  if [[ -n "${SAFE_SID}" ]]; then
+    CACHE_FILE="${CACHE_DIR}/${SAFE_SID}.cache"
+  fi
+
+  # Cache hit → reuse the resolved list, skip both curls + the parse. Predicate call → SC2310.
+  # shellcheck disable=SC2310
+  if [[ -n "${CACHE_FILE}" ]] && [[ -z "${SCOPE_DRIFT_CACHE_BYPASS:-}" ]] \
+    && scope_drift_read_cache "${CACHE_FILE}"; then
+    check_drift_and_emit "${FILE_PATH}" "${CACHED_ALLOWED_FILES}" "${CACHED_PLAN_ID}"
+    exit 0
+  fi
 
   # 1. List API → pick the in-progress doc ID. Response {"total":N,"rows":[...]}.
   #    Selection: newest created_at, tie → max id (deterministic). --max-time enforced.
@@ -142,17 +229,14 @@ if [[ -z "${PLAN_FILE:-}" ]]; then
     exit 0
   fi
 
-  # 4. Match → file outside the list → SCOPE-070 advisory (exit 0, non-blocking).
-  #    Intended predicate call (explicit return 0/1, no set -e reliance) → SC2310 disabled.
-  # shellcheck disable=SC2310
-  if ! match_file_against_allowed "${FILE_PATH}" "${ALLOWED_FILES}"; then
-    emit_error "SCOPE-070" "advisory" \
-      "Scope drift: file not in plan target list" \
-      "Scope drift: file not in plan target list" \
-      "Update plan target files or confirm modification is intentional" \
-      "Update plan target files or confirm the modification is intentional" \
-      "{\"file\":\"${FILE_PATH}\",\"plan_id\":${PLAN_ID}}"
+  # 4. Persist the resolution for subsequent same-session edits (best-effort — never gates the
+  #    verdict), then run the shared drift decision (identical to the cache-hit branch above).
+  if [[ -n "${CACHE_FILE}" ]]; then
+    # Best-effort: a write failure must NOT abort the hook (optimization only) → SC2310 disabled.
+    # shellcheck disable=SC2310
+    scope_drift_write_cache "${CACHE_FILE}" "${PLAN_ID}" "${ALLOWED_FILES}" || true
   fi
+  check_drift_and_emit "${FILE_PATH}" "${ALLOWED_FILES}" "${PLAN_ID}"
   exit 0
 fi
 [[ ! -f "${PLAN_FILE}" ]] && exit 0

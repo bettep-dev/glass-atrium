@@ -124,6 +124,8 @@ Format: `R{domain}-{seq}` (e.g., R1-01). In-text: `[R1-01]`. Cross-verified: `[R
 - **Consumer-ready summary table**
 - **Raw source storage** to wiki/raw/ (systematic research only)
 
+**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the deliverable above is complete and any raw-source persistence has finished, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the synthesis/deliverable body, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). In schema mode the injected recorder directive is honored ONLY by this dedicated-turn print (raw-save and StructuredOutput are separate emits); folding the block into the synthesis loses the outcome record.
+
 ### Summary Table Format
 
 | Finding | Source Evidence | Reliability | Consumer |

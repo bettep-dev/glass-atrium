@@ -87,6 +87,9 @@ const LIVE_TONE_CLASS = {
 	crit: "arch-node-live-crit",
 };
 
+// ring tone severity 순위 — 복수 daemon fold 시 최악값 선택용. neutral/info = ring 없음(0).
+const LIVE_TONE_RANK = { crit: 3, warn: 2, ok: 1 };
+
 // 탭 정의 (백엔드 diagram id 와 매칭) — order = 사용자 멘탈 모델 순서.
 const TAB_ORDER = [
 	"v2-overview-entry",
@@ -274,14 +277,11 @@ function ScreenArchitecture(
 		return { roles, nodeTypes, edgeTypes };
 	}, [activeDiagram]);
 
-	// unscoped mermaid node id → daemon — 서버 DAEMON_NODE_BINDINGS(node_ids) 가 ring 점등의 유일 근거 (F32).
-	const liveDaemonByNodeId = useMemoAR(() => {
-		const m = new Map();
-		if (liveState.status !== "ready") return m;
-		for (const d of liveState.data?.daemons || []) {
-			for (const nid of d.node_ids || []) m.set(nid, d);
-		}
-		return m;
+	// unscoped mermaid node id → daemon 목록 — 서버 DAEMON_NODE_BINDINGS(node_ids) 가 ring 점등의 유일 근거 (F32).
+	//   한 노드에 복수 daemon 바인딩 가능(cron: daily-restart-autoagent/-wiki) → id 당 목록 보존, last-writer-wins 드롭 방지 (F39).
+	const liveDaemonsByNodeId = useMemoAR(() => {
+		if (liveState.status !== "ready") return new Map();
+		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
 	}, [liveState.status, liveState.data]);
 
 	const handleSelectNode = useCallbackAR(
@@ -434,7 +434,7 @@ function ScreenArchitecture(
 						activeDiagram={activeDiagram}
 						nodeByLabel={nodeByLabel}
 						nodeIndex={nodeIndex}
-						liveDaemonByNodeId={liveDaemonByNodeId}
+						liveDaemonsByNodeId={liveDaemonsByNodeId}
 						legendFocus={legendFocus}
 						onSelectNode={handleSelectNode}
 						onRetry={triggerRefresh}
@@ -456,7 +456,7 @@ function ScreenArchitecture(
 					detail={detail}
 					nodeIndex={nodeIndex}
 					activeDiagram={activeDiagram}
-					liveDaemonByNodeId={liveDaemonByNodeId}
+					liveDaemonsByNodeId={liveDaemonsByNodeId}
 					onClose={closeDetail}
 				/>
 			)}
@@ -510,7 +510,7 @@ function DiagramCanvasCard({
 	activeDiagram,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonByNodeId,
+	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 	onRetry,
@@ -523,7 +523,7 @@ function DiagramCanvasCard({
 					activeDiagram={activeDiagram}
 					nodeByLabel={nodeByLabel}
 					nodeIndex={nodeIndex}
-					liveDaemonByNodeId={liveDaemonByNodeId}
+					liveDaemonsByNodeId={liveDaemonsByNodeId}
 					legendFocus={legendFocus}
 					onSelectNode={onSelectNode}
 					onRetry={onRetry}
@@ -538,7 +538,7 @@ function DiagramBody({
 	activeDiagram,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonByNodeId,
+	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 	onRetry,
@@ -592,7 +592,7 @@ function DiagramBody({
 			diagramDescription={activeDiagram.description || ""}
 			nodeByLabel={nodeByLabel}
 			nodeIndex={nodeIndex}
-			liveDaemonByNodeId={liveDaemonByNodeId}
+			liveDaemonsByNodeId={liveDaemonsByNodeId}
 			legendFocus={legendFocus}
 			onSelectNode={onSelectNode}
 		/>
@@ -609,7 +609,7 @@ function MermaidCanvas({
 	diagramDescription,
 	nodeByLabel,
 	nodeIndex,
-	liveDaemonByNodeId,
+	liveDaemonsByNodeId,
 	legendFocus,
 	onSelectNode,
 }) {
@@ -678,16 +678,16 @@ function MermaidCanvas({
 			if (matchedId) {
 				el.setAttribute("data-arch-node-id", matchedId);
 				// 스키마 node id = `${diagramId}.${mermaidId}` · 바인딩 키 = unscoped mermaid id → suffix 매칭 (F32).
-				const daemon = liveDaemonByNodeId.get(unscopedNodeIdAR(matchedId)) || null;
+				const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(matchedId));
 				// 이전 폴링 tick 의 ring 잔존 제거 후 현재 tone 재부착.
 				el.classList.remove(...Object.values(LIVE_TONE_CLASS));
-				const liveClass = daemon
-					? LIVE_TONE_CLASS[daemonEffectiveTone(daemon)]
-					: null;
+				// 복수 daemon 바인딩 시 최악 severity 를 ring 근거로 채택 (F39).
+				const tone = worstDaemonTone(daemons);
+				const liveClass = tone ? LIVE_TONE_CLASS[tone] : null;
 				if (liveClass) el.classList.add(liveClass);
 			}
 		});
-	}, [renderState.status, renderState.svgHtml, nodeByLabel, liveDaemonByNodeId]);
+	}, [renderState.status, renderState.svgHtml, nodeByLabel, liveDaemonsByNodeId]);
 
 	// SVG a11y — root <svg> 에 role/aria-label + 내장 <title> + aria-describedby(외부 description) 부여.
 	//   mermaid 가 자체 생성한 <title>/aria-* 를 우리 의미값으로 덮어씀 (스크린리더가 다이어그램 목적 판독).
@@ -1185,7 +1185,7 @@ function DetailModal({
 	detail,
 	nodeIndex,
 	activeDiagram,
-	liveDaemonByNodeId,
+	liveDaemonsByNodeId,
 	onClose,
 }) {
 	// detail undefined 시 React state batching edge case 방어.
@@ -1203,7 +1203,7 @@ function DetailModal({
 				info={info}
 				flows={activeDiagram?.flows || []}
 				nodeIndex={nodeIndex}
-				liveDaemonByNodeId={liveDaemonByNodeId}
+				liveDaemonsByNodeId={liveDaemonsByNodeId}
 			/>
 		);
 
@@ -1226,10 +1226,10 @@ function DetailModal({
 	);
 }
 
-function NodeDetailBody({ info, flows, nodeIndex, liveDaemonByNodeId }) {
+function NodeDetailBody({ info, flows, nodeIndex, liveDaemonsByNodeId }) {
 	const { Pill, formatRelativeTime, daemonStatusLabel } = window.UI;
-	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32).
-	const daemon = liveDaemonByNodeId.get(unscopedNodeIdAR(info.id)) || null;
+	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 시 각각 pill (F39).
+	const daemons = liveDaemonsByNodeId.get(unscopedNodeIdAR(info.id)) || [];
 
 	const inbound = flows.filter((f) => f.to === info.id);
 	const outbound = flows.filter((f) => f.from === info.id);
@@ -1240,11 +1240,11 @@ function NodeDetailBody({ info, flows, nodeIndex, liveDaemonByNodeId }) {
 			<div className="flex flex-wrap items-center gap-1.5">
 				{info.type && <Pill>{NODE_TYPE_LABEL[info.type] || info.type}</Pill>}
 				{info.layer_label && <Pill>Layer: {info.layer_label}</Pill>}
-				{daemon && (
-					<Pill tone={daemonEffectiveTone(daemon)}>
+				{daemons.map((daemon) => (
+					<Pill key={daemon.daemon_name} tone={daemonEffectiveTone(daemon)}>
 						{`live: ${daemon.daemon_name} ${daemonStatusLabel(daemon.status)}${daemon.last_run_at ? ` · ${formatRelativeTime(daemon.last_run_at)}` : ""}`}
 					</Pill>
-				)}
+				))}
 			</div>
 			{info.path && <FieldBlock label="File path" value={info.path} mono />}
 			{info.description && (
@@ -1561,6 +1561,36 @@ function daemonEffectiveTone(d) {
 function daemonChipLabelAR(daemon, tone) {
 	if (daemon?.status === "ok" && tone === "warn") return "Overdue";
 	return window.UI.daemonStatusLabel(daemon?.status);
+}
+
+// 서버 daemon 목록 → unscoped mermaid node id 별 daemon 배열 (F39).
+//   한 노드에 복수 daemon 바인딩 시(cron) last-writer-wins 로 하나가 유실되지 않도록 id 당 목록 축적.
+function buildLiveDaemonsByNodeId(daemons) {
+	const m = new Map();
+	for (const d of daemons || []) {
+		for (const nid of d.node_ids || []) {
+			const list = m.get(nid);
+			if (list) list.push(d);
+			else m.set(nid, [d]);
+		}
+	}
+	return m;
+}
+
+// 노드에 바인딩된 daemon 들의 effective tone 중 최악 severity 반환 — ring 클래스 근거 (F39).
+//   전부 neutral/info(ring 없음) 이거나 목록이 비면 null.
+function worstDaemonTone(daemons) {
+	let worst = null;
+	let worstRank = 0;
+	for (const d of daemons || []) {
+		const tone = daemonEffectiveTone(d);
+		const rank = LIVE_TONE_RANK[tone] || 0;
+		if (rank > worstRank) {
+			worstRank = rank;
+			worst = tone;
+		}
+	}
+	return worst;
 }
 
 // 스키마 node id (`${diagramId}.${mermaidId}`) → unscoped mermaid id (마지막 '.' 뒤 segment).

@@ -613,10 +613,12 @@ fi
 
 # Feed the whole multi-line parser output to one python writer-driver via an env
 # var (same pattern as the parser — no shell interpolation of the JSON). The
-# driver splits on newlines and writes each row through the helper. PG_HELPER =
-# sibling of the CANONICALIZED script path (realpath discipline like
-# PRICING_LIB_DIR — a symlinked invocation's unresolved dirname would point at a
-# dir without the helper). Passed via env: __file__ absent under -c.
+# driver builds every row, then fires the helper ONCE with the whole batch so the
+# psycopg import + connect is paid a single time per Stop (was once per row — the
+# N-subagent fan-out was the Stop-event latency spike). PG_HELPER = sibling of the
+# CANONICALIZED script path (realpath discipline like PRICING_LIB_DIR — a
+# symlinked invocation's unresolved dirname would point at a dir without the
+# helper). Passed via env: __file__ absent under -c.
 # shellcheck disable=SC2016
 PG_LINES="${PARSED}" \
   SESSION_ID="${SESSION_ID}" \
@@ -681,6 +683,7 @@ def build_row(parsed):
     }
 
 
+batch = []
 for raw_line in lines.splitlines():
     raw_line = raw_line.strip()
     if not raw_line:
@@ -698,22 +701,37 @@ for raw_line in lines.splitlines():
             % row.get("kind")
         )
         continue
+    batch.append(row)
+
+# ONE writer subprocess per Stop — the whole fire ships in a single batch
+# envelope so psycopg is imported + connected once, not once per row (the
+# per-row fan-out was the Stop-event latency spike). An empty batch skips the
+# fork entirely.
+if batch:
     envelope = {
         "hook_name": "cost-tracker",
         "target_table": "core.cost_events",
         "payload_ref": session_id[:128],
-        "row": row,
+        "rows": batch,
     }
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["python3", helper],
             input=json.dumps(envelope),
             text=True,
-            timeout=5,
+            timeout=30,
         )
-    except Exception as exc:  # noqa: BLE001 — never let one write block the rest
+        if result.returncode != 0:
+            # Named loud-fail from the batch writer (partial/total row failure).
+            # Surfaced but non-blocking — the writer already logged each failed
+            # row + a core.hook_failures record, and the hook block is `|| true`.
+            sys.stderr.write(
+                "[cost-tracker] pg batch writer exit=%d (per-row detail above)\n"
+                % result.returncode
+            )
+    except Exception as exc:  # noqa: BLE001 — never let the write block the hook
         sys.stderr.write(
-            "[cost-tracker] pg write invocation failed: %s\n"
+            "[cost-tracker] pg batch write invocation failed: %s\n"
             % str(exc).replace("\n", " ")
         )
 sys.exit(0)

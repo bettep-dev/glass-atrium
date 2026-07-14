@@ -43,6 +43,18 @@ sha256_of() {
   fi
 }
 
+# Echo a file's inode number, portable across GNU coreutils and BSD/macOS stat.
+# `stat --version` succeeds only on GNU, so it is a reliable discriminator (a
+# BSD `stat -f '%i'` means something entirely different on GNU — filesystem id —
+# so a blind fallback would silently return the wrong number).
+inode_of() {
+  if stat --version >/dev/null 2>&1; then
+    stat -c '%i' -- "$1" # GNU coreutils
+  else
+    stat -f '%i' -- "$1" # BSD / macOS
+  fi
+}
+
 # Write file $2 (relative) with content $3 under root $1, creating parent dirs.
 seed_file() {
   local root="$1" rel="$2" content="$3"
@@ -141,6 +153,86 @@ spine() {
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"no hash for hooks/a.sh"* ]]
+}
+
+# #13 — spine_find_removed_files (vendor-removal provenance selection)
+
+@test "#13 removal: a pristine vendored file the new release dropped is selected" {
+  seed_file "${LIVE}" "hooks/old.sh" "vendor-body"
+  build_manifest "${WORK}/baseline.json" "${LIVE}" "hooks/old.sh"
+  seed_file "${NEW}" "hooks/keep.sh" "kept"
+  build_manifest "${WORK}/new.json" "${NEW}" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "hooks/old.sh" ]]
+}
+
+@test "#13 removal: a file still shipped by the new release is NOT selected" {
+  seed_file "${LIVE}" "hooks/keep.sh" "body"
+  build_manifest "${WORK}/baseline.json" "${LIVE}" "hooks/keep.sh"
+  seed_file "${NEW}" "hooks/keep.sh" "body"
+  build_manifest "${WORK}/new.json" "${NEW}" "hooks/keep.sh"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "#13 removal: a USER-MODIFIED dropped file is PRESERVED (live hash != baseline)" {
+  # baseline hash describes the pristine vendor body; the live file was edited.
+  seed_file "${WORK}" "pristine" "vendor-body"
+  local pristine_hash
+  pristine_hash="$(sha256_of "${WORK}/pristine")"
+  seed_file "${LIVE}" "hooks/old.sh" "USER-EDITED-body"
+  jq -n --arg h "${pristine_hash}" \
+    '{version:"1.0.0", files:["hooks/old.sh"], hashes:{"hooks/old.sh":$h}}' \
+    >"${WORK}/baseline.json"
+  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "#13 removal: agents/**/*.md + *.local.md + config.toml dropped paths are EXCLUDED" {
+  seed_file "${LIVE}" "agents/dev-x.md" "a"
+  seed_file "${LIVE}" "rules/y.local.md" "b"
+  seed_file "${LIVE}" "config.toml" "c"
+  seed_file "${LIVE}" "hooks/old.sh" "vendor"
+  build_manifest "${WORK}/baseline.json" "${LIVE}" \
+    "agents/dev-x.md" "rules/y.local.md" "config.toml" "hooks/old.sh"
+  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]]
+  # only the vendor-owned hook is swept; none of the excluded kinds appear
+  [[ "${output}" == "hooks/old.sh" ]]
+}
+
+@test "#13 removal: a dropped file already absent from the live install is a no-op" {
+  seed_file "${WORK}" "x" "vendor"
+  local h
+  h="$(sha256_of "${WORK}/x")"
+  jq -n --arg h "${h}" \
+    '{version:"1.0.0", files:["hooks/gone.sh"], hashes:{"hooks/gone.sh":$h}}' \
+    >"${WORK}/baseline.json"
+  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "#13 removal: loud-fail (rc 1) when a dropped baseline path carries no hash" {
+  seed_file "${LIVE}" "hooks/old.sh" "vendor"
+  jq -n '{version:"1.0.0", files:["hooks/old.sh"], hashes:{}}' >"${WORK}/baseline.json"
+  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
+  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"baseline has no hash for hooks/old.sh"* ]]
+}
+
+@test "#13 removal: loud-fail when the baseline manifest is missing" {
+  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
+  run spine spine_find_removed_files "${WORK}/nope.json" "${WORK}/new.json" "${LIVE}"
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"needs a baseline manifest"* ]]
 }
 
 # T11 — spine_stage_and_verify
@@ -246,6 +338,72 @@ spine() {
   ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
   [[ "${status}" -eq 1 ]]
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
+}
+
+# #10 / #11 — atomic swap + atomic rollback restore (sibling temp + rename(2))
+
+@test "#10/#11 commit: swap replaces the live file via atomic rename (inode changes, no temp residue)" {
+  # The crux of #10: overwriting an EXISTING live file (e.g. the running
+  # update.sh) in place keeps the SAME inode, so a process reading that inode
+  # can see a half-written tail. An atomic temp+rename gives the path a NEW
+  # inode; the old inode is unlinked-but-open and reaches clean EOF.
+  seed_file "${WORKDIR}/staging" "scripts/update.sh" "NEW-self-updated-body"
+  seed_file "${LIVE}" "scripts/update.sh" "OLD-running-body"
+  local before after
+  before="$(inode_of "${LIVE}/scripts/update.sh")"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "scripts/update.sh" | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [[ "${status}" -eq 0 ]]
+  [[ "$(cat "${LIVE}/scripts/update.sh")" == "NEW-self-updated-body" ]]
+  after="$(inode_of "${LIVE}/scripts/update.sh")"
+  # atomic rename => live path points at a fresh inode (in-place cp would keep it)
+  [[ "${before}" != "${after}" ]]
+  # no sibling temp leaked into the install dir
+  run bash -c 'ls "$1"/scripts/*.tmp.* 2>/dev/null || true' _ "${LIVE}"
+  [[ -z "${output}" ]]
+}
+
+@test "#11 rollback: in-isolation restore uses atomic rename (inode changes, content restored, no temp residue)" {
+  # spine_rollback restoring a snapshot must NOT cp in place (a crash mid-copy
+  # truncates the live target). Atomic temp+rename => the restored path gets a
+  # fresh inode and the snapshot content lands intact.
+  seed_file "${WORKDIR}/snapshot" "hooks/a.sh" "SNAP-pre-swap-body"
+  seed_file "${LIVE}" "hooks/a.sh" "LIVE-corrupted-body"
+  local before after
+  before="$(inode_of "${LIVE}/hooks/a.sh")"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    spine_rollback "$1" "$2" "hooks/a.sh"
+  ' _ "${REAL_LIB}" "${LIVE}" "${WORKDIR}/snapshot"
+  [[ "${status}" -eq 0 ]]
+  [[ "$(cat "${LIVE}/hooks/a.sh")" == "SNAP-pre-swap-body" ]]
+  after="$(inode_of "${LIVE}/hooks/a.sh")"
+  [[ "${before}" != "${after}" ]]
+  run bash -c 'ls "$1"/hooks/*.tmp.* 2>/dev/null || true' _ "${LIVE}"
+  [[ -z "${output}" ]]
+}
+
+@test "#11 commit: rollback via atomic restore recovers pre-swap content after a mid-swap failure" {
+  # Same shape as the existing rollback test, but asserts the atomic-restore
+  # path end-to-end: hooks/a.sh swaps (atomic), scripts/z.sh's staged source is
+  # missing → rollback atomically restores hooks/a.sh from its snapshot.
+  seed_file "${WORKDIR}/staging" "hooks/a.sh" "NEW-a"
+  seed_file "${LIVE}" "hooks/a.sh" "ORIGINAL-a"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "hooks/a.sh" "scripts/z.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [[ "${status}" -eq 1 ]]
+  [[ "$(cat "${LIVE}/hooks/a.sh")" == "ORIGINAL-a" ]]
+  # rollback left no sibling temp behind in the install dir
+  run bash -c 'ls "$1"/hooks/*.tmp.* 2>/dev/null || true' _ "${LIVE}"
+  [[ -z "${output}" ]]
 }
 
 # T11 — spine_apply (full transaction)

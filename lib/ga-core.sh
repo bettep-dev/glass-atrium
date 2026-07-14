@@ -624,8 +624,8 @@ run_uninstall() {
 # remove_manifest_links/sweep_orphans only unlink SYMLINKS; the update system's runtime/recovery state
 # lives in PLAIN files they never reach, so this explicit step tears them down:
 #   * pause flag (GA_ROOT/.update-state/autoagent-pause.flag): ephemeral coordination state — ALWAYS
-#     removed (a residual flag could wrongly suspend a later reinstall's daemon; update_pause_remove is
-#     idempotent).
+#     removed (a residual flag could wrongly suspend a later reinstall's daemon; update_pause_force_remove
+#     removes unconditionally — no owner gate — so even foreign crashed-updater residue is cleared).
 #   * base@install baseline (the next update's diff base): RECOVERY state — KEPT by default (mirrors
 #     config.toml's keep-unless-`--purge-config`); moved to the Trash (never rm'd) ONLY under --purge-config.
 # Dry-run reports each action without performing it.
@@ -638,7 +638,7 @@ teardown_update_state() {
   if "${DRY_RUN}"; then
     log "dry-run: would remove update pause flag (${flag})"
   elif [[ -e "${flag}" ]]; then
-    update_pause_remove
+    update_pause_force_remove
     log "uninstall: removed update pause flag (${flag})"
   else
     log "uninstall: no update pause flag to remove (${flag})"

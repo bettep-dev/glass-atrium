@@ -162,9 +162,14 @@ export interface OutcomeCrossAnalysisByResult {
   reconstructed_count: number;
 }
 
+// Per-agent aggregate with the reconstructed sub-count split out. `count` = ALL
+// matching rows for the agent; `reconstructed_count` isolates harness recovery
+// artifacts (same discriminator as OutcomeCrossAnalysisByResult). Invariants:
+// 0 <= reconstructed_count <= count; writer-emitted headline = count - reconstructed_count.
 export interface OutcomeCrossAnalysisByAgent {
   agent: string;
   count: number;
+  reconstructed_count: number;
 }
 
 // Artifact-vs-quality breakdown — grader_verdict distribution over the matching set.

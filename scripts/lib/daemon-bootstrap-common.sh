@@ -45,6 +45,18 @@ readonly DAEMON_BOOTSTRAP_LIB_DIR
 # shellcheck source=lib/daemon-lock.sh
 source "${DAEMON_BOOTSTRAP_LIB_DIR}/daemon-lock.sh"
 
+# fakechat port-cleanup lib — the shared, STRICTLY PORT-SCOPED fakechat_free_port
+# helper reaped in the stale-port reclaim (step 2.6). Loud-fail on absence (broken
+# install), matching the E5-lib contract in lib/ga-env.sh. log() is not yet defined
+# at this module scope, so the loud-fail prints directly to stderr.
+if [[ ! -f "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh" ]]; then
+  printf 'FATAL: fakechat-cleanup lib missing: %s (broken install — scripts/lib is incomplete)\n' \
+    "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh" >&2
+  exit 1
+fi
+# shellcheck source=lib/fakechat-cleanup.sh
+source "${DAEMON_BOOTSTRAP_LIB_DIR}/fakechat-cleanup.sh"
+
 # Headless claude auth (launchd keychain-bypass): source the 0600 secrets file
 # so CLAUDE_CODE_OAUTH_TOKEN is exported into THIS bootstrap shell (used by the
 # bootstrap's own probes). The tmux PANE re-sources the same file at startup so
@@ -56,6 +68,17 @@ if [[ -f "${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh" ]]; then
   source "${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh"
   claude_auth_load_env
 fi
+
+# Channels-session model — pin the `claude --channels` REPL to the menu-configured
+# daemon LLM tier instead of the settings.json default (Fable 5, whose low usage
+# cap the daemon REPL otherwise hits). haiku_model is the SAME SoT the monitor
+# "Daemon cycle helper" menu writes (model-config-consts.ts daemonConfigKey
+# "haiku_model") and daemon_cycle.py already runs its cycle calls on — reading it
+# here keeps ONE model knob for the whole daemon. Resolved via
+# atrium_resolve_haiku_model (lib/atrium-config.sh, sourced by the wrapper before
+# this lib). DAEMON_CONFIG override hook → canonical default when empty (test seam).
+HAIKU_MODEL="$(atrium_resolve_haiku_model "${DAEMON_CONFIG:-}")"
+readonly HAIKU_MODEL
 
 # Env-overridable cold-start constants — shared default budget for BOTH roles.
 # Cold-start delay: claude CLI takes ~2-3s to render the REPL after exec, but the
@@ -125,32 +148,17 @@ daemon_bootstrap_preflight() {
 }
 
 # Step 2.6: stale-port reclaim. claude's own bun MCP child binds
-# 127.0.0.1:$FAKECHAT_PORT in step 3; a stale listener (orphan bun, manual
-# diagnostic spawn) would make that child hit EADDRINUSE and die → REPL has no
-# fakechat link. So clear the port FIRST. The lsof block catches the port-holding
-# bun; the helper sweep below reaps retired spawn-helper debris keyed on the same
-# port (port-keyed so a peer daemon's procs are left untouched).
-# `set +e` wraps lsof/pgrep: each exits 1 on no-match, which would else trip the
-# ERR trap (set +e does NOT disable it), so `|| true` forces exit 0 inside the
-# command substitution. `xargs` is a no-op on empty input.
+# 127.0.0.1:$FAKECHAT_PORT in step 3; a stale listener (orphan bun reparented to
+# PID 1, manual diagnostic spawn) would make that child hit EADDRINUSE and die →
+# REPL has no fakechat link. So clear the port FIRST via the shared, STRICTLY
+# PORT-SCOPED fakechat_free_port (fakechat-cleanup.sh): it reaps the port owner + its
+# descendant tree + the port-keyed spawn-helper debris, escalating TERM → KILL. It
+# NEVER matches on the plugin:fakechat@ cmdline — that would TERM the LIVE HEALTHY
+# PEER daemon, whose claude shares an IDENTICAL command line (only the tmux
+# `-e FAKECHAT_PORT=` env differs). FAKECHAT_PORT_DEFAULT is this role's own resolved
+# port (wrapper-injected via atrium_config_port), so the reap stays peer-safe.
 daemon_bootstrap_reclaim_port() {
-  local stale_pids stray_pids
-  set +e
-  stale_pids="$(lsof -iTCP:"${FAKECHAT_PORT_DEFAULT}" -sTCP:LISTEN -t 2>/dev/null || true)"
-  set -e
-  if [[ -n "${stale_pids}" ]]; then
-    log "killing stale fakechat listeners on port ${FAKECHAT_PORT_DEFAULT}: ${stale_pids//$'\n'/ }"
-    printf '%s\n' "${stale_pids}" | xargs kill 2>/dev/null || true
-    sleep 1
-  fi
-
-  set +e
-  stray_pids="$(pgrep -f "spawn-unix-fd.py ${FAKECHAT_PORT_DEFAULT} " 2>/dev/null || true)"
-  set -e
-  if [[ -n "${stray_pids}" ]]; then
-    log "reaping retired fakechat spawn-helper procs (port ${FAKECHAT_PORT_DEFAULT}): ${stray_pids//$'\n'/ }"
-    printf '%s\n' "${stray_pids}" | xargs kill 2>/dev/null || true
-  fi
+  fakechat_free_port "${FAKECHAT_PORT_DEFAULT}"
 }
 
 # Step 3 + 4: create the detached tmux session running claude with the fakechat
@@ -163,6 +171,7 @@ daemon_bootstrap_reclaim_port() {
 create_raced=false
 daemon_bootstrap_create_session() {
   log "creating session '${SESSION}' with fakechat channel plugin (port=${FAKECHAT_PORT_DEFAULT})"
+  log "channels REPL model=${HAIKU_MODEL} (daemon-config.json haiku_model, fallback claude-haiku-4-5)"
   # FAKECHAT_PORT is a NON-secret tmux set-env (server.ts reads process.env) — kept
   # on `-e`. The spawned claude inherits it and passes it to the bun MCP child.
   local tmux_env_args=("-e" "FAKECHAT_PORT=${FAKECHAT_PORT_DEFAULT}")
@@ -180,11 +189,16 @@ daemon_bootstrap_create_session() {
   # pane inherits (FAKECHAT_PORT et al.).
   local auth_lib="${DAEMON_BOOTSTRAP_LIB_DIR}/claude-auth-env.sh"
   local pane_cmd
+  # --model pins the channels REPL to the resolved daemon LLM tier (HAIKU_MODEL,
+  # module-level). SECURITY: single-quoted inside the `bash -c` program (same idiom
+  # as source '<auth_lib>' below) so the id stays one literal token; HAIKU_MODEL is
+  # read from the local monitor-validated daemon-config.json, never external input.
+  # --model is additive — the OAuth-token source + fakechat channel stay intact.
   if [[ -f "${auth_lib}" ]]; then
-    pane_cmd="source '${auth_lib}'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official"
+    pane_cmd="source '${auth_lib}'; claude_auth_load_env; exec claude --channels plugin:fakechat@claude-plugins-official --model '${HAIKU_MODEL}'"
   else
     # no auth lib on disk (deploy gap) — start claude directly; it uses the keychain.
-    pane_cmd="exec claude --channels plugin:fakechat@claude-plugins-official"
+    pane_cmd="exec claude --channels plugin:fakechat@claude-plugins-official --model '${HAIKU_MODEL}'"
   fi
   if ! tmux new-session -d -s "${SESSION}" -c "${HOME}" \
     "${tmux_env_args[@]}" \

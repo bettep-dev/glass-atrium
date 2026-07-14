@@ -425,6 +425,32 @@ const OWN_BUNDLE_SEQUENCE_SRC =
   "    B--&gt;&gt;A: 응답\n" +
   "    Note over A,B: 완료";
 
+test("GET /:id/html-export: render-time SSRF interceptor — Tailwind allowed (no 503) while OWN-BUNDLE jsdelivr aborted, still renders", async () => {
+  // Combined interceptor proof in a single render: the body references BOTH
+  // cdn.tailwindcss.com (MUST stay allowed — else waitForTailwindStylesheet 503)
+  // AND a jsdelivr mermaid <script src> (allowlisted by sanitize, so it survives
+  // into the stored body). The render interceptor ABORTS the jsdelivr request;
+  // the locally-injected mermaid driver still produces <svg>. Result: 200 (no
+  // tailwind 503) + runtime <style> captured + <svg> + zero jsdelivr/tailwind
+  // host egress in the output.
+  const { id } = await seedHtmlDoc(
+    "interceptor",
+    makeOwnBundleMermaidBody("interceptor", OWN_BUNDLE_SEQUENCE_SRC),
+  );
+
+  const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` });
+  assert.strictEqual(
+    res.statusCode,
+    200,
+    `interceptor must not 503 the tailwind path, got ${res.statusCode}: ${res.payload.slice(0, 300)}`,
+  );
+  const body = res.payload;
+  assert.ok(body.includes("<style"), "Tailwind runtime <style> captured (CDN was allowed at render)");
+  assert.ok(body.includes("<svg"), "mermaid rendered <svg> despite jsdelivr abort (local driver)");
+  assert.ok(!body.includes("cdn.jsdelivr.net"), "jsdelivr host absent from output");
+  assert.ok(!body.includes("cdn.tailwindcss.com"), "tailwind <script> stripped from output");
+});
+
 test("GET /:id/html-export: OWN-BUNDLE — own mermaid CDN script does not pollute export (doc 6768 corpus class)", async () => {
   // 본 테스트는 픽스 전에 RED: 자체 번들이 startOnLoad로 <pre>를 SVG로 변환 →
   // driveMermaidRender가 live textContent(SVG 레이블)를 mermaid.render()에 전달 →

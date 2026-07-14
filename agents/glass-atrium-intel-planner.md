@@ -209,6 +209,8 @@ The supplied body field IS the format discriminator (no `prefix` field). Returni
 
 **[COMPLETION] task_type**: emit `task_type: plan` when the deliverable is a plan/task decomposition, or `task_type: doc` when it is a document deliverable, per the Role → Allowed task_types table in core-outcome-record.md (these two are this role's only allowed values).
 
+**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the deliverable is complete and the monitor POST has succeeded, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the plan/spec body, NEVER inside a POSTed `*_body` field, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). This double-keys the injected recorder directive so it is honored in schema mode, without leaking the machine record artifact into the POSTed document.
+
 **HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)**: HTML primary is produced ONLY when 1+ explicit signal is present —
 - (a) explicit format request (HTML/web/PDF form ONLY): the user explicitly names an HTML / web / PDF output form (e.g. "HTML로", "웹 문서로", "as HTML", "as a web document / web doc", "PDF로", "export it as PDF"). A generic plan/spec/document request ("계획서로 작성", "기획서 정리", "make a plan", "write it up") is NOT an HTML signal — it routes to user-requested non-HTML (md default).
 - (b) explicit share intent: third-party sharing or direct human review/presentation made clear (e.g. "share with the team", "팀에 공유", "something to show", "for a presentation", "for sharing")

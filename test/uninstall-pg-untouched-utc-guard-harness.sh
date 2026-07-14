@@ -167,10 +167,17 @@ rm() { # only ever `rm -f -- <sock>` from clear_unmanaged_pg_orphan (socket remo
 }
 sleep() { return 0; } # collapse the bounded poll interval to instant
 lsof() {              # `lsof -t -- <sock>` and `lsof -ti tcp:5432` — report the (fake) owning pid
+  # kill_daemon_tmux_sessions now folds a STRICTLY PORT-SCOPED fakechat port-free
+  # (`lsof -iTCP:<port>`) after the tmux teardown. That probe is orthogonal to postgres,
+  # so return NO owner and do NOT record it — this harness asserts NO pg-socket probing,
+  # and the fakechat reap has its own coverage in fakechat-port-cleanup.bats.
+  case "${1:-}" in -iTCP:*) return 0 ;; esac
   _rec "lsof:$*"
   [[ -n "${GA_ORPHAN_PIDS}" ]] && printf '%s\n' "${GA_ORPHAN_PIDS}"
   return 0
 }
+# pgrep: the fakechat port-free's descendant/helper probe — no matches in this harness.
+pgrep() { return 1; }
 psql() {
   _rec "psql:$*"
   return 0
