@@ -305,13 +305,21 @@ jobs:
       - name: Install GNU parallel (bats --jobs dependency)
         run: sudo apt-get update && sudo apt-get install -y parallel
 
-      # bats `-o/--output <dir>` requires the directory to ALREADY EXIST (per
-      # `bats --help`: "Directory to write report files (must exist)"), so we
-      # mkdir it first. `--report-formatter junit` KEEPS the pretty console
-      # output AND writes a junit report.xml (NOT `--formatter junit`, which
-      # would replace the readable console log with raw XML). We do NOT wrap the
-      # bats call in `|| true`: the reporter step below runs on if:always() and
-      # the ci-pass gate must still observe a real bats failure exit code.
+      # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
+      # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
+      # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,
+      # so a file that HANGS never flushes — the CI log never names it, it just
+      # burns the 15-min leg timeout in silence. `parallel --timeout 240` kills
+      # any single file exceeding 240s (no legit file runs >~60s; the hang is
+      # ~900s) and prints a warning naming the killed command (which carries the
+      # file path), while `--tagstring '{}'` prefixes every output line with the
+      # file path — so the offender is unmistakable either way.
+      #
+      # junit output is intentionally dropped: concurrent per-file bats writes
+      # to one `--output` dir would collide. The annotate step tolerates a
+      # missing report (if:always + require_tests:false), and the ci-pass gate
+      # keys on parallel's exit code — NOT swallowed (no `|| true`), so a failed
+      # or timed-out file still reddens the leg.
       - name: Run bats suite (${{ matrix.name }})
         env:
           # env-indirection: bind each matrix value to a shell var and dereference
@@ -327,11 +335,19 @@ jobs:
           TMPDIR: /dev/shm
         run: |
           mkdir -p reports/bats
-          # File-level parallelism: --jobs $(nproc) runs files concurrently while
-          # --no-parallelize-within-files keeps tests WITHIN a file sequential
-          # (setup_file-once + ordered-side-effect semantics preserved). Jobs derive
-          # from the runner core count (2-4 on GitHub), NOT a local constant. Suspected
-          # flake → drop the --jobs/--no-parallelize-within-files pair for serial.
+          # One GNU parallel job per *.bats file (fed NUL-delimited so any odd
+          # path survives). --timeout 240 kills a single file running >240s (the
+          # diagnostic: name the hanging file); --no-parallelize-within-files
+          # keeps tests WITHIN a file sequential (setup_file-once + ordered side
+          # effects preserved); --jobs $(nproc) bounds concurrency to the runner
+          # core count; --tagstring '{}' tags every output line with the file
+          # path. parallel's non-zero exit (a failed OR timed-out file) rides the
+          # pipe out — pipefail is on via the GitHub default shell — to fail the
+          # leg, so the ci-pass gate sees the real code.
+          run_bats() {
+            parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' \
+              bats --no-parallelize-within-files {}
+          }
           if [[ "${SHARDS}" -gt 0 ]]; then
             # Sharded root: deterministic round-robin partition of this root's *.bats
             # across SHARDS legs. `sort` gives a stable index; `find` covers nested
@@ -347,20 +363,15 @@ jobs:
               i=$((i + 1))
             done < <(find "${ROOT}" -name '*.bats' | sort)
             # Loud-fail: an empty shard means SHARDS exceeds the file count (a
-            # misconfigured matrix), not a benign no-op — surface it, don't let bats
-            # emit a cryptic "no files" error.
+            # misconfigured matrix), not a benign no-op — surface it explicitly.
             if [[ "${#targets[@]}" -eq 0 ]]; then
               echo "FATAL: shard ${SHARD}/${SHARDS} of ${ROOT} matched 0 *.bats files" >&2
               exit 1
             fi
-            bats --jobs "$(nproc)" --no-parallelize-within-files \
-              --report-formatter junit --output reports/bats \
-              "${targets[@]}"
+            printf '%s\0' "${targets[@]}" | run_bats
           else
-            # Unsharded root: the whole tree, --recursive.
-            bats --jobs "$(nproc)" --no-parallelize-within-files --recursive \
-              --report-formatter junit --output reports/bats \
-              "${ROOT}/"
+            # Unsharded root: every *.bats under the tree, one parallel job each.
+            find "${ROOT}" -name '*.bats' -print0 | sort -z | run_bats
           fi
 
       # Inline PR annotations from the junit report. Separate step, if:always()
