@@ -30,8 +30,9 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 
 # LARGE fixture size: the scan's cut output must exceed the pipe buffer (~64KB) so cut is still
-# writing when the reader breaks (empirically reliable from ~800 files; 3000 gives a ~4x margin).
-REPORT_FANOUT=3000
+# writing when the reader breaks (empirically reliable from ~800 files; 1500 keeps ~1.9x margin —
+# the ~150KB cut backlog still >> the 64KB pipe buffer — at half the per-scan fork cost).
+REPORT_FANOUT=1500
 
 setup() {
   [[ -f "${GA}/lib/ga-env.sh" ]] || skip "lib not found: ${GA}/lib/ga-env.sh"
@@ -67,12 +68,13 @@ extract_fn() {
 
 # _make_reports <dir> <n> [match] — create n empty *.json reports; "match" adds one auth-failure report
 # forced to a future mtime so it sorts newest → the loop breaks on it at count=1 (max cut backlog).
+# Batch-create via `xargs -0 touch` (a few execs) rather than an n-iteration in-process open/close loop.
 _make_reports() {
-  local dir="$1" n="$2" mode="${3:-nomatch}" i=0
-  while [[ "${i}" -lt "${n}" ]]; do
-    : >"${dir}/report-daemon-cycle-000000000000000000-${i}.json"
-    i=$((i + 1))
-  done
+  local dir="$1" n="$2" mode="${3:-nomatch}"
+  # `{0..$n}` brace expansion does NOT honor a variable in bash 3.2 → seq|awk|xargs.
+  seq 0 "$((n - 1))" \
+    | awk -v d="${dir}" '{print d"/report-daemon-cycle-000000000000000000-"$0".json"}' \
+    | tr '\n' '\0' | xargs -0 touch
   if [[ "${mode}" == "match" ]]; then
     printf '%s\n' '{"parse_mode": "auth-failure"}' >"${dir}/report-daemon-cycle-000000000000000000-MATCH.json"
     touch -t 203012312359.59 "${dir}/report-daemon-cycle-000000000000000000-MATCH.json"

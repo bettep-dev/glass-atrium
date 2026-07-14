@@ -125,7 +125,7 @@ launch_bootstrap() {
     GA_ROOT="${TMPROOT}" \
     COLD_START_WAIT_SEC=0 \
     HTTP_READY_INTERVAL_SEC=0 \
-    MONITOR_INTERVAL_SEC=1 \
+    MONITOR_INTERVAL_SEC=0.5 \
     RESTART_LOCK_POLL_SEC=1 \
     TMUX_NEW_SESSION_MODE="${TMUX_NEW_SESSION_MODE:-ok}" \
     bash "${script}" "$@" >"${logf}" 2>&1 &
@@ -222,7 +222,7 @@ wait_for_log() {
     sleep 0.1
     waited=$((waited + 1))
   done
-  sleep 1
+  sleep 0.3
   alive=0
   if kill -0 "${pid_a}" 2>/dev/null; then alive=$((alive + 1)); fi
   if kill -0 "${pid_b}" 2>/dev/null; then alive=$((alive + 1)); fi

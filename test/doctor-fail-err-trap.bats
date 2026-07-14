@@ -13,9 +13,9 @@
 # STRATEGY (launcher-as-library, mirrors test/run-step-fail-return.bats): a driver SOURCES
 # the real launcher (BASH_SOURCE!=$0 → main is skipped), keeps the REAL ERR + EXIT traps
 # ARMED, stubs run_doctor to return non-zero + doctor_headless_auth_advisory to a no-op,
-# then calls the REAL `passthrough doctor`. FAIL-BEFORE: a sed copy reverting the fix
-# (exit → return) is driven identically and MUST emit `ERROR: line` (proving the assertion
-# discriminates); PASS-AFTER: the real launcher MUST NOT, and the exit code stays intact.
+# then calls the REAL `passthrough doctor`. PASS-AFTER: the real launcher MUST NOT emit a
+# spurious `ERROR: line` and preserves the exit code; STATIC: the source pins the `exit`-idiom
+# on both the doctor and preflight branches (mirroring the `update` branch).
 #
 # Machine-safe: no real doctor run (run_doctor stubbed), no TTY, no ~/.claude / ~/.glass-atrium
 # mutation. bats `run` merges stderr into $output, so the ERR-trap line lands in $output.
@@ -33,7 +33,6 @@ setup() {
   [[ -f "${GA}/lib/ga-core.sh" ]] || skip "launcher lib not found: ${GA}/lib/ga-core.sh"
   SANDBOX="$(mktemp -d -t ga-doctor-errtrap.XXXXXX)"
   DRIVER="${SANDBOX}/driver.sh"
-  PREFIX="${SANDBOX}/glass-atrium-prefix"
 
   # The driver keeps the REAL ERR+EXIT traps armed (does NOT `trap - ERR`), stubs the two
   # doctor callees, and calls the REAL passthrough branch named by SUB (doctor | preflight —
@@ -47,30 +46,6 @@ doctor_headless_auth_advisory() { :; }
 passthrough "${SUB:-doctor}"
 DRV
   chmod +x "${DRIVER}"
-
-  # HEAD carries the COMMITTED doctor+preflight fix (5d060b8): both passthrough arms already
-  # `exit "${doctor_rc}"` / `exit "${pf_rc}"`, so a raw `git show HEAD:glass-atrium` copy is the
-  # FIXED launcher — the fail-before assertions could never trip against it. The ${PREFIX} copy
-  # is therefore sed-reverted below to the pre-fix ERR-trap defect. Both lib trees are symlinked
-  # so the copy at ${SANDBOX} resolves its launcher-libs (${GA_ROOT}/lib) AND script-libs
-  # (${GA_ROOT}/scripts/lib, e.g. atrium-config.sh) natively. git-absent → empty PREFIX +
-  # fail-before tests skip.
-  ln -s "${GA}/lib" "${SANDBOX}/lib"
-  mkdir -p "${SANDBOX}/scripts"
-  ln -s "${GA}/scripts/lib" "${SANDBOX}/scripts/lib"
-  git -C "${GA}" show HEAD:glass-atrium >"${PREFIX}" 2>/dev/null || : >"${PREFIX}"
-  # Revert the committed fix in the ${PREFIX} copy so it reproduces the pre-fix defect: a
-  # non-zero `return` (NOT `exit`) as the branch's terminal command trips the echo-only ERR
-  # trap (identical defect class on both arms). Portable single-line s/// (BSD+GNU identical) —
-  # a multi-line preflight-collapse sed would diverge BSD vs GNU. Single-quoted program keeps
-  # ${doctor_rc}/${pf_rc} literal; each target string occurs exactly once in the launcher.
-  if [[ -s "${PREFIX}" ]]; then
-    sed -i.bak \
-      -e 's/exit "${doctor_rc}"/return "${doctor_rc}"/' \
-      -e 's/exit "${pf_rc}"/return "${pf_rc}"/' \
-      "${PREFIX}"
-    rm -f "${PREFIX}.bak"
-  fi
 }
 
 teardown() {
@@ -106,22 +81,6 @@ drive() {
   [[ "${output}" != *"ERROR: line"* ]] || return 1
 }
 
-# === FAIL-BEFORE — the pre-fix (HEAD) launcher DID trip the ERR trap =========================
-
-@test "item6 fail-before: the pre-fix doctor branch ('return \${doctor_rc}') emits the spurious ERR-trap line" {
-  [[ -s "${PREFIX}" ]] || skip "git-absent — HEAD pre-fix launcher unavailable"
-  drive "${PREFIX}" 3 doctor
-  # the guard's discriminating signal: pre-fix, the non-zero return trips the echo-only ERR trap.
-  [[ "${output}" == *"ERROR: line"* ]] || return 1
-}
-
-@test "item6 fail-before: even the pre-fix doctor branch still returns the doctor rc (3)" {
-  [[ -s "${PREFIX}" ]] || skip "git-absent — HEAD pre-fix launcher unavailable"
-  # the spurious message is ON TOP of a correct exit code — the fix removes only the noise.
-  drive "${PREFIX}" 3 doctor
-  [[ "${status}" -eq 3 ]] || return 1
-}
-
 # === PREFLIGHT ALIAS — the sibling branch shares (and now is freed of) the same defect =======
 
 @test "preflight pass-after: a non-zero doctor FAIL via 'preflight' emits NO spurious ERR-trap line" {
@@ -138,18 +97,6 @@ drive() {
   drive "${TUI}" 0 preflight
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" != *"ERROR: line"* ]] || return 1
-}
-
-@test "preflight fail-before: the pre-fix 'preflight) run_doctor ;;' emits the spurious ERR-trap line" {
-  [[ -s "${PREFIX}" ]] || skip "git-absent — HEAD pre-fix launcher unavailable"
-  drive "${PREFIX}" 3 preflight
-  [[ "${output}" == *"ERROR: line"* ]] || return 1
-}
-
-@test "preflight fail-before: the pre-fix preflight branch still propagates the doctor rc (3)" {
-  [[ -s "${PREFIX}" ]] || skip "git-absent — HEAD pre-fix launcher unavailable"
-  drive "${PREFIX}" 3 preflight
-  [[ "${status}" -eq 3 ]] || return 1
 }
 
 # === STATIC — the doctor + preflight branches mirror the `update` branch's exit idiom ========

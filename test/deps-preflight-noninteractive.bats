@@ -1331,8 +1331,10 @@ SH
     ga_detect_claude_auth
   ' >"${out}" 2>/dev/null 3>&- &
   local pid=$! waited=0 bounded=0
-  while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt 8 ]]; do
-    sleep 1
+  # 40 x 0.2s = the same 8s outer bound, but a tighter poll exits ~0.8s sooner once the inner
+  # 1s-ceiling probe self-completes.
+  while kill -0 "${pid}" 2>/dev/null && [[ "${waited}" -lt 40 ]]; do
+    sleep 0.2
     waited=$((waited + 1))
   done
   if kill -0 "${pid}" 2>/dev/null; then

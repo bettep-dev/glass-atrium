@@ -15,13 +15,13 @@
 # lazily-sourced atrium-config.sh lib. Real `tar` extracts the happy-path bundle. No real gh /
 # GitHub, no ~/.claude or ~/.glass-atrium mutation.
 #
-# FAIL-BEFORE: the committed HEAD update.sh (pre-fix, `-print -quit`) is sourced + driven with a
-# MULTIPLE-bundle release → it silently succeeds (exit 0), where the fixed code exits 14.
+# The pass-after cases below pin the fixed behavior directly (zero / one / multiple / mismatch /
+# no-version), so the MULTIPLE-bundle → exit 14 case covers the original ambiguity defect.
 #
 # Every assertion is gated `|| return 1`.
 #
 # Run via: bats test/update-fetch-bundle-derivation.bats
-# Requires: bats 1.5+, jq, tar, git (fail-before only), bash 3.2+
+# Requires: bats 1.5+, jq, tar, bash 3.2+
 
 bats_require_minimum_version 1.5.0
 
@@ -119,17 +119,4 @@ drive_fetch() {
   drive_fetch GH_NOVERSION=1 GH_BUNDLES='glass-atrium-bundle-1.0.1.tar.gz'
   [[ "${status}" -eq 14 ]] || return 1
   [[ "${output}" == *"carries no .version"* ]] || return 1
-}
-
-# === FAIL-BEFORE — the committed HEAD (pre-fix) silently accepted ambiguity =================
-
-@test "item5 fail-before: the pre-fix HEAD update.sh silently accepts MULTIPLE bundles (exit 0)" {
-  command -v git >/dev/null 2>&1 || skip "git required for the HEAD baseline"
-  local head_src="${SANDBOX}/update-head.sh"
-  git -C "${GA}" show HEAD:scripts/update.sh >"${head_src}" 2>/dev/null || skip "cannot read HEAD:scripts/update.sh"
-  # pre-fix `-print -quit` takes the FIRST match with no count check → succeeds silently.
-  SRC="${head_src}" drive_fetch GH_MANIFEST_VERSION=1.0.1 \
-    GH_BUNDLES='glass-atrium-bundle-1.0.1.tar.gz glass-atrium-bundle-9.9.9.tar.gz'
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == *"FETCH_OK"* ]] || return 1
 }

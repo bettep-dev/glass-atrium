@@ -42,6 +42,22 @@ HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/track-outcome.sh"
 PG_HELPER_SRC="${HOOKS_DIR}/_pg_outcome_dualwrite.py"
 
+# Both probes below are session-invariant (psycopg location + DB reachability never vary between
+# tests), so resolve them ONCE here and export the results — per-test setup() reads the cached
+# flags instead of re-spawning two python3 cold-starts per DB test.
+setup_file() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  export PSYCOPG_PP
+  DB_OK=0
+  if [[ -n "${PSYCOPG_PP}" ]] && PYTHONPATH="${PSYCOPG_PP}" python3 -c \
+      'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
+      >/dev/null 2>&1; then
+    DB_OK=1
+  fi
+  export DB_OK
+}
+
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "track-outcome.sh not found: ${HOOK_SH}"
   [[ -f "${PG_HELPER_SRC}" ]] || skip "_pg_outcome_dualwrite.py not found: ${PG_HELPER_SRC}"
@@ -78,13 +94,10 @@ setup() {
     *"[inline]"*) return 0 ;;
   esac
 
-  # DB-dependent cases: pin psycopg (HOME-dependent user install) for the sandboxed hook, then
-  # require the live DB — the row assertions cannot run without it.
-  PSYCOPG_PP="$(python3 -c 'import psycopg,os;print(os.path.dirname(os.path.dirname(psycopg.__file__)))' 2>/dev/null || true)"
+  # DB-dependent cases: the psycopg path + live-DB reachability were probed once in setup_file and
+  # exported as PSYCOPG_PP / DB_OK — read the cached flags (the row assertions cannot run without it).
   [[ -n "${PSYCOPG_PP}" ]] || skip "psycopg module not importable"
-  PYTHONPATH="${PSYCOPG_PP}" python3 -c \
-    'import psycopg; psycopg.connect("dbname=glass_atrium", connect_timeout=2).close()' \
-    >/dev/null 2>&1 || skip "glass_atrium DB not reachable"
+  [[ "${DB_OK}" == "1" ]] || skip "glass_atrium DB not reachable"
 }
 
 teardown() {

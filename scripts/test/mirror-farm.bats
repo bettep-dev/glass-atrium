@@ -53,11 +53,12 @@ setup() {
   # present. Glob-copy the full set (byte-identical to the prior explicit list)
   # so a future sibling auto-tracks here instead of loud-failing on the omission.
   cp -p "${GA}/lib/"*.sh "${GAROOT}/lib/"
-  # ga_init_env hard-requires the E5 libs from <root>/scripts/lib (loud-fails
-  # "E5 lib missing" otherwise) — copy the real trio into the sandbox engine.
-  cp -p "${GA}/scripts/lib/atrium-config.sh" "${GAROOT}/scripts/lib/atrium-config.sh"
-  cp -p "${GA}/scripts/lib/apply-spine.sh" "${GAROOT}/scripts/lib/apply-spine.sh"
-  cp -p "${GA}/scripts/lib/update-pause-flag.sh" "${GAROOT}/scripts/lib/update-pause-flag.sh"
+  # ga_init_env hard-requires several libs from <root>/scripts/lib (loud-fails on
+  # ANY omission — the E5 trio AND branch-new siblings like fakechat-cleanup.sh).
+  # Glob-copy the full set (mirrors the lib/*.sh copy above, and the sibling
+  # install-bootstrap-subcommand.bats) so a future required lib auto-tracks here
+  # instead of reintroducing the exact "lib missing" loud-fail.
+  cp -p "${GA}/scripts/lib/"*.sh "${GAROOT}/scripts/lib/"
   printf '# shipped lib v1\n' >"${GAROOT}/skills/testkit/newlib.sh"
   write_manifest "skills/testkit/newlib.sh"
 }
