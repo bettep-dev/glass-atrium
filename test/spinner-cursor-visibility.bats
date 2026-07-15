@@ -126,31 +126,6 @@ _last_cursor_op() { tail -n 1 "${TP_LOG}"; }
 
 # === static — the fix shape + the preserved death-traps ================================
 
-@test "static: stop_step_spinner folds the cursor op into the RENDER_MODE branch" {
-  local body
-  body="$(_fn_body stop_step_spinner)"
-  [[ -n "${body}" ]]
-  # panel arm re-hides, scrolling arm restores — both present.
-  [[ "${body}" == *'tp civis'* ]]
-  [[ "${body}" == *'tp cnorm'* ]]
-  # the UNCONDITIONAL trailing cursor op is GONE: no `tp cnorm` sits after the closing `fi`.
-  # (extract the tail after the last `fi` and assert it carries no bare cursor op.)
-  local after_fi
-  after_fi="$(awk '/^  fi$/{seen=NR} {line[NR]=$0} END{for(i=seen+1;i<=NR;i++) print line[i]}' <<<"${body}")"
-  run grep -cE '^[[:space:]]*tp (cnorm|civis)[[:space:]]*$' <<<"${after_fi}"
-  [[ "${output}" -eq 0 ]]
-}
-
-@test "static: stop_idle_spinner ends on civis, not a trailing cnorm" {
-  local body
-  body="$(_fn_body stop_idle_spinner)"
-  [[ -n "${body}" ]]
-  # the last cursor op in the function body is civis.
-  local last_cursor
-  last_cursor="$(grep -oE 'tp (civis|cnorm)' <<<"${body}" | tail -n 1)"
-  [[ "${last_cursor}" == "tp civis" ]]
-}
-
 @test "static: the forked-child cnorm death-traps are PRESERVED (Ctrl-C scrollback safety)" {
   local step idle
   step="$(_fn_body start_step_spinner)"

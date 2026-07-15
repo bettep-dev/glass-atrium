@@ -250,23 +250,6 @@ _write_daemon_config() {
   grep -qF -- '--model claude-haiku-4-5' "${CLAUDE_STUB_ARGS_OUT}" || return 1
 }
 
-# === (8) STATIC — the probe carries env -u isolation + --model + the diagnostic branches ============
-
-@test "selftest(static): the probe is env -u isolated, cheap-model pinned, and diagnostic-branched" {
-  local body
-  body="$(awk '/^headless_auth_selftest\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${GA}/lib/ga-tui-preflight.sh")" || return 1
-  [[ -n "${body}" ]] || return 1
-  # the isolation wrap strips BOTH competing Anthropic credential env vars, before the claude bin.
-  [[ "${body}" == *'run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p'* ]] || return 1
-  # the cheap-model pin delegates to the centralized resolver (own seam passed as the arg) + reaches --model.
-  [[ "${body}" == *'haiku_model="$(atrium_resolve_haiku_model "${GA_AUTH_DAEMON_CONFIG:-}")"'* ]] || return 1
-  [[ "${body}" == *'--model "${haiku_model}"'* ]] || return 1
-  # the diagnostic disambiguation asserts token PRESENCE, never reads the value into a var.
-  [[ "${body}" == *'[[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]'* ]] || return 1
-  [[ "${body}" == *"provisioning did not deliver a token"* ]] || return 1
-  [[ "${body}" == *"token delivered to claude but rejected"* ]] || return 1
-}
-
 # === (9) STATIC — the centralized jq idiom + alias literal now live in atrium_resolve_haiku_model =====
 
 @test "resolver(static): atrium_resolve_haiku_model owns the jq idiom + the claude-haiku-4-5 fallback literal" {

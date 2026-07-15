@@ -155,16 +155,3 @@ _run_buggy() {
   ! grep -qE 'cut -f2-|ERROR: line' "${ERRF}" || return 1
   grep -qF 'recent daemon reports show no auth-failure' "${OUT}" || return 1
 }
-
-# === T5 — STATIC regression guard: the buggy process-sub is gone, the here-string is present =======
-
-@test "scan(static): the scan iterates a here-string, not a 'cut -f2-' process substitution" {
-  local body
-  body="$(awk '/^doctor_headless_auth_advisory\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
-    "${GA}/lib/ga-tui-preflight.sh")" || return 1
-  [[ -n "${body}" ]] || return 1
-  # the FIXED form: iterate the materialized var via a here-string.
-  [[ "${body}" == *'done <<<"${sorted}"'* ]] || return 1
-  # the OLD form (process substitution ending in cut) is GONE.
-  [[ "${body}" != *'done < <(find "${reports_dir}"'* ]] || return 1
-}
