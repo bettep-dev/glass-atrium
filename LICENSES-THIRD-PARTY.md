@@ -25,7 +25,7 @@ artifact and this verdict must be re-evaluated.
 - **Manifests audited**: `monitor/package.json` (versions pinned by the tracked
   `monitor/package-lock.json`), `autoagent/package.json` (lockfile untracked — versions
   read from the installed tree), and Python third-party imports enumerated across all
-  73 tracked `*.py` files (no `requirements.txt` / `pyproject.toml` exists in the repo).
+  74 tracked `*.py` files (no `requirements.txt` / `pyproject.toml` exists in the repo).
 - **License sources**: installed `node_modules/*/package.json` `license` fields; bundled
   LICENSE texts where the field is absent; npm registry metadata (`npm view`) for unmet
   optional placeholders; Python `importlib.metadata` for installed distributions.
@@ -131,8 +131,16 @@ Import sites (tracked files):
 - autoagent production Python (`daemon_cycle.py`, `lib/confidence.py`,
   `lib/project_key.py`) is **stdlib-only**.
 
-All other imports across the 73 tracked `*.py` files are Python standard library or
-repo-local modules.
+All other imports across the 74 tracked `*.py` files are Python standard library or
+repo-local modules — with one **build-time-only** exception: `docs/assets/bulldog-braille-gen.py`
+imports `Pillow` (PIL) to pre-render the TUI bulldog art. It is never bundled, installed, or
+run at runtime — the launcher ships only its pre-generated `docs/assets/bulldog-braille.txt`
+output and WHOLESALE-loads that text — so Pillow stays outside the distributed / runtime
+third-party surface audited above (no runtime-dependency table or license-bucket entry). The
+generator's build-time reference input `docs/assets/bulldog-reference.webp` is a byte-identical
+copy (sha256 verified) of the already-tracked project-owned brand artwork
+`docs/assets/banner.webp`, retained under the generator's expected input filename and excluded
+from the runtime bundle.
 
 ## monitor — devDependencies (build-time only, not distributed)
 
