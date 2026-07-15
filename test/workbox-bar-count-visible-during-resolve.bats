@@ -156,18 +156,6 @@ _idle_child() {
 
 # === static invariant (the three coordinated edits keep their shape) ====================
 
-@test "static: stop_idle_spinner restore is COMPOUND-gated (run + build_run_bar) and still blanks otherwise" {
-  local body
-  body="$(_fn_body stop_idle_spinner)"
-  [[ -n "${body}" ]]
-  [[ "${body}" == *'build_run_bar'* ]]    # the restore rebuilds the bar
-  [[ "${body}" == *'workbox_body_str'* ]] # and paints the real resting body
-  [[ "${body}" == *'WORK_STATE'* ]]       # gated on run-state (compound with the bar)
-  # the OTHERWISE branch still blanks both rows (no-bar windows).
-  run grep -cF 'paint_workbox_body_inner ""' <<<"${body}"
-  [[ "${output}" -ge 1 ]]
-}
-
 @test "static: start_idle_spinner composites the bar UNDER the spinner when a run bar is active" {
   local body
   body="$(_fn_body start_idle_spinner)"

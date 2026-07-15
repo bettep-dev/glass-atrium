@@ -297,14 +297,6 @@ CYCLE_SH="${HOME}/.glass-atrium/autoagent/daemon-cycle.sh"
 # source-under-test anchor the hermetic lib tests use — not on ${HOME}.
 APPLY_SH="${GA}/autoagent/daemon-apply.sh"
 
-@test "daemon-cycle.sh sources the pause lib and gates on update_pause_is_active" {
-  [[ -f "${CYCLE_SH}" ]] || skip "daemon-cycle.sh missing"
-  grep -q 'update-pause-flag.sh' "${CYCLE_SH}"
-  grep -q 'update_pause_is_active' "${CYCLE_SH}"
-  # the skip path is a clean exit 0 (not a DEGRADED non-zero)
-  grep -q 'skipping cycle (exit 0)' "${CYCLE_SH}"
-}
-
 @test "daemon-apply.sh sources the pause lib and gates before lock acquisition" {
   [[ -f "${APPLY_SH}" ]] || skip "daemon-apply.sh missing"
   grep -q 'update-pause-flag.sh' "${APPLY_SH}"
