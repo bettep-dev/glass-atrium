@@ -29,10 +29,13 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 
-# LARGE fixture size: the scan's cut output must exceed the pipe buffer (~64KB) so cut is still
-# writing when the reader breaks (empirically reliable from ~800 files; 1500 keeps ~1.9x margin —
-# the ~150KB cut backlog still >> the 64KB pipe buffer — at half the per-scan fork cost).
-REPORT_FANOUT=1500
+# LARGE fixture size: cut's output must exceed the ~64KB pipe buffer.
+# Then cut is still writing when the reader breaks → SIGPIPE → the ERR trap T1 asserts.
+# Margin is sized on the SHORTEST-path platform: Linux CI /tmp (~73B/line) is ~half macOS (~128B/line).
+# 3000 files ≈ 219KB ≈ 3.3x the buffer on Linux (5.9x on macOS) — a robust >=3x race margin.
+# Do NOT size against macOS byte lengths; do NOT drop below 3000.
+# Under 3000 the Linux margin falls toward ~1.7x and the write-vs-break race flakes on CI.
+REPORT_FANOUT=3000
 
 setup() {
   [[ -f "${GA}/lib/ga-env.sh" ]] || skip "lib not found: ${GA}/lib/ga-env.sh"
