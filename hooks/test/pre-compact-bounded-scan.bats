@@ -72,6 +72,10 @@ make_home() { # home_root
 
 # Drive the hook: cwd forced to a clean dir (no ./memory/outcomes leakage), shims on PATH, counters
 # routed to the given files. Populates $status / $output via bats `run`.
+# PRECOMPACT_DB_DISABLE=1 forces the legacy .md-scan fallback these tests seed + assert on (the DB
+# path is the new primary; the DB-primary behavior is pinned separately in pre-compact-db-source.bats).
+# Without it, the hook would query the shared production core.outcomes and the .md assertions would
+# race live rows.
 run_hook() { # home  stat_count_file  awk_count_file  [k]
   local home="${1}" scf="${2}" acf="${3}" k="${4:-}"
   local payload
@@ -84,6 +88,7 @@ run_hook() { # home  stat_count_file  awk_count_file  [k]
     PATH="${SHIM_DIR}:${PATH}" \
     STAT_COUNT_FILE="${scf}" \
     AWK_COUNT_FILE="${acf}" \
+    PRECOMPACT_DB_DISABLE=1 \
     PRECOMPACT_CORRELATION_LIMIT="${k}" \
     bash -c 'cd "$1" && exec bash "$2" <<<"$3"' _ "${home}" "${HOOK_SH}" "${payload}"
 }

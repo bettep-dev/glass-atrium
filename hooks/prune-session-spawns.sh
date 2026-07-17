@@ -17,6 +17,17 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# OS-portable mtime accessor — BSD/macOS `stat -f %m` vs GNU/Linux `stat -c %Y` (both emit the epoch
+# seconds). GNU `-f` means --file-system, so a bare BSD `stat -f %m` misparses on Linux and yields no
+# epoch — every marker would then read as mtime 0, be treated as stale, and get pruned (silent data
+# loss). Detect the flavor ONCE (uname -s) into an args array, mirroring pre-compact.sh's `_GA_STAT_MP`.
+_GA_OS="$(uname -s 2>/dev/null || printf 'unknown')"
+if [[ "${_GA_OS}" == "Darwin" ]]; then
+  _GA_STAT_MTIME=(-f %m)
+else
+  _GA_STAT_MTIME=(-c %Y)
+fi
+
 readonly DEFAULT_SPAWNS_DIR="${HOME}/.claude/data/session-spawns"
 readonly DEFAULT_TRASH_DIR="${HOME}/.Trash"
 readonly DEFAULT_TTL_SECONDS=86400
@@ -73,8 +84,8 @@ for file in "${candidates[@]}"; do
   # Skip directories/special entries — markers are regular files only.
   [[ -f "${file}" ]] || continue
 
-  # macOS BSD `stat -f %m` returns mtime epoch. On failure 0 → treated as stale (pruned).
-  file_mtime="$(stat -f %m "${file}" 2>/dev/null || printf '0')"
+  # Portable mtime epoch via the detected accessor. On failure 0 → treated as stale (pruned).
+  file_mtime="$(stat "${_GA_STAT_MTIME[@]}" "${file}" 2>/dev/null || printf '0')"
   if [[ "${file_mtime}" =~ ^[0-9]+$ ]] && [[ "${file_mtime}" -ge "${cutoff_epoch}" ]]; then
     preserved_count=$((preserved_count + 1))
     continue
