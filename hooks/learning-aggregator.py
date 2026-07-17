@@ -144,6 +144,31 @@ PATTERN1_SOFT_LABEL = "recurring negative-signal concentration"
 _SIGNATURE_ANCHOR = {PATTERN1_SOFT_LABEL: PATTERN1_FAIL_LABEL}
 
 
+# Signature-residue guard (D-F4). _NUMERIC_RE strips a label's dynamic numeric but not the
+# punctuation around it: 'agent instruction-improvement candidate (failure rate 75%)' → the
+# orphan '(failure rate )'. Left in the dedup core that trailing-space remnant forks the
+# signature. _NUMERIC_RE stays untouched (its daemon_cycle mirror; R3 regex-expansion rejected)
+# — this is a separate forward-only cleanup applied at signature derivation.
+_SIG_SEP_BEFORE_CLOSE_RE = re.compile(r"[,;]\s*\)")
+_SIG_OPEN_SPACE_RE = re.compile(r"\(\s+")
+_SIG_SPACE_CLOSE_RE = re.compile(r"\s+\)")
+_SIG_EMPTY_PAREN_RE = re.compile(r"\s*\(\s*\)")
+_SIG_MULTISPACE_RE = re.compile(r"\s{2,}")
+
+
+def _normalize_signature_residue(text: str) -> str:
+    """Normalize the residue _NUMERIC_RE leaves after stripping a label's dynamic numeric so
+    the dedup signature core does not fork on a cosmetic empty-paren remnant. Forward-only:
+    legacy rows keep their stored core (NO DB writes), so a re-triggered agent re-keys at most
+    once (benign). Non-parenthetical labels (patterns 1/7) pass through unchanged."""
+    text = _SIG_SEP_BEFORE_CLOSE_RE.sub(")", text)  # '(feature, )' → '(feature)'
+    text = _SIG_OPEN_SPACE_RE.sub("(", text)
+    text = _SIG_SPACE_CLOSE_RE.sub(")", text)  # '(failure rate )' → '(failure rate)'
+    text = _SIG_EMPTY_PAREN_RE.sub("", text)  # 'foo ()' → 'foo'
+    text = _SIG_MULTISPACE_RE.sub(" ", text)
+    return text.strip()
+
+
 def _pattern1_display_label(has_actual_fail: bool) -> str:
     """Pattern-1 DISPLAY label — verbatim PATTERN1_FAIL_LABEL when the agent's
     negative-signal concentration includes an actual result=fail, else the accurate
@@ -848,8 +873,10 @@ def main() -> None:
                 status_label = cols[5]
                 tier_label = cols[6] if len(cols) > 6 else "user-pending"
 
-                # strip dynamic numerics so repeated runs converge on the same signature
-                pat_core = _NUMERIC_RE.sub('', pattern_label).strip()
+                # strip dynamic numerics so repeated runs converge on the same signature,
+                # then normalize the residue so the dedup core is not forked by an orphan
+                # '(failure rate )' remnant the strip leaves (D-F4).
+                pat_core = _normalize_signature_residue(_NUMERIC_RE.sub('', pattern_label))
                 if not pat_core:
                     pat_core = pattern_label
                 # P3a DISPLAY-only decouple: a decoupled soft label re-anchors to its

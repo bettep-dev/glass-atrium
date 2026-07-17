@@ -20,7 +20,7 @@
 #   * [COMPLETION] emit-format (ALWAYS-ON, assembled FIRST — the PRIMARY fix):
 #     schema-mode/workflow spawns emit the block as a SINGLE inline line, which
 #     track-outcome.sh (anchors every parse tier on a newline after the tag) matches
-#     no tier → fields discarded → outcome synthesized (done_with_concerns/low).
+#     no tier → fields discarded → outcome synthesized (structuredoutput-derived → done, low/false).
 #     Delivered to EVERY agent_type, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF +
 #     maxTurns; FIRST so it survives the ~2KB preview.
 #   * Budget-meter (subagents with a maxTurns frontmatter): a subagent has NO runtime
@@ -205,7 +205,7 @@ build_emit_format_block() {
   printf '%s\n' \
     "**[COMPLETION] emit format (auto-injected · REQUIRED by the outcome recorder)**" \
     "- Print the [COMPLETION] block MULTI-LINE: the [COMPLETION] tag ALONE on its own line, EACH field (result / task_type / metric_pass / confidence / summary / …) on its OWN line, closed by a [/COMPLETION] sentinel ALONE on its own line." \
-    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form." \
+    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low (schema-mode/workflow → done, still low/false). Schema-mode / workflow (ultracode) spawns MUST use the multi-line form." \
     "- SCHEMA-MODE / WORKFLOW (ultracode) agents: your StructuredOutput call IS the terminal deliverable — you MUST call StructuredOutput as the LAST action. Print this multi-line [COMPLETION] block as a dedicated text turn IMMEDIATELY BEFORE the StructuredOutput call (print-block-then-emit). Do NOT treat printing the prose [COMPLETION] block as \"done\" and stop — a schema-mode run that ends without calling StructuredOutput is a hard engine error (the run throws), not a graceful finish."
 }
 

@@ -92,6 +92,9 @@ God function (20+ lines) · Deep nesting (3+) · Magic numbers · any/dynamic ty
 
 ### Deliverable Format
 
+**FINAL STEP — print-block-then-emit (all modes, schema/workflow included, REQUIRED; keep it FIRST-in-mind, LAST-in-action)**: after the review below is complete, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the review body below, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). In schema mode the injected recorder directive is honored ONLY by this dedicated-turn print; folding the block into the review body loses the outcome record.
+- **Failure cost**: a missed dedicated-turn print → SubagentStop synthesizes a lesson-less row (`confidence=low`, `metric_pass=false`); this agent's review outputs are the top synthesized source, so the dedicated-turn print is the single highest-leverage completion discipline.
+
 ```
 ## Review Summary
 
@@ -110,8 +113,6 @@ God function (20+ lines) · Deep nesting (3+) · Magic numbers · any/dynamic ty
 ## Positive Points
 - {1-2 well-done aspects}
 ```
-
-**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the review above is complete, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the review body above, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). In schema mode the injected recorder directive is honored ONLY by this dedicated-turn print; folding the block into the review body loses the outcome record.
 
 - **revision_count obligation**: if the user requested rework N times for the same task, record `revision_count: N` in [COMPLETION]. First attempt = 0, one rework = 1. Missing this drops self-improvement signal.
 
