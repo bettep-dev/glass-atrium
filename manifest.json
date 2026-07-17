@@ -453,7 +453,7 @@
     "hooks/prune-session-spawns.sh": "12639fa0da843243e1d134925bea9cbcd9be99ee763c57cfc1155cc34dc1ab5e",
     "hooks/style-ref-verify.sh": "80c3e701cec7cd7e3d2149da837abf173fa8c74d755edfe677d267a5dc29e974",
     "hooks/telemetry-activation.sh": "effa649c5873f7fd0b57d61d02bc39ffbe2110620901c0bd374de5bc0f98e019",
-    "hooks/track-outcome.sh": "624a8799451e2a356310694c849dc26189fcf545b3e95075fb34f5ca58e30ad2",
+    "hooks/track-outcome.sh": "596d3a582b58799f6ad74e61abe4556d8fc97ea9bb52e1683f2877913432dd5c",
     "hooks/validate-compliance-matrix.sh": "91d20e59da1fd6f15a0eb17040cb37c3b35a8f6b04a140f966bdafc6f7f67504",
     "hooks/validate-large-diff.sh": "ec11f50e4a10656646a1f960aff8521c5dd5dcaf5357df13e18e0d20579dbc8d",
     "hooks/validate-output.sh": "3e0f2b69ab760ce5c804b61853777c17f95d2989ddd4c1b86dcf201ba379c131",
