@@ -1114,6 +1114,15 @@ if [ "${AGENT_PROVIDED_REVISION}" -eq 1 ] \
   || [ -n "${C_DIRECTIVE_HINT}" ]; then
   AGENT_PROVIDED_CORRECTION=1
 fi
+# CORRECTION_HINT_GAP (computed here where the correction vars are in scope; APPLIED in/after the
+# REVIEW_FLAG block below — an early REVIEW_FLAG set would be clobbered by REVIEW_FLAG's re-init):
+# agent emitted a correction (evaluative_signal=-1) but omitted the distilled directive_hint the
+# Correction-emission rule requires as the 3rd co-emitted element = a lesson-less correction.
+# READ-ONLY — never mutates AGENT_PROVIDED_CORRECTION or the core.correction_signals write path.
+CORRECTION_HINT_GAP=0
+if [ "${C_EVALUATIVE_SIGNAL}" = "-1" ] && [ -z "${C_DIRECTIVE_HINT}" ]; then
+  CORRECTION_HINT_GAP=1
+fi
 REVISION_COUNT="${S_REVISION_COUNT}"
 # Seed from raw [COMPLETION] value (preserves 0-vs-absent); regex fallback overrides to -1 below
 EVALUATIVE_SIGNAL="${C_EVALUATIVE_SIGNAL}"
@@ -1960,6 +1969,17 @@ if [[ "${GRADER_VERDICT}" = "verified_fail" ]]; then
     "Review the outcome body — verify the deliverable matches the writer's metric_pass=true claim" \
     "Review the outcome body — verify the deliverable matches the writer's metric_pass=true claim" \
     "{\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\",\"verdict\":\"verified_fail\"}"
+fi
+
+# Correction-gap loud flag (applied here, in/after the REVIEW_FLAG block, per the early-clobber note
+# where CORRECTION_HINT_GAP is computed): a -1 correction with an empty directive_hint only partially
+# met the 3-element co-emission → raise review_flag + a loud 1-line stderr note so the learning
+# aggregation registers the lesson-less correction. READ-ONLY vs the correction WRITE path — the
+# SIG_EMIT / core.correction_signals dualwrite, EVALUATIVE_SIGNAL and DIRECTIVE_HINT are untouched.
+if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
+  REVIEW_FLAG="true"
+  printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
+    "${AGENT_TYPE}" >&2
 fi
 
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).
