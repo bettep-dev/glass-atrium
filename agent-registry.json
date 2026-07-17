@@ -321,7 +321,7 @@
       ],
       "phase": "planning",
       "dual_phase": false,
-      "compatibility": "Requires monitor running at 127.0.0.1:16145 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "compatibility": "Requires monitor running at 127.0.0.1:16145 for HTML primary emission via POST /api/clauded-docs. Agent-only token-optimized records also POST to the monitor. Compatibility gate applies whenever a monitor POST is needed.",
       "origin": "shipped"
     },
     "glass-atrium-meta-prompt-engineer": {
@@ -466,7 +466,7 @@
       ],
       "phase": "report",
       "dual_phase": false,
-      "compatibility": "Requires monitor running at 127.0.0.1:16145 only when emitting a shareable HTML primary via POST /api/clauded-docs. Agent-only / Markdown outputs are unaffected — the gate applies only when an HTML primary is requested.",
+      "compatibility": "Requires monitor running at 127.0.0.1:16145 for emission via POST /api/clauded-docs. Both modes route through the POST API: user-requested HTML primary (viewer-exposed) and agent-only token-optimized records (viewer default-hidden) are gated on monitor availability.",
       "origin": "shipped"
     },
     "glass-atrium-intel-researcher": {

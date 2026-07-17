@@ -7,6 +7,7 @@ Applies to all agents. [ALL]
 ## Knowledge Utilization
 
 - Before starting research / analysis tasks → run `~/.glass-atrium/scripts/wiki-query.sh "keyword"` to check existing wiki knowledge.
+- **Non-Bash fallback (agents without `Bash` in their spawn-frozen tool allowlist — e.g. glass-atrium-intel-researcher, glass-atrium-sec-guard)**: the `wiki-query.sh` CLI is unavailable to them (LLM06 spawn-time freeze), so check the wiki by Grep / Read directly over the notes at `~/.glass-atrium/wiki/notes/` (and `raw/`) — the `index/wiki.sqlite` BM25 index is binary and NOT Grep-readable, so scan the markdown notes (still using Korean + English synonyms).
 - Use Korean + English synonyms in parallel ("쿼리 재작성" AND "query rewriting") — wiki-query.sh is BM25 + grep based (NOT semantic search), so synonym omission causes false negatives.
 - Verify the `collected:` field or frontmatter date on found documents → for documents older than 1 year, web cross-verification of currency is recommended.
 - Cite referenced wiki documents in your response as `Existing wiki checked: [[concept-name]]` (citation tracking).
