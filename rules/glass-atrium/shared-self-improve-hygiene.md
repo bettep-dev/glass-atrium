@@ -24,13 +24,13 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 - `backup_capture_failed` path (`GIT_TXN_BACKUP_CAPTURE_FAIL`) → hard PRE-apply abort + emit_log — nothing was applied, so there is nothing to restore
 - Verification failure after apply (`GIT_TXN_VERIFY_FAIL`) → atomic restore of the target from the `agents-bak` before-image (sibling temp + `mv -f` rename, same-FS) → keeps a user-retryable state
 - In-place `cp` restore FORBIDDEN — a crash mid-copy truncates the target; only the atomic temp+rename swap is permitted
-- Bats test coverage required for the apply / atomic-restore / lock-reclaim branches (`autoagent/test/git-txn-gitfree.bats`)
+- Bats test coverage required for the apply / atomic-restore / lock-reclaim branches (`autoagent/test/git-txn-gitfree.bats` — source-repo-only: this suite lives in the dev source tree, NOT bundled into the live `~/.glass-atrium/autoagent/` install)
 
 ## Harness Git Track Status
 
-- `~/.glass-atrium/autoagent/`, `~/.glass-atrium/rules/`, `~/.glass-atrium/agents/`, `~/.glass-atrium/monitor/` are EACH an independent git repository → change history of self-improvement core code (daemon-apply.sh / daemon_cycle.py / daemon-cycle.sh) AND of every rule file under `~/.glass-atrium/rules/` (including this document) is git-preserved — prior-version recovery via `git log` / `git restore`
-- Git history is the recovery mechanism for these tracked dirs → pre-change local-backup duplication is redundant
-- Remaining untracked surface — `~/.glass-atrium/skills/`, `~/.glass-atrium/hooks/`, `~/.glass-atrium/scripts/`, and the `~/.glass-atrium/` root itself are NOT git repos → no recovery for changes confined to those paths. Rule-change recovery is already covered by the rules repo; this residual surface is lower-stakes (no self-improvement core code, no rule SoT)
+- `~/.glass-atrium/autoagent/`, `~/.glass-atrium/rules/`, `~/.glass-atrium/agents/`, `~/.glass-atrium/monitor/` are DESIGNED to each be an independent git repository, initialized by the audit/install operation → once initialized, change history of self-improvement core code (daemon-apply.sh / daemon_cycle.py / daemon-cycle.sh) AND of every rule file under `~/.glass-atrium/rules/` (including this document) is git-preserved — prior-version recovery via `git log` / `git restore`
+- Where a dir HAS been git-initialized, git history is its recovery mechanism → pre-change local-backup duplication is redundant. Where a `.git` is ABSENT (not yet initialized on this machine), git recovery does NOT exist → a pre-change backup is REQUIRED and MUST NOT be skipped on the strength of this doc
+- Remaining untracked surface — `~/.glass-atrium/skills/`, `~/.glass-atrium/hooks/`, `~/.glass-atrium/scripts/`, and the `~/.glass-atrium/` root itself are NOT git repos → no recovery for changes confined to those paths. Rule-change recovery is covered by the rules repo where initialized; this residual surface is lower-stakes (no self-improvement core code, no rule SoT)
 
 ## Cross-References
 

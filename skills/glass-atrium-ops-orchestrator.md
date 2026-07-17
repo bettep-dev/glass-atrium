@@ -29,7 +29,7 @@ Governs how the orchestrator agent delegates tasks, composes agent teams, manage
 **Task Decomposition Questions**: Self-contained? · Boundary interface contract explicit? · Causal chain unsplit?
 
 **Capability Consultation** (hints only, no forced match):
-- **`domains` array** (`~/.claude/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
+- **`domains` array** (`~/.glass-atrium/agent-registry.json`): each agent's capability list — Claude semantically compares against each sub-task
 - **Agent description** (frontmatter): when needed, lazy-load the top 2-3 candidates' descriptions for precise judgment
 - **Phase numbers**: `research(1) → analysis(2) → planning(3) → implementation(4) → review(5) → report(6)` — used only for ordering, not for matching
 - **Task-type hints** (reference only, not enforced): analysis ≈ phase 2 · planning ≈ phase 3 · implementation ≈ phase 4 · document ≈ phase 6
