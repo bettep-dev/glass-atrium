@@ -523,14 +523,11 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgit\s+stash\s+(?:clear|drop)\b"),
     # `git reset --hard` discards uncommitted work + moves HEAD irreversibly.
     re.compile(r"\bgit\s+reset\s+--hard\b"),
-    # `git checkout .` (literal-dot pathspec) discards ALL unstaged tree changes.
-    # Bare-dot only — `git checkout .gitignore` / `./src` (single path) do not.
-    re.compile(r"\bgit\s+checkout\s+\.(?=\s|$)"),
-    # `git checkout -- .` is the double-dash (explicit pathspec) equivalent of the
-    # bare-dot form above — same ALL-unstaged-tree discard, but the `--` guard
-    # slips past the pattern above. Bare-dot only, so `git checkout -- .gitignore`
-    # and a branch checkout (`git checkout feature`) stay clean.
-    re.compile(r"\bgit\s+checkout\s+--\s+\.(?=\s|$)"),
+    # `git checkout .` / `git checkout -- .` (bare-dot pathspec, optional `--`
+    # separator) discard ALL unstaged tree changes. Bare-dot only: a single-path
+    # checkout (`git checkout .gitignore` / `-- .gitignore` / `./src`) and a
+    # branch checkout (`git checkout feature`) stay clean.
+    re.compile(r"\bgit\s+checkout\s+(?:--\s+)?\.(?=\s|$)"),
     # `git restore .` / `git restore --worktree .` are the modern equivalent of
     # `git checkout .` — both discard ALL working-tree changes. Bare-dot only: a
     # specific-file restore (`git restore path/to/file.ts`) and a `--staged`-only
@@ -7282,11 +7279,10 @@ def run_cycle(
                 # core-security.md High-impact actions).
                 approval_tier = "safety"
                 status_value = "pending"
-                # Loud WARN on a sensitive-diff match — a hazardous, irreversible
-                # command (e.g. a bare `git stash` / `reset --hard` inherited-tree
-                # recipe) reached the safety gate. Surfaced (never silent) so the
-                # launchd-live log shows the routing to the Tier-2 user-approval
-                # queue; the row is NEVER auto-applied (Precondition Loud-Fail).
+                # Loud WARN when a diff-embedded hazard recipe reached the safety
+                # gate (Precondition Loud-Fail — never silent). Only a diff trigger
+                # warns: a path/frontmatter safety hit is self-evident from the
+                # target, whereas the diff pattern that caught the hazard is not.
                 diff_hit = match_sensitive_diff(proposal.proposed_diff)
                 if diff_hit is not None:
                     sys.stderr.write(

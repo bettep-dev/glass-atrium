@@ -125,12 +125,13 @@ _DIFF_CLEAN: tuple[str, ...] = (
     # negative-lookahead keeps push/apply/list clean.
     "+ git stash push -u -m tag",
     "+ git stash apply <sha>",
-    "+ tsc --noEmit",
     "+ the note explains why a bare stash is risky without a restore step",  # prose, prescribes nothing
-    # Non-discard restore/checkout forms — a specific-file restore, a `--staged`-
-    # only unstage (working tree preserved), and a branch checkout MUST stay clean.
-    "+ git restore --staged file.ts",  # unstage only — tree changes preserved
+    # Non-discard restore/checkout forms — a bare-dot `--staged` unstage (working
+    # tree preserved), a specific-file restore, a dot-prefixed path, and a branch
+    # checkout MUST stay clean.
+    "+ git restore --staged .",  # bare-dot but --staged → tree preserved
     "+ git restore path/to/file.ts",  # single-file restore, not the bare-dot tree
+    "+ git checkout .gitignore",  # dot-prefixed path, not the bare-dot tree discard
     "+ git checkout feature-branch",  # branch switch, not a pathspec discard
     f"+ {_I1_BULLET}",  # the I1 bullet verbatim — pins the safe instruction clean
 )
