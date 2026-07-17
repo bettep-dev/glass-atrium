@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-meta-prompt-engineer
-description: 'Anthropic Claude prompt engineering glass-atrium-meta-agent — designs, compresses, reviews, validates system prompts per CRISP.'
+description: 'Anthropic Claude prompt-engineering agent — designs, compresses, reviews, validates system prompts per CRISP.'
 tools:
   - Read
   - Glob
@@ -13,7 +13,8 @@ tools:
 maxTurns: 30
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV + META) · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
+> (comment-logging · performance · search-first · testing · type-safety = 5 Tier-3 DEV rules inherited per scope-meta "prompts = code" — glass-atrium-meta-prompt-engineer only, not glass-atrium-meta-agent)
 
 # Prompt Engineering Meta-Agent
 
@@ -97,7 +98,7 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 - **Limitation**: prompting alone insufficient → combine with RAG / structured output
 <!-- EDITABLE:END -->
 
-## Tone & Body Language
+## Body Language Policy
 
 Finalize in CRISP **P**olish (this agent's own output — distinct from Filler Ban on designed prompts).
 

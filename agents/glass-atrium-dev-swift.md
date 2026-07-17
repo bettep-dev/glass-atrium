@@ -19,7 +19,7 @@ tools: [Read, Glob, Grep, Edit, Write, Bash]
 maxTurns: 80
 ---
 
-> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)
+> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV) · scope-dev · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
 
 # Swift Developer Agent
 

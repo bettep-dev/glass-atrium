@@ -62,8 +62,8 @@ This file is the **system charter** for all agents — it governs behaviors unco
 - Spawn only when: (1) tasks are parallelizable AND independent, (2) single-agent capacity confirmed insufficient.
 - Concurrent children > 3 → verify rate-limit headroom before fan-out.
 - **Typed spawn always**: every spawn passes an `agentType` matching the routing decision — an untyped/generic subagent does NOT inherit scope rules or the per-agent tool allowlist (OWASP LLM06). Guard detail: `skills/glass-atrium-ops-orchestrator.md` → Red Flags (Generic-subagent guard).
-- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies. Layering detail: `rules/orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`.
-- Detail: `rules/orchestrator-role.md` → `### Spawn Budget`.
+- **Ultracode/Workflow-tool mode**: the runtime governs spawn concurrency, but (a) the "parallelizable AND independent" judgment above still gates whether to author a workflow vs a single delegation, and (b) the typed-`agentType` requirement still applies. Layering detail: `rules/glass-atrium/orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`.
+- Detail: `rules/glass-atrium/orchestrator-role.md` → `### Spawn Budget`.
 
 ## 3-Tier Boundary [ALL]
 
@@ -142,18 +142,18 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 
 ## Outcome Record [ALL]
 
-> Detailed rules: See `outcome-record` (rules/core-outcome-record.md)
+> Detailed rules: See `outcome-record` (rules/glass-atrium/core-outcome-record.md)
 > Emit boundary (mandatory / exempt / gray-zone): `core-outcome-record.md` → `### Emit Boundary` canonical
 
 ## Learning Log & Correction Signal [ALL]
 
-> Detailed rules: See `learning-log` (rules/core-learning-log.md)
+> Detailed rules: See `learning-log` (rules/glass-atrium/core-learning-log.md)
 
-- **Memory persistence is user-instructed-only [ALL]**: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir). A persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language). Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN (gated-off by default in code via a two-factor env + safety-marker authorization, fail-safe-to-OFF — not deleted). Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt — only user-facing memory writes require the explicit instruction. Detail + the 4-condition Long-Term Memory Write-Gate: `rules/core-learning-log.md`.
+- **Memory persistence is user-instructed-only [ALL]**: the main session MUST NOT proactively or automatically write user-facing memory (`feedback_*.md` / `MEMORY.md` in the personal memory dir). A persisted memory fires ONLY when the user explicitly instructs it (e.g. `기억해` / "remember this", judged semantically in any language). Daemon auto-generation of `feedback_*.md` from clustered correction signals is FORBIDDEN — and the daemon auto-clustering path is NOT implemented in the current code (no such clustering / user-facing-memory-persistence logic exists in learning-aggregator.py), so the prohibition holds by absence of the code path, not by a runtime gate. Internal CTM/EPM self-improvement learning under `memory/core-learning-log.md` is exempt — only user-facing memory writes require the explicit instruction. Detail + the 4-condition Long-Term Memory Write-Gate: `rules/glass-atrium/core-learning-log.md`.
 
 ## Wiki Reference (Knowledge Utilization) [ALL]
 
-> Detailed rules: See `wiki-reference` (rules/core-wiki-reference.md)
+> Detailed rules: See `wiki-reference` (rules/glass-atrium/core-wiki-reference.md)
 
 ## Hook Operation Policy [ALL]
 

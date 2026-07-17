@@ -107,7 +107,7 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
 
 ### Pre-Edit Facts Disclosure (Karpathy Investigation-Before-Editing) [DEV]
 
-- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape (parsed by the Stop/SubagentStop advisory hook):
+- Before the FIRST `Write`/`Edit` to each non-trivial file, the DEV agent MUST emit a `Pre-Edit Facts:` block for that file (one block per file) — a header line + exactly 4 fact lines, this exact shape (parsed by the Stop advisory hook):
 
   ```
   Pre-Edit Facts: <file_path>
@@ -170,13 +170,14 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
 - **Project Convention Probe**: Before first `Write`/`Edit` on every code-emit turn → PRIMARY: Glob same-directory + same-extension siblings of the planned target, Read 1 most-recently-modified sibling, extract 3 axes (`naming case` / `import order` / `error+log pattern`) — record sibling path in `[COMPLETION] style_ref:` when field available · SECONDARY: if `AGENTS.md` / `CLAUDE.md` / `CONVENTIONS.md` exists in repo root or any ancestor → Read as supplementary context (augments, does NOT substitute sibling probe) · Greenfield (0 siblings AND no anchor file) → declare `convention: greenfield — no sibling/anchor file` in turn-0 `Assumptions:` line (cross-ref Assumptions Disclosure above) instead of fabricating · probe failure (glob err / read err) → emit warning, do NOT block (ask user when ambiguous) · see `shared-search-first.md` → Pattern recognition
 - **Ripple check**: Before the first `Write`/`Edit`, reason one line beyond WHAT surface changes (the layer Pre-Edit Facts covers) to WHAT breaks / bends / slows downstream as a consequence — callers, dependent APIs, affected tests, integration points. This is a free-text reasoning step you perform, NOT a 5th `Pre-Edit Facts:` key (the `advisory-preedit-facts.sh` hook parses exactly the 4 fixed keys importers / affected-API / data-schemas / user-instruction — a 5th key would be malformed input) and NOT a missing-info gather item (no Gap Table / user question — you reason it yourself).
 
-> The block below (between the `AGENT-INJECT:STYLE-REF` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the DEV subagents (NOT QA). It is a self-contained restatement of the Project Convention Probe `style_ref` obligation above — keep the two in sync; this file is the single source of truth, zero drift. The marker name differs from `shared-comment-logging.md`'s plain `AGENT-INJECT:START/END` so the two blocks never collide.
+> The block below (between the `AGENT-INJECT:STYLE-REF` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the DEV subagents (NOT QA). It is a self-contained restatement of the Project Convention Probe `style_ref` obligation above — keep the two manually in sync; this file is the single source of truth (sync is a manual obligation, not a mechanically enforced guarantee). The marker name differs from `shared-comment-logging.md`'s plain `AGENT-INJECT:START/END` so the two blocks never collide.
 
+<!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats (redteam-#24 9728B ceiling). -->
 <!-- AGENT-INJECT:STYLE-REF:START -->
-**style_ref emit (auto-injected for DEV agents · full: `~/.claude/scoped/scope-dev.md` Project Convention Probe)**
-- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-directory + same-extension sibling of the first-touch file for local conventions (naming case / import order / error+log).
-- Mirror covers **code form only** (naming / imports / error+log / file layout), NOT comment density or header — the comment-logging core (also injected) governs comments and OVERRIDES; its pragma-directive + Justified-header carve-outs live there. Author COMPLIANT comments even when the sibling's violate.
-- Then emit `style_ref: <relative/path/to/sibling/you/Read>` in `[COMPLETION]`. The path MUST be a file you actually Read THIS turn — a PreToolUse hook cross-checks your Read calls, so a fabricated path is rejected.
+**style_ref emit (auto-injected for DEV agents · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
+- Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for local conventions (naming case / import order / error+log).
+- Mirror covers **code form only** (naming / imports / error+log / layout), NOT comment density or header — the injected comment-logging core governs those and OVERRIDES (its carve-outs live there); author COMPLIANT comments even when the sibling's violate.
+- Then emit `style_ref: <path/you/Read>` (a file you Read THIS turn). On SubagentStop `track-outcome.sh` cross-checks it against your Read history and sets `style_ref_verified=false` for a path not there — a Gaming-the-Judge flag, NOT rejected (no PreToolUse Read-check hook).
 - Greenfield (first-touch directory has 0 siblings AND no `AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` anchor) → emit the literal `style_ref: greenfield` AND declare `convention: greenfield` in the turn-0 `Assumptions:` line.
 - Advisory, not blocking: probe failure (glob/read error) → proceed. An emit obligation, not a result gate.
 <!-- AGENT-INJECT:STYLE-REF:END -->
@@ -237,7 +238,7 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
 
 <!-- AGENT-INJECT:MINIMALISM:START -->
-**Minimalism reflex (auto-injected for DEV agents · full: ~/.claude/scoped/scope-dev.md)**
+**Minimalism reflex (auto-injected for DEV agents · full: ~/.glass-atrium/scoped/scope-dev.md)**
 A reflex every response, not opt-in — adding any function/file/dependency/abstraction passes the "can this be smaller?" gate first.
 - First rung that holds: YAGNI (build it at all?) -> stdlib/native -> framework-bundled -> installed third-party -> one line -> minimum code LAST. Atrium prepend: grep existing project code/util first (search-first).
 - Deletion over addition: prefer deleting/consolidating into an existing file over a new file/layer/helper. "Can I remove this?" before "should I add this?". Fewest files — keep one coherent file until it splits into distinct concerns; don't split early.

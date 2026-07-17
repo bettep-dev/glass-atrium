@@ -15,7 +15,7 @@
 #             "matcher": "",
 #             "hooks": [
 #               { "type": "command",
-#                 "command": "~/.claude/hooks/style-ref-verify.sh" }
+#                 "command": "~/.glass-atrium/hooks/style-ref-verify.sh" }
 #             ]
 #           }
 #         ]
@@ -129,7 +129,7 @@ def main():
 
     # style_ref absence + greenfield exemption → silent skip.
     # 'greenfield' literal — mirrors bash STYLE_REF_GREENFIELD constant in
-    # ~/.claude/hooks/lib/style-ref-consts.sh. 3-layer manual sync obligation
+    # ~/.glass-atrium/hooks/lib/style-ref-consts.sh. 3-layer manual sync obligation
     # (bash/python/TS) — value change requires updating all 3 layers in same cycle.
     if not style_ref or style_ref == "greenfield":
         emit("skip_silent")
@@ -164,7 +164,7 @@ PY
 )
 
 # Shared matcher (single SoT with track-outcome.sh), resolved from this script's
-# own dir so the symlinked ~/.claude/hooks path works.
+# own dir so the sibling lib resolves regardless of the invocation path.
 STYLE_REF_MATCH_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/style_ref_match.py"
 
 PIPELINE_OUT=""
