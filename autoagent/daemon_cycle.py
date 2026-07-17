@@ -526,6 +526,16 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # `git checkout .` (literal-dot pathspec) discards ALL unstaged tree changes.
     # Bare-dot only — `git checkout .gitignore` / `./src` (single path) do not.
     re.compile(r"\bgit\s+checkout\s+\.(?=\s|$)"),
+    # `git checkout -- .` is the double-dash (explicit pathspec) equivalent of the
+    # bare-dot form above — same ALL-unstaged-tree discard, but the `--` guard
+    # slips past the pattern above. Bare-dot only, so `git checkout -- .gitignore`
+    # and a branch checkout (`git checkout feature`) stay clean.
+    re.compile(r"\bgit\s+checkout\s+--\s+\.(?=\s|$)"),
+    # `git restore .` / `git restore --worktree .` are the modern equivalent of
+    # `git checkout .` — both discard ALL working-tree changes. Bare-dot only: a
+    # specific-file restore (`git restore path/to/file.ts`) and a `--staged`-only
+    # unstage (`git restore --staged .`, working tree preserved) stay clean.
+    re.compile(r"\bgit\s+restore\s+(?:--worktree\s+)?\.(?=\s|$)"),
     # `git clean -f` / `--force` (force flag in any short-flag cluster) deletes
     # untracked files irreversibly; a dry-run (`-n`, no `f`) stays clean.
     re.compile(r"\bgit\s+clean\s+(?:-\S+\s+)*(?:-[a-zA-Z]*f|--force\b)"),

@@ -111,6 +111,9 @@ _DIFF_SENSITIVE: tuple[str, ...] = (
     "+ git stash drop stash@{0}",  # index-addressed drop
     "+ git reset --hard HEAD~1",
     "+ git checkout .",
+    "+ git checkout -- .",  # double-dash bare-dot — same discard, past the `.`-only pattern
+    "+ git restore .",  # modern worktree discard (default --worktree)
+    "+ git restore --worktree .",  # explicit-worktree bare-dot discard
     "+ git clean -fd",
 )
 _DIFF_CLEAN: tuple[str, ...] = (
@@ -124,6 +127,11 @@ _DIFF_CLEAN: tuple[str, ...] = (
     "+ git stash apply <sha>",
     "+ tsc --noEmit",
     "+ the note explains why a bare stash is risky without a restore step",  # prose, prescribes nothing
+    # Non-discard restore/checkout forms — a specific-file restore, a `--staged`-
+    # only unstage (working tree preserved), and a branch checkout MUST stay clean.
+    "+ git restore --staged file.ts",  # unstage only — tree changes preserved
+    "+ git restore path/to/file.ts",  # single-file restore, not the bare-dot tree
+    "+ git checkout feature-branch",  # branch switch, not a pathspec discard
     f"+ {_I1_BULLET}",  # the I1 bullet verbatim — pins the safe instruction clean
 )
 
