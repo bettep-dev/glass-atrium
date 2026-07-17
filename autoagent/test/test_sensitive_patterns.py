@@ -79,18 +79,61 @@ _PATH_CORPUS: tuple[str, ...] = (
 # split so this test file never embeds a literal dangerous command.
 _RM = "r" "m"
 _CHMOD = "c" "hmod"
+
+# The SAFE inherited-tree recipe (dev-react "Pre-Execution Verification" bullet,
+# I1). It NAMES stash/pop/drop/build but PRESCRIBES only the tagged-stash flow,
+# so the diff detector MUST leave it clean — a false positive here would flag
+# the very instruction that closes the hazard. Pinned verbatim below.
+_I1_BULLET = (
+    "- **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, "
+    "preserve existing work with `git stash push -u -m <unique-tag>`, immediately "
+    "capture the entry SHA, and restore ONLY via `git stash apply <sha>` (never "
+    "`pop`) — drop the entry by its tag afterwards · a transient WIP commit is "
+    "NOT the default (`git add -A` is forbidden by the Tier-1 git rule + "
+    "pre-commit hooks may fail on a pre-broken tree, and a tagged stash bypasses "
+    "commit hooks) · record pre-existing compile state with TYPE-CHECK ONLY "
+    "(`tsc --noEmit` / `npm run typecheck`, never a full build) · pre-existing "
+    "errors blocking scope → escalate to orchestrator"
+)
+
 _DIFF_SENSITIVE: tuple[str, ...] = (
     f"+ {_RM} -rf /tmp/x",
     f"+    {_CHMOD} 0777 secret",
     "+ git push --force origin main",
     "+ DROP TABLE core.outcomes;",
     "+ launchctl bootout gui/501",
+    # Inherited-tree baseline hazards (I2) — a body recipe prescribing a raw
+    # working-tree reset. Embedded literally, matching the `git push --force`
+    # precedent above (only rm/chmod are token-split).
+    "+ git stash && npm run build",  # bare git stash (the rolled-back proposal-9 recipe)
+    "+ git stash pop",
+    "+ git stash clear",
+    "+ git stash drop stash@{0}",  # index-addressed drop
+    "+ git reset --hard HEAD~1",
+    "+ git checkout .",
+    "+ git checkout -- .",  # double-dash bare-dot — same discard, past the `.`-only pattern
+    "+ git restore .",  # modern worktree discard (default --worktree)
+    "+ git restore --worktree .",  # explicit-worktree bare-dot discard
+    "+ git clean -fd",
 )
 _DIFF_CLEAN: tuple[str, ...] = (
     "+ this confirms the farm output",  # 'confirm'/'farm' must NOT match \brm\b
     f"- {_RM} -rf /tmp/x",  # removed line, not added → ignored
     "+++ b/path.md",  # diff header, not body
     "+ a perfectly ordinary documentation line",
+    # The SAFE tagged-stash recipe (I1) must NEVER trip the detector — the
+    # negative-lookahead keeps push/apply/list clean.
+    "+ git stash push -u -m tag",
+    "+ git stash apply <sha>",
+    "+ the note explains why a bare stash is risky without a restore step",  # prose, prescribes nothing
+    # Non-discard restore/checkout forms — a bare-dot `--staged` unstage (working
+    # tree preserved), a specific-file restore, a dot-prefixed path, and a branch
+    # checkout MUST stay clean.
+    "+ git restore --staged .",  # bare-dot but --staged → tree preserved
+    "+ git restore path/to/file.ts",  # single-file restore, not the bare-dot tree
+    "+ git checkout .gitignore",  # dot-prefixed path, not the bare-dot tree discard
+    "+ git checkout feature-branch",  # branch switch, not a pathspec discard
+    f"+ {_I1_BULLET}",  # the I1 bullet verbatim — pins the safe instruction clean
 )
 
 

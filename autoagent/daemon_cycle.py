@@ -510,6 +510,32 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
     re.compile(r"\bexec\s*\("),
+    # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
+    # tree reset). A bare `git stash` (incl. `git stash && ...`) discards the
+    # tree onto a shared, session-crossing stash stack with no restore guarantee;
+    # `git stash pop` compounds it (silently drops the entry on a conflict). The
+    # negative lookahead keeps the SAFE tagged-stash recipe — `git stash push` /
+    # `apply` / `list` — clean, and defers the destructive `clear` / `drop`
+    # subcommands to their own pattern below (so each is a live, distinct match).
+    re.compile(r"\bgit\s+stash\b(?!\s+(?:push|apply|list|clear|drop))"),
+    # `git stash clear` wipes ALL stashes; `git stash drop [stash@{N}]` deletes
+    # one — both irreversible.
+    re.compile(r"\bgit\s+stash\s+(?:clear|drop)\b"),
+    # `git reset --hard` discards uncommitted work + moves HEAD irreversibly.
+    re.compile(r"\bgit\s+reset\s+--hard\b"),
+    # `git checkout .` / `git checkout -- .` (bare-dot pathspec, optional `--`
+    # separator) discard ALL unstaged tree changes. Bare-dot only: a single-path
+    # checkout (`git checkout .gitignore` / `-- .gitignore` / `./src`) and a
+    # branch checkout (`git checkout feature`) stay clean.
+    re.compile(r"\bgit\s+checkout\s+(?:--\s+)?\.(?=\s|$)"),
+    # `git restore .` / `git restore --worktree .` are the modern equivalent of
+    # `git checkout .` — both discard ALL working-tree changes. Bare-dot only: a
+    # specific-file restore (`git restore path/to/file.ts`) and a `--staged`-only
+    # unstage (`git restore --staged .`, working tree preserved) stay clean.
+    re.compile(r"\bgit\s+restore\s+(?:--worktree\s+)?\.(?=\s|$)"),
+    # `git clean -f` / `--force` (force flag in any short-flag cluster) deletes
+    # untracked files irreversibly; a dry-run (`-n`, no `f`) stays clean.
+    re.compile(r"\bgit\s+clean\s+(?:-\S+\s+)*(?:-[a-zA-Z]*f|--force\b)"),
 )
 
 
@@ -7253,6 +7279,17 @@ def run_cycle(
                 # core-security.md High-impact actions).
                 approval_tier = "safety"
                 status_value = "pending"
+                # Loud WARN when a diff-embedded hazard recipe reached the safety
+                # gate (Precondition Loud-Fail — never silent). Only a diff trigger
+                # warns: a path/frontmatter safety hit is self-evident from the
+                # target, whereas the diff pattern that caught the hazard is not.
+                diff_hit = match_sensitive_diff(proposal.proposed_diff)
+                if diff_hit is not None:
+                    sys.stderr.write(
+                        f"[daemon-cycle] WARN: safety-diff match — agent={agent} "
+                        f"target={proposal.target_file} pattern=/{diff_hit}/ → "
+                        "routed to Tier-2 user-approval queue (NOT auto-applied).\n"
+                    )
             elif verify.passed:
                 approval_tier = "auto"
                 status_value = "pending"  # apply stage flips this to 'applied'
