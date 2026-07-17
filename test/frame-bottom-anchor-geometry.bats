@@ -75,6 +75,9 @@ _run_geometry() {
   [ "${MENU_BLOCK_FIRST_ROW}" -eq 9 ]
   [ "${SEPARATOR_ROW}" -eq 8 ]
   [ "${WORDMARK_FIRST_ROW}" -eq 6 ]
+  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK=false here so it equals the
+  # wordmark row (geometry owns the extent-top decision).
+  [ "${MENU_FIRST_ROW}" -eq "${WORDMARK_FIRST_ROW}" ]
   [ "${MENU_FIRST_ROW}" -eq 6 ]
 }
 
@@ -148,6 +151,9 @@ _run_geometry() {
   [ "${MENU_BLOCK_FIRST_ROW}" -eq 27 ]
   [ "${SEPARATOR_ROW}" -eq 26 ]
   [ "${WORDMARK_FIRST_ROW}" -eq 24 ]
+  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK here so it equals the art top.
+  [ "${MENU_FIRST_ROW}" -eq "${ART_FIRST_ROW}" ]
+  [ "${MENU_FIRST_ROW}" -eq 2 ]
 }
 
 @test "geometry R=40: ART_OK, ART_FIRST_ROW=3, art region rows 3..23" {
@@ -161,6 +167,9 @@ _run_geometry() {
   [ "${MENU_BLOCK_FIRST_ROW}" -eq 28 ]
   [ "${SEPARATOR_ROW}" -eq 27 ]
   [ "${WORDMARK_FIRST_ROW}" -eq 25 ]
+  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK here so it equals the art top.
+  [ "${MENU_FIRST_ROW}" -eq "${ART_FIRST_ROW}" ]
+  [ "${MENU_FIRST_ROW}" -eq 3 ]
   # ART_ROWS=21 → art last row = 3 + 21 - 1 = 23, one gap row (24) below the wordmark (25).
   [ "$((ART_FIRST_ROW + ART_ROWS - 1))" -eq 23 ]
 }

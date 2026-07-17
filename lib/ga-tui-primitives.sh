@@ -28,6 +28,20 @@ _bar_fill() {
   printf '%s' "${filled}"
 }
 
+# plate_center_pad — shared centered-pad SoT for the wordmark + bulldog art (both mirror this
+# math). $1=content width · $2=out-var name. Sets the out-var to a spaces string centering a
+# width-cell block inside the current plate inner: PLATE_LEFT + (plate_inner - width)/2, clamped
+# to the PLATE_LEFT floor so a sub-width plate stays flush — the clamp is LIVE for the wordmark
+# (no horizontal-fit gate) and a harmless no-op for the art (ART_OK guarantees inner >= width).
+# One plate_inner fork per call; the pad string is set via printf -v (no subshell). bash-3.2-safe.
+plate_center_pad() {
+  local width="$1" out_var="$2" inner pad_n
+  inner="$(plate_inner)"
+  pad_n=$((PLATE_LEFT + (inner - width) / 2))
+  [[ "${pad_n}" -lt "${PLATE_LEFT}" ]] && pad_n="${PLATE_LEFT}"
+  printf -v "${out_var}" '%*s' "${pad_n}" ""
+}
+
 # build_counter_str — X-of-Y step counter as a fixed-width sub-char block bar. $1=i
 # (1-based) $2=N. Constant CELLS-wide gauge so the column never jitters as i advances;
 # glyphs from the shared PROG_FULL/PROG_EMPTY SoT (--ascii degrades to `#`/`.`). i,N are

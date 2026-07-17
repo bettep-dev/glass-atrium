@@ -45,49 +45,50 @@ compute_menu_geometry() {
   [[ "${MENU_LEFT}" -lt "${PLATE_MARGIN}" ]] && MENU_LEFT="${PLATE_MARGIN}"
 
   # VERTICAL: bottom-fixed build-UP. The keyhint pins to the last screen row (R); every region
-  # anchors UPWARD from it by a MENU_COUNT(C)-derived offset (frame.sh invariant: COMPUTED,
-  # never a row literal). Offsets: keyhint R | workbox R-4..R-1 | menu top rail R-(7+C) |
-  # separator R-(8+C) | wordmark R-(10+C)..R-(9+C). The 2-row wordmark (T4) is load-bearing —
-  # a 5-row wordmark would overrun the separator + menu top rail.
+  # anchors UPWARD off its LOWER NEIGHBOR so each region's height is encoded EXACTLY ONCE (no
+  # hand-collapsed R-(k+C) sums re-stating every height below). The chain evaluates to the
+  # documented offsets: keyhint R | workbox R-4..R-1 | menu top rail R-(7+C) | separator R-(8+C) |
+  # wordmark R-(10+C)..R-(9+C). The 2-row wordmark (T4) is load-bearing — a 5-row wordmark would
+  # overrun the separator + menu top rail.
   MENU_KEYHINT_ROW="${rows}"
-  WORKBOX_FIRST_ROW=$((rows - 4))              # top rail + LINE1 + LINE2 + bottom rail (fixed 4)
+  WORKBOX_FIRST_ROW=$((MENU_KEYHINT_ROW - 4))  # top rail + LINE1 + LINE2 + bottom rail (fixed 4)
   WORKBOX_BODY_ROW=$((WORKBOX_FIRST_ROW + 1))  # LINE 1 headline
   WORKBOX_BODY_ROW2=$((WORKBOX_FIRST_ROW + 2)) # LINE 2 detail (bottom rail sits at WORKBOX_FIRST_ROW+3)
-  MENU_BLOCK_FIRST_ROW=$((rows - (7 + MENU_COUNT)))
-  SEPARATOR_ROW=$((rows - (8 + MENU_COUNT)))
-  WORDMARK_FIRST_ROW=$((rows - (10 + MENU_COUNT)))
-  # MENU_FIRST_ROW = the wordmark row: the redraw-extent top WHEN the art is absent (ART_OK false),
-  # and the topmost DRAWN region below the art otherwise. When ART_OK the extent top lifts to
-  # ART_FIRST_ROW (redraw_frame_inplace clear_top).
-  MENU_FIRST_ROW="${WORDMARK_FIRST_ROW}"
+  # one blank gap row above the workbox, then UP over the menu block (2 rails + MENU_COUNT items).
+  MENU_BLOCK_FIRST_ROW=$((WORKBOX_FIRST_ROW - 1 - (2 + MENU_COUNT)))
+  SEPARATOR_ROW=$((MENU_BLOCK_FIRST_ROW - 1)) # dot-rule one row above the menu top rail
+  WORDMARK_FIRST_ROW=$((SEPARATOR_ROW - 2))   # 2-row wordmark ends one row above the separator
 
   # ART gate — the SINGLE art tier (the 3-band system is retired; one 55x21 asset ships). Art
   # needs BOTH a taller terminal AND a wide-enough plate: rows >= ART_MIN_ROWS (=39 at C=5, which
-  # keeps ART_FIRST_ROW = R-(11+C)-ART_ROWS >= 2 at the floor) AND the 55-cell art fits the
-  # centered plate inner (MENU_INNER — the fullscreen plate_inner SoT derived above from cols,
-  # never a cols literal). Top-down degradation step 1: a too-short OR tall-but-narrow terminal
-  # drops the bulldog; the menu + workbox + keyhint never lose a row.
+  # keeps ART_FIRST_ROW >= 2 at the floor) AND the 55-cell art fits the centered plate inner
+  # (MENU_INNER — the fullscreen plate_inner SoT derived above from cols, never a cols literal).
+  # Top-down degradation step 1: a too-short OR tall-but-narrow terminal drops the bulldog; the
+  # menu + workbox + keyhint never lose a row. ART_FIRST_ROW chains off the wordmark top — one gap
+  # row, then ART_ROWS up (= R-(11+C)-ART_ROWS) — so the art height is encoded once, here.
   if [[ "${rows}" -ge "${ART_MIN_ROWS}" && "${MENU_INNER}" -ge "${ART_WIDTH}" ]]; then
     ART_OK=true
+    ART_FIRST_ROW=$((WORDMARK_FIRST_ROW - 1 - ART_ROWS))
   else
     ART_OK=false
-  fi
-  if [[ "${ART_OK}" == "true" ]]; then
-    ART_FIRST_ROW=$((rows - (11 + MENU_COUNT) - ART_ROWS))
-  else
     ART_FIRST_ROW=0
   fi
 
-  # WORDMARK gate — top-down degradation step 2 (defensive). After the bulldog drops, the wordmark
-  # + separator drop NEXT if the terminal is too short to seat the wordmark top at row >= 2
-  # (rows >= 12+C). Inside the fullscreen range (rows >= 21) WORDMARK_FIRST_ROW >= 6, so this is
-  # always true today; it is a REAL gate the compose step consults (wordmark + separator drawn only
-  # when WORDMARK_OK) so the degradation ladder stays structurally complete for a later render wave.
-  if [[ "${WORDMARK_FIRST_ROW}" -ge 2 ]]; then
-    WORDMARK_OK=true
+  # MENU_FIRST_ROW = the frame extent TOP = the topmost DRAWN row: the art top when ART_OK, else
+  # the wordmark row. redraw_frame_inplace consumes this directly as its per-row clear_top (no
+  # per-call ART_OK branch there) — geometry owns the extent-top decision.
+  if [[ "${ART_OK}" == "true" ]]; then
+    MENU_FIRST_ROW="${ART_FIRST_ROW}"
   else
-    WORDMARK_OK=false
+    MENU_FIRST_ROW="${WORDMARK_FIRST_ROW}"
   fi
+
+  # WORDMARK gate — top-down degradation step 2. Provably constant-TRUE in the fullscreen path:
+  # rows >= MIN_ROWS (=16+C) implies WORDMARK_FIRST_ROW = R-(10+C) >= 6 >= 2, so the wordmark top
+  # is always seatable here (recheck if MIN_ROWS ever drops below 12+C). KEEP the variable + the
+  # compact-branch false reset + the compose-side consult — they carry the degradation-ladder
+  # semantics (wordmark + separator drawn only when WORDMARK_OK) for a later render wave.
+  WORDMARK_OK=true
 }
 
 # ensure_geometry — dirty-gate caller. Runs compute_menu_geometry ONLY when GEOMETRY_DIRTY
@@ -100,8 +101,7 @@ ensure_geometry() {
 }
 
 draw_wordmark() {
-  local inner wm_w r0 r1 wpad wpad_n
-  inner="$(plate_inner)"
+  local wm_w r0 r1 wpad
 
   if [[ "${USE_UTF8}" == "true" ]]; then
     # One-line wordmark GLASS + ATRIUM = 44 cols across the 2-row half-block pixel font
@@ -117,11 +117,9 @@ draw_wordmark() {
     r1=""
   fi
 
-  # Center wm_w-wide wordmark: left pad = PLATE_LEFT + (inner - wm_w)/2, clamped to PLATE_LEFT
-  # so a sub-wordmark-width plate stays flush.
-  wpad_n=$((PLATE_LEFT + (inner - wm_w) / 2))
-  [[ "${wpad_n}" -lt "${PLATE_LEFT}" ]] && wpad_n="${PLATE_LEFT}"
-  wpad="$(printf '%*s' "${wpad_n}" "")"
+  # Center the wm_w-wide wordmark via the shared centering SoT (plate_center_pad, also used by the
+  # bulldog art) so the two centerings cannot drift.
+  plate_center_pad "${wm_w}" wpad
   r0="$(c "${C_STRONG}" "${r0}")"
   [[ -n "${r1}" ]] && r1="$(c "${C_STRONG}" "${r1}")"
 
@@ -295,9 +293,10 @@ reset_plate_geometry() {
 # top→bottom order (art → wordmark → separator → menu → workbox → bottom row). Shared by both
 # redraw paths so the region sequence has ONE SoT. Each region seats itself with an absolute
 # cup_to (no single frame-top cup + natural-newline chaining across gaps), so a gap between two
-# regions (art↔wordmark, menu↔workbox) never depends on a prior region's trailing cursor. Every
-# NEW per-region cup_to is FULLSCREEN-conditional; _compose_frame_regions is only ever reached in
-# the fullscreen path, so the guards are defensive (the compact path composes inline elsewhere).
+# regions (art↔wordmark, menu↔workbox) never depends on a prior region's trailing cursor.
+# CONTRACT: fullscreen-only — both callers (draw_frame_full's fullscreen branch, redraw_frame_inplace)
+# gate on FULLSCREEN before reaching here, so the per-region cup_to calls are UNCONDITIONAL (the
+# compact path composes inline elsewhere).
 _compose_frame_regions() {
   # (1) Bulldog art — TOP region. Self-gated (FULLSCREEN AND ART_OK AND USE_UTF8) and self-anchored
   # (cup_to ART_FIRST_ROW) inside draw_bulldog_art, which emits NOTHING when any gate is off (no
@@ -308,14 +307,14 @@ _compose_frame_regions() {
   # The wordmark self-anchors at WORDMARK_FIRST_ROW; the separator self-anchors at SEPARATOR_ROW
   # (its own fullscreen cup_to).
   if [[ "${WORDMARK_OK}" == "true" ]]; then
-    [[ "${FULLSCREEN}" == "true" ]] && cup_to "${WORDMARK_FIRST_ROW}" 1
+    cup_to "${WORDMARK_FIRST_ROW}" 1
     draw_wordmark  # 2 centered wordmark rows
     draw_separator # dim dot-rule separator (fullscreen self-anchors at SEPARATOR_ROW)
   fi
   # (4) menu: EXPLICIT self-anchor at MENU_BLOCK_FIRST_ROW — the menu block is position-independent
   # of the wordmark/separator gate, so it seats correctly even when WORDMARK_OK is false and the
   # separator is skipped. Compact composes inline elsewhere.
-  [[ "${FULLSCREEN}" == "true" ]] && cup_to "${MENU_BLOCK_FIRST_ROW}" 1
+  cup_to "${MENU_BLOCK_FIRST_ROW}" 1
   draw_menu       # labels-only menu block (top rail + N rows + bottom rail), honors MENU_DIMMED
   draw_workbox    # the fixed work-area box (self-anchored at WORKBOX_FIRST_ROW), from WORK_STATE
   draw_bottom_row # the ONE bottom row (self-anchored at MENU_KEYHINT_ROW): keyhint OR status line
@@ -347,11 +346,12 @@ draw_frame_full() {
 # redraw_frame_inplace — the FLICKER-FREE nav/dim/done/return composer. Does NOT emit ESC[2J —
 # instead pre-clears the WHOLE cached frame extent with per-row ESC[2K at the FIXED cached position,
 # then recomposes via the SAME region order → ZERO accumulation (full extent cleared) + ZERO flash
-# (no global blank-then-repaint). The extent TOP is ART_FIRST_ROW when ART_OK (so a repeated redraw
-# leaves no ghost/accumulation of the static art rows), else MENU_FIRST_ROW (the wordmark row — the
-# topmost region when the art is absent); the BOTTOM is always MENU_KEYHINT_ROW (incl. every
-# wordmark/separator + menu↔workbox gap row). Geometry REUSED from cache (ensure_geometry no-ops when
-# clean) → no size-jitter shift. Compact path has no cached extent → falls through to full-clear.
+# (no global blank-then-repaint). The extent TOP is MENU_FIRST_ROW, which compute_menu_geometry set
+# to the topmost DRAWN row (ART_FIRST_ROW when ART_OK — so a repeated redraw leaves no ghost of the
+# static art rows — else the wordmark row when the art is absent); the BOTTOM is always
+# MENU_KEYHINT_ROW (incl. every wordmark/separator + menu↔workbox gap row). Geometry REUSED from
+# cache (ensure_geometry no-ops when clean) → no size-jitter shift. Compact path has no cached
+# extent → falls through to full-clear.
 # NOTE (resize): a shrink out of the art tier (ART_OK true→false) or out of fullscreen is handled by
 # on_winch → draw_frame_full, which ESC[2J-clears the WHOLE screen before recomposing, so former art
 # rows are wiped there — no extra clearing is needed on this in-place path for that transition.
@@ -362,11 +362,10 @@ redraw_frame_inplace() {
     draw_frame_full # compact path: no cached extent to per-row clear — reuse the full composer
     return 0
   fi
-  # Extent top: the art region sits ABOVE the wordmark, so when ART_OK the per-row clear must reach
-  # up to ART_FIRST_ROW (else a repeated in-place redraw would stack ghost art rows); no art → the
-  # wordmark row (MENU_FIRST_ROW) is the top.
+  # Extent top = MENU_FIRST_ROW: geometry already set it to the topmost DRAWN row (ART_FIRST_ROW
+  # when ART_OK, so the per-row clear reaches up to the art top and a repeated in-place redraw
+  # stacks no ghost art rows; else the wordmark row when the art is absent).
   local clear_top="${MENU_FIRST_ROW}"
-  [[ "${ART_OK}" == "true" ]] && clear_top="${ART_FIRST_ROW}"
   # Pre-clear every row of the cached extent in place (guarded: skip if the extent is degenerate).
   if [[ "${MENU_KEYHINT_ROW}" -ge "${clear_top}" ]]; then
     local r="${clear_top}"

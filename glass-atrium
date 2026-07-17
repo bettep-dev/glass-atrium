@@ -394,8 +394,8 @@ readonly MIN_ROWS=$((5 + 1 + (2 + MENU_COUNT) + 1 + 4 + 3))
 # ART region dimensions — the ONE pre-generated 55x21-cell bulldog asset (the 3-band system is
 # retired; a single fixed size ships). ART_ROWS = the asset cell height; ART_WIDTH = the asset
 # cell width (center-align + the horizontal-fit check). ART_MIN_ROWS is the art sub-gate =
-# 13 + MENU_COUNT + ART_ROWS (=39 at C=5), which keeps ART_FIRST_ROW = R-(11+C)-ART_ROWS >= 2 at
-# the floor. Top-down degradation: the bulldog drops FIRST when the terminal is too short (rows <
+# 13 + MENU_COUNT + ART_ROWS (=39 at C=5), where 13 = 11 (the R-(11+C) art-top offset chain) + 2
+# (the min top margin), which keeps ART_FIRST_ROW = R-(11+C)-ART_ROWS >= 2 at the floor. Top-down degradation: the bulldog drops FIRST when the terminal is too short (rows <
 # ART_MIN_ROWS) OR too narrow to seat 55 cells; the wordmark drops SECOND; menu + workbox +
 # keyhint always survive. Horizontal fit is a LIVE check against MENU_INNER in
 # compute_menu_geometry (NOT a cols literal), so a tall-but-narrow terminal also drops the bulldog.
@@ -458,15 +458,16 @@ WORDMARK_OK=false    # true when the wordmark+separator tier is admitted (WORDMA
 ART_FIRST_ROW=0      # absolute screen row the art top starts on (0 when !ART_OK)
 # Bulldog asset cache — loader stub-band state for the ga-tui-bulldog.sh render module (SOURCED
 # module owns only functions, so its lazy-load state lives here, set -u safe + stable across
-# re-source). BULLDOG_ROWS holds the WHOLESALE-loaded braille rows; BULLDOG_LOADED gates the
-# one-time lazy read (a missing asset still flips it true → art silently dropped, no re-stat);
-# BULLDOG_ROW_COUNT is the loaded row count the draw path iterates.
+# re-source). BULLDOG_ROWS holds the WHOLESALE-loaded braille rows; BULLDOG_ROWS_C holds the
+# load-time band-colored siblings the draw path emits fork-free; BULLDOG_LOADED gates the one-time
+# lazy read + color bake (a missing/wrong-shape asset still flips it true → art silently dropped,
+# no re-stat). The draw path derives the row count from ${#BULLDOG_ROWS[@]} — no count global.
 # shellcheck disable=SC2034
 BULLDOG_ROWS=()       # WHOLESALE-loaded braille asset rows (lazy-filled on first draw)
 # shellcheck disable=SC2034
-BULLDOG_LOADED=false  # true once the asset load has been ATTEMPTED (success or missing-asset)
+BULLDOG_ROWS_C=()     # per-row band-colored siblings (baked at load; draw emits these fork-free)
 # shellcheck disable=SC2034
-BULLDOG_ROW_COUNT=0   # number of rows successfully loaded (0 = art dropped)
+BULLDOG_LOADED=false  # true once the asset load has been ATTEMPTED (success or missing/wrong-shape)
 # MENU_DIMMED — when true, draw_menu repaints the whole menu in C_DIM with no caret +
 # no reverse-video selection (the "running / non-interactive" signal). draw_frame sets it
 # for a run and clears it on return to nav.
