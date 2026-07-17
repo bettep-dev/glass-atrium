@@ -40,7 +40,7 @@ Cross-ref: `~/.claude/agents/glass-atrium-dev-front.md` existing token-drift pro
 Any animated component MUST declare which motion token (spring family OR `transition.*` token OR `duration.*` + `easing.*` pair) is applied:
 
 - **Source**: spring families named in `motion-philosophy.md` (`spatial-default` · `spatial-fast` · `spatial-slow` · `effects-default` · `effects-fast` · `effects-slow`) per M3 Expressive contract.
-- **Declaration site**: code-side comment (per `~/.claude/scoped/shared-comment-logging.md` "why over what") naming the applied family — e.g., `// motion: spatial-default (M3E Spatial, primary CTA tier)`.
+- **Declaration site**: code-side comment (per `~/.glass-atrium/scoped/shared-comment-logging.md` "why over what") naming the applied family — e.g., `// motion: spatial-default (M3E Spatial, primary CTA tier)`.
 - **`prefers-reduced-motion` contract**: every motion declaration MUST honor `@media (prefers-reduced-motion: reduce)` (CSS auto-honors; JS animations require explicit check). Fallback typically `transition: opacity` only — no spatial overshoot.
 - **Mixing prohibition**: spring family consistency within a single element flow — mixing Spatial and Effects on one element FORBIDDEN (per glass-atrium-design-designer Motion Philosophy choreography rules).
 
@@ -76,5 +76,5 @@ When the project's DESIGN.md is DTCG-aligned (per `~/.claude/agents/templates/DE
 - `~/.claude/agents/templates/DESIGN.md` — DESIGN.md schema (DTCG 2025.10) authored by glass-atrium-design-designer
 - `~/.claude/agents/glass-atrium-design-designer.md` — design philosophy + Motion Philosophy + AI Slop Tropes SoT
 - `~/.claude/agents/glass-atrium-dev-front.md` — token SSoT consumption patterns + state layer values
-- `~/.claude/rules/scope-design.md` — Platform Design Token Policy + LLM Output Validation
+- `~/.glass-atrium/scoped/scope-design.md` — Platform Design Token Policy + LLM Output Validation
 - W3C DTCG 2025.10 spec — `https://www.designtokens.org/schemas/2025.10/format.json`
