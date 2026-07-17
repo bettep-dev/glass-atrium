@@ -38,6 +38,7 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **YAML frontmatter colon hazard**: `description:` with literal colon breaks `yaml.safe_load` — wrap in single quotes
 - **External-citation tag scope**: `wiki/raw/*.md` citation tags for external sources only · cross-file pointers use `→ <path>`
 - **Compress-by-default**: appending verbatim long-form FORBIDDEN — every addition compressed + merged with overlapping rules
+- **Schema-mode budget scoping**: design schema-mode agent prompts with explicit output-shape constraints (recursion depth, additionalProperties closure, array cardinality) BEFORE draft to prevent token-overflow failures
 - **Self-edit dogfood audit**: before completing self-edits, grep audit `\b(N[0-9]|C[0-9]|P[0-9])\b` MUST return only OWASP/RFC/CVE/external-standard hits — internal labels = audit fail
 <!-- EDITABLE:END -->
 
