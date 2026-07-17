@@ -2009,7 +2009,17 @@ SUMMARY=$(printf '%s' "$SUMMARY" | cut -c1-${BODY_SUMMARY_MAX})
 
 # Timestamp — TIMESTAMP feeds the PG envelope (record_ts column). PG core.outcomes
 # is the single sink, with the body_md column carrying the markdown body.
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+# MILLISECOND precision (not second): core.outcomes has UNIQUE(record_ts, agent, task_type)
+# with ON CONFLICT DO UPDATE. At the old second precision (.000Z) two DISTINCT subagents of
+# the same agent+task_type finishing in the same wall-clock second aliased to one dedup key,
+# so the later write silently overwrote the earlier row (last-writer-wins data loss). macOS
+# BSD date has no sub-second %N, so stamp via python3 (already a hook dependency); the guarded
+# fall back to the second-precision form only fires if python3 is unavailable (a NOT NULL
+# record_ts is never emitted empty).
+TIMESTAMP=$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")' 2>/dev/null || true)
+if [[ -z "${TIMESTAMP}" ]]; then
+  TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+fi
 
 # trap cleanup targets — PY_SCRIPT_FILE (main parser) + T9_PY_FILE (Stage 1 detector).
 # T9_PY_FILE is created by Stage 1 detection (:- fallback when unset).
