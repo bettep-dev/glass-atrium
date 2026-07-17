@@ -25,7 +25,7 @@ test("buildLaunchFailReason: Playwright 절대경로 메시지(코드 없음) �
   // Playwright 의 전형적 실패 — errno code 없이 message 에 바이너리 절대경로를 담음.
   const err = new Error(
     "browserType.launch: Executable doesn't exist at " +
-      "/Users/bettep/Library/Caches/ms-playwright/chromium-1179/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+      "/Users/testuser/Library/Caches/ms-playwright/chromium-1179/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
   );
   const reason = buildLaunchFailReason(err);
   assertPathFreeNonEmpty(reason);
@@ -34,7 +34,7 @@ test("buildLaunchFailReason: Playwright 절대경로 메시지(코드 없음) �
 
 test("buildLaunchFailReason: spawn errno(ENOENT) → 경로 없는 errno 코드만", () => {
   const err = Object.assign(
-    new Error("spawn /Users/bettep/.cache/ms-playwright/chromium/chrome ENOENT"),
+    new Error("spawn /Users/testuser/.cache/ms-playwright/chromium/chrome ENOENT"),
     { code: "ENOENT" },
   );
   const reason = buildLaunchFailReason(err);
@@ -58,7 +58,7 @@ test("buildLaunchFailReason: EACCES errno → 경로 없는 errno 코드만", ()
 });
 
 test("buildLaunchFailReason: 비-Error 값 → 경로 없는 일반 사유(비어있지 않음)", () => {
-  for (const value of ["/Users/bettep/leak", undefined, null, 42]) {
+  for (const value of ["/Users/testuser/leak", undefined, null, 42]) {
     const reason = buildLaunchFailReason(value);
     assertPathFreeNonEmpty(reason);
     assert.strictEqual(reason, "chromium launch failed");

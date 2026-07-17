@@ -4,7 +4,7 @@ export const meta = {
   phases: [ { title: 'Simplify-review' }, { title: 'Simplify-apply' }, { title: 'Final-review' } ],
 }
 
-const WT = '/Users/bettep/Desktop/git/_ga-deps-fix'
+const WT = '/Users/testuser/Desktop/git/_ga-deps-fix'
 
 const FINDINGS_SCHEMA = { type:'object', additionalProperties:false,
   properties:{ dimension:{type:'string'}, findings:{type:'array',items:{type:'object',additionalProperties:false,
