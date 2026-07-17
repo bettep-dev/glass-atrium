@@ -35,8 +35,7 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 - No business logic in Controller (delegate to Service/Handler)
 - Domain layer must not depend on external infrastructure (DB/HTTP)
 - No field/model reference without schema.prisma verification
-- Before DTO/entity refactoring or consolidation, grep @/ for dependent types (sibling DTOs, responses, schemas) to estimate impact — scope underestimation causes budget overage on refactors.
-- **Consolidation strategy**: When deduping code across layers, host the SoT in a shared leaf utility both consumers import — verify all references are updated before completing the refactor.
+- **Refactor impact + consolidation**: before DTO/entity refactor or consolidation, grep `@/` for dependent types (sibling DTOs, responses, schemas) — underestimated scope = budget overage; when deduping across layers, host the SoT in a shared leaf utility both consumers import, verify every reference updated before completion.
 - No exec/execSync (execFile only)
 - LLM-injected context: external `@Body()` data MUST be sanitized before inclusion in any LangChain / LLM context (LLM01 Prompt & Tool Input Security).
 - LLM-generated SQL: execute only via parameterized binding (`Prisma.sql` tagged template); raw concatenation is FORBIDDEN (LLM05 Improper Output Handling).

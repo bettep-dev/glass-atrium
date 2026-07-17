@@ -99,7 +99,7 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 
 ## Pre-Execution Verification
 
-- **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, preserve existing work with `git stash push -u -m <unique-tag>`, immediately capture the entry SHA, and restore ONLY via `git stash apply <sha>` (never `pop`) — drop the entry by its tag afterwards · a transient WIP commit is NOT the default (`git add -A` is forbidden by the Tier-1 git rule + pre-commit hooks may fail on a pre-broken tree, and a tagged stash bypasses commit hooks) · record pre-existing compile state with TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build) · pre-existing errors blocking scope → escalate to orchestrator
+- **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, `git stash push -u -m <unique-tag>`, capture the entry SHA immediately, restore ONLY via `git stash apply <sha>` (never `pop`), drop the entry by its tag afterwards · a transient WIP commit is NOT the default (`git add -A` is forbidden by the Tier-1 git rule; pre-commit hooks may fail on a pre-broken tree, and a tagged stash bypasses them) · record pre-existing compile state via TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build) · pre-existing errors blocking scope → escalate to orchestrator
 - **Custom hooks/utilities**: Search existing functionality first
 - **TailwindCSS**: Read `tailwind.config` for custom classes/themes
 - **Security**: Server Action = public API entry → validate all inputs
