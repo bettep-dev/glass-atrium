@@ -73,6 +73,7 @@ run_hook_real() {
       INJECT_SCOPE_RULES_NAMING_SRC="${naming}" \
       INJECT_SCOPE_RULES_AGENTS_DIR="${agents}" \
       INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${AGENTS_DIR}" \
     "${BATS_TEST_TMPDIR}/inject-drop.log"

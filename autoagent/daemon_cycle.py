@@ -581,10 +581,16 @@ def match_sensitive_diff(diff: str) -> str | None:
 # rule excerpts are also bounded, so $0.02 is a generous cap (Haiku 4.5 input
 # at ~$1/MTok + output ~$5/MTok → typical call ≈ $0.005).
 # PRE_VERIFY_MAX_BUDGET_USD is imported from the daemon-config.json SoT (unified
-# at 0.50, same as HAIKU — lower caps cause systematic 5/5 reject). PRE_VERIFY_MODEL
-# aliases HAIKU_MODEL (single model id — SoT haiku_model).
+# at 0.50, same as HAIKU — lower caps cause systematic 5/5 reject).
 PRE_VERIFY_TIMEOUT_SEC = 90
-PRE_VERIFY_MODEL = HAIKU_MODEL
+
+# AD-9 evaluator independence (CALM self-preference precedent): the patch
+# generator runs on HAIKU_MODEL; an evaluator systematically favors output from
+# its own model class, so the verifier SHOULD run on a different class where
+# feasible. AUTOAGENT_PRE_VERIFY_MODEL overrides the verifier model id; when
+# absent it defaults to HAIKU_MODEL (same class as the author) and the run
+# proceeds under a loud advisory — never blocking (ADVISORY-FIRST rollout).
+PRE_VERIFY_MODEL = os.environ.get("AUTOAGENT_PRE_VERIFY_MODEL", "").strip() or HAIKU_MODEL
 
 # Compliance source files — the verifier reads excerpts and must check
 # the patch against all 4 axes independently.
@@ -1230,6 +1236,117 @@ def _coerce_revision_count(raw: object) -> int:
         return 0
 
 
+# -- AD-10 Pareto variant retention (Solution History, GEPA precedent) -------
+
+# GEPA min-occurrence floor per (agent, task_type) cell — a cell with fewer
+# attempts than this carries insufficient evidence to retain any winner.
+SOLUTION_HISTORY_MIN_OCCURRENCE = 5
+
+
+@dataclass(frozen=True)
+class SolutionAttempt:
+    """One instruction-improvement attempt in Solution History.
+
+    OPRO 3-tuple (score / applied_date + the instruction cell) plus the
+    reflective mutation signal (lesson + directive_hint) that GEPA feeds into
+    the next optimization cycle. `score` is a 1-5 scalar; `applied_date` is an
+    ISO 'YYYY-MM-DD' string (lexical order == chronological).
+    """
+
+    agent: str
+    task_type: str
+    score: float
+    applied_date: str
+    lesson: str = ""
+    directive_hint: str = ""
+
+
+def _solution_dominates(a: SolutionAttempt, b: SolutionAttempt) -> bool:
+    """Pareto domination over (score, recency).
+
+    `a` dominates `b` iff `a` is >= on BOTH objectives (higher score, newer
+    date) AND strictly greater on at least one. Ties are non-dominating, so
+    equally-good variants are BOTH retained — the diversity AD-10 preserves.
+    """
+    at_least = a.score >= b.score and a.applied_date >= b.applied_date
+    strictly = a.score > b.score or a.applied_date > b.applied_date
+    return at_least and strictly
+
+
+def retain_pareto_winners(
+    attempts: list[SolutionAttempt],
+    *,
+    min_occurrence: int = SOLUTION_HISTORY_MIN_OCCURRENCE,
+) -> dict[tuple[str, str], list[SolutionAttempt]]:
+    """Retain the per-(agent, task_type) Pareto-nondominated winner set.
+
+    AD-10 (GEPA): Solution History keeps MULTIPLE winners per cell — the
+    non-dominated frontier over (score, recency) — NOT a single scalar-best, so a
+    newer-but-lower-score variant survives alongside an older-but-higher one and
+    their lesson+directive_hint diversity feeds the next reflective mutation. A
+    cell is retained ONLY when it has >= `min_occurrence` attempts (GEPA
+    min-occurrence floor); thinner cells are dropped.
+
+    Returns dict[(agent, task_type)] -> winners, each list sorted score-desc then
+    date-desc (deterministic).
+    """
+    if min_occurrence < 1:
+        raise ValueError(f"min_occurrence must be >= 1, got {min_occurrence}")
+
+    cells: dict[tuple[str, str], list[SolutionAttempt]] = defaultdict(list)
+    for attempt in attempts:
+        cells[(attempt.agent, attempt.task_type)].append(attempt)
+
+    winners: dict[tuple[str, str], list[SolutionAttempt]] = {}
+    for cell_key, cell_attempts in cells.items():
+        if len(cell_attempts) < min_occurrence:
+            continue  # GEPA min-occurrence: insufficient evidence → drop cell
+        frontier = [
+            attempt
+            for attempt in cell_attempts
+            if not any(
+                _solution_dominates(other, attempt)
+                for other in cell_attempts
+                if other is not attempt
+            )
+        ]
+        # Stable-chain sort: date-desc first, then score-desc (score primary).
+        frontier.sort(key=lambda a: a.applied_date, reverse=True)
+        frontier.sort(key=lambda a: a.score, reverse=True)
+        winners[cell_key] = frontier
+    return winners
+
+
+def solution_attempt_from_outcome(
+    outcome: Outcome,
+    applied_date: str,
+    *,
+    directive_hint: str = "",
+) -> SolutionAttempt:
+    """Bridge an Outcome record into a SolutionAttempt (score from polarity).
+
+    Score derivation mirrors the loop's existing polarity signals: a passing
+    metric is the base, a user correction (evaluative_signal == -1 or a
+    revision) pulls it down, explicit praise (+1) lifts it. directive_hint is
+    passed in because it is not carried on the Outcome dataclass.
+    """
+    metric_true = str(outcome.metric_pass).strip().lower() == "true"
+    base = 4.0 if metric_true else 2.0
+    if outcome.evaluative_signal == 1:
+        base += 1.0
+    elif outcome.evaluative_signal == -1 or outcome.revision_count >= 2:
+        base -= 1.0
+    score = max(1.0, min(5.0, base))
+    return SolutionAttempt(
+        agent=outcome.agent,
+        task_type=outcome.task_type,
+        score=score,
+        applied_date=applied_date,
+        lesson=outcome.lesson,
+        directive_hint=directive_hint,
+    )
+
+
 @dataclass(frozen=True)
 class PatchProposal:
     """Haiku output describing a proposed edit to a single agent .md file."""
@@ -1375,6 +1492,14 @@ class CycleReport:
     # so an unattended launchd run STOPS reporting a clean exit 0. A quiet night
     # (patches=[]) leaves this 'ok'.
     cycle_status: str = "ok"
+    # AD-10 Solution History: the per-(agent, task_type) Pareto winner frontier
+    # retained THIS cycle (retain_pareto_winners over the generation outcomes).
+    # In-memory only — tuple keys are not JSON-serializable, so _report_to_dict
+    # emits a serializable count summary rather than this dict. Feeds the next
+    # reflective-mutation cycle once a durable cross-cycle store lands (deferred).
+    solution_winners: dict[tuple[str, str], list[SolutionAttempt]] = field(
+        default_factory=dict
+    )
 
 
 # -- generation step 1: intake user-pending patterns (PG) -------------------
@@ -4791,6 +4916,44 @@ def _parse_pre_verify_response(stdout: str) -> tuple[dict[str, bool], bool, str]
     return axes, explicit_verified, rationale[:600]
 
 
+def _model_class(model_id: str) -> str:
+    """Extract the model family token from an id — 'claude-haiku-4-5' → 'haiku'.
+
+    Unknown shapes collapse to the lowercased id so a non-matching pair is never
+    falsely reported as evaluator-independent.
+    """
+    lowered = model_id.strip().lower()
+    for family in ("haiku", "sonnet", "opus"):
+        if family in lowered:
+            return family
+    return lowered
+
+
+def resolve_verifier_model(
+    author_model: str = HAIKU_MODEL,
+    verifier_model: str = PRE_VERIFY_MODEL,
+) -> str:
+    """Return the verifier model, warning when it shares the author's class.
+
+    AD-9 evaluator independence: prefer a verifier whose model class differs from
+    the proposal author's (CALM self-preference precedent). Feasibility gate —
+    when no distinct verifier model is configured the classes match; that is
+    surfaced as a loud ADVISORY (stderr WARN, Precondition Loud-Fail) but NEVER
+    blocks the loop (advisory-first rollout). Axis order in the verify prompt is
+    fixed and the 4 axes are independent PASS/FAIL checks (not ranked
+    candidates), so no self-preference-via-ordering applies — order randomization
+    is intentionally kept out here, the class-independence axis is the mitigation.
+    """
+    if _model_class(verifier_model) == _model_class(author_model):
+        sys.stderr.write(
+            "[daemon-cycle] WARN: evaluator independence not satisfied — verifier "
+            f"class {_model_class(verifier_model)!r} == proposal-author class "
+            "(self-preference risk, CALM); set AUTOAGENT_PRE_VERIFY_MODEL to a "
+            "different class to enable independent verification\n"
+        )
+    return verifier_model
+
+
 def run_pre_verify(
     patch: PatchProposal,
     pattern: Pattern,
@@ -4833,6 +4996,8 @@ def run_pre_verify(
         )
 
     prompt = _build_pre_verify_prompt(patch, pattern)
+    # AD-9: resolve the verifier model (warns on same-class-as-author, advisory).
+    verifier_model = resolve_verifier_model()
 
     try:
         completed = subprocess.run(  # nosec — list form, no shell=True
@@ -4841,7 +5006,7 @@ def run_pre_verify(
                 "-p", prompt,
                 "--output-format", "text",
                 "--max-budget-usd", PRE_VERIFY_MAX_BUDGET_USD,
-                "--model", PRE_VERIFY_MODEL,
+                "--model", verifier_model,
             ],
             capture_output=True,
             text=True,
@@ -4927,6 +5092,14 @@ def _report_to_dict(report: CycleReport) -> dict:
         "patterns_processed": report.patterns_processed,
         "cost_guard": report.cost_guard,
         "patches": [asdict(p) for p in report.patches],
+        # AD-10 Solution History runtime observability — tuple-keyed
+        # solution_winners is not JSON-serializable, so emit its count summary.
+        "solution_history": {
+            "cells_retained": len(report.solution_winners),
+            "winners_retained": sum(
+                len(v) for v in report.solution_winners.values()
+            ),
+        },
     }
 
 
@@ -7212,6 +7385,9 @@ def run_cycle(
             )
 
     seen_targets: set[str] = set()
+    # AD-10 Solution History accumulator — one SolutionAttempt per generation
+    # outcome, pruned to the Pareto frontier after the loop (retain_pareto_winners).
+    solution_attempts: list[SolutionAttempt] = []
     for agent, agent_patterns in agent_groups:
         # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
         # All three gates write PG (learning_log transition + skip loop events),
@@ -7231,6 +7407,16 @@ def run_cycle(
             agent,
             day_bounds=gen_day_bounds,
             outcomes_dir=outcomes_dir,
+        )
+        # AD-10 Solution History: bridge each generation outcome into a
+        # SolutionAttempt (OPRO 3-tuple + reflective signal). applied_date is the
+        # cycle day — the outcomes share the generation window, so recency is a
+        # per-cycle constant here; cross-cycle recency spread arrives with the
+        # durable store (deferred, see below). directive_hint is not on the
+        # Outcome dataclass, so it defaults empty.
+        solution_attempts.extend(
+            solution_attempt_from_outcome(outcome, report.cycle_date)
+            for outcome in outcomes
         )
         # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
         # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
@@ -7596,6 +7782,28 @@ def run_cycle(
                 "[daemon-cycle] WARN: emit_loop_events raised — observation lost: "
                 f"{type(exc).__name__}: {str(exc)[:160]}\n"
             )
+
+    # AD-10 Solution History Pareto retention — prune this cycle's accumulated
+    # attempts to the per-(agent, task_type) non-dominated frontier (GEPA
+    # min-occurrence 5 floor). Runs unconditionally (pure computation, no PG
+    # write) so the AC is observable even on skip_loop_emit/skip_haiku preflight.
+    #
+    # DEFERRAL NOTE (AD-10 durable store): Solution History is designed as a
+    # cross-cycle accumulation feeding the next optimizer's OPRO context. That
+    # persistence layer does not exist yet — a within-cycle window shares one
+    # applied_date, so the recency objective is constant and cells rarely reach
+    # the 5+ floor. This wiring makes retention run + observable at runtime
+    # (report.solution_winners + the serialized count); durable persistence of the
+    # frontier across cycles is the follow-up once the store lands.
+    report.solution_winners = retain_pareto_winners(solution_attempts)
+    if report.solution_winners:
+        winner_total = sum(len(v) for v in report.solution_winners.values())
+        sys.stderr.write(
+            "[daemon-cycle] INFO: Solution History Pareto retention — "
+            f"{len(report.solution_winners)} cell(s), {winner_total} winner(s) "
+            f"retained from {len(solution_attempts)} attempt(s) "
+            f"(min-occurrence {SOLUTION_HISTORY_MIN_OCCURRENCE})\n"
+        )
 
     # Derive the cost-guard state from the aggregate per-patch failure classes so
     # the serialized cost_guard carries an explicit 'state' (_pg_push reads it as

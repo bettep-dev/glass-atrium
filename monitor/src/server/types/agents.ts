@@ -26,6 +26,13 @@ export interface AgentSuccessRateRow {
   reconstructed_count: number;
   // null when total_count = 0 (defensive — emitted rows always have ≥1 outcome).
   success_rate: number | null;
+  // AD-11 composite utility (SICA precedent): success_rate folded with the window's
+  // token cost + duration into one advisory [0,1] score. ADVISORY-FIRST — additive,
+  // NEVER replaces success_rate. null when success_rate is null (no quality signal).
+  // Window-level cost/time (outcomes carries no per-row session join), so the fold is
+  // a uniform efficiency discount for now; per-pattern token attribution is a burn-in
+  // follow-up gated on outcomes gaining a session key.
+  composite_utility: number | null;
 }
 
 export interface AgentSuccessRateResponse {

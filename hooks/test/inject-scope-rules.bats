@@ -74,6 +74,7 @@ run_hook() {
       INJECT_SCOPE_RULES_SRC=/nonexistent \
       INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
       "${env_naming[@]}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${naming_src}"
 }
@@ -187,6 +188,7 @@ assert_ctx_not_contains() {
       INJECT_SCOPE_RULES_SRC="${comment_src}" \
       INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
       INJECT_SCOPE_RULES_NAMING_SRC="${naming_src}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "glass-atrium-dev-react" "${HOOK_SH}" "${naming_src}" "${comment_src}"
 
@@ -224,6 +226,7 @@ run_hook_no_meter() {
       INJECT_SCOPE_RULES_SRC=/nonexistent \
       INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
       INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}"
 }
@@ -342,6 +345,7 @@ run_hook_full() {
       INJECT_SCOPE_RULES_SRC="${comment_src}" \
       INJECT_SCOPE_RULES_STYLEREF_SRC="${styleref_src}" \
       INJECT_SCOPE_RULES_NAMING_SRC="${naming_src}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${comment_src}" "${styleref_src}" "${naming_src}" "${agents_dir}"
 }
@@ -433,6 +437,7 @@ run_hook_emit_meter_only() {
       INJECT_SCOPE_RULES_SRC=/nonexistent \
       INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
       INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
       bash "${hook}"
   ' _ "${agent}" "${HOOK_SH}" "${agents_dir}"
 }

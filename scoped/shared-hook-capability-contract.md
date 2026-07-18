@@ -34,6 +34,16 @@ Both channels exist · they are NOT substitutable · a hook MUST pick the channe
 - **Channel overlap caveat (file-verified)**: `exit 2` is NOT exclusive to channel a — `validate-output.sh` and `enforce-foreground-harness.sh` use a stdout `decision` block AND `exit 2` together. The discriminator is therefore the **presence of the stdout `"decision"` JSON**, not the exit code. Channel-a hooks emit error JSON on stderr only and carry no stdout `decision`.
 - **Non-substitutability rule**: do NOT replace a channel-a `emit_error`+`exit 2` with a stdout `decision`, or vice versa, without verifying the registering event's expected contract — the consumer reads exactly one surface.
 
+## on_fail Action Taxonomy (validation-failure disposition vocabulary)
+
+When a hook — or a `[COMPLETION]` parse-tier validator — detects a failed check, its DISPOSITION falls into one of three named actions. This is a SHARED VOCABULARY only, **DOCS-ONLY — no library import, no new dependency** (naming borrowed from guardrails-ai's `on_fail` actions so a hook's behavior is describable in one word). Every existing hook already implements one of these; the taxonomy just names them.
+
+- **exception** — HARD-block the operation: emit on the block channel + `exit 2` (channel-a `emit_error`+`exit 2` OR channel-b `{"decision":"block"}`). The offending action does NOT proceed. Used by the fail-closed hooks (`validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-foreground-harness.sh`, `enforce-workflow-verify-stage.sh` block verdicts). Reserved for a decidable, high-confidence violation — never fail-open uncertainty.
+- **filter** — DROP/strip the offending element (or degrade) and CONTINUE, no block: the operation proceeds with the bad part removed or ignored, typically via a stderr `emit_error` + `exit 0` advisory. Example: an advisory-only hook that logs + `exit 0`; the resilient-workflow join `.filter(Boolean)` dropping a null (failed) agent result and continuing with survivors (`glass-atrium-ops-orchestrator` → Resilient Workflow Authoring).
+- **reask** — RE-PROMPT/retry the producer with a tightened instruction rather than blocking or dropping. Example: the `robustAgent` retry-once-on-null re-spawn with a tightened re-prompt (schema-mode workflows); the Failure Recovery Loop retry (`orchestrator-role.md`) is a reask at the delegation layer.
+
+**parse-tier naming alignment**: `track-outcome.sh`'s multi-tier `[COMPLETION]` parse (`parse_tier` 1 = complete-block / inline-tolerance; higher tiers = degraded → synthesized) is the READ-side counterpart of this taxonomy — a tier miss is a `filter`-style graceful degradation (synthesize a `done_with_concerns` record), NEVER an `exception`-block, because `Stop`/`SubagentStop` cannot rewind a finished turn (see the capability table). **Disposition is event-capability-bound**: an event with NO block channel (`Stop`/`SubagentStop`/`SessionStart`/`SubagentStart`) can only `filter` (advise/degrade) or `reask` (via a later spawn) — it can NEVER `exception`. Pick the disposition the registering event actually supports; naming it does not grant a capability the event lacks.
+
 ## Event Registration Status (file-verified)
 
 Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`.

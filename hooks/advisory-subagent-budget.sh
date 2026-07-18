@@ -2,7 +2,9 @@
 # advisory-subagent-budget.sh — PreToolUse advisory on a SUBAGENT's own inner tool_use.
 #
 # Per-agent_id TOOL_USE counter; fires a STDERR advisory at ~70%/~80% of a TOOL_USE budget.
-# ADVISORY ONLY — always exit 0, NEVER blocks (no exit 2 path).
+# ADVISORY-FIRST — exits 0 by default. The ONE block path is the no-progress brake (N consecutive
+# exact-duplicate call signatures), and it exits 2 ONLY when the burn-in flag SUBAGENT_NOPROGRESS_BLOCK=1
+# arms it; unarmed it warns and continues. Everything else always fails open to exit 0.
 # WHY: a subagent has no runtime budget meter, so it runs to its maxTurns hard cap, which kills it
 # mid-tool-use → no [COMPLETION] → costly orchestrator recovery. The SubagentStart meter states the
 # budget at spawn; THIS hook nudges again as the live count climbs, while the agent can still act.
@@ -128,6 +130,31 @@ print(json.dumps({
   printf '%s' "${row_json}" | "${overage_writer}" advisory-subagent-budget core.budget_overages >/dev/null 2>&1 || true
 }
 
+# compute_signature — stable sha256 of the call signature (tool_name + canonical tool_input JSON). Two
+# consecutive IDENTICAL signatures = the same operation re-issued with the same inputs, which produces no
+# new state (zero forward delta); a signature CHANGE means the loop varied and made progress. json.dumps
+# is sort_keys+compact so key-order jitter never perturbs the hash. Echoes the hex digest, or EMPTY on ANY
+# failure (absent python3 / malformed input / non-object root) → the caller then skips the brake (fail-open).
+# Args: $1=json_input.
+compute_signature() {
+  printf '%s\n' "${1}" | python3 -c '
+import sys, json, hashlib
+try:
+    d = json.load(sys.stdin)
+    if not isinstance(d, dict):
+        raise ValueError
+except Exception:
+    sys.exit(0)
+tool = str(d.get("tool_name", ""))
+ti = d.get("tool_input", {})
+try:
+    canon = json.dumps(ti, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+except Exception:
+    canon = repr(ti)
+print(hashlib.sha256((tool + "\x00" + canon).encode("utf-8", "replace")).hexdigest())
+' 2>/dev/null || true
+}
+
 # TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (orchestrator-role.md HARD
 # SECONDARY trigger). 40 = the band's lower edge, so the 80% advisory lands at 32, before the danger
 # zone. Env-overridable.
@@ -140,6 +167,20 @@ tool_budget="${SUBAGENT_TOOL_BUDGET:-${DEFAULT_TOOL_BUDGET}}"
 if [[ ! "${tool_budget}" =~ ^[0-9]+$ ]] || ((10#${tool_budget} == 0)); then
   tool_budget="${DEFAULT_TOOL_BUDGET}"
 fi
+
+# TUNE: no-progress brake — N consecutive exact-duplicate call signatures (same tool_name + tool_input)
+# is a stuck loop with zero forward delta (identical op → no new state). 6 leaves room for a legitimate
+# short retry burst while still catching a wedged loop well before the tool_use budget is exhausted.
+# Same octal-safe validation as the tool_budget (10#-forced zero-check after the digit-string guard).
+readonly DEFAULT_NOPROGRESS_LIMIT=6
+noprogress_limit="${SUBAGENT_NOPROGRESS_LIMIT:-${DEFAULT_NOPROGRESS_LIMIT}}"
+if [[ ! "${noprogress_limit}" =~ ^[0-9]+$ ]] || ((10#${noprogress_limit} == 0)); then
+  noprogress_limit="${DEFAULT_NOPROGRESS_LIMIT}"
+fi
+# ADVISORY-FIRST rollout: the brake WARNS by default and blocks (exit 2) only when the burn-in flag arms
+# it, so it cannot wall off real work during rollout. Arm with SUBAGENT_NOPROGRESS_BLOCK=1.
+noprogress_block_armed=0
+[[ "${SUBAGENT_NOPROGRESS_BLOCK:-}" == "1" ]] && noprogress_block_armed=1
 
 # 1. Read input. This hook has matcher "" (all tools) — every inner tool_use is one count.
 input="$(hook_read_input)"
@@ -188,7 +229,50 @@ new_count=$((10#${prior_count} + 1))
 # Persist the incremented count; write failure → fail-open (advisory may misfire next call, never blocks).
 printf '%s\n' "${new_count}" >"${counter_file}" 2>/dev/null || exit 0
 
-# 5. Threshold comparison. Fire ONCE at each crossing (equality test → not repeated every call).
+# 5. No-progress mechanical brake. Track the per-agent streak of exact-duplicate call signatures in a
+#    DISJOINT sibling state file (.sig, TTL-swept with the counter). A repeated identical signature is
+#    zero forward delta; a varied signature resets the streak (a legitimate loop is unaffected). At the
+#    hard limit → BLOCK (exit 2) when the burn-in flag is armed, else a one-shot STDERR advisory.
+#    AD-4 deviation: plan specified "signature + zero-file-delta", but signature-only ships — the exact-duplicate call-signature sha256 is the tractable PreToolUse-only proxy; true zero-file-delta needs PostToolUse file-diff state not available in this hook's event.
+signature="$(compute_signature "${input}")"
+if [[ -n "${signature}" ]]; then
+  sig_file="${counter_file}.sig"
+  prior_signature=""
+  prior_repeat=0
+  if [[ -f "${sig_file}" && -r "${sig_file}" ]]; then
+    # Two-line state: signature on line 1, streak count on line 2. A partial/corrupt read degrades to a
+    # fresh streak, never an arithmetic error (same fail-open posture as the counter).
+    {
+      IFS= read -r prior_signature
+      IFS= read -r prior_repeat
+    } <"${sig_file}" 2>/dev/null || true
+    prior_signature="$(printf '%s' "${prior_signature}" | tr -cd 'a-f0-9')"
+    [[ "${prior_repeat}" =~ ^[0-9]+$ ]] || prior_repeat=0
+  fi
+
+  repeat=1
+  if [[ -n "${prior_signature}" && "${signature}" == "${prior_signature}" ]]; then
+    repeat=$((10#${prior_repeat} + 1))
+  fi
+  # Persist the streak; write failure → fail-open (the brake may misfire next call, never crashes).
+  printf '%s\n%s\n' "${signature}" "${repeat}" >"${sig_file}" 2>/dev/null || true
+
+  if ((repeat >= noprogress_limit)); then
+    if ((noprogress_block_armed == 1)); then
+      emit_error "NOPROGRESS-001" "block" \
+        "No-progress loop blocked: ${repeat} consecutive identical tool calls (same tool + input) with zero forward delta" \
+        "Vary the approach or emit a terminal [COMPLETION] (result: needs_context); unset SUBAGENT_NOPROGRESS_BLOCK to downgrade to advisory-only" \
+        "{\"consecutive_identical_calls\":${repeat},\"limit\":${noprogress_limit}}"
+      exit 2
+    elif ((repeat == noprogress_limit)); then
+      # One-shot advisory at the crossing (== not >=) so a continuing loop does not spam every call.
+      printf '[subagent-tool-budget-advisory] %s\n' \
+        "NO-PROGRESS advisory: ${repeat} consecutive identical tool calls (same tool + input) — a stuck loop with zero forward delta. Vary the approach or emit a terminal [COMPLETION] (result: needs_context). Non-blocking (advisory-first rollout; set SUBAGENT_NOPROGRESS_BLOCK=1 to enforce)." >&2
+    fi
+  fi
+fi
+
+# 6. Threshold comparison. Fire ONCE at each crossing (equality test → not repeated every call).
 if ((new_count == crit_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
     "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 80% of the ${tool_budget}-tool_use budget (anchored to the observed 40-52 tool_use truncation band, orchestrator-role.md). NOTE: this is a TOOL_USE count, NOT a maxTurns/% — distinct units. Consider checkpointing to memory/progress-{task}.md and emitting a terminal [COMPLETION] (result: needs_context) with a resume point before truncation. Non-blocking — the tool call proceeds." >&2
@@ -197,7 +281,7 @@ elif ((new_count == warn_threshold)); then
     "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 70% of the ${tool_budget}-tool_use budget. NOTE: TOOL_USE count, NOT maxTurns/%. Plan to wrap up: finish the current work-unit, checkpoint remaining work to memory/progress-{task}.md. Non-blocking — the tool call proceeds." >&2
 fi
 
-# 6. Overage recording (durable signal). Fires ONLY on a crossing, so sidecar recovery + PG write cost
+# 7. Overage recording (durable signal). Fires ONLY on a crossing, so sidecar recovery + PG write cost
 #    is spent at most once per crossing. Crossings: 100% (new_count == budget) then every
 #    floor(budget/5) beyond (min 1 step; default 40 → 40,48,56,...). Base-10 forced (10#) as above.
 budget_n=$((10#${tool_budget}))

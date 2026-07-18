@@ -63,6 +63,7 @@ write_full_settings() {
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-edit-syntax.sh" } ] },
       { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-prompt.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-scope-drift.sh" } ] },
@@ -205,8 +206,8 @@ run_doctor_sandbox() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 43-binding set across all 7 events
-  # (PreToolUse 21 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 44-binding set across all 7 events
+  # (PreToolUse 22 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
   # SubagentStop 3 / PreCompact 1). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh binds under TWO matchers
   # (Write|Edit AND Bash), two hooks share the Workflow matcher (enforce-workflow-
@@ -215,8 +216,8 @@ run_doctor_sandbox() {
   # across events (agent-tracker.sh, post-edit-typecheck.sh, telemetry-activation.sh) —
   # each occurrence is a distinct leaf. advisory-preedit-facts.sh binds on Stop ONLY
   # (SubagentStop sees a parent transcript that predates the subagent's edits). With
-  # settings.json absent, every leaf is unwired, so all 43 report dormant.
-  [[ "${output}" == *"43 dormant hook binding(s)"* ]]
+  # settings.json absent, every leaf is unwired, so all 44 report dormant.
+  [[ "${output}" == *"44 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

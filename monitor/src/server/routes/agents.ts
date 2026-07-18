@@ -149,6 +149,59 @@ interface SuccessRateDbRow {
   success_rate: Prisma.Decimal | null;
 }
 
+// AD-11: window-level token cost + duration pulled from core.cost_events (outcomes
+// carries no session join, so cost/time cannot key per-pattern — this is the coarse
+// uniform reference the advisory composite folds into every row). Either field may
+// be null when the window has zero cost_events / all-NULL aggregates.
+interface SuccessEfficiencyContext {
+  avgTokens: number | null;
+  avgDurationMs: number | null;
+}
+
+interface CostEfficiencyDbRow {
+  avg_tokens: Prisma.Decimal | null;
+  avg_duration_ms: Prisma.Decimal | null;
+}
+
+// AD-11 composite utility (SICA precedent). Folds cost (tokens) + time (duration)
+// into success_rate as a single advisory [0,1] score. ADVISORY-FIRST — additive,
+// never replaces success_rate. Weights kept small so cost/time only DISCOUNT a
+// high success_rate, never invert it. Identical formula + constants live in the
+// track-outcome.sh advisory diag so the number reads the same on both surfaces.
+const COMPOSITE_TOKEN_REF = 20000; // soft token reference — cost half-point
+const COMPOSITE_DURATION_REF_MS = 120000; // soft duration reference — time half-point
+const COMPOSITE_W_COST = 0.25;
+const COMPOSITE_W_TIME = 0.25;
+
+export function computeCompositeUtility(
+  successRate: number | null,
+  efficiency: SuccessEfficiencyContext | null,
+): number | null {
+  // No quality signal → no composite (mirrors metric_pass-absent → None in the hook).
+  if (successRate === null) {
+    return null;
+  }
+  // No efficiency data → degrade to pure quality (advisory-first graceful fallback).
+  if (efficiency === null) {
+    return successRate;
+  }
+  const tokens =
+    efficiency.avgTokens !== null && efficiency.avgTokens > 0
+      ? efficiency.avgTokens
+      : 0;
+  const durationMs =
+    efficiency.avgDurationMs !== null && efficiency.avgDurationMs > 0
+      ? efficiency.avgDurationMs
+      : 0;
+  const costPenalty = tokens > 0 ? tokens / (tokens + COMPOSITE_TOKEN_REF) : 0;
+  const timePenalty =
+    durationMs > 0 ? durationMs / (durationMs + COMPOSITE_DURATION_REF_MS) : 0;
+  const composite =
+    successRate *
+    (1 - COMPOSITE_W_COST * costPenalty - COMPOSITE_W_TIME * timePenalty);
+  return Math.max(0, Math.min(1, composite));
+}
+
 interface RevisionDistributionDbRow {
   agent: string;
   revision_bucket: string;
@@ -389,7 +442,16 @@ async function handleSuccessRate(
       LIMIT ${SUCCESS_RATE_LIMIT}
     `;
 
-    const mapped = mapSuccessRateRows(rows);
+    // AD-11: window token/duration averages for the advisory composite. Separate
+    // scan (kind='turn' only — subagent rows would double-count the main turn) over
+    // the SAME window bound. Fail-open: any error/empty aggregate → null context →
+    // composite degrades to success_rate (advisory-first, never blocks the response).
+    const efficiency = await loadSuccessEfficiency(
+      prisma,
+      windowLowerBound,
+      request.log,
+    );
+    const mapped = mapSuccessRateRows(rows, efficiency);
 
     const truncated = rows.length >= SUCCESS_RATE_LIMIT;
     request.log.info(
@@ -420,11 +482,14 @@ async function handleSuccessRate(
 // silently excludes whole task_type populations from the matrix.
 export function mapSuccessRateRows(
   rows: ReadonlyArray<SuccessRateDbRow>,
+  efficiency: SuccessEfficiencyContext | null = null,
 ): AgentSuccessRateRow[] {
   return rows.flatMap((row) => {
     if (!ALLOWED_TASK_TYPES.has(row.task_type as AgentTaskType)) {
       return [];
     }
+    const successRate =
+      row.success_rate === null ? null : decimalToNumber(row.success_rate);
     return [
       {
         agent: row.agent,
@@ -434,11 +499,51 @@ export function mapSuccessRateRows(
         failure_count: bigintToNumber(row.failure_count),
         total_count: bigintToNumber(row.total_count),
         reconstructed_count: bigintToNumber(row.reconstructed_count),
-        success_rate:
-          row.success_rate === null ? null : decimalToNumber(row.success_rate),
+        success_rate: successRate,
+        composite_utility: computeCompositeUtility(successRate, efficiency),
       },
     ];
   });
+}
+
+// AD-11: window token/duration averages feeding the advisory composite. kind='turn'
+// filter keeps subagent per-file rows from double-counting the main turn's tokens.
+// Fail-open — any DB error returns a null context so the composite degrades to
+// success_rate rather than failing the whole success-rate route.
+async function loadSuccessEfficiency(
+  prisma: ReturnType<typeof getPrisma>,
+  windowLowerBound: Prisma.Sql,
+  log: FastifyRequest["log"],
+): Promise<SuccessEfficiencyContext | null> {
+  try {
+    const rows = await prisma.$queryRaw<CostEfficiencyDbRow[]>`
+      SELECT
+        AVG((input_tokens + output_tokens)::numeric)::numeric(20,4) AS avg_tokens,
+        AVG(duration_ms::numeric)::numeric(20,4)                    AS avg_duration_ms
+      FROM core.cost_events
+      WHERE event_date >= ${windowLowerBound}
+        AND kind = 'turn'
+        AND duration_ms >= 0
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    return {
+      avgTokens: row.avg_tokens === null ? null : decimalToNumber(row.avg_tokens),
+      avgDurationMs:
+        row.avg_duration_ms === null ? null : decimalToNumber(row.avg_duration_ms),
+    };
+  } catch (error) {
+    // Advisory-first: the composite is optional, so a cost_events read failure must
+    // NOT sink the primary success-rate response — degrade to pure-quality composite.
+    // Loud-fail: surface the cause in the log rather than silently absorbing it.
+    log.warn(
+      { route: "/api/agents/success-rate", err: error },
+      "AD-11 composite efficiency read failed — composite degraded to success_rate",
+    );
+    return null;
+  }
 }
 
 // GET /api/agents/revision-distribution?days={7|30|90}

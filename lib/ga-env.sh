@@ -188,6 +188,7 @@ ga_init_env() {
     "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
     "PreToolUse	lint-workflow-template-literal.sh	Workflow"
     "PreToolUse	telemetry-activation.sh	Agent"
+    "PreToolUse	validate-edit-syntax.sh	Write|Edit"
     "PreToolUse	validate-pre-write-raw.sh	Write"
     "PreToolUse	validate-prompt.sh	Write|Edit"
     "PreToolUse	validate-scope-drift.sh	Write|Edit"

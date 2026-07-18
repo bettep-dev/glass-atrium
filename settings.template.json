@@ -9,8 +9,26 @@
     "APPLY: merge ONLY the \"permissions\" object into your existing ~/.claude/settings.json (never wipe",
     "  other keys). wire_hooks (lib/ga-config-hooks.sh) never touches permissions, so this stays manual.",
     "LIVE-VERIFY (see the \"live_verify\" key): confirm rm is blocked at the PERMISSION layer, not merely",
-    "  by the dangerous-command hook."
+    "  by the dangerous-command hook.",
+    "HOOKS: the \"hooks\" block below documents the edit-time syntax gate (validate-edit-syntax.sh), a",
+    "  PreToolUse(Write|Edit) advisory that runs bash -n / node --check / py_compile by extension allowlist.",
+    "  It is advisory-first (warns on a syntax error; set SYNTAX_GATE_BLOCK=1 to block after burn-in) and",
+    "  exempts templates. wire_hooks (from the ga-env.sh EXPECTED_HOOK_BINDINGS SoT) wires it automatically",
+    "  with an absolute command path; this block is the manual-reference form."
   ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.glass-atrium/hooks/validate-edit-syntax.sh"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "defaultMode": "auto",
     "allow": [
