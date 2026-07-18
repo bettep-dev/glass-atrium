@@ -21,9 +21,12 @@
 #              agent-registry.json + the glass-atrium launcher, lib/ (the
 #              install/update ENGINE the launcher SOURCES), config.toml.example,
 #              requirements.txt, monitor/ (dashboard built + run in place; its
-#              gitignored data/node_modules/dist + monitor/test/* auto-excluded).
-#              Without lib/ + monitor/ a fresh no-.git bundle is dead-on-arrival
-#              (launcher source + monitor build/run have no target).
+#              gitignored data/node_modules/dist + monitor/test/* auto-excluded),
+#              docs/assets/bulldog-braille.txt (the ONE shipped TUI art asset the
+#              launcher WHOLESALE-loads at runtime — its build-time generator .py +
+#              reference .webp are NOT scoped, runtime dep 0). Without lib/ + monitor/
+#              a fresh no-.git bundle is dead-on-arrival (launcher source + monitor
+#              build/run have no target).
 #   EXCLUDE    dev-only: */test/* + test_*.py/*.bats/*.test.js basenames, */archive/*,
 #              publish-release.sh (maintainer/CI-only). Untracked/gitignored excluded
 #              by construction — listing one hard-fails doctor §4 on a fresh clone.
@@ -77,6 +80,12 @@ readonly -a SCOPE_PATHS=(
   "lib"
   "monitor"
   "requirements.txt"
+  # The ONE shipped bulldog art asset — draw_bulldog_art WHOLESALE-loads it at runtime from
+  # ${GA_ROOT}/docs/assets/bulldog-braille.txt, so it must bundle + hash-verify like any other
+  # install-internal runtime file. Scoped as an EXACT single path (NOT "docs/"): the offline
+  # generator bulldog-braille-gen.py + the reference webp are BUILD-TIME only (runtime dep 0),
+  # so they stay OUT of the runtime bundle.
+  "docs/assets/bulldog-braille.txt"
 )
 
 # Dev-only exclusions (test trees, test-file basenames, archive snapshots).
