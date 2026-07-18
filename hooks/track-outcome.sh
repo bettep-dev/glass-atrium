@@ -101,7 +101,7 @@ import sys, json, re
 # `key:` is NOT in this set as a continuation of the current field, so an unlisted qa_score line
 # silently corrupts (e.g.) the summary value. Both are consumed (concerns via its "## Concerns"
 # fallback below; qa_score direct from the [COMPLETION] field) and carried to the PG dual-write.
-KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns'}
+KNOWN_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'files', 'summary', 'lesson', 'cid', 'revision_count', 'review_flag', 'style_ref', 'style_ref_verified', 'confidence_observed', 'directive_hint', 'evaluative_signal', 'qa_score', 'concerns', 'token_usage', 'duration_ms'}
 
 # Inline single-line [COMPLETION] tolerance (schema/workflow mode). CORE fields gate the inline
 # match — >=1 must parse so prose merely mentioning [COMPLETION] with a stray delimiter is rejected.
@@ -153,6 +153,45 @@ def _append_diag_log(line):
 def clamp(s, n):
     s = (s or '').strip()
     return s[:n].replace('\n', ' ').replace('\r', ' ')
+
+# AD-11 composite utility (SICA precedent): folds cost (token_usage) and time
+# (duration_ms) into a single advisory score alongside the quality signal
+# (metric_pass). ADVISORY-FIRST — it is logged via diag() only, NEVER persisted,
+# NEVER an envelope field, and NEVER overwrites metric_pass or the existing score.
+# Weights kept small so cost/time can only DISCOUNT a passing outcome, never turn a
+# pass into a fail. The identical formula + constants live in the monitor
+# success-rate route so the advisory reads the same on both surfaces.
+_COMPOSITE_TOKEN_REF = 20000      # soft token reference — cost penalty half-point
+_COMPOSITE_DURATION_REF_MS = 120000  # soft duration reference — time penalty half-point
+_COMPOSITE_W_COST = 0.25
+_COMPOSITE_W_TIME = 0.25
+
+def _parse_token_total(token_usage):
+    """Sum input+output from a `token_usage: input=N, output=N` field → int (0 on miss)."""
+    total = 0
+    for m in re.finditer(r'\b(?:input|output)\s*=\s*(\d+)', token_usage or ''):
+        total += int(m.group(1))
+    return total
+
+def _compute_composite_utility(metric_pass, token_usage, duration_ms):
+    """Advisory composite in [0,1] or None when no quality signal exists.
+
+    quality = 1.0 (metric_pass true) / 0.0 (false); None (absent) → no composite.
+    cost/time penalties saturate toward 1 as tokens/duration grow past the refs.
+    """
+    mp = (metric_pass or '').strip().lower()
+    if mp == 'true':
+        quality = 1.0
+    elif mp == 'false':
+        quality = 0.0
+    else:
+        return None
+    tokens = _parse_token_total(token_usage)
+    dur = duration_ms if isinstance(duration_ms, int) and duration_ms >= 0 else 0
+    cost_penalty = tokens / (tokens + _COMPOSITE_TOKEN_REF) if tokens > 0 else 0.0
+    time_penalty = dur / (dur + _COMPOSITE_DURATION_REF_MS) if dur > 0 else 0.0
+    composite = quality * (1.0 - _COMPOSITE_W_COST * cost_penalty - _COMPOSITE_W_TIME * time_penalty)
+    return max(0.0, min(1.0, composite))
 
 def parse_completion_body(text):
     """Parse field: value pairs; values may span continuation lines and contain colons."""
@@ -993,6 +1032,15 @@ out('directive_hint', clamp(completion.get('directive_hint') or directive, 500))
 out('c_directive_hint', clamp(completion.get('directive_hint', ''), 500))
 # evaluative_signal: raw value, no clamp — 0 vs absent must stay distinguishable ('' when absent)
 out('c_evaluative_signal', completion.get('evaluative_signal', ''))
+# AD-11 composite utility — advisory-only diag emit (never persisted / never mutates
+# metric_pass). duration_ms is read from the [COMPLETION] block when present (0 otherwise).
+_dur_raw = (completion.get('duration_ms') or '').strip()
+_dur_ms = int(_dur_raw) if _dur_raw.isdigit() else 0
+_composite = _compute_composite_utility(completion.get('metric_pass', ''), completion.get('token_usage', ''), _dur_ms)
+if _composite is not None:
+    diag(f'[AD-11] composite_utility_advisory={_composite:.4f} '
+         f'(tokens={_parse_token_total(completion.get("token_usage", ""))} duration_ms={_dur_ms}; '
+         f'advisory-only, does not affect metric_pass/score)')
 out('msg_head', msg[:500].replace('\n', ' '))
 out('msg_tail', msg[-500:].replace('\n', ' ') if len(msg) > 500 else '')
 
