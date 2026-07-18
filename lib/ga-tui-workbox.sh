@@ -72,21 +72,24 @@ workbox_body_row2_str() {
   esac
 }
 
-# draw_workbox — emit the 4-row work box (top rail + LINE1 headline + LINE2 detail + bottom rail) at
-# the WORKBOX_FIRST_ROW anchor. Fullscreen only (compact keeps the inline scrolling model); a "work"
-# tab mirrors the menu's "menu" tab. LINE2 is a STANDING row the spinner/idle repaints in place
-# during a run, else the done-state digest (Token/Monitor) or blank. Rail-safety: no in-line guard —
-# compute_menu_geometry gates FULLSCREEN on MIN_ROWS (reserves the box), so a rail-colliding WINCH
-# degrades to the compact no-box path BEFORE draw_workbox runs.
+# draw_workbox — emit the LOWER half of the merged menu+work box: the internal 'work' divider rail +
+# LINE1 headline + LINE2 detail + the SINGLE shared bottom rail, at the WORKBOX_FIRST_ROW anchor.
+# Fullscreen only (compact keeps the inline scrolling model). The divider is a plate_mid rail — side
+# rails run THROUGH it (junction glyphs ├ ┤), splitting the ONE box into a menu section (drawn above by
+# draw_menu, top rail + items, NO bottom rail) and this work section; the 'work' tab mirrors the menu
+# section's 'menu' tab. LINE2 is a STANDING row the spinner/idle repaints in place during a run, else
+# the done-state digest (Token/Monitor) or blank. Rail-safety: no in-line guard — compute_menu_geometry
+# gates FULLSCREEN on MIN_ROWS (reserves the box), so a rail-colliding WINCH degrades to the compact
+# no-box path BEFORE draw_workbox runs.
 draw_workbox() {
   [[ "${FULLSCREEN}" == "true" ]] || return 0
   local inner
   inner="$(plate_inner)"
   cup_to "${WORKBOX_FIRST_ROW}" 1
-  plate_top "${inner}" " work " "${C_FRAME}"
+  plate_mid "${inner}" " work " "${C_FRAME}"      # INTERNAL divider rail (├ ┤ junctions), splits the merged box
   plate_row "${inner}" "$(workbox_body_str)"      # LINE 1 headline (bar + i/N + label)
   plate_row "${inner}" "$(workbox_body_row2_str)" # LINE 2 detail (tail / dots / done digest / blank)
-  plate_bot "${inner}" "${C_FRAME}"
+  plate_bot "${inner}" "${C_FRAME}"               # the SINGLE shared bottom rail closing the whole box
 }
 
 # draw_bottom_row — the ONE bottom-pinned row at MENU_KEYHINT_ROW, chosen by WORK_STATE. Fullscreen

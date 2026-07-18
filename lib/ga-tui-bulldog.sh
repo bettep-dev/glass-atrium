@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154,SC2312  # SC2154: reads shared loader globals (GA_ROOT/ART_*/FULLSCREEN/USE_UTF8/C_*) present at runtime; SC2312: c()/_bulldog_color_for_row run inside command subs (always succeed via printf → masked return no signal), mirrors loader-wide disable
+# shellcheck disable=SC2154,SC2312  # SC2154: reads shared loader globals (GA_ROOT/ART_*/FULLSCREEN/USE_UTF8/C_*) present at runtime; SC2312: c()/_bulldog_bake_row run inside command subs (always succeed via printf → masked return no signal), mirrors loader-wide disable
 # Glass Atrium launcher — bulldog art render module. SOURCED (never executed):
 # shebang/strict-mode/IFS/traps stay loader-owned so re-sourcing never re-arms. Emits the
 # top-of-screen brand mascot as a WHOLESALE-loaded braille asset: the TUI renders NO braille
@@ -9,8 +9,10 @@
 
 # _bulldog_load_asset — read the shipped braille asset into BULLDOG_ROWS once (lazy, on the
 # first draw), then bake a pre-colored sibling array BULLDOG_ROWS_C so the hot draw path forks
-# ZERO subshells per row. WHOLESALE contract: the rows are emitted verbatim — never generated,
-# sliced, or transformed at runtime (the color wrap is display-only). bash-3.2-safe whole-file
+# ZERO subshells per row. WHOLESALE contract: the braille glyphs are emitted verbatim at runtime —
+# never generated. The load-time color bake wraps EACH row WHOLE in C_STRONG (near-white): the whole
+# bulldog renders one flat near-white with NO point accent (USER-DIRECTED — colorless eyes). The MONO
+# tier stays byte-for-byte verbatim (c() is a no-op on an empty palette). bash-3.2-safe whole-file
 # read (no mapfile): `while IFS= read -r` into an index-counted array. Idempotent — BULLDOG_LOADED
 # guards re-entry so repeated draws never re-stat the file (perf) nor re-color. FAIL-SAFE: a
 # missing/unreadable asset OR a wrong-shape asset leaves both arrays empty and returns 0 (the
@@ -40,34 +42,25 @@ _bulldog_load_asset() {
     BULLDOG_ROWS=()
     return 0
   fi
-  # Pre-color each row ONCE here (load-time), so draw_bulldog_art emits precomputed strings with
-  # no per-row c() fork. The palette (C_*) + USE_COLOR are resolved by the first draw; the mono
-  # tier bakes verbatim rows since c() is a no-op with an empty palette.
-  local i=0 color
+  # Bake each row's colored string ONCE here (load-time), so draw_bulldog_art emits precomputed
+  # strings with no per-row c() fork. _bulldog_bake_row whole-row-wraps every row in C_STRONG (no
+  # per-row special case). The palette (C_*) is resolved by the first draw; the mono tier bakes
+  # verbatim rows since c() is a no-op with an empty palette.
+  local i=0
   while [[ "${i}" -lt "${#BULLDOG_ROWS[@]}" ]]; do
-    color="$(_bulldog_color_for_row "$((i + 1))")"
-    BULLDOG_ROWS_C+=("$(c "${color}" "${BULLDOG_ROWS[${i}]}")")
+    BULLDOG_ROWS_C+=("$(_bulldog_bake_row "${BULLDOG_ROWS[${i}]}")")
     i=$((i + 1))
   done
   return 0
 }
 
-# _bulldog_color_for_row — map a 1-based asset row index to its whole-row color band, scaled to
-# the 21-row asset (print-time c() wrapping only — NEVER per-dot/per-cell drawing). Four bands,
-# top→bottom: crown/ears (recede) → C_INFO; brow/eyes (the ferocity band) → C_STRONG; mid-face/
-# nose → C_ACCENT; jaw/chin (recede) → C_DIM. A simple index→color chain (bash-3.2; no assoc
-# arrays). Mono tier leaves every C_* empty, so the emitted value is "" and c() is a no-op.
-_bulldog_color_for_row() {
-  local row_idx="$1"
-  if [[ "${row_idx}" -le 4 ]]; then
-    printf '%s' "${C_INFO}"
-  elif [[ "${row_idx}" -le 9 ]]; then
-    printf '%s' "${C_STRONG}"
-  elif [[ "${row_idx}" -le 15 ]]; then
-    printf '%s' "${C_ACCENT}"
-  else
-    printf '%s' "${C_DIM}"
-  fi
+# _bulldog_bake_row — return the load-time colored string for one asset row. $1 = the raw braille row.
+# EVERY row gets a single whole-row C_STRONG (near-white) wrap — the whole bulldog is one flat
+# near-white with NO point accent (USER-DIRECTED: colorless eyes). No per-row special case, no
+# segmentation. MONO tier: c() is a no-op on an empty palette, so the wrap emits the row byte-for-byte
+# verbatim (the mono squint-test contract holds).
+_bulldog_bake_row() {
+  c "${C_STRONG}" "$1"
 }
 
 # draw_bulldog_art — paint the bulldog art region at its absolute top anchor, OR emit NOTHING.
@@ -76,8 +69,8 @@ _bulldog_color_for_row() {
 # no blank rows), so the compose/redraw layers keep full ownership of the layout. When active:
 # cup_to ART_FIRST_ROW, then emit each loaded row at a center-align pad (PLATE_LEFT + (inner -
 # ART_WIDTH)/2 — mirrors draw_wordmark's centering, reusing the shared plate_inner/PLATE_LEFT),
-# each row whole-row-wrapped via c() with its band color. FAIL-SAFE: no rows loaded (absent
-# asset) → art-dropped, silent, exit 0.
+# each row pre-colored at load (every row whole-row near-white, no point accent). FAIL-SAFE: no rows
+# loaded (absent asset) → art-dropped, silent, exit 0.
 draw_bulldog_art() {
   [[ "${FULLSCREEN}" == "true" && "${ART_OK}" == "true" && "${USE_UTF8}" == "true" ]] || return 0
 

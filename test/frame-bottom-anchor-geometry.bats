@@ -1,18 +1,24 @@
 #!/usr/bin/env bats
-# frame-bottom-anchor-geometry.bats — pure-math golden pins for the bottom-fixed build-UP geometry
-# (T1). compute_menu_geometry pins the keyhint to the last row (R) and anchors every region UPWARD
-# by a MENU_COUNT(C)-derived offset. These anchors are the SoT downstream render/redraw waves
-# consume, so they are golden-pinned here FIRST at C=5:
+# frame-bottom-anchor-geometry.bats — pure-math golden pins for the VERTICALLY-CENTERED block geometry
+# (T1). compute_menu_geometry centers the whole stack as ONE unit: top_pad = (rows - BLOCK_H)/2 (floor
+# >= 1) blank rows above, then the block chained DOWNWARD from block_top = top_pad + 1, then the
+# remaining rows blank below. The keyhint is the block's LAST row (it travels WITH the block, no longer
+# pinned to the terminal's last row). The menu + work area are ONE merged box split by an internal
+# 'work' divider (NO menu bottom rail, NO menu↔work gap). The ex-separator row is RETAINED as a BLANK
+# spacer (draw_separator emits no glyphs in fullscreen). Downward offsets from block_top, at C=5:
 #
-#   keyhint R | workbox R-4..R-1 | menu top rail R-(7+C) | separator R-(8+C) |
-#   wordmark R-(10+C)..R-(9+C) | art gap R-(11+C) | art R-(11+C)-ART_ROWS..R-(12+C)
+#   block_top | (art tier: art ART_ROWS + 1 gap, then) wordmark block_top(+19)..+1 |
+#   blank ex-separator +2 | box top rail +3 | menu items +4..+(3+C) | blank pad +(4+C) |
+#   'work' divider +(5+C) | LINE1 +(6+C) | LINE2 +(7+C) | bottom rail +(8+C) | keyhint +(9+C)
 #
-# The bulldog is ONE fixed 55x21 asset (the 3-band system is retired). The single art tier is gated
-# by ART_OK = rows >= ART_MIN_ROWS (=39 at C=5) AND the 55-cell art fits the centered plate inner
-# (MENU_INNER). When admitted, ART_FIRST_ROW = R-(11+C)-ART_ROWS = R-37. Top-down degradation: the
-# bulldog drops first (ART_OK=false), then the wordmark (WORDMARK_OK=false); menu+workbox+keyhint
-# always survive. Golden rows R=21/24/25/30/38 (fullscreen-no-art), R=39/40 (fullscreen-with-art),
-# R=20 (compact). Hermetic: each test EVALs the single compute_menu_geometry function
+# BLOCK_H per tier (WORDMARK_OK always true in the fullscreen range): no-art = 10 + C (=15 at C=5);
+# art = ART_ROWS + 11 + C (=34 at C=5). The +1 vs the pre-pad model is the USER-DIRECTED blank interior
+# row between the last menu item and the 'work' divider. The bulldog is ONE fixed 55x18 asset (the
+# 3-band system is retired), admitted by ART_OK = rows >= ART_MIN_ROWS (=35 = BLOCK_H(art)+1) AND the
+# 55-cell art fits the centered plate inner (MENU_INNER). Top-down degradation: the bulldog drops first
+# (ART_OK=false) — the SMALLER no-art block then re-centers — then the wordmark (WORDMARK_OK=false);
+# menu+workbox+keyhint always survive. Golden rows R=21/24/25/30/33/34 (fullscreen-no-art), R=35/38/40
+# (fullscreen-with-art), R=20 (compact). Hermetic: each test EVALs the single compute_menu_geometry function
 # (extract_launcher_fn), stubs term_size + tput, and asserts the derived globals — no TTY, no
 # launcher boot, no system mutation.
 #
@@ -36,16 +42,17 @@ extract_launcher_fn() {
 
 # _geo_consts — the production gate + single-asset ART constants at C=5 (mirrors the launcher
 # readonly block). MIN_ROWS is the FULLSCREEN gate (21); ART_MIN_ROWS is the SEPARATE art sub-gate
-# (39 = 13 + C + ART_ROWS). ART_ROWS/ART_WIDTH are the ONE fixed asset size (no per-band variants).
+# (35 = BLOCK_H(art)+1 = 12 + C + ART_ROWS), so the centered art block fits fully with top_pad >= 1.
+# ART_ROWS/ART_WIDTH are the ONE fixed asset size (no per-band variants).
 _geo_consts() {
   PLATE_MARGIN=2
   MAX_READABLE=64
   MIN_COLS=50
   MENU_COUNT=5
   MIN_ROWS=$((5 + 1 + (2 + MENU_COUNT) + 1 + 4 + 3))
-  ART_ROWS=21
+  ART_ROWS=18
   ART_WIDTH=55
-  ART_MIN_ROWS=$((13 + MENU_COUNT + ART_ROWS))
+  ART_MIN_ROWS=$((12 + MENU_COUNT + ART_ROWS))
 }
 
 # _run_geometry cols rows — drive compute_menu_geometry hermetically at a fixed TTY size. tput stubbed
@@ -58,9 +65,9 @@ _run_geometry() {
   compute_menu_geometry
 }
 
-# --- no-art fullscreen band (21-38): ART_OK=false, bottom-fixed stack, menu+workbox survive --------
+# --- no-art fullscreen band (21-34): ART_OK=false, the smaller block (BLOCK_H=15) centers ------------
 
-@test "geometry R=21 (fullscreen floor): fullscreen, ART_OK=false, WORDMARK_OK=true, bottom-fixed anchors" {
+@test "geometry R=21 (fullscreen floor): fullscreen, ART_OK=false, WORDMARK_OK=true, centered anchors" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 21
@@ -68,115 +75,163 @@ _run_geometry() {
   [ "${ART_OK}" = "false" ]
   [ "${ART_FIRST_ROW}" -eq 0 ]
   [ "${WORDMARK_OK}" = "true" ]
-  [ "${MENU_KEYHINT_ROW}" -eq 21 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 17 ]
-  [ "${WORKBOX_BODY_ROW}" -eq 18 ]
-  [ "${WORKBOX_BODY_ROW2}" -eq 19 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 9 ]
-  [ "${SEPARATOR_ROW}" -eq 8 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 6 ]
-  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK=false here so it equals the
-  # wordmark row (geometry owns the extent-top decision).
+  # BLOCK_H(no-art)=15; top_pad=(21-15)/2=3; block_top=4; keyhint=block_top+14=18.
+  [ "${WORDMARK_FIRST_ROW}" -eq 4 ]
+  [ "${SEPARATOR_ROW}" -eq 6 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 7 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 14 ]
+  [ "${WORKBOX_BODY_ROW}" -eq 15 ]
+  [ "${WORKBOX_BODY_ROW2}" -eq 16 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 18 ]
+  # keyhint sits ABOVE the terminal's last row now (centered, not bottom-pinned).
+  [ "${MENU_KEYHINT_ROW}" -lt 21 ]
+  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row = block_top; ART_OK=false so it equals
+  # the wordmark row.
   [ "${MENU_FIRST_ROW}" -eq "${WORDMARK_FIRST_ROW}" ]
-  [ "${MENU_FIRST_ROW}" -eq 6 ]
+  [ "${MENU_FIRST_ROW}" -eq 4 ]
 }
 
-@test "geometry R=24: fullscreen, ART_OK=false, no menu/workbox row loss" {
+@test "geometry R=24: fullscreen, ART_OK=false, centered block, no menu/workbox row loss" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 24
   [ "${FULLSCREEN}" = "true" ]
   [ "${ART_OK}" = "false" ]
-  [ "${MENU_KEYHINT_ROW}" -eq 24 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 20 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 12 ]
-  [ "${SEPARATOR_ROW}" -eq 11 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 9 ]
-  # no-art top region (wordmark) stays on-screen (>=1); the whole stack fits inside 24 rows.
+  # top_pad=(24-15)/2=4; block_top=5; keyhint=19.
+  [ "${WORDMARK_FIRST_ROW}" -eq 5 ]
+  [ "${SEPARATOR_ROW}" -eq 7 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 8 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 15 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 19 ]
+  # no-art top region (wordmark) stays on-screen (>=1); the whole block fits inside 24 rows.
   [ "${WORDMARK_FIRST_ROW}" -ge 1 ]
   [ "$((WORKBOX_FIRST_ROW + 3))" -lt "${MENU_KEYHINT_ROW}" ]
 }
 
-@test "geometry R=25 (was Compact band, now no-art): ART_OK=false, ART_FIRST_ROW=0, anchors unchanged" {
+@test "geometry R=25 (was Compact band, now no-art): ART_OK=false, ART_FIRST_ROW=0, centered" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 25
   [ "${FULLSCREEN}" = "true" ]
   [ "${ART_OK}" = "false" ]
   [ "${ART_FIRST_ROW}" -eq 0 ]
-  [ "${MENU_KEYHINT_ROW}" -eq 25 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 21 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 13 ]
-  [ "${SEPARATOR_ROW}" -eq 12 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 10 ]
+  # top_pad=(25-15)/2=5 (floor); block_top=6; keyhint=20.
+  [ "${WORDMARK_FIRST_ROW}" -eq 6 ]
+  [ "${SEPARATOR_ROW}" -eq 8 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 9 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 16 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 20 ]
 }
 
-@test "geometry R=30 (was Medium band, now no-art): ART_OK=false, ART_FIRST_ROW=0" {
+@test "geometry R=30 (was Medium band, now no-art): ART_OK=false, ART_FIRST_ROW=0, centered" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 30
   [ "${ART_OK}" = "false" ]
   [ "${ART_FIRST_ROW}" -eq 0 ]
-  [ "${MENU_KEYHINT_ROW}" -eq 30 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 26 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 18 ]
-  [ "${SEPARATOR_ROW}" -eq 17 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 15 ]
+  # top_pad=(30-15)/2=7; block_top=8; keyhint=22.
+  [ "${WORDMARK_FIRST_ROW}" -eq 8 ]
+  [ "${SEPARATOR_ROW}" -eq 10 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 11 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 18 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 22 ]
 }
 
-@test "geometry R=38 (art floor minus one): ART_OK=false, ART_FIRST_ROW=0" {
+@test "geometry R=33 (art floor minus two): ART_OK=false, ART_FIRST_ROW=0, centered" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
-  _run_geometry 80 38
+  _run_geometry 80 33
   [ "${ART_OK}" = "false" ]
   [ "${ART_FIRST_ROW}" -eq 0 ]
-  [ "${MENU_KEYHINT_ROW}" -eq 38 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 34 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 26 ]
-  [ "${SEPARATOR_ROW}" -eq 25 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 23 ]
+  # top_pad=(33-15)/2=9; block_top=10; keyhint=24.
+  [ "${WORDMARK_FIRST_ROW}" -eq 10 ]
+  [ "${SEPARATOR_ROW}" -eq 12 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 13 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 20 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 24 ]
 }
 
-# --- art tier (39/40): ART_OK=true (wide cols), ART_FIRST_ROW = R-37 -------------------------------
-
-@test "geometry R=39 (art floor): ART_OK, ART_FIRST_ROW=2 (top margin 1)" {
+@test "geometry R=34 (art floor minus one): ART_OK=false, ART_FIRST_ROW=0, centered" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
-  _run_geometry 80 39
+  _run_geometry 80 34
+  [ "${FULLSCREEN}" = "true" ]
+  # ART_MIN_ROWS is 35, so R=34 falls one row BELOW the art floor -> no-art.
+  [ "${ART_OK}" = "false" ]
+  [ "${ART_FIRST_ROW}" -eq 0 ]
+  # top_pad=(34-15)/2=9 (floor); block_top=10; keyhint=24.
+  [ "${WORDMARK_FIRST_ROW}" -eq 10 ]
+  [ "${SEPARATOR_ROW}" -eq 12 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 13 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 20 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 24 ]
+}
+
+# --- art tier (35/38/40): ART_OK=true (wide cols), BLOCK_H(art)=34 centers -------------------------
+
+@test "geometry R=35 (art floor): ART_OK, ART_FIRST_ROW=2 (top_pad clamped to 1)" {
+  extract_launcher_fn compute_menu_geometry
+  _geo_consts
+  _run_geometry 80 35
   [ "${FULLSCREEN}" = "true" ]
   [ "${ART_OK}" = "true" ]
+  # BLOCK_H(art)=34; top_pad=(35-34)/2=0 -> clamped to 1; block_top=2; keyhint=block_top+33=35.
   [ "${ART_FIRST_ROW}" -eq 2 ]
-  [ "${MENU_KEYHINT_ROW}" -eq 39 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 35 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 27 ]
-  [ "${SEPARATOR_ROW}" -eq 26 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 24 ]
-  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK here so it equals the art top.
+  [ "${WORDMARK_FIRST_ROW}" -eq 21 ]
+  [ "${SEPARATOR_ROW}" -eq 23 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 24 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 31 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 35 ]
+  # at the floor the block fills the screen exactly: keyhint == rows, one blank row (top_pad) above.
+  [ "${MENU_KEYHINT_ROW}" -eq 35 ]
+  # MENU_FIRST_ROW = frame extent top = the art top.
   [ "${MENU_FIRST_ROW}" -eq "${ART_FIRST_ROW}" ]
   [ "${MENU_FIRST_ROW}" -eq 2 ]
 }
 
-@test "geometry R=40: ART_OK, ART_FIRST_ROW=3, art region rows 3..23" {
+@test "geometry R=38: ART_OK, ART_FIRST_ROW=3, centered above the floor" {
+  extract_launcher_fn compute_menu_geometry
+  _geo_consts
+  _run_geometry 80 38
+  [ "${ART_OK}" = "true" ]
+  # top_pad=(38-34)/2=2; block_top=3; keyhint=block_top+33=36; 2 blank above, 2 below.
+  [ "${ART_FIRST_ROW}" -eq 3 ]
+  [ "${WORDMARK_FIRST_ROW}" -eq 22 ]
+  [ "${SEPARATOR_ROW}" -eq 24 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 25 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 32 ]
+  [ "${WORKBOX_BODY_ROW}" -eq 33 ]
+  [ "${WORKBOX_BODY_ROW2}" -eq 34 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 36 ]
+  [ "$((38 - MENU_KEYHINT_ROW))" -eq 2 ]
+}
+
+@test "geometry R=40: ART_OK, ART_FIRST_ROW=4, art region rows 4..21, keyhint 37" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 40
   [ "${ART_OK}" = "true" ]
-  [ "${ART_FIRST_ROW}" -eq 3 ]
-  [ "${MENU_KEYHINT_ROW}" -eq 40 ]
-  [ "${WORKBOX_FIRST_ROW}" -eq 36 ]
-  [ "${MENU_BLOCK_FIRST_ROW}" -eq 28 ]
-  [ "${SEPARATOR_ROW}" -eq 27 ]
-  [ "${WORDMARK_FIRST_ROW}" -eq 25 ]
-  # MENU_FIRST_ROW = frame extent top = the topmost DRAWN row; ART_OK here so it equals the art top.
+  # top_pad=(40-34)/2=3; block_top=4; keyhint=37; rows 1..3 blank above, 38..40 blank below.
+  [ "${ART_FIRST_ROW}" -eq 4 ]
+  [ "${WORDMARK_FIRST_ROW}" -eq 23 ]
+  [ "${SEPARATOR_ROW}" -eq 25 ]
+  [ "${MENU_BLOCK_FIRST_ROW}" -eq 26 ]
+  [ "${WORKBOX_FIRST_ROW}" -eq 33 ]
+  [ "${WORKBOX_BODY_ROW}" -eq 34 ]
+  [ "${WORKBOX_BODY_ROW2}" -eq 35 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 37 ]
+  # MENU_FIRST_ROW = frame extent top = the art top.
   [ "${MENU_FIRST_ROW}" -eq "${ART_FIRST_ROW}" ]
-  [ "${MENU_FIRST_ROW}" -eq 3 ]
-  # ART_ROWS=21 → art last row = 3 + 21 - 1 = 23, one gap row (24) below the wordmark (25).
-  [ "$((ART_FIRST_ROW + ART_ROWS - 1))" -eq 23 ]
+  [ "${MENU_FIRST_ROW}" -eq 4 ]
+  # ART_ROWS=18 → art last row = 4 + 18 - 1 = 21, one gap row (22) below the art, wordmark at 23.
+  [ "$((ART_FIRST_ROW + ART_ROWS - 1))" -eq 21 ]
+  # floor-split centering: BLOCK_H(art)=34 even, rows=40 even -> 3 blank rows above and 3 below.
+  [ "$((40 - MENU_KEYHINT_ROW))" -eq 3 ]
 }
 
 # --- horizontal fit: a tall-but-narrow terminal drops the bulldog (ART_OK=false) ------------------
 
-@test "geometry R=40 cols=50 (tall but narrow): fullscreen but ART_OK=false (plate < 55)" {
+@test "geometry R=40 cols=50 (tall but narrow): fullscreen but ART_OK=false, no-art block centers" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 50 40
@@ -186,17 +241,19 @@ _run_geometry() {
   [ "${ART_FIRST_ROW}" -eq 0 ]
   # the wordmark tier still survives the horizontal drop of the bulldog.
   [ "${WORDMARK_OK}" = "true" ]
-  [ "${MENU_KEYHINT_ROW}" -eq 40 ]
+  # dropping the art shrinks BLOCK_H to 15 and re-centers: top_pad=(40-15)/2=12; block_top=13; keyhint=27.
+  [ "${WORDMARK_FIRST_ROW}" -eq 13 ]
+  [ "${MENU_KEYHINT_ROW}" -eq 27 ]
 }
 
-@test "geometry R=40 cols=61 (plate exactly 55): ART_OK=true (horizontal-fit boundary)" {
+@test "geometry R=40 cols=61 (plate exactly 55): ART_OK=true, ART_FIRST_ROW=4 (horizontal-fit boundary)" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 61 40
   # MENU_INNER = (min(61-4,64))-2 = 55 == ART_WIDTH -> the art fits exactly.
   [ "${FULLSCREEN}" = "true" ]
   [ "${ART_OK}" = "true" ]
-  [ "${ART_FIRST_ROW}" -eq 3 ]
+  [ "${ART_FIRST_ROW}" -eq 4 ]
 }
 
 @test "geometry R=40 cols=60 (plate 54, one short): ART_OK=false (horizontal-fit boundary)" {
@@ -219,24 +276,45 @@ _run_geometry() {
   [ "${WORDMARK_OK}" = "true" ]
 }
 
-# --- non-overlap: the whole stack is strictly ascending art -> wordmark -> sep -> menu -> workbox -
+# --- centering symmetry: blank rows above (top_pad) ≈ blank rows below (rows - keyhint) ------------
 
-@test "geometry R=40 non-overlap: art < gap < wordmark < sep < menu < gap < workbox < keyhint" {
+@test "geometry R=40 centered: floor-split blank rows above and below the block (art tier)" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
   _run_geometry 80 40
-  # art top margin >= 1
+  # top_pad = block_top - 1 (rows above the first drawn row); below = rows - keyhint. BLOCK_H(art)=34 is
+  # even and rows=40 is even, so the split is balanced: 3 blank rows above and 3 below.
+  local above below
+  above=$((MENU_FIRST_ROW - 1))
+  below=$((40 - MENU_KEYHINT_ROW))
+  [ "${above}" -eq 3 ]
+  [ "${below}" -eq 3 ]
+  # centering is balanced to within one row (the odd-gap remainder, if any, lands below).
+  [ "$((below - above))" -le 1 ]
+}
+
+# --- non-overlap: strictly ascending art -> wordmark -> sep -> box-top -> items -> divider -> work --
+
+@test "geometry R=40 non-overlap: art < gap < wordmark < sep < box-top < items < divider < keyhint" {
+  extract_launcher_fn compute_menu_geometry
+  _geo_consts
+  _run_geometry 80 40
+  # art top margin >= 1 (top_pad floored at 1 -> block_top >= 2)
   [ "${ART_FIRST_ROW}" -ge 2 ]
   # art last row strictly above the wordmark (>=1 gap row between)
   [ "$((ART_FIRST_ROW + ART_ROWS - 1))" -lt "${WORDMARK_FIRST_ROW}" ]
   # wordmark (2 rows) strictly above the separator
   [ "$((WORDMARK_FIRST_ROW + 1))" -lt "${SEPARATOR_ROW}" ]
-  # separator strictly above the menu top rail
+  # separator (blank spacer) strictly above the box top rail
   [ "${SEPARATOR_ROW}" -lt "${MENU_BLOCK_FIRST_ROW}" ]
-  # menu block (2 rails + MENU_COUNT items) bottom strictly above the workbox top (>=1 gap)
-  [ "$((MENU_BLOCK_FIRST_ROW + 2 + MENU_COUNT - 1))" -lt "${WORKBOX_FIRST_ROW}" ]
-  # workbox (4 rows) bottom rail strictly above the pinned keyhint
+  # MERGED BOX: box top rail + MENU_COUNT items + ONE blank pad row end EXACTLY at the row above the
+  # internal 'work' divider (WORKBOX_FIRST_ROW) — NO menu bottom rail; the blank pad is the USER-DIRECTED
+  # breathing row between the last menu item and the divider (top rail offset 1 + C items + 1 blank pad).
+  [ "$((MENU_BLOCK_FIRST_ROW + MENU_COUNT + 2))" -eq "${WORKBOX_FIRST_ROW}" ]
+  # workbox section (divider + LINE1 + LINE2 + bottom rail = 4 rows) bottom rail strictly above the keyhint
   [ "$((WORKBOX_FIRST_ROW + 3))" -lt "${MENU_KEYHINT_ROW}" ]
+  # keyhint is the block's LAST row (bottom rail directly above it, no gap).
+  [ "$((WORKBOX_FIRST_ROW + 4))" -eq "${MENU_KEYHINT_ROW}" ]
 }
 
 # --- degradation: rows<21 OR cols<MIN_COLS -> compact top-left, unchanged (ART_OK never true) -----

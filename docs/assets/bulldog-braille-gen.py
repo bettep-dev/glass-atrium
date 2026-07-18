@@ -15,8 +15,9 @@
 """Feature-sharpened flat braille bulldog head, made symmetric by mirror.
 
 env-085 base: a flat solid body (`_fill_cut`) + crisp outer outline ring, with
-Floyd-dithered detail inside the eyes/nose/mouth/ears envelope, squish 0.85,
-width 56. The dither SOURCE inside that envelope is sharpened (UnsharpMask +
+Floyd-dithered detail inside the eyes/nose/mouth/ears envelope, squish 0.76
+(flatter proportion — 18 braille rows), width 56. The dither SOURCE inside that
+envelope is sharpened (UnsharpMask +
 contrast push toward bimodal) so the dither resolves clean eye slits / nose
 leather + nostrils / scowl mouth / brow notch instead of gray noise.
 
@@ -325,7 +326,7 @@ def to_braille(crop, width, squish, *, radius, percent, threshold, contrast,
 
 def main() -> None:
     crop = crop_head(load_rgba())
-    lines = to_braille(crop, width=56, squish=0.85, mirror=FINAL_MIRROR, **MID)
+    lines = to_braille(crop, width=56, squish=0.76, mirror=FINAL_MIRROR, **MID)
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     cells_h = len(lines)
     cells_w = max((len(line) for line in lines), default=0)

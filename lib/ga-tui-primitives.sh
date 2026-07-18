@@ -243,6 +243,20 @@ plate_top() {
   tty_line "$(c "${accent}" "${G_TL}${tab}$(hrule "${G_H}" "${fill}")${G_TR}")"
 }
 
+# plate_mid — INTERNAL divider rail that splits ONE box into two stacked sections (the merged
+# menu+work box). Mirrors plate_top EXACTLY except the two ends are side-rail JUNCTION glyphs
+# (G_ML ├ / G_MR ┤; ASCII |) instead of top corners (G_TL/G_TR), so the left/right rails run
+# straight THROUGH the divider while a labeled dash rule crosses between them. tab INCLUDES its own
+# surrounding spaces (empty tab = full rail); hrule fills (inner - visible tab) so the divider spans
+# inner+2 — the SAME width as plate_top/plate_bot, keeping every rail column aligned.
+plate_mid() {
+  local inner="$1" tab="${2:-}" accent="${3:-${C_FRAME}}" fill
+  fill=$((inner - $(visible_len "${tab}")))
+  [[ "${fill}" -lt 0 ]] && fill=0
+  tty_out "$(printf '%*s' "${PLATE_LEFT}" "")"
+  tty_line "$(c "${accent}" "${G_ML}${tab}$(hrule "${G_H}" "${fill}")${G_MR}")"
+}
+
 # plate_bot — box bottom rail: margin + accent(BL + hrule inner + BR); spans inner+2, same as plate_top.
 plate_bot() {
   local inner="$1" accent="${2:-${C_FRAME}}"

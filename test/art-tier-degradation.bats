@@ -2,13 +2,15 @@
 # art-tier-degradation.bats — behavioral coverage for the bulldog render module (T3). draw_bulldog_art
 # emits the WHOLESALE-loaded braille asset ONLY in the fullscreen art tier with braille glyphs
 # (FULLSCREEN AND ART_OK AND USE_UTF8); every gate-off path emits NOTHING (top-down degradation —
-# the bulldog is the first region dropped). This file pins the tier ladder end-to-end:
-#   (a) USE_UTF8 + colors      -> 21 braille rows, band-colored, centered pad
-#   (b) mono (empty C_*)       -> same 21 rows, ZERO SGR
+# the bulldog is the first region dropped). COLORLESS contract (USER-DIRECTED): the whole bulldog
+# renders one flat C_STRONG (near-white) — there is NO eye accent, no C_ACCENT anywhere, no pupil
+# trim. This file pins the tier ladder end-to-end:
+#   (a) USE_UTF8 + colors      -> 18 braille rows; EVERY row whole-row C_STRONG, NO accent, centered pad
+#   (b) mono (empty C_*)       -> same 18 rows, ZERO SGR, byte-for-byte verbatim asset
 #   (c) USE_UTF8=false         -> NOTHING (ascii / non-UTF8 locale drops the bulldog)
 #   (d) ART_OK=false           -> NOTHING (too short / too narrow terminal)
 #   (e) missing asset file     -> NOTHING, exit 0 under set -Eeuo pipefail (fail-safe, not a crash)
-# plus the row->color band map and FULLSCREEN=false / idempotent-load coverage.
+# plus the whole-row bake unit test, FULLSCREEN=false, and idempotent-load coverage.
 #
 # The render is driven through a strict-mode (set -Eeuo pipefail) probe script so EVERY path also
 # proves the module never trips errexit — the module is SOURCED under a strict-mode loader in
@@ -45,9 +47,9 @@ USE_UTF8="${PROBE_USE_UTF8:-true}"
 USE_COLOR="${PROBE_USE_COLOR:-true}"
 PLATE_MARGIN=2
 PLATE_LEFT="${PROBE_PLATE_LEFT:-8}"
-ART_ROWS=21
+ART_ROWS=18
 ART_WIDTH=55
-ART_FIRST_ROW="${PROBE_ART_FIRST_ROW:-3}"
+ART_FIRST_ROW="${PROBE_ART_FIRST_ROW:-4}"
 MENU_INNER_OVERRIDE="${PROBE_INNER:-62}"
 # `-` default: unset -> the fallback code; set-but-empty -> "" (the mono tier passes C_*= empty).
 C_INFO="${PROBE_C_INFO-94}"
@@ -68,39 +70,47 @@ PROBE_EOF
 # _esc — a literal ESC byte (mirrors ga-tui-primitives.sh strip_csi; $'\033' avoided for 3.2 parity).
 _esc() { printf '\033'; }
 
-# --- (a) full tier: USE_UTF8 + colors -> 21 band-colored braille rows at the centered pad ---------
+# --- (a) full tier: USE_UTF8 + colors -> 18 whole-row-white braille rows at the centered pad --------
 
-@test "(a) USE_UTF8 + colors: 21 braille rows, all 4 color bands, row1=C_INFO, centered pad=11" {
+@test "(a) USE_UTF8 + colors: 18 rows; EVERY row whole-row C_STRONG, no accent anywhere, pad=11" {
   run env PROBE_GA_ROOT="${GA}" PROBE_LIB="${GA}/lib" bash "${PROBE}"
   [ "${status}" -eq 0 ]
-  # 21 emitted rows (asset row count; independently pinned by art-asset-integrity.bats).
-  [ "${#lines[@]}" -eq 21 ]
+  # 18 emitted rows (asset row count; independently pinned by art-asset-integrity.bats).
+  [ "${#lines[@]}" -eq 18 ]
   local esc
   esc="$(_esc)"
-  # SGR present, and every band color (C_INFO/STRONG/ACCENT/DIM) appears -> the band chain fires.
-  printf '%s' "${output}" | grep -q "${esc}\[94m"
+  # Colorless palette contract: the whole bulldog renders C_STRONG (97, near-white). The accent color
+  # C_ACCENT (96) is GONE — no eye accent — and the retired bands C_INFO (94) / C_DIM (90) stay absent.
   printf '%s' "${output}" | grep -q "${esc}\[97m"
-  printf '%s' "${output}" | grep -q "${esc}\[96m"
-  printf '%s' "${output}" | grep -q "${esc}\[90m"
-  # Row 1 (crown/ears band) is wrapped in C_INFO: the FIRST SGR sequence emitted is ESC[94m
-  # (grep -o yields matches left-to-right, so head -1 is the first opening color, not the reset).
+  ! printf '%s' "${output}" | grep -q "${esc}\[96m"
+  ! printf '%s' "${output}" | grep -q "${esc}\[94m"
+  ! printf '%s' "${output}" | grep -q "${esc}\[90m"
+  # EVERY row is a single whole-row C_STRONG wrap with NO accent — no segmentation, no per-row case.
+  local i=0
+  while [[ "${i}" -lt "${#lines[@]}" ]]; do
+    printf '%s' "${lines[${i}]}" | grep -q "${esc}\[97m"
+    ! printf '%s' "${lines[${i}]}" | grep -q "${esc}\[96m"
+    i=$((i + 1))
+  done
+  # Row 1 (crown/ears) is wrapped in C_STRONG: the FIRST SGR sequence emitted is ESC[97m (grep -o
+  # yields matches left-to-right, so head -1 is the first opening color, not the reset).
   local first_seq first_code
   first_seq="$(printf '%s' "${output}" | grep -o "${esc}\[[0-9;]*m" | head -1)"
   first_code="$(printf '%s' "${first_seq}" | sed "s/${esc}\[\([0-9;]*\)m/\1/")"
-  [ "${first_code}" = "94" ]
+  [ "${first_code}" = "97" ]
   # Centered pad: strip leading spaces off row 2 (before its SGR wrap) -> 8 + (62-55)/2 = 11.
   local prefix="${lines[1]%%[! ]*}"
   [ "${#prefix}" -eq 11 ]
 }
 
-# --- (b) mono tier: empty C_* / USE_COLOR=false -> same 21 rows, no SGR --------------------------
+# --- (b) mono tier: empty C_* / USE_COLOR=false -> same 18 rows, no SGR, verbatim asset -------------
 
-@test "(b) mono (empty C_*): 21 braille rows, zero SGR sequences, same centered pad" {
+@test "(b) mono (empty C_*): 18 braille rows, zero SGR sequences, same pad, byte-for-byte verbatim" {
   run env PROBE_GA_ROOT="${GA}" PROBE_LIB="${GA}/lib" \
     PROBE_USE_COLOR=false PROBE_C_INFO= PROBE_C_STRONG= PROBE_C_ACCENT= PROBE_C_DIM= \
     bash "${PROBE}"
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 21 ]
+  [ "${#lines[@]}" -eq 18 ]
   local esc
   esc="$(_esc)"
   # NO SGR color sequence anywhere (the cup_to ESC[..H is not an SGR 'm' sequence).
@@ -108,6 +118,19 @@ _esc() { printf '\033'; }
   # braille still emits: row 2 carries the centered pad, unchanged from the colored tier.
   local prefix="${lines[1]%%[! ]*}"
   [ "${#prefix}" -eq 11 ]
+  # every row is byte-for-byte the verbatim asset row (the mono squint-test contract). Row 0 carries
+  # the leading absolute CUP (…H), so strip that first; then strip the centering pad (leading ASCII
+  # spaces; the braille blank ⠀ = U+2800 is NOT an ASCII space) and compare to the raw asset line.
+  local i=0
+  while [[ "${i}" -lt "${#lines[@]}" ]]; do
+    local ln body raw
+    ln="${lines[${i}]}"
+    [[ "${i}" -eq 0 ]] && ln="${ln#*H}"
+    body="${ln#"${ln%%[! ]*}"}"
+    raw="$(sed -n "$((i + 1))p" "${GA}/docs/assets/bulldog-braille.txt")"
+    [ "${body}" = "${raw}" ]
+    i=$((i + 1))
+  done
 }
 
 # --- (c) glyph gate off: USE_UTF8=false -> NOTHING ------------------------------------------------
@@ -145,21 +168,58 @@ _esc() { printf '\033'; }
   [ -z "${output}" ]
 }
 
-# --- row -> color band map (scaled to the 21-row asset) ------------------------------------------
+# --- whole-row bake unit: every row gets a single C_STRONG wrap, NO accent, mono verbatim -----------
 
-@test "_bulldog_color_for_row band boundaries: 1-4 INFO / 5-9 STRONG / 10-15 ACCENT / 16-21 DIM" {
+@test "_bulldog_bake_row: whole-row C_STRONG wrap on every row, no accent; mono emits verbatim" {
+  # shellcheck source=/dev/null
+  source "${GA}/lib/ga-tui-primitives.sh"
   # shellcheck source=/dev/null
   source "${GA}/lib/ga-tui-bulldog.sh"
-  C_INFO="INFO"
-  C_STRONG="STRONG"
-  C_ACCENT="ACCENT"
-  C_DIM="DIM"
-  [ "$(_bulldog_color_for_row 1)" = "INFO" ]
-  [ "$(_bulldog_color_for_row 4)" = "INFO" ]
-  [ "$(_bulldog_color_for_row 5)" = "STRONG" ]
-  [ "$(_bulldog_color_for_row 9)" = "STRONG" ]
-  [ "$(_bulldog_color_for_row 10)" = "ACCENT" ]
-  [ "$(_bulldog_color_for_row 15)" = "ACCENT" ]
-  [ "$(_bulldog_color_for_row 16)" = "DIM" ]
-  [ "$(_bulldog_color_for_row 21)" = "DIM" ]
+  USE_COLOR=true
+  C_STRONG="S"
+  C_ACCENT="A"
+  local esc
+  esc="$(_esc)"
+  # 55-char ASCII marker row (locale-independent: 1 byte == 1 char). The bake takes ONE arg (the raw
+  # row) — no row-index special case — and wraps the WHOLE row in C_STRONG with NO accent segment.
+  local row="LLLLLLLLLLLLLLL11MMMMMMMMMMMMMMMMMMMMMM22RRRRRRRRRRRRRR"
+  [ "${#row}" -eq 55 ]
+  [ "$(_bulldog_bake_row "${row}")" = "${esc}[Sm${row}${esc}[0m" ]
+  ! printf '%s' "$(_bulldog_bake_row "${row}")" | grep -q "${esc}\[Am"
+  # A row carrying the solid ⣿⣿ cores is NOT trimmed and NOT accented — the eye machinery is gone, so
+  # the whole row (⣿⣿ included) passes through inside the single C_STRONG wrap.
+  local core="LLLLLLLLLLLLLLL⣿⣿MMMMMMMMMMMMMMMMMMMMMM⣿⣿RRRRRRRRRRRRRR"
+  [ "$(_bulldog_bake_row "${core}")" = "${esc}[Sm${core}${esc}[0m" ]
+  ! printf '%s' "$(_bulldog_bake_row "${core}")" | grep -q "${esc}\[Am"
+  # Mono contract: empty palette -> c() no-op -> the row emits verbatim with ZERO SGR.
+  USE_COLOR=false
+  C_STRONG=""
+  C_ACCENT=""
+  [ "$(_bulldog_bake_row "${row}")" = "${row}" ]
+  [ "$(_bulldog_bake_row "${core}")" = "${core}" ]
+}
+
+# --- idempotent load: a second _bulldog_load_asset is a no-op (BULLDOG_LOADED guards re-entry) -------
+
+@test "_bulldog_load_asset: idempotent — a second load neither re-appends nor re-colors" {
+  # shellcheck source=/dev/null
+  source "${GA}/lib/ga-tui-primitives.sh"
+  # shellcheck source=/dev/null
+  source "${GA}/lib/ga-tui-bulldog.sh"
+  GA_ROOT="${GA}"
+  ART_ROWS=18
+  USE_COLOR=false
+  C_STRONG=""
+  BULLDOG_ROWS=()
+  BULLDOG_ROWS_C=()
+  BULLDOG_LOADED=false
+  _bulldog_load_asset
+  [ "${BULLDOG_LOADED}" = "true" ]
+  local n1="${#BULLDOG_ROWS[@]}"
+  [ "${n1}" -eq 18 ]
+  [ "${#BULLDOG_ROWS_C[@]}" -eq 18 ]
+  # a second call returns early on the BULLDOG_LOADED guard — the arrays are not doubled/re-baked.
+  _bulldog_load_asset
+  [ "${#BULLDOG_ROWS[@]}" -eq "${n1}" ]
+  [ "${#BULLDOG_ROWS_C[@]}" -eq "${n1}" ]
 }

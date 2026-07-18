@@ -1,13 +1,13 @@
 #!/usr/bin/env bats
 # art-band-selection.bats — pure-math coverage for the SINGLE art-tier gate (T1). The 3-band system
-# (Large/Medium/Compact) is retired: the bulldog is ONE fixed 55x21 asset, admitted by a single
-# boolean ART_OK. compute_menu_geometry sets ART_OK = FULLSCREEN AND rows >= ART_MIN_ROWS (=39 at
+# (Large/Medium/Compact) is retired: the bulldog is ONE fixed 55x18 asset, admitted by a single
+# boolean ART_OK. compute_menu_geometry sets ART_OK = FULLSCREEN AND rows >= ART_MIN_ROWS (=35 at
 # C=5) AND the 55-cell art fits the centered plate inner (MENU_INNER >= ART_WIDTH). The horizontal
 # fit derives from the same plate math the menu uses (MENU_INNER = min(cols-2*margin, MAX_READABLE) -
 # 2), never a cols literal — so a tall-but-narrow terminal drops the bulldog. WORDMARK_OK is the
-# step-2 degradation gate (wordmark+separator survive the bulldog drop). This file pins the gate
+# step-2 degradation gate (wordmark+blank-separator survive the bulldog drop). This file pins the gate
 # DECISION (ART_OK / WORDMARK_OK / the ART_FIRST_ROW zero-clamp) across the vertical floor, the
-# horizontal-fit boundary, and the compact fallback; the anchor row math is pinned in
+# horizontal-fit boundary, and the compact fallback; the CENTERED anchor row math is pinned in
 # frame-bottom-anchor-geometry.bats. Hermetic: EVAL the single function, stub term_size + tput, assert.
 #
 # Run via: bats test/art-band-selection.bats
@@ -26,16 +26,17 @@ extract_launcher_fn() {
 }
 
 # _geo_consts — production gate + single-asset ART constants at C=5 (mirrors the launcher readonly
-# block). ART_ROWS/ART_WIDTH are the ONE fixed asset size; ART_MIN_ROWS = 13 + C + ART_ROWS = 39.
+# block). ART_ROWS/ART_WIDTH are the ONE fixed asset size; ART_MIN_ROWS = 12 + C + ART_ROWS = 35
+# (the flatter 18-row asset lowered the art floor from the pre-flatten 38).
 _geo_consts() {
   PLATE_MARGIN=2
   MAX_READABLE=64
   MIN_COLS=50
   MENU_COUNT=5
   MIN_ROWS=$((5 + 1 + (2 + MENU_COUNT) + 1 + 4 + 3))
-  ART_ROWS=21
+  ART_ROWS=18
   ART_WIDTH=55
-  ART_MIN_ROWS=$((13 + MENU_COUNT + ART_ROWS))
+  ART_MIN_ROWS=$((12 + MENU_COUNT + ART_ROWS))
 }
 
 _run_geometry() {
@@ -55,16 +56,16 @@ _assert_gate() {
   [ "${WORDMARK_OK}" = "$5" ]
 }
 
-# --- vertical floor: rows 38 no-art | 39 art (wide cols) -------------------------------------------
+# --- vertical floor: rows 34 no-art | 35 art (wide cols) -------------------------------------------
 
-@test "gate R=38 cols=80: ART_OK=false (one row below the art floor)" {
+@test "gate R=34 cols=80: ART_OK=false (one row below the art floor)" {
   extract_launcher_fn compute_menu_geometry
-  _assert_gate 80 38 true false true
+  _assert_gate 80 34 true false true
 }
 
-@test "gate R=39 cols=80: ART_OK=true (art floor exactly met, plate wide)" {
+@test "gate R=35 cols=80: ART_OK=true (art floor exactly met, plate wide)" {
   extract_launcher_fn compute_menu_geometry
-  _assert_gate 80 39 true true true
+  _assert_gate 80 35 true true true
 }
 
 @test "gate R=40 cols=80: ART_OK=true (above the floor, plate wide)" {
@@ -96,17 +97,17 @@ _assert_gate() {
 
 # --- both axes required: tall-but-narrow AND short-but-wide both drop the bulldog -----------------
 
-@test "gate R=39 cols=50 (art floor met, plate too narrow): ART_OK=false" {
+@test "gate R=35 cols=50 (art floor met, plate too narrow): ART_OK=false" {
   extract_launcher_fn compute_menu_geometry
-  _assert_gate 50 39 true false true
+  _assert_gate 50 35 true false true
 }
 
-@test "gate R=38 cols=80 (plate wide, rows below floor): ART_OK=false" {
+@test "gate R=34 cols=80 (plate wide, rows below floor): ART_OK=false" {
   extract_launcher_fn compute_menu_geometry
-  _assert_gate 80 38 true false true
+  _assert_gate 80 34 true false true
 }
 
-# --- ART_FIRST_ROW zero-clamp: 0 when the art tier is off, R-37 when on ---------------------------
+# --- ART_FIRST_ROW zero-clamp: 0 when the art tier is off, block_top (= top_pad+1) when on ---------
 
 @test "clamp R=25: art off -> ART_FIRST_ROW=0" {
   extract_launcher_fn compute_menu_geometry
@@ -124,12 +125,22 @@ _assert_gate() {
   [ "${ART_FIRST_ROW}" -eq 0 ]
 }
 
-@test "clamp R=39 cols=80: art on -> ART_FIRST_ROW = R-37 = 2" {
+@test "clamp R=35 cols=80: art on -> ART_FIRST_ROW = block_top = 2 (top_pad clamped to 1)" {
   extract_launcher_fn compute_menu_geometry
   _geo_consts
-  _run_geometry 80 39
+  _run_geometry 80 35
   [ "${ART_OK}" = "true" ]
+  # BLOCK_H(art)=34; top_pad=(35-34)/2=0 -> floor-clamped to 1; block_top=top_pad+1=2.
   [ "${ART_FIRST_ROW}" -eq 2 ]
+}
+
+@test "clamp R=40 cols=80: art on -> ART_FIRST_ROW = block_top = 4 (centered)" {
+  extract_launcher_fn compute_menu_geometry
+  _geo_consts
+  _run_geometry 80 40
+  [ "${ART_OK}" = "true" ]
+  # BLOCK_H(art)=34; top_pad=(40-34)/2=3 (floor); block_top=4.
+  [ "${ART_FIRST_ROW}" -eq 4 ]
 }
 
 # --- WORDMARK_OK step-2 gate + compact fallback ---------------------------------------------------

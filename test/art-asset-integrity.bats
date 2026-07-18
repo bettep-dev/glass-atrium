@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # art-asset-integrity.bats — regression pin for the shipped bulldog asset (plan §4.7.5-1 dimension
 # gate). The TUI loads docs/assets/bulldog-braille.txt WHOLESALE and emits it verbatim, so its shape
-# is a hard contract: the row count IS ART_ROWS (21) and no row may exceed ART_WIDTH (55) or the
+# is a hard contract: the row count IS ART_ROWS (18) and no row may exceed ART_WIDTH (55) or the
 # center-pad math + horizontal-fit gate break. Pinned invariants:
-#   1. exactly 21 lines            (== ART_ROWS; the vertical geometry contract)
+#   1. exactly 18 lines            (== ART_ROWS; the vertical geometry contract)
 #   2. every char in U+2800-U+28FF (single-width braille only — no ASCII/emoji/double-width leak)
 #   3. widest line == 55 (ART_WIDTH), every line 1..55 cells (the horizontal bound)
 #
@@ -19,7 +19,7 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 ASSET="${GA}/docs/assets/bulldog-braille.txt"
-ART_ROWS=21
+ART_ROWS=18
 ART_WIDTH=55
 
 setup() {
@@ -28,7 +28,7 @@ setup() {
   trap - ERR
 }
 
-@test "asset has exactly ART_ROWS (21) lines" {
+@test "asset has exactly ART_ROWS (18) lines" {
   run python3 - "${ASSET}" <<'PY'
 import sys
 lines = open(sys.argv[1], encoding="utf-8").read().split("\n")

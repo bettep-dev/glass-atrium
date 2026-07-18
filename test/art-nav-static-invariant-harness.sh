@@ -3,13 +3,15 @@
 # split (T6) on the UNCOMMITTED working tree. The bulldog art is a STATIC top region: an arrow-move
 # (redraw_nav_move) MUST repaint ONLY the two changed menu rows + the workbox body and NEVER address
 # an art row, while the full in-place composer (redraw_frame_inplace) MUST clear+recompose the WHOLE
-# cached extent INCLUDING the art rows (so a dim/done/return transition leaves no ghost). Three
-# invariants at the canonical R=40 / cols=80 art tier (ART_OK, ART_FIRST_ROW=3, art band rows 3..23):
+# cached extent INCLUDING the art rows (so a dim/done/return transition leaves no ghost). The block is
+# VERTICALLY CENTERED, so at R=40 top_pad=(40-34)/2=3 seats the art at block_top=4 and the keyhint at
+# the block's last row 37 (rows 1..3 + rows 38..40 are the centering pad). Three invariants at the canonical
+# R=40 / cols=80 art tier (ART_OK, ART_FIRST_ROW=4, art band rows 4..21):
 #
-#   (I1) STATIC ART   — redraw_nav_move addresses NO row in [ART_FIRST_ROW, ART_FIRST_ROW+20] = [3,23]
+#   (I1) STATIC ART   — redraw_nav_move addresses NO row in [ART_FIRST_ROW, ART_FIRST_ROW+17] = [4,21]
 #                       (it touches only the prev/cur menu rows + the workbox body row).
 #   (I2) EXTENT PROOF — redraw_frame_inplace addresses EVERY row of [ART_FIRST_ROW..MENU_KEYHINT_ROW]
-#                       = [3..40] (the per-row ESC[2K pre-clear reaches up to the art top).
+#                       = [4..37] (the per-row ESC[2K pre-clear covers exactly the centered block).
 #   (I3) IDEMPOTENT   — repeated redraw_frame_inplace emits BYTE-IDENTICAL output (no accumulation).
 #
 # The REAL compose/redraw orchestration is exercised (compute_menu_geometry, redraw_frame_inplace,
@@ -53,9 +55,9 @@ MAX_READABLE=64
 MIN_COLS=50
 MENU_COUNT=5
 MIN_ROWS=$((5 + 1 + (2 + MENU_COUNT) + 1 + 4 + 3))
-ART_ROWS=21
+ART_ROWS=18
 ART_WIDTH=55
-ART_MIN_ROWS=$((13 + MENU_COUNT + ART_ROWS))
+ART_MIN_ROWS=$((12 + MENU_COUNT + ART_ROWS))
 USE_UTF8=true
 COLUMNS=80
 GEOMETRY_DIRTY=true
@@ -77,7 +79,8 @@ draw_bulldog_art() {
   cup_to "${ART_FIRST_ROW}" 1
 }
 draw_wordmark() { :; }                                        # wrapper cups WORDMARK_FIRST_ROW
-draw_separator() { [[ "${FULLSCREEN}" == "true" ]] && cup_to "${SEPARATOR_ROW}" 1; }
+# draw_separator emits NOTHING in fullscreen now (blank spacer) — mirror production: no cup.
+draw_separator() { [[ "${FULLSCREEN}" == "true" ]] && return 0; cup_to "${SEPARATOR_ROW}" 1; }
 draw_menu() { :; }                                            # wrapper cups MENU_BLOCK_FIRST_ROW
 draw_workbox() { [[ "${FULLSCREEN}" == "true" ]] && cup_to "${WORKBOX_FIRST_ROW}" 1; }
 draw_bottom_row() { [[ "${FULLSCREEN}" == "true" ]] && cup_to "${MENU_KEYHINT_ROW}" "$((MENU_LEFT + 1))"; }
@@ -123,8 +126,8 @@ _expect() { # $1 label · $2 actual · $3 expected
 }
 _expect "precondition FULLSCREEN" "${FULLSCREEN}" "true"
 _expect "precondition ART_OK" "${ART_OK}" "true"
-_expect "precondition ART_FIRST_ROW" "${ART_FIRST_ROW}" "3"
-_expect "precondition MENU_KEYHINT_ROW" "${MENU_KEYHINT_ROW}" "40"
+_expect "precondition ART_FIRST_ROW" "${ART_FIRST_ROW}" "4"
+_expect "precondition MENU_KEYHINT_ROW" "${MENU_KEYHINT_ROW}" "37"
 
 ART_LO="${ART_FIRST_ROW}"
 ART_HI=$((ART_FIRST_ROW + ART_ROWS - 1))
@@ -138,10 +141,11 @@ if [[ "${nav_art}" -eq 0 ]]; then
 else
   fail "(I1) redraw_nav_move addressed ${nav_art} art-band rows (expected 0)"
 fi
-# positive complement: it DID repaint the two menu rows (29,30) + the workbox body row (37).
+# positive complement: it DID repaint the two menu rows (27,28) + the workbox body row (34).
+# (MENU_BLOCK_FIRST_ROW=26 → items at 27+i; the centered art tier seats the box top rail at 26.)
 nav_rows="$(tr '\n' ' ' <"${CUP_ROWS}")"
-if _row_recorded 29 && _row_recorded 30 && _row_recorded "${WORKBOX_BODY_ROW}"; then
-  pass "(I1) redraw_nav_move repainted menu rows 29,30 + workbox body ${WORKBOX_BODY_ROW}"
+if _row_recorded 27 && _row_recorded 28 && _row_recorded "${WORKBOX_BODY_ROW}"; then
+  pass "(I1) redraw_nav_move repainted menu rows 27,28 + workbox body ${WORKBOX_BODY_ROW}"
 else
   fail "(I1) redraw_nav_move missed an expected menu/workbox row (rows: ${nav_rows})"
 fi
