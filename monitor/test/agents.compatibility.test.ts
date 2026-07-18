@@ -117,13 +117,14 @@ test("loadAgentRegistry: legacy v1.0 registry (모든 agent compatibility 미선
   }
 });
 
-test("loadAgentRegistry: 캐시 동작 — 두 번째 호출은 fs read 우회", async () => {
+test("loadAgentRegistry: 캐시 동작 — mtime 불변이면 두 번째 호출은 fs read 우회", async () => {
+  // DF-12 mtime revalidation 계약: 캐시 hit = mtime 불변 시 readFile 재실행 없음.
+  // 재파싱이 일어나면 새 Map 인스턴스가 되므로, 동일 인스턴스 = fs read 우회 증거.
+  // (파일 DELETE 는 이제 무효화 트리거이므로 stale hit 을 기대하던 옛 단언은 폐기.)
   await writeFile(registryPath, JSON.stringify(FIXTURE_PARTIAL_COMPATIBILITY), "utf8");
   const first = await loadAgentRegistry();
-  // fixture 파일 삭제 후에도 두 번째 호출은 캐시에서 성공.
-  await rm(registryPath, { force: true });
   const second = await loadAgentRegistry();
-  assert.strictEqual(first, second, "동일한 Map 인스턴스 반환 (캐시 hit)");
+  assert.strictEqual(first, second, "mtime 불변 → 동일 Map 인스턴스 (fs read 우회)");
 });
 
 test("loadAgentRegistry: ENOENT (파일 없음) → 빈 Map fallback (서버 기동 차단 금지)", async () => {
