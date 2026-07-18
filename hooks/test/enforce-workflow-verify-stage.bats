@@ -52,8 +52,27 @@ run_hook_file() {
   ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
 }
 
+# Drive the hook in OFFLINE --lint mode with $1 (raw script text) on stdin — no JSON envelope.
+run_lint() {
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"
+    printf "%s" "${script}" | WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}" --lint
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+}
+
+# Drive --lint with a FILE arg ($1 = path).
+run_lint_file() {
+  run bash -c '
+    file="$1"; hook="$2"; trace="$3"
+    WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}" --lint "${file}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+}
+
 # firing-trace tag assertion — verdict=<tag> recorded on the most recent firing.
 assert_trace() { grep -q "verdict=${1}" "${TRACE_LOG}"; }
+
+# trace-line count assertion — the offline --lint path must write ZERO trace lines (side-effect-free).
+assert_trace_empty() { [[ ! -s "${TRACE_LOG}" ]]; }
 
 # Shared docroute assertion tails — status + "doc-routing leak" stderr pair combined into ONE
 # command so they gate as the final command (or via `|| return 1`).
@@ -1335,6 +1354,122 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
 }
 
 # =====================================================================================================
+# SECTION P0 — OFFLINE --lint mode (the verified prevention). --lint reuses the IDENTICAL verdict helper
+#   + dispatch, so the previewed verdict == the gate verdict BY CONSTRUCTION. These pin: (1) verdict/exit
+#   PARITY across the 5 block shapes + a passing form between --lint and the real envelope path; (2) the
+#   side-effect-free contract (zero trace lines written); (3) --lint --template exits 0, contains both
+#   declaration forms, and writes zero trace; (4) file-arg and stdin lint modes agree.
+# =====================================================================================================
+
+# (1) + (2): each shape yields the SAME exit code in --lint as in the envelope path, AND --lint writes
+# zero trace lines (the LINT_MODE emit_trace guard). Same-code-path parity is the load-bearing property.
+@test "lint(parity+side-effect-free): 5 block shapes + 1 pass form → identical exit vs hook mode, zero trace" {
+  local pass_form="${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  local nodecl="agent('glass-atrium-dev-shell',{goal:'implement'})"
+  local grammar="/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+bogus: x
+[/AGENT-COMPOSITION] */
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
+  local norev="/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: clauded-docs/7')
+agent('glass-atrium-dev-nestjs',{goal:'no reviewer spawned'})"
+  local noverifydev="/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer
+impl: glass-atrium-dev-shell
+[/AGENT-COMPOSITION] */
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+agent('glass-atrium-qa-code-reviewer',{goal:'r'});agent('glass-atrium-dev-shell',{goal:'i'})"
+  local undecl="/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})
+agent('glass-atrium-dev-python',{goal:'undeclared'})"
+  local shapes=("${pass_form}" "${nodecl}" "${grammar}" "${norev}" "${noverifydev}" "${undecl}")
+  local s hook_status lint_status
+  for s in "${shapes[@]}"; do
+    run_hook "${s}"
+    hook_status="${status}"
+    : >"${TRACE_LOG}"
+    run_lint "${s}"
+    lint_status="${status}"
+    [[ "${lint_status}" -eq "${hook_status}" ]] || {
+      echo "LINT PARITY MISMATCH: hook=${hook_status} lint=${lint_status} for: ${s}" >&2
+      return 1
+    }
+    assert_trace_empty || {
+      echo "LINT WROTE A TRACE LINE (must be side-effect-free) for: ${s}" >&2
+      return 1
+    }
+  done
+}
+
+# (3): --lint --template exits 0, teaches BOTH declaration forms, and writes zero trace.
+@test "lint(template): --lint --template → exit 0, both declaration forms, zero trace" {
+  : >"${TRACE_LOG}"
+  run bash -c '
+    hook="$1"; trace="$2"
+    WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}" --lint --template
+  ' _ "${HOOK_SH}" "${TRACE_LOG}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs"* ]] || return 1
+  [[ "${output}" == *"verify: upstream clauded-docs/<N>"* ]] || return 1
+  [[ "${output}" == *"[SIZE-EST]"* ]] || return 1
+  assert_trace_empty || return 1
+}
+
+# (3b): the --template scaffold is code-consistent — pasted into a minimal DEV script it clears the gate.
+@test "lint(template): the printed [AGENT-COMPOSITION] scaffold pasted into a DEV script → PASS" {
+  run bash -c '
+    hook="$1"; trace="$2"
+    WORKFLOW_GATE_FIRED_LOG="${trace}" bash "${hook}" --lint --template
+  ' _ "${HOOK_SH}" "${TRACE_LOG}"
+  local decl
+  decl="$(printf '%s\n' "${output}" | awk '/\/\* \[AGENT-COMPOSITION\]/{grab=1} grab{print} /\[\/AGENT-COMPOSITION\] \*\//{if(grab)exit}')"
+  [[ "${decl}" == *"[AGENT-COMPOSITION]"* ]] || return 1
+  run_hook "${decl}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# (4): file-arg and stdin --lint modes agree on the verdict (both read RAW script text).
+@test "lint(file==stdin): file-arg and stdin lint modes agree on exit code" {
+  local script="agent('glass-atrium-dev-shell',{goal:'implement, no declaration'})"
+  local f="${BATS_TEST_TMPDIR}/lint_in.js"
+  printf '%s' "${script}" >"${f}"
+  run_lint "${script}"
+  local stdin_status="${status}"
+  run_lint_file "${f}"
+  [[ "${status}" -eq "${stdin_status}" ]] || return 1
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# (5): an EXPLICIT file arg that is missing/unreadable must fail LOUD — exit 2 + stderr naming the
+# path — NOT swallow the read error into an empty script that reads as a clean "exit 0 = will pass".
+@test "lint(file-missing): --lint with a nonexistent path → exit 2, stderr names the path" {
+  local missing="${BATS_TEST_TMPDIR}/does_not_exist.js"
+  run_lint_file "${missing}"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"cannot read ${missing}"* ]] || return 1
+}
+
+# =====================================================================================================
 # SECTION P — recalibrated whole-suite ground-truth cross-tab (safety net). Every listed fixture is
 #   asserted against its declaration-contract ground-truth exit code; the BLOCK-intent rows prove 0
 #   BLOCK-intent fixtures pass (no bypass regression), the PASS-intent rows prove no over-blocking.
@@ -1501,8 +1636,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 122 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 122 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 127 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 127 @test, found ${actual}" >&2
     return 1
   }
 }

@@ -128,12 +128,19 @@ if [[ ! "${trace_line_cap}" =~ ^[1-9][0-9]*$ ]]; then
   trace_line_cap="${DEFAULT_TRACE_LINE_CAP}"
 fi
 
+# LINT_MODE — 0 = the real PreToolUse(Workflow) envelope path (default) · 1 = the offline --lint preview
+# path (--lint flag set below). The offline path reuses the IDENTICAL verdict helper + dispatch, but MUST
+# have NO side effects: LINT_MODE=1 makes emit_trace a no-op so a preview never appends to the firing log.
+LINT_MODE=0
+
 # emit_trace VERDICT SCRIPT_LEN — append one firing-trace line, FAIL-SAFE.
 # The verdict is ALWAYS decided before this runs; every failure mode here (unwritable dir, mkdir
 # refusal, printf error) is swallowed so the trace can NEVER alter the hook's exit code or verdict.
 # Subshell + `|| true` isolates the ERR trap: a logging error must not trip the fail-open trap and
 # must not leak a non-zero status into `set -e`. Best-effort only.
 emit_trace() {
+  # LINT preview path is side-effect-free: never append to the firing log (verdict/exit stay identical).
+  [[ "${LINT_MODE:-0}" == "1" ]] && return 0
   local verdict="${1}" script_len="${2}"
   (
     local log_dir ts
@@ -216,89 +223,83 @@ print_resilience_advisory() {
   return 0
 }
 
-# stdin non-interactive → drain once, otherwise fail-open.
-input=""
-if [[ ! -t 0 ]]; then
-  input="$(cat 2>/dev/null)" || input=""
-fi
-[[ -z "${input}" ]] && exit 0
+# ==== author-facing scaffold emitters (single SoT — reused by both a BLOCK remediation AND --template) ===
+# Keeping the copy-paste examples in ONE function each guarantees the block-reason stderr the gate emits
+# and the --lint --template preview can NEVER drift apart. Single-quoted heredocs = no expansion (the
+# <…> placeholders + $HOME-style paths stay literal, injection-safe).
 
-# Absent jq is a system misconfiguration — fail-open (never block on tooling gaps).
-if ! command -v jq >/dev/null 2>&1; then
-  printf '[enforce-workflow-verify-stage] jq not found on PATH; skipping (fail-open)\n' >&2
-  exit 0
-fi
+# emit_composition_scaffold — the two canonical [AGENT-COMPOSITION] declaration forms (in-script verify
+# team + upstream). SoT reused by the BLOCK_NODECL remediation and print_lint_template.
+emit_composition_scaffold() {
+  cat <<'EOF'
+  --- in-script verify form (the Stage-2 {qa-code-reviewer, DEV} pair lives in THIS script) ---
+  /* [AGENT-COMPOSITION]
+  verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+  impl: glass-atrium-dev-nestjs
+  [/AGENT-COMPOSITION] */
 
-# tool_name gate — only the Workflow tool is in scope. In-pipe `|| true` absorbs jq failure on
-# corrupted JSON so the ERR trap fires only on genuine errors.
-tool_name=""
-tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || true)" || tool_name=""
-# tool_name != Workflow → out of scope → NO trace (this gate only records actual Workflow firings).
-[[ "${tool_name}" != "Workflow" ]] && exit 0
+  --- upstream form (this workflow EXECUTES an already-verified persisted plan; waives the in-script pair) ---
+  /* [AGENT-COMPOSITION]
+  verify: upstream clauded-docs/<N>
+  impl: glass-atrium-dev-shell
+  impl-computed: glass-atrium-dev-node
+  [/AGENT-COMPOSITION] */
+EOF
+}
 
-# Past this point the harness HAS fired PreToolUse(Workflow) — every subsequent exit emits a trace.
+# emit_entry_token_scaffold — the plan-ref (path 1) / [ENTRY-CLASS] (path 2) entry-signal tokens. SoT
+# reused by the entry-miss remediation and print_lint_template.
+emit_entry_token_scaffold() {
+  cat <<'EOF'
+  --- path (1): persisted plan (sizable DEV work — the DEFAULT) ---
+  log('plan-ref: clauded-docs/<DOC_ID>');
 
-# Extract tool_input.script. base64-wrap so a multi-line JS script with arbitrary control chars
-# passes through safely (the script body is the heuristic target).
-script_b64=""
-script_b64="$(printf '%s' "${input}" | jq -r '(.tool_input.script // "") | @base64' 2>/dev/null || true)" || script_b64=""
-if [[ -z "${script_b64}" ]]; then
-  emit_trace "pass-noscript" "0"
-  exit 0
-fi
+  --- path (2): genuinely simple, none of the sizable criteria hold ---
+  log('[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line>');
+EOF
+}
 
-script_src=""
-script_src="$(printf '%s' "${script_b64}" | base64 --decode 2>/dev/null)" || script_src=""
-# Empty/unparseable script → nothing to inspect → fail-open.
-if [[ -z "${script_src}" ]]; then
-  emit_trace "pass-noscript" "0"
-  exit 0
-fi
+# print_lint_template — --lint --template output: the full author self-attestation scaffold assembled
+# from the SAME scaffold emitters the gate's block remediations use (so the taught template is exactly
+# what the gate accepts). The [SIZE-EST] line mirrors the BLOCK_SIZEEST remediation format.
+print_lint_template() {
+  cat <<'EOF'
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate).
 
-# Script body is known from here — length feeds the trace's script_len field.
-script_len="${#script_src}"
+[AGENT-COMPOSITION] declaration (pick ONE form):
+EOF
+  emit_composition_scaffold
+  cat <<'EOF'
 
-# RESILIENCE ADVISORY (fail-open, stderr-only) — the fire/silent DECISION is computed by the python3
-# helper's per-site scan (#45) and returned on its THIRD output line; the nudge is PRINTED after the
-# helper runs (below, alongside the verdict dispatch) so it rides along with ANY verdict — never here,
-# never blocking. Decoupled from the [SIZE-EST] / entry / verify-stage / docroute verdicts.
+Entry signal (pick ONE path):
+EOF
+  emit_entry_token_scaffold
+  cat <<'EOF'
 
-# DECLARATION-CONSISTENCY MODEL (replaces the prior shape-inference machinery). The gate no longer
-# GUESSES which dev-* is the verify partner vs the gated implementer — that role information does not
-# exist in the code. Instead the author DECLARES it in an [AGENT-COMPOSITION] block and the helper
-# checks the declaration against the code:
-#   TIER A — broad quoted-literal presence scan. Feeds PRESENCE gates (dev_present + reviewer-existence
-#     for BLOCK_NOREV + entry + size-est) AND supplies the Tier-A dev TYPE SET for consistency check
-#     (b-prime). A data-array config field like agent:'dev-*' counts here, so a data-literal-only script is
-#     NOT exempt.
-#   TIER B — spawn-position scan (agent-call first-arg OR agentType field-value). The CODE-SIDE
-#     OPERAND of the consistency check: it yields the (position, agent-type) of every real dev/reviewer
-#     spawn. A data-field literal is DATA and excluded from Tier B.
-# The [AGENT-COMPOSITION] block is extracted from RAW src with a string-literal guard (an incidental
-# prompt/goal mention of the sentinel is NOT a declaration). The consistency checks (a)-(e), the b'
-# Tier-A coverage rule, and the Stage-2 DEV hard-gate are documented in the file header.
-# Comment-stripping is RETAINED for the spawn/target token scans (a commented spawn is not a real one;
-# string-aware so a URL inside a goal string does not false-strip a reviewer line).
-#
-# The helper emits a two-line output: line 1 = verdict token (BLOCK_NODECL | BLOCK_GRAMMAR |
-# BLOCK_NOREV | BLOCK_NOVERIFYDEV | BLOCK_DECLSPAWN | BLOCK_UNDECL | BLOCK_COMPUTED | BLOCK_ORDER |
-# BLOCK_UPSTREAM | BLOCK_DOCROUTE | BLOCK_SIZEEST | PASS), line 2 = entry marker (ENTRY_OK |
-# ENTRY_ADVISORY). CRITICAL — FAIL-OPEN DOMINANT: python3 absent, the helper erroring, OR any stdout
-# outside the enumerated tokens → treated as PASS (exit 0). A false-BLOCK of a legitimate workflow is
-# worse than a missed bypass, so every uncertainty resolves to allow. HONESTY: declaration truthfulness
-# is NOT mechanically verifiable — identical honor-system trust model as the sibling attestation tokens.
-#
-# python3 absent is a system misconfiguration — fail-open (never block on a tooling gap).
-if ! command -v python3 >/dev/null 2>&1; then
-  emit_trace "pass" "${script_len}"
-  exit 0
-fi
+Delegation-size self-attestation (at EVERY DEV spawn):
+  log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
+EOF
+}
 
-# Verdict helper. Reads DEV_SET (arg 1) + the script (stdin). Prints exactly a verdict token + marker.
-# Any internal exception → the helper itself prints PASS (belt-and-suspenders fail-open), and the bash
-# side ALSO treats a non-enumerated / errored helper as PASS.
-verdict_py="$(
-  cat <<'PY'
+# run_verdict_and_dispatch — the shared decode-to-dispatch TAIL, called by BOTH the hook envelope path
+# and the --lint preview path. It operates on the globals script_src + script_len (set by the caller)
+# and reuses the IDENTICAL verdict helper + DEV_SET + verdict dispatch, so a --lint preview verdict is
+# the gate verdict BY CONSTRUCTION (never a drift-prone reimplementation). emit_trace is LINT_MODE-guarded
+# so the preview writes zero trace lines; every verdict / exit path is otherwise unchanged.
+run_verdict_and_dispatch() {
+  # python3 absent is a system misconfiguration — fail-open (never block on a tooling gap). In lint mode
+  # emit_trace no-ops, so this is a clean "will pass" exit 0.
+  if ! command -v python3 >/dev/null 2>&1; then
+    emit_trace "pass" "${script_len}"
+    exit 0
+  fi
+
+  # Verdict helper. Reads DEV_SET (arg 1) + the script (stdin). Prints exactly a verdict token + marker.
+  # Any internal exception → the helper itself prints PASS (belt-and-suspenders fail-open), and the bash
+  # side ALSO treats a non-enumerated / errored helper as PASS.
+  local verdict_py
+  verdict_py="$(
+    cat <<'PY'
 import sys, re
 
 # --- retained: plan-ref / attestation literals (entry + size + docroute) ---
@@ -985,94 +986,81 @@ except SystemExit:
 except Exception:
     emit("PASS", "ENTRY_OK")
 PY
-)"
+  )"
 
-# Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
-# (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
-# unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
-helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT'
+  # Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
+  # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
+  # unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
+  helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT'
 
-# Parse the three lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
-# EOF on a short (2-line legacy / fail-open) output from tripping the fail-open ERR trap; each field is
-# then normalized to a known value so a stray/absent line collapses to the safe default.
-verdict="PASS"
-entry_marker="ENTRY_OK"
-resil_flag="RESIL_SILENT"
-{
-  IFS= read -r verdict
-  IFS= read -r entry_marker
-  IFS= read -r resil_flag
-} <<<"${helper_out}" || true
-[[ -z "${verdict}" ]] && verdict="PASS"
-[[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
-[[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
+  # Parse the three lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # EOF on a short (2-line legacy / fail-open) output from tripping the fail-open ERR trap; each field is
+  # then normalized to a known value so a stray/absent line collapses to the safe default.
+  verdict="PASS"
+  entry_marker="ENTRY_OK"
+  resil_flag="RESIL_SILENT"
+  {
+    IFS= read -r verdict
+    IFS= read -r entry_marker
+    IFS= read -r resil_flag
+  } <<<"${helper_out}" || true
+  [[ -z "${verdict}" ]] && verdict="PASS"
+  [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+  [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
 
-# RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
-# schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
-# BLOCK below). This NEVER alters the exit code.
-if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
-  print_resilience_advisory
-fi
+  # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
+  # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
+  # BLOCK below). This NEVER alters the exit code.
+  if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
+    print_resilience_advisory
+  fi
 
-# ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
-# NOT already a BLOCK_* (unquoted BLOCK* glob — fully DECOUPLED) AND the entry signal is
-# ENTRY_ADVISORY (DEV spawn with no plan-ref AND no [ENTRY-CLASS] token). It can NEVER fire when
-# entry_ok holds. Any python helper error yields PASS + ENTRY_OK (fail-open), so an internal error
-# never produces a spurious entry-block.
-if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
-  entry_reason="$(
-    cat <<'EOF'
+  # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
+  # NOT already a BLOCK_* (unquoted BLOCK* glob — fully DECOUPLED) AND the entry signal is
+  # ENTRY_ADVISORY (DEV spawn with no plan-ref AND no [ENTRY-CLASS] token). It can NEVER fire when
+  # entry_ok holds. Any python helper error yields PASS + ENTRY_OK (fail-open), so an internal error
+  # never produces a spurious entry-block.
+  if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
+    entry_reason="$(
+      cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this gate: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. Placement is not enforced (raw-scanned), so a commented token also satisfies this gate.
 
 COPY-PASTE SCAFFOLD (fill the <…> placeholders, persist the plan, then paste path (1) OR (2) into the script):
 
-  --- path (1): persisted plan (sizable DEV work — the DEFAULT) ---
-  log('plan-ref: clauded-docs/<DOC_ID>');
-
-  --- path (2): genuinely simple, none of the sizable criteria hold ---
-  log('[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line>');
 EOF
-  )"
-  block_and_exit "${entry_reason}" "block-entry"
-fi
+      emit_entry_token_scaffold
+    )"
+    block_and_exit "${entry_reason}" "block-entry"
+  fi
 
-# Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* token carries its own dedicated stderr
-# remediation. Default (PASS / any unenumerated token) → fail-open: emit_trace "pass" + exit 0. The
-# `*)` default is the VERDICT-PLUMBING TRAP guard's other half: every python-side BLOCK token MUST
-# have a case arm here (AND a block_and_exit ADR-2 allowlist entry AND a trace tag) or it silently
-# falls to PASS — the enumerated arms below cover the identical token set the helper can emit.
-trace_tag=""
-reason=""
-case "${verdict}" in
-  BLOCK_NODECL)
-    trace_tag="block-nodecl"
-    reason="$(
-      cat <<'EOF'
+  # Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* token carries its own dedicated stderr
+  # remediation. Default (PASS / any unenumerated token) → fail-open: emit_trace "pass" + exit 0. The
+  # `*)` default is the VERDICT-PLUMBING TRAP guard's other half: every python-side BLOCK token MUST
+  # have a case arm here (AND a block_and_exit ADR-2 allowlist entry AND a trace tag) or it silently
+  # falls to PASS — the enumerated arms below cover the identical token set the helper can emit.
+  trace_tag=""
+  reason=""
+  case "${verdict}" in
+    BLOCK_NODECL)
+      trace_tag="block-nodecl"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [ENTRY-CLASS] / [SIZE-EST], the composition declaration is a MANDATORY author self-attestation — its ABSENCE on a DEV workflow is a hard block (presence parity). It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
 
 COPY-PASTE SCAFFOLD — pick ONE form (canonical home: a /* */ block comment):
 
-  --- in-script verify form (the Stage-2 {qa-code-reviewer, DEV} pair lives in THIS script) ---
-  /* [AGENT-COMPOSITION]
-  verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
-  impl: glass-atrium-dev-nestjs
-  [/AGENT-COMPOSITION] */
-
-  --- upstream form (this workflow EXECUTES an already-verified persisted plan; waives the in-script pair) ---
-  /* [AGENT-COMPOSITION]
-  verify: upstream clauded-docs/<N>
-  impl: glass-atrium-dev-shell
-  impl-computed: glass-atrium-dev-node
-  [/AGENT-COMPOSITION] */
+EOF
+        emit_composition_scaffold
+        cat <<'EOF'
 
 Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV hard-gate is enforced HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
 EOF
-    )"
-    ;;
-  BLOCK_GRAMMAR)
-    trace_tag="block-grammar"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_GRAMMAR)
+      trace_tag="block-grammar"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (malformed composition declaration): this Workflow script carries an [AGENT-COMPOSITION] block, but its contents are not well-formed. A well-formed sentinel pair means you opted INTO the contract, so a decidable author error is a hard block (NOT fail-open) — silently ignoring a typo would run unvalidated DEV work while you believe the gate validated it. One of these decidable errors was detected: an unterminated block (opening sentinel with no [/AGENT-COMPOSITION] close); 2+ comment-resident blocks (ambiguous authority); a line that does not begin with a known key + colon; a duplicate key; an unknown agent name (validated against the runtime DEV_SET + the reviewer literal — NOTE names must be COMMA-separated: a space-separated pair like `verify: glass-atrium-qa-code-reviewer glass-atrium-dev-nestjs` reads as ONE unknown name and blocks here); a malformed `verify: upstream …` clause; or a team-form verify clause naming MORE THAN ONE dev-* type. Fix the block to the strict grammar below, then retry. HONESTY: only presence + grammar + code-consistency are mechanical; role truthfulness is honor-system.
 
 STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys drawn from {verify, impl, impl-computed}; agent names must be the reviewer literal or a runtime-DEV_SET dev-*; free text is admitted ONLY after a spaced-dash delimiter (e.g. `impl-computed: glass-atrium-dev-node — over the BATCHES array`):
@@ -1090,84 +1078,164 @@ STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys dr
 
 verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns).
 EOF
-    )"
-    ;;
-  BLOCK_NOREV)
-    trace_tag="block-norev"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_NOREV)
+      trace_tag="block-norev"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (no reviewer, zero-reviewer hard guarantee): this DEV workflow contains NO glass-atrium-qa-code-reviewer spawn token ANYWHERE. This guarantee is UNCONDITIONAL — it is evaluated independently of the declaration form, so the upstream form does NOT waive it: even a workflow executing an already-verified plan must still carry a real reviewer spawn somewhere. Either add the reviewer verify spawn (in-script verify form), OR — if this workflow only EXECUTES an already-verified persisted plan AND still spawns a reviewer — keep the reviewer and use the upstream form (verify: upstream clauded-docs/<N>, cited by a plan-ref token in the body).
 EOF
-    )"
-    ;;
-  BLOCK_NOVERIFYDEV)
-    trace_tag="block-noverifydev"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_NOVERIFYDEV)
+      trace_tag="block-noverifydev"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (verify team lacks the DEV half — Stage-2 DEV hard-gate): the [AGENT-COMPOSITION] verify clause does NOT name BOTH glass-atrium-qa-code-reviewer AND a glass-atrium-dev-* partner. The Plan Direction Verification (Stage-2) gate REQUIRES a DEV verdict (feasible|infeasible) alongside the reviewer verdict — a reviewer-only verify team is rejected. Fix the declaration: verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>. If there is NO genuine in-script verify DEV (e.g. a lone audit reviewer plus scattered implementation devs), this is the correct block — add a real {qa, dev} verify pair, or use the upstream form if executing an already-verified plan. HONESTY: this checks the DECLARATION names a DEV; it does NOT verify a feasible verdict was emitted (honor-system, same as the attestation tokens).
 EOF
-    )"
-    ;;
-  BLOCK_DECLSPAWN)
-    trace_tag="block-declspawn"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_DECLSPAWN)
+      trace_tag="block-declspawn"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (declared role never spawned): a literal agent role declared in [AGENT-COMPOSITION] (a verify-team member or an impl: spawn) has NO matching spawn-position token in the code (agent('<type>', …) first-arg OR agentType: '<type>'). The declaration must describe the ACTUAL spawns — a phantom verify team is falsifiable against code and blocks. Either add the missing spawn, correct the declared agentType, or (if the spawn is computed/indirect) move it to an impl-computed: line so it is checked via data-literal presence instead.
 EOF
-    )"
-    ;;
-  BLOCK_UNDECL)
-    trace_tag="block-undecl"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_UNDECL)
+      trace_tag="block-undecl"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (undeclared DEV spawn): a glass-atrium-dev-* type appears in the code whose agentType is NOT covered by any verify / impl / impl-computed clause in [AGENT-COMPOSITION]. Every DEV type MUST be declared (so a silently-added implementation dev cannot bypass the verify contract). This fires on TWO shapes: (1) a real Tier-B spawn (agent('glass-atrium-dev-*', …) OR agentType: '…') that is undeclared — add its agentType to an impl: (or impl-computed:) line, or remove the spawn; (2) PROSE-MENTION / config-array coverage (b-prime): an exact-quoted dev-* name that is NOT a real spawn — e.g. a dev-* name quoted inside a goal/prose string, or a dev literal parked in a data config array (agentType: b.agent over a BATCHES array) with ZERO agent() spawn positions. ONE-EDIT remediation for shape (2): if the quoted name is merely a MENTION, reword it so the dev-* name is NOT a quote-bounded literal (drop the quotes / paraphrase); if it IS a real (computed) spawn, declare its type on an impl-computed: line.
 EOF
-    )"
-    ;;
-  BLOCK_COMPUTED)
-    trace_tag="block-computed"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_COMPUTED)
+      trace_tag="block-computed"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (declared computed spawn absent): an impl-computed: agentType declared in [AGENT-COMPOSITION] does NOT appear as a data-literal anywhere in the code (e.g. inside the config array the computed agentType selects over). A computed/indirect spawn (agentType: b.agent / a ternary) is verified by the presence of its declared agent-type literals in the data. Add the agent-type literal to the config data, or correct the declared type.
 EOF
-    )"
-    ;;
-  BLOCK_ORDER)
-    trace_tag="block-order"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_ORDER)
+      trace_tag="block-order"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (ordering): a declared implementation dev-* spawn textually precedes EVERY glass-atrium-qa-code-reviewer spawn, so the implementation is not gated by the verify stage. On the greedy-earliest same-type binding (the first Tier-B spawn of a declared verify-dev type is the verify slot; the rest of the declared impl-type positions are implementation slots), some reviewer MUST precede the first implementation slot. Reorder so the {qa-code-reviewer, DEV} verify stage runs BEFORE the implementation agent(); OR, if the earlier dev-* is a pre-verify Discovery/Design step, use a NON-DEV agent for it (glass-atrium-intel-researcher / glass-atrium-intel-planner) so no dev-* precedes the reviewer; OR front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-*. (Computed/indirect impl spawns have no static position → ordering is honor-system for those.)
 EOF
-    )"
-    ;;
-  BLOCK_UPSTREAM)
-    trace_tag="block-upstream"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_UPSTREAM)
+      trace_tag="block-upstream"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (upstream plan not cited): the [AGENT-COMPOSITION] verify clause uses the upstream form (verify: upstream clauded-docs/<N>) but the referenced plan id is NOT cited by a plan-ref token in the script BODY (outside the declaration). The upstream form waives the in-script {qa, dev} verify PAIR-MAPPING and ORDERING ONLY — it does NOT waive the zero-reviewer hard guarantee, and it is honest ONLY for a workflow that genuinely executes an already-verified persisted plan. So the script must reference that plan. Add a plan-ref citation, e.g. log('plan-ref: clauded-docs/<N>'), matching the declared id; or switch to the in-script verify form. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — reference a REAL, already-verified persisted plan (same honor-system floor as a fake plan-ref).
 EOF
-    )"
-    ;;
-  BLOCK_DOCROUTE)
-    trace_tag="block-docroute"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_DOCROUTE)
+      trace_tag="block-docroute"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (doc-routing leak): this Workflow spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. Route the document to the monitor clauded-docs API (POST /api/clauded-docs); if a local path is only a /tmp staging buffer piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing. USER-REQUESTED LOCAL: stamp log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>') (path/line-scoped; concrete dotted path required). HONEST LIMIT: this is the WEAKEST string-heuristic layer; the runtime PreToolUse(Write) hook (block-doc-routing-leak.sh) is the primary guard.
 EOF
-    )"
-    ;;
-  BLOCK_SIZEEST)
-    trace_tag="block-sizeest"
-    reason="$(
-      cat <<'EOF'
+      )"
+      ;;
+    BLOCK_SIZEEST)
+      trace_tag="block-sizeest"
+      reason="$(
+        cat <<'EOF'
 [enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at EVERY DEV spawn: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
 EOF
-    )"
-    ;;
-  *)
-    emit_trace "pass" "${script_len}"
-    exit 0
-    ;;
-esac
+      )"
+      ;;
+    *)
+      emit_trace "pass" "${script_len}"
+      exit 0
+      ;;
+  esac
 
-block_and_exit "${reason}" "${trace_tag}"
+  block_and_exit "${reason}" "${trace_tag}"
+}
+
+# ==== entry point — arg parse MUST precede the unconditional stdin drain =============================
+# --lint [script-file] : OFFLINE preview (the verified prevention). Reads RAW script text from a file arg
+#   OR stdin (no JSON envelope, no jq/tool_name stage) and runs the IDENTICAL verdict helper + dispatch,
+#   so `exit 0 = will pass the gate` by construction. Side-effect-free: LINT_MODE guards emit_trace (no
+#   trace line written). --lint --template : print the canonical author-attestation scaffold and exit 0.
+if [[ "${1:-}" == "--lint" ]]; then
+  LINT_MODE=1
+  shift
+  if [[ "${1:-}" == "--template" ]]; then
+    print_lint_template
+    exit 0
+  fi
+  script_src=""
+  if [[ -n "${1:-}" ]]; then
+    # Explicit file arg — a missing/unreadable path MUST fail LOUD (exit 2), not swallow the read
+    # error into an empty script that reads as a clean "exit 0 = will pass". Only the stdin path and
+    # a readable-but-empty file mirror the hook no-script exit-0 (nothing to lint).
+    if [[ ! -r "${1}" ]]; then
+      printf '[lint] cannot read %s\n' "${1}" >&2
+      exit 2
+    fi
+    script_src="$(cat -- "${1}" 2>/dev/null)" || script_src=""
+  elif [[ ! -t 0 ]]; then
+    script_src="$(cat 2>/dev/null)" || script_src=""
+  fi
+  # Empty (readable-but-empty file, or empty stdin) → nothing to lint → exit 0 (a clean "will pass";
+  # mirrors the hook no-script path).
+  [[ -z "${script_src}" ]] && exit 0
+  script_len="${#script_src}"
+  # run_verdict_and_dispatch always terminates via exit (helper dispatch or python3-absent fail-open).
+  run_verdict_and_dispatch
+fi
+
+# ==== hook mode — PreToolUse(Workflow) envelope path (verdict path UNCHANGED) ========================
+# stdin non-interactive → drain once, otherwise fail-open.
+input=""
+if [[ ! -t 0 ]]; then
+  input="$(cat 2>/dev/null)" || input=""
+fi
+[[ -z "${input}" ]] && exit 0
+
+# Absent jq is a system misconfiguration — fail-open (never block on tooling gaps).
+if ! command -v jq >/dev/null 2>&1; then
+  printf '[enforce-workflow-verify-stage] jq not found on PATH; skipping (fail-open)\n' >&2
+  exit 0
+fi
+
+# tool_name gate — only the Workflow tool is in scope. In-pipe `|| true` absorbs jq failure on
+# corrupted JSON so the ERR trap fires only on genuine errors.
+tool_name=""
+tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || true)" || tool_name=""
+# tool_name != Workflow → out of scope → NO trace (this gate only records actual Workflow firings).
+[[ "${tool_name}" != "Workflow" ]] && exit 0
+
+# Past this point the harness HAS fired PreToolUse(Workflow) — every subsequent exit emits a trace.
+
+# Extract tool_input.script. base64-wrap so a multi-line JS script with arbitrary control chars
+# passes through safely (the script body is the heuristic target).
+script_b64=""
+script_b64="$(printf '%s' "${input}" | jq -r '(.tool_input.script // "") | @base64' 2>/dev/null || true)" || script_b64=""
+if [[ -z "${script_b64}" ]]; then
+  emit_trace "pass-noscript" "0"
+  exit 0
+fi
+
+script_src=""
+script_src="$(printf '%s' "${script_b64}" | base64 --decode 2>/dev/null)" || script_src=""
+# Empty/unparseable script → nothing to inspect → fail-open.
+if [[ -z "${script_src}" ]]; then
+  emit_trace "pass-noscript" "0"
+  exit 0
+fi
+
+# Script body is known from here — length feeds the trace's script_len field.
+script_len="${#script_src}"
+
+# Shared decode-to-dispatch tail (identical to the --lint path above).
+run_verdict_and_dispatch
