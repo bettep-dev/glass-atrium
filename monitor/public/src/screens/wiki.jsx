@@ -1238,11 +1238,8 @@ function SummaryStatW({ label, value, unit, tone, hint, bar }) {
 }
 
 function EmptyStateW({ message }) {
-	return (
-		<div className="placeholder m-3" style={{ padding: 20 }}>
-			{message}
-		</div>
-	);
+	const { EmptyState } = window.UI;
+	return <EmptyState message={message} className="m-3" />;
 }
 
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
@@ -1359,20 +1356,9 @@ function findTypeCountW(byType, noteType) {
 	return row && typeof row.count === "number" ? row.count : null;
 }
 
-// 정수 천단위 콤마 — 비숫자/음수/null → '—' (가짜 0 금지).
-function formatCountW(n) {
-	if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "—";
-	return n.toLocaleString("en-US");
-}
-
-// p95/소요 ms → human-readable. <1s = ms · <60s = 초 · 그 외 분/초.
-function formatDurationMsW(ms) {
-	if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "—";
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	const sec = Math.round(ms / 1000);
-	if (sec < 60) return `${sec}s`;
-	return `${Math.floor(sec / 60)}m ${sec % 60}s`;
-}
+// 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기. formatInt 가 wiki 가드(음수/NaN → '—') 승격 보유.
+const formatCountW = window.UI.formatInt;
+const formatDurationMsW = (ms) => window.UI.formatDuration(ms, "ms");
 
 // JSONB payload 직렬화 — 순환참조/직렬화 불가 시 안전 폴백.
 function stringifyPayloadW(payload) {

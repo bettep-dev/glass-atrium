@@ -164,7 +164,7 @@ function HealthOverviewKpiRow({ daemonState, pgState, hookState, hookFailState }
 // daemon 운영 주기 노트 — 서버 expected_next_at 에서 KST 일정으로 파생 (cron 변경 시 드리프트 방지).
 function daemonScheduleNoteH(expectedNextAt) {
   if (!expectedNextAt) return 'no schedule set';
-  const kst = formatDailyKstH(expectedNextAt);
+  const kst = window.UI.formatKstTime(expectedNextAt);
   return kst ? `daily at ${kst} ${window.UI.tzShortLabel()}` : 'no schedule set';
 }
 
@@ -367,7 +367,7 @@ const CARD_MODEL_BUILDERS = {
       metricLabel:    'Last run',
       metricValue:    d.last_run_at ? formatTimeShortH(d.last_run_at) : '—',
       subMetricLabel: 'STALENESS',
-      subMetricValue: typeof d.staleness_minutes === 'number' ? formatStaleness(d.staleness_minutes) : '—',
+      subMetricValue: typeof d.staleness_minutes === 'number' ? window.UI.formatDuration(d.staleness_minutes * 60) : '—',
     };
   },
 
@@ -495,7 +495,7 @@ function DaemonPayloadBody({ state, daemon, onRetry }) {
 
 function DaemonPayloadEntry({ entry }) {
   const payload = entry?.payload && typeof entry.payload === 'object' ? entry.payload : {};
-  const keys = Object.keys(payload);
+  const rows = window.HealthModel.toPayloadRows(payload);
   const sizeLabel = formatBytesH(entry?.payload_size_bytes);
 
   return (
@@ -503,34 +503,26 @@ function DaemonPayloadEntry({ entry }) {
       <summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
         {/* 12px→fs-body(12) run_date · 10.5px→fs-meta(11) 키수/크기. */}
         <span className="font-mono fs-body text-ink font-medium">{entry?.run_date || '—'}</span>
-        <span className="font-mono fs-meta text-faint">{keys.length} fields</span>
+        <span className="font-mono fs-meta text-faint">{rows.length} fields</span>
         <span className="ml-auto font-mono fs-meta text-dim">{sizeLabel}</span>
       </summary>
       <div className="px-3 pb-3">
-        {/* 10.5px→fs-meta(11) 빈 페이로드/JSON pre. */}
-        {keys.length === 0
+        {/* keyed/labeled 행 — humanized 키 dt + 값 dd (원시값 인라인·복합값 compact JSON). */}
+        {rows.length === 0
           ? <div className="fs-meta font-mono text-faint">Empty payload</div>
-          : <pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">{stringifyPayloadH(payload)}</pre>}
+          : <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 m-0 max-h-64 overflow-y-auto">
+              {rows.map((row) => [
+                <dt key={`${row.key}-k`} className="fs-meta text-faint whitespace-nowrap">{row.label}</dt>,
+                <dd key={`${row.key}-v`} className={`fs-meta font-mono text-dim m-0 min-w-0 break-words${row.complex ? ' whitespace-pre-wrap' : ''}`}>{row.text}</dd>,
+              ])}
+            </dl>}
       </div>
     </details>
   );
 }
 
-// payload_size_bytes → human-readable; 숫자 아님/음수 → '—'. B/KB 환산만 (페이로드 ≤수십 KB).
-function formatBytesH(bytes) {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-// JSONB 페이로드 직렬화 — 순환참조/직렬화 불가 시 안전 폴백 (raw render 깨짐 방지).
-function stringifyPayloadH(payload) {
-  try {
-    return JSON.stringify(payload, null, 2);
-  } catch (_e) {
-    return '[unreadable data]';
-  }
-}
+// 공용 formatBytes 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 숫자 아님/음수 → '—' 동일 가드.
+const formatBytesH = window.UI.formatBytes;
 
 // 훅 실패 로그 카드 (전 훅 raw 실패 이벤트).
 // 소스: /api/health/hook-failures?days=30&limit=50 — 전 훅 실패 로그 (failure_ts KST 표시).
@@ -604,6 +596,8 @@ function HookFailureBody({ state, onRetry }) {
   // 동일 (hook + table + error_kind + retry) 실패를 1행으로 접고 "and N similar" 로 표기 (T-HLT-3).
   // 대표 행 = 최신 failure_ts (입력이 시간 역순이면 첫 등장) · count 는 그룹 전건 수.
   const groups = consolidateHookFailuresH(failures);
+  // error_kind × hook × table 완전 집계 (서버 GROUP BY, LIMIT 미절단) — 접힘 기본 확장 표.
+  const breakdown = state.data?.error_kind_breakdown || [];
 
   // 테이블 5 컬럼: 시각(KST) / hook / table / error_kind(듀얼인코딩) / retry (D8 ≤5 컬럼).
   return (
@@ -613,10 +607,10 @@ function HookFailureBody({ state, onRetry }) {
         <thead>
           <tr className="text-dim text-left border-b border-line">
             <th className="py-2 pr-2 font-medium">Time ({window.UI.tzShortLabel()})</th>
-            <th className="py-2 px-2 font-medium">hook</th>
-            <th className="py-2 px-2 font-medium">table</th>
-            <th className="py-2 px-2 font-medium">error_kind</th>
-            <th className="py-2 pl-2 font-medium text-center">retry</th>
+            <th className="py-2 px-2 font-medium">Hook</th>
+            <th className="py-2 px-2 font-medium">Table</th>
+            <th className="py-2 px-2 font-medium">Error kind</th>
+            <th className="py-2 pl-2 font-medium text-center">Retry</th>
           </tr>
         </thead>
         <tbody>
@@ -627,7 +621,7 @@ function HookFailureBody({ state, onRetry }) {
             return (
               <tr key={g.key} className="border-b border-line/40">
                 <td className="py-2 pr-2 text-dim whitespace-nowrap">
-                  {formatTimeKstH(f.failure_ts)}
+                  {formatTimeShortH(f.failure_ts)}
                   {extra > 0 && <span className="fs-meta text-faint ml-1">and {extra} similar</span>}
                 </td>
                 <td className="py-2 px-2 text-ink truncate max-w-[120px]" title={f.hook_name}>{f.hook_name}</td>
@@ -656,28 +650,64 @@ function HookFailureBody({ state, onRetry }) {
           <span>retried</span>
         </span>
       </div>
+      <HookErrorKindBreakdownH breakdown={breakdown}/>
     </div>
   );
 }
 
-// ISO 타임스탬프(UTC) → 표시 tz MM/DD HH:MM 문자열 — 훅 실패 시각 표시용.
-// 서버 failure_ts 는 UTC(Z) → timeZone 옵션(config 시드 표시 tz)으로 환산. 파싱불가 → '—'.
-function formatTimeKstH(iso) {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString('ko-KR', {
-      timeZone: window.UI.getDisplayTimezone(),
-      month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    });
-  } catch (_e) {
-    return '—';
-  }
+// error_kind × hook × table 분해 표 — 접힘 기본(<details>), 24h 실패 카드 밀도 유지.
+// 서버 완전 집계(days 창, LIMIT 미절단) → 상단 목록이 잘려도 전체 구성 확인 가능 (P12).
+function HookErrorKindBreakdownH({ breakdown }) {
+  const { Icon } = window.UI;
+
+  if (!breakdown || breakdown.length === 0) return null;
+
+  const total = breakdown.reduce((sum, b) => sum + (b.count || 0), 0);
+  return (
+    <details className="mt-3 border-t border-line pt-2">
+      <summary className="fs-meta text-dim cursor-pointer select-none">
+        Breakdown by error kind · {total} total
+      </summary>
+      <div className="overflow-x-auto mt-2">
+        <table className="w-full fs-body font-mono border-collapse">
+          <thead>
+            <tr className="text-dim text-left border-b border-line">
+              <th className="py-1.5 pr-2 font-medium">Error kind</th>
+              <th className="py-1.5 px-2 font-medium">Hook</th>
+              <th className="py-1.5 px-2 font-medium">Table</th>
+              <th className="py-1.5 pl-2 font-medium text-right">Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((b, i) => {
+              const kind = hookErrorKindModelH(b.error_kind);
+              return (
+                <tr key={`${b.error_kind}|${b.hook_name}|${b.target_table}|${i}`} className="border-b border-line/40">
+                  <td className={`py-1.5 pr-2 whitespace-nowrap text-${kind.tone === 'ok' ? 'dim' : kind.tone}`}
+                    title={b.error_kind}>
+                    <span className="inline-flex items-center gap-1">
+                      {kind.icon ? <Icon name={kind.icon} size={14}/> : kind.symbol}
+                      {kind.label}
+                    </span>
+                  </td>
+                  <td className="py-1.5 px-2 text-ink truncate max-w-[120px]" title={b.hook_name}>{b.hook_name}</td>
+                  <td className="py-1.5 px-2 text-dim truncate max-w-[140px]" title={b.target_table}>{b.target_table}</td>
+                  <td className="py-1.5 pl-2 text-right text-ink tabular-nums">{b.count}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
 }
 
+// 공용 EmptyState atom(ui.jsx SoT) 위임 — 화면별 .placeholder 복제 제거.
+// m-3 외곽 여백 유지 — .card-body flush 안 점선 보더가 카드 외곽선에 붙는 문제 해소.
 function EmptyStateH({ message }) {
-  // m-3 외곽 여백 — .card-body flush 안 점선 보더가 카드 외곽선에 붙는 문제 해소.
-  return <div className="placeholder m-3" style={{ padding: 20 }}>{message}</div>;
+  const { EmptyState } = window.UI;
+  return <EmptyState message={message} className="m-3" />;
 }
 
 function ErrorBannerH({ title, detail, onRetry }) {
@@ -786,28 +816,6 @@ function enrichCostGuardWithAuthH(costGuard, daemon) {
 function formatTimeShortH(iso) {
   if (!iso) return '—';
   return window.UI.formatKstDateTime(iso);
-}
-
-// ISO 타임스탬프 → 표시 tz HH:MM 24시간 문자열 — daemon 일정 노트 파생용.
-// 서버 응답이 UTC(Z)여도 timeZone 옵션(config 시드 표시 tz)으로 환산 (예: KST 19:30Z → 04:30).
-function formatDailyKstH(iso) {
-  try {
-    return new Date(iso).toLocaleTimeString('ko-KR', {
-      timeZone: window.UI.getDisplayTimezone(),
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    });
-  } catch (_e) {
-    return '';
-  }
-}
-
-// staleness_minutes → human-readable; minutes/hours/days breakdown.
-function formatStaleness(minutes) {
-  if (minutes < 60)        return `${minutes}m`;
-  if (minutes < 60 * 24)   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  const days = Math.floor(minutes / (60 * 24));
-  const hours = Math.floor((minutes % (60 * 24)) / 60);
-  return `${days}d ${hours}h`;
 }
 
 window.ScreenHealth = ScreenHealth;

@@ -96,7 +96,9 @@ async function loadScreen(src: string, extraCtx: Record<string, unknown> = {}): 
   return ctx;
 }
 
-const outcomes = (await loadScreen(OUTCOMES_SRC)) as unknown as OutcomesHelpers;
+// outcomes.jsx delegates formatIntO to `window.UI.formatInt` at module top level →
+// provide a non-empty UI object so the eval does not throw (the value itself is unused here).
+const outcomes = (await loadScreen(OUTCOMES_SRC, { window: { UI: {} } })) as unknown as OutcomesHelpers;
 // agents.jsx reads `window.UI.STICKY_TH_STYLE` at module top level → provide a
 // non-empty UI object so the eval does not throw (the value itself is unused here).
 const agents = (await loadScreen(AGENTS_SRC, { window: { UI: {} } })) as unknown as AgentsHelpers;

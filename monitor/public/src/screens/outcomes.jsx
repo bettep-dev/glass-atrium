@@ -39,31 +39,31 @@ const TASK_TYPE_OPTIONS = [
   { value: 'cleanup',   label: 'cleanup'  },
 ];
 
-// result — core-outcome-record.md enum (5 values).
+// result — core-outcome-record.md enum (5 values). Labels sourced from RESULT_META (label SoT).
 const RESULT_OPTIONS = [
   { value: '',                   label: 'All'               },
-  { value: 'done',               label: 'done'              },
-  { value: 'done_with_concerns', label: 'done_w_concerns'   },
-  { value: 'blocked',            label: 'blocked'           },
-  { value: 'needs_context',      label: 'needs_context'     },
-  { value: 'fail',               label: 'fail'              },
+  { value: 'done',               label: 'Done'              },
+  { value: 'done_with_concerns', label: 'Done with caveats' },
+  { value: 'blocked',            label: 'Blocked'           },
+  { value: 'needs_context',      label: 'Needs info'        },
+  { value: 'fail',               label: 'Failed'            },
 ];
 
 // confidence axis (3 + null) — 'null' = writer omission.
 const CONFIDENCE_OPTIONS = [
   { value: '',       label: 'All'    },
-  { value: 'high',   label: 'high'   },
-  { value: 'medium', label: 'medium' },
-  { value: 'low',    label: 'low'    },
-  { value: 'null',   label: 'null'   },
+  { value: 'high',   label: 'High'   },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low',    label: 'Low'    },
+  { value: 'null',   label: 'None'   },
 ];
 
-// metric_pass axis (true/false/null).
+// metric_pass axis — writer self-check (true/false/none).
 const METRIC_PASS_OPTIONS = [
   { value: '',      label: 'All'  },
-  { value: 'true',  label: 'pass' },
-  { value: 'false', label: 'fail' },
-  { value: 'null',  label: 'null' },
+  { value: 'true',  label: 'Pass' },
+  { value: 'false', label: 'Fail' },
+  { value: 'null',  label: 'None' },
 ];
 
 // review_flag toggle.
@@ -100,6 +100,16 @@ const GRADER_BREAKDOWN_META = {
   unverified:    { label: 'Auto-check N/A',           symbol: '○', icon: 'circle', colorVar: '--dim'   },
   verified_fail: { label: 'Check failed',             symbol: '✕', icon: 'x',      colorVar: '--crit'  },
   not_measured:  { label: 'Pre-grader (legacy)',      symbol: '–', icon: 'minus',  colorVar: '--faint' },
+};
+
+// downgrade_origin 분포 순서 + 메타 — cross-analysis downgrade_breakdown 소비. writer_true_downgraded
+// (작성자 pass 주장 ↔ grader 불일치)가 가장 actionable. not_recorded(레거시 NULL)는 disagreement 아님 → muted.
+const DOWNGRADE_BREAKDOWN_ORDER = ['writer_true_downgraded', 'writer_false', 'synthesized', 'not_recorded'];
+const DOWNGRADE_BREAKDOWN_META = {
+  writer_true_downgraded: { label: 'Writer/grader disagreement', icon: 'warn',   colorVar: '--warn'  },
+  writer_false:           { label: 'Writer self-reported fail',  icon: 'minus',  colorVar: '--dim'   },
+  synthesized:            { label: 'Harness-reconstructed',      icon: 'circle', colorVar: '--faint' },
+  not_recorded:           { label: 'Pre-provenance (legacy)',    icon: 'minus',  colorVar: '--faint' },
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
@@ -223,17 +233,17 @@ function AttributionDevScopeO({ devScope }) {
       <div className="grid grid-cols-2 gap-2">
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
-          title="Budget-truncation (no-[COMPLETION] budget kill) rate for DEV agents over the selected window — the rolling baseline to watch for recurrence">
+          title="Rate at which DEV agents ran out of budget before reporting a result over the selected window — the rolling baseline to watch for recurrence">
           <div className="fs-micro font-mono text-dim">Budget-kill rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.budget_truncation_rate)}</div>
           <div className="fs-micro font-mono text-dim mt-0.5">{formatIntO(truncCount)} of {formatIntO(total)}</div>
         </div>
         <div
           className="bg-elev rounded-md p-2.5 border border-line"
-          title="Synthesized-outcome rate for DEV agents — harness recovery when no [COMPLETION] block was emitted (not a failure, a recovery artifact)">
+          title="Synthesized-outcome rate for DEV agents — harness recovery when the agent reported no result (not a failure, a recovery artifact)">
           <div className="fs-micro font-mono text-dim">Synthesized rate</div>
           <div className="fs-stat font-semibold text-ink mt-1 font-mono">{formatRateO(devScope.synthesized_rate)}</div>
-          <div className="fs-micro font-mono text-dim mt-0.5">no-[COMPLETION] recovery</div>
+          <div className="fs-micro font-mono text-dim mt-0.5">recovered from missing report</div>
         </div>
       </div>
     </div>
@@ -269,7 +279,7 @@ const ATTRIBUTION_GRID_BARS = 30;
 // 'failed' = fail+blocked 집계 (fail 단독 아님) → 라벨 'Fail+blocked'. needs_context 는 설계상 제외.
 const HEATMAP_FILTER_OPTIONS = [
   { value: 'all',    label: 'All',          tone: 'info' },
-  { value: 'empty',  label: 'EMPTY only',   tone: 'warn' },
+  { value: 'empty',  label: 'No self-check', tone: 'warn' },
   { value: 'failed', label: 'Fail+blocked', tone: 'crit' },
   { value: 'done',   label: 'Done only',    tone: 'ok'   },
 ];
@@ -320,9 +330,9 @@ function isNonActionableAgentO(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS_O) 
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) = core-outcome-record.md Mismatch Review Trigger → ⚠ 기호 표식.
 const CROSSTAB_CONFIDENCE_ROWS = ['high', 'medium', 'low', 'null'];
 const CROSSTAB_METRIC_COLS = [
-  { key: 'true',  label: 'pass' },
-  { key: 'false', label: 'fail' },
-  { key: 'null',  label: 'null' },
+  { key: 'true',  label: 'Pass' },
+  { key: 'false', label: 'Fail' },
+  { key: 'null',  label: 'None' },
 ];
 
 // cells[].metric_pass (boolean|null) → 'true'|'false'|'null' 문자열 키 (열 매핑용).
@@ -474,7 +484,7 @@ function ScreenOutcomes({ onNav }) {
         const byResultCount    = buildByResultCountMapO(overall.by_result);
         // 합성 복구행(reconstructed) 서브카운트 — KPI headline 을 writer-emitted 로 분리.
         const byResultReconstructed = buildByResultReconstructedMapO(overall.by_result);
-        const agentStack       = buildAgentStackO(perResult, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
+        const agentStack       = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
         const bucketSparks     = buildBucketSparkMapO(perResult, ANALYTICS_KPI_ORDER);
         // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
         const needsContextCount = extractResultCountO(overall.by_result, 'needs_context');
@@ -940,7 +950,7 @@ function AgentStackedBarCard({ state, onRetry }) {
   const { CardHead } = window.UI;
   return (
     <div className="card">
-      <CardHead title="Results by agent" sub="Approximate"/>
+      <CardHead title="Results by agent" sub="Exact — reconciles with KPI totals"/>
       <div className="card-body">
         <AgentStackedBarBody state={state} onRetry={onRetry}/>
       </div>
@@ -966,7 +976,7 @@ function AgentStackedBarBody({ state, onRetry }) {
         {agentStack.map((row) => <AgentStackedBarRow key={row.agent} row={row}/>)}
       </div>
       <AgentStackedBarLegend/>
-      {/* per-result top-10 4개 독립 리스트 stitch → cutoff(#11↓) 기여 누락 가능 = 비권위 근사치 고지. */}
+      {/* by_agent_result 단일 쿼리 → per-agent total 이 KPI 합계와 정확히 정합 (구 4-list stitch cutoff 제거). */}
       <div className="fs-micro text-faint font-mono mt-2 leading-relaxed">
         <span className="inline-flex items-center gap-1">
           <GlyphO name="diamond" className="text-dim"/> = placeholder bucket (not a real agent)
@@ -1347,8 +1357,34 @@ function GraderBreakdownBody({ state, onRetry }) {
           );
         })}
       </div>
+      <DowngradeBreakdownRowO breakdown={state.data?.overall?.downgrade_breakdown}/>
       <TaskTypeGraderCrosstabO rows={state.data?.overall?.task_type_grader_breakdown}/>
     </>
+  );
+}
+
+// downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
+// 주장 ↔ grader 불일치)를 우선 노출, 나머지 provenance 는 muted. 전 표본 0 → 미렌더(no fake zero).
+function DowngradeBreakdownRowO({ breakdown }) {
+  if (!breakdown) return null;
+  const segments = DOWNGRADE_BREAKDOWN_ORDER
+    .map((key) => ({ key, count: Number(breakdown[key]) || 0 }))
+    .filter((s) => s.count > 0);
+  if (segments.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-line fs-micro font-mono">
+      <span className="text-faint uppercase tracking-wider">downgrade origin</span>
+      {segments.map(({ key, count }) => {
+        const meta = DOWNGRADE_BREAKDOWN_META[key];
+        return (
+          <span key={key} className="inline-flex items-center gap-1" style={{ color: `rgb(var(${meta.colorVar}))` }} title={key}>
+            <GlyphO name={meta.icon}/>
+            {meta.label}: {formatIntO(count)}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1462,7 +1498,7 @@ function CrosstabBody({ state, onRetry }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <EmptyStateO message="No confidence×metric_pass records in this period."/>;
+    return <EmptyStateO message="No confidence-vs-self-check records in this period."/>;
   }
 
   const max = crosstabMaxCountO(crosstab.byCell);
@@ -1473,7 +1509,7 @@ function CrosstabBody({ state, onRetry }) {
         <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
-              <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">conf \ metric</th>
+              <th scope="col" className="text-left text-dim font-medium px-2 py-1.5 border-b border-line">confidence \ self-check</th>
               {CROSSTAB_METRIC_COLS.map((col) => (
                 <th key={col.key} scope="col" className="text-center text-dim font-medium px-2 py-1.5 border-b border-line">
                   {col.label}
@@ -1510,7 +1546,7 @@ function CrosstabRow({ rowKey, byCell, max }) {
 
   return (
     <tr>
-      <th scope="row" className="text-left text-ink font-medium px-2 py-1.5 border-b border-line">{rowKey}</th>
+      <th scope="row" className="text-left text-ink font-medium px-2 py-1.5 border-b border-line">{rowKey === 'null' ? 'None' : rowKey}</th>
       {CROSSTAB_METRIC_COLS.map((col) => {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
         return <CrosstabCell key={col.key} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
@@ -1676,12 +1712,12 @@ function LoopEventsBody({ state, onRetry }) {
 
 // 칩 축 driver — label, axis key (filter prop), 옵션 목록을 1행 1축으로 표현.
 const CHIP_FILTER_AXES = [
-  { axis: 'task_type',   label: 'task_type',   options: TASK_TYPE_OPTIONS   },
-  { axis: 'result',      label: 'result',      options: RESULT_OPTIONS      },
-  { axis: 'confidence',  label: 'confidence',  options: CONFIDENCE_OPTIONS  },
-  { axis: 'metric_pass', label: 'metric_pass', options: METRIC_PASS_OPTIONS },
-  { axis: 'review_flag', label: 'review_flag', options: REVIEW_FLAG_OPTIONS },
-  { axis: 'attribution_source', label: 'attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
+  { axis: 'task_type',   label: 'Task type',   options: TASK_TYPE_OPTIONS   },
+  { axis: 'result',      label: 'Result',      options: RESULT_OPTIONS      },
+  { axis: 'confidence',  label: 'Confidence',  options: CONFIDENCE_OPTIONS  },
+  { axis: 'metric_pass', label: 'Self-check',  options: METRIC_PASS_OPTIONS },
+  { axis: 'review_flag', label: 'Flagged',     options: REVIEW_FLAG_OPTIONS },
+  { axis: 'attribution_source', label: 'Attribution', options: ATTRIBUTION_SOURCE_OPTIONS },
 ];
 
 function FilterSidebar({
@@ -2092,7 +2128,7 @@ function MetricPassMarkO({ metricPass }) {
       className="fs-meta font-mono inline-flex items-center align-middle"
       style={{ color: isPass ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
       role="img"
-      aria-label={`metric_pass ${label}`}>
+      aria-label={`self-check ${label}`}>
       <GlyphO name={iconName}/>
     </span>
   );
@@ -2117,7 +2153,7 @@ function QaScoreDotsO({ qaScore }) {
       className="inline-flex items-center gap-0.5 align-middle"
       role="img"
       aria-label={`qa score ${avg.toFixed(1)} of 5`}
-      title={`qa_score: ${qaScore}`}>
+      title={`QA score: ${qaScore}`}>
       {[0, 1, 2, 3, 4].map((i) => (
         <span
           key={i}
@@ -2311,8 +2347,8 @@ function DetailModal({ detailRow, detailState, rows, onClose, onNav }) {
 }
 
 function reviewFlagLabel(flag) {
-  if (flag === true)  return 'true';
-  if (flag === false) return 'false';
+  if (flag === true)  return 'Yes';
+  if (flag === false) return 'No';
   return '—';
 }
 
@@ -2333,7 +2369,7 @@ function DetailMetadata({ row, detail }) {
 
   return (
     <div className="grid grid-cols-2 gap-3 mb-4 fs-meta font-mono">
-      <MetaField label="confidence"        value={row?.confidence ?? '—'}/>
+      <MetaField label="Confidence"         value={row?.confidence ?? '—'}/>
       <MetaField label="Self-reported pass" value={row?.metric_pass == null ? '—' : String(row.metric_pass)}/>
       <div>
         <div className="fs-micro text-faint uppercase tracking-wider">Automatic check</div>
@@ -2342,9 +2378,9 @@ function DetailMetadata({ row, detail }) {
           {grader.label}
         </div>
       </div>
-      <MetaField label="revision_count" value={formatIntO(row?.revision_count || 0)}/>
+      <MetaField label="Reworks" value={formatIntO(row?.revision_count || 0)}/>
       <div>
-        <div className="fs-micro text-faint uppercase tracking-wider">review_flag</div>
+        <div className="fs-micro text-faint uppercase tracking-wider">Flagged for review</div>
         <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
           {reviewFlagLabel(row?.review_flag)}
           {row?.review_flag === true && window.UI.reviewFlagReasons(row).map((r) => (
@@ -2353,13 +2389,22 @@ function DetailMetadata({ row, detail }) {
         </div>
       </div>
       {row?.poisoned_window === true && (
-        <MetaField label="poisoned_window" value="true — quarantined window (excluded from analysis)"/>
+        <MetaField label="Quarantined window" value="true — excluded from analysis"/>
       )}
       {evalSignal != null && (
-        <MetaField label="evaluative_signal" value={formatEvaluativeSignalO(evalSignal)}/>
+        <MetaField label="User signal" value={formatEvaluativeSignalO(evalSignal)}/>
       )}
       {metricType != null && metricType !== '' && (
-        <MetaField label="metric_type" value={String(metricType)}/>
+        <MetaField label="Check type" value={String(metricType)}/>
+      )}
+      {parseQaScoreAvgO(row?.qa_score) != null && (
+        <div>
+          <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
+          <div className="text-ink inline-flex items-center gap-2">
+            <QaScoreDotsO qaScore={row.qa_score}/>
+            <span className="font-mono text-dim">{row.qa_score}</span>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2477,11 +2522,8 @@ function MarkdownView({ markdown }) {
 // ----- Shared chrome --------------------------------------------------------
 
 function EmptyStateO({ message }) {
-  return (
-    <div className="placeholder" style={{ padding: 20 }}>
-      {message}
-    </div>
-  );
+  const { EmptyState } = window.UI;
+  return <EmptyState message={message} />;
 }
 
 function ErrorBannerO({ title, detail, onRetry }) {
@@ -2740,10 +2782,8 @@ function truncateO(str, len) {
   return str.slice(0, len - 1) + '…';
 }
 
-function formatIntO(value) {
-  const n = Number(value) || 0;
-  return n.toLocaleString('en-US');
-}
+// 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
+const formatIntO = window.UI.formatInt;
 
 // record_ts = real-UTC ISO (server .toISOString()) → 표시 tz 'MM/DD HH:mm' 표시.
 // 직접 getHours()/getMinutes() = 브라우저 로컬 tz → 사용자 지시 'tz 명시' 위반 →
@@ -2847,26 +2887,26 @@ function buildByResultReconstructedMapO(byResult) {
   return out;
 }
 
-// per-result cross-analysis x4 응답 → 에이전트별 카운트 stitch. 인덱스 = resultOrder.
-// reconstructed = 각 by_agent row 의 reconstructed_count 누적(합성 복구행) — headline 을
-// writer-emitted(total - reconstructed)로 분리, KpiBucket sub-line 과 동일 패턴. 필드 부재(구 응답) → 0.
+// cross-analysis by_agent_result (단일 GROUP BY (agent, result)) → 에이전트별 스택 행.
+// 이전 per-result top-10 4-list stitch(는 #11↓ agent 를 소리없이 누락 = 근사치)를 대체 —
+// 서버가 canonical agent 전체의 모든 result 를 한 쿼리로 반환하므로 per-agent total 이 정확히 정합.
+// resultOrder(4-KPI) 밖 result(needs_context 등)는 스택 미표시 → total/byResult 에서 제외(막대 합 100%).
+// reconstructed = reconstructed_count 누적(합성 복구행) — headline 을 writer-emitted(total-reconstructed)로 분리.
 // 반환: total desc top-N.
-function buildAgentStackO(perResultPayloads, resultOrder, topN) {
+function buildAgentStackO(byAgentResult, resultOrder, topN) {
+  const resultSet = new Set(resultOrder);
   const byAgent = new Map();
-  perResultPayloads.forEach((payload, i) => {
-    const result = resultOrder[i];
-    const rows = Array.isArray(payload?.by_agent_top_10) ? payload.by_agent_top_10 : [];
-    for (const row of rows) {
-      if (!row || typeof row.agent !== 'string') continue;
-      const entry = byAgent.get(row.agent) || { agent: row.agent, byResult: {}, total: 0, reconstructed: 0 };
-      const count = Number(row.count) || 0;
-      const reconstructed = Math.min(Number(row.reconstructed_count) || 0, count);
-      entry.byResult[result] = count;
-      entry.total += count;
-      entry.reconstructed += reconstructed;
-      byAgent.set(row.agent, entry);
-    }
-  });
+  const rows = Array.isArray(byAgentResult) ? byAgentResult : [];
+  for (const row of rows) {
+    if (!row || typeof row.agent !== 'string' || !resultSet.has(row.result)) continue;
+    const entry = byAgent.get(row.agent) || { agent: row.agent, byResult: {}, total: 0, reconstructed: 0 };
+    const count = Number(row.count) || 0;
+    const reconstructed = Math.min(Number(row.reconstructed_count) || 0, count);
+    entry.byResult[row.result] = (entry.byResult[row.result] || 0) + count;
+    entry.total += count;
+    entry.reconstructed += reconstructed;
+    byAgent.set(row.agent, entry);
+  }
   return Array.from(byAgent.values())
     .sort((a, b) => b.total - a.total)
     .slice(0, topN);

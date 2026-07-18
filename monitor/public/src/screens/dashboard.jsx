@@ -437,7 +437,6 @@ function KpiRow({ kpiState, cost7State, onNav, onRetry }) {
 
   // last_etl_at = 진짜 UTC 순간 → 공용 KST 포매터. ETL 스탬프는 cost_events 를 설명 → 비용 KPI 에 귀속 (F01, F05).
   const etlSuffix = k.last_etl_at ? ` · ETL ${window.UI.formatKstDateTime(k.last_etl_at)}` : '';
-  const breakageCount = (Number(k.fail_count_24h) || 0) + (Number(k.blocked_count_24h) || 0);
   const tz = window.UI.tzShortLabel();
 
   return (
@@ -461,10 +460,11 @@ function KpiRow({ kpiState, cost7State, onNav, onRetry }) {
         sparkColor="rgb(var(--accent))"
         onClick={() => onNav('cost')}
       />
-      {/* 단일 스칼라(24h 윈도우) → sparkline 부적합. blocked 는 실패 아님 → info 톤 분리 표기 (F05/A2). */}
+      {/* 단일 스칼라(24h 윈도우) → sparkline 부적합. headline = fail 전용 (RESULT_META: blocked 는 실패 아님) ·
+          blocked 는 info 톤으로 sub-hint 에만 분리 표기 (F05/A2). */}
       <KPI
         label="Failures (24 h)"
-        value={formatInt(breakageCount)}
+        value={formatInt(k.fail_count_24h)}
         hint={<>Failed {formatInt(k.fail_count_24h)} · <span className="text-info">Blocked {formatInt(k.blocked_count_24h)}</span></>}
         onClick={() => onNav('outcomes')}
       />
@@ -797,7 +797,7 @@ function TokenDonutBody({ state, todayPoint, totalTokens, onRetry }) {
       segments={segments}
       total={totalTokens}
       centerPrimary={formatTokenCompact(totalTokens)}
-      centerSecondary={todayPoint.date.slice(2)}
+      centerSecondary={window.UI.formatKstDate(todayPoint.date)}
     />
   );
 }

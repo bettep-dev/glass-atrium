@@ -156,6 +156,8 @@ function ScreenAgents() {
   // lifecycleState → start/stop/completed gap(orphan spawn) + duration 분포 패널 (built, never rendered).
   const [activationState, setActivationState] = useStateAg(INITIAL_FETCH_STATE);
   const [lifecycleState,  setLifecycleState]  = useStateAg(INITIAL_FETCH_STATE);
+  // overageState → budget_overages(P95 옆 near-cap 뱃지). 404/503(테이블 미배포) 시 error → 뱃지 미렌더.
+  const [overageState,    setOverageState]    = useStateAg(INITIAL_FETCH_STATE);
 
   // selectedAgent = 키보드/행 하이라이트 (드릴 진입점) · 드로어 열림과 독립 — 하이라이트는 클릭·포커스로,
   // 드로어는 클릭/Enter 로만 (open trigger 분리).
@@ -183,7 +185,7 @@ function ScreenAgents() {
     const mainSetters = [
       setSummaryState, setLatencyState, setSuccessState, setRevisionState,
       setReviewState, setReviewByAgentState, setFailureState,
-      setActivationState, setLifecycleState,
+      setActivationState, setLifecycleState, setOverageState,
     ];
     mainSetters.forEach((s) => s(INITIAL_FETCH_STATE));
 
@@ -203,6 +205,8 @@ function ScreenAgents() {
       // 미렌더 orphan 데이터 surface (P2): activation 이벤트 + lifecycle gap. days 토글 동기.
       runFetchAg(`/api/telemetry/activations?days=${days}`, ctrl.signal, setActivationState),
       runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl.signal, setLifecycleState),
+      // budget_overages near-cap 뱃지 — days ∈ {7,30,90} 서버 allowlist 와 동일.
+      runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl.signal, setOverageState),
     ];
 
     return () => ctrl.abort();
@@ -279,6 +283,12 @@ function ScreenAgents() {
   const failureByAgent = useMemoAg(
     () => buildFailureMap(readyData(failureState)?.rows ?? []),
     [failureState],
+  );
+
+  // budget_overages near-cap 뱃지 — agent_type == agent_id (현 cycle convention) 직접 key join.
+  const overageByAgent = useMemoAg(
+    () => buildOverageMap(readyData(overageState)?.rows ?? []),
+    [overageState],
   );
 
   // 정렬 상태를 화면 레벨로 승격 — 테이블과 드로어 Prev/Next nav 가 동일 정렬 순서를 공유 (AC3).
@@ -368,6 +378,7 @@ function ScreenAgents() {
           onRetry={triggerRefresh}
           trendByAgent={trendByAgent}
           failureByAgent={failureByAgent}
+          overageByAgent={overageByAgent}
         />
       </div>
 
@@ -450,7 +461,7 @@ const SUMMARY_SORT_OPTIONS = [
 const MINIBAR_WIDTH = 50;
 const MINIBAR_HEIGHT = 20;
 
-function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent }) {
+function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
   const { CardHead, Badge } = window.UI;
   const data = readyData(state);
   const totalAgents = data?.meta?.total_agents ?? 0;
@@ -477,12 +488,13 @@ function AgentSummaryCard({ state, days, sortBy, onSortChange, density, onDensit
         onRetry={onRetry}
         trendByAgent={trendByAgent}
         failureByAgent={failureByAgent}
+        overageByAgent={overageByAgent}
       />
     </div>
   );
 }
 
-function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent }) {
+function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensityChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent }) {
   if (state.status === 'loading') {
     return <div className="card-body"><ChartSkeletonAg height={240} aria-label="Loading agent performance"/></div>;
   }
@@ -494,9 +506,10 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensit
     return <div className="card-body"><EmptyStateAg message={`No agent activity in the last ${days} days.`}/></div>;
   }
 
-  const sorted = sortAgentSummary(agents, sortBy, failureByAgent);
-  // %-of-total 분모 (T-AGT-3) — 전체 agent runs 합. 0 이면 셀에서 dash 처리.
-  const totalRuns = agents.reduce((sum, a) => sum + (Number(a.runs) || 0), 0);
+  // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
+  const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
+  const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
+  const sorted = sortAgentSummary(actionable, sortBy, failureByAgent);
   const isCompact = density === 'compact';
 
   return (
@@ -533,19 +546,44 @@ function AgentSummaryBody({ state, days, sortBy, onSortChange, density, onDensit
       <div className={`card-body flush${isCompact ? ' ag-density-compact' : ''}`}>
         <AgentSummaryTable
           agents={sorted}
+          pseudoAgents={pseudoAgents}
           days={days}
-          totalRuns={totalRuns}
           selectedAgent={selectedAgent}
           onSelect={onSelect}
           trendByAgent={trendByAgent}
           failureByAgent={failureByAgent}
+          overageByAgent={overageByAgent}
         />
       </div>
     </>
   );
 }
 
-function AgentSummaryTable({ agents, days, totalRuns, selectedAgent, onSelect, trendByAgent, failureByAgent }) {
+// 두 성공률 임계 세트가 의도적으로 다른 이유 한 줄 설명 — 사용자 혼동 차단 (CF8).
+const SUMMARY_THRESHOLD_CAPTION =
+  `Row tone tracks operational health (≥${SUMMARY_SUCCESS_OK_PCT}% ok · ≥${SUMMARY_SUCCESS_WARN_PCT}% warn); `
+  + `the agent×task matrix flags earlier at ${(SUCCESS_RATE_OK_THRESHOLD * 100).toFixed(0)}/${(SUCCESS_RATE_WARN_THRESHOLD * 100).toFixed(0)}% to surface review priority.`;
+
+// 총 컬럼 수 (footer colSpan) — badge·Agent·Runs·Launches·Success·Needs info·Breakages·P95·Trend·status = 10.
+const SUMMARY_TABLE_COLSPAN = 10;
+
+function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent }) {
+  const [showPseudo, setShowPseudo] = useStateAg(false);
+  const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
+
+  const renderRow = (a) => (
+    <AgentSummaryRow
+      key={a.agent_id}
+      agent={a}
+      days={days}
+      isSelected={selectedAgent === a.agent_id}
+      onSelect={onSelect}
+      trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
+      failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
+      overage={overageByAgent ? overageByAgent.get(a.agent_id) : null}
+    />
+  );
+
   return (
     <div className="agent-table-minibars overflow-auto">
       <table className="tbl">
@@ -554,7 +592,6 @@ function AgentSummaryTable({ agents, days, totalRuns, selectedAgent, onSelect, t
             <th style={STICKY_TH_STYLE}></th>
             <th style={STICKY_TH_STYLE}>Agent</th>
             <th className="num" style={STICKY_TH_STYLE} title="Times the agent finished and reported a result (outcome records)">Runs</th>
-            <th className="num" style={STICKY_TH_STYLE} title="Share of all agents' runs in this window">% of total</th>
             <th className="num" style={STICKY_TH_STYLE}>Launches</th>
             <th className="num" style={STICKY_TH_STYLE}>Success rate</th>
             <th className="num" style={STICKY_TH_STYLE}>Needs info</th>
@@ -565,34 +602,36 @@ function AgentSummaryTable({ agents, days, totalRuns, selectedAgent, onSelect, t
           </tr>
         </thead>
         <tbody>
-          {agents.map((a) => (
-            <AgentSummaryRow
-              key={a.agent_id}
-              agent={a}
-              days={days}
-              totalRuns={totalRuns}
-              isSelected={selectedAgent === a.agent_id}
-              onSelect={onSelect}
-              trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
-              failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
-            />
-          ))}
+          {agents.map(renderRow)}
         </tbody>
+        {pseudoRows.length > 0 && (
+          <tbody>
+            <tr>
+              <td colSpan={SUMMARY_TABLE_COLSPAN} className="border-t border-line">
+                <button
+                  className="w-full text-left fs-micro font-mono text-faint px-1 py-1.5 hover:text-dim"
+                  onClick={() => setShowPseudo((v) => !v)}
+                  aria-expanded={showPseudo}>
+                  {showPseudo ? '▾' : '▸'} {pseudoRows.length} non-actionable {pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)
+                </button>
+              </td>
+            </tr>
+            {showPseudo && pseudoRows.map(renderRow)}
+          </tbody>
+        )}
       </table>
+      <div className="fs-micro font-mono text-faint px-1 py-2 border-t border-line">{SUMMARY_THRESHOLD_CAPTION}</div>
     </div>
   );
 }
 
-function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, failure }) {
-  const { AgentBadge, StatusDot, MiniBars, Bar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
+function AgentSummaryRow({ agent, days, isSelected, onSelect, trend, failure, overage }) {
+  const { AgentBadge, StatusDot, MiniBars, Bar, Badge, resolveBadge, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
   const nonActionableLabel = isSyntheticAgent ? SYNTHETIC_SENTINEL_LABEL : UNKNOWN_AGENT_LABEL;
   const nonActionableTitle = isSyntheticAgent ? SYNTHETIC_SENTINEL_TITLE : UNKNOWN_AGENT_TITLE;
-  const runs = Number(agent.runs) || 0;
-  // %-of-total (T-AGT-3) — 전체 runs 합 대비 이 agent 비중. 분모 0 이면 셀에서 dash.
-  const safeTotalRuns = Number(totalRuns) || 0;
   const successPct = Number(agent.success_pct) || 0;
   const successTone = successRateTone(successPct);
   // matrix 분모 = runs − needs_context (서버 success_pct 와 동일 semantics) → 'N.N% (x/y)' 재구성.
@@ -608,6 +647,12 @@ function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, 
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
   const p95Tone = p95LatencyTone(p95Sec);
   const p95Glyph = p95GlyphTone(p95Sec);
+  // near-cap 뱃지 — overage 행 존재 = 실제 tool_use 예산 크로싱 발생. 미존재/count 0 → 미렌더.
+  const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
+  const overageBadge = overageCount > 0 ? resolveBadge('budget_near_cap') : null;
+  const overageTitle = overage
+    ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${Number(overage.max_crossed_pct) || 0}% of budget`
+    : null;
   const status = mapStatusToTone(agent.status);
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
@@ -646,15 +691,6 @@ function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, 
         </div>
       </td>
       <td className="num">{formatIntAg(agent.runs)}</td>
-      <td
-        className="num"
-        title={safeTotalRuns > 0
-          ? `${formatIntAg(runs)} of ${formatIntAg(safeTotalRuns)} total runs in this window`
-          : 'no runs in this window'}>
-        <span className={safeTotalRuns > 0 && runs > 0 ? 'text-dim' : 'text-faint'}>
-          {safeTotalRuns > 0 ? formatPctWithDenominator(runs, safeTotalRuns) : '—'}
-        </span>
-      </td>
       <td className="num" title={formatInvocationsTitle(invocations, days)}>
         <span className={invocationsTone(invocations, days)}>
           {invocations == null ? '—' : formatIntAg(invocations)}
@@ -700,16 +736,23 @@ function AgentSummaryRow({ agent, days, totalRuns, isSelected, onSelect, trend, 
             종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
             전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
             글리프는 옆 초 수치(스크린리더 가독)를 강화하는 장식 → aria-hidden. 측정 불가(null)면 미렌더. */}
-        {p95Sec != null ? (
-          <span className="inline-flex items-center justify-end gap-1">
-            <span className={p95Tone || 'text-ok'} aria-hidden="true">
-              <Icon name={TONE_ICON[p95Glyph]} size={13}/>
+        <span className="inline-flex items-center justify-end gap-1.5">
+          {p95Sec != null ? (
+            <span className="inline-flex items-center gap-1">
+              <span className={p95Tone || 'text-ok'} aria-hidden="true">
+                <Icon name={TONE_ICON[p95Glyph]} size={13}/>
+              </span>
+              <span className={p95Tone}>{formatDurationSecAg(p95Sec)}</span>
             </span>
-            <span className={p95Tone}>{`${p95Sec.toFixed(1)}s`}</span>
-          </span>
-        ) : (
-          <span className="text-faint">—</span>
-        )}
+          ) : (
+            <span className="text-faint">—</span>
+          )}
+          {overageBadge && (
+            <Badge role="status" tone={overageBadge.tone} title={overageTitle}>
+              {overageBadge.pill}
+            </Badge>
+          )}
+        </span>
       </td>
       <td>
         {hasTrend ? (
@@ -813,11 +856,11 @@ function LatencyBars({ agents }) {
             <div className="flex items-center gap-2 mb-1.5">
               <AgentBadge a={{ id: a.agent_id, name: a.agent_name }} size={18}/>
               <span className="flex-1 truncate">{a.agent_name}</span>
-              <span className="font-mono text-faint fs-micro">P95 {(p95 / 1000).toFixed(1)}s</span>
+              <span className="font-mono text-faint fs-micro">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
               className="h-2.5 bg-sunken rounded-full relative overflow-hidden"
-              aria-label={`p50 ${(p50/1000).toFixed(1)}s, p95 ${(p95/1000).toFixed(1)}s, p99 ${(p99/1000).toFixed(1)}s`}>
+              aria-label={`p50 ${formatDurationMsAg(p50)}, p95 ${formatDurationMsAg(p95)}, p99 ${formatDurationMsAg(p99)}`}>
               {LATENCY_LAYERS.map((layer) => (
                 <div
                   key={layer.key}
@@ -1311,7 +1354,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   // latency 행 (p50/p95/p99) — 미페어 시 error/empty 독립 표기.
   const latency = (readyData(latencyState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
   const p95Sec = latency?.p95_ms != null ? Number(latency.p95_ms) / 1000 : null;
-  const p95Display = p95Sec == null ? '—' : `${p95Sec.toFixed(1)}s`;
+  const p95Display = p95Sec == null ? '—' : formatDurationSecAg(p95Sec);
   const trend = trendByAgent ? trendByAgent.get(drawerAgent) : null;
   const hasTrend = Array.isArray(trend) && trend.length > 0;
 
@@ -1351,7 +1394,7 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
   }
-  const fmt = (ms) => ms == null ? '—' : `${(Number(ms) / 1000).toFixed(1)}s`;
+  const fmt = (ms) => ms == null ? '—' : formatDurationMsAg(ms);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-3">
@@ -2241,15 +2284,15 @@ function QualityHealthTimelineTooltip({ active, payload }) {
       </div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--warn))' }}/>
-        empty_metric {formatIntAg(row.empty_metric_count)}
+        No self-check {formatIntAg(row.empty_metric_count)}
         <span style={{ color: 'rgb(var(--faint))' }}>· {row.empty_metric_ratio_pct.toFixed(1)}%</span>
       </div>
       <div style={tooltipRowStyle}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
-        polar_mismatch {formatIntAg(row.polar_mismatch_count)}
+        Confidence mismatch {formatIntAg(row.polar_mismatch_count)}
       </div>
       <div style={{ color: 'rgb(var(--crit))', marginTop: 4 }}>
-        review_flag rate {row.review_flag_ratio_pct.toFixed(1)}%
+        Flagged rate {row.review_flag_ratio_pct.toFixed(1)}%
       </div>
     </div>
   );
@@ -2604,11 +2647,8 @@ function SkillActivationRecentRow({ row }) {
 // Shared chrome
 
 function EmptyStateAg({ message }) {
-  return (
-    <div className="placeholder" style={{ padding: 20 }}>
-      {message}
-    </div>
-  );
+  const { EmptyState } = window.UI;
+  return <EmptyState message={message} />;
 }
 
 function ErrorBannerAg({ title, detail, onRetry }) {
@@ -3015,36 +3055,30 @@ function buildFailureMap(rows) {
   return map;
 }
 
+// budget-overages API → agent_type-keyed Map (near-cap 뱃지 조회). 미배포 테이블(빈 rows) → 빈 Map.
+function buildOverageMap(rows) {
+  const map = new Map();
+  if (!Array.isArray(rows)) return map;
+  for (const r of rows) {
+    if (!r || !r.agent_type) continue;
+    map.set(r.agent_type, {
+      overage_count: Number(r.overage_count) || 0,
+      max_crossed_pct: Number(r.max_crossed_pct) || 0,
+      latest_ts: r.latest_ts || null,
+    });
+  }
+  return map;
+}
+
 // null/undefined → null · otherwise Number(value).
 function nullableNumber(value) {
   if (value === null || value === undefined) return null;
   return Number(value);
 }
 
-function formatIntAg(value) {
-  const n = Number(value) || 0;
-  return n.toLocaleString('en-US');
-}
-
-function formatRelativeTimeAg(iso) {
-  if (!iso) return '—';
-  try {
-    const target = new Date(iso).getTime();
-    if (!Number.isFinite(target)) return '—';
-    const now = Date.now();
-    const diffSec = Math.round((target - now) / 1000);
-    const abs = Math.abs(diffSec);
-    const past = diffSec < 0;
-    let label;
-    if (abs < 60)         label = `${abs}s`;
-    else if (abs < 3600)  label = `${Math.round(abs / 60)}m`;
-    else if (abs < 86400) label = `${Math.round(abs / 3600)}h`;
-    else                  label = `${Math.round(abs / 86400)}d`;
-    return past ? `${label} ago` : `in ${label}`;
-  } catch (_e) {
-    return String(iso);
-  }
-}
+// 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기
+const formatIntAg = window.UI.formatInt;
+const formatRelativeTimeAg = window.UI.formatRelativeTime;
 
 // Tone / formatting helpers
 
@@ -3161,19 +3195,18 @@ function orphanRatioTone(ratio) {
   return 'text-dim';
 }
 
-// duration_sec → 사람이 읽는 단위 (초/분/시) — lifecycle p95 표시.
-function formatDurationSecAg(sec) {
-  const n = Number(sec) || 0;
-  if (n < 60)    return `${n.toFixed(0)}s`;
-  if (n < 3600)  return `${(n / 60).toFixed(1)}m`;
-  return `${(n / 3600).toFixed(1)}h`;
-}
+// duration_sec → 인간화 (≥60s "Mm Ss") — 공용 formatDuration(ui.jsx SoT)에 위임, lifecycle p95 표시.
+const formatDurationSecAg = (sec) => window.UI.formatDuration(sec);
+
+// latency_ms → 인간화 (<1s "NNNms" · ≥60s "Mm Ss") — 공용 formatDuration('ms') 위임, p50/p95/p99 표시.
+const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
 
 // MiniBars 추세 색상 — error / 성공률 미달 / OK 의 3-단 (rgb literal — Tailwind 외 SVG fill).
+// 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
+//   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
 function trendBarColor(status, successPct) {
-  if (status === 'error') return 'rgb(220 38 38)';
-  if (successPct < 90)    return 'rgb(217 119 6)';
-  return 'rgb(5 150 105)';
+  const tone = status === 'error' ? 'crit' : successPct < 90 ? 'warn' : 'ok';
+  return window.UI.toneVarColor(tone);
 }
 
 // MiniBars 추세 — success-rate 일별 합계를 agent × date 로 group → 최근 7일 series.

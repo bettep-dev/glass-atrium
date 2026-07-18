@@ -115,6 +115,43 @@ function computeOverviewKpis(states) {
   return { okCount, degradedCount, infoCount, staleCount, totalCount };
 }
 
+// daemon_run_payload jsonb 키 → 표시 라벨 (P18) — 동적/write-only 키라 하드코딩 맵 없이 humanize.
+// snake/kebab/camel → 공백 분리 후 첫 글자만 대문자 (키 원형 보존, 과도 변형 금지).
+function humanizePayloadKey(key) {
+  const raw = String(key == null ? '' : key).trim();
+  if (raw === '') return '—';
+  const spaced = raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+// jsonb 값 → 표시 문자열 + 복합 여부. null/undefined→'—' · 원시값→문자열 · 객체/배열→compact JSON.
+// 직렬화 불가(순환참조 등) → 안전 폴백 (raw render 깨짐 방지).
+function formatPayloadValue(value) {
+  if (value === null || value === undefined) return { text: '—', complex: false };
+  const kind = typeof value;
+  if (kind === 'string' || kind === 'number' || kind === 'boolean') {
+    return { text: String(value), complex: false };
+  }
+  try {
+    return { text: JSON.stringify(value), complex: true };
+  } catch (_e) {
+    return { text: '[unreadable data]', complex: true };
+  }
+}
+
+// payload 객체 → keyed/labeled 렌더 행 [{ key, label, text, complex }] (P18).
+// 비객체/배열/null → [] (빈 상태 위임). 카드 렌더층이 이 순수 변환만 소비.
+function toPayloadRows(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  return Object.keys(payload).map((key) => {
+    const formatted = formatPayloadValue(payload[key]);
+    return { key, label: humanizePayloadKey(key), text: formatted.text, complex: formatted.complex };
+  });
+}
+
 window.HealthModel = {
   HEALTH_CARD_DEFS,
   DAEMON_STALE_THRESHOLD_MIN,
@@ -122,4 +159,7 @@ window.HealthModel = {
   resolveDaemonDisplayMeta,
   resolveCardFacts,
   computeOverviewKpis,
+  humanizePayloadKey,
+  formatPayloadValue,
+  toPayloadRows,
 };

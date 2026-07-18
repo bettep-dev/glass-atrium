@@ -121,9 +121,22 @@ export interface HookFailureEntry {
   retry_attempted: boolean;
 }
 
+// error_kind × hook_name × target_table aggregate over the same days window. Unlike
+// `failures` (LIMIT-truncated row list), this is a COMPLETE GROUP BY count — the
+// expandable breakdown reconciles the full composition the truncated list cannot.
+export interface HookErrorKindBreakdownEntry {
+  error_kind: HookErrorKindValue;
+  hook_name: string;
+  target_table: string;
+  count: number;
+}
+
 export interface HealthHookFailuresResponse {
   days: number;
   failures: HookFailureEntry[];
+  // Complete per-kind composition over the days window (days-param dependent, NOT
+  // LIMIT-truncated) — feeds the collapsed-by-default errorKind breakdown table.
+  error_kind_breakdown: HookErrorKindBreakdownEntry[];
   // Fixed-24h recency aggregates (days-param independent — `failures` is windowed + LIMIT-
   // truncated, so the FE cannot derive these). Tone: warn = count_24h > 0 · crit = unretried_count_24h > 0.
   count_24h: number;

@@ -27,8 +27,11 @@ import { parseIdParam } from "../route-params.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
   ApproveProposalResponse,
+  CorrectionSignalAgreement,
+  CorrectionSignalRow,
   ImprovementConfidenceDistribution,
   ImprovementConfidenceTierBucket,
+  ImprovementCorrectionSignalsResponse,
   ImprovementCtmEpmBuckets,
   ImprovementErrorBody,
   ImprovementFilterEcho,
@@ -281,6 +284,7 @@ export async function registerImprovementRoutes(app: FastifyInstance): Promise<v
   // autoagent_loop_events) populated by hooks/daemons.
   app.get("/api/improvement/learning-log", handleLearningLog);
   app.get("/api/improvement/loop-events", handleLoopEvents);
+  app.get("/api/improvement/correction-signals", handleCorrectionSignals);
   // Interactive approval writers. approve shells to daemon-apply.sh (high-impact; an
   // unwanted apply is recoverable via the agents-bak before-image restore below). reject
   // is a status-only, low-risk transition to 'rejected'.
@@ -980,6 +984,115 @@ async function handleLoopEvents(
   } catch (error) {
     return failWithDb(request, reply, "/api/improvement/loop-events", error);
   }
+}
+
+interface CorrectionSignalAggDbRow {
+  total: bigint;
+  both_matched: bigint;
+  stage1_only: bigint;
+  stage2_only: bigint;
+  neither_matched: bigint;
+  revision_delta_sum: bigint;
+  // MAX over an integer column → integer; COALESCE(...,0) removes the null.
+  revision_delta_max: number;
+  latest_event_ts: Date | null;
+}
+
+interface CorrectionSignalDbRow {
+  id: bigint;
+  event_ts: Date;
+  task_type: string;
+  stage1_matched: boolean;
+  stage2_matched: boolean;
+  final_detected: boolean;
+  revision_count_delta: number;
+}
+
+// Surfaces core.correction_signals — the orphaned detection-quality table. The
+// aggregate is table-wide (the table is small and single-purpose); the list is a
+// bounded recency slice. Read-only. No registry gate: correction_signals has no
+// agent column (keyed on task_type + outcome_id), so there is nothing to scope.
+async function handleCorrectionSignals(
+  request: FastifyRequest<{ Querystring: OrphanQuerystring }>,
+  reply: FastifyReply,
+): Promise<ImprovementCorrectionSignalsResponse | ImprovementErrorBody> {
+  const start = Date.now();
+
+  const limit = parseOrphanLimit(request.query.limit);
+  if (limit === null) {
+    return reply.code(400).send(invalidParam("limit"));
+  }
+
+  const prisma = getPrisma();
+  try {
+    const [aggRows, signalRows] = await Promise.all([
+      prisma.$queryRaw<CorrectionSignalAggDbRow[]>`
+        SELECT
+          COUNT(*)::bigint                                                      AS total,
+          COUNT(*) FILTER (WHERE stage1_matched AND stage2_matched)::bigint     AS both_matched,
+          COUNT(*) FILTER (WHERE stage1_matched AND NOT stage2_matched)::bigint AS stage1_only,
+          COUNT(*) FILTER (WHERE NOT stage1_matched AND stage2_matched)::bigint AS stage2_only,
+          COUNT(*) FILTER (WHERE NOT stage1_matched AND NOT stage2_matched)::bigint AS neither_matched,
+          COALESCE(SUM(revision_count_delta), 0)::bigint                        AS revision_delta_sum,
+          COALESCE(MAX(revision_count_delta), 0)::int                           AS revision_delta_max,
+          MAX(event_ts)                                                         AS latest_event_ts
+        FROM core.correction_signals
+      `,
+      prisma.$queryRaw<CorrectionSignalDbRow[]>`
+        SELECT id, event_ts, task_type, stage1_matched, stage2_matched, final_detected, revision_count_delta
+        FROM core.correction_signals
+        ORDER BY event_ts DESC, id DESC
+        LIMIT ${limit}
+      `,
+    ]);
+
+    const agg = aggRows[0];
+    const both = agg === undefined ? 0 : bigintToNumber(agg.both_matched);
+    const neither = agg === undefined ? 0 : bigintToNumber(agg.neither_matched);
+    const agreement: CorrectionSignalAgreement = {
+      both_matched: both,
+      stage1_only: agg === undefined ? 0 : bigintToNumber(agg.stage1_only),
+      stage2_only: agg === undefined ? 0 : bigintToNumber(agg.stage2_only),
+      neither_matched: neither,
+      agreement_count: both + neither,
+      total: agg === undefined ? 0 : bigintToNumber(agg.total),
+    };
+
+    const signals = signalRows.map(rowToCorrectionSignal);
+    const payload: ImprovementCorrectionSignalsResponse = {
+      fetched_at: new Date().toISOString(),
+      total_signals: agreement.total,
+      agreement,
+      revision_delta_sum: agg === undefined ? 0 : bigintToNumber(agg.revision_delta_sum),
+      revision_delta_max: agg === undefined ? 0 : agg.revision_delta_max,
+      latest_event_ts:
+        agg === undefined || agg.latest_event_ts === null
+          ? null
+          : agg.latest_event_ts.toISOString(),
+      returned: signals.length,
+      signals,
+    };
+
+    request.log.info(
+      { route: "/api/improvement/correction-signals", durationMs: Date.now() - start },
+      "improvement correction-signals query complete",
+    );
+    return payload;
+  } catch (error) {
+    return failWithDb(request, reply, "/api/improvement/correction-signals", error);
+  }
+}
+
+function rowToCorrectionSignal(row: CorrectionSignalDbRow): CorrectionSignalRow {
+  return {
+    id: bigintToNumber(row.id),
+    event_ts: row.event_ts.toISOString(),
+    task_type: row.task_type,
+    stage1_matched: row.stage1_matched,
+    stage2_matched: row.stage2_matched,
+    final_detected: row.final_detected,
+    revision_count_delta: row.revision_count_delta,
+  };
 }
 
 // POST /api/improvement/:id/approve
@@ -1760,11 +1873,22 @@ export function buildStyleRefSummary(
     verifiedEligibleTotal += row.verified_eligible;
   }
 
+  // Split derivation from the same rollup counts:
+  //   greenfield = emitted rows NOT verify-eligible (style_ref = 'greenfield')
+  //   unverified = verify-eligible rows that did NOT cross-verify (fake numerator)
+  const greenfieldTotal = emissionCountTotal - verifiedEligibleTotal;
+  const unverifiedTotal = verifiedEligibleTotal - verifiedTrueTotal;
+
   return {
     window_days: STYLE_REF_WINDOW_DAYS,
     agents,
     overall_emission_rate: safeRatio(emissionCountTotal, emissionTotalTotal),
     overall_verified_rate: safeRatio(verifiedTrueTotal, verifiedEligibleTotal),
+    overall_verified_count: verifiedTrueTotal,
+    overall_unverified_count: unverifiedTotal,
+    overall_greenfield_count: greenfieldTotal,
+    // fake_rate = unverified / verify-eligible = 1 - verified_rate; null when eligible = 0.
+    overall_fake_rate: safeRatio(unverifiedTotal, verifiedEligibleTotal),
   };
 }
 

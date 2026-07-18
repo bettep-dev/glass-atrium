@@ -30,11 +30,13 @@ import type {
   LiteralOmissionBreakdown,
   OutcomeConfidenceLiteral,
   OutcomeCrossAnalysisByAgent,
+  OutcomeCrossAnalysisByAgentResult,
   OutcomeCrossAnalysisByResult,
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
   OutcomeCrossAnalysisResponse,
   OutcomeDetailResponse,
+  OutcomeDowngradeBreakdown,
   OutcomeDowngradeOrigin,
   OutcomeGraderBreakdown,
   OutcomeGraderVerdict,
@@ -216,6 +218,8 @@ interface OutcomeSearchDbRow {
   poisoned_window: boolean;
   // Raw attribution_source, selected verbatim (no ::text cast — column is text).
   attribution_source: string | null;
+  // Raw qa_score text (shape cov=N,ins=N,instr=N,clar=N); NULL for non-QA rows.
+  qa_score: string | null;
 }
 
 interface OutcomeDetailDbRow {
@@ -240,6 +244,8 @@ interface OutcomeDetailDbRow {
   cid: string | null;
   summary: string;
   review_flag: boolean;
+  // Raw qa_score text (shape cov=N,ins=N,instr=N,clar=N); NULL for non-QA rows.
+  qa_score: string | null;
   body_md: string | null;
   inserted_at: Date;
 }
@@ -281,6 +287,23 @@ interface GraderVerdictDbRow {
 interface TaskTypeGraderDbRow {
   task_type: string;
   grader_verdict: string | null;
+  count: bigint;
+}
+
+// One (agent, result, count) group for the stacked-bar single-query SoT. Replaces
+// the client's 4-list per-result stitching — one GROUP BY (agent, result) carries
+// every canonical agent's ALL results so per-agent totals reconcile exactly.
+interface ByAgentResultDbRow {
+  agent: string;
+  result: string;
+  count: bigint;
+  reconstructed_count: bigint;
+}
+
+// One (downgrade_origin-or-NULL, count) group. NULL (legacy rows predating the
+// downgrade_origin column) folds into `not_recorded`, never a disagreement bucket.
+interface DowngradeOriginDbRow {
+  downgrade_origin: string | null;
   count: bigint;
 }
 
@@ -439,7 +462,8 @@ async function handleSearch(
           cid,
           (body_md IS NOT NULL)          AS has_body_md,
           poisoned_window,
-          attribution_source
+          attribution_source,
+          qa_score
         FROM core.outcomes
         ${whereClause}
         ${sortFragment}
@@ -490,6 +514,7 @@ async function handleSearch(
           has_body_md: row.has_body_md,
           poisoned_window: row.poisoned_window,
           attribution_source: row.attribution_source,
+          qa_score: row.qa_score,
         },
       ];
     });
@@ -555,6 +580,7 @@ async function handleDetail(
         cid,
         summary,
         review_flag,
+        qa_score,
         body_md,
         inserted_at
       FROM core.outcomes
@@ -609,6 +635,7 @@ async function handleDetail(
       correlation_id: row.correlation_id,
       cid: row.cid,
       review_flag: row.review_flag,
+      qa_score: row.qa_score,
       body_md: row.body_md,
       inserted_at: row.inserted_at.toISOString(),
     };
@@ -668,7 +695,9 @@ async function handleCrossAnalysis(
       cellRows,
       byResultRows,
       byAgentRows,
+      byAgentResultRows,
       graderRows,
+      downgradeRows,
       taskTypeGraderRows,
       countRows,
       baseCountRows,
@@ -709,6 +738,24 @@ async function handleCrossAnalysis(
           ORDER BY count DESC, agent ASC
           LIMIT ${TOP_AGENTS_LIMIT}
         `,
+        // Per-(agent, result) exact counts — the stacked-bar single-query SoT.
+        // Registry-scoped identically to by_agent_top_10 (byAgentMembership); the
+        // canonical registry is a small bounded set, so every agent's ALL results
+        // fit without a LIMIT and client-side per-agent totals reconcile exactly
+        // (no #11+ cutoff loss from the former per-result 4-list stitch).
+        prisma.$queryRaw<ByAgentResultDbRow[]>`
+          SELECT
+            agent,
+            result::text     AS result,
+            COUNT(*)::bigint AS count,
+            (COUNT(*) FILTER (
+              WHERE ${buildReconstructedRowFilter()}
+            ))::bigint       AS reconstructed_count
+          FROM core.outcomes
+          ${analyticsWhere}
+          ${byAgentMembership}
+          GROUP BY agent, result
+        `,
         // Artifact-vs-quality: count per grader_verdict bucket. NULL (legacy
         // un-graded) arrives as its own group and is folded into `not_measured`
         // by the pivot below — NEVER into a fail bucket, and NEVER in the ratio
@@ -720,6 +767,16 @@ async function handleCrossAnalysis(
           FROM core.outcomes
           ${analyticsWhere}
           GROUP BY grader_verdict
+        `,
+        // downgrade_origin distribution — writer/grader disagreement provenance.
+        // NULL (legacy) folds into `not_recorded` by the pivot, never a bucket.
+        prisma.$queryRaw<DowngradeOriginDbRow[]>`
+          SELECT
+            downgrade_origin::text AS downgrade_origin,
+            COUNT(*)::bigint       AS count
+          FROM core.outcomes
+          ${analyticsWhere}
+          GROUP BY downgrade_origin
         `,
         // 9-type × grader_verdict crosstab ('측정 분포' 9-type render support).
         prisma.$queryRaw<TaskTypeGraderDbRow[]>`
@@ -752,6 +809,7 @@ async function handleCrossAnalysis(
     const excludedPoisonedCount = bigintToNumber(baseTotalRow.total) - total;
 
     const graderBreakdown = buildGraderBreakdown(graderRows);
+    const downgradeBreakdown = buildDowngradeBreakdown(downgradeRows);
     const taskTypeGraderBreakdown = buildTaskTypeGraderBreakdown(taskTypeGraderRows);
 
     // Build the 12-cell grid: 4 confidence values (high/medium/low/null) ×
@@ -799,6 +857,18 @@ async function handleCrossAnalysis(
       count: bigintToNumber(row.count),
       reconstructed_count: bigintToNumber(row.reconstructed_count),
     }));
+    // Defensive enum filter — drop rows with a drifted result value (mirrors by_result).
+    const byAgentResult: OutcomeCrossAnalysisByAgentResult[] = byAgentResultRows.flatMap((row) => {
+      if (!ALLOWED_RESULTS.has(row.result as OutcomeResultLiteral)) return [];
+      return [
+        {
+          agent: row.agent,
+          result: row.result as OutcomeResultLiteral,
+          count: bigintToNumber(row.count),
+          reconstructed_count: bigintToNumber(row.reconstructed_count),
+        },
+      ];
+    });
 
     const filterEcho = toCrossAnalysisFilterEcho(filters);
 
@@ -822,7 +892,9 @@ async function handleCrossAnalysis(
       cells,
       by_result: byResult,
       by_agent_top_10: byAgentTop10,
+      by_agent_result: byAgentResult,
       grader_breakdown: graderBreakdown,
+      downgrade_breakdown: downgradeBreakdown,
       task_type_grader_breakdown: taskTypeGraderBreakdown,
       fetched_at: new Date().toISOString(),
     };
@@ -1359,6 +1431,42 @@ function buildGraderBreakdown(rows: GraderVerdictDbRow[]): OutcomeGraderBreakdow
     verified_pass_rate: ratioOrNull(verifiedPass, gradedTotal),
     unverified_rate: ratioOrNull(unverified, gradedTotal),
     verified_fail_rate: ratioOrNull(verifiedFail, gradedTotal),
+  };
+}
+
+// Pivot the (downgrade_origin, count) groups into the fixed 4-slot breakdown.
+// NULL and any unrecognized drifted value accumulate into `not_recorded` (legacy
+// rows predate the column) — never a disagreement bucket, mirroring the NULL
+// discipline of buildGraderBreakdown.
+function buildDowngradeBreakdown(rows: DowngradeOriginDbRow[]): OutcomeDowngradeBreakdown {
+  let writerTrueDowngraded = 0;
+  let writerFalse = 0;
+  let synthesized = 0;
+  let notRecorded = 0;
+
+  for (const row of rows) {
+    const count = bigintToNumber(row.count);
+    switch (normalizeDowngradeOrigin(row.downgrade_origin)) {
+      case "writer_true_downgraded":
+        writerTrueDowngraded += count;
+        break;
+      case "writer_false":
+        writerFalse += count;
+        break;
+      case "synthesized":
+        synthesized += count;
+        break;
+      case null:
+        notRecorded += count;
+        break;
+    }
+  }
+
+  return {
+    writer_true_downgraded: writerTrueDowngraded,
+    writer_false: writerFalse,
+    synthesized,
+    not_recorded: notRecorded,
   };
 }
 

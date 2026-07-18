@@ -114,6 +114,20 @@ function Pill({ children, tone='neutral' }) {
     : <Badge role="status" tone={tone} glyph={false}>{children}</Badge>;
 }
 
+// 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
+//   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
+//   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
+//   타입은 6단 스케일 토큰(fs-meta/fs-micro)로 고정 — 화면별 off-scale px 리터럴 제거.
+function EmptyState({ message, hint, action, className='' }) {
+  return (
+    <div className={`placeholder ${className}`.trim()}>
+      <div className="fs-meta">{message}</div>
+      {hint && <div className="fs-micro text-faint mt-1">{hint}</div>}
+      {action && <div className="mt-2 flex justify-center">{action}</div>}
+    </div>
+  );
+}
+
 // 공용 sub-card primitive — 중첩 섹션/메트릭 타일용 작은 면. ring-1 + rounded-lg + 일정 padding.
 //   발산하던 idiom(드로어 1px-hairline · DetailMetric ring 타일 · .i-card-shadow)이 후속 wave 에서 여기로 수렴.
 //   sunken=true → bg-sunken(더 들어간 면) · 기본 bg-elev(떠오른 면). label 지정 시 uppercase --dim 섹션 라벨.
@@ -200,6 +214,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor' }) {
 // rgb(var(--token) / opacity) 소비 — 하우스 비례막대 관용구(cost.jsx TurnStopReasonTable) 그대로.
 const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint' };
 
+// tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
+//   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
+function toneVarColor(tone) {
+  return `rgb(var(${BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral}))`;
+}
+
 // CSS width:% 가로 막대. tone 은 CSS class 가 아닌 KEY 를 받아 내부에서 토큰으로 매핑.
 // 색은 단독 인코딩 금지 — 길이가 크기를, showValue/aria 가 수치를 전달(dual-encoding a11y).
 function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
@@ -272,24 +292,28 @@ function StatusDot({ status }) {
   return <span className={`inline-block w-1.5 h-1.5 rounded-full ${map[status] || 'bg-faint'} mr-1.5 align-middle`}></span>;
 }
 
-// 22px 원형 컬러 배지 + 이니셜. named agent 외에는 id 해시로 안정 색상
-const AGENT_NAMED_COLORS = {
-  'glass-atrium-intel-planner':    '#3b82f6',
-  'glass-atrium-intel-researcher': '#8b5cf6',
-  writer:     '#06b6d4',
-  reviewer:   '#10b981',
-  coder:      '#f59e0b',
-  analyst:    '#ec4899',
+// 22px 원형 컬러 배지 + 이니셜. 색 = categorical agent 팔레트 토큰(tokens.css --agent-N, 테마 불변) —
+//   하드코딩 hex 제거. named agent 는 고정 슬롯, 그 외 id 해시로 안정 배정.
+const AGENT_NAMED_VAR = {
+  'glass-atrium-intel-planner':    '--agent-1',
+  'glass-atrium-intel-researcher': '--agent-2',
+  writer:   '--agent-3',
+  reviewer: '--agent-4',
+  coder:    '--agent-5',
+  analyst:  '--agent-6',
 };
-const AGENT_PALETTE = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#ef4444', '#0891b2'];
+const AGENT_PALETTE_VARS = ['--agent-1', '--agent-2', '--agent-3', '--agent-4', '--agent-5', '--agent-6', '--agent-7', '--agent-8'];
 
 function AgentBadge({ a, size=22 }) {
   const id = a?.id || a?.agent_id || '';
   const name = a?.name || a?.agent_name || id || '?';
   const initial = name[0] ? name[0].toUpperCase() : '?';
-  const color = AGENT_NAMED_COLORS[id] || AGENT_PALETTE[(strHash(id) >>> 0) % AGENT_PALETTE.length];
-  return <span className="agent-badge inline-grid place-items-center font-mono font-semibold text-white shrink-0"
-    style={{width:size, height:size, fontSize: size*0.5, borderRadius: size*0.3, background: color, letterSpacing:'-0.02em'}}>
+  const colorVar = AGENT_NAMED_VAR[id] || AGENT_PALETTE_VARS[(strHash(id) >>> 0) % AGENT_PALETTE_VARS.length];
+  // 이니셜 전경 = 고정 dark ink(--agent-ink) → 밝은 amber/cyan fill 에서도 ≥3:1 대비 (기존 white ~2:1 회귀 해소).
+  //   팔레트 8색 전부 dark ink 로 ≥3.9:1 검증 완료 (fill 은 테마 불변 categorical).
+  return <span className="agent-badge inline-grid place-items-center font-mono font-semibold shrink-0"
+    style={{width:size, height:size, fontSize: size*0.5, borderRadius: size*0.3,
+      background: `rgb(var(${colorVar}))`, color: 'rgb(var(--agent-ink))', letterSpacing:'-0.02em'}}>
     {initial}
   </span>;
 }
@@ -464,23 +488,21 @@ function stripHtmlTags(input) {
     .trim();
 }
 
-// ISO timestamp → "5m ago" / "in 5m" 상대시각
+// ISO timestamp → "5m ago" / "in 5m" 상대시각 — falsy/파싱불가 입력은 '—' (NaN 라벨 차단)
 function formatRelativeTime(iso) {
-  try {
-    const target = new Date(iso).getTime();
-    const now = Date.now();
-    const diffSec = Math.round((target - now) / 1000);
-    const abs = Math.abs(diffSec);
-    const past = diffSec < 0;
-    let label;
-    if (abs < 60)         label = `${abs}s`;
-    else if (abs < 3600)  label = `${Math.round(abs / 60)}m`;
-    else if (abs < 86400) label = `${Math.round(abs / 3600)}h`;
-    else                  label = `${Math.round(abs / 86400)}d`;
-    return past ? `${label} ago` : `in ${label}`;
-  } catch (_e) {
-    return iso;
-  }
+  if (!iso) return '—';
+  const target = new Date(iso).getTime();
+  if (!Number.isFinite(target)) return '—';
+  const now = Date.now();
+  const diffSec = Math.round((target - now) / 1000);
+  const abs = Math.abs(diffSec);
+  const past = diffSec < 0;
+  let label;
+  if (abs < 60)         label = `${abs}s`;
+  else if (abs < 3600)  label = `${Math.round(abs / 60)}m`;
+  else if (abs < 86400) label = `${Math.round(abs / 3600)}h`;
+  else                  label = `${Math.round(abs / 86400)}d`;
+  return past ? `${label} ago` : `in ${label}`;
 }
 
 // API 는 UTC ISO(Z) 제공 → 표시 tz 는 서버 /api/health timezone(config [meta].timezone) 시드
@@ -585,6 +607,9 @@ const BADGE_OVERRIDES = {
   // resolveBadge('ok') 재사용('Healthy' 단일 정의) → 여기 미열거. tone 은 facts.tone 과 정합.
   browser_failed:   { tone: 'crit', pill: 'FAILED',   label: 'Failed to start' },
   browser_unprobed: { tone: 'info', pill: 'UNPROBED', label: 'Unverified'      },
+  // budget_overages(core.budget_overages) — 최근 tool_use 예산 한도 도달 이벤트 존재.
+  // 행 존재 자체가 실제 크로싱(100%+) → warn (P95 지연 옆 near-cap 신호).
+  budget_near_cap:  { tone: 'warn', pill: 'NEAR CAP', label: 'Hit tool-use budget' },
 };
 
 // tone KEY 또는 override KEY → { tone, pill, label } 해석. 미정의 → info 폴백 (가짜 ok 금지).
@@ -639,10 +664,36 @@ function formatUsdCompact(value) {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-// 콤마 정수 (1,234,567)
+// 콤마 정수 (1,234,567) — 비숫자/NaN/음수 → '—' (가짜 0 금지, wiki 가드 승격)
 function formatInt(value) {
-  const n = Number(value) || 0;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return '—';
   return n.toLocaleString('en-US');
+}
+
+// duration → human-readable 단일 버킷 SoT (agents p95 · wiki 소요 공용). unit: 'sec'(기본) | 'ms'.
+// 비숫자/NaN/음수 → '—' · ms<1s = "NNNms" · <60s = "NNs" · ≥60s = "Mm Ss" 인간화 · ≥1h = "Hh Mm".
+function formatDuration(value, unit = 'sec') {
+  const raw = Number(value);
+  if (!Number.isFinite(raw) || raw < 0) return '—';
+  let sec;
+  if (unit === 'ms') {
+    if (raw < 1000) return `${Math.round(raw)}ms`;
+    sec = Math.round(raw / 1000);
+  } else {
+    sec = Math.round(raw);
+  }
+  if (sec < 60)   return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+}
+
+// byte 크기 → human-readable; 비숫자/NaN/음수 → '—'. <1KB = "N B" · 그 외 "N.N KB" (페이로드 ≤수십 KB 도메인)
+function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1024) return `${n} B`;
+  return `${(n / 1024).toFixed(1)} KB`;
 }
 
 // K=1소수 · M/B/T=2소수 압축 · 1e3 미만 = 원값 문자열 · Math.abs 부호 무관 임계
@@ -723,12 +774,12 @@ function reviewFlagReasons(row) {
 const REVIEW_FLAG_REASON_ORDER = ['overconfident', 'underconfident', 'empty', 'grader_mismatch', 'other'];
 
 window.UI = {
-  Icon, Pill, Badge, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
-  TypeScaleStyle,
+  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
+  TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact,
+  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, LOW_N_MIN, formatPctWithDenominator,

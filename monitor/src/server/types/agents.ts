@@ -282,6 +282,27 @@ export interface AgentFailureReasonsResponse {
   fetched_at: string;
 }
 
+// GET /api/agents/budget-overages — near-cap tool_use-budget crossing events
+// aggregated per agent_type over core.budget_overages (raw-SQL table, outside
+// schema.prisma). advisory-subagent-budget.sh records a row only at a crossing
+// (100% of the tool_use budget, then every further step), so a present row is a
+// genuine over-cap event — never a synthetic zero.
+export interface AgentBudgetOverageRow {
+  agent_type: string;
+  // Overage-crossing events in the window.
+  overage_count: number;
+  // Highest crossed_pct across the window (100 = hit budget, >100 = beyond).
+  max_crossed_pct: number;
+  // Most-recent overage event (ISO8601 UTC).
+  latest_ts: string;
+}
+
+export interface AgentBudgetOveragesResponse {
+  rows: AgentBudgetOverageRow[];
+  days: AgentsWindowDays;
+  fetched_at: string;
+}
+
 export type AgentsErrorBody =
   | { error: "internal" }
   | { error: "database_unavailable" }
