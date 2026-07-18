@@ -73,6 +73,12 @@ _INLINE_CORE_FIELDS = {'result', 'task_type', 'metric_pass', 'confidence', 'summ
 # bullet U+2022 · dot-operator U+22C5. Built from ints → the source stays ASCII (no non-ASCII byte
 # to mis-encode). None of the four is regex-special inside a character class.
 _INLINE_DELIM_CLASS = '[' + ''.join(chr(_c) for _c in (0x7C, 0xB7, 0x2022, 0x22C5)) + ']'
+# Schema-mode (ultracode Workflow / StructuredOutput) subagents NEVER print the text-channel
+# [COMPLETION] block — the engine consumes ONLY the StructuredOutput tool call (0/129 observed).
+# But the writer's fields survive inside the terminal SO input under this OPTIONAL string property:
+# the full multi-line [COMPLETION]...[/COMPLETION] text. Pinned as a constant so the recorder and
+# the orchestrator-side schema convention name the SAME field (a divergence silently loses recovery).
+_SO_COMPLETION_FIELD = 'completion_block'
 
 def diag(msg):
     line = f"[outcome-record] DIAG: {msg}"
@@ -140,6 +146,30 @@ def parse_completion_body(text):
             result[current_key] = val
 
     return result
+
+def _strip_completion_sentinels(block):
+    """Strip a leading '[COMPLETION]' opener line and a trailing '[/COMPLETION]' closer line
+    from a captured SO-input completion_block BEFORE field parsing. The SO-input block carries
+    the FULL multi-line block INCLUDING both sentinels; parse_completion_body reads the colon-less
+    '[/COMPLETION]' closer as a CONTINUATION of the last field, gluing the sentinel (and any
+    trailing whitespace) onto that value — so the last field (lesson/concerns/summary/… — whichever
+    it is) leaks the closer. The text-channel tiers never hit this: _T1/_T2 capture group(1), the
+    region strictly BETWEEN the anchors. Block-level (not per-field) → field-agnostic, cleaning
+    whatever field lands last. Tolerates surrounding blank/whitespace/CRLF lines and a MISSING
+    closer (writer truncation — the last line is then a real field, left untouched)."""
+    lines = block.split('\n')
+    start, end = 0, len(lines)
+    # Leading: skip blank/whitespace lines, then drop one lone [COMPLETION] opener.
+    while start < end and not lines[start].strip():
+        start += 1
+    if start < end and lines[start].strip() == '[COMPLETION]':
+        start += 1
+    # Trailing: skip blank/whitespace lines, then drop one lone [/COMPLETION] closer.
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    if end > start and lines[end - 1].strip() == '[/COMPLETION]':
+        end -= 1
+    return '\n'.join(lines[start:end])
 
 try:
     d = json.load(sys.stdin)
@@ -735,13 +765,16 @@ diag(f"synth_has_writes={synth_has_writes} synth_file_count={len(synth_files)}")
 # alongside _read_subagent_transcript_once (the memoized wrapper the collectors share).
 def _classify_terminal_so(items, from_transcript, tail_partial=False):
     # Classify the terminal StructuredOutput pairing on ONE transcript snapshot.
-    # Returns (verdict, race): verdict is '1' (terminal SO paired with a NON-error
+    # Returns (verdict, race, block): verdict is '1' (terminal SO paired with a NON-error
     # tool_result) else '0'. race is True only when a '0' could be a transcript-flush
     # artifact worth a re-read — an ORPHAN terminal SO (paired result not yet flushed)
     # or a still-partial trailing line hiding the real terminal. A paired-error result
     # and a settled non-SO terminal are DEFINITIVE (race False → the caller stops).
+    # block is the terminal SO's completion_block string (captured on THIS snapshot,
+    # '' when no terminal SO / absent) so the caller consumes the settled snapshot's
+    # block — never a stale memo re-scan when a retry settles on a fresh read.
     if not items:
-        return '0', tail_partial
+        return '0', tail_partial, ''
     window = _current_turn_window(items, from_transcript)
     # Terminal = the run's LAST tool_use. "Later superseding assistant action" means a
     # SUBSEQUENT tool_use — trailing plain assistant text does NOT supersede the emit.
@@ -768,44 +801,60 @@ def _classify_terminal_so(items, from_transcript, tail_partial=False):
     if not isinstance(last_tool_use, dict) or last_tool_use.get('name') != 'StructuredOutput':
         # No terminal SO visible. If the trailing line is still flushing, the real
         # terminal SO may not be parseable yet → race; else a settled non-SO run.
-        return '0', tail_partial
+        return '0', tail_partial, ''
+    # The completion_block rides the SO tool_use INPUT — present as soon as that line
+    # flushes (no dependence on the paired result). Capture it on THIS snapshot so the
+    # verdict and its block settle together; a flush-race retry hands back the fresh read's
+    # block, never a stale memo re-scan. '' when the input is absent / non-string.
+    block = ''
+    tu_input = last_tool_use.get('input')
+    if isinstance(tu_input, dict):
+        _blk = tu_input.get(_SO_COMPLETION_FIELD)
+        if isinstance(_blk, str):
+            block = _blk
     tu_id = last_tool_use.get('id')
     # Pair by tool_use_id, NEVER adjacency — an id-less tool_use cannot pair strictly →
     # no match, caller keeps the old synthesis path (safe direction for odd transcripts).
     if not isinstance(tu_id, str) or not tu_id:
-        return '0', False
+        return '0', False, block
     paired = results_by_id.get(tu_id)
     if paired is None:
         # Orphan terminal SO: the classic SubagentStop flush race — the paired
         # tool_result may still be in flight. A hard kill can NEVER later produce a
         # paired NON-error result, so a re-read is safe (idempotent) and only helps
         # the race case; it can never manufacture a false consumed verdict.
-        return '0', True
+        return '0', True, block
     # Success = is_error NOT truthy — absent OR false both = success (both shapes observed
     # live); an equality-to-false check would misread the absent shape as an error.
     if paired.get('is_error') or paired.get('isError'):
         # A consumed-with-error emit is a REAL outcome, not a flush race → definitive.
-        return '0', False
-    return '1', False
+        return '0', False, block
+    return '1', False, block
 
 
 def detect_terminal_structuredoutput(d):
+    # Returns (verdict, block): verdict '0'/'1' (R2 discriminator input) and the terminal
+    # SO's completion_block string captured on the SAME settled snapshot the verdict is
+    # decided on ('' when verdict '0' / block absent). The extraction path consumes this
+    # capture directly, so a flush-race retry that settles on a fresh read never re-scans
+    # the (possibly stale) memoized transcript.
     import os as _os
     import time as _time
     if hook_event in MAIN_SESSION_HOOKS:
-        return '0'
+        return '0', ''
     if not (d.get('agent_id') or ''):
-        return '0'
+        return '0', ''
     if parse_tier != 3:
-        return '0'
+        return '0', ''
     # Inline payload messages cannot change between reads → evaluate once, no retry.
     inline_items = next((d[k] for k in ('messages', 'transcript', 'conversation')
                          if isinstance(d.get(k), list) and d.get(k)), [])
     if inline_items:
-        return _classify_terminal_so(inline_items, from_transcript=False)[0]
+        verdict, _race, block = _classify_terminal_so(inline_items, from_transcript=False)
+        return verdict, block
     tpath = _effective_transcript_path(d)
     if not (isinstance(tpath, str) and tpath and _os.path.isfile(tpath)):
-        return '0'
+        return '0', ''
     # SubagentStop transcript-flush race: the engine appends the StructuredOutput
     # tool_result ~60ms+ after the tool_use, so a SINGLE snapshot can read an unpaired
     # (orphan) terminal SO — or a still-partial terminal line — while the write is in
@@ -826,17 +875,53 @@ def detect_terminal_structuredoutput(d):
             # RACE test pins (paired result flushed inside the re-read window).
             items, tail_partial = _read_transcript_items(tpath)
         if items is None:  # OS error → keep the old synthesis path
-            return '0'
-        verdict, race = _classify_terminal_so(
+            return '0', ''
+        verdict, race, block = _classify_terminal_so(
             items, from_transcript=True, tail_partial=tail_partial)
         if verdict == '1' or not race:
-            return verdict
+            return verdict, block
         if _attempt < _SO_REREAD_RETRIES:
             _time.sleep(_SO_REREAD_DELAY_S)
-    return '0'
+    return '0', ''
 
-terminal_so = detect_terminal_structuredoutput(d)
+terminal_so, terminal_so_block = detect_terminal_structuredoutput(d)
 diag(f"terminal_structuredoutput={terminal_so}")
+
+
+# P1 schema-mode recovery — a terminal consumed StructuredOutput with NO text-channel [COMPLETION]
+# (parse_tier 3) may still carry the writer's fields inside the SO input's completion_block string.
+# Pull it (no new file read — shares the memo cache), run the EXISTING block parser over it, and on a
+# VALID parse (>=1 CORE field AND a whitelisted result — the same LLM-trust gate the inline tier
+# applies before PG) PROMOTE the run to writer-emitted tier-1 semantics: parse_tier 1 blocks the
+# downstream tier-2 truncated_completion relabel, and the populated `completion` feeds S_RESULT →
+# HAS_STRUCTURED=true on the shell side (which pairs with TERMINAL_SO=1 → structuredoutput-completion).
+# so_completion_block is set ONLY on a validated promotion, so an absent / garbage block leaves
+# parse_tier 3 + an empty grader body → byte-identical today-synthesis (structuredoutput-derived).
+so_completion_block = ''
+if parse_tier == 3 and terminal_so == '1' and terminal_so_block:
+    # _strip_completion_sentinels drops the [COMPLETION]/[/COMPLETION] lines (else the colon-less
+    # closer folds into the last field — see its docstring); the cleaned block doubles as the grader
+    # body, matching the text-channel _block_text (m_tier1/m_tier2 group(1)) semantics.
+    _clean_so_block = _strip_completion_sentinels(terminal_so_block)
+    _so_fields = parse_completion_body(_clean_so_block)
+    if (_INLINE_CORE_FIELDS & set(_so_fields)) \
+            and _so_fields.get('result', '').strip() in _VALID_RESULTS:
+        parse_tier = 1
+        completion = _so_fields
+        so_completion_block = _clean_so_block
+        # The derived scalars (lesson/concerns/qa_score/summary) were extracted above from the
+        # then-empty completion → refresh them from the recovered block so the row carries the
+        # writer's OWN values. result/task_type/metric_pass/confidence/cid/style_ref/directive_hint/
+        # revision_count are read straight from `completion` by the out() calls below, so they pick
+        # up the promotion with no extra assignment.
+        lesson = _so_fields.get('lesson', '') or lesson
+        qa_score = _so_fields.get('qa_score', '')
+        # Refresh concerns + summary unconditionally (field value → keep prior when absent): the
+        # text-channel baseline records concerns regardless of result, so schema-mode recovery must
+        # match (not only for done_with_concerns).
+        concerns = _so_fields.get('concerns', '') or concerns
+        summary = _so_fields.get('summary', '') or summary
+        diag('completion_block recovered from terminal StructuredOutput input (tier-1 promotion)')
 
 def out(k, v):
     print(f"@@{k}@@{clamp(v, 2000)}")
@@ -887,7 +972,10 @@ def _grader_body(text, parse_block):
         tail = text[-(GRADER_BODY_MAX // 2):] if len(text) > GRADER_BODY_MAX // 2 else ''
         body = head + ' ' + tail
     return body[:GRADER_BODY_MAX].replace('\r', ' ')
-_block_text = m_tier1.group(1) if m_tier1 else (m_tier2.group(1) if m_tier2 else '')
+# so_completion_block (schema-mode recovery) is the grader body when the writer block came from the
+# terminal StructuredOutput input — without it the grader would score unrelated head/tail prose from
+# msg (the SO-recovered run has NO [COMPLETION] in msg, so m_tier1/m_tier2 are both None).
+_block_text = m_tier1.group(1) if m_tier1 else (m_tier2.group(1) if m_tier2 else so_completion_block)
 out_wide('grader_body', _grader_body(msg, _block_text), GRADER_BODY_MAX)
 
 # Full multi-line files: field — concat ALL files: lines (a deliverable may list
@@ -1230,6 +1318,19 @@ fi
 # Tier-2 = open block + missing close = truncation signal. Re-label only the hook-input default.
 if [ "${PARSE_TIER}" = "2" ] && [ "${ATTRIBUTION_SOURCE}" = "hook-input" ]; then
   ATTRIBUTION_SOURCE="truncated_completion"
+fi
+
+# schema-mode writer recovery relabel — mirrors the tier-2 relabel above (only the hook-input DEFAULT
+# is reclassified; a real instrumentation label / cron signal is preserved). HAS_STRUCTURED=true +
+# TERMINAL_SO=1 is reachable ONLY via the python completion_block promotion: a text-channel [COMPLETION]
+# sets parse_tier 1/2 BEFORE detect_terminal_structuredoutput runs → TERMINAL_SO=0, so this pairing
+# uniquely marks a writer block recovered from the terminal StructuredOutput input. A DISTINCT literal
+# (NOT the synthesized structuredoutput-derived, which daemon_cycle carves out of SUCCESS + the monitor
+# folds as reconstructed) keeps the recovered signal a clean SUCCESS exemplar + a 'healthy' monitor row.
+if [[ "${HAS_STRUCTURED}" = "true" ]] && [[ "${TERMINAL_SO}" = "1" ]] && [[ "${ATTRIBUTION_SOURCE}" = "hook-input" ]]; then
+  ATTRIBUTION_SOURCE="structuredoutput-completion"
+  printf '[outcome-record] structuredoutput-completion: writer [COMPLETION] recovered from terminal StructuredOutput input (attribution=%s, agent=%s)\n' \
+    "${ATTRIBUTION_SOURCE}" "${AGENT_TYPE}" >&2
 fi
 
 # Tier-3 conversation-only skip: parse_tier=3 + tool_use=0 + no structured block.
