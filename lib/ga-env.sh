@@ -134,6 +134,10 @@ ga_init_env() {
     "requirements.txt"
     "agent-registry.json"
     "glass-atrium"
+    # The shipped bulldog art asset — the launcher reads it in place from
+    # ~/.glass-atrium/docs/assets/bulldog-braille.txt (GA_ROOT-anchored), so a
+    # ~/.claude symlink would be dead weight (Claude Code never discovers docs/).
+    "docs/assets/bulldog-braille.txt"
   )
   readonly SYMLINK_EXCLUDE_EXACT
 

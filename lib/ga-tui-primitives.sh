@@ -28,6 +28,20 @@ _bar_fill() {
   printf '%s' "${filled}"
 }
 
+# plate_center_pad — shared centered-pad SoT for the wordmark + bulldog art (both mirror this
+# math). $1=content width · $2=out-var name. Sets the out-var to a spaces string centering a
+# width-cell block inside the current plate inner: PLATE_LEFT + (plate_inner - width)/2, clamped
+# to the PLATE_LEFT floor so a sub-width plate stays flush — the clamp is LIVE for the wordmark
+# (no horizontal-fit gate) and a harmless no-op for the art (ART_OK guarantees inner >= width).
+# One plate_inner fork per call; the pad string is set via printf -v (no subshell). bash-3.2-safe.
+plate_center_pad() {
+  local width="$1" out_var="$2" inner pad_n
+  inner="$(plate_inner)"
+  pad_n=$((PLATE_LEFT + (inner - width) / 2))
+  [[ "${pad_n}" -lt "${PLATE_LEFT}" ]] && pad_n="${PLATE_LEFT}"
+  printf -v "${out_var}" '%*s' "${pad_n}" ""
+}
+
 # build_counter_str — X-of-Y step counter as a fixed-width sub-char block bar. $1=i
 # (1-based) $2=N. Constant CELLS-wide gauge so the column never jitters as i advances;
 # glyphs from the shared PROG_FULL/PROG_EMPTY SoT (--ascii degrades to `#`/`.`). i,N are
@@ -227,6 +241,20 @@ plate_top() {
   [[ "${fill}" -lt 0 ]] && fill=0
   tty_out "$(printf '%*s' "${PLATE_LEFT}" "")"
   tty_line "$(c "${accent}" "${G_TL}${tab}$(hrule "${G_H}" "${fill}")${G_TR}")"
+}
+
+# plate_mid — INTERNAL divider rail that splits ONE box into two stacked sections (the merged
+# menu+work box). Mirrors plate_top EXACTLY except the two ends are side-rail JUNCTION glyphs
+# (G_ML ├ / G_MR ┤; ASCII |) instead of top corners (G_TL/G_TR), so the left/right rails run
+# straight THROUGH the divider while a labeled dash rule crosses between them. tab INCLUDES its own
+# surrounding spaces (empty tab = full rail); hrule fills (inner - visible tab) so the divider spans
+# inner+2 — the SAME width as plate_top/plate_bot, keeping every rail column aligned.
+plate_mid() {
+  local inner="$1" tab="${2:-}" accent="${3:-${C_FRAME}}" fill
+  fill=$((inner - $(visible_len "${tab}")))
+  [[ "${fill}" -lt 0 ]] && fill=0
+  tty_out "$(printf '%*s' "${PLATE_LEFT}" "")"
+  tty_line "$(c "${accent}" "${G_ML}${tab}$(hrule "${G_H}" "${fill}")${G_MR}")"
 }
 
 # plate_bot — box bottom rail: margin + accent(BL + hrule inner + BR); spans inner+2, same as plate_top.

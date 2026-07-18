@@ -105,6 +105,8 @@ source "${GA_DIR}/lib/ga-tui-primitives.sh"
 source "${GA_DIR}/lib/ga-tui-term.sh"
 # shellcheck source=lib/ga-tui-frame.sh
 source "${GA_DIR}/lib/ga-tui-frame.sh"
+# shellcheck source=lib/ga-tui-bulldog.sh
+source "${GA_DIR}/lib/ga-tui-bulldog.sh"
 # shellcheck source=lib/ga-tui-workbox.sh
 source "${GA_DIR}/lib/ga-tui-workbox.sh"
 # shellcheck source=lib/ga-tui-run.sh
@@ -208,6 +210,8 @@ G_TL=""      # top-left corner
 G_TR=""      # top-right corner
 G_BL=""      # bottom-left corner
 G_BR=""      # bottom-right corner
+G_ML=""      # left side-rail junction (├) — internal divider left end
+G_MR=""      # right side-rail junction (┤) — internal divider right end
 G_H=""       # horizontal rule
 G_V=""       # vertical rail
 G_DOT=""     # mid-dot separator
@@ -375,17 +379,38 @@ readonly PLATE_MARGIN=2
 
 # Fullscreen-layout constants (the centered max-width column). MAX_READABLE is the
 # plate OUTER cap (incl. both rails) so very-wide text never stretches past 64 cells
-# even on a 200-col screen; MIN_COLS/MIN_ROWS gate the degradation to the compact
-# top-left layout. MIN_ROWS DERIVES from the same terms as block_rows in
-# compute_menu_geometry — wordmark(5)+sep(1)+menu(2 rails+MENU_COUNT)+1 gap+workbox(4) =
-# block_rows, +3 for the top gap + bottom keyhint gap (= 22 at MENU_COUNT=6), so it
-# auto-tracks MENU_COUNT. MIN_COLS=50 gates fullscreen so the 44-col BORDERLESS banner
-# (emitted past plate_truncate at PLATE_LEFT) always fits without wrapping into the
+# even on a 200-col screen. MIN_COLS/MIN_ROWS gate the degradation to the compact
+# top-left layout: MIN_ROWS is the FULLSCREEN gate, held at its historical value (21 at C=5) for
+# back-compat (the gate threshold is unchanged; the compact rendering itself did shift with the
+# shared 2-row draw_wordmark) while still auto-tracking MENU_COUNT via the same term structure. The
+# merged menu+work box is 1 row SHORTER than the old two-plate stack (it dropped the menu bottom rail
+# + the menu↔work gap row = −2, then added back a 1-row menu→divider blank pad = +1, net −1), so the
+# fullscreen stack still fits inside MIN_ROWS with headroom — the formula terms below are a historical
+# back-compat expression, not the literal new stack sum.
+# Art entry is a SEPARATE, much taller
+# ART_MIN_ROWS sub-gate (below, =35 at C=5) plus a horizontal-fit check, so fullscreen-no-art
+# spans MIN_ROWS up to the art floor (or any too-narrow width). MIN_COLS=50 gates fullscreen so the 44-col BORDERLESS
+# banner (emitted past plate_truncate at PLATE_LEFT) always fits without wrapping into the
 # absolute-anchored menu, while inner stays >=44 for the 14-cell label + caret gutter.
-# (MENU_COUNT is defined above, so this readonly computes safely at file-scope.)
+# (MENU_COUNT is defined above, so these readonlys compute safely at file-scope.)
 readonly MAX_READABLE=64
 readonly MIN_COLS=50
 readonly MIN_ROWS=$((5 + 1 + (2 + MENU_COUNT) + 1 + 4 + 3))
+
+# ART region dimensions — the ONE pre-generated 55x18-cell bulldog asset (the 3-band system is
+# retired; a single fixed size ships). ART_ROWS = the asset cell height; ART_WIDTH = the asset
+# cell width (center-align + the horizontal-fit check). ART_MIN_ROWS is the art sub-gate =
+# 12 + MENU_COUNT + ART_ROWS (=35 at C=5). CENTERED-block derivation: BLOCK_H(art) = ART_ROWS + 1 gap +
+# 2 wordmark + 1 blank + (1 box top rail + C items + 1 blank pad + 1 divider + 2 body + 1 bottom rail) + 1 keyhint =
+# ART_ROWS + 11 + C (=34 at C=5); the gate is ART_MIN_ROWS = BLOCK_H(art) + 1 = ART_ROWS + 12 + C, so at
+# the floor the whole art block is centered fully on-screen with top_pad >= 1 (block bottom = keyhint <=
+# rows, no overflow). Top-down degradation: the bulldog drops FIRST when the terminal is too short (rows
+# < ART_MIN_ROWS) OR too narrow to seat 55 cells; the wordmark drops SECOND; menu + workbox + keyhint
+# always survive. Horizontal fit is a LIVE check against MENU_INNER in compute_menu_geometry (NOT a cols
+# literal), so a tall-but-narrow terminal also drops the bulldog.
+readonly ART_ROWS=18
+readonly ART_WIDTH=55
+readonly ART_MIN_ROWS=$((12 + MENU_COUNT + ART_ROWS))
 
 # PLATE_LEFT — the live left-indent every plate emitter pads to. Default = PLATE_MARGIN
 # (the compact / inline-run path). draw_menu raises it to the centered column for the
@@ -416,18 +441,45 @@ FULLSCREEN=false            # true when the centered fullscreen layout is active
 GEOMETRY_DIRTY=true
 MENU_LEFT="${PLATE_MARGIN}" # centered left column the block pads to
 MENU_INNER=52               # centered-column inner width (caps at MAX_READABLE-2)
-MENU_FIRST_ROW=1            # 1-based screen row the wordmark top rail starts on
-MENU_KEYHINT_ROW=1          # 1-based screen row the bottom-pinned keyhint sits on
-# Menu-block + workbox anchors, derived by compute_menu_geometry from MENU_FIRST_ROW +
-# the fixed wordmark(5)+separator(1) stack and MENU_COUNT — shared by draw_menu, draw_workbox,
-# and the per-tick spinner (which repaints WORKBOX_BODY_ROW in place inside the stable frame).
-MENU_BLOCK_FIRST_ROW=1 # the menu top rail's absolute screen row (wordmark+separator below first_row)
-MENU_BLOCK_ROWS=1      # rows the menu occupies (top rail + N items + bottom rail)
-WORKBOX_FIRST_ROW=1    # the work-area box top rail's absolute row (one blank gap below the menu)
+MENU_FIRST_ROW=1            # 1-based screen row of the centered block's TOP (art or wordmark top)
+MENU_KEYHINT_ROW=1          # 1-based screen row the keyhint sits on (the block's LAST row, not the terminal's)
+# Menu-block + workbox anchors, chained DOWNWARD by compute_menu_geometry from the CENTERED block top
+# (top_pad = (rows - BLOCK_H)/2, floored at 1) via MENU_COUNT-derived offsets. The menu + work area are
+# ONE merged box: the box top rail sits at block_top+3 (+ART_ROWS+1 when the art leads), the menu items
+# directly above the internal 'work' divider (WORKBOX_FIRST_ROW = box top rail + 1 + MENU_COUNT) with NO
+# gap + NO menu bottom rail, and the work section spans the divider .. LINE1 .. LINE2 .. the single
+# shared bottom rail. Shared by draw_menu, draw_workbox, and the per-tick spinner (which repaints
+# WORKBOX_BODY_ROW in place inside the stable frame).
+MENU_BLOCK_FIRST_ROW=1 # the merged box's top rail absolute screen row (top_pad-derived downward anchor)
+WORKBOX_FIRST_ROW=1    # the internal 'work' divider row (directly below the last menu item, no gap)
 WORKBOX_BODY_ROW=1     # LINE 1: the headline row (bar + i/N + label) inside the work-area box
 WORKBOX_BODY_ROW2=1    # LINE 2: the status-detail row (output tail / slow dots) below LINE 1
 # (WORKBOX_BODY_ROW2 defaulted at file scope — mirrors WORKBOX_BODY_ROW — so the pre-geometry path
 # is set -u safe; compute_menu_geometry derives its real value alongside WORKBOX_BODY_ROW.)
+# Centered-block downward anchors + ART/WORDMARK gate state, filled by compute_menu_geometry. This
+# stub-band declares them set -u safe before the first geometry pass + across re-source. Stubs
+# stay gate-off so the compact path never admits the art tier or the fullscreen wordmark tier.
+SEPARATOR_ROW=1      # absolute row of the blank ex-separator spacer (fullscreen draws no glyphs; compact dot-rule)
+WORDMARK_FIRST_ROW=1 # absolute row the 2-row wordmark caption starts on
+ART_OK=false         # true when the single art tier is admitted (rows>=ART_MIN_ROWS AND plate fit)
+WORDMARK_OK=false    # true when the wordmark+separator tier is admitted (WORDMARK_FIRST_ROW>=2)
+# ART_FIRST_ROW: declared in the loader stub-band per the geometry<->loader name-sharing
+# contract, set by compute_menu_geometry and read by the bulldog render module
+# (lib/ga-tui-bulldog.sh). ART_ROWS/ART_WIDTH are readonly constants (above), read here by
+# compute_menu_geometry (ART_MIN_ROWS + the horizontal-fit check).
+ART_FIRST_ROW=0      # absolute screen row the art top starts on (0 when !ART_OK)
+# Bulldog asset cache — loader stub-band state for the ga-tui-bulldog.sh render module (SOURCED
+# module owns only functions, so its lazy-load state lives here, set -u safe + stable across
+# re-source). BULLDOG_ROWS holds the WHOLESALE-loaded braille rows; BULLDOG_ROWS_C holds the
+# load-time band-colored siblings the draw path emits fork-free; BULLDOG_LOADED gates the one-time
+# lazy read + color bake (a missing/wrong-shape asset still flips it true → art silently dropped,
+# no re-stat). The draw path derives the row count from ${#BULLDOG_ROWS[@]} — no count global.
+# shellcheck disable=SC2034
+BULLDOG_ROWS=()       # WHOLESALE-loaded braille asset rows (lazy-filled on first draw)
+# shellcheck disable=SC2034
+BULLDOG_ROWS_C=()     # per-row band-colored siblings (baked at load; draw emits these fork-free)
+# shellcheck disable=SC2034
+BULLDOG_LOADED=false  # true once the asset load has been ATTEMPTED (success or missing/wrong-shape)
 # MENU_DIMMED — when true, draw_menu repaints the whole menu in C_DIM with no caret +
 # no reverse-video selection (the "running / non-interactive" signal). draw_frame sets it
 # for a run and clears it on return to nav.
@@ -459,14 +511,11 @@ MONITOR_SUMMARY=""
 MONITOR_SUMMARY_ROW2=""
 
 # === wordmark ==============================================================
-# Printed ONCE at the top of the alt-screen, frozen for the session. A BORDERLESS
-# pixel-art banner floating on the bare field (no plate/rails): the one-line
-# "GLASS ATRIUM" half-block wordmark (GLASS + 2-space gap + ATRIUM, side-by-side)
-# CENTERED in the plate inner width, framed above + below by scattered blue ✦
-# sparkle rows. No mascot. The mono/ASCII tier renders a plain centered GLASS ATRIUM
-# with '*' sparkles so the banner stays 5 rows tall in BOTH tiers — the geometry
-# constants (compute_menu_geometry / MIN_ROWS) take wordmark height = 5 (top sparkle
-# + 2 content rows + bottom sparkle + 1 blank pad row, no rails).
+# A BORDERLESS pixel-art caption floating on the bare field (no plate/rails): the one-line
+# "GLASS ATRIUM" half-block wordmark (GLASS + 2-space gap + ATRIUM, side-by-side) CENTERED
+# in the plate inner width. The mono/ASCII tier renders a plain centered GLASS ATRIUM + a
+# blank 2nd row so the caption stays EXACTLY 2 rows tall in BOTH tiers — the geometry
+# offsets (compute_menu_geometry: SEPARATOR_ROW/menu-top build-UP) assume that 2-row height.
 
 # === menu render ===========================================================
 # A framed panel: a top rail with a "menu" tab, one row per item (left rail glyph +
