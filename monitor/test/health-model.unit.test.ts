@@ -50,6 +50,7 @@ interface HealthModelApi {
   HEALTH_CARD_DEFS: ReadonlyArray<{ id: string; kind: string; daemonName?: string }>;
   resolveCardFacts: (def: unknown, states: HealthStates) => { status: string; tone?: string };
   computeOverviewKpis: (states: HealthStates) => OverviewKpis;
+  resolveDaemonDisplayMeta: (d: unknown) => { tone: string; label: string };
 }
 
 const stubWindow: StubWindow = {
@@ -192,6 +193,15 @@ test("hook failures: unretried 24h failure → crit; retried-only → warn (F08)
   );
   assert.strictEqual(warn.degradedCount, 1);
   assert.strictEqual(warn.okCount, 6);
+});
+
+test("stale daemon: display meta stays crit-toned 'STALE' (Rule 4 — tone unchanged)", () => {
+  // isDaemonStale wins over last_status; the label is unified but the tone MUST stay crit.
+  const meta = HealthModel.resolveDaemonDisplayMeta(
+    daemonRow("autoagent", { last_status: "ok", staleness_minutes: 3000 }),
+  );
+  assert.strictEqual(meta.tone, "crit");
+  assert.strictEqual(meta.label, "STALE");
 });
 
 test("daemonState not ready: KPI renders '—' sentinels, never fabricated zeros", () => {

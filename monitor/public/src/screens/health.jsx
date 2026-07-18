@@ -296,11 +296,13 @@ function buildHealthCardModel(def, states) {
 
 const CARD_MODEL_BUILDERS = {
   pg(_def, facts, { pgState }) {
+    // pill/label 은 BADGE_OVERRIDES 단일 출처 (Rule 1 — 인라인 리터럴 금지). tone 은 facts 유지.
+    const badge = window.UI.resolveBadge(facts.pgOk ? 'pg_open' : 'pg_closed');
     return {
       status: 'ready',
       tone:           facts.tone,
-      pillLabel:      facts.pgOk ? 'OPEN' : 'CLOSED',
-      statusLabel:    facts.pgOk ? 'Connected' : 'Disconnected',
+      pillLabel:      badge.pill,
+      statusLabel:    badge.label,
       // version 필드 = 모니터 앱 버전 — PG server_version 아님 (오인 차단).
       note:           `monitor app version ${pgState.data?.version || '—'}`,
       metricLabel:    'Connection',
@@ -314,11 +316,14 @@ const CARD_MODEL_BUILDERS = {
   // failed = playwright 업그레이드 후 바이너리 드리프트 등 launch 불가 → HTML export 전건 실패 상태.
   browser(_def, facts, { pgState }) {
     const launch = facts.launch;
+    // pill/label 은 BADGE_OVERRIDES/톤 단일 출처 (Rule 1 — 인라인 리터럴 금지). tone 은 facts 유지.
+    // launch enum(ok/failed/unprobed) → 배지 키: ok 는 톤 기본값 재사용('Healthy' 단일 정의), 나머지 browser_*.
+    const badge = window.UI.resolveBadge(launch === 'ok' ? 'ok' : (launch === 'failed' ? 'browser_failed' : 'browser_unprobed'));
     return {
       status: 'ready',
       tone:           facts.tone,
-      pillLabel:      launch.toUpperCase(),
-      statusLabel:    launch === 'ok' ? 'Healthy' : (launch === 'failed' ? 'Failed to start' : 'Unverified'),
+      pillLabel:      badge.pill,
+      statusLabel:    badge.label,
       note:           launch === 'failed'
         ? (pgState.data?.browser_reason || 'launch failed')
         : '',
@@ -332,11 +337,12 @@ const CARD_MODEL_BUILDERS = {
   daemon(_def, facts) {
     const d = facts.daemon;
     if (!d) {
+      const badge = window.UI.resolveBadge('daemon_no_data');
       return {
         status: 'ready',
         tone:           facts.tone,
-        pillLabel:      'NO DATA',
-        statusLabel:    'No data',
+        pillLabel:      badge.pill,
+        statusLabel:    badge.label,
         note:           'never reported',
         metricLabel:    'Last run', metricValue:    '—',
         subMetricLabel: 'Next due', subMetricValue: '—',
@@ -371,12 +377,13 @@ const CARD_MODEL_BUILDERS = {
       (sum, ev) => sum + (ev.groups || []).reduce((s, g) => s + (g.hooks?.length || 0), 0),
       0,
     );
-    let pillLabel;
-    let statusLabel;
-    if (facts.tone === 'crit')      { pillLabel = 'FAILED'; statusLabel = 'Failed in 24 h (not retried)'; }
-    else if (facts.tone === 'warn') { pillLabel = 'WARN';   statusLabel = 'Failed in 24 h (retried)'; }
-    else if (!facts.configured)     { pillLabel = 'NOT SET UP'; statusLabel = 'Not set up'; }
-    else                            { pillLabel = 'ACTIVE'; statusLabel = 'Active'; }
+    // pill/label 은 BADGE_OVERRIDES 단일 출처 (Rule 1) — 인라인 "WARN"/"FAILED"/"ACTIVE" 리터럴 폐기(AC1).
+    let overrideKey;
+    if (facts.tone === 'crit')      overrideKey = 'hook_failed';
+    else if (facts.tone === 'warn') overrideKey = 'hook_warn';
+    else if (!facts.configured)     overrideKey = 'hook_unset';
+    else                            overrideKey = 'hook_active';
+    const { pill: pillLabel, label: statusLabel } = window.UI.resolveBadge(overrideKey);
 
     const failKnown = facts.count24h !== null;
     const unretriedSuffix = facts.unretried24h > 0 ? ` · ${facts.unretried24h} not retried` : '';
