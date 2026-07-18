@@ -316,6 +316,8 @@ model Outcome {
   //   - truncated_completion   : Tier-2 fallback — open tag + close tag 부재 (실 truncation)
   //   - completion-synthesized : block 부재 → outcome-record.sh 결정론 합성 record (복구 산출물 · 2026-05-29 추가)
   //   - budget-truncation      : subagent 예산 초과 truncation 라벨 (dual-write source · 9번째 값)
+  //   - structuredoutput-derived   : schema-mode terminal StructuredOutput, [COMPLETION] 부재 → 합성 done/low (10번째 값)
+  //   - structuredoutput-completion: SO input completion_block 필드에서 복구한 writer [COMPLETION] block (writer-emitted · 11번째 값)
   // String? 유지 (Prisma enum 미도입). CHECK 는 migration 이 아닌 oss-db-setup.sh post-deploy
   // raw-SQL 로 DB-side 적용 (applied baseline SQL 수정 시 checksum drift → 회피). Nullable:
   // historical rows pre-2026-05-09 legitimately have NULL (NOT VALID 가 면제).
