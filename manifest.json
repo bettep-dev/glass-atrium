@@ -481,7 +481,7 @@
     "lib/ga-tui-primitives.sh": "84e523c7f0ce6d2df2804bdabfc0e769d398001c7d64a16fad0738ddcd77dbad",
     "lib/ga-tui-run.sh": "41a7de60e3e61d2c9eca41313cc92d014f20b0eae70bff57f6dc380eefb1828b",
     "lib/ga-tui-term.sh": "9e6033265382665143de9b01e31019065afa097f5688131ece3d6606dee7216a",
-    "lib/ga-tui-workbox.sh": "70c8b30e1dd30da111fdad27ae0c920ec5a031ec4dcd11672f87caa8005e12dc",
+    "lib/ga-tui-workbox.sh": "ab1992f8f65facd042608a4162806d0346bcde8ba5070e196b511ca7330fa61f",
     "monitor/.env.example": "2154f06eac4e604b4e734dfb227c8f9a20e077d67677ea7a5a0433c40c04fe04",
     "monitor/.nvmrc": "68ca3fba3b7e864770cb61aeb306d4bd4354b68ab4dd38450860c5d823e42a53",
     "monitor/README.md": "23fdb16c4bf62af0463f665eb31de92f17908ed43c84e81fa3229c674d4775f2",
