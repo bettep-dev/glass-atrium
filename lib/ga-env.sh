@@ -194,6 +194,7 @@ ga_init_env() {
     "PreToolUse	validate-secret-scan.sh	Bash"
     "PreToolUse	validate-secret-scan.sh	Write|Edit"
     "PostToolUse	detect-secret-file-write.sh	Bash"
+    "PostToolUse	enforce-verification-gate.sh	Agent"
     "PostToolUse	post-edit-format.sh	Edit|Write"
     "PostToolUse	post-edit-outcome-sync.sh	Write"
     "PostToolUse	post-edit-typecheck.sh	Edit|Write"

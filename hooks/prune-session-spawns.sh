@@ -2,7 +2,7 @@
 # prune-session-spawns.sh — SessionStart hook (advisory, fail-open, always exit 0).
 #
 # enforce-verification-gate.sh writes a per-session spawn marker to
-# ~/.claude/data/session-spawns/<session-key> on every PreToolUse(Agent) spawn,
+# ~/.claude/data/session-spawns/<session-key> on every PostToolUse(Agent) spawn-success,
 # but nothing reaps them. This SessionStart reaper mtime-TTL-sweeps stale markers.
 #
 # Design: runs at SessionStart (NOT an in-hook sweep) to keep the spawn hot path
