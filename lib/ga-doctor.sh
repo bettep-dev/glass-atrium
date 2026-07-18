@@ -239,8 +239,10 @@ run_doctor() {
     # a silent pass (Precondition Loud-Fail Principle).
     local drift_sha=()
     # empty resolver → read hits EOF (rc 1); || true keeps set -e off so the empty-array loud-skip fires.
+    # IFS prefix scopes space+tab splitting to THIS read only — the launcher's strict IFS=$'\n\t'
+    # otherwise keeps `shasum -a 256` as one array word → an unrunnable command name.
     # shellcheck disable=SC2310
-    read -ra drift_sha < <(_resolve_sha256_cmd) || true
+    IFS=$' \t' read -ra drift_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#drift_sha[@]}" -eq 0 ]]; then
       log "  warn : manifest drift gate skipped (consumer install — no shasum/sha256sum for hash reconciliation)"
     else
@@ -399,8 +401,10 @@ run_doctor() {
   else
     local ld_sha=()
     # empty resolver → read hits EOF (rc 1); || true keeps set -e off so the empty-array loud-skip fires.
+    # IFS prefix scopes space+tab splitting to THIS read only — the launcher's strict IFS=$'\n\t'
+    # otherwise keeps `shasum -a 256` as one array word → an unrunnable command name.
     # shellcheck disable=SC2310
-    read -ra ld_sha < <(_resolve_sha256_cmd) || true
+    IFS=$' \t' read -ra ld_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#ld_sha[@]}" -eq 0 ]]; then
       log "  warn : launchd deploy-drift check skipped — no shasum/sha256sum for plist comparison"
     else
