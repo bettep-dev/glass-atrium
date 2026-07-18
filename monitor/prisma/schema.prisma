@@ -330,10 +330,12 @@ model Outcome {
   // L1114 (Cycle 3.2). NULL = pre-Cycle-3.2 row OR v1.0 OPTIONAL silent omit. v1.1
   // MANDATORY graduation (per plan ADR-2) requires emission ≥ 50% AND fake_rate < 10%.
   styleRef          String?       @map("style_ref")
-  // Set by future write-back from hooks/style-ref-verify.sh (currently stderr WARN only —
-  // DB UPDATE path is downstream Cycle 3.3.c). TRUE = path matched session Read history;
-  // FALSE = Gaming-the-Judge candidate (R2-06); NULL = verify hook not wired OR
-  // style_ref is 'greenfield'/NULL itself (verify is structurally not applicable).
+  // Set by track-outcome.sh _compute_style_ref_verified at SubagentStop (shared matcher
+  // lib/style_ref_match.py). TRUE = path matched session Read history; FALSE =
+  // Gaming-the-Judge candidate (R2-06); NULL = style_ref is 'greenfield'/NULL itself
+  // (verify structurally N/A) OR a pre-verify row. hooks/style-ref-verify.sh is RETIRED
+  // (do NOT wire) — a standalone Stop/SubagentStop variant sharing that same matcher,
+  // superseded by this persisted column.
   styleRefVerified  Boolean?      @map("style_ref_verified")
   // Phase 1 P1.3.2 (2026-05-24): 3-Tier Eval Grader rollout marker (plan doc 1779).
   // TRUE = row predates 3-Tier wire-in AND metric_pass=NULL (legacy EMPTY backfill,
