@@ -77,9 +77,10 @@ setup() {
 
 teardown() {
   if [[ -n "${UNIQUE_AGENT:-}" && -n "${PSYCOPG_PP:-}" ]]; then
-    CB_AGENT="${UNIQUE_AGENT}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY' >/dev/null 2>&1 || true
+    CB_AGENT="${UNIQUE_AGENT}" CB_CTL="${UNIQUE_AGENT}-ctl" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY' >/dev/null 2>&1 || true
 import os, psycopg
 agent = os.environ.get("CB_AGENT", "")
+ctl = os.environ.get("CB_CTL", "")
 if agent:
     with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
         with conn.cursor() as cur:
@@ -87,6 +88,21 @@ if agent:
                 "DELETE FROM core.correction_signals WHERE outcome_id IN "
                 "(SELECT id FROM core.outcomes WHERE agent=%s)", (agent,))
             cur.execute("DELETE FROM core.outcomes WHERE agent=%s", (agent,))
+            # Secondary loud-fail artifact: when the primary core.outcomes INSERT fails (e.g. the
+            # structuredoutput-completion CHECK rejection on a live DB whose constraint is not yet
+            # widened), _pg_outcome_dualwrite.py stamps a core.hook_failures row tagged with the
+            # outcome payload_ref (cid → agent fallback = UNIQUE_AGENT here, the transcripts carry no
+            # cid). Untended those rows accumulate into the 24h Hook Chain WARN. Scope the DELETE to
+            # THIS run's payload tag only — never hook-name- or time-window-scoped, which would mask
+            # a live fault. Regenerable artifacts, mirroring the outcomes scoped-DELETE above.
+            cur.execute("DELETE FROM core.hook_failures WHERE payload_ref=%s", (agent,))
+            # The scoped-self-cleanup test seeds a distinctly-tagged CONTROL row (UNIQUE_AGENT-ctl)
+            # to prove the suite cleanup is payload-tag-scoped. It is deleted only here, never by the
+            # cleanup-under-test — so an interrupted run (before the test's own hf_delete) would
+            # orphan it, the exact artifact class this suite eliminates. Sweep it with the same
+            # payload-tag-scoped shape as the main DELETE; distinct exact tag, so no collateral hit.
+            if ctl:
+                cur.execute("DELETE FROM core.hook_failures WHERE payload_ref=%s", (ctl,))
         conn.commit()
 PY
   fi
@@ -248,6 +264,47 @@ with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM core.outcomes WHERE agent=%s", (agent,))
         print(cur.fetchone()[0])
+PY
+}
+
+# core.hook_failures helpers — the secondary loud-fail row carries the outcome payload_ref
+# (cid → agent fallback), so this suite's rows are tagged with UNIQUE_AGENT. hf_seed writes a row
+# shape-identical to the writer's INSERT so the scoped-DELETE hygiene is pinned without depending
+# on the live CHECK-constraint state (which decides whether a real run generates one).
+hf_count() {
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
+import os, psycopg
+ref = os.environ["CB_REF"]
+with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM core.hook_failures WHERE payload_ref=%s", (ref,))
+        print(cur.fetchone()[0])
+PY
+}
+
+hf_seed() {
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
+import os, psycopg
+ref = os.environ["CB_REF"]
+with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO core.hook_failures "
+            "(failure_ts, hook_name, target_table, error_kind, payload_ref, retry_attempted) "
+            "VALUES (now(), 'outcome-record', 'core.outcomes', 'constraint_violation', %s, false)",
+            (ref,))
+    conn.commit()
+PY
+}
+
+hf_delete() {
+  CB_REF="${1}" PYTHONPATH="${PSYCOPG_PP}" python3 - <<'PY'
+import os, psycopg
+ref = os.environ["CB_REF"]
+with psycopg.connect("dbname=glass_atrium", connect_timeout=2) as conn:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM core.hook_failures WHERE payload_ref=%s", (ref,))
+    conn.commit()
 PY
 }
 
@@ -512,4 +569,35 @@ PY
   [ "${output}" = "structuredoutput-completion" ] || return 1
   run fetch_col downgrade_origin
   [ "${output}" != "synthesized" ] || return 1
+}
+
+@test "hook_failures secondary rows: scoped self-cleanup deletes ONLY the suite's payload tag" {
+  # Root cause of the 24h Hook Chain WARN: the loud-fail dual-write writer stamps a core.hook_failures
+  # row on a primary core.outcomes INSERT failure (the structuredoutput-completion CHECK rejection when
+  # the live constraint is not yet widened), tagged with the outcome payload_ref (cid → agent). Those
+  # rows share UNIQUE_AGENT and, untended by the pre-fix teardown (outcomes/correction_signals only),
+  # accumulated into the WARN aggregate. Pin the scoped-DELETE hygiene deterministically (no dependence
+  # on the live CHECK state): a tagged row + a distinctly-tagged control row → the scoped cleanup zeroes
+  # ONLY the suite's tag and leaves the control intact (never hook-name- or time-window-scoped).
+  # The control tag is derived from UNIQUE_AGENT (a distinct exact tag, not a prefix of it) so
+  # teardown() sweeps it on an interrupted run — the cleanup-under-test (exact WHERE payload_ref =
+  # UNIQUE_AGENT) still never touches it, preserving the "other tags survive" proof.
+  local control_ref="${UNIQUE_AGENT}-ctl"
+
+  hf_seed "${UNIQUE_AGENT}"
+  hf_seed "${control_ref}"
+
+  run hf_count "${UNIQUE_AGENT}"
+  [ "${output}" = "1" ] || { echo "seed failed: own tag count ${output} != 1"; hf_delete "${control_ref}"; return 1; }
+
+  # The exact scoped DELETE the teardown runs (WHERE payload_ref = UNIQUE_AGENT).
+  hf_delete "${UNIQUE_AGENT}"
+
+  run hf_count "${UNIQUE_AGENT}"
+  [ "${output}" = "0" ] || { echo "own tag not zeroed post-cleanup: ${output}"; hf_delete "${control_ref}"; return 1; }
+  # Other rows untouched — proves the cleanup is payload-tag-scoped, not a blanket smoke-cb/time purge.
+  run hf_count "${control_ref}"
+  [ "${output}" = "1" ] || { echo "control row collaterally deleted (scope too broad): ${output}"; hf_delete "${control_ref}"; return 1; }
+
+  hf_delete "${control_ref}"
 }
