@@ -129,28 +129,32 @@ function kpiToBadges(kpi) {
 	};
 }
 
-// live → architecture 배지 — 두 신호 합성(덮어쓰기 금지):
-//   · 구조 드리프트(stale)        → info-tone "Update needed" (설계도 카운트 mismatch)
-//   · 데몬 다운(daemon status≠ok) → 기존 warn-tone 카운트 (런타임 헬스)
-// 톤·문구로 구별. 동시 발생 시 `badges` 배열로 두 span 병치 → 단일 슬롯 충돌 회피.
+// live 신호 두 개를 독립 슬롯으로 분리:
+//   · 구조 드리프트(stale)        → architecture(System map) info "Update needed" (설계도 카운트 mismatch)
+//   · 데몬 다운(daemon status≠ok) → health(System health) warn 카운트 (런타임 헬스)
+// 슬롯이 분리돼 서로 덮지 않음. health 슬롯은 KPI 배지와 mergeHealthBadge 로 병치.
 function liveToBadge(live) {
-	const badges = [];
-
-	if (live?.stale === true) {
-		badges.push({ badge: "Update needed", badgeTone: "info" });
-	}
+	const architecture =
+		live?.stale === true
+			? { badge: "Update needed", badgeTone: "info" }
+			: null;
 
 	const badDaemons = (live?.daemons || []).filter(
 		(d) => d.status !== "ok",
 	).length;
-	if (badDaemons > 0) {
-		badges.push({ badge: String(badDaemons), badgeTone: "warn" });
-	}
+	const daemonHealth =
+		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
 
-	if (badges.length === 0) return null;
+	return { architecture, daemonHealth };
+}
 
-	// 단일 신호도 `badges` 로 통일 — Sidebar 가 배열/단일 양쪽 호환 렌더.
-	return { badges };
+// health nav 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운 카운트)가 한 슬롯에 병치.
+// 소스 태그로 자기 기여분만 교체 → 한 소스 재폴링이 다른 소스 배지를 덮지 않음.
+// badges-array-coexistence 관용(Sidebar 가 배열/단일 양쪽 호환) 재사용.
+function mergeHealthBadge(prevHealth, source, badge) {
+	const kept = (prevHealth?.badges || []).filter((b) => b.source !== source);
+	const next = badge ? [...kept, { ...badge, source }] : kept;
+	return next.length > 0 ? { badges: next } : null;
 }
 
 function App() {
@@ -197,7 +201,15 @@ function App() {
 			const kpiR = await Promise.allSettled([fetchJson("/api/dashboard/kpi")]);
 			if (cancelled) return;
 			if (kpiR[0].status !== "fulfilled") return; // 실패 시 직전 동기화 시각 보존
-			setNavBadges((prev) => ({ ...prev, ...kpiToBadges(kpiR[0].value) }));
+			setNavBadges((prev) => {
+				const kpi = kpiToBadges(kpiR[0].value);
+				// health 는 데몬 다운 소스와 병치되므로 스프레드로 덮지 않고 merge.
+				return {
+					...prev,
+					cost: kpi.cost,
+					health: mergeHealthBadge(prev.health, "kpi", kpi.health),
+				};
+			});
 		};
 		fetchBadges();
 		const id = setInterval(fetchBadges, NAV_BADGE_POLL_MS);
@@ -213,7 +225,12 @@ function App() {
 		fetchJson("/api/architecture/live")
 			.then((live) => {
 				if (cancelled) return;
-				setNavBadges((prev) => ({ ...prev, architecture: liveToBadge(live) }));
+				const { architecture, daemonHealth } = liveToBadge(live);
+				setNavBadges((prev) => ({
+					...prev,
+					architecture,
+					health: mergeHealthBadge(prev.health, "daemon", daemonHealth),
+				}));
 			})
 			.catch(() => {
 				// 무시 — 직전 navBadges/동기화 시각 보존
