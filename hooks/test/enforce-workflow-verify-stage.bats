@@ -228,6 +228,19 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
   assert_trace block-grammar || return 1
 }
 
+# Exact-shape pin: names in a verify clause MUST be comma-separated. A space-joined pair collapses to
+# ONE token that is not in the runtime DEV_SET + reviewer literal → unknown name → BLOCK_GRAMMAR
+# (the confusion the enriched authoring surfaces warn against).
+@test "grammar: space-separated verify pair (no comma) → BLOCK_GRAMMAR (reads as one unknown name)" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-dev-nestjs',{goal:'f'}))"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-grammar || return 1
+}
+
 @test "grammar: line without a known key + colon → BLOCK_GRAMMAR" {
   run_hook "/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
@@ -472,6 +485,23 @@ impl: glass-atrium-dev-react
 log('${SIZE_EST}')
 log('plan-ref: ${PLAN_REF}')
 agent('glass-atrium-qa-code-reviewer',{goal:'review'});agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  assert_trace block-declspawn || return 1
+}
+
+# Exact-shape pin: a declared verify-dev whose ONLY occurrence is a wrapper argument
+# (robustAgent('type',…)) has no bare agent('type')/agentType:'type' spawn position — the lowercase
+# agent( scan never matches the capital-A robustAgent( callee — so the declared type is un-spawned →
+# BLOCK_DECLSPAWN. Fix is the opts agentType: literal or an impl-computed: declaration (see #45 robust
+# PASS shape), NOT a validator change.
+@test "consistency(a): declared verify-dev only as wrapper arg (robustAgent) → BLOCK_DECLSPAWN" {
+  run_hook "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('${SIZE_EST}')
+log('plan-ref: ${PLAN_REF}')
+async function robustAgent(agentType, opts) { return agent(opts.goal, { ...opts, agentType }).catch(() => null); }
+agent('glass-atrium-qa-code-reviewer',{goal:'review'});robustAgent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ "${status}" -eq 2 ]] || return 1
   assert_trace block-declspawn || return 1
 }
@@ -1471,8 +1501,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 120 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 120 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 122 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 122 @test, found ${actual}" >&2
     return 1
   }
 }
