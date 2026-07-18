@@ -504,7 +504,7 @@ INSERT INTO core.learning_log (
     approval_tier, last_updated
 ) VALUES (
     %(discovered_date)s, %(pattern_signature)s, %(frequency)s, %(agent)s,
-    'pending'::core."LearningStatus",
+    'identified'::core."LearningStatus",
     'auto'::core."ApprovalTier",
     now()
 )

@@ -5,19 +5,21 @@
 # a cost-discipline safety net for runaway fan-out. ADVISORY ONLY, never blocks.
 # HONEST FRAMING: counts CUMULATIVE session spawns (lifetime append count), NOT concurrent children
 # or chain depth — the PreToolUse(Agent) envelope carries neither, and the timestamp-less
-# session-spawns append trace (written by enforce-verification-gate.sh) cannot reconstruct them, so
-# concurrency/depth BLOCKING is an explicit Non-Goal. The cumulative count is a coarse proxy (a
-# healthy multi-wave session spawns many agents sequentially), so the threshold sits high (see TUNE).
+# session-spawns append trace (written by enforce-verification-gate.sh on PostToolUse(Agent)
+# spawn-success) cannot reconstruct them, so concurrency/depth BLOCKING is an explicit Non-Goal. The
+# cumulative count is a coarse proxy (a healthy multi-wave session spawns many agents sequentially),
+# so the threshold sits high (see TUNE).
 # Manual-path only — ultracode/Workflow agent() spawn fires no PreToolUse(Agent) and leaves no trace
 # (fail-open under-count, never a false advisory).
 #
-# Trace source: ~/.claude/data/session-spawns/<session-key> (one subagent_type per line, read-only
-# line count). session-key = session_id run through the writer's path-safe allowlist transform.
+# Trace source: ~/.claude/data/session-spawns/<session-key> (one subagent_type per executed spawn,
+# read-only line count). session-key = session_id run through the writer's path-safe allowlist transform.
 # Channel: STDERR advisory + exit 0 (PreToolUse accepts only approve/block; STDERR is no validation
 # surface). fail-open on EVERYTHING: missing session_id / absent-or-unreadable / malformed trace /
 # internal error → exit 0 silently.
-# Ordering caveat: enforce-verification-gate.sh appends THIS spawn's line on the same event, so the
-# read count may include or exclude the current spawn (±1) — immaterial for a coarse threshold.
+# Ordering: enforce-verification-gate.sh appends a line only on PostToolUse(Agent) spawn-success,
+# which fires AFTER this PreToolUse advisory reads, so the count excludes the current spawn and any
+# never-executed spawn (executed-spawns-only basis) — immaterial for a coarse threshold.
 
 set -Eeuo pipefail
 IFS=$'\n\t'

@@ -19,10 +19,15 @@
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
 #   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
 # Session state: agent_events has no session_id column + async PG write → no synchronous lookup, so
-#   each spawn appends agent_type to a local marker (session-spawns/<key>) read here.
-# Ordering: READ-BEFORE-STAMP — reviewer-present snapshot taken BEFORE this spawn appends its own type
-#   → sequential reviewer→DEV passes (reviewer PreToolUse durably committed first); same-batch parallel
-#   reviewer+DEV raises. Avoids a write-after-read inversion where the DEV's own append pollutes its read.
+#   an EXECUTED spawn appends its agent_type to a local marker (session-spawns/<key>), read here.
+# Dual-event (DF-5): registered on BOTH PreToolUse(Agent) AND PostToolUse(Agent).
+#   - PreToolUse: READ the reviewer-present snapshot + run all verdict/advisory logic. NEVER stamps.
+#   - PostToolUse: STAMP the marker (the spawn actually executed) + prune. No verdict logic.
+#   A spawn blocked at PreToolUse (this gate's exit 2, or a sibling hook) reaches no PostToolUse, so
+#   it leaves NO stamp — no false reviewer-present, no inflated spawn-budget counter. Sequential
+#   reviewer→DEV still passes: the reviewer's PostToolUse commits its qa-code-reviewer line before the
+#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV raises the advisory (reviewer
+#   not yet completed at the DEV read) — correct, parallel is the wrong pattern.
 # fail-open: internal error / marker absent / corrupted payload → exit 0, never interferes.
 
 set -Eeuo pipefail
@@ -78,21 +83,23 @@ tool_name=""
 tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || true)" || tool_name=""
 [[ "${tool_name}" != "Agent" ]] && exit 0
 
-# Single jq fan-out — session_id / subagent_type / prompt at once.
+# Single jq fan-out — hook_event / session_id / subagent_type / prompt at once.
 gate_sep=$'\x1f'
 gate_tsv=""
 gate_tsv="$(printf '%s' "${input}" | jq -r --arg sep "${gate_sep}" '[
+  (.hook_event_name // ""),
   (.session_id // ""),
   (.tool_input.subagent_type // ""),
   ((.tool_input.prompt // "") | @base64)
 ] | join($sep)' 2>/dev/null || true)" || gate_tsv=""
 [[ -z "${gate_tsv}" ]] && exit 0
 
+hook_event=""
 session_id=""
 subagent_type=""
 prompt_b64=""
 {
-  IFS=$'\x1f' read -r session_id subagent_type prompt_b64
+  IFS=$'\x1f' read -r hook_event session_id subagent_type prompt_b64
 } <<<"${gate_tsv}"
 
 # session_id absent → marker key impossible → fail-open.
@@ -161,11 +168,12 @@ has_size_est_token() {
   printf '%s' "${text}" | grep -qF '[SIZE-EST]' 2>/dev/null
 }
 
-# 1. READ-BEFORE-STAMP — snapshot reviewer-present state from PRIOR invocations BEFORE this spawn
-# appends its own type. Sequential reviewer→DEV: reviewer's completed PreToolUse durably commits the
-# qa-code-reviewer line → DEV read observes it → pass. Same-batch parallel reviewer+DEV: reviewer
-# stamp not guaranteed committed before the DEV read → snapshot absent → raise. Reading first keeps
-# the DEV's own append from polluting its own read. (Append is O_APPEND atomic per line.)
+# 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
+# Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
+# it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
+# the reviewer has not completed at the DEV read → snapshot absent → raise. This PreToolUse read is
+# used only by the verdict logic below; the marker is never written on PreToolUse. (Append is
+# O_APPEND atomic per line.)
 marker_path="${spawn_dir}/${session_key}"
 reviewer_present=false
 if [[ -f "${marker_path}" ]] && grep -qx "glass-atrium-qa-code-reviewer" "${marker_path}" 2>/dev/null; then
@@ -206,12 +214,22 @@ prune_marker_file() {
   mv -f "${tmp_path}" "${path}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
 }
 
-# 2. Self-stamp (record own spawn) AFTER the snapshot — keeps this spawn discoverable by a
-# LATER sequential spawn without retroactively affecting the snapshot just taken above.
-if [[ -n "${subagent_type}" ]]; then
-  mkdir -p "${spawn_dir}" 2>/dev/null || true
-  printf '%s\n' "${subagent_type}" >>"${marker_path}" 2>/dev/null || true
-  prune_marker_file "${marker_path}"
+# 2. Spawn-SUCCESS stamp — PostToolUse ONLY (DF-5). PreToolUse fires BEFORE the spawn runs, so
+# stamping there records a mere ATTEMPT: a spawn later blocked (by THIS gate's exit 2, or by a
+# sibling PreToolUse hook) never executes yet still leaves a marker line — falsely satisfying a
+# later DEV spawn's reviewer-presence check AND inflating advisory-spawn-budget.sh's counter with
+# never-executed spawns. PostToolUse fires only after the Agent actually executed, so it is the
+# reliable spawn-success signal: a blocked spawn reaches no PostToolUse → leaves NO stamp. The
+# PreToolUse path reads the reviewer-present snapshot above but MUST NOT stamp. An empty/unknown
+# hook_event (legacy payloads without hook_event_name) defaults to the read-only PreToolUse path —
+# fail-safe: never stamp on ambiguity.
+if [[ "${hook_event}" == "PostToolUse" ]]; then
+  if [[ -n "${subagent_type}" ]]; then
+    mkdir -p "${spawn_dir}" 2>/dev/null || true
+    printf '%s\n' "${subagent_type}" >>"${marker_path}" 2>/dev/null || true
+    prune_marker_file "${marker_path}"
+  fi
+  exit 0
 fi
 
 # 3. Advisory-fire condition.

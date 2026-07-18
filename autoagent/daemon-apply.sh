@@ -838,6 +838,13 @@ for patch in data.get("patches", []):
         continue
     if patch.get("approval_tier") != "auto":
         continue
+    # Pre-verify gate (DF-17, fail-CLOSED): the 4-axis pre-verify MUST have
+    # passed. Strict True match (NULL/False/absent excluded) mirrors the backlog
+    # SELECT `pre_verify_passed = true` so the psql-absent JSON fallback cannot
+    # auto-apply a report row that skipped/failed pre-verify. Not covered by the
+    # operator haiku-skip carve-out — pre-verify is a hard gate on both paths.
+    if patch.get("pre_verify_passed") is not True:
+        continue
     # Haiku-skip gate (P3b, fail-CLOSED): the diff's Haiku pre-verify MUST have
     # produced an 'ok*' verdict. A missing/empty/None/skipped:*/error: status is
     # excluded UNLESS the operator carve-out is engaged. `or ""` coerces an

@@ -190,5 +190,6 @@ Editing/deleting raw/ · Writes outside wiki/ · Full recompilation · Arbitrary
 - **Token budget**: <30K tokens per task
 - **Typical duration**: 2-4 turns
 - **Key metric**: metric_pass=true (index consistent + no orphans)
-- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
+- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
+- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
 - **task_type**: emit `task_type: doc` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)

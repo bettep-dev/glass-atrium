@@ -1160,25 +1160,78 @@ update_capture_base_content() {
 #      tree — unfiltered, swap_symlink would hard-die "manifest source missing"
 #      on every update until manual review (warn+skip is the update contract).
 
+# Persist ${1} (the release manifest) as the root install manifest ${2}/manifest.json:
+# atomic (temp + rename so a concurrent reader never sees a half-written file) AND
+# source-present-FILTERED. Any manifest .files / .hashes entry with NO source under the
+# root — a sensitive harness file the update REFUSED to auto-sync, or an unapplied /
+# rolled-back member — is dropped from the persisted copy, so doctor §4 (manifest
+# source-present) no longer BRICKS on the legitimately-absent file (DF-8); a file that
+# WAS present at persist time and later goes missing is NOT in the persisted set and is
+# still §4-caught. The common case (nothing absent) is a byte-identical cp -p, so a
+# normal release keeps its unfiltered manifest. .version + every other key (e.g.
+# _doc_settings_json) are preserved, so an agent-only bump still clears the "update
+# available" badge (DF-10). WARN-not-fatal: a persist failure leaves the root scope
+# stale until the next update (never aborts an applied update).
+update_persist_root_manifest() {
+  local src="$1" root="$2" dst tmp present_txt rel absent=0
+  dst="${root}/manifest.json"
+  tmp="${dst}.ga-update.$$"
+  present_txt="$(mktemp -t glass-atrium-present-manifest.XXXXXX)"
+
+  # Single pass: keep the source-present entries, count + name the absent ones.
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    if [[ -e "${root}/${rel}" ]]; then
+      printf '%s\n' "${rel}" >>"${present_txt}"
+    else
+      update_log "  (manifest source absent — dropped from the persisted manifest) ${rel}"
+      absent=$((absent + 1))
+    fi
+  done < <(jq -r '.files[]' -- "${src}" 2>/dev/null)
+
+  if [[ "${absent}" -eq 0 ]]; then
+    # Nothing absent → byte-identical persist (a normal release is unfiltered).
+    rm -f -- "${present_txt}" 2>/dev/null || true
+    if cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; then
+      update_log "root manifest persisted (install-parity): ${dst}"
+    else
+      rm -f -- "${tmp}" 2>/dev/null || true
+      update_log "WARN: could not persist the release manifest to ${dst} — root scope stays stale until the next update"
+    fi
+    return 0
+  fi
+
+  # Absent entries exist → drop them from .files + .hashes, preserve .version + the
+  # rest, via jq into the temp, then atomically rename.
+  if jq --rawfile present "${present_txt}" '
+      ($present | split("\n") | map(select(length > 0))
+        | map({key: ., value: true}) | from_entries) as $keep
+      | .files = (.files | map(select($keep[.])))
+      | (if (.hashes | type) == "object"
+         then .hashes = (.hashes | to_entries | map(select($keep[.key])) | from_entries)
+         else . end)
+    ' -- "${src}" >"${tmp}" 2>/dev/null \
+    && mv -f -- "${tmp}" "${dst}"; then
+    update_log "root manifest persisted source-present-filtered (${absent} absent entr(y/ies) dropped): ${dst}"
+  else
+    rm -f -- "${tmp}" 2>/dev/null || true
+    update_log "WARN: could not persist the filtered release manifest to ${dst} — root scope stays stale until the next update"
+  fi
+  rm -f -- "${present_txt}" 2>/dev/null || true
+  return 0
+}
+
 # Persist + refresh, then surface orphan mirrors as a --dry-run ADVISORY only
 # (prune stays explicit-opt-in by ga-core.sh design). Farm failure -> named
 # exit 11 with "files applied, mirror refresh failed" semantics (the exit-9
 # post-step precedent); NEVER rolls back the applied files. Arg: $1 = the
 # downloaded/applied manifest.json.
 update_refresh_mirror_farm() {
-  local manifest="$1" root filtered tmp rc=0
+  local manifest="$1" root filtered rc=0
   root="$(update_ga_root)"
 
-  # Step 1 — persist (temp + rename: a concurrent manifest reader never sees a
-  # half-written file). WARN-not-fatal: the refresh below reads the FILTERED
-  # per-run scope, not this copy.
-  tmp="${root}/manifest.json.ga-update.$$"
-  if cp -p -- "${manifest}" "${tmp}" && mv -f -- "${tmp}" "${root}/manifest.json"; then
-    update_log "root manifest persisted (install-parity): ${root}/manifest.json"
-  else
-    rm -f -- "${tmp}" 2>/dev/null || true
-    update_log "WARN: could not persist the release manifest to ${root}/manifest.json — root scope stays stale until the next update"
-  fi
+  # Step 1 — persist the root manifest (source-present-FILTERED, atomic temp+rename).
+  update_persist_root_manifest "${manifest}" "${root}"
 
   # Step 2 — filtered refresh via the canonical entrypoint (shared lib).
   filtered="${_update_workdir}/farm-manifest.json"
@@ -1714,6 +1767,32 @@ _update_launchd_settle() {
   done
 }
 
+# Emit the launchd job roster (one name per line) from the ga-env SoT (lib/ga-env.sh
+# LAUNCHD_JOBS) — the SINGLE list every resident-daemon consumer must agree on (DF-31),
+# not a second hardcoded copy. update.sh MUST NOT source ga-env.sh in-process: its
+# readonly assignments would collide with update.sh's own globals and abort under set -e.
+# So source it in an ISOLATED SUBSHELL (ga_init_env is pure assignments, no side effects)
+# and print the array. The just-APPLIED ga-env.sh is read, so the roster reflects the new
+# release. rc 1 (no output) when ga-env.sh is absent/unsourceable or the array is empty —
+# the caller loud-WARNs and skips rather than silently reloading nothing.
+update_launchd_jobs_from_ga_env() {
+  local root ga_env
+  root="$(update_ga_root)"
+  ga_env="${root}/lib/ga-env.sh"
+  [[ -f "${ga_env}" ]] || return 1
+  (
+    # shellcheck source=/dev/null
+    source "${ga_env}" >/dev/null 2>&1 || exit 1
+    ga_init_env "${root}" >/dev/null 2>&1 || exit 1
+    # LAUNCHD_JOBS is assigned by ga_init_env in the dynamically-sourced ga-env.sh,
+    # invisible to shellcheck's static scope.
+    # shellcheck disable=SC2154
+    [[ "${#LAUNCHD_JOBS[@]}" -gt 0 ]] || exit 1
+    # shellcheck disable=SC2154
+    printf '%s\n' "${LAUNCHD_JOBS[@]}"
+  )
+}
+
 # Re-deploy + reload EVERY resident (already-loaded) com.glass-atrium.* launchd job whose
 # deployed plist has DRIFTED from the freshly-rendered SoT, so a renderer / PATH /
 # EnvironmentVariables fix from render-parity actually reaches the loaded definition.
@@ -1742,20 +1821,23 @@ update_refresh_resident_launchd() {
   rendered_dir="$(update_rendered_launchd_dir)"
   agents_dir="$(update_launch_agents_dir)"
 
-  # Resident daemon set = lib/ga-env.sh LAUNCHD_JOBS (8) MINUS `monitor` (kickstart-
-  # refreshed above). update.sh runs standalone (never sources ga-env.sh — a readonly
-  # collision would abort), so the set is inlined; drift vs that SoT / render-launchd-
-  # plists.sh JOBS is a redeploy gap. bash 3.2 + set -u: iterate a function-local array.
-  local jobs=(
-    autoagent-daemon
-    wiki-daemon
-    monitor-log-rotate
-    pg-backup
-    autoagent-cycle
-    wiki-compile
-    daemon-daily-restart
-  )
-  [[ "${#jobs[@]}" -gt 0 ]] || return 0
+  # Resident daemon set = lib/ga-env.sh LAUNCHD_JOBS MINUS `monitor` (kickstart-
+  # refreshed above), DERIVED from that SoT (DF-31) rather than re-hardcoded — a second
+  # inlined list silently drifts from the ga-env roster. update.sh cannot source
+  # ga-env.sh in-process (its readonly assignments collide with update.sh's own globals
+  # + abort under set -e), so the roster is read in an ISOLATED SUBSHELL. A derivation
+  # failure loud-WARNs + skips (best-effort post-step contract: never abort an applied
+  # update). bash 3.2 + set -u: iterate a function-local array.
+  local jobs=() job_raw
+  while IFS= read -r job_raw; do
+    [[ -n "${job_raw}" ]] || continue
+    [[ "${job_raw}" == "monitor" ]] && continue
+    jobs+=("${job_raw}")
+  done < <(update_launchd_jobs_from_ga_env || true)
+  if [[ "${#jobs[@]}" -eq 0 ]]; then
+    update_log "WARN: could not derive the resident daemon roster from lib/ga-env.sh (LAUNCHD_JOBS) — resident daemons were NOT reloaded; reload them manually after this update"
+    return 0
+  fi
 
   local job label src dst
   for job in "${jobs[@]}"; do
@@ -2395,6 +2477,11 @@ update_run() {
     # landed merges (outcome-keyed) and sweep a drop-only release, even with no
     # non-agent content change.
     update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # Persist the new-version manifest even with no non-agent file change, so an
+    # agent-only version bump advances the installed version-of-record and clears
+    # the "update available" badge (DF-10) — the full-apply path persists via
+    # update_refresh_mirror_farm, which this early return never reaches.
+    update_persist_root_manifest "${manifest}" "${root}"
     update_finalize_success 0
     return 0
   fi
@@ -2421,6 +2508,11 @@ update_run() {
     # Sensitive-only path (finding #9 / #14): advance anchors for landed merges
     # (outcome-keyed) and sweep a drop-only release on the all-sensitive path too.
     update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # Persist the new-version (source-present-filtered) manifest so the sensitive-only
+    # bump advances the installed version-of-record + clears the "update available"
+    # badge (DF-10); the filter drops the just-refused sensitive entries so doctor §4
+    # does not brick on them (DF-8).
+    update_persist_root_manifest "${manifest}" "${root}"
     update_finalize_success 0
     return 0
   fi

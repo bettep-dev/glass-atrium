@@ -391,13 +391,16 @@ run_regression_stage() {
 # runs/payload writes read OUT_PATH's already-final stats (apply never mutates
 # OUT_PATH), so moving the helper earlier is behavior-preserving for them.
 # Skip on dry-run + when the report file is absent or 0-byte (cycle failed).
-# Helper itself swallows failures (fail-loud-and-skip).
+# The helper attempts every write (never blocks the daemon) but now EXITS
+# NON-ZERO when a write fails (DB down); that rc is returned here so the caller
+# folds it into PIPELINE_RC and a DB-down cycle surfaces as degraded (DF-16). A
+# skip (dry-run / absent report) returns 0 — nothing was pushed, nothing failed.
 run_pg_push_stage() {
     local pg_push_py="${HOME}/.glass-atrium/scripts/_pg_push_autoagent_cycle.py"
+    local pg_rc=0
     if [[ "${DRY_RUN}" -eq 0 && -s "${OUT_PATH}" && -f "${pg_push_py}" ]]; then
         printf '[daemon-cycle] PG_PUSH start out=%s date=%s started=%s\n' \
             "${OUT_PATH}" "${CYCLE_DATE}" "${CYCLE_STARTED_AT}" >&2
-        local pg_rc=0
         OUT_PATH="${OUT_PATH}" \
             CYCLE_DATE="${CYCLE_DATE}" \
             CYCLE_STARTED_AT="${CYCLE_STARTED_AT}" \
@@ -420,7 +423,7 @@ run_pg_push_stage() {
         printf '[daemon-cycle] PG_PUSH SKIP dry=%d out_size=%s helper=%s out=%s\n' \
             "${DRY_RUN}" "${out_size_label}" "${helper_label}" "${OUT_PATH}" >&2
     fi
-    return 0
+    return "${pg_rc}"
 }
 
 # aggregate: scan outcomes/ → update core-learning-log.md + feedback-clusters.json.
@@ -451,8 +454,9 @@ run_aggregate_stage() {
 # and does NOT abort the next stage), but a non-zero rc from ANY dispatched
 # stage is OR-accumulated into PIPELINE_RC so the final exit can report a
 # degraded cycle (exit 1) instead of an unconditional clean exit 0. The PG_PUSH
-# stages are best-effort sinks (fail-loud-and-skip, always return 0) and so do
-# not contribute. Helper: run a stage, fold its rc into PIPELINE_RC.
+# stage now contributes: a write failure (DB down) returns non-zero and is
+# folded in so a DB-down cycle surfaces as degraded (DF-16). LOOP_PUSH stays a
+# best-effort sink. Helper: run a stage, fold its rc into PIPELINE_RC.
 PIPELINE_RC=0
 record_stage_rc() {
     local rc="$1"
@@ -467,8 +471,10 @@ case "${STAGE_MODE}" in
         run_cycle_stage
         record_stage_rc "$?"
         # Push proposals to PG BEFORE apply so the apply backlog drain finds
-        # same-cycle auto-tier rows (produce-before-consume).
+        # same-cycle auto-tier rows (produce-before-consume). A write failure
+        # (DB down) is folded into PIPELINE_RC (DF-16).
         run_pg_push_stage
+        record_stage_rc "$?"
         FULL_MODE_PG_PUSHED=1
         # Re-derive prior-cycle stale pending diffs BEFORE apply so the same
         # cycle's apply drains the freshened rows instead of re-skipping them on
@@ -518,7 +524,11 @@ set -e
 # (--cycle-only / --apply-only / --aggregate-only / --regression-only) keep the
 # tail-push behavior.
 if [[ "${FULL_MODE_PG_PUSHED}" -eq 0 ]]; then
-    run_pg_push_stage
+    # `|| pg_tail_rc=$?` keeps set -e from aborting on a non-zero push (DB down);
+    # the rc is folded into PIPELINE_RC so non-full modes also surface degraded.
+    pg_tail_rc=0
+    run_pg_push_stage || pg_tail_rc=$?
+    record_stage_rc "${pg_tail_rc}"
 fi
 # PHASE2-AUTOAGENT-DUALWRITE-END
 
@@ -548,9 +558,10 @@ fi
 
 # Final exit reflects the aggregate dispatch result: 0 = all dispatched stages
 # clean · 1 = degraded (≥1 stage non-zero) · 2 = arg/stage-mode error · 3 =
-# python3 missing · 4 = claude missing. The PG_PUSH / LOOP_PUSH tail sinks are
-# best-effort and do not affect this aggregate. This lets launchd/monitoring
-# distinguish a degraded run from a clean one instead of always seeing success.
+# python3 missing · 4 = claude missing. PG_PUSH now folds its write-failure rc
+# into this aggregate (DF-16 — a DB-down cycle is degraded); the LOOP_PUSH tail
+# sink stays best-effort. This lets launchd/monitoring distinguish a degraded
+# run from a clean one instead of always seeing success.
 if [[ "${PIPELINE_RC}" -ne 0 ]]; then
     printf '[daemon-cycle] cycle finished DEGRADED — at least one stage returned non-zero (exit 1)\n' >&2
     exit 1

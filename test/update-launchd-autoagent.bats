@@ -26,6 +26,13 @@ REAL_UPDATE="${GA}/scripts/update.sh"
 
 setup() {
   [[ -f "${REAL_UPDATE}" ]] || skip "updater not found: ${REAL_UPDATE}"
+  # DF-31: update_refresh_resident_launchd DERIVES its roster from ${GA_ROOT}/lib/ga-env.sh
+  # LAUNCHD_JOBS (update_launchd_jobs_from_ga_env), not an inline copy. Pin GA_ROOT to the
+  # repo tree (real ga-env.sh + scripts/lib E5 deps) so the derivation is HERMETIC — without
+  # it the reader falls back to ${HOME}/.glass-atrium, absent on CI → empty roster → the
+  # loop redeploys nothing (the observed CI failure). Env seams below still redirect the
+  # rendered/deployed plist dirs, so GA_ROOT only feeds the roster read.
+  export GA_ROOT="${GA}"
   SANDBOX="$(mktemp -d -t ga-update-launchd.XXXXXX)"
   STUB_LOG="${SANDBOX}/launchctl-calls.log"
   RENDERED="${SANDBOX}/rendered"

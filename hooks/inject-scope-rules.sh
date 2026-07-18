@@ -121,6 +121,13 @@ readonly INJECT_CTX_MAX_BYTES=9728
 readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOME}/.claude/logs/inject-scope-rules.diag.log}"
 readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
 
+# Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3
+# maxTurns budget (glass-atrium-sec-guard's maxTurns:3 → ceiling 2) is a self-contradictory "stop
+# after 2 of 3 turns" advisory for the verdict-only agent GLOBAL_RULES already EXEMPTS from the
+# ceiling mechanic (Turn Budget & Graceful Exit → Exempt). Requiring maxTurns >= 4 keeps the meter
+# meaningful (ceiling >= 3, a real gap) and leaves the sec-guard spawn context meter-free.
+readonly METER_MIN_MAX_TURNS=4
+
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
 
@@ -225,9 +232,10 @@ byte_len() {
 # Append a persisted drop-marker line. Fail-open: EVERY statement is guarded (|| true / || return 0
 # / if-then) so a logging glitch can NEVER trip set -e → the ERR trap → a spawn-suppressing exit
 # (a logging failure must not cost the injection). Bounded: the log is removed once it crosses
-# INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=ctx_bytes at drop.
+# INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=pre-drop byte
+# size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size).
 append_drop_log() {
-  local block="${1}" ctx_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts=""
+  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts=""
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
     sz="$(wc -c < "${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
@@ -236,8 +244,8 @@ append_drop_log() {
     fi
   fi
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] DROP agent=%s block=%s ctx_bytes=%s ceiling=%s\n' \
-    "${ts}" "${AGENT_TYPE}" "${block}" "${ctx_bytes}" "${INJECT_CTX_MAX_BYTES}" \
+  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s\n' \
+    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" \
     >>"${INJECT_DROP_LOG}" 2>/dev/null || true
   return 0
 }
@@ -306,10 +314,13 @@ EMIT_BLOCK="$(build_emit_format_block)"
 METER_BLOCK=""
 if [[ -z "${SUBAGENT_BUDGET_METER_OFF}" ]]; then
   METER_MAX_TURNS="$(read_max_turns "${AGENT_TYPE}")"
-  if [[ -n "${METER_MAX_TURNS}" ]]; then
-    METER_BLOCK="$(build_meter_block "${METER_MAX_TURNS}")"
-  else
+  if [[ -z "${METER_MAX_TURNS}" ]]; then
     printf '[inject-scope-rules] maxTurns un-derivable for budget meter (agent=%s)\n' "${AGENT_TYPE}" >&2
+  elif [[ "$((10#${METER_MAX_TURNS}))" -lt "${METER_MIN_MAX_TURNS}" ]]; then
+    # DF-20: maxTurns below the floor (sec-guard's 3) → meter skipped, not contradictory.
+    printf '[inject-scope-rules] maxTurns %s below meter floor %d; meter skipped (agent=%s)\n' "${METER_MAX_TURNS}" "${METER_MIN_MAX_TURNS}" "${AGENT_TYPE}" >&2
+  else
+    METER_BLOCK="$(build_meter_block "${METER_MAX_TURNS}")"
   fi
 fi
 
@@ -326,6 +337,10 @@ CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "$
 ctx_bytes="$(byte_len "${CTX}")"
 for drop_block in naming styleref minimalism comment; do
   [[ "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
+  # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
+  # the block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would
+  # under-report the size that actually breached the ceiling.
+  pre_drop_bytes="${ctx_bytes}"
   case "${drop_block}" in
     naming) keep_naming=0 ;;
     styleref) keep_styleref=0 ;;
@@ -336,7 +351,7 @@ for drop_block in naming styleref minimalism comment; do
   CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}")"
   ctx_bytes="$(byte_len "${CTX}")"
   printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
-  append_drop_log "${drop_block}" "${ctx_bytes}"
+  append_drop_log "${drop_block}" "${pre_drop_bytes}"
 done
 
 # All blocks empty → nothing to inject, fail-open exit.

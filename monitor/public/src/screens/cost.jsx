@@ -762,13 +762,13 @@ function TokenCategoryBody({ state, days, onRetry }) {
   }
 
   const categoryRates = window.TOKEN_CATEGORY_RATES || [];
-  const rateCatalog = window.TOKEN_RATES || {};
 
   // 모델별 카테고리 가중치 — 단가 가중(tokens × rate/1M) 분배의 분모.
   // 토큰 COUNT 비율은 카테고리간 단가차(Opus output $75 vs cache_read $1.5 = 50배) 무시 → 고단가·저COUNT output 을 ~8배 과소표시 → 단가 가중으로 교정.
   // 단가 미상 모델(카탈로그 키 부재) → tokens × 1 = 순수 COUNT 비율 폴백 (비용 0/누락 없이 기존 거동 유지).
+  // getTokenRate = exact + family-prefix — date-suffixed id 도 family 단가로 해소 (silent COUNT 폴백 방지).
   const modelWeights = (m) => {
-    const rates = rateCatalog[m.model];
+    const rates = window.getTokenRate(m.model);
     const weight = {};
     let sum = 0;
     for (const cat of categoryRates) {
@@ -868,14 +868,21 @@ function ModelCostCard({ state, days, onRetry }) {
   const unattributedCount = rows.reduce((s, r) => s + (isUnattributedModel(r.model) ? 1 : 0), 0);
   const realModelCount = rows.length - unattributedCount;
   // 단가 카탈로그 미등록 실모델 — COUNT 폴백 분배 중임을 카드 레벨에서 가시화 (F28).
-  const rateCatalog = window.TOKEN_RATES || {};
+  // getTokenRate = exact + family-prefix → date-suffixed id 는 family 단가로 해소되므로 실제 miss 만 카운트.
   const fallbackCount = rows.reduce(
-    (s, r) => s + (!isUnattributedModel(r.model) && !rateCatalog[r.model] ? 1 : 0), 0);
+    (s, r) => s + (!isUnattributedModel(r.model) && !window.getTokenRate(r.model) ? 1 : 0), 0);
 
   return (
     <div className="card">
       <CardHead
         title="Cost by model"
+        right={fallbackCount > 0
+          ? (
+            <span title={`${fallbackCount} model${fallbackCount === 1 ? '' : 's'} without a catalog price — cost split falls back to token-count ratio`}>
+              <Pill tone="warn">{fallbackCount} est. rate</Pill>
+            </span>
+          )
+          : null}
       />
       <div className="card-body">
         <ModelCostBody state={state} days={days} onRetry={onRetry}/>
@@ -1001,7 +1008,6 @@ function ModelCostRow({ r }) {
 // 토큰 COUNT 비율은 카테고리간 단가차(output vs cache_read ~50배) 무시 → output 과소표시 → 단가 가중으로 교정.
 // 단가 미상 모델(카탈로그 키 부재) → rate=1 = COUNT 비율 폴백 + rateFallback 마킹 (silent degrade 차단, F28).
 function buildModelCostRows(rows) {
-  const rateCatalog = window.TOKEN_RATES || {};
   return rows.map((r) => {
     const inputN  = Number(r.input_tokens) || 0;
     const outputN = Number(r.output_tokens) || 0;
@@ -1009,7 +1015,8 @@ function buildModelCostRows(rows) {
     const cacheC  = Number(r.cache_creation_tokens) || 0;
     const cost    = Number(r.cost_usd) || 0;
     const unattributed = isUnattributedModel(r.model);
-    const rates = rateCatalog[r.model];
+    // getTokenRate = exact + family-prefix — date-suffixed id 도 family 단가로 해소.
+    const rates = window.getTokenRate(r.model);
     const rateFallback = !rates;
     const rateOf = (key) => (rates ? (Number(rates[key]) || 0) : 1);
     const weights = {
@@ -1071,11 +1078,13 @@ function CacheHitBody({ state, days, onRetry }) {
     return <EmptyStateC message={`No cache-hit events in the last ${days} days.`}/>;
   }
 
-  // 헤더 summary 용 평균 — non-null 일자만 집계.
-  const validRows = rows.filter((r) => r.cache_hit_rate !== null && r.cache_hit_rate !== undefined);
-  const avgRate = validRows.length > 0
-    ? validRows.reduce((s, r) => s + Number(r.cache_hit_rate), 0) / validRows.length
-    : null;
+  // 헤더 summary = 합산(pooled) 적중률 — Σcache_read / Σ(input+cache_read).
+  // 일별 비율 평균(mean-of-daily-rates)은 저트래픽 일을 고트래픽 일과 동일 가중해 왜곡 →
+  // 표본 가중 합산으로 교정 (A5). 서버 per-day 분모(input+cache_read)와 동일 기준.
+  const totalCacheRead = rows.reduce((s, r) => s + (Number(r.total_cache_read) || 0), 0);
+  const totalInputAll  = rows.reduce((s, r) => s + (Number(r.total_input) || 0), 0);
+  const pooledDenominator = totalInputAll + totalCacheRead;
+  const pooledRate = pooledDenominator > 0 ? totalCacheRead / pooledDenominator : null;
 
   const chartRows = rows.map((r) => ({
     date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
@@ -1094,9 +1103,9 @@ function CacheHitBody({ state, days, onRetry }) {
     <>
       <div className="flex items-baseline gap-3 mb-3">
         <div className="font-mono fs-stat font-semibold tracking-tight">
-          {avgRate === null ? '—' : (avgRate * 100).toFixed(1) + '%'}
+          {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
         </div>
-        <div className="fs-meta text-dim">average hit rate</div>
+        <div className="fs-meta text-dim">pooled hit rate</div>
       </div>
       <div style={{ width: '100%', height: 220 }}>
         <CacheHitChart rows={chartRows} yDomain={yDomain}/>

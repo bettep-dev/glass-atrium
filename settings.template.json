@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Glass Atrium ~/.claude/settings.json PERMISSIONS template (DF-22 reference — NOT auto-applied).",
+    "DEFECT: an rm NEGATION placed inside permissions.allow — e.g. \"!Bash(rm:*)\" — is likely INERT.",
+    "  Claude Code's permission layer denies via the permissions.deny array; an allow-list negation is",
+    "  not the documented deny mechanism, so \"Bash(*)\" + \"!Bash(rm:*)\" in allow does NOT reliably block",
+    "  rm at the permission layer (the block-dangerous-commands.sh hook is a SEPARATE, later gate).",
+    "FIX: declare rm rules in permissions.deny (below). deny is evaluated with precedence over allow.",
+    "APPLY: merge ONLY the \"permissions\" object into your existing ~/.claude/settings.json (never wipe",
+    "  other keys). wire_hooks (lib/ga-config-hooks.sh) never touches permissions, so this stays manual.",
+    "LIVE-VERIFY (see the \"live_verify\" key): confirm rm is blocked at the PERMISSION layer, not merely",
+    "  by the dangerous-command hook."
+  ],
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(*)"
+    ],
+    "deny": [
+      "Bash(rm:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "live_verify": [
+    "1. Apply the permissions block above to ~/.claude/settings.json, then start a fresh 'claude' session.",
+    "2. Request an rm command, e.g. Bash: rm /tmp/ga-df22-probe",
+    "3. EXPECT: the call is DENIED at the permission layer (permission prompt / auto-deny), BEFORE any",
+    "   hook fires. A pass = rm cannot execute. Contrast with the pre-fix state, where '!Bash(rm:*)' sat",
+    "   inside permissions.allow and rm was NOT permission-denied (only the hook, if present, caught it).",
+    "4. Positive control: Bash: ls /tmp — MUST still be permitted (deny is scoped to rm only)."
+  ]
+}

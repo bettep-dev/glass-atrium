@@ -84,15 +84,58 @@ for f in sys.argv[1:]:
   }
 }
 
+# Escape a raw string for safe embedding as a JSON string value — pure-bash (Bash 3.2 ${//}),
+# no jq/python dependency, so it is safe even in the python3-absent path (hook_require_python3
+# emits an error PRECISELY when python3 is missing). Order matters: backslash FIRST, then the
+# double-quote, then the common control chars. Args: $1=raw · stdout: escaped body (no quotes).
+_hook_json_escape() {
+  local s="${1}"
+  # backslash FIRST (must precede the quote pass), then the double-quote, then common control chars.
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "${s}"
+}
+
 # Emit a structured JSON error object to stderr.
 # Args: $1=error_code $2=severity $3=message
 #       $4=suggestion (optional) $5=context_json (optional, default "{}")
+# DF-21: message/suggestion are free text — a raw printf %s embed of a value carrying a " or \
+# produced MALFORMED JSON. Build via jq (full JSON-correct escaping + validates ctx as a JSON
+# fragment); on jq absent (or a jq parse failure) fall back to the pure-bash escaper so the object
+# stays valid. ctx is a caller-supplied JSON fragment → --argjson (parsed, not re-quoted); an
+# unparseable ctx degrades to {} rather than dropping the whole error.
 hook_emit_error() {
   local hook_name code="${1}" severity="${2}" message="${3}"
   local suggestion="${4:-}" ctx="${5:-"{}"}"
   hook_name="$(basename "${BASH_SOURCE[1]:-${0}}" .sh)"
+  if command -v jq >/dev/null 2>&1; then
+    local _json
+    if _json="$(jq -cn \
+      --arg hook "${hook_name}" --arg code "${code}" --arg severity "${severity}" \
+      --arg message "${message}" --arg suggestion "${suggestion}" --argjson context "${ctx}" \
+      '{hook:$hook,error_code:$code,severity:$severity,message:$message,suggestion:$suggestion,context:$context}' 2>/dev/null)"; then
+      printf '%s\n' "${_json}" >&2
+      return 0
+    fi
+    if _json="$(jq -cn \
+      --arg hook "${hook_name}" --arg code "${code}" --arg severity "${severity}" \
+      --arg message "${message}" --arg suggestion "${suggestion}" \
+      '{hook:$hook,error_code:$code,severity:$severity,message:$message,suggestion:$suggestion,context:{}}' 2>/dev/null)"; then
+      printf '%s\n' "${_json}" >&2
+      return 0
+    fi
+  fi
+  local e_hook e_code e_sev e_msg e_sug
+  e_hook="$(_hook_json_escape "${hook_name}")"
+  e_code="$(_hook_json_escape "${code}")"
+  e_sev="$(_hook_json_escape "${severity}")"
+  e_msg="$(_hook_json_escape "${message}")"
+  e_sug="$(_hook_json_escape "${suggestion}")"
   printf '{"hook":"%s","error_code":"%s","severity":"%s","message":"%s","suggestion":"%s","context":%s}\n' \
-    "${hook_name}" "${code}" "${severity}" "${message}" "${suggestion}" "${ctx}" >&2
+    "${e_hook}" "${e_code}" "${e_sev}" "${e_msg}" "${e_sug}" "${ctx}" >&2
 }
 
 # Log a diagnostic message to stderr with the caller's hook name.

@@ -16,9 +16,12 @@ import { join } from "node:path";
 
 import {
   buildFsFailReason,
+  cascadeAfterRowUpdate,
+  cascadeUpdateDocStatus,
   fsErrnoCode,
   prefixedFsReason,
   replyUpdateCasConflict,
+  restoreHtmlBody,
   updateClaudedDocRow,
   type HtmlRestoreArgs,
   type UpdateClaudedDocArgs,
@@ -259,4 +262,194 @@ test("#21 prefixedFsReason: keeps the stage discriminator (pinned by html-export
   assert.ok(render.startsWith("html_export_render:"), render);
   assert.strictEqual(render, "html_export_render: export failed");
   assertNoPathLeak(render);
+});
+
+// ---------------------------------------------------------------------------
+// DF-13 — cascade fires only on an ACTUAL doc_status diff (body-changed PUT).
+// A PUT echoing the row's current status must leave mixed-status siblings alone.
+// cascadeAfterRowUpdate takes prisma via DI → a call-counting mock drives it DB-free.
+// ---------------------------------------------------------------------------
+
+// prisma mock counting $queryRaw invocations (cascade fires ⟺ count increments).
+function makeCountingPrisma(rows: unknown[] = []): {
+  prisma: PrismaParam;
+  callCount: () => number;
+} {
+  let calls = 0;
+  const prisma = {
+    $queryRaw: async () => {
+      calls += 1;
+      return rows;
+    },
+  } as unknown as PrismaParam;
+  return { prisma, callCount: () => calls };
+}
+
+// cascadeAfterRowUpdate is typed against Fastify's request/prisma; the DI stubs
+// mirror the existing makeRequest/makePrisma shims.
+function makeExisting(overrides: Record<string, unknown>): Parameters<typeof cascadeAfterRowUpdate>[5] {
+  return {
+    id: BigInt(1),
+    folder_id: BigInt(5),
+    doc_status: "progress",
+    ...overrides,
+  } as unknown as Parameters<typeof cascadeAfterRowUpdate>[5];
+}
+
+function makeParsed(overrides: Record<string, unknown>): Parameters<typeof cascadeAfterRowUpdate>[4] {
+  return { expected_hash: "0".repeat(64), ...overrides } as unknown as Parameters<
+    typeof cascadeAfterRowUpdate
+  >[4];
+}
+
+test("DF-13 cascadeAfterRowUpdate: status echo (parsed === existing) → NO cascade (siblings untouched)", async () => {
+  const { prisma, callCount } = makeCountingPrisma();
+  const result = await cascadeAfterRowUpdate(
+    makeRequest() as unknown as Parameters<typeof cascadeAfterRowUpdate>[0],
+    makeReply().asReply as unknown as Parameters<typeof cascadeAfterRowUpdate>[1],
+    prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
+    1,
+    makeParsed({ doc_status: "progress" }),
+    makeExisting({ doc_status: "progress", folder_id: BigInt(5) }),
+  );
+  assert.strictEqual(result, true);
+  assert.strictEqual(callCount(), 0, "echoing the current status must NOT run the cascade UPDATE");
+});
+
+test("DF-13 cascadeAfterRowUpdate: actual diff on a grouped row → cascade fires once", async () => {
+  const { prisma, callCount } = makeCountingPrisma([
+    { id: BigInt(1), doc_status: "done", folder_id: BigInt(5) },
+  ]);
+  const result = await cascadeAfterRowUpdate(
+    makeRequest() as unknown as Parameters<typeof cascadeAfterRowUpdate>[0],
+    makeReply().asReply as unknown as Parameters<typeof cascadeAfterRowUpdate>[1],
+    prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
+    1,
+    makeParsed({ doc_status: "done" }),
+    makeExisting({ doc_status: "progress", folder_id: BigInt(5) }),
+  );
+  assert.strictEqual(result, true);
+  assert.strictEqual(callCount(), 1, "a real progress→done diff on a group member runs the cascade");
+});
+
+test("DF-13 cascadeAfterRowUpdate: standalone row (folder_id NULL) → NO cascade even on a diff", async () => {
+  const { prisma, callCount } = makeCountingPrisma();
+  const result = await cascadeAfterRowUpdate(
+    makeRequest() as unknown as Parameters<typeof cascadeAfterRowUpdate>[0],
+    makeReply().asReply as unknown as Parameters<typeof cascadeAfterRowUpdate>[1],
+    prisma as unknown as Parameters<typeof cascadeAfterRowUpdate>[2],
+    1,
+    makeParsed({ doc_status: "done" }),
+    makeExisting({ doc_status: "progress", folder_id: null }),
+  );
+  assert.strictEqual(result, true);
+  assert.strictEqual(callCount(), 0, "standalone rows have no siblings — cascade skipped");
+});
+
+// ---------------------------------------------------------------------------
+// DF-26 — swap-orphan unlink: a failed html↔plain-swap PUT must remove the
+// freshly-written swap file (no predecessor to restore), not leave it dangling.
+// ---------------------------------------------------------------------------
+
+test("DF-26 restoreHtmlBody: isNewSwapFile → unlinks the swap orphan (leaves no dangling file)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "swap-orphan-"));
+  try {
+    const htmlPath = join(dir, "new-swap.html");
+    writeFileSync(htmlPath, "FRESHLY_WRITTEN_SWAP_BODY", "utf8");
+    const restoreArgs: HtmlRestoreArgs = {
+      htmlPath,
+      previousHtmlContent: null, // swap path had no predecessor
+      isNewSwapFile: true,
+    };
+
+    await restoreHtmlBody(makeRequest().log as unknown as Parameters<typeof restoreHtmlBody>[0], restoreArgs);
+
+    assert.throws(
+      () => readFileSync(htmlPath, "utf8"),
+      /ENOENT/,
+      "swap orphan removed on rollback",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("DF-26 restoreHtmlBody: in-place (not swap) still restores previous bytes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "swap-inplace-"));
+  try {
+    const htmlPath = join(dir, "inplace.html");
+    writeFileSync(htmlPath, "LOSER_NEW_CONTENT", "utf8");
+    const restoreArgs: HtmlRestoreArgs = {
+      htmlPath,
+      previousHtmlContent: "ORIGINAL_BYTES",
+      // isNewSwapFile omitted → in-place restore branch (regression guard).
+    };
+
+    await restoreHtmlBody(makeRequest().log as unknown as Parameters<typeof restoreHtmlBody>[0], restoreArgs);
+
+    assert.strictEqual(readFileSync(htmlPath, "utf8"), "ORIGINAL_BYTES");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DF-26 — cascade-only PUT content_hash guard: the cascade target must carry an
+// atomic CAS guard so a hash that moved between fetch and cascade is caught.
+// ---------------------------------------------------------------------------
+
+// Flatten Prisma.Sql fragment embeds (the mock does not, unlike real $queryRaw).
+function flattenValues(values: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const v of values) {
+    const nested = (v as { values?: unknown }).values;
+    if (v !== null && typeof v === "object" && Array.isArray(nested)) {
+      out.push(...flattenValues(nested));
+    } else {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+// Recover the SQL text of any embedded Prisma.Sql fragment (guard branch).
+function fragmentTexts(values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    const strings = (v as { strings?: unknown }).strings;
+    if (v !== null && typeof v === "object" && Array.isArray(strings)) {
+      out.push(strings.join(""));
+    }
+  }
+  return out;
+}
+
+test("DF-26 cascadeUpdateDocStatus: expectedHash → target carries a bound content_hash CAS guard", async () => {
+  let capturedValues: unknown[] = [];
+  const prisma = makePrisma(async (_strings, values) => {
+    capturedValues = values;
+    return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
+  });
+
+  await cascadeUpdateDocStatus(prisma, 1, "done", "EXPECTED_HASH_TOKEN");
+
+  // The guard fragment SQL text mentions content_hash …
+  const guardText = fragmentTexts(capturedValues).join(" ");
+  assert.match(guardText, /content_hash/, "guard branch embeds the content_hash comparison");
+  // … and the client hash is a BOUND value, never string-inlined (LLM05).
+  const flat = flattenValues(capturedValues);
+  assert.ok(flat.includes("EXPECTED_HASH_TOKEN"), "expected_hash bound as a parameter");
+});
+
+test("DF-26 cascadeUpdateDocStatus: no expectedHash (body-changed path) → NO extra guard", async () => {
+  let capturedValues: unknown[] = [];
+  const prisma = makePrisma(async (_strings, values) => {
+    capturedValues = values;
+    return [{ id: BigInt(1), doc_status: "done", folder_id: BigInt(5) }];
+  });
+
+  await cascadeUpdateDocStatus(prisma, 1, "done");
+
+  const guardText = fragmentTexts(capturedValues).join(" ");
+  assert.ok(!/content_hash/.test(guardText), "omitting expectedHash embeds Prisma.empty (no CAS guard)");
 });

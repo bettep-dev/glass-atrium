@@ -463,7 +463,7 @@ function ScreenOutcomes({ onNav }) {
   }, [filter, sort, page, refreshTick, includeAll]);
 
   // 분석 fetch — period 또는 heatmap 필터 변경 시 재실행.
-  // 병렬 6 fetch: cross-analysis x5 (overall + per-result 4) + heatmap x1.
+  // 병렬 2 fetch: cross-analysis(overall) x1 + heatmap x1.
   // AbortController 분리 → 탐색기 wave 와 독립.
   useEffectO(() => {
     const ctrl = new AbortController();
@@ -473,25 +473,22 @@ function ScreenOutcomes({ onNav }) {
     const crossUrl   = `/api/outcomes/cross-analysis?days=${analyticsPeriod}`;
     const heatmapUrl = `/api/outcomes/heatmap?days=${analyticsPeriod}&result=${heatmapFilter}`;
 
-    const overallTask    = fetchJsonO(crossUrl, ctrl.signal);
-    const perResultTasks = ANALYTICS_KPI_ORDER.map((res) =>
-      fetchJsonO(`${crossUrl}&result=${res}`, ctrl.signal),
-    );
-    const heatmapTask    = fetchJsonO(heatmapUrl, ctrl.signal);
+    // per-result rank-distribution sparkline 제거(DF-29) → per-result cross-analysis fetch 도 폐지
+    // (해당 4 요청은 오직 sparkline 산출용이었음). overall + heatmap 만 유지.
+    const heatmapTask = fetchJsonO(heatmapUrl, ctrl.signal);
 
-    Promise.all([overallTask, ...perResultTasks])
-      .then(([overall, ...perResult]) => {
+    fetchJsonO(crossUrl, ctrl.signal)
+      .then((overall) => {
         const byResultCount    = buildByResultCountMapO(overall.by_result);
         // 합성 복구행(reconstructed) 서브카운트 — KPI headline 을 writer-emitted 로 분리.
         const byResultReconstructed = buildByResultReconstructedMapO(overall.by_result);
         const agentStack       = buildAgentStackO(overall.by_agent_result, ANALYTICS_KPI_ORDER, AGENT_STACK_TOP_N);
-        const bucketSparks     = buildBucketSparkMapO(perResult, ANALYTICS_KPI_ORDER);
         // needs_context (4-KPI 밖 유효 result) + polar-mismatch cross-tab — overall 응답에서 직접 추출.
         const needsContextCount = extractResultCountO(overall.by_result, 'needs_context');
         const crosstab          = buildCrosstabO(overall.cells);
         setAnalyticsState({
           status: 'ready',
-          data: { overall, byResultCount, byResultReconstructed, agentStack, bucketSparks, needsContextCount, crosstab },
+          data: { overall, byResultCount, byResultReconstructed, agentStack, needsContextCount, crosstab },
           error: null,
         });
       })
@@ -717,7 +714,7 @@ function AnalyticsSection({ analyticsState, heatmapState, attributionState, heat
   );
 }
 
-// KPI 버킷 (4 result × Sparkline).
+// KPI 버킷 (4 result headline + reconstructed sub-line).
 
 function KpiBucketRow({ state, onRetry }) {
   if (state.status === 'loading') {
@@ -739,7 +736,6 @@ function KpiBucketRow({ state, onRetry }) {
   // headline = writer-emitted (count - reconstructed) — 합성 복구행은 카드 내 sub-line 으로 분리
   // (Attribution Health 'Reconstructed ⚠' 어휘 재사용, 복구 산물 ≠ 실패).
   const byResultReconstructed = state.data.byResultReconstructed || {};
-  const bucketSparks  = state.data.bucketSparks || {};
 
   // 분모 = API total (5개 result enum 전수) — 4-card 합(needs_context 제외)으로 재유도 금지.
   // total 부재 시에만 4-card 합 fallback (헤더 일치 total 우선).
@@ -766,7 +762,6 @@ function KpiBucketRow({ state, onRetry }) {
               count={totalCount - reconstructedCount}
               reconstructedCount={reconstructedCount}
               total={kpiTotal}
-              sparkData={bucketSparks[key] ?? null}
             />
           );
         })}
@@ -796,13 +791,9 @@ function NeedsContextSegment({ count, total, otherCount }) {
   );
 }
 
-function KpiBucket({ meta, count, total, sparkData, reconstructedCount = 0 }) {
-  const { Sparkline } = window.UI;
+function KpiBucket({ meta, count, total, reconstructedCount = 0 }) {
   const pct = total > 0 ? (count / total * 100) : 0;
 
-  // 0건 버킷(예: 30d fail) → dead 0% 카드 대신 빈 sparkline 숨김 + '다른 기간에서 확인' 안내.
-  //   reconstructed 만 있는 버킷은 dead 아님 → sub-line 유지.
-  const isZeroBucket = count === 0 && reconstructedCount === 0;
   const synthMeta = ATTRIBUTION_CATEGORY_META.synthesized;
   const ariaLabel = reconstructedCount > 0
     ? `${meta.label}: ${count} writer-emitted, ${reconstructedCount} reconstructed`
@@ -828,13 +819,6 @@ function KpiBucket({ meta, count, total, sparkData, reconstructedCount = 0 }) {
           title="Harness-reconstructed records (recovery artifacts, not writer-emitted)">
           {synthMeta.symbol} {formatIntO(reconstructedCount)} {synthMeta.label.toLowerCase()}
         </div>
-      )}
-      {isZeroBucket ? null : (
-        sparkData && sparkData.length >= 2 && (
-          <div className="kpi-spark">
-            <Sparkline data={sparkData} w={68} h={26} color={meta.sparkRgb}/>
-          </div>
-        )
       )}
     </div>
   );
@@ -2947,19 +2931,6 @@ function buildCrosstabO(cells) {
     }
   }
   return { byCell, total, polarTotal };
-}
-
-// KPI 카드 sparkline — result 별 by_agent_top_10 카운트 series ("이 result 가 어느 에이전트들에 분포").
-// 항목 < 2 → null (Sparkline 미렌더 가드 정합 — ui.jsx).
-function buildBucketSparkMapO(perResultPayloads, resultOrder) {
-  const out = {};
-  perResultPayloads.forEach((payload, i) => {
-    const result = resultOrder[i];
-    const rows = Array.isArray(payload?.by_agent_top_10) ? payload.by_agent_top_10 : [];
-    const data = rows.map((r) => Number(r?.count) || 0);
-    out[result] = data.length >= 2 ? data : null;
-  });
-  return out;
 }
 
 window.ScreenOutcomes = ScreenOutcomes;

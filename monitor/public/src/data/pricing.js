@@ -24,6 +24,24 @@ window.TOKEN_RATES = {
   'claude-haiku-4':     { input:  1.00, output:  5.00, cache_read: 0.10,  cache_creation:  1.25 },
 };
 
+// 모델 id → 단가 조회 (miss 가능 → null · get 계약: throws 아님).
+// exact 키 우선, 없으면 family-prefix 매칭 — date-suffixed id(예: claude-opus-4-8-20260101)를
+// family stem(claude-opus-4-8)로 해소해 silent rate-miss(rate=1 COUNT 폴백) 방지.
+// 경계 매칭('-' 구분)으로 claude-opus-4 가 claude-opus-4-8 를 오탈취하지 않게 최장 prefix 선택.
+window.getTokenRate = function (model) {
+  if (!model) return null;
+  const rates = window.TOKEN_RATES || {};
+  if (rates[model]) return rates[model];
+
+  let best = null;
+  for (const key of Object.keys(rates)) {
+    if (model === key || model.startsWith(key + '-')) {
+      if (best === null || key.length > best.length) best = key;
+    }
+  }
+  return best === null ? null : rates[best];
+};
+
 // 기준 mid-tier 모델 — 향후 per-model rate consumer 용 public global (cost 계산은 API cost_usd 사용)
 window.TOKEN_RATES_DEFAULT_MODEL = 'claude-sonnet-4-5';
 

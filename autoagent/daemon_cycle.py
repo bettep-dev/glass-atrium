@@ -805,6 +805,9 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
     A patch dict is auto-apply eligible iff ALL hold:
       - approval_tier == 'auto'   (safety tier stays a human-approval candidate),
       - classification == 'body-auto' (JSON-side label for a pre-verified edit),
+      - pre_verify_passed is True (the 4-axis pre-verify gate; fail-CLOSED when the
+        key is absent/None/False — a report row without the flag is NOT auto-applied,
+        mirroring the backlog SELECT's `pre_verify_passed = true`, DF-17),
       - haiku_status starts with 'ok' (the Haiku-skip gate; fail-CLOSED when the
         key is absent — a report row missing haiku_status is NOT auto-applied).
 
@@ -816,6 +819,10 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
     if str(patch.get("approval_tier", "")) != "auto":
         return False
     if str(patch.get("classification", "")) != "body-auto":
+        return False
+    # pre_verify_passed is bool|None on PatchResult; strict True match (NULL/False/
+    # absent excluded) mirrors the backlog SELECT `pre_verify_passed = true`.
+    if patch.get("pre_verify_passed") is not True:
         return False
     return is_apply_eligible_haiku_status(str(patch.get("haiku_status", "")))
 
@@ -3958,6 +3965,23 @@ def _validate_unified_diff(
             pass
 
 
+def _diff_header_target_basename(diff: str) -> str | None:
+    """Return the basename declared by the diff's first ``+++`` header, or None.
+
+    None is returned when the diff carries no ``+++`` header (a header-less
+    append-only fragment asserts no target file — valid by construction). Strips
+    a leading ``a/``/``b/`` prefix and any trailing tab-separated timestamp, then
+    returns the final path component.
+    """
+    for line in diff.splitlines():
+        if line.startswith("+++"):
+            rest = line[3:].strip().split("\t", 1)[0].strip()
+            if rest.startswith(("a/", "b/")):
+                rest = rest[2:]
+            return rest.rsplit("/", 1)[-1] if rest else None
+    return None
+
+
 def _gate_validated_diff(diff: str, target_file: Path) -> str:
     """F2 GATE: return a parseable diff or "" (reject) — never a broken one.
 
@@ -3978,6 +4002,21 @@ def _gate_validated_diff(diff: str, target_file: Path) -> str:
     """
     if not diff.strip():
         return diff
+
+    # Basename-match assertion — a '+++' header declares the file the diff
+    # targets. If its basename diverges from target_file, `git apply` (run under
+    # GIT_ROOT with --directory path resolution) could land the diff on ANOTHER
+    # agent body; the apply-side before-image/verify (bound to target_file) would
+    # neither catch nor restore that wrong-file mutation. Reject BEFORE any
+    # repair/apply. A header-less fragment (None) asserts no target → passes.
+    declared = _diff_header_target_basename(diff)
+    if declared is not None and declared != target_file.name:
+        sys.stderr.write(
+            f"[daemon-cycle] F2 GATE: diff '+++' header targets {declared!r} but "
+            f"proposal target is {target_file.name!r} — wrong-file diff rejected "
+            f"(stored empty)\n"
+        )
+        return ""
 
     parseable, stderr_excerpt = _validate_unified_diff(diff)
     if parseable:
@@ -6605,6 +6644,42 @@ def derive_cost_guard_state(report: CycleReport) -> str:
     return "ok"
 
 
+def is_infra_pre_verify_status(status: str) -> bool:
+    """Whether a pre-verify status marks an INFRA non-adjudication (not a verdict).
+
+    ``run_pre_verify`` stamps ``error:*`` (``error:timeout-*`` / ``error:cli-not-
+    found`` / ``error:exit-*``) when the VERIFIER itself failed — a verifier
+    OUTAGE, not a quality verdict on the (already generated) candidate. Recording
+    such a candidate as a terminal quality ``rejected`` carries the GENERATOR
+    rationale, which ``classify_failure_rationale`` reads as FAILURE_CLASS_QUALITY
+    → the consecutive_reject kill streak advances on an infra night (DF-6). Route
+    these to ``pending`` instead (re-verified next cycle). ``skipped:*`` (flag /
+    empty-diff) is a normal skip handled on its own path, so it is NOT infra here.
+    """
+    return status.startswith("error:")
+
+
+def route_failed_pre_verify(
+    classification: str, verify_status: str
+) -> tuple[str, str, str]:
+    """Route a non-safety, pre-verify-FAILED body-auto candidate to its persisted state.
+
+    Returns ``(classification, approval_tier, status_value)``. Two structurally
+    distinct pre-verify failures:
+      - INFRA non-adjudication (``is_infra_pre_verify_status`` — verifier timeout
+        / CLI-missing / non-zero exit): the candidate was never adjudicated →
+        leave it ``pending`` (classification unchanged) so it is re-verified next
+        cycle and the consecutive_reject kill streak is NOT advanced by an outage.
+        approval_tier='' + pre_verify_passed=False keep it off the auto-apply
+        SELECT, so no unverified diff is ever applied.
+      - GENUINE quality verdict (verifier ran + refused): auto-reject — persist
+        ``rejected`` so the row does not fossilize at pending.
+    """
+    if is_infra_pre_verify_status(verify_status):
+        return classification, "", "pending"
+    return "reject", "", "rejected"
+
+
 def consecutive_reject_count(
     pattern_label: str,
     proposal_rows: list[tuple[str, str, str]],
@@ -7294,14 +7369,31 @@ def run_cycle(
                 approval_tier = "auto"
                 status_value = "pending"  # apply stage flips this to 'applied'
             else:
-                # Non-safety quality issue → auto-reject. The Haiku retry already
-                # absorbed the recoverable subset upstream of pre-verify; this is
-                # the residual failure that should NOT block user attention.
-                # Persist 'rejected' explicitly — an empty sentinel was coerced to
-                # 'pending' downstream, fossilizing auto-reject rows at pending.
-                classification = "reject"
-                approval_tier = ""
-                status_value = "rejected"
+                # Pre-verify did NOT pass. Distinguish a GENUINE quality verdict
+                # (the verifier ran and refused the candidate → auto-reject) from
+                # an INFRA non-adjudication (verifier timeout / CLI-missing /
+                # non-zero exit → the candidate was never adjudicated). Recording
+                # an infra OUTAGE as a terminal 'rejected' carries the GENERATOR
+                # rationale, which the kill-streak classifier reads as a quality
+                # reject → the consecutive_reject streak fossilizes healthy agents
+                # on an infra night (DF-6). Route infra failures to 'pending'
+                # (re-verified next cycle) so the streak is untouched.
+                #
+                # For a genuine quality reject: persist 'rejected' explicitly — an
+                # empty sentinel was coerced to 'pending' downstream, fossilizing
+                # auto-reject rows at pending. The Haiku retry already absorbed the
+                # recoverable subset upstream, so this residual should NOT block
+                # user attention (the user queue is NOT a quality fallback).
+                classification, approval_tier, status_value = route_failed_pre_verify(
+                    classification, verify.status
+                )
+                if status_value == "pending":
+                    sys.stderr.write(
+                        "[daemon-cycle] WARN: pre-verify INFRA failure "
+                        f"(status={verify.status}) for agent={agent} "
+                        f"target={proposal.target_file} — row left pending, NOT a "
+                        "quality reject (consecutive_reject streak untouched)\n"
+                    )
         elif classification == "frontmatter-dryrun":
             # Frontmatter identity (name / tools / scope / etc.) is a safety trigger
             # (LLM06 Excessive Agency). Surface as safety tier; pre-verify is

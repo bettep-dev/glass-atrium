@@ -203,10 +203,34 @@ fetch_release() {
 
   [[ -f "${dl_dir}/manifest.json" ]] \
     || die "${EXIT_DOWNLOAD_FAILED}" "release asset manifest.json missing after download."
-  bundle="$(find "${dl_dir}" -maxdepth 1 -name 'glass-atrium-bundle-*.tar.gz' -print -quit)"
-  [[ -n "${bundle}" ]] \
+
+  # Bundle-name/version assertion parity with update.sh::update_fetch_release: the
+  # bundle is named glass-atrium-bundle-<version>.tar.gz by publish-release.sh from
+  # the SAME manifest .version, so derive the expected name and refuse a zero /
+  # ambiguous / version-mismatched match rather than blindly taking the first — a
+  # mismatch is a corrupt release, not a file to guess at.
+  local version expected b
+  local -a bundles=()
+  version="$(jq -r '.version // empty' -- "${dl_dir}/manifest.json")"
+  [[ -n "${version}" ]] \
+    || die "${EXIT_DOWNLOAD_FAILED}" "release manifest.json carries no .version — cannot derive the expected bundle name."
+  expected="glass-atrium-bundle-${version}.tar.gz"
+  # find/sort feed the loop; their rc is intentionally not the loop's verdict.
+  # shellcheck disable=SC2312
+  while IFS= read -r b; do
+    [[ -n "${b}" ]] && bundles+=("${b}")
+  done < <(find "${dl_dir}" -maxdepth 1 -type f -name 'glass-atrium-bundle-*.tar.gz' | LC_ALL=C sort)
+  if [[ "${#bundles[@]}" -eq 0 ]]; then
+    die "${EXIT_DOWNLOAD_FAILED}" "release bundle (${expected}) missing after download."
+  fi
+  if [[ "${#bundles[@]}" -gt 1 ]]; then
+    die "${EXIT_DOWNLOAD_FAILED}" \
+      "ambiguous release: ${#bundles[@]} bundle assets matched glass-atrium-bundle-*.tar.gz — expected exactly one (${expected}): ${bundles[*]}"
+  fi
+  bundle="${bundles[0]}"
+  [[ "${bundle##*/}" == "${expected}" ]] \
     || die "${EXIT_DOWNLOAD_FAILED}" \
-      "release bundle (glass-atrium-bundle-*.tar.gz) missing after download."
+      "release bundle ${bundle##*/} does not match the manifest version bundle ${expected} — refusing a version-mismatched bundle."
   tar -xzf "${bundle}" -C "${new_tree}" \
     || die "${EXIT_EXTRACT_FAILED}" "bundle extraction failed: ${bundle}"
 }
@@ -259,18 +283,38 @@ install_tree() {
     log "Installing Glass Atrium ${release_version} into ${GA_DIR} (fresh extract)."
   fi
 
-  # Additive merge: cp -Rp copies the verified staging tree into GA_DIR, preserving modes
-  # (each file was staged with cp -p, so ${GA_DIR}/glass-atrium stays executable). Writes
-  # only verified manifest.files members, so agents-bak/, wiki/, secrets/, data/,
-  # config.toml (none bundle members) are untouched. Codebase idiom from update.sh.
+  # Additive merge: swap each verified staging member into GA_DIR one file at a time
+  # through the spine's ATOMIC swap (sibling temp + rename(2), same FS). A bulk
+  # `cp -Rp` writes each file IN PLACE (truncate-then-write), so a mid-copy kill on a
+  # reinstall-over-existing left a half-written member in the LIVE tree; the per-file
+  # rename makes every destination either the whole old file or the whole new one, so
+  # an interrupted reinstall leaves the prior tree intact (no truncated members).
+  # Modes are preserved (spine cp -p, so ${GA_DIR}/glass-atrium stays executable), and
+  # only verified manifest.files members are swapped — agents-bak/, wiki/, secrets/,
+  # data/, config.toml (none bundle members) are untouched (no directory-level rename).
+  command -v spine_atomic_swap >/dev/null 2>&1 \
+    || die "${EXIT_EXTRACT_FAILED}" "spine_atomic_swap unavailable — apply-spine.sh was not sourced before install_tree."
   mkdir -p -- "${GA_DIR}"
-  cp -Rp -- "${staged_tree}/." "${GA_DIR}/" \
-    || die "${EXIT_EXTRACT_FAILED}" "failed to write the verified staging tree into ${GA_DIR}."
+  local rel src dst
+  # the manifest was already parsed + hash-verified; jq's rc here is not the verdict.
+  # shellcheck disable=SC2312
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    src="${staged_tree}/${rel}"
+    dst="${GA_DIR}/${rel}"
+    [[ -f "${src}" ]] \
+      || die "${EXIT_EXTRACT_FAILED}" "verified staging member missing for ${rel} — refusing a partial install."
+    mkdir -p -- "$(dirname -- "${dst}")" \
+      || die "${EXIT_EXTRACT_FAILED}" "failed to create the destination directory for ${rel} under ${GA_DIR}."
+    spine_atomic_swap "${src}" "${dst}" \
+      || die "${EXIT_EXTRACT_FAILED}" "failed to atomically install ${rel} into ${GA_DIR}."
+  done < <(jq -r '.files[]' -- "${dl_manifest}")
 
   # Persist the release manifest as the install manifest (the idempotency key + the
   # update path's baseline anchor). manifest.json is a SEPARATE release asset, not a
-  # bundle member, so it is installed explicitly here.
-  cp -p -- "${dl_manifest}" "${GA_DIR}/manifest.json" \
+  # bundle member, so it is installed explicitly here — through the SAME atomic swap
+  # so a mid-write kill never leaves a truncated idempotency key.
+  spine_atomic_swap "${dl_manifest}" "${GA_DIR}/manifest.json" \
     || die "${EXIT_EXTRACT_FAILED}" "failed to persist the install manifest to ${GA_DIR}/manifest.json."
 }
 

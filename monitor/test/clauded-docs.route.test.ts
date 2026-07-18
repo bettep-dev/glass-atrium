@@ -318,6 +318,38 @@ test("PUT /api/clauded-docs/:id: success — content_hash updates + HTML rewritt
   }
 });
 
+// PUT plain-format mismatch — updating a .md row with a different plain body kind
+// (yaml_body) must 400 (DF-26): a silent path-swap across incompatible plain
+// formats would orphan the old file + drift row identity. html↔plain stays a swap.
+test("PUT /api/clauded-docs/:id: plain-format mismatch (md row ← yaml_body) → 400 invalid_body", async () => {
+  const title = makeTitle("put-format-mismatch");
+  const created = await postCreate(app, {
+    title,
+    author: "reporter",
+    md_body: makeMdBody(title, null),
+  });
+  assert.strictEqual(created.status, 201);
+  const detail = created.body as { id: number; content_hash: string; format: string };
+  assert.strictEqual(detail.format, "md", "created row is a .md primary");
+
+  try {
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/clauded-docs/${detail.id}`,
+      payload: {
+        yaml_body: "key: value\n",
+        expected_hash: detail.content_hash,
+      },
+    });
+    assert.strictEqual(res.statusCode, 400);
+    const body = res.json() as { error: string; reason: string };
+    assert.strictEqual(body.error, "invalid_body");
+    assert.match(body.reason, /format mismatch/);
+  } finally {
+    await deleteDoc(app, detail.id);
+  }
+});
+
 // PUT doc_status toggle.
 // standalone 행(folder_id IS NULL)도 cascade-only path 진입 → cascadeUpdateDocStatus CTE 가 self-only 집합으로 degradation (단일 행 갱신). 4 시나리오:
 //   (1) standalone progress→done 토글 → 200 + done 영속화

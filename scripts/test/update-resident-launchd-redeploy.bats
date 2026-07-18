@@ -23,6 +23,12 @@ export SKILL="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)/scripts/update.sh"
 setup() {
   [[ -f "${SKILL}" ]] || skip "update.sh not found: ${SKILL}"
   command -v cmp >/dev/null 2>&1 || skip "cmp required"
+  # DF-31: the resident roster is DERIVED at runtime from ${GA_ROOT}/lib/ga-env.sh LAUNCHD_JOBS
+  # (update_launchd_jobs_from_ga_env), not an inline copy. Pin GA_ROOT to the repo tree (real
+  # ga-env.sh + scripts/lib E5 deps) so every redeploy test reads a KNOWN roster hermetically —
+  # without it the reader falls back to ${HOME}/.glass-atrium (absent on CI → empty roster →
+  # nothing redeployed). The rendered/deployed plist dirs stay redirected by the env seams below.
+  export GA_ROOT="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
   WORK="$(cd -- "$(mktemp -d -t ga-resident-launchd.XXXXXX)" && pwd -P)"
   RENDERED="${WORK}/rendered/launchd"
   AGENTS="${WORK}/LaunchAgents"
@@ -194,19 +200,42 @@ _extract_array() {
   grep -q "kickstart -k gui/" "${LAUNCHCTL_LOG}" || return 1 # reload probe still ran
 }
 
-@test "resident set == canonical LAUNCHD_JOBS minus monitor (inline-drift guard, both parsed from source)" {
-  # Defense-in-depth: this incident was a deploy-propagation gap, so guard the inline resident
-  # set against the canonical lib/ga-env.sh LAUNCHD_JOBS SoT — a canonical change not mirrored
-  # here would re-open the same class of gap. Parse BOTH arrays from source text and compare.
-  local ga_env="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)/lib/ga-env.sh"
+@test "resident set == canonical LAUNCHD_JOBS minus monitor (ga-env SoT, derived at runtime)" {
+  # DF-31: the resident roster is now DERIVED at runtime from the lib/ga-env.sh LAUNCHD_JOBS
+  # SoT (update_launchd_jobs_from_ga_env), REPLACING the former inline hardcoded copy — so the
+  # inline-vs-canonical drift this once guarded is eliminated by construction (there is no second
+  # copy to drift). Reframed for the new mechanism: verify (a) the runtime derivation reproduces
+  # the canonical array byte-for-byte, and (b) the resident loop behaviorally DROPS monitor.
+  local repo ga_env
+  repo="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+  ga_env="${repo}/lib/ga-env.sh"
   [[ -f "${ga_env}" ]] || skip "ga-env.sh not found: ${ga_env}"
-  local canonical inline expected got
-  canonical="$(_extract_array "${ga_env}" "LAUNCHD_JOBS=(")"
-  inline="$(_extract_array "${SKILL}" "local jobs=(")"
+
+  local canonical derived
+  canonical="$(_extract_array "${ga_env}" "LAUNCHD_JOBS=(" | sort)"
   [[ -n "${canonical}" ]] || return 1
-  [[ -n "${inline}" ]] || return 1
   grep -qx "monitor" <<<"${canonical}" || return 1 # monitor IS the excluded job
-  expected="$(grep -vx "monitor" <<<"${canonical}" | sort)"
-  got="$(sort <<<"${inline}")"
-  [[ "${expected}" == "${got}" ]] || return 1
+
+  # (a) runtime SoT derivation == the canonical array (no second copy that could drift).
+  derived="$(GA_ROOT="${repo}" bash -c 'source "'"${SKILL}"'"; update_launchd_jobs_from_ga_env' | sort)"
+  [[ "${canonical}" == "${derived}" ]] || return 1
+
+  # (b) behavioral exclusion: a LOADED + DRIFTED monitor is NOT touched by the resident refresh
+  # (monitor is kickstart-refreshed by update_refresh_monitor_launchd). Were the "minus monitor"
+  # filter dropped, monitor would bootout+bootstrap here — so its absence proves the exclusion.
+  write_stub_launchctl
+  write_plist "${RENDERED}/com.glass-atrium.monitor.plist" "/new/bin:/usr/bin"
+  write_plist "${AGENTS}/com.glass-atrium.monitor.plist" "/stale/bin:/usr/bin"
+  run bash -c '
+    source "'"${SKILL}"'"
+    export ATRIUM_UPDATE_LAUNCHCTL="'"${LAUNCHCTL}"'"
+    export ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR="'"${RENDERED}"'"
+    export ATRIUM_UPDATE_LAUNCH_AGENTS_DIR="'"${AGENTS}"'"
+    export LAUNCHCTL_LOG="'"${LAUNCHCTL_LOG}"'"
+    export LOADED_LABELS="com.glass-atrium.monitor"
+    update_refresh_resident_launchd
+  '
+  [ "$status" -eq 0 ] || return 1
+  ! grep -q "bootout gui/.*/com.glass-atrium.monitor" "${LAUNCHCTL_LOG}" || return 1
+  ! grep -q "bootstrap gui/.* .*com.glass-atrium.monitor.plist" "${LAUNCHCTL_LOG}" || return 1
 }

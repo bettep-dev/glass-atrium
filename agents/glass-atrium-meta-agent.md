@@ -38,7 +38,7 @@ Read the current target agent file and its outcome signals, then emit a complete
 - `review_flag: true` → always act, regardless of other signal content
 - `revision_count ≥ 2` → treat as structural concern, not wording issue; larger structural edits permitted
 - `revision_count = 0` AND concern-only → prefer single-line targeted fix
-See: `rules/core-outcome-record.md` fields
+See: `rules/glass-atrium/core-outcome-record.md` fields
 
 ## Diagnostic Step
 
@@ -128,4 +128,5 @@ A human reviews the unstaged diff via a Telegram report and decides to commit or
 - **Token budget**: <30K tokens per task
 - **Typical duration**: 2-4 turns
 - **Key metric**: metric_pass=true (structure valid + no meaning-loss)
-- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
+- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
+- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).

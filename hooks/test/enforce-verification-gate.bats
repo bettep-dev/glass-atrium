@@ -61,6 +61,18 @@ seed_reviewer() {
   printf '%s\n' "glass-atrium-qa-code-reviewer" >"${DATA_DIR}/session-spawns/sess-test-001"
 }
 
+# Drive the hook with an explicit hook_event_name ($1=event PreToolUse|PostToolUse, $2=stype,
+# $3=prompt). Exercises the DF-5 dual-event split: PreToolUse = read/verdict only (no stamp);
+# PostToolUse = spawn-success stamp.
+run_hook_event() {
+  run bash -c '
+    event="$1"; stype="$2"; prompt="$3"; hook="$4"; data="$5"
+    payload="$(jq -n --arg e "${event}" --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" \
+      '\''{hook_event_name:$e,tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" bash "${hook}"
+  ' _ "${1}" "${2}" "${3}" "${HOOK_SH}" "${DATA_DIR}"
+}
+
 # Per-assertion gate helpers (the bats body is NOT under set -e — see header note).
 assert_status() {
   [[ "${status}" -eq "${1}" ]] || {
@@ -83,6 +95,19 @@ assert_not_contains() {
 assert_empty() {
   [[ -z "${output}" ]] || {
     echo "expected empty output, got: ${output}" >&2
+    return 1
+  }
+}
+# DF-5 marker assertions — the session-spawns marker records EXECUTED spawns only (PostToolUse).
+assert_marker_absent() {
+  ! grep -qx "${1}" "${DATA_DIR}/session-spawns/sess-test-001" 2>/dev/null || {
+    echo "expected marker to NOT contain line [${1}]" >&2
+    return 1
+  }
+}
+assert_marker_present() {
+  grep -qx "${1}" "${DATA_DIR}/session-spawns/sess-test-001" 2>/dev/null || {
+    echo "expected marker to contain line [${1}]" >&2
     return 1
   }
 }
@@ -243,4 +268,41 @@ assert_empty() {
   ' _ "${HOOK_SH}" "${DATA_DIR}"
   assert_status 0
   assert_empty
+}
+
+# (f) DF-5 — the spawn stamp moved from PreToolUse (attempt) to PostToolUse (spawn-SUCCESS). A
+# blocked/never-executed spawn reaches no PostToolUse, so it must leave NO marker line: no false
+# reviewer-present for a later DEV spawn, and no inflated advisory-spawn-budget.sh counter.
+
+@test "DF-5: PreToolUse reviewer spawn does NOT stamp → blocked-spawn leaves no reviewer-present" {
+  run_hook_event "PreToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
+  assert_status 0
+  assert_marker_absent "glass-atrium-qa-code-reviewer"
+}
+
+@test "DF-5: PostToolUse reviewer spawn stamps reviewer-present (only an executed spawn records)" {
+  run_hook_event "PostToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
+  assert_status 0
+  assert_marker_present "glass-atrium-qa-code-reviewer"
+}
+
+@test "DF-5: PreToolUse DEV entry-miss BLOCK (exit 2) leaves NO marker line (no counter inflation)" {
+  run_hook_event "PreToolUse" "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
+  assert_status 2
+  assert_contains "entry-miss"
+  assert_marker_absent "glass-atrium-dev-nestjs"
+}
+
+@test "DF-5: PostToolUse-stamped reviewer → later PreToolUse DEV plan-ref spawn passes silently" {
+  run_hook_event "PostToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
+  assert_status 0
+  run_hook_event "PreToolUse" "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  assert_status 0
+  assert_empty
+}
+
+@test "DF-5: PreToolUse DEV plan-ref spawn does NOT stamp itself (read-only on PreToolUse)" {
+  run_hook_event "PreToolUse" "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  assert_status 0
+  assert_marker_absent "glass-atrium-dev-react"
 }

@@ -47,7 +47,7 @@ Mandatory result recording on task completion (regardless of result type). For t
 
 ## Completion Report Output Obligation
 
-The final response on task completion MUST include the block below. track-outcome.sh parses this block to auto-generate the Outcome Record. (Channel scope — main/orchestrator session: the block is a machine-facing record artifact; summarize outcomes in prose and do NOT print the raw block in user-facing replies. Subagents emit it in their user-invisible final tool-result message, which is the recorded path. See `### Emit Boundary` → Channel asymmetry.)
+The final response on task completion MUST include the block below. **Mandate scope (backing-honest — no [ALL] MUST without a backing):** the MUST is MECHANICALLY BACKED for SUBAGENTS only — `track-outcome.sh` fires on the SubagentStop channel and records the emitted block (or synthesizes on omission), so a subagent's emit is enforced by the recorder. The MAIN/ORCHESTRATOR session has NO Stop-channel recorder wired, so ITS adherence is HONOR-SYSTEM (labeled, not mechanically verified) — wiring a main-session Stop-recorder is a separate follow-up decision, not assumed here. track-outcome.sh parses this block to auto-generate the Outcome Record. (Channel scope — main/orchestrator session: the block is a machine-facing record artifact; summarize outcomes in prose and do NOT print the raw block in user-facing replies. Subagents emit it in their user-invisible final tool-result message, which is the recorded path. See `### Emit Boundary` → Channel asymmetry.)
 
 ```
 [COMPLETION]

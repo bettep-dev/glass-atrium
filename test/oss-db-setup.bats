@@ -24,7 +24,7 @@ setup() {
   touch "${FAKE_ROOT}/prisma.config.ts"
   cp "${GA}/monitor/.env.example" "${FAKE_ROOT}/.env.example"
   # psql existence probe -> "1" (db exists) so the createdb branch is skipped
-  printf '#!/bin/bash\necho 1\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\n' >"${STUB_BIN}/psql"
   # createdb must never be reached here -> abort marker + non-zero exit
   printf '#!/bin/bash\ntouch "%s/createdb-called"\nexit 1\n' "${SANDBOX}" >"${STUB_BIN}/createdb"
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/npm"
@@ -99,51 +99,101 @@ run_setup() {
   [[ "$(diff "${FAKE_ROOT}/.env" "${FAKE_ROOT}/.env.example" | grep -c '^[<>]')" -eq 6 ]]
 }
 
-@test "post-deploy step applies the 11-value attribution_source CHECK constraint (incl structuredoutput-completion)" {
-  # record every psql invocation's args; still answer existence probes with "1" so the
-  # createdb branch is skipped and the run reaches the post-deploy constraint step.
-  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\necho 1\nexit 0\n' \
+@test "post-deploy step verifies the 5 value-domain CHECK constraints via pg_constraint" {
+  # record every psql invocation's args; answer the pg_constraint count probe with 5 (all
+  # present) and existence probes with 1 so the createdb branch is skipped and step 6 passes.
+  # The 5 CHECKs are now created by 20260718000001_db_hygiene_promote_ddl (migrate deploy),
+  # so the installer VERIFIES rather than applies them.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/psql"
   chmod +x "${STUB_BIN}/psql"
   run_setup ""
   [[ "${status}" -eq 0 ]]
-  # the idempotent DROP-then-ADD pair on the canonical constraint name was issued
-  grep -q 'DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check' "${SANDBOX}/psql-args"
-  grep -q 'ADD CONSTRAINT outcomes_attribution_source_check' "${SANDBOX}/psql-args"
-  grep -q 'NOT VALID' "${SANDBOX}/psql-args"
-  # the 11th canonical value is present alongside all 10 pre-existing ones
-  local v
-  for v in hook-input cron-derived agent-id-missing subagent-stop-missing \
-           completion-missing conversation-only truncated_completion \
-           completion-synthesized budget-truncation structuredoutput-derived \
-           structuredoutput-completion; do
-    grep -qF "${v}" "${SANDBOX}/psql-args" || {
-      echo "missing canonical value: ${v}" >&2
+  # the presence guard queries pg_constraint for exactly the 5 value-domain CHECK names
+  grep -q 'pg_constraint' "${SANDBOX}/psql-args"
+  local n
+  for n in outcomes_attribution_source_check outcomes_evaluative_signal_check \
+           outcomes_revision_count_check outcomes_metric_type_check \
+           correction_signals_task_type_check; do
+    grep -qF "${n}" "${SANDBOX}/psql-args" || {
+      echo "missing CHECK constraint name in pg_constraint verification: ${n}" >&2
       return 1
     }
   done
 }
 
-@test "post-deploy step creates core.budget_overages idempotently with the 6 contract columns" {
-  # record every psql invocation's args; answer existence probes with "1" so the createdb branch is
-  # skipped and the run reaches the post-deploy budget_overages step.
-  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\necho 1\nexit 0\n' \
+@test "post-deploy step loud-fails (exit 10) when a value-domain CHECK is absent" {
+  # pg_constraint count probe returns 4 (one CHECK missing) -> verification must loud-fail.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 4 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
+    >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 10 ]]
+  [[ "${output}" == *"db_hygiene_promote_ddl did not fully apply"* ]]
+}
+
+@test "post-deploy step verifies core.budget_overages presence via to_regclass" {
+  # record every psql invocation's args; step 6 confirms the table (created by the migration,
+  # previously an out-of-band CREATE here that lacked a PK) landed.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/psql"
   chmod +x "${STUB_BIN}/psql"
   run_setup ""
   [[ "${status}" -eq 0 ]]
-  # idempotence is guaranteed by construction: the statement is CREATE TABLE IF NOT EXISTS
-  grep -q 'CREATE TABLE IF NOT EXISTS core.budget_overages' "${SANDBOX}/psql-args"
-  # all 6 contract columns present (agent_type nullable, the rest NOT NULL, ts defaulted)
-  local c
-  for c in agent_id agent_type tool_use_count budget crossed_pct ts; do
-    grep -qF "${c}" "${SANDBOX}/psql-args" || {
-      echo "missing budget_overages column: ${c}" >&2
+  grep -q "to_regclass('core.budget_overages')" "${SANDBOX}/psql-args"
+}
+
+@test "post-deploy step loud-fails (exit 11) when core.budget_overages is absent" {
+  # to_regclass probe returns empty (table absent) -> verification must loud-fail.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
+    >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 11 ]]
+  [[ "${output}" == *"core.budget_overages absent"* ]]
+}
+
+@test "post-deploy step loud-fails (exit 11) when the budget_overages probe query crashes" {
+  # psql exits non-zero on the to_regclass probe (peer-auth / privilege / DB crash) -> the
+  # capture must loud-fail with a named exit + message, never absorb the psql code silently.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) exit 3 ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
+    >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 11 ]]
+  [[ "${output}" == *"core.budget_overages verification query failed"* ]]
+}
+
+@test "post-deploy step verifies the 5 squash-lost partial indexes via pg_indexes (DF-4)" {
+  # record every psql invocation's args; answer the pg_indexes count probe with 5 (all present)
+  # and existence probes with 1 so the createdb branch is skipped and the run reaches step 7.
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/psql-args"\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' \
+    "${SANDBOX}" >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 0 ]]
+  # the presence guard queries pg_indexes for exactly the 5 restored index names
+  grep -q 'pg_indexes' "${SANDBOX}/psql-args"
+  local n
+  for n in outcomes_style_ref_agent_ts_idx outcomes_baseline_pre_3tier_idx \
+           autoagent_proposals_confidence_idx monitor_documents_folder_id_idx \
+           monitor_documents_folder_created_idx; do
+    grep -qF "${n}" "${SANDBOX}/psql-args" || {
+      echo "missing partial-index name in pg_indexes verification: ${n}" >&2
       return 1
     }
   done
-  # ts is DB-defaulted so the hook need not pass it
-  grep -q 'ts timestamptz NOT NULL DEFAULT now()' "${SANDBOX}/psql-args"
+}
+
+@test "post-deploy step loud-fails (exit 12) when a restored partial index is absent" {
+  # pg_indexes count probe returns 4 (one index missing) -> verification must loud-fail, not pass.
+  # CHECK + budget_overages probes must still pass so the run reaches the step-7 index guard.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 4 ;; *) echo 1 ;; esac\nexit 0\n' \
+    >"${STUB_BIN}/psql"
+  chmod +x "${STUB_BIN}/psql"
+  run_setup ""
+  [[ "${status}" -eq 12 ]]
+  [[ "${output}" == *"restore_squash_lost_partial_indexes did not fully apply"* ]]
 }
 
 @test "no literal \${HOME} token survives the render" {
@@ -154,7 +204,7 @@ run_setup() {
 
 @test "both DBs absent -> createdb invoked for main AND shadow" {
   # probe says "not exists" for every db; createdb records its args and succeeds
-  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/createdb-args"\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/createdb"
   run_setup ""
@@ -165,7 +215,7 @@ run_setup() {
 
 @test "main DB exists, shadow absent -> only the shadow DB is created (idempotent guard)" {
   # probe answers per-db: shadow query -> empty (absent), anything else -> exists
-  printf '#!/bin/bash\ncase "$*" in *_shadow*) ;; *) echo 1 ;; esac\nexit 0\n' \
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *_shadow*) ;; *) echo 1 ;; esac\nexit 0\n' \
     >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"%s/createdb-args"\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/createdb"
@@ -255,7 +305,7 @@ run_recreate() {
   # (skipped — no shadow create). pg_dump writes a non-empty file + records order;
   # dropdb records order + clears the main sentinel; createdb records the re-create.
   : >"${SANDBOX}/main-present"
-  printf '#!/bin/bash\ncase "$*" in\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
+  printf '#!/bin/bash\ncase "$*" in\n  *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;;\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/psql"
   printf '#!/bin/bash\nprintf "dump\\n" >>"%s/order"\n# emit a non-empty dump at the -f path arg\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/pg_dump"
@@ -273,7 +323,7 @@ run_recreate() {
 }
 
 @test "GA_DB_RECREATE aborts (exit 8) when pg_dump yields an empty file (no drop)" {
-  printf '#!/bin/bash\necho 1\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\n' >"${STUB_BIN}/psql"
   # pg_dump creates an EMPTY file at the -f path -> backup verification fails
   printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\n: >"${out}"\nexit 0\n' \
     >"${STUB_BIN}/pg_dump"
@@ -290,7 +340,7 @@ run_recreate() {
   # dropdb. The absent-target path then falls through to the fresh createdb, so the
   # setup() abort stub (touch createdb-called; exit 1) MUST be overridden with a
   # passing createdb here — otherwise the legitimate fresh-create dies EXIT_CREATEDB=5.
-  printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/psql"
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
   printf '#!/bin/bash\ntouch "%s/dropdb-called"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/dropdb"
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/pg_dump"
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"

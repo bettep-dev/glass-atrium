@@ -21,8 +21,9 @@ set -euo pipefail
 #   7 = GA_DB_NAME override mismatch (bad name, or disagrees with existing .env)
 #   8 = recreate safety-guard violation (live 'glass_atrium' target, or backup/drop fail)
 #   9 = retry after P3009 baseline resolve still failed (manual intervention needed)
-#  10 = post-deploy attribution_source CHECK constraint apply failed
-#  11 = post-deploy core.budget_overages CREATE TABLE failed
+#  10 = post-deploy value-domain CHECK constraint verification failed (a CHECK is absent)
+#  11 = post-deploy core.budget_overages table verification failed (table absent)
+#  12 = post-deploy partial-index verification failed (a restored index is absent)
 EXIT_BAD_CWD=3
 EXIT_MISSING_CLI=4
 EXIT_CREATEDB=5
@@ -30,13 +31,16 @@ EXIT_PRISMA=6
 EXIT_DB_OVERRIDE=7
 EXIT_RECREATE=8
 EXIT_P3009=9
-EXIT_POSTSQL=10
+EXIT_CHECK_VERIFY=10
 EXIT_OVERAGE_TABLE=11
+EXIT_PARTIAL_IDX=12
 
 # Squash baseline migration name — the P3009 target guard's known-name allowlist
-# (only this migration's failure is resolve-eligible). Never edit the applied
-# init_oss_baseline SQL: changing an applied migration drifts existing-DB checksums.
-SQUASH_BASELINE_MIGRATION="20260611000000_init_oss_baseline"
+# (only this migration's failure is resolve-eligible). MUST byte-match the actual
+# prisma/migrations/ dir name, else deploy_output_is_baseline_p3009's grep -F never
+# matches → the P3009 recovery silently no-ops. Never edit the applied baseline SQL:
+# changing an applied migration drifts existing-DB checksums.
+SQUASH_BASELINE_MIGRATION="20260611000000_init_squashed"
 
 # GA_DB_NAME: sandbox/CI throwaway-DB override (mirrors the engine's GA_* override
 # pattern) — unset keeps the default glass_atrium (additive). Every DB op (existence
@@ -315,34 +319,45 @@ if [[ "${deploy_rc}" -ne 0 ]]; then
   log "P3009: resolve + deploy retry succeeded — pre-squash baseline recovered cleanly"
 fi
 
-# step 6: attribution_source CHECK constraint (idempotent · post-deploy raw SQL)
-# init_oss_baseline defines core.outcomes.attribution_source as plain TEXT (no CHECK), so
-# the canonical value allowlist is applied out-of-band HERE, not via a migration — editing
-# the applied baseline SQL drifts existing-DB checksums. DROP IF EXISTS + ADD is re-run/widen
-# safe; NOT VALID skips the full-table scan (pre-existing rows trusted, new writes checked).
-# The 11-value set MUST byte-match the dual-write producers (track-outcome.sh / outcomes.ts /
-# daemon_cycle.py / _pg_*_dualwrite.py) — a missing value → constraint_violation → the write is
-# rejected (loud-fail: _pg_outcome_dualwrite.py EXIT_WRITE_FAILED + structured stderr + a
-# hook_failures row; the row is lost, NOT silently dropped). core.outcomes lives only in the
-# main DB — shadow excluded.
-# structuredoutput-completion (11th) = writer [COMPLETION] recovered from the terminal
-# StructuredOutput input's completion_block field (distinct from synthesized structuredoutput-derived).
-log "applying attribution_source CHECK constraint (11 canonical values · idempotent · NOT VALID)"
-psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
-  -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
-  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived','structuredoutput-completion']::text[]))) NOT VALID" \
-  || fail "${EXIT_POSTSQL}" "attribution_source CHECK constraint apply failed (DB '${DB_NAME}') — check core.outcomes exists + peer auth privileges"
+# step 6: value-domain CHECK verification (post-deploy · pg_constraint · SELECT-only · loud-fail)
+# The 5 value-domain CHECKs (attribution_source + evaluative_signal + revision_count +
+# metric_type on core.outcomes, task_type on core.correction_signals) and core.budget_overages
+# are now created by 20260718000001_db_hygiene_promote_ddl — migrate deploy applies them. A
+# silent apply miss would let out-of-domain writes through (e.g. an unknown attribution_source
+# no longer rejected), so confirm the CHECKs landed and loud-fail otherwise. Names MUST
+# byte-match the migration DDL. SELECT-only, no mutation.
+log "verifying 5 value-domain CHECK constraints exist (pg_constraint · SELECT-only)"
+check_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
+  "SELECT count(*) FROM pg_constraint WHERE contype='c' AND conname IN ('outcomes_attribution_source_check','outcomes_evaluative_signal_check','outcomes_revision_count_check','outcomes_metric_type_check','correction_signals_task_type_check')")" \
+  || fail "${EXIT_CHECK_VERIFY}" "pg_constraint verification query failed (DB '${DB_NAME}') — check core.outcomes / core.correction_signals exist + peer auth privileges"
+if [[ "${check_present}" != "5" ]]; then
+  fail "${EXIT_CHECK_VERIFY}" "expected 5 value-domain CHECK constraints, found ${check_present} — 20260718000001_db_hygiene_promote_ddl did not fully apply"
+fi
 
-# The budget-overage signal store is hook-written best-effort (advisory-subagent-budget.sh via
-# _pg-write.py), so it is created out-of-band HERE, not via a prisma migration — same
-# checksum-drift reason as the attribution CHECK above. CREATE TABLE IF NOT EXISTS is
-# idempotent. The 6 columns MUST byte-match _pg-write.py's _ALLOWED_COLUMNS['core.budget_overages']:
-# agent_id/tool_use_count/budget/crossed_pct/ts NOT NULL, agent_type nullable (sidecar recovery
-# is the norm, null the accepted fallback). ts defaults to now(). core schema comes from migrate deploy.
-log "creating core.budget_overages table (idempotent · CREATE TABLE IF NOT EXISTS)"
-psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
-  -c "CREATE TABLE IF NOT EXISTS core.budget_overages (agent_id text NOT NULL, agent_type text, tool_use_count integer NOT NULL, budget integer NOT NULL, crossed_pct integer NOT NULL, ts timestamptz NOT NULL DEFAULT now())" \
-  || fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages CREATE TABLE failed (DB '${DB_NAME}') — check core schema exists + peer auth privileges"
+# core.budget_overages presence verification. The table + its surrogate PK are created by
+# 20260718000001_db_hygiene_promote_ddl (previously an out-of-band CREATE here that lacked a
+# PK). to_regclass → NULL when the object is absent. SELECT-only, no mutation.
+log "verifying core.budget_overages table exists (to_regclass · SELECT-only)"
+overage_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
+  "SELECT to_regclass('core.budget_overages')" | tr -d '[:space:]')" \
+  || fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages verification query failed (DB '${DB_NAME}') — check core schema exists + peer auth privileges"
+if [[ "${overage_present}" != "core.budget_overages" ]]; then
+  fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages absent (DB '${DB_NAME}') — 20260718000001_db_hygiene_promote_ddl did not apply"
+fi
+
+# step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
+# The 5 partial indexes restored by 20260718000000_restore_squash_lost_partial_indexes are raw-SQL
+# (Prisma DSL cannot express a WHERE predicate). migrate deploy applies them, but a silent create
+# miss would degrade to seq-scans (clauded-docs folder cascade + improvement style_ref/tier window)
+# with NO error — so confirm all 5 landed and loud-fail otherwise (aligns with the loud-fail
+# precondition principle; SELECT-only, no mutation). Names MUST byte-match the migration DDL.
+log "verifying 5 restored partial indexes exist (pg_indexes · SELECT-only)"
+idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
+  "SELECT count(*) FROM pg_indexes WHERE indexname IN ('outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx')")" \
+  || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
+if [[ "${idx_present}" != "5" ]]; then
+  fail "${EXIT_PARTIAL_IDX}" "expected 5 restored partial indexes, found ${idx_present} — 20260718000000_restore_squash_lost_partial_indexes did not fully apply"
+fi
 
 # no seed step
 # The empty schema is functional on its own (0 required seeds) — stated so the installer
