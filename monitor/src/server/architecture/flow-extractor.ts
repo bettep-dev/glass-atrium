@@ -145,12 +145,62 @@ export function extractFlows(
     }
   }
 
+  // Subgraph-container endpoint label backfill — cross-subgraph edge(예: `daemon --> orch`)는
+  // subgraph id 를 직접 endpoint 로 참조하므로 bare-fallback node(label === id)로 등록된다.
+  // 사람 라벨은 subgraph 헤더(sg.label)에만 있으므로 여기서 노드 라벨로 끌어와, downstream
+  // connection row 가 bare "daemon" 대신 "Scheduled background jobs (daemons)"를 표시하게 한다.
+  const subgraphLabelById = new Map(subgraphs.map((sg) => [sg.id, sg.label]));
+  for (const node of nodes.values()) {
+    if (node.label !== node.id) {
+      continue;
+    }
+    const humanLabel = subgraphLabelById.get(node.id);
+    if (humanLabel !== undefined && humanLabel !== node.id) {
+      node.label = humanLabel;
+    }
+  }
+
+  // Containment-edge guard — 실노드와 그 자신을 감싼 subgraph 컨테이너 사이의 edge 제거
+  // (예: `autoagent_d --> daemon`, autoagent_d ∈ subgraph daemon). subgraph 박스와 중복 표현.
+  // 관계 자체는 subgraph membership(사람 라벨 sg.label 보유)이 이미 표현 → 제거해도 정보 손실 없음.
+  // 양방향(컨테이너가 source/target 어느 쪽이든) 처리.
+  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
+  const keptEdges = edges.filter(
+    (edge) => !isContainmentEdge(edge, idPrefix, subgraphIds, nodes),
+  );
+
   return {
     nodes: Array.from(nodes.values()),
     subgraphs,
-    edges,
+    edges: keptEdges,
     unmappedLabels,
   };
+}
+
+// prefixed edge endpoint(`${idPrefix}.${mermaidId}`) → raw mermaid id. node id 는 dot 미포함이라
+// 알려진 prefix 만 벗겨내면 안전.
+function stripIdPrefix(prefixedId: string, idPrefix: string): string {
+  const head = `${idPrefix}.`;
+  return prefixedId.startsWith(head) ? prefixedId.slice(head.length) : prefixedId;
+}
+
+// containment edge = 실노드 ↔ 그 노드를 직접 감싼 subgraph 컨테이너. subgraph 간(daemon-->orch)
+// 이나 top-level 노드 → 다른 subgraph(from_improvement-->agents) 는 의도된 flow 라 보존.
+function isContainmentEdge(
+  edge: FlowEdge,
+  idPrefix: string,
+  subgraphIds: Set<string>,
+  nodes: Map<string, ExtractedNode>,
+): boolean {
+  const from = stripIdPrefix(edge.from, idPrefix);
+  const to = stripIdPrefix(edge.to, idPrefix);
+  if (subgraphIds.has(to) && nodes.get(from)?.subgraphId === to) {
+    return true;
+  }
+  if (subgraphIds.has(from) && nodes.get(to)?.subgraphId === from) {
+    return true;
+  }
+  return false;
 }
 
 // node parsing

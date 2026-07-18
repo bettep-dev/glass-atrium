@@ -14,7 +14,7 @@ const DAEMON_TONE: Record<string, string> = {
   error: "crit",
   missing: "info",
   stale: "crit",
-  quota_exceeded: "neutral",
+  quota_exceeded: "warn",
 };
 
 interface StubWindow {
@@ -146,7 +146,8 @@ test("hook config not ready: hook card drops out of the denominator", () => {
   assert.strictEqual(kpis.totalCount, 6);
 });
 
-test("info attribution: missing daemon row + quota_exceeded land in info bucket", () => {
+test("bucket attribution: missing daemon row → info; quota_exceeded → degraded (warn re-tone)", () => {
+  // quota_exceeded 는 warn 톤으로 재분류 → degraded 버킷. missing 행만 info 유지.
   const kpis = assertKpiInvariant(
     allHealthyStates({
       daemonState: ready({
@@ -160,8 +161,8 @@ test("info attribution: missing daemon row + quota_exceeded land in info bucket"
     }),
   );
   assert.strictEqual(kpis.totalCount, 7);
-  assert.strictEqual(kpis.infoCount, 2);
-  assert.strictEqual(kpis.degradedCount, 0);
+  assert.strictEqual(kpis.infoCount, 1);
+  assert.strictEqual(kpis.degradedCount, 1);
 });
 
 test("stale daemon (threshold exceeded): degraded bucket + staleCount", () => {

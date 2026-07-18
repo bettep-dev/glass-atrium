@@ -60,9 +60,7 @@ export const DIAGRAMS = [
     agents -- "tool calls" --> hooks
     agents -- "saves documents" --> to_html_gate
     hooks -- "saves results" --> to_data
-    from_improvement -- "instruction updates" --> agents
-    autoagent_d --> daemon
-    wiki_d --> daemon`,
+    from_improvement -- "instruction updates" --> agents`,
 	},
 	{
 		id: 2,

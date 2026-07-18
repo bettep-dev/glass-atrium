@@ -25,6 +25,12 @@ import sys
 OUT_PATH = os.environ.get("OUT_PATH", "")
 CYCLE_DATE = os.environ.get("CYCLE_DATE", "")
 CYCLE_STARTED_AT = os.environ.get("CYCLE_STARTED_AT", "")
+
+# Daemon failure_class token (hyphen) ↔ core.daemon_runs status enum (underscore).
+# Token SoT is daemon_cycle.FAILURE_CLASS_QUOTA; kept as a literal here to avoid
+# importing daemon_cycle (heavy config resolution at import) into the writer.
+_FAILURE_CLASS_QUOTA = "quota-limit"
+_STATUS_QUOTA_EXCEEDED = "quota_exceeded"
 # Sibling of this module — scripts/ is consumed in place from the store.
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
 
@@ -66,7 +72,23 @@ def _aggregate(payload):
     if explicit_state in ("ok", "warn", "block", "infra_fault"):
         cost_guard_state = explicit_state
 
-    status = "partial" if saw_error else "ok"
+    # Status accuracy: subdivide the former blanket 'partial' by the failure_class
+    # of the error-bearing patches (same set that drives saw_error, so the ok vs
+    # non-ok boundary is unchanged). A cycle whose failures are ALL quota-limit is
+    # an external usage ceiling, not a code fault → 'quota_exceeded' (monitor
+    # renders "Usage limit"). Mixed / other / malformed-or-absent failure_class
+    # stays 'partial' — never a silent 'ok'.
+    failing_classes = {
+        (p.get("failure_class") or "").strip()
+        for p in patches
+        if isinstance(p, dict) and (p.get("error") or "").strip()
+    }
+    if not saw_error:
+        status = "ok"
+    elif failing_classes == {_FAILURE_CLASS_QUOTA}:
+        status = _STATUS_QUOTA_EXCEEDED
+    else:
+        status = "partial"
     return {
         "patches_count": len(patches),
         "patches_apply_count": apply_count,
