@@ -23,6 +23,7 @@ set -euo pipefail
 #   9 = retry after P3009 baseline resolve still failed (manual intervention needed)
 #  10 = post-deploy attribution_source CHECK constraint apply failed
 #  11 = post-deploy core.budget_overages CREATE TABLE failed
+#  12 = post-deploy partial-index verification failed (a restored index is absent)
 EXIT_BAD_CWD=3
 EXIT_MISSING_CLI=4
 EXIT_CREATEDB=5
@@ -32,6 +33,7 @@ EXIT_RECREATE=8
 EXIT_P3009=9
 EXIT_POSTSQL=10
 EXIT_OVERAGE_TABLE=11
+EXIT_PARTIAL_IDX=12
 
 # Squash baseline migration name — the P3009 target guard's known-name allowlist
 # (only this migration's failure is resolve-eligible). Never edit the applied
@@ -343,6 +345,20 @@ log "creating core.budget_overages table (idempotent · CREATE TABLE IF NOT EXIS
 psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "CREATE TABLE IF NOT EXISTS core.budget_overages (agent_id text NOT NULL, agent_type text, tool_use_count integer NOT NULL, budget integer NOT NULL, crossed_pct integer NOT NULL, ts timestamptz NOT NULL DEFAULT now())" \
   || fail "${EXIT_OVERAGE_TABLE}" "core.budget_overages CREATE TABLE failed (DB '${DB_NAME}') — check core schema exists + peer auth privileges"
+
+# step 7: partial-index presence verification (post-deploy · pg_indexes · SELECT-only · loud-fail)
+# The 5 partial indexes restored by 20260718000000_restore_squash_lost_partial_indexes are raw-SQL
+# (Prisma DSL cannot express a WHERE predicate). migrate deploy applies them, but a silent create
+# miss would degrade to seq-scans (clauded-docs folder cascade + improvement style_ref/tier window)
+# with NO error — so confirm all 5 landed and loud-fail otherwise (aligns with the loud-fail
+# precondition principle; SELECT-only, no mutation). Names MUST byte-match the migration DDL.
+log "verifying 5 restored partial indexes exist (pg_indexes · SELECT-only)"
+idx_present="$(psql -h "${PG_SOCKET}" -d "${DB_NAME}" -tAc \
+  "SELECT count(*) FROM pg_indexes WHERE indexname IN ('outcomes_style_ref_agent_ts_idx','outcomes_baseline_pre_3tier_idx','autoagent_proposals_confidence_idx','monitor_documents_folder_id_idx','monitor_documents_folder_created_idx')")" \
+  || fail "${EXIT_PARTIAL_IDX}" "pg_indexes verification query failed (DB '${DB_NAME}') — check core/monitor schemas + peer auth privileges"
+if [[ "${idx_present}" != "5" ]]; then
+  fail "${EXIT_PARTIAL_IDX}" "expected 5 restored partial indexes, found ${idx_present} — 20260718000000_restore_squash_lost_partial_indexes did not fully apply"
+fi
 
 # no seed step
 # The empty schema is functional on its own (0 required seeds) — stated so the installer

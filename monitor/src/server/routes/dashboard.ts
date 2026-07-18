@@ -204,9 +204,13 @@ async function handleCostTimeseries(
   }
   const prisma = getPrisma();
   try {
+    // Pin the series window to the day-bucket timezone's "today", the SAME calendar
+    // day the KPI path buckets on — session-tz CURRENT_DATE would drift a day behind
+    // (00:00–08:59 KST renders yesterday-as-today). Bound as a bind param (::date).
+    const todayIso = computeBucketTzToday(new Date());
     // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
     // via Prisma.raw is safe here because `days` was validated against allowlist.
-    const windowLowerBound = buildWindowLowerBound(days);
+    const windowLowerBound = buildWindowLowerBound(todayIso, days);
     const rows = await prisma.$queryRaw<TimeseriesRow[]>`
       SELECT
         d::date AS date,
@@ -216,7 +220,7 @@ async function handleCostTimeseries(
         COALESCE(SUM(c.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
         COALESCE(SUM(c.cost_usd), 0)::numeric(12,6) AS cost_usd,
         COUNT(DISTINCT c.session_id)::bigint AS session_count
-      FROM generate_series(${windowLowerBound}, CURRENT_DATE, '1 day') d
+      FROM generate_series(${windowLowerBound}, ${todayIso}::date, '1 day') d
       LEFT JOIN core.cost_events c ON c.event_date = d::date
       GROUP BY d
       ORDER BY d ASC
@@ -311,12 +315,28 @@ function parseDaysParam(
   return parsed;
 }
 
-// Canonical "last N days" window lower bound — mirrors cost.ts buildWindowLowerBound.
-// Window = [CURRENT_DATE - (days-1) .. CURRENT_DATE] inclusive = exactly `days`
-// calendar days (today counted), so every "last N days" card covers the same day-set.
+// Day-bucket timezone's "today" as an ISO calendar-day string (YYYY-MM-DD). The KPI
+// path pins its buckets to this timezone via SQL NOW() AT TIME ZONE; the timeseries
+// resolves the same bucket-tz wall-clock day here (en-CA → ISO format) so its series
+// bounds agree with the KPI buckets instead of drifting to session-tz CURRENT_DATE.
+// Deterministic given `now` — the frozen-clock route test asserts the KST-today bound.
+export function computeBucketTzToday(now: Date, timeZone: string = DAY_BUCKET_TIMEZONE): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+// Canonical "last N days" window lower bound, computed from the bucket-tz `today` bind
+// param (todayIso), NOT session-tz CURRENT_DATE.
+// Window = [today - (days-1) .. today] inclusive = exactly `days` calendar days (today
+// counted), where `today` is the bucket-tz day (bind param), so every "last N days"
+// card covers the same bucket-tz day-set as the KPI band.
 // Safe: `days` allowlist-validated ({7, 30, 90}); `days - 1` is a derived integer.
-function buildWindowLowerBound(days: number): Prisma.Sql {
-  return Prisma.raw(`CURRENT_DATE - INTERVAL '${days - 1} days'`);
+function buildWindowLowerBound(todayIso: string, days: number): Prisma.Sql {
+  return Prisma.sql`${todayIso}::date - ${Prisma.raw(`INTERVAL '${days - 1} days'`)}`;
 }
 
 function bigintToNumber(value: bigint): number {
