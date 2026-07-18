@@ -11,10 +11,48 @@ set -Eeuo pipefail
 # shellcheck source=hook-utils.sh
 [[ -r "${BASH_SOURCE%/*}/hook-utils.sh" ]] && source "${BASH_SOURCE%/*}/hook-utils.sh"
 
+# DF-21: the 7-param override's free-text fields (message/suggestion, EN+KO) carried the same raw
+# printf %s vulnerability as hook-utils' hook_emit_error — a " or \ in any of them yielded MALFORMED
+# JSON. Build via jq (JSON-correct escaping + ctx validated as a JSON fragment); on jq absent/failed
+# fall back to the sourced pure-bash _hook_json_escape helper, and only to the raw printf when BOTH
+# jq AND the sibling hook-utils are unavailable (doubly-degraded floor).
 emit_error() {
   local code="${1}" severity="${2}" msg_en="${3}" msg_ko="${4}" suggest_en="${5}" suggest_ko="${6}" ctx="${7:-"{}"}"
-  printf '{"code":"%s","severity":"%s","hook":"%s","message_en":"%s","message_ko":"%s","suggestion_en":"%s","suggestion_ko":"%s","context":%s}\n' \
-    "${code}" "${severity}" "$(basename "${0}" .sh)" "${msg_en}" "${msg_ko}" "${suggest_en}" "${suggest_ko}" "${ctx}" >&2
+  local hook_name
+  hook_name="$(basename "${0}" .sh)"
+  if command -v jq >/dev/null 2>&1; then
+    local _json
+    if _json="$(jq -cn \
+      --arg code "${code}" --arg severity "${severity}" --arg hook "${hook_name}" \
+      --arg men "${msg_en}" --arg mko "${msg_ko}" --arg sen "${suggest_en}" --arg sko "${suggest_ko}" \
+      --argjson context "${ctx}" \
+      '{code:$code,severity:$severity,hook:$hook,message_en:$men,message_ko:$mko,suggestion_en:$sen,suggestion_ko:$sko,context:$context}' 2>/dev/null)"; then
+      printf '%s\n' "${_json}" >&2
+      return 0
+    fi
+    if _json="$(jq -cn \
+      --arg code "${code}" --arg severity "${severity}" --arg hook "${hook_name}" \
+      --arg men "${msg_en}" --arg mko "${msg_ko}" --arg sen "${suggest_en}" --arg sko "${suggest_ko}" \
+      '{code:$code,severity:$severity,hook:$hook,message_en:$men,message_ko:$mko,suggestion_en:$sen,suggestion_ko:$sko,context:{}}' 2>/dev/null)"; then
+      printf '%s\n' "${_json}" >&2
+      return 0
+    fi
+  fi
+  if command -v _hook_json_escape >/dev/null 2>&1; then
+    local e_code e_sev e_hook e_men e_mko e_sen e_sko
+    e_code="$(_hook_json_escape "${code}")"
+    e_sev="$(_hook_json_escape "${severity}")"
+    e_hook="$(_hook_json_escape "${hook_name}")"
+    e_men="$(_hook_json_escape "${msg_en}")"
+    e_mko="$(_hook_json_escape "${msg_ko}")"
+    e_sen="$(_hook_json_escape "${suggest_en}")"
+    e_sko="$(_hook_json_escape "${suggest_ko}")"
+    printf '{"code":"%s","severity":"%s","hook":"%s","message_en":"%s","message_ko":"%s","suggestion_en":"%s","suggestion_ko":"%s","context":%s}\n' \
+      "${e_code}" "${e_sev}" "${e_hook}" "${e_men}" "${e_mko}" "${e_sen}" "${e_sko}" "${ctx}" >&2
+  else
+    printf '{"code":"%s","severity":"%s","hook":"%s","message_en":"%s","message_ko":"%s","suggestion_en":"%s","suggestion_ko":"%s","context":%s}\n' \
+      "${code}" "${severity}" "${hook_name}" "${msg_en}" "${msg_ko}" "${suggest_en}" "${suggest_ko}" "${ctx}" >&2
+  fi
 }
 
 # require_safety_marker <flag-name> — returns 0 (authorized) ONLY when the marker file

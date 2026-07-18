@@ -4,7 +4,8 @@
 
 # settings.json hook-binding query (read-only, D-5) — echo "yes"/"no" for <hook-basename> under <event> (optionally <matcher>); basename compare tolerates the ~/.claude/hooks/ vs absolute prefix.
 # Read-ONLY: NEVER writes settings.json (mutation-free doctor contract).
-# Matcher-scoped (command-WITHIN-matcher): a non-empty 3rd arg counts only hook-groups whose matcher EQUALS it, tracking each (event, matcher, basename) tuple independently — REQUIRED so one hook binds under two matchers (validate-secret-scan.sh on Write|Edit AND Bash). Absent matcher key ≡ empty-string matcher; empty 3rd arg → legacy event+basename match (matcher ignored).
+# Matcher-scoped (command-WITHIN-matcher): a non-empty 3rd arg counts only hook-groups whose matcher EQUALS it, tracking each (event, matcher, basename) tuple independently — REQUIRED so one hook binds under two matchers (validate-secret-scan.sh on Write|Edit AND Bash). Absent matcher key ≡ empty-string matcher.
+# DF-28 truth-up: the empty-3rd-arg branch is NOT "matcher ignored" — it matches the basename ONLY within the empty/absent-matcher hook-group (a matcher-less registration: SessionStart/SubagentStop groups, advisory-subagent-budget.sh, validate-output.sh — each stored with no matcher key). A hook bound under a NON-empty matcher is deliberately NOT matched by an empty-arg query, mirroring the exact (event, matcher, basename) tuple scoping of the non-empty branch.
 # Always exits 0 (stdout verdict, like is_never_touch) so the ERR trap is inert.
 is_hook_bound() {
   local event="$1" hook="$2" matcher="${3:-}"
@@ -32,6 +33,8 @@ is_hook_bound() {
     )"
   else
     found="$(
+      # empty-matcher branch: matcher-less registration only ((.matcher // "") == "" matches both an
+      # absent matcher key AND an explicit "" — NOT a wildcard over non-empty matcher groups).
       jq -r --arg ev "${event}" \
         '(.hooks[$ev] // [])[]
            | select((.matcher // "") == "")

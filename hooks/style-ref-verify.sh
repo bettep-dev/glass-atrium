@@ -5,22 +5,16 @@
 # session's Read history — surfacing the Gaming-the-Judge content-based
 # false-positive risk.
 #
-# DEFERRED — not yet wired in settings.json; staged rollout ships the hook first
-# as a deployed-but-inactive measurement layer (user decides when to register).
-# Suggested registration form (USER REFERENCE ONLY — do NOT auto-edit settings.json):
-#     {
-#       "hooks": {
-#         "SubagentStop": [
-#           {
-#             "matcher": "",
-#             "hooks": [
-#               { "type": "command",
-#                 "command": "~/.glass-atrium/hooks/style-ref-verify.sh" }
-#             ]
-#           }
-#         ]
-#       }
-#     }
+# RETIRED (DF-28 decision) — do NOT wire. Superseded by track-outcome.sh's
+# _compute_style_ref_verified, which runs at the same SubagentStop event and PERSISTS the
+# identical verdict (via the SAME shared matcher lib/style_ref_match.py) to the DB column
+# style_ref_verified — the authoritative, monitor-aggregated surface. This standalone variant
+# adds ONLY a live stderr WARN, and Claude Code DISCARDS hook stderr (see track-outcome.sh
+# "Claude Code discards hook stderr"), so wiring it would produce no operator surface while
+# double-running the verification. It stayed indefinitely DEFERRED and is now resolved as retired.
+# Physical removal + downstream sync are a coordinated cross-track follow-up (out of this file's
+# ownership): manifest.json regen · schema.prisma L336-337 citation (db track) · comment-audit
+# canonical-baseline.tsv row. The code below is left intact so no test/manifest breaks pre-removal.
 #
 # exit 0 — pass / silent skip / warning (warn-not-block preserves Gaming-the-Judge
 #          honesty without breaking the session).
