@@ -58,57 +58,84 @@ SURVIVAL_PATH="${BACKUP_DIR}/${TIMESTAMP}_${SESSION_ID}_survival.md"
 SURVIVAL_TMP="$(mktemp -t "compact-survival-XXXXXX")"
 trap 'rm -f -- "${SURVIVAL_TMP}" 2>/dev/null || true' EXIT
 
-# 3a. Collect + sort ALL outcome paths ONCE, newest-first (shared by 3d summary + 3e correlation).
-# Path priority mirrors track-outcome.sh: 1. ~/.claude/data/outcomes/*.md (canonical)
-#   2. ${PWD}/memory/outcomes/*.md (deprecated legacy).
-# Bounded fan-out: one `find | xargs stat | sort` (a CONSTANT number of processes — NOT a stat fork
-# per file; mirrors the retention-prune pattern below), yielding every outcome path newest-first. The
-# perf win is the single sort + single-pass awk (3b), NOT a head-cap — so no head slice bounds the
-# corpus. The `2>/dev/null` here is best-effort scanning (the packet degrades to `(none)`/`?`), NOT an
-# error-signal path — so it is not a new suppression on a loud-fail path.
+# 3a. Recent-outcome tuple stream — DB-primary (PG core.outcomes), legacy .md scan as fallback.
+# Outcome records migrated to PG core.outcomes (DB-only sink written by _pg_outcome_dualwrite.py;
+# per-outcome .md files are retired — no longer written). The primary source is now the DB, read via
+# the SELECT-only _pg_outcome_read.py helper (identical host/port-less connection contract). The legacy
+# .md scan is kept ONLY as a fallback for pre-migration residue OR a DB that is unavailable/empty — so
+# the packet degrades gracefully and NEVER blocks compaction. Both sources emit the SAME newest-first
+# tuple stream `detail<TAB>result<TAB>cid`, so the 3d/3e formatter below is source-agnostic (detail =
+# the outcome summary on the DB path, the file path on the legacy .md path).
 #
-# Coverage: correlation reads the FULL corpus so an active CID older than the newest few outcomes
-# still surfaces (a multi-wave session can hold a CID active well below the recent-summary window).
-# The two consumers window independently in 3d/3e: SUMMARY_LIMIT windows the recent-outcomes TABLE
-# only, while CORRELATION_LIMIT is an OPTIONAL operator safety bound (PRECOMPACT_CORRELATION_LIMIT)
-# that windows the active-CID scan to the newest K WITHOUT ever truncating the summary. Empty / unset
-# / non-integer / 0 = unbounded (full corpus) — the default.
+# Windowing (unchanged): SUMMARY_LIMIT windows the recent-outcomes TABLE only, while CORRELATION_LIMIT
+# is an OPTIONAL operator safety bound (PRECOMPACT_CORRELATION_LIMIT) that windows the active-CID scan
+# to the newest K WITHOUT truncating the summary. Empty / unset / non-integer / 0 = unbounded — default.
 SUMMARY_LIMIT=5
 CORRELATION_LIMIT="${PRECOMPACT_CORRELATION_LIMIT:-0}"
 # Non-integer / negative operator input → unbounded; also guards the -gt comparison in 3e.
 [[ "${CORRELATION_LIMIT}" =~ ^[0-9]+$ ]] || CORRELATION_LIMIT=0
 
-outcome_dirs=()
-[[ -d "${HOME}/.claude/data/outcomes" ]] && outcome_dirs+=("${HOME}/.claude/data/outcomes")
-[[ -d "${PWD}/memory/outcomes" ]] && outcome_dirs+=("${PWD}/memory/outcomes")
+# DB fetch cap — the shared multi-project core.outcomes carries NO cwd/project key and unbounded
+# history, so (unlike the .md scan's full-corpus walk) the DB path bounds the fetch to the newest N
+# rows. Correlation coverage within that window is preserved; an active CID older than the window is
+# out of scope for the DB path (raise PRECOMPACT_DB_FETCH_LIMIT to widen it).
+DB_FETCH_LIMIT="${PRECOMPACT_DB_FETCH_LIMIT:-100}"
+[[ "${DB_FETCH_LIMIT}" =~ ^[0-9]+$ && "${DB_FETCH_LIMIT}" -gt 0 ]] || DB_FETCH_LIMIT=100
 
+outcome_tuples=""
+# detail_label names the recent-outcomes table's 2nd column: the DB path shows the outcome summary,
+# the legacy .md fallback the file path.
+detail_label="summary"
+
+# DB-primary read. Skipped when disabled (PRECOMPACT_DB_DISABLE — the .md-fallback test seam), the
+# helper is unreadable, or python3 is absent. The helper is SELECT-only and self-degrades: a genuine
+# DB-unreachable case prints its OWN 1-line stderr note (loud-fail), `|| true` keeps this hook alive
+# regardless, and an empty result simply falls through to the legacy .md scan below.
+PG_READ_HELPER="${_HOOK_DIR}/_pg_outcome_read.py"
+if [[ -z "${PRECOMPACT_DB_DISABLE:-}" && -r "${PG_READ_HELPER}" ]] && command -v python3 >/dev/null 2>&1; then
+  db_tuples="$(python3 "${PG_READ_HELPER}" "${DB_FETCH_LIMIT}" || true)"
+  [[ -n "${db_tuples}" ]] && outcome_tuples="${db_tuples}"
+fi
+
+# Legacy .md fallback path selection — runs ONLY when the DB path yielded nothing (unavailable / empty
+# / disabled). Path priority mirrors track-outcome.sh: 1. ~/.claude/data/outcomes/*.md (canonical)
+#   2. ${PWD}/memory/outcomes/*.md (deprecated legacy). Bounded fan-out: one `find | xargs stat | sort`
+# (a CONSTANT number of processes — NOT a stat fork per file; mirrors the retention-prune pattern
+# below). The `2>/dev/null` is best-effort scanning (the packet degrades to `(none)`/`?`), NOT an
+# error-signal path — so it is not a new suppression on a loud-fail path.
 sorted_paths=()
-if [[ ${#outcome_dirs[@]} -gt 0 ]]; then
-  # `{ ...; } || true` absorbs a benign non-zero pipe status under pipefail (e.g. stat racing a
-  # vanished file, or empty-input xargs); the scan degrades to empty, which the guard below tolerates.
-  # Command-sub + here-string read keeps `sorted_paths` in the current shell (a `| while` would
-  # populate a lost subshell).
-  sorted_raw="$(
-    {
-      find "${outcome_dirs[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null \
-        | xargs -0 stat "${_GA_STAT_MP[@]}" 2>/dev/null \
-        | sort -rn \
-        | awk '{ $1=""; sub(/^ /, ""); print }'
-    } || true
-  )"
-  if [[ -n "${sorted_raw}" ]]; then
-    while IFS= read -r outcome_path; do
-      [[ -n "${outcome_path}" ]] && sorted_paths+=("${outcome_path}")
-    done <<<"${sorted_raw}"
+if [[ -z "${outcome_tuples}" ]]; then
+  detail_label="path"
+  outcome_dirs=()
+  [[ -d "${HOME}/.claude/data/outcomes" ]] && outcome_dirs+=("${HOME}/.claude/data/outcomes")
+  [[ -d "${PWD}/memory/outcomes" ]] && outcome_dirs+=("${PWD}/memory/outcomes")
+
+  if [[ ${#outcome_dirs[@]} -gt 0 ]]; then
+    # `{ ...; } || true` absorbs a benign non-zero pipe status under pipefail (e.g. stat racing a
+    # vanished file, or empty-input xargs); the scan degrades to empty, which the guard below tolerates.
+    # Command-sub + here-string read keeps `sorted_paths` in the current shell (a `| while` would
+    # populate a lost subshell).
+    sorted_raw="$(
+      {
+        find "${outcome_dirs[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null \
+          | xargs -0 stat "${_GA_STAT_MP[@]}" 2>/dev/null \
+          | sort -rn \
+          | awk '{ $1=""; sub(/^ /, ""); print }'
+      } || true
+    )"
+    if [[ -n "${sorted_raw}" ]]; then
+      while IFS= read -r outcome_path; do
+        [[ -n "${outcome_path}" ]] && sorted_paths+=("${outcome_path}")
+      done <<<"${sorted_raw}"
+    fi
   fi
 fi
 
-# 3b. Single awk pass over the full sorted corpus → one `path<TAB>result<TAB>cid` tuple per file
-# (newest first). One awk process regardless of corpus size (replaces the prior per-file awk fork —
-# one per outcome, ×2 for summary + correlation). `result` = first result: in the opening
-# frontmatter. `cid` is emitted only once the closing frontmatter fence (#2) is seen — so an
-# unterminated frontmatter yields no correlation.
-outcome_tuples=""
+# 3b. Legacy .md awk pass over the sorted corpus → one `path<TAB>result<TAB>cid` tuple per file (newest
+# first). Runs ONLY on the fallback path (sorted_paths is empty when the DB read already populated
+# outcome_tuples, so this is skipped and the DB result is preserved). One awk process regardless of
+# corpus size. `result` = first result: in the opening frontmatter; `cid` is emitted only once the
+# closing frontmatter fence (#2) is seen — so an unterminated frontmatter yields no correlation.
 if [[ ${#sorted_paths[@]} -gt 0 ]]; then
   outcome_tuples="$(
     awk '
@@ -184,14 +211,18 @@ active_cid_lines=""
 summary_seen=0
 scan_pos=0
 if [[ -n "${outcome_tuples}" ]]; then
-  while IFS=$'\t' read -r t_path t_result t_cid; do
-    [[ -z "${t_path}" ]] && continue
+  while IFS=$'\t' read -r t_detail t_result t_cid; do
+    # Skip only a fully-blank line (e.g. a trailing newline). A DB row may carry an empty detail
+    # (null summary) yet a valid result/cid, so the guard MUST NOT key on t_detail alone.
+    [[ -z "${t_detail}" && -z "${t_result}" && -z "${t_cid}" ]] && continue
     scan_pos=$((scan_pos + 1))
     # Summary window — exactly the newest SUMMARY_LIMIT rows, decoupled from CORRELATION_LIMIT.
     if [[ "${summary_seen}" -lt "${SUMMARY_LIMIT}" ]]; then
       row_result="${t_result}"
       [[ -z "${row_result}" ]] && row_result="?"
-      recent_outcome_rows+="| ${row_result} | ${t_path} |"$'\n'
+      row_detail="${t_detail}"
+      [[ -z "${row_detail}" ]] && row_detail="-"
+      recent_outcome_rows+="| ${row_result} | ${row_detail} |"$'\n'
       summary_seen=$((summary_seen + 1))
     fi
     # Correlation window — full corpus by default; a positive operator bound windows the active-CID
@@ -227,7 +258,7 @@ fi
   printf '\n'
 
   printf '## Recent outcomes (newest %s)\n\n' "${SUMMARY_LIMIT}"
-  printf '| result | path |\n'
+  printf '| result | %s |\n' "${detail_label}"
   printf '|--------|------|\n'
   if [[ -n "${recent_outcome_rows}" ]]; then
     printf '%s' "${recent_outcome_rows}"

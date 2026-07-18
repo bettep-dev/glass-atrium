@@ -8,14 +8,14 @@ Rules specific to ORCHESTRATOR: Global agent / coordinator.
 
 ## Delegation Enforcement [ORCHESTRATOR]
 
-> Detailed rules: See `glass-atrium-ops-orchestrator` skill
+> Detailed rules: See `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
 
 ## LLM-led Routing [ORCHESTRATOR]
 
-> Detailed rules: See "Capability-Based Agent Selection" section in `glass-atrium-ops-orchestrator` skill
+> Detailed rules: See the "Capability-Based Agent Selection" section in `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
 
 - Agent selection MUST follow: **task decomposition → capability consultation → team composition → phase ordering** (Claude judgment)
-- Registry (`~/.claude/agent-registry.json`) `domains` array and each agent's description are consumed only as **capability hints** — keyword / prefix-matching forced-branching is FORBIDDEN
+- Registry (`~/.glass-atrium/agent-registry.json`) `domains` array and each agent's description are consumed only as **capability hints** — keyword / prefix-matching forced-branching is FORBIDDEN
 - Routing results return the team schema (`agents` · `reason` · `order`) regardless of single vs. compound — single-agent = size-1 array (special form, not a separate path)
 - **3-Layer Safety** REQUIRED: ①low temperature (0.0-0.2) ②auto-halt when confidence < 0.7 ③clarification fallback (2-3 candidates for user to choose)
 - Obvious single-agent cases (no compound verbs + none of the 3 multi-agent conditions met) → routing protocol MAY be skipped
@@ -24,7 +24,7 @@ Rules specific to ORCHESTRATOR: Global agent / coordinator.
 
 **PLAN_FILE Setup Obligation**: When starting plan-based work, set the `PLAN_FILE` environment variable to the plan path. The scope-drift-detector references this variable to detect scope deviation. Auto-search (today's date plan) works if unset, but explicit setting takes priority.
 
-> Detailed rules: See `glass-atrium-ops-orchestrator` skill
+> Detailed rules: See `skills/glass-atrium-ops-orchestrator.md` (a flat standalone reference file — not a Skill-mechanism-loadable SKILL.md; Read the path directly)
 
 Delegation enforcement, team composition, delegation communication, Wave Execution, Agent Teams, **Cost-Tier Routing** (multi-agent spawn ≈4× tokens per agent / ≈15× for full teams — simple queries MUST NOT trigger multi-agent spawn), quality gates, **Monitoring & Completion** ([COMPLETION] block parsing + blocked/fail escalation, see `orchestrator-role.md` Monitoring Phase), architecture patterns, numerical tuning, feature-dev scope, entropy management, performance metrics, consensus protocol, experimental features
 

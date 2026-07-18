@@ -7,7 +7,7 @@ Applies to all DEV and QA agents.
 > The block between the `AGENT-INJECT` markers is extracted verbatim by a SubagentStart hook and injected into DEV/QA subagents. Edit it here only.
 
 <!-- AGENT-INJECT:START -->
-**Comment-rule core (auto-injected DEV/QA · full: `~/.claude/scoped/shared-comment-logging.md`)**
+**Comment-rule core (auto-injected DEV/QA · full: `~/.glass-atrium/scoped/shared-comment-logging.md`)**
 
 TOP PROHIBITIONS (read first):
 - **NO history / narration / attribution** — git owns history; "why" = DESIGN RATIONALE, never change-narration. Forbidden: date-stamps, before/after or A→B notes, version/wave/ADR tags, authorship/review. Owner/ticket ONLY in TODO. **No commented-out dead code** "for rollback" → DELETE.

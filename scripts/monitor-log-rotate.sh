@@ -48,8 +48,10 @@ rotate_one() {
     return 0
   fi
 
+  # POSIX byte count (identical on BSD+GNU) — NOT `stat -f`/`stat -c` (BSD/GNU-divergent:
+  # GNU `-f` means --file-system, so '%z' becomes a bad file operand and the ERR trap dies).
   local size
-  size="$(stat -f "%z" "${log_path}")"
+  size="$(wc -c <"${log_path}" | tr -d '[:space:]')"
 
   if ((size <= MAX_SIZE_BYTES)); then
     return 0

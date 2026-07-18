@@ -18,9 +18,10 @@
 # Two NON-DROPPABLE universal blocks (ALL subagents, not DEV/QA-scoped), INDEPENDENT
 # of each other and of the scope blocks:
 #   * [COMPLETION] emit-format (ALWAYS-ON, assembled FIRST — the PRIMARY fix):
-#     schema-mode/workflow spawns emit the block as a SINGLE inline line, which
-#     track-outcome.sh (anchors every parse tier on a newline after the tag) matches
-#     no tier → fields discarded → outcome synthesized (done_with_concerns/low).
+#     schema-mode/workflow spawns emit NO text-channel block (the engine consumes only
+#     StructuredOutput); track-outcome.sh recovers the writer fields from the SO input's
+#     completion_block field. This directive names that field for schema-mode + delivers the
+#     strict multi-line contract to the text-channel (manual) path.
 #     Delivered to EVERY agent_type, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF +
 #     maxTurns; FIRST so it survives the ~2KB preview.
 #   * Budget-meter (subagents with a maxTurns frontmatter): a subagent has NO runtime
@@ -198,15 +199,20 @@ build_meter_block() {
 # Build the always-on [COMPLETION] emit-format directive. Static text (no args) for EVERY
 # subagent, INDEPENDENT of SUBAGENT_BUDGET_METER_OFF + maxTurns (NOT folded into build_meter_block
 # / read_max_turns, whose kill-switch + maxTurns coupling would leave workflow subagents
-# uncovered). WHY: schema-mode spawns emit the block as a SINGLE inline line, which the recorder
-# (parse tiers anchored on a newline after the tag) cannot match → fields discarded → synthesized.
-# This delivers the strict multi-line contract the recorder can parse. stdout: block text.
+# uncovered). WHY: schema-mode spawns emit NO text-channel [COMPLETION] block (the engine consumes
+# only StructuredOutput); the recorder recovers the writer fields from the SO input's completion_block
+# field, so this directive names that field for schema-mode + delivers the strict multi-line contract
+# to the text-channel (manual) path. The manual path keeps the print-block-then-emit discipline;
+# schema-mode supersedes it with the completion_block field. stdout: block text.
+# BYTE-BUDGET: this printf'd block is byte-budgeted — redteam-#24 9728B injection ceiling +
+# the EMIT+METER 2048B ~2KB-preview cap. Any rewording MUST re-run hooks/test/inject-scope-rules-nodrop.bats
+# and hooks/test/inject-scope-rules.bats before commit.
 build_emit_format_block() {
   printf '%s\n' \
     "**[COMPLETION] emit format (auto-injected · REQUIRED by the outcome recorder)**" \
     "- Print the [COMPLETION] block MULTI-LINE: the [COMPLETION] tag ALONE on its own line, EACH field (result / task_type / metric_pass / confidence / summary / …) on its OWN line, closed by a [/COMPLETION] sentinel ALONE on its own line." \
-    "- The single-line inline form ([COMPLETION] k: v | k: v | …, all fields on ONE line) is DISCARDED by the recorder — its fields are lost and the outcome is synthesized as done_with_concerns / confidence=low. Schema-mode / workflow (ultracode) spawns MUST use the multi-line form." \
-    "- SCHEMA-MODE / WORKFLOW (ultracode) agents: your StructuredOutput call IS the terminal deliverable — you MUST call StructuredOutput as the LAST action. Print this multi-line [COMPLETION] block as a dedicated text turn IMMEDIATELY BEFORE the StructuredOutput call (print-block-then-emit). Do NOT treat printing the prose [COMPLETION] block as \"done\" and stop — a schema-mode run that ends without calling StructuredOutput is a hard engine error (the run throws), not a graceful finish."
+    "- The inline single-line form ([COMPLETION] k: v | k: v | …) is NOT sanctioned — multi-line stays REQUIRED — but a well-formed inline emit is salvaged (parse_tier=1 fallback), not discarded; only a truly unparseable emit is synthesized (done_with_concerns / low). Schema/workflow (ultracode) spawns MUST use multi-line." \
+    "- SCHEMA-MODE / WORKFLOW (ultracode) agents: your StructuredOutput call IS the terminal deliverable — you MUST call StructuredOutput as the LAST action. When the schema has a completion_block string field, put the full multi-line [COMPLETION] block there — the recorder recovers it (the RELIABLE path; a printed text turn does NOT survive the engine). A schema-mode run that ends without calling StructuredOutput is a hard engine error (the run throws), not a graceful finish."
 }
 
 # Byte length of a string (wc -c counts bytes, locale-independent); tr strips BSD wc's leading

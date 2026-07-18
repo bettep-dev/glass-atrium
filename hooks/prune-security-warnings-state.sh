@@ -15,6 +15,18 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# OS-portable mtime accessor — BSD/macOS `stat -f %m` vs GNU/Linux `stat -c %Y` (both emit the epoch
+# seconds). GNU `-f` means --file-system, so a bare BSD `stat -f %m` misparses on Linux and yields no
+# epoch — every state file would then read as mtime 0 and fall out of the fresh-window preserve check
+# (silent over-prune). Detect the flavor ONCE (uname -s) into an args array, mirroring pre-compact.sh's
+# `_GA_STAT_MP`.
+_GA_OS="$(uname -s 2>/dev/null || printf 'unknown')"
+if [[ "${_GA_OS}" == "Darwin" ]]; then
+  _GA_STAT_MTIME=(-f %m)
+else
+  _GA_STAT_MTIME=(-c %Y)
+fi
+
 readonly DEFAULT_BASE_DIR="${HOME}/.claude"
 readonly DEFAULT_TRASH_DIR="${HOME}/.Trash"
 readonly MTIME_WINDOW_SECONDS=300
@@ -77,8 +89,8 @@ for file in "${candidates[@]}"; do
 
   # Fallback: no session_id → preserve files fresh within the mtime window.
   if [[ -z "${active_session_id}" ]]; then
-    # macOS BSD `stat -f %m` returns mtime epoch.
-    file_mtime="$(stat -f %m "${file}" 2>/dev/null || printf '0')"
+    # Portable mtime epoch via the detected accessor.
+    file_mtime="$(stat "${_GA_STAT_MTIME[@]}" "${file}" 2>/dev/null || printf '0')"
     if [[ -n "${file_mtime}" && "${file_mtime}" -ge "${cutoff_epoch}" ]]; then
       preserved_count=$((preserved_count + 1))
       continue

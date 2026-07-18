@@ -8,6 +8,7 @@ import {
   BUDGET_TRUNCATION_SOURCE,
   COMPLETION_SYNTHESIZED_SOURCE,
   buildReconstructedRowFilter,
+  STRUCTUREDOUTPUT_COMPLETION_SOURCE,
   STRUCTUREDOUTPUT_DERIVED_SOURCE,
 } from "../attribution-sources.js";
 import {
@@ -114,11 +115,19 @@ const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
 // positives, and genuine loss is ~0 anyway (the honest expected value).
 const ATTRIBUTION_LOSS_AGENT_EVENT_WINDOW_MINUTES = 5;
 
-// Attribution-source → semantic-category map. Folds all 10 CHECK-canonical
+// Attribution-source → semantic-category map. Folds all 11 CHECK-canonical
 // values into 4 sum-complete categories. Any value NOT listed here (incl. a
 // future canonical addition) falls through to 'synthesized' via the
 // categorize() else-branch, so it can never silently drop from `total`.
-const HEALTHY_SOURCE = "hook-input";
+// Writer-emitted attribution values → the 'healthy' category. hook-input is the happy path;
+// structuredoutput-completion is the schema-mode sibling where a VALID [COMPLETION] block was
+// recovered from the terminal StructuredOutput input (writer fields intact) — NOT a synthesis
+// artifact, so it lands healthy alongside hook-input (its synthesized twin structuredoutput-derived
+// stays in SYNTHESIZED_SOURCES). Literal imported from attribution-sources.ts.
+const HEALTHY_SOURCES: ReadonlySet<string> = new Set<string>([
+  "hook-input",
+  STRUCTUREDOUTPUT_COMPLETION_SOURCE,
+]);
 // Raw sentinel for SubagentStop-without-completion. NOT genuine attribution loss
 // by itself — qualified at query time against a real core.agent_events backing
 // (see handleAttributionDaily). Only the query-qualified subset reaches the
@@ -1241,7 +1250,7 @@ export function pivotAttributionDaily(rows: AttributionDailyDbRow[]): {
 export function categorizeAttributionSource(
   source: string,
 ): keyof AttributionCategoryTotals {
-  if (source === HEALTHY_SOURCE) return "healthy";
+  if (HEALTHY_SOURCES.has(source)) return "healthy";
   if (source === ATTRIBUTION_LOSS_SOURCE) return "attribution_loss";
   if (LITERAL_OMISSION_SOURCES.has(source)) return "literal_omission";
   // SYNTHESIZED_SOURCES explicit members OR else→catch-all (any future canonical

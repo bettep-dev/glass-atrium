@@ -40,7 +40,7 @@ Systematically collect data through web search, codebase exploration, and litera
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Checkpoint
-- **MUST run** `wiki-query.sh "topic"` before any web search (check existing knowledge first)
+- **MUST check existing wiki first** — Grep/Glob `~/.glass-atrium/wiki/notes/` + `raw/` (Korean+English synonyms) then Read matches, before any web search (this agent's frozen allowlist has no Bash, so the `wiki-query.sh` BM25 index is unavailable — Grep the notes directly)
 - **Corrective pass mandatory** when sources contradict, confidence is low, or conclusion rests on ≤2 sources
 - **Axis disambiguation check** before claiming "X differs from Y": apply the canonical axis-conflation rule (Guardrails) — verify the two measure operationally distinct dimensions before asserting a difference (recurrent failure: SNS API vs web-crawlability confusion).
 - **Infrastructure failure protocol**: when a query/fetch fails, categorize as transient (network → retry), structural (site blocks, auth required → fallback/pause), or institutional (throttle → backoff). Distinguish infrastructure failure from data-level "no results found".
@@ -60,7 +60,7 @@ Systematically collect data through web search, codebase exploration, and litera
 <!-- EDITABLE:BEGIN -->
 
 ### Wiki Pre-Check
-- Before research, run `Bash: ~/.glass-atrium/scripts/wiki-query.sh "topic"` → check existing wiki · Found → Read first, build on existing (prevent duplicate)
+- Before research, Grep/Glob `~/.glass-atrium/wiki/notes/` + `raw/` for the topic (Korean+English synonyms) → check existing wiki · Found → Read first, build on existing (prevent duplicate) · the `wiki-query.sh` BM25 index (`index/wiki.sqlite`) needs Bash, absent from this agent's frozen allowlist
 - Cite: `Existing wiki checked: [[concept-name]]` · Simple/urgent searches may skip
 
 ### Raw Source Storage Pipeline
@@ -83,7 +83,7 @@ Pipeline (each step gates the next):
 
 ### 3-Stage Research
 - **Exploration**: Topic → 3-5 sub-questions → 2-3 WebSearch per question.
-- **Deep dive**: Per source → Defuddle (web pages) or WebFetch (APIs); structure findings + cross-reference signals.
+- **Deep dive**: Per source → `glass-atrium-intel-defuddle` skill (web pages) or WebFetch (APIs); structure findings + cross-reference signals.
 - **Corrective pass**: If sources contradict OR confidence below threshold OR conclusion rests on a single source → discard low-confidence docs + trigger supplemental WebSearch (CRAG pattern; see `scope-research` Retrieval Guidance).
 - **Synthesis**: Reconcile contradictions, label dated sources, emit citations.
 
@@ -95,7 +95,7 @@ Pipeline (each step gates the next):
 - **Split signal**: Plan implies >20 uses → STOP upfront, report to main, request partitioning (preferred over hitting ceiling mid-task)
 - **Curation → raw/**: Highest reuse value
 - **Mid-chain checkpoint**: Every 4-5 tool uses → 3-5 line partial summary (current findings / remaining sub-questions / next query) before next tool call. Survives context saturation.
-- **Defuddle-first for HTML**: ≥10KB or navigation-heavy → `glass-atrium-intel-defuddle` skill (60-96% token reduction). WebFetch only for structured/API <8KB. WebFetch on 50KB doc without glass-atrium-intel-defuddle precheck = red flag.
+- **Defuddle-first for HTML**: ≥10KB or navigation-heavy → `glass-atrium-intel-defuddle` skill (60-96% token reduction). WebFetch only for structured/API <8KB. WebFetch on 50KB doc without glass-atrium-intel-defuddle precheck = red flag. NOTE: the defuddle skill drives a Defuddle CLI (Bash) outside this agent's frozen allowlist — until Bash is granted (deferred decision), WebFetch is the achievable extraction path and Defuddle-first is advisory.
 
 ### Source Reliability (0-100)
 - **Domain authority**: Official (90+) · Academic (80+) · Tech blogs (60-80) · Community (40-60) · **Recency**: <1yr (+20) · 1-3yr (+10) · 3+yr (+0) · Unknown (-10)
@@ -124,7 +124,7 @@ Format: `R{domain}-{seq}` (e.g., R1-01). In-text: `[R1-01]`. Cross-verified: `[R
 - **Consumer-ready summary table**
 - **Raw source storage** to wiki/raw/ (systematic research only)
 
-**FINAL STEP (all modes — schema/workflow included, REQUIRED)**: after the deliverable above is complete and any raw-source persistence has finished, print the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) as a DEDICATED assistant text turn — NEVER inside the synthesis/deliverable body, NEVER inside the `StructuredOutput` JSON — then call `StructuredOutput` as the last action (print-block-then-emit). In schema mode the injected recorder directive is honored ONLY by this dedicated-turn print (raw-save and StructuredOutput are separate emits); folding the block into the synthesis loses the outcome record.
+**FINAL STEP (mode-split, REQUIRED)**: after the deliverable above is complete and any raw-source persistence has finished, emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its own line, each field on its own line, closed by `[/COMPLETION]` alone on its own line) — NEVER inside the synthesis/deliverable body; folding the block into the synthesis loses the outcome record. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit), unchanged. SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action; raw-save and StructuredOutput remain separate emits) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation would fail).
 
 ### Summary Table Format
 
@@ -177,7 +177,7 @@ Finding as fact <3 sources · URL cited but never fetched · No-date source trea
 Execute corrective pass (do NOT skip to synthesis) when ANY occur:
 - 2+ sources show contradictory claims → stop, search 3rd independent source to resolve conflict
 - Conclusion based on ≤2 sources → stop, search 3rd independent source before synthesis
-- `wiki-query.sh "topic"` returns 0 results → retry once with synonym pair (Korean + English equivalent), only then WebSearch
+- Wiki Grep over `~/.glass-atrium/wiki/notes/` returns 0 matches → retry once with synonym pair (Korean + English equivalent), only then WebSearch
 - Source is labeled `[Dated: YYYY]` or `[Date Unknown]` → trigger supplemental current-date search before citing as primary evidence
 
 ## Synthesis Verification Checklist

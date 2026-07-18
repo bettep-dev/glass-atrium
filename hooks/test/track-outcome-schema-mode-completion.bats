@@ -133,6 +133,9 @@ PY
 #   no-block           — NO [COMPLETION] anywhere; terminal consumed StructuredOutput (R2 shape)
 #   no-block-no-so     — NO [COMPLETION] and NO StructuredOutput (true old-synthesis fallback)
 #   no-block-so-error  — terminal StructuredOutput whose paired tool_result is is_error:true
+#   no-block-so-error-ratelimit — errored SO (NON-consumed terminal) + trailing rate-limit prose:
+#                        budget-truncation attribution when the counter sits at budget, and the
+#                        JUDGE_TEXT keyword flips the synthesized RESULT to blocked
 #   no-block-ratelimit — rate-limit prose as the final assistant text + consumed terminal SO
 #   no-block-decoy     — errored decoy tool_result (foreign tool_use_id) interleaved between the
 #                        SO call and its real success result (adjacency-pairing would mis-read)
@@ -190,6 +193,12 @@ elif mode == "no-block-orphan":
 elif mode == "no-block-so-error":
     rows.append(structured_call)
     rows.append(structured_err)
+elif mode == "no-block-so-error-ratelimit":
+    rows.append(structured_call)
+    rows.append(structured_err)   # NON-consumed terminal ⇒ TERMINAL_SO=0 (not structuredoutput-derived)
+    rows.append({"type": "assistant", "message": {"role": "assistant",  # last assistant text ⇒ JUDGE_TEXT
+        "content": [{"type": "text",
+                     "text": "The run hit your limit — rate limit reached before the emit."}]}})
 elif mode == "no-block-decoy":
     rows.append(structured_call)
     rows.append(decoy_result)   # adjacency-pairing would read THIS errored foreign result
@@ -375,11 +384,14 @@ PY
   skip_unless_live_check_allows_r2_token
   run count_rows
   [ "${output}" = "1" ]
-  # done, but writer-unverified: confidence stays low + the R2 arm's OWN concerns line.
+  # F2 tuple lock (structuredoutput-derived): done, but writer-unverified — confidence stays low +
+  # metric_pass false + the R2 arm's OWN concerns line.
   run fetch_col result
   [ "${output}" = "done" ]
   run fetch_col confidence
   [ "${output}" = "low" ]
+  run fetch_col metric_pass
+  [[ "${output}" == "False" || "${output}" == "f" ]]
   run fetch_col attribution_source
   [ "${output}" = "structuredoutput-derived" ]
   run fetch_col downgrade_origin
@@ -429,10 +441,13 @@ PY
 
   run count_rows
   [ "${output}" = "1" ]
+  # F2 tuple lock (completion-synthesized): done_with_concerns + confidence low + metric_pass false.
   run fetch_col result
   [ "${output}" = "done_with_concerns" ]
   run fetch_col confidence
   [ "${output}" = "low" ]
+  run fetch_col metric_pass
+  [[ "${output}" == "False" || "${output}" == "f" ]]
   run fetch_col attribution_source
   [ "${output}" = "completion-synthesized" ]
   run fetch_col downgrade_origin
@@ -574,10 +589,42 @@ PY
 
   run count_rows
   [ "${output}" = "1" ]
+  # F2 tuple lock (budget-truncation, no rate-limit keyword): done_with_concerns + low + false.
   run fetch_col attribution_source
   [ "${output}" = "budget-truncation" ]
   run fetch_col result
   [ "${output}" = "done_with_concerns" ]
+  run fetch_col confidence
+  [ "${output}" = "low" ]
+  run fetch_col metric_pass
+  [[ "${output}" == "False" || "${output}" == "f" ]]
+}
+
+@test "T11 budget-truncation + rate-limit prose ⇒ blocked (keyword result under a budget kill)" {
+  write_transcript no-block-so-error-ratelimit
+  write_payload
+  printf '%s\n' "40" >"${COUNTER_FILE}"
+
+  run_hook
+  [ "${status}" -eq 0 ]
+  # Non-consumed terminal (errored SO) + counter at budget ⇒ budget-truncation attribution; the
+  # rate-limit keyword in the final assistant prose flips the synthesized RESULT to blocked (the
+  # else-arm keyword heuristic governs result when no consumed emit refutes it).
+  [[ "${output}" == *"attribution=budget-truncation"* ]]
+  [[ "${output}" != *"attribution=structuredoutput-derived"* ]]
+  [[ "${output}" != *"attribution=completion-synthesized"* ]]
+
+  run count_rows
+  [ "${output}" = "1" ]
+  # Tuple lock (budget-truncation, rate-limit signal): blocked + confidence low + metric_pass false.
+  run fetch_col attribution_source
+  [ "${output}" = "budget-truncation" ]
+  run fetch_col result
+  [ "${output}" = "blocked" ]
+  run fetch_col confidence
+  [ "${output}" = "low" ]
+  run fetch_col metric_pass
+  [[ "${output}" == "False" || "${output}" == "f" ]]
 }
 
 # Inline single-line [COMPLETION] tolerance (T4/T5)

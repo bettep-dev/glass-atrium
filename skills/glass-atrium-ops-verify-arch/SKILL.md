@@ -60,7 +60,7 @@ The result shape is `ArchDriftResult`:
 - `claimed` = the value `ARCH_INVARIANTS` asserts (what the diagram says). `actual` = the live Atrium-scoped filesystem count.
 - `stale === true` means at least one count drifted. Each `diff` is one drifted invariant.
 
-**Hook-count semantics (do not re-derive)**: the hook count is "Atrium-owned hook-COMMAND per settings.json event" — flattened command count, not matcher-entry count, filtered to commands whose resolved path is under `~/.glass-atrium/hooks/` or its per-file symlink mirror `~/.claude/hooks/`. This is the SoT defined in `arch-invariants.ts`; report `hooks.*` diffs verbatim from `computeArchDrift()`.
+**Hook-count semantics (do not re-derive)**: the hook count is "Atrium-owned hook-COMMAND per settings.json event" — flattened command count, not matcher-entry count, filtered to commands whose resolved path is under `~/.glass-atrium/hooks/` (the in-place primary) or its historical fallback `~/.claude/hooks/` (absent in current installs — fail-open to 0). This is the SoT defined in `arch-invariants.ts`; report `hooks.*` diffs verbatim from `computeArchDrift()`.
 
 ### Stage 2 — Semantic completeness (LLM, count-invariant drift)
 
