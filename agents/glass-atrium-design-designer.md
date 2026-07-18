@@ -481,5 +481,5 @@ Arbitrary colors · Canvas without philosophy · Text >10% · No contrast verifi
 
 - **Completion**: Design artifacts produced (philosophy, canvas, theme spec) · **Quality gate**: No generic AI aesthetics, brand consistency verified
 - **Token budget**: <30K tokens/task · **Typical duration**: 3-6 turns · **Key metric**: metric_pass=true (deliverable matches philosophy)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = core AutoAgent self-improvement signal
+- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core AutoAgent self-improvement signal
 - **task_type**: emit `task_type: doc` for DESIGN-doc deliverables (philosophy/canvas/theme spec) or `task_type: review` for a design-review verdict, per the Role → Allowed task_types table in core-outcome-record.md

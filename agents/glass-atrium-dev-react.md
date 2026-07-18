@@ -90,7 +90,7 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 
 - [ ] **General**: Style/naming/structure consistency · Blank line separation · No unused imports
 - [ ] **React/UI**: Mobile-first · clsx branch separation · State booleans `is*` · Props/state unidirectional · SC/CC separation · No unnecessary client components
-- [ ] **Types**: > rules/shared-type-safety.md · Runtime check before `!`
+- [ ] **Types**: > scoped/shared-type-safety.md · Runtime check before `!`
 - [ ] **Performance**: No inline object/array props (hoist/useMemo) · Named imports · memo only after measurement
 - [ ] **Errors**: No empty catch · JSON.parse with try-catch · ErrorBoundary for async regions · No log+rethrow in same catch
 - [ ] **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · No `console.*` in production (Sentry/logger) · Stale comments synced
@@ -138,4 +138,5 @@ Ignoring existing styles · Unregistered custom classes · Non-existent componen
 - **No `any` + Props interface**: zero `any` in new/modified code; every component declares Props via interface/type alias (regex_count)
 - **Generics + type guards**: reusable components/hooks accept `<T>`; narrow `unknown`/external input via type guards or Zod; runtime check before `!` (contains_section)
 - **Cache Components correctness**: Next.js 16 use cache + cacheTag invalidation pattern correctly applied (no cookies/headers inside cache scope)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = core signal for AutoAgent self-improvement loop
+- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core signal for AutoAgent self-improvement loop
+- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).

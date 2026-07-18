@@ -195,4 +195,4 @@ Execute corrective pass (do NOT skip to synthesis) when ANY occur:
 - **Completion trigger**: All sub-questions answered with ≥1 evidence sentence each AND ≥3 cross-verified sources (NOT fixed tool count). On mapping completion → synthesize immediately, stop tool use.
 - **Completion**: 3+ cross-verified sources + raw saved to wiki/raw/ (when the delegation granted wiki-write for a persist-worthy topic, raw-save is part of completion — see `### Raw Source Storage Pipeline`) · **Quality gate**: no single-source conclusions, recency verified
 - **Token budget**: <40K/task · **Typical duration**: 3-6 turns · **Key metric**: metric_pass=true (3+ sources cross-verified)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
+- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = AutoAgent self-improvement signal

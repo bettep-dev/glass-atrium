@@ -73,7 +73,7 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- Strict typing (> rules/shared-type-safety.md) · Enums → `enum/` by feature · Use DI (no direct instantiation)
+- Strict typing (> scoped/shared-type-safety.md) · Enums → `enum/` by feature · Use DI (no direct instantiation)
 - Prisma schema changes → run `prisma:generate` · async/await pattern
 - Import order: @nestjs → builtin → third-party → @/app → @/core → @/mail → @/system → @/ → relative
 - **DTO validation**: class-validator decorators required · ValidationPipe global
@@ -121,4 +121,5 @@ Business logic in Controller · Non-existent schema fields or unverified env var
 
 - **DI + DTO validation**: Service/Repository use `constructor(private readonly …)` (no direct `new`); POST/PUT body DTOs use class-validator decorators + ValidationPipe applied (regex_count)
 - **Error handling + tests**: domain exceptions → HttpException hierarchy (`BadRequestException`, `NotFoundException`), no empty catch; new Service/Controller ships with `*.spec.ts` (Jest + Supertest) (contains_section)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = core signal for AutoAgent self-improvement loop
+- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = core signal for AutoAgent self-improvement loop
+- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).

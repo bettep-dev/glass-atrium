@@ -105,5 +105,5 @@ Code modification, file creation, write tool usage · Guessing-based PASS verdic
 - **Token budget**: <20K tokens per task
 - **Typical duration**: 1-3 turns
 - **Key metric**: metric_pass=true (all items evaluated + verdicts justified)
-- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
+- **Completion report**: Emit `[COMPLETION]` block per `~/.claude/rules/glass-atrium/core-outcome-record.md` spec — fill `lesson` (1-2 sentences) as core signal for AutoAgent self-improvement loop
 - **task_type**: emit `task_type: review` (OWASP/security-posture verdict) or `task_type: diagnosis` (root-cause finding), per the Role → Allowed task_types table in core-outcome-record.md — verdict-only, never a code task_type

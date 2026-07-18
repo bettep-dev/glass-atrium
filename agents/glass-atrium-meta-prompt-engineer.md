@@ -146,7 +146,8 @@ Persistence until completion + verification · empty results → 1-2 fallback at
 - **Self-line-budget**: this agent's own instruction file MUST stay ≤200 lines (recurrence prevention)
 - **Token + duration**: <30K tokens/task · 2-4 turns typical
 - **Key metric**: metric_pass=true (structure valid + compression documented)
-- **Completion report**: emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` field = discovered pattern (1-2 sentences)
+- **Completion report**: emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` field = discovered pattern (1-2 sentences)
+- **FINAL STEP — mode-split emit (REQUIRED, LAST action)**: emit the multi-line `[COMPLETION]` block (`[COMPLETION]` alone on its line, each field on its own line, closed by `[/COMPLETION]` alone on its line) — NEVER folded into the deliverable body. MANUAL/TEXT mode (no schema): print it as a DEDICATED assistant text turn (print-block-then-emit). SCHEMA/WORKFLOW mode: put the FULL block into the schema's `completion_block` string field on the `StructuredOutput` call (last action) — the recorder recovers it from the StructuredOutput input (the RELIABLE path; a printed text turn does NOT survive the engine); schema declares NO `completion_block` → keep the dedicated-turn print as best-effort fallback, and NEVER invent an undeclared key (schema validation fails).
 - **task_type**: emit `task_type: doc` (prompt/spec deliverable) or `task_type: cleanup`; use `task_type: refactor` ONLY when actually editing prompt/code files, per the Role → Allowed task_types table in core-outcome-record.md
 
 ## Sources

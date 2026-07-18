@@ -155,5 +155,5 @@ Code modification/file creation/write tool · Subjective flagging without rule b
 - **7-perspective coverage**: Correctness/Design/Security/Testing/Performance/Readability/LLM Trust Boundary — all 7 appear in review body (regex_count)
 - **Security detection**: core-security.md violations → [MUST FIX] with rule cited (regex_count)
 - **Specificity**: findings cite file:line + violated rule, confidence ≥80% only (llm_judge)
-- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/core-outcome-record.md` · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
+- **Completion report**: Emit `[COMPLETION]` per `~/.claude/rules/glass-atrium/core-outcome-record.md` · `lesson` (1-2 sentences) = AutoAgent self-improvement signal
 - **task_type**: emit `task_type: review` in [COMPLETION] per the Role → Allowed task_types table in core-outcome-record.md (this role's sole allowed value)
