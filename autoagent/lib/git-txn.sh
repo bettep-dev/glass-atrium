@@ -127,6 +127,27 @@ _git_txn_count_file_headers() {
   fi
 }
 
+# _git_txn_diff_header_basename — echo the basename declared by the diff's FIRST
+# '+++ ' header, or empty when the diff carries no '+++ ' header. A header-LESS
+# append-only fragment (daemon apply_diff Strategy B) asserts NO target file, so
+# an empty result is a VALID single-target case (the caller's guard passes it).
+# awk splits on whitespace: field $2 is the path, so a trailing tab-separated
+# timestamp git/unified diffs may append becomes $3 and is dropped cleanly. The
+# leading a//b/ prefix is stripped; the final path component is echoed. Arg: $1
+# diff text.
+_git_txn_diff_header_basename() {
+  local diff="$1"
+  printf '%s\n' "${diff}" | awk '
+    /^\+\+\+ / {
+      p = $2
+      sub(/^[ab]\//, "", p)
+      n = split(p, parts, "/")
+      print parts[n]
+      exit
+    }
+  '
+}
+
 # _git_txn_capture_before_image — copy the single real target into the
 # caller-provided backup dir and verify the copy exists + is readable BEFORE any
 # apply touches the live file. Args: $1 real_target, $2 backup_dir, $3
@@ -243,6 +264,23 @@ git_txn_apply() {
   if [[ "${n_files}" -gt 1 ]]; then
     printf 'git-txn: multi-file diff rejected (%s file headers > 1) — single-file transaction only (target=%s install_root=%s)\n' \
       "${n_files}" "${target}" "${install_root}" >&2
+    GIT_TXN_RC="${GIT_TXN_APPLY_FAIL}"
+    return 0
+  fi
+
+  # -- Basename-match guard. A '+++ ' header declares the file the diff targets.
+  #    If its basename diverges from THIS transaction's target, applying it would
+  #    mutate ANOTHER file — and the before-image capture + verify (both bound to
+  #    real_target) would neither catch nor restore it (vacuous verify / wrong-file
+  #    restore). Reject BEFORE any file is touched, mapped to APPLY_FAIL (malformed
+  #    input, same bucket as the multi-file case above). A header-LESS fragment
+  #    (empty basename) asserts no target and is a valid single-target case → passes.
+  local diff_basename target_basename
+  diff_basename="$(_git_txn_diff_header_basename "${diff}")"
+  target_basename="${target##*/}"
+  if [[ -n "${diff_basename}" && "${diff_basename}" != "${target_basename}" ]]; then
+    printf 'git-txn: diff +++ header targets "%s" but transaction target is "%s" — wrong-file diff rejected before apply (target=%s install_root=%s)\n' \
+      "${diff_basename}" "${target_basename}" "${target}" "${install_root}" >&2
     GIT_TXN_RC="${GIT_TXN_APPLY_FAIL}"
     return 0
   fi

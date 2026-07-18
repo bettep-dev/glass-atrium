@@ -225,6 +225,66 @@ _inode_of() {
 }
 
 # ---------------------------------------------------------------------------
+# (7b) DF-1: a diff whose '+++' header basename mismatches the transaction target
+#      is refused BEFORE any apply — the wrong-file-mutation guard. Without it a
+#      '+++ b/other.md' diff would mutate another agent body while the before-
+#      image/verify (bound to THIS target) pass vacuously.
+# ---------------------------------------------------------------------------
+@test "APPLY_FAIL: mismatched-header diff is refused before apply (wrong-file guard)" {
+  local wrong
+  wrong="$(printf '%s\n' \
+    '--- a/other.md' '+++ b/other.md' '@@ -1,2 +1,3 @@' \
+    ' # Probe Agent' ' original line' '+inserted line')"
+
+  GIT_TXN_RC=999
+  # _apply_ok would append 'inserted line' IF ever called — assert it is NOT.
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "${wrong}" \
+    "${BACKUP_DIR}" _apply_ok _verify_ok "lbl" "${TARGET}"
+  local fn_status=$?
+
+  [ "${fn_status}" -eq 0 ]
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_APPLY_FAIL}" ]
+  cmp -s "${PRISTINE}" "${TARGET}" # apply never ran, target untouched
+  ! grep -q 'inserted line' "${TARGET}"
+  [ ! -f "${BACKUP_DIR}/probe.md.bak" ] # rejected before before-image capture
+}
+
+# ---------------------------------------------------------------------------
+# (7c) DF-1: a MATCHED '+++' header basename proceeds unchanged (no false reject).
+# ---------------------------------------------------------------------------
+@test "OK: matched-header diff proceeds unchanged (basename guard passes)" {
+  local matched
+  matched="$(printf '%s\n' \
+    '--- a/probe.md' '+++ b/probe.md' '@@ -1,2 +1,3 @@' \
+    ' # Probe Agent' ' original line' '+inserted line')"
+
+  GIT_TXN_RC=999
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "${matched}" \
+    "${BACKUP_DIR}" _apply_via_gitapply _verify_ok "lbl" "${TARGET}"
+  local fn_status=$?
+
+  [ "${fn_status}" -eq 0 ]
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]
+  grep -q 'inserted line' "${TARGET}"
+}
+
+# ---------------------------------------------------------------------------
+# (7d) DF-1: a header-LESS append-only fragment (Strategy B) asserts no target,
+#      so the basename guard passes it (empty basename → not a mismatch).
+# ---------------------------------------------------------------------------
+@test "OK: header-less fragment passes the basename guard (no +++ header)" {
+  GIT_TXN_RC=999
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "the-diff" \
+    "${BACKUP_DIR}" _apply_ok _verify_ok "lbl" "${TARGET}"
+
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]
+  grep -q 'inserted line' "${TARGET}"
+}
+
+# ---------------------------------------------------------------------------
 # (8) before-image capture failure aborts BEFORE apply → BACKUP_CAPTURE_FAIL
 # ---------------------------------------------------------------------------
 @test "BACKUP_CAPTURE_FAIL: uncreatable backup dir aborts before apply" {
