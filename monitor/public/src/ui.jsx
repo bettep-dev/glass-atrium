@@ -559,6 +559,44 @@ function formatKstFull(iso) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${tzShortLabel()}`;
 }
 
+// 배지 5-tier canonical taxonomy SoT (T1) — 톤별 pill 토큰 + 기본 라벨 단일 출처.
+//   drift 근절: health 카드 인라인 "WARN"↔"Warning" 케이싱 발산 + 중복 "Healthy" 를 여기서 단일화.
+//   status 톤(ok/warn/crit/info)만 pill 토큰 보유 · neutral = non-status 서술자 → pill 토큰 없음(글리프리스 neutral shell).
+//   Rule 2 — status 라벨은 풀워드 title-case ("Warning" canonical · 약어 "WARN" 폐기).
+const BADGE_TONE_META = {
+  ok:      { pill: 'OK',      label: 'Healthy'    },
+  warn:    { pill: 'Warning', label: 'Warning'    },
+  crit:    { pill: 'FAIL',    label: 'Down'       },
+  info:    { pill: 'INFO',    label: 'No data'    },
+  neutral: { pill: null,      label: 'Needs info' },
+};
+
+// 카드별 pill 토큰/라벨 오버라이드 열거 (Rule 1 — health 카드 인라인 리터럴 금지, 여기서만 정의).
+//   각 항목 tone 은 위 5 톤 중 하나 → neutral-shell/글리프/severity 계약 상속.
+const BADGE_OVERRIDES = {
+  pg_open:        { tone: 'ok',   pill: 'OPEN',       label: 'Connected'    },
+  pg_closed:      { tone: 'crit', pill: 'CLOSED',     label: 'Disconnected' },
+  hook_active:    { tone: 'ok',   pill: 'ACTIVE',     label: 'Active'       },
+  hook_warn:      { tone: 'warn', pill: 'Warning',    label: 'Failed in 24 h (retried)'     },
+  hook_failed:    { tone: 'crit', pill: 'FAILED',     label: 'Failed in 24 h (not retried)' },
+  hook_unset:     { tone: 'info', pill: 'NOT SET UP', label: 'Not set up'   },
+  daemon_no_data: { tone: 'info', pill: 'NO DATA',    label: 'No data'      },
+  // browser(Chromium export) launch enum(ok/failed/unprobed) 중 비-ok 2종. ok 는 톤 기본값
+  // resolveBadge('ok') 재사용('Healthy' 단일 정의) → 여기 미열거. tone 은 facts.tone 과 정합.
+  browser_failed:   { tone: 'crit', pill: 'FAILED',   label: 'Failed to start' },
+  browser_unprobed: { tone: 'info', pill: 'UNPROBED', label: 'Unverified'      },
+};
+
+// tone KEY 또는 override KEY → { tone, pill, label } 해석. 미정의 → info 폴백 (가짜 ok 금지).
+function resolveBadge(key) {
+  const override = BADGE_OVERRIDES[key];
+  if (override) return override;
+
+  const meta = BADGE_TONE_META[key];
+  if (meta) return { tone: key, pill: meta.pill, label: meta.label };
+  return { tone: 'info', pill: BADGE_TONE_META.info.pill, label: String(key) };
+}
+
 // 데몬 status enum → tone/라벨 SoT (A2) — dashboard·health·architecture 공용 단일 테이블.
 // 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded + 합성 missing/stale) — 미발행 키 보유 금지.
 // quota_exceeded = 외부 한도 원인 → neutral 'Usage limit' (장애 아님).
@@ -566,6 +604,9 @@ function formatKstFull(iso) {
 // 서버(resolveDaemonStatuses)가 설치 앵커(min(started_at)) 기준 시스템이 1 cadence 초과로
 // 떠 있으면 stale(crit)로 승격 — 진짜 신규 설치(cadence 미만)만 info 유지.
 const DAEMON_STATUS_TONE = {
+  // 'Healthy' 는 BADGE_TONE_META.ok.label 과 의도적 동일 리터럴 — daemon-nodata-consistency.test.ts 의
+  // 소스 정규식 파서가 `label: '...'` 문자열 리터럴을 요구(참조식 불가)하므로 여기서 단일화 불가.
+  // 드리프트는 ui.badge-registry.unit.test.ts 의 동치 단언(=== BADGE_TONE_META.ok.label)이 차단.
   ok:             { tone: 'ok',      label: 'Healthy' },
   partial:        { tone: 'warn',    label: 'Warning' },
   error:          { tone: 'crit',    label: 'Down' },
@@ -688,6 +729,7 @@ window.UI = {
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstTime, formatKstDate, formatKstFull,
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact,
+  BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER,
