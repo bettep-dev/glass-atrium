@@ -128,6 +128,76 @@ test("observability: 미인식 line → unmappedLabels 에 line-not-recognized �
   );
 });
 
+test("containment guard: child --> 자기 subgraph edge 제외 + cross-boundary edge 보존", () => {
+  const out = extract(
+    "flowchart LR\n" +
+      '    subgraph daemon["Scheduled background jobs (daemons)"]\n' +
+      "        autoagent_d[Self-improvement daemon]\n" +
+      "    end\n" +
+      "    daemon --> orch\n" +
+      "    autoagent_d --> daemon",
+  );
+  // containment edge(autoagent_d --> 자기 컨테이너 daemon) 제외, cross-boundary daemon --> orch 보존.
+  assert.equal(out.edges.length, 1);
+  assert.equal(out.edges[0]?.from, "t.daemon");
+  assert.equal(out.edges[0]?.to, "t.orch");
+  assert.ok(
+    !out.edges.some((e) => e.from === "t.autoagent_d" && e.to === "t.daemon"),
+    "containment edge 가 남아 bare-id 로 누출됨",
+  );
+});
+
+test("containment guard: subgraph 사람 라벨 + membership 파싱", () => {
+  const out = extract(
+    "flowchart LR\n" +
+      '    subgraph daemon["Scheduled background jobs (daemons)"]\n' +
+      "        autoagent_d[Self-improvement daemon]\n" +
+      "    end\n" +
+      "    autoagent_d --> daemon",
+  );
+  const daemonSg = out.subgraphs.find((sg) => sg.id === "daemon");
+  assert.ok(daemonSg !== undefined);
+  assert.equal(daemonSg.label, "Scheduled background jobs (daemons)");
+  assert.ok(daemonSg.members.includes("autoagent_d"));
+});
+
+test("container-endpoint label backfill: 실 DIAGRAMS 의 bare container id endpoint → 사람 라벨", () => {
+  // cross-subgraph edge(예: `daemon --> orch`)의 subgraph-id endpoint 는 bare-fallback node 로
+  // 등록되므로, backfill 후 connection row 가 bare id 대신 subgraph 사람 라벨을 표시해야 한다.
+  const entry = DIAGRAMS.find((d) => d.slug === "v2-overview-entry");
+  assert.ok(entry !== undefined);
+  const out = extract(entry.mermaid_source);
+  const byId = new Map(out.nodes.map((n) => [n.id, n]));
+
+  // orch 는 `repo --> orch` 등에서 endpoint 로 참조되는 subgraph 컨테이너 — bare "orch" 가 아니어야 함.
+  assert.equal(byId.get("orch")?.label, "Orchestrator (main session)");
+  assert.equal(byId.get("daemon")?.label, "Scheduled background jobs (daemons)");
+  assert.equal(byId.get("agents")?.label, "Specialist agents");
+  assert.equal(byId.get("hooks")?.label, "Safety checks & tracking");
+
+  // 어떤 노드도 subgraph id 로 폴백된 bare 라벨을 갖지 않는다.
+  const subgraphIds = new Set(out.subgraphs.map((sg) => sg.id));
+  const bareContainerNodes = out.nodes.filter(
+    (n) => subgraphIds.has(n.id) && n.label === n.id,
+  );
+  assert.deepEqual(
+    bareContainerNodes.map((n) => n.id),
+    [],
+    "backfill 후 bare container-id 라벨이 남음",
+  );
+});
+
+test("containment guard: 컨테이너-as-source containment 도 제외 (from-side)", () => {
+  const out = extract(
+    "flowchart LR\n" +
+      '    subgraph grp["Group"]\n' +
+      "        child[Child]\n" +
+      "    end\n" +
+      "    grp --> child",
+  );
+  assert.equal(out.edges.length, 0);
+});
+
 test("SoT parity: 다이어그램별 parsed edge 수 == source arrow 수", () => {
   for (const diagram of DIAGRAMS) {
     const out = extract(diagram.mermaid_source);
@@ -169,13 +239,14 @@ const CLASSIFICATION_ORACLE: Record<
   { edges: Record<string, number>; nodes: Record<string, number>; roles: Record<string, number> }
 > = {
   "v2-overview-entry": {
-    edges: { control_flow: 8, data_flow: 1, writes_to: 1 },
+    edges: { control_flow: 6, data_flow: 1, writes_to: 1 },
     nodes: { agent: 8, daemon: 3, gateway: 1, hook: 2, store: 1 },
     roles: { execution: 4, orchestration: 2 },
   },
   "v2-overview-data": {
     edges: { control_flow: 17, data_flow: 1 },
-    nodes: { agent: 12, gateway: 2, hook: 1, store: 2 },
+    // data 컨테이너 endpoint 라벨이 "…glass_atrium DB" 로 backfill → "DB" 키워드로 store 분류(agent 아님).
+    nodes: { agent: 11, gateway: 2, hook: 1, store: 3 },
     roles: { data: 1, execution: 3, feedback: 2, monitoring: 1 },
   },
   "v2-hooks": {
