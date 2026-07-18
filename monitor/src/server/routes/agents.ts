@@ -13,6 +13,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { buildReconstructedRowFilter } from "../attribution-sources.js";
 import {
   buildAgentMembershipFilter,
+  invalidateAgentRegistryCache,
   loadAgentRegistry,
   loadCanonicalAgentKeys,
 } from "../agents/registry.js";
@@ -539,7 +540,10 @@ async function handleReviewFlagTimeseries(
   }
 
   // generate_series gap-fills empty days with zero counts so the FE chart shows
-  // continuous coverage (mirrors the cost.ts cache-hit pattern).
+  // continuous coverage (mirrors the cost.ts cache-hit pattern). The empty_metric
+  // FILTERs carry an `o.id IS NOT NULL` guard: a gap day's LEFT JOIN emits a phantom
+  // all-NULL `o` row for which `metric_pass IS NULL` is TRUE — without the guard it
+  // would inflate empty_metric_count/ratio to 1 on a zero-activity day.
   const windowLowerBound = buildWindowLowerBound(days);
   const prisma = getPrisma();
   try {
@@ -558,7 +562,7 @@ async function handleReviewFlagTimeseries(
         d::date                                                        AS event_date,
         COUNT(o.id)::bigint                                            AS total_count,
         COUNT(*) FILTER (WHERE o.review_flag = true)::bigint           AS review_flagged_count,
-        COUNT(*) FILTER (WHERE o.metric_pass IS NULL)::bigint          AS empty_metric_count,
+        COUNT(*) FILTER (WHERE o.metric_pass IS NULL AND o.id IS NOT NULL)::bigint AS empty_metric_count,
         COUNT(*) FILTER (
           WHERE (o.confidence::text = 'high' AND o.metric_pass = false)
              OR (o.confidence::text = 'low'  AND o.metric_pass = true)
@@ -573,7 +577,7 @@ async function handleReviewFlagTimeseries(
         CASE
           WHEN COUNT(o.id) = 0 THEN NULL
           ELSE (
-            COUNT(*) FILTER (WHERE o.metric_pass IS NULL)::numeric
+            COUNT(*) FILTER (WHERE o.metric_pass IS NULL AND o.id IS NOT NULL)::numeric
             / NULLIF(COUNT(o.id), 0)
           )::numeric(8,6)
         END                                                            AS empty_metric_ratio
@@ -1757,7 +1761,9 @@ const CLI_EXIT_ROLLBACK_FAILED = 6;
 
 // Agent-name charset — defense-in-depth alongside the CLI re-validation.
 // Lowercase-slug shape; the DELETE :name param + --confirm token are gated on it.
-const NAME_RE = /^[a-z0-9-]+$/;
+// Leading char MUST be alphanumeric: a leading hyphen (e.g. "--dry-run") would be
+// parsed by argparse as a CLI flag once passed positionally to agent_lifecycle.
+const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 // Reconcile of the three inject-scope-rules.sh arrays is now executable: the
 // named skill drives the tested CLI sync-inject verb (transactional .bak +
@@ -1899,20 +1905,20 @@ function buildDeletePreviewArgv(name: string): string[] {
 // Build the delete commit argv (`delete <name> --confirm <confirm>`). Both are
 // discrete execFile elements; the CLI re-checks `confirm === name` (hard gate),
 // so a mismatch returns exit 4 (refused), never a silent delete.
-function buildDeleteCommitArgv(name: string, confirm: string): string[] {
+export function buildDeleteCommitArgv(name: string, confirm: string): string[] {
   return ["-m", "agent_lifecycle", "delete", name, "--confirm", confirm];
 }
 
-type DeleteBodyValidation =
+export type DeleteBodyValidation =
   | { kind: "preview"; name: string }
   | { kind: "commit"; name: string; confirm: string }
   | { kind: "error"; body: AgentMutationErrorBody };
 
 // Validate the :name route param + body BEFORE any child-process spawn. `name`
 // is charset-gated (the CLI re-validates as the chokepoint — defense-in-depth).
-function validateDeleteRequest(rawName: string, rawBody: unknown): DeleteBodyValidation {
+export function validateDeleteRequest(rawName: string, rawBody: unknown): DeleteBodyValidation {
   if (typeof rawName !== "string" || !NAME_RE.test(rawName)) {
-    return { kind: "error", body: invalidMutationBody("name", "must match ^[a-z0-9-]+$") };
+    return { kind: "error", body: invalidMutationBody("name", "must match ^[a-z0-9][a-z0-9-]*$") };
   }
   if (rawBody === null || typeof rawBody !== "object" || Array.isArray(rawBody)) {
     return { kind: "error", body: invalidMutationBody("body", "must be a JSON object") };
@@ -1927,7 +1933,7 @@ function validateDeleteRequest(rawName: string, rawBody: unknown): DeleteBodyVal
     if (typeof confirm !== "string" || !NAME_RE.test(confirm)) {
       return {
         kind: "error",
-        body: invalidMutationBody("confirm", "must match ^[a-z0-9-]+$ (the typed agent name)"),
+        body: invalidMutationBody("confirm", "must match ^[a-z0-9][a-z0-9-]*$ (the typed agent name)"),
       };
     }
     return { kind: "commit", name: rawName, confirm };
@@ -2022,6 +2028,11 @@ function mapDeleteExit(
   };
 
   if (cli.code === CLI_EXIT_OK) {
+    // The CLI rewrote agent-registry.json — evict the in-process singleton so the
+    // next /summary (and every membership gate) excludes the deleted agent without
+    // a server restart. mtime revalidation would also catch it, but explicit
+    // eviction closes the same-millisecond-rewrite window.
+    invalidateAgentRegistryCache();
     request.log.info(logBase, "agent-delete committed");
     return {
       result: "deleted",

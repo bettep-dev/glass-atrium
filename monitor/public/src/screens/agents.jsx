@@ -1913,7 +1913,7 @@ function SuccessRateCell({ agent, taskType, cell }) {
     <td
       className="text-center px-1 py-1.5 border-b border-line relative"
       style={{ background: bg, outline: borderAccent, outlineOffset: -1 }}
-      title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total`}
+      title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
       <div className="flex flex-col items-center gap-0.5">
         <SuccessRateSparkline points={cell.points} colorVar={tone.colorVar}/>
@@ -2112,8 +2112,10 @@ const QH_HEALTH_BULLET_ZONES = [
 const QH_TOP_N = 5;
 
 // review_flag timeline 좌축/우축 라벨 — re-render 마다 신규 객체 생성 회피 (Recharts 패턴).
+// 좌축 막대는 flag "사유"(empty_metric + polar_mismatch) 스택이지 총 flag 수가 아님 →
+// 'Flagged per day' 는 과대표시 (총 flagged 는 우측 rate 라인·툴팁이 담당). 라벨을 사유 기준으로 정정.
 const QH_TIMELINE_COUNT_AXIS_LABEL = {
-  value: 'Flagged per day',
+  value: 'Flag reasons / day',
   angle: -90,
   position: 'insideLeft',
   fill: 'rgb(var(--dim))',
@@ -2789,18 +2791,21 @@ function buildSuccessRateMatrix(rows) {
     const key = `${r.agent}|${r.task_type}`;
     let agg = cellMap.get(key);
     if (!agg) {
-      agg = { points: [], totalCount: 0, successCount: 0, failureCount: 0 };
+      agg = { points: [], totalCount: 0, rawSuccessCount: 0, failureCount: 0, reconstructed: 0 };
       cellMap.set(key, agg);
     }
 
     const total   = Number(r.total_count) || 0;
     const success = Number(r.success_count) || 0;
     const failure = Number(r.failure_count) || 0;
+    // 합성 복구행(reconstructed)은 done/done_with_concerns(success 버킷) 귀속 → success 로 clamp.
+    const reconstructed = Math.min(Number(r.reconstructed_count) || 0, success);
     const rate    = nullableNumber(r.success_rate);
 
-    agg.totalCount   += total;
-    agg.successCount += success;
-    agg.failureCount += failure;
+    agg.totalCount      += total;
+    agg.rawSuccessCount += success;
+    agg.failureCount    += failure;
+    agg.reconstructed   += reconstructed;
     agg.points.push({ date: r.event_date, rate });
 
     agentTotals.set(r.agent, (agentTotals.get(r.agent) || 0) + total);
@@ -2808,6 +2813,9 @@ function buildSuccessRateMatrix(rows) {
 
   for (const agg of cellMap.values()) {
     agg.points.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    // writer-emitted 기준 단일화 — 합성 복구행을 성공/분모에서 제외 (headline·ratio 를 화면 타 카드와 동일 basis).
+    // totalCount 는 disclosed total 로 raw 유지 → writer-emitted + reconstructed 가 total 로 합산.
+    agg.successCount = Math.max(0, agg.rawSuccessCount - agg.reconstructed);
     agg.rateDenominator = agg.successCount + agg.failureCount;
     // null = 분모 0 (success/fail 외 result 만 존재) — fabricated 0% 차단 (A7).
     agg.pooledRate = agg.rateDenominator > 0 ? agg.successCount / agg.rateDenominator : null;
@@ -2856,6 +2864,7 @@ function buildTopNFailing(rows, threshold, limit) {
         totalCount: 0,
         successCount: 0,
         failureCount: 0,
+        reconstructed: 0,
         lastFailureDate: null,
       };
       pairMap.set(key, agg);
@@ -2863,9 +2872,12 @@ function buildTopNFailing(rows, threshold, limit) {
     const total   = Number(r.total_count) || 0;
     const success = Number(r.success_count) || 0;
     const failure = Number(r.failure_count) || 0;
-    agg.totalCount   += total;
-    agg.successCount += success;
-    agg.failureCount += failure;
+    // 합성 복구행은 success 버킷 귀속 → success 로 clamp (매트릭스와 동일 basis).
+    const reconstructed = Math.min(Number(r.reconstructed_count) || 0, success);
+    agg.totalCount     += total;
+    agg.successCount   += success;
+    agg.failureCount   += failure;
+    agg.reconstructed  += reconstructed;
     // YYYY-MM-DD lex compare — 최신 failure date 추적.
     if (failure > 0 && typeof r.event_date === 'string') {
       if (!agg.lastFailureDate || r.event_date > agg.lastFailureDate) {
@@ -2876,10 +2888,12 @@ function buildTopNFailing(rows, threshold, limit) {
 
   const failingPairs = [];
   for (const agg of pairMap.values()) {
-    const rateDenominator = agg.successCount + agg.failureCount;
+    // writer-emitted 성공/분모 — 합성 복구행 제외 (headline basis 단일화).
+    const writerSuccess = Math.max(0, agg.successCount - agg.reconstructed);
+    const rateDenominator = writerSuccess + agg.failureCount;
     if (rateDenominator < TOPN_MIN_SAMPLE) continue;
 
-    const pooledRate = agg.successCount / rateDenominator;
+    const pooledRate = writerSuccess / rateDenominator;
     if (pooledRate < threshold) {
       failingPairs.push({
         agent: agg.agent,
@@ -2887,8 +2901,9 @@ function buildTopNFailing(rows, threshold, limit) {
         pooledRate,
         rateDenominator,
         totalCount: agg.totalCount,
-        successCount: agg.successCount,
+        successCount: writerSuccess,
         failureCount: agg.failureCount,
+        reconstructed: agg.reconstructed,
         lastFailureDate: agg.lastFailureDate,
       });
     }
@@ -3024,9 +3039,14 @@ function buildQualityHealthRanking(revisionRows, reviewRows, topN) {
       ? { kind: 'rework', value: m.avgRevision }
       : { kind: 'flag', value: m.reviewFlagRatio };
   }
-  agentMetrics.sort((a, b) => a.healthIndex - b.healthIndex);
+  // low-N floor (DF-29) — outcome 표본(총 발생 건수) < LOW_N_MIN 인 agent 는 비율 신뢰 불가 → 랭킹 제외
+  // (thin-data agent 가 개선 우선순위 상단을 점유하는 왜곡 차단). 헤더 verdict 게이트와 동일 SoT ·
+  // 테스트 격리(window.UI 미정의) 시 3 폴백.
+  const lowNMin = Number(window.UI && window.UI.LOW_N_MIN) || 3;
+  const ranked = agentMetrics.filter((m) => m.totalRevisions >= lowNMin);
+  ranked.sort((a, b) => a.healthIndex - b.healthIndex);
 
-  return agentMetrics.slice(0, topN);
+  return ranked.slice(0, topN);
 }
 
 // failure-patterns rows → agent → row map (Summary 컬럼 client-side merge).

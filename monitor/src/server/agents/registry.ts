@@ -2,7 +2,7 @@
 // SoT: `~/.glass-atrium/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
 // singleton 이유: static 파일이라 per-request fs read + JSON.parse 회피 → /api/agents/summary p95 budget 보호.
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -36,6 +36,11 @@ interface RawRegistryRoot {
 
 let cachedEntries: Map<string, AgentRegistryEntry> | null = null;
 
+// mtime of the registry file at cache-fill time — the revalidation key. The
+// agent_lifecycle CLI (add/delete) rewrites the file out-of-process, so a stat
+// mismatch means the cached Map is stale and must be re-read (no restart needed).
+let cachedMtimeMs: number | null = null;
+
 // warn once — corrupt registry 가 매 요청마다 stderr 범람하는 것 방지
 let warnedOnce = false;
 
@@ -46,16 +51,23 @@ let warnedOnce = false;
  * Callers may read size === 0 as "no registry".
  */
 export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntry>> {
-  if (cachedEntries !== null) {
+  const path = resolveRegistryPath();
+
+  // mtime revalidation — reuse the cache only while the file is byte-for-byte
+  // unchanged since it was read. A stat failure (missing file) leaves currentMtimeMs
+  // null → cache is bypassed and the readFile catch below yields the empty-Map fallback.
+  const currentMtimeMs = await readRegistryMtimeMs(path);
+  if (cachedEntries !== null && currentMtimeMs !== null && currentMtimeMs === cachedMtimeMs) {
     return cachedEntries;
   }
-  const path = resolveRegistryPath();
+
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
     emitWarnOnce(`agent-registry read failed (${path}): ${describeError(error)}`);
     cachedEntries = new Map();
+    cachedMtimeMs = null;
     return cachedEntries;
   }
   let parsed: unknown;
@@ -64,6 +76,7 @@ export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntr
   } catch (error) {
     emitWarnOnce(`agent-registry JSON parse failed (${path}): ${describeError(error)}`);
     cachedEntries = new Map();
+    cachedMtimeMs = null;
     return cachedEntries;
   }
   const entries = normalizeRegistry(parsed);
@@ -71,13 +84,37 @@ export async function loadAgentRegistry(): Promise<Map<string, AgentRegistryEntr
   // One-time per-agent fs read folded into the singleton cache — preserves the /api/agents/summary p95 budget.
   await enrichDescriptions(entries);
   cachedEntries = entries;
+  cachedMtimeMs = currentMtimeMs;
   return cachedEntries;
+}
+
+// Registry file mtime in ms, or null when the file is absent/unstattable.
+// null forces a (re)load attempt rather than serving a possibly-stale cache.
+async function readRegistryMtimeMs(path: string): Promise<number | null> {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 /** Test hook — resets cache + warn flag. Do not call from production code. */
 export function resetAgentRegistryCache(): void {
   cachedEntries = null;
+  cachedMtimeMs = null;
   warnedOnce = false;
+}
+
+/**
+ * Invalidate the singleton cache after an out-of-process registry mutation
+ * (agent DELETE/ADD via the agent_lifecycle CLI) so the next loadAgentRegistry
+ * re-reads the file. Complements mtime revalidation with immediate eviction —
+ * a same-millisecond rewrite would otherwise slip past the stat comparison.
+ * Distinct from resetAgentRegistryCache (a test-only full reset incl. warn flag).
+ */
+export function invalidateAgentRegistryCache(): void {
+  cachedEntries = null;
+  cachedMtimeMs = null;
 }
 
 // H6 rename-transition dual-match prefix — registry keys are `glass-atrium-*` post-rename;

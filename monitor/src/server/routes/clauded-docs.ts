@@ -738,7 +738,12 @@ async function handleListGroups(
                  id AS rep_id, title, author,
                  doc_status::text AS doc_status,
                  audience, html_path, created_at, supersedes_id,
-                 created_at AS group_latest_at, folder_id AS group_key,
+                 -- group_latest_at = the newest member's created_at across the whole
+                 -- group (DF-26), NOT the rep row's own created_at — the rep is picked
+                 -- by display_order, so its created_at is not necessarily the latest.
+                 -- Window MAX is computed over the partition before DISTINCT ON collapses.
+                 MAX(created_at) OVER (PARTITION BY folder_id) AS group_latest_at,
+                 folder_id AS group_key,
                  (SELECT COUNT(*) FROM monitor.documents d2
                   WHERE d2.folder_id = d.folder_id)::bigint AS member_count
           FROM monitor.documents d
@@ -1525,7 +1530,7 @@ async function handleUpdateHtmlBody(
     if (!cascadeNeeded) {
       return replyNoOpUpdate(request, reply, id, existing);
     }
-    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, "html");
+    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, "html", parsed.expected_hash);
   }
 
   // Audience re-classification check — issue a new path when the body extension must change.
@@ -1563,6 +1568,7 @@ async function handleUpdateHtmlBody(
   const restoreArgs: HtmlRestoreArgs = {
     htmlPath: bodyPath,
     previousHtmlContent: prevContent,
+    isNewSwapFile: needsPathSwap,
   };
 
   const dupCheck = await checkUpdateHashUniqueness(
@@ -1653,7 +1659,7 @@ async function handleUpdatePlainBody(
     if (!cascadeNeeded) {
       return replyNoOpUpdatePlain(request, reply, id, existing, format);
     }
-    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, format);
+    return replyCascadeOnlyUpdate(request, reply, id, existing, parsed.doc_status as DocStatusLiteral, format, parsed.expected_hash);
   }
 
   // Was HTML primary → path swap needed · same plain format → in-place.
@@ -1688,6 +1694,7 @@ async function handleUpdatePlainBody(
   const restoreArgs: HtmlRestoreArgs = {
     htmlPath: bodyPath,
     previousHtmlContent: prevContent,
+    isNewSwapFile: needsPathSwap,
   };
 
   const dupCheck = await checkUpdateHashUniqueness(
@@ -2369,13 +2376,24 @@ async function replyCascadeOnlyUpdate(
   existing: ClaudedDocDbRow,
   newStatus: DocStatusLiteral,
   format: DocFormatToken,
+  // Client optimistic-lock hash — guards the cascade target atomically (DF-26).
+  expectedHash: string,
 ): Promise<GetClaudedDocResponse | ClaudedDocsErrorBody> {
   const prisma = getPrisma();
   let cascadeRows: CascadeRow[];
   try {
-    cascadeRows = await cascadeUpdateDocStatus(prisma, id, newStatus);
+    cascadeRows = await cascadeUpdateDocStatus(prisma, id, newStatus, expectedHash);
   } catch (error) {
     return failWithDb(request, reply, "/api/clauded-docs/:id (PUT cascade-only)", error);
+  }
+  // Empty RETURNING ⟺ the guarded target matched no row — content_hash moved
+  // (lost lock race) or the row was deleted between fetch and cascade. Resolve
+  // like the body-changed CAS miss (409 hash_conflict / 404); no file was written.
+  if (cascadeRows.length === 0) {
+    return replyUpdateCasConflict(request, reply, prisma, id, expectedHash, {
+      htmlPath: existing.html_path,
+      previousHtmlContent: null,
+    });
   }
   request.log.info(
     {
@@ -2458,6 +2476,10 @@ async function checkUpdateHashUniqueness(
 export interface HtmlRestoreArgs {
   htmlPath: string;
   previousHtmlContent: string | null;
+  // htmlPath is a freshly-issued swap path with no predecessor (html↔plain
+  // transition). Rollback unlinks it (orphan cleanup) rather than restoring
+  // bytes — restoring null is meaningless and would leave a dangling body (DF-26).
+  isNewSwapFile?: boolean;
 }
 
 /**
@@ -2469,6 +2491,17 @@ export interface HtmlRestoreArgs {
  * Exposed for tests.
  */
 export async function restoreHtmlBody(log: FastifyBaseLogger, args: HtmlRestoreArgs): Promise<void> {
+  if (args.isNewSwapFile) {
+    // Swap orphan — the new-path file had no predecessor; unlink it so a failed
+    // PUT leaves no dangling body file on disk (old path stays the valid one).
+    await removeFileIfExists(args.htmlPath).catch((error: unknown) => {
+      log.error(
+        { err: error, htmlPath: args.htmlPath },
+        "PUT swap-orphan unlink failed — dangling body file left on disk; remove it manually",
+      );
+    });
+    return;
+  }
   if (args.previousHtmlContent === null) return;
   try {
     await writeFileAtomic(args.htmlPath, args.previousHtmlContent, { overwrite: true });
@@ -2611,14 +2644,23 @@ interface CascadeRow {
   folder_id: bigint | null;
 }
 
-async function cascadeUpdateDocStatus(
+export async function cascadeUpdateDocStatus(
   prisma: ReturnType<typeof getPrisma>,
   id: number,
   newStatus: DocStatusLiteral,
+  // Optional CAS guard on the TARGET row (cascade-only PUT path, DF-26). When set,
+  // an empty RETURNING signals the target's content_hash moved / row deleted since
+  // fetch → caller resolves 409/404. Body-changed path omits it (updateClaudedDocRow
+  // already advanced the hash, so its own WHERE carried the guard).
+  expectedHash?: string,
 ): Promise<CascadeRow[]> {
+  const targetGuard =
+    expectedHash === undefined
+      ? Prisma.empty
+      : Prisma.sql`AND content_hash = ${expectedHash}`;
   return prisma.$queryRaw<CascadeRow[]>`
     WITH target AS (
-      SELECT id, folder_id FROM monitor.documents WHERE id = ${BigInt(id)}
+      SELECT id, folder_id FROM monitor.documents WHERE id = ${BigInt(id)} ${targetGuard}
     ),
     cascade_targets AS (
       SELECT id FROM monitor.documents
@@ -2643,7 +2685,7 @@ async function cascadeUpdateDocStatus(
  * its siblings with mismatched doc_status (idempotent retry recommended — the
  * log identifies it).
  */
-async function cascadeAfterRowUpdate(
+export async function cascadeAfterRowUpdate(
   request: FastifyRequest,
   reply: FastifyReply,
   prisma: ReturnType<typeof getPrisma>,
@@ -2651,7 +2693,14 @@ async function cascadeAfterRowUpdate(
   parsed: UpdateClaudedDocBody,
   existing: ClaudedDocDbRow,
 ): Promise<true | ClaudedDocsErrorBody> {
-  if (parsed.doc_status === undefined || existing.folder_id === null) {
+  // Cascade fires only on an ACTUAL status diff (DF-13): a body-changed PUT that
+  // echoes the row's current doc_status must leave mixed-status siblings alone —
+  // else the group homogenizes to the echoed value. Standalone/unspecified skip too.
+  if (
+    parsed.doc_status === undefined ||
+    existing.folder_id === null ||
+    parsed.doc_status === (existing.doc_status as DocStatusLiteral)
+  ) {
     return true; // no-op — cascade trigger conditions unmet
   }
   try {
