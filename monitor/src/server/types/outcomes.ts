@@ -260,7 +260,7 @@ export interface OutcomeHeatmapResponse {
 // /api/outcomes/attribution-daily
 
 // Daily attribution-health series. Decomposes core.outcomes.attribution_source into
-// 4 sum-complete categories over ALL 10 CHECK-canonical values (no value drops from
+// 4 sum-complete categories over ALL 11 CHECK-canonical values (no value drops from
 // `total`); NULL rows excluded from every ratio (legacy, predate attribution tracking).
 //
 // attribution_loss qualification: raw `subagent-stop-missing` is ~100% harness phantom
@@ -269,7 +269,8 @@ export interface OutcomeHeatmapResponse {
 // `subagent-stop-phantom` and fold into 'synthesized'. Series sits near 0 (flat 0 = no genuine loss).
 //
 // Category → attribution_source mapping (server-side pivot):
-//   healthy          ← hook-input
+//   healthy          ← hook-input, structuredoutput-completion (writer-emitted: block recovered
+//                      from the terminal StructuredOutput input, writer fields intact)
 //   attribution_loss ← subagent-stop-missing, GENUINE-ONLY (real SubagentStop backing ±5min)
 //   literal_omission ← truncated_completion, completion-missing, budget-truncation
 //   synthesized      ← completion-synthesized, conversation-only, cron-derived,

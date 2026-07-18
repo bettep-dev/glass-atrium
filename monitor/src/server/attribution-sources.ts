@@ -11,6 +11,13 @@ import { Prisma } from "../generated/prisma/client.js";
 // track-outcome.sh (done/low/false). Explicit member so an audit distinguishes
 // it from an unrecognized fall-through.
 export const STRUCTUREDOUTPUT_DERIVED_SOURCE = "structuredoutput-derived";
+// structuredoutput-completion: WRITER-emitted, NOT a synthesis artifact — the sibling
+// of structuredoutput-derived where track-outcome.sh recovered a VALID [COMPLETION] block
+// from the terminal StructuredOutput input's completion_block field (writer fields flow
+// normally: result/confidence/metric_pass/lesson from the block, downgrade_origin empty).
+// DELIBERATELY absent from RECONSTRUCTED_ATTRIBUTION_SOURCES below so the recovered signal
+// is NOT folded as a harness recovery artifact — it is a clean writer-emitted (healthy) row.
+export const STRUCTUREDOUTPUT_COMPLETION_SOURCE = "structuredoutput-completion";
 // completion-synthesized: SubagentStop transcript-synthesis recovery artifact.
 export const COMPLETION_SYNTHESIZED_SOURCE = "completion-synthesized";
 // budget-truncation: a subagent hard-killed at its tool_use budget ceiling before

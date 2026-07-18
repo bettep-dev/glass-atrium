@@ -320,13 +320,17 @@ fi
 # the canonical value allowlist is applied out-of-band HERE, not via a migration — editing
 # the applied baseline SQL drifts existing-DB checksums. DROP IF EXISTS + ADD is re-run/widen
 # safe; NOT VALID skips the full-table scan (pre-existing rows trusted, new writes checked).
-# The 10-value set MUST byte-match the dual-write producers (track-outcome.sh / outcomes.ts /
-# daemon_cycle.py / _pg_*_dualwrite.py) — a missing value → constraint_violation → the row is
-# silently dropped from PG. core.outcomes lives only in the main DB — shadow excluded.
-log "applying attribution_source CHECK constraint (10 canonical values · idempotent · NOT VALID)"
+# The 11-value set MUST byte-match the dual-write producers (track-outcome.sh / outcomes.ts /
+# daemon_cycle.py / _pg_*_dualwrite.py) — a missing value → constraint_violation → the write is
+# rejected (loud-fail: _pg_outcome_dualwrite.py EXIT_WRITE_FAILED + structured stderr + a
+# hook_failures row; the row is lost, NOT silently dropped). core.outcomes lives only in the
+# main DB — shadow excluded.
+# structuredoutput-completion (11th) = writer [COMPLETION] recovered from the terminal
+# StructuredOutput input's completion_block field (distinct from synthesized structuredoutput-derived).
+log "applying attribution_source CHECK constraint (11 canonical values · idempotent · NOT VALID)"
 psql -h "${PG_SOCKET}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
   -c "ALTER TABLE core.outcomes DROP CONSTRAINT IF EXISTS outcomes_attribution_source_check" \
-  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived']::text[]))) NOT VALID" \
+  -c "ALTER TABLE core.outcomes ADD CONSTRAINT outcomes_attribution_source_check CHECK ((attribution_source IS NULL) OR (attribution_source = ANY (ARRAY['hook-input','cron-derived','agent-id-missing','subagent-stop-missing','completion-missing','conversation-only','truncated_completion','completion-synthesized','budget-truncation','structuredoutput-derived','structuredoutput-completion']::text[]))) NOT VALID" \
   || fail "${EXIT_POSTSQL}" "attribution_source CHECK constraint apply failed (DB '${DB_NAME}') — check core.outcomes exists + peer auth privileges"
 
 # The budget-overage signal store is hook-written best-effort (advisory-subagent-budget.sh via
