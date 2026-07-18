@@ -15,7 +15,12 @@
 # (subprocess) so retry / hook_failures / fail-loud-and-skip semantics
 # match wiki-sync.sh and daemon-cycle.sh writes.
 #
-# Exit 0 always — the daemon must not block on PG failure.
+# Exit code: 0 when every attempted PG write committed (or the cycle had
+# nothing to push — missing/empty/unparseable report); 1 when one or more
+# writes FAILED (DB down / connection refused). The daemon still never BLOCKS —
+# every write is attempted and each failure is recorded to core.hook_failures +
+# stderr — but a failed cycle now surfaces non-zero so daemon-cycle.sh folds it
+# into PIPELINE_RC and the log aggregator sees a degraded run (DF-16).
 
 import json
 import os
@@ -100,19 +105,34 @@ def _aggregate(payload):
 
 
 def _invoke_helper(envelope):
+    """Invoke the dual-write helper for one envelope; return True on a committed
+    write, False on any failure.
+
+    The helper ALWAYS exits 0 (fail-loud-and-skip: it records a write failure to
+    core.hook_failures + stderr, never blocking the daemon), so its exit code is
+    not a usable success discriminator. The reliable signal is its stdout token:
+    a committed write emits the elapsed_ms integer on stdout, a failed write
+    emits nothing there (the failure detail goes to stderr). stderr is inherited
+    so the log aggregator still sees the pg_write=ok/fail line.
+    """
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["python3", HELPER],
             input=json.dumps(envelope),
             text=True,
             timeout=10,
             check=False,
+            stdout=subprocess.PIPE,
         )
     except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
         sys.stderr.write(
             "[autoagent-cycle-pg] helper invocation failed (op=%s): %s\n"
             % (envelope.get("op", "?"), str(exc).replace('"', "'"))
         )
+        return False
+    # Empty stdout = the write failed (helper still exited 0). Non-empty stdout
+    # (the elapsed_ms token) = committed.
+    return result.returncode == 0 and bool((result.stdout or "").strip())
 
 
 def main():
@@ -173,8 +193,11 @@ def main():
         },
     }
 
-    _invoke_helper(run_env)
-    _invoke_helper(payload_env)
+    # Track whether every attempted write committed. A DB-down cycle fails all
+    # of them → non-zero exit surfaces the degraded cycle to daemon-cycle.sh.
+    all_writes_ok = True
+    all_writes_ok &= _invoke_helper(run_env)
+    all_writes_ok &= _invoke_helper(payload_env)
 
     # Per-patch UPSERT into core.autoagent_proposals.
     source_file_basename = os.path.basename(OUT_PATH)
@@ -229,8 +252,14 @@ def main():
                 "promotion_tier": patch.get("promotion_tier") or "",
             },
         }
-        _invoke_helper(proposal_env)
+        all_writes_ok &= _invoke_helper(proposal_env)
 
+    if not all_writes_ok:
+        sys.stderr.write(
+            "[autoagent-cycle-pg] one or more PG writes failed "
+            "(DB down / connection refused) — exiting non-zero for the log aggregator\n"
+        )
+        return 1
     return 0
 
 

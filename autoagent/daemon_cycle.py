@@ -805,6 +805,9 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
     A patch dict is auto-apply eligible iff ALL hold:
       - approval_tier == 'auto'   (safety tier stays a human-approval candidate),
       - classification == 'body-auto' (JSON-side label for a pre-verified edit),
+      - pre_verify_passed is True (the 4-axis pre-verify gate; fail-CLOSED when the
+        key is absent/None/False — a report row without the flag is NOT auto-applied,
+        mirroring the backlog SELECT's `pre_verify_passed = true`, DF-17),
       - haiku_status starts with 'ok' (the Haiku-skip gate; fail-CLOSED when the
         key is absent — a report row missing haiku_status is NOT auto-applied).
 
@@ -816,6 +819,10 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
     if str(patch.get("approval_tier", "")) != "auto":
         return False
     if str(patch.get("classification", "")) != "body-auto":
+        return False
+    # pre_verify_passed is bool|None on PatchResult; strict True match (NULL/False/
+    # absent excluded) mirrors the backlog SELECT `pre_verify_passed = true`.
+    if patch.get("pre_verify_passed") is not True:
         return False
     return is_apply_eligible_haiku_status(str(patch.get("haiku_status", "")))
 

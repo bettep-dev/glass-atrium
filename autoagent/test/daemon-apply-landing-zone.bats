@@ -156,6 +156,7 @@ print(
                 {
                     "classification": "body-auto",
                     "approval_tier": "auto",
+                    "pre_verify_passed": True,
                     "haiku_status": "ok",
                     "pattern_label": label,
                     "pattern_agent": "probe",

@@ -53,6 +53,7 @@ write_report() {
     {
       "classification": "body-auto",
       "approval_tier": "auto",
+      "pre_verify_passed": true,
       ${haiku_field}
       "pattern_label": "probe",
       "target_file": "/x/probe.md",
@@ -148,6 +149,7 @@ JSON
     {
       "classification": "body-auto",
       "approval_tier": "safety",
+      "pre_verify_passed": true,
       "haiku_status": "ok",
       "pattern_label": "probe",
       "target_file": "/x/probe.md",
@@ -159,4 +161,73 @@ JSON
   run extract_body_auto_patches "${REPORT}"
   [[ "${status}" -eq 0 ]]
   [[ -z "${output}" ]]
+}
+
+# ---------------------------------------------------------------------------
+# (e) DF-17 pre-verify gate — a body-auto/auto/ok patch that skipped or failed
+#     pre-verify is EXCLUDED in psql-absent mode (matches the backlog SELECT's
+#     `pre_verify_passed = true`).
+# ---------------------------------------------------------------------------
+
+@test "JSON-fallback: a body-auto patch WITHOUT pre_verify_passed is EXCLUDED (DF-17 fail-closed)" {
+  cat >"${REPORT}" <<'JSON'
+{
+  "patches": [
+    {
+      "classification": "body-auto",
+      "approval_tier": "auto",
+      "haiku_status": "ok",
+      "pattern_label": "probe",
+      "target_file": "/x/probe.md",
+      "proposed_diff": "diff"
+    }
+  ]
+}
+JSON
+  run extract_body_auto_patches "${REPORT}"
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "JSON-fallback: pre_verify_passed=false is EXCLUDED even with an ok haiku_status" {
+  cat >"${REPORT}" <<'JSON'
+{
+  "patches": [
+    {
+      "classification": "body-auto",
+      "approval_tier": "auto",
+      "pre_verify_passed": false,
+      "haiku_status": "ok",
+      "pattern_label": "probe",
+      "target_file": "/x/probe.md",
+      "proposed_diff": "diff"
+    }
+  ]
+}
+JSON
+  run extract_body_auto_patches "${REPORT}"
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "JSON-fallback: pre_verify gate is NOT bypassed by the haiku operator carve-out" {
+  cat >"${REPORT}" <<'JSON'
+{
+  "patches": [
+    {
+      "classification": "body-auto",
+      "approval_tier": "auto",
+      "pre_verify_passed": false,
+      "haiku_status": "skipped:empty-or-error",
+      "pattern_label": "probe",
+      "target_file": "/x/probe.md",
+      "proposed_diff": "diff"
+    }
+  ]
+}
+JSON
+  AUTOAGENT_ALLOW_HAIKU_SKIP=1 run extract_body_auto_patches "${REPORT}"
+  [[ "${status}" -eq 0 ]]
+  # Carve-out bypasses ONLY the haiku gate; the pre-verify gate still excludes it.
+  [[ "${output}" != *'"pattern_label": "probe"'* ]]
 }
