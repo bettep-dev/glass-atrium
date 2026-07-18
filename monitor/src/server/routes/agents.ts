@@ -27,6 +27,8 @@ import type {
   DeleteAgentResponse,
 } from "../types/agents.js";
 import type {
+  AgentBudgetOverageRow,
+  AgentBudgetOveragesResponse,
   AgentFailurePatternRow,
   AgentFailurePatternsResponse,
   AgentFailureReasonCategory,
@@ -194,6 +196,16 @@ interface LifecycleStatsDbRow {
   max_duration_sec: Prisma.Decimal | null;
 }
 
+// /budget-overages: per-agent_type tool_use-budget crossing rollup over the
+// raw-SQL core.budget_overages table (outside schema.prisma). max_crossed_pct is
+// already an integer column; COUNT casts to bigint.
+interface BudgetOverageDbRow {
+  agent_type: string;
+  overage_count: bigint;
+  max_crossed_pct: number;
+  latest_ts: Date;
+}
+
 // /summary: per-agent runs / success / last_run_at / last_result.
 // denom_count = done+dwc+blocked+fail (matrix semantics — needs_context excluded).
 interface SummaryOutcomeDbRow {
@@ -248,10 +260,70 @@ export async function registerAgentsRoutes(app: FastifyInstance): Promise<void> 
   app.get("/api/agents/summary", handleSummary);
   app.get("/api/agents/latency", handleLatency);
   app.get("/api/agents/failure-reasons", handleFailureReasons);
+  app.get("/api/agents/budget-overages", handleBudgetOverages);
   // Writable DEV-agent DELETE — preview(--dry-run)/commit(--confirm) two-step,
   // gated by the 127.0.0.1 local-only human-in-the-loop model. The CLI's
   // `run_delete` is the single owner of the registry-mutation lock.
   app.delete("/api/agents/:name", handleDeleteAgent);
+}
+
+// GET /api/agents/budget-overages?days={7|30|90}
+// Near-cap tool_use-budget crossings per agent_type. The source table is
+// created post-deploy (oss-db-setup.sh) and may be absent on a fresh DB — a
+// missing table surfaces as a normal DB failure (503), and the FE degrades to
+// "no badge" rather than fabricating a zero.
+async function handleBudgetOverages(
+  request: FastifyRequest<{ Querystring: { days?: string } }>,
+  reply: FastifyReply,
+): Promise<AgentBudgetOveragesResponse | AgentsErrorBody> {
+  const start = Date.now();
+  const days = parseDaysParam(request.query.days);
+  if (days === null) {
+    return reply.code(400).send(invalidDays());
+  }
+
+  const windowLowerBound = buildWindowLowerBound(days);
+  const prisma = getPrisma();
+  try {
+    // NULL agent_type rows (sidecar recovery miss) can't map to a summary row →
+    // excluded. Grouped per agent_type so the FE keys the badge by agent_id
+    // (agent_type == agent_id == agent_name in the current convention).
+    const rows = await prisma.$queryRaw<BudgetOverageDbRow[]>`
+      SELECT
+        agent_type,
+        COUNT(*)::bigint    AS overage_count,
+        MAX(crossed_pct)    AS max_crossed_pct,
+        MAX(ts)             AS latest_ts
+      FROM core.budget_overages
+      WHERE ts >= ${windowLowerBound}
+        AND agent_type IS NOT NULL
+      GROUP BY agent_type
+      ORDER BY overage_count DESC
+    `;
+
+    const payload: AgentBudgetOveragesResponse = {
+      rows: rows.map(mapBudgetOverageRow),
+      days,
+      fetched_at: new Date().toISOString(),
+    };
+
+    request.log.info(
+      { route: "/api/agents/budget-overages", durationMs: Date.now() - start },
+      "agents budget-overages query complete",
+    );
+    return payload;
+  } catch (error) {
+    return failWithDb(request, reply, "/api/agents/budget-overages", error);
+  }
+}
+
+function mapBudgetOverageRow(row: BudgetOverageDbRow): AgentBudgetOverageRow {
+  return {
+    agent_type: row.agent_type,
+    overage_count: bigintToNumber(row.overage_count),
+    max_crossed_pct: Number(row.max_crossed_pct),
+    latest_ts: row.latest_ts.toISOString(),
+  };
 }
 
 // GET /api/agents/success-rate?days={7|30|90}

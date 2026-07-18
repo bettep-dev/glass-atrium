@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildStyleRefSummary,
   foldConfidenceDistribution,
   foldTierBreakdownRow,
   rowToProposalSummary,
@@ -313,4 +314,50 @@ test("foldConfidenceDistribution: 4-decimal rounding on rollup", () => {
   assert.strictEqual(out.window_days, 7);
   assert.strictEqual(out.buckets[0].confidence_observed_avg, 0.3333, "per-lane avg 4-decimal rounded");
   assert.strictEqual(out.overall_confidence_observed_avg, 0.3333, "rollup 4-decimal rounded");
+});
+
+// ----- buildStyleRefSummary split counts + fake_rate (P13) -------------------
+
+function styleRow(o: Partial<Record<string, bigint | string>> = {}) {
+  return {
+    agent: "dev-a",
+    emission_count: 0n,
+    emission_total: 0n,
+    verified_true_count: 0n,
+    verified_eligible: 0n,
+    ...o,
+  } as Parameters<typeof buildStyleRefSummary>[0][number];
+}
+
+test("buildStyleRefSummary: split derivation verified/unverified/greenfield", () => {
+  // emission=10, eligible=6, verified=4 → unverified=2, greenfield=4.
+  const out = buildStyleRefSummary([
+    styleRow({ emission_count: 10n, emission_total: 12n, verified_true_count: 4n, verified_eligible: 6n }),
+  ]);
+
+  assert.strictEqual(out.overall_verified_count, 4);
+  assert.strictEqual(out.overall_unverified_count, 2, "eligible - verified");
+  assert.strictEqual(out.overall_greenfield_count, 4, "emission - eligible");
+  assert.strictEqual(out.overall_fake_rate, Number((2 / 6).toFixed(4)), "unverified / eligible");
+});
+
+test("buildStyleRefSummary: fake_rate null on zero verify-eligible (no fake zero)", () => {
+  // all greenfield: emission=5, eligible=0 → fake_rate null, greenfield=5.
+  const out = buildStyleRefSummary([
+    styleRow({ emission_count: 5n, emission_total: 5n, verified_true_count: 0n, verified_eligible: 0n }),
+  ]);
+
+  assert.strictEqual(out.overall_fake_rate, null, "eligible=0 → honest null, not 0");
+  assert.strictEqual(out.overall_greenfield_count, 5);
+  assert.strictEqual(out.overall_unverified_count, 0);
+});
+
+test("buildStyleRefSummary: empty rows → all-zero counts + null rates", () => {
+  const out = buildStyleRefSummary([]);
+
+  assert.strictEqual(out.overall_verified_count, 0);
+  assert.strictEqual(out.overall_unverified_count, 0);
+  assert.strictEqual(out.overall_greenfield_count, 0);
+  assert.strictEqual(out.overall_fake_rate, null);
+  assert.strictEqual(out.overall_emission_rate, null);
 });

@@ -34,6 +34,7 @@ import type {
   HealthWikiReportsResponse,
   HookChainEvent,
   HookEntry,
+  HookErrorKindBreakdownEntry,
   HookErrorKindValue,
   HookFailureEntry,
   HookMatcherGroup,
@@ -469,6 +470,13 @@ interface HookFailureRow {
   retry_attempted: boolean;
 }
 
+interface HookErrorKindBreakdownRow {
+  error_kind: string;
+  hook_name: string;
+  target_table: string;
+  cnt: bigint;
+}
+
 async function handleHookFailures(
   request: FastifyRequest<{ Querystring: { days?: string; limit?: string } }>,
   reply: FastifyReply,
@@ -495,7 +503,7 @@ async function handleHookFailures(
     // Both validated before embedding (days=allowlist, limit=integer clamp).
     const intervalLiteral = Prisma.raw(`INTERVAL '${days} days'`);
     const limitLiteral = Prisma.raw(String(limit));
-    const [rows, recencyRows] = await Promise.all([
+    const [rows, recencyRows, breakdownRows] = await Promise.all([
       prisma.$queryRaw<HookFailureRow[]>`
         SELECT
           id,
@@ -517,6 +525,19 @@ async function handleHookFailures(
           COUNT(*) FILTER (WHERE retry_attempted = FALSE)::bigint AS unretried_count_24h
         FROM core.hook_failures
         WHERE failure_ts >= NOW() - INTERVAL '24 hours'
+      `,
+      // Complete per-kind composition over the days window — NOT LIMIT-truncated, so
+      // it reconciles the full picture the row list above may cut off (P12).
+      prisma.$queryRaw<HookErrorKindBreakdownRow[]>`
+        SELECT
+          error_kind::text AS error_kind,
+          hook_name,
+          target_table,
+          COUNT(*)::bigint AS cnt
+        FROM core.hook_failures
+        WHERE failure_ts >= NOW() - ${intervalLiteral}
+        GROUP BY error_kind, hook_name, target_table
+        ORDER BY cnt DESC, error_kind ASC, hook_name ASC
       `,
     ]);
     const recency = recencyRows[0];
@@ -547,6 +568,7 @@ async function handleHookFailures(
     return {
       days,
       failures,
+      error_kind_breakdown: buildHookErrorKindBreakdown(breakdownRows),
       count_24h: count24h,
       unretried_count_24h: unretriedCount24h,
       timezone: "UTC",
@@ -638,6 +660,20 @@ function narrowHookErrorKind(raw: string): HookErrorKindValue {
   return KNOWN_HOOK_ERROR_KINDS.has(raw as HookErrorKindValue)
     ? (raw as HookErrorKindValue)
     : "unknown";
+}
+
+// Pure seam: narrow raw GROUP BY rows → typed breakdown entries (error_kind narrowed,
+// bigint count → number). Input order (query's cnt-desc) is preserved. Exported for the
+// DB-independent unit test.
+export function buildHookErrorKindBreakdown(
+  rows: ReadonlyArray<HookErrorKindBreakdownRow>,
+): HookErrorKindBreakdownEntry[] {
+  return rows.map((row) => ({
+    error_kind: narrowHookErrorKind(row.error_kind),
+    hook_name: row.hook_name,
+    target_table: row.target_table,
+    count: bigintToNumber(row.cnt),
+  }));
 }
 
 function formatDateOnly(date: Date): string {

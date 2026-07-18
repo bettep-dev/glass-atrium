@@ -30,7 +30,7 @@ interface AgentsHelpers {
 }
 interface OutcomesHelpers {
   buildAgentStackO: (
-    perResultPayloads: unknown[],
+    byAgentResult: unknown[],
     resultOrder: string[],
     topN: number,
   ) => Array<{ agent: string; total: number; reconstructed: number; byResult: Record<string, number> }>;
@@ -146,27 +146,43 @@ test("buildQualityHealthRanking: synthesized-heavy agent's health headline uses 
   assert.strictEqual(entry.reviewFlaggedReconstructed, 25);
 });
 
-// --- buildAgentStackO: by_agent_top_10 reconstructed accumulation ---
+// --- buildAgentStackO: by_agent_result single-query accumulation (P14) ---
 
-test("buildAgentStackO: accumulates reconstructed_count across per-result payloads (writer-emitted headline base)", () => {
-  // Two result payloads (done / done_with_concerns) each carry a by_agent_top_10 row
-  // for the same agent; reconstructed sums, total sums.
-  const donePayload = { by_agent_top_10: [{ agent: "qa-code-reviewer", count: 5, reconstructed_count: 1 }] };
-  const dwcPayload = { by_agent_top_10: [{ agent: "qa-code-reviewer", count: 20, reconstructed_count: 18 }] };
-  const stack = outcomes.buildAgentStackO([donePayload, dwcPayload], ["done", "done_with_concerns"], 10);
+test("buildAgentStackO: sums count + reconstructed across an agent's results (writer-emitted headline base)", () => {
+  // Single combined by_agent_result array — one (agent, result) row each; total + reconstructed sum.
+  const byAgentResult = [
+    { agent: "qa-code-reviewer", result: "done", count: 5, reconstructed_count: 1 },
+    { agent: "qa-code-reviewer", result: "done_with_concerns", count: 20, reconstructed_count: 18 },
+  ];
+  const stack = outcomes.buildAgentStackO(byAgentResult, ["done", "done_with_concerns"], 10);
   const row = stack.find((r) => r.agent === "qa-code-reviewer");
   assert.ok(row);
-  assert.strictEqual(row.total, 25, "total sums all rows (bar distribution base)");
+  assert.strictEqual(row.total, 25, "total sums all in-order results (bar distribution base)");
   assert.strictEqual(row.reconstructed, 19, "reconstructed sums per-result reconstructed_count");
+  assert.strictEqual(row.byResult.done, 5);
+  assert.strictEqual(row.byResult.done_with_concerns, 20);
   // writer-emitted headline = total - reconstructed = 6 (the non-inflated count).
   assert.strictEqual(row.total - row.reconstructed, 6);
 });
 
 test("buildAgentStackO: backward-compat — rows without reconstructed_count → reconstructed 0", () => {
-  const payload = { by_agent_top_10: [{ agent: "dev-nestjs", count: 8 }] };
-  const stack = outcomes.buildAgentStackO([payload], ["done"], 10);
+  const byAgentResult = [{ agent: "dev-nestjs", result: "done", count: 8 }];
+  const stack = outcomes.buildAgentStackO(byAgentResult, ["done"], 10);
   const row = stack.find((r) => r.agent === "dev-nestjs");
   assert.ok(row);
   assert.strictEqual(row.reconstructed, 0);
   assert.strictEqual(row.total, 8);
+});
+
+test("buildAgentStackO: results outside resultOrder are excluded from total (bar sums to 100%)", () => {
+  // needs_context is a valid result but outside the 4-KPI stack order — must not inflate total.
+  const byAgentResult = [
+    { agent: "dev-python", result: "done", count: 10, reconstructed_count: 0 },
+    { agent: "dev-python", result: "needs_context", count: 4, reconstructed_count: 0 },
+  ];
+  const stack = outcomes.buildAgentStackO(byAgentResult, ["done", "done_with_concerns", "blocked", "fail"], 10);
+  const row = stack.find((r) => r.agent === "dev-python");
+  assert.ok(row);
+  assert.strictEqual(row.total, 10, "needs_context excluded from total");
+  assert.strictEqual(row.byResult.needs_context, undefined, "off-order result not stacked");
 });

@@ -173,6 +173,15 @@ export interface ImprovementStyleRefSummary {
   // Cross-agent headline rollups; null when no eligible rows exist in the window.
   overall_emission_rate: number | null;
   overall_verified_rate: number | null;
+  // Verified/unverified/greenfield split counts (P13 Gaming-the-Judge card):
+  //   verified   = style_ref_verified TRUE
+  //   unverified = verify-eligible but not verified (the fake-rate numerator)
+  //   greenfield = emitted 'greenfield' sentinel (verify structurally N/A)
+  overall_verified_count: number;
+  overall_unverified_count: number;
+  overall_greenfield_count: number;
+  // 1 - overall_verified_rate; null when no verify-eligible rows (honest "—", no fake zero).
+  overall_fake_rate: number | null;
 }
 
 // Per-proposal compact summary (UI card row). snake_case matches project convention.
@@ -362,6 +371,48 @@ export interface ImprovementLoopEventsResponse {
   latest_event_ts: string | null; // ISO8601 UTC
   // Recent events (bounded by limit, ORDER BY event_ts DESC).
   events: ImprovementLoopEventRow[];
+}
+
+// GET /api/improvement/correction-signals — detection-quality view over the
+// orphaned core.correction_signals table. Surfaces the stage1-vs-stage2
+// detection agreement + revision_count delta that sit behind the aggregated
+// revision_count elsewhere.
+//
+// stage1_matched / stage2_matched = whether each detection stage flagged a
+// correction; agreement = the two stages concurred (both true OR both false).
+export interface CorrectionSignalAgreement {
+  both_matched: number; // stage1 && stage2
+  stage1_only: number; // stage1 && !stage2
+  stage2_only: number; // !stage1 && stage2
+  neither_matched: number; // !stage1 && !stage2
+  // both_matched + neither_matched (the two stages concurred).
+  agreement_count: number;
+  // Sum of the four disjoint buckets.
+  total: number;
+}
+
+export interface CorrectionSignalRow {
+  id: number;
+  event_ts: string; // ISO8601 UTC
+  task_type: string;
+  stage1_matched: boolean;
+  stage2_matched: boolean;
+  final_detected: boolean;
+  revision_count_delta: number;
+}
+
+export interface ImprovementCorrectionSignalsResponse {
+  fetched_at: string; // ISO8601 UTC
+  total_signals: number; // table-wide count
+  // Stage1-vs-stage2 agreement rollup across the whole table.
+  agreement: CorrectionSignalAgreement;
+  // Sum + max of revision_count_delta table-wide (0 when the table is empty).
+  revision_delta_sum: number;
+  revision_delta_max: number;
+  latest_event_ts: string | null; // ISO8601 UTC
+  returned: number; // recent rows returned (≤ limit)
+  // Most-recent signals (bounded by limit, ORDER BY event_ts DESC).
+  signals: CorrectionSignalRow[];
 }
 
 // error envelope

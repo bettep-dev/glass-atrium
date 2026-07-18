@@ -87,6 +87,8 @@ export interface OutcomeSearchRow {
   poisoned_window: boolean;
   // Raw core.outcomes.attribution_source (verbatim, NOT re-categorized). NULL = legacy row.
   attribution_source: string | null;
+  // QA-review score string (shape cov=N,ins=N,instr=N,clar=N). NULL for non-QA rows — FE renders no dots.
+  qa_score: string | null;
 }
 
 export interface OutcomeSearchResponse {
@@ -122,6 +124,8 @@ export interface OutcomeDetailResponse {
   correlation_id: string | null;
   cid: string | null;
   review_flag: boolean;
+  // QA-review score string (shape cov=N,ins=N,instr=N,clar=N). NULL for non-QA rows — FE renders no dots.
+  qa_score: string | null;
   // Full markdown body (no truncation) — null when DB column is NULL.
   body_md: string | null;
   inserted_at: string;
@@ -172,6 +176,30 @@ export interface OutcomeCrossAnalysisByAgent {
   reconstructed_count: number;
 }
 
+// Per-(agent, result) exact count over the matching set — the single-query SoT for
+// the "Results by agent" stacked bar. Replaces the former 4-list per-result stitching
+// (which silently dropped an agent ranked #11+ in any single result bucket). Registry-
+// scoped identically to by_agent_top_10; every canonical agent's ALL results arrive so
+// client-side per-agent totals reconcile exactly. `reconstructed_count` isolates harness
+// recovery artifacts (same discriminator as OutcomeCrossAnalysisByAgent).
+export interface OutcomeCrossAnalysisByAgentResult {
+  agent: string;
+  result: OutcomeResultLiteral;
+  count: number;
+  reconstructed_count: number;
+}
+
+// downgrade_origin distribution over the matching set — provenance of how graded
+// outcomes arose. `writer_true_downgraded` (writer claimed pass, grader disagreed) is
+// the most actionable writer/grader disagreement signal. `not_recorded` = legacy NULL
+// rows (predate downgrade_origin instrumentation), reported separately, never a failure.
+export interface OutcomeDowngradeBreakdown {
+  writer_true_downgraded: number;
+  writer_false: number;
+  synthesized: number;
+  not_recorded: number;
+}
+
 // Artifact-vs-quality breakdown — grader_verdict distribution over the matching set.
 // Only the 3 graded buckets contribute to ratio denominators; legacy NULL-verdict rows
 // are reported SEPARATELY as `not_measured` and EXCLUDED from `graded_total` so they
@@ -218,8 +246,12 @@ export interface OutcomeCrossAnalysisResponse {
   by_result: OutcomeCrossAnalysisByResult[];
   // Top 10 agents in the matching set by row count.
   by_agent_top_10: OutcomeCrossAnalysisByAgent[];
+  // Per-(agent, result) exact counts (all canonical agents, all results) — the stacked-bar SoT.
+  by_agent_result: OutcomeCrossAnalysisByAgentResult[];
   // grader_verdict distribution with legacy NULL rows excluded from the ratios.
   grader_breakdown: OutcomeGraderBreakdown;
+  // downgrade_origin distribution — writer/grader disagreement provenance.
+  downgrade_breakdown: OutcomeDowngradeBreakdown;
   // 9-type × grader_verdict crosstab (always 9 rows, TASK_TYPES order).
   task_type_grader_breakdown: OutcomeTaskTypeGraderRow[];
   fetched_at: string;
