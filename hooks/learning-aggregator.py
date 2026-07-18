@@ -5,6 +5,7 @@ PG is the single sink/source: core.learning_log · core.aggregator_state.
 Read paths go through the _pg_learning_dualwrite.read_* helpers.
 """
 
+import json
 import os
 import re
 import sys
@@ -682,6 +683,250 @@ def _cluster_budget_overages(overage_rows: list[dict]) -> dict[str, int]:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# AD-1 / AD-2 — CTM/EPM lesson store: size-capped labeled memory blocks
+# (Letta/MemGPT) with consolidation-op ingest (Mem0). A local JSON store —
+# NOT PG — because the spawn-time consumer (inject-scope-rules.sh, AD-3) is a
+# Bash hook that reads it with jq; a PG read from Bash is impractical + violates
+# the hook's <1s / fail-open contract. The pure functions below take no I/O so
+# they unit-test without a live DB (aggregator-test convention).
+# ---------------------------------------------------------------------------
+
+# Store path — env-overridable for tests + the AD-3 hook's matching default.
+LESSON_STORE_FILE = os.environ.get(
+    "CLAUDE_LESSONS_STORE_FILE", os.path.join(DATA_DIR, "lessons.json")
+)
+
+# AD-1 per-bucket char caps (MemGPT memory-block precedent). Cap is on the ACTIVE
+# (non-tombstoned) lesson-text sum; overflow triggers summarize-and-evict.
+CTM_BUCKET_MAX_CHARS = 4000
+EPM_BUCKET_MAX_CHARS = 4000
+
+# AD-3 CTM injection floor — mirrors the core-learning-log.md "score >= 4 → CTM" bar.
+CTM_MIN_SCORE = 4
+
+# confidence enum → lesson score (self-report; high=5 medium=4 low=3, unknown=3).
+_CONFIDENCE_SCORE = {"high": 5, "medium": 4, "low": 3}
+
+# Numeric/whitespace strip for lesson-text dedup — two lessons differing only in a
+# count/date/percentage are ONE lesson (a duplicate bumps frequency, never a new row).
+_LESSON_NORM_RE = re.compile(r"\d[\d.]*%?")
+
+
+def _normalize_lesson_text(text: object) -> str:
+    """Dedup key for a lesson body — lowercased, numeric-stripped, whitespace-collapsed.
+    A cosmetic numeric/case/spacing difference must NOT fork a duplicate into a new entry."""
+    s = str(text or "").strip().lower()
+    s = _LESSON_NORM_RE.sub("", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _lesson_size(entry: dict) -> int:
+    """Char weight of one lesson = its text length (the injected surface, AD-1 cap basis)."""
+    return len(str(entry.get("text", "")))
+
+
+def _bucket_active_size(bucket: list[dict]) -> int:
+    """Sum of active (non-tombstoned) lesson-text lengths — the AD-1 cap is measured on THIS."""
+    return sum(_lesson_size(e) for e in bucket if not e.get("tombstoned"))
+
+
+def _lesson_score(record: dict) -> int:
+    """Outcome confidence enum → integer lesson score (CTM score>=4 filter basis)."""
+    conf = str(record.get("confidence", "")).strip().lower()
+    return _CONFIDENCE_SCORE.get(conf, 3)
+
+
+def _record_is_negative(record: dict) -> bool:
+    """DB-independent negative-signal check (mirrors the _negative_signal_hits OR-terms) so
+    classify_lesson_bucket unit-tests without the PG helper: fail/blocked/done_with_concerns,
+    revision_count>=2, evaluative_signal=-1, or review_flag=true → EPM-bound."""
+    if str(record.get("result", "")).strip() in ("fail", "blocked", "done_with_concerns"):
+        return True
+    try:
+        if int(record.get("revision_count", 0) or 0) >= 2:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if str(record.get("evaluative_signal", "")).strip() == "-1":
+        return True
+    rf = record.get("review_flag")
+    return rf is True or str(rf).strip().lower() == "true"
+
+
+def classify_lesson_bucket(record: dict) -> str | None:
+    """Route one outcome's lesson to "ctm" (success) / "epm" (failure) / None (skip).
+    Negative signal → EPM; a clean done + metric_pass + score>=4 → CTM; anything else skipped."""
+    if _record_is_negative(record):
+        return "epm"
+    mp = record.get("metric_pass")
+    mp_true = mp is True or str(mp).strip().lower() == "true"
+    if (
+        str(record.get("result", "")).strip() == "done"
+        and mp_true
+        and _lesson_score(record) >= CTM_MIN_SCORE
+    ):
+        return "ctm"
+    return None
+
+
+def _outcome_to_lesson_entry(record: dict, today: str) -> dict:
+    """Distil one outcome record into a lesson-store entry (canonical agent key + score)."""
+    return {
+        "agent": _canonical_agent(record.get("agent", "")),
+        "task_type": str(record.get("task_type", "")).strip(),
+        "text": str(record.get("lesson", "")).strip(),
+        "score": _lesson_score(record),
+        "updated": today,
+    }
+
+
+def ingest_lesson(bucket: list[dict], entry: dict) -> str:
+    """AD-2 consolidation-op ingest (Mem0) — ADD / UPDATE / MERGE, NEVER hard-delete.
+
+    - live (agent, task_type, normalized-text) match → UPDATE: frequency+1, score=max,
+      refresh `updated` (a DUPLICATE lesson bumps frequency, it never appends a new row).
+    - tombstoned match → MERGE: resurrect (tombstoned=False) + frequency+1 (a re-observed
+      stale lesson revives rather than duplicating).
+    - no match → ADD a fresh entry (frequency 1).
+    Returns the op name for the caller's audit log. Hard-delete is NOT an op here — capacity
+    removal is enforce_bucket_cap's job (AD-1); staleness removal is tombstone_lesson's."""
+    key = (
+        entry.get("agent"),
+        entry.get("task_type"),
+        _normalize_lesson_text(entry.get("text")),
+    )
+    for existing in bucket:
+        ekey = (
+            existing.get("agent"),
+            existing.get("task_type"),
+            _normalize_lesson_text(existing.get("text")),
+        )
+        if ekey == key:
+            existing["frequency"] = int(existing.get("frequency", 0) or 0) + 1
+            existing["score"] = max(
+                int(existing.get("score", 0) or 0), int(entry.get("score", 0) or 0)
+            )
+            existing["updated"] = entry.get("updated", existing.get("updated", ""))
+            if existing.get("tombstoned"):
+                existing["tombstoned"] = False
+                return "MERGE"
+            return "UPDATE"
+    bucket.append({
+        "agent": entry.get("agent"),
+        "task_type": entry.get("task_type"),
+        "text": str(entry.get("text", "")),
+        "score": int(entry.get("score", 0) or 0),
+        "frequency": 1,
+        "tombstoned": False,
+        "updated": entry.get("updated", ""),
+    })
+    return "ADD"
+
+
+def tombstone_lesson(bucket: list[dict], agent: str, task_type: str, text: str) -> bool:
+    """AD-2 TOMBSTONE — SOFT-delete a stale lesson (tombstoned=True), row RETAINED (never
+    hard-deleted). Excluded from injection + the active-cap sum, but resurrectable via a later
+    MERGE ingest. Returns True when a matching live/tombstoned row was marked."""
+    key = (agent, task_type, _normalize_lesson_text(text))
+    for existing in bucket:
+        ekey = (
+            existing.get("agent"),
+            existing.get("task_type"),
+            _normalize_lesson_text(existing.get("text")),
+        )
+        if ekey == key:
+            existing["tombstoned"] = True
+            return True
+    return False
+
+
+def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
+    """AD-1 summarize-and-evict — keep the ACTIVE lesson-text sum <= max_chars.
+
+    Eviction order (lowest value first): tombstoned dead-weight, then live ascending by
+    (score, frequency). Capacity eviction is the SOLE hard-removal path and is DISTINCT from
+    the AD-2 tombstone soft-delete — it fires on capacity pressure, not staleness, so removing
+    a tombstoned row here is legitimate (it reclaims file space, carries no active weight).
+    Mutates `bucket` in place; returns the evicted entries for the caller's audit.
+    AC: on return, _bucket_active_size(bucket) <= max_chars."""
+    evicted: list[dict] = []
+    if _bucket_active_size(bucket) <= max_chars:
+        return evicted
+
+    def _evict_rank(e: dict) -> tuple:
+        return (
+            0 if e.get("tombstoned") else 1,  # tombstoned evicted first
+            int(e.get("score", 0) or 0),
+            int(e.get("frequency", 0) or 0),
+        )
+
+    # Evicting a tombstoned row does not shrink the active sum, so the loop keeps going until a
+    # live row is removed — it terminates because the bucket strictly shrinks each pass.
+    while bucket and _bucket_active_size(bucket) > max_chars:
+        victim = min(bucket, key=_evict_rank)
+        bucket.remove(victim)
+        evicted.append(victim)
+    return evicted
+
+
+def load_lesson_store(path: str) -> dict:
+    """Load the JSON lesson store → {"ctm": [...], "epm": [...]}. Missing / unreadable /
+    malformed → a fresh empty store (fail-soft: a corrupt store must not block aggregation)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    for bucket in ("ctm", "epm"):
+        if not isinstance(data.get(bucket), list):
+            data[bucket] = []
+    return data
+
+
+def save_lesson_store(path: str, store: dict) -> None:
+    """Atomically persist the lesson store (reuses the crash-safe atomic_write)."""
+    atomic_write(
+        path, json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def ingest_outcome_lessons(records: list[dict], path: str | None = None) -> dict[str, int]:
+    """Build/update the CTM/EPM lesson store from a batch of outcomes, then enforce the caps.
+
+    Fail-soft: any error logs + returns zero-counts — a lesson-store problem MUST NOT block the
+    core aggregation (sibling policy to the PG read helpers). Returns per-op counts for the log."""
+    store_path = path or LESSON_STORE_FILE
+    ops: dict[str, int] = defaultdict(int)
+    try:
+        store = load_lesson_store(store_path)
+        today = datetime.now().strftime("%Y-%m-%d")
+        for rec in records:
+            if _is_empty_lesson(rec.get("lesson")):
+                continue
+            bucket_name = classify_lesson_bucket(rec)
+            if bucket_name is None:
+                continue
+            entry = _outcome_to_lesson_entry(rec, today)
+            if not entry["agent"] or entry["agent"] in _UNPREFIXABLE_AGENTS:
+                continue  # no roster stem → not injectable at spawn (AD-3 matches on agent)
+            ops[ingest_lesson(store[bucket_name], entry)] += 1
+        for name, cap in (("ctm", CTM_BUCKET_MAX_CHARS), ("epm", EPM_BUCKET_MAX_CHARS)):
+            evicted = enforce_bucket_cap(store[name], cap)
+            if evicted:
+                ops["EVICT"] += len(evicted)
+        save_lesson_store(store_path, store)
+    except Exception as exc:  # noqa: BLE001 — fail-soft: lesson store MUST NOT block aggregation
+        print(
+            f"[learning-aggregator] lesson-store ingest failed, skip "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+    return dict(ops)
+
+
 def main() -> None:
     if not os.path.isdir(OUTCOMES_DIR):
         return
@@ -928,6 +1173,16 @@ def main() -> None:
                 f"[learning-aggregator] {new_count} new + {updated_count} frequency-updated",
                 file=sys.stderr,
             )
+
+    # AD-1/AD-2: consolidate this batch's lessons into the size-capped CTM/EPM store the
+    # spawn-time injector (AD-3) reads. Fail-soft — never blocks the core aggregation.
+    lesson_ops = ingest_outcome_lessons(new_records)
+    if lesson_ops:
+        print(
+            "[learning-aggregator] lesson store: "
+            + ", ".join(f"{op}={n}" for op, n in sorted(lesson_ops.items())),
+            file=sys.stderr,
+        )
 
     _emit_exclusion_summary(aggregated_count, exclusion_counts)
 
