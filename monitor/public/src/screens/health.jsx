@@ -762,7 +762,8 @@ const COST_GUARD_MODEL = {
   block:          { tone: 'crit',    icon: 'x',     label: 'Blocked',       prefix: 'Spending guard ', titleHint: 'Spending guard blocked — runs stopped (spend ceiling reached)' },
   infra_fault:    { tone: 'crit',    icon: 'x',     label: 'Auth fault',    prefix: '',                titleHint: 'Auth fault — daemon login expired (HTTP 401 / credential), NOT a usage limit · re-auth required' },
   limited:        { tone: 'warn',    icon: 'warn',  label: 'Restricted',    prefix: 'Spending guard ', titleHint: 'Spending guard restricted — some work held back this run' },
-  quota_exceeded: { tone: 'neutral', icon: 'info',  label: 'Limit reached', prefix: 'Spending guard ', titleHint: 'Spending guard limit reached — not a fault (external usage cap · recovers with time)' },
+  // quota_exceeded = warn (usage-limit 도달 주의 톤 · ui.jsx DAEMON_STATUS_TONE 와 의도적 정렬 · 별도 축이나 일관성 위해 재톤).
+  quota_exceeded: { tone: 'warn',    icon: 'info',  label: 'Limit reached', prefix: 'Spending guard ', titleHint: 'Spending guard limit reached — not a fault (external usage cap · recovers with time)' },
   paused:         { tone: 'crit',    icon: 'x',     label: 'Paused',        prefix: 'Spending guard ', titleHint: 'Spending guard paused — runs temporarily stopped' },
 };
 function costGuardModelH(state) {

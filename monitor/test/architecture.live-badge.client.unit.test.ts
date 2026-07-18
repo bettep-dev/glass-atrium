@@ -50,7 +50,7 @@ const DAEMON_STATUS_TONE: Record<string, { tone: string; label: string }> = {
   error: { tone: "crit", label: "Down" },
   missing: { tone: "info", label: "No data" },
   stale: { tone: "crit", label: "Overdue" },
-  quota_exceeded: { tone: "neutral", label: "Usage limit" },
+  quota_exceeded: { tone: "warn", label: "Usage limit" },
 };
 
 // Build once, evaluate in a sandbox — the real top-level helper declarations.
@@ -206,12 +206,16 @@ test("all-healthy fold stays ok", () => {
   );
 });
 
-test("neutral/info-only bindings produce no ring (null)", () => {
-  // quota_exceeded → neutral (not a ring tone).
+test("quota_exceeded folds to warn ring (T3 re-tone)", () => {
+  // quota_exceeded → warn → map ring tone (이전 neutral/no-ring 대체).
   assert.strictEqual(
     arch.worstDaemonTone([daemon("a", "quota_exceeded")]),
-    null,
+    "warn",
   );
+});
+
+test("info-only / empty bindings produce no ring (null)", () => {
+  assert.strictEqual(arch.worstDaemonTone([daemon("a", "missing")]), null);
   assert.strictEqual(arch.worstDaemonTone([]), null);
   assert.strictEqual(arch.worstDaemonTone(undefined), null);
 });
