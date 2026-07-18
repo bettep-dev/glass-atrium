@@ -27,7 +27,7 @@ extract_launcher_fn() {
 
 # _geo_consts — production gate + single-asset ART constants at C=5 (mirrors the launcher readonly
 # block). ART_ROWS/ART_WIDTH are the ONE fixed asset size; ART_MIN_ROWS = 12 + C + ART_ROWS = 35
-# (the flatter 18-row asset lowered the art floor from the pre-flatten 38).
+# (the flatter 18-row asset lowered the art floor from the pre-flatten 39).
 _geo_consts() {
   PLATE_MARGIN=2
   MAX_READABLE=64

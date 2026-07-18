@@ -81,12 +81,22 @@ workbox_body_row2_str() {
 # the done-state digest (Token/Monitor) or blank. Rail-safety: no in-line guard — compute_menu_geometry
 # gates FULLSCREEN on MIN_ROWS (reserves the box), so a rail-colliding WINCH degrades to the compact
 # no-box path BEFORE draw_workbox runs.
+# FRAME GATE (must MIRROR draw_menu): draw_menu frames only at cols >= 56, but compute_menu_geometry
+# admits FULLSCREEN from MIN_COLS=50, so cols 50-55 is fullscreen-yet-unframed — draw_menu emits
+# rail-less item rows there. A plate_mid ├┤ divider in that band would dangle its junctions below a
+# rail-less menu, so below the frame gate close the work area as a SELF-CONTAINED box (plate_top ╭╮
+# corners) instead of the merged-box divider.
 draw_workbox() {
   [[ "${FULLSCREEN}" == "true" ]] || return 0
-  local inner
+  local inner cols
   inner="$(plate_inner)"
+  cols="$(term_cols)"
   cup_to "${WORKBOX_FIRST_ROW}" 1
-  plate_mid "${inner}" " work " "${C_FRAME}"      # INTERNAL divider rail (├ ┤ junctions), splits the merged box
+  if [[ "${cols}" -lt 56 ]]; then
+    plate_top "${inner}" " work " "${C_FRAME}"    # unframed band (cols 50-55): self-contained top rail (╭╮), no ├┤ junctions
+  else
+    plate_mid "${inner}" " work " "${C_FRAME}"    # INTERNAL divider rail (├ ┤ junctions), splits the merged box
+  fi
   plate_row "${inner}" "$(workbox_body_str)"      # LINE 1 headline (bar + i/N + label)
   plate_row "${inner}" "$(workbox_body_row2_str)" # LINE 2 detail (tail / dots / done digest / blank)
   plate_bot "${inner}" "${C_FRAME}"               # the SINGLE shared bottom rail closing the whole box

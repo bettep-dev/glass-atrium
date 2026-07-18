@@ -35,7 +35,9 @@ LIB="${PROBE_LIB:?}"
 FULLSCREEN=true
 USE_UTF8="${PROBE_USE_UTF8:-true}"
 USE_COLOR=false
-COLUMNS=80
+# COLUMNS drives term_cols → the draw_menu / draw_workbox frame gate (< 56 = unframed). Default 80
+# (framed merged box); the unframed-band pin overrides it to 52 (fullscreen-yet-unframed, cols 50-55).
+COLUMNS="${PROBE_COLS:-80}"
 PLATE_MARGIN=2
 PLATE_LEFT=8
 MENU_INNER_OVERRIDE=40
@@ -185,4 +187,49 @@ PROBE_EOF
   # the blank pad is the LAST row before the divider: side rails '|' only, no glyph content.
   local ascii_last="${lines[$((work_idx - 1))]//|/}"
   [[ -z "${ascii_last// /}" ]]
+}
+
+# --- unframed band (cols 50-55): fullscreen-yet-unframed → SELF-CONTAINED work box, no ├┤ divider ---
+# compute_menu_geometry admits FULLSCREEN from MIN_COLS=50, but draw_menu / draw_workbox frame only at
+# cols >= 56, so cols 50-55 is fullscreen-yet-unframed: draw_menu emits rail-less item rows. A plate_mid
+# ├┤ divider in that band would dangle its junctions below a rail-less menu — draw_workbox MUST instead
+# close the work area as a SELF-CONTAINED box (plate_top ╭╮ corners + shared ╰╯ bottom rail, no ├┤).
+
+@test "UTF-8 unframed band (cols=52): work box is self-contained (╭ ' work ' top rail, ╰╯ bottom rail, NO ├ ┤ junctions)" {
+  run env PROBE_GA_ROOT="${GA}" PROBE_LIB="${GA}/lib" PROBE_COLS=52 bash "${PROBE}"
+  [ "${status}" -eq 0 ]
+
+  local i=0 line
+  local work_div=0 bottom=0 junction_lines=0
+  local work_idx=-1 bottom_idx=-1
+  for line in "${lines[@]}"; do
+    if [[ "${line}" == *" work "* ]]; then
+      work_div=$((work_div + 1))
+      work_idx="${i}"
+    fi
+    # bottom rail = a rail carrying BOTH bottom corners (╰ ╯).
+    if [[ "${line}" == *"╰"* && "${line}" == *"╯"* ]]; then
+      bottom=$((bottom + 1))
+      bottom_idx="${i}"
+    fi
+    # a merged-box divider junction (├ or ┤) MUST NOT appear anywhere in the unframed band.
+    if [[ "${line}" == *"├"* || "${line}" == *"┤"* ]]; then
+      junction_lines=$((junction_lines + 1))
+    fi
+    i=$((i + 1))
+  done
+
+  # exactly ONE ' work ' rail and exactly ONE bottom rail — the self-contained work box.
+  [ "${work_div}" -eq 1 ]
+  [ "${bottom}" -eq 1 ]
+
+  # the ' work ' rail uses TOP corners (╭ ╮) — a self-contained box top, NOT the merged-box ├┤ divider.
+  [[ "${lines[${work_idx}]}" == *"╭"* && "${lines[${work_idx}]}" == *"╮"* ]]
+  [[ "${lines[${work_idx}]}" != *"├"* && "${lines[${work_idx}]}" != *"┤"* ]]
+
+  # NO ├ ┤ junction glyphs anywhere: the rail-less unframed menu never leaves a dangling divider.
+  [ "${junction_lines}" -eq 0 ]
+
+  # ordering: the ' work ' top rail precedes the ╰╯ bottom rail (the box builds top→bottom).
+  [ "${work_idx}" -lt "${bottom_idx}" ]
 }
