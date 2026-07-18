@@ -1893,11 +1893,8 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents }) {
 
 // 공통 chrome
 function EmptyStateC({ message }) {
-  return (
-    <div className="placeholder" style={{ padding: 20 }}>
-      {message}
-    </div>
-  );
+  const { EmptyState } = window.UI;
+  return <EmptyState message={message} />;
 }
 
 function ErrorBannerC({ title, detail, onRetry }) {

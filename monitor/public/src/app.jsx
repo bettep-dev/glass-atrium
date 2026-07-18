@@ -12,7 +12,7 @@ const NAV = [
 	{ id: "health", label: "System health", icon: "pulse" },
 	{ id: "wiki", label: "Wiki", icon: "brain" },
 	{ id: "architecture", label: "System map", icon: "git" },
-	{ id: "clauded-docs", label: "Documents", icon: "target" },
+	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -46,6 +46,7 @@ function parseHashScreen() {
 
 function Sidebar({ active, onNav, dynamicBadges }) {
 	const { Icon } = window.UI;
+	const systems = systemsRollup(dynamicBadges);
 	return (
 		<aside className="w-[220px] flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="px-4 py-4 border-b border-line">
@@ -103,8 +104,9 @@ function Sidebar({ active, onNav, dynamicBadges }) {
 			<div className="p-3 border-t border-line">
 				<div className="bg-sunken rounded-md p-2.5 text-[11px]">
 					<div className="flex items-center gap-1.5 mb-1">
-						<span className="w-1.5 h-1.5 rounded-full bg-ok live-dot"></span>
-						<span className="font-mono text-dim">ALL SYSTEMS</span>
+						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
+						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
+						<span className="font-mono text-dim">{systems.label}</span>
 					</div>
 				</div>
 			</div>
@@ -146,6 +148,20 @@ function liveToBadge(live) {
 		badDaemons > 0 ? { badge: String(badDaemons), badgeTone: "warn" } : null;
 
 	return { architecture, daemonHealth };
+}
+
+// ALL SYSTEMS 풋터 도트 = health nav 슬롯 라이브 롤업 파생 (KPI 실패 카운트 + 데몬 다운/partial/quota).
+// 미폴링(health 키 부재) → neutral 'CHECKING…' (가짜 ok 금지) · 이슈 0 → ok · 이슈 N → warn.
+// 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
+function systemsRollup(dynamicBadges) {
+	const polled =
+		dynamicBadges &&
+		Object.prototype.hasOwnProperty.call(dynamicBadges, "health");
+	if (!polled) return { tone: "neutral", dotClass: "bg-faint", label: "CHECKING…" };
+
+	const badges = dynamicBadges.health?.badges || [];
+	if (badges.length === 0) return { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
+	return { tone: "warn", dotClass: "bg-warn", label: "ISSUES DETECTED" };
 }
 
 // health nav 배지 병합 — 독립 두 소스(KPI 실패 카운트 · 데몬 다운 카운트)가 한 슬롯에 병치.

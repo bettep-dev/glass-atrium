@@ -22,6 +22,9 @@ const LEARNING_LOG_URL = "/api/improvement/learning-log?limit=50";
 // 만 소비 — 사이클 변경량 합계(self-improvement 적용 효과) + verified/reject 날짜 추세.
 // raw event 행은 렌더하지 않음 → 집계 학습 신호만 유지 (경계 위반 아님).
 const LOOP_EVENTS_URL = "/api/improvement/loop-events?limit=200";
+// correction_signals AGGREGATE — stage1-vs-stage2 검출 일치 + revision_count delta.
+// 집계 필드만 소비(list 는 미렌더) → 최소 limit.
+const CORRECTION_SIGNALS_URL = "/api/improvement/correction-signals?limit=1";
 // verified = 적용/검증 성공(CTM 인접) · reject 계열 = 반려/실패(EPM 인접) → 추세 2-시리즈 분류.
 const TREND_REJECT_RESULTS = new Set([
 	"reject",
@@ -181,6 +184,12 @@ function ScreenImprovement({ onNav }) {
 		data: null,
 		error: null,
 	});
+	// correction_signals 집계 fetch-state — 부분 실패 격리 (실패 시 해당 카드만 생략).
+	const [correctionState, setCorrectionState] = useSI({
+		status: "loading",
+		data: null,
+		error: null,
+	});
 	const [drawerRow, setDrawerRow] = useSI(null);
 	const [toast, setToast] = useSI(null);
 	// 허용/거절 in-flight 카드 id (scalar — 카드 액션은 직렬 1건 · Set 불필요).
@@ -193,6 +202,7 @@ function ScreenImprovement({ onNav }) {
 	const orphanAbortRef = useRI(null);
 	const reviewReasonAbortRef = useRI(null);
 	const loopEventsAbortRef = useRI(null);
+	const correctionAbortRef = useRI(null);
 	const toastTimerRef = useRI(null);
 
 	const triggerRefresh = useCI(() => setRefreshTick((t) => t + 1), []);
@@ -381,6 +391,18 @@ function ScreenImprovement({ onNav }) {
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
+	// correction_signals 집계 fetch — orphan helper 재사용 (5xx/미배포 → error state · 카드 숨김).
+	useEI(() => {
+		const ctrl = new AbortController();
+		correctionAbortRef.current?.abort();
+		correctionAbortRef.current = ctrl;
+		setCorrectionState({ status: "loading", data: null, error: null });
+
+		fetchOrphanI(CORRECTION_SIGNALS_URL, ctrl.signal, setCorrectionState);
+
+		return () => ctrl.abort();
+	}, [refreshTick]);
+
 	const columnRows = useMI(() => {
 		if (listState.status !== "ready" || !listState.data)
 			return { safety: [], applied: [], rejected: [] };
@@ -481,7 +503,6 @@ function ScreenImprovement({ onNav }) {
         .i-row-card:focus-visible { outline:2px solid rgb(var(--accent)); outline-offset:2px; }
         .i-anim-skel { animation:skelPulseI 1.4s ease-in-out infinite; }
         .i-anim-toast { animation:toastInI 180ms ease-out; }
-        .i-empty-col { border:1px dashed rgb(var(--faint) / 0.5); border-radius:8px; padding:28px; text-align:center; color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:12px; }
         /* 카드 메타 배지 — 전부 canonical window.UI.Badge(.pill family)로 이관 (screen-local 배지 CSS 폐지).
            tone 은 status Badge 의 내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud fill 금지 · dual-encode 보존). */
         /* 시그니처 셀 — 2줄 클램프 + 셀 최소폭(crush 방지) + 행 최소높이(1↔2줄 점프 차단). */
@@ -588,6 +609,7 @@ function ScreenImprovement({ onNav }) {
 					onRetry={triggerRefresh}
 				/>
 				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
+				<CorrectionSignalsCardI state={correctionState} />
 				<StyleRefCardI state={listState} styleRef={styleRef} />
 				<AttributionPointerCardI state={attributionState} onNav={onNav} />
 				<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
@@ -945,7 +967,15 @@ function KanbanColumnI({
 	onAction,
 	pendingActionId,
 }) {
+	const { EmptyState } = window.UI;
 	const isCompact = column.variant === "compact";
+	// 빈-컬럼 안내 — 원인 한 줄 + 다음-단계 힌트 (bare "Empty" 대체, 공용 EmptyState atom SoT).
+	const emptyMessage =
+		column.key === "applied" ? "Nothing applied yet" : "Nothing rejected";
+	const emptyHint =
+		column.key === "applied"
+			? "Approved suggestions move here once the loop applies them."
+			: "Suggestions the loop or a reviewer turned down show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
 		<div className="flex flex-col min-h-0 gap-2">
@@ -976,7 +1006,7 @@ function KanbanColumnI({
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
 				{rows.length === 0 ? (
-					<div className="i-empty-col">Empty</div>
+					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
 					<RejectedCompactListI rows={rows} onRowClick={onRowClick} />
 				) : (
@@ -1340,45 +1370,23 @@ function ConfidenceBadgeI({ value }) {
 // NULL/undefined → ℹ "n/a" — 개별 proposal 의 실측 신뢰도 미산정분에 대한 방어 분기
 // (daemon 이 대부분 채우지만 산정 전 row 존재 가능). `classes` = pill 배경 (proposal 카드 배지) · `tone` = text class (KPI tile · 표).
 function confidenceBadgeMetaI(value) {
-	// icon = symbol 과 정합(FIX-D 중앙화) — Icon 렌더 경로 소비 · symbol 은 drawer String() 텍스트 폴백 유지.
+	const { TONE_GLYPH, TONE_ICON } = window.UI;
+	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 tone/symbol 맵 제거.
+	const build = (tone, label, titleHint) => ({
+		tone: `text-${tone}`,
+		symbol: TONE_GLYPH[tone],
+		icon: TONE_ICON[tone],
+		label,
+		titleHint,
+	});
 	if (value === null || value === undefined || Number.isNaN(Number(value))) {
-		return {
-			classes: "bg-blue-900/40 text-blue-200",
-			tone: "text-info",
-			symbol: "ℹ",
-			icon: "info",
-			label: "n/a",
-			titleHint: "Not measured for this suggestion",
-		};
+		return build("info", "n/a", "Not measured for this suggestion");
 	}
 	const v = Number(value);
 	const pct = `${(v * 100).toFixed(0)}%`;
-	if (v >= 0.7)
-		return {
-			classes: "bg-green-900/40 text-green-200",
-			tone: "text-ok",
-			symbol: "✓",
-			icon: "check",
-			label: `Confidence ${pct}`,
-			titleHint: `${v.toFixed(4)} (high)`,
-		};
-	if (v >= 0.4)
-		return {
-			classes: "bg-yellow-900/40 text-yellow-200",
-			tone: "text-warn",
-			symbol: "⚠",
-			icon: "warn",
-			label: `Confidence ${pct}`,
-			titleHint: `${v.toFixed(4)} (medium)`,
-		};
-	return {
-		classes: "bg-red-900/40 text-red-200",
-		tone: "text-crit",
-		symbol: "✕",
-		icon: "x",
-		label: `Confidence ${pct}`,
-		titleHint: `${v.toFixed(4)} (low)`,
-	};
+	if (v >= 0.7) return build("ok", `Confidence ${pct}`, `${v.toFixed(4)} (high)`);
+	if (v >= 0.4) return build("warn", `Confidence ${pct}`, `${v.toFixed(4)} (medium)`);
+	return build("crit", `Confidence ${pct}`, `${v.toFixed(4)} (low)`);
 }
 
 // pre_verify_status → canonical 4-badge dual-encoded mapping.
@@ -1386,49 +1394,27 @@ function confidenceBadgeMetaI(value) {
 // `kind` = 안정 식별자 (로직 분기용 — 표시 문자열 변경이 로직을 깨뜨리지 않도록)
 //   · `label` = 사용자 노출 라벨 · `titleHint` = 원본 status (진단값 verbatim).
 function preVerifyBadgeI(status, passed) {
-	// icon = Icon 렌더 경로(FIX-D) · tone = text class(메타 스트립 flat 표기, bg pill 없이 색+기호+텍스트 유지).
+	const { TONE_GLYPH, TONE_ICON } = window.UI;
+	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 symbol 맵 + 하드코딩 Tailwind fill 제거
+	// (confidenceBadgeMetaI/learningStatusBadgeI 형제와 동일 fold). kind/label/titleHint 만 로컬 매핑.
+	const build = (kind, tone, label, titleHint) => ({
+		kind,
+		tone: `text-${tone}`,
+		symbol: TONE_GLYPH[tone],
+		icon: TONE_ICON[tone],
+		label,
+		titleHint,
+	});
 	if (passed === true) {
-		return {
-			kind: "passed",
-			classes: "bg-green-900/40 text-green-200",
-			tone: "text-ok",
-			symbol: "✓",
-			icon: "check",
-			label: "Pre-check passed",
-			titleHint: status || "passed",
-		};
+		return build("passed", "ok", "Pre-check passed", status || "passed");
 	}
 	if (typeof status === "string" && status.startsWith("error:")) {
-		return {
-			kind: "budget-wall",
-			classes: "bg-yellow-900/40 text-yellow-200",
-			tone: "text-warn",
-			symbol: "⚠",
-			icon: "warn",
-			label: "Budget hit",
-			titleHint: status,
-		};
+		return build("budget-wall", "warn", "Budget hit", status);
 	}
 	if (passed === false || status === "failed") {
-		return {
-			kind: "failed",
-			classes: "bg-red-900/40 text-red-200",
-			tone: "text-crit",
-			symbol: "✕",
-			icon: "x",
-			label: "Pre-check failed",
-			titleHint: status || "failed",
-		};
+		return build("failed", "crit", "Pre-check failed", status || "failed");
 	}
-	return {
-		kind: "pending",
-		classes: "bg-blue-900/40 text-blue-200",
-		tone: "text-info",
-		symbol: "ℹ",
-		icon: "info",
-		label: "Pending",
-		titleHint: status || "pending",
-	};
+	return build("pending", "info", "Pending", status || "pending");
 }
 
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
@@ -1567,7 +1553,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 				<CardHead title="Results by check status (30 days)" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No tasks in the last {windowDays} days
 					</div>
@@ -1768,7 +1754,7 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 				<CardHead title="Suggestion confidence (measured)" sub="30 days" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No suggestions in the last 30 days
 					</div>
@@ -2032,13 +2018,22 @@ function StyleRefCardI({ state, styleRef }) {
 					</div>
 				))}
 			</div>
+			{/* verified/unverified/greenfield split + fake_rate (P13) — 데이터 부재 시 미렌더(placeholder 로 위임). */}
+			{hasData && (
+				<StyleRefSplitI
+					verified={styleRef.overall_verified_count}
+					unverified={styleRef.overall_unverified_count}
+					greenfield={styleRef.overall_greenfield_count}
+					fakeRate={styleRef.overall_fake_rate}
+				/>
+			)}
 			{/* per-agent breakdown — 데이터 부재 시 "누적 중" 안내. */}
 			{hasData ? (
 				<StyleRefAgentTableI rows={agentRows} />
 			) : (
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						Collecting data
 					</div>
@@ -2089,6 +2084,38 @@ function StyleRefAgentTableI({ rows }) {
 					})}
 				</tbody>
 			</table>
+		</div>
+	);
+}
+
+// verified/unverified/greenfield 분해 + fake_rate 도표 (P13 · Gaming-the-Judge).
+// fake_rate = unverified / verify-eligible — eligible=0 → "—" (가짜 0 금지).
+function StyleRefSplitI({ verified, unverified, greenfield, fakeRate }) {
+	const cells = [
+		["Verified", verified, "text-ok"],
+		["Unverified", unverified, "text-warn"],
+		["Greenfield", greenfield, "text-info"],
+	];
+	return (
+		<div className="px-3 pb-1">
+			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
+				{cells.map(([label, count, tone]) => (
+					<span key={label} className="inline-flex items-baseline gap-1">
+						<span className={tone}>{label}</span>
+						<span className="text-ink font-semibold">
+							{formatIntI(Number(count ?? 0))}
+						</span>
+					</span>
+				))}
+				<span className="inline-flex items-baseline gap-1 ml-auto">
+					<span
+						className="text-faint uppercase tracking-wider"
+						title="Fake rate = unverified / verify-eligible (graduation gate < 10%)">
+						Fake rate
+					</span>
+					<span className="text-ink font-semibold">{formatRateI(fakeRate)}</span>
+				</span>
+			</div>
 		</div>
 	);
 }
@@ -2219,7 +2246,7 @@ function LearningLogCardI({ state, onRetry }) {
 				<CardHead title="Learned patterns" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No learned patterns yet
 					</div>
@@ -2287,7 +2314,7 @@ function LearningLogTableI({ patterns }) {
 		return (
 			<div className="px-3 pb-3">
 				<div
-					className="i-empty-col"
+					className="placeholder"
 				>
 					No new patterns in the last 7 days
 				</div>
@@ -2341,18 +2368,16 @@ function LearningLogTableI({ patterns }) {
 // learning-aggregator status → dual-encoded 배지 (canonical 4-badge palette).
 //   applied/proposed=진행 · identified=초기 · rejected=반려 · 그 외 fallback ℹ.
 function learningStatusBadgeI(status) {
-	switch (status) {
-		case "applied":
-			return { tone: "text-ok", symbol: "✓", label: "Applied" };
-		case "proposed":
-			return { tone: "text-warn", symbol: "⚠", label: "Proposed" };
-		case "rejected":
-			return { tone: "text-crit", symbol: "✕", label: "Declined" };
-		case "identified":
-			return { tone: "text-info", symbol: "ℹ", label: "Spotted" };
-		default:
-			return { tone: "text-info", symbol: "ℹ", label: status || "—" };
-	}
+	const { TONE_GLYPH } = window.UI;
+	// symbol 은 registry(TONE_GLYPH) 단일 출처 — 로컬 tone→symbol 맵 제거. status → tone/label 만 로컬 매핑.
+	const map = {
+		applied: { tone: "ok", label: "Applied" },
+		proposed: { tone: "warn", label: "Proposed" },
+		rejected: { tone: "crit", label: "Declined" },
+		identified: { tone: "info", label: "Spotted" },
+	};
+	const meta = map[status] || { tone: "info", label: status || "—" };
+	return { tone: `text-${meta.tone}`, symbol: TONE_GLYPH[meta.tone], label: meta.label };
 }
 
 // ----- Detail drawer (Read) — 공용 DetailSurface(variant=drawer) 위임. -------
@@ -2375,8 +2400,8 @@ function DetailDrawerI({ row, onClose }) {
 	);
 }
 
-// Detail body — fields grid + 0..N text sections (단일 컴포넌트 — pattern / proposal 공용).
-function DetailBodyI({ fields, sections, footnote }) {
+// Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
+function DetailBodyI({ fields, sections, footnote, preVerify }) {
 	const labelCls = "fs-micro font-mono text-faint uppercase tracking-wider";
 	return (
 		<div className="flex flex-col gap-3">
@@ -2406,9 +2431,61 @@ function DetailBodyI({ fields, sections, footnote }) {
 						)}
 					</div>
 				))}
+			{preVerify && <PreVerifyDetailI {...preVerify} labelCls={labelCls} />}
 			{footnote && (
 				<div className="fs-meta font-mono text-faint mt-2">{footnote}</div>
 			)}
+		</div>
+	);
+}
+
+// PRE-VERIFY drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
+// axis value boolean → PASS/FAIL 배지 · 그 외 → 문자열.
+function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
+	const { Badge } = window.UI;
+	return (
+		<div>
+			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
+			<div className="bg-sunken p-2.5 rounded-md flex flex-col gap-2">
+				<div className="flex items-center gap-1.5 fs-meta font-mono">
+					<SymI s={badge.symbol} className={badge.tone} size={13} />
+					<span className={badge.tone}>{badge.label}</span>
+					{badge.titleHint && badge.titleHint !== badge.label && (
+						<span className="text-faint">· {badge.titleHint}</span>
+					)}
+				</div>
+				{rationale && (
+					<div className="fs-body text-dim whitespace-pre-wrap break-words">
+						{rationale}
+					</div>
+				)}
+				{axes.length > 0 && (
+					<dl
+						className="grid gap-1 items-center"
+						style={{ gridTemplateColumns: "1fr auto" }}>
+						{axes.map(({ key, label, value }) => (
+							<React.Fragment key={key}>
+								<dt className="fs-meta font-mono text-dim">{label}</dt>
+								<dd className="justify-self-end">
+									{typeof value === "boolean" ? (
+										<Badge
+											role="status"
+											tone={value ? "ok" : "crit"}
+											icon
+											title={`${label}: ${value ? "PASS" : "FAIL"}`}>
+											{value ? "PASS" : "FAIL"}
+										</Badge>
+									) : (
+										<span className="fs-meta font-mono text-ink">
+											{String(value)}
+										</span>
+									)}
+								</dd>
+							</React.Fragment>
+						))}
+					</dl>
+				)}
+			</div>
 		</div>
 	);
 }
@@ -2455,8 +2532,8 @@ function buildDetailPropsI(row) {
 		row?.pre_verify_status,
 		row?.pre_verify_passed,
 	);
-	// pre-verify 3-line block: status badge + Korean rationale + axes JSON pretty.
-	const preVerifyBlock = composePreVerifyBlockI(
+	// pre-verify block: status badge + rationale + keyed axis 행 (원시 JSON 제거 · P10).
+	const preVerifyDetail = composePreVerifyI(
 		preVerify,
 		row?.pre_verify_rationale,
 		row?.pre_verify_axes,
@@ -2482,29 +2559,48 @@ function buildDetailPropsI(row) {
 		sections: [
 			["PATTERN LABEL", row?.pattern_label, false],
 			["RATIONALE", row?.rationale, false],
-			["PRE-VERIFY", preVerifyBlock, true],
 		],
+		preVerify: preVerifyDetail,
 	};
 }
 
-// pre-verify 3-line render block — section value (mono pre) 형식.
-// 빈 status + 빈 rationale + 빈 axes → null 반환 (sections filter 가 미렌더 처리).
-function composePreVerifyBlockI(badge, rationale, axes) {
-	const hasContent = (badge && badge.kind !== "pending") || rationale || axes;
+// pre_verify_axes 4-axis compliance dict {C1..C4} → 사람이 읽는 라벨 (daemon_cycle 4-axis 게이트 원천).
+const PRE_VERIFY_AXIS_LABELS = {
+	C1: "Rule-loading policy",
+	C2: "Global absolute rules",
+	C3: "Scope absolute rules",
+	C4: "Agent's own rules",
+};
+
+// snake/kebab key → Title Case 폴백 (미지의 axis 키 대비).
+function humanizeAxisKeyI(key) {
+	return String(key)
+		.replace(/[_-]+/g, " ")
+		.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// axes JSON → [{key,label,value}] 행 배열. 객체 아님 → [] (원시 JSON 텍스트 렌더 차단).
+function toAxisEntriesI(axes) {
+	if (!axes || typeof axes !== "object" || Array.isArray(axes)) return [];
+	return Object.keys(axes).map((k) => ({
+		key: k,
+		label: PRE_VERIFY_AXIS_LABELS[k] || humanizeAxisKeyI(k),
+		value: axes[k],
+	}));
+}
+
+// pre-verify drawer block 구조화 — badge + rationale + keyed axis 행 (원시 JSON blob 제거).
+// 빈 status + 빈 rationale + 빈 axes → null (미렌더).
+function composePreVerifyI(badge, rationale, axes) {
+	const entries = toAxisEntriesI(axes);
+	const hasContent =
+		(badge && badge.kind !== "pending") || rationale || entries.length > 0;
 	if (!hasContent) return null;
-	const lines = [];
-	lines.push(
-		`${badge.symbol} ${badge.label}${badge.titleHint && badge.titleHint !== badge.label ? ` · ${badge.titleHint}` : ""}`,
-	);
-	if (rationale) lines.push(String(rationale));
-	if (axes !== null && axes !== undefined) {
-		try {
-			lines.push(JSON.stringify(axes, null, 2));
-		} catch (_) {
-			lines.push(String(axes));
-		}
-	}
-	return lines.join("\n");
+	return {
+		badge,
+		rationale: rationale ? String(rationale) : null,
+		axes: entries,
+	};
 }
 
 // ----- Change summary card (T-IMP-1 · T-IMP-6) -------------------------------
@@ -2562,7 +2658,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry }) {
 				<CardHead title="Self-improvement changes (applied)" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No improvement cycles recorded yet
 					</div>
@@ -2728,7 +2824,7 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 				<CardHead title="Top candidate patterns (ranked)" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No candidate patterns in the last 7 days
 					</div>
@@ -2756,7 +2852,7 @@ function RankedCandidateCardI({ state, onRowClick, onRetry }) {
 			<div className="px-3 pb-3 flex flex-col gap-1.5">
 				{active.length === 0 ? (
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						No active candidates — all declined (see
 						backlog)
@@ -2858,6 +2954,93 @@ function candidateSeverityI(freq, maxFreq) {
 // 색 단독 인코딩 금지 — CTM=solid · EPM=dashed 선스타일이 비색 1차 신호 (Sparkline 은
 // dash 미지원 → 인라인 SVG 직접 path 2개). 윈도우 합계 텍스트 동반 (a11y).
 
+// correction_signals AGGREGATE 카드 — stage1(regex) vs stage2(agent-emit) 검출 일치율
+// + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
+// 가짜 0 금지. error(503/테이블 부재) → 카드 숨김 (loop-events 와 동일 degrade).
+function CorrectionSignalsCardI({ state }) {
+	const { CardHead, formatKstDate } = window.UI;
+	const title = "Detection agreement (correction signals)";
+
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !state.data) {
+		return (
+			<div className="card">
+				<CardHead title={title} />
+				<div className="p-3">
+					<div
+						className="i-anim-skel"
+						style={{
+							height: 60,
+							borderRadius: 8,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+						}}
+					/>
+				</div>
+			</div>
+		);
+	}
+
+	const d = state.data;
+	// 빈 테이블 → 정직한 빈 상태 (다음 단계 힌트 동반). 가짜 0% 미표기.
+	if (!d.total_signals) {
+		return (
+			<div className="card">
+				<CardHead title={title} />
+				<div className="px-3 pb-3">
+					<div className="placeholder">
+						No correction signals recorded yet — appears once a run logs a
+						stage1/stage2 detection.
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	const agr = d.agreement;
+	const total = agr.total || 0;
+	// stage1·stage2 가 concur 한 비율(both OR neither) — 검출기 합의도.
+	const agreePct = total > 0 ? ((agr.agreement_count / total) * 100).toFixed(1) : "0.0";
+	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
+
+	return (
+		<div className="card">
+			<CardHead
+				title={title}
+				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
+			/>
+			<div className="px-3 pb-3 space-y-2">
+				<div className="fs-body">
+					<span className="font-mono text-ink">{agreePct}%</span>{" "}
+					<span className="text-faint">stage1/stage2 agreement</span>
+				</div>
+				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
+				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+					<span>
+						<span className="text-ok">both</span> {formatIntI(agr.both_matched)}
+					</span>
+					<span>
+						<span className="text-warn">stage1 only</span>{" "}
+						{formatIntI(agr.stage1_only)}
+					</span>
+					<span>
+						<span className="text-warn">stage2 only</span>{" "}
+						{formatIntI(agr.stage2_only)}
+					</span>
+					<span>
+						<span className="text-faint">neither</span>{" "}
+						{formatIntI(agr.neither_matched)}
+					</span>
+				</div>
+				<div className="fs-micro font-mono text-faint">
+					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
+					{formatIntI(d.revision_delta_max)}
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function TrendCardI({ state, aggregate }) {
 	const { CardHead } = window.UI;
 	if (state.status === "error") return null;
@@ -2888,7 +3071,7 @@ function TrendCardI({ state, aggregate }) {
 				<CardHead title="Verified vs rejected (trend)" />
 				<div className="px-3 pb-3">
 					<div
-						className="i-empty-col"
+						className="placeholder"
 					>
 						Not enough days to plot a trend
 					</div>
@@ -3177,9 +3360,8 @@ function groupByColumnI(proposals) {
 	return out;
 }
 
-function formatIntI(n) {
-	return (Number(n) || 0).toLocaleString("en-US");
-}
+// 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
+const formatIntI = window.UI.formatInt;
 // date-only "YYYY-MM-DD" 문자열 전용 (cycle_date · discovered_date · window_start/end ·
 // latest_window_end — 서버 formatDateOnly 직렬화). new Date 파싱 회피 → tz 일자 shift 차단
 // (UTC 자정 문자열을 브라우저 로컬로 해석하면 음수 오프셋에서 전날로 밀림). 문자열에서 MM/DD 만 추출.

@@ -3150,9 +3150,8 @@ function describeApiErrorCD(payload, status) {
 	}
 }
 
-function formatIntCD(value) {
-	return (Number(value) || 0).toLocaleString("en-US");
-}
+// 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기
+const formatIntCD = window.UI.formatInt;
 
 // created_at 등 모든 displayed 시각 = 서버 .toISOString() real-UTC instant
 // → 브라우저-local getHours/getDate 대신 KST 고정 포맷터 위임 (사용자 지시: 표시 시각 KST 명시).

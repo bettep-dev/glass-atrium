@@ -19,6 +19,17 @@
   --cat-3:    37  99 235;
   --cat-4:   219  39 119;
 
+  /* Agent 식별 팔레트 (categorical · 테마 불변) — AgentBadge fill. 이니셜 전경은 --agent-ink 고정 dark(전 8색 ≥3.9:1). */
+  --agent-1:  59 130 246;
+  --agent-2: 139  92 246;
+  --agent-3:   6 182 212;
+  --agent-4:  16 185 129;
+  --agent-5: 245 158  11;
+  --agent-6: 236  72 153;
+  --agent-7: 239  68  68;
+  --agent-8:   8 145 178;
+  --agent-ink: 28  25  23;
+
   /* ── Tier 2 — Elevation (신규 · additive, §3.2) ─────────────────── */
   --elev-2: 252 252 251;          /* kind A primitive: 다크 전용 raised-2 fill (라이트는 elev 255 천장이라 미사용) */
   --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */

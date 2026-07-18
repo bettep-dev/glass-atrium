@@ -458,6 +458,8 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
+	const rows = sortDomainsMC(domains || []);
+
 	return (
 		<div className="mb-4">
 			<SectionHeadMC label="Model assignment" />
@@ -472,7 +474,7 @@ function DomainsSectionMC({
 					</tr>
 				</thead>
 				<tbody>
-					{domains.map((d) => (
+					{rows.map((d) => (
 						<DomainRowMC
 							key={d.domain}
 							domain={d}
