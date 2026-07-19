@@ -884,9 +884,8 @@ def _update_evicted_digest(bucket: list[dict], evicted: list[dict]) -> None:
         bucket.append(digest)
     tags: dict[str, int] = dict(digest.get("tags") or {})
     for e in live_evicted:
-        tags[str(e.get("task_type") or "").strip()] = (
-            tags.get(str(e.get("task_type") or "").strip(), 0) + 1
-        )
+        tag = str(e.get("task_type") or "").strip()
+        tags[tag] = tags.get(tag, 0) + 1
     digest["evicted_count"] = int(digest.get("evicted_count", 0) or 0) + len(live_evicted)
     digest["tags"] = tags
     digest["text"] = _render_evicted_digest_text(digest["evicted_count"], tags)
@@ -905,8 +904,6 @@ def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
     Mutates `bucket` in place; returns the evicted entries for the caller's audit.
     AC: on return, _bucket_active_size(bucket) <= max_chars."""
     evicted: list[dict] = []
-    if _bucket_active_size(bucket) <= max_chars:
-        return evicted
 
     def _evict_rank(e: dict) -> tuple:
         return (

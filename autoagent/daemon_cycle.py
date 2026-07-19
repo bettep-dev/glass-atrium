@@ -4739,7 +4739,7 @@ def classify_dead_reference(
     stderr note) when ≥1 dead reference is found. It NEVER rejects the patch.
     """
     dead: list[str] = []
-    checked: list[str] = []
+    checked_count = 0
     for line in _iter_added_reference_lines(diff):
         if _EXAMPLE_CONTEXT_RE.search(line):
             continue
@@ -4750,7 +4750,7 @@ def classify_dead_reference(
             resolved = _resolve_reference_token(token)
             if resolved is None:
                 continue
-            checked.append(token)
+            checked_count += 1
             if not resolved.exists():
                 dead.append(token)
 
@@ -4761,7 +4761,7 @@ def classify_dead_reference(
         "classification": "dead-reference" if is_dead else "ok",
         "warning": is_dead,
         "dead_references": dead,
-        "checked_count": len(checked),
+        "checked_count": checked_count,
         "target_file": target_file,
     }
     if record and is_dead:
