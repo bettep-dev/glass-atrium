@@ -4651,6 +4651,128 @@ def _diff_touches_hook_file(diff: str, target_file: str) -> bool:
     return False
 
 
+# -- reference-resolution guard ---------------------------------------------
+#
+# run_pre_verify delegates entirely to an LLM over 4 semantic axes (C1-C4) with
+# NO mechanical on-disk existence check on path/rule pointers a diff INTRODUCES,
+# so a plausible-but-DEAD pointer (a since-moved rule path — e.g. the pre-move
+# `~/.claude/rules/core-*.md` form that lost its `glass-atrium/` segment) sails
+# through. This deterministic pass resolves every in-scope pointer token added by
+# the diff against the filesystem and WARNS on a miss. It is DETECTION-ONLY —
+# never a hard reject (per shared-self-improve-hygiene.md Prose-Only-Add: false-
+# blocking the learning loop is the worse failure than a missed warning).
+
+# The harness root under which a bare `rules/...` reference resolves.
+_HARNESS_ROOT = HOME / ".claude"
+
+# A path token ending in `.md`. The char class deliberately admits glob `*` and
+# `<var>` chars so a globbed / placeholder token is captured WHOLE — then excluded
+# below — instead of matching only its literal prefix.
+_MD_POINTER_RE = re.compile(r"[~\w.][\w./~<>*-]*\.md\b")
+
+# An illustrative line (example / e.g. / i.e.) cites a form, not a live reference.
+# NB: `e.g.` / `i.e.` end in a period (non-word char) so a trailing `\b` would
+# never match after them — the word-boundary anchor rides only the word forms.
+_EXAMPLE_CONTEXT_RE = re.compile(
+    r"(?:\be\.g\.|\bi\.e\.|\bexamples?\b|\bfor instance\b)", re.IGNORECASE
+)
+
+
+def _iter_added_reference_lines(diff: str) -> list[str]:
+    """Added ('+') diff lines OUTSIDE any fenced code block, diff-prefix stripped.
+
+    A ``` fence toggles collection off: fenced content is an illustrative snippet
+    (a rule QUOTE / worked example), not a live pointer. Fence state is tracked
+    across context AND added lines so a fence opened on a context line still
+    suppresses the added lines inside it.
+    """
+    out: list[str] = []
+    in_fence = False
+    for raw_line in (diff or "").splitlines():
+        if raw_line.startswith(("+++", "---", "@@")):
+            continue
+        marker = raw_line[:1]
+        content = raw_line[1:] if marker in "+- " else raw_line
+        if content.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if marker == "+":
+            out.append(content)
+    return out
+
+
+def _resolve_reference_token(token: str) -> Path | None:
+    """Map an in-scope pointer token to the on-disk Path to check, else None.
+
+    In-scope forms (conservative — only these resolve): tilde-absolute
+    `~/.claude/...`, bare `.claude/...` (the /-lookbehind-blindspot form), and
+    relative `rules/...` (resolved under the harness root). Any other token
+    (a bare filename, a non-harness path) is out of scope → None.
+    """
+    if token.startswith("~/.claude/"):
+        return Path(token).expanduser()
+    if token.startswith(".claude/"):
+        return HOME / token
+    if token.startswith("rules/"):
+        return _HARNESS_ROOT / token
+    return None
+
+
+def classify_dead_reference(
+    diff: str,
+    *,
+    target_file: str = "",
+    store_file: Path | None = None,
+    record: bool = True,
+) -> dict[str, object]:
+    """Deterministic dead-reference detector for ADDED pointer tokens (DETECTION-ONLY).
+
+    For each `+` added line (outside fenced code / example context) it extracts
+    every in-scope `.md` pointer token, EXCLUDES any carrying a glob `*` or a
+    `<var>` placeholder, then resolves the rest on disk (``.exists()`` follows
+    symlinks). A token that does NOT resolve is a DEAD reference → collected.
+
+    Emits a ``reference_resolution`` WARNING into the signal store (+ a loud
+    stderr note) when ≥1 dead reference is found. It NEVER rejects the patch.
+    """
+    dead: list[str] = []
+    checked: list[str] = []
+    for line in _iter_added_reference_lines(diff):
+        if _EXAMPLE_CONTEXT_RE.search(line):
+            continue
+        for token in _MD_POINTER_RE.findall(line):
+            # Glob / placeholder tokens describe a FORM, not a real file.
+            if "*" in token or "<" in token or ">" in token:
+                continue
+            resolved = _resolve_reference_token(token)
+            if resolved is None:
+                continue
+            checked.append(token)
+            if not resolved.exists():
+                dead.append(token)
+
+    is_dead = bool(dead)
+    signal: dict[str, object] = {
+        "signal_type": "reference_resolution",
+        "detection_only": True,
+        "classification": "dead-reference" if is_dead else "ok",
+        "warning": is_dead,
+        "dead_references": dead,
+        "checked_count": len(checked),
+        "target_file": target_file,
+    }
+    if record and is_dead:
+        _record_signal(signal, store_file)
+        sys.stderr.write(
+            "[daemon-cycle] WARN: dead-reference — added line(s) cite "
+            f"unresolved pointer(s) {dead} in target={target_file or '<unknown>'} "
+            "→ DETECTION-ONLY warning (patch NOT rejected).\n"
+        )
+    return signal
+
+
 # -- M4: area classification gate -------------------------------------------
 
 
@@ -7679,6 +7801,18 @@ def run_cycle(
                 sys.stderr.write(
                     "[daemon-cycle] WARN: classify_prose_only_add raised — patch "
                     f"classification lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+                )
+            # Deterministic reference-resolution guard — WARNS on an added line
+            # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
+            # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
+            try:
+                classify_dead_reference(
+                    proposal.proposed_diff, target_file=str(proposal.target_file)
+                )
+            except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
+                sys.stderr.write(
+                    "[daemon-cycle] WARN: classify_dead_reference raised — reference "
+                    f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
                 )
 
         # Cross-day supersede — only when the new proposal is an actual emit target
