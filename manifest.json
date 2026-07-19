@@ -422,7 +422,7 @@
     "hooks/advisory-preedit-facts.sh": "34f3a68fc7a18d2f26c096b3842d3dc0de3cf6462475833649efa39c01a8481f",
     "hooks/advisory-spawn-budget.sh": "11a38ee803b449e79511340e6e809f079fdc884d533f68413626de8af752744d",
     "hooks/advisory-spawn-cost.sh": "9ce280d6f1b43ecd3842e1240f813c9e2f7d8a735aa04ae45ae9b91df89134a9",
-    "hooks/advisory-subagent-budget.sh": "0a82999f03a5eb8dc7494536d10a6db8a254714f0c62cb98409bcf0b540f790e",
+    "hooks/advisory-subagent-budget.sh": "e55f6e0a97a0d2700762079dec300943f613b2f8710c9dc2f3d78557241e57dd",
     "hooks/agent-tracker.sh": "27803402c4d651123ccacc11cb67f379885e37fa8f30783c860c5ea79418cd42",
     "hooks/backfill-cost-events.py": "a159a760d75640a5a7f0b8da9bde6f62fc1675b16892c7805428b99cf5eb3075",
     "hooks/block-dangerous-commands.sh": "4a15174af5979077734d66504e225d47a9d715191892be7294acaf52ab5d5c86",
