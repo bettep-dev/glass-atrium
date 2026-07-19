@@ -52,13 +52,11 @@ FILE_PATH="$(hook_get_tool_input "${INPUT}" "file_path")"
 basename_only="${FILE_PATH##*/}"
 case "${FILE_PATH}" in
   */templates/* | */template/*) exit 0 ;;
-  *) : ;;
 esac
 case "${basename_only}" in
   *.template | *.template.* | *.tmpl | *.tpl | *.j2 | *.jinja | *.jinja2 | *.mustache | *.hbs | *.handlebars)
     exit 0
     ;;
-  *) : ;;
 esac
 
 # Extension → checker. No extension (basename has no dot) or an unlisted extension → allow.
