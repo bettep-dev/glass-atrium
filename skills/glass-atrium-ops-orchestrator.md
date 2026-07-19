@@ -135,12 +135,15 @@ Delegation required elements: **Goal · Target files/paths · Constraints · Com
 | `tool_budget` | Max total tool uses; hitting ceiling → stop + emit status | glass-atrium-intel-researcher ~15, glass-atrium-intel-planner ~12, glass-atrium-qa-code-reviewer ~14, DEV: est ≈ reads + 3×(files to edit) + 4×(suite runs) + 5 margin [default, adjustable]; reads not estimable (exploration-heavy/unfamiliar surface) → floor reads = 2×(files to edit); declare as tool_budget; est ≳40 or borderline-with-unknown-reads → SPLIT (→ orchestrator-role.md Spawn Budget → Delegation-size discipline) |
 | `checkpoint_rule` | Every N tool uses → emit 3-5 line partial summary (current / next / remaining) before next tool call | glass-atrium-intel-researcher every 5, glass-atrium-intel-planner every 4, reviewer every 4 |
 | `output_cap` | Max final-output size | 1500 KR chars or equivalent |
+| `reserved_output` | Reserve-then-check: `input_budget = context_window − reserved_output` — bound the read allowlist to fit `input_budget` so the reserved emit budget is NEVER spent on input (schema-mode analysis: the terminal StructuredOutput MUST have budget left) | reserve emit tail BEFORE work; gate the read scope against `input_budget`, never after |
 | `scope_cap` | Explicit item/file count — no expansion without re-delegation | explicit item count |
 | `tool_preference` | Default extraction tool selection | defuddle-first for HTML ≥ 10KB · WebFetch reserved for structured/API pages < 8KB |
 | `spawn_budget` | Max sub-agent invocations per Wave; hitting ceiling → stop + escalate to user | glass-atrium-intel-researcher ~3, glass-atrium-intel-planner ~2, glass-atrium-qa-code-reviewer ~1 — per-wave soft budgets; concurrency itself is bounded by the Workflow engine's runtime self-cap (core-derived, per-machine), not a fixed number (orchestrator-role.md `### Spawn Budget`) |
 
 
 Hitting `tool_budget` without completion → emit `result: blocked` + partial findings, never silent exit.
+
+These defaults are a **FLOOR to size against, not advisory-only prose** — encode them into the analysis delegation skeleton (`#### Analysis-Track Right-Sizing (input-side)`) so a pasted schema-mode analysis workflow carries the read allowlist + effort ceiling + field cap + budget-guard idiom by construction, plus the analysis-mode `[SIZE-EST]` token. Observed non-emit incidents exceeded these advisory budgets ~2×, so an exploration-heavy analysis read rounds the budget UP (under-estimate = DANGEROUS error, per `orchestrator-role.md` → `### Spawn Budget` `[SIZE-EST]` honesty framing) and, past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), SPLITS by domain up front rather than sizing one broad agent.
 
 - Free-text handoff forbidden → structured instructions only
 - 3+ step chains: propagate original requirements as immutable context through all stages
@@ -288,6 +291,39 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 ```
 
 **Prevention-by-construction + fail-open advisory backstop**: the copy-verbatim verify-stage skeletons in `#### Pipeline Acceptance Criteria` (and the entry-class skeleton) embed this `robustAgent` helper INLINE, route EVERY stage through it, and carry the `[AGENT-COMPOSITION]` declaration block + entry/`[SIZE-EST]` tokens — so a pasted DEV workflow clears the declaration gate and carries the resilience idiom by construction (do NOT strip either back out). As a secondary, fail-open backstop, `enforce-workflow-verify-stage.sh` emits a NON-blocking stderr advisory (exit 0 — NEVER exit 2) when ANY workflow script (DEV **or non-DEV** — the dev-gate was removed since the crashed runs were non-DEV researcher/reporter fan-outs) has at least ONE UNHANDLED schema-mode `agent()` spawn site — a site not `.catch`-chained, not inside a `try{}`, and not routed through a `robustAgent` or custom `.catch`-chained wrapper. This is a decidable PER-SITE check (it closes the former WHOLE-SCRIPT false-negative where one `catch`/`robustAgent` token ANYWHERE silenced N still-bare schema sites), with a false-positive guard: a bare `agent({schema})` inside a custom-named wrapper whose OWN invocation is `.catch`-chained at the join is HANDLED, not flagged. The present-by-construction skeleton is PRIMARY; the advisory only nudges when an unhandled site remains.
+
+#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]
+
+The `robustAgent` resilience layer above hardens the OUTPUT side (a non-emit no longer crashes the run). This section prevents the INPUT-side cause: a single schema-mode NON-DEV analysis/research/audit spawn with a BROAD read + `effort:high` + a 3-4-field schema exhausts the turn budget before the terminal StructuredOutput (the 6 non-emit incidents shared ALL FOUR). Rule SoT: `orchestrator-role.md` → `### Spawn Budget` (`[SIZE-EST]` analysis mode + decompose-by-domain). Every schema-mode analysis delegation MUST carry PER-TRACK bounds by construction:
+
+- **Bounded read-scope** — an explicit file/dir READ allowlist, NEVER a repo sweep.
+- **Effort matched to depth** — default `medium` for broad reads; `high` ONLY for narrow-scope deep reasoning.
+- **Output-field cap** — ≤2-3 required schema fields; a 4-field schema is itself a SPLIT signal (prefer a single free-text `analysis` field per the Shape-tolerant schema bullet above).
+- **Budget-guard idiom** — a hard tool-use ceiling with a STOP-and-EMIT-partial instruction in the delegation prompt.
+- **Decompose-by-domain up front** — past the split trigger (`reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)`), fan an N-domain audit to N scoped agents at Decision time + one reduce phase; NEVER one broad agent then a reactive split.
+
+```js
+// [SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist — bounded per-track analysis spawn
+// [OWNERSHIP] trackA: hooks/** · trackB: monitor/src/** — disjoint read sets, existence-only
+// per-track read allowlists — explicit + disjoint (one object per [OWNERSHIP] track), NEVER a repo sweep
+const READ_TRACKS = [
+  { allowlist: ['hooks/enforce-workflow-verify-stage.sh', 'hooks/test/'], goal: 'trackA: audit the gate hook + its bats coverage' },
+  { allowlist: ['monitor/src/server/routes/'], goal: 'trackB: audit the monitor route surface' },
+];
+const budgetGuard =
+  'HARD BUDGET ~12 tool uses: reserve the emit tail — the terminal StructuredOutput IS the deliverable. ' +
+  'READ ONLY the allowlist below (no repo sweep); effort=medium (raise to high ONLY for narrow deep reasoning); ' +
+  'emit ONLY 2-3 fields. STOP and EMIT a partial cited answer when approaching the ceiling — a partial beats a lost one.';
+// bounded schema: <=2-3 fields, one free-text absorber (Shape-tolerant schema, above)
+const AnalysisSchema = { findings: 'string(maxLength)', completion_block: 'string' };
+const results = await parallel(READ_TRACKS.map((t) =>
+  robustAgent('glass-atrium-intel-researcher', {
+    agentType: 'glass-atrium-intel-researcher',
+    goal: budgetGuard + '\nREAD ALLOWLIST: ' + t.allowlist.join(', ') + '\nTASK: ' + t.goal,
+    effort: 'medium', schema: AnalysisSchema,
+  })));
+const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete, re-delegable
+```
 
 #### Deploy-Safety Idiom (drift-preserving live-copy + verify) [ORCHESTRATOR]
 

@@ -226,6 +226,18 @@ print_resilience_advisory() {
   return 0
 }
 
+# print_analysis_size_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
+# DECISION fires INSIDE the python3 verdict helper: a schema-mode NON-DEV analysis/research/audit spawn
+# (an agent()/agentType literal NOT in the sync-gate-roster-fed DEV_SET) with NO [SIZE-EST] token, on a
+# NON-DEV workflow (a DEV workflow is already hard-blocked by BLOCK_SIZEEST, unchanged). It returns an
+# ANALYSIS_SIZE_ADVISE / ANALYSIS_SIZE_SILENT flag on its FOURTH output line. Advisory (not exit 2) is
+# deliberate: the analysis roster is exclusion-derived + broad, so a nudge cannot false-block a legit
+# workflow — matching the resilience-advisory posture + the plan (clauded-docs/279 D2) fail-open floor.
+print_analysis_size_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (analysis size-attestation, non-blocking): this workflow spawns a schema-mode NON-DEV analysis/research/audit agent (researcher/planner/reporter/reviewer) but carries NO [SIZE-EST] delegation-size token. A single broad-read + high-effort + 3-4-field schema agent exhausts the turn budget before the terminal StructuredOutput (the non-emit failure class). RIGHT-SIZE at Decision time: emit the analysis-mode token log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>'), and if reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) SPLIT by domain into N narrow agents up front (never one broad agent then a reactive split). Bound each track: a file/dir read allowlist (NOT a repo sweep), effort matched to depth (default medium for broad reads; high only for narrow deep reasoning), <=2-3 output fields, and a HARD BUDGET guard ('STOP and EMIT partial when approaching ~N tool uses'). Presence-only, never estimate correctness — parity with the DEV [SIZE-EST]. ADVISORY ONLY, this check NEVER blocks (fail-open on ambiguous shapes)." >&2
+  return 0
+}
+
 # ==== author-facing scaffold emitters (single SoT — reused by both a BLOCK remediation AND --template) ===
 # Keeping the copy-paste examples in ONE function each guarantees the block-reason stderr the gate emits
 # and the --lint --template preview can NEVER drift apart. Single-quoted heredocs = no expansion (the
@@ -281,8 +293,14 @@ EOF
   emit_entry_token_scaffold
   cat <<'EOF'
 
-Delegation-size self-attestation (at EVERY DEV spawn):
+Delegation-size self-attestation (at EVERY DEV spawn — ONE [SIZE-EST] token, two modes):
+  --- DEV mode ---
   log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
+  --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
+  log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>');
+  RIGHT-SIZE the analysis spawn: reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) → SPLIT by
+  domain into N narrow agents up front. Default effort=medium for broad reads; high only for narrow deep
+  reasoning. Bound the read scope to a file/dir allowlist (never a repo sweep) and cap output fields <=3.
 EOF
 }
 
@@ -827,15 +845,63 @@ def resilience_advisory_needed(stripped):
         return False
 
 
+# Agent-name shape for a spawn-position literal. NON-DEV is defined BY EXCLUSION from the runtime
+# dev_set (the sync-gate-roster-fed roster) — NEVER a second hardcoded analysis list. The reviewer +
+# intel-researcher/planner/reporter analysis agents are all caught because none is a dev_set member.
+ANALYSIS_AGENT_SHAPE = r"glass-atrium-[a-z0-9-]+"
+
+
+def analysis_size_advisory_needed(stripped, attestation_src, dev_present, dev_set):
+    # ADVISORY-ONLY (never a verdict, never exit 2): True when a schema-mode NON-DEV analysis/research/
+    # audit spawn exists AND no [SIZE-EST] token is present AND this is NOT already a DEV workflow. The
+    # DEV BLOCK_SIZEEST gate (dev_present) already models the same missing token, so a DEV workflow is
+    # excluded here to avoid a double-signal — the DEV exit-2 semantics stay UNCHANGED. Heuristic for a
+    # schema-mode non-DEV spawn = a schema token in the script + an agent(…)/agentType spawn literal whose
+    # name matches the agent shape and is NOT a dev_set member. FAIL-OPEN: [SIZE-EST] present, no schema
+    # token, no non-DEV spawn, OR any parse uncertainty → False (silent). Presence-only, never estimate
+    # correctness — parity with the DEV [SIZE-EST] honesty floor. Advisory posture (a stderr nudge, not a
+    # block) is deliberate: the analysis roster is exclusion-derived + broad, so a nudge cannot false-block
+    # a legitimate workflow (matches the resilience-advisory precedent).
+    try:
+        if dev_present:
+            return False
+        # The [SIZE-EST] token silences BOTH the DEV gate and this analysis advisory (one token, D1).
+        if SIZE_EST_LITERAL in attestation_src:
+            return False
+        # No schema token anywhere → not a schema-mode workflow → out of scope (fail-open silent).
+        if "schema" not in stripped:
+            return False
+        dev_members = set(d for d in dev_set if d)
+        # Spawn-position literal: agent(<lit>) OR agentType: <lit>. The literal open paren is injected via
+        # chr(40) so the source stays balanced for the bash-3.2 dollar-paren scan (mirrors _agent_open).
+        spawn_re = re.compile(
+            r"agent" + "\\" + chr(40) + r"\s*['\"](" + ANALYSIS_AGENT_SHAPE + r")['\"]"
+            + r"|agentType\s*:\s*['\"](" + ANALYSIS_AGENT_SHAPE + r")['\"]"
+        )
+        for m in spawn_re.finditer(stripped):
+            name = next((g for g in m.groups() if g is not None), None)
+            if name is not None and name not in dev_members:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 # RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
 # SILENT so a fail-open exit (an exception before the scan) never fires a spurious advisory.
 RESIL_FLAG = "RESIL_SILENT"
+
+# ANALYSIS_SIZE_FLAG — schema-mode NON-DEV analysis-spawn size-attestation advisory, printed as the
+# FOURTH helper output line by emit(). Default SILENT so a fail-open exit never fires a spurious nudge.
+# The DEV [SIZE-EST] gate (BLOCK_SIZEEST) is UNCHANGED — this is the parallel non-DEV advisory branch.
+ANALYSIS_SIZE_FLAG = "ANALYSIS_SIZE_SILENT"
 
 
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
+    print(ANALYSIS_SIZE_FLAG)
     sys.exit(0)
 
 
@@ -887,6 +953,13 @@ try:
     entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
+
+    # ANALYSIS-SIZE advisory (parallel NON-DEV branch) — computed BEFORE the first emit (incl. the
+    # `if not dev_present` early PASS at the top of the DEV block) so EVERY emit path carries it on line
+    # 4. Advisory-only: it rides the helper output, never a verdict, so the DEV BLOCK_SIZEEST exit-2 path
+    # is untouched. dev_present workflows are excluded inside the helper (the DEV gate covers them).
+    if analysis_size_advisory_needed(antigaming_src, attestation_src, dev_present, dev_set):
+        ANALYSIS_SIZE_FLAG = "ANALYSIS_SIZE_ADVISE"
 
     def pass_or_size():
         return "BLOCK_SIZEEST" if size_est_missing else "PASS"
@@ -1040,28 +1113,38 @@ PY
   # Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
   # unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
-  helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT'
+  helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT'
 
-  # Parse the three lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
-  # EOF on a short (2-line legacy / fail-open) output from tripping the fail-open ERR trap; each field is
-  # then normalized to a known value so a stray/absent line collapses to the safe default.
+  # Parse the four lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
+  # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
   entry_marker="ENTRY_OK"
   resil_flag="RESIL_SILENT"
+  analysis_size_flag="ANALYSIS_SIZE_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
     IFS= read -r resil_flag
+    IFS= read -r analysis_size_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
+  [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
   # BLOCK below). This NEVER alters the exit code.
   if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
     print_resilience_advisory
+  fi
+
+  # ANALYSIS-SIZE ADVISORY (fail-open, stderr-only) — the helper decided a schema-mode NON-DEV analysis
+  # spawn lacks a [SIZE-EST] token; nudge here so it rides ANY verdict. NEVER alters the exit code (the
+  # DEV BLOCK_SIZEEST hard-block path stays exit 2 and is decided independently in the case dispatch).
+  if [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]]; then
+    print_analysis_size_advisory
   fi
 
   # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is

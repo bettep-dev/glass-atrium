@@ -1323,6 +1323,76 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
 }
 
 # =====================================================================================================
+# SECTION N2 — ANALYSIS SIZE-ATTESTATION ADVISORY (advisory-only, never blocks; the parallel non-DEV
+#   branch of [SIZE-EST], clauded-docs/279 D2). Fires on a schema-mode NON-DEV analysis/research/audit
+#   spawn with NO [SIZE-EST] token. NON-DEV is exclusion-derived from the sync-gate-roster-fed DEV_SET
+#   (never a second hardcoded list). The DEV BLOCK_SIZEEST exit-2 path stays UNCHANGED (dev_present
+#   excludes a DEV workflow here — the DEV gate already models the same missing token). FAIL-OPEN.
+# =====================================================================================================
+
+# CORE PIN — a schema-mode non-DEV analysis fan-out (reporter + reviewer) with NO [SIZE-EST] nudges.
+@test "analysis-size: non-DEV schema analysis workflow, NO [SIZE-EST] → PASS + analysis advisory fires" {
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize with a schema-shaped output',schema:Out}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+}
+
+# ATTESTED — the analysis-mode [SIZE-EST] token silences the advisory (one token, two modes; D1).
+@test "analysis-size: non-DEV schema analysis workflow WITH analysis [SIZE-EST] → PASS, NO advisory" {
+  run_hook "log('[SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist')
+pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize',schema:Out}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+}
+
+# SCHEMA-GATED (fail-open on a non-schema shape) — a non-DEV workflow with NO schema token is out of
+# scope (the terminal-StructuredOutput failure class does not apply) → silent.
+@test "analysis-size: non-DEV workflow with NO schema token → PASS, NO advisory (schema-gated)" {
+  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+}
+
+# EXCLUSION-DERIVED ROSTER — a reviewer-only schema audit (non-DEV) is caught because the reviewer is
+# not a DEV_SET member; no second hardcoded analysis list is consulted.
+@test "analysis-size: reviewer-only schema audit, NO [SIZE-EST] → PASS + analysis advisory fires" {
+  run_hook "agent('glass-atrium-qa-code-reviewer',{goal:'audit the whole tree',schema:Verdict})"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+}
+
+# DEV PATH UNCHANGED (a) — a DEV workflow missing [SIZE-EST] still hard-blocks BLOCK_SIZEEST (exit 2)
+# and does NOT ALSO fire the analysis advisory (dev_present excludes it — no double-signal).
+@test "analysis-size: DEV workflow schema, NO [SIZE-EST] → BLOCK_SIZEEST (exit 2), NO analysis advisory" {
+  run_hook "${DECL_TEAM}
+log('plan-ref: clauded-docs/55')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge',schema:X}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"size-attestation miss"* ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+  assert_trace block-sizeest || return 1
+}
+
+# DEV PATH UNCHANGED (b) — a DEV workflow WITH [SIZE-EST] passes and fires NO analysis advisory.
+@test "analysis-size: DEV workflow WITH [SIZE-EST] → PASS, NO analysis advisory" {
+  run_hook "${DECL_TEAM}
+log('plan-ref: clauded-docs/55')
+log('${SIZE_EST}')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge',schema:X}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (analysis size-attestation"* ]] || return 1
+}
+
+# --lint --template teaches the analysis-mode [SIZE-EST] form (author self-attestation scaffold parity).
+@test "analysis-size: --lint --template includes the analysis-mode [SIZE-EST] form" {
+  run bash -c 'bash "$1" --lint --template' _ "${HOOK_SH}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"reads~=N fields=N effort="* ]] || return 1
+}
+
+# =====================================================================================================
 # SECTION O — CORPUS (T8): the 3 undeclared originals are missing-declaration BLOCK pins; the 4
 #   declared variants (both declaration forms) are PASS pins. The real archived scripts are the
 #   durable regression anchor.
@@ -1657,8 +1727,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 129 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 129 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 136 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 136 @test, found ${actual}" >&2
     return 1
   }
 }
