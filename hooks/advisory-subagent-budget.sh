@@ -234,6 +234,7 @@ printf '%s\n' "${new_count}" >"${counter_file}" 2>/dev/null || exit 0
 #    zero forward delta; a varied signature resets the streak (a legitimate loop is unaffected). At the
 #    hard limit → BLOCK (exit 2) when the burn-in flag is armed, else a one-shot STDERR advisory.
 #    AD-4 deviation: plan specified "signature + zero-file-delta", but signature-only ships — the exact-duplicate call-signature sha256 is the tractable PreToolUse-only proxy; true zero-file-delta needs PostToolUse file-diff state not available in this hook's event.
+#    Precedent note: the ag2/AutoGen max_consecutive_auto_reply citation is goal-level only — that API is absent from ag2 1.0.0b0 (it lived in legacy AutoGen 0.x), so this streak brake is Atrium-designed, not a 1:1 port.
 signature="$(compute_signature "${input}")"
 if [[ -n "${signature}" ]]; then
   sig_file="${counter_file}.sig"
