@@ -153,10 +153,18 @@ printf '%s' "${INPUT}" | python3 -c "${EFFECTIVE_PY}" "${src_file}" || rc=$?
 [[ "${rc}" -eq 0 ]] || exit 0
 [[ -f "${src_file}" ]] || exit 0
 
-# Parse-only check. Valid syntax → allow.
-if "${checker[@]}" "${src_file}" >/dev/null 2>&1; then
+# Parse-only check. Capture stderr so the checker's own diagnostic (failing line + message) can
+# surface in the advisory — discarding it (>/dev/null 2>&1) left a message-less "checker failed".
+# Valid syntax → allow.
+err_file="${work_dir}/checker.err"
+if "${checker[@]}" "${src_file}" >/dev/null 2>"${err_file}"; then
   exit 0
 fi
+
+# First non-blank stderr line = the checker's diagnostic. The path in it is the sandbox src_file
+# (transient temp), not the user's file — acceptable context for a syntax advisory, no secret leak.
+first_err=""
+[[ -s "${err_file}" ]] && first_err="$(grep -m1 -v '^[[:space:]]*$' "${err_file}" 2>/dev/null || true)"
 
 # Invalid syntax. Armed → block; else a non-blocking advisory.
 if [[ "${BLOCK_ARMED}" -eq 1 ]]; then
@@ -171,5 +179,5 @@ if [[ "${BLOCK_ARMED}" -eq 1 ]]; then
   exit 2
 fi
 printf '[edit-syntax] %s\n' \
-  "SYNTAX advisory: the ${ext} write to ${basename_only} has a syntax error (${checker[*]} failed). Non-blocking (advisory-first rollout; set SYNTAX_GATE_BLOCK=1 to enforce)." >&2
+  "SYNTAX advisory: the ${ext} write to ${basename_only} has a syntax error (${checker[*]} failed)${first_err:+ — ${first_err}}. Non-blocking (advisory-first rollout; set SYNTAX_GATE_BLOCK=1 to enforce)." >&2
 exit 0

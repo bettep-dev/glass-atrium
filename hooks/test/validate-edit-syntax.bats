@@ -62,6 +62,16 @@ run_hook() {
   [[ "${output}" == *"SYNTAX advisory"* ]]
 }
 
+@test "the advisory surfaces the checker's stderr diagnostic with a line number (R6)" {
+  # py_compile prints the offending location ('File ..., line N') to stderr; the advisory must fold
+  # the first stderr line in (with the ' — ' separator), not discard it as the old >/dev/null did.
+  run_hook "$(write_input "${SANDBOX}/x.py" 'def f(:')"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == *"SYNTAX advisory"* ]]
+  [[ "${output}" == *" — "* ]]
+  [[ "${output}" == *"line 1"* ]]
+}
+
 @test "invalid python Write blocks when armed" {
   run_hook "$(write_input "${SANDBOX}/x.py" 'def f(:')" SYNTAX_GATE_BLOCK=1
   [[ "${status}" -eq 2 ]]
