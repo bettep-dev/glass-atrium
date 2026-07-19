@@ -1236,10 +1236,31 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
-@test "resilience: non-DEV doc workflow with schema, no catch → PASS, NO advisory (DEV-gated)" {
+# DEV-GATE REMOVED (#widen): a non-DEV schema-mode fan-out (researcher/reporter) was the crashed-run
+# class the advisory was widened to cover. It now FIRES on a bare schema site with no catch — exit 0
+# (advisory NEVER blocks; the script is non-DEV → Stage-2 exempt → PASS verdict).
+@test "resilience(#widen): non-DEV doc workflow with schema, no catch → PASS + advisory fires" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize with a schema-shaped output'}), agent('glass-atrium-qa-code-reviewer',{goal:'review'}))"
   [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
+}
+
+# CUSTOM-WRAPPER FALSE-POSITIVE GUARD (qa-named): a bare agent({schema}) inside a CUSTOM-named wrapper
+# (not literally robustAgent) whose OWN invocation is .catch-chained at the join is HANDLED → silent.
+@test "resilience(guard): custom-named wrapper, bare agent({schema}), .catch-chained call → PASS, NO advisory" {
+  run_hook "async function myWrap(t,o){ return agent(o.goal,{...o,agentType:t,schema:S}); }
+const r = await parallel(items.map((i) => myWrap('glass-atrium-intel-reporter', mk(i)).catch(()=>null)))"
+  [[ "${status}" -eq 0 ]] || return 1
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
+}
+
+# GUARD COUNTERWEIGHT — the SAME custom wrapper whose invocation is NOT .catch-chained stays UNHANDLED
+# → advisory fires (the guard suppresses only the genuinely-handled join, never a bare one).
+@test "resilience(guard-neg): custom wrapper, invocation NOT catch-chained → PASS + advisory fires" {
+  run_hook "async function myWrap(t,o){ return agent(o.goal,{...o,agentType:t,schema:S}); }
+const r = await parallel(items.map((i) => myWrap('glass-atrium-intel-reporter', mk(i))))"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
 # Decoupling: a schema-mode DEV workflow whose declaration is valid but spawns NO reviewer → the
@@ -1636,8 +1657,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 127 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 127 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 129 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 129 @test, found ${actual}" >&2
     return 1
   }
 }
