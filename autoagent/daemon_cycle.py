@@ -584,8 +584,9 @@ def match_sensitive_diff(diff: str) -> str | None:
 # at 0.50, same as HAIKU — lower caps cause systematic 5/5 reject).
 PRE_VERIFY_TIMEOUT_SEC = 90
 
-# AD-9 evaluator independence (CALM self-preference precedent): the patch
-# generator runs on HAIKU_MODEL; an evaluator systematically favors output from
+# AD-9 evaluator independence (GOAL precedent from CALM self-preference; the CALM
+# mapping is inferred, not code-verified — mechanism independently designed here): the
+# patch generator runs on HAIKU_MODEL; an evaluator systematically favors output from
 # its own model class, so the verifier SHOULD run on a different class where
 # feasible. AUTOAGENT_PRE_VERIFY_MODEL overrides the verifier model id; when
 # absent it defaults to HAIKU_MODEL (same class as the author) and the run

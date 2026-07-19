@@ -698,7 +698,9 @@ LESSON_STORE_FILE = os.environ.get(
 )
 
 # AD-1 per-bucket char caps (MemGPT memory-block precedent). Cap is on the ACTIVE
-# (non-tombstoned) lesson-text sum; overflow triggers summarize-and-evict.
+# (non-tombstoned, non-digest) lesson-text sum; overflow triggers evict-with-digest — a
+# hard-evict plus a NO-LLM evicted-digest footer (the non-agentic hook has no LLM call, so
+# true Letta-style summarization is not portable; the footer preserves a count/tag trace).
 CTM_BUCKET_MAX_CHARS = 4000
 EPM_BUCKET_MAX_CHARS = 4000
 
@@ -727,8 +729,11 @@ def _lesson_size(entry: dict) -> int:
 
 
 def _bucket_active_size(bucket: list[dict]) -> int:
-    """Sum of active (non-tombstoned) lesson-text lengths — the AD-1 cap is measured on THIS."""
-    return sum(_lesson_size(e) for e in bucket if not e.get("tombstoned"))
+    """Sum of active (non-tombstoned, non-digest) lesson-text lengths — the AD-1 cap is measured
+    on THIS; the evicted-digest footer carries no active weight, so it is cap-excluded here."""
+    return sum(
+        _lesson_size(e) for e in bucket if not e.get("tombstoned") and not e.get("digest")
+    )
 
 
 def _lesson_score(record: dict) -> int:
@@ -841,13 +846,62 @@ def tombstone_lesson(bucket: list[dict], agent: str, task_type: str, text: str) 
     return False
 
 
+# AD-1 evicted-digest footer — a single NO-LLM summary row per bucket recording what
+# capacity-eviction dropped (cumulative count + per-task_type tags). It preserves a trace of the
+# lost signal (Letta summarize-and-evict INTENT) without an LLM call, and is EXCLUDED from the
+# active-size cap, so appending it can never breach the cap invariant.
+_EVICTED_DIGEST_PREFIX = "[evicted-digest]"
+
+
+def _find_evicted_digest(bucket: list[dict]) -> dict | None:
+    """The bucket's single digest footer, if one exists (marked digest=True)."""
+    for e in bucket:
+        if e.get("digest"):
+            return e
+    return None
+
+
+def _render_evicted_digest_text(count: int, tags: dict[str, int]) -> str:
+    """One-line count/tag summary — e.g. '[evicted-digest] 3 evicted: feature×2, bug-fix×1',
+    tags ordered by descending count then name (stable, NO-LLM)."""
+    parts = ", ".join(
+        f"{tag or '?'}×{n}" for tag, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    body = f": {parts}" if parts else ""
+    return f"{_EVICTED_DIGEST_PREFIX} {count} evicted{body}"
+
+
+def _update_evicted_digest(bucket: list[dict], evicted: list[dict]) -> None:
+    """Fold the just-evicted entries into the bucket's single digest footer (cumulative, NO-LLM).
+    The footer is cap-excluded (_bucket_active_size skips digest rows), so it never re-triggers
+    eviction. Digest rows among `evicted` are skipped (the digest is never an eviction victim)."""
+    live_evicted = [e for e in evicted if not e.get("digest")]
+    if not live_evicted:
+        return
+    digest = _find_evicted_digest(bucket)
+    if digest is None:
+        digest = {"digest": True, "evicted_count": 0, "tags": {}, "text": ""}
+        bucket.append(digest)
+    tags: dict[str, int] = dict(digest.get("tags") or {})
+    for e in live_evicted:
+        tags[str(e.get("task_type") or "").strip()] = (
+            tags.get(str(e.get("task_type") or "").strip(), 0) + 1
+        )
+    digest["evicted_count"] = int(digest.get("evicted_count", 0) or 0) + len(live_evicted)
+    digest["tags"] = tags
+    digest["text"] = _render_evicted_digest_text(digest["evicted_count"], tags)
+
+
 def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
-    """AD-1 summarize-and-evict — keep the ACTIVE lesson-text sum <= max_chars.
+    """AD-1 evict-with-digest — keep the ACTIVE lesson-text sum <= max_chars.
 
     Eviction order (lowest value first): tombstoned dead-weight, then live ascending by
     (score, frequency). Capacity eviction is the SOLE hard-removal path and is DISTINCT from
     the AD-2 tombstone soft-delete — it fires on capacity pressure, not staleness, so removing
     a tombstoned row here is legitimate (it reclaims file space, carries no active weight).
+    Evicted entries are then folded into a single NO-LLM evicted-digest footer (count +
+    per-task_type tags) so the dropped signal leaves a trace (Letta summarize-and-evict INTENT,
+    sans LLM). The digest footer is cap-EXCLUDED and is NEVER an eviction candidate.
     Mutates `bucket` in place; returns the evicted entries for the caller's audit.
     AC: on return, _bucket_active_size(bucket) <= max_chars."""
     evicted: list[dict] = []
@@ -862,11 +916,16 @@ def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
         )
 
     # Evicting a tombstoned row does not shrink the active sum, so the loop keeps going until a
-    # live row is removed — it terminates because the bucket strictly shrinks each pass.
-    while bucket and _bucket_active_size(bucket) > max_chars:
-        victim = min(bucket, key=_evict_rank)
+    # live row is removed — it terminates because the candidate pool strictly shrinks each pass.
+    while _bucket_active_size(bucket) > max_chars:
+        candidates = [e for e in bucket if not e.get("digest")]
+        if not candidates:
+            break  # only the cap-excluded digest remains → active sum is already 0
+        victim = min(candidates, key=_evict_rank)
         bucket.remove(victim)
         evicted.append(victim)
+    if evicted:
+        _update_evicted_digest(bucket, evicted)
     return evicted
 
 
