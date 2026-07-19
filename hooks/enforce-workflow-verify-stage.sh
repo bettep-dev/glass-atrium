@@ -211,15 +211,18 @@ EOF
 
 # print_resilience_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
 # DECISION of whether to fire moved INTO the python3 verdict helper (#45): the helper runs a PER-CALL-SITE
-# scan (a schema-mode agent spawn whose call is NOT .catch-chained, NOT inside a try block, and NOT
-# routed through a robustAgent-style wrapper counts as UNHANDLED) and returns a RESIL_ADVISE / RESIL_SILENT
-# flag on its THIRD output line. This function only PRINTS the nudge when the caller read RESIL_ADVISE.
-# Moving the scan into the helper closes the prior WHOLE-SCRIPT false-negative where ONE robustAgent/catch
-# token ANYWHERE silenced the advisory for N still-bare schema spawns. Per-site residual undecidability
-# (Promise.allSettled, custom-helper indirection) stays uncredited — which is exactly why this remains
-# advisory-only, fail-open (a surviving advisory MAY be a false alarm, and it NEVER blocks).
+# scan (a schema-mode agent spawn whose call is NOT .catch-chained, NOT inside a try block, NOT routed
+# through a robustAgent-style wrapper, and NOT inside a custom-named wrapper whose own call is
+# .catch-chained counts as UNHANDLED) and returns a RESIL_ADVISE / RESIL_SILENT flag on its THIRD output
+# line. This function only PRINTS the nudge when the caller read RESIL_ADVISE. The scan applies to ANY
+# schema-mode workflow (DEV or non-DEV — the dev-gate was removed since the crashed runs were non-DEV
+# researcher/reporter fan-outs). Moving the scan into the helper closes the prior WHOLE-SCRIPT
+# false-negative where ONE robustAgent/catch token ANYWHERE silenced the advisory for N still-bare schema
+# spawns. Per-site residual undecidability (Promise.allSettled, deeper indirection) stays uncredited —
+# which is exactly why this remains advisory-only, fail-open (a surviving advisory MAY be a false alarm,
+# and it NEVER blocks).
 print_resilience_advisory() {
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this DEV workflow spawns a schema-mode agent() with at least one UNHANDLED spawn site (not .catch-chained, not inside a try{}, not routed through a robustAgent wrapper). A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). PER-SITE scan with residual undecidability: Promise.allSettled + custom-helper indirection remain uncredited, so a surviving advisory MAY be a false alarm — ADVISORY ONLY, this check NEVER blocks." >&2
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this workflow spawns a schema-mode agent() with at least one UNHANDLED spawn site (not .catch-chained, not inside a try{}, not routed through a robustAgent or custom .catch-chained wrapper). A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '### Resilient Workflow Authoring' + the '### Pipeline Acceptance Criteria' in-script verify-stage). PER-SITE scan with residual undecidability: Promise.allSettled + custom-helper indirection remain uncredited, so a surviving advisory MAY be a false alarm — ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -244,6 +247,8 @@ emit_composition_scaffold() {
   impl: glass-atrium-dev-shell
   impl-computed: glass-atrium-dev-node
   [/AGENT-COMPOSITION] */
+  NOTE: impl-computed is OPTIONAL — include it ONLY for indirect/computed spawns; with none, OMIT the line
+  entirely. `impl-computed: none` is malformed (only impl: accepts the `none` literal) and blocks as block-grammar.
 EOF
 }
 
@@ -704,17 +709,20 @@ def _chained_catch(struct, close_idx, n):
     return False
 
 
-def resilience_advisory_needed(stripped, dev_set):
+def resilience_advisory_needed(stripped):
     # ADVISORY-ONLY per-site schema-spawn resilience scan (never alters the verdict; the caller only
     # prints a stderr nudge). Returns True when at least ONE UNHANDLED schema-mode agent-call site
-    # remains in a DEV workflow. FAIL-OPEN: dev-gate absent, no schema site, OR any parse uncertainty
-    # returns False (silent). A site is schema-mode when the literal token schema appears within its call
-    # arguments. A site is HANDLED when [a] a .catch member is chained onto its call, [b] it sits inside
-    # a try block, or [c] it sits inside a robustAgent-style wrapper body. A spawn routed THROUGH the
-    # wrapper [callee robustAgent, not agent] is not an agent-call site at all, so it is never counted.
+    # remains in ANY workflow (DEV or non-DEV). The DEV gate is GONE (#widen): the crashed runs were
+    # non-DEV researcher/reporter fan-outs, so a schema-mode agent() throws-on-non-emit crash is not a
+    # DEV-only failure mode — every schema-mode workflow is in scope. FAIL-OPEN: no schema site OR any
+    # parse uncertainty returns False (silent). A site is schema-mode when the literal token schema
+    # appears within its call arguments. A site is HANDLED when [a] a .catch member is chained onto its
+    # call, [b] it sits inside a try block, [c] it sits inside a robustAgent-style wrapper body, or
+    # [d] it sits inside a CUSTOM-named wrapper whose OWN invocation is .catch-chained at the join (the
+    # qa-named false-positive guard: a bare agent({schema}) inside such a wrapper is already handled at
+    # the wrapper call site, so it must NOT be flagged). A spawn routed THROUGH the wrapper [callee
+    # robustAgent, not agent] is not an agent-call site at all, so it is never counted.
     try:
-        if not any(d and d in stripped for d in dev_set):
-            return False
         # No schema token anywhere -> no per-site match is possible -> skip the full _string_mask scan
         # (the docstring already lists no-schema-site as a fail-open False; advisory-only, verdict intact).
         if "schema" not in stripped:
@@ -752,6 +760,47 @@ def resilience_advisory_needed(stripped, dev_set):
         for wm in re.finditer(r"(?<![A-Za-z0-9_$])robustAgent(?![A-Za-z0-9_$])", struct):
             brace = struct.find(chr(123), wm.end())
             if brace != -1:
+                end = match_close(brace, chr(123), chr(125))
+                if end is not None:
+                    handled_spans.append((brace, end))
+
+        # FALSE-POSITIVE GUARD [d] (qa-named) — a CUSTOM-named wrapper (any name, not just robustAgent)
+        # containing a bare agent({schema}) whose OWN invocation is .catch-chained at the join is HANDLED.
+        # Step 1: collect the set of callee identifiers invoked as NAME(...) with a trailing .catch chain
+        # (the join is handled there). Step 2: treat the body of any function DEFINITION whose name is in
+        # that set as a handled region (same effect as the robustAgent span, generalized to an arbitrary
+        # wrapper name). FAIL-OPEN by construction: any paren/brace mismatch simply omits the span (a
+        # missed handled region can only make the advisory MORE eager, never block — advisory-only).
+        catch_callees = set()
+        # NAME(...) callee, excluding a member access (leading dot) so a.b() records nothing here.
+        for cm in re.finditer(r"(?<![A-Za-z0-9_$.])([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
+            copen = cm.end() - 1
+            cclose = match_close(copen, chr(40), chr(41))
+            if cclose is None:
+                continue
+            if _chained_catch(struct, cclose, n):
+                catch_callees.add(cm.group(1))
+        if catch_callees:
+            # function NAME (...) { ... }
+            for fm in re.finditer(r"(?<![A-Za-z0-9_$])function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
+                if fm.group(1) not in catch_callees:
+                    continue
+                pclose = match_close(fm.end() - 1, chr(40), chr(41))
+                if pclose is None:
+                    continue
+                brace = struct.find(chr(123), pclose)
+                if brace != -1:
+                    end = match_close(brace, chr(123), chr(125))
+                    if end is not None:
+                        handled_spans.append((brace, end))
+            # const|let|var NAME = (...) => { ... } | = function (...) { ... } — first brace after '=' is
+            # the arrow/function body (NAME is in catch_callees, so it is invoked, i.e. a function value).
+            for fm in re.finditer(r"(?<![A-Za-z0-9_$])(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=", struct):
+                if fm.group(1) not in catch_callees:
+                    continue
+                brace = struct.find(chr(123), fm.end())
+                if brace == -1:
+                    continue
                 end = match_close(brace, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((brace, end))
@@ -799,7 +848,7 @@ try:
 
     # Resilience advisory decision (#45) — computed early so EVERY emit path carries it on line 3. The
     # scan is decoupled from the verdict: it only sets the advisory flag the bash side prints.
-    if resilience_advisory_needed(antigaming_src, dev_set):
+    if resilience_advisory_needed(antigaming_src):
         RESIL_FLAG = "RESIL_ADVISE"
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
@@ -1023,7 +1072,7 @@ PY
   if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
     entry_reason="$(
       cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this gate: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. Placement is not enforced (raw-scanned), so a commented token also satisfies this gate.
+[enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this gate: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. ENTRY-CLASS NEGATIVE: `simple-task` is the ONLY recognized [ENTRY-CLASS] literal — sizable work has NO [ENTRY-CLASS] form (its entry signal is the plan-ref token, path 1); any other [ENTRY-CLASS] variant (e.g. [ENTRY-CLASS] sizable / complex / feature) is UNRECOGNIZED and does NOT clear this gate. Placement is not enforced (raw-scanned), so a commented token also satisfies this gate.
 
 COPY-PASTE SCAFFOLD (fill the <…> placeholders, persist the plan, then paste path (1) OR (2) into the script):
 
@@ -1053,7 +1102,7 @@ EOF
         emit_composition_scaffold
         cat <<'EOF'
 
-Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV hard-gate is enforced HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
+Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV hard-gate is enforced HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. IMPL-COMPUTED NEGATIVE: when there are NO computed/indirect spawns, OMIT the impl-computed line entirely — `impl-computed: none` is MALFORMED (only impl: accepts the `none` literal) and BLOCKS as block-grammar (unknown-name). The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
 EOF
       )"
       ;;
@@ -1076,7 +1125,7 @@ STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys dr
   impl: glass-atrium-dev-shell
   [/AGENT-COMPOSITION] */
 
-verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns).
+verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns) — OMIT this line entirely when there are no computed spawns; `impl-computed: none` is malformed (only impl: accepts the `none` literal) and blocks here as block-grammar.
 EOF
       )"
       ;;
