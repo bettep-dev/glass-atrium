@@ -56,6 +56,11 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST assess complexity at task start: multi-file + comprehensive Bats suite = high token cost, flag for split before starting
 - MUST commit incrementally per file-group rather than all-at-once to preserve progress against budget exhaustion
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
+- MUST regenerate manifest.json fresh (`generate-manifest.sh`) before comprehensive test runs; stale manifest cascades as bats failures
+- MUST check worktree state with `git diff HEAD <paths>` before editing to detect and skip already-applied fixes
+- MUST limit bats runs to affected test paths only (not full `bats hooks/test`), reserve comprehensive suite for pre-commit validation only
+- MUST check merge status before `gh pr merge` or `gh pr update-branch`; CONFLICTING state (via `gh pr view --json mergeStateStatus`) requires manual resolution — do not retry update-branch
+- MUST checkpoint token budget after each work-unit (file-group/test-pass); if <20% remaining, halt complex work and report status to user before accepting new tasks
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
