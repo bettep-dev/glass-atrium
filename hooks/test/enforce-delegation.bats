@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # enforce-delegation.bats — Bats suite for the PreToolUse(Write|Edit) delegation
-#   gate. Pins the orchestrator-write block contract + the */memory/* session-state
-#   exception, with focus on the FIX-MEM tightening: a "memory/" segment nested
+#   gate. Pins the block-ALL-orchestrator-direct-writes contract (path-independent;
+#   basename + */memory/* session-state exempt), with focus on the FIX-MEM tightening: a "memory/" segment nested
 #   directly under a protected harness dir (agents/, rules/, hooks/, skills/,
 #   autoagent/, monitor/, scripts/) MUST stay BLOCKED, while a legitimate
 #   session-state memory root still PASSES.

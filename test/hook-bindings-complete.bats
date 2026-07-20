@@ -89,7 +89,7 @@ arch_event_count() {
   done
 }
 
-@test "total: array leaf count == 44 == sum(arch-invariants.ts hooks)" {
+@test "total: array leaf count == 46 == sum(arch-invariants.ts hooks)" {
   local ev m total arch_sum=0
   total="$(array_rows | wc -l | tr -d ' ')"
   for ev in "${EVENTS[@]}"; do
@@ -100,12 +100,12 @@ arch_event_count() {
     fi
     arch_sum=$((arch_sum + m))
   done
-  if [[ "${total}" != "44" ]]; then
-    echo "array leaf total=${total}, expected 44"
+  if [[ "${total}" != "46" ]]; then
+    echo "array leaf total=${total}, expected 46"
     return 1
   fi
-  if [[ "${arch_sum}" != "44" ]]; then
-    echo "arch-invariants hooks sum=${arch_sum}, expected 44"
+  if [[ "${arch_sum}" != "46" ]]; then
+    echo "arch-invariants hooks sum=${arch_sum}, expected 46"
     return 1
   fi
 }

@@ -14,7 +14,12 @@
     "  PreToolUse(Write|Edit) advisory that runs bash -n / node --check / py_compile by extension allowlist.",
     "  It is advisory-first (warns on a syntax error; set SYNTAX_GATE_BLOCK=1 to block after burn-in) and",
     "  exempts templates. wire_hooks (from the ga-env.sh EXPECTED_HOOK_BINDINGS SoT) wires it automatically",
-    "  with an absolute command path; this block is the manual-reference form."
+    "  with an absolute command path; this block is the manual-reference form.",
+    "  enforce-harness-critical.sh (two rows: Write|Edit + Bash) is the harness-critical file gate — it",
+    "  blocks agent_id-INDEPENDENT writes to live settings.json/settings.local.json, live hook dirs, and",
+    "  agents/*.md frontmatter identity keys {name, tools, scope} (model excluded; new agents/*.md Write",
+    "  blocked — creation routes through the agent_lifecycle CLI). Grant: HARNESS_PROTECTION_APPROVE=1 in",
+    "  the LAUNCH environment only (an in-session export never reaches the hook env)."
   ],
   "hooks": {
     "PreToolUse": [
@@ -24,6 +29,24 @@
           {
             "type": "command",
             "command": "$HOME/.glass-atrium/hooks/validate-edit-syntax.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.glass-atrium/hooks/enforce-harness-critical.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.glass-atrium/hooks/enforce-harness-critical.sh"
           }
         ]
       }
