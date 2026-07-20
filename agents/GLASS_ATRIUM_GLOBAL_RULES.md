@@ -160,7 +160,7 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 - **Default behavior**: `exit 0` by default · Return non-zero only when blocking is intended
 - **Timeout**: Command hook default 600 seconds (actual scripts SHOULD be designed to complete within 1 second)
 - **Rollback**: Identify problematic hook → Remove entry from `settings.json` → Restart session
-- **Pre-deployment verification**: Confirm blocking behavior with intentional violation input before applying
+- **Pre-deployment verification**: Confirm blocking behavior with an intentional-violation probe before treating rollout as complete. Claude Code snapshots the hook config at SESSION START — a `settings.json` binding added mid-session is INERT in every already-running session (and any pre-warmed background/spare process) until restart. Envelope-injection (`echo '{...}' | hook.sh`) tests the SCRIPT in isolation, NOT live dispatch — so rollout is complete only after a restart + a live intentional-violation tool-call probe in a fresh session.
 
 ## Rationalization Rejection [ALL]
 
