@@ -15,6 +15,7 @@ HOOK_SH="${HOOKS_DIR}/enforce-delegation.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
+  source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
 }
 
 # Drive the hook as the orchestrator (no agent_id) with a synthetic Write input.
@@ -117,29 +118,8 @@ write_as_orchestrator() {
 # `[[ -z FILE_PATH ]] && exit 0` would ALLOW an orchestrator harness write. The
 # fix blocks on non-trivial input but must NOT over-block genuinely-empty input.
 
-# Build a PATH containing only the coreutils the hook needs, EXCLUDING python3.
-# Echoes the stripped bin dir on stdout.
-minimal_bin_without_python3() {
-  local bindir="${BATS_TEST_TMPDIR}/minbin" tool src
-  mkdir -p "${bindir}"
-  for tool in bash cat grep basename tr sed env mktemp dirname; do
-    src="$(command -v "${tool}")"
-    [[ -n "${src}" ]] && ln -sf "${src}" "${bindir}/${tool}"
-  done
-  printf '%s\n' "${bindir}"
-}
-
-# Drive the hook with python3 stripped from PATH. Args: $1 = raw JSON stdin.
-# HOME is preserved (hook-utils.sh derives its log/data dirs from it under
-# set -u); only PATH is narrowed so `command -v python3` fails — the precise
-# real-world condition H-3 guards (python3 off PATH, not a bare environment).
-run_with_no_python3() {
-  local bindir
-  bindir="$(minimal_bin_without_python3)"
-  run env "PATH=${bindir}" "HOME=${HOME}" bash -c '
-    printf "%s" "$1" | bash "$2"
-  ' _ "${1}" "${HOOK_SH}"
-}
+# Shared fixture: lib/no-python3.bash (sourced in setup). Args: $1 = raw JSON stdin.
+run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 
 @test "python3 absent + orchestrator harness write → BLOCKED (H-3 fail-closed)" {
   run_with_no_python3 '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'

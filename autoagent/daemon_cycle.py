@@ -698,13 +698,7 @@ try:
         OutcomeSignal,
         POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
         POST_APPLY_REGRESSION_RATE_DELTA,
-        # Beta(1,1) prior reuse — the regression-watch window smoothing must
-        # stay in parity with the module's posterior prior (single SoT, no
-        # re-declared copy to drift), so the private constants are imported
-        # deliberately.
-        _PRIOR_ALPHA,
-        _PRIOR_BETA,
-        classify_outcome,
+        beta_smoothed_rate,
         compute_confidence_observed,
     )
     from project_key import resolve_project_key  # noqa: E402
@@ -5629,41 +5623,31 @@ def alert_all_reject_streak(report: CycleReport) -> None:
 
 
 def _is_soft_negative_outcome(row: dict) -> bool:
-    """Soft-negative composite for the post-apply regression watch.
+    """Soft-negative for the post-apply regression watch — the shared trigger SoT.
 
-    review_flag ∨ result ∈ {done_with_concerns, blocked} ∨ failure-classified
-    empirical tuple (revision_count >= the failure-revision threshold ∨
-    result == 'fail' — delegated to confidence.classify_outcome so the
-    threshold keeps a single SoT). Soft keying is deliberate: 0 result=fail
-    rows across 4160 lifetime outcomes make hard-failure keying dead.
+    Thin named wrapper over _pg_learning_dualwrite.is_negative_signal_outcome,
+    the same predicate the aggregator emits on and _live_failure_stats
+    recomputes with (the generation polarity partition's sync mandate). Beyond
+    the retired hand-built composite this inherits the synthesized-measurement-
+    gap carve-out (a completion-synthesized done_with_concerns row is a
+    measurement artifact, not a regression signal), the structural review_flag
+    carve-out, and the grader_verdict=verified_fail term. Soft keying stays
+    deliberate: 0 result=fail rows across 4160 lifetime outcomes make
+    hard-failure keying dead. Reachable only under HAS_PG_OUTCOME_READ (the
+    alert gate), where the imported alias is bound.
     """
-    if bool(row.get("review_flag")):
-        return True
-    result = row.get("result") or ""
-    if result in ("done_with_concerns", "blocked"):
-        return True
-    try:
-        revision_count = int(row.get("revision_count") or 0)
-    except (TypeError, ValueError):
-        revision_count = 0
-    signal = OutcomeSignal(
-        revision_count=revision_count,
-        result=result,
-        evaluative_signal=0,  # auxiliary weight — unread by classify_outcome
-    )
-    return classify_outcome(signal) == "failure"
+    return _pg_is_negative_signal_outcome(row)
 
 
 def _smoothed_soft_negative_rate(rows: list[dict]) -> float:
     """Beta(1,1)-smoothed posterior mean of a window's soft-negative rate.
 
-    Prior parity with compute_confidence_observed (shared _PRIOR_ALPHA/_BETA):
-    an empty window degrades to the Beta(1,1) mean 0.5 instead of 0-division.
+    Smoothing delegates to confidence.beta_smoothed_rate (prior parity with
+    compute_confidence_observed): an empty window degrades to the Beta(1,1)
+    mean 0.5 instead of 0-division.
     """
     negative_count = sum(1 for row in rows if _is_soft_negative_outcome(row))
-    return (_PRIOR_ALPHA + negative_count) / (
-        _PRIOR_ALPHA + _PRIOR_BETA + len(rows)
-    )
+    return beta_smoothed_rate(negative_count, len(rows))
 
 
 def _split_outcome_windows(
@@ -6891,11 +6875,12 @@ def _terminalize_pattern(
     log_label: str,
     eval_result: str,
 ) -> None:
-    """Shared terminal action for the reject-streak and non-auto-fixable gates.
+    """Shared terminal action for the reverted-snooze, reject-streak, and
+    non-auto-fixable gates.
 
     Transitions a fossil pattern's core.learning_log row to terminal 'rejected'
     (the intake predicate stops selecting it next cycle on), then loudly records
-    the drop (fail-on-None stderr WARN + loop-event emit). The two gates differ
+    the drop (fail-on-None stderr WARN + loop-event emit). The three gates differ
     only in WHICH patterns reach here (their own predicate) plus the reason /
     log_label / eval_result strings — this tail MUST stay in lockstep, so it lives
     once. A failed transition (PG write error) still drops for this cycle.
@@ -6919,6 +6904,7 @@ def _terminalize_pattern(
 def drop_reject_streak_patterns(
     agent: str,
     patterns: list[Pattern],
+    rows: list[tuple[str, str, str]] | None = None,
 ) -> list[Pattern]:
     """Reject-streak gate — snooze patterns whose proposals keep getting rejected.
 
@@ -6936,11 +6922,15 @@ def drop_reject_streak_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
+        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
+            fetch across both proposal-history gates (read-only here). None →
+            self-fetch (backward-compatible for direct callers).
 
     Returns:
         surviving patterns, input order preserved.
     """
-    rows = _fetch_proposal_history(agent)
+    if rows is None:
+        rows = _fetch_proposal_history(agent)
     if rows is None:
         return patterns
 
@@ -6971,6 +6961,7 @@ def drop_reject_streak_patterns(
 def drop_reverted_patterns(
     agent: str,
     patterns: list[Pattern],
+    rows: list[tuple[str, str, str]] | None = None,
 ) -> list[Pattern]:
     """Reverted-proposal gate — snooze patterns whose applied change was reverted.
 
@@ -6985,8 +6976,11 @@ def drop_reverted_patterns(
     backlog SELECT already excludes it via its pending/snoozed predicates.
 
     Fail-open: proposal-history read failure / synthetic row_id → pattern kept.
+    ``rows`` mirrors drop_reject_streak_patterns — a pre-fetched
+    _fetch_proposal_history result (None → self-fetch).
     """
-    rows = _fetch_proposal_history(agent)
+    if rows is None:
+        rows = _fetch_proposal_history(agent)
     if rows is None:
         return patterns
 
@@ -7794,8 +7788,17 @@ def run_cycle(
         # before the transient staleness snooze; reverted runs FIRST (a human
         # back-out outranks every generation-side verdict).
         if not skip_haiku and not skip_loop_emit:
-            agent_patterns = drop_reverted_patterns(agent, agent_patterns)
-            agent_patterns = drop_reject_streak_patterns(agent, agent_patterns)
+            # One shared fetch serves both proposal-history gates (neither
+            # mutates rows). None (PG off / read error) → skip both, matching
+            # each gate's own fail-open branch without a doomed re-fetch.
+            history_rows = _fetch_proposal_history(agent)
+            if history_rows is not None:
+                agent_patterns = drop_reverted_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_reject_streak_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
             agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
             agent_patterns = drop_stale_patterns(agent, agent_patterns)
             if not agent_patterns:

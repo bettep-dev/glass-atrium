@@ -160,10 +160,9 @@ hook_is_subagent() {
 # Fail-closed python3 precondition guard — SECURITY hooks ONLY.
 # WHY: hook_get_field/hook_get_tool_input degrade to empty when python3 is absent
 # (trailing `2>/dev/null || printf ""`) → silently disarms a fail-open security gate
-# (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Only the four
-# security hooks opt in — enforce-delegation.sh (DEL-002) · validate-secret-scan.sh
-# (SEC-017) · block-dangerous-commands.sh (SEC-010) · enforce-harness-critical.sh
-# (HAR-003) — fail-soft extraction for every other hook is unchanged.
+# (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Opt-in is
+# per-hook — the caller set is derivable via `grep -l hook_require_python3 hooks/*.sh`;
+# fail-soft extraction for every other hook is unchanged.
 # Args: $1=block_code · $2=message. On python3 absent → emit_error(block) + exit 2.
 hook_require_python3() {
   local code="${1}" message="${2}"
@@ -172,6 +171,59 @@ hook_require_python3() {
     "Install python3 (required for hook input parsing) and retry" \
     "{\"missing\":\"python3\"}"
   exit 2
+}
+
+# Fail-closed python3 precondition, gated on there being real input to guard: empty
+# stdin ("" / "{}" / "{ }") keeps the fail-open exit-0 contract (nothing to guard),
+# any other input delegates to hook_require_python3 (block + exit 2 on absence).
+# Args: $1=hook_input · $2=block_code · $3=message.
+hook_require_python3_unless_empty() {
+  local input="${1}" code="${2}" message="${3}"
+  case "${input}" in
+    "" | "{}" | "{ }") return 0 ;;
+    *) hook_require_python3 "${code}" "${message}" ;;
+  esac
+}
+
+# Normalize a POSIX path by collapsing "." and ".." segments without touching the
+# filesystem (the target may not exist yet). Traversal-safety: "hooks/../x" resolves
+# to "x", so a protected prefix cannot be dodged — and a protected segment cannot be
+# forged — via "..". Args: $1 = path. Echoes the normalized path.
+hook_normalize_path() {
+  local path="${1}" seg
+  local -a out=()
+  local lead=""
+  [[ "${path}" == /* ]] && lead="/"
+  local saved_ifs="${IFS}"
+  IFS='/'
+  # Word-split on "/" intentionally to walk each segment.
+  # shellcheck disable=SC2206
+  local -a parts=(${path})
+  IFS="${saved_ifs}"
+  # ${arr[@]+"${arr[@]}"} guards empty-array expansion under set -u on bash 3.2.
+  for seg in ${parts[@]+"${parts[@]}"}; do
+    case "${seg}" in
+      "" | ".") : ;;
+      "..")
+        # Pop the last real segment (do not pop past root / a leading "..").
+        if [[ ${#out[@]} -gt 0 && "${out[${#out[@]} - 1]}" != ".." ]]; then
+          unset 'out[${#out[@]}-1]'
+          out=(${out[@]+"${out[@]}"})
+        elif [[ -z "${lead}" ]]; then
+          out+=("..")
+        fi
+        ;;
+      *) out+=("${seg}") ;;
+    esac
+  done
+  local joined=""
+  if [[ ${#out[@]} -gt 0 ]]; then
+    local saved_ifs2="${IFS}"
+    IFS='/'
+    joined="${out[*]}"
+    IFS="${saved_ifs2}"
+  fi
+  printf '%s\n' "${lead}${joined}"
 }
 
 # Allowlist-transform an external identifier to a path-safe single segment.

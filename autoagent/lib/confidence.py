@@ -200,6 +200,25 @@ def compute_confidence_observed(
     return alpha / (alpha + beta)
 
 
+def beta_smoothed_rate(negative_count: int, n: int) -> float:
+    """Beta(1,1)-smoothed posterior mean of a window's negative rate.
+
+    ``(α + negative_count) / (α + β + n)`` on this module's shared Beta(1,1)
+    prior — the same prior compute_confidence_observed builds its posterior on
+    (single SoT: consumers reuse this helper instead of re-declaring the prior
+    constants). An empty window (``n == 0``) degrades to the Beta(1,1) mean 0.5
+    instead of 0-division.
+
+    Args:
+        negative_count: window rows counted as negative (soft-negative hits).
+        n: window size (total rows).
+
+    Returns:
+        float — smoothed rate ∈ (0.0, 1.0). Always valid (denominator ≥ 2).
+    """
+    return (_PRIOR_ALPHA + negative_count) / (_PRIOR_ALPHA + _PRIOR_BETA + n)
+
+
 def confidence_dir(project_key: str) -> Path:
     """Per-project confidence-signal storage directory (delegates to learning_dir).
 

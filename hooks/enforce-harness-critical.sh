@@ -25,7 +25,10 @@
 # by a protected-path literal. DOCUMENTED RESIDUAL (not covered): variable
 # indirection (P=...; echo > "$P"), command substitution, quote-split paths,
 # non-command-position verb runs (xargs/find -exec) — the settings deny layer + the
-# Write|Edit arm remain the primary gates.
+# Write|Edit arm remain the primary gates. The pure-bash hot-path prefilter (raw
+# envelope must contain a ".claude" / ".glass-atrium" dir-name literal, else exit 0
+# with zero python3 spawns) shares the same residual: an envelope hiding those
+# literals behind indirection or JSON \uXXXX escapes skips this gate.
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
@@ -55,66 +58,34 @@ INPUT="$(hook_read_input)"
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard
 # (mirrors enforce-delegation.sh DEL-002). Empty input ("{}") stays exit 0.
+hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
+  "Harness-critical gate unavailable: python3 is required to parse hook input"
+
+# Hot-path prefilter (pure bash, zero spawns): every protected class textually
+# requires one of the two protected-root dir-name literals in the raw envelope —
+# PROT_RE and the deterministic path classes literal-match on them, and traversal
+# forms still contain them. No literal → nothing this gate can block → exit 0.
+# Residual shared with the Bash arm: indirection / JSON \uXXXX escaping of the
+# literals skips this gate (see header).
 case "${INPUT}" in
-  "" | "{}" | "{ }") : ;;
-  *) hook_require_python3 "HAR-003" \
-    "Harness-critical gate unavailable: python3 is required to parse hook input" ;;
+  *".claude"* | *".glass-atrium"*) : ;;
+  *) exit 0 ;;
 esac
-
-TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
-
-# Normalize a POSIX path by collapsing "." and ".." segments without touching the
-# filesystem (the target may not exist yet). Traversal-safety: "hooks/../x" resolves
-# to "x", so a protected prefix cannot be dodged via "..". Mirrors
-# enforce-delegation.sh normalize_path. Args: $1 = path. Echoes normalized.
-normalize_path() {
-  local path="${1}" seg
-  local -a out=()
-  local lead=""
-  [[ "${path}" == /* ]] && lead="/"
-  local saved_ifs="${IFS}"
-  IFS='/'
-  # Word-split on "/" intentionally to walk each segment.
-  # shellcheck disable=SC2206
-  local -a parts=(${path})
-  IFS="${saved_ifs}"
-  # ${arr[@]+"${arr[@]}"} guards empty-array expansion under set -u on bash 3.2.
-  for seg in ${parts[@]+"${parts[@]}"}; do
-    case "${seg}" in
-      "" | ".") : ;;
-      "..")
-        # Pop the last real segment (do not pop past root / a leading "..").
-        if [[ ${#out[@]} -gt 0 && "${out[${#out[@]} - 1]}" != ".." ]]; then
-          unset 'out[${#out[@]}-1]'
-          out=(${out[@]+"${out[@]}"})
-        elif [[ -z "${lead}" ]]; then
-          out+=("..")
-        fi
-        ;;
-      *) out+=("${seg}") ;;
-    esac
-  done
-  local joined=""
-  if [[ ${#out[@]} -gt 0 ]]; then
-    local saved_ifs2="${IFS}"
-    IFS='/'
-    joined="${out[*]}"
-    IFS="${saved_ifs2}"
-  fi
-  printf '%s\n' "${lead}${joined}"
-}
 
 CLAUDE_DIR="${HOME}/.claude"
 GA_DIR="${HOME}/.glass-atrium"
 readonly CLAUDE_DIR GA_DIR
 
-# Content-inspection detector (python3 — robust frontmatter/regex parsing). Emits one
-# token on stdout: block:<reason> → caller blocks (exit 2) · allow → pass. The
-# refinement fails OPEN on an internal exception — the deterministic path classes
-# (live settings / hook dirs / new-agent creation) block in pure bash and never
-# depend on it.
-DETECT_PY=$(
-  cat <<'PY'
+# Single-pass envelope classifier (python3 — robust JSON/frontmatter/regex parsing),
+# ONE spawn for the whole hook: emits tool_name, the arm target (file_path for
+# Write|Edit, command for Bash), and the content-inspection verdict
+# (block:<reason> | allow), each NUL-terminated (hook_get_fields consumer
+# convention). The verdict refinement fails OPEN on an internal exception — the
+# deterministic path classes (live settings / hook dirs / new-agent creation) block
+# in pure bash and never depend on it.
+# `read -d ''` builtin assignment (no command-substitution-of-cat subshell); read
+# returns 1 at heredoc EOF without a NUL → `|| true`.
+IFS= read -r -d '' DETECT_PY <<'PY' || true
 import json
 import re
 import sys
@@ -246,34 +217,54 @@ def detect_bash(tool_input):
 
 
 def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else ""
-    data = json.load(sys.stdin)
+    try:
+        data = json.load(sys.stdin)
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:  # noqa: BLE001 — unparseable envelope → empty fields (extraction parity)
+        data = {}
     tool_input = data.get("tool_input", {}) or {}
-    if mode == "agent-write":
-        reason = detect_agent_write(tool_input)
-    elif mode == "agent-edit":
-        reason = detect_agent_edit(tool_input)
-    elif mode == "bash":
-        reason = detect_bash(tool_input)
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    tool_name = str(data.get("tool_name", ""))
+    if tool_name in ("Write", "Edit"):
+        target = str(tool_input.get("file_path", ""))
+    elif tool_name == "Bash":
+        target = str(tool_input.get("command", ""))
     else:
+        target = ""
+    try:
+        if tool_name == "Write":
+            reason = detect_agent_write(tool_input)
+        elif tool_name == "Edit":
+            reason = detect_agent_edit(tool_input)
+        elif tool_name == "Bash":
+            reason = detect_bash(tool_input)
+        else:
+            reason = ""
+    except Exception:  # noqa: BLE001 — refinement fails open; bash-side classes stay armed
         reason = ""
-    sys.stdout.write(("block:" + reason if reason else "allow") + "\n")
+    verdict = "block:" + reason if reason else "allow"
+    # NUL-strip mirrors hook_get_fields (a JSON string MAY carry \u0000; an embedded
+    # NUL would truncate the `read -r -d ''` consumer mid-value).
+    for field in (tool_name, target, verdict):
+        sys.stdout.write(field.rstrip("\n").replace("\x00", "") + "\0")
 
 
-try:
-    main()
-except Exception:  # noqa: BLE001 — refinement fails open; bash-side classes stay armed
-    sys.stdout.write("allow\n")
+main()
 PY
-)
 
-# Run the detector in mode $1 over the hook INPUT; stdout: block:<reason> | allow.
-# A detector crash degrades to allow (fail-open refinement, see DETECT_PY note).
-run_detector() {
-  local mode="${1}" out
-  out="$(printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" "${mode}" 2>/dev/null)" || out="allow"
-  printf '%s\n' "${out}"
-}
+# One detector pass over the hook INPUT. Total python3 failure degrades to three
+# empty fields (empty tool_name → the dispatch case below exits 0), preserving the
+# legacy extraction-failure fail-open.
+# SC2312: the <( ) pipeline's masked return is the DESIGNED degrade path — the
+# `|| printf '\0\0\0'` fallback supplies the three empty fields on python3 failure.
+# shellcheck disable=SC2312
+{
+  IFS= read -r -d '' TOOL_NAME || true
+  IFS= read -r -d '' TARGET || true
+  IFS= read -r -d '' VERDICT || true
+} < <(printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || printf '\0\0\0')
 
 # Emit the block payload + exit 2. Args: $1=code $2=class $3=target (path or command).
 block_critical() {
@@ -286,10 +277,9 @@ block_critical() {
 }
 
 write_edit_arm() {
-  local file_path norm verdict
-  file_path="$(hook_get_tool_input "${INPUT}" "file_path")"
-  [[ -z "${file_path}" ]] && exit 0
-  norm="$(normalize_path "${file_path}")"
+  local norm
+  [[ -z "${TARGET}" ]] && exit 0
+  norm="$(hook_normalize_path "${TARGET}")"
 
   case "${norm}" in
     "${CLAUDE_DIR}/settings.json" | "${CLAUDE_DIR}/settings.local.json")
@@ -307,33 +297,23 @@ write_edit_arm() {
     *) exit 0 ;;
   esac
 
-  if [[ "${TOOL_NAME}" == "Write" ]]; then
-    if [[ ! -e "${norm}" ]]; then
-      block_critical "HAR-001" "new-agent-creation" "${norm}"
-    fi
-    verdict="$(run_detector "agent-write")"
-  else
-    verdict="$(run_detector "agent-edit")"
+  if [[ "${TOOL_NAME}" == "Write" && ! -e "${norm}" ]]; then
+    block_critical "HAR-001" "new-agent-creation" "${norm}"
   fi
-  case "${verdict}" in
-    block:*) block_critical "HAR-001" "${verdict#block:}" "${norm}" ;;
+  case "${VERDICT}" in
+    block:*) block_critical "HAR-001" "${VERDICT#block:}" "${norm}" ;;
     *) exit 0 ;;
   esac
 }
 
 bash_arm() {
-  local verdict cmd
-  verdict="$(run_detector "bash")"
-  case "${verdict}" in
-    block:*)
-      cmd="$(hook_get_tool_input "${INPUT}" "command")"
-      block_critical "HAR-002" "${verdict#block:}" "${cmd:0:200}"
-      ;;
+  case "${VERDICT}" in
+    block:*) block_critical "HAR-002" "${VERDICT#block:}" "${TARGET:0:200}" ;;
     *) exit 0 ;;
   esac
 }
 
-case "${TOOL_NAME:-}" in
+case "${TOOL_NAME}" in
   Write | Edit) write_edit_arm ;;
   Bash) bash_arm ;;
   *) exit 0 ;;

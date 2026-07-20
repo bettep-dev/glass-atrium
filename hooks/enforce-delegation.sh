@@ -16,57 +16,13 @@ IFS=$'\n\t'
 
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# Normalize a POSIX path — collapse "." / ".." segments without touching the filesystem
-# (target may not exist yet). Traversal-safety: "memory/../hooks/x.sh" resolves to "hooks/x.sh",
-# so a "memory" segment cannot be forged via "..". Args: $1 = path. Echoes normalized path.
-normalize_path() {
-  local path="${1}" seg
-  local -a out=()
-  local lead=""
-  [[ "${path}" == /* ]] && lead="/"
-  local saved_ifs="${IFS}"
-  IFS='/'
-  # Word-split on "/" intentionally to walk each segment.
-  # shellcheck disable=SC2206
-  local -a parts=(${path})
-  IFS="${saved_ifs}"
-  # ${arr[@]+"${arr[@]}"} guards empty-array expansion under set -u on bash 3.2.
-  for seg in ${parts[@]+"${parts[@]}"}; do
-    case "${seg}" in
-      "" | ".") : ;;
-      "..")
-        # Pop the last real segment (do not pop past root / a leading "..").
-        if [[ ${#out[@]} -gt 0 && "${out[${#out[@]} - 1]}" != ".." ]]; then
-          unset 'out[${#out[@]}-1]'
-          out=(${out[@]+"${out[@]}"})
-        elif [[ -z "${lead}" ]]; then
-          out+=("..")
-        fi
-        ;;
-      *) out+=("${seg}") ;;
-    esac
-  done
-  local joined=""
-  if [[ ${#out[@]} -gt 0 ]]; then
-    local saved_ifs2="${IFS}"
-    IFS='/'
-    joined="${out[*]}"
-    IFS="${saved_ifs2}"
-  fi
-  printf '%s\n' "${lead}${joined}"
-}
-
 INPUT=$(hook_read_input)
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.
 # WHY: without python3, hook_get_tool_input degrades to EMPTY — which the `[[ -z FILE_PATH ]] && exit 0`
-# below would misread as "no file" → ALLOW an orchestrator harness write. Empty input ("{}") stays
-# exit 0 (nothing to guard); a non-trivial INPUT whose extraction we cannot trust MUST block.
-case "${INPUT}" in
-  "" | "{}" | "{ }") : ;; # nothing to guard — empty-input case stays exit 0
-  *) hook_require_python3 "DEL-002" \
-    "Delegation gate unavailable: python3 is required to parse hook input" ;;
-esac
+# below would misread as "no file" → ALLOW an orchestrator harness write.
+hook_require_python3_unless_empty "${INPUT}" "DEL-002" \
+  "Delegation gate unavailable: python3 is required to parse hook input"
 
 # 1. Extract file_path
 FILE_PATH=$(hook_get_tool_input "${INPUT}" "file_path")
@@ -84,7 +40,7 @@ esac
 #    directly under a protected harness dir (agents/, rules/, hooks/, skills/, autoagent/,
 #    monitor/, scripts/) is NOT a session-state root — those stay BLOCKED so a harness write
 #    cannot bypass via a "memory" segment (e.g. agents/memory/x.md must route through delegation).
-NORM_PATH=$(normalize_path "${FILE_PATH}")
+NORM_PATH=$(hook_normalize_path "${FILE_PATH}")
 case "/${NORM_PATH}/" in
   */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \
     */autoagent/memory/* | */monitor/memory/* | */scripts/memory/*) : ;;
