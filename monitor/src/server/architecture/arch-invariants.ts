@@ -37,9 +37,9 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 	agents: 23,
 	launchd: 8,
 	rules: 10,
-	scoped: 16,
+	scoped: 17,
 	scopedScope: 9,
-	scopedShared: 7,
+	scopedShared: 8,
 	skills: 15,
 	uniqueHookBasename: 50,
 	hooks: {
