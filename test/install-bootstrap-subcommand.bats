@@ -286,12 +286,20 @@ MANIFEST
 
 # PATH-stub curl: record argv + URL, then serve the fixture asset at the -o path.
 # FETCH_FAIL_MANIFEST/FETCH_FAIL_BUNDLE → curl's HTTP-error rc 22 (the -f contract).
+# FETCH_BIN also fronts a Darwin uname stub: the live-PATH runs (tag-pin / HTTP-fail /
+# tamper) exercise the macOS-only install contract, and the real uname would exit-10
+# the preflight on Linux CI before the fetch stage under test.
 t6_build_fetch_stub() {
   FETCH_BIN="${SANDBOX}/fetch-bin"
   FETCH_URL_LOG="${SANDBOX}/fetch-url.log"
   FETCH_ARGV_LOG="${SANDBOX}/fetch-argv.log"
   export FETCH_URL_LOG FETCH_ARGV_LOG
   mkdir -p "${FETCH_BIN}"
+  cat >"${FETCH_BIN}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "Darwin"
+SH
+  chmod +x "${FETCH_BIN}/uname"
   cat >"${FETCH_BIN}/curl" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -322,15 +330,22 @@ STUB
 # + real stock tools, with jq and gh deliberately never linked. The python3
 # symlink resolves off /usr/bin, so the probe's Apple-shim CLT gate stays out of
 # the way (brew-like path) and the REAL python3 backs the manifest parse.
+# `uname` is a Darwin STUB, never a symlink: the run exercises the macOS-only
+# install contract, and the real uname would exit-10 the preflight on Linux CI.
 t6_build_stock_toolbin() {
   TOOLBIN="${SANDBOX}/stock-bin"
   mkdir -p "${TOOLBIN}"
   local t src
   # bash is on the list for the stub curl's own #!/usr/bin/env bash shebang.
-  for t in bash uname tar shasum python3 mktemp mkdir dirname ls cat cp rm mv; do
+  for t in bash tar shasum python3 mktemp mkdir dirname ls cat cp rm mv; do
     src="$(command -v "${t}")" || return 1
     ln -s "${src}" "${TOOLBIN}/${t}"
   done
+  cat >"${TOOLBIN}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "Darwin"
+SH
+  chmod +x "${TOOLBIN}/uname"
   ln -s "${FETCH_BIN}/curl" "${TOOLBIN}/curl"
 }
 

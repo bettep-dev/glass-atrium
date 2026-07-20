@@ -1359,11 +1359,23 @@ INSTALL_SH_T6="${GA}/install.sh"
 
 # Symlink an allowlist of real tools into a fresh TOOLBIN (the ONLY PATH entry for the
 # restricted runs) — jq and gh are deliberately never linked. Args: tool names.
+# `uname` is written as a Darwin STUB, never a symlink: these runs exercise the
+# macOS-only install contract, and the real uname would exit-10 the preflight on a
+# Linux CI host BEFORE the stage under test is ever reached (platform-honest, same
+# pattern as the AUTH-block uname stubs above).
 t6_build_toolbin() {
   TOOLBIN="${SANDBOX}/toolbin"
   mkdir -p "${TOOLBIN}"
   local t src
   for t in "$@"; do
+    if [[ "${t}" == "uname" ]]; then
+      cat >"${TOOLBIN}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "Darwin"
+SH
+      chmod +x "${TOOLBIN}/uname"
+      continue
+    fi
     src="$(command -v "${t}")" || return 1
     ln -s "${src}" "${TOOLBIN}/${t}"
   done
