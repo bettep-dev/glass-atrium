@@ -1,0 +1,17 @@
+-- Add 'reverted' to core."ProposalStatus" — the human/CLI back-out terminal status the
+-- post-apply regression watch (daemon_cycle.py alert_post_apply_regression) directs
+-- operators to set. The daemon consumers (drop_reverted_patterns, the reject-streak
+-- look-past, the all-reject discriminator) already read the value; until this migration
+-- the enum lacked it, so the status was unreachable (any UPDATE ... SET status='reverted'
+-- errors on the enum cast).
+--
+-- Transaction note: Prisma Migrate wraps each migration file in a single transaction on
+-- PostgreSQL. ALTER TYPE ... ADD VALUE was forbidden inside a transaction block before
+-- PG 12; since PG 12 it is allowed PROVIDED the new value is not consumed in the same
+-- transaction. This file only adds the value (no DML uses it) and the project floor is
+-- PostgreSQL 14+ (README badge) → the transactional apply is safe.
+--
+-- IF NOT EXISTS keeps a re-run — and a future pre-release re-squash that folds the value
+-- into the init CREATE TYPE — a no-op. The applied init_squashed migration stays
+-- untouched (migrate deploy checksum-verifies applied migrations).
+ALTER TYPE "core"."ProposalStatus" ADD VALUE IF NOT EXISTS 'reverted';

@@ -7,20 +7,25 @@
 export type ImprovementTier = "auto" | "safety";
 
 // PG ProposalStatus enum mirror. pending/approved/snoozed = non-terminal ·
-// applied/rejected = terminal. Every non-terminal status reaches a terminal one
-// via the daemon (auto) or the user (approve/reject).
+// applied/rejected/reverted = terminal. Every non-terminal status reaches a
+// terminal one via the daemon (auto) or the user (approve/reject); 'reverted'
+// is set ONLY by a human/CLI back-out of an applied row (the daemon-side
+// post-apply regression watch is detection-only — it never writes it).
 export type ProposalStatus =
   | "pending"
   | "approved"
   | "rejected"
   | "applied"
-  | "snoozed";
+  | "snoozed"
+  | "reverted";
 
 // Terminal states — no further transition (applied = git-reversible only;
-// rejected = learning-log EPM feed candidate). approve/reject re-call → 409.
+// rejected = learning-log EPM feed candidate; reverted = human/CLI back-out).
+// approve/reject re-call → 409.
 export const TERMINAL_PROPOSAL_STATUSES: ReadonlySet<ProposalStatus> = new Set([
   "applied",
   "rejected",
+  "reverted",
 ]);
 
 // Statuses the approve/reject endpoints act on. Mirrors daemon-apply.sh
@@ -189,7 +194,7 @@ export interface ImprovementProposalRow {
   id: number;
   cycle_date: string; // 'YYYY-MM-DD'
   approval_tier: ImprovementTier;
-  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed)
+  status: string; // ProposalStatus enum text (pending / approved / rejected / applied / snoozed / reverted)
   target_agent: string | null;
   target_file: string;
   pattern_label: string;
