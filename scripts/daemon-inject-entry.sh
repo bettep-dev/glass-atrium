@@ -202,10 +202,13 @@ capture_pane() {
 # registration is the per-session transcript, not the ephemeral pane. Chain:
 #   pane_pid -> ~/.claude/sessions/<pane_pid>.json {sessionId, cwd}
 #            -> ~/.claude/projects/<cwd-slug>/<sessionId>.jsonl   (slug: '/' '.' -> '-')
-# Loud-fail with a DISTINCT path-naming message on any missing link — a silent pane
-# fallback would lose the scrolled-off echo this durable read exists to preserve
-# (Precondition Loud-Fail Principle). Writes the global TRANSCRIPT_PATH (no command
-# substitution) so fatal's exit propagates to the whole script, not just a subshell.
+# Loud-fail with a DISTINCT path-naming message on a missing sessions-json link — a
+# silent pane fallback would lose the scrolled-off echo this durable read exists to
+# preserve (Precondition Loud-Fail Principle). Exception: a missing transcript FILE is
+# NOT an error — the .jsonl is created on the session's FIRST prompt, so a virgin
+# (pre-first-prompt) pane legitimately has none; resolve the path and proceed to
+# inject. Writes the global TRANSCRIPT_PATH (no command substitution) so fatal's exit
+# propagates to the whole script, not just a subshell.
 TRANSCRIPT_PATH=""
 resolve_transcript_path() {
   local pane_pid session_json session_id cwd cwd_slug
@@ -231,7 +234,7 @@ resolve_transcript_path() {
   cwd_slug="${cwd_slug//./-}"
   TRANSCRIPT_PATH="${HOME}/.claude/projects/${cwd_slug}/${session_id}.jsonl"
   if [[ ! -f "${TRANSCRIPT_PATH}" ]]; then
-    fatal "session transcript missing: ${TRANSCRIPT_PATH} (cwd=${cwd} sessionId=${session_id})"
+    log "virgin session: transcript not yet created (pre-first-prompt) — treating as not-registered, proceeding to inject (${TRANSCRIPT_PATH})"
   fi
 }
 
@@ -242,7 +245,8 @@ log "resolved transcript: ${TRANSCRIPT_PATH}"
 #     /loop ran in this session — re-injecting would duplicate the cron entry, so
 #     skip + exit 0. Reads the durable transcript so a genuinely-registered session
 #     actually skips (HTTP 204 from /upload proves receipt, not registration).
-if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}"; then
+#     An absent transcript (virgin session) means NOT-registered — no skip, proceed.
+if [[ -f "${TRANSCRIPT_PATH}" ]] && grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}"; then
   log "session already registered (canonical cron line in transcript) — idempotent skip"
   exit 0
 fi
@@ -308,7 +312,9 @@ while :; do
   sleep "${VERIFY_POLL_INTERVAL_SEC}"
 
   # PRIMARY (sole certifier): canonical cron line in the durable transcript.
-  if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}"; then
+  # 2>/dev/null tolerates a virgin session's still-absent transcript — this poll
+  # loop then doubles as the file-appearance poll.
+  if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}" 2>/dev/null; then
     log "verified: canonical cron line in transcript (cron registered)"
     verify_passed=1
     break
