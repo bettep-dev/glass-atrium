@@ -38,6 +38,7 @@ Read the current target agent file and its outcome signals, then emit a complete
 - `review_flag: true` → always act, regardless of other signal content
 - `revision_count ≥ 2` → treat as structural concern, not wording issue; larger structural edits permitted
 - `revision_count = 0` AND concern-only → prefer single-line targeted fix
+- **Budget & sizing (TURN-0)**: bound reads to an explicit allowlist (no repo sweep) and reserve the emit tail — the final `[COMPLETION]` / StructuredOutput IS the deliverable. On a broad scope (≳20 reads) or when the turn budget nears its 80% ceiling, STOP and emit a partial cited result rather than pushing to the hard limit (a partial beats a lost run).
 See: `rules/glass-atrium/core-outcome-record.md` fields
 
 ## Diagnostic Step

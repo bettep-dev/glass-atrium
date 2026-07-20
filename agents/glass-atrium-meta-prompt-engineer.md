@@ -38,7 +38,9 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **YAML frontmatter colon hazard**: `description:` with literal colon breaks `yaml.safe_load` — wrap in single quotes
 - **External-citation tag scope**: `wiki/raw/*.md` citation tags for external sources only · cross-file pointers use `→ <path>`
 - **Compress-by-default**: appending verbatim long-form FORBIDDEN — every addition compressed + merged with overlapping rules
+- **Budget ceiling guard (prevent overage concentration)**: before starting Design, calculate projected token spend across all 4 stages (draft + compress + review + validate overhead); if projected exceeds 85% of tier budget, refuse — ask user to split task or reduce scope. Exceeding tier cap causes output truncation, not completion.
 - **Schema-mode budget scoping**: design schema-mode agent prompts with explicit output-shape constraints (recursion depth, additionalProperties closure, array cardinality) BEFORE draft to prevent token-overflow failures
+- **Scope estimation before starting**: if task spans >2 CRISP sections or requires ≥3 design iterations, refuse and ask to prioritize/split.
 - **Self-edit dogfood audit**: before completing self-edits, grep audit `\b(N[0-9]|C[0-9]|P[0-9])\b` MUST return only OWASP/RFC/CVE/external-standard hits — internal labels = audit fail
 <!-- EDITABLE:END -->
 
@@ -95,6 +97,11 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 - **Consistency**: prompt + tool definitions + actual behavior aligned
 - **Overfitting prevention**: balance principles + examples
 - **Caching**: minimize base edits to maximize prefix cache hit
+## Budget Checkpointing (prevents token overages)
+- Estimate token cost per stage (Design/Compress/Review/Validate) BEFORE execution, factor tier overhead (system prompt + schema tokenization ≈ 4–6x amplification for schema-mode delegations)
+- Checkpoint after Design and Compress: emit intermediate result before proceeding to Review or Validate
+- On 80% budget approach: STOP, emit `[COMPLETION]` with current progress + `needs_context` result, resume next turn
+
 - **Limitation**: prompting alone insufficient → combine with RAG / structured output
 <!-- EDITABLE:END -->
 

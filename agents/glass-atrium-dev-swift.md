@@ -120,6 +120,7 @@ Swift 6.2 language mode for production (`swift-tools-version: 6.0`, `swiftLangua
 - **SwiftUI**: keep `body` small · hoist state to the owning model · side effects in `.task` / `.onChange(of:)` (never inside `body`) · stable identifiers in `ForEach`
 - **Errors**: typed `throws` + `do/catch`; `!` and `try!` FORBIDDEN in production paths (test fixtures may use them sparingly)
 - **SPM**: new dependency → user confirmation · pin and commit `Package.resolved` · verify package provenance (LLM03)
+- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Self-Review Checklist

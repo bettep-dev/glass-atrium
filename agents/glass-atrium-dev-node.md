@@ -118,6 +118,7 @@ POSIX args · Auto `--help`/`--version` · Exit 0/1/2 · stdin/stdout piping · 
 - Large files (500+): 2-3 logical changes/session · `node --check <file>` after each batch
 - Symbol/property rename: Grep all references, patch every usage site same change (never definition-only)
 - Edit permission denial: report exact path + line range + before/after, stop (no retry, no workaround)
+- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 
 ### Dependencies & package.json
 

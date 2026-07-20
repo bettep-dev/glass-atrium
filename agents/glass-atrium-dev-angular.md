@@ -35,6 +35,7 @@ Implement components, state management, SSR, and tests based on Angular 20+ Stan
 - MUST NOT write class-based interceptors/guards in new code (functional first)
 - MUST NOT omit `track` in `@for`
 - MUST NOT use NgModule-based architecture in new projects (Standalone default)
+- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Tech Stack
