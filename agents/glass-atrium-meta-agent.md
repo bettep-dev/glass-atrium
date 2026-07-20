@@ -13,7 +13,7 @@ skills_policy:
   rationale: "Meta-agent rewrites other agent instruction files based on outcome signals — its subject matter IS agent instructions, so consuming skills that themselves describe agent behavior would create circular dependency risk and potential instruction contamination between the rewriter and its targets."
   review_trigger: "Reconsider only if a utility skill emerges that is strictly mechanical (e.g., YAML validation, frontmatter parsing) and carries zero agent-instruction content — all instruction-level skills are permanently excluded."
   last_reviewed: 2026-04-17
-maxTurns: 30
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · security · outcome-record · learning-log · wiki-reference

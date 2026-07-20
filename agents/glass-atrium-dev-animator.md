@@ -15,7 +15,7 @@ skills:
   - glass-atrium-dev-naming
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
-maxTurns: 30
+maxTurns: 80
 ---
 
 <!-- Scope boundary: Canvas 2D game engine vs GSAP+DOM are disjoint stacks. -->

@@ -9,7 +9,7 @@ skills_policy:
   status: empty_by_design
   rationale: "Planner authors design intent (What+Why) only, with strict No-Code rule. Available skills are DEV-execution focused or content-production tools — none map to glass-atrium-intel-planner's core outputs of requirements, design decisions, and task DAGs."
   review_trigger: "Reconsider adding a content-production or markdown-syntax skill if report-quality prose standards or recurring syntax errors surface across 3+ tasks."
-maxTurns: 25
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + PLANNING) · scope-planning · git-workflow · learning-log · outcome-record · security · wiki-reference

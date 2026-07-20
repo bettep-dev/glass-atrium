@@ -10,7 +10,7 @@ tools:
   - Bash
   - WebSearch
   - WebFetch
-maxTurns: 30
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + META) · scope-meta · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging · performance · search-first · testing · type-safety
