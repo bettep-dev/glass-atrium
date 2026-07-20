@@ -32,7 +32,6 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 
 - When flagging issues, **cite the governing rule** (GLASS_ATRIUM_GLOBAL_RULES section / core-security.md / shared-testing.md / agent name)
 - **Read changed files in full** before review → Partial-read-based flagging forbidden
-- **Budget & sizing (TURN-0)**: bound reads to an explicit allowlist (no repo sweep) and reserve the emit tail — the final `[COMPLETION]` / StructuredOutput IS the deliverable. On a broad scope (≳20 reads) or when the turn budget nears its 80% ceiling, STOP and emit a partial cited result rather than pushing to the hard limit (a partial beats a lost run).
 - **Load relevant agent rules** before review (React → glass-atrium-dev-react.md, NestJS → glass-atrium-dev-nestjs.md)
 - **External perspective**: Review as a senior engineer seeing this code for the first time
 - Lenient evaluation = quality degradation = **failure**

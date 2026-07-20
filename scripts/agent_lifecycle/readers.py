@@ -3,10 +3,10 @@
 Responsibilities:
     Load the registry agents dict, parse the scope-dev.md Tier-2 brace-list DEV
     roster (anchored regex over prose, NOT a clean array — dev-note 1), and
-    parse the four inject-scope-rules.sh bash arrays (INJECT_AGENTS = DEV+QA,
-    STYLEREF_AGENTS = DEV, MINIMALISM_AGENTS = DEV, NAMING_AGENTS = DEV −
-    {dev-swift} + qa-code-reviewer — B4). All are READ-ONLY; no helper mutates
-    a store.
+    parse the five tracked inject-scope-rules.sh bash arrays (INJECT_AGENTS =
+    DEV+QA, STYLEREF_AGENTS = DEV, MINIMALISM_AGENTS = DEV, NAMING_AGENTS =
+    DEV − {dev-swift} + qa-code-reviewer — B4, BUDGET_DEV_AGENTS = DEV − the
+    daemon-carrier exclusions). All are READ-ONLY; no helper mutates a store.
 
 The brace-list and bash-array parsers are anchored + round-trip-checkable so a
 later-wave editor can re-parse after an insert to confirm the edit is coherent.
@@ -46,6 +46,12 @@ _MINIMALISM_AGENTS_RE = _array_re("MINIMALISM_AGENTS")
 # (the naming delta-core injects to the review-enforcement surface, not the
 # read-only debugger). Auto-reconciled as the 4th array under the HYBRID fix.
 _NAMING_AGENTS_RE = _array_re("NAMING_AGENTS")
+# BUDGET_DEV_AGENTS = DEV roster − the daemon-carrier exclusions (agents whose
+# in-body budget bullet the daemon owns; exclusion SoT =
+# inject_sync._BUDGET_DAEMON_CARRIERS). The 5th tracked array. The sibling
+# BUDGET_ANALYSIS_AGENTS array is deliberately UNTRACKED (manual-curated) and
+# has no regex here.
+_BUDGET_DEV_AGENTS_RE = _array_re("BUDGET_DEV_AGENTS")
 
 # enforce-{verification-gate,workflow-verify-stage}.sh carry an UNPADDED
 # `readonly DEV_SET="dev-front dev-react ... dev-swift"` bash string (single-space
@@ -125,13 +131,14 @@ def parse_roster_text(text: str, *, source: str = "<text>") -> list[str]:
 
 def parse_inject_arrays(
     paths: StorePaths,
-) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Parse the 4 inject-scope-rules.sh arrays from the hook file (B4).
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    """Parse the 5 tracked inject-scope-rules.sh arrays from the hook file (B4).
 
     INJECT_AGENTS = DEV + QA, STYLEREF_AGENTS = DEV-only,
     MINIMALISM_AGENTS = DEV-only, NAMING_AGENTS = DEV − {dev-swift} + qa-code-reviewer
-    (narrower roster, EXCLUDES qa-debugger). Returns all four as ordered name
-    lists, in that order. Raises ReaderError when any array is absent.
+    (narrower roster, EXCLUDES qa-debugger), BUDGET_DEV_AGENTS = DEV − the
+    daemon-carrier exclusions. Returns all five as ordered name lists, in that
+    order. Raises ReaderError when any array is absent.
     """
     return parse_inject_text(
         paths.inject_scope_rules.read_text(encoding="utf-8"),
@@ -141,17 +148,20 @@ def parse_inject_arrays(
 
 def parse_inject_text(
     text: str, *, source: str = "<text>"
-) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Parse all 4 inject-scope-rules.sh arrays out of raw bash text (testable core).
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    """Parse all 5 tracked inject-scope-rules.sh arrays out of raw bash text.
 
-    Returns (inject, styleref, minimalism, naming) — the 4-tuple order every
-    destructuring caller mirrors. NAMING_AGENTS is the 4th array (narrower
-    roster: DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger).
+    Returns (inject, styleref, minimalism, naming, budget_dev) — the 5-tuple
+    order every destructuring caller mirrors. NAMING_AGENTS is the narrower
+    4th array (DEV − {dev-swift} + qa-code-reviewer, EXCLUDES qa-debugger);
+    BUDGET_DEV_AGENTS is the 5th (DEV − daemon carriers). The untracked
+    BUDGET_ANALYSIS_AGENTS array is intentionally NOT parsed here.
     """
     inject = _INJECT_AGENTS_RE.search(text)
     styleref = _STYLEREF_AGENTS_RE.search(text)
     minimalism = _MINIMALISM_AGENTS_RE.search(text)
     naming = _NAMING_AGENTS_RE.search(text)
+    budget_dev = _BUDGET_DEV_AGENTS_RE.search(text)
     if inject is None:
         raise ReaderError(f"INJECT_AGENTS array not found in {source}")
     if styleref is None:
@@ -160,11 +170,14 @@ def parse_inject_text(
         raise ReaderError(f"MINIMALISM_AGENTS array not found in {source}")
     if naming is None:
         raise ReaderError(f"NAMING_AGENTS array not found in {source}")
+    if budget_dev is None:
+        raise ReaderError(f"BUDGET_DEV_AGENTS array not found in {source}")
     inject_names = inject.group("body").split()
     styleref_names = styleref.group("body").split()
     minimalism_names = minimalism.group("body").split()
     naming_names = naming.group("body").split()
-    return inject_names, styleref_names, minimalism_names, naming_names
+    budget_dev_names = budget_dev.group("body").split()
+    return inject_names, styleref_names, minimalism_names, naming_names, budget_dev_names
 
 
 def parse_scope_legend_names(paths: StorePaths) -> set[str]:

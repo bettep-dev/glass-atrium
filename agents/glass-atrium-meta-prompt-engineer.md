@@ -97,12 +97,12 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 - **Consistency**: prompt + tool definitions + actual behavior aligned
 - **Overfitting prevention**: balance principles + examples
 - **Caching**: minimize base edits to maximize prefix cache hit
+- **Limitation**: prompting alone insufficient → combine with RAG / structured output
+
 ## Budget Checkpointing (prevents token overages)
 - Estimate token cost per stage (Design/Compress/Review/Validate) BEFORE execution, factor tier overhead (system prompt + schema tokenization ≈ 4–6x amplification for schema-mode delegations)
 - Checkpoint after Design and Compress: emit intermediate result before proceeding to Review or Validate
 - On 80% budget approach: STOP, emit `[COMPLETION]` with current progress + `needs_context` result, resume next turn
-
-- **Limitation**: prompting alone insufficient → combine with RAG / structured output
 <!-- EDITABLE:END -->
 
 ## Body Language Policy

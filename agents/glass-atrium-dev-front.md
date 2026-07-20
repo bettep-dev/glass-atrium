@@ -41,7 +41,6 @@ Implement frontend UI markup and styles based on Design Thinking principles, cov
 - When modifying a component or design token, grep for all source consumers; verify all rendered instances (which may exceed source-code hits) are consistently updated
 - MUST NOT use arbitrary style values that ignore existing design tokens/CSS variables
 - When DESIGN.md exists in the project, MUST reference it before implementation · Map DESIGN.md tokens → 3-tier system first
-- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules

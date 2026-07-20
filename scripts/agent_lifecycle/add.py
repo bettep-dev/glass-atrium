@@ -207,18 +207,21 @@ def _run_add_locked(
     )
 
     # dev-note 5: a freshly-ADDed DEV agent stays inject-list-mismatch until the
-    # four inject-scope-rules.sh arrays are reconciled — surface it, do not hide
-    # it. The reconcile is executable now (skill glass-atrium-ops-reconcile-inject
-    # → sync-inject CLI verb), no longer a manual hand-edit. NAMING_AGENTS is the
-    # 4th array (narrower roster: DEV − {dev-swift} + qa-code-reviewer); under the
-    # HYBRID fix it is auto-reconciled alongside the other three, so the same
-    # sync-inject verb covers it.
+    # five tracked inject-scope-rules.sh arrays are reconciled — surface it, do
+    # not hide it. The reconcile is executable now (skill
+    # glass-atrium-ops-reconcile-inject → sync-inject CLI verb), no longer a
+    # manual hand-edit. NAMING_AGENTS is the 4th array (narrower roster: DEV −
+    # {dev-swift} + qa-code-reviewer) and BUDGET_DEV_AGENTS the 5th (DEV − the
+    # daemon-carrier exclusions); both are auto-reconciled alongside the other
+    # three, so the same sync-inject verb covers the full tracked set (the
+    # manual-curated BUDGET_ANALYSIS_AGENTS array is untracked by design).
     note = ""
     if is_dev:
         note = (
             " NOTE: inject-scope-rules.sh INJECT_AGENTS/STYLEREF_AGENTS/"
-            "MINIMALISM_AGENTS/NAMING_AGENTS arrays still need this NAME — run skill "
-            "glass-atrium-ops-reconcile-inject (orphan-scan will report this)."
+            "MINIMALISM_AGENTS/NAMING_AGENTS/BUDGET_DEV_AGENTS arrays still need "
+            "this NAME — run skill glass-atrium-ops-reconcile-inject (orphan-scan "
+            "will report this)."
         )
     return f"added {req.name} ({req.scope}/{req.origin}); {len(tx.written_labels())} steps committed.{note}"
 

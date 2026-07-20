@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .atomic import load_json
+from .inject_sync import _BUDGET_DAEMON_CARRIERS
 from .overlap import scan_existing_pairs
 from .paths import NON_AGENT_DIRS, NON_AGENT_EXCLUSIONS, StorePaths
 from .readers import (
@@ -208,7 +209,7 @@ def _check_one_inject_array(
     `array_name` is the bash variable (e.g. INJECT_AGENTS) used in the human-
     readable detail. A name in `expected` but not `members` is a missing-from
     finding; the reverse is a stale-extra finding. Same finding `mode` for all
-    four arrays so a single reconcile pass can act on the full set.
+    five tracked arrays so a single reconcile pass can act on the full set.
     """
     findings: list[Finding] = []
     for name in sorted(expected - members):
@@ -227,15 +228,18 @@ def _check_inject_list_mismatch(
 ) -> list[Finding]:
     """Mode 5: an inject-scope-rules.sh bash array out of sync with the roster (B4).
 
-    Parses all 4 arrays: INJECT_AGENTS (DEV+QA), STYLEREF_AGENTS (DEV),
+    Parses all 5 tracked arrays: INJECT_AGENTS (DEV+QA), STYLEREF_AGENTS (DEV),
     MINIMALISM_AGENTS (DEV), NAMING_AGENTS (DEV − {dev-swift} + qa-code-reviewer,
-    EXCLUDES qa-debugger). STYLEREF + MINIMALISM must equal the DEV roster;
-    INJECT must equal the DEV roster + QA; NAMING uses the narrower dedicated
-    predicate. Lint-only — a fix is reported to a human/DEV, never auto-edited
-    here (the reconcile-inject CLI verb owns writes).
+    EXCLUDES qa-debugger), BUDGET_DEV_AGENTS (DEV − the daemon-carrier
+    exclusions — the SHARED inject_sync._BUDGET_DAEMON_CARRIERS constant, never
+    a second hardcoded list). STYLEREF + MINIMALISM must equal the DEV roster;
+    INJECT must equal the DEV roster + QA; NAMING + BUDGET_DEV use their
+    dedicated predicates. The untracked BUDGET_ANALYSIS_AGENTS array is not
+    linted (manual-curated). Lint-only — a fix is reported to a human/DEV,
+    never auto-edited here (the reconcile-inject CLI verb owns writes).
     """
     try:
-        inject, styleref, minimalism, naming = parse_inject_arrays(paths)
+        inject, styleref, minimalism, naming, budget_dev = parse_inject_arrays(paths)
     except (ReaderError, OSError) as exc:
         return [
             Finding(
@@ -254,6 +258,9 @@ def _check_inject_list_mismatch(
         "MINIMALISM_AGENTS", set(minimalism), dev_roster
     )
     findings += _check_one_inject_array("NAMING_AGENTS", set(naming), naming_expected)
+    findings += _check_one_inject_array(
+        "BUDGET_DEV_AGENTS", set(budget_dev), dev_roster - _BUDGET_DAEMON_CARRIERS
+    )
     return findings
 
 

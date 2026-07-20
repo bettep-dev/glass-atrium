@@ -148,7 +148,6 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 - **Logging**: English · stderr for errors · no secrets · masked identifiers
 - **Comments**: "why" only · step numbers for 3+ sequential ops · `# SECURITY:` for suspicious areas
 - **Infrastructure decommissioning (4-layer atomicity)**: When retiring a script or hook, update ALL four layers in a single task: (1) move data/script files to archive or trash (2) remove the hook entry from `settings.json` (3) remove rule-doc sections referencing the retired component (4) remove health-check assertions and actionable hints for the retired component — omitting any layer causes false-positive monitoring failures or stale rule pollution in the learning log
-- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification

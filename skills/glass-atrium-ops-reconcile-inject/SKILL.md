@@ -1,11 +1,11 @@
 ---
 name: glass-atrium-ops-reconcile-inject
-description: Bidirectionally reconcile the four inject-scope-rules.sh bash arrays (INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS) with the DEV/QA roster — INSERTING every newly registered agent missing from an array AND REMOVING every stale name of a deleted agent — so each array matches the live roster and a new agent loads its scope-rule injection blocks. Runs the tested agent_lifecycle sync-inject CLI subcommand (transactional, .bak backup, atomic write, rollback), never an in-session hook edit. Use when you just registered OR deleted a DEV agent from the monitor flow, when the add-result or delete-result card shows the "skill-execution request" badge naming this skill, when finishing integrating or removing an agent, when asked to sync inject-scope-rules.sh, when a newly added agent loads no scope rules, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or non-DEV/QA agents.
+description: Bidirectionally reconcile the five tracked inject-scope-rules.sh bash arrays (INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS) with the DEV/QA roster — INSERTING every newly registered agent missing from an array AND REMOVING every stale name of a deleted agent — so each array matches the live roster and a new agent loads its scope-rule injection blocks; the sixth, manual-curated BUDGET_ANALYSIS_AGENTS array is never written by the CLI. Runs the tested agent_lifecycle sync-inject CLI subcommand (transactional, .bak backup, atomic write, rollback), never an in-session hook edit. Use when you just registered OR deleted a DEV agent from the monitor flow, when the add-result or delete-result card shows the "skill-execution request" badge naming this skill, when finishing integrating or removing an agent, when asked to sync inject-scope-rules.sh, when a newly added agent loads no scope rules, or via the /glass-atrium-ops-reconcile-inject slash command. Do NOT use for architecture-diagram drift (use glass-atrium-ops-verify-arch), model/budget config, or non-DEV/QA agents.
 ---
 
 # Reconcile inject-scope-rules.sh arrays
 
-Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI — one executable, transactional command serving both the add and delete lifecycle.
+Reconcile the five tracked `inject-scope-rules.sh` bash arrays with the live DEV/QA roster by idempotently INSERTING every missing roster member AND REMOVING every stale name (a deleted agent), via the tested `agent_lifecycle sync-inject` CLI — one executable, transactional command serving both the add and delete lifecycle.
 
 ## When to Use
 
@@ -22,12 +22,14 @@ Reconcile the four `inject-scope-rules.sh` bash arrays with the live DEV/QA rost
 
 ## The gap this closes
 
-`~/.glass-atrium/hooks/inject-scope-rules.sh` holds four readonly arrays that drive scope-rule injection at SubagentStart:
+`~/.glass-atrium/hooks/inject-scope-rules.sh` holds six readonly roster arrays that drive scope-rule injection at SubagentStart — five CLI-tracked plus one manual-curated:
 
 - **INJECT_AGENTS** — DEV (12) + QA (2): receives the comment-logging core block.
 - **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block.
 - **MINIMALISM_AGENTS** — DEV (12): receives the MINIMALISM block.
-- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. This array is auto-reconciled by the CLI alongside the other three.
+- **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. This array is auto-reconciled by the CLI alongside the other four tracked arrays.
+- **BUDGET_DEV_AGENTS** — DEV minus the four daemon-carrier agents {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell} = 9: receives the BUDGET-DEV sizing block (source `scoped/shared-turn-budget.md`). The carriers keep daemon-evolved in-body budget bullets (the daemon rewrites agent BODIES, never hook sources) — injecting on top would double-deliver. Tracked 5th array: reconciled via the predicate dev_roster − `_BUDGET_DAEMON_CARRIERS` (the carrier constant changes ONLY by manual governance, like NAMING's exclusions).
+- **BUDGET_ANALYSIS_AGENTS** — 6 analysis consumers (glass-atrium-intel-planner, glass-atrium-intel-reporter, glass-atrium-qa-code-reviewer, glass-atrium-design-designer, glass-atrium-meta-agent, glass-atrium-wiki-curator): receives the BUDGET-ANALYSIS block (same source file). MANUAL-curated — NOT tracked by the CLI (membership is not roster-derivable: glass-atrium-meta-agent in, glass-atrium-meta-prompt-engineer out, glass-atrium-intel-researcher out as a carrier); a reconcile run leaves it byte-identical.
 
 A newly registered DEV/QA agent is in the registry + scope-dev roster but absent from these arrays until reconciled, so it silently loads NO injection blocks. Symmetrically, a deleted DEV agent's name lingers in the arrays after the delete prunes its scope-dev.md roster entry, leaving a dangling injection target. This skill runs the CLI that detects BOTH the missing names (insert) and the stale names (remove) and writes the fix transactionally in one pass.
 
@@ -50,7 +52,7 @@ The package resolves the GA root internally and writes to the live `inject-scope
 ### Step 2 — Read what it reports
 
 - **Already in sync** — prints `sync-inject: already in sync (no names inserted or removed).` and exits 0. This is the idempotent no-op: re-running on a clean tree (nothing to insert AND nothing to remove) leaves the array file byte-identical with mtime unchanged and NO `.bak` written. Safe to run any number of times.
-- **Names reconciled** — reports each agent name inserted and/or removed and the per-scope array it touched (INJECT / STYLEREF / MINIMALISM / NAMING), plus the `.bak` backup path created before the write. Inserts (a newly added agent) and removes (a deleted agent's stale name) are applied together in one transaction.
+- **Names reconciled** — reports each agent name inserted and/or removed and the per-scope array it touched (INJECT / STYLEREF / MINIMALISM / NAMING / BUDGET_DEV), plus the `.bak` backup path created before the write. Inserts (a newly added agent) and removes (a deleted agent's stale name) are applied together in one transaction.
 
 ### Step 3 — Report the outcome + exit code
 
@@ -65,7 +67,7 @@ A non-zero exit means the live hook was NOT left in a partial state — the `.ba
 
 ## Idempotency
 
-Membership is checked by `split()` + token equality (not substring), so `glass-atrium-dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change.
+Membership is checked by `split()` + token equality (not substring), so `glass-atrium-dev-rag` and a hypothetical `dev-rag-x` are distinct and a present name is never duplicated. Both directions are idempotent: inserting a name already present is a no-op, and removing a name already absent is a no-op. Running the skill repeatedly is safe: an already-synced tree (nothing to insert AND nothing to remove) is a no-op with no content change. The manual-curated `BUDGET_ANALYSIS_AGENTS` array is never written — every reconcile run leaves it byte-identical.
 
 ## Output Format
 
@@ -75,16 +77,16 @@ RECONCILE-INJECT: [RECONCILED | ALREADY-SYNCED | FAILED]
 Command: cd ~/.glass-atrium/scripts && python3 -m agent_lifecycle sync-inject
 Exit code: <0|4|5|6>
 Inserted:
-  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS   # per actual scope (NAMING excludes glass-atrium-dev-swift + glass-atrium-qa-debugger); "(none)" if no inserts
+  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS   # per actual scope (NAMING excludes glass-atrium-dev-swift + glass-atrium-qa-debugger; BUDGET_DEV excludes the four daemon carriers); "(none)" if no inserts
 Removed:
-  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS   # stale name of a deleted agent; "(none)" if no removes
+  <agent-name> -> INJECT_AGENTS, STYLEREF_AGENTS, MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS   # stale name of a deleted agent; "(none)" if no removes
 Backup: <path to .bak>                                                # omit if no write occurred
 ```
 
 ## Prohibitions
 
 - **No in-session array edit** — never edit `inject-scope-rules.sh` via in-session Edit/Write/sed. The only sanctioned mutation path is the CLI subprocess (`.bak` backup + atomic write + rollback). Harness Path Protection blocks and forbids the direct edit.
-- **DEV/QA agents only** — these arrays populate from the DEV (12) + QA (2) roster. Non-DEV/non-QA agents are not array members; do not attempt to inject them.
+- **DEV/QA agents only** — the tracked arrays populate from the DEV (12) + QA (2) roster. Non-DEV/non-QA agents are not tracked-array members; do not attempt to inject them. (The manual-curated `BUDGET_ANALYSIS_AGENTS` roster does name non-DEV/QA analysis agents, but the CLI never writes it — its membership is a manual governance decision, out of this skill's write scope.)
 - **Does NOT chain verify-arch** — this skill is a fast array-sync only. It MUST NOT trigger `glass-atrium-ops-verify-arch` (the heavy build + launchctl restart). Architecture-diagram reconciliation is a separate, decoupled skill/badge — keeping them separate avoids `execFile` timeout coupling.
 
 ## Red Flags
