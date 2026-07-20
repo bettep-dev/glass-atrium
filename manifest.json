@@ -369,7 +369,7 @@
   ],
   "hashes": {
     "agent-registry.json": "e37021b3661cf44f9f864b10fa570ff2c58a564c95d2b4f5e17ea42999a46d70",
-    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "34c27fe3823d651dc2cb3ac411bfda1b9167b7a2b8ff6a82602914bfdd01f152",
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "b5a22d04db3fefce65531dbc8df4328b4d851650b57ee9a51e620eac732cfec1",
     "agents/glass-atrium-design-designer.md": "8dd0aecec82678806b0510031ed5d7fddc4570fcaf21f187526ccfa907cf0a85",
     "agents/glass-atrium-dev-android.md": "0e74f9aba4bbb4dab48d8a6b6a7091863bffebf4de8911fe7b1062f63e568044",
     "agents/glass-atrium-dev-angular.md": "66c7a17a6b5ae44c6e63ff3facf367cc9ef907d5d3b41df83d483091281300ee",
@@ -597,7 +597,7 @@
     "monitor/src/server/version.ts": "752c9ad6d08a0debae2641cba6eb59a4f6b6c4a4e28b855059bc8b65f8fc2f7c",
     "monitor/tsconfig.json": "28983bf0f2e87ed5721283feb68d98ec19dc3318e26bc429a983e4c0a7ac4b35",
     "requirements.txt": "eae3486e48ad1b5cb6dea1024cdf0e3360461a9bf4a304f49713ee18985c5f23",
-    "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md": "34c27fe3823d651dc2cb3ac411bfda1b9167b7a2b8ff6a82602914bfdd01f152",
+    "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md": "b5a22d04db3fefce65531dbc8df4328b4d851650b57ee9a51e620eac732cfec1",
     "rules/glass-atrium/core-compliance-matrix.md": "daef540f962cea7de178a27a0142786c0a73c75013dfdfec5a6403f4aecc7257",
     "rules/glass-atrium/core-git-workflow.md": "0ebf8b55a96648a5c3ec3f9838828502c04e7d8987adf5b38519b6b519228131",
     "rules/glass-atrium/core-learning-log.md": "3538432fb514f938cf9902410bf2c843943ac62e0cdd79bae432b1badeaef367",
