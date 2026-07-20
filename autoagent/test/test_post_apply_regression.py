@@ -299,11 +299,18 @@ class TestDropRevertedPatterns(unittest.TestCase):
             self.transitions.append((pattern_id, reason))
             return pattern_id
 
+        # create=True: _pg_reject_learning_pattern is a CONDITIONAL import
+        # (daemon_cycle try-block alias — absent when psycopg is missing, the
+        # CI condition). This class is pure-mock and must keep running PG-less
+        # (unlike test_pattern_lifecycle_gates, which co-imports the PG helper
+        # and skips wholesale because its live-PG classes need psycopg anyway);
+        # the gate reaches the alias only through the mocked
+        # _fetch_proposal_history, so patching it into existence is sound.
         for target, repl in (
             ("_invoke_pg_helper", _record_event),
             ("_pg_reject_learning_pattern", _record_transition),
         ):
-            patcher = mock.patch.object(dc, target, repl)
+            patcher = mock.patch.object(dc, target, repl, create=True)
             patcher.start()
             self.addCleanup(patcher.stop)
 
