@@ -13,7 +13,14 @@
 # excl dev-swift) + qa-code-reviewer (the enforcement surface). Its NAMING_AGENTS
 # roster is DELIBERATELY narrower than INJECT_AGENTS (no qa-debugger, no dev-swift)
 # and is AUTO-RECONCILED by agent_lifecycle inject_sync as a 4th tracked array — a
-# new DEV agent is wired into naming injection automatically.
+# new DEV agent is wired into naming injection automatically. Two BUDGET-SIZING blocks
+# (shared-turn-budget.md — injection-text SoT; policy SoT = GLOBAL_RULES Turn Budget &
+# Graceful Exit) ride DISJOINT rosters: BUDGET-DEV (sizing-only — the non-droppable
+# meter block already owns the 80%-ceiling half) → BUDGET_DEV_AGENTS, DEV(13) minus the
+# four daemon-carrier agents whose bodies keep daemon-evolved budget bullets,
+# AUTO-RECONCILED by inject_sync as a 5th tracked array; BUDGET-ANALYSIS →
+# BUDGET_ANALYSIS_AGENTS, 6 curated analysis consumers, UNTRACKED-manual (membership is
+# a governance decision, not roster-derivable).
 #
 # Two NON-DROPPABLE universal blocks (ALL subagents, not DEV/QA-scoped), INDEPENDENT
 # of each other and of the scope blocks:
@@ -64,6 +71,10 @@ readonly STYLEREF_SRC_FILE="${INJECT_SCOPE_RULES_STYLEREF_SRC:-${HOME}/.glass-at
 # default keeps that path (a symlink into the canonical ~/.glass-atrium store).
 readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skills/glass-atrium-dev-naming/SKILL.md}"
 
+# turn-budget source rule file — BOTH budget blocks (BUDGET-DEV + BUDGET-ANALYSIS) live in this
+# single scoped/ file; same env-override + ~/.glass-atrium/scoped default as SRC_FILE/STYLEREF_SRC_FILE.
+readonly BUDGET_SRC_FILE="${INJECT_SCOPE_RULES_BUDGET_SRC:-${HOME}/.glass-atrium/scoped/shared-turn-budget.md}"
+
 # AD-3 lesson store — the CTM/EPM JSON the learning-aggregator writes (default under
 # ~/.claude/data). Env-overridable for the Bats sandbox. Absent file → no lesson block
 # (fail-open, universal). Read with jq (already required above); a PG read from this <1s
@@ -95,6 +106,13 @@ readonly MINIMALISM_MARKER_END='<!-- AGENT-INJECT:MINIMALISM:END -->'
 readonly NAMING_MARKER_START='<!-- AGENT-INJECT:NAMING:START -->'
 readonly NAMING_MARKER_END='<!-- AGENT-INJECT:NAMING:END -->'
 
+# budget AGENT-INJECT block boundaries — two DISTINCT marker names (one per roster variant), so
+# neither sed range collides with the other nor with any other block.
+readonly BUDGET_DEV_MARKER_START='<!-- AGENT-INJECT:BUDGET-DEV:START -->'
+readonly BUDGET_DEV_MARKER_END='<!-- AGENT-INJECT:BUDGET-DEV:END -->'
+readonly BUDGET_ANALYSIS_MARKER_START='<!-- AGENT-INJECT:BUDGET-ANALYSIS:START -->'
+readonly BUDGET_ANALYSIS_MARKER_END='<!-- AGENT-INJECT:BUDGET-ANALYSIS:END -->'
+
 # Comment-logging scope-match — DEV + QA (core-compliance-matrix.md Scope Legend SoT).
 # Space-padded to block partial matches. Update when DEV/QA agents are added.
 readonly INJECT_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-dev-swift "
@@ -113,19 +131,37 @@ readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass
 # DEV agent is wired in automatically.
 readonly NAMING_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer "
 
+# budget-dev scope-match — DEV(13) MINUS the four daemon-carrier agents (dev-nestjs, dev-python,
+# dev-react, dev-shell) whose BODIES keep daemon-evolved in-body budget bullets (the daemon
+# rewrites agent bodies, never hook sources) — injecting on top would double-deliver. Space-padded.
+# AUTO-RECONCILED by agent_lifecycle inject_sync as a 5th tracked array via the predicate
+# dev_roster − _BUDGET_DAEMON_CARRIERS — a new DEV agent is wired in automatically; the carrier
+# constant changes ONLY when the daemon adds/removes an in-body budget bullet (a manual
+# governance change, like NAMING's exclusions).
+readonly BUDGET_DEV_AGENTS=" glass-atrium-dev-front glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-node glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-swift "
+
+# budget-analysis scope-match — 6 curated analysis consumers. UNTRACKED-manual (no inject_sync
+# reconcile): the set is not roster-derivable (meta-agent IN / meta-prompt-engineer OUT /
+# intel-researcher OUT as a daemon carrier; qa-debugger + sec-guard never recipients) — a
+# derivation predicate would be a second copy of the array = false confidence, so membership
+# stays a curated governance decision. Space-padded.
+readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-reporter glass-atrium-qa-code-reviewer glass-atrium-design-designer glass-atrium-meta-agent glass-atrium-wiki-curator "
+
 # Universal byte ceiling for the assembled additionalContext (byte-accurate via wc -c).
 # WHY: the engine persists any SubagentStart additionalContext larger than ~10KB (10240
 # bytes) to a file and delivers only a ~2KB preview — so an oversized assembly silently
-# strips the meter (the exact failure this hook repairs). 9728 stays clear of the 10240
-# trigger (512B margin), and the ~900B meter fits even the 2KB preview, so meter delivery
-# holds in every degradation mode. The four AGENT-INJECT source blocks are compressed so the
-# worst-case DEV assembly (all six blocks) fits under this ceiling with headroom — a ceiling
+# strips the meter (the exact failure this hook repairs). 9984 stays clear of the 10240
+# trigger (256B margin — halved from 512B to admit the byte-contracted BUDGET-DEV block, still
+# clear), and the ~900B meter fits even the 2KB preview, so meter delivery
+# holds in every degradation mode. The six AGENT-INJECT source blocks are compressed so the
+# worst-case DEV assembly (all seven blocks, <=9935B measured) fits under this ceiling with
+# >=49B headroom — a ceiling
 # raise ALONE cannot fit the pre-compression ~11540B sum, since no compliant ceiling can hold
 # it under the 10240 persist threshold; the fit is compression + ceiling together. The zero-
 # drop invariant is pinned by hooks/test/inject-scope-rules-nodrop.bats against the real repo
 # sources. UNIVERSAL: the envelope carries no spawn-mode discriminator, so engine/schema-mode
 # spawns are bounded identically to manual ones.
-readonly INJECT_CTX_MAX_BYTES=9728
+readonly INJECT_CTX_MAX_BYTES=9984
 
 # Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
 # SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
@@ -166,7 +202,7 @@ extract_block() {
 }
 
 # Extract a droppable scope block WHEN AGENT_TYPE is in the roster, emitting one fail-open
-# diagnostic on an empty extraction (markers/file absent). Consolidates the four scope-block
+# diagnostic on an empty extraction (markers/file absent). Consolidates the six scope-block
 # sites; blocks stay independent — an empty one self-skips (a non-matching roster yields empty
 # with no diagnostic). Args: $1=roster $2=src_file $3=marker_start $4=marker_end $5=label.
 extract_scope_block() {
@@ -225,8 +261,10 @@ build_meter_block() {
 # field, so this directive names that field for schema-mode + delivers the strict multi-line contract
 # to the text-channel (manual) path. The manual path keeps the print-block-then-emit discipline;
 # schema-mode supersedes it with the completion_block field. stdout: block text.
-# BYTE-BUDGET: this printf'd block is byte-budgeted — redteam-#24 9728B injection ceiling +
-# the EMIT+METER 2048B ~2KB-preview cap. Any rewording MUST re-run hooks/test/inject-scope-rules-nodrop.bats
+# BYTE-BUDGET: this printf'd block is byte-budgeted — redteam-#24 9984B injection ceiling
+# (worst-case DEV seven-block assembly <=9935B, >=49B headroom; drop order sheds lesson, then
+# the two budget blocks, before the proven four) + the EMIT+METER 2048B ~2KB-preview cap. Any
+# rewording MUST re-run hooks/test/inject-scope-rules-nodrop.bats
 # and hooks/test/inject-scope-rules.bats before commit.
 build_emit_format_block() {
   printf '%s\n' \
@@ -324,16 +362,20 @@ join_block() {
 }
 
 # Assemble additionalContext: the two NON-DROPPABLE blocks first (EMIT-FORMAT, then METER),
-# followed by the four droppable scope blocks in display order (comment-logging, style_ref,
-# minimalism, naming), each gated by its keep-flag. Reads the module-level *_BLOCK variables.
-# Emit-first/meter-second is load-bearing: both must survive the 2KB preview, so neither may sit
-# behind a larger droppable block. Emit leads as the PRIMARY fix.
-# Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming $5=keep_lesson (each 0/1)
+# followed by the six droppable scope blocks in display order (comment-logging, style_ref,
+# minimalism, naming, budget-dev, budget-analysis), each gated by its keep-flag. Reads the
+# module-level *_BLOCK variables. Emit-first/meter-second is load-bearing: both must survive the
+# 2KB preview, so neither may sit behind a larger droppable block. Emit leads as the PRIMARY fix.
+# Args: $1=keep_comment $2=keep_styleref $3=keep_minimalism $4=keep_naming $5=keep_budget_dev
+# $6=keep_budget_analysis $7=keep_lesson (each 0/1)
 # stdout: the assembled context (no trailing newline). The AD-3 lesson block is appended LAST
-# (lowest priority) so it is the FIRST block the drop loop sheds under ceiling pressure — the six
-# proven blocks (worst-case DEV already ~9633B, ~95B headroom) always win over best-effort recall.
+# (lowest priority) so it is the FIRST block the drop loop sheds under ceiling pressure; the two
+# budget blocks shed next-after-lesson (newest, least proven — their DISJOINT rosters make their
+# mutual order inert), so the proven four (worst-case DEV seven-block assembly <=9935B, >=49B
+# headroom under 9984) always win over best-effort recall.
 assemble_ctx() {
-  local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}" keep_lesson="${5}"
+  local keep_comment="${1}" keep_styleref="${2}" keep_minimalism="${3}" keep_naming="${4}"
+  local keep_budget_dev="${5}" keep_budget_analysis="${6}" keep_lesson="${7}"
   local ctx=""
   if [[ -n "${EMIT_BLOCK}" ]]; then
     ctx="${EMIT_BLOCK}"
@@ -353,21 +395,31 @@ assemble_ctx() {
   if [[ "${keep_naming}" -eq 1 && -n "${NAMING_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${NAMING_BLOCK}")"
   fi
+  if [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${BUDGET_DEV_BLOCK}")"
+  fi
+  if [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]]; then
+    ctx="$(join_block "${ctx}" "${BUDGET_ANALYSIS_BLOCK}")"
+  fi
   if [[ "${keep_lesson}" -eq 1 && -n "${LESSON_BLOCK}" ]]; then
     ctx="$(join_block "${ctx}" "${LESSON_BLOCK}")"
   fi
   printf '%s' "${ctx}"
 }
 
-# Four droppable scope blocks — each extracted only when AGENT_TYPE is in that block's roster (an
+# Six droppable scope blocks — each extracted only when AGENT_TYPE is in that block's roster (an
 # empty extraction self-skips with a fail-open diagnostic; see extract_scope_block). Rosters DIFFER:
 # comment-logging = DEV+QA · style_ref/minimalism = DEV-only (shared scope-dev.md source) · naming =
-# DEV(12)+qa-code-reviewer. Blocks are independent — a missing one never suppresses the others (see
-# the *_AGENTS definitions above for exact rosters + rationale).
+# DEV(12)+qa-code-reviewer · budget-dev = DEV(9, minus daemon carriers) · budget-analysis = 6
+# curated analysis consumers (shared shared-turn-budget.md source). Blocks are independent — a
+# missing one never suppresses the others (see the *_AGENTS definitions above for exact rosters +
+# rationale).
 COMMENT_BLOCK="$(extract_scope_block "${INJECT_AGENTS}" "${SRC_FILE}" "${MARKER_START}" "${MARKER_END}" "comment-logging")"
 STYLEREF_BLOCK="$(extract_scope_block "${STYLEREF_AGENTS}" "${STYLEREF_SRC_FILE}" "${STYLEREF_MARKER_START}" "${STYLEREF_MARKER_END}" "style_ref")"
 MINIMALISM_BLOCK="$(extract_scope_block "${MINIMALISM_AGENTS}" "${STYLEREF_SRC_FILE}" "${MINIMALISM_MARKER_START}" "${MINIMALISM_MARKER_END}" "minimalism")"
 NAMING_BLOCK="$(extract_scope_block "${NAMING_AGENTS}" "${NAMING_SRC_FILE}" "${NAMING_MARKER_START}" "${NAMING_MARKER_END}" "naming")"
+BUDGET_DEV_BLOCK="$(extract_scope_block "${BUDGET_DEV_AGENTS}" "${BUDGET_SRC_FILE}" "${BUDGET_DEV_MARKER_START}" "${BUDGET_DEV_MARKER_END}" "budget-dev")"
+BUDGET_ANALYSIS_BLOCK="$(extract_scope_block "${BUDGET_ANALYSIS_AGENTS}" "${BUDGET_SRC_FILE}" "${BUDGET_ANALYSIS_MARKER_START}" "${BUDGET_ANALYSIS_MARKER_END}" "budget-analysis")"
 
 # AD-3 lesson-recall block — universal (any agent_type), self-skipping on no store / no match
 # (a no-match spawn is unchanged). NOT a roster gate: build_lesson_block returns empty unless
@@ -380,7 +432,7 @@ LESSON_BLOCK="$(build_lesson_block)"
 # candidate.
 EMIT_BLOCK="$(build_emit_format_block)"
 
-# Budget-meter block — ALL subagents (universal), independent of the four scope blocks above.
+# Budget-meter block — ALL subagents (universal), independent of the six scope blocks above.
 # Kill-switch + un-derivable maxTurns → empty (no meter). A missing meter must not suppress a
 # scope block, and vice-versa.
 METER_BLOCK=""
@@ -398,19 +450,24 @@ fi
 
 # Combine blocks (EMIT-FORMAT first, METER second), then enforce the byte ceiling. assemble_ctx
 # places the two non-droppable blocks first + appends the kept droppable blocks; the drop loop
-# below removes the lowest-value blocks in the PINNED order naming → style-ref → minimalism →
-# comment-logging until the total fits INJECT_CTX_MAX_BYTES. Neither emit-format nor meter is a
-# drop candidate, so under extreme pressure only those two survive.
+# below removes the lowest-value blocks in the PINNED order lesson → budget-analysis → budget-dev
+# → naming → style-ref → minimalism → comment-logging until the total fits INJECT_CTX_MAX_BYTES.
+# Neither emit-format nor meter is a drop candidate, so under extreme pressure only those two
+# survive.
 keep_comment=1
 keep_styleref=1
 keep_minimalism=1
 keep_naming=1
+keep_budget_dev=1
+keep_budget_analysis=1
 keep_lesson=1
-CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_lesson}")"
+CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}")"
 ctx_bytes="$(byte_len "${CTX}")"
-# lesson FIRST — AD-3 best-effort recall yields before any proven scope block (worst-case DEV is
-# already ~9633B, so a full-DEV spawn sheds lessons before naming; lighter agents keep them).
-for drop_block in lesson naming styleref minimalism comment; do
+# lesson FIRST — AD-3 best-effort recall yields before any scope block; the two budget blocks
+# (newest, least proven — DISJOINT rosters, mutual order inert) shed next, before the proven four
+# (worst-case DEV seven-block assembly <=9935B under 9984 → a full-DEV spawn sheds lessons first;
+# lighter agents keep them).
+for drop_block in lesson budget-analysis budget-dev naming styleref minimalism comment; do
   [[ "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
   # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
   # the block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would
@@ -418,13 +475,15 @@ for drop_block in lesson naming styleref minimalism comment; do
   pre_drop_bytes="${ctx_bytes}"
   case "${drop_block}" in
     lesson) keep_lesson=0 ;;
+    budget-analysis) keep_budget_analysis=0 ;;
+    budget-dev) keep_budget_dev=0 ;;
     naming) keep_naming=0 ;;
     styleref) keep_styleref=0 ;;
     minimalism) keep_minimalism=0 ;;
     comment) keep_comment=0 ;;
     *) ;; # unreachable — the loop iterates a fixed literal set; present only to satisfy SC2249.
   esac
-  CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_lesson}")"
+  CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}")"
   ctx_bytes="$(byte_len "${CTX}")"
   printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
   append_drop_log "${drop_block}" "${pre_drop_bytes}"

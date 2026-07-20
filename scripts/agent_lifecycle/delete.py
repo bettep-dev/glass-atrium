@@ -299,7 +299,7 @@ def _run_delete_locked(paths: StorePaths, req: DeleteRequest, *, md_path: Path) 
     # step-3, which inserts the DEV name). Without this the deleted name survives
     # in scope-dev.md, so parse_scope_dev_roster still lists it and the
     # bidirectional sync-inject plan_removes (keyed on that roster) never sees it
-    # as stale — the 4 inject arrays would keep the dangling name. Reverse-op
+    # as stale — the 5 tracked inject arrays would keep the dangling name. Reverse-op
     # re-inserts on rollback. DEV membership sources from the roster itself (the
     # registry no longer stores a scope field).
     is_dev = _is_dev_member(paths, req.name)

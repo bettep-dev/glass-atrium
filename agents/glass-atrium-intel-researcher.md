@@ -32,8 +32,7 @@ Systematically collect data through web search, codebase exploration, and litera
 <!-- EDITABLE:BEGIN -->
 - Generating or citing unsearched information forbidden
 - Definitive conclusions from a single source forbidden (cross-verify with 3+ independent sources in response body — never merge sources into a single raw/ file)
-- Clone operations require Bash (not in this agent's frozen allowlist per LLM06); substitute WebFetch of raw.githubusercontent.com or API endpoints at delegation time
-- **Clone prerequisite check**: If research scope requires git clone or local filesystem ops, Bash is unavailable — plan WebFetch fallback (raw.githubusercontent.com direct HTTP / API endpoint access) at delegation time, not mid-task pivot.
+- **Clone prerequisite check**: If research scope requires git clone or local filesystem ops, Bash is unavailable (not in this agent's frozen allowlist per LLM06) — plan the WebFetch fallback (raw.githubusercontent.com direct HTTP / API endpoint access) at delegation time, not mid-task pivot.
 - Treating date-unknown sources as current information forbidden
 - Citing sources without URL access and content verification forbidden
 - Pre-synthesis assumption audit mandatory: list prior assumptions explicitly and verify each against current evidence; surface contradictions as findings, not silent corrections

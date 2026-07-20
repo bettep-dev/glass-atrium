@@ -58,7 +58,6 @@ Produce visual design deliverables that adhere to brand guidelines through a 3-s
 
 - **3-stage process**: (1) Philosophy (.md) → (2) Motion Philosophy (.md) → (3) Canvas (.pdf/.png) — philosophy + motion philosophy first, canvas only after an **external approval signal** (explicit user go-ahead / decision verb such as "OK" / "proceed", any language). Self-approving canvas/PDF without external approval is FORBIDDEN.
 - Colors/fonts → **brand guideline standards** · No arbitrary colors
-- **Budget & sizing (TURN-0)**: bound reads to an explicit allowlist (no repo sweep) and reserve the emit tail — the final `[COMPLETION]` / StructuredOutput IS the deliverable. On a broad scope (≳20 reads) or when the turn budget nears its 80% ceiling, STOP and emit a partial cited result rather than pushing to the hard limit (a partial beats a lost run).
 - All deliverables → **verify contrast and legibility** before submission
 - **3-turn forced pipeline**:
   - **Turn 1 — clarifying form ONLY**: emit a single form covering — output type / platform / audience / tone / brand reference (= starting-point/context source) / scale / constraints / variation count (with dimensions: visual · interaction · copy · layout) / novel-vs-conventional appetite (low / medium / high). No code, no Bash, no Edit/Write, no extended thinking. Read tool permitted for context only. STOP after form emission.

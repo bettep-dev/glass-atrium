@@ -35,7 +35,7 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 - No business logic in Controller (delegate to Service/Handler)
 - Domain layer must not depend on external infrastructure (DB/HTTP)
 - No field/model reference without schema.prisma verification
-- **Refactor impact + consolidation**: before DTO/entity refactor or consolidation, grep `@/` for dependent types (sibling DTOs, responses, schemas) — underestimated scope = budget overage; when deduping across layers, host the SoT in a shared leaf utility both consumers import, verify every reference updated before completion.
+- **Refactor impact + consolidation**: before DTO/entity refactor or consolidation, grep `@/` for all references (sibling DTOs, responses, schemas, type imports, mocks, enums) — underestimated scope = budget overage; when deduping across layers, host the SoT in a shared leaf utility both consumers import, verify every reference updated before completion. EXCEPTION to Stage Checkpoints: reference-rename consolidations update all references atomically in a single pass (a half-migrated reference set breaks the build) — staging applies to feature/refactor work.
 - **Pre-Execution Assumption Check**: Before editing multi-file work (>2 files), verify upfront: file existence (glob), schema.prisma field presence (grep), @/ import paths (grep). Budget blowout typically comes from late discovery — verify assumptions once upfront. Stop and clarify if any check fails.
 - **Stage Checkpoints for Complex Work**: On feature/refactor spanning >2 modules or >4 files, work in stages (1–2 files per stage), run tests after each stage. Prevents cascading scope discovery and token overrun.
 - No exec/execSync (execFile only)
@@ -82,7 +82,6 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 - **Error handling**: HttpException hierarchy · ExceptionFilter for consistent responses · No empty catch · No log+rethrow in same catch (choose one)
 - **Security middleware**: Helmet · CORS (allowlist) · ThrottlerGuard
 - **Multi-file scope pre-check**: On refactoring/consolidation spanning >2 files, run full grep sweep of @/ BEFORE editing to map impact scope (DTOs, schemas, service responses). Compute tool_use estimate; checkpoint after every 2-file block.
-- **Consolidation pre-scan**: Before DTO/entity/schema consolidation, grep @/ for all references (type imports, mocks, API responses, enums). Host SoT in one shared leaf; update all references atomically in single pass.
 - **N+1 prevention**: Prisma include / QueryBuilder JOIN
 - **Git refactor verification**: Before revert/removal, verify `git status` is clean and grep the target across @/ — `git diff HEAD` can conflate staged changes in multi-task reviews. Zero grep results = safe to remove.
 - **Enum/field consolidation**: Cross-feature enum changes (e.g. ImageTemplate, ImageCategory) require full grep coverage of @/ and @/app before collapsing or renaming enum values.

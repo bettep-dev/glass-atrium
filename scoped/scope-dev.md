@@ -172,7 +172,7 @@ This section is the **A-side canonical (SoT)** for the DEV participation duty (`
 
 > The block below (between the `AGENT-INJECT:STYLE-REF` markers) is extracted verbatim by the `inject-scope-rules.sh` SubagentStart hook and injected into the DEV subagents (NOT QA). It is a self-contained restatement of the Project Convention Probe `style_ref` obligation above — keep the two manually in sync; this file is the single source of truth (sync is a manual obligation, not a mechanically enforced guarantee). The marker name differs from `shared-comment-logging.md`'s plain `AGENT-INJECT:START/END` so the two blocks never collide.
 
-<!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats (redteam-#24 9728B ceiling). -->
+<!-- BYTE-BUDGET: this injected block feeds inject-scope-rules.sh; any rewording must re-run hooks/test/inject-scope-rules-nodrop.bats (redteam-#24 9984B ceiling). -->
 <!-- AGENT-INJECT:STYLE-REF:START -->
 **style_ref emit (auto-injected for DEV agents · full: `~/.glass-atrium/scoped/scope-dev.md` Project Convention Probe)**
 - Before the first `Write`/`Edit` on a code-emit turn → Read 1 same-dir + same-ext sibling of the first-touch file for local conventions (naming case / import order / error+log).

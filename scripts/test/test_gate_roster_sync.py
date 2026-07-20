@@ -18,6 +18,11 @@ Covers `agent_lifecycle.gate_roster_sync` (the 3-gate-site transactional rebuild
   - detection mode: orphan-scan gate-roster-mismatch reports drift, writes nothing.
   - auto-wire e2e: a fixture run_add of a DEV agent makes its name appear in all 3
     sites (the T6 integration proof).
+  - inject 5-tuple widening: parse_inject_text returns the 5-tracked-array tuple
+    (BUDGET_DEV_AGENTS 5th) and loud-fails when it is absent; orphan_scan's
+    inject drift-lint keys BUDGET_DEV on the SHARED
+    inject_sync._BUDGET_DAEMON_CARRIERS predicate (readers/orphan_scan
+    consumption paths).
 
 Run with:
     uv run --python 3.13 --with pytest pytest scripts/test/test_gate_roster_sync.py -v
@@ -37,7 +42,7 @@ _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_ROOT))
 
-from agent_lifecycle import gate_roster_sync  # noqa: E402
+from agent_lifecycle import gate_roster_sync, inject_sync, orphan_scan  # noqa: E402
 from agent_lifecycle.cli import (  # noqa: E402
     EXIT_OK,
     EXIT_ROLLBACK_FAILED,
@@ -47,7 +52,9 @@ from agent_lifecycle.cli import (  # noqa: E402
 from agent_lifecycle.orphan_scan import run_scan  # noqa: E402
 from agent_lifecycle.paths import StorePaths  # noqa: E402
 from agent_lifecycle.readers import (  # noqa: E402
+    ReaderError,
     parse_dev_set_text,
+    parse_inject_text,
     parse_sql_in_list_text,
 )
 from agent_lifecycle.validation import ValidationError  # noqa: E402
@@ -560,3 +567,102 @@ def test_rollback_failed_raises_and_cli_returns_exit_6(
 
     code = cli_main(["--ga-root", str(paths.ga_root), "sync-gate-roster"])
     assert code == EXIT_ROLLBACK_FAILED
+
+
+def _inject_hook_text(budget_dev: list[str]) -> str:
+    """A minimal inject-scope-rules.sh: all 5 tracked arrays in-sync for the
+    13-name roster except a caller-driven BUDGET_DEV_AGENTS membership."""
+
+    def line(var: str, names: list[str]) -> str:
+        return f'readonly {var}=" {" ".join(names)} "'
+
+    qa = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
+    naming = [n for n in _DEV_ROSTER if n != "glass-atrium-dev-swift"] + [
+        "glass-atrium-qa-code-reviewer"
+    ]
+    return (
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                line("INJECT_AGENTS", _DEV_ROSTER + qa),
+                line("STYLEREF_AGENTS", _DEV_ROSTER),
+                line("MINIMALISM_AGENTS", _DEV_ROSTER),
+                line("NAMING_AGENTS", naming),
+                line("BUDGET_DEV_AGENTS", budget_dev),
+            ]
+        )
+        + "\n"
+    )
+
+
+def test_parse_inject_text_returns_five_tuple_in_documented_order() -> None:
+    """readers 5-tuple widening: (inject, styleref, minimalism, naming, budget_dev)."""
+    expected_budget = [
+        n for n in _DEV_ROSTER if n not in inject_sync._BUDGET_DAEMON_CARRIERS
+    ]
+    text = _inject_hook_text(expected_budget)
+
+    inject, styleref, minimalism, naming, budget_dev = parse_inject_text(text)
+
+    assert inject == _DEV_ROSTER + [
+        "glass-atrium-qa-code-reviewer",
+        "glass-atrium-qa-debugger",
+    ]
+    assert styleref == _DEV_ROSTER
+    assert minimalism == _DEV_ROSTER
+    assert naming[-1] == "glass-atrium-qa-code-reviewer"
+    assert "glass-atrium-dev-swift" not in naming
+    assert budget_dev == expected_budget
+
+
+def test_parse_inject_text_loud_fails_without_budget_dev_array() -> None:
+    """A hook missing the 5th tracked array raises ReaderError (loud, not a 4-tuple)."""
+    text = _inject_hook_text(["glass-atrium-dev-front"])
+    without_budget = (
+        "\n".join(
+            ln for ln in text.splitlines() if "BUDGET_DEV_AGENTS" not in ln
+        )
+        + "\n"
+    )
+
+    with pytest.raises(ReaderError, match="BUDGET_DEV_AGENTS"):
+        parse_inject_text(without_budget)
+
+
+def test_orphan_scan_budget_dev_lint_uses_shared_carrier_predicate(
+    tmp_path: Path,
+) -> None:
+    """orphan_scan flags BUDGET_DEV deviations from roster − carriers via the
+    SHARED inject_sync constant — identity-pinned so a re-hardcoded local copy
+    fails even when equal (a second carrier list is forbidden)."""
+    assert orphan_scan._BUDGET_DAEMON_CARRIERS is inject_sync._BUDGET_DAEMON_CARRIERS
+
+    paths = _write_fixture(
+        tmp_path, dev_set=_DEV_ROSTER, sql=_DEV_ROSTER, roster=_DEV_ROSTER
+    )
+    expected_budget = [
+        n for n in _DEV_ROSTER if n not in inject_sync._BUDGET_DAEMON_CARRIERS
+    ]
+    # drift both directions: drop dev-front (a member) + add dev-shell (a carrier).
+    drifted = [n for n in expected_budget if n != "glass-atrium-dev-front"] + [
+        "glass-atrium-dev-shell"
+    ]
+    paths.inject_scope_rules.write_text(_inject_hook_text(drifted), encoding="utf-8")
+
+    report = run_scan(paths, ["inject-list-mismatch"])
+    findings = report.by_mode("inject-list-mismatch")
+
+    budget_findings = {
+        (f.name, f.detail) for f in findings if "BUDGET_DEV_AGENTS" in f.detail
+    }
+    assert ("glass-atrium-dev-front", "missing from BUDGET_DEV_AGENTS") in budget_findings
+    assert (
+        "glass-atrium-dev-shell",
+        "BUDGET_DEV_AGENTS name not expected",
+    ) in budget_findings
+    # no carrier is ever EXPECTED in BUDGET_DEV: none is flagged as missing.
+    assert not any(
+        f.name in inject_sync._BUDGET_DAEMON_CARRIERS
+        and f.detail == "missing from BUDGET_DEV_AGENTS"
+        for f in findings
+    )

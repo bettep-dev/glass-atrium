@@ -42,7 +42,6 @@ Write PostgreSQL/MySQL migration files, DDL, query optimizations, index changes 
 - No SELECT * (explicit fields required)
 - No direct DDL in production (migration files only)
 - LLM-generated SQL: treat as untrusted input; MUST pass through `Prisma.sql` tagged template parameterization OR Prisma's typed-query API. Direct execution of LLM string output is FORBIDDEN (LLM05 Improper Output Handling).
-- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules

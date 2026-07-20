@@ -1,11 +1,15 @@
-"""Behavioral tests for the inject-scope-rules.sh 3-array sync (plan T4 / AC1-AC4).
+"""Behavioral tests for the inject-scope-rules.sh 5-tracked-array sync (plan T4 / AC1-AC4).
 
 Covers the `agent_lifecycle.inject_sync` transactional reconcile + the
 `sync-inject` CLI verb against a disposable `--ga-root` temp fixture (never the
 live ~/.glass-atrium tree):
 
-  - insert-when-missing, per scope: a missing DEV name lands in ALL THREE arrays
-    (INJECT + STYLEREF + MINIMALISM), a missing QA name lands in INJECT only (AC1).
+  - insert-when-missing, per scope: a missing DEV name lands in every tracked
+    array its predicate covers, a missing QA name lands in INJECT only (AC1).
+  - BUDGET_DEV_AGENTS (5th tracked array): reconciles to DEV roster − the shared
+    _BUDGET_DAEMON_CARRIERS exclusions; a carrier is never inserted and is
+    pruned when present. The untracked BUDGET_ANALYSIS_AGENTS line stays
+    byte-identical across a reconcile run.
   - idempotent no-op: a clean tree leaves the hook file byte- AND mtime-identical
     (AC2).
   - MINIMALISM specifically: the previously-unparsed third array is detected AND
@@ -76,6 +80,27 @@ _QA_NAMES = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
 # review name. Tests append extra names per scenario.
 _NAMING_QA_NAME = "glass-atrium-qa-code-reviewer"
 
+# The untracked, manual-curated analysis roster — written into every fixture so
+# tests can prove the reconcile leaves it byte-identical (D5: not roster-derivable).
+_BUDGET_ANALYSIS = [
+    "glass-atrium-intel-planner",
+    "glass-atrium-intel-reporter",
+    "glass-atrium-qa-code-reviewer",
+    "glass-atrium-design-designer",
+    "glass-atrium-meta-agent",
+    "glass-atrium-wiki-curator",
+]
+
+
+def _budget_dev_expected(roster: list[str]) -> list[str]:
+    """BUDGET_DEV_AGENTS in-sync membership: roster − the SHARED carrier constant.
+
+    Derives from the production `inject_sync._BUDGET_DAEMON_CARRIERS` so the
+    predicate has exactly one home; the literal 4-name governance pin lives in
+    test_budget_daemon_carriers_pin.
+    """
+    return [n for n in roster if n not in inject_sync._BUDGET_DAEMON_CARRIERS]
+
 
 def _array_line(var: str, names: list[str]) -> str:
     """A `readonly VAR=" a b c "` line mirroring the live space-padded format."""
@@ -90,16 +115,21 @@ def _write_fixture(
     minimalism: list[str],
     naming: list[str],
     roster: list[str],
+    budget_dev: list[str] | None = None,
 ) -> StorePaths:
     """Build a minimal but valid GA store under `root` (disposable temp tree).
 
     Writes the stores `run_scan(['inject-list-mismatch'])` + inject_sync touch:
-    the inject hook (4 arrays: INJECT/STYLEREF/MINIMALISM/NAMING), scope-dev.md
-    (roster brace list), and the registry + manifest JSON (load_json raises on a
-    missing manifest).
+    the inject hook (5 tracked arrays INJECT/STYLEREF/MINIMALISM/NAMING/
+    BUDGET_DEV + the untracked BUDGET_ANALYSIS line), scope-dev.md (roster brace
+    list), and the registry + manifest JSON (load_json raises on a missing
+    manifest). `budget_dev=None` defaults to the in-sync roster − carriers set.
     """
     (root / "hooks").mkdir(parents=True, exist_ok=True)
     (root / "scoped").mkdir(parents=True, exist_ok=True)
+
+    if budget_dev is None:
+        budget_dev = _budget_dev_expected(roster)
 
     hook = root / "hooks" / "inject-scope-rules.sh"
     hook.write_text(
@@ -108,7 +138,9 @@ def _write_fixture(
         f"{_array_line('INJECT_AGENTS', inject)}\n"
         f"{_array_line('STYLEREF_AGENTS', styleref)}\n"
         f"{_array_line('MINIMALISM_AGENTS', minimalism)}\n"
-        f"{_array_line('NAMING_AGENTS', naming)}\n",
+        f"{_array_line('NAMING_AGENTS', naming)}\n"
+        f"{_array_line('BUDGET_DEV_AGENTS', budget_dev)}\n"
+        f"{_array_line('BUDGET_ANALYSIS_AGENTS', _BUDGET_ANALYSIS)}\n",
         encoding="utf-8",
     )
 
@@ -129,7 +161,7 @@ def _write_fixture(
 
 def _members(hook: Path, var: str) -> list[str]:
     """Re-parse the live hook file and return the named array's token members."""
-    inject, styleref, minimalism, naming = inject_sync.parse_inject_text(
+    inject, styleref, minimalism, naming, budget_dev = inject_sync.parse_inject_text(
         hook.read_text(encoding="utf-8")
     )
     return {
@@ -137,6 +169,7 @@ def _members(hook: Path, var: str) -> list[str]:
         "STYLEREF_AGENTS": styleref,
         "MINIMALISM_AGENTS": minimalism,
         "NAMING_AGENTS": naming,
+        "BUDGET_DEV_AGENTS": budget_dev,
     }[var]
 
 
@@ -162,10 +195,11 @@ def _write_gate_sites(paths: StorePaths, names: list[str]) -> None:
     )
 
 
-def test_insert_when_missing_dev_lands_in_all_three_arrays(tmp_path: Path) -> None:
-    """A roster DEV name absent from every array is inserted into all 4 (AC1).
+def test_insert_when_missing_dev_lands_in_all_tracked_arrays(tmp_path: Path) -> None:
+    """A roster DEV name absent from every array is inserted into all 5 (AC1).
 
-    glass-atrium-dev-newkid is a non-swift DEV name, so it is expected in NAMING_AGENTS too.
+    glass-atrium-dev-newkid is neither dev-swift nor a daemon carrier, so it is
+    expected in NAMING_AGENTS and BUDGET_DEV_AGENTS too.
     """
     paths = _write_fixture(
         tmp_path,
@@ -173,6 +207,7 @@ def test_insert_when_missing_dev_lands_in_all_three_arrays(tmp_path: Path) -> No
         styleref=_DEV_ROSTER,
         minimalism=_DEV_ROSTER,
         naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        budget_dev=_budget_dev_expected(_DEV_ROSTER),
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
@@ -184,15 +219,18 @@ def test_insert_when_missing_dev_lands_in_all_three_arrays(tmp_path: Path) -> No
     assert "glass-atrium-dev-newkid" in _members(hook, "STYLEREF_AGENTS")
     assert "glass-atrium-dev-newkid" in _members(hook, "MINIMALISM_AGENTS")
     assert "glass-atrium-dev-newkid" in _members(hook, "NAMING_AGENTS")
+    assert "glass-atrium-dev-newkid" in _members(hook, "BUDGET_DEV_AGENTS")
     assert result.inserted["INJECT_AGENTS"] == ["glass-atrium-dev-newkid"]
     assert result.inserted["STYLEREF_AGENTS"] == ["glass-atrium-dev-newkid"]
     assert result.inserted["MINIMALISM_AGENTS"] == ["glass-atrium-dev-newkid"]
     assert result.inserted["NAMING_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.inserted["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-newkid"]
 
 
 def test_insert_when_missing_qa_lands_in_inject_only(tmp_path: Path) -> None:
-    """A missing QA name goes into INJECT only — STYLEREF/MINIMALISM/NAMING never
-    take glass-atrium-qa-debugger (NAMING carries glass-atrium-qa-code-reviewer only) (AC1)."""
+    """A missing QA name goes into INJECT only — STYLEREF/MINIMALISM/NAMING/
+    BUDGET_DEV never take glass-atrium-qa-debugger (NAMING carries
+    glass-atrium-qa-code-reviewer only) (AC1)."""
     paths = _write_fixture(
         tmp_path,
         inject=_DEV_ROSTER + ["glass-atrium-qa-code-reviewer"],  # glass-atrium-qa-debugger missing from INJECT
@@ -209,10 +247,12 @@ def test_insert_when_missing_qa_lands_in_inject_only(tmp_path: Path) -> None:
     assert "glass-atrium-qa-debugger" not in _members(hook, "STYLEREF_AGENTS")
     assert "glass-atrium-qa-debugger" not in _members(hook, "MINIMALISM_AGENTS")
     assert "glass-atrium-qa-debugger" not in _members(hook, "NAMING_AGENTS")
+    assert "glass-atrium-qa-debugger" not in _members(hook, "BUDGET_DEV_AGENTS")
     assert result.inserted["INJECT_AGENTS"] == ["glass-atrium-qa-debugger"]
     assert result.inserted["STYLEREF_AGENTS"] == []
     assert result.inserted["MINIMALISM_AGENTS"] == []
     assert result.inserted["NAMING_AGENTS"] == []
+    assert result.inserted["BUDGET_DEV_AGENTS"] == []
 
 
 def test_idempotent_noop_leaves_file_unchanged(tmp_path: Path) -> None:
@@ -370,7 +410,8 @@ def test_plan_removes_flags_stale_array_names(tmp_path: Path) -> None:
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
-        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in all 4 arrays
+        budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
+        roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in all 5 arrays
     )
     text = paths.inject_scope_rules.read_text(encoding="utf-8")
 
@@ -380,9 +421,10 @@ def test_plan_removes_flags_stale_array_names(tmp_path: Path) -> None:
     assert removes["STYLEREF_AGENTS"] == ["glass-atrium-dev-gone"]
     assert removes["MINIMALISM_AGENTS"] == ["glass-atrium-dev-gone"]
     assert removes["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert removes["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-gone"]
 
 
-def test_apply_removes_stale_dev_name_from_all_four_arrays(tmp_path: Path) -> None:
+def test_apply_removes_stale_dev_name_from_all_tracked_arrays(tmp_path: Path) -> None:
     """A name absent from the roster is pruned from every array it sits in (AC7/AC12)."""
     paths = _write_fixture(
         tmp_path,
@@ -390,6 +432,7 @@ def test_apply_removes_stale_dev_name_from_all_four_arrays(tmp_path: Path) -> No
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
+        budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,
     )
 
@@ -401,10 +444,12 @@ def test_apply_removes_stale_dev_name_from_all_four_arrays(tmp_path: Path) -> No
     assert "glass-atrium-dev-gone" not in _members(hook, "STYLEREF_AGENTS")
     assert "glass-atrium-dev-gone" not in _members(hook, "MINIMALISM_AGENTS")
     assert "glass-atrium-dev-gone" not in _members(hook, "NAMING_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "BUDGET_DEV_AGENTS")
     assert result.removed["INJECT_AGENTS"] == ["glass-atrium-dev-gone"]
     assert result.removed["STYLEREF_AGENTS"] == ["glass-atrium-dev-gone"]
     assert result.removed["MINIMALISM_AGENTS"] == ["glass-atrium-dev-gone"]
     assert result.removed["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
+    assert result.removed["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-gone"]
     # roster members survive — only the stale name left.
     assert "glass-atrium-dev-shell" in _members(hook, "STYLEREF_AGENTS")
 
@@ -418,6 +463,7 @@ def test_apply_inserts_and_removes_in_one_transaction(tmp_path: Path) -> None:
         styleref=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         minimalism=_DEV_ROSTER + ["glass-atrium-dev-gone"],
         naming=_DEV_ROSTER + [_NAMING_QA_NAME, "glass-atrium-dev-gone"],
+        budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
         roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],
     )
 
@@ -433,9 +479,87 @@ def test_apply_inserts_and_removes_in_one_transaction(tmp_path: Path) -> None:
     assert "glass-atrium-dev-gone" not in _members(hook, "NAMING_AGENTS")
     assert result.inserted["NAMING_AGENTS"] == ["glass-atrium-dev-newkid"]
     assert result.removed["NAMING_AGENTS"] == ["glass-atrium-dev-gone"]
+    # BUDGET_DEV (the 5th array) reconciles in the same transaction too.
+    assert "glass-atrium-dev-newkid" in _members(hook, "BUDGET_DEV_AGENTS")
+    assert "glass-atrium-dev-gone" not in _members(hook, "BUDGET_DEV_AGENTS")
+    assert result.inserted["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-newkid"]
+    assert result.removed["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-gone"]
     # one transaction -> one backup.
     assert result.backup_path is not None
     assert result.backup_path.exists()
+
+
+def test_budget_daemon_carriers_pin() -> None:
+    """Governance pin: the shared carrier constant is exactly the 4 daemon-owned
+    in-body bullet carriers (D2) — edited only when the daemon adds/removes one."""
+    assert inject_sync._BUDGET_DAEMON_CARRIERS == {
+        "glass-atrium-dev-nestjs",
+        "glass-atrium-dev-python",
+        "glass-atrium-dev-react",
+        "glass-atrium-dev-shell",
+    }
+
+
+def test_budget_dev_carrier_never_inserted_and_pruned_when_present(
+    tmp_path: Path,
+) -> None:
+    """Predicate honesty (D5): BUDGET_DEV = roster − carriers — a daemon carrier
+    in the roster is never inserted, and one sitting in the array is pruned as
+    stale, while the carrier-inclusive arrays keep it."""
+    # BUDGET_DEV drifts twice: missing dev-front (a member) + carrying dev-react
+    # (a carrier — in the roster, but excluded by the predicate).
+    drifted = [
+        n for n in _budget_dev_expected(_DEV_ROSTER) if n != "glass-atrium-dev-front"
+    ]
+    paths = _write_fixture(
+        tmp_path,
+        inject=_DEV_ROSTER + _QA_NAMES,
+        styleref=_DEV_ROSTER,
+        minimalism=_DEV_ROSTER,
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        budget_dev=drifted + ["glass-atrium-dev-react"],
+        roster=_DEV_ROSTER,
+    )
+
+    result = inject_sync.apply(paths)
+
+    hook = paths.inject_scope_rules
+    assert result.inserted["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-front"]
+    assert result.removed["BUDGET_DEV_AGENTS"] == ["glass-atrium-dev-react"]
+    assert not (
+        set(_members(hook, "BUDGET_DEV_AGENTS")) & inject_sync._BUDGET_DAEMON_CARRIERS
+    )
+    # the carrier stays a member of the carrier-inclusive arrays (roster-driven).
+    assert "glass-atrium-dev-react" in _members(hook, "STYLEREF_AGENTS")
+    assert result.inserted["INJECT_AGENTS"] == []
+    assert result.removed["STYLEREF_AGENTS"] == []
+
+
+def test_budget_analysis_untracked_stays_byte_identical(tmp_path: Path) -> None:
+    """The manual-curated BUDGET_ANALYSIS_AGENTS array is never reconciled: a run
+    that rewrites tracked arrays leaves its line byte-identical and reports no
+    plan entry for it (D5 regression pin)."""
+    paths = _write_fixture(
+        tmp_path,
+        inject=_DEV_ROSTER + _QA_NAMES,
+        styleref=_DEV_ROSTER,
+        minimalism=_DEV_ROSTER,
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        budget_dev=_budget_dev_expected(_DEV_ROSTER),
+        roster=_DEV_ROSTER + ["glass-atrium-dev-newkid"],  # forces a real rewrite
+    )
+    analysis_line = _array_line("BUDGET_ANALYSIS_AGENTS", _BUDGET_ANALYSIS)
+    hook = paths.inject_scope_rules
+    assert analysis_line in hook.read_text(encoding="utf-8")
+
+    result = inject_sync.apply(paths)
+
+    assert result.changed
+    # a naive roster predicate would have pruned every analysis name (none are in
+    # the DEV roster) — the line surviving byte-identical proves it is untracked.
+    assert analysis_line in hook.read_text(encoding="utf-8")
+    assert "BUDGET_ANALYSIS_AGENTS" not in result.inserted
+    assert "BUDGET_ANALYSIS_AGENTS" not in result.removed
 
 
 def test_apply_noop_when_nothing_to_insert_or_remove(tmp_path: Path) -> None:
@@ -563,15 +687,18 @@ def test_run_delete_prunes_scope_dev_roster_stanza(
     assert target not in roster_after
 
     # AC12 — the now-pruned roster makes the bidirectional sync drop the stale
-    # name from all 4 arrays end-to-end.
+    # name from all 5 tracked arrays end-to-end (the fixture's default budget_dev
+    # derives from the pre-delete roster, so it carried the target too).
     result = inject_sync.apply(paths)
     hook = paths.inject_scope_rules
     assert target not in _members(hook, "INJECT_AGENTS")
     assert target not in _members(hook, "STYLEREF_AGENTS")
     assert target not in _members(hook, "MINIMALISM_AGENTS")
     assert target not in _members(hook, "NAMING_AGENTS")
+    assert target not in _members(hook, "BUDGET_DEV_AGENTS")
     assert result.removed["INJECT_AGENTS"] == [target]
     assert result.removed["NAMING_AGENTS"] == [target]
+    assert result.removed["BUDGET_DEV_AGENTS"] == [target]
 
 
 def test_orphan_scan_is_lint_only_no_write(tmp_path: Path) -> None:

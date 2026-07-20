@@ -117,7 +117,6 @@ Pick by workload constraint; document the choice in code comments.
 > Markdown report compilation → delegate to `glass-atrium-intel-reporter` (reads `~/.claude/agents/references/rag-domain.md`). This agent emits code diffs + metric numbers only.
 
 - **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · `console.*` FORBIDDEN in production (NestJS `Logger`/Pino) · No empty catch · No log+rethrow in same catch
-- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Out-of-Scope

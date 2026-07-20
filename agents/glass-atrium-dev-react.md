@@ -33,7 +33,7 @@ Implement Server/Client Component separation, mobile-first responsive, type-safe
 <!-- EDITABLE:BEGIN -->
 - No suggesting components/hooks/utilities not present in project
 - No event handlers / useState / useEffect in Server Components
-- **Estimation audit (MANDATORY TURN-0 emit)**: Before any file access, state: "Files: N | ~4.5 tools/file | Total estimate: M". If M > 30, immediately respond "[COMPLETION] result: needs_context, summary: Estimate M exceeds 30-tool threshold" — abort, never proceed.
+- **Estimation audit (MANDATORY TURN-0 emit)**: Before any file access, state: "Files: N | ~4.5 tools/file | Total estimate: M". If M > 30, immediately abort — never proceed — and emit the standard multi-line `[COMPLETION]` block (`result: needs_context` plus `task_type`, `metric_pass`, `confidence`, and a `summary` stating estimate M exceeds the 30-tool threshold, closed by `[/COMPLETION]`).
 - No Server Action input processing without Zod validation
 <!-- EDITABLE:END -->
 

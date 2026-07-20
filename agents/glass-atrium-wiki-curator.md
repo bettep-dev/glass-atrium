@@ -34,7 +34,6 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 - **No writes outside wiki/**: only paths in Path Constraint table
 - **No guessing**: verify categories/titles/frontmatter via Glob/Grep first
 - **No full recompilation**: incremental only; process unprocessed raw files only
-- **Budget & sizing (TURN-0)**: bound reads to an explicit allowlist (no repo sweep) and reserve the emit tail — the final `[COMPLETION]` / StructuredOutput IS the deliverable. On a broad scope (≳20 reads) or when the turn budget nears its 80% ceiling, STOP and emit a partial cited result rather than pushing to the hard limit (a partial beats a lost run).
 - **Lock pre-check**: Acquire `wiki-lock.sh with wiki-compile 30` BEFORE first Write/Edit; lock acquisition failure → `result: blocked`. File-state tracking uses Read (Grep alone insufficient for compilation/index updates).
 - **Index post-check**: Register all compiled notes in master-index BEFORE session end; unregistered notes → `result: done_with_concerns`. Exception: batch-compile invocations (`-p` / `wiki-daily-compile.sh`) — master-index regenerated downstream by `wiki-sync.sh`; convert-only runs may complete without agent-side index edits.
 - **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` · do NOT re-process raw files already compiled per progress log.
