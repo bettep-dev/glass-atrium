@@ -862,6 +862,12 @@ def analysis_size_advisory_needed(stripped, attestation_src, dev_present, dev_se
     # correctness — parity with the DEV [SIZE-EST] honesty floor. Advisory posture (a stderr nudge, not a
     # block) is deliberate: the analysis roster is exclusion-derived + broad, so a nudge cannot false-block
     # a legitimate workflow (matches the resilience-advisory precedent).
+    # Known-benign false-POSITIVE (never false-BLOCK) edge cases, deliberately accepted under the
+    # fail-open advisory posture: (a) the 'schema' membership test is a whole-script substring scan,
+    # and (b) it is decoupled from the per-spawn-site match — so a non-schema-mode non-DEV spawn
+    # inside a script that merely mentions 'schema' elsewhere can fire a spurious ADVISORY. Not
+    # tightened on purpose: a per-call-site parse adds complexity for a nudge that can only
+    # over-advise, never wrongly exit 2.
     try:
         if dev_present:
             return False
