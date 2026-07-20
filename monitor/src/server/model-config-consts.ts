@@ -76,7 +76,12 @@ export interface ModelDomainDef {
   applyMode: ApplyMode;
   // false = no enforced write surface.
   editable: boolean;
-  surface: "frontmatter-dev" | "frontmatter-research" | "daemon-config";
+  surface:
+    | "frontmatter-dev"
+    | "frontmatter-research"
+    | "frontmatter-meta"
+    | "frontmatter-wiki"
+    | "daemon-config";
   // daemon-config.json key this domain renders to (write-through target), null otherwise.
   daemonConfigKey: string | null;
   allowInherit: boolean;
@@ -97,6 +102,22 @@ export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
     applyMode: "next-spawn",
     editable: true,
     surface: "frontmatter-research",
+    daemonConfigKey: null,
+    allowInherit: true,
+  },
+  {
+    key: "model.meta",
+    applyMode: "next-spawn",
+    editable: true,
+    surface: "frontmatter-meta",
+    daemonConfigKey: null,
+    allowInherit: true,
+  },
+  {
+    key: "model.wiki",
+    applyMode: "next-spawn",
+    editable: true,
+    surface: "frontmatter-wiki",
     daemonConfigKey: null,
     allowInherit: true,
   },

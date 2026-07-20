@@ -10,6 +10,8 @@ export type ApplyMode =
 export type ModelDomainKey =
   | "model.dev"
   | "model.research"
+  | "model.meta"
+  | "model.wiki"
   | "model.daemon_cycle_haiku";
 
 export type BudgetDomainKey = "budget.haiku_max_usd" | "budget.pre_verify_max_usd";
@@ -65,7 +67,12 @@ export interface SurfaceFileResult {
 }
 
 export interface SurfaceResult {
-  surface: "daemon-config.json" | "frontmatter-dev" | "frontmatter-research";
+  surface:
+    | "daemon-config.json"
+    | "frontmatter-dev"
+    | "frontmatter-research"
+    | "frontmatter-meta"
+    | "frontmatter-wiki";
   status: "ok" | "skipped" | "failed";
   reason?: string;
   files?: SurfaceFileResult[];
