@@ -141,7 +141,7 @@ When the interactive menu opens, choose **Install** — once it finishes, the de
 
 ### Updating
 
-To update, just run the same one-liner again. It is safe to re-run at any time — if you already have the latest release it does nothing, and if a new one is out it swaps the files in place while leaving your settings and data untouched. You can also run `glass-atrium update`, which downloads the latest release, shows you what will change first, and applies it after a single confirmation.
+When a new version is out, an **Update available** badge with the new version number appears on the Atrium Monitor dashboard. One click applies the update automatically — your settings and data stay untouched — and the dashboard shows the progress until it is done. Re-running the install one-liner is also safe at any time and updates in place, and `glass-atrium update` works from the terminal too.
 
 ### Uninstall
 

@@ -141,7 +141,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 
 ### 更新
 
-要更新，只需再次运行首次安装时用过的那条一行命令。任何时候重复运行都是安全的——如果已是最新版本就什么也不做；如果发布了新版本，则会在保留设置与数据的前提下就地替换文件。也可以运行 `glass-atrium update`：它会下载最新发布版，先展示将要发生的变动，经你确认一次后再应用。
+当新版本发布时，Atrium Monitor 仪表盘上会出现带有新版本号的 **Update available** 徽标。点击一下即可自动应用更新——设置与数据保持原样——并在完成前一直显示进度。再次运行首次安装时用过的那条一行命令同样随时安全、可就地更新，在终端里也可以使用 `glass-atrium update` 命令。
 
 ### 卸载
 
