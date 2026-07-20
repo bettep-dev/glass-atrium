@@ -248,3 +248,170 @@ source_and_call() {
   [[ "${status}" -eq 21 ]]
   grep -q 'http://127.0.0.1:16145/api/health' "${CURL_URL_LOG}"
 }
+
+# === install.sh one-line bootstrap fetch path (T6 pre-bundle de-dependency) ==
+# install.sh must fetch WITHOUT gh via unauthenticated curl against the fixed
+# release-asset URL forms, MANIFEST-FIRST (latest-form manifest → parse .version
+# → tag-form releases/download/v<version>/<bundle>), and must run end-to-end on
+# a STOCK Mac (no gh, no jq — runnable-python3 manifest parse, incl. the spine's
+# per-file hash lookups). Driven with a PATH-STUB curl (NOT the
+# GA_INSTALL_SRC_* local-bundle seam — that seam covers install-tree acceptance
+# only; fetch coverage must exercise the URL builder). The stub serves a REAL
+# hash-true fixture bundle so download → verify → install completes genuinely.
+# These tests build their own FETCH_BIN/TOOLBIN and ignore the engine stubs above.
+
+INSTALL_SH="${GA}/install.sh"
+
+# Build a hash-true release fixture: mini install tree (launcher + the real
+# apply-spine.sh, which install.sh sources from the extracted bundle), its
+# manifest {version, files, hashes} (plain heredoc — no jq needed), and the
+# tar.gz bundle. Exports FIXTURE_MANIFEST / FIXTURE_BUNDLE.
+t6_build_release_fixture() {
+  local version="$1" fix="${SANDBOX}/fixture" tree h_launcher h_spine
+  tree="${fix}/tree"
+  mkdir -p "${tree}/scripts/lib"
+  printf '#!/usr/bin/env bash\necho fixture-launcher\n' >"${tree}/glass-atrium"
+  chmod +x "${tree}/glass-atrium"
+  cp "${GA}/scripts/lib/apply-spine.sh" "${tree}/scripts/lib/apply-spine.sh"
+  h_launcher="$(shasum -a 256 "${tree}/glass-atrium" | awk '{print $1}')"
+  h_spine="$(shasum -a 256 "${tree}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
+  cat >"${fix}/manifest.json" <<MANIFEST
+{"version":"${version}",
+ "files":["glass-atrium","scripts/lib/apply-spine.sh"],
+ "hashes":{"glass-atrium":"${h_launcher}","scripts/lib/apply-spine.sh":"${h_spine}"}}
+MANIFEST
+  tar -czf "${fix}/bundle.tar.gz" -C "${tree}" glass-atrium scripts
+  export FIXTURE_MANIFEST="${fix}/manifest.json" FIXTURE_BUNDLE="${fix}/bundle.tar.gz"
+}
+
+# PATH-stub curl: record argv + URL, then serve the fixture asset at the -o path.
+# FETCH_FAIL_MANIFEST/FETCH_FAIL_BUNDLE → curl's HTTP-error rc 22 (the -f contract).
+t6_build_fetch_stub() {
+  FETCH_BIN="${SANDBOX}/fetch-bin"
+  FETCH_URL_LOG="${SANDBOX}/fetch-url.log"
+  FETCH_ARGV_LOG="${SANDBOX}/fetch-argv.log"
+  export FETCH_URL_LOG FETCH_ARGV_LOG
+  mkdir -p "${FETCH_BIN}"
+  cat >"${FETCH_BIN}/curl" <<'STUB'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+out="" url="" prev=""
+for tok in "$@"; do
+  [[ "${prev}" == "-o" ]] && out="${tok}"
+  prev="${tok}"
+  url="${tok}"
+done
+printf '%s\n' "$*" >>"${FETCH_ARGV_LOG}"
+printf '%s\n' "${url}" >>"${FETCH_URL_LOG}"
+case "${url}" in
+  */manifest.json)
+    [[ -n "${FETCH_FAIL_MANIFEST:-}" ]] && exit 22
+    cp "${FIXTURE_MANIFEST}" "${out}"
+    ;;
+  *.tar.gz)
+    [[ -n "${FETCH_FAIL_BUNDLE:-}" ]] && exit 22
+    cp "${FIXTURE_BUNDLE}" "${out}"
+    ;;
+  *) exit 9 ;;
+esac
+STUB
+  chmod +x "${FETCH_BIN}/curl"
+}
+
+# Allowlisted TOOLBIN (the ONLY PATH entry for the stock-Mac run): the stub curl
+# + real stock tools, with jq and gh deliberately never linked. The python3
+# symlink resolves off /usr/bin, so the probe's Apple-shim CLT gate stays out of
+# the way (brew-like path) and the REAL python3 backs the manifest parse.
+t6_build_stock_toolbin() {
+  TOOLBIN="${SANDBOX}/stock-bin"
+  mkdir -p "${TOOLBIN}"
+  local t src
+  # bash is on the list for the stub curl's own #!/usr/bin/env bash shebang.
+  for t in bash uname tar shasum python3 mktemp mkdir dirname ls cat cp rm mv; do
+    src="$(command -v "${t}")" || return 1
+    ln -s "${src}" "${TOOLBIN}/${t}"
+  done
+  ln -s "${FETCH_BIN}/curl" "${TOOLBIN}/curl"
+}
+
+@test "install.sh fetch: STOCK-Mac end-to-end — no gh, no jq → preflight passes, download verifies, install lands" {
+  t6_build_release_fixture 1.0.9
+  t6_build_fetch_stub
+  t6_build_stock_toolbin || return 1
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+    FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
+    FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    /bin/bash "${INSTALL_SH}"
+  [[ "${status}" -eq 0 ]] || return 1
+  # verified install landed: launcher executable + persisted install manifest.
+  [[ -x "${SANDBOX}/ga-install/glass-atrium" ]] || return 1
+  [[ -f "${SANDBOX}/ga-install/manifest.json" ]] || return 1
+  [[ -f "${SANDBOX}/ga-install/scripts/lib/apply-spine.sh" ]] || return 1
+}
+
+@test "install.sh fetch: latest-form manifest URL then v<version> tag-form bundle URL (manifest-first)" {
+  t6_build_release_fixture 1.0.9
+  t6_build_fetch_stub
+  t6_build_stock_toolbin || return 1
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+    FIXTURE_MANIFEST="${FIXTURE_MANIFEST}" FIXTURE_BUNDLE="${FIXTURE_BUNDLE}" \
+    FETCH_URL_LOG="${FETCH_URL_LOG}" FETCH_ARGV_LOG="${FETCH_ARGV_LOG}" \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    /bin/bash "${INSTALL_SH}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(wc -l <"${FETCH_URL_LOG}" | tr -d ' ')" -eq 2 ]] || return 1
+  [[ "$(sed -n 1p "${FETCH_URL_LOG}")" == "https://github.com/owner/repo/releases/latest/download/manifest.json" ]] || return 1
+  [[ "$(sed -n 2p "${FETCH_URL_LOG}")" == "https://github.com/owner/repo/releases/download/v1.0.9/glass-atrium-bundle-1.0.9.tar.gz" ]] || return 1
+  # -f fail-on-HTTP-error + bounded retries on BOTH requests.
+  run grep -cE -- '-fSL --retry 3' "${FETCH_ARGV_LOG}"
+  [[ "${output}" == "2" ]] || return 1
+}
+
+@test "install.sh fetch: GA_RELEASE_TAG pins BOTH assets to the tag-form URLs" {
+  t6_build_release_fixture 1.0.9
+  t6_build_fetch_stub
+  run env PATH="${FETCH_BIN}:${PATH}" \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    GA_RELEASE_TAG="v9.9.9" \
+    bash "${INSTALL_SH}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(sed -n 1p "${FETCH_URL_LOG}")" == "https://github.com/owner/repo/releases/download/v9.9.9/manifest.json" ]] || return 1
+  [[ "$(sed -n 2p "${FETCH_URL_LOG}")" == "https://github.com/owner/repo/releases/download/v9.9.9/glass-atrium-bundle-1.0.9.tar.gz" ]] || return 1
+}
+
+@test "install.sh fetch: manifest download HTTP failure → exit 14 naming the failing URL" {
+  t6_build_release_fixture 1.0.9
+  t6_build_fetch_stub
+  run env PATH="${FETCH_BIN}:${PATH}" FETCH_FAIL_MANIFEST=1 \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    bash "${INSTALL_SH}"
+  [[ "${status}" -eq 14 ]] || return 1
+  [[ "${output}" == *"manifest download failed: https://github.com/owner/repo/releases/latest/download/manifest.json"* ]] || return 1
+}
+
+@test "install.sh fetch: bundle download HTTP failure → exit 14 naming the tag-form URL" {
+  t6_build_release_fixture 1.0.9
+  t6_build_fetch_stub
+  run env PATH="${FETCH_BIN}:${PATH}" FETCH_FAIL_BUNDLE=1 \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    bash "${INSTALL_SH}"
+  [[ "${status}" -eq 14 ]] || return 1
+  [[ "${output}" == *"bundle download failed: https://github.com/owner/repo/releases/download/v1.0.9/glass-atrium-bundle-1.0.9.tar.gz"* ]] || return 1
+}
+
+@test "install.sh fetch: hash mismatch after download still exits 15 (SHA-256 manifest = sole trust anchor)" {
+  t6_build_release_fixture 1.0.9
+  # tamper AFTER hashing: rebuild the bundle with a drifted launcher so the
+  # downloaded content no longer matches manifest.hashes.
+  printf '#!/usr/bin/env bash\necho TAMPERED\n' >"${SANDBOX}/fixture/tree/glass-atrium"
+  tar -czf "${SANDBOX}/fixture/bundle.tar.gz" -C "${SANDBOX}/fixture/tree" glass-atrium scripts
+  t6_build_fetch_stub
+  run env PATH="${FETCH_BIN}:${PATH}" \
+    GA_DIR="${SANDBOX}/ga-install" GA_RELEASE_REPO="owner/repo" GA_NO_RUN=1 \
+    bash "${INSTALL_SH}"
+  [[ "${status}" -eq 15 ]] || return 1
+  [[ "${output}" == *"hash verification failed"* ]] || return 1
+  # nothing installed from the tampered bundle.
+  [[ ! -e "${SANDBOX}/ga-install/glass-atrium" ]] || return 1
+}

@@ -110,7 +110,9 @@ _hook_json_escape() {
 hook_emit_error() {
   local hook_name code="${1}" severity="${2}" message="${3}"
   local suggestion="${4:-}" ctx="${5:-"{}"}"
-  hook_name="$(basename "${BASH_SOURCE[1]:-${0}}" .sh)"
+  # ${0} = executed-hook identity at any call depth (hooks are executed, never sourced).
+  # A fixed BASH_SOURCE index misnames wrapper-path callers (emit_error / hook_require_python3) as the library; bash 3.2 has no negative index.
+  hook_name="$(basename "${0}" .sh)"
   if command -v jq >/dev/null 2>&1; then
     local _json
     if _json="$(jq -cn \

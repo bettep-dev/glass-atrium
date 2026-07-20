@@ -106,7 +106,7 @@ test("rowToProposalSummary: 3 confidence fields null → null pass-through (curr
   const row = makeRow();
   const out = rowToProposalSummary(row);
 
-  // Keys MUST be present even when null — FE renders "미산정" on null, not crash.
+  // Keys MUST be present even when null — FE renders its "not computed" placeholder on null, not crash.
   assert.ok("confidence_observed" in out, "confidence_observed key present");
   assert.ok("project_key" in out, "project_key key present");
   assert.ok("promotion_tier" in out, "promotion_tier key present");
@@ -119,19 +119,19 @@ test("rowToProposalSummary: 3 confidence fields null → null pass-through (curr
 test("rowToProposalSummary: 3 confidence fields populated → pass-through (post-wire-in)", () => {
   const row = makeRow({
     confidence_observed: 0.7321,
-    project_key: "yoaida",
+    project_key: "sample-project",
     promotion_tier: "auto",
   });
   const out = rowToProposalSummary(row);
 
   assert.strictEqual(out.confidence_observed, 0.7321);
-  assert.strictEqual(out.project_key, "yoaida");
+  assert.strictEqual(out.project_key, "sample-project");
   assert.strictEqual(out.promotion_tier, "auto");
 });
 
 test("rowToProposalSummary: confidence_observed 0.0 → preserved (not coerced to null)", () => {
   // Boundary: 0.0 is a valid empirical posterior (all-failure pattern), MUST NOT
-  // be folded to null (that would mis-render as "미산정" instead of "0%").
+  // be folded to null (that would mis-render as "not computed" instead of "0%").
   const row = makeRow({ confidence_observed: 0 });
   const out = rowToProposalSummary(row);
 
@@ -199,7 +199,7 @@ test("foldTierBreakdownRow: empty result array → zero-init fallback (defensive
 
 test("foldTierBreakdownRow: all-zero PG row → all-zero response (empty cohort window)", () => {
   // Pre-wire-in OR truly empty 30d window — distinguished from migration
-  // failure at FE layer (totalCnt === 0 → "데이터 부재" indicator).
+  // failure at FE layer (totalCnt === 0 → "no data" indicator).
   const rows = [
     {
       code_based_pass_30d: 0n,
@@ -233,7 +233,7 @@ test("foldTierBreakdownRow: large bigint counts within MAX_SAFE_INTEGER", () => 
 test("foldTierBreakdownRow: column-absence degradation → type-stable zero-init partial (F4 regression guard)", () => {
   // Graceful degradation contract — route isolates tier_breakdown in Promise.allSettled.
   // On rejection (PG 42703 undefined_column) the handler feeds foldTierBreakdownRow([]) — same empty-array input as the rejected branch.
-  // Degradation output = fully-formed 4-field object (non-null, type-stable) → tier_breakdown_30d never null/undefined → FE hits "데이터 부재" path, not a crash → endpoint stays 200, NOT 503.
+  // Degradation output = fully-formed 4-field object (non-null, type-stable) → tier_breakdown_30d never null/undefined → FE hits the "no data" path, not a crash → endpoint stays 200, NOT 503.
   const degraded = foldTierBreakdownRow([]);
 
   // type-stable shape: all 4 ImprovementTierBreakdown fields present + numeric
@@ -241,7 +241,7 @@ test("foldTierBreakdownRow: column-absence degradation → type-stable zero-init
   assert.strictEqual(typeof degraded.code_based_pass_30d, "number");
   assert.strictEqual(typeof degraded.code_based_fail_30d, "number");
   assert.strictEqual(typeof degraded.pre_3tier_baseline_count, "number");
-  // FE "데이터 부재" trigger: totalCnt === 0 (pass + fail + baseline all zero)
+  // FE "no data" trigger: totalCnt === 0 (pass + fail + baseline all zero)
   const totalCnt =
     degraded.code_based_pass_30d +
     degraded.code_based_fail_30d +
@@ -262,7 +262,7 @@ test("foldConfidenceDistribution: empty rows → empty buckets + null overall (c
 
 test("foldConfidenceDistribution: all-NULL avg lanes → buckets present, null avgs (forward-looking)", () => {
   // Current state: 25 rows NULL confidence_observed — PG AVG returns NULL per lane.
-  // Buckets still surface (lane labels + counts) but avgs are null → "미산정".
+  // Buckets still surface (lane labels + counts) but avgs are null → "not computed".
   const rows = [
     { promotion_tier: "unassigned", proposal_count: 25n, confidence_observed_avg: null },
   ];

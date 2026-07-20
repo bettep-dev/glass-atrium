@@ -20,7 +20,7 @@ Applies to all agents.
 
 - **Blank line REQUIRED** between subject and body whenever a body exists — git tooling (`log`, `shortlog`, `rebase`) parses on this boundary.
 - **Body is optional** — write one only when the "why" of the change is not self-evident from the subject and diff.
-- **Issue / ticket references**: place in a footer block separated from the body by a blank line, formatted as `Refs: #123` or `Refs: YOAIDA-926`.
+- **Issue / ticket references**: place in a footer block separated from the body by a blank line, formatted as `Refs: #123` or `Refs: PROJ-123`.
 
 ### Body Content
 

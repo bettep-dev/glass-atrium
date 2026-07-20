@@ -20,8 +20,10 @@
 # install manifest {version}: unchanged → no-op, changed → extract in place.
 #
 # SECURITY: handles NO tokens/secrets, reads no .env, echoes no credentials, and
-# runs no third-party `curl | sh`. It downloads a GitHub Release asset via `gh`
-# (authenticated), verifies it per-file, extracts it, and launches; nothing else.
+# runs no third-party `curl | sh`. It downloads the GitHub Release assets via
+# unauthenticated `curl` against the fixed release-asset URLs (no gh, no GitHub
+# API, no auth surface), verifies every file against the SHA-256 manifest — the
+# sole trust anchor — extracts, and launches; nothing else.
 #
 # Environment overrides (all optional):
 #   GA_RELEASE_REPO   GitHub release repo slug <owner>/<repo> to install from
@@ -33,13 +35,14 @@
 #   GA_NO_RUN         when non-empty, install only + print the run hint (CI/testing)
 #   GA_INSTALL_SRC_BUNDLE + GA_INSTALL_SRC_MANIFEST
 #                     TEST SEAM — when BOTH are set, install from a local bundle +
-#                     manifest verbatim (skip gh/network). This is how the PHASE-2
+#                     manifest verbatim (skip the network). This is how the PHASE-2
 #                     acceptance test drives a real end-to-end no-.git install.
 #
 # Exit codes (named, loud-fail — no silent precondition absorption):
 #   0   success (installed and either handed off or printed the run hint)
 #   10  not macOS
-#   11  a required tool (gh / tar / jq / shasum) is not on PATH
+#   11  a required tool (tar / curl / shasum) or manifest parser (jq / runnable
+#       python3) is not available
 #   12  GA_RELEASE_REPO not configured / not an <owner>/<repo> slug
 #   13  GA_DIR exists with foreign content (not a Glass Atrium install; refuse to clobber)
 #   14  release download failed / expected assets missing
@@ -78,6 +81,9 @@ GA_NO_RUN="${GA_NO_RUN:-}"
 # The download/verify/merge scratch tree. Declared here so the trap sees a defined
 # origin under strict mode and cleans it on ANY early-exit path.
 _ga_workdir=""
+# Manifest-parser backend ("jq" | "python3"), resolved ONCE by preflight's
+# require_manifest_parser and consulted at every manifest_get call site.
+_ga_manifest_parser=""
 
 # leaf logging (stderr only; mirrors lib/ga-core.sh)
 # Progress/diagnostics go to stderr so they never collide with a future exec of
@@ -120,18 +126,98 @@ require_sha256() {
   die "${EXIT_MISSING_TOOL}" "no SHA-256 tool (shasum/sha256sum) on PATH — install one and re-run."
 }
 
+# NON-INTERACTIVE python3 runnability probe. Stock macOS ships /usr/bin/python3 as
+# an Apple CLT shim that pops a GUI install dialog when executed without the
+# Command Line Tools — PATH visibility alone is NOT runnability. The CLT gate
+# (xcode-select -p) applies ONLY to that Apple shim path; a brew/pyenv python3
+# runs without CLT and must never be rejected by it.
+python3_runnable() {
+  local py
+  py="$(command -v python3 2>/dev/null)" || return 1
+  if [[ "${py}" == "/usr/bin/python3" ]]; then
+    xcode-select -p >/dev/null 2>&1 || return 1
+  fi
+}
+
+# Resolve the manifest-parser backend ONCE: jq when present, runnable python3
+# otherwise — the fallback is what lets the one-liner run on a bare Mac BEFORE
+# ga-deps can ever install jq. Neither usable → loud-fail naming both accepted
+# parsers + the brew remedy.
+require_manifest_parser() {
+  if command -v jq >/dev/null 2>&1; then
+    _ga_manifest_parser="jq"
+    return 0
+  fi
+  # shellcheck disable=SC2310  # probe in a condition by design — verdict branched on
+  if python3_runnable; then
+    _ga_manifest_parser="python3"
+    return 0
+  fi
+  die "${EXIT_MISSING_TOOL}" \
+    "no JSON parser available — install jq (brew install jq) or a runnable python3 (xcode-select --install), then re-run."
+}
+
+# manifest_get <mode> <manifest.json> — the ONE shared manifest-parse helper for
+# every pre-bundle parse site, with an identical output contract on both backends:
+#   version-or-empty   ≡ jq -r '.version // empty'
+#   version-or-unknown ≡ jq -r '.version // "unknown"'
+#   files              ≡ jq -r '.files[]'
+# Backend chosen by require_manifest_parser (jq preferred; python3 on a bare Mac).
+manifest_get() {
+  local mode="$1" manifest="$2"
+  if [[ "${_ga_manifest_parser}" == "jq" ]]; then
+    case "${mode}" in
+      version-or-empty) jq -r '.version // empty' -- "${manifest}" ;;
+      version-or-unknown) jq -r '.version // "unknown"' -- "${manifest}" ;;
+      files) jq -r '.files[]' -- "${manifest}" ;;
+      *) return 2 ;;
+    esac
+    return
+  fi
+  # python3 backend: source captured FIRST, then run — an inline heredoc on the
+  # python3 -c command line itself would swallow stdin (SC2259).
+  local py_src
+  py_src="$(
+    cat <<'PY'
+import json, sys
+
+mode, path = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    data = json.load(fh)
+if mode == "version-or-empty":
+    v = data.get("version")
+    if v is not None and v is not False:
+        print(v)
+elif mode == "version-or-unknown":
+    v = data.get("version")
+    print("unknown" if v is None or v is False else v)
+elif mode == "files":
+    files = data.get("files")
+    if files is None or files is False:
+        sys.exit(5)  # jq parity: iterating null is an error (exit 5)
+    for entry in files:
+        print(entry)
+else:
+    sys.exit(2)
+PY
+  )"
+  python3 -c "${py_src}" "${mode}" "${manifest}"
+}
+
 # preflight (loud-fail)
 # Verify the hard preconditions before touching the filesystem: macOS + the tools
-# the download/verify/extract needs. (gh is required only on the network path and
-# is checked in fetch_release, so the local-bundle test seam needs no gh.)
+# the download/verify/extract needs. Stock-macOS bar by design: tar + curl +
+# shasum ship with the OS and the manifest parse falls back to runnable python3,
+# so a bare Mac passes with nothing preinstalled (no gh, no jq).
 preflight() {
   local os
   os="$(uname -s)"
   [[ "${os}" == "Darwin" ]] \
     || die "${EXIT_NOT_MACOS}" "Glass Atrium requires macOS (detected: ${os})."
   require_tool tar
-  require_tool jq
+  require_tool curl
   require_sha256
+  require_manifest_parser
 }
 
 # foreign-dir guard (no-rm-rf clobber refusal, keyed on the manifest)
@@ -157,14 +243,20 @@ assert_installable_target() {
 
 # download + extract the release bundle
 # Fetch manifest.json + glass-atrium-bundle-<version>.tar.gz into $1 (download dir),
-# extract the bundle into $2 (scratch new-release tree). The gh asset patterns MIRROR
-# update.sh::update_fetch_release rather than sourcing it — on a fresh curl|bash
-# install nothing is on disk yet, so the updater's libs can't be sourced pre-download.
+# extract the bundle into $2 (scratch new-release tree). The fixed release-asset URL
+# forms MIRROR update.sh::update_fetch_release rather than sourcing it — on a fresh
+# curl|bash install nothing is on disk yet, so the updater's libs can't be sourced
+# pre-download. MANIFEST-FIRST by design: curl cannot glob an asset name, so the
+# manifest is fetched first and the bundle name derived from its .version, then the
+# bundle fetched from the version-pinned tag URL (releases/download/v<version>/…,
+# the publish-release v<manifest.version> tag contract) — closing the race where
+# "latest" moves between two latest-form requests. Unauthenticated by design: gh
+# demands auth even for a public release and was dropped outright (D2-R1).
 fetch_release() {
-  local dl_dir="$1" new_tree="$2" slug bundle
+  local dl_dir="$1" new_tree="$2" slug base tag manifest_url bundle_url version expected bundle
 
   # TEST SEAM — both set → a locally-built bundle + manifest are used verbatim,
-  # skipping gh/network entirely (mirrors update.sh's ATRIUM_UPDATE_SRC_* seam), so
+  # skipping the network entirely (mirrors update.sh's ATRIUM_UPDATE_SRC_* seam), so
   # the PHASE-2 acceptance test can exercise a real no-.git install hermetically.
   if [[ -n "${GA_INSTALL_SRC_BUNDLE:-}" && -n "${GA_INSTALL_SRC_MANIFEST:-}" ]]; then
     log "Installing from a local release bundle (test seam): ${GA_INSTALL_SRC_BUNDLE}"
@@ -188,49 +280,34 @@ fetch_release() {
         "GA_RELEASE_REPO must be an <owner>/<repo> slug (got: '${slug}')."
       ;;
   esac
-  require_tool gh
 
-  local -a gh_args=(release download)
-  [[ -n "${GA_RELEASE_TAG}" ]] && gh_args+=("${GA_RELEASE_TAG}")
-  gh_args+=(
-    --repo "${slug}" --dir "${dl_dir}" --clobber
-    --pattern 'manifest.json' --pattern 'glass-atrium-bundle-*.tar.gz'
-  )
-  log "Downloading the ${GA_RELEASE_TAG:-latest} Glass Atrium release from ${slug} ..."
-  gh "${gh_args[@]}" \
-    || die "${EXIT_DOWNLOAD_FAILED}" \
-      "gh release download failed for ${slug} — check the slug, the release, and gh auth."
+  base="https://github.com/${slug}/releases"
+  # -f is load-bearing: plain curl exits 0 on a 404 HTML body, which would poison
+  # the download — -f turns HTTP errors into a non-zero rc for the exit-14 gate.
+  if [[ -n "${GA_RELEASE_TAG}" ]]; then
+    manifest_url="${base}/download/${GA_RELEASE_TAG}/manifest.json"
+  else
+    manifest_url="${base}/latest/download/manifest.json"
+  fi
+  log "Downloading the ${GA_RELEASE_TAG:-latest} Glass Atrium release manifest from ${slug} ..."
+  curl -fSL --retry 3 -o "${dl_dir}/manifest.json" "${manifest_url}" \
+    || die "${EXIT_DOWNLOAD_FAILED}" "manifest download failed: ${manifest_url}"
 
-  [[ -f "${dl_dir}/manifest.json" ]] \
-    || die "${EXIT_DOWNLOAD_FAILED}" "release asset manifest.json missing after download."
-
-  # Bundle-name/version assertion parity with update.sh::update_fetch_release: the
-  # bundle is named glass-atrium-bundle-<version>.tar.gz by publish-release.sh from
-  # the SAME manifest .version, so derive the expected name and refuse a zero /
-  # ambiguous / version-mismatched match rather than blindly taking the first — a
-  # mismatch is a corrupt release, not a file to guess at.
-  local version expected b
-  local -a bundles=()
-  version="$(jq -r '.version // empty' -- "${dl_dir}/manifest.json")"
+  # invalid-JSON manifest → the parser's non-zero rc folds into the same loud
+  # exit-14 (a corrupt asset is a failed download, not an unnamed strict-mode abort).
+  # shellcheck disable=SC2310,SC2312
+  version="$(manifest_get version-or-empty "${dl_dir}/manifest.json" || true)"
   [[ -n "${version}" ]] \
     || die "${EXIT_DOWNLOAD_FAILED}" "release manifest.json carries no .version — cannot derive the expected bundle name."
   expected="glass-atrium-bundle-${version}.tar.gz"
-  # find/sort feed the loop; their rc is intentionally not the loop's verdict.
-  # shellcheck disable=SC2312
-  while IFS= read -r b; do
-    [[ -n "${b}" ]] && bundles+=("${b}")
-  done < <(find "${dl_dir}" -maxdepth 1 -type f -name 'glass-atrium-bundle-*.tar.gz' | LC_ALL=C sort)
-  if [[ "${#bundles[@]}" -eq 0 ]]; then
-    die "${EXIT_DOWNLOAD_FAILED}" "release bundle (${expected}) missing after download."
-  fi
-  if [[ "${#bundles[@]}" -gt 1 ]]; then
-    die "${EXIT_DOWNLOAD_FAILED}" \
-      "ambiguous release: ${#bundles[@]} bundle assets matched glass-atrium-bundle-*.tar.gz — expected exactly one (${expected}): ${bundles[*]}"
-  fi
-  bundle="${bundles[0]}"
-  [[ "${bundle##*/}" == "${expected}" ]] \
-    || die "${EXIT_DOWNLOAD_FAILED}" \
-      "release bundle ${bundle##*/} does not match the manifest version bundle ${expected} — refusing a version-mismatched bundle."
+  # A pinned GA_RELEASE_TAG keeps BOTH assets on that tag; otherwise the bundle is
+  # version-pinned to the manifest just fetched (v<version> per publish-release).
+  tag="${GA_RELEASE_TAG:-v${version}}"
+  bundle_url="${base}/download/${tag}/${expected}"
+  bundle="${dl_dir}/${expected}"
+  log "Downloading ${expected} ..."
+  curl -fSL --retry 3 -o "${bundle}" "${bundle_url}" \
+    || die "${EXIT_DOWNLOAD_FAILED}" "bundle download failed: ${bundle_url}"
   tar -xzf "${bundle}" -C "${new_tree}" \
     || die "${EXIT_EXTRACT_FAILED}" "bundle extraction failed: ${bundle}"
 }
@@ -239,8 +316,9 @@ fetch_release() {
 # Verify every extracted file's SHA-256 against manifest.hashes[path]. BOOTSTRAP: the
 # verify REUSES the shared spine lib rather than inlining the hash loop, but the lib is
 # itself a bundle member existing only AFTER extract — so it is sourced post-extract
-# from the scratch tree. The trust anchor is the authenticated gh release + slug; this
-# per-file check is the integrity gate against a corrupt/partial download.
+# from the scratch tree. This per-file SHA-256 manifest check IS the sole trust
+# anchor of the unauthenticated download (integrity gate against a corrupt /
+# tampered / partial asset).
 # Args: $1 = new-release tree · $2 = manifest.json · $3 = staging.
 verify_bundle() {
   local new_tree="$1" manifest="$2" staging="$3" spine_lib
@@ -253,7 +331,8 @@ verify_bundle() {
   log "Verifying per-file SHA-256 of the release against manifest.hashes ..."
   # A fresh install stages the WHOLE manifest.files set; spine_stage_and_verify
   # copies each into the staging dir and loud-fails on the first hash mismatch.
-  if ! jq -r '.files[]' -- "${manifest}" \
+  # shellcheck disable=SC2310,SC2312  # the pipeline verdict IS branched on
+  if ! manifest_get files "${manifest}" \
     | spine_stage_and_verify "${new_tree}" "${manifest}" "${staging}"; then
     die "${EXIT_VERIFY_FAILED}" \
       "per-file hash verification failed — corrupt download, refusing to install."
@@ -270,10 +349,12 @@ verify_bundle() {
 # extract in place. Args: $1 = verified staging tree · $2 = downloaded manifest.json.
 install_tree() {
   local staged_tree="$1" dl_manifest="$2" release_version installed_version
-  release_version="$(jq -r '.version // "unknown"' -- "${dl_manifest}")"
+  # shellcheck disable=SC2311
+  release_version="$(manifest_get version-or-unknown "${dl_manifest}")"
 
   if [[ -f "${GA_DIR}/manifest.json" ]]; then
-    installed_version="$(jq -r '.version // "unknown"' -- "${GA_DIR}/manifest.json" 2>/dev/null || printf 'unknown\n')"
+    # shellcheck disable=SC2310,SC2312
+    installed_version="$(manifest_get version-or-unknown "${GA_DIR}/manifest.json" 2>/dev/null || printf 'unknown\n')"
     if [[ "${installed_version}" != 'unknown' && "${installed_version}" == "${release_version}" ]]; then
       log "Glass Atrium ${installed_version} already installed at ${GA_DIR} (verified) — no extract needed."
       return 0
@@ -296,8 +377,9 @@ install_tree() {
     || die "${EXIT_EXTRACT_FAILED}" "spine_atomic_swap unavailable — apply-spine.sh was not sourced before install_tree."
   mkdir -p -- "${GA_DIR}"
   local rel src dst
-  # the manifest was already parsed + hash-verified; jq's rc here is not the verdict.
-  # shellcheck disable=SC2312
+  # the manifest was already parsed + hash-verified; the parser's rc here is not
+  # the verdict.
+  # shellcheck disable=SC2310,SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
     src="${staged_tree}/${rel}"
@@ -308,7 +390,7 @@ install_tree() {
       || die "${EXIT_EXTRACT_FAILED}" "failed to create the destination directory for ${rel} under ${GA_DIR}."
     spine_atomic_swap "${src}" "${dst}" \
       || die "${EXIT_EXTRACT_FAILED}" "failed to atomically install ${rel} into ${GA_DIR}."
-  done < <(jq -r '.files[]' -- "${dl_manifest}")
+  done < <(manifest_get files "${dl_manifest}")
 
   # Persist the release manifest as the install manifest (the idempotency key + the
   # update path's baseline anchor). manifest.json is a SEPARATE release asset, not a

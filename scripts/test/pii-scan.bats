@@ -1,10 +1,14 @@
 #!/usr/bin/env bats
-# pii-scan.sh 릴리스 게이트 스캐너 테스트 (T10 AC).
+# pii-scan.sh release-gate scanner tests (T10 AC).
 #
-# AC 고정: 의도적 위반 fixture 는 잡히고(exit 1) clean 트리는 0 hit(exit 0),
-#   전제조건 불충족은 exit 2. 패턴은 실행 머신에서 유도되므로 ($HOME · $USER ...)
-#   fixture 내용도 전부 런타임에 합성한다 — 테스트 파일에 개인 문자열을
-#   하드코딩하면 그 자체가 추적 대상 PII 가 되므로 금지.
+# AC pinned: intentional-violation fixtures are caught (exit 1), a clean tree is
+#   0 hits (exit 0), unmet preconditions are exit 2. Patterns are derived from
+#   the running machine ($HOME · $USER ...), so all fixture content is also
+#   synthesized at runtime — hardcoding a personal string in the test file would
+#   itself become tracked PII, so that is forbidden. Single exception: the
+#   approved-disclosure identifiers (APPROVED_MAINTAINER_IDS — disclosure
+#   decision 2026-07-20) are exact-match hardcoded constants, so verification
+#   must use the same literal (fragment assembly cannot exercise the allowlist).
 #
 # Run via: bats scripts/test/pii-scan.bats
 # Requires: bats (brew install bats-core), bash 3.2+
@@ -13,16 +17,29 @@ SCANNER="${BATS_TEST_DIRNAME}/../pii-scan.sh"
 
 setup() {
   [[ -f "${SCANNER}" ]] || skip "pii-scan.sh not found: ${SCANNER}"
-  # 호스트 독립 합성 USER (P0 Wave 3): 스캐너는 PII 패턴 #3 을 $USER(단어 경계)에서
-  #   유도한다. CI 호스트의 사용자명이 추적 소스(ci.yml/문서)에 등장하는 토큰이면
-  #   worktree-clean 오탐 FAIL 을 유발한다. 고정 합성 토큰을 주입해 유도 패턴을
-  #   결정적으로 만들고 어떤 호스트(CI/개발기)에서도 실제 저장소 내용과 매치되지
-  #   않게 한다. 아래 fixture 도 동일한 $USER 로 dirty 내용을 합성하므로 dir 모드
-  #   단어 경계 테스트가 정렬된다. 확장값이 이 추적 파일에 연속 리터럴로 등장하지
-  #   않도록 조각으로 조립한다 — 그렇지 않으면 tracked 모드 스캔이 fixture 이름을
-  #   자기 매치해 제거하려던 FAIL 을 다시 유발한다.
+  # Host-independent synthetic USER (P0 Wave 3): the scanner derives PII pattern
+  #   #3 from $USER (word-boundary). If the CI host's username is a token that
+  #   appears in tracked sources (ci.yml/docs), it causes a worktree-clean
+  #   false-positive FAIL. Injecting a fixed synthetic token makes the derived
+  #   pattern deterministic and guarantees no match against real repo content on
+  #   any host (CI/dev machine). The fixtures below synthesize dirty content from
+  #   the same $USER, so the dir-mode word-boundary tests stay aligned. The
+  #   expanded value is assembled from fragments so it never appears as a
+  #   contiguous literal in this tracked file — otherwise the tracked-mode scan
+  #   would self-match the fixture name and re-trigger the FAIL it was meant to
+  #   remove.
   local u_head="ga-fixture" u_tail="user"
   export USER="${u_head}-${u_tail}"
+  # Host-independent synthetic HOME (T1 allowlist): the maintainer machine's real
+  #   HOME matches the approved-disclosure identifier (/Users/bettep) and is
+  #   excluded at collection time, which would neutralize the HOME fixture tests
+  #   on that host. As with USER, inject a synthetic value to make the derived
+  #   pattern deterministic, with the same fragment assembly to avoid a
+  #   contiguous literal (prevents tracked-mode self-match). Global git config
+  #   missing under this HOME is harmless — every isolated-repo test commits
+  #   with a repo-local user.email.
+  local h_tail="home"
+  export HOME="/Users/ga-fixture-${h_tail}"
   WORK="$(mktemp -d -t pii-scan-bats.XXXXXX)"
 }
 
@@ -57,7 +74,7 @@ teardown() {
 }
 
 @test "dir mode: USER embedded inside a longer token -> no false positive" {
-  # 단어 경계 플래그 검증 — 짧은 토큰의 부분 일치는 hit 가 아니어야 한다.
+  # Verifies the word-boundary flag — a partial match of the short token must not be a hit.
   printf 'token: x%sx\n' "${USER}" >"${WORK}/embedded.txt"
   run bash "${SCANNER}" "${WORK}"
   [[ "${status}" -eq 0 ]]
@@ -80,7 +97,7 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 @test "tracked mode: worktree is clean (release-gate invariant — no PII in HEAD tree)" {
-  # 두 검사를 분리해 worktree 단독 깨끗함을 단언 — history 는 컷오버 전까지 dirty.
+  # The two checks are separate, so worktree cleanliness is asserted on its own — holds regardless of history state.
   run bash "${SCANNER}" --worktree-only
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"worktree-clean: PASS"* ]]
@@ -99,10 +116,12 @@ teardown() {
 }
 
 @test "tracked mode: history-FAIL sets exit bit 4 independently of worktree bit 1" {
-  # 컷오버 전 본 GA 저장소는 식별 문자열을 히스토리에 보유 → history-clean FAIL.
-  #   exit-bit 결합을 단언 (환경 결합 최소화): history FAIL 이면 비트4 ON, worktree
-  #   PASS 이면 비트1 OFF → 두 검사의 독립 보고를 검증. 컷오버 후 history clean
-  #   상태에서도 결합 단언은 유지된다 (FAIL 분기일 때만 비트 확인).
+  # Asserts the exit-bit combination (minimal environment coupling): history FAIL
+  #   sets bit 4 ON, worktree PASS keeps bit 1 OFF → verifies the two checks
+  #   report independently. With the approved-identifier allowlist applied, this
+  #   repo's expected state is history PASS — the combination assertion still
+  #   holds in an environment where a non-approved identifier entered history
+  #   (the bit is checked only on the FAIL branch).
   run bash "${SCANNER}"
   if [[ "${output}" == *"history-clean: FAIL"* ]]; then
     # bit 4 set
@@ -125,9 +144,10 @@ teardown() {
 # ---------------------------------------------------------------------------
 
 @test "history scan: PII removed from worktree but present in history -> worktree PASS + history FAIL (exit 4)" {
-  # 격리 저장소에서 history-only 유출을 합성 — 워크트리는 깨끗하나 히스토리에는
-  #   $HOME 가 남아 worktree(bit1) clear + history(bit4) set 을 단언. 패턴은 실행
-  #   머신에서 유도되므로 fixture 도 런타임 $HOME 로 합성 (하드코딩 금지).
+  # Synthesizes a history-only leak in an isolated repo — the worktree is clean
+  #   but $HOME remains in history; asserts worktree (bit 1) clear + history
+  #   (bit 4) set. Patterns derive from the running machine, so the fixture is
+  #   synthesized from the runtime $HOME too (hardcoding forbidden).
   command -v git >/dev/null 2>&1 || skip "git not found"
   local repo="${WORK}/hist-repo"
   mkdir -p "${repo}"
@@ -143,8 +163,9 @@ teardown() {
   git -C "${repo}" add cfg.txt
   git -C "${repo}" commit -qm "scrub home path"
 
-  # GA_ROOT 는 스크립트 위치(dirname/..) 기준이라 cwd 와 무관 — 격리 저장소를
-  #   GA_ROOT 로 주입하려면 스크립트를 ${repo}/scripts/ 에 복사해 실행한다.
+  # GA_ROOT is anchored to the script location (dirname/..), independent of cwd —
+  #   to inject the isolated repo as GA_ROOT, copy the script into
+  #   ${repo}/scripts/ and run it from there.
   mkdir -p "${repo}/scripts"
   cp "${SCANNER}" "${repo}/scripts/pii-scan.sh"
   run bash "${repo}/scripts/pii-scan.sh"
@@ -152,4 +173,72 @@ teardown() {
   [[ "${output}" == *"history-clean: FAIL"* ]]
   [[ $((status & 4)) -eq 4 ]]
   [[ $((status & 1)) -eq 0 ]]
+}
+
+# ---------------------------------------------------------------------------
+# approved-disclosure allowlist (D1-R2 — maintainer identifiers, disclosure decision 2026-07-20)
+# ---------------------------------------------------------------------------
+
+@test "approved ids: USER seam — maintainer username/home-path skipped with note (exit 0)" {
+  # Uses the approved-identifier literal — the allowlist is an exact-match constant, so only the same literal can verify it.
+  export USER="bettep"
+  printf 'owner: bettep\nhome = "/Users/bettep"\n' >"${WORK}/approved.txt"
+  run bash "${SCANNER}" "${WORK}"
+  [[ "${output}" == *"worktree-clean: PASS"* ]]
+  # The last assertion is compound — bash 3.2 bats ignores mid-test assertion
+  #   failures (errexit does not propagate), so the decisive gates are combined
+  #   into the single final command.
+  [[ "${status}" -eq 0 && "${output}" == *"approved-disclosure identifier skipped"* ]]
+}
+
+@test "approved ids: git-config seam — maintainer email skipped in worktree AND history (exit 0)" {
+  # Verifies the email seam in an isolated repo — even with the approved email in
+  #   both worktree and history, the pattern is excluded at collection time, so
+  #   both checks PASS.
+  command -v git >/dev/null 2>&1 || skip "git not found"
+  local repo="${WORK}/approved-email-repo"
+  mkdir -p "${repo}"
+  git -C "${repo}" init -q
+  git -C "${repo}" config user.email "hongdaesik88@gmail.com"
+  git -C "${repo}" config user.name "Maintainer"
+  printf 'contact = "hongdaesik88@gmail.com"\n' >"${repo}/cfg.txt"
+  git -C "${repo}" add cfg.txt
+  git -C "${repo}" commit -qm "add contact"
+  mkdir -p "${repo}/scripts"
+  cp "${SCANNER}" "${repo}/scripts/pii-scan.sh"
+  run bash "${repo}/scripts/pii-scan.sh"
+  [[ "${output}" == *"approved-disclosure identifier skipped"* ]]
+  [[ "${output}" == *"worktree-clean: PASS"* ]]
+  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  [[ "${status}" -eq 0 && "${output}" == *"history-clean: PASS"* ]]
+}
+
+@test "foreign email via git-config seam -> worktree bit1 + history bit4 (exit 5)" {
+  # A non-approved identifier still FAILs both checks as before — pins that the
+  #   allowlist does not globally relax the gate.
+  command -v git >/dev/null 2>&1 || skip "git not found"
+  local repo="${WORK}/foreign-email-repo"
+  mkdir -p "${repo}"
+  git -C "${repo}" init -q
+  git -C "${repo}" config user.email "contributor@example.invalid"
+  git -C "${repo}" config user.name "Contributor"
+  printf 'contact = "contributor@example.invalid"\n' >"${repo}/cfg.txt"
+  git -C "${repo}" add cfg.txt
+  git -C "${repo}" commit -qm "add contact"
+  mkdir -p "${repo}/scripts"
+  cp "${SCANNER}" "${repo}/scripts/pii-scan.sh"
+  run bash "${repo}/scripts/pii-scan.sh"
+  [[ "${output}" == *"worktree-clean: FAIL"* ]]
+  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  [[ "${status}" -eq 5 && "${output}" == *"history-clean: FAIL"* ]]
+}
+
+@test "approved ids: exact-match only — near-miss username still flagged (exit 1)" {
+  # Pins no partial/prefix matching — even one extra character on the approved literal stays scanned.
+  local u_tail="2"
+  export USER="bettep${u_tail}"
+  printf 'owner: %s\n' "${USER}" >"${WORK}/near-miss.txt"
+  run bash "${SCANNER}" "${WORK}"
+  # Compound final assertion — works around bash 3.2 bats ignoring mid-test assertions (see approved USER seam)
+  [[ "${status}" -eq 1 && "${output}" == *"near-miss.txt"* ]]
 }
