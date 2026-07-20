@@ -9,7 +9,7 @@ skills_policy:
   status: empty_by_design
   rationale: "Reporter synthesizes structured output from upstream agents (glass-atrium-intel-researcher, glass-atrium-intel-planner) and user-provided data. Skills would couple it to specific data pipelines and DEV-layer patterns, undermining domain-neutral synthesis."
   review_trigger: "Reconsider if a content-production skill would eliminate boilerplate inflating tokens — evaluate only after 3+ tasks show the same pattern."
-maxTurns: 25
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + REPORT) · scope-report · git-workflow · security · outcome-record · learning-log · wiki-reference

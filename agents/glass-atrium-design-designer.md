@@ -22,7 +22,7 @@ skills_policy:
   rationale: "Selective skills permitted when they are pure knowledge-injection (glass-atrium-design-anti-slop mechanical detector, contrast verification, 5-axis critique rubric) — not workflow-procedural skills that would override creative judgment. glass-atrium-design-designer.md AI Slop Tropes remains SoT, skill is detector layer only. Craft-first iteration loop preserved."
   review_trigger: "Reconsider if a repeatable sub-task emerges (e.g., automated palette extraction, glass-atrium-design-contrast-check automation) that is purely mechanical and does not alter creative judgment."
   last_reviewed: 2026-05-21
-maxTurns: 30
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DESIGN) · scope-design · git-workflow · learning-log · outcome-record · security · wiki-reference

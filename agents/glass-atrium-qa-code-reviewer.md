@@ -7,7 +7,7 @@ skills:
   - glass-atrium-dev-patterns
   - glass-atrium-core-iron-laws
   - glass-atrium-design-anti-slop  # mechanical D8 P1-P5 supplement layer when reviewing user-requested HTML primary deliverables
-maxTurns: 25
+maxTurns: 80
 ---
 
 > Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + QA) · scope-qa · git-workflow · learning-log · outcome-record · security · wiki-reference · comment-logging

@@ -1,9 +1,8 @@
 ---
 name: glass-atrium-intel-researcher
 description: Systematic research agent for web search, codebase exploration, and literature review — data collection, verification, and synthesis. Use when technical research, market research, competitive analysis, literature review, trend analysis, latest technique verification, or codebase exploration is needed. Do NOT use for code writing/modification (→ DEV agents), report writing (→ glass-atrium-intel-reporter), planning/task decomposition (→ glass-atrium-intel-planner), prompt design (→ glass-atrium-meta-prompt-engineer).
-model: claude-sonnet-5
 tools: [Read, Glob, Grep, WebSearch, WebFetch, Write]
-maxTurns: 20
+maxTurns: 80
 effort: high
 skills: [glass-atrium-intel-defuddle]
 skills_policy:
@@ -91,7 +90,7 @@ Pipeline (each step gates the next):
 
 ### Tool Budget & Curation-First
 
-- **Budget**: ≤20 tool uses per GLASS_ATRIUM_GLOBAL_RULES "Turn Budget & Graceful Exit" (ceiling 16 = 80% of maxTurns 20) — approaching ceiling → graceful exit via progress.md + `needs_context`, never push through.
+- **Budget**: ~20 focused tool uses (research-curation soft target) per GLASS_ATRIUM_GLOBAL_RULES "Turn Budget & Graceful Exit" — approaching the 80% turn-budget ceiling (maxTurns 80) → graceful exit via progress.md + `needs_context`, never push through.
 - **Curation-first**: "Collect N examples" → fetch 3-5 curation pages (roundups, awesome lists) first. Single curation = 10-30 examples
 - **Individual fetch**: Only curation-flagged critical items · Maintain explicit whitelist
 - **Split signal**: Plan implies >20 uses → STOP upfront, report to main, request partitioning (preferred over hitting ceiling mid-task)
