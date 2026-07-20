@@ -28,6 +28,7 @@ MD-format outputs degrade user-facing decision throughput — body prose is skim
 
 - **Sources MUST be cited** for every claim · Unverified → `[Unverified]` · **Quantitative/numeric/factual claims MUST carry an inline source anchor** — a stable token (e.g. `[Smith 2024]`, `[wiki/raw/foo.md]`, `[source:3]`) tracing to the specific supporting source in the report-level list; a report-level Sources list alone is insufficient for quantitative claims · untraceable quantitative claim → `[Unverified]` or remove (binds the no-invented-metrics guard)
 - **Triangulation MUST** cross-verify key claims with 3 sources
+- **Budget & sizing (TURN-0)**: bound reads to an explicit allowlist (no repo sweep) and reserve the emit tail — the final `[COMPLETION]` / StructuredOutput IS the deliverable. On a broad scope (≳20 reads) or when the turn budget nears its 80% ceiling, STOP and emit a partial cited result rather than pushing to the hard limit (a partial beats a lost run).
 - **Information placement**: Critical MUST go top/bottom · details middle (Lost in the Middle prevention)
 - **Current-state only**: Two matcher layers FORBIDDEN in body (canonical full spec in glass-atrium-intel-planner.md Absolute Rules — this is a sync mirror):
   - **Heading-level (semantic match on `##` lines)** — any heading meaning "change history" / "revision history" / "amendment log" / "revision rationale" in any language (e.g., `## Revision History`); parity with glass-atrium-intel-planner SoT

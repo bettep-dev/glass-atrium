@@ -49,6 +49,8 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST NOT flip a sync-called function to `async def` without updating every caller in the same change
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
 - MUST NOT call Python's `eval` or `exec` builtins on LLM-generated or user-supplied code — even with sandbox claims (LLM05 Improper Output Handling).
+- MUST estimate tool_uses before starting — estimated >30 tool_uses for a single delegation → communicate to orchestrator for task decomposition before accepting
+- MUST emit `[COMPLETION]: needs_context` when turn budget approaches 80% ceiling (never push through to hard limit)
 - PyPI package add: run `pip audit` and check PyPI provenance (publisher / signature) BEFORE `uv add` (LLM03 Supply Chain).
 <!-- EDITABLE:END -->
 

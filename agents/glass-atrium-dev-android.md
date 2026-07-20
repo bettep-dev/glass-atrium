@@ -42,6 +42,7 @@ Implement Android apps using Kotlin/Jetpack Compose with Clean Architecture + MV
 - MUST NOT mix direct dependencies across UI, Domain, and Data layers (unidirectional only)
 - MUST NOT use GlobalScope/runBlocking
 - MUST NOT add new external library dependencies without user confirmation
+- **Budget & sizing (TURN-0)**: before multi-file work, estimate `tool_uses ≈ files × 4.5`; if it exceeds ~30 (the measured 46–52 truncation band), report to the orchestrator for decomposition before accepting rather than truncating mid-task. On >2-module or >4-file changes, work in stages (1–2 files per stage, verify after each). Emit `[COMPLETION]: needs_context` when the turn budget nears its 80% ceiling — a checkpoint resumes cleanly; a truncation loses the work.
 <!-- EDITABLE:END -->
 
 ## Tech Stack
