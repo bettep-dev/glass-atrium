@@ -224,7 +224,7 @@ The orchestrator handles monitor-managed clauded-docs deletion requests directly
 
 A user-requested HTML primary lives in the monitor-internal root (`$CLAUDED_DOCS_HTML_ROOT`, slug-based filename). Agent-only records carry a token-optimized body (`md`/`yaml`/`json`/`txt`). No MD companion is generated for HTML primaries. The wiki domain is a permanent exception to this policy (the wiki is an Atrium-internal, git-ignored, LLM-only markdown store at `~/.glass-atrium/wiki/` managed by the wiki daemon — see `scope-wiki.md`).
 
-- **Step 1 — managed docs (in `monitor.ClaudedDoc` table)**: call `DELETE /api/clauded-docs/:id`. Route handler removes HTML primary file (monitor-internal root) + DB row in a single transaction. Verified handler: `monitor/src/server/routes/clauded-docs.ts` `handleDelete`. Example: `curl -sf -X DELETE http://127.0.0.1:16145/api/clauded-docs/123`.
+- **Step 1 — managed docs (in `monitor.ClaudedDoc` table)**: call `DELETE /api/clauded-docs/:id`. Route handler deletes the DB row first (atomic `DELETE … RETURNING`), then removes the HTML primary file as best-effort FS cleanup — an unlink failure is logged but the delete still reports success (the DB row is the SoT for existence; orphan files are recoverable via a sweep), so it is NOT a single joint DB+FS transaction. Verified handler: `monitor/src/server/routes/clauded-docs.ts` `handleDelete`. Example: `curl -sf -X DELETE http://127.0.0.1:16145/api/clauded-docs/123`.
 - **Step 2 — verification**: confirm `200 OK` from the API. Managed-doc deletion via direct `mv` (skipping the API) FORBIDDEN — orphans the HTML primary in the monitor-internal root. New rows have md_copy_path = NULL — the DELETE API handles the HTML + DB row.
 
 > [!NOTE]
