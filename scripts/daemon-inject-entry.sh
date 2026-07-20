@@ -10,10 +10,13 @@
 #   Two-instance split routing (one port per role) supported.
 #
 # Behavior: (1) resolve session/prompt/port/log from role; (2) delegate healthcheck;
-#   (3) idempotent skip (exit 0) if scrollback already shows `Scheduled <8-hex>` from
-#   a prior /loop submit; (4) POST prompt to /upload (HTTP 204 = success); (5) verify
-#   by polling capture-pane 2s×30s for Scheduled <hex>, `← fakechat · web:` echo, or
-#   non-zero Usage — fail loud on timeout; (6) log to /tmp/daemon-inject-<role>.log.
+#   (3) idempotent skip (exit 0) if the per-session transcript already shows the
+#   canonical `Scheduled recurring job <hex>` from a prior /loop submit; (4) POST
+#   prompt to /upload (HTTP 204 = success); (5) verify by polling that transcript
+#   2s×75s for `Scheduled recurring job <hex>` (sole registration certifier —
+#   CronCreate lands ~55s post-POST), with the `← fakechat · web:` echo / non-zero
+#   Usage pane signals demoted to "prompt received" breadcrumbs — fail loud on
+#   timeout; (6) log to /tmp/daemon-inject-<role>.log.
 #
 # Test-mode overrides (non-production): DAEMON_INJECT_PORT / DAEMON_INJECT_SESSION
 #   let the isolated PoC harness run without touching the real
@@ -36,11 +39,18 @@ readonly SCRIPT_DIR
 # shellcheck source=lib/atrium-config.sh
 source "${SCRIPT_DIR}/lib/atrium-config.sh"
 
-# Verification poll: how long to wait between captures and how long total
-# before declaring failure. 30s upper bound = entry prompt + /loop Skill
-# rewrite + cron registration round-trip. Polls every 2s.
+# Verification poll: interval between captures + total budget before failure.
+# 75s budget covers CronCreate landing — the canonical "Scheduled recurring job
+# <hex>" tool_result lands ~55s post-POST (entry prompt + /loop Skill rewrite +
+# cron round-trip), with ~20s margin. Polls every 2s.
 readonly VERIFY_POLL_INTERVAL_SEC=2
-readonly VERIFY_TIMEOUT_SEC=30
+readonly VERIFY_TIMEOUT_SEC=75
+
+# Canonical CronCreate acceptance pattern. The tool_result reads "Scheduled
+# recurring job <8hex> ..." — the hex trails the phrase (not adjacent to
+# "Scheduled") and the confirmation wording may be Korean, so match this stable
+# ASCII fragment. A transcript match on it is the sole registration certifier.
+readonly CRON_REGISTERED_RE='Scheduled recurring job [a-f0-9]{8}'
 
 # HTTP request timeout — the fakechat /upload handler is synchronous (writes
 # the file then broadcasts the MCP notification before returning 204), so a
@@ -131,6 +141,10 @@ if ! command -v curl >/dev/null 2>&1; then
   fatal "curl not on PATH"
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  fatal "jq not on PATH (required to parse the session state file)"
+fi
+
 if [[ ! -f "${PROMPT_FILE}" ]]; then
   fatal "entry prompt file missing: ${PROMPT_FILE}"
 fi
@@ -175,21 +189,61 @@ if [[ "${liveness_status}" != "200" ]]; then
 fi
 log "fakechat HTTP server is live on ${FAKECHAT_BASE_URL} (200 OK)"
 
-# 6. Capture pane for the idempotency check. -S -1500 = deep scrollback so the
-#    "Scheduled <hex>" line from /loop's CronCreate (which scrolls off fast) is visible.
+# 6. Capture pane — serves ONLY the demoted fallback verify breadcrumbs below
+#    (fakechat echo / Usage%). Registration evidence lives in the durable transcript
+#    (see resolve_transcript_path); the pane repaints (-S -1500 deep scrollback still
+#    drops scrolled-off one-time echoes), so it cannot certify registration.
 capture_pane() {
   tmux capture-pane -t "${SESSION}" -p -S -1500 2>/dev/null || true
 }
 
-pane_snapshot="$(capture_pane)"
+# Durable evidence contract: resolve this session's transcript .jsonl from the live
+# pane_pid. CronCreate is session-only/in-memory, so the durable record of a
+# registration is the per-session transcript, not the ephemeral pane. Chain:
+#   pane_pid -> ~/.claude/sessions/<pane_pid>.json {sessionId, cwd}
+#            -> ~/.claude/projects/<cwd-slug>/<sessionId>.jsonl   (slug: '/' '.' -> '-')
+# Loud-fail with a DISTINCT path-naming message on any missing link — a silent pane
+# fallback would lose the scrolled-off echo this durable read exists to preserve
+# (Precondition Loud-Fail Principle). Writes the global TRANSCRIPT_PATH (no command
+# substitution) so fatal's exit propagates to the whole script, not just a subshell.
+TRANSCRIPT_PATH=""
+resolve_transcript_path() {
+  local pane_pid session_json session_id cwd cwd_slug
+  pane_pid="$(tmux list-panes -t "${SESSION}" -F '#{pane_pid}' 2>/dev/null | head -n 1)"
+  if [[ -z "${pane_pid}" ]]; then
+    fatal "no pane PID for session ${SESSION} — cannot resolve transcript"
+  fi
 
-# 6a. Idempotency guard. A `Scheduled <8-hex>` line already in scrollback means
+  session_json="${HOME}/.claude/sessions/${pane_pid}.json"
+  if [[ ! -f "${session_json}" ]]; then
+    fatal "session state file missing: ${session_json} (pane_pid=${pane_pid})"
+  fi
+
+  session_id="$(jq -r '.sessionId // empty' "${session_json}" 2>/dev/null || true)"
+  cwd="$(jq -r '.cwd // empty' "${session_json}" 2>/dev/null || true)"
+  if [[ -z "${session_id}" || -z "${cwd}" ]]; then
+    fatal "session state file lacks sessionId/cwd: ${session_json}"
+  fi
+
+  # Harness slug convention: every '/' then every '.' in cwd becomes '-' (bash-3.2
+  # parameter expansion, no external tr).
+  cwd_slug="${cwd//\//-}"
+  cwd_slug="${cwd_slug//./-}"
+  TRANSCRIPT_PATH="${HOME}/.claude/projects/${cwd_slug}/${session_id}.jsonl"
+  if [[ ! -f "${TRANSCRIPT_PATH}" ]]; then
+    fatal "session transcript missing: ${TRANSCRIPT_PATH} (cwd=${cwd} sessionId=${session_id})"
+  fi
+}
+
+resolve_transcript_path
+log "resolved transcript: ${TRANSCRIPT_PATH}"
+
+# 6a. Idempotency guard. The canonical cron line already in the transcript means
 #     /loop ran in this session — re-injecting would duplicate the cron entry, so
-#     skip + exit 0. The single Scheduled-line check suffices under the fakechat
-#     model (no input-box residue mode); HTTP 204 from /upload is durable evidence
-#     the message reached claude.
-if printf '%s' "${pane_snapshot}" | grep -qE 'Scheduled [a-f0-9]{8}'; then
-  log "session already has Scheduled <hex> in scrollback — idempotent skip"
+#     skip + exit 0. Reads the durable transcript so a genuinely-registered session
+#     actually skips (HTTP 204 from /upload proves receipt, not registration).
+if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}"; then
+  log "session already registered (canonical cron line in transcript) — idempotent skip"
   exit 0
 fi
 
@@ -232,16 +286,19 @@ if [[ "${http_status}" != "204" ]]; then
 fi
 log "POST succeeded (HTTP 204)"
 
-# 9. Verification. Poll the pane up to VERIFY_TIMEOUT_SEC for any of: (a) "Scheduled
-#    <8-hex>" — CronCreate confirmation, strongest; (b) "← fakechat · web:" + first 40
-#    prompt chars — MCP notification delivered + rendered (for prompts not starting
-#    with /loop); (c) a non-zero Usage % — claude consumed tokens. None within the
-#    timeout → FAIL LOUD: HTTP 204 only proves the plugin RECEIVED, not that claude
-#    consumed it.
+# 9. Verification. The SOLE registration certifier is the canonical cron line in
+#    the durable transcript — CronCreate lands ~55s post-POST, so poll the transcript
+#    up to VERIFY_TIMEOUT_SEC for it. The pane `← fakechat · web:` echo and non-zero
+#    Usage% branches render at ~+2s (prompt arrival), far ahead of CronCreate, so
+#    they attest delivery/processing only and are DEMOTED to fallback breadcrumbs:
+#    logged once for timeout diagnosis, never certifying, poll continues. None of the
+#    certifier within the timeout → FAIL LOUD: HTTP 204 only proves the plugin
+#    RECEIVED, not that cron registered.
 verify_now=""
 verify_now="$(date +%s)"
 verify_deadline=$((verify_now + VERIFY_TIMEOUT_SEC))
 verify_passed=0
+prompt_received=0
 post_snapshot=""
 while :; do
   verify_now="$(date +%s)"
@@ -249,34 +306,32 @@ while :; do
     break
   fi
   sleep "${VERIFY_POLL_INTERVAL_SEC}"
+
+  # PRIMARY (sole certifier): canonical cron line in the durable transcript.
+  if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}"; then
+    log "verified: canonical cron line in transcript (cron registered)"
+    verify_passed=1
+    break
+  fi
+
+  # Fallback breadcrumbs — pane-sourced, logged once, never certifying.
   post_snapshot="$(capture_pane)"
 
-  if printf '%s' "${post_snapshot}" | grep -qE 'Scheduled [a-f0-9]{8}'; then
-    log "verified: Scheduled <hex> appeared in pane (cron registered)"
-    verify_passed=1
-    break
+  # fakechat render `← fakechat · web: <first chars of text>`: channel marker plus a
+  # prompt fragment, avoiding residual lines from a prior session.
+  if [[ "${prompt_received}" -eq 0 ]] \
+    && printf '%s' "${post_snapshot}" | grep -qF 'fakechat' \
+    && printf '%s' "${post_snapshot}" | grep -qF "${prompt_echo_marker}"; then
+    prompt_received=1
+    log "fallback: fakechat echoed prompt prefix (prompt received, awaiting cron registration)"
   fi
 
-  # fakechat transcript render: `← fakechat · web: <first chars of text>`.
-  # We grep for the literal channel marker plus a fragment of the prompt to
-  # avoid matching residual lines from a prior session.
-  if printf '%s' "${post_snapshot}" | grep -qF 'fakechat'; then
-    if printf '%s' "${post_snapshot}" | grep -qF "${prompt_echo_marker}"; then
-      log "verified: fakechat transcript echoed prompt prefix (${prompt_echo_marker})"
-      verify_passed=1
-      break
-    fi
-  fi
-
-  # Claude Code REPL usage-line format: "Usage [bar] NN%" or
-  # "Usage ⚠ Limit reached". A non-zero NN% (or any non-"0%" indicator) shows
-  # the REPL is processing. We accept ANY digit followed by '%' that is NOT
-  # exactly "0%" — accommodates both 1% and 100% and avoids false-positive
-  # on the 0%-idle baseline.
-  if printf '%s' "${post_snapshot}" | grep -qE 'Usage [^0]+[1-9][0-9]?%'; then
-    log "verified: Usage > 0% — REPL is processing the prompt"
-    verify_passed=1
-    break
+  # Claude Code REPL usage-line "Usage [bar] NN%": any non-"0%" indicator means the
+  # REPL is processing (accepts 1%..100%, rejects the 0%-idle baseline).
+  if [[ "${prompt_received}" -eq 0 ]] \
+    && printf '%s' "${post_snapshot}" | grep -qE 'Usage [^0]+[1-9][0-9]?%'; then
+    prompt_received=1
+    log "fallback: Usage > 0% (REPL processing, awaiting cron registration)"
   fi
 done
 
@@ -286,7 +341,7 @@ fi
 
 # Verification failed — capture the final pane state to the log for diagnosis.
 # No auto-retry: re-running is safe (idempotency guard) but silent retries hide bugs.
-log "FAIL: post-send verification timed out after ${VERIFY_TIMEOUT_SEC}s"
+log "FAIL: post-send verification timed out after ${VERIFY_TIMEOUT_SEC}s (prompt_received=${prompt_received})"
 log "pane tail:"
 printf '%s' "${post_snapshot:-(no snapshot captured)}" | tail -n 25 >>"${LOG_FILE}"
 
@@ -301,4 +356,4 @@ if printf '%s' "${post_snapshot}" | grep -qiE 'Limit reached|resets [0-9]+d [0-9
   exit 2
 fi
 
-fatal "verification timed out — none of (Scheduled <hex>, fakechat echo, Usage > 0%) appeared"
+fatal "verification timed out — canonical cron line 'Scheduled recurring job <hex>' never appeared in transcript within ${VERIFY_TIMEOUT_SEC}s (prompt_received=${prompt_received}, transcript=${TRANSCRIPT_PATH})"

@@ -131,14 +131,35 @@ fi
 
 # 5. Cron registration watchdog. /loop is a Skill that rewrites to a CronCreate
 #    call and returns to idle — no persistent "/loop" text; the durable evidence
-#    is the "Scheduled <8-hex-id>" line from CronCreate. Capture deep scrollback
-#    (-S -1500) since the prompt + rewrite + Scheduled line scroll off fast.
+#    is the canonical "Scheduled recurring job <8-hex>" tool_result. The tmux pane
+#    repaints and scrolls that one-time echo off-screen, so read the persistent
+#    per-session transcript instead: pane_pid → sessions/<pid>.json (sessionId+cwd)
+#    → projects/<cwd-slug>/<sessionId>.jsonl. Any missing harness-internal path
+#    fails LOUD with a distinct message — NEVER a silent fallback to the pane grep.
 #    Failure here → an operator MUST re-run daemon-inject-entry.sh (bootstrap won't
 #    retry). Bypassed under --skip-cron-watchdog (pre-inject: injection PRODUCES
 #    this terminal state, so asserting it pre-inject is a chicken-and-egg deadlock).
 if [[ "${skip_cron_watchdog}" -eq 0 ]]; then
-  pane_snapshot="$(tmux capture-pane -t "${SESSION}" -p -S -1500 2>/dev/null || true)"
-  if ! printf '%s' "${pane_snapshot}" | grep -qE 'Scheduled [a-f0-9]{8}'; then
+  session_record="${HOME}/.claude/sessions/${pane_pid}.json"
+  if [[ ! -f "${session_record}" ]]; then
+    fail "cron watchdog: session record '${session_record}' absent — cannot resolve transcript (no pane fallback)"
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    fail "cron watchdog: jq not on PATH — required to parse '${session_record}'"
+  fi
+  session_fields="$(jq -r '[.sessionId, .cwd] | @tsv' "${session_record}" 2>/dev/null || true)"
+  IFS=$'\t' read -r session_id session_cwd <<<"${session_fields}"
+  if [[ -z "${session_id}" || -z "${session_cwd}" ]]; then
+    fail "cron watchdog: '${session_record}' missing sessionId/cwd — cannot resolve transcript"
+  fi
+  # cwd → project-dir slug: the harness maps every '/' and '.' to '-'.
+  cwd_slug="$(printf '%s' "${session_cwd}" | sed 's#[/.]#-#g')"
+  transcript="${HOME}/.claude/projects/${cwd_slug}/${session_id}.jsonl"
+  if [[ ! -f "${transcript}" ]]; then
+    fail "cron watchdog: transcript '${transcript}' absent — cannot verify cron registration (no pane fallback)"
+  fi
+  # Canonical CronCreate line, model-phrasing-independent (immune to Korean wording).
+  if ! grep -qE 'Scheduled recurring job [a-f0-9]{8}' "${transcript}"; then
     fail "session alive but no cron registered — re-run: bash ~/.glass-atrium/scripts/daemon-inject-entry.sh autoagent"
   fi
   printf 'OK: session=%s claude_pid=%s fakechat=200 cron=registered pg=%s\n' \
