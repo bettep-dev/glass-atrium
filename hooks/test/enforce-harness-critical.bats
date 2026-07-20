@@ -21,6 +21,7 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   command -v jq >/dev/null 2>&1 || skip "jq required"
+  source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
 
   FAKE_HOME="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${FAKE_HOME}/.claude/hooks" "${FAKE_HOME}/.claude/agents" \
@@ -238,17 +239,8 @@ MD
 
 # ── AC2-4: python3-absent fail-closed (HAR-003) ──────────────────────────────
 
-# Build a PATH containing only the coreutils the hook needs, EXCLUDING python3
-# (mirrors enforce-delegation.bats H-3). Echoes the stripped bin dir on stdout.
-minimal_bin_without_python3() {
-  local bindir="${BATS_TEST_TMPDIR}/minbin" tool src
-  mkdir -p "${bindir}"
-  for tool in bash cat grep basename tr sed env mktemp dirname; do
-    src="$(command -v "${tool}")"
-    [[ -n "${src}" ]] && ln -sf "${src}" "${bindir}/${tool}"
-  done
-  printf '%s\n' "${bindir}"
-}
+# Shared fixture: minimal_bin_without_python3 comes from lib/no-python3.bash
+# (sourced in setup).
 
 @test "python3 absent + protected write → HAR-003 block (fail-closed, exit 2)" {
   local bindir
@@ -267,6 +259,22 @@ minimal_bin_without_python3() {
     printf "%s" "" | bash "$1"
   ' _ "${HOOK_SH}"
   [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Hot-path prefilter: no protected-root literal → exit 0, zero python3 spawns ──
+
+@test "prefilter: non-protected envelope → pass without invoking python3" {
+  # A recording python3 stub shadows the real one; the hook must exit 0 via the
+  # pure-bash prefilter (envelope carries neither ".claude" nor ".glass-atrium"),
+  # so the stub marker must stay absent.
+  local stubdir="${BATS_TEST_TMPDIR}/stubbin" marker="${BATS_TEST_TMPDIR}/python3-called"
+  mkdir -p "${stubdir}"
+  printf '#!/usr/bin/env bash\ntouch "%s"\nexit 0\n' "${marker}" >"${stubdir}/python3"
+  chmod +x "${stubdir}/python3"
+  run env "PATH=${stubdir}:${PATH}" "HOME=${FAKE_HOME}" bash "${HOOK_SH}" \
+    <<<'{"tool_name":"Write","tool_input":{"file_path":"/tmp/app/src/main.ts","content":"x"}}'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -e "${marker}" ]] || return 1
 }
 
 # ── AC2-5: Bash arm — mutation verb + protected-path literal ─────────────────

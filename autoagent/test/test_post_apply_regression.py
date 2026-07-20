@@ -65,14 +65,25 @@ def _outcome_row(
     result: str = "done",
     review_flag: bool = False,
     revision_count: int = 0,
+    task_type: str = "bug-fix",
+    attribution_source: str | None = None,
+    grader_verdict: str | None = None,
 ) -> dict:
-    return {
+    # task_type defaults to a hard-test-bar code type so review_flag stays a
+    # REAL negative under the shared predicate's structural carve-out.
+    row = {
         "record_ts": _APPLIED_TS + timedelta(days=offset_days),
         "result": result,
         "review_flag": review_flag,
         "revision_count": revision_count,
         "evaluative_signal": 0,
+        "task_type": task_type,
     }
+    if attribution_source is not None:
+        row["attribution_source"] = attribution_source
+    if grader_verdict is not None:
+        row["grader_verdict"] = grader_verdict
+    return row
 
 
 def _windows(pre_negatives: int, pre_n: int, post_negatives: int, post_n: int) -> list[dict]:
@@ -87,11 +98,21 @@ def _windows(pre_negatives: int, pre_n: int, post_negatives: int, post_n: int) -
 
 
 @unittest.skipIf(
-    dc is None or not getattr(dc, "HAS_CONFIDENCE_LIB", False),
-    f"import failed: {_IMPORT_ERROR}" if dc is None else "confidence lib absent",
+    dc is None
+    or not getattr(dc, "HAS_CONFIDENCE_LIB", False)
+    or not getattr(dc, "HAS_PG_OUTCOME_READ", False),
+    f"import failed: {_IMPORT_ERROR}"
+    if dc is None
+    else "psycopg / confidence lib absent: shared predicate or smoothing unbound",
 )
 class TestSoftNegativeComposite(unittest.TestCase):
-    """review_flag ∨ result∈{done_with_concerns,blocked} ∨ failure-class tuple."""
+    """Soft-negative delegates to the shared is_negative_signal_outcome SoT.
+
+    Pins the terms the watch inherits by delegating (hooks/_pg_learning_dualwrite):
+    the classic OR-terms PLUS the grader_verdict=verified_fail term, the
+    synthesized-measurement-gap carve-out, and the structural review_flag
+    carve-out — synthesis/structural artifacts must never fire the WARN.
+    """
 
     def test_when_review_flag_then_negative(self) -> None:
         self.assertTrue(dc._is_soft_negative_outcome(_outcome_row(0, review_flag=True)))
@@ -107,6 +128,12 @@ class TestSoftNegativeComposite(unittest.TestCase):
     def test_when_revision_count_reaches_failure_threshold_then_negative(self) -> None:
         self.assertTrue(dc._is_soft_negative_outcome(_outcome_row(0, revision_count=2)))
 
+    def test_when_grader_verified_fail_then_negative(self) -> None:
+        # grader_verdict OR-term gained by delegating to the shared predicate.
+        self.assertTrue(
+            dc._is_soft_negative_outcome(_outcome_row(0, grader_verdict="verified_fail"))
+        )
+
     def test_when_clean_done_then_not_negative(self) -> None:
         self.assertFalse(dc._is_soft_negative_outcome(_outcome_row(0)))
 
@@ -116,6 +143,30 @@ class TestSoftNegativeComposite(unittest.TestCase):
             dc._is_soft_negative_outcome(_outcome_row(0, result="needs_context"))
         )
 
+    def test_when_synthesized_done_with_concerns_then_not_negative(self) -> None:
+        # Synthesized-measurement-gap carve-out: a completion-synthesized
+        # done_with_concerns row is a measurement artifact (agent emitted no
+        # [COMPLETION]; the result is the synthesis DEFAULT), so it must not
+        # count toward a post-apply regression.
+        self.assertFalse(
+            dc._is_soft_negative_outcome(
+                _outcome_row(
+                    0,
+                    result="done_with_concerns",
+                    attribution_source="completion-synthesized",
+                )
+            )
+        )
+
+    def test_when_review_flag_on_structural_row_then_not_negative(self) -> None:
+        # Structural carve-out: review_flag on a no-test-bar task_type is the
+        # polar-mismatch artifact, not a real failure signal.
+        self.assertFalse(
+            dc._is_soft_negative_outcome(
+                _outcome_row(0, review_flag=True, task_type="doc")
+            )
+        )
+
     def test_when_window_empty_then_rate_is_beta_prior_mean(self) -> None:
         self.assertAlmostEqual(dc._smoothed_soft_negative_rate([]), 0.5)
 
@@ -123,6 +174,24 @@ class TestSoftNegativeComposite(unittest.TestCase):
         rows = [_outcome_row(0, review_flag=True)]
         # Beta(1,1): (1 + 1) / (2 + 1) — never 1.0 on a single observation.
         self.assertAlmostEqual(dc._smoothed_soft_negative_rate(rows), 2 / 3)
+
+
+@unittest.skipIf(
+    dc is None or not getattr(dc, "HAS_CONFIDENCE_LIB", False),
+    f"import failed: {_IMPORT_ERROR}" if dc is None else "confidence lib absent",
+)
+class TestBetaSmoothedRate(unittest.TestCase):
+    """confidence.beta_smoothed_rate — public Beta(1,1) smoothing helper.
+
+    Runs without psycopg (confidence lib is stdlib-only), keeping the smoothing
+    pinned even when the shared-predicate class above skips.
+    """
+
+    def test_when_empty_window_then_prior_mean(self) -> None:
+        self.assertAlmostEqual(dc.beta_smoothed_rate(0, 0), 0.5)
+
+    def test_when_one_negative_of_one_then_two_thirds(self) -> None:
+        self.assertAlmostEqual(dc.beta_smoothed_rate(1, 1), 2 / 3)
 
 
 @unittest.skipIf(

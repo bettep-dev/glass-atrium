@@ -17,6 +17,7 @@ HOOK_SH="${BATS_TEST_DIRNAME}/../block-dangerous-commands.sh"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
 }
 
 # Run the hook with an envelope on stdin. Args: $1=input JSON.
@@ -115,27 +116,8 @@ run_hook() {
 # to EMPTY → zero matches → a dangerous command would silently pass; the hook must
 # block instead. Empty stdin stays fail-open (nothing to guard).
 
-# Build a PATH containing only the coreutils the hook needs, EXCLUDING python3
-# (and jq — emit_error falls back to the pure-bash escaper). Echoes the bin dir.
-minimal_bin_without_python3() {
-  local bindir="${BATS_TEST_TMPDIR}/minbin" tool src
-  mkdir -p "${bindir}"
-  for tool in bash cat grep basename; do
-    src="$(command -v "${tool}")"
-    [[ -n "${src}" ]] && ln -sf "${src}" "${bindir}/${tool}"
-  done
-  printf '%s\n' "${bindir}"
-}
-
-# Drive the hook with python3 stripped from PATH. Args: $1 = raw JSON stdin.
-# HOME is preserved (hook-utils.sh derives its log/data dirs from it under set -u).
-run_with_no_python3() {
-  local bindir
-  bindir="$(minimal_bin_without_python3)"
-  run env "PATH=${bindir}" "HOME=${HOME}" bash -c '
-    printf "%s" "$1" | bash "$2"
-  ' _ "${1}" "${HOOK_SH}"
-}
+# Shared fixture: lib/no-python3.bash (sourced in setup). Args: $1 = raw JSON stdin.
+run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 
 @test "fail-closed: python3 absent + non-empty input → SEC-010 block (exit 2)" {
   run_with_no_python3 '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'

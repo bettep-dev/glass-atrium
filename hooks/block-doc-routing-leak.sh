@@ -48,46 +48,8 @@ source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 # '' (cosmetic in the guidance string only).
 monitor_port="$(hook_monitor_port || true)"
 
-# Normalize a POSIX path by collapsing "." and ".." segments without touching the filesystem
-# (the target may not exist yet). Traversal-safety: "memory/../x" resolves to "x", so a
-# "memory" segment cannot be forged via "..". Mirrors enforce-delegation.sh normalize_path.
-# Args: $1 = path. Echoes normalized.
-normalize_path() {
-  local path="${1}" seg
-  local -a out=()
-  local lead=""
-  [[ "${path}" == /* ]] && lead="/"
-  local saved_ifs="${IFS}"
-  IFS='/'
-  # Word-split on "/" intentionally to walk each segment.
-  # shellcheck disable=SC2206
-  local -a parts=(${path})
-  IFS="${saved_ifs}"
-  # ${arr[@]+"${arr[@]}"} guards empty-array expansion under set -u on bash 3.2.
-  for seg in ${parts[@]+"${parts[@]}"}; do
-    case "${seg}" in
-      "" | ".") : ;;
-      "..")
-        # Pop the last real segment (do not pop past root / a leading "..").
-        if [[ ${#out[@]} -gt 0 && "${out[${#out[@]} - 1]}" != ".." ]]; then
-          unset 'out[${#out[@]}-1]'
-          out=(${out[@]+"${out[@]}"})
-        elif [[ -z "${lead}" ]]; then
-          out+=("..")
-        fi
-        ;;
-      *) out+=("${seg}") ;;
-    esac
-  done
-  local joined=""
-  if [[ ${#out[@]} -gt 0 ]]; then
-    local saved_ifs2="${IFS}"
-    IFS='/'
-    joined="${out[*]}"
-    IFS="${saved_ifs2}"
-  fi
-  printf '%s\n' "${lead}${joined}"
-}
+# Path normalization: hook_normalize_path (hook-utils.sh) — traversal-safe "."/".."
+# collapse, shared with enforce-delegation.sh / enforce-harness-critical.sh.
 
 # Recover agentType from the .meta.json sidecar — ALGORITHMICALLY EQUIVALENT to
 # track-outcome.sh recover_agent_type_from_sidecar (reimplemented in bash + jq, not copied).
@@ -234,7 +196,7 @@ esac
 
 # Condition (4): allowlist check. Normalize FIRST so "memory/../x" cannot spoof a
 # session-state segment (traversal guard, mirrors enforce-delegation.sh).
-NORM_PATH="$(normalize_path "${FILE_PATH}")"
+NORM_PATH="$(hook_normalize_path "${FILE_PATH}")"
 
 # (a) session-state file under any */memory/progress-* — the progress-file write the
 #     doc agents hold in their frozen allowlist.
