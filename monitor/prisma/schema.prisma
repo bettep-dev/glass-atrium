@@ -146,6 +146,10 @@ enum ProposalStatus {
   rejected
   applied
   snoozed
+  // Human/CLI back-out of an APPLIED proposal — terminal-non-resurrectable.
+  // Never set by the daemon (post-apply regression watch is DETECTION-ONLY);
+  // read by drop_reverted_patterns + the reject-streak look-past.
+  reverted
 
   @@schema("core")
 }

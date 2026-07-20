@@ -49,6 +49,16 @@ _PRIOR_BETA = 1
 # Empirical failure threshold — revision_count >= this counts as failure.
 _FAILURE_REVISION_THRESHOLD = 2
 
+# Post-apply regression watch tunables (daemon detection-only next-cycle step).
+# The watch compares pre/post-apply soft-negative window rates smoothed by this
+# module's Beta(1,1) prior, so its tunables live beside the prior constants.
+# Degradation predicate: post-window smoothed rate must exceed the pre-window
+# rate by at least this delta.
+POST_APPLY_REGRESSION_RATE_DELTA = 0.15
+# Post-window observation floor — below 5 outcomes the Beta(1,1) posterior
+# interval is too wide for a stable rate claim.
+POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS = 5
+
 # Default per-day decay rate. 1.0 = no decay → callers get the legacy posterior
 # unchanged. Active decay only via an explicit λ<1 at call time.
 # λ semantics: per-day outcome weight = λ^Δd. Recommended operational value ~0.97

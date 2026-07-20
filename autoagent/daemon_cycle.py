@@ -282,6 +282,18 @@ ALL_REJECT_ALERT_THRESHOLD = int(
 # eval_result stamped on the alert loop event (grep-able, monitor-surfaced).
 ALL_REJECT_ALERT_EVAL_RESULT = "all-reject-alert"
 
+# Post-apply regression watch (C1, DETECTION-ONLY) --------------------------
+#
+# Next-cycle step beside is_systemic_regression: per APPLIED proposal, the
+# target agent's post-apply soft-negative outcome rate is compared to the
+# pre-apply rate (both windows share the learning-signal exclusion scope of
+# the PG helper — attribution failures + poisoned_window excluded).
+# Degradation → ONE WARN loop event naming the proposal id + its agents-bak
+# before-image path. NO auto-revert / agent-file write / safety-queue insert —
+# a weeks-latency revert would clobber intervening user edits, and the safety
+# queue is reserved for irreversible external-effect triggers.
+POST_APPLY_REGRESSION_EVAL_RESULT = "post-apply-regression"
+
 # Days-since-last-applied corroborating crit (FIX #4) -----------------------
 #
 # Secondary signal CONJOINED with the all-reject-streak leg: a slow-bleed
@@ -343,6 +355,15 @@ NON_AUTO_FIXABLE_REASON = (
     "non-auto-fixable: proposal modifies a line OUTSIDE every editable region "
     "(structural — add-only synthesis cannot express the removal) — re-arm by "
     "wrapping the target in an EDITABLE region then resetting status to 'identified'"
+)
+# last_transition_reason stamped on a reverted-pattern snooze: a human/CLI
+# back-out of an APPLIED proposal (status 'reverted') is the strongest terminal
+# verdict — regenerating from the same pattern would re-propose the exact
+# change a human just backed out.
+REVERTED_SNOOZE_REASON = (
+    "reverted snooze: a covering applied proposal was reverted (human/CLI "
+    "back-out) — pattern excluded from re-application; re-arm by setting "
+    "status back to 'identified'"
 )
 # Rolling live-rate window. 14d = 2× the 7-day promotion sustain window — long
 # enough to smooth weekday gaps, short enough that a stale failure burst decays.
@@ -675,6 +696,15 @@ if str(_AUTOAGENT_LIB_DIR) not in sys.path:
 try:
     from confidence import (  # noqa: E402
         OutcomeSignal,
+        POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
+        POST_APPLY_REGRESSION_RATE_DELTA,
+        # Beta(1,1) prior reuse — the regression-watch window smoothing must
+        # stay in parity with the module's posterior prior (single SoT, no
+        # re-declared copy to drift), so the private constants are imported
+        # deliberately.
+        _PRIOR_ALPHA,
+        _PRIOR_BETA,
+        classify_outcome,
         compute_confidence_observed,
     )
     from project_key import resolve_project_key  # noqa: E402
@@ -5521,14 +5551,19 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
 def _all_rejected_this_cycle(report: CycleReport) -> bool:
     """Shared discriminator: this cycle INGESTED input and rejected ALL of it.
 
-    True iff report.patches is non-empty AND every patch is 'rejected'. A quiet
-    night (patches=[]) is False — the single SoT for the "all-reject-this-cycle"
-    precondition both alert_all_reject_streak and is_systemic_regression gate on
-    (a 'snoozed'/'pending'/'applied' row is non-rejected pipeline output → False).
+    True iff report.patches is non-empty AND every patch is terminal-negative.
+    A quiet night (patches=[]) is False — the single SoT for the
+    "all-reject-this-cycle" precondition both alert_all_reject_streak and
+    is_systemic_regression gate on (a 'snoozed'/'pending'/'applied' row is
+    non-rejected pipeline output → False). 'reverted' counts as
+    rejected-equivalent: a backed-out apply is terminal-non-resurrectable, NOT
+    live pipeline output, so it must never resurrect the healthy-output claim.
     """
     if not report.patches:
         return False
-    return all(patch.status == "rejected" for patch in report.patches)
+    return all(
+        patch.status in ("rejected", "reverted") for patch in report.patches
+    )
 
 
 def is_systemic_regression(report: CycleReport) -> bool:
@@ -5588,6 +5623,195 @@ def alert_all_reject_streak(report: CycleReport) -> None:
             },
         }
     )
+
+
+# -- post-apply regression watch (C1, detection-only) ------------------------
+
+
+def _is_soft_negative_outcome(row: dict) -> bool:
+    """Soft-negative composite for the post-apply regression watch.
+
+    review_flag ∨ result ∈ {done_with_concerns, blocked} ∨ failure-classified
+    empirical tuple (revision_count >= the failure-revision threshold ∨
+    result == 'fail' — delegated to confidence.classify_outcome so the
+    threshold keeps a single SoT). Soft keying is deliberate: 0 result=fail
+    rows across 4160 lifetime outcomes make hard-failure keying dead.
+    """
+    if bool(row.get("review_flag")):
+        return True
+    result = row.get("result") or ""
+    if result in ("done_with_concerns", "blocked"):
+        return True
+    try:
+        revision_count = int(row.get("revision_count") or 0)
+    except (TypeError, ValueError):
+        revision_count = 0
+    signal = OutcomeSignal(
+        revision_count=revision_count,
+        result=result,
+        evaluative_signal=0,  # auxiliary weight — unread by classify_outcome
+    )
+    return classify_outcome(signal) == "failure"
+
+
+def _smoothed_soft_negative_rate(rows: list[dict]) -> float:
+    """Beta(1,1)-smoothed posterior mean of a window's soft-negative rate.
+
+    Prior parity with compute_confidence_observed (shared _PRIOR_ALPHA/_BETA):
+    an empty window degrades to the Beta(1,1) mean 0.5 instead of 0-division.
+    """
+    negative_count = sum(1 for row in rows if _is_soft_negative_outcome(row))
+    return (_PRIOR_ALPHA + negative_count) / (
+        _PRIOR_ALPHA + _PRIOR_BETA + len(rows)
+    )
+
+
+def _split_outcome_windows(
+    rows: list[dict],
+    applied_ts: datetime,
+) -> tuple[list[dict], list[dict]]:
+    """Partition agent outcome rows into (pre, post) windows around the apply.
+
+    A naive record_ts borrows applied_ts's tzinfo (PG returns tz-aware —
+    mirrors confidence._decay_weight); a row without record_ts cannot be
+    placed on either side → skipped.
+    """
+    pre_rows: list[dict] = []
+    post_rows: list[dict] = []
+    for row in rows:
+        record_ts = row.get("record_ts")
+        if record_ts is None:
+            continue
+        if record_ts.tzinfo is None and applied_ts.tzinfo is not None:
+            record_ts = record_ts.replace(tzinfo=applied_ts.tzinfo)
+        if record_ts > applied_ts:
+            post_rows.append(row)
+        else:
+            pre_rows.append(row)
+    return pre_rows, post_rows
+
+
+def _fetch_applied_proposals() -> list[tuple] | None:
+    """Recently APPLIED proposal rows for the regression watch, newest-first.
+
+    reviewed_at is the apply-side status-flip timestamp (daemon-apply.sh
+    update_db_status) — the pre/post window boundary. Bounded to the outcome
+    lookback window (an older apply has no comparable outcome history) with
+    LIMIT 50 mirroring _fetch_proposal_history. PG off / read error → None
+    (fail-OPEN: a read failure must never fabricate a regression alert).
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+
+    select_sql = (
+        "SELECT id, target_agent, cycle_date, reviewed_at "
+        "FROM core.autoagent_proposals "
+        "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
+        "AND target_agent IS NOT NULL "
+        "AND reviewed_at > now() - make_interval(days => %s) "
+        "ORDER BY reviewed_at DESC "
+        "LIMIT 50"
+    )
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(select_sql, (PG_OUTCOME_LOOKBACK_DAYS,))
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
+        sys.stderr.write(
+            f"[daemon-cycle] post-apply watch: PG read failed — fail-open "
+            f"(no rows): {type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def _backup_subdir_path(cycle_date: object, proposal_id: object) -> Path:
+    """Per-proposal agents-bak before-image dir for an applied proposal.
+
+    Derivation parity with daemon-apply.sh: BACKUP_DIR
+    (${AUTOAGENT_BACKUP_DIR:-<root>/agents-bak}) + '<cycle>_p<id>'. Existence
+    is NOT checked — retention prune may already have dropped the subdir; the
+    WARN names the recorded rollback anchor either way.
+    """
+    backup_root = os.environ.get("AUTOAGENT_BACKUP_DIR") or str(
+        Path(__file__).resolve().parent.parent / "agents-bak"
+    )
+    return Path(backup_root) / f"{cycle_date}_p{proposal_id}"
+
+
+def alert_post_apply_regression() -> None:
+    """Post-apply regression watch — DETECTION-ONLY WARN, never a revert (C1).
+
+    Next-cycle step: for each recently applied proposal, the target agent's
+    Beta(1,1)-smoothed soft-negative outcome rate BEFORE the apply is compared
+    to the rate AFTER it. Both windows read through _pg_read_outcomes_since —
+    the same shared learning-signal exclusion scope as _count_outcome_signals
+    (attribution failures + poisoned_window excluded inside the PG helper).
+    Degradation (post rate exceeding pre by >= POST_APPLY_REGRESSION_RATE_DELTA
+    with post n >= POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS) emits ONE WARN
+    loop event whose stderr line names the proposal id + agents-bak
+    before-image path. event_ts keys on the proposal's apply timestamp, so the
+    loop-event UPSERT natural key (event_ts, agent, eval_result) dedups a
+    same-cycle re-run and every later re-detection into a single row.
+
+    Detection-only invariant: zero agent-file writes, zero proposal-status
+    mutations, zero safety-queue inserts — the only write is the loop event.
+    A human/CLI revert (status 'reverted') is the follow-up the WARN enables,
+    never an automatic action — the stderr line names the concrete path
+    (before-image restore + the status='reverted' UPDATE), since no setter
+    exists anywhere in the pipeline. Once set, _fetch_applied_proposals'
+    status='applied' predicate drops the row, so the WARN stops re-firing.
+    """
+    if not HAS_PG_LOOP_WRITE or not HAS_PG_OUTCOME_READ or not HAS_CONFIDENCE_LIB:
+        return
+
+    applied_rows = _fetch_applied_proposals()
+    if not applied_rows:
+        return
+
+    lookback_seconds = PG_OUTCOME_LOOKBACK_DAYS * 86400
+    for proposal_id, agent, cycle_date, applied_ts in applied_rows:
+        if not agent or applied_ts is None:
+            continue
+        window_rows = _pg_read_outcomes_since(
+            applied_ts.timestamp() - lookback_seconds, agent=agent
+        )
+        pre_rows, post_rows = _split_outcome_windows(window_rows, applied_ts)
+        if len(post_rows) < POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS:
+            continue
+        pre_rate = _smoothed_soft_negative_rate(pre_rows)
+        post_rate = _smoothed_soft_negative_rate(post_rows)
+        if post_rate - pre_rate < POST_APPLY_REGRESSION_RATE_DELTA:
+            continue
+
+        backup_subdir = _backup_subdir_path(cycle_date, proposal_id)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: post-apply regression — proposal "
+            f"id={proposal_id} agent={agent} soft-negative rate "
+            f"pre={pre_rate:.3f} → post={post_rate:.3f} "
+            f"(delta >= {POST_APPLY_REGRESSION_RATE_DELTA}, "
+            f"post n={len(post_rows)}); before-image: {backup_subdir}; "
+            "DETECTION-ONLY — no auto-revert, no status mutation, no "
+            "safety-queue insert; loop event emitted; revert path (human/CLI): "
+            "restore the agent file from the before-image, then psql: "
+            "UPDATE core.autoagent_proposals SET status='reverted' "
+            f"WHERE id={proposal_id}\n"
+        )
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    # Apply-timestamp key → stable dedup across re-runs (the
+                    # UPSERT's (event_ts, agent, eval_result) natural key).
+                    "event_ts": applied_ts.isoformat(),
+                    "agent": (agent or "")[:64],  # varchar(64) guard
+                    "eval_result": POST_APPLY_REGRESSION_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                },
+            }
+        )
 
 
 # -- stale pending-proposal regeneration ------------------------------------
@@ -6744,6 +6968,53 @@ def drop_reject_streak_patterns(
     return kept
 
 
+def drop_reverted_patterns(
+    agent: str,
+    patterns: list[Pattern],
+) -> list[Pattern]:
+    """Reverted-proposal gate — snooze patterns whose applied change was reverted.
+
+    A 'reverted' proposal row records a human/CLI back-out of an APPLIED
+    change — the strongest terminal verdict a pattern can receive.
+    Regenerating from the same pattern would re-propose the exact change a
+    human just backed out, so the covering pattern's core.learning_log row is
+    transitioned to terminal 'rejected' (the intake predicate stops selecting
+    it) and dropped from THIS cycle's generation. Loud (stderr WARN +
+    eval_result='reverted-snooze' loop event), never silent. The proposal row
+    itself is NOT mutated — 'reverted' stays 'reverted', and the apply-side
+    backlog SELECT already excludes it via its pending/snoozed predicates.
+
+    Fail-open: proposal-history read failure / synthetic row_id → pattern kept.
+    """
+    rows = _fetch_proposal_history(agent)
+    if rows is None:
+        return patterns
+
+    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    kept: list[Pattern] = []
+    for pattern in patterns:
+        if pattern.row_id <= 0:
+            kept.append(pattern)
+            continue
+        covered = any(
+            status == "reverted"
+            and _covers_pattern_label(pattern.label, proposal_label)
+            for status, proposal_label, _rationale in rows
+        )
+        if not covered:
+            kept.append(pattern)
+            continue
+        _terminalize_pattern(
+            agent,
+            pattern,
+            event_ts,
+            reason=REVERTED_SNOOZE_REASON,
+            log_label="reverted-snooze",
+            eval_result="reverted-snooze",
+        )
+    return kept
+
+
 def _pattern_has_out_of_region_modify(
     pattern_label: str,
     rows: list[tuple[str, str, str]],
@@ -6993,8 +7264,10 @@ def consecutive_reject_count(
         the candidate was never genuinely adjudicated, so it MUST NOT advance
         the kill streak (the de-conflation root-cause fix);
       - 'rejected' classifying as a genuine QUALITY reject → streak += 1;
-      - 'snoozed' (back-off, stale-drain) / 'pending' (not yet adjudicated)
-        → looked past;
+      - 'snoozed' (back-off, stale-drain) / 'pending' (not yet adjudicated) /
+        'reverted' (human/CLI back-out — terminal-non-resurrectable: it must
+        NOT re-arm the candidate the way an accepted change does; pattern
+        exclusion is owned by drop_reverted_patterns) → looked past;
       - anything else ('applied' / 'approved') → break — an accepted change
         re-arms the candidate, mirroring consecutive_timeout_count recovery.
 
@@ -7011,7 +7284,7 @@ def consecutive_reject_count(
                 continue
             streak += 1
             continue
-        if status in ("snoozed", "pending"):
+        if status in ("snoozed", "pending", "reverted"):
             continue
         break
     return streak
@@ -7513,13 +7786,15 @@ def run_cycle(
     solution_attempts: list[SolutionAttempt] = []
     for agent, agent_patterns in agent_groups:
         # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
-        # All three gates write PG (learning_log transition + skip loop events),
+        # All four gates write PG (learning_log transition + skip loop events),
         # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
         # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the two
-        # terminalizing gates (reject-streak, non-auto-fixable) run before the
-        # transient staleness snooze.
+        # mode) bypasses them like the supersede. Order matters — the three
+        # terminalizing gates (reverted, reject-streak, non-auto-fixable) run
+        # before the transient staleness snooze; reverted runs FIRST (a human
+        # back-out outranks every generation-side verdict).
         if not skip_haiku and not skip_loop_emit:
+            agent_patterns = drop_reverted_patterns(agent, agent_patterns)
             agent_patterns = drop_reject_streak_patterns(agent, agent_patterns)
             agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
             agent_patterns = drop_stale_patterns(agent, agent_patterns)
@@ -7907,6 +8182,17 @@ def run_cycle(
             sys.stderr.write(
                 "[daemon-cycle] WARN: is_systemic_regression raised — regression "
                 f"status not set: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+        # C1 post-apply regression watch — DETECTION-ONLY sibling of the
+        # systemic check above: same next-cycle observability family, opposite
+        # target (this one watches proposals that DID land). Emits its own
+        # loop events, so it rides the same skip_loop_emit gate.
+        try:
+            alert_post_apply_regression()
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
+            sys.stderr.write(
+                "[daemon-cycle] WARN: alert_post_apply_regression raised — "
+                f"watch lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
         try:
             emit_loop_events(report)
