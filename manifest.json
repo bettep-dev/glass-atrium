@@ -654,7 +654,7 @@
     "scripts/autoagent-status-backfill.py": "eaa4374c2f80529315877e7abfa75373552c7397bbc1d84cc8641f3a085c4002",
     "scripts/daemon-README.md": "8c663cf67b5739fa9c3d48b2d4f58c5bfdc20c80e6a76d4f557c68b2ec7f9859",
     "scripts/daemon-daily-restart.sh": "dfe0718ecb90d9f98edb13108c5d854ec6dfb65d2b8d285d8d8a5da6a4a90598",
-    "scripts/daemon-inject-entry.sh": "4ed2de5b9014ffbe0277ab2b0fc2496b24ee071f4cf4c3b920d9221a24cbec1f",
+    "scripts/daemon-inject-entry.sh": "cc43b2650983f06bef4baa37ff300470ac33637c8937e0dc235c84b67b112f69",
     "scripts/gate-audit.sh": "67724cce6c12cb93d1d8848e848776dcf731d134341cc36576e7d111117c366f",
     "scripts/generate-manifest.sh": "18b1e111edf70b628a35eae4aa4c4e2308610f94e83fc44befc8c8abb8b02047",
     "scripts/lib/apply-gate.sh": "44e8e924b67c8a5b764169f1eb2eb9bd61ea1976b065185ce9369ac6a2607698",
