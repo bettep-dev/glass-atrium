@@ -332,12 +332,16 @@ STUB
 # the way (brew-like path) and the REAL python3 backs the manifest parse.
 # `uname` is a Darwin STUB, never a symlink: the run exercises the macOS-only
 # install contract, and the real uname would exit-10 the preflight on Linux CI.
+# `gzip` is on the list for GNU tar: bsdtar (macOS) decompresses -z in-process
+# via libarchive, but GNU tar (Linux CI) forks an external gzip resolved via
+# PATH — without it the hermetic `tar -xzf` extract dies (exit 17). Stock macOS
+# ships gzip, so linking it keeps the stock-Mac model faithful on both hosts.
 t6_build_stock_toolbin() {
   TOOLBIN="${SANDBOX}/stock-bin"
   mkdir -p "${TOOLBIN}"
   local t src
   # bash is on the list for the stub curl's own #!/usr/bin/env bash shebang.
-  for t in bash tar shasum python3 mktemp mkdir dirname ls cat cp rm mv; do
+  for t in bash tar gzip shasum python3 mktemp mkdir dirname ls cat cp rm mv; do
     src="$(command -v "${t}")" || return 1
     ln -s "${src}" "${TOOLBIN}/${t}"
   done
