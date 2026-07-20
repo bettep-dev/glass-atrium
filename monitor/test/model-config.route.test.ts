@@ -50,6 +50,8 @@ import type {
 const BASELINE: ReadonlyArray<[string, string]> = [
   ["model.dev", "inherit"],
   ["model.research", "claude-sonnet-5"],
+  ["model.meta", "claude-sonnet-5"],
+  ["model.wiki", "claude-sonnet-5"],
   ["model.daemon_cycle_haiku", "claude-haiku-4-5"],
   ["budget.haiku_max_usd", "10.00"],
   ["budget.pre_verify_max_usd", "10.00"],
@@ -180,6 +182,18 @@ before(async () => {
     agentMarkdown("glass-atrium-intel-researcher", ["model: claude-sonnet-5"]),
     "utf8",
   );
+  // Single-agent frontmatter surfaces for the new meta/wiki domains — seeded with the
+  // baseline model line so both read back drift-free (mirrors the research fixture).
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-meta-agent.md"),
+    agentMarkdown("glass-atrium-meta-agent", ["model: claude-sonnet-5"]),
+    "utf8",
+  );
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-wiki-curator.md"),
+    agentMarkdown("glass-atrium-wiki-curator", ["model: claude-sonnet-5"]),
+    "utf8",
+  );
 
   // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
   // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only glass-atrium-dev-alpha/beta/broken are
@@ -245,7 +259,7 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigGetResponse;
 
-  assert.strictEqual(body.domains.length, 3);
+  assert.strictEqual(body.domains.length, 5);
   assert.strictEqual(typeof body.fetched_at, "string");
 
   // known_models = the SoT fixture's `models` key set (order-agnostic set equality).
@@ -268,6 +282,18 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   const research = domainOf(body, "model.research");
   assert.strictEqual(research.actual, "claude-sonnet-5");
   assert.strictEqual(research.drift, false);
+
+  const meta = domainOf(body, "model.meta");
+  assert.strictEqual(meta.apply_mode, "next-spawn");
+  assert.strictEqual(meta.desired, "claude-sonnet-5");
+  assert.strictEqual(meta.actual, "claude-sonnet-5");
+  assert.strictEqual(meta.drift, false);
+
+  const wiki = domainOf(body, "model.wiki");
+  assert.strictEqual(wiki.apply_mode, "next-spawn");
+  assert.strictEqual(wiki.desired, "claude-sonnet-5");
+  assert.strictEqual(wiki.actual, "claude-sonnet-5");
+  assert.strictEqual(wiki.drift, false);
 
   const haiku = domainOf(body, "model.daemon_cycle_haiku");
   assert.strictEqual(haiku.apply_mode, "next-cycle");

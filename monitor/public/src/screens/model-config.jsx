@@ -41,21 +41,35 @@ const MODEL_CAP_MC = {
 const DOMAIN_META_MC = {
 	"model.dev": {
 		label: "Dev agents",
-		desc: "Written into the dev-*.md agent files; picked up when an agent next starts",
+		desc: "All development agents (React, NestJS, Python, DB, shell, and the rest of the dev fleet) — code implementation; written into every dev agent file, picked up at next spawn",
 		enforcement: "applied",
 		editable: true,
 		inherit: true,
 	},
 	"model.research": {
 		label: "Research agent",
-		desc: "Written into glass-atrium-intel-researcher.md; picked up when the agent next starts",
+		desc: "glass-atrium-intel-researcher — web and codebase research: source collection, verification, and synthesis; written into its agent file, picked up at next spawn",
+		enforcement: "applied",
+		editable: true,
+		inherit: true,
+	},
+	"model.meta": {
+		label: "Meta agent",
+		desc: "glass-atrium-meta-agent — the AutoAgent self-improvement loop's instruction rewriter: regenerates agent instruction files from outcome signals, so its model quality shapes how well every agent evolves",
+		enforcement: "applied",
+		editable: true,
+		inherit: true,
+	},
+	"model.wiki": {
+		label: "Wiki curator",
+		desc: "glass-atrium-wiki-curator — sole owner of wiki writes: incremental compilation, index and topic-map updates, health checks, and raw-ingestion validation",
 		enforcement: "applied",
 		editable: true,
 		inherit: true,
 	},
 	"model.daemon_cycle_haiku": {
 		label: "Daemon cycle helper",
-		desc: "Background LLM for both daemon cycles — drafts self-improve proposals + pre-verify, summarizes wiki notes",
+		desc: "Lightweight helper for daemon housekeeping cycle steps — drafts self-improve proposals, runs pre-verify, and summarizes wiki notes in the background cycles",
 		enforcement: "applied",
 		editable: true,
 		inherit: false,
@@ -66,6 +80,8 @@ const DOMAIN_META_MC = {
 const DOMAIN_ORDER_MC = [
 	"model.dev",
 	"model.research",
+	"model.meta",
+	"model.wiki",
 	"model.daemon_cycle_haiku",
 ];
 
@@ -543,12 +559,9 @@ function DomainRowMC({
 					</span>
 				</div>
 				{meta.desc && (
-					// auto table-layout: card-sub clamp widens the cell unless capped — bound to the column so the ellipsis engages.
-					<div
-						className="card-sub mt-1"
-						style={{ maxWidth: 280 }}
-						title={window.UI.titleOf(meta.desc)}
-					>
+					// is-wrap 로 card-sub 기본 1행 ellipsis 클램프 해제 — bounded column(280) 안에서 역할 설명 전문을 멀티라인 랩 (D3).
+					// 전문이 항상 보이므로 hover-only title 툴팁 제거 — 운영자가 모델 선택 전 도메인 역할을 전부 읽게.
+					<div className="card-sub is-wrap mt-1" style={{ maxWidth: 280 }}>
 						{meta.desc}
 					</div>
 				)}

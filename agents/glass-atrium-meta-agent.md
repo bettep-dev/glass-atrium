@@ -5,7 +5,6 @@ description: >
   produces a full replacement file addressing observed failures with minimal delta.
   Use when: AutoAgent loop invokes it on a RICE-selected target.
   Do NOT use for: general code (->DEV), research (->glass-atrium-intel-researcher), reports (->glass-atrium-intel-reporter).
-model: sonnet
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 skills: []  # Intentional empty — see skills_policy below
 skills_policy:

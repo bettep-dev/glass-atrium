@@ -46,6 +46,8 @@ import type {
 const UPDATED_BY = "monitor-web";
 
 const RESEARCH_AGENT_FILE = "glass-atrium-intel-researcher.md";
+const META_AGENT_FILE = "glass-atrium-meta-agent.md";
+const WIKI_AGENT_FILE = "glass-atrium-wiki-curator.md";
 const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
 
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
@@ -101,13 +103,23 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   const rows = await prisma.modelConfig.findMany();
   const desired = new Map<string, string>(rows.map((r) => [r.configKey, r.configValue]));
 
-  const [daemonConfig, devFiles, researchModel, knownModelIds] = await Promise.all([
-    readDaemonConfig(),
-    readDevAgentModels(),
-    readFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), undefined),
-    loadKnownModelIds(),
-  ]);
-  const surfaces: ActualSurfaces = { daemonConfig, devFiles, researchModel, knownModelIds };
+  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, knownModelIds] =
+    await Promise.all([
+      readDaemonConfig(),
+      readDevAgentModels(),
+      readFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), undefined),
+      readFrontmatterModel(path.join(getAgentsDir(), META_AGENT_FILE), undefined),
+      readFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), undefined),
+      loadKnownModelIds(),
+    ]);
+  const surfaces: ActualSurfaces = {
+    daemonConfig,
+    devFiles,
+    researchModel,
+    metaModel,
+    wikiModel,
+    knownModelIds,
+  };
 
   const domains: DomainStatus[] = MODEL_DOMAINS.map((def) =>
     buildDomainStatus(def, desired.get(def.key) ?? null, surfaces),
@@ -150,6 +162,8 @@ interface ActualSurfaces {
   daemonConfig: Record<string, unknown> | null;
   devFiles: DomainFileModel[];
   researchModel: string | null | undefined; // undefined = unparseable/unreadable
+  metaModel: string | null | undefined;
+  wikiModel: string | null | undefined;
   knownModelIds: ReadonlySet<string>;
 }
 
@@ -171,6 +185,12 @@ function buildDomainStatus(
     }
     case "frontmatter-research":
       actual = surfaces.researchModel === undefined ? null : (surfaces.researchModel ?? INHERIT_VALUE);
+      break;
+    case "frontmatter-meta":
+      actual = surfaces.metaModel === undefined ? null : (surfaces.metaModel ?? INHERIT_VALUE);
+      break;
+    case "frontmatter-wiki":
+      actual = surfaces.wikiModel === undefined ? null : (surfaces.wikiModel ?? INHERIT_VALUE);
       break;
     case "daemon-config": {
       const raw = surfaces.daemonConfig?.[def.daemonConfigKey ?? ""];
@@ -311,7 +331,10 @@ async function handlePut(
     // daemon-apply stash-window guard (D4 amended): the real lock is the filesystem dir
     // ~/.claude/data/daemon-reports/.apply-lock — fail-open when absent.
     const touchesFrontmatter =
-      modelChanges.has("model.dev") || modelChanges.has("model.research");
+      modelChanges.has("model.dev") ||
+      modelChanges.has("model.research") ||
+      modelChanges.has("model.meta") ||
+      modelChanges.has("model.wiki");
     if (touchesFrontmatter && (await pathExists(getApplyLockPath()))) {
       return reply.code(409).send({
         error: "daemon_apply_in_progress",
@@ -365,6 +388,12 @@ async function handlePut(
     }
     if (modelChanges.has("model.research")) {
       surfaces.push(await renderResearchFrontmatter(modelChanges.get("model.research") as string));
+    }
+    if (modelChanges.has("model.meta")) {
+      surfaces.push(await renderMetaFrontmatter(modelChanges.get("model.meta") as string));
+    }
+    if (modelChanges.has("model.wiki")) {
+      surfaces.push(await renderWikiFrontmatter(modelChanges.get("model.wiki") as string));
     }
 
     const getShape = await buildGetResponse();
@@ -473,6 +502,16 @@ async function renderDevFrontmatter(desired: string): Promise<SurfaceResult> {
 async function renderResearchFrontmatter(desired: string): Promise<SurfaceResult> {
   const result = await writeFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), desired);
   return { surface: "frontmatter-research", status: result.status, reason: result.reason, files: [result] };
+}
+
+async function renderMetaFrontmatter(desired: string): Promise<SurfaceResult> {
+  const result = await writeFrontmatterModel(path.join(getAgentsDir(), META_AGENT_FILE), desired);
+  return { surface: "frontmatter-meta", status: result.status, reason: result.reason, files: [result] };
+}
+
+async function renderWikiFrontmatter(desired: string): Promise<SurfaceResult> {
+  const result = await writeFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), desired);
+  return { surface: "frontmatter-wiki", status: result.status, reason: result.reason, files: [result] };
 }
 
 function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "failed" {

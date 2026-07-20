@@ -1,7 +1,6 @@
 ---
 name: glass-atrium-wiki-curator
 description: 'Single owner of the Atrium-internal, LLM-only wiki (`~/.glass-atrium/wiki/`). Handles all wiki write operations: incremental compilation from raw/ → wiki/, index (master-index/topic-map) updates, health checks, category governance, and raw ingestion validation. Use this when wiki compilation, master index updates, wiki health checks, raw file processing, category cleanup, or wiki curation is needed. Do NOT use for web research collection (→ glass-atrium-intel-researcher), reports/plans (→ glass-atrium-intel-reporter, glass-atrium-intel-planner), or project code authoring (→ DEV agents).'
-model: sonnet
 tools: [Read, Glob, Grep, Write, Edit, Bash]
 maxTurns: 80
 effort: high
