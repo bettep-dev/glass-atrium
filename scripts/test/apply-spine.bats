@@ -479,3 +479,96 @@ spine() {
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "${alt}/baseline-manifest.json" ]]
 }
+
+# === T6 — jq-less manifest parse fallback (install.sh bootstrap surface) =====
+# spine_stage_and_verify + spine_get_manifest_hash must work with jq HIDDEN
+# (runnable-python3 fallback): install.sh sources this lib from the fresh bundle
+# BEFORE ga-deps can ever install jq. jq is hidden via an allowlisted TOOLBIN of
+# symlinks (the run's ONLY PATH entry) — never by touching the live system.
+
+# Build the jq-less TOOLBIN. The python3 symlink resolves OFF /usr/bin, so the
+# probe's Apple-shim CLT gate stays out of the way and the REAL python3 backs
+# the hash lookups. bash is listed for #!/usr/bin/env bash shebang resolution.
+t6_build_jqless_toolbin() {
+  JQLESS_BIN="${WORK}/jqless-bin"
+  mkdir -p "${JQLESS_BIN}"
+  local t src
+  for t in bash cat cp mkdir dirname shasum python3; do
+    src="$(command -v "${t}")" || return 1
+    ln -s "${src}" "${JQLESS_BIN}/${t}"
+  done
+}
+
+@test "T6: jq-hidden end-to-end — spine_stage_and_verify verifies via the python3 fallback" {
+  seed_file "${NEW}" "scripts/tool.sh" "tool content"
+  seed_file "${NEW}" "hooks/h.sh" "hook content"
+  build_manifest "${WORK}/manifest.json" "${NEW}" "scripts/tool.sh" "hooks/h.sh"
+  t6_build_jqless_toolbin || return 1
+  run env PATH="${JQLESS_BIN}" /bin/bash -c "
+    set -Eeuo pipefail
+    source '${REAL_LIB}'
+    command -v jq >/dev/null 2>&1 && { echo 'jq NOT hidden'; exit 90; }
+    printf '%s\n' 'scripts/tool.sh' 'hooks/h.sh' \
+      | spine_stage_and_verify '${NEW}' '${WORK}/manifest.json' '${WORK}/staging'
+  "
+  [[ "${status}" -eq 0 ]]
+  [[ -f "${WORK}/staging/scripts/tool.sh" ]]
+  [[ -f "${WORK}/staging/hooks/h.sh" ]]
+  [[ "$(sha256_of "${WORK}/staging/scripts/tool.sh")" == "$(sha256_of "${NEW}/scripts/tool.sh")" ]]
+}
+
+@test "T6: jq-hidden verify still LOUD-FAILS on a hash mismatch (fallback is no weaker)" {
+  seed_file "${NEW}" "scripts/tool.sh" "original"
+  build_manifest "${WORK}/manifest.json" "${NEW}" "scripts/tool.sh"
+  printf 'tampered' >"${NEW}/scripts/tool.sh"
+  t6_build_jqless_toolbin || return 1
+  run env PATH="${JQLESS_BIN}" /bin/bash -c "
+    set -Eeuo pipefail
+    source '${REAL_LIB}'
+    printf '%s\n' 'scripts/tool.sh' \
+      | spine_stage_and_verify '${NEW}' '${WORK}/manifest.json' '${WORK}/staging'
+  "
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"hash mismatch"* ]]
+}
+
+@test "T6: jq-hidden spine_get_manifest_hash parity — recorded hash echoed, unknown path empty" {
+  seed_file "${NEW}" "scripts/tool.sh" "tool content"
+  build_manifest "${WORK}/manifest.json" "${NEW}" "scripts/tool.sh"
+  want="$(sha256_of "${NEW}/scripts/tool.sh")"
+  t6_build_jqless_toolbin || return 1
+  run env PATH="${JQLESS_BIN}" /bin/bash -c "
+    set -Eeuo pipefail
+    source '${REAL_LIB}'
+    spine_get_manifest_hash '${WORK}/manifest.json' 'scripts/tool.sh'
+  "
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "${want}" ]]
+  # unknown path → empty output, rc 0 (the `.hashes[$p] // empty` contract)
+  run env PATH="${JQLESS_BIN}" /bin/bash -c "
+    set -Eeuo pipefail
+    source '${REAL_LIB}'
+    spine_get_manifest_hash '${WORK}/manifest.json' 'no/such/path'
+  "
+  [[ "${status}" -eq 0 ]]
+  [[ -z "${output}" ]]
+}
+
+@test "T6: neither jq nor python3 → spine_stage_and_verify loud-fails naming both parsers" {
+  seed_file "${NEW}" "scripts/tool.sh" "tool content"
+  build_manifest "${WORK}/manifest.json" "${NEW}" "scripts/tool.sh"
+  BARE_BIN="${WORK}/bare-bin"
+  mkdir -p "${BARE_BIN}"
+  local t
+  for t in bash cat cp mkdir dirname shasum; do
+    ln -s "$(command -v "${t}")" "${BARE_BIN}/${t}"
+  done
+  run env PATH="${BARE_BIN}" /bin/bash -c "
+    set -Eeuo pipefail
+    source '${REAL_LIB}'
+    printf '%s\n' 'scripts/tool.sh' \
+      | spine_stage_and_verify '${NEW}' '${WORK}/manifest.json' '${WORK}/staging'
+  "
+  [[ "${status}" -eq 1 ]]
+  [[ "${output}" == *"no JSON parser (jq or runnable python3)"* ]]
+}

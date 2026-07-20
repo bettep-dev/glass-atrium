@@ -33,7 +33,10 @@
 # stderr, never a silent skip.
 #
 # Portability: SHA-256 via `shasum -a 256` (macOS) with a `sha256sum` (GNU)
-# fallback — same precedence as generate-manifest.sh. jq reads the manifest.
+# fallback — same precedence as generate-manifest.sh. jq reads the manifest,
+# with a runnable-python3 fallback on the install.sh bootstrap surface
+# (spine_get_manifest_hash / spine_stage_and_verify) — that path runs from the
+# fresh bundle BEFORE ga-deps can install jq, so it must verify jq-less.
 
 # Internal helpers
 
@@ -66,11 +69,56 @@ spine_sha256_of() {
   printf '%s\n' "${out%% *}"
 }
 
+# NON-INTERACTIVE python3 runnability probe (bootstrap parity with install.sh's
+# python3_runnable — this lib is self-contained, so the idiom is mirrored, not
+# sourced). Stock macOS ships /usr/bin/python3 as an Apple CLT shim that pops a
+# GUI install dialog when executed without the Command Line Tools — PATH
+# visibility alone is NOT runnability. The CLT gate (xcode-select -p) applies
+# ONLY to that Apple shim path; a brew/pyenv python3 runs without CLT.
+spine_python3_runnable() {
+  local py
+  py="$(command -v python3 2>/dev/null)" || return 1
+  if [[ "${py}" == "/usr/bin/python3" ]]; then
+    xcode-select -p >/dev/null 2>&1 || return 1
+  fi
+}
+
+# Loud-fail unless a manifest JSON parser is usable: jq, else runnable python3.
+# The jq-less window is REAL on the install.sh bootstrap path — this lib is
+# sourced from the fresh bundle BEFORE ga-deps can ever install jq.
+spine_require_manifest_parser() {
+  command -v jq >/dev/null 2>&1 && return 0
+  # shellcheck disable=SC2310  # probe in a condition by design — verdict branched on
+  spine_python3_runnable && return 0
+  printf 'apply-spine: no JSON parser (jq or runnable python3) available\n' >&2
+  return 1
+}
+
 # Echo the expected hash for a path from the manifest's hashes map; empty when
-# the path carries no recorded hash.
+# the path carries no recorded hash. jq when present; the python3 backend keeps
+# the jq-less install bootstrap verifiable — identical output contract to
+# `jq -r '.hashes[$p] // empty'`.
 spine_get_manifest_hash() {
   local manifest="$1" path="$2"
-  jq -r --arg p "${path}" '.hashes[$p] // empty' -- "${manifest}"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r --arg p "${path}" '.hashes[$p] // empty' -- "${manifest}"
+    return
+  fi
+  # python3 backend: source captured FIRST, then run — an inline heredoc on the
+  # python3 -c command line itself would swallow stdin (SC2259).
+  local py_src
+  py_src="$(
+    cat <<'PY'
+import json, sys
+
+with open(sys.argv[2]) as fh:
+    data = json.load(fh)
+v = (data.get("hashes") or {}).get(sys.argv[1])
+if v is not None and v is not False:
+    print(v)
+PY
+  )"
+  python3 -c "${py_src}" "${path}" "${manifest}"
 }
 
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
@@ -196,7 +244,9 @@ spine_find_removed_files() {
 spine_stage_and_verify() {
   local new_dir="$1" manifest="$2" staging="$3"
   local path src dst want got
-  spine_require_tools jq || return 1
+  # jq OR runnable python3 — the install.sh bootstrap verifies jq-less (pre-ga-deps).
+  # shellcheck disable=SC2310
+  spine_require_manifest_parser || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     src="${new_dir}/${path}"

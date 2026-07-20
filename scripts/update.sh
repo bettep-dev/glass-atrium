@@ -51,7 +51,7 @@
 # sets strict mode itself. The sourced libs are written to be safe under it.
 #
 # Test seam: ATRIUM_UPDATE_SRC_DIR + ATRIUM_UPDATE_SRC_MANIFEST, when both set,
-# bypass the gh download/extract (the new-release tree + manifest are supplied
+# bypass the network download/extract (the new-release tree + manifest are supplied
 # directly) so the apply pipeline is exercisable hermetically. Confirmation is
 # injectable via ATRIUM_UPDATE_CONFIRM_ANSWER (the apply-gate's own seam).
 #
@@ -91,9 +91,10 @@
 # settings.json event->hook bindings were NOT reconciled to the new release — run
 # `glass-atrium wire-hooks`; no rollback of applied files) · 13 vendor-removal
 # sweep failed (files APPLIED, but a vendor-DROPPED file could not be moved to
-# Trash — remove it manually; no rollback of applied files) · 14 release bundle
-# asset resolution failed BEFORE apply (zero, ambiguous multiple, or a
-# version-mismatched glass-atrium-bundle-*.tar.gz — nothing was applied).
+# Trash — remove it manually; no rollback of applied files) · 14 release asset
+# fetch/derivation failed BEFORE apply (manifest or bundle HTTP download failed,
+# or the manifest carries no .version to derive the bundle name — nothing was
+# applied).
 #
 # DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
 # the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
@@ -398,7 +399,7 @@ update_pause_refresher_stop() {
 # and extract the bundle into $2 (new-release tree). Echoes nothing; on success
 # $2 holds the new tree and $1/manifest.json the new manifest. Honors the
 # ATRIUM_UPDATE_SRC_DIR / ATRIUM_UPDATE_SRC_MANIFEST test seam (both set → skip
-# gh entirely, the supplied tree + manifest are used verbatim).
+# the network entirely, the supplied tree + manifest are used verbatim).
 update_fetch_release() {
   local dl_dir="$1" new_dir="$2" slug bundle
   mkdir -p -- "${dl_dir}" "${new_dir}"
@@ -413,42 +414,36 @@ update_fetch_release() {
   slug="$(update_release_slug)"
   [[ -n "${slug}" ]] \
     || update_die "release repo NOT configured — set ATRIUM_RELEASE_REPO=<owner/repo> or [release].repo in config.toml"
-  update_require_tools gh tar
+  update_require_tools curl tar
   update_log "downloading latest release from ${slug}"
-  # No tag → latest. The two assets are deterministic: manifest.json + the
-  # versioned bundle (glass-atrium-bundle-<version>.tar.gz, per publish-release.sh).
-  gh release download --repo "${slug}" --dir "${dl_dir}" --clobber \
-    --pattern 'manifest.json' --pattern 'glass-atrium-bundle-*.tar.gz' \
-    || update_die "gh release download failed for ${slug}"
-  [[ -f "${dl_dir}/manifest.json" ]] \
-    || update_die "release asset manifest.json missing after download"
+  # PARITY: install.sh::fetch_release MIRRORS this fixed-URL curl fetch by
+  # documented design (a fresh curl|bash install has nothing on disk to source) —
+  # keep the two in lockstep. MANIFEST-FIRST: curl cannot glob an asset name, so
+  # the manifest is fetched from the latest-form URL first and the bundle name
+  # derived from its .version, then the bundle fetched from the version-pinned
+  # tag URL (releases/download/v<version>/…, the publish-release
+  # v<manifest.version> tag contract) — no gh, no auth, no GitHub API, and no
+  # two-request "latest" race. -f is load-bearing: plain curl exits 0 on a 404
+  # HTML body, which would poison the download.
+  local base manifest_url
+  base="https://github.com/${slug}/releases"
+  manifest_url="${base}/latest/download/manifest.json"
+  curl -fSL --retry 3 -o "${dl_dir}/manifest.json" "${manifest_url}" \
+    || update_die_code 14 "manifest download failed: ${manifest_url}"
 
-  # Derive the EXPECTED bundle name from the downloaded manifest's version (the release
-  # this update targets) — the bundle is named glass-atrium-bundle-<version>.tar.gz by
-  # publish-release.sh from the SAME manifest version, so a mismatch is a corrupt release.
-  local version expected
+  # Derive the bundle name from the downloaded manifest's version (the release
+  # this update targets) — the bundle is named glass-atrium-bundle-<version>.tar.gz
+  # by publish-release.sh from the SAME manifest version, and the version-pinned
+  # tag URL makes any other asset structurally unreachable (no glob to disambiguate).
+  local version expected bundle_url
   version="$(jq -r '.version // empty' "${dl_dir}/manifest.json")"
   [[ -n "${version}" ]] \
     || update_die_code 14 "release manifest.json carries no .version — cannot derive the expected bundle name"
   expected="glass-atrium-bundle-${version}.tar.gz"
-
-  # Resolve EVERY candidate bundle (never silently take the first): zero OR more-than-one
-  # match is a loud, named-code failure (14) rather than a guess. Sorted for a stable msg.
-  local -a bundles=()
-  local b
-  while IFS= read -r b; do
-    [[ -n "${b}" ]] && bundles+=("${b}")
-  done < <(find "${dl_dir}" -maxdepth 1 -type f -name 'glass-atrium-bundle-*.tar.gz' | LC_ALL=C sort)
-  if [[ "${#bundles[@]}" -eq 0 ]]; then
-    update_die_code 14 "no release bundle asset matched glass-atrium-bundle-*.tar.gz (expected ${expected}) after download"
-  fi
-  if [[ "${#bundles[@]}" -gt 1 ]]; then
-    update_die_code 14 "ambiguous release: ${#bundles[@]} bundle assets matched glass-atrium-bundle-*.tar.gz — expected exactly one (${expected}), refusing to guess: ${bundles[*]}"
-  fi
-  bundle="${bundles[0]}"
-  # the single resolved bundle MUST be the manifest-derived name (version of record).
-  [[ "${bundle##*/}" == "${expected}" ]] \
-    || update_die_code 14 "release bundle ${bundle##*/} does not match the manifest version bundle ${expected} — refusing a version-mismatched bundle"
+  bundle_url="${base}/download/v${version}/${expected}"
+  bundle="${dl_dir}/${expected}"
+  curl -fSL --retry 3 -o "${bundle}" "${bundle_url}" \
+    || update_die_code 14 "bundle download failed: ${bundle_url}"
 
   tar -xzf "${bundle}" -C "${new_dir}" \
     || update_die "bundle extraction failed: ${bundle}"

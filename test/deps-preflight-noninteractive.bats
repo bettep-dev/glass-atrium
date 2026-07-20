@@ -1346,3 +1346,195 @@ SH
   [[ "${bounded}" -eq 1 ]] || return 1            # self-completed (fail-before: killed at the 8s bound)
   [[ "$(cat "${out}")" == "absent" ]] || return 1 # bounded probe → unauthenticated verdict
 }
+
+# === T6 — install.sh pre-bundle de-dependency: preflight + manifest-parser fallback =========
+# The one-line bootstrap must pass preflight on a STOCK Mac (tar/curl/shasum ship with the
+# OS; no gh, no jq) — the manifest parse falls back to a RUNNABLE python3, where runnability
+# is a NON-INTERACTIVE probe (the Apple /usr/bin/python3 CLT shim pops a GUI dialog, so it is
+# gated on xcode-select -p; a brew/pyenv python3 needs no CLT). Neither parser → loud exit 11
+# naming both accepted parsers + the brew remedy. All dynamic runs are hermetic: an
+# allowlisted TOOLBIN of symlinks (never the live PATH) or awk-extracted function drivers.
+
+INSTALL_SH_T6="${GA}/install.sh"
+
+# Symlink an allowlist of real tools into a fresh TOOLBIN (the ONLY PATH entry for the
+# restricted runs) — jq and gh are deliberately never linked. Args: tool names.
+# `uname` is written as a Darwin STUB, never a symlink: these runs exercise the
+# macOS-only install contract, and the real uname would exit-10 the preflight on a
+# Linux CI host BEFORE the stage under test is ever reached (platform-honest, same
+# pattern as the AUTH-block uname stubs above).
+t6_build_toolbin() {
+  TOOLBIN="${SANDBOX}/toolbin"
+  mkdir -p "${TOOLBIN}"
+  local t src
+  for t in "$@"; do
+    if [[ "${t}" == "uname" ]]; then
+      cat >"${TOOLBIN}/uname" <<'SH'
+#!/bin/bash
+printf '%s\n' "Darwin"
+SH
+      chmod +x "${TOOLBIN}/uname"
+      continue
+    fi
+    src="$(command -v "${t}")" || return 1
+    ln -s "${src}" "${TOOLBIN}/${t}"
+  done
+}
+
+# Extract a single top-level function body from install.sh into $2 (driver file).
+t6_extract_fn() {
+  awk -v fn="$1" '$0 == fn "() {" {f=1} f{print} f&&/^}/{exit}' "${INSTALL_SH_T6}" >"$2"
+  [[ -s "$2" ]]
+}
+
+@test "T6(static): install.sh preflight requires tar+curl+sha256+manifest parser — no jq, no gh" {
+  body="$(awk '/^preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${INSTALL_SH_T6}")"
+  [[ "${body}" == *'require_tool tar'* ]] || return 1
+  [[ "${body}" == *'require_tool curl'* ]] || return 1
+  [[ "${body}" == *'require_sha256'* ]] || return 1
+  [[ "${body}" == *'require_manifest_parser'* ]] || return 1
+  [[ "${body}" != *'require_tool jq'* ]] || return 1
+  [[ "${body}" != *'require_tool gh'* ]] || return 1
+}
+
+@test "T6(static): zero gh invocations remain in install.sh AND scripts/update.sh" {
+  # comment-stripped scan: any non-comment gh invocation is a regression of the
+  # D2-R1 de-dependency (unauthenticated curl is the ONLY fetch path).
+  run bash -c "sed 's/#.*//' '${INSTALL_SH_T6}' '${GA}/scripts/update.sh' | grep -nE '(^|[^a-zA-Z0-9_./-])gh[[:space:]]+(release|api|auth)'"
+  [[ "${status}" -ne 0 ]] || return 1
+  ! grep -qE '^[[:space:]]*(require_tool|update_require_tools)[[:space:]].*\bgh\b' \
+    "${INSTALL_SH_T6}" "${GA}/scripts/update.sh" || return 1
+}
+
+@test "T6: stock-Mac preflight PASSES with no gh and no jq on PATH (runnable python3 fallback)" {
+  # TOOLBIN carries only what a stock Mac ships (+ python3); GA_RELEASE_REPO is a
+  # deliberately slash-less slug so the run exits 12 in fetch_release — PROOF that
+  # preflight (and the parser resolution) already passed without gh/jq, with zero network.
+  t6_build_toolbin uname tar shasum curl python3 mktemp mkdir dirname ls cp rm mv cat || return 1
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+    GA_DIR="${SANDBOX}/ga-dir" GA_RELEASE_REPO="no-slash-slug" \
+    /bin/bash "${INSTALL_SH_T6}"
+  [[ "${status}" -eq 12 ]] || return 1
+  [[ "${output}" == *"<owner>/<repo> slug"* ]] || return 1
+}
+
+@test "T6: neither jq nor python3 usable → loud exit 11 naming BOTH parsers + the brew remedy" {
+  t6_build_toolbin uname tar shasum curl mktemp mkdir dirname ls cp rm mv cat || return 1
+  run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
+    GA_DIR="${SANDBOX}/ga-dir" GA_RELEASE_REPO="owner/repo" \
+    /bin/bash "${INSTALL_SH_T6}"
+  [[ "${status}" -eq 11 ]] || return 1
+  [[ "${output}" == *"brew install jq"* ]] || return 1
+  [[ "${output}" == *"python3"* ]] || return 1
+  [[ "${output}" == *"xcode-select --install"* ]] || return 1
+}
+
+# --- python3_runnable: NON-INTERACTIVE CLT-gated probe (unit, via function shadows) --------
+
+# Build a probe driver: the extracted python3_runnable + a `command` shadow resolving
+# python3 to $1 (empty → not found) + an xcode-select shadow returning $2.
+t6_build_probe() {
+  local py_path="$1" clt_rc="$2" driver="${SANDBOX}/probe.sh"
+  t6_extract_fn python3_runnable "${driver}" || return 1
+  cat >>"${driver}" <<PROBE
+command() {
+  if [[ "\$1" == "-v" && "\${2:-}" == "python3" ]]; then
+    [[ -n "${py_path}" ]] || return 1
+    printf '%s\n' "${py_path}"
+    return 0
+  fi
+  builtin command "\$@"
+}
+xcode-select() { return ${clt_rc}; }
+python3_runnable
+PROBE
+  printf '%s\n' "${driver}"
+}
+
+@test "T6: probe REJECTS the Apple /usr/bin/python3 shim when CLT is absent (GUI stub ≠ runnable)" {
+  driver="$(t6_build_probe /usr/bin/python3 2)" || return 1
+  run bash "${driver}"
+  [[ "${status}" -eq 1 ]] || return 1
+}
+
+@test "T6: probe accepts /usr/bin/python3 when CLT is present (xcode-select -p succeeds)" {
+  driver="$(t6_build_probe /usr/bin/python3 0)" || return 1
+  run bash "${driver}"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T6: CLT gate applies ONLY to the Apple shim — a brew python3 passes WITHOUT CLT" {
+  driver="$(t6_build_probe /opt/homebrew/bin/python3 2)" || return 1
+  run bash "${driver}"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T6: no python3 on PATH at all → probe returns 1" {
+  driver="$(t6_build_probe '' 0)" || return 1
+  run bash "${driver}"
+  [[ "${status}" -eq 1 ]] || return 1
+}
+
+# --- manifest_get: jq-hidden backend parity (// empty · // \"unknown\" · .files[]) ----------
+
+# Build a manifest_get driver pinned to backend $1; invoked as: bash driver <mode> <file>.
+t6_build_manifest_get() {
+  local backend="$1" driver="${SANDBOX}/mg-${backend}.sh"
+  t6_extract_fn manifest_get "${driver}" || return 1
+  cat >>"${driver}" <<DRIVER
+_ga_manifest_parser="${backend}"
+manifest_get "\$1" "\$2"
+DRIVER
+  printf '%s\n' "${driver}"
+}
+
+t6_seed_manifests() {
+  printf '%s' '{}' >"${SANDBOX}/empty.json"
+  printf '%s' '{"version":"1.2.3","files":["a","b/c"]}' >"${SANDBOX}/full.json"
+}
+
+@test "T6: python3 backend parity — version-or-empty ≡ jq '.version // empty'" {
+  t6_seed_manifests
+  driver="$(t6_build_manifest_get python3)" || return 1
+  run bash "${driver}" version-or-empty "${SANDBOX}/empty.json"
+  [[ "${status}" -eq 0 && -z "${output}" ]] || return 1
+  run bash "${driver}" version-or-empty "${SANDBOX}/full.json"
+  [[ "${status}" -eq 0 && "${output}" == "1.2.3" ]] || return 1
+}
+
+@test "T6: python3 backend parity — version-or-unknown ≡ jq '.version // \"unknown\"'" {
+  t6_seed_manifests
+  driver="$(t6_build_manifest_get python3)" || return 1
+  run bash "${driver}" version-or-unknown "${SANDBOX}/empty.json"
+  [[ "${status}" -eq 0 && "${output}" == "unknown" ]] || return 1
+  run bash "${driver}" version-or-unknown "${SANDBOX}/full.json"
+  [[ "${status}" -eq 0 && "${output}" == "1.2.3" ]] || return 1
+}
+
+@test "T6: python3 backend parity — files ≡ jq '.files[]' (incl. iterate-null → exit 5)" {
+  t6_seed_manifests
+  driver="$(t6_build_manifest_get python3)" || return 1
+  run bash "${driver}" files "${SANDBOX}/full.json"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "$(printf 'a\nb/c')" ]] || return 1
+  run bash "${driver}" files "${SANDBOX}/empty.json"
+  [[ "${status}" -eq 5 ]] || return 1
+}
+
+@test "T6: jq and python3 backends emit IDENTICAL output across all three modes" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for the cross-backend compare"
+  t6_seed_manifests
+  jq_drv="$(t6_build_manifest_get jq)" || return 1
+  py_drv="$(t6_build_manifest_get python3)" || return 1
+  local mode file
+  for mode in version-or-empty version-or-unknown files; do
+    for file in empty.json full.json; do
+      jq_out="$(bash "${jq_drv}" "${mode}" "${SANDBOX}/${file}" 2>/dev/null)" || jq_out="RC:$?"
+      py_out="$(bash "${py_drv}" "${mode}" "${SANDBOX}/${file}" 2>/dev/null)" || py_out="RC:$?"
+      [[ "${jq_out}" == "${py_out}" ]] || {
+        echo "backend divergence: mode=${mode} file=${file} jq='${jq_out}' py='${py_out}'"
+        return 1
+      }
+    done
+  done
+}

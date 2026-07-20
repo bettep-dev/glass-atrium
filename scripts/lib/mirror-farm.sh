@@ -113,6 +113,13 @@ farm_refresh() {
 farm_write_present_manifest() {
   local ga_root="$1" src="$2" out="$3" rel version missing=0 kept=0
   local present_list=""
+  # RESIDUAL jq requirement (T6 pre-bundle de-dependency, deliberate): this helper
+  # BUILDS JSON via jq -R/-s — construction, not the plain read the install.sh
+  # jq-or-python3 parse fallback covers. It is update-path-only (called from
+  # update.sh post-install, where ga-deps has provisioned jq); install.sh's
+  # reinstall refresh calls farm_refresh, never this helper. A jq-less reinstall
+  # can still fail INSIDE the farm_refresh launcher subprocess (surfaced loudly as
+  # install.sh exit 18 with the agents-only remedy) — loud-fail stays the contract.
   if ! command -v jq >/dev/null 2>&1; then
     farm_log "ERROR: jq required to filter ${src}"
     return 1
