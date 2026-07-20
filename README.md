@@ -139,6 +139,10 @@ When the interactive menu opens, choose **Install** — once it finishes, the de
 
 > **Leave the installed folder where it is.** The installer downloads a release bundle, unpacks it into the `~/.glass-atrium` folder, and links it into your Claude config directory through a **per-file symlink farm** (the method described earlier). The real files live here, so moving or deleting the folder breaks the links.
 
+### Updating
+
+To update, just run the same one-liner again. It is safe to re-run at any time — if you already have the latest release it does nothing, and if a new one is out it swaps the files in place while leaving your settings and data untouched. You can also run `glass-atrium update`, which downloads the latest release, shows you what will change first, and applies it after a single confirmation.
+
 ### Uninstall
 
 Choose **Uninstall** from the menu. It removes the installed symlinks and drops the GA database to cleanly detach the Atrium from your existing Claude system, leaving your own files untouched and no residue behind. Note that **the database is backed up before it is deleted** (the dump is kept in `~/.claude/backups/postgres/`), and a reinstall creates a fresh one. The backup is not restored automatically — if you need the old data, restore it yourself with `pg_restore`.
