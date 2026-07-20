@@ -33,6 +33,7 @@ Applies to all agents. Enforced alongside each agent's own security rules.
 - **Enforcement boundary**:
   - **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness reads each agent's frontmatter `tools:` allowlist and FREEZES it at spawn time. A subagent cannot invoke a tool outside its frozen allowlist — this is the enforced LLM06 boundary, applied per-agent at spawn.
   - **Mid-task runtime per-agent allowlist check is NOT implemented**: a PreToolUse hook firing on an inner subagent `tool_use` envelope cannot identify WHICH agent is making the call — the inner envelope exposes only `agent_id` (an opaque token; `track-outcome.sh` recovers agent_type from a `.meta.json` sidecar), NOT the caller's `agent_type`. Full runtime per-agent tool-grant enforcement is therefore not available at the current harness surface.
+  - **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit + Bash) blocks writes to harness-critical LIVE surfaces — live `settings.json`/`settings.local.json`, live hook dirs, `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded), NEW `agents/*.md` creation — for EVERY caller, main session and subagents alike, precisely because it needs NO caller identification. This is a per-FILE protection floor, NOT a per-agent tool-grant check, so the preceding "per-agent allowlist check is NOT implemented" claim stays accurate.
 
 ## LLM-Specific Security
 

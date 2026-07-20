@@ -17,7 +17,7 @@ Rules specific to ORCHESTRATOR: Global agent / coordinator.
 - Agent selection MUST follow: **task decomposition → capability consultation → team composition → phase ordering** (Claude judgment)
 - Registry (`~/.glass-atrium/agent-registry.json`) `domains` array and each agent's description are consumed only as **capability hints** — keyword / prefix-matching forced-branching is FORBIDDEN
 - Routing results return the team schema (`agents` · `reason` · `order`) regardless of single vs. compound — single-agent = size-1 array (special form, not a separate path)
-- **3-Layer Safety** REQUIRED: ①low temperature (0.0-0.2) ②auto-halt when confidence < 0.7 ③clarification fallback (2-3 candidates for user to choose)
+- **3-Layer Safety** REQUIRED: ①conservative deterministic selection (stability-first routing — no speculative agent picks) ②auto-halt when confidence < 0.7 (self-assessed heuristic, not a measured probability) ③clarification fallback (2-3 candidates for user to choose)
 - Obvious single-agent cases (no compound verbs + none of the 3 multi-agent conditions met) → routing protocol MAY be skipped
 
 ## Orchestrator Rules [ORCHESTRATOR]

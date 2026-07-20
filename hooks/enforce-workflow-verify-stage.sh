@@ -76,9 +76,11 @@
 # a deterministic fix → strict BLOCK. The switch lives INSIDE the found-sentinel branch, so a crash
 # BEFORE a non-string opening sentinel is detected stays fail-open (accepted residual).
 #
-# CONDITIONAL ACTIVATION (unverified binding): whether the harness fires PreToolUse(Workflow) with
-# tool_input.script exposed is NOT empirically confirmed. Fail-open by design, so wiring is SAFE even
-# if the event never fires — it no-ops on any envelope mismatch. Verify firing with a runtime probe.
+# ACTIVATION (binding live): the harness fires PreToolUse(Workflow) with tool_input.script exposed —
+# the rolling firing log below (cap 1000 lines) shows the gate firing AND blocking in production
+# (observed 2026-07: ~130 exit-2 blocks among 1000 recorded firings; counts roll with the log).
+# Honest residual: a share of pass-noscript rows — Workflow envelopes arriving WITHOUT
+# .tool_input.script pass uninspected (fail-open); no full-coverage claim.
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
 # one-line trace is appended to ${HOME}/.claude/data/workflow-gate-fired.log (timestamp · tool_name ·

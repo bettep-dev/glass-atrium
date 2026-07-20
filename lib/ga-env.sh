@@ -184,6 +184,8 @@ ga_init_env() {
     "PreToolUse	enforce-config-protection.sh	Write|Edit"
     "PreToolUse	enforce-delegation.sh	Write|Edit"
     "PreToolUse	enforce-foreground-harness.sh	Agent"
+    "PreToolUse	enforce-harness-critical.sh	Bash"
+    "PreToolUse	enforce-harness-critical.sh	Write|Edit"
     "PreToolUse	enforce-verification-gate.sh	Agent"
     "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
     "PreToolUse	lint-workflow-template-literal.sh	Workflow"
