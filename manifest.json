@@ -533,7 +533,7 @@
     "monitor/public/styles/tokens.css": "f389cb68e2c6194eed2e448c6635566abcc63de6b4e7b33aac80fdccba2b038e",
     "monitor/scripts/oss-db-setup.sh": "c9ecf1d14c42796a55b8561e3e70c24295c1ead51f165a850ebdf695c205a73c",
     "monitor/src/server/agents/registry.ts": "43064a7baee3fe803252e99c98ad3b1aedcfac2afe17076cb1299f9f3172df50",
-    "monitor/src/server/architecture/arch-invariants.ts": "7c1a557519619ff58ba3e812de2bc3c6f15df5473813f16ed2075169e513c23c",
+    "monitor/src/server/architecture/arch-invariants.ts": "06809aab3f4a7ce58a81faf0763a35f3caa6ae555bd780d38daa38690f7a6af8",
     "monitor/src/server/architecture/compute-arch-drift.ts": "33a8bf92fd37aad84a432db29d9d3c9bf30ad7763315db3e781421f879f4ce7e",
     "monitor/src/server/architecture/diagrams-source.ts": "16b0cb0907de9089dc8c4178298b5a6203e7be6534e05bd301c3cb55c2a8a5bc",
     "monitor/src/server/architecture/flow-extractor.ts": "2ba04f6875e477628f8707e32f5c38720ab5698c811ddfac4855c2271718c0ca",
