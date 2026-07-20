@@ -75,7 +75,7 @@ The reconcile-inject + verify-arch gates (steps 6-7) are MANDATORY whenever a co
 | **Delegation** | Deliver self-contained context | Follow Handoff Context rules · Generate + attach CID · English delegation prompt | Passing full conversation history · Context-free "just do it" | Subagent invocation with CID |
 | **Monitoring** | Verify results + quality | Check `[COMPLETION]` block · Escalate `blocked`/`fail` to user or glass-atrium-qa-debugger · Relay `done_with_concerns` · Verify intent-result alignment | Forwarding results without verification · Printing the raw `[COMPLETION]` block to the user (it is a machine-facing record artifact — summarize outcomes in prose; see `core-outcome-record.md` → Emit Boundary Channel asymmetry) | Final response or follow-up |
 
-> **Automatic Parallelization (Decision-phase default)**: during Decision-phase decomposition, when the resulting sub-tasks are file/resource NON-overlapping AND independent, compose them as a parallel fan-out BY DEFAULT — no per-task user request for parallelism is needed. Guardrails (disjoint file ownership · engine runtime concurrency self-cap governs · overlapping-file work stays sequential) + cross-link to `[SIZE-EST]`/effort-scaling sizing: `### Spawn Budget` → Automatic Parallelization.
+> **Automatic Parallelization (Decision-phase default)**: NON-overlapping AND independent sub-tasks compose as a parallel fan-out BY DEFAULT — no per-task user request needed. Guardrails + `[SIZE-EST]`/effort-scaling sizing: SoT `### Spawn Budget` → Automatic Parallelization.
 
 ### Phase Notes
 

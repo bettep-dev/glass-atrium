@@ -160,8 +160,10 @@ hook_is_subagent() {
 # Fail-closed python3 precondition guard — SECURITY hooks ONLY.
 # WHY: hook_get_field/hook_get_tool_input degrade to empty when python3 is absent
 # (trailing `2>/dev/null || printf ""`) → silently disarms a fail-open security gate
-# (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Only the two
-# security hooks opt in — fail-soft extraction for every other hook is unchanged.
+# (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Only the four
+# security hooks opt in — enforce-delegation.sh (DEL-002) · validate-secret-scan.sh
+# (SEC-017) · block-dangerous-commands.sh (SEC-010) · enforce-harness-critical.sh
+# (HAR-003) — fail-soft extraction for every other hook is unchanged.
 # Args: $1=block_code · $2=message. On python3 absent → emit_error(block) + exit 2.
 hook_require_python3() {
   local code="${1}" message="${2}"

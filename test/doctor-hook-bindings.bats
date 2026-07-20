@@ -59,6 +59,8 @@ write_full_settings() {
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-config-protection.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
@@ -206,18 +208,19 @@ run_doctor_sandbox() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 44-binding set across all 7 events
-  # (PreToolUse 22 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 46-binding set across all 7 events
+  # (PreToolUse 24 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
   # SubagentStop 3 / PreCompact 1). The total is counted per FLATTENED matcher-leaf,
-  # NOT per unique hook basename: validate-secret-scan.sh binds under TWO matchers
-  # (Write|Edit AND Bash), two hooks share the Workflow matcher (enforce-workflow-
-  # verify-stage.sh AND lint-workflow-template-literal.sh), enforce-verification-gate.sh
-  # binds under BOTH PreToolUse and PostToolUse (Agent matcher), and several hooks recur
-  # across events (agent-tracker.sh, post-edit-typecheck.sh, telemetry-activation.sh) —
-  # each occurrence is a distinct leaf. advisory-preedit-facts.sh binds on Stop ONLY
-  # (SubagentStop sees a parent transcript that predates the subagent's edits). With
-  # settings.json absent, every leaf is unwired, so all 44 report dormant.
-  [[ "${output}" == *"44 dormant hook binding(s)"* ]]
+  # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
+  # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
+  # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
+  # enforce-verification-gate.sh binds under BOTH PreToolUse and PostToolUse (Agent
+  # matcher), and several hooks recur across events (agent-tracker.sh,
+  # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
+  # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
+  # transcript that predates the subagent's edits). With settings.json absent, every
+  # leaf is unwired, so all 46 report dormant.
+  [[ "${output}" == *"46 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

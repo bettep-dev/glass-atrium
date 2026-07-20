@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse(Write|Edit) — block the orchestrator's direct file modification across ~/.claude/,
-# ~/.claude-work/, ~/.claude-personal/ (only sub-agents may modify).
-# Sub-agents (agent_id present) or allowed basenames (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) pass; everything else is blocked with exit 2
+# PreToolUse(Write|Edit) — block ALL orchestrator direct writes regardless of path
+# (only sub-agents may modify files).
+# Sub-agents (agent_id present), allowed basenames (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md), or */memory/* session-state paths pass; everything else is blocked with exit 2
 # Block channel = stderr emit_error + exit 2 (non-substitutable with the stdout decision channel — see shared-hook-capability-contract.md)
 #
 # memory/* path-prefix exception (clauded-doc #8478 T6): the orchestrator MAY directly Write/Edit
