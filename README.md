@@ -76,7 +76,7 @@ The opposite model, the **Handoff Pattern** (agents transferring control directl
 
 In Glass Atrium the orchestrator holds the full context alone and keeps control at every delegation boundary.
 
-Each sub-task is routed by capability rather than keyword (no keyword or alias matching), so it is always clear exactly who is doing what. Each agent returns a structured completion record, and the orchestrator verifies that intent and result line up. A failed subagent is handled by the Failure Recovery Loop (retry → fallback → debugger escalation), while spawn depth, concurrency caps, and per-agent budgets are all enforced so that no delegation can run away.
+Each sub-task is routed by capability rather than keyword (no keyword or alias matching), so it is always clear exactly who is doing what. Each agent returns a structured completion record, and the orchestrator verifies that intent and result line up. A failed subagent is handled by the Failure Recovery Loop (retry → fallback → debugger escalation), while spawn depth, concurrency caps, and per-agent budgets are all enforced so that no delegation can run away. Independent, non-overlapping sub-tasks run in parallel by default, without your having to ask for it.
 
 This control is **mechanical, not merely procedural** — it does not stop at writing rules into a prompt and hoping they hold.
 
@@ -89,7 +89,7 @@ A single request moves through the system like this:
 1. **You ask the orchestrator** (the main session) for something — fix a bug, plan a feature, write a report.
 2. **The orchestrator investigates and decomposes** the request, then consults the capability registry to assemble a team of specialist agents and an execution order.
 3. **It delegates each sub-task** — every delegation clears the **PreToolUse hooks** (dangerous-command blocking, secret scanning, scope-drift flagging, plan-verification gate) *before* the action actually runs.
-4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**, and within enforced spawn, turn, and tool budgets.
+4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**, and within enforced spawn, turn, and tool budgets. Rather than being cut off abruptly when a budget runs out, a long task records its progress and pauses in a resumable state.
 5. **Outcomes are recorded.** Each agent emits a `[COMPLETION]` block, and the **PostToolUse hook** captures it as an Outcome Record.
 6. **The orchestrator synthesizes** — folding the verified results into one answer, or running the recovery loop when something fails.
 7. **Everything is observable.** Every cost, outcome, and agent event streams into PostgreSQL and the Atrium Monitor in real time.
@@ -111,7 +111,7 @@ Which path it takes is the system's own call, based on the size and complexity o
 - **Fleet of specialist agents** — routed by a capability registry (`agent-registry.json`) rather than by keyword (developers per stack, plus QA, planning · research · reporting, design · audio, security, wiki, and meta).
 - **Layered rule system** — a global charter (`agents/GLASS_ATRIUM_GLOBAL_RULES.md`), core cross-cutting rules (`rules/`), and per-scope rules (`scoped/`), all bound together by an explicit compliance matrix.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
-- **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong.
+- **Self-improvement loop** — the autoagent daemon (`autoagent/`) turns accumulated outcome records and correction signals into agent-instruction patches, auto-applying only the safe ones. It sets the original aside before each apply and restores it as-is if anything goes wrong. Separately from those instruction patches, whenever a new task starts it injects the success and failure patterns learned earlier straight into that agent's session, so they are reused right away.
 - **Atrium Monitor** — a 10-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
 - **Direct model + budget assignment** — the monitor's **Models & budgets** screen assigns a per-domain model and a per-call USD hard cap without your having to edit the config file.
 - **Live architecture map** — the monitor's System map screen renders the 7 maintained Mermaid diagrams alongside live daemon status.
@@ -152,7 +152,7 @@ Which format you get **comes down to how you word the request**:
 - the default is a **hidden "agent-only," token-optimized record** on the monitor — chosen from md, yaml, json, or txt depending on the shape of the content. It is an internal record for later reference.
 - if you make your intent to share or read it plain — say "**as HTML**," "**as a web document**," or "**for the team to share**" — you get an **HTML document** a person can view and share (a single file with a dark theme, diagrams, and tables).
 
-Both formats show up on the Atrium Monitor's **Documents** screen.
+Both formats show up on the Atrium Monitor's **Documents** screen, where a document can move between in-progress and done, and a new document on the same topic can replace an earlier one.
 
 Even when you do not explicitly ask for a document, an agent-only record may be left behind if it is judged worth keeping.
 
