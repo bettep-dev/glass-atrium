@@ -684,6 +684,15 @@ GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
 # never shell the real suite recursively).
 BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
 
+# preflight_fatal — the four verify_test_harness abort sites share one framing
+# ([daemon-apply] FATAL: <clause> Override: AUTOAGENT_ALLOW_UNVERIFIED=1.); pass
+# only the distinct clause so the shared prefix/suffix live in one place.
+preflight_fatal() {
+    local clause="$1"
+    printf '[daemon-apply] FATAL: %s Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' "${clause}" >&2
+    exit 16
+}
+
 # verify_test_harness — abort (exit 16) unless the four test roots are present
 # and, on the batch/cron path, the suite's prerequisites are installed and the
 # suite exits 0. "verify" is a domain verb: none of the canonical get/set/find
@@ -713,9 +722,7 @@ verify_test_harness() {
     local root
     for root in test hooks/test scripts/test autoagent/test; do
         if [[ ! -d "${GA_ROOT}/${root}" ]]; then
-            printf '[daemon-apply] FATAL: test root absent: %s (under %s) — the install carries no executable tests; refusing to apply onto an unverifiable harness. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
-                "${root}" "${GA_ROOT}" >&2
-            exit 16
+            preflight_fatal "test root absent: ${root} (under ${GA_ROOT}) — the install carries no executable tests; refusing to apply onto an unverifiable harness."
         fi
     done
 
@@ -733,23 +740,18 @@ verify_test_harness() {
     local tool
     for tool in bats parallel; do
         if ! command -v "${tool}" >/dev/null 2>&1; then
-            printf '[daemon-apply] FATAL: test-suite prerequisite absent: %s — the green-suite gate cannot run. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
-                "${tool}" >&2
-            exit 16
+            preflight_fatal "test-suite prerequisite absent: ${tool} — the green-suite gate cannot run."
         fi
     done
     if [[ ! -x "${BATS_RUNNER}" ]]; then
-        printf '[daemon-apply] FATAL: test-suite prerequisite absent: bats runner not executable (%s) — the green-suite gate cannot run. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
-            "${BATS_RUNNER}" >&2
-        exit 16
+        preflight_fatal "test-suite prerequisite absent: bats runner not executable (${BATS_RUNNER}) — the green-suite gate cannot run."
     fi
 
     # Run the full suite with the re-entry sentinel exported (bats rows that
     # shell THIS script then skip the gate). stdout → stderr so the runner's TAP
     # never pollutes the daemon's stdout JSON.
     if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
-        printf '[daemon-apply] FATAL: test suite FAILED — refusing to apply onto an unverified harness (green-suite gate). Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' >&2
-        exit 16
+        preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
     fi
     return 0
 }
