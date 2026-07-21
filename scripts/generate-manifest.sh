@@ -24,12 +24,17 @@
 #              gitignored data/node_modules/dist + monitor/test/* auto-excluded),
 #              docs/assets/bulldog-braille.txt (the ONE shipped TUI art asset the
 #              launcher WHOLESALE-loads at runtime — its build-time generator .py +
-#              reference .webp are NOT scoped, runtime dep 0). Without lib/ + monitor/
-#              a fresh no-.git bundle is dead-on-arrival (launcher source + monitor
-#              build/run have no target).
-#   EXCLUDE    dev-only: */test/* + test_*.py/*.bats/*.test.js basenames, */archive/*,
-#              publish-release.sh (maintainer/CI-only). Untracked/gitignored excluded
-#              by construction — listing one hard-fails doctor §4 on a fresh clone.
+#              reference .webp are NOT scoped, runtime dep 0), and the four
+#              executable-suite roots test/ hooks/test/ scripts/test/ autoagent/test/
+#              (the daemon-apply preflight runs the suite in place, so it must ship;
+#              the root test/ rides the ga-env.sh SYMLINK_EXCLUDE_PREFIXES "test/"
+#              prefix to stay install-internal, the three sub-roots ride their parent
+#              prefixes). Without lib/ + monitor/ a fresh no-.git bundle is
+#              dead-on-arrival (launcher source + monitor build/run have no target).
+#   EXCLUDE    dev-only: monitor/test/ (dashboard .test.ts, NOT the harness suite —
+#              no other pattern here catches .test.ts, .ts != .js), *.test.js basenames,
+#              */archive/*, publish-release.sh (maintainer/CI-only). Untracked/gitignored
+#              excluded by construction — listing one hard-fails doctor §4 on a fresh clone.
 #
 # settings.json stays OUT of .files (user-owned config the installer must never
 # overwrite) — rationale in _doc_settings_json, carried over verbatim on regen.
@@ -80,6 +85,12 @@ readonly -a SCOPE_PATHS=(
   "lib"
   "monitor"
   "requirements.txt"
+  # Root executable-suite dir. hooks/test, scripts/test, autoagent/test ride their
+  # parent scope entries above; the root test/ has no parent, so it needs an explicit
+  # entry to enter git ls-files scope. Install-internal (run in place by the
+  # daemon-apply preflight, never symlinked — its farm exclusion rides the
+  # lib/ga-env.sh SYMLINK_EXCLUDE_PREFIXES "test/" prefix).
+  "test"
   # The ONE shipped bulldog art asset — draw_bulldog_art WHOLESALE-loads it at runtime from
   # ${GA_ROOT}/docs/assets/bulldog-braille.txt, so it must bundle + hash-verify like any other
   # install-internal runtime file. Scoped as an EXACT single path (NOT "docs/"): the offline
@@ -88,8 +99,13 @@ readonly -a SCOPE_PATHS=(
   "docs/assets/bulldog-braille.txt"
 )
 
-# Dev-only exclusions (test trees, test-file basenames, archive snapshots).
-readonly EXCLUDE_RE='(^|/)test/|(^|/)test_[^/]*\.py$|\.bats$|\.test\.js$|(^|/)archive/|(^|/)publish-release\.sh$'
+# Dev-only exclusions. monitor/test is carved out surgically — its .test.ts
+# dashboard tests are not the harness suite, and no other alternation here catches
+# .test.ts (.ts != .js). The four executable-suite roots (test/, hooks/test/,
+# scripts/test/, autoagent/test/) are deliberately NOT excluded: they bundle
+# install-internal so the daemon-apply preflight can run them in place, which is why
+# there is no blanket test/ dir alternation and no .bats / test_*.py basename drop.
+readonly EXCLUDE_RE='(^|/)monitor/test/|\.test\.js$|(^|/)archive/|(^|/)publish-release\.sh$'
 
 command -v jq >/dev/null 2>&1 || {
   echo "generate-manifest: jq required" >&2

@@ -115,6 +115,9 @@ ga_init_env() {
   #     prose reference is repointed to the ~/.glass-atrium/scripts copy, so a ~/.claude/scripts link is dead weight.
   #   * autoagent/ — the self-improvement daemon tree, invoked via ~/.glass-atrium/autoagent (launchd
   #     ProgramArguments + sibling resolution), never a ~/.claude alias.
+  #   * test/  — the root executable-suite dir; bundled + hash-verified so the daemon-apply preflight runs it
+  #     in place from ~/.glass-atrium, never natively discovered by Claude Code, so a ~/.claude/test link is
+  #     dead weight (the hooks/test, scripts/test, autoagent/test sub-roots ride their parent prefixes above).
   # RUNTIME-ACTIVATION SEQUENCING (cross-unit): the effective drop of these surfaces MUST NOT take runtime
   # effect before their long-running consumers are repointed (settings.json hook command path; monitor
   # registry.ts default; inject-scope-rules/validate-compliance-matrix SCOPED source) — else a live install
@@ -127,6 +130,7 @@ ga_init_env() {
     "scoped/"
     "scripts/"
     "autoagent/"
+    "test/"
   )
   readonly SYMLINK_EXCLUDE_PREFIXES
   SYMLINK_EXCLUDE_EXACT=(
