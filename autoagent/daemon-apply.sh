@@ -144,6 +144,21 @@
 #          enforce=1 path). Loud-fail rather than swallow, since a swallowed
 #          counter failure keeps the fossil re-selecting every cycle (the exact
 #          condition the stale-drain fixes). Does NOT collide with 0/2-14.
+#
+# Test-suite preflight exit code (verify_test_harness — loud-fail BEFORE the
+# lock, so the daemon never mutates a harness it cannot verify):
+#     16 — test-suite preflight failed. ONE abort semantic for three causes,
+#          named distinctly on stderr: (a) a test root is absent (T1a — the
+#          install carries no executable tests); (b) a suite prerequisite
+#          (bats / GNU parallel) is absent (T22); (c) the suite ran and exited
+#          non-zero (T22 — a RED suite, distinct from absence). Bypassed by
+#          AUTOAGENT_ALLOW_UNVERIFIED=1 (operator override, logged), exempted
+#          under --dry-run, and skipped when AUTOAGENT_PREFLIGHT_ACTIVE=1 (the
+#          re-entry sentinel the green-suite run exports so nested daemon-apply
+#          calls do not recurse). Root presence (a) runs on BOTH the batch and
+#          single-proposal paths; the heavy green-suite run (b/c) is batch/cron
+#          ONLY — the single-proposal (--proposal-id) approve path is exempt.
+#          Does NOT collide with 0/2-15.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -653,6 +668,93 @@ else
     printf '[daemon-apply] WARN: pause-flag lib missing (%s) — proceeding without update-pause gate\n' \
         "${PAUSE_FLAG_LIB}" >&2
 fi
+
+# -- Test-suite preflight (loud-fail: verify the harness before mutating it) --
+# The daemon mutates agent files it can trust only if the test suite that
+# certifies them is BOTH present and green — root PRESENCE alone is theater, a
+# red or never-run suite passes every structural check. Two staged checks share
+# ONE abort semantic (exit 16, named distinctly on stderr). Runs AFTER arg-parse
+# (so --help stays 0) and BEFORE the lock is acquired, so nothing is applied and
+# no target file is written when it aborts (Precondition Loud-Fail).
+#   GA root = the realpathed script dir's PARENT (SCRIPT_DIR = <ga>/autoagent).
+#   NOT $HOME — the $HOME-anchored paths in this file are a facade that would
+#   resolve the roots wrongly.
+GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
+# The bats parallel runner (env-overridable so a test can point it at a stub and
+# never shell the real suite recursively).
+BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
+
+# verify_test_harness — abort (exit 16) unless the four test roots are present
+# and, on the batch/cron path, the suite's prerequisites are installed and the
+# suite exits 0. "verify" is a domain verb: none of the canonical get/set/find
+# set expresses "assert the harness is verifiable, else loud-fail".
+verify_test_harness() {
+    # Escape hatches — any ONE short-circuits the whole gate:
+    #   AUTOAGENT_ALLOW_UNVERIFIED=1 → operator override (apply unverified, logged).
+    #   --dry-run                    → nothing is applied, so nothing to verify.
+    #   AUTOAGENT_PREFLIGHT_ACTIVE=1 → re-entry sentinel: the green-suite run below
+    #     shells the bats suite, several rows of which invoke THIS script; the
+    #     sentinel makes a nested call skip the gate so the run terminates
+    #     (bounded), never recursing (LLM10 unbounded-consumption guard).
+    if [[ "${AUTOAGENT_ALLOW_UNVERIFIED:-0}" == "1" ]]; then
+        printf '[daemon-apply] WARN: AUTOAGENT_ALLOW_UNVERIFIED=1 — applying UNVERIFIED (test-suite preflight skipped)\n' >&2
+        return 0
+    fi
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        return 0
+    fi
+    if [[ "${AUTOAGENT_PREFLIGHT_ACTIVE:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    # T1a — the four test roots must be present under the GA root. Applies to
+    # BOTH the batch and single-proposal paths (a human single-approve mutating
+    # an unverifiable install is the same hazard as the autonomous cron).
+    local root
+    for root in test hooks/test scripts/test autoagent/test; do
+        if [[ ! -d "${GA_ROOT}/${root}" ]]; then
+            printf '[daemon-apply] FATAL: test root absent: %s (under %s) — the install carries no executable tests; refusing to apply onto an unverifiable harness. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
+                "${root}" "${GA_ROOT}" >&2
+            exit 16
+        fi
+    done
+
+    # T22 — green-suite gate: a full-suite run is HEAVY, so it fires on the
+    # batch/cron (daemon-cycle) path ONLY. The single-proposal (--proposal-id)
+    # approve is human-gated + recoverable → exempt (root presence above already
+    # ran on it).
+    if [[ -n "${PROPOSAL_ID}" ]]; then
+        return 0
+    fi
+
+    # Prerequisites probed HERE (not delegated to the runner) so a non-zero
+    # runner exit unambiguously means a RED suite, not a missing tool — absence
+    # and failure abort on DISTINCT stderr lines.
+    local tool
+    for tool in bats parallel; do
+        if ! command -v "${tool}" >/dev/null 2>&1; then
+            printf '[daemon-apply] FATAL: test-suite prerequisite absent: %s — the green-suite gate cannot run. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
+                "${tool}" >&2
+            exit 16
+        fi
+    done
+    if [[ ! -x "${BATS_RUNNER}" ]]; then
+        printf '[daemon-apply] FATAL: test-suite prerequisite absent: bats runner not executable (%s) — the green-suite gate cannot run. Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' \
+            "${BATS_RUNNER}" >&2
+        exit 16
+    fi
+
+    # Run the full suite with the re-entry sentinel exported (bats rows that
+    # shell THIS script then skip the gate). stdout → stderr so the runner's TAP
+    # never pollutes the daemon's stdout JSON.
+    if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
+        printf '[daemon-apply] FATAL: test suite FAILED — refusing to apply onto an unverified harness (green-suite gate). Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' >&2
+        exit 16
+    fi
+    return 0
+}
+
+verify_test_harness
 
 # -- Shared apply-lock helper (stale-reclaim guard) ------------------------
 # The .apply-lock stale-reclaim logic is SHARED with the updater (update.sh) via
