@@ -254,7 +254,7 @@ fi
 
 CYCLE_DATE="$(date -u +%Y-%m-%d)"
 CYCLE_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-REPORTS_DIR="${HOME}/.claude/data/daemon-reports"
+REPORTS_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports"
 DEFAULT_REPORT_PATH="${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then

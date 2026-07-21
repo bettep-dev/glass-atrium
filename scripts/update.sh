@@ -135,7 +135,7 @@ update_ga_root() {
 # the SAME precedence daemon-apply.sh uses, so updater and daemon contend on ONE
 # canonical lock directory.
 update_reports_dir() {
-  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${HOME}/.claude/data/daemon-reports}"
+  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
 }
 
 # The daemon .apply-lock directory (mkdir-atomic lock, same as daemon-apply.sh).

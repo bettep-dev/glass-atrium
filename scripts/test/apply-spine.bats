@@ -572,3 +572,33 @@ t6_build_jqless_toolbin() {
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"no JSON parser (jq or runnable python3)"* ]]
 }
+
+# === T4b — Tier-C negative guard ============================================
+# The domain-data-separation seam moved the Tier-A daemon reports to
+# ${GA_DATA_ROOT:-~/.glass-atrium}/data, but spine_baseline_dir (Tier C) must
+# STILL default under ~/.claude — the updater consumes its own baseline during
+# the very update that would relocate it, so it is deliberately left behind. This
+# is a regression guard: it PASSES both before and after the seam conversion.
+
+@test "T4b Tier-C guard: spine_baseline_dir with no override STILL resolves ~/.claude/data/update" {
+  # setup() exports ATRIUM_UPDATE_STATE_DIR; strip it AND GA_DATA_ROOT so the bare
+  # default surfaces — proving the seam did NOT drag Tier C to ~/.glass-atrium.
+  run env -u ATRIUM_UPDATE_STATE_DIR -u GA_DATA_ROOT bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    spine_baseline_dir
+  ' _ "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "${HOME}/.claude/data/update" ]]
+  [[ "${output}" != *".glass-atrium"* ]]
+}
+
+@test "T4b Tier-C guard: ATRIUM_UPDATE_STATE_DIR override still wins unchanged" {
+  run env -u GA_DATA_ROOT ATRIUM_UPDATE_STATE_DIR="/tmp/custom-update-state" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    spine_baseline_dir
+  ' _ "${REAL_LIB}"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "/tmp/custom-update-state" ]]
+}
