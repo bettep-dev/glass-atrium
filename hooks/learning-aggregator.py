@@ -892,16 +892,17 @@ def _lesson_is_stale(entry: dict, today: datetime, stale_days: int) -> bool:
 
 
 def sweep_stale_lessons(store: dict, today: datetime, stale_days: int = LESSON_STALE_DAYS) -> int:
-    """D1 staleness sweep — tombstone every live stale lesson via the canonical tombstone_lesson
-    (AD-2 soft-delete: row retained, MERGE-resurrectable). Fresh ingests always stamp `updated`
-    with today, so a same-pass ingest can never be swept. Returns the tombstoned count."""
+    """D1 staleness sweep — tombstone every live stale lesson (AD-2 soft-delete: row retained,
+    MERGE-resurrectable). Fresh ingests always stamp `updated` with today, so a same-pass ingest
+    can never be swept. Returns the tombstoned count."""
     swept = 0
     for bucket in (store.get("ctm", []), store.get("epm", [])):
         live = [e for e in bucket if not e.get("tombstoned") and not e.get("digest")]
         for entry in live:
-            if _lesson_is_stale(entry, today, stale_days) and tombstone_lesson(
-                bucket, entry.get("agent"), entry.get("task_type"), entry.get("text")
-            ):
+            if _lesson_is_stale(entry, today, stale_days):
+                # entry is a reference into `bucket` and post-dedup keys are unique, so this direct
+                # set matches tombstone_lesson's first-match row exactly — minus the per-entry rescan.
+                entry["tombstoned"] = True
                 swept += 1
     return swept
 

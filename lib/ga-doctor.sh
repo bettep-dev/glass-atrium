@@ -592,37 +592,18 @@ launchd_deploy_drift() {
 # fd2) and count it; the total is the stdout verdict (mirrors manifest_hash_drift). ENUMERATION-
 # scoped, NOT a blanket ~/.claude sweep: the deferred Tier-B monitor logs (logs/monitor.*) and the
 # nested Tier-C spine baseline (data/update) are intentionally NOT in the list, so an on-purpose
-# deferred path can never false-trip this warn. Keep the enumeration in sync with
-# scripts/migrate-claude-to-ga-data.sh TIER_A_SUBPATHS (both derive from the plan Relocation Map).
+# deferred path can never false-trip this warn. The enumeration is the shared leaf
+# lib/ga-tier-a-subpaths.sh (GA_TIER_A_SUBPATHS), sourced here + by the migration script.
 data_sep_leftover_scan() {
   local claude_root="$1"
   local rel stale=0
-  local subpaths=(
-    data/agent-tool-budget
-    data/audit
-    data/daemon-config.json
-    data/daemon-reports
-    data/doc-routing-leak-fired.log
-    data/learning
-    data/lessons.json
-    data/outcomes
-    data/outcomes-audit-queue.txt
-    data/outcomes-audit-queue-pg-offset
-    data/safety-overrides
-    data/session-spawns
-    data/wiki-dedup-verified-hashes.json
-    data/workflow-gate-fired.log
-    logs/autoagent-haiku-failures
-    logs/context-budget-advisory-cache
-    logs/cost-subagent-mtime
-    logs/inject-scope-rules.diag.log
-    logs/scope-drift-plancache
-    logs/spawn-cost-advisory-cache
-    logs/telemetry-activation.log
-    logs/track-outcome.diag.log
-    backups/postgres
-  )
-  for rel in "${subpaths[@]}"; do
+  # Tier-A enumeration from the shared leaf (SoT) — sourced lazily + idempotently,
+  # source-path agnostic via BASH_SOURCE so a standalone-sourced doctor lib (bats
+  # fixture) resolves the sibling. Replaces the inline copy formerly synced-by-comment.
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=ga-tier-a-subpaths.sh
+  source "${BASH_SOURCE[0]%/*}/ga-tier-a-subpaths.sh"
+  for rel in "${GA_TIER_A_SUBPATHS[@]}"; do
     if [[ -e "${claude_root}/${rel}" || -L "${claude_root}/${rel}" ]]; then
       log "  warn : stale Tier-A store under legacy root: ${claude_root}/${rel} — run scripts/migrate-claude-to-ga-data.sh"
       stale=$((stale + 1))

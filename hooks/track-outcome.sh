@@ -1477,7 +1477,7 @@ detect_budget_truncation() {
   agent_key="$(hook_path_safe_key "${AGENT_ID}")"
   [[ -z "${agent_key}" ]] && return 1
   local budget_dir counter_file
-  budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/agent-tool-budget}"
+  budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${HOOK_DATA_DIR}/agent-tool-budget}"
   counter_file="${budget_dir}/${agent_key}"
   [[ -f "${counter_file}" && -r "${counter_file}" ]] || return 1
   local count

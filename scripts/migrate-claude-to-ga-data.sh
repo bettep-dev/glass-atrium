@@ -27,6 +27,12 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# Script dir (resolved, symlink-tolerant) — locates the shared ga-tier-a-subpaths.sh
+# leaf under ../lib. That leaf is the ONLY lib this standalone op sources (the ga-core
+# stack stays un-sourced by design).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+
 # --- resolved roots (seam-overridable for hermetic tests) ---------------------
 readonly SRC_ROOT="${GA_MIGRATE_SRC_ROOT:-${HOME}/.claude}"
 readonly DEST_ROOT="${GA_MIGRATE_DEST_ROOT:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}}"
@@ -62,35 +68,17 @@ GA_DAEMON_SESSIONS=(
 )
 readonly GA_DAEMON_SESSIONS
 
-# Tier-A ENUMERATED relocation set (relative subpaths). SoT = the plan's Relocation
-# Target Map — keep in sync with lib/ga-doctor.sh data_sep_leftover_scan(). Explicitly
-# EXCLUDES the nested Tier-C `data/update` and the deferred Tier-B `logs/monitor.*`.
-TIER_A_SUBPATHS=(
-  data/agent-tool-budget
-  data/audit
-  data/daemon-config.json
-  data/daemon-reports
-  data/doc-routing-leak-fired.log
-  data/learning
-  data/lessons.json
-  data/outcomes
-  data/outcomes-audit-queue.txt
-  data/outcomes-audit-queue-pg-offset
-  data/safety-overrides
-  data/session-spawns
-  data/wiki-dedup-verified-hashes.json
-  data/workflow-gate-fired.log
-  logs/autoagent-haiku-failures
-  logs/context-budget-advisory-cache
-  logs/cost-subagent-mtime
-  logs/inject-scope-rules.diag.log
-  logs/scope-drift-plancache
-  logs/spawn-cost-advisory-cache
-  logs/telemetry-activation.log
-  logs/track-outcome.diag.log
-  backups/postgres
-)
-readonly TIER_A_SUBPATHS
+# Tier-A ENUMERATED relocation set (relative subpaths) — the shared leaf (SoT),
+# sourced from ../lib so this standalone op + lib/ga-doctor.sh data_sep_leftover_scan
+# share ONE definition (was formerly duplicated byte-identically, synced by comment).
+# EXCLUDES the nested Tier-C `data/update` + the deferred Tier-B `logs/monitor.*`.
+# Provides the readonly GA_TIER_A_SUBPATHS array.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/ga-tier-a-subpaths.sh
+source "${SCRIPT_DIR}/../lib/ga-tier-a-subpaths.sh" || {
+  printf '[migrate-ga-data] FATAL: cannot source lib/ga-tier-a-subpaths.sh (Tier-A enumeration SoT)\n' >&2
+  exit 1
+}
 
 # lifecycle state — resume runs at most once, guaranteed even on a mid-migration abort.
 QUIESCED=0
@@ -255,9 +243,9 @@ resume() {
 
 # migrate — the enumerated Tier-A relocation loop.
 migrate() {
-  log "migrate: ${#TIER_A_SUBPATHS[@]} Tier-A subpath(s) from ${SRC_ROOT} -> ${DEST_ROOT}"
+  log "migrate: ${#GA_TIER_A_SUBPATHS[@]} Tier-A subpath(s) from ${SRC_ROOT} -> ${DEST_ROOT}"
   local rel moved=0
-  for rel in "${TIER_A_SUBPATHS[@]}"; do
+  for rel in "${GA_TIER_A_SUBPATHS[@]}"; do
     local src="${SRC_ROOT}/${rel}" dst="${DEST_ROOT}/${rel}"
     if [[ -e "${src}" || -L "${src}" ]]; then
       merge_move "${src}" "${dst}"
