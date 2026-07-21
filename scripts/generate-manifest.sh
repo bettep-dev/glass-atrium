@@ -123,10 +123,20 @@ sha256_of() {
   "${SHA256_CMD[@]}" -- "$1" | awk '{print $1}'
 }
 
-# Echo the octal permission mode (e.g. 644 / 755) of a single file — BSD stat
-# (macOS) first, GNU coreutils fallback (same dual-tool posture as SHA256_CMD).
+# Echo the octal permission mode (e.g. 644 / 755) of a single file. `-L`
+# DEREFERENCES symlinks so a git symlink records its TARGET's mode, not the
+# link's own lstat bits: a symlink lstats 0755 (macOS) / 0777 (Linux), but the
+# post-extract enforcers `chmod` the path and chmod FOLLOWS the link to its
+# target — recording the target's 0644 keeps enforcement consistent (recording
+# the link's 0755 would wrongly chmod the target, exactly the FB-2 defect that
+# flipped GLASS_ATRIUM_GLOBAL_RULES.md to 755). BSD stat (macOS) first, GNU
+# coreutils fallback (same dual-tool posture as SHA256_CMD). A dangling symlink
+# (target absent) has no dereferenceable mode — fall back to 644 (regular-file
+# default) so the modes map stays complete (one entry per files[] path, as the
+# count-parity gate requires) instead of aborting the whole regen over one
+# broken link.
 mode_of() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  stat -L -f '%Lp' "$1" 2>/dev/null || stat -L -c '%a' "$1" 2>/dev/null || echo 644
 }
 
 # Emit the generated deploy file list, one path per line, sorted.
