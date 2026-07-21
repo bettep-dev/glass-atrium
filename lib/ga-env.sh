@@ -20,6 +20,15 @@ ga_init_env() {
   readonly GA_ROOT="${ga_root}"
   # sandbox override — throwaway target dir when GA_TARGET_HOME is set
   readonly TARGET_HOME="${GA_TARGET_HOME:-${HOME}/.claude}"
+
+  # GA_DATA_ROOT — HOME-anchored runtime data/log root, DECOUPLED from the install-tree GA_ROOT (which is
+  # unset in the CLI-fired-hook + launchd-daemon contexts). Exported so launcher-spawned children inherit
+  # the resolved value; hook-utils.sh + ga_paths.py mirror the same default for contexts that never source
+  # this lib. GA_DATA_ROOT override preserved (default-only). Two-step global idiom (plain assign, then
+  # export + `readonly` WITHOUT -a) so a cross-function expansion stays defined under set -u.
+  GA_DATA_ROOT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}"
+  export GA_DATA_ROOT
+  readonly GA_DATA_ROOT
   # MANIFEST overridable (GA_MANIFEST) so a sandbox/CI run drives the installer against a tree-matched
   # manifest without editing the tracked one (GA_* override pattern). Default = the tracked manifest in the GA root.
   readonly MANIFEST="${GA_MANIFEST:-${GA_ROOT}/manifest.json}"
