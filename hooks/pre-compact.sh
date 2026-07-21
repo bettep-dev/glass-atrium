@@ -98,7 +98,7 @@ if [[ -z "${PRECOMPACT_DB_DISABLE:-}" && -r "${PG_READ_HELPER}" ]] && command -v
 fi
 
 # Legacy .md fallback path selection — runs ONLY when the DB path yielded nothing (unavailable / empty
-# / disabled). Path priority mirrors track-outcome.sh: 1. ~/.claude/data/outcomes/*.md (canonical)
+# / disabled). Path priority mirrors track-outcome.sh: 1. ~/.glass-atrium/data/outcomes/*.md (canonical)
 #   2. ${PWD}/memory/outcomes/*.md (deprecated legacy). Bounded fan-out: one `find | xargs stat | sort`
 # (a CONSTANT number of processes — NOT a stat fork per file; mirrors the retention-prune pattern
 # below). The `2>/dev/null` is best-effort scanning (the packet degrades to `(none)`/`?`), NOT an
@@ -107,7 +107,7 @@ sorted_paths=()
 if [[ -z "${outcome_tuples}" ]]; then
   detail_label="path"
   outcome_dirs=()
-  [[ -d "${HOME}/.claude/data/outcomes" ]] && outcome_dirs+=("${HOME}/.claude/data/outcomes")
+  [[ -d "${HOOK_DATA_DIR}/outcomes" ]] && outcome_dirs+=("${HOOK_DATA_DIR}/outcomes")
   [[ -d "${PWD}/memory/outcomes" ]] && outcome_dirs+=("${PWD}/memory/outcomes")
 
   if [[ ${#outcome_dirs[@]} -gt 0 ]]; then

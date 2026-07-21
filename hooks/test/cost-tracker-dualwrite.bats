@@ -21,9 +21,9 @@
 # strict-equality total would flake; the fixture-session-row count is the
 # invariant that actually isolates.
 #
-# HOME override: HOOK_LOG_DIR is ${HOME}/.claude/logs (the subagent mtime
+# HOME override: HOOK_LOG_DIR is ${HOME}/.glass-atrium/logs (the subagent mtime
 # cache), so HOME is repointed to a temp dir — the run leaves NO artifact under
-# the real ~/.claude. psycopg lives in the HOME-derived PEP 370 user
+# the real ~/.glass-atrium. psycopg lives in the HOME-derived PEP 370 user
 # site-packages, so PYTHONPATH carries the REAL user-site (captured before the
 # override) to keep the import alive.
 
@@ -124,7 +124,7 @@ _eph_snapshot() {
 # capture file. Positional args into `bash -c` avoid any interpolation injection.
 _fire_stop() {
   local stderr_file="${1:-/dev/null}"
-  rm -rf "${EPH_HOME}/.claude/logs/cost-subagent-mtime" 2>/dev/null || true
+  rm -rf "${EPH_HOME}/.glass-atrium/logs/cost-subagent-mtime" 2>/dev/null || true
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"
@@ -217,7 +217,7 @@ exec "${real_py3}" "\$@"
 EOF
   chmod +x "${shimbin}/python3"
 
-  rm -rf "${EPH_HOME}/.claude/logs/cost-subagent-mtime" 2>/dev/null || true
+  rm -rf "${EPH_HOME}/.glass-atrium/logs/cost-subagent-mtime" 2>/dev/null || true
   local stdin_json
   stdin_json="$(printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","permission_mode":"default","hook_event_name":"Stop"}' \
     "${EPH_SID}" "${EPH_TX}")"

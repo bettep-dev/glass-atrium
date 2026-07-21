@@ -15,6 +15,14 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+# Pin this hook's own dir on sys.path so the sibling ga_paths seam resolves under
+# any invocation (script or importlib). Unlike the fail-soft sibling imports below,
+# the runtime-path seam is load-bearing, so its import is not guarded.
+_HOOKS_DIR = str(Path(__file__).resolve().parent)
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+import ga_paths  # noqa: E402 — sys.path insert immediately above
+
 try:
     import yaml
     HAS_YAML = True
@@ -44,7 +52,7 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
         file=sys.stderr,
     )
 
-DATA_DIR = os.path.expanduser("~/.claude/data")
+DATA_DIR = str(ga_paths.get_data_root())
 OUTCOMES_DIR = os.path.join(DATA_DIR, "outcomes")
 # Outcomes excluded by the input filter — append-only, deduped (grep target for missing signals).
 AUDIT_QUEUE_FILE = os.path.join(DATA_DIR, "outcomes-audit-queue.txt")

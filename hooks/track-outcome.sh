@@ -56,10 +56,10 @@ emit_error() {
 }
 
 # require_safety_marker <flag-name> — returns 0 (authorized) ONLY when the marker file
-#   ${SAFETY_OVERRIDE_DIR:-${HOME}/.claude/data/safety-overrides}/<flag>.authorized
+#   ${SAFETY_OVERRIDE_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/safety-overrides}/<flag>.authorized
 # exists and is a readable regular file; any other condition → return 1 (absent).
-# Marker-path convention MUST stay identical to the Python sibling learning-aggregator.py
-# (~/.claude/data/safety-overrides/<flag>.authorized); SAFETY_OVERRIDE_DIR is a test-sandbox override.
+# Marker-path convention: ~/.glass-atrium/data/safety-overrides/<flag>.authorized
+# (SAFETY_OVERRIDE_DIR is a test-sandbox override).
 # Fail-SAFE: consumed by safety DISABLE switches, so "marker absent → switch stays ON"; any read
 # ambiguity (path unreadable, stat error) resolves to ABSENT (return 1), never authorized.
 # SECURITY: this gates ACCIDENTAL/casual env-disable only — an operator with filesystem access can
@@ -67,7 +67,7 @@ emit_error() {
 require_safety_marker() {
   local flag="${1:-}"
   [[ -z "${flag}" ]] && return 1
-  local marker_dir="${SAFETY_OVERRIDE_DIR:-${HOME}/.claude/data/safety-overrides}"
+  local marker_dir="${SAFETY_OVERRIDE_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/safety-overrides}"
   local marker_path="${marker_dir}/${flag}.authorized"
   # -f AND -r: a present-but-unreadable marker resolves to the SAFE (absent) state.
   [[ -f "${marker_path}" && -r "${marker_path}" ]] || return 1
@@ -122,8 +122,8 @@ def diag(msg):
     line = f"[outcome-record] DIAG: {msg}"
     print(line, file=sys.stderr)
     # Also append to a rotating debug log — Claude Code discards hook stderr,
-    # so phantom-termination reasons would otherwise be unrecoverable. HOME-relative
-    # path so the Bats HOME override never touches the real ~/.claude/logs.
+    # so phantom-termination reasons would otherwise be unrecoverable. HOME-anchored
+    # path so the Bats HOME override never touches the real ~/.glass-atrium/logs.
     _append_diag_log(line)
 
 
@@ -134,7 +134,12 @@ def _append_diag_log(line):
     import os as _os
     import datetime as _dt
     try:
-        log_dir = _os.path.join(_os.path.expanduser('~'), '.claude', 'logs')
+        # HOME-anchored ${GA_DATA_ROOT:-$HOME/.glass-atrium}/logs — parity with the shell
+        # seam (hooks/hook-utils.sh) + the python twin hooks/ga_paths.py (get_log_root).
+        # HOME via os.environ first so a HOME-mangling test harness redirects the root.
+        _base = _os.environ.get('GA_DATA_ROOT') or _os.path.join(
+            _os.environ.get('HOME') or _os.path.expanduser('~'), '.glass-atrium')
+        log_dir = _os.path.join(_base, 'logs')
         _os.makedirs(log_dir, exist_ok=True)
         log_path = _os.path.join(log_dir, 'track-outcome.diag.log')
         # Soft rotation: drop the file when it crosses the cap (cheap, no archive).
@@ -1472,7 +1477,7 @@ detect_budget_truncation() {
   agent_key="$(hook_path_safe_key "${AGENT_ID}")"
   [[ -z "${agent_key}" ]] && return 1
   local budget_dir counter_file
-  budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${HOME}/.claude/data/agent-tool-budget}"
+  budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/agent-tool-budget}"
   counter_file="${budget_dir}/${agent_key}"
   [[ -f "${counter_file}" && -r "${counter_file}" ]] || return 1
   local count
@@ -2052,7 +2057,7 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
   _CBG_FLAG="${CODE_BASED_GATE:-}"
   _CBG_FLAG_LC="$(printf '%s' "${_CBG_FLAG}" | tr '[:upper:]' '[:lower:]')"
   # The env-only disable is not sufficient: disabling the grader-PRIMARY safety control ALSO requires a
-  # one-time authorization marker (~/.claude/data/safety-overrides/code-based-gate.authorized).
+  # one-time authorization marker (~/.glass-atrium/data/safety-overrides/code-based-gate.authorized).
   # require_safety_marker is fail-safe-to-ON: any read ambiguity resolves to ABSENT, so an
   # unreadable/missing marker keeps the grader ACTIVE (the safe direction). Two off-paths:
   #   off + marker present → grader SKIPPED (authorized disable; consequence WARN).
@@ -2079,8 +2084,8 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
       emit_error "DATA-102" "warn" \
         "SAFETY: CODE_BASED_GATE=off IGNORED — authorization marker absent → Code-Based grader stays ACTIVE (unauthorized disable not honored)" \
         "SAFETY: CODE_BASED_GATE=off IGNORED — authorization marker absent → Code-Based grader stays ACTIVE (unauthorized disable not honored)" \
-        "create ~/.claude/data/safety-overrides/code-based-gate.authorized to authorize disabling the grader" \
-        "create ~/.claude/data/safety-overrides/code-based-gate.authorized to authorize disabling the grader" \
+        "create ~/.glass-atrium/data/safety-overrides/code-based-gate.authorized to authorize disabling the grader" \
+        "create ~/.glass-atrium/data/safety-overrides/code-based-gate.authorized to authorize disabling the grader" \
         "{\"flag\":\"CODE_BASED_GATE=off\",\"marker\":\"absent\",\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\"}"
     fi
   fi

@@ -76,10 +76,10 @@ readonly NAMING_SRC_FILE="${INJECT_SCOPE_RULES_NAMING_SRC:-${HOME}/.claude/skill
 readonly BUDGET_SRC_FILE="${INJECT_SCOPE_RULES_BUDGET_SRC:-${HOME}/.glass-atrium/scoped/shared-turn-budget.md}"
 
 # AD-3 lesson store — the CTM/EPM JSON the learning-aggregator writes (default under
-# ~/.claude/data). Env-overridable for the Bats sandbox. Absent file → no lesson block
-# (fail-open, universal). Read with jq (already required above); a PG read from this <1s
-# hook is impractical, so the store is a local JSON file the aggregator maintains.
-readonly LESSON_SRC_FILE="${INJECT_SCOPE_RULES_LESSONS_SRC:-${HOME}/.claude/data/lessons.json}"
+# HOOK_DATA_DIR = ~/.glass-atrium/data). Env-overridable for the Bats sandbox. Absent file →
+# no lesson block (fail-open, universal). Read with jq (already required above); a PG read from
+# this <1s hook is impractical, so the store is a local JSON file the aggregator maintains.
+readonly LESSON_SRC_FILE="${INJECT_SCOPE_RULES_LESSONS_SRC:-${HOOK_DATA_DIR}/lessons.json}"
 # Hard per-block byte cap — the lesson block is the LOWEST-priority (first-dropped) block, so
 # it must stay small; this bounds it independent of the assembly ceiling. Lessons are English
 # (Outcome-record language invariant), so a byte truncation cannot split a multibyte char.
@@ -166,9 +166,9 @@ readonly INJECT_CTX_MAX_BYTES=9984
 # Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
 # SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
 # track-outcome.sh's _append_diag_log — a bounded append (1 MiB truncate-on-exceed soft rotation)
-# under a HOME-relative logs dir (the Bats HOME override redirects it clear of the real
-# ~/.claude/logs). `glass-atrium doctor` (§10) surfaces the count. Env-overridable for the Bats sandbox.
-readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOME}/.claude/logs/inject-scope-rules.diag.log}"
+# under HOOK_LOG_DIR = ~/.glass-atrium/logs (the Bats HOME override redirects it clear of the real
+# logs). `glass-atrium doctor` (§10) surfaces the count. Env-overridable for the Bats sandbox.
+readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOOK_LOG_DIR}/inject-scope-rules.diag.log}"
 readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
 
 # Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3

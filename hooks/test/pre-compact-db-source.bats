@@ -93,7 +93,7 @@ seed_outcome() {
 
 # Build a sandbox HOME with an (empty) legacy outcomes dir + a transcript; echo nothing (sets caller state).
 make_home() {
-  mkdir -p "${1}/.claude/data/outcomes"
+  mkdir -p "${1}/.glass-atrium/data/outcomes"
   printf '{"line":1}\n' >"${1}/transcript.jsonl"
 }
 
@@ -103,7 +103,7 @@ run_hook_db() {
   local payload
   payload="$(jq -nc --arg t "${home}/transcript.jsonl" \
     '{session_id:"sesDB", trigger:"auto", transcript_path:$t}')"
-  run env \
+  run env -u GA_DATA_ROOT \
     HOME="${home}" \
     PYTHONPATH="${EPH_USER_SITE}" \
     PGHOST="${EPH_SOCKDIR}" \
@@ -148,7 +148,7 @@ packet_tail() { # home
   _eph_q "TRUNCATE core.outcomes;" || return 1
 
   local home="${PC_TMP}/b"
-  make_home "${home}" # empty .claude/data/outcomes
+  make_home "${home}" # empty .glass-atrium/data/outcomes
   run_hook_db "${home}"
   [ "${status}" -eq 0 ] || return 1
 
