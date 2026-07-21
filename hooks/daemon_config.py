@@ -33,10 +33,22 @@ import os
 import sys
 from pathlib import Path
 
-# Config path SoT — kept independent of HOME-mangling test harnesses by reading
-# $HOME first (matching daemon_cycle.py line 44 convention), then Path.home().
-_HOME = Path(os.environ.get("HOME", str(Path.home())))
-CONFIG_PATH = _HOME / ".claude" / "data" / "daemon-config.json"
+# Pin this hook's own dir on sys.path so the sibling ga_paths seam resolves under
+# any invocation (script or importlib) — mirrors learning-aggregator.py's insert.
+_HOOKS_DIR = str(Path(__file__).resolve().parent)
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+import ga_paths  # noqa: E402 — sys.path insert immediately above
+
+# Config path SoT — the DAEMON_CONFIG env override (shell-seam parity: the
+# lib/atrium-config.sh atrium_resolve_haiku_model helper reads the same var)
+# wins; else the ga_paths runtime-data root (.glass-atrium default,
+# GA_DATA_ROOT-overridable) so the daemon reads the SAME daemon-config.json the
+# monitor Save writes after the .claude→.glass-atrium data migration.
+CONFIG_PATH = Path(
+    os.environ.get("DAEMON_CONFIG")
+    or str(ga_paths.get_data_root() / "daemon-config.json")
+)
 
 # Defensive fallback literals — MUST mirror the current in-code constants so a
 # missing/unreadable config file preserves the validated behavior exactly.

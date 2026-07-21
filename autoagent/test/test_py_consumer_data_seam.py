@@ -11,7 +11,18 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
     (learning-aggregator's CLAUDE_LESSONS_STORE_FILE default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
-HEAD baseline (fails before T2b): every constant resolved under ``~/.claude``.
+Covered: the original set (project_key.py / _pg_push_autoagent_loop_events.py /
+learning-aggregator.py / autoagent-status-backfill.py) PLUS the seam-completion
+consumers that previously still resolved the legacy ``.claude`` store:
+daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
+(SIGNAL_STORE_FILE + WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
+(DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR /
+FEATURE_FLAGS_FILE), wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
+wiki_daemon_cycle.py (DEFAULT_REPORTS_DIR). DEFAULT_LEARNING_LOG stays legacy — not
+part of the Tier-A migration and the daemon neither reads nor writes it.
+
+HEAD baseline (fails before the seam completion): every migrated-store constant resolved
+under ``~/.claude``.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_py_consumer_data_seam -v
@@ -20,7 +31,9 @@ Run with either runner:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import sys
 import unittest
@@ -31,10 +44,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _HOOKS = _REPO_ROOT / "hooks"
 _LIB = _REPO_ROOT / "autoagent" / "lib"
 _SCRIPTS = _REPO_ROOT / "scripts"
+_AUTOAGENT = _REPO_ROOT / "autoagent"
 
-# The three consumer trees + the hooks dir that hosts ga_paths — the same inserts
-# the consumers do at runtime, so the fresh loads below resolve the seam.
-for _p in (_HOOKS, _LIB, _SCRIPTS):
+# The consumer trees + the hooks dir that hosts ga_paths — the same inserts the
+# consumers do at runtime, so the fresh loads below resolve the seam.
+for _p in (_HOOKS, _LIB, _SCRIPTS, _AUTOAGENT):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -61,6 +75,15 @@ def _load_fresh(path: Path, name: str):
     finally:
         sys.modules.pop(name, None)
     return module
+
+
+def _load_daemon_cycle():
+    """Fresh-load the heavy autoagent daemon module, muting its import-time
+    optional-dependency warnings (pause-lib / psycopg absent) — noise here, not
+    failures. Its DEFAULT_* roots bind from ga_paths at import, so a fresh load
+    recomputes them under the active HOME / GA_DATA_ROOT."""
+    with contextlib.redirect_stderr(io.StringIO()):
+        return _load_fresh(_AUTOAGENT / "daemon_cycle.py", "daemon_cycle_probe")
 
 
 class DefaultResolutionTest(unittest.TestCase):
@@ -128,6 +151,89 @@ class DefaultResolutionTest(unittest.TestCase):
                 ),
             )
 
+    def test_daemon_config_path_under_glass_atrium(self) -> None:
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            os.environ.pop("GA_DATA_ROOT", None)
+            os.environ.pop("DAEMON_CONFIG", None)
+            m = _load_fresh(_HOOKS / "daemon_config.py", "daemon_config_probe")
+            self.assertEqual(
+                m.CONFIG_PATH,
+                Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "daemon-config.json",
+            )
+            self.assertNotIn(".claude", str(m.CONFIG_PATH))
+
+    def test_compliance_telemetry_stores_under_glass_atrium(self) -> None:
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            for _k in (
+                "GA_DATA_ROOT",
+                "AUTOAGENT_SIGNAL_STORE_FILE",
+                "WORKFLOW_GATE_LOG_FILE",
+            ):
+                os.environ.pop(_k, None)
+            m = _load_fresh(_HOOKS / "compliance_telemetry.py", "compliance_probe")
+            base = Path(_SANDBOX_HOME) / ".glass-atrium" / "data"
+            self.assertEqual(
+                m.SIGNAL_STORE_FILE, base / "learning" / "self-improve-signals.jsonl"
+            )
+            self.assertEqual(m.WORKFLOW_GATE_LOG_FILE, base / "workflow-gate-fired.log")
+            self.assertNotIn(".claude", str(m.SIGNAL_STORE_FILE))
+            self.assertNotIn(".claude", str(m.WORKFLOW_GATE_LOG_FILE))
+
+    def test_daemon_cycle_roots_under_glass_atrium(self) -> None:
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            os.environ.pop("GA_DATA_ROOT", None)
+            m = _load_daemon_cycle()
+            ga = Path(_SANDBOX_HOME) / ".glass-atrium"
+            self.assertEqual(m.DEFAULT_OUTCOMES_DIR, ga / "data" / "outcomes")
+            self.assertEqual(m.DEFAULT_REPORTS_DIR, ga / "data" / "daemon-reports")
+            self.assertEqual(
+                m.HAIKU_FAILURE_LOG_DIR, ga / "logs" / "autoagent-haiku-failures"
+            )
+            self.assertEqual(
+                m.FEATURE_FLAGS_FILE, ga / "data" / "learning" / "feature-flags.json"
+            )
+            for _c in (
+                m.DEFAULT_OUTCOMES_DIR,
+                m.DEFAULT_REPORTS_DIR,
+                m.HAIKU_FAILURE_LOG_DIR,
+                m.FEATURE_FLAGS_FILE,
+            ):
+                self.assertNotIn(".claude", str(_c))
+
+    def test_daemon_cycle_learning_log_stays_legacy_claude(self) -> None:
+        # learning-log.md was NOT part of the Tier-A migration AND the daemon
+        # neither reads nor writes it — the constant is deliberately left legacy.
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            os.environ.pop("GA_DATA_ROOT", None)
+            m = _load_daemon_cycle()
+            self.assertEqual(
+                m.DEFAULT_LEARNING_LOG,
+                Path(_SANDBOX_HOME) / ".claude" / "data" / "learning-log.md",
+            )
+
+    def test_wiki_dedup_verified_hashes_under_glass_atrium(self) -> None:
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            os.environ.pop("GA_DATA_ROOT", None)
+            m = _load_fresh(_SCRIPTS / "wiki_dedup.py", "wiki_dedup_probe")
+            self.assertEqual(
+                m.DEFAULT_VERIFIED_HASHES_PATH,
+                Path(_SANDBOX_HOME)
+                / ".glass-atrium"
+                / "data"
+                / "wiki-dedup-verified-hashes.json",
+            )
+            self.assertNotIn(".claude", str(m.DEFAULT_VERIFIED_HASHES_PATH))
+
+    def test_wiki_daemon_cycle_reports_under_glass_atrium(self) -> None:
+        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
+            os.environ.pop("GA_DATA_ROOT", None)
+            m = _load_fresh(_SCRIPTS / "wiki_daemon_cycle.py", "wiki_daemon_probe")
+            self.assertEqual(
+                m.DEFAULT_REPORTS_DIR,
+                Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "daemon-reports",
+            )
+            self.assertNotIn(".claude", str(m.DEFAULT_REPORTS_DIR))
+
 
 class OverrideParityTest(unittest.TestCase):
     """GA_DATA_ROOT redirects the consumer root — shell-seam override parity."""
@@ -154,6 +260,66 @@ class OverrideParityTest(unittest.TestCase):
             )
             self.assertEqual(
                 m.LOOP_LOG, str(Path("/var/atrium-alt") / "logs" / "autoagent-loop.jsonl")
+            )
+
+    def test_ga_data_root_redirects_daemon_config(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
+            clear=False,
+        ):
+            os.environ.pop("DAEMON_CONFIG", None)
+            m = _load_fresh(_HOOKS / "daemon_config.py", "daemon_config_gdr_probe")
+            self.assertEqual(
+                m.CONFIG_PATH, Path("/var/atrium-alt") / "data" / "daemon-config.json"
+            )
+
+    def test_daemon_config_env_override_wins_over_seam(self) -> None:
+        # The DAEMON_CONFIG override (shell-seam parity) must win even over the
+        # GA_DATA_ROOT-anchored default — the explicit path is authoritative.
+        override = "/custom/place/my-daemon-config.json"
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "DAEMON_CONFIG": override,
+                "GA_DATA_ROOT": "/var/atrium-alt",
+                "HOME": _SANDBOX_HOME,
+            },
+            clear=False,
+        ):
+            m = _load_fresh(_HOOKS / "daemon_config.py", "daemon_config_ovr_probe")
+            self.assertEqual(m.CONFIG_PATH, Path(override))
+
+    def test_compliance_env_overrides_preserved(self) -> None:
+        sig = "/custom/sig.jsonl"
+        gate = "/custom/gate.log"
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "AUTOAGENT_SIGNAL_STORE_FILE": sig,
+                "WORKFLOW_GATE_LOG_FILE": gate,
+                "HOME": _SANDBOX_HOME,
+            },
+            clear=False,
+        ):
+            os.environ.pop("GA_DATA_ROOT", None)
+            m = _load_fresh(_HOOKS / "compliance_telemetry.py", "compliance_ovr_probe")
+            self.assertEqual(m.SIGNAL_STORE_FILE, Path(sig))
+            self.assertEqual(m.WORKFLOW_GATE_LOG_FILE, Path(gate))
+
+    def test_ga_data_root_redirects_daemon_cycle(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
+            clear=False,
+        ):
+            m = _load_daemon_cycle()
+            self.assertEqual(
+                m.DEFAULT_OUTCOMES_DIR, Path("/var/atrium-alt") / "data" / "outcomes"
+            )
+            self.assertEqual(
+                m.HAIKU_FAILURE_LOG_DIR,
+                Path("/var/atrium-alt") / "logs" / "autoagent-haiku-failures",
             )
 
 
