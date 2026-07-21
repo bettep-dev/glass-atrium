@@ -66,7 +66,7 @@ Three representative cases where compound team return outperforms single matchin
 
 Due to LLM judgment characteristics, the same input may return different teams. **All** of the following triple safeguards MUST be applied (missing any one increases team-composition instability risk):
 
-- **Low temperature**: routing-judgment segment recommended in the **0.0-0.2** range (determinism first, no creativity needed)
+- **Conservative deterministic selection**: stability-first routing — no speculative agent picks (determinism first, no creativity needed)
 - **Confidence threshold**: when routing-judgment self-confidence is **below 0.7**, automatic routing is halted (default; for adjustment see the [default, adjustable] policy)
 - **Clarification fallback**: when below threshold, present **2-3 candidates** to the user and request selection — execution by guessing is forbidden
 
@@ -555,7 +555,7 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 
 **Operational rules**:
 - Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size rule (no fixed-number gate — the Workflow engine's runtime self-cap, core-derived per-machine, bounds concurrency; a VERY large fan-out just needs reasoning in `reason` about synthesis value + total-session token cost) defined in orchestrator-role.md `### Team Size`. The 2-3 member cap is specific to the pure Agent Teams pattern, not a global limit.
-- Model tiering: Lead(Opus) + Teammate(Sonnet) natural language instructions
+- Model tiering: Lead + Teammate tiers assigned per `rules/orchestrator-role.md` → `### Cost-Tier Selection` (no hardcoded tier/version here) — natural language instructions
 - Manually include agent instructions (.claude/agents/*.md content) in spawn prompt
 - Control Wave execution (parallel → sequential) via blockedBy field
 - Immediately cleanup idle Teammates · deactivate unused MCP servers

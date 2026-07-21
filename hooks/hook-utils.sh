@@ -161,7 +161,9 @@ hook_is_subagent() {
 # WHY: hook_get_field/hook_get_tool_input degrade to empty when python3 is absent
 # (trailing `2>/dev/null || printf ""`) → silently disarms a fail-open security gate
 # (empty CONTENT = no match = allow); a security hook MUST fail CLOSED. Opt-in is
-# per-hook — the caller set is derivable via `grep -l hook_require_python3 hooks/*.sh`;
+# per-hook — the caller set (4) is derivable via
+# `grep -l hook_require_python3 hooks/*.sh | grep -v hook-utils.sh`; the -v excludes THIS
+# file, which the grep would otherwise self-match as a fifth "caller" for defining the function;
 # fail-soft extraction for every other hook is unchanged.
 # Args: $1=block_code · $2=message. On python3 absent → emit_error(block) + exit 2.
 hook_require_python3() {

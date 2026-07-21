@@ -38,9 +38,11 @@
 # grant, or those writes go via the existing NON-hook-mediated paths
 # (installer / update.sh / daemon-apply / agent_lifecycle sync-inject).
 #
-# Fail-closed on python3 absence (DEL-002 precedent family): without python3 the
-# extraction helpers degrade to EMPTY → the empty-path allow would silently disarm
-# the gate; non-trivial input + no python3 → HAR-003 block (exit 2).
+# Fail-closed on python3 absence AND on classifier failure (DEL-002 precedent
+# family): an extraction degraded to EMPTY would silently disarm the gate via the
+# empty-target allow. Non-trivial input with python3 missing — or a classifier
+# that exits non-zero, or whose in-band status trailer reads empty or misaligned
+# — is a HAR-003 block (exit 2), never a pass.
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
 # Scope: LIVE install paths ONLY (HOME-anchored) — the git repo tree is untouched.
 
@@ -254,27 +256,64 @@ def main():
 main()
 PY
 
-# One detector pass over the hook INPUT. Total python3 failure degrades to three
-# empty fields (empty tool_name → the dispatch case below exits 0), preserving the
-# legacy extraction-failure fail-open.
-# SC2312: the <( ) pipeline's masked return is the DESIGNED degrade path — the
-# `|| printf '\0\0\0'` fallback supplies the three empty fields on python3 failure.
+# Block-payload context as VALID JSON whatever bytes the target carries: a raw
+# interpolation of a path holding a " or \ produced malformed JSON, and emit_error's
+# --argjson then degraded the whole object to {}, dropping BOTH fields. Dual path,
+# mirroring the library's own emit: jq present → argument-passing construction ·
+# jq absent → the library's pure-bash escaper. The fallback is mandatory — under
+# errexit a bare jq call dies exit-127 on a jq-less machine, and a non-2 hook exit
+# is NON-blocking, i.e. the gate would fail open inside its own block path. It is
+# NEVER python3-based: the HAR-003 classifier-failure branch fires precisely when
+# python3 is broken, so a python3 escaper would be dead exactly when needed.
+# Args: $1=class $2=target · stdout: a JSON object.
+block_context() {
+  local class="${1}" target="${2}" e_class e_target
+  if command -v jq >/dev/null 2>&1 \
+    && jq -cn --arg class "${class}" --arg target "${target}" \
+      '{class:$class,target:$target}' 2>/dev/null; then
+    return 0
+  fi
+  e_class="$(_hook_json_escape "${class}")"
+  e_target="$(_hook_json_escape "${target}")"
+  printf '{"class":"%s","target":"%s"}' "${e_class}" "${e_target}"
+}
+
+# Emit the block payload + exit 2. Args: $1=code $2=class $3=target (path or command).
+block_critical() {
+  local code="${1}" class="${2}" target="${3}" ctx
+  ctx="$(block_context "${class}" "${target}")"
+  emit_error "${code}" "block" \
+    "Harness-critical write blocked (${class})" \
+    "This surface is protected agent_id-independent. Use the sanctioned path (installer / update.sh / agent_lifecycle CLI), or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change" \
+    "${ctx}"
+  exit 2
+}
+
+# One detector pass over the hook INPUT, fail-CLOSED: the producer appends the
+# classifier's exit status as a FOURTH NUL-framed field, and the gate below
+# compares it against the LITERAL zero string — non-zero, EMPTY, or misaligned all
+# block, so a classifier crashing mid-stream can never smuggle a pass through
+# partial output. A SIGPIPE (141) blocks too, which is the correct direction.
+# `|| st=$?` sits in condition context, so the subshell-inherited errexit cannot
+# abort before the trailer prints. Capturing the stream into a variable is
+# FORBIDDEN — command substitution strips NUL bytes, which ARE the field framing —
+# as is `wait` on the process substitution (bash 4.4+, broken on stock 3.2.57).
+# Blast radius stays bounded by the prefilter above: a broken python3 blocks only
+# envelopes naming a protected root, not all tool use.
+# SC2312: the producer pipeline's own return is deliberately unread — the in-band
+# status trailer, not the pipeline exit, is what the gate consumes.
 # shellcheck disable=SC2312
 {
   IFS= read -r -d '' TOOL_NAME || true
   IFS= read -r -d '' TARGET || true
   IFS= read -r -d '' VERDICT || true
-} < <(printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || printf '\0\0\0')
-
-# Emit the block payload + exit 2. Args: $1=code $2=class $3=target (path or command).
-block_critical() {
-  local code="${1}" class="${2}" target="${3}"
-  emit_error "${code}" "block" \
-    "Harness-critical write blocked (${class})" \
-    "This surface is protected agent_id-independent. Use the sanctioned path (installer / update.sh / agent_lifecycle CLI), or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change" \
-    "{\"class\":\"${class}\",\"target\":\"${target}\"}"
-  exit 2
-}
+  IFS= read -r -d '' PY_STATUS || true
+} < <(
+  st=0
+  printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || st=$?
+  printf '%s\0' "${st}"
+)
+[[ "${PY_STATUS}" == "0" ]] || block_critical "HAR-003" "classifier-failure" "python3 classifier exit ${PY_STATUS:-EOF}"
 
 write_edit_arm() {
   local norm
