@@ -993,7 +993,7 @@ update_merge_agent_editable_regions() {
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
       "${file}" "${base%.md}" >>"${records_file}"
-    gate_records="${gate_records}$(printf 'agents/%s\t%s\t%s' "${base}" "${local_file}" "${candidate}")"$'\n'
+    gate_records="${gate_records}$(printf 'agents/%s\x1f%s\x1f%s' "${base}" "${local_file}" "${candidate}")"$'\n'
     n_candidates=$((n_candidates + 1))
   done
 
@@ -2142,7 +2142,7 @@ update_preview() {
   # Render every change's unified diff to STDOUT (no confirm prompt, no write). Reuse
   # the SAME record + diff format the confirm gate uses so P3-T3 sees identical output.
   records="$(gate_build_nonagent_records "${new_dir}" "${root}" <"${clean_paths}")"
-  while IFS=$'\t' read -r label current proposed; do
+  while IFS=$'\x1f' read -r label current proposed; do
     [[ -n "${label}" ]] || continue
     gate_render_diff "${label}" "${current}" "${proposed}" || true
   done <<<"${records}"
@@ -2350,7 +2350,7 @@ update_sweep_removed_files() {
     [[ -n "${path}" ]] || continue
     current="${root}/${path}"
     label="REMOVE ${path} (-> Trash)"
-    records="${records}$(printf '%s\t%s\t%s' "${label}" "${current}" "${empty_proposed}")"$'\n'
+    records="${records}$(printf '%s\x1f%s\x1f%s' "${label}" "${current}" "${empty_proposed}")"$'\n'
   done <"${clean_removals}"
 
   printf '%s' "${records}" | gate_apply_confirmed _update_removal_commit_callback || rc=$?
