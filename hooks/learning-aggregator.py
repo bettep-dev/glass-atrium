@@ -704,11 +704,27 @@ LESSON_STORE_FILE = os.environ.get(
 CTM_BUCKET_MAX_CHARS = 4000
 EPM_BUCKET_MAX_CHARS = 4000
 
-# AD-3 CTM injection floor — mirrors the core-learning-log.md "score >= 4 → CTM" bar.
+# AD-3 CTM injectable floor — the injector selects score >= 4; admission is tiered (D4):
+# high lands AT the floor immediately, medium lands BELOW it (provisional) until corroborated.
 CTM_MIN_SCORE = 4
 
-# confidence enum → lesson score (self-report; high=5 medium=4 low=3, unknown=3).
-_CONFIDENCE_SCORE = {"high": 5, "medium": 4, "low": 3}
+# confidence enum → stored lesson score (self-report; unknown=3). medium=3 is the D4
+# provisional SUB-FLOOR — non-injectable until promoted; classify gates medium by the
+# confidence string, so low (also 3) never rides along into CTM.
+_CONFIDENCE_SCORE = {"high": 5, "medium": 3, "low": 3}
+
+# D4 corroboration bar — a provisional lesson re-observed to this frequency promotes to the floor.
+CORROBORATION_MIN_FREQUENCY = 2
+
+# D1 staleness window (days) — a live lesson whose `updated` anchor is older is tombstoned by
+# the ingest-time sweep (soft-delete; MERGE resurrection keeps a wrong sweep recoverable).
+LESSON_STALE_DAYS = 30
+
+# D2/D3 lesson-key allowlist source — the lifecycle-CLI-written registry; env-overridable for tests.
+AGENT_REGISTRY_FILE = os.environ.get(
+    "CLAUDE_AGENT_REGISTRY_FILE",
+    os.path.expanduser("~/.glass-atrium/agent-registry.json"),
+)
 
 # Numeric/whitespace strip for lesson-text dedup — two lessons differing only in a
 # count/date/percentage are ONE lesson (a duplicate bumps frequency, never a new row).
@@ -761,22 +777,30 @@ def _record_is_negative(record: dict) -> bool:
 
 def classify_lesson_bucket(record: dict) -> str | None:
     """Route one outcome's lesson to "ctm" (success) / "epm" (failure) / None (skip).
-    Negative signal → EPM; a clean done + metric_pass + score>=4 → CTM; anything else skipped."""
+
+    Negative signal → EPM. Clean done + metric_pass → CTM by confidence tier (D4): high
+    admits at the injectable floor immediately; medium admits PROVISIONAL (sub-floor score,
+    injectable only after promote_corroborated_lessons); low/unknown never admit. A
+    grader_verdict of verified_fail never admits CTM — falsified evidence outranks the
+    writer self-report even when review_flag was not set."""
     if _record_is_negative(record):
         return "epm"
+    if str(record.get("grader_verdict", "")).strip().lower() == "verified_fail":
+        return None
     mp = record.get("metric_pass")
     mp_true = mp is True or str(mp).strip().lower() == "true"
-    if (
-        str(record.get("result", "")).strip() == "done"
-        and mp_true
-        and _lesson_score(record) >= CTM_MIN_SCORE
-    ):
+    if str(record.get("result", "")).strip() != "done" or not mp_true:
+        return None
+    if _lesson_score(record) >= CTM_MIN_SCORE:
+        return "ctm"
+    if str(record.get("confidence", "")).strip().lower() == "medium":
         return "ctm"
     return None
 
 
 def _outcome_to_lesson_entry(record: dict, today: str) -> dict:
-    """Distil one outcome record into a lesson-store entry (canonical agent key + score)."""
+    """Distil one outcome record into a lesson-store entry (canonical agent key + score).
+    A medium-confidence record stores the provisional sub-floor score (D4, via _lesson_score)."""
     return {
         "agent": _canonical_agent(record.get("agent", "")),
         "task_type": str(record.get("task_type", "")).strip(),
@@ -844,6 +868,52 @@ def tombstone_lesson(bucket: list[dict], agent: str, task_type: str, text: str) 
             existing["tombstoned"] = True
             return True
     return False
+
+
+def _lesson_is_stale(entry: dict, today: datetime, stale_days: int) -> bool:
+    """D1 staleness — `updated` older than stale_days; a missing/empty/unparseable anchor is
+    stale too (a row that cannot demonstrate freshness cannot be trusted as current)."""
+    raw = str(entry.get("updated", "") or "").strip()
+    if not raw:
+        return True
+    try:
+        updated = datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError:
+        return True
+    return (today - updated).days > stale_days
+
+
+def sweep_stale_lessons(store: dict, today: datetime, stale_days: int = LESSON_STALE_DAYS) -> int:
+    """D1 staleness sweep — tombstone every live stale lesson via the canonical tombstone_lesson
+    (AD-2 soft-delete: row retained, MERGE-resurrectable). Fresh ingests always stamp `updated`
+    with today, so a same-pass ingest can never be swept. Returns the tombstoned count."""
+    swept = 0
+    for bucket in (store.get("ctm", []), store.get("epm", [])):
+        live = [e for e in bucket if not e.get("tombstoned") and not e.get("digest")]
+        for entry in live:
+            if _lesson_is_stale(entry, today, stale_days) and tombstone_lesson(
+                bucket, entry.get("agent"), entry.get("task_type"), entry.get("text")
+            ):
+                swept += 1
+    return swept
+
+
+def promote_corroborated_lessons(bucket: list[dict]) -> int:
+    """D4 promotion — a provisional (sub-floor score) lesson corroborated to
+    CORROBORATION_MIN_FREQUENCY is bumped to the injectable floor. Explicit, because the
+    ingest UPDATE path's score=max(existing, entry) can never lift a medium duplicate
+    (3 vs 3) past the floor. Returns the promoted count."""
+    promoted = 0
+    for entry in bucket:
+        if entry.get("tombstoned") or entry.get("digest"):
+            continue
+        if (
+            int(entry.get("frequency", 0) or 0) >= CORROBORATION_MIN_FREQUENCY
+            and int(entry.get("score", 0) or 0) < CTM_MIN_SCORE
+        ):
+            entry["score"] = CTM_MIN_SCORE
+            promoted += 1
+    return promoted
 
 
 # AD-1 evicted-digest footer — a single NO-LLM summary row per bucket recording what
@@ -949,16 +1019,48 @@ def save_lesson_store(path: str, store: dict) -> None:
     )
 
 
-def ingest_outcome_lessons(records: list[dict], path: str | None = None) -> dict[str, int]:
-    """Build/update the CTM/EPM lesson store from a batch of outcomes, then enforce the caps.
+def _load_registry_agents(path: str) -> frozenset[str] | None:
+    """D2/D3 lesson-key allowlist — the registry's agent keys (the injectable roster).
+    Missing/unreadable/malformed → None, meaning validation is SKIPPED (fail-open: a registry
+    problem must never block lesson ingest — sibling policy to the store fail-soft)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    agents = data.get("agents") if isinstance(data, dict) else None
+    if not isinstance(agents, dict) or not agents:
+        return None
+    return frozenset(agents)
 
+
+def ingest_outcome_lessons(
+    records: list[dict],
+    path: str | None = None,
+    registry_path: str | None = None,
+    stale_days: int = LESSON_STALE_DAYS,
+) -> dict[str, int]:
+    """Build/update the CTM/EPM lesson store from a batch of outcomes, then run the D1
+    staleness sweep, the D4 corroboration promotion, and the AD-1 cap enforcement.
+
+    Lesson keys are validated against the agent registry (D2/D3): an unregistered agent's
+    lesson is rejected with one loud skip line (invariant: lesson keys ⊆ injectable registry
+    keys); an unavailable registry skips validation with one warning (fail-open).
     Fail-soft: any error logs + returns zero-counts — a lesson-store problem MUST NOT block the
     core aggregation (sibling policy to the PG read helpers). Returns per-op counts for the log."""
     store_path = path or LESSON_STORE_FILE
     ops: dict[str, int] = defaultdict(int)
     try:
+        registry = _load_registry_agents(registry_path or AGENT_REGISTRY_FILE)
+        if registry is None:
+            print(
+                "[learning-aggregator] agent registry unavailable, "
+                "lesson-key validation skipped (fail-open)",
+                file=sys.stderr,
+            )
         store = load_lesson_store(store_path)
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
         for rec in records:
             if _is_empty_lesson(rec.get("lesson")):
                 continue
@@ -968,7 +1070,23 @@ def ingest_outcome_lessons(records: list[dict], path: str | None = None) -> dict
             entry = _outcome_to_lesson_entry(rec, today)
             if not entry["agent"] or entry["agent"] in _UNPREFIXABLE_AGENTS:
                 continue  # no roster stem → not injectable at spawn (AD-3 matches on agent)
+            if registry is not None and entry["agent"] not in registry:
+                # D2: a key outside the registry has NO injection consumer — reject loudly
+                # rather than accumulate dead weight (lesson keys ⊆ injectable keys).
+                print(
+                    f"[learning-aggregator] lesson skip (unregistered agent "
+                    f"'{entry['agent']}')",
+                    file=sys.stderr,
+                )
+                ops["SKIP_UNREGISTERED"] += 1
+                continue
             ops[ingest_lesson(store[bucket_name], entry)] += 1
+        promoted = promote_corroborated_lessons(store["ctm"])
+        if promoted:
+            ops["PROMOTE"] += promoted
+        swept = sweep_stale_lessons(store, now, stale_days)
+        if swept:
+            ops["TOMBSTONE"] += swept
         for name, cap in (("ctm", CTM_BUCKET_MAX_CHARS), ("epm", EPM_BUCKET_MAX_CHARS)):
             evicted = enforce_bucket_cap(store[name], cap)
             if evicted:
