@@ -223,7 +223,7 @@ def confidence_dir(project_key: str) -> Path:
     """Per-project confidence-signal storage directory (delegates to learning_dir).
 
     - Used as the per-project posterior cache location at daemon wire-in.
-    - Path policy (``~/.claude/data/learning/<key>/`` inside the vault) is owned by learning_dir.
+    - Path policy (``~/.glass-atrium/data/learning/<key>/`` inside the vault) is owned by learning_dir.
 
     Args:
         project_key: resolve_project_key().key (12 hex).
