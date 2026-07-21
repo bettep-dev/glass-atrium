@@ -236,6 +236,9 @@ _update_state_dir=""
 _update_agent_install_root=""
 _update_agent_backup_dir=""
 _update_agent_records_file=""
+# New-release manifest carrying the modes map (FB-2) — read by _update_agent_apply
+# for its post-copy mode re-apply; empty/absent map degrades to a plain copy.
+_update_modes_manifest=""
 # Per-run agent-merge OUTCOME ledger (finding #9): one basename per line = the
 # base-content store MAY advance for that file (its merge actually landed — applied
 # GIT_TXN_OK, byte-identical, or resolved with no net change). Every other outcome
@@ -796,8 +799,20 @@ sys.exit(0 if cand.verify(on_disk) == 0 else 1)
 #   Invoked INDIRECTLY as the apply callback NAME injected into git_txn_apply —
 #   never called by `()` syntax here, so ShellCheck's reachability pass misses it.
 _update_agent_apply() {
-  local target="$1" candidate="$2"
+  local target="$1" candidate="$2" root_norm rel mode
   cp -- "${candidate}" "${target}" || return 2
+  # The candidate is a scratch merge output (mktemp-class 600 & umask), so a
+  # plain cp DROPS the manifest mode on a fresh target and inherits whatever an
+  # existing target carried (the FB-2 plain-copy hole). Re-apply the mapped mode
+  # post-copy; a map-less manifest (pre-modes release) leaves the copy result
+  # untouched — the post-landing enforcement pass owns the one skip notice.
+  root_norm="${_update_agent_install_root%/}"
+  rel="${target#"${root_norm}"/}"
+  mode="$(jq -r --arg p "${rel}" '(.modes // {})[$p] // empty' \
+    -- "${_update_modes_manifest:-/dev/null}" 2>/dev/null || true)"
+  if [[ "${mode}" =~ ^[0-7]{3,4}$ ]]; then
+    chmod "${mode}" "${target}" || return 2
+  fi
   return 0
 }
 
@@ -2372,6 +2387,54 @@ update_finalize_merge_and_anchors() {
   update_capture_base_content "${new_dir}"
 }
 
+# post-landing mode enforcement (D6 R1: apply-then-verify)
+# Copy-path surfaces converging here: tar -xzf extract (update_fetch_release —
+# archive modes), the spine's cp -p staging + atomic swap (deterministic sync),
+# and the agent-merge _update_agent_apply copy. None ASSERTS the landed mode, so
+# a mode-stripped bundle member updates silently inert (the FB-2 shipped-inert
+# class). The modes map covers EVERY files[] entry; a member absent on disk
+# (e.g. a sensitive-refused new file) warns and is skipped — only an existing
+# file that cannot converge is fatal. A manifest without a modes map (pre-modes
+# release) skips fail-open with one notice. (The launchd-plist staging cp -f is
+# a scratch-dir copy, not a landing surface — out of scope here.)
+
+# Echo the octal permission mode of a single file — BSD stat (macOS) first,
+# GNU coreutils fallback (Linux CI parity).
+update_file_mode_octal() {
+  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+}
+
+update_enforce_manifest_modes() {
+  local manifest="$1" root="$2" rel mode actual
+  if ! jq -e '(.modes // empty) | type == "object"' -- "${manifest}" >/dev/null 2>&1; then
+    update_log "manifest carries no modes map (pre-modes release) — mode enforcement skipped"
+    return 0
+  fi
+  while IFS=$'\t' read -r rel mode; do
+    [[ -n "${rel}" ]] || continue
+    # a malformed map entry is an APPLY failure — loud by contract (D6 R1),
+    # never a silent skip (the silent-inert class one level up)
+    [[ "${mode}" =~ ^[0-7]{3,4}$ ]] \
+      || update_die "manifest.modes[${rel}] is not a valid octal mode: '${mode}'"
+    if [[ ! -f "${root}/${rel}" ]]; then
+      update_log "WARN: mode target missing on disk (skipped): ${rel}"
+      continue
+    fi
+    actual="$(update_file_mode_octal "${root}/${rel}")"
+    [[ -n "${actual}" ]] || update_die "cannot read the on-disk mode of ${rel}"
+    if [[ "$((8#${actual}))" -ne "$((8#${mode}))" ]]; then
+      # applied deltas are logged so auto-repair cannot MASK an upstream
+      # mode-dropping bug (D6 R1 mitigation)
+      update_log "mode applied: ${rel} ${actual} -> ${mode}"
+      chmod "${mode}" "${root}/${rel}" \
+        || update_die "chmod ${mode} failed for ${rel}"
+      actual="$(update_file_mode_octal "${root}/${rel}")"
+      [[ "$((8#${actual}))" -eq "$((8#${mode}))" ]] \
+        || update_die "post-apply mode mismatch for ${rel}: applied ${mode}, observed ${actual}"
+    fi
+  done < <(jq -r '(.modes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${manifest}")
+}
+
 update_run() {
   local root work dl_dir new_dir manifest staging snapshot baseline_manifest
   local changed clean_paths sensitive_paths n_sensitive records rc=0 path name
@@ -2406,6 +2469,8 @@ update_run() {
   update_heartbeat
   update_fetch_release "${dl_dir}" "${new_dir}"
   manifest="${dl_dir}/manifest.json"
+  # arm the agent-merge apply callback's post-copy mode re-apply (FB-2)
+  _update_modes_manifest="${manifest}"
   # Record the resolved release version on the job row (INSERT used a placeholder).
   update_job_set_version "$(jq -r '.version // "unknown"' "${manifest}" 2>/dev/null || printf 'unknown')"
   update_heartbeat
@@ -2472,6 +2537,8 @@ update_run() {
     # landed merges (outcome-keyed) and sweep a drop-only release, even with no
     # non-agent content change.
     update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # post-landing mode enforcement (D6 R1) — agent merges may still have landed
+    update_enforce_manifest_modes "${manifest}" "${root}"
     # Persist the new-version manifest even with no non-agent file change, so an
     # agent-only version bump advances the installed version-of-record and clears
     # the "update available" badge (DF-10) — the full-apply path persists via
@@ -2503,6 +2570,8 @@ update_run() {
     # Sensitive-only path (finding #9 / #14): advance anchors for landed merges
     # (outcome-keyed) and sweep a drop-only release on the all-sensitive path too.
     update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # post-landing mode enforcement (D6 R1) — agent merges may still have landed
+    update_enforce_manifest_modes "${manifest}" "${root}"
     # Persist the new-version (source-present-filtered) manifest so the sensitive-only
     # bump advances the installed version-of-record + clears the "update available"
     # badge (DF-10); the filter drops the just-refused sensitive entries so doctor §4
@@ -2541,6 +2610,10 @@ update_run() {
   # advance and BEFORE the mirror-farm refresh below, so a removed file gains no
   # dangling mirror.
   update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+
+  # Step 6.5 — post-landing mode enforcement (D6 R1): every landing surface of
+  # this run (spine sync, agent merges) has completed — converge on manifest.modes.
+  update_enforce_manifest_modes "${manifest}" "${root}"
 
   # Step 7 — facade mirror-farm refresh (incident #58325): persist the new
   # manifest, then re-run the per-file symlink farm so every newly-shipped file

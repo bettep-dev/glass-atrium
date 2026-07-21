@@ -51,6 +51,7 @@
 #   17  bundle extraction / tree write failed
 #   18  mirror-farm refresh failed (reinstall path: files installed, but the
 #       ~/.claude facade mirror was NOT refreshed — run `glass-atrium agents-only`)
+#   19  post-extract mode enforcement failed (manifest.modes apply/verify mismatch)
 #
 # HARD CONSTRAINT: stock macOS bash 3.2 + BSD coreutils only (no mapfile, no
 # associative arrays, no GNU-only flags).
@@ -67,6 +68,7 @@ readonly EXIT_VERIFY_FAILED=15
 readonly EXIT_NO_LAUNCHER=16
 readonly EXIT_EXTRACT_FAILED=17
 readonly EXIT_FARM_FAILED=18
+readonly EXIT_MODE_FAILED=19
 
 # parameters (env-overridable)
 # The release repo slug is a REAL wired default (the one-liner installs with zero env
@@ -162,6 +164,8 @@ require_manifest_parser() {
 #   version-or-empty   ≡ jq -r '.version // empty'
 #   version-or-unknown ≡ jq -r '.version // "unknown"'
 #   files              ≡ jq -r '.files[]'
+#   modes              ≡ jq -r '(.modes // {}) | to_entries[] | "\(.key)\t\(.value)"'
+#                        (empty output on a pre-modes manifest — fail-open key)
 # Backend chosen by require_manifest_parser (jq preferred; python3 on a bare Mac).
 manifest_get() {
   local mode="$1" manifest="$2"
@@ -170,6 +174,7 @@ manifest_get() {
       version-or-empty) jq -r '.version // empty' -- "${manifest}" ;;
       version-or-unknown) jq -r '.version // "unknown"' -- "${manifest}" ;;
       files) jq -r '.files[]' -- "${manifest}" ;;
+      modes) jq -r '(.modes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${manifest}" ;;
       *) return 2 ;;
     esac
     return
@@ -197,6 +202,9 @@ elif mode == "files":
         sys.exit(5)  # jq parity: iterating null is an error (exit 5)
     for entry in files:
         print(entry)
+elif mode == "modes":
+    for k, v in (data.get("modes") or {}).items():
+        print(k + "\t" + str(v))
 else:
     sys.exit(2)
 PY
@@ -400,6 +408,56 @@ install_tree() {
     || die "${EXIT_EXTRACT_FAILED}" "failed to persist the install manifest to ${GA_DIR}/manifest.json."
 }
 
+# post-extract mode enforcement (D6 R1: apply-then-verify)
+# Copy-path surfaces on this flow: tar -xzf extract (fetch_release above —
+# relies on archive modes) and the spine's cp -p staging + atomic swap
+# (verify_bundle / install_tree — mode-preserving). None ASSERTS the landed
+# result, so a mode-stripped bundle member installs silently inert (the FB-2
+# shipped-inert class). Converge every installed file on manifest.modes: apply
+# each mapped mode, then verify, loud-failing (exit 19) when a file cannot
+# converge. A manifest without a modes map (pre-modes release) skips fail-open
+# with one notice — an old release must keep installing.
+
+# Echo the octal permission mode of a single file — BSD stat (macOS) first,
+# GNU coreutils fallback (Linux CI parity).
+file_mode_octal() {
+  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+}
+
+enforce_manifest_modes() {
+  local manifest="$1" mode_lines rel mode actual
+  # shellcheck disable=SC2310  # probe in a condition by design — verdict branched on
+  mode_lines="$(manifest_get modes "${manifest}")" \
+    || die "${EXIT_MODE_FAILED}" "cannot read manifest.modes from ${manifest}"
+  if [[ -z "${mode_lines}" ]]; then
+    log "manifest carries no modes map (pre-modes release) — mode enforcement skipped."
+    return 0
+  fi
+  log "Enforcing manifest file modes ..."
+  while IFS=$'\t' read -r rel mode; do
+    [[ -n "${rel}" ]] || continue
+    # a malformed map entry is an APPLY failure — loud by contract (D6 R1),
+    # never a silent skip (the silent-inert class one level up)
+    [[ "${mode}" =~ ^[0-7]{3,4}$ ]] \
+      || die "${EXIT_MODE_FAILED}" "manifest.modes[${rel}] is not a valid octal mode: '${mode}'"
+    [[ -f "${GA_DIR}/${rel}" ]] \
+      || die "${EXIT_MODE_FAILED}" "mode target missing after install: ${rel}"
+    actual="$(file_mode_octal "${GA_DIR}/${rel}")"
+    [[ -n "${actual}" ]] \
+      || die "${EXIT_MODE_FAILED}" "cannot read the on-disk mode of ${rel}"
+    if [[ "$((8#${actual}))" -ne "$((8#${mode}))" ]]; then
+      # applied deltas are logged so auto-repair cannot MASK an upstream
+      # mode-dropping bug (D6 R1 mitigation)
+      log "mode applied: ${rel} ${actual} -> ${mode}"
+      chmod "${mode}" "${GA_DIR}/${rel}" \
+        || die "${EXIT_MODE_FAILED}" "chmod ${mode} failed for ${rel}"
+      actual="$(file_mode_octal "${GA_DIR}/${rel}")"
+      [[ "$((8#${actual}))" -eq "$((8#${mode}))" ]] \
+        || die "${EXIT_MODE_FAILED}" "post-apply mode mismatch for ${rel}: applied ${mode}, observed ${actual}"
+    fi
+  done <<<"${mode_lines}"
+}
+
 # facade mirror-farm refresh (reinstall parity)
 # Reinstall parity: a reinstall-over-existing lands NEW release files in GA_DIR, but
 # the per-file symlink farm only ran at first install — so new files ship WITHOUT their
@@ -487,6 +545,10 @@ main() {
   # Install from the VERIFIED staging tree, NOT the raw ${new_tree}: installed ==
   # verified == manifest.files, so an unlisted tarball member is never deployed.
   install_tree "${staging}" "${manifest}"
+
+  # Post-extract mode enforcement (D6 R1) — tar/spine copies above preserved
+  # modes but never asserted them; converge the landed tree on manifest.modes.
+  enforce_manifest_modes "${manifest}"
 
   # The scratch tree is done with; remove it BEFORE handoff since exec never returns
   # to fire the EXIT trap.

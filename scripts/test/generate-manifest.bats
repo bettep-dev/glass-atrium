@@ -54,10 +54,10 @@ seed_manifest_doc() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, _doc_settings_json, files, hashes" {
+@test "generate: top-level key order is version, _doc_settings_json, files, hashes, modes" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes" ]]
+  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes,modes" ]]
 }
 
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {

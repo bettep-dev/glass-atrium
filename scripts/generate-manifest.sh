@@ -7,6 +7,11 @@
 #   _doc_settings_json   settings.json never-touch contract doc
 #   files                DEPLOY LIST — array of path STRINGS e.g. "agents/foo.md"
 #   hashes               parallel {path: sha256} map, one entry per files[] path
+#   modes                parallel {path: octal} map, one entry per files[] path —
+#                        the post-extract mode-enforcement SoT (FB-2). ALL files,
+#                        not executables only, so every landing surface (tar
+#                        extract, spine cp -p, agent-merge copy) has a map target.
+#                        Additive optional key: pre-modes consumers ignore it.
 # files[] stays a string array (NOT files-as-objects) so every `jq -r '.files[]'`
 # consumer (ga-core.sh read/remove_manifest_links + doctor, validate-compliance-matrix,
 # acceptance/e2e) works UNCHANGED; hashes adds integrity + O(1) hashes["agents/foo.md"] lookup.
@@ -118,6 +123,12 @@ sha256_of() {
   "${SHA256_CMD[@]}" -- "$1" | awk '{print $1}'
 }
 
+# Echo the octal permission mode (e.g. 644 / 755) of a single file — BSD stat
+# (macOS) first, GNU coreutils fallback (same dual-tool posture as SHA256_CMD).
+mode_of() {
+  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+}
+
 # Emit the generated deploy file list, one path per line, sorted.
 # grep exit 1 (= every tracked file excluded) is absorbed so the empty set
 # reaches the named exit-6 guard instead of dying as an opaque pipefail.
@@ -136,6 +147,16 @@ emit_hash_lines() {
   done < <(generate_files) | LC_ALL=C sort
 }
 
+# Emit `<path>\t<octal mode>` for every generated file, sorted by path — the
+# modes-map source. Reused by the regenerate assembly and the --check mode gate.
+emit_mode_lines() {
+  local f
+  # shellcheck disable=SC2312  # same masking contract as emit_hash_lines above
+  while IFS= read -r f; do
+    printf '%s\t%s\n' "${f}" "$(mode_of "${GA_ROOT}/${f}")"
+  done < <(generate_files) | LC_ALL=C sort
+}
+
 # Emit the tracked manifest's file list, sorted (for --check comparison).
 read_manifest_files() {
   jq -r '.files[]' -- "${MANIFEST}" | LC_ALL=C sort
@@ -146,6 +167,13 @@ read_manifest_files() {
 # version gate flags that divergence separately) instead of a jq null error.
 read_manifest_hash_lines() {
   jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}" \
+    | LC_ALL=C sort
+}
+
+# Emit the tracked manifest's `<path>\t<mode>` lines, sorted by path. `.modes // {}`
+# tolerates a pre-modes manifest (the count gate flags that gap separately).
+read_manifest_mode_lines() {
+  jq -r '(.modes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}" \
     | LC_ALL=C sort
 }
 
@@ -164,6 +192,7 @@ read_doc_key() {
 
 run_check() {
   local doc orphans missing mismatches manifest_version gen_count rc=0
+  local modes_count mode_mismatches
   doc="$(read_doc_key)" || exit $?
   [[ -n "${doc}" ]] || exit 5
 
@@ -214,6 +243,25 @@ run_check() {
     rc=1
   fi
 
+  # mode gate — a chmod with unchanged content is INVISIBLE to the hash gate,
+  # yet a stale modes map would make the installers ENFORCE the wrong mode (the
+  # FB-2 inert-hook class one level up). Count gap catches an absent/incomplete
+  # map; the join catches per-file drift on the intersection.
+  modes_count="$(jq -r '(.modes // {}) | length' -- "${MANIFEST}")"
+  # shellcheck disable=SC2312  # same join-on-intersection contract as the hash gate
+  mode_mismatches="$(LC_ALL=C join -t "$(printf '\t')" \
+    <(read_manifest_mode_lines) <(emit_mode_lines) \
+    | awk -F'\t' '$2 != $3 { printf "%s (manifest=%s actual=%s)\n", $1, $2, $3 }')"
+  if [[ "${modes_count}" != "${gen_count}" ]]; then
+    echo "generate-manifest --check: MODES map incomplete (${modes_count} entries, expected ${gen_count})" >&2
+    rc=1
+  fi
+  if [[ -n "${mode_mismatches}" ]]; then
+    echo "generate-manifest --check: MODE mismatches (permission changed, content unchanged):" >&2
+    printf '%s\n' "${mode_mismatches}" | sed 's/^/  ~ /' >&2
+    rc=1
+  fi
+
   if [[ "${rc}" -eq 0 ]]; then
     echo "generate-manifest --check: manifest matches generated set (${gen_count} files, version ${ATRIUM_VERSION}, hashes + both directions clean)"
   else
@@ -223,7 +271,7 @@ run_check() {
 }
 
 run_generate() {
-  local doc count tmp files_json hashes_json
+  local doc count tmp files_json hashes_json modes_json
   doc="$(read_doc_key)" || exit $?
   count="$(generate_files | wc -l | tr -d ' ')"
   # an empty list means the scope/exclusion config is broken, never a valid
@@ -239,6 +287,8 @@ run_generate() {
   # object per line → add). `// {}` keeps a defined object if the stream is
   # empty (the count guard above already precludes that).
   hashes_json="$(emit_hash_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
+  # modes = {path: octal}, same per-line merge as hashes (FB-2 enforcement SoT).
+  modes_json="$(emit_mode_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
 
   tmp="${MANIFEST}.ga-gen.$$"
   jq -n \
@@ -246,7 +296,8 @@ run_generate() {
     --arg doc "${doc}" \
     --argjson files "${files_json}" \
     --argjson hashes "${hashes_json}" \
-    '{version: $ver, _doc_settings_json: $doc, files: $files, hashes: $hashes}' \
+    --argjson modes "${modes_json}" \
+    '{version: $ver, _doc_settings_json: $doc, files: $files, hashes: $hashes, modes: $modes}' \
     >"${tmp}"
 
   # re-validate before the swap — a malformed temp must never replace the live
@@ -260,6 +311,9 @@ run_generate() {
     and (.hashes | type == "object")
     and ((.hashes | length) == (.files | length))
     and (.hashes | to_entries | all(.value | test("^[0-9a-f]{64}$")))
+    and (.modes | type == "object")
+    and ((.modes | length) == (.files | length))
+    and (.modes | to_entries | all(.value | test("^[0-7]{3,4}$")))
   ' -- "${tmp}" >/dev/null 2>&1 || {
     rm -f -- "${tmp}"
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
@@ -267,7 +321,7 @@ run_generate() {
   }
 
   mv -f -- "${tmp}" "${MANIFEST}"
-  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes)"
+  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes, ${count} modes)"
   refresh_deployed_farm
 }
 
