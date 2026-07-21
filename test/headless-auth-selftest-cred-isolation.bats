@@ -46,7 +46,7 @@ setup() {
   # start from a known-clean credential axis so a real inherited value cannot skew the presence check.
   unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
   # hermetic model seam: point the daemon-config resolver at a sandbox path (absent by default -> the
-  # alias-literal fallback) so no test reads the real ${HOME}/.claude/data/daemon-config.json.
+  # alias-literal fallback) so no test reads the real ${HOME}/.glass-atrium/data/daemon-config.json.
   GA_AUTH_DAEMON_CONFIG="${SANDBOX}/daemon-config.json"
 }
 
@@ -260,5 +260,5 @@ _write_daemon_config() {
   [[ "${body}" == *"jq -r '.haiku_model // empty'"* ]] || return 1
   [[ "${body}" == *'model="claude-haiku-4-5"'* ]] || return 1
   # the config path is a parameter (each caller passes its own seam), defaulting to the canonical path.
-  [[ "${body}" == *'local config_path="${1:-${HOME}/.claude/data/daemon-config.json}"'* ]] || return 1
+  [[ "${body}" == *'local config_path="${1:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-config.json}"'* ]] || return 1
 }

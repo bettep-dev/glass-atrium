@@ -145,7 +145,7 @@ setup_database() {
 # DB while the dropped data stays RECOVERABLE. The fresh-DB intent stands (dev-agent roster +
 # schema drift across installs → no auto-restore), but the drop is gated on a verified backup:
 # BACKUP-BEFORE-DROP, FAIL-CLOSED per database. Each EXISTING database is pg_dump'ed (custom -F c,
-# pg_restore-compatible) to ${HOME}/.claude/backups/postgres/<db>-pre-uninstall-<ts>.dump
+# pg_restore-compatible) to ${HOME}/.glass-atrium/backups/postgres/<db>-pre-uninstall-<ts>.dump
 # (pg-backup.sh's dir + timestamp convention; GA_DB_BACKUP_DIR sandbox override, mirroring
 # oss-db-setup.sh). A dump that FAILS or is EMPTY (non-empty gate = oss-db-setup.sh
 # backup_db_to_file precedent) SKIPS the drop for THAT database — loud log, data preserved,
@@ -176,7 +176,7 @@ drop_databases() {
     log "uninstall: pg_dump not found — SKIPPING DB drop entirely (backup-before-drop is mandatory; data preserved)"
     return 0
   fi
-  local backup_dir="${GA_DB_BACKUP_DIR:-${HOME}/.claude/backups/postgres}"
+  local backup_dir="${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
   if ! mkdir -p -- "${backup_dir}"; then

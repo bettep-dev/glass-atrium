@@ -461,12 +461,31 @@ run_doctor() {
     fi
   fi
 
+  # 12. domain-data separation (D6) — relocation correctness. Asserts the new HOME-anchored runtime
+  #     root (GA_DATA_ROOT/data) landed AND warns on stale Tier-A leftovers still under the legacy
+  #     claude root. Tier-A-ENUMERATED (never a blanket ~/.claude sweep): the deferred Tier-B monitor
+  #     logs + the nested Tier-C data/update stay under ~/.claude by design, so they are NOT in the
+  #     enumeration and never false-trip the stale warn. Mutation-free; advisory (warn, never a FAIL —
+  #     a not-yet-migrated system is a valid transitional state, remediated by the migration op).
+  local data_sep_stale=0
+  if [[ -d "${GA_DATA_ROOT}/data" ]]; then
+    log "  ok   : runtime data root present at new location (${GA_DATA_ROOT}/data)"
+  fi
+  # data_sep_leftover_scan logs each stale leftover to stderr + echoes the count (stdout verdict).
+  # shellcheck disable=SC2311
+  data_sep_stale="$(data_sep_leftover_scan "${TARGET_HOME}")"
+  if [[ "${data_sep_stale}" -eq 0 ]]; then
+    log "  ok   : no stale Tier-A stores under legacy root (${TARGET_HOME})"
+  else
+    log "  ---- ${data_sep_stale} stale Tier-A store(s) under ${TARGET_HOME} — run scripts/migrate-claude-to-ga-data.sh to relocate ----"
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
     fi
     return 0
   fi
@@ -566,6 +585,50 @@ launchd_deploy_drift() {
     fi
   done
   printf '%d\n' "${drift}"
+}
+
+# domain-data separation leftover scan (run_doctor §12 helper — D6). For each Tier-A ENUMERATED
+# subpath still present under the legacy claude root ($1), log a stale-leftover warn (stderr, log →
+# fd2) and count it; the total is the stdout verdict (mirrors manifest_hash_drift). ENUMERATION-
+# scoped, NOT a blanket ~/.claude sweep: the deferred Tier-B monitor logs (logs/monitor.*) and the
+# nested Tier-C spine baseline (data/update) are intentionally NOT in the list, so an on-purpose
+# deferred path can never false-trip this warn. Keep the enumeration in sync with
+# scripts/migrate-claude-to-ga-data.sh TIER_A_SUBPATHS (both derive from the plan Relocation Map).
+data_sep_leftover_scan() {
+  local claude_root="$1"
+  local rel stale=0
+  local subpaths=(
+    data/agent-tool-budget
+    data/audit
+    data/daemon-config.json
+    data/daemon-reports
+    data/doc-routing-leak-fired.log
+    data/learning
+    data/lessons.json
+    data/outcomes
+    data/outcomes-audit-queue.txt
+    data/outcomes-audit-queue-pg-offset
+    data/safety-overrides
+    data/session-spawns
+    data/wiki-dedup-verified-hashes.json
+    data/workflow-gate-fired.log
+    logs/autoagent-haiku-failures
+    logs/context-budget-advisory-cache
+    logs/cost-subagent-mtime
+    logs/inject-scope-rules.diag.log
+    logs/scope-drift-plancache
+    logs/spawn-cost-advisory-cache
+    logs/telemetry-activation.log
+    logs/track-outcome.diag.log
+    backups/postgres
+  )
+  for rel in "${subpaths[@]}"; do
+    if [[ -e "${claude_root}/${rel}" || -L "${claude_root}/${rel}" ]]; then
+      log "  warn : stale Tier-A store under legacy root: ${claude_root}/${rel} — run scripts/migrate-claude-to-ga-data.sh"
+      stale=$((stale + 1))
+    fi
+  done
+  printf '%d\n' "${stale}"
 }
 
 # verify-clean (parity doctor)
