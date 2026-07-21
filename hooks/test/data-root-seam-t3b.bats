@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# data-root-seam-t3b.bats — pins the T3b advisory/enforce/prune consumer conversion onto the
+# data-root-seam-t3b.bats — pins the T3b advisory/enforce/prune consumer conversion (+ the
+# post-edit-typecheck T3a marker-dir straggler) onto the
 # HOME-anchored GA_DATA_ROOT seam (${GA_DATA_ROOT:-$HOME/.glass-atrium}). Each hook's DEFAULT
 # runtime data/log path (no per-file override) must resolve under $HOME/.glass-atrium/data, not
 # $HOME/.claude/data. Every assertion is behavioral: the hook READS a seeded default-path store or
@@ -116,4 +117,42 @@ teardown() {
 
   [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
   [[ -f "${GA_DATA}/doc-routing-leak-fired.log" ]] || { echo "trace not appended to new default log" >&2; return 1; }
+}
+
+@test "post-edit-typecheck.sh: no override → PostToolUse marker lands at \$HOME/.glass-atrium/data" {
+  local hook="${HOOKS_DIR}/post-edit-typecheck.sh"
+  [[ -x "${hook}" ]] || skip "hook not executable: ${hook}"
+  command -v git >/dev/null 2>&1 || skip "git not on PATH"
+  # record_marker resolves PROJECT_ROOT from the file's git top-level, so the .ts edit must sit in a repo.
+  local repo="${SANDBOX}/proj"
+  mkdir -p "${repo}"
+  git -C "${repo}" init -q
+  local payload
+  payload="$(jq -n --arg fp "${repo}/app.ts" \
+    '{hook_event_name:"PostToolUse",tool_name:"Edit",session_id:"sess-tc",tool_input:{file_path:$fp}}')"
+
+  run env -u GA_DATA_ROOT -u TYPECHECK_MARKER_DIR HOME="${SANDBOX}" \
+    bash -c 'printf "%s" "$1" | "$2"' _ "${payload}" "${hook}"
+
+  [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
+  [[ -f "${GA_DATA}/typecheck-pending_sess-tc.json" ]] || { echo "marker not written under new default" >&2; return 1; }
+}
+
+@test "post-edit-typecheck.sh: TYPECHECK_MARKER_DIR override wins over the default seam" {
+  local hook="${HOOKS_DIR}/post-edit-typecheck.sh"
+  [[ -x "${hook}" ]] || skip "hook not executable: ${hook}"
+  command -v git >/dev/null 2>&1 || skip "git not on PATH"
+  local repo="${SANDBOX}/proj" override="${SANDBOX}/override-markers"
+  mkdir -p "${repo}" "${override}"
+  git -C "${repo}" init -q
+  local payload
+  payload="$(jq -n --arg fp "${repo}/app.ts" \
+    '{hook_event_name:"PostToolUse",tool_name:"Edit",session_id:"sess-ov",tool_input:{file_path:$fp}}')"
+
+  run env -u GA_DATA_ROOT HOME="${SANDBOX}" TYPECHECK_MARKER_DIR="${override}" \
+    bash -c 'printf "%s" "$1" | "$2"' _ "${payload}" "${hook}"
+
+  [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
+  [[ -f "${override}/typecheck-pending_sess-ov.json" ]] || { echo "override marker not written" >&2; return 1; }
+  [[ ! -f "${GA_DATA}/typecheck-pending_sess-ov.json" ]] || { echo "default path wrongly written despite override" >&2; return 1; }
 }
