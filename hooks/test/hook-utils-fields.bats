@@ -248,3 +248,29 @@ py_spawn_count() {
   # agent_type reached the row ONLY if the batch-extracted transcript_path found the sidecar.
   grep -q '"agent_type": "glass-atrium-dev-shell"' "${rows}" || return 1
 }
+
+# F7 guard — the hook_require_python3 comment documents a derivation command AND states a caller
+# count. The pre-fix command (`grep -l ... hooks/*.sh`) self-matched hook-utils.sh, which DEFINES the
+# function, inflating a 4-caller set to 5. This pins command and count to each other so the stated
+# figure cannot silently drift from what its own documented method returns.
+#
+# Not hook-invocation coverage: this asserts a documentation invariant over the repo, so it executes
+# the documented grep rather than running a hook. The direct-command-execution rule governs rows that
+# exercise hook BEHAVIOR (where an interpreter prefix would bypass the executable bit); no hook is
+# executed here, so that rule has nothing to bind.
+@test "F7: hook_require_python3 comment's stated caller count matches its own documented derivation" {
+  local stated actual
+  # The count the comment claims, parsed from the comment itself (not hardcoded here).
+  stated="$(sed -n 's/^# per-hook — the caller set (\([0-9][0-9]*\)) is derivable via$/\1/p' "${REAL_LIB}")"
+  [[ -n "${stated}" ]] || return 1
+
+  # Re-run the documented method: callers minus the definer.
+  actual="$(grep -l hook_require_python3 "${GA}"/hooks/*.sh | grep -v 'hook-utils\.sh$' | grep -c '')"
+  [[ "${stated}" -eq "${actual}" ]] || {
+    printf 'stated=%s actual=%s\n' "${stated}" "${actual}" >&2
+    return 1
+  }
+
+  # The definer must be excluded — a command lacking the -v exclusion is the F7 defect itself.
+  grep -q "grep -v hook-utils.sh" "${REAL_LIB}" || return 1
+}

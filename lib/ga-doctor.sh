@@ -100,14 +100,22 @@ run_doctor() {
   #    loudly and let the USER apply the bindings. Missing bindings are a WARNING (doctor still
   #    PASSes on §1-5), not a hard FAIL — the fix is documentation, not mutation (see the
   #    apply-by-hand NOTE below + manifest.json ._doc_settings_json).
-  local unbound=0
+  #    SECOND dormant class, same section because the trigger is the SAME wiring roster: a hook that IS
+  #    wired but whose live file lacks the executable bit. Claude Code spawns each binding as a COMMAND,
+  #    so a mode-644 hook is bound-yet-inert — the protection silently never runs (the defect this check
+  #    exists to surface). Unlike a missing binding this is a hard FAIL: the file is Atrium-owned and the
+  #    fix is a deterministic chmod, so §6's "fix lives in user-owned settings.json" warn rationale does
+  #    not apply. Scoped by three guards — EXISTING files only (an absent file is §4/§7's deploy-presence
+  #    class, never double-reported here), the GA_ROOT hooks dir wire_hooks emits, and the expected-roster
+  #    loop (never a settings.json sweep, so foreign user hooks and sourced libraries cannot false-fail).
+  local unbound=0 nonexec=0 nonexec_seen=""
   if [[ ! -f "${SETTINGS_JSON}" ]]; then
     log "  warn : settings.json absent (${SETTINGS_JSON}) — ALL hook event-bindings are unwired; deployed hooks are DORMANT"
     unbound=${#EXPECTED_HOOK_BINDINGS[@]}
   elif ! command -v jq >/dev/null 2>&1; then
     log "  warn : jq absent — cannot read hook bindings from settings.json (skipping binding check)"
   else
-    local binding event hook matcher
+    local binding event hook matcher hook_path
     for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
       IFS=$'\t' read -r event hook matcher <<<"${binding}"
       # matcher-scoped check so the same hook bound under two matchers (e.g. validate-secret-scan.sh
@@ -116,6 +124,14 @@ run_doctor() {
       # shellcheck disable=SC2310,SC2311,SC2312
       if [[ "$(is_hook_bound "${event}" "${hook}" "${matcher}")" == "yes" ]]; then
         log "  ok   : hook bound — ${event} -> ${hook} (matcher=${matcher:-<none>})"
+        # mode is a per-FILE property (the binding is per-tuple), so a hook wired under two matchers
+        # reports ONE executability line — the seen-list is a bash-3.2-safe substring set (no assoc arrays).
+        hook_path="${GA_ROOT}/hooks/${hook}"
+        if [[ -f "${hook_path}" && ! -x "${hook_path}" && "${nonexec_seen}" != *" ${hook} "* ]]; then
+          log "  FAIL : hook wired but NOT executable — ${hook_path} (DORMANT: bound yet can never run)"
+          nonexec_seen="${nonexec_seen} ${hook} "
+          nonexec=$((nonexec + 1))
+        fi
       else
         log "  warn : hook NOT bound — ${event} -> ${hook} (matcher=${matcher:-<none>}) (DORMANT: deployed but never fires)"
         unbound=$((unbound + 1))
@@ -126,6 +142,11 @@ run_doctor() {
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
     log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
     log "       NOTE: this doctor check is read-only and never writes settings.json. To apply these bindings, run 'glass-atrium install' — wire_hooks performs an idempotent, timestamped-backup MERGE of ONLY the Atrium hook bindings (it never deletes/overwrites user-owned keys; 'agents-only' skips it). You may also add them by hand."
+  fi
+  if [[ "${nonexec}" -gt 0 ]]; then
+    log "  ---- ${nonexec} wired hook(s) missing the executable bit — bound but permanently inert ----"
+    log "       fix: chmod +x ${GA_ROOT}/hooks/<hook>.sh (or re-run 'glass-atrium install' to redeploy)"
+    fail=1
   fi
 
   # 7. target-side deploy reconciliation — symmetric inverse of §4. §4 checks manifest entry ->

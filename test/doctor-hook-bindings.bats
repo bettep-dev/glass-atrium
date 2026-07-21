@@ -37,6 +37,7 @@ SH
 }
 
 teardown() {
+  [[ -n "${GA_SANDBOX:-}" && -d "${GA_SANDBOX}" ]] && rm -rf -- "${GA_SANDBOX}"
   [[ -n "${TARGET:-}" && -d "${TARGET}" ]] && rm -rf -- "${TARGET}" || true
 }
 
@@ -116,6 +117,41 @@ JSON
 # a §1-5 FAIL too — we assert on stdout lines, not the exit code.
 run_doctor_sandbox() {
   GA_TARGET_HOME="${TARGET}" run "${REAL_GA}" doctor
+}
+
+# --- executability of WIRED hooks (§6 second dormant class) -------------------
+#
+# A hook can be wired in settings.json AND present on disk yet mode-644: Claude Code
+# spawns each binding as a COMMAND, so the protection never runs. Covering that class
+# needs a GA root whose hooks/ dir the test OWNS — the real repo hooks dir is mode-755
+# and a test must never chmod it. lib/ + scripts/ are symlinked so the code under test
+# is the REAL doctor; only the entry point is COPIED, because resolve_self walks a
+# symlink chain back to its origin (a symlinked entry would re-resolve to the repo).
+# The hook files are stubs: the check stats the mode, never the content.
+make_ga_sandbox() {
+  GA_SANDBOX="$(mktemp -d -t ga-doctor-bats-root.XXXXXX)"
+  mkdir -p "${GA_SANDBOX}/hooks"
+  cp "${REAL_GA}" "${GA_SANDBOX}/glass-atrium"
+  chmod 755 "${GA_SANDBOX}/glass-atrium"
+  ln -s "${GA}/lib" "${GA_SANDBOX}/lib"
+  ln -s "${GA}/scripts" "${GA_SANDBOX}/scripts"
+  ln -s "${GA}/config.toml.example" "${GA_SANDBOX}/config.toml.example"
+  local src name
+  for src in "${GA}"/hooks/*.sh; do
+    name="$(basename "${src}")"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${GA_SANDBOX}/hooks/${name}"
+    chmod 755 "${GA_SANDBOX}/hooks/${name}"
+  done
+  # empty .files → §4/§7 stay clean against the sandbox root (deploy reconciliation
+  # is a different check; these rows assert §6 only).
+  printf '{"version":"1.0.1","files":[],"hashes":{}}\n' >"${GA_SANDBOX}/manifest.json"
+}
+
+# Invoke the doctor DIRECTLY as a command (never `bash <path>`): an interpreter prefix
+# bypasses the executable bit, which is the very defect class these rows exist to catch.
+run_doctor_ga_sandbox() {
+  GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${GA_SANDBOX}/manifest.json" \
+    run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
 @test "present binding -> ok line (advisory-spawn-budget wired)" {
@@ -237,6 +273,71 @@ run_doctor_sandbox() {
   run_doctor_sandbox
   # the read-only check must not have written a settings.json into the target
   [[ ! -f "${SETTINGS}" ]]
+}
+
+@test "wired hook without the executable bit -> FAIL line naming it + non-zero verdict" {
+  make_ga_sandbox
+  write_full_settings
+  chmod 644 "${GA_SANDBOX}/hooks/block-no-verify.sh"
+  run_doctor_ga_sandbox
+  [[ "${output}" == *"FAIL : hook wired but NOT executable — ${GA_SANDBOX}/hooks/block-no-verify.sh"* ]]
+  [[ "${output}" == *"1 wired hook(s) missing the executable bit"* ]]
+  [[ "${output}" == *"doctor: FAIL"* ]]
+  [[ "${status}" -ne 0 ]]
+}
+
+@test "every wired hook executable -> no executability FAIL, doctor passes" {
+  # the negative half of the row above: same fixture, nothing chmod-ed. Without it a
+  # check that always fires would look identical to a check that works.
+  make_ga_sandbox
+  write_full_settings
+  run_doctor_ga_sandbox
+  [[ "${output}" != *"NOT executable"* ]]
+  [[ "${output}" != *"missing the executable bit"* ]]
+  [[ "${output}" == *"doctor: PASS"* ]]
+  [[ "${status}" -eq 0 ]]
+}
+
+@test "one hook wired under two matchers -> ONE executability FAIL line (per-file, not per-tuple)" {
+  # enforce-harness-critical.sh binds under Bash AND Write|Edit. The binding verdict is
+  # per-tuple, but the mode is a property of the single FILE — so it must not double-report.
+  make_ga_sandbox
+  write_full_settings
+  chmod 644 "${GA_SANDBOX}/hooks/enforce-harness-critical.sh"
+  run_doctor_ga_sandbox
+  local lines
+  lines="$(printf '%s\n' "${output}" | grep -c 'NOT executable' || true)"
+  [[ "${lines}" == "1" ]]
+  [[ "${output}" == *"1 wired hook(s) missing the executable bit"* ]]
+  [[ "${status}" -ne 0 ]]
+}
+
+@test "wired hook file ABSENT -> no executability FAIL (deploy-presence class, no double-report)" {
+  # an absent file is §4/§7 territory; asserting executability on it would report the
+  # same defect twice under two different classes.
+  make_ga_sandbox
+  write_full_settings
+  rm -f "${GA_SANDBOX}/hooks/cost-tracker.sh"
+  run_doctor_ga_sandbox
+  [[ "${output}" != *"NOT executable"* ]]
+  [[ "${output}" == *"doctor: PASS"* ]]
+  [[ "${status}" -eq 0 ]]
+}
+
+@test "non-roster file in the hooks dir -> never executability-checked (roster-keyed, not a sweep)" {
+  # the check walks EXPECTED_HOOK_BINDINGS, never the hooks dir or settings.json — so a
+  # foreign user hook or a sourced (non-executable by design) library cannot false-fail.
+  make_ga_sandbox
+  write_full_settings
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${GA_SANDBOX}/hooks/user-own-hook.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/user-own-hook.sh"
+  mkdir -p "${GA_SANDBOX}/hooks/lib"
+  printf 'sourced_helper() { :; }\n' >"${GA_SANDBOX}/hooks/lib/shared.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/lib/shared.sh"
+  run_doctor_ga_sandbox
+  [[ "${output}" != *"NOT executable"* ]]
+  [[ "${output}" == *"doctor: PASS"* ]]
+  [[ "${status}" -eq 0 ]]
 }
 
 @test "output names the unsafe-to-auto-write rationale (loud-fail framing)" {

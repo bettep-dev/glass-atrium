@@ -79,8 +79,11 @@
 # ACTIVATION (binding live): the harness fires PreToolUse(Workflow) with tool_input.script exposed —
 # the rolling firing log below (cap 1000 lines) shows the gate firing AND blocking in production
 # (observed 2026-07: ~130 exit-2 blocks among 1000 recorded firings; counts roll with the log).
-# Honest residual: a share of pass-noscript rows — Workflow envelopes arriving WITHOUT
-# .tool_input.script pass uninspected (fail-open); no full-coverage claim.
+# Honest residual: pass-noscript rows — Workflow envelopes arriving WITHOUT .tool_input.script pass
+# uninspected (fail-open); no full-coverage claim. Measured 53 of 1000 recorded firings (~5.3%) as of
+# 2026-07-21. The figure is a ROLLING-BUFFER reading, not a lifetime rate: the log caps at 1000 lines,
+# so it ages out and this count drifts — re-derive rather than trust the date, via
+# `grep -c pass-noscript ~/.claude/data/workflow-gate-fired.log`.
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
 # one-line trace is appended to ${HOME}/.claude/data/workflow-gate-fired.log (timestamp · tool_name ·

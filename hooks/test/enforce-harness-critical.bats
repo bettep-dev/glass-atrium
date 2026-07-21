@@ -14,6 +14,16 @@
 #
 # Hermetic strategy: the hook is HOME-anchored, so every protected path lives
 # under a per-test FAKE_HOME (BATS_TEST_TMPDIR) — no live-install dependency.
+#
+# INVOCATION CONVENTION — the hook is executed DIRECTLY as a command, never
+# interpreter-prefixed (`bash hook.sh`). An interpreter prefix bypasses the
+# executable bit, so a hook shipped mode-644 — inert to Claude Code, protecting
+# nothing — still passes a green suite. Direct execution exercises the real path.
+# DOCUMENTED EXCEPTION: the python3-absent rows keep the interpreter prefix,
+# because direct execution resolves `#!/usr/bin/env bash` through the narrowed
+# PATH, and that fixture's stripped bin dir is the shared lib's roster rather than
+# this suite's. Those rows assert a PATH condition, not the executable bit, which
+# every other row in this file now covers.
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../enforce-harness-critical.sh"
 
@@ -42,7 +52,7 @@ Body paragraph mentioning name: not-frontmatter inside the body.
 MD
 }
 
-# Build an envelope with jq and run the hook under FAKE_HOME.
+# Build an envelope with jq and run the hook under FAKE_HOME — DIRECT invocation.
 # Args: $1=tool_name $2=tool_input JSON object $3=agent_id (optional, "" = main session).
 run_hook() {
   local tool="${1}" tin="${2}" agent="${3:-}" envelope
@@ -53,8 +63,48 @@ run_hook() {
     envelope="$(jq -cn --arg t "${tool}" --argjson ti "${tin}" \
       '{tool_name: $t, tool_input: $ti}')"
   fi
-  run env "HOME=${FAKE_HOME}" bash "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
 }
+
+# Same, but under a narrowed PATH. The bin dir MUST carry env + bash so the
+# hook's shebang still resolves under direct execution.
+# Args: $1=bin dir $2=tool_name $3=tool_input JSON object.
+run_hook_on_path() {
+  local bindir="${1}" tool="${2}" tin="${3}" envelope
+  envelope="$(jq -cn --arg t "${tool}" --argjson ti "${tin}" \
+    '{tool_name: $t, tool_input: $ti}')"
+  run env "PATH=${bindir}" "HOME=${FAKE_HOME}" "${HOOK_SH}" <<<"${envelope}"
+}
+
+# Symlink the named real tools into a bin dir. Args: $1=dir, rest=tool names.
+link_bin() {
+  local bindir="${1}" tool src
+  shift
+  mkdir -p "${bindir}"
+  for tool in "$@"; do
+    if src="$(command -v "${tool}")"; then ln -sf "${src}" "${bindir}/${tool}"; fi
+  done
+  printf '%s\n' "${bindir}"
+}
+
+# PATH where python3 is a stub running the given body — jq and the shebang tools
+# stay real, so this isolates classifier FAILURE from python3 ABSENCE.
+# Args: $1=stub body.
+bin_with_broken_python3() {
+  local bindir
+  bindir="$(link_bin "${BATS_TEST_TMPDIR}/pybroken" env bash jq basename cat grep tr sed mktemp dirname)"
+  printf '#!/usr/bin/env bash\n%s\n' "${1}" >"${bindir}/python3"
+  chmod +x "${bindir}/python3"
+  printf '%s\n' "${bindir}"
+}
+
+# PATH with jq stripped and python3 real — drives the pure-bash escaper fallback.
+bin_without_jq() {
+  link_bin "${BATS_TEST_TMPDIR}/nojq" env bash python3 basename cat grep tr sed mktemp dirname
+}
+
+# A protected path whose bytes break raw JSON interpolation (quote + backslash).
+quoted_hook_path() { printf '%s' "${FAKE_HOME}/.glass-atrium/hooks/a\"b\\c.sh"; }
 
 # jq-built Write/Edit tool_input helpers (nested quotes stay well-formed).
 write_input() { jq -cn --arg p "${1}" --arg c "${2}" '{file_path: $p, content: $c}'; }
@@ -233,14 +283,18 @@ MD
   local envelope
   envelope="$(jq -cn --arg p "${FAKE_HOME}/.claude/settings.json" \
     '{tool_name: "Write", tool_input: {file_path: $p, content: "{}"}}')"
-  run env "HOME=${FAKE_HOME}" HARNESS_PROTECTION_APPROVE=1 bash "${HOOK_SH}" <<<"${envelope}"
+  run env "HOME=${FAKE_HOME}" HARNESS_PROTECTION_APPROVE=1 "${HOOK_SH}" <<<"${envelope}"
   [[ "${status}" -eq 0 ]] || return 1
 }
 
 # ── AC2-4: python3-absent fail-closed (HAR-003) ──────────────────────────────
 
 # Shared fixture: minimal_bin_without_python3 comes from lib/no-python3.bash
-# (sourced in setup).
+# (sourced in setup). These two rows are the file's ONLY sanctioned interpreter-
+# prefixed invocations (see the header's INVOCATION CONVENTION): direct execution
+# would have to resolve `#!/usr/bin/env bash` through the shared lib's stripped bin
+# roster, which this suite does not own. They assert a PATH condition, not the
+# executable bit — every other row exercises that directly.
 
 @test "python3 absent + protected write → HAR-003 block (fail-closed, exit 2)" {
   local bindir
@@ -261,6 +315,89 @@ MD
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# ── F1: classifier PRESENT but FAILING → fail-closed HAR-003 ─────────────────
+#
+# Distinct from the python3-ABSENT rows above: here `command -v python3` succeeds,
+# so the absence guard never fires. The regression these rows pin is the classifier
+# exiting non-zero while the fallback emptied TARGET, which the empty-target guard
+# then converted into a silent exit-0 pass — a blocking hook inverted to fail-open.
+# Direct hook execution (no interpreter prefix): the executable bit is part of the
+# behavior under test.
+
+@test "classifier exits non-zero with no output → HAR-003 block (fail-closed)" {
+  local bindir
+  bindir="$(bin_with_broken_python3 'exit 1')"
+  run_hook_on_path "${bindir}" "Write" \
+    "$(write_input "${FAKE_HOME}/.claude/settings.json" '{}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-003"* ]] || return 1
+  [[ "${output}" == *"classifier-failure"* ]] || return 1
+}
+
+@test "classifier emits partial fields then crashes → HAR-003 block (misaligned trailer)" {
+  local bindir
+  bindir="$(bin_with_broken_python3 'printf "Write\0"; exit 1')"
+  run_hook_on_path "${bindir}" "Write" \
+    "$(write_input "${FAKE_HOME}/.claude/settings.json" '{}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-003"* ]] || return 1
+}
+
+@test "classifier emits a full allow verdict then exits 1 → HAR-003 block (no pass smuggling)" {
+  local bindir
+  bindir="$(bin_with_broken_python3 'printf "Write\0/tmp/harmless.ts\0allow\0"; exit 1')"
+  run_hook_on_path "${bindir}" "Write" \
+    "$(write_input "${FAKE_HOME}/.claude/settings.json" '{}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-003"* ]] || return 1
+}
+
+@test "classifier failure on a NON-protected envelope → pass (blast radius stays prefiltered)" {
+  local bindir
+  bindir="$(bin_with_broken_python3 'exit 1')"
+  run_hook_on_path "${bindir}" "Write" "$(write_input "/tmp/app/src/main.ts" 'x')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── F3: block context survives quote/backslash bytes, jq present AND absent ───
+#
+# Raw string interpolation of the target produced malformed JSON, which emit_error's
+# --argjson then degraded to {} — dropping BOTH class and target from every block
+# record on such a path. The jq-absent half also pins AC-T1-4: a bare jq call would
+# die exit-127 under errexit, and a non-2 hook exit is NON-blocking to the harness.
+
+@test "quote+backslash target (jq present) → block context retains class AND target" {
+  local path ctx_class ctx_target
+  path="$(quoted_hook_path)"
+  run_hook "Write" "$(write_input "${path}" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  ctx_class="$(printf '%s' "${output}" | jq -r '.context.class')"
+  ctx_target="$(printf '%s' "${output}" | jq -r '.context.target')"
+  [[ "${ctx_class}" == "live-hooks-dir" ]] || return 1
+  [[ "${ctx_target}" == "${path}" ]] || return 1
+}
+
+@test "quote+backslash target (jq absent) → block context retains class AND target" {
+  local bindir path ctx_class ctx_target
+  bindir="$(bin_without_jq)"
+  path="$(quoted_hook_path)"
+  run_hook_on_path "${bindir}" "Write" "$(write_input "${path}" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  ctx_class="$(printf '%s' "${output}" | jq -r '.context.class')"
+  ctx_target="$(printf '%s' "${output}" | jq -r '.context.target')"
+  [[ "${ctx_class}" == "live-hooks-dir" ]] || return 1
+  [[ "${ctx_target}" == "${path}" ]] || return 1
+}
+
+@test "jq absent + protected write → exit 2, never a non-2 interpreter death" {
+  local bindir
+  bindir="$(bin_without_jq)"
+  run_hook_on_path "${bindir}" "Write" \
+    "$(write_input "${FAKE_HOME}/.claude/settings.json" '{}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-001"* ]] || return 1
+}
+
 # ── Hot-path prefilter: no protected-root literal → exit 0, zero python3 spawns ──
 
 @test "prefilter: non-protected envelope → pass without invoking python3" {
@@ -271,7 +408,7 @@ MD
   mkdir -p "${stubdir}"
   printf '#!/usr/bin/env bash\ntouch "%s"\nexit 0\n' "${marker}" >"${stubdir}/python3"
   chmod +x "${stubdir}/python3"
-  run env "PATH=${stubdir}:${PATH}" "HOME=${FAKE_HOME}" bash "${HOOK_SH}" \
+  run env "PATH=${stubdir}:${PATH}" "HOME=${FAKE_HOME}" "${HOOK_SH}" \
     <<<'{"tool_name":"Write","tool_input":{"file_path":"/tmp/app/src/main.ts","content":"x"}}'
   [[ "${status}" -eq 0 ]] || return 1
   [[ ! -e "${marker}" ]] || return 1
