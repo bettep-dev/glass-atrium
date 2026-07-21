@@ -20,7 +20,7 @@
 # keeps its OWN per-agent_id counter, incremented once per call (the count IS the sequence).
 #
 # Channel: STDERR advisory + exit 0 (PreToolUse accepts only approve/block; STDERR is no validation
-# surface). Counter store: ~/.claude/data/agent-tool-budget/<key> — a DISJOINT path, NOT
+# surface). Counter store: ~/.glass-atrium/data/agent-tool-budget/<key> — a DISJOINT path, NOT
 # session-spawns/ (consumed by advisory-spawn-budget.sh + enforce-verification-gate.sh; appending
 # there would corrupt both).
 # fail-open on EVERYTHING: missing agent_id, absent jq, un-writable/corrupt counter, internal error →
@@ -46,7 +46,7 @@ trap 'printf "[subagent-tool-budget-advisory] internal error at line %d: %s — 
 
 # Counter-store dir override — captured BEFORE sourcing hook-utils.sh (which assigns HOOK_DATA_DIR
 # and would clobber a caller env value). Dedicated var name sidesteps the collision.
-readonly DEFAULT_BUDGET_DIR="${HOME}/.claude/data/agent-tool-budget"
+readonly DEFAULT_BUDGET_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/agent-tool-budget"
 budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${DEFAULT_BUDGET_DIR}}"
 
 # Overage-writer override — a PATH-shimmable stub replaces _pg-write.py in Bats (count invocations

@@ -12,7 +12,7 @@
 # Manual-path only — ultracode/Workflow agent() spawn fires no PreToolUse(Agent) and leaves no trace
 # (fail-open under-count, never a false advisory).
 #
-# Trace source: ~/.claude/data/session-spawns/<session-key> (one subagent_type per executed spawn,
+# Trace source: ~/.glass-atrium/data/session-spawns/<session-key> (one subagent_type per executed spawn,
 # read-only line count). session-key = session_id run through the writer's path-safe allowlist transform.
 # Channel: STDERR advisory + exit 0 (PreToolUse accepts only approve/block; STDERR is no validation
 # surface). fail-open on EVERYTHING: missing session_id / absent-or-unreadable / malformed trace /
@@ -29,7 +29,7 @@ trap 'printf "[agent-spawn-budget-advisory] internal error at line %d: %s — fa
 
 # Trace dir override — captured BEFORE sourcing hook-utils.sh (which assigns HOOK_DATA_DIR and would
 # clobber a caller env value). Dedicated var name (SESSION_SPAWNS_DIR) sidesteps the collision.
-readonly DEFAULT_SPAWN_DIR="${HOME}/.claude/data/session-spawns"
+readonly DEFAULT_SPAWN_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/session-spawns"
 spawn_dir="${SESSION_SPAWNS_DIR:-${DEFAULT_SPAWN_DIR}}"
 
 # shellcheck source=hook-utils.sh
