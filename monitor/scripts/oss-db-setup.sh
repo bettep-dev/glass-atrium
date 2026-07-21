@@ -139,7 +139,7 @@ recreate_database() {
 
   # step 1 — backup before drop (parameterized, never touches live glass_atrium); timestamped file.
   local backup_dir backup_file
-  backup_dir="${GA_DB_BACKUP_DIR:-${HOME}/.claude/backups/postgres}"
+  backup_dir="${GA_DB_BACKUP_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres}"
   mkdir -p -- "${backup_dir}"
   backup_file="${backup_dir}/${name}-recreate-$(date +%Y%m%d-%H%M%S).dump"
   backup_db_to_file "${name}" "${backup_file}"

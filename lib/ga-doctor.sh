@@ -374,7 +374,9 @@ run_doctor() {
   #     HOME-relative diag log. Surface it as a WARN (never a FAIL): a recorded drop means a scope
   #     block stopped reaching subagents — recompress the AGENT-INJECT source blocks. Mutation-free.
   local drop_events=0
-  local inject_drop_log="${TARGET_HOME}/.claude/logs/inject-scope-rules.diag.log"
+  # Must read the SAME root inject-scope-rules.sh writes to: GA_DATA_ROOT/logs (the migrated
+  # Tier-A seam = the producer's INJECT_DROP_LOG = HOOK_LOG_DIR) — reader + producer share one root.
+  local inject_drop_log="${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"
   if [[ -f "${inject_drop_log}" ]]; then
     # grep -c prints "0" + exits 1 on zero matches → `|| true` swallows the rc without double-counting
     # (masked substitution rc keeps set -e intact; SC2312 fires only for the lib's lack of file-scope set -e).
