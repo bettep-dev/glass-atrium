@@ -462,16 +462,25 @@ jobs:
 
       # unittest prints its "Ran N tests ... OK/FAILED (...)" trailer to STDERR.
       # We tee that stream to a file, then emit a GITHUB_STEP_SUMMARY aggregate
-      # line — WITHOUT swallowing the exit code: `set -o pipefail` makes the
-      # pipeline exit non-zero when unittest fails, and the summary step below
-      # is guarded by if:always() so it runs on both pass and fail. No `|| true`
-      # anywhere → a real test failure still reddens the job + the ci-pass gate.
-      - name: Run autoagent unittest suites
+      # line — WITHOUT swallowing the exit code. `set -o pipefail` makes each
+      # discover pipeline exit non-zero on failure; the rc latch (`|| rc=1`, NOT
+      # `|| true`) carries that failure across BOTH roots so a regression in
+      # either suite still reddens the job + the ci-pass gate. Two roots because
+      # `unittest discover` takes a single -s: autoagent/test AND hooks/test (the
+      # home-anchored ga_paths seam suite lives under hooks/test). The summary
+      # step below (if:always()) reads the one combined log.
+      - name: Run autoagent + hooks unittest suites
         id: unittest
         run: |
           set -o pipefail
-          python3 -m unittest discover -s autoagent/test -p 'test_*.py' -v \
-            2>&1 | tee "unittest-${{ matrix.python-version }}.log"
+          log="unittest-${{ matrix.python-version }}.log"
+          : >"${log}"
+          rc=0
+          for root in autoagent/test hooks/test; do
+            python3 -m unittest discover -s "${root}" -p 'test_*.py' -v \
+              2>&1 | tee -a "${log}" || rc=1
+          done
+          exit "${rc}"
 
       - name: Summarize autoagent unittest results
         if: always()
