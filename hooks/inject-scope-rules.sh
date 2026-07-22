@@ -39,6 +39,17 @@
 # fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty
 # extraction) → exit 0 + 1 stderr diagnostic, injecting whatever IS available (a
 # missing block must NOT suppress the others).
+#
+# T8 — membership vs. delivery (roster disclaimer): this hook injects a FIXED set of extracted
+# AGENT-INJECT MARKER blocks (comment-logging · style_ref · minimalism · naming · budget-dev ·
+# budget-analysis) against the HARDCODED rosters below (INJECT_AGENTS, STYLEREF_AGENTS,
+# MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS, BUDGET_ANALYSIS_AGENTS). It performs NO
+# per-agent Tier-2 scope-file SELECTION and injects NO Tier-2 scope-file BODY — a subagent's
+# scope-rule body reaches it through the HOST project-instructions context channel, which is
+# UNCEILINGED and UNMEASURED (unlike this hook's byte-accurate 9984-byte SubagentStart budget). So
+# Tier-2 MEMBERSHIP (core-compliance-matrix.md) is NOT the same as delivery through this hook, and
+# the corpus this hook budgets carefully is the MINOR channel. (Matrix SoT: core-compliance-matrix.md
+# → "Membership vs. Delivery".)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -161,7 +172,19 @@ readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-
 # drop invariant is pinned by hooks/test/inject-scope-rules-nodrop.bats against the real repo
 # sources. UNIVERSAL: the envelope carries no spawn-mode discriminator, so engine/schema-mode
 # spawns are bounded identically to manual ones.
-readonly INJECT_CTX_MAX_BYTES=9984
+readonly INJECT_CTX_MAX_BYTES="${INJECT_SCOPE_RULES_CTX_MAX_BYTES:-9984}"
+
+# T16 in-context drop marker reserve — a FIXED byte reserve subtracted from the ceiling the drop
+# loop compares against, applied CONDITIONALLY (only after the first shed; an under-ceiling spawn
+# keeps the full ceiling and grows no marker). Sized to the engine SAFETY MARGIN: the 9984 ceiling
+# sits 256B below the ~10240 engine persist threshold (see INJECT_CTX_MAX_BYTES), so a 256B reserve
+# guarantees that even when the widened marker overflows the reserve, the total stays below the
+# engine threshold (the overflow rule's "emit + accept" is absorbed by this margin, never triggering
+# the file-persist that strips the meter). The reserve is FIXED (not marker-length-derived) and the
+# ceiling lowers exactly ONCE, so a widening marker can never re-trigger a shed — the byte arithmetic
+# converges because each named shed just freed a whole block (hundreds-to-1200B) while its name+path
+# costs ~40-60B (net negative). A larger reserve would needlessly shed blocks that fit the margin.
+readonly INJECT_MARKER_RESERVE=256
 
 # Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
 # SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
@@ -393,6 +416,70 @@ append_drop_log() {
   return 0
 }
 
+# AM-T16: map a shed block label to its Read-resolvable rule-doc source path. Returns the SAME
+# *_SRC_FILE constant the block was extracted from, so a marker path can never drift from the real
+# source. The lesson block is the ONE runtime-derived exception (sourced at runtime from a JSON store
+# via jq, NOT a rule document) — it has no Read-resolvable path, so it returns empty and the caller
+# tags it instead. Args: $1=block label · stdout: source path (empty for lesson / unknown).
+marker_source_path() {
+  case "${1}" in
+    comment) printf '%s' "${SRC_FILE}" ;;
+    styleref | minimalism) printf '%s' "${STYLEREF_SRC_FILE}" ;;
+    naming) printf '%s' "${NAMING_SRC_FILE}" ;;
+    budget-dev | budget-analysis) printf '%s' "${BUDGET_SRC_FILE}" ;;
+    *) : ;; # lesson (runtime-derived) + any unknown → no path
+  esac
+}
+
+# AM-T16: append one shed-block entry to the running (semicolon-joined, single-line) marker-entry
+# list. A rule-doc-sourced block carries its resolvable source path; the lesson block is tagged
+# EXACTLY "runtime-derived, no source path — recovers via re-spawn, not Read" and carries NO path
+# (its most-frequent-shed blind spot would otherwise pass the path-existence criterion vacuously, or
+# worse point at the all-agent JSON store). Args: $1=existing entries $2=block label · stdout: joined.
+append_marker_entry() {
+  local existing="${1}" label="${2}" entry="" src_path
+  if [[ "${label}" == "lesson" ]]; then
+    entry="lesson: runtime-derived, no source path — recovers via re-spawn, not Read"
+  else
+    src_path="$(marker_source_path "${label}")"
+    entry="${label}: ${src_path}"
+  fi
+  if [[ -z "${existing}" ]]; then
+    printf '%s' "${entry}"
+  else
+    printf '%s; %s' "${existing}" "${entry}"
+  fi
+}
+
+# T16: build the single-line, post-loop drop marker naming each shed block. The count field is
+# fixed-width (%02d padded) so a variable count can never nudge the marker across the reserve
+# boundary. AM-T16: the header states ONCE that a listed source path MAY be Read to recover the
+# dropped guidance (per-rule-doc-block paths carried in the entries). Args: $1=shed count $2=entries.
+build_drop_marker() {
+  local count="${1}" entries="${2}" padded
+  padded="$(printf '%02d' "${count}" 2>/dev/null || printf '%s' "${count}")"
+  printf '**Injection shed %s (auto-injected — you MAY Read a listed source path to recover it):** %s.' \
+    "${padded}" "${entries}"
+}
+
+# T16: was the block for a shed label ACTUALLY present (non-empty) in the assembly? Reads the
+# module-level *_BLOCK variables (set before the loop). Only a present-then-shed block is a REAL
+# shed the marker should name — naming an absent block would claim a phantom drop + phantom AM-T16
+# path. Each branch ends on the [[ ]] so the function returns its truth value (set -e safe in an
+# `if` condition). Args: $1=block label · returns: 0 if present, 1 otherwise.
+block_is_present() {
+  case "${1}" in
+    lesson) [[ -n "${LESSON_BLOCK}" ]] ;;
+    budget-analysis) [[ -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
+    budget-dev) [[ -n "${BUDGET_DEV_BLOCK}" ]] ;;
+    naming) [[ -n "${NAMING_BLOCK}" ]] ;;
+    styleref) [[ -n "${STYLEREF_BLOCK}" ]] ;;
+    minimalism) [[ -n "${MINIMALISM_BLOCK}" ]] ;;
+    comment) [[ -n "${COMMENT_BLOCK}" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
 # Increment the injection-attempted spawn counter — the drop-rate DENOMINATOR. Separate from the drop
 # sink so a no-drop spawn advances the denominator WITHOUT writing a drop record. Fail-open on every
 # statement (a counter glitch must never break the spawn nor alter injected content — AC4). Read-
@@ -526,12 +613,37 @@ ctx_bytes="$(byte_len "${CTX}")"
 # (newest, least proven — DISJOINT rosters, mutual order inert) shed next, before the proven four
 # (worst-case DEV seven-block assembly <=9935B under 9984 → a full-DEV spawn sheds lessons first;
 # lighter agents keep them).
+#
+# T16: the loop compares against effective_ceiling (starts FULL; lowers ONCE by INJECT_MARKER_RESERVE
+# on the first shed, then never again — a widening marker can never lower it a second time) and
+# accumulates a marker entry for every ACTUALLY-PRESENT block it sheds. The post-loop marker is
+# NON-DROPPABLE by placement (appended after the loop, never re-size-checked).
+effective_ceiling="${INJECT_CTX_MAX_BYTES}"
+marker_entries=""
+shed_count=0
+ceiling_lowered=0
 for drop_block in lesson budget-analysis budget-dev naming styleref minimalism comment; do
-  [[ "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
+  [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
   # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
   # the block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would
   # under-report the size that actually breached the ceiling.
   pre_drop_bytes="${ctx_bytes}"
+  # T16 conditional reserve: the FIRST shed lowers the ceiling ONCE (a marker exists only once a shed
+  # occurred, so an under-full-ceiling spawn never reserves and grows no marker). Guarded → lowers at
+  # most once per invocation.
+  if [[ "${ceiling_lowered}" -eq 0 ]]; then
+    effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
+    ceiling_lowered=1
+    printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
+  fi
+  # T16 marker accumulation — name only a block that was ACTUALLY present (block_is_present); an
+  # absent block is not a real shed, so naming it would claim a phantom drop + phantom AM-T16 path.
+  # Pure predicate → the if-condition disabling set -e (SC2310) is intended.
+  # shellcheck disable=SC2310
+  if block_is_present "${drop_block}"; then
+    marker_entries="$(append_marker_entry "${marker_entries}" "${drop_block}")"
+    shed_count=$((shed_count + 1))
+  fi
   case "${drop_block}" in
     lesson) keep_lesson=0 ;;
     budget-analysis) keep_budget_analysis=0 ;;
@@ -547,6 +659,16 @@ for drop_block in lesson budget-analysis budget-dev naming styleref minimalism c
   printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
   append_drop_log "${drop_block}" "${pre_drop_bytes}"
 done
+
+# T16 in-context drop marker — appended AFTER the loop, so it is NON-DROPPABLE by placement (no shed
+# can remove it). Emitted only when >=1 actually-present block was shed, and never re-size-checked:
+# the OVERFLOW RULE accepts the pathological case where the two non-droppable blocks plus the marker
+# exceed the reduced ceiling (emit + accept, NEVER loop). The byte arithmetic otherwise converges —
+# each named shed freed a whole block (hundreds-to-1200B) while its name+path costs ~40-60B.
+if [[ "${shed_count}" -gt 0 ]]; then
+  drop_marker="$(build_drop_marker "${shed_count}" "${marker_entries}")"
+  CTX="$(join_block "${CTX}" "${drop_marker}")"
+fi
 
 # All blocks empty → nothing to inject, fail-open exit.
 if [[ -z "${CTX}" ]]; then
