@@ -184,38 +184,40 @@ class RegistryAllowlist(IngestFixture):
 
 
 class CorroborationTier(IngestFixture):
-    """D4 / FB-1d — high immediate; medium provisional until frequency >= 2; low never;
-    grader verified_fail never admits CTM."""
+    """FB-1d — NON-code task_types only (code arms follow T19, tested in test_ctm_admission_polarity):
+    high immediate; medium provisional until frequency >= 2; low never; verified_fail never admits."""
 
     def test_when_medium_first_observed_then_provisional_not_injectable(self):
-        self._ingest([_record("medium insight", confidence="medium")])
+        self._ingest([_record("medium insight", confidence="medium", task_type="review")])
         store = self._store()
         self.assertEqual(len(store["ctm"]), 1)
         self.assertEqual(store["ctm"][0]["score"], 3)  # stored sub-floor
         self.assertEqual(_injectable(store), [])
 
     def test_when_medium_reobserved_then_promoted_to_injectable(self):
-        self._ingest([_record("medium insight", confidence="medium")])
+        self._ingest([_record("medium insight", confidence="medium", task_type="review")])
         self.assertEqual(_injectable(self._store()), [])  # frequency 1 → excluded
-        ops, _ = self._ingest([_record("medium insight", confidence="medium")])
+        ops, _ = self._ingest([_record("medium insight", confidence="medium", task_type="review")])
         store = self._store()
         self.assertEqual(store["ctm"][0]["frequency"], 2)
         self.assertGreaterEqual(store["ctm"][0]["score"], 4)
         self.assertEqual(_injectable(store), ["medium insight"])
-        self.assertEqual(ops.get("PROMOTE"), 1)
+        # Promotion is the score-bump side-effect of the surviving inline ingest corroboration
+        # (returns UPDATE); the score >= 4 + injectable assertions above prove it fired.
+        self.assertEqual(ops.get("UPDATE"), 1)
 
     def test_when_high_then_immediate_injectable_admission_unchanged(self):
-        self._ingest([_record("high insight", confidence="high")])
+        self._ingest([_record("high insight", confidence="high", task_type="review")])
         self.assertEqual(_injectable(self._store()), ["high insight"])
 
     def test_when_low_then_never_admitted(self):
-        self._ingest([_record("low insight", confidence="low")])
+        self._ingest([_record("low insight", confidence="low", task_type="review")])
         self.assertEqual(self._store()["ctm"], [])
 
     def test_when_grader_verified_fail_then_ctm_never_admitted(self):
-        # done + metric_pass + high + review_flag unset — the defensive exclusion alone rejects
+        # non-code + verified_fail (review_flag unset) — the FB-1d branch verified_fail gate rejects
         ops, _ = self._ingest(
-            [_record("bogus win", grader_verdict="verified_fail")]
+            [_record("bogus win", grader_verdict="verified_fail", task_type="review")]
         )
         store = self._store()
         self.assertEqual(store["ctm"], [])

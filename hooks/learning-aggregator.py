@@ -837,25 +837,27 @@ def _admission_score(record: dict) -> int:
 def classify_lesson_bucket(record: dict) -> str | None:
     """Route one outcome's lesson to "ctm" (success) / "epm" (failure) / None (skip).
 
-    Negative signal (incl. verified_fail, which carries review_flag) → EPM. Otherwise a clean
-    done + metric_pass row admits to CTM by task_type family:
+    Negative signal (incl. verified_fail carrying review_flag) → EPM. Otherwise a clean
+    done + metric_pass row admits to CTM by task_type family (disjoint domains):
     - CODE task_types (T19): ALWAYS admit — the grader verdict sets the SCORE via
       _admission_score (verified_pass → injectable floor; else provisional sub-floor 3,
       promoted on corroboration), it never discards. This keeps refactor, whose grader
       verdict is structurally never verified_pass, off zero CTM.
-    - NON-code task_types (FB-1d): high (score >= CTM_MIN_SCORE) admits at the injectable
-      floor; medium admits PROVISIONAL (sub-floor 3, injectable only after corroboration);
-      low/unknown never admit."""
+    - NON-code task_types (FB-1d): confidence-gated — high (score >= CTM_MIN_SCORE) admits
+      at the injectable floor; medium admits PROVISIONAL (sub-floor 3, injectable only after
+      corroboration); low/unknown never admit; a synthetic verified_fail (no review_flag) is
+      not admitted. The verified_fail gate lives in THIS branch so it never pre-empts the
+      code T19 path (a production verified_fail always carries review_flag → EPM above)."""
     if _record_is_negative(record):
         return "epm"
-    if str(record.get("grader_verdict", "")).strip().lower() == "verified_fail":
-        return None
     mp = record.get("metric_pass")
     mp_true = mp is True or str(mp).strip().lower() == "true"
     if not (str(record.get("result", "")).strip() == "done" and mp_true):
         return None
     if _is_code_task_type(record):
         return "ctm"
+    if str(record.get("grader_verdict", "")).strip().lower() == "verified_fail":
+        return None
     if _lesson_score(record) >= CTM_MIN_SCORE:
         return "ctm"
     if str(record.get("confidence", "")).strip().lower() == "medium":
