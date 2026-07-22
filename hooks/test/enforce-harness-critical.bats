@@ -484,3 +484,62 @@ MD
   run_hook "Bash" "$(bash_input 'ls -la /tmp')"
   [[ "${status}" -eq 0 ]] || return 1
 }
+
+# ── Bash arm: chmod permission verb + launchd-plist protected path ────────────
+#
+# chmod is a mutation verb (a mode-644 flip silently disarms a live hook); the
+# harness launchctl-bootstrap plists (com.{claude,glass-atrium}.*.plist) are
+# protected-path literals. Both are Bash-arm-only additions — a chmod or a plist
+# write is unguarded at HEAD (verdict allow → exit 0), so each row below fails
+# before the change and passes after.
+
+@test "bash: chmod on live GA hooks dir → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'chmod +x ~/.glass-atrium/hooks/track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: chmod on live settings.json (\$HOME form) → block" {
+  run_hook "Bash" "$(bash_input 'chmod 600 $HOME/.claude/settings.json')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: chmod on a launchd plist → block" {
+  run_hook "Bash" "$(bash_input 'chmod 644 ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: redirect write into a launchd plist → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: cp into a launchd plist (autoagent-daemon) → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.glass-atrium.autoagent-daemon.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: tee into a legacy com.claude launchd plist → block (legacy label)" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/Library/LaunchAgents/com.claude.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: chmod on an unprotected path → pass (no false-block)" {
+  run_hook "Bash" "$(bash_input 'chmod +x ~/project/build.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# 'chmod' as an argument word, not a command-position verb — must not false-block.
+@test "bash: chmod as an argument word (echo) → pass (command-position anchored)" {
+  run_hook "Bash" "$(bash_input 'echo run chmod on ~/.claude/hooks/x.sh manually')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# The launchd alternation needs a mutation verb / redirect — a read-only reference
+# to a plist path must pass (no verb in command position, no redirect shape).
+@test "bash: read-only cat of a launchd plist → pass" {
+  run_hook "Bash" "$(bash_input 'cat ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
