@@ -110,7 +110,7 @@ Inserted between the planning phase and the implementation phase: after a glass-
 
 ### Cost-Tier Selection
 
-Assign model tier by task complexity before spawning subagents:
+The table below is a **judgment heuristic** for LLM-led routing — NOT a mechanically-enforced tier-selection mechanism. No tier-selecting code reads a per-agent tier field; that infrastructure is deliberately unbuilt (the observed pin rate showed it was never exercised), so the orchestrator assigns a tier by task complexity as a routing judgment before spawning subagents. The daemon's OWN automation reads its model from configuration (`~/.claude/data/daemon-config.json` via `hooks/daemon_config.py`); when that config is absent it falls back to the session default (an unpinned family alias), never a pinned version.
 
 | Task type | Model tier | Trigger |
 |-----------|-----------|---------|
