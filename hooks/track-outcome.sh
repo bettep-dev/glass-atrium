@@ -268,6 +268,14 @@ except Exception:
 # source. Defined here (before the msg assignment below) so the parse and the
 # tool_use / write-target counters all reuse one resolution point.
 # --------------------------------------------------------------------------
+# (agent_id, session_id) → resolved transcript path memo. The resolver globs every
+# project dir and is called 3-4x per fire with identical ids (style_ref scan, the
+# write-crosscheck, and the transcript-readable predicate), so the glob result — stable
+# within one process — is computed once. Per-process only (each fire is its own
+# process), so it never crosses the cross-fire disk caches.
+_SUBAGENT_TPATH_CACHE = {}
+
+
 def _resolve_subagent_transcript(payload_d):
     # Resolve the SUBAGENT's OWN transcript. On SubagentStop the payload
     # transcript_path points at the PARENT, so a subagent's own Read history /
@@ -283,6 +291,9 @@ def _resolve_subagent_transcript(payload_d):
     session_val = payload_d.get('session_id', '') or ''
     if not agent_id_val or not session_val:
         return ''
+    _key = (agent_id_val, session_val)
+    if _key in _SUBAGENT_TPATH_CACHE:
+        return _SUBAGENT_TPATH_CACHE[_key]
     filename = f'agent-{agent_id_val}.jsonl'
     patterns = (
         _os.path.expanduser(
@@ -292,11 +303,16 @@ def _resolve_subagent_transcript(payload_d):
             f'~/.claude/projects/*/{session_val}/subagents/workflows/wf_*/{filename}'
         ),
     )
+    result = ''
     for pattern in patterns:
         for match in _glob.glob(pattern):
             if _os.path.isfile(match):
-                return match
-    return ''
+                result = match
+                break
+        if result:
+            break
+    _SUBAGENT_TPATH_CACHE[_key] = result
+    return result
 
 
 def _effective_transcript_path(payload_d):
@@ -1106,6 +1122,26 @@ out('c_style_ref', completion.get('style_ref', ''))
 # and style_ref verification cross-check the subagent's own transcript, not the parent.
 
 
+# STYLE_REF_MATCH_LIB compiled-namespace memo, keyed on lib_path. Both consumers below
+# (_compute_style_ref_verified's Read scan + _compute_write_crosscheck's Write/Edit scan)
+# need the same in-repo matcher; without this each did its own open()+compile() of the
+# identical fixed-path source, compiling it twice per fire on a common DEV row. Only a
+# SUCCESSFUL compile is cached — an OSError/SyntaxError propagates to the caller's
+# existing fail-open catch, and the next call retries fresh (nothing poisoned).
+_SRM_NS_CACHE = {}
+
+
+def _load_srm_ns(lib_path):
+    if lib_path in _SRM_NS_CACHE:
+        return _SRM_NS_CACHE[lib_path]
+    with open(lib_path, 'r', encoding='utf-8') as _lf:
+        _lib_src = _lf.read()
+    _ns = {}
+    exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
+    _SRM_NS_CACHE[lib_path] = _ns
+    return _ns
+
+
 # style_ref_verified: cross-verify the emitted style_ref against the session's
 # Read tool_use history (single SoT matcher in lib/style_ref_match.py, shared with
 # style-ref-verify.sh — no rule divergence). Emitted as a 3-state token:
@@ -1130,16 +1166,70 @@ def _compute_style_ref_verified(completion_d, payload_d):
         tpath = _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
         if not isinstance(tpath, str) or not tpath or not _os.path.isfile(tpath):
             return ''
-        with open(lib_path, 'r', encoding='utf-8') as _lf:
-            _lib_src = _lf.read()
-        _ns = {}
-        exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
-        read_paths = _ns['collect_read_paths'](tpath)
+        _ns = _load_srm_ns(lib_path)
+        # Explicit Read tool-filter: the matcher namespaces its incremental cache by
+        # this tag, so style_ref's read-history scan never collides with the grader's
+        # Write/Edit write-history scan (collect_write_paths) over the same transcript.
+        read_paths = _ns['collect_read_paths'](tpath, ('Read',))
         return 'true' if _ns['style_ref_matches'](style_ref_val, read_paths) else 'false'
     except (OSError, IOError, KeyError, SyntaxError, ValueError):
         return ''
 
 out('style_ref_verified', _compute_style_ref_verified(completion, d))
+
+
+# Grader Step 4-5 transcript Write/Edit cross-check (plan T2, ADR-6). Scans the
+# SUBAGENT's OWN transcript for Write/Edit file_path history via the single-SoT
+# collector style_ref_match.py::collect_write_paths (the {"Write","Edit"} tool-filter,
+# cache namespaced away from the style_ref Read scan). Emits two internal @@fields@@ the
+# bash side feeds to code_based_grader_check:
+#   grader_write_scan  = 'verifiable' (own transcript readable + lib present) |
+#                        'unverifiable' (main-session row / unreadable transcript / missing
+#                        lib) → the grader WITHHOLDS promotion (AC 265).
+#   grader_write_path  = one line per Write/Edit history path (verifiable only), deduped +
+#                        bounded; the grader matches claimed files: paths against these.
+# Fail-open by contract: any error → ('unverifiable', []) → withhold, NEVER a false
+# contradiction. Does NOT fall back to the parent transcript — a row with no resolvable
+# per-agent transcript is unverifiable by Step 5, not graded against the parent's writes.
+def _compute_write_crosscheck(payload_d):
+    import os as _os
+    lib_path = _os.environ.get('STYLE_REF_MATCH_LIB', '')
+    if not lib_path or not _os.path.isfile(lib_path):
+        return ('unverifiable', [])
+    tpath = _resolve_subagent_transcript(payload_d)
+    if not tpath or not _os.path.isfile(tpath):
+        return ('unverifiable', [])
+    try:
+        _ns = _load_srm_ns(lib_path)
+        _wpaths = _ns['collect_write_paths'](tpath)
+    except (OSError, IOError, KeyError, SyntaxError, ValueError):
+        return ('unverifiable', [])
+    _seen = set()
+    _out = []
+    for _p in _wpaths:
+        if isinstance(_p, str) and _p and _p not in _seen:
+            _seen.add(_p)
+            _out.append(_p)
+            if len(_out) >= 200:
+                break
+    return ('verifiable', _out)
+
+# Gate the scan (a SECOND transcript open) to rows the grader's feature/bug-fix arms can
+# actually consume: metric_pass=true + a success result + a non-empty files: field. A row
+# with no claimed files has nothing to cross-check (falls to the files-evidence/body path),
+# and this gate keeps the single-open perf invariant (track-outcome-transcript-parse-once)
+# on the common no-files path — mirroring how the style_ref read-scan opens only when a
+# style_ref field is present.
+_cc_files = (completion.get('files', '') or '').strip()
+_cc_metric = (completion.get('metric_pass', '') or '').strip().lower()
+_cc_result = (completion.get('result', '') or '').strip()
+if _cc_files and _cc_metric == 'true' and _cc_result in ('done', 'done_with_concerns'):
+    _write_scan, _write_paths = _compute_write_crosscheck(d)
+else:
+    _write_scan, _write_paths = '', []
+out('grader_write_scan', _write_scan)
+for _wp in _write_paths:
+    out('grader_write_path', _wp)
 out('c_confidence_observed', completion.get('confidence_observed', ''))
 out('parse_tier', str(parse_tier))
 out('tool_use_count', str(tool_use_count))
@@ -1219,6 +1309,17 @@ case "${STYLE_REF_VERIFIED}" in
   true | false) ;;
   *) STYLE_REF_VERIFIED="" ;;
 esac
+# Grader Step 4-5 transcript cross-check inputs (plan T2, ADR-6), computed in the python
+# block from the subagent's OWN transcript. GRADER_WRITE_SCAN is whitelisted to the two
+# literals (else empty → grader treats as unwired → pure files-evidence). GRADER_WRITE_PATHS
+# is the newline-separated Write/Edit history (multiple @@grader_write_path@@ lines → all
+# extracted, NOT head -1 like extract_field). Both fed to code_based_grader_check below.
+GRADER_WRITE_SCAN=$(extract_field grader_write_scan)
+case "${GRADER_WRITE_SCAN}" in
+  verifiable | unverifiable) ;;
+  *) GRADER_WRITE_SCAN="" ;;
+esac
+GRADER_WRITE_PATHS=$(printf '%s\n' "$PARSED" | sed -n 's/^@@grader_write_path@@//p')
 # confidence_observed: daemon-computed posterior float 0.0-1.0. Passive recognition only —
 # valid → keep · invalid → warn+skip (no block) · absent → no-op.
 CONFIDENCE_OBSERVED=$(extract_field c_confidence_observed)
@@ -2108,11 +2209,11 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
     else
       GRADER_BODY_TEXT="${MSG_HEAD} ${MSG_TAIL}"
     fi
-    export GRADER_BODY_TEXT GRADER_FILES_FIELD
+    export GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
     # shellcheck source=lib/code-based-grader.sh
     source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
     GRADER_VERDICT="$(code_based_grader_check)"
-    unset GRADER_BODY_TEXT GRADER_FILES_FIELD
+    unset GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
   fi
 fi
 
@@ -2249,6 +2350,207 @@ emit_error "DATA-070" "info" \
   "N/A (automatic)" \
   "{\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\",\"result\":\"${RESULT}\"}"
 
+# --- T9 circuit-breaker + T10 dead-letter spool (both keyed off this recorded outcome) ---
+# T9 backs the Failure Recovery Loop's "3+ consecutive fails → suspend agent" clause, which had
+# no backing code. T10 keeps a bounded on-disk spool so a DB outage does not silently lose the
+# outcome. Separate state dirs — the two mechanisms never share files (non-conflicting).
+CIRCUIT_BREAKER_DIR="${CIRCUIT_BREAKER_DIR:-${HOME}/.claude/data/agent-circuit-breaker}"
+CIRCUIT_BREAKER_THRESHOLD="${CIRCUIT_BREAKER_THRESHOLD:-3}"
+OUTCOME_SPOOL_DIR="${OUTCOME_SPOOL_DIR:-${HOME}/.claude/data/outcome-spool}"
+OUTCOME_SPOOL_MAX_ENTRIES="${OUTCOME_SPOOL_MAX_ENTRIES:-100}"
+OUTCOME_SPOOL_MAX_AGE_DAYS="${OUTCOME_SPOOL_MAX_AGE_DAYS:-7}"
+OUTCOME_SPOOL_DRAIN_BATCH="${OUTCOME_SPOOL_DRAIN_BATCH:-25}"
+
+# Update the per-agent consecutive-fail counter for a recorded outcome. At the threshold, write a
+# suspension signal at a stable path a SubagentStart reader can consult (T9 AC1); any non-fail
+# resets the counter to zero and clears the suspension (T9 AC2). Fail-open — never crashes the hook.
+circuit_breaker_record() {
+  # Path-safe agent key via the shared hook_path_safe_key (sourced from hook-utils.sh) — the SAME
+  # transform detect_budget_truncation reuses, so no private twin can drift. An unsourced helper
+  # fails open here (mirrors line ~1541), never errors.
+  command -v hook_path_safe_key >/dev/null 2>&1 || return 0
+  local agent="${1}" result="${2}"
+  [ -z "${agent}" ] && return 0
+  local key counter_file susp_file
+  key="$(hook_path_safe_key "${agent}")"
+  counter_file="${CIRCUIT_BREAKER_DIR}/${key}.fails"
+  susp_file="${CIRCUIT_BREAKER_DIR}/${key}.suspended"
+  if [ "${result}" = "fail" ]; then
+    if [ ! -d "${CIRCUIT_BREAKER_DIR}" ] && ! mkdir -p "${CIRCUIT_BREAKER_DIR}" 2>/dev/null; then
+      emit_error "DATA-078" "warn" \
+        "Circuit-breaker state dir uncreatable — fail counter skipped" \
+        "Circuit-breaker state dir uncreatable — fail counter skipped" \
+        "Check permissions on ${CIRCUIT_BREAKER_DIR}" \
+        "Check permissions on ${CIRCUIT_BREAKER_DIR}"
+      return 0
+    fi
+    local count=0
+    if [ -r "${counter_file}" ]; then
+      count="$(cat "${counter_file}" 2>/dev/null)"
+    fi
+    case "${count}" in
+      '' | *[!0-9]*) count=0 ;;
+    esac
+    count=$((count + 1))
+    printf '%s\n' "${count}" >"${counter_file}" 2>/dev/null || true
+    if [ "${count}" -ge "${CIRCUIT_BREAKER_THRESHOLD}" ]; then
+      if command -v jq >/dev/null 2>&1; then
+        jq -nc --arg agent "${agent}" --argjson fails "${count}" --arg ts "${TIMESTAMP}" \
+          '{agent: $agent, consecutive_fails: $fails, suspended_ts: $ts}' \
+          >"${susp_file}" 2>/dev/null || true
+      else
+        printf '{"agent":"%s","consecutive_fails":%s,"suspended_ts":"%s"}\n' \
+          "${agent}" "${count}" "${TIMESTAMP}" >"${susp_file}" 2>/dev/null || true
+      fi
+      emit_error "DATA-079" "warn" \
+        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+        "{\"agent\":\"${key}\",\"consecutive_fails\":${count}}"
+    fi
+  else
+    # Non-fail resets to zero. Skip when no state was ever written (happy-path common case).
+    [ -d "${CIRCUIT_BREAKER_DIR}" ] || return 0
+    rm -f "${counter_file}" "${susp_file}" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Ensure the spool dir exists; return 1 (not fatal) when uncreatable so the caller drops the
+# envelope and the hook still exits 0 (T10 AC4).
+spool_dir_ensure() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] && return 0
+  mkdir -p "${OUTCOME_SPOOL_DIR}" 2>/dev/null
+}
+
+# Current epoch seconds as a sanitized integer — empty / non-numeric / a date failure all degrade
+# to 0. Shared by the spool helpers so the epoch-guard idiom lives once.
+_now_epoch() {
+  local t
+  t="$(date +%s 2>/dev/null)" || t=0
+  case "${t}" in
+    '' | *[!0-9]*) t=0 ;;
+  esac
+  printf '%s' "${t}"
+}
+
+# Persist one failed envelope as a spool file. The epoch-second name prefix keeps entries
+# lexically oldest-first for FIFO drain + eviction; mktemp adds the unique suffix.
+spool_write() {
+  local ts spool_file
+  ts="$(_now_epoch)"
+  spool_file="$(mktemp "${OUTCOME_SPOOL_DIR}/${ts}-XXXXXX" 2>/dev/null)" || return 1
+  printf '%s' "${1}" >"${spool_file}" 2>/dev/null || {
+    rm -f "${spool_file}" 2>/dev/null || true
+    return 1
+  }
+  return 0
+}
+
+# Bound the spool: prune entries older than the max age, then evict oldest-first when the count
+# exceeds the max, recording how many were removed (T10 AC3).
+spool_evict() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] || return 0
+  local now cutoff f prefix aged=0
+  local entries=() evicted=0 over i=0
+  now="$(_now_epoch)"
+  cutoff=$((now - OUTCOME_SPOOL_MAX_AGE_DAYS * 86400))
+  # Single directory scan: age-prune numeric-prefix entries past the cutoff AND collect every
+  # survivor into entries for the count-bound eviction below (no second glob of the same dir).
+  for f in "${OUTCOME_SPOOL_DIR}"/*; do
+    [ -e "${f}" ] || continue
+    prefix="${f##*/}"
+    prefix="${prefix%%-*}"
+    case "${prefix}" in
+      '' | *[!0-9]*)
+        # non-numeric prefix: not age-gradeable, but still a live entry for the count bound.
+        entries+=("${f}")
+        continue
+        ;;
+    esac
+    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && rm -f "${f}" 2>/dev/null; then
+      aged=$((aged + 1))
+    else
+      entries+=("${f}")
+    fi
+  done
+  if [ "${#entries[@]}" -gt "${OUTCOME_SPOOL_MAX_ENTRIES}" ]; then
+    over=$((${#entries[@]} - OUTCOME_SPOOL_MAX_ENTRIES))
+    while [ "${i}" -lt "${over}" ]; do
+      rm -f "${entries[${i}]}" 2>/dev/null && evicted=$((evicted + 1))
+      i=$((i + 1))
+    done
+  fi
+  if [ "${aged}" -gt 0 ] || [ "${evicted}" -gt 0 ]; then
+    emit_error "DATA-072" "warn" \
+      "Outcome spool bound exceeded — removed entries oldest-first" \
+      "Outcome spool bound exceeded — removed entries oldest-first" \
+      "Spooled outcomes exceeded the age/count bound and were dropped oldest-first" \
+      "Spooled outcomes exceeded the age/count bound and were dropped oldest-first" \
+      "{\"aged\":${aged},\"evicted\":${evicted}}"
+  fi
+  return 0
+}
+
+# Dead-letter a failed outcome write: persist to the spool (T10 AC1), then enforce the bound.
+# Uncreatable spool dir → loud named code, drop the envelope, hook still exits 0 (T10 AC4).
+spool_persist() {
+  if ! spool_dir_ensure; then
+    emit_error "DATA-071" "warn" \
+      "Outcome spool dir uncreatable — failed write dropped" \
+      "Outcome spool dir uncreatable — failed write dropped" \
+      "Check permissions on ${OUTCOME_SPOOL_DIR}" \
+      "Check permissions on ${OUTCOME_SPOOL_DIR}"
+    return 0
+  fi
+  if spool_write "${1}"; then
+    spool_evict
+  else
+    # T12 manifest site (verification-result / cross-session state persistence): the spool dir exists
+    # (spool_dir_ensure passed) but the entry write itself failed (temp-create refusal / disk full /
+    # unwritable dir), so the recorded outcome — the verification result a LATER session's spool_drain
+    # replays — is dropped. spool_dir-uncreatable already loud-fails as DATA-071; this is the distinct
+    # write-failure branch. Named code, envelope dropped, hook still exits 0 (advisory).
+    emit_error "DATA-080" "warn" \
+      "Outcome spool write failed — failed outcome dropped despite a present spool dir" \
+      "Outcome spool write failed — failed outcome dropped despite a present spool dir" \
+      "Check free space/permissions on ${OUTCOME_SPOOL_DIR}" \
+      "Check free space/permissions on ${OUTCOME_SPOOL_DIR}"
+  fi
+  return 0
+}
+
+# Replay spooled envelopes after a confirmed live write, removing each ONLY on a confirmed
+# re-write (T10 AC2). Stop at the first failure (DB still down) and cap the batch so a large
+# post-outage backlog cannot blow the hook's sub-second budget.
+spool_drain() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] || return 0
+  local f drained=0
+  for f in "${OUTCOME_SPOOL_DIR}"/*; do
+    [ -e "${f}" ] || continue
+    [ "${drained}" -ge "${OUTCOME_SPOOL_DRAIN_BATCH}" ] && break
+    if python3 "${PG_HELPER}" <"${f}" >/dev/null 2>&1; then
+      rm -f "${f}" 2>/dev/null && drained=$((drained + 1))
+    else
+      break
+    fi
+  done
+  if [ "${drained}" -gt 0 ]; then
+    emit_error "DATA-073" "info" \
+      "Outcome spool drained ${drained} entries after write recovery" \
+      "Outcome spool drained ${drained} entries after write recovery" \
+      "N/A (automatic)" \
+      "N/A (automatic)" \
+      "{\"drained\":${drained}}"
+  fi
+  return 0
+}
+
+# T9: fold this recorded outcome into the per-agent circuit-breaker before persistence — the
+# fail/non-fail signal is independent of whether the DB write below succeeds.
+circuit_breaker_record "${AGENT_TYPE}" "${RESULT}"
+
 # PHASE3-OUTCOME-DUALWRITE-BEGIN
 # Write to PostgreSQL — PG is the single sink; the body_md column carries the full markdown body so
 # the renderer CLI can reconstruct output, and the signals[] envelope below is the single sink for
@@ -2339,10 +2641,18 @@ if [ -x "${PG_HELPER}" ]; then
     }' 2>/dev/null || true)
 
   if [ -n "${PG_ENVELOPE}" ]; then
-    # Helper exit code is always 0; stderr carries elapsed_ms + status.
-    # Background would lose stderr ordering vs other emit_error lines, so run
-    # synchronously — helper budget is <50ms typical.
-    printf '%s' "${PG_ENVELOPE}" | python3 "${PG_HELPER}" || true
+    # T10: capture the helper exit code instead of swallowing it — the helper emits a named
+    # non-zero code on failure (DB unreachable / write-failed). Non-zero → dead-letter the
+    # envelope so the outcome is not silently lost; zero → drain any previously-spooled entries.
+    # Background would lose stderr ordering vs other emit_error lines, so run synchronously —
+    # helper budget is <50ms typical.
+    _pg_rc=0
+    printf '%s' "${PG_ENVELOPE}" | python3 "${PG_HELPER}" || _pg_rc=$?
+    if [ "${_pg_rc}" -ne 0 ]; then
+      spool_persist "${PG_ENVELOPE}"
+    else
+      spool_drain
+    fi
   fi
 fi
 # PHASE3-OUTCOME-DUALWRITE-END

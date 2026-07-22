@@ -4,8 +4,10 @@
 # PreToolUse(Write|Edit + Bash) harness-critical gate, agent_id-INDEPENDENT:
 #   Write|Edit arm → live settings.json/settings.local.json · live hook dirs ·
 #   agents/*.md frontmatter identity keys {name, tools, scope} (model excluded,
-#   body edits pass) · NEW agents/*.md Write. Bash arm → best-effort mutation-verb
-#   + protected-path-literal text match (indirection residual PASSES by design).
+#   body edits pass) · NEW agents/*.md Write · scheduled-exec dirs
+#   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
+#   best-effort mutation-verb + protected-path-literal text match (indirection
+#   residual PASSES by design).
 # Block channel: HAR-001/HAR-002 emit_error + exit 2 · fail-closed HAR-003 on a
 # python3-less PATH · HARNESS_PROTECTION_APPROVE=1 launch-env grant passes.
 #
@@ -277,6 +279,90 @@ MD
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# ── H1: scheduled-execution surface — autoagent/ + scripts/ + skills/ ─────────
+#
+# launchd runs autoagent/ code unattended, so a plain Write/Edit persists code the
+# scheduler later executes (LLM06). H1 extends BOTH arms to the three dirs. Every
+# block row is exit-0 at HEAD (no deterministic case, no PROT_RE literal) and
+# exit-2 after — a genuine before/after. rules/ + scoped/ are EXCLUDED by design
+# (H1-D1); the four permit rows guard that exclusion against a later
+# "complete the pattern" edit.
+
+@test "H1 Write into autoagent/ → HAR-001 scheduled-exec block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/autoagent/daemon-apply.sh" 'echo pwned')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-001"* ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into autoagent/ → block (agent cannot rewrite scheduled code)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/autoagent/daemon_cycle.py" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Write into scripts/ → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/scripts/generate-manifest.sh" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into scripts/ → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/scripts/wiki-query.sh" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "H1 Write into skills/ → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/skills/foo/SKILL.md" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into skills/ → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/skills/foo/SKILL.md" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Bash arm — redirect / copy verb targeting the three dirs (3 of 3 blocked).
+
+@test "H1 bash redirect into autoagent/ → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/.glass-atrium/autoagent/daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "H1 bash cp into scripts/ → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.sh ~/.glass-atrium/scripts/generate-manifest.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "H1 bash tee into skills/ → block" {
+  run_hook "Bash" "$(bash_input 'echo pwn | tee ~/.glass-atrium/skills/foo/SKILL.md')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# rules/ + scoped/ DELIBERATELY EXCLUDED (H1-D1) — permit rows guard the exclusion.
+
+@test "H1 Write into rules/ → pass (excluded, hand-edited live)" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/rules/glass-atrium/foo.md" 'x')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Edit into rules/ → pass (excluded)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/rules/glass-atrium/foo.md" 'a' 'b')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Write into scoped/ → pass (excluded)" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/scoped/scope-dev.md" 'x')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Edit into scoped/ → pass (excluded)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/scoped/scope-dev.md" 'a' 'b')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
 # ── AC2-3: launch-env approval grant ─────────────────────────────────────────
 
 @test "HARNESS_PROTECTION_APPROVE=1 launch env passes an otherwise-blocked write" {
@@ -482,5 +568,64 @@ MD
 
 @test "bash: unrelated command → pass" {
   run_hook "Bash" "$(bash_input 'ls -la /tmp')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Bash arm: chmod permission verb + launchd-plist protected path ────────────
+#
+# chmod is a mutation verb (a mode-644 flip silently disarms a live hook); the
+# harness launchctl-bootstrap plists (com.{claude,glass-atrium}.*.plist) are
+# protected-path literals. Both are Bash-arm-only additions — a chmod or a plist
+# write is unguarded at HEAD (verdict allow → exit 0), so each row below fails
+# before the change and passes after.
+
+@test "bash: chmod on live GA hooks dir → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'chmod +x ~/.glass-atrium/hooks/track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: chmod on live settings.json (\$HOME form) → block" {
+  run_hook "Bash" "$(bash_input 'chmod 600 $HOME/.claude/settings.json')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: chmod on a launchd plist → block" {
+  run_hook "Bash" "$(bash_input 'chmod 644 ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: redirect write into a launchd plist → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "bash: cp into a launchd plist (autoagent-daemon) → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.glass-atrium.autoagent-daemon.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: tee into a legacy com.claude launchd plist → block (legacy label)" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/Library/LaunchAgents/com.claude.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "bash: chmod on an unprotected path → pass (no false-block)" {
+  run_hook "Bash" "$(bash_input 'chmod +x ~/project/build.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# 'chmod' as an argument word, not a command-position verb — must not false-block.
+@test "bash: chmod as an argument word (echo) → pass (command-position anchored)" {
+  run_hook "Bash" "$(bash_input 'echo run chmod on ~/.claude/hooks/x.sh manually')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# The launchd alternation needs a mutation verb / redirect — a read-only reference
+# to a plist path must pass (no verb in command position, no redirect shape).
+@test "bash: read-only cat of a launchd plist → pass" {
+  run_hook "Bash" "$(bash_input 'cat ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
   [[ "${status}" -eq 0 ]] || return 1
 }

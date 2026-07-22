@@ -144,6 +144,21 @@
 #          enforce=1 path). Loud-fail rather than swallow, since a swallowed
 #          counter failure keeps the fossil re-selecting every cycle (the exact
 #          condition the stale-drain fixes). Does NOT collide with 0/2-14.
+#
+# Test-suite preflight exit code (verify_test_harness — loud-fail BEFORE the
+# lock, so the daemon never mutates a harness it cannot verify):
+#     16 — test-suite preflight failed. ONE abort semantic for three causes,
+#          named distinctly on stderr: (a) a test root is absent (T1a — the
+#          install carries no executable tests); (b) a suite prerequisite
+#          (bats / GNU parallel) is absent (T22); (c) the suite ran and exited
+#          non-zero (T22 — a RED suite, distinct from absence). Bypassed by
+#          AUTOAGENT_ALLOW_UNVERIFIED=1 (operator override, logged), exempted
+#          under --dry-run, and skipped when AUTOAGENT_PREFLIGHT_ACTIVE=1 (the
+#          re-entry sentinel the green-suite run exports so nested daemon-apply
+#          calls do not recurse). Root presence (a) runs on BOTH the batch and
+#          single-proposal paths; the heavy green-suite run (b/c) is batch/cron
+#          ONLY — the single-proposal (--proposal-id) approve path is exempt.
+#          Does NOT collide with 0/2-15.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -653,6 +668,95 @@ else
     printf '[daemon-apply] WARN: pause-flag lib missing (%s) — proceeding without update-pause gate\n' \
         "${PAUSE_FLAG_LIB}" >&2
 fi
+
+# -- Test-suite preflight (loud-fail: verify the harness before mutating it) --
+# The daemon mutates agent files it can trust only if the test suite that
+# certifies them is BOTH present and green — root PRESENCE alone is theater, a
+# red or never-run suite passes every structural check. Two staged checks share
+# ONE abort semantic (exit 16, named distinctly on stderr). Runs AFTER arg-parse
+# (so --help stays 0) and BEFORE the lock is acquired, so nothing is applied and
+# no target file is written when it aborts (Precondition Loud-Fail).
+#   GA root = the realpathed script dir's PARENT (SCRIPT_DIR = <ga>/autoagent).
+#   NOT $HOME — the $HOME-anchored paths in this file are a facade that would
+#   resolve the roots wrongly.
+GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
+# The bats parallel runner (env-overridable so a test can point it at a stub and
+# never shell the real suite recursively).
+BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
+
+# preflight_fatal — the four verify_test_harness abort sites share one framing
+# ([daemon-apply] FATAL: <clause> Override: AUTOAGENT_ALLOW_UNVERIFIED=1.); pass
+# only the distinct clause so the shared prefix/suffix live in one place.
+preflight_fatal() {
+    local clause="$1"
+    printf '[daemon-apply] FATAL: %s Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' "${clause}" >&2
+    exit 16
+}
+
+# verify_test_harness — abort (exit 16) unless the four test roots are present
+# and, on the batch/cron path, the suite's prerequisites are installed and the
+# suite exits 0. "verify" is a domain verb: none of the canonical get/set/find
+# set expresses "assert the harness is verifiable, else loud-fail".
+verify_test_harness() {
+    # Escape hatches — any ONE short-circuits the whole gate:
+    #   AUTOAGENT_ALLOW_UNVERIFIED=1 → operator override (apply unverified, logged).
+    #   --dry-run                    → nothing is applied, so nothing to verify.
+    #   AUTOAGENT_PREFLIGHT_ACTIVE=1 → re-entry sentinel: the green-suite run below
+    #     shells the bats suite, several rows of which invoke THIS script; the
+    #     sentinel makes a nested call skip the gate so the run terminates
+    #     (bounded), never recursing (LLM10 unbounded-consumption guard).
+    if [[ "${AUTOAGENT_ALLOW_UNVERIFIED:-0}" == "1" ]]; then
+        printf '[daemon-apply] WARN: AUTOAGENT_ALLOW_UNVERIFIED=1 — applying UNVERIFIED (test-suite preflight skipped)\n' >&2
+        return 0
+    fi
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        return 0
+    fi
+    if [[ "${AUTOAGENT_PREFLIGHT_ACTIVE:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    # T1a — the four test roots must be present under the GA root. Applies to
+    # BOTH the batch and single-proposal paths (a human single-approve mutating
+    # an unverifiable install is the same hazard as the autonomous cron).
+    local root
+    for root in test hooks/test scripts/test autoagent/test; do
+        if [[ ! -d "${GA_ROOT}/${root}" ]]; then
+            preflight_fatal "test root absent: ${root} (under ${GA_ROOT}) — the install carries no executable tests; refusing to apply onto an unverifiable harness."
+        fi
+    done
+
+    # T22 — green-suite gate: a full-suite run is HEAVY, so it fires on the
+    # batch/cron (daemon-cycle) path ONLY. The single-proposal (--proposal-id)
+    # approve is human-gated + recoverable → exempt (root presence above already
+    # ran on it).
+    if [[ -n "${PROPOSAL_ID}" ]]; then
+        return 0
+    fi
+
+    # Prerequisites probed HERE (not delegated to the runner) so a non-zero
+    # runner exit unambiguously means a RED suite, not a missing tool — absence
+    # and failure abort on DISTINCT stderr lines.
+    local tool
+    for tool in bats parallel; do
+        if ! command -v "${tool}" >/dev/null 2>&1; then
+            preflight_fatal "test-suite prerequisite absent: ${tool} — the green-suite gate cannot run."
+        fi
+    done
+    if [[ ! -x "${BATS_RUNNER}" ]]; then
+        preflight_fatal "test-suite prerequisite absent: bats runner not executable (${BATS_RUNNER}) — the green-suite gate cannot run."
+    fi
+
+    # Run the full suite with the re-entry sentinel exported (bats rows that
+    # shell THIS script then skip the gate). stdout → stderr so the runner's TAP
+    # never pollutes the daemon's stdout JSON.
+    if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
+        preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
+    fi
+    return 0
+}
+
+verify_test_harness
 
 # -- Shared apply-lock helper (stale-reclaim guard) ------------------------
 # The .apply-lock stale-reclaim logic is SHARED with the updater (update.sh) via
@@ -1312,7 +1416,28 @@ sys.stdout.write("\n".join(out))
     return 1
 }
 
-# verify_patched — confirm the file has new bytes and still parses (basic).
+# verify_patched — post-apply preservation-semantics check on the patched target.
+# Return 0 = preserved (keep) · non-0 = fail (git_txn_apply restores from the
+# before-image). This runs in the ONLY deterministic slot between a generated patch
+# and the live harness — the pre-apply gates are all judgment.
+#
+# The before-image path travels through the VERIFY_BEFORE_IMAGE global (the caller
+# sets it right before the transaction, the pattern scripts/update.sh uses), so the
+# callback signature stays ONE argument and the editable-merge caller's own one-arg
+# verify callback is unaffected.
+#
+# Preservation semantics — present-before implies present-after, NOT unconditional
+# presence: a target that never had frontmatter or a `> Rules:` anchor is not
+# penalized for its continued absence (the rules files and the global-rules file
+# never carried frontmatter). Checks: non-empty · one heading · present-before
+# frontmatter kept · present-before `> Rules:` anchor kept · not shrunk below half
+# the before-image line count.
+#
+# DEFECT CLASSES IT CANNOT DETECT: markdown has no compiler and a heading-bearing
+# file IS structurally valid, so a SEMANTIC regression that keeps the frontmatter,
+# the anchor, and the size — reworded guidance, an inverted rule, a present-but-
+# gutted section — is undetectable in this deterministic slot by design; that class
+# needs the judgment the pre-apply gates already own.
 #
 # shellcheck disable=SC2329
 #   Invoked INDIRECTLY as the verify callback injected into git_txn_apply
@@ -1320,9 +1445,40 @@ sys.stdout.write("\n".join(out))
 #   reachability pass cannot see the call site.
 verify_patched() {
     local target="$1"
+    # Retained base checks: non-empty, at least one heading line.
     [[ -s "${target}" ]] || return 1
-    # Markdown sanity: at least one heading line. Cheap, no external deps.
     grep -q '^#' "${target}" || return 1
+
+    # Preservation layer keys on the before-image (VERIFY_BEFORE_IMAGE global). An
+    # absent/unreadable anchor degrades to the base checks only — a missing anchor
+    # is a caller-wiring gap, not a patch fault (fail-open on this layer).
+    local before="${VERIFY_BEFORE_IMAGE:-}"
+    [[ -n "${before}" && -r "${before}" ]] || return 0
+
+    # Frontmatter: present-before implies present-after (first line is '---').
+    # Separated command substitution (not inside the [[ ]]) so head's exit is not
+    # masked (SC2312) — before/target are readable, so head cannot fail here.
+    local before_fm after_fm
+    before_fm="$(head -n 1 "${before}")"
+    after_fm="$(head -n 1 "${target}")"
+    if [[ "${before_fm}" == "---" && "${after_fm}" != "---" ]]; then
+        return 1
+    fi
+
+    # `> Rules:` anchor: present-before implies present-after.
+    if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${target}"; then
+        return 1
+    fi
+
+    # Proportional shrink floor: keep at least half the before-image line count.
+    # Guts a body-stripping patch while a normal edit (near-original size) passes.
+    local before_lines after_lines
+    before_lines="$(wc -l <"${before}")"
+    after_lines="$(wc -l <"${target}")"
+    if ((after_lines * 2 < before_lines)); then
+        return 1
+    fi
+
     return 0
 }
 
@@ -1657,6 +1813,12 @@ ERRORS=0
 # distinct from ERRORS so the summary distinguishes "deferred" from "failed".
 NEEDS_REGEN=0
 
+# Before-image path for the post-apply verify predicate (verify_patched). SET
+# per-iteration right before git_txn_apply (below) and READ by verify_patched — the
+# same caller-scope verify-context contract scripts/update.sh uses. git_txn_apply
+# hands the verify callback only the target, so this anchor travels as a global.
+VERIFY_BEFORE_IMAGE=""
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -1868,6 +2030,12 @@ PY
     short="$(short_label "${PATCH_LABEL}")"
     apply_msg="${APPLY_PREFIX} T7 patch: ${PATCH_AGENT} ${short}"
     backup_subdir="${BACKUP_DIR}/${patch_cycle}_p${patch_id}"
+    # T20: verify_patched compares the post-apply target against the before-image
+    # git_txn_apply captures at <backup_subdir>/<target basename>.bak
+    # (_git_txn_capture_before_image). The one-arg verify callback receives only the
+    # target, so the before-image path travels through this global — set HERE, before
+    # the transaction; capture precedes verify, so the file exists when verify reads it.
+    VERIFY_BEFORE_IMAGE="${backup_subdir}/${GIT_TARGET##*/}.bak"
     # Invoked BARE (never `|| rc=$?`) — see git-txn.sh "set -e contract": bare
     # invocation keeps set -e active inside the function, so a contract violation
     # (wrong arity / bad callback) loud-fails the daemon instead of being masked.
@@ -1922,6 +2090,23 @@ PY
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
+        continue
+    fi
+    if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_RESTORE_FAIL}" ]]; then
+        # verify_patched failed AND the atomic restore ALSO failed — the target may
+        # still hold the applied bytes (unrecovered in place). Escalated over
+        # verify_failed: this is NOT a clean rollback, so it must NEVER reach the OK
+        # fall-through (APPLIED++). Count as an error, log a distinct reason, and
+        # loud-fail to stderr (shared-self-improve-hygiene Loud-Fail) — the
+        # before-image in the backup dir is the manual recovery anchor.
+        ERRORS=$((ERRORS + 1))
+        emit_log "$(printf '{"ts":%s,"status":"error","reason":"restore_failed","pattern_label":%s,"target_file":%s,"recovery_anchor":%s}' \
+            "$(printf '%s' "${timestamp}" | json_escape)" \
+            "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
+            "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
+            "$(printf '%s' "${VERIFY_BEFORE_IMAGE}" | json_escape)")"
+        printf '[daemon-apply] ERROR: atomic restore FAILED for %s (%s) — target may hold applied bytes, unrecovered. Recover manually from before-image: %s\n' \
+            "${PATCH_TARGET}" "${PATCH_LABEL}" "${VERIFY_BEFORE_IMAGE}" >&2
         continue
     fi
 

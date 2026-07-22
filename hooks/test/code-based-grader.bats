@@ -28,6 +28,24 @@ REAL_LIB="${BATS_TEST_DIRNAME}/../lib/code-based-grader.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "code-based-grader.sh not found: ${REAL_LIB}"
+  # Real files for the existence-gated feature promotion cases (W1 files-evidence).
+  # Absolute paths keep resolution deterministic (no cwd/repo-root coupling). The
+  # NON-existent / glob / prose forms are exhaustively pinned in the sibling
+  # code-based-grader-files-evidence.bats — this suite keeps only representative
+  # existing-path promotion + non-test/embedded-substring guards.
+  SANDBOX="$(cd -- "$(mktemp -d -t ga-grader.XXXXXX)" && pwd -P)"
+  EX_TEST="${SANDBOX}/auth.test.ts"
+  EX_SPEC="${SANDBOX}/login.spec.ts"
+  EX_BATS="${SANDBOX}/new-hook.test.bats"
+  EX_PLAIN="${SANDBOX}/auth.ts"
+  printf '%s\n' 'x' >"${EX_TEST}"
+  printf '%s\n' 'x' >"${EX_SPEC}"
+  printf '%s\n' 'x' >"${EX_BATS}"
+  printf '%s\n' 'x' >"${EX_PLAIN}"
+}
+
+teardown() {
+  [[ -n "${SANDBOX:-}" && -d "${SANDBOX}" ]] && rm -rf -- "${SANDBOX}"
 }
 
 # Drive code_based_grader_check in a fresh bash with the six caller-scope
@@ -223,38 +241,38 @@ zero_evidence() {
   [[ "${output}" == "verified_pass" ]] || return 1
 }
 
-@test "feature with a test-file path in files: → verified_pass" {
-  grade feature true "done" hook-input "new endpoint" "src/auth.ts, src/auth.test.ts"
+@test "feature with an EXISTING test-file path in files: → verified_pass" {
+  grade feature true "done" hook-input "new endpoint" "${EX_PLAIN}, ${EX_TEST}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "verified_pass" ]]
 }
 
-@test "feature with a .spec. file path → verified_pass" {
-  grade feature true "done" hook-input "new module" "src/login.spec.ts"
+@test "feature with an EXISTING .spec. file path → verified_pass" {
+  grade feature true "done" hook-input "new module" "${EX_SPEC}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "verified_pass" ]]
 }
 
-@test "feature with a .bats test path → verified_pass" {
-  grade feature true "done" hook-input "new hook" "hooks/test/new-hook.test.bats"
+@test "feature with an EXISTING .bats test path → verified_pass" {
+  grade feature true "done" hook-input "new hook" "${EX_BATS}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "verified_pass" ]]
 }
 
 @test "feature with only non-test source files → unverified (not fail)" {
-  grade feature true "done" hook-input "new endpoint" "src/auth.ts, src/router.ts"
+  grade feature true "done" hook-input "new endpoint" "${EX_PLAIN}, ${SANDBOX}/router.ts"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "unverified" ]]
 }
 
 @test "feature: embedded-substring 'latest.ts' does NOT false-promote → unverified" {
-  grade feature true "done" hook-input "new endpoint" "src/latest.ts"
+  grade feature true "done" hook-input "new endpoint" "${SANDBOX}/latest.ts"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "unverified" ]] || return 1
 }
 
-@test "feature: word-bounded 'src/foo.test.ts' still promotes → verified_pass" {
-  grade feature true "done" hook-input "new endpoint" "src/foo.test.ts"
+@test "feature: word-bounded EXISTING 'auth.test.ts' still promotes → verified_pass" {
+  grade feature true "done" hook-input "new endpoint" "${EX_TEST}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "verified_pass" ]] || return 1
 }

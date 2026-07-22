@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) — block dangerous commands
+# PreToolUse(Bash) — dangerous-command heuristic filter, NOT a security boundary.
+# Bar-raising text match only: raises the cost of an obvious mistake, does not confine a determined caller.
+#
+# Known bypass classes (OUT of scope — each defeats a literal text match; extending the list is an unwinnable arms race):
+#   - variable indirection          — X=rm; "$X" -rf /
+#   - aliasing / indirect naming     — a renamed or shadowed binary
+#   - encoding / obfuscation         — base64 -d <<<… | sh
+#   - redirect / inline interpreter  — writes outside the matched forms
+#
+# Confinement belongs to the tool-grant layer, not here. See plan clauded-docs/290 UD-1 (the blanket shell grant makes the config path-allowlists decorative).
+#
+# Constraints:
+#   - Non-reliance (UD-1): nothing in the harness may cite this hook as a capability control, mitigation, or compensating factor. It is a heuristic backstop, never a control.
 set -Eeuo pipefail
 IFS=$'\n\t'
 

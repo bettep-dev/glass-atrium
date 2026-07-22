@@ -50,6 +50,13 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
 
+  # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
+  # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`). The drop
+  # sink shares the same live-path risk: the ceiling-drop tests below force real drops, so redirect it
+  # too (pre-existing gap surfaced by T7) — neither the counter nor the sink may touch live ~/.claude.
+  export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
+  export INJECT_SCOPE_RULES_DROP_LOG="${BATS_TEST_TMPDIR}/inject-drop.log"
+
   # Hermetic NAMING source fixture — the hook's default naming source is the HOME-anchored real
   # SKILL.md (${HOME}/.claude/skills/...), absent in a CI checkout → the naming block would be
   # empty and the positive-injection assertions would falsely fail. Build a self-contained fixture

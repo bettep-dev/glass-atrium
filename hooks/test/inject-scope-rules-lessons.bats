@@ -21,6 +21,10 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
 
+  # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
+  # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
+
   # Hermetic lesson store: dev-shell has 8 CTM (5 score-5, 1 score-4, 1 score-3 to be filtered,
   # 1 tombstoned to be excluded) + 1 EPM; dev-node has an unrelated entry (proves agent scoping).
   LESSON_FIXTURE="${BATS_TEST_TMPDIR}/lessons.json"

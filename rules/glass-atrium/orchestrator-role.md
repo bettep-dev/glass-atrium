@@ -110,7 +110,7 @@ Inserted between the planning phase and the implementation phase: after a glass-
 
 ### Cost-Tier Selection
 
-Assign model tier by task complexity before spawning subagents:
+The table below is a **judgment heuristic** for LLM-led routing — NOT a mechanically-enforced tier-selection mechanism. No tier-selecting code reads a per-agent tier field; that infrastructure is deliberately unbuilt (the observed pin rate showed it was never exercised), so the orchestrator assigns a tier by task complexity as a routing judgment before spawning subagents. The daemon's OWN automation reads its model from configuration (`~/.claude/data/daemon-config.json` via `hooks/daemon_config.py`); when that config is absent it falls back to the session default (an unpinned family alias), never a pinned version.
 
 | Task type | Model tier | Trigger |
 |-----------|-----------|---------|
@@ -183,6 +183,8 @@ Under ultracode (the deterministic Workflow-tool execution path), mechanism and 
 On `result: fail` or `result: blocked`:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (Iron Law: 2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3+ fail across session → suspend agent, report to user).
+
+**Backing honesty (which stages are enforced)**: the first three stages — **Retry**, **Fallback**, **Escalate** — are **honor-system orchestrator discipline**: no hook or code tracks the attempt count or enforces the transition, so the orchestrator applies them behaviorally (do NOT treat them as mechanically enforced). Only the **Circuit-breaker** stage is **code-backed** — `hooks/track-outcome.sh` `circuit_breaker_record` folds each recorded outcome into a per-agent consecutive-fail counter under `~/.claude/data/agent-circuit-breaker/` (a readable signal path a SubagentStart reader can consult; any non-`fail` outcome resets the counter + clears the suspension), writing a `.suspended` marker at the 3-fail threshold.
 
 **Checkpoint resumption**: on partial completion before fail, resume from last successful Phase (reference `progress.md`). Full restart is FORBIDDEN unless explicitly confirmed by user.
 

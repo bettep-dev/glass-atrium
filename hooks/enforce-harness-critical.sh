@@ -16,13 +16,21 @@
 #       is a tampered state: Edit AND Write both block until repaired via a
 #       sanctioned path / launch-env grant.
 #   (d) Write of a NEW agents/*.md — creation routes through the agent_lifecycle CLI.
+#   (e) scheduled-execution surface — ~/.glass-atrium/{autoagent,scripts,skills}/;
+#       launchd runs autoagent/ code unattended, so a plain Edit persists code the
+#       scheduler later executes (LLM06). rules/ + scoped/ are EXCLUDED by design —
+#       hand-edited live and often, so blocking them would train a hook-disable
+#       habit; sanctioned autoagent maintenance reroutes via HARNESS_PROTECTION_APPROVE=1.
+#       PROT_RE mirrors these three dirs for the Bash arm.
 #
 # Bash arm (best-effort, bar-raising ONLY): a >/>> redirect blocks when the > sits
 # at start/after whitespace-or-separator (optional fd digit) AND the protected path
 # is its IMMEDIATE target token — a quoted '>' inside an argument (grep -- '->',
-# awk '$1 > 5') does not present this shape; copy verbs (tee, cp, mv, ln, sed -i)
-# match in COMMAND position, followed — within the same unpiped command segment —
-# by a protected-path literal. DOCUMENTED RESIDUAL (not covered): variable
+# awk '$1 > 5') does not present this shape; copy/permission verbs (tee, cp, mv,
+# ln, chmod, sed -i) match in COMMAND position, followed — within the same unpiped
+# command segment — by a protected-path literal (the harness launchctl-bootstrap
+# plists com.{claude,glass-atrium}.*.plist are protected-path literals too).
+# DOCUMENTED RESIDUAL (not covered): variable
 # indirection (P=...; echo > "$P"), command substitution, quote-split paths,
 # non-command-position verb runs (xargs/find -exec) — the settings deny layer + the
 # Write|Edit arm remain the primary gates. The pure-bash hot-path prefilter (raw
@@ -95,13 +103,21 @@ import sys
 
 IDENTITY_LINE_RE = re.compile(r"^(?:name|tools|scope)[ \t]*:", re.MULTILINE)
 
-# Protected-path literals (best-effort text match — Bash arm).
+# Protected-path literals (best-effort text match — Bash arm). The launchd
+# alternation matches the harness launchctl-bootstrap plists by label
+# (com.claude.* legacy + com.glass-atrium.* live) — the same label form
+# daemon_cycle.py treats as a safety-tier surface; the label itself carries the
+# prefilter literal, so a plist envelope reaches this classifier.
 PROT_RE = re.compile(
     r"\.claude/settings(?:\.local)?\.json"
     r"|\.claude/hooks/"
     r"|\.glass-atrium/hooks/"
     r"|\.claude/agents/"
     r"|\.glass-atrium/agents/"
+    r"|\.glass-atrium/autoagent/"
+    r"|\.glass-atrium/scripts/"
+    r"|\.glass-atrium/skills/"
+    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist"
 )
 
 # Redirect shape: start-or-separator, optional fd digit, > or >>, then the
@@ -109,13 +125,15 @@ PROT_RE = re.compile(
 # (grep -- '->', awk '$1 > 5') never presents this shape.
 REDIR_RE = re.compile(r"(?:^|[\s;&|])\d?>{1,2}[ \t]*(\S+)")
 
-# Copy/mutation verbs in COMMAND position (segment start, optional sudo/env
-# prefix): tee, cp, mv, ln, sed short-flag -i run. The position class carries "("
-# (subshell / command substitution) and \x60 (backtick — spelled as an escape so
-# the enclosing bash heredoc scan never sees a literal backquote).
+# Copy/mutation/permission verbs in COMMAND position (segment start, optional
+# sudo/env prefix): tee, cp, mv, ln, chmod, sed short-flag -i run. chmod covers a
+# mode flip on a protected surface (a mode-644 flip on a live hook silently
+# disarms it). The position class carries "(" (subshell / command substitution)
+# and \x60 (backtick — spelled as an escape so the enclosing bash heredoc scan
+# never sees a literal backquote).
 CMD_VERB_RE = re.compile(
     r"(?:^|[|;&\n(\x60])[ \t]*(?:sudo[ \t]+|env[ \t]+)?"
-    r"(?:tee\b|cp\b|mv\b|ln\b|sed\b[^|;&\n]*\s-[a-zA-Z]*i)"
+    r"(?:tee\b|cp\b|mv\b|ln\b|chmod\b|sed\b[^|;&\n]*\s-[a-zA-Z]*i)"
 )
 
 
@@ -326,6 +344,9 @@ write_edit_arm() {
       ;;
     "${GA_DIR}/hooks/"* | "${CLAUDE_DIR}/hooks/"*)
       block_critical "HAR-001" "live-hooks-dir" "${norm}"
+      ;;
+    "${GA_DIR}/autoagent/"* | "${GA_DIR}/scripts/"* | "${GA_DIR}/skills/"*)
+      block_critical "HAR-001" "scheduled-exec-dir" "${norm}"
       ;;
     *) : ;;
   esac

@@ -201,3 +201,62 @@ seed_manifest_doc() {
   run "${SCRIPT}"
   [[ "${status}" -eq 5 ]]
 }
+
+# T1b — the four executable-suite roots must bundle so the daemon-apply preflight
+# can run the suite from the installed tree; monitor/test must stay out. Seeds one
+# .bats per root (+ a test_*.py under autoagent) and a monitor/test .test.ts decoy —
+# the .test.ts is the trap a blanket (^|/)test/ drop would leak (no pattern catches .ts).
+seed_test_roots() {
+  mkdir -p "${WORK}/test" "${WORK}/hooks/test" "${WORK}/scripts/test" \
+    "${WORK}/autoagent/test" "${WORK}/monitor/test"
+  printf '@test "root" { true; }\n' >"${WORK}/test/root-suite.bats"
+  printf '@test "hooks" { true; }\n' >"${WORK}/hooks/test/hooks-suite.bats"
+  printf '@test "scripts" { true; }\n' >"${WORK}/scripts/test/scripts-suite.bats"
+  printf '@test "auto" { true; }\n' >"${WORK}/autoagent/test/auto-suite.bats"
+  printf 'def test_x():\n    assert True\n' >"${WORK}/autoagent/test/test_thing.py"
+  printf 'it("dash", () => {});\n' >"${WORK}/monitor/test/dash.test.ts"
+  git -C "${WORK}" add -A
+  git -C "${WORK}" commit -qm 'seed test roots'
+}
+
+@test "generate: bundles all four executable-suite roots + their .bats/test_*.py" {
+  seed_test_roots
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]]
+  # Root test/ enters only via the explicit SCOPE_PATHS entry (rides no parent prefix).
+  run jq -e 'any(.files[]; . == "test/root-suite.bats")' "${MANIFEST}"
+  [[ "${status}" -eq 0 ]]
+  # Sub-roots ride hooks/, scripts/, autoagent/ scope; un-excluded once the blanket
+  # test/ + .bats + test_*.py alternations are gone.
+  run jq -e 'any(.files[]; . == "hooks/test/hooks-suite.bats")' "${MANIFEST}"
+  [[ "${status}" -eq 0 ]]
+  run jq -e 'any(.files[]; . == "scripts/test/scripts-suite.bats")' "${MANIFEST}"
+  [[ "${status}" -eq 0 ]]
+  run jq -e 'any(.files[]; . == "autoagent/test/auto-suite.bats")' "${MANIFEST}"
+  [[ "${status}" -eq 0 ]]
+  run jq -e 'any(.files[]; . == "autoagent/test/test_thing.py")' "${MANIFEST}"
+  [[ "${status}" -eq 0 ]]
+}
+
+@test "generate: monitor/test .test.ts stays excluded (surgical carve-out, not blanket)" {
+  seed_test_roots
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]]
+  # The named decoy is absent, and no .test.ts leaks anywhere — the surgical
+  # monitor/test carve-out holds where a blanket test/ drop would fail.
+  run jq -e 'any(.files[]; . == "monitor/test/dash.test.ts")' "${MANIFEST}"
+  [[ "${status}" -ne 0 ]]
+  run jq -e 'any(.files[]; endswith(".test.ts"))' "${MANIFEST}"
+  [[ "${status}" -ne 0 ]]
+}
+
+@test "generate: every tracked .bats under the four roots is bundled (count parity)" {
+  seed_test_roots
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]]
+  local tracked bundled
+  tracked="$(git -C "${WORK}" ls-files -- test hooks/test scripts/test autoagent/test | grep -c '\.bats$')"
+  bundled="$(jq -r '.files[] | select(endswith(".bats"))' "${MANIFEST}" | grep -c '\.bats$')"
+  [[ "${tracked}" -gt 0 ]]
+  [[ "${bundled}" -eq "${tracked}" ]]
+}

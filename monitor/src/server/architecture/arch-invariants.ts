@@ -43,7 +43,7 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 	skills: 15,
 	uniqueHookBasename: 51,
 	hooks: {
-		PreToolUse: 24,
+		PreToolUse: 26,
 		PostToolUse: 8,
 		SessionStart: 4,
 		SubagentStart: 3,

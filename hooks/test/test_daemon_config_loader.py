@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -49,6 +50,11 @@ if str(_HOOKS_ROOT) not in sys.path:
 import daemon_config as dc  # noqa: E402 — sys.path insert immediately above
 
 _CONTRACT_KEYS = ("haiku_max_budget_usd", "pre_verify_max_budget_usd", "haiku_model")
+
+# A pinned/dated model version, e.g. claude-haiku-4-5 — the shape T13 bars from the
+# automation module (the daemon reads its model from config; the absent-config
+# fallback is an unpinned family alias, never a dated pin).
+_PINNED_MODEL = re.compile(r"claude-[a-z]+-\d")
 
 
 def _write_config(payload: object) -> Path:
@@ -184,6 +190,67 @@ class ConsumerBindingTest(unittest.TestCase):
         for value in (dc.HAIKU_MAX_BUDGET_USD, dc.PRE_VERIFY_MAX_BUDGET_USD, dc.HAIKU_MODEL):
             self.assertIsInstance(value, str)
             self.assertTrue(value)
+
+
+class ModelTierDescopeTest(unittest.TestCase):
+    """T13 — honest de-scope of the daemon model constant.
+
+    AC2: the automation module holds no pinned/dated model version — the model is
+    read from configuration (``load_daemon_config`` → ``haiku_model``).
+    AC3: an absent config falls back to the unpinned session default (a family
+    alias), never a dated version pin.
+    """
+
+    def test_source_holds_no_pinned_model_version(self) -> None:
+        # AC2 grep: the constant's absence — no dated claude-<family>-<n> pin in
+        # the automation module (the fallback is now a family alias).
+        src = Path(dc.__file__).read_text(encoding="utf-8")
+        self.assertIsNone(
+            _PINNED_MODEL.search(src),
+            "daemon_config.py must not hardcode a dated model version — read from config",
+        )
+
+    def test_absent_config_falls_back_to_session_default_not_pinned(self) -> None:
+        # AC3: missing config → the session-default family alias, not a dated pin.
+        missing = Path(tempfile.mkdtemp()) / "does-not-exist.json"
+        model = dc.load_daemon_config(path=missing)["haiku_model"]
+        self.assertNotRegex(model, r"\d", "fallback must not be a dated version pin")
+        self.assertIn(
+            model, {"haiku", "sonnet", "opus"}, "fallback must be an unpinned family alias"
+        )
+
+    def test_config_present_model_is_honored(self) -> None:
+        # The config lookup still wins when present — the daemon reads from config.
+        path = _write_config(
+            {
+                "haiku_max_budget_usd": "0.50",
+                "pre_verify_max_budget_usd": "0.50",
+                "haiku_model": "claude-haiku-4-5",
+            }
+        )
+        self.assertEqual(dc.load_daemon_config(path=path)["haiku_model"], "claude-haiku-4-5")
+
+
+class CostTierRuleTextTest(unittest.TestCase):
+    """T13 AC1 — the Cost-Tier rule text is labeled a judgment heuristic and cites
+    the daemon's configuration-read mechanism."""
+
+    _RULE_PATH = _HOOKS_ROOT.parent / "rules" / "glass-atrium" / "orchestrator-role.md"
+
+    @unittest.skipUnless(_RULE_PATH.exists(), "orchestrator-role.md not present in this tree")
+    def test_cost_tier_section_labeled_heuristic_and_cites_mechanism(self) -> None:
+        rule = self._RULE_PATH.read_text(encoding="utf-8")
+        self.assertIn("### Cost-Tier Selection", rule)
+        section = rule.split("### Cost-Tier Selection", 1)[1].split("###", 1)[0]
+        self.assertIn(
+            "judgment heuristic", section, "table must be labeled a judgment heuristic"
+        )
+        self.assertIn(
+            "daemon_config.py", section, "must cite the daemon config-read mechanism"
+        )
+        self.assertIn(
+            "session default", section, "must state the unpinned session-default fallback"
+        )
 
 
 if __name__ == "__main__":

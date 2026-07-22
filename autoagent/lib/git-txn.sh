@@ -10,7 +10,8 @@
 #   git_txn_apply  — run one before-image -> apply -> verify -> (leave | restore)
 #                    transaction, reporting the structured outcome in GIT_TXN_RC.
 #   GIT_TXN_OK / GIT_TXN_BACKUP_CAPTURE_FAIL / GIT_TXN_APPLY_REGEN /
-#   GIT_TXN_APPLY_FAIL / GIT_TXN_VERIFY_FAIL — the GIT_TXN_RC outcome constants.
+#   GIT_TXN_APPLY_FAIL / GIT_TXN_VERIFY_FAIL / GIT_TXN_RESTORE_FAIL — the
+#   GIT_TXN_RC outcome constants.
 #
 # WHY this is git-free (the linchpin refactor): the transaction no longer relies
 # on a git worktree. Instead of a WIP snapshot commit + soft-reset/checkout
@@ -68,11 +69,9 @@ if [[ -n "${_GIT_TXN_SH_LOADED:-}" ]]; then
 fi
 readonly _GIT_TXN_SH_LOADED=1
 
-# GIT_TXN_RC outcome codes. The values 10-13 deliberately match daemon-apply.sh's
+# GIT_TXN_RC outcome codes. The values 10-14 deliberately match daemon-apply.sh's
 # documented exit-code namespace style so the structured outcome reads
-# consistently with the daemon's own codes; 0 == success. The value 14
-# (formerly COMMIT_FAIL) is retired: this transaction never commits, so there is
-# no apply-commit outcome to report.
+# consistently with the daemon's own codes; 0 == success.
 readonly GIT_TXN_OK=0
 # Before-image capture failed (backup dir uncreatable, source unreadable, or the
 # captured copy failed its post-write existence/readability check). Hard
@@ -83,9 +82,15 @@ readonly GIT_TXN_APPLY_REGEN=11
 # apply callback returned non-0/non-3 (malformed, no bytes written), OR the diff
 # spanned more than one file (rejected by the single-file scope guard).
 readonly GIT_TXN_APPLY_FAIL=12
-# verify callback failed; the target is restored from the before-image via the
-# atomic sibling-temp + rename swap.
+# verify callback failed AND the atomic restore SUCCEEDED — the target is back to
+# its pristine pre-apply bytes via the sibling-temp + rename swap.
 readonly GIT_TXN_VERIFY_FAIL=13
+# verify callback failed AND the atomic restore ALSO failed — the target may still
+# hold the applied bytes (unrecovered in place). Distinct from GIT_TXN_VERIFY_FAIL
+# so the RC value itself discriminates restore-succeeded from restore-failed on a
+# verify failure, and the caller can route this escalated outcome; the before-image
+# stays in the backup dir as the recovery anchor.
+readonly GIT_TXN_RESTORE_FAIL=14
 
 # _git_txn_valid_callback — assert an injected callback name is a defined function.
 # Guards against an old-signature call site whose positional shape shifts a
@@ -312,15 +317,24 @@ git_txn_apply() {
   fi
 
   # -- Verify. On failure the apply DID write bytes, so atomically restore the
-  #    target from the before-image (sibling temp + rename). Restore is best-
-  #    effort + LOUD: a failed restore leaves the persistent agents-bak before-
-  #    image as the recovery source (P3-T5 post-hoc restore).
+  #    target from the before-image (sibling temp + rename). The restore rc is
+  #    CAPTURED, not swallowed: a SUCCEEDED restore reports GIT_TXN_VERIFY_FAIL
+  #    (target pristine), a FAILED restore reports the distinct GIT_TXN_RESTORE_FAIL
+  #    (target may still hold applied bytes) — the RC value itself discriminates the
+  #    two so the caller can route the escalated outcome. Either way the persistent
+  #    agents-bak before-image stays as the recovery anchor; a failed restore is
+  #    LOUD via _git_txn_restore's own stderr line.
   # shellcheck disable=SC2310
   #   Invoked in an `if !` so set -e is intentionally suppressed — a failed
   #   verify is the expected branch that triggers the restore below.
   if ! "${verify_fn}" "${target}"; then
-    _git_txn_restore "${real_target}" "${before_image}" "${install_root}" || true
-    GIT_TXN_RC="${GIT_TXN_VERIFY_FAIL}"
+    local restore_rc=0
+    _git_txn_restore "${real_target}" "${before_image}" "${install_root}" || restore_rc=$?
+    if [[ "${restore_rc}" -ne 0 ]]; then
+      GIT_TXN_RC="${GIT_TXN_RESTORE_FAIL}"
+    else
+      GIT_TXN_RC="${GIT_TXN_VERIFY_FAIL}"
+    fi
     return 0
   fi
 
