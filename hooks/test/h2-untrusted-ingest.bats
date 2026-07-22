@@ -142,6 +142,33 @@ bytelen() { wc -c | tr -cd '0-9'; }
   [[ "${output}" == *"SCOPE-001"* ]] || { echo "expected SCOPE-001 (V1) block: ${output}" >&2; return 1; }
 }
 
+# ---- V4 locale portability (Linux CI parity) ---------------------------------------------------
+# The V4 Korean-heading grep must be locale-independent: a [가-힣] collation range makes GNU grep
+# leak "Invalid collation character" on stderr under the runner locale (and silently disables the
+# detection). Both polarities are pinned under a forced C locale.
+
+# Permit polarity: zero output (no collation stderr leak) under LC_ALL=C.
+@test "R5/V4: conforming non-Korean write under LC_ALL=C → exit 0, zero output (no stderr leak)" {
+  local body content
+  body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'English-only preserved content.' \
+    '<!-- /UNTRUSTED-SOURCE -->')"
+  content="$(raw_doc "${body}")"
+  run env LC_ALL=C LANG=C bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0, got ${status}: ${output}" >&2; return 1; }
+  [[ -z "${output}" ]] || { echo "expected zero output under LC_ALL=C: ${output}" >&2; return 1; }
+}
+
+# Detect polarity: the Korean-heading detection still FIRES under LC_ALL=C.
+@test "R5/V4: Korean heading in body under LC_ALL=C → blocked, SCOPE-004 (detection preserved)" {
+  local body content
+  body="$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' '## 한국어 섹션 제목' 'content' \
+    '<!-- /UNTRUSTED-SOURCE -->')"
+  content="$(raw_doc "${body}")"
+  run env LC_ALL=C LANG=C bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-004"* ]] || { echo "expected SCOPE-004 (V4) block: ${output}" >&2; return 1; }
+}
+
 # Non-raw path is untouched (regression baseline for the trigger gate).
 @test "R5: non-raw path → exit 0, silent" {
   local payload; payload="$(jq -nc '{tool_name:"Write", tool_input:{file_path:"/tmp/notes/x.md", content:"hi"}}')"

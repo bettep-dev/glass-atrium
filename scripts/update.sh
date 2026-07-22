@@ -2399,9 +2399,19 @@ update_finalize_merge_and_anchors() {
 # a scratch-dir copy, not a landing surface — out of scope here.)
 
 # Echo the octal permission mode of a single file — BSD stat (macOS) first,
-# GNU coreutils fallback (Linux CI parity).
+# GNU coreutils fallback (Linux CI parity). Exit codes cannot select the form:
+# GNU `stat -f` is FILESYSTEM status and EXITS 0 printing garbage ("?p") for
+# '%Lp', so each probe's OUTPUT is validated; both probes invalid is a loud
+# failure (never a silent empty that explodes downstream in $((8#...)) math).
 update_file_mode_octal() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  local m
+  m="$(stat -f '%Lp' "$1" 2>/dev/null || true)"
+  if [[ ! "${m}" =~ ^[0-7]{3,4}$ ]]; then
+    m="$(stat -c '%a' "$1" 2>/dev/null || true)"
+  fi
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] \
+    || update_die "cannot read a valid octal mode for $1 (BSD/GNU stat probes both invalid)"
+  printf '%s\n' "${m}"
 }
 
 update_enforce_manifest_modes() {

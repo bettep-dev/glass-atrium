@@ -31,8 +31,14 @@ bats_require_minimum_version 1.5.0
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
+# Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
+# '%Lp'), so the exit code alone cannot select the right form.
 mode_of() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  local m
+  m="$(stat -f '%Lp' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || m="$(stat -c '%a' "$1" 2>/dev/null || true)"
+  [[ "${m}" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "${m}"
 }
 
 setup() {
@@ -230,6 +236,38 @@ DRV
   [ "$(mode_of "${root}/hooks/u.sh")" = "755" ] || return 1
   run -0 "${root}/hooks/u.sh" # direct-command execution proof
   [ "${output}" = "u-ok" ] || return 1
+}
+
+@test "update: update_file_mode_octal survives the GNU stat -f trap (PATH shim)" {
+  # GNU-like stat shim: -f = FILESYSTEM status → exit 0 with "?p" garbage for
+  # '%Lp' (the trap: an exit-code-only || fallback never fires); -c '%a' = a
+  # valid file mode. Pins the probe-with-validation contract on macOS runners.
+  make_update_driver
+  local shim="${SANDBOX}/shim" target="${SANDBOX}/probe-target"
+  mkdir -p "${shim}"
+  printf 'x\n' >"${target}"
+  cat >"${shim}/stat" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  -f) printf '?p\n'; exit 0 ;;
+  -c) printf '750\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+SHIM
+  chmod 755 "${shim}/stat"
+  run -0 env PATH="${shim}:${PATH}" "${DRIVER}" update_file_mode_octal "${target}"
+  [ "${output}" = "750" ] || return 1
+}
+
+@test "update: update_file_mode_octal loud-fails when both stat probes are invalid" {
+  make_update_driver
+  local shim="${SANDBOX}/shim-bad" target="${SANDBOX}/probe-target-bad"
+  mkdir -p "${shim}"
+  printf 'x\n' >"${target}"
+  printf '#!/usr/bin/env bash\nprintf "garbage\\n"\nexit 0\n' >"${shim}/stat"
+  chmod 755 "${shim}/stat"
+  run -1 env PATH="${shim}:${PATH}" "${DRIVER}" update_file_mode_octal "${target}"
+  [[ "${output}" == *"cannot read a valid octal mode"* ]] || return 1
 }
 
 @test "update: modes-less manifest notices once and returns 0" {
