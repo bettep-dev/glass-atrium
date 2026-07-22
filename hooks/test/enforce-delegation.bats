@@ -135,3 +135,63 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
   run_with_no_python3 '{}'
   [[ "${status}" -eq 0 ]]
 }
+
+# T4: fail-closed on an UNRECOGNIZED tool_input envelope (host schema drift).
+# The value-only extractor collapsed a legitimately-empty field AND a drifted envelope
+# (renamed / dropped / non-object tool_input) into a shared empty → the gate read
+# empty=ALLOW and disarmed silently + permanently. T4 consumes T3's three-state probe:
+# legit-empty keeps today's allow; a real drift emits a distinctly-coded (DEL-003),
+# aggregation-visible error and STILL allows (ADR-2 emit-and-allow, not block). These
+# rows REQUIRE python3 (the probe classifier) — without it hook_require_python3_unless_empty
+# blocks non-empty input at exit 2 upstream, so a drift envelope never reaches the probe.
+
+# Drive the hook with a RAW JSON envelope (renamed keys, non-object, malformed …), merging
+# stderr into $output so the emit_error JSON (DEL-003 / DEL-001) is assertable. Multi-assertion
+# rows gate via `|| return 1` per line so a mid-body failure fails the test (bats runs no set -e,
+# so only the FINAL command would otherwise gate). Args: $1 = raw JSON stdin.
+run_raw_envelope() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required for envelope classification"
+  # SC2016: inner $1/$2 are the child bash's OWN positionals — no expansion here.
+  # shellcheck disable=SC2016
+  run bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${1}" "${HOOK_SH}"
+}
+
+@test "T4 AC2 drift (tool_input renamed) → DEL-003 error + exit 0 (loud, not silent disarm)" {
+  # A host field rename tool_input → toolInput. The old gate extracted empty and ALLOWed
+  # silently (permanently disarmed); now the drift is loud (DEL-003) yet still allows (ADR-2).
+  run_raw_envelope '{"tool_name":"Write","toolInput":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"DEL-003"* ]] || return 1
+}
+
+@test "T4 AC2 drift (tool_input non-object) → DEL-003 error + exit 0" {
+  run_raw_envelope '{"tool_input":"a string, not an object"}'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"DEL-003"* ]] || return 1
+}
+
+@test "T4 AC2 drift (malformed JSON) → DEL-003 error + exit 0" {
+  run_raw_envelope '{not valid json'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"DEL-003"* ]] || return 1
+}
+
+@test "T4 distinctness: legitimately-empty field → silent allow (exit 0, NO DEL-003)" {
+  # tool_input is an object, file_path absent → keep today's allow WITHOUT the drift error.
+  run_raw_envelope '{"tool_input":{"other":"x"}}'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"DEL-003"* ]] || return 1
+}
+
+@test "T4 degenerate empty object '{}' (python3 present) → silent allow (nothing to guard, no drift)" {
+  # "{}" is the input-empty carve-out (nothing to guard), NOT a drift → no DEL-003 noise.
+  run_raw_envelope '{}'
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"DEL-003"* ]] || return 1
+}
+
+@test "T4 AC3 well-formed blocked path → exit 2 with DEL-001 (drift path did not cannibalize the block)" {
+  run_raw_envelope '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"DEL-001"* ]] || return 1
+}
