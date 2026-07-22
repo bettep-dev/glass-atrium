@@ -169,7 +169,14 @@ readonly INJECT_CTX_MAX_BYTES=9984
 # under a HOME-relative logs dir (the Bats HOME override redirects it clear of the real
 # ~/.claude/logs). `glass-atrium doctor` (§10) surfaces the count. Env-overridable for the Bats sandbox.
 readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOME}/.claude/logs/inject-scope-rules.diag.log}"
-readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
+readonly INJECT_DROP_LOG_MAX_BYTES=1048576 # 1 MiB soft cap → truncate-on-exceed
+
+# Injection-attempted spawn counter — the DENOMINATOR of the drop-rate aggregation (rate = drops /
+# spawns-with-injection-attempted). A SEPARATE artifact from the drop sink so a no-drop spawn writes
+# NO drop record yet the denominator still advances; the drop sink stays numerator-only. A monotonic
+# integer (not an append log), so it never grows in size and never needs rotation. Env-overridable
+# for the Bats sandbox. An absent counter reads as 0 (first run), NOT as missing data.
+readonly INJECT_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER:-${HOME}/.claude/logs/inject-scope-rules.spawns.count}"
 
 # Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3
 # maxTurns budget (glass-atrium-sec-guard's maxTurns:3 → ceiling 2) is a self-contradictory "stop
@@ -177,6 +184,36 @@ readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exc
 # ceiling mechanic (Turn Budget & Graceful Exit → Exempt). Requiring maxTurns >= 4 keeps the meter
 # meaningful (ceiling >= 3, a real gap) and leaves the sec-guard spawn context meter-free.
 readonly METER_MIN_MAX_TURNS=4
+
+# Named aggregation query over the drop sink — reports the block-drop count (numerator, from the drop
+# sink) against spawns-with-injection-attempted (denominator, from the spawn counter) plus the drop
+# rate. Read-only: never writes, never touches injected content. Absent sink OR absent counter reads
+# as 0 (a first run is 0 drops over 0 attempts → rate 0), NOT missing data. jq-free (awk/grep/tr only),
+# so it works even where the injection path would fail-open on absent jq.
+aggregate_drop_rate() {
+  local drops=0 attempts=0 rate="0"
+  if [[ -f "${INJECT_DROP_LOG}" ]]; then
+    # grep -c prints "0" AND exits 1 on zero matches — capture with `|| true`, never `|| echo 0`
+    # (the latter yields "0\n0"); the empty-guard then covers a read error.
+    drops="$(grep -c ' DROP ' "${INJECT_DROP_LOG}" 2>/dev/null || true)"
+    [[ -z "${drops}" ]] && drops=0
+  fi
+  if [[ -f "${INJECT_SPAWN_COUNTER}" ]]; then
+    attempts="$(tr -cd '0-9' <"${INJECT_SPAWN_COUNTER}" 2>/dev/null || true)"
+    [[ -z "${attempts}" ]] && attempts=0
+  fi
+  # awk float division; denominator 0 → rate 0 (absent sink counts as 0, not missing data).
+  rate="$(awk -v n="${drops}" -v d="${attempts}" 'BEGIN { if (d > 0) printf "%.4f", n / d; else printf "0" }' 2>/dev/null || printf '0')"
+  printf 'inject-scope-rules drop-rate: drops=%s injection_attempted=%s drop_rate=%s\n' "${drops}" "${attempts}" "${rate}"
+}
+
+# Operator/doctor aggregation-query mode — dispatched BEFORE reading the SubagentStart envelope so
+# `inject-scope-rules.sh --drop-rate` never blocks on hook_read_input's cat. The hook path is invoked
+# with NO args, so ${1:-} is empty and this is skipped there.
+if [[ "${1:-}" == "--drop-rate" ]]; then
+  aggregate_drop_rate
+  exit 0
+fi
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -335,18 +372,40 @@ build_lesson_block() {
 # INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=pre-drop byte
 # size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size).
 append_drop_log() {
-  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts=""
+  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
-    sz="$(wc -c < "${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
+    sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_DROP_LOG_MAX_BYTES}" ]]; then
       rm -f "${INJECT_DROP_LOG}" 2>/dev/null || true
     fi
   fi
+  # Byte overage = how far the pre-drop assembly exceeded the ceiling (the record names it explicitly,
+  # not only the raw sizes). Sanitize pre_drop_bytes to digits first so a non-numeric arg can never
+  # trip the arithmetic → the fail-open ERR trap → a spawn-suppressing exit.
+  pdb="$(printf '%s' "${pre_drop_bytes}" | tr -cd '0-9')"
+  [[ -z "${pdb}" ]] && pdb=0
+  overage=$((10#${pdb} - INJECT_CTX_MAX_BYTES))
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s\n' \
-    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" \
+  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s\n' \
+    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" \
     >>"${INJECT_DROP_LOG}" 2>/dev/null || true
+  return 0
+}
+
+# Increment the injection-attempted spawn counter — the drop-rate DENOMINATOR. Separate from the drop
+# sink so a no-drop spawn advances the denominator WITHOUT writing a drop record. Fail-open on every
+# statement (a counter glitch must never break the spawn nor alter injected content — AC4). Read-
+# modify-write races are acceptable for an approximate observability rate (drops are rare).
+increment_spawn_attempts() {
+  local dir="${INJECT_SPAWN_COUNTER%/*}" cur="" next=0
+  mkdir -p "${dir}" 2>/dev/null || return 0
+  if [[ -f "${INJECT_SPAWN_COUNTER}" ]]; then
+    cur="$(tr -cd '0-9' <"${INJECT_SPAWN_COUNTER}" 2>/dev/null || true)"
+  fi
+  [[ -z "${cur}" ]] && cur=0
+  next=$((10#${cur} + 1))
+  printf '%s\n' "${next}" >"${INJECT_SPAWN_COUNTER}" 2>/dev/null || return 0
   return 0
 }
 
@@ -494,6 +553,10 @@ if [[ -z "${CTX}" ]]; then
   printf '[inject-scope-rules] no injectable block available; skipping injection (agent=%s)\n' "${AGENT_TYPE}" >&2
   exit 0
 fi
+
+# Injection is attempted (non-empty CTX proceeding to emit) → advance the drop-rate denominator. Placed
+# AFTER the empty-CTX skip so a no-inject spawn does not count. Fail-open (never alters CTX / the exit).
+increment_spawn_attempts
 
 # Assemble JSON — jq --arg escapes the combined context. additionalContext = the child injection point.
 OUTPUT_JSON=""

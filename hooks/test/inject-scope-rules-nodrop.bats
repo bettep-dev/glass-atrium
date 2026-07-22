@@ -77,6 +77,10 @@ setup() {
   [[ -f "${NAMING_SRC}" ]] || skip "real naming source missing: ${NAMING_SRC}"
   [[ -f "${BUDGET_SRC}" ]] || skip "real turn-budget source missing: ${BUDGET_SRC}"
   [[ -d "${AGENTS_DIR}" ]] || skip "real agents dir missing: ${AGENTS_DIR}"
+
+  # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
+  # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
 }
 
 # Drive the hook with a SubagentStart envelope for $1, assembling from the REAL repo sources with the
