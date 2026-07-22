@@ -19,7 +19,20 @@
     "  blocks agent_id-INDEPENDENT writes to live settings.json/settings.local.json, live hook dirs, and",
     "  agents/*.md frontmatter identity keys {name, tools, scope} (model excluded; new agents/*.md Write",
     "  blocked — creation routes through the agent_lifecycle CLI). Grant: HARNESS_PROTECTION_APPROVE=1 in",
-    "  the LAUNCH environment only (an in-session export never reaches the hook env)."
+    "  the LAUNCH environment only (an in-session export never reaches the hook env).",
+    "INTERPRETER NEGATIONS (T21): the deny rows Bash(bash -c:*) / Bash(sh -c:*) / Bash(zsh -c:*) /",
+    "  Bash(eval:*) close a command-prefix-matcher BYPASS — an inline shell re-parse (bash -c 'rm -rf ~')",
+    "  would otherwise smuggle a denied verb past Bash(rm:*), whose match anchors on the LEADING token only.",
+    "  These forms ARE expressible as command-prefix matchers (leading-token anchored) and have no",
+    "  legitimate agent use — an agent runs commands through the Bash tool directly, never wrapped.",
+    "  RESIDUAL (deliberately NOT denied): a LANGUAGE-interpreter inline form (python3 -c, node -e, perl -e)",
+    "  is an equivalent bypass vector but collides with legitimate portability use (e.g. python3 -c date",
+    "  math on BSD/GNU divergence), so it stays for the block-dangerous-commands.sh + enforce-harness-",
+    "  critical.sh backstops rather than a blanket permission-layer deny.",
+    "REDIRECT INEXPRESSIBILITY (T21): 'a redirect INTO a harness path' (echo x > ~/.claude/hooks/y) is",
+    "  INEXPRESSIBLE as a Bash(<prefix>:*) deny — the > operator and its path target appear anywhere in the",
+    "  command, not as a leading prefix the matcher anchors on. That pattern therefore lives ONLY in",
+    "  enforce-harness-critical.sh's redirect regex (DETECT_PY REDIR_RE + PROT_RE), never here."
   ],
   "hooks": {
     "PreToolUse": [
@@ -59,7 +72,11 @@
     ],
     "deny": [
       "Bash(rm:*)",
-      "Bash(rm -rf:*)"
+      "Bash(rm -rf:*)",
+      "Bash(bash -c:*)",
+      "Bash(sh -c:*)",
+      "Bash(zsh -c:*)",
+      "Bash(eval:*)"
     ]
   },
   "live_verify": [
