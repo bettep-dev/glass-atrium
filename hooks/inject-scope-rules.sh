@@ -99,13 +99,24 @@ readonly WIKI_UNTRUSTED_SRC_FILE="${INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC:-${HOM
 # this <1s hook is impractical, so the store is a local JSON file the aggregator maintains.
 readonly LESSON_SRC_FILE="${INJECT_SCOPE_RULES_LESSONS_SRC:-${HOOK_DATA_DIR}/lessons.json}"
 # Hard per-block byte cap — the lesson block is the LOWEST-priority (first-dropped) block, so
-# it must stay small; this bounds it independent of the assembly ceiling. Lessons are English
-# (Outcome-record language invariant), so a byte truncation cannot split a multibyte char.
+# it must stay small; this bounds it independent of the assembly ceiling. Enforced via
+# truncate_bytes_utf8_safe (NOT a raw head -c): lesson text carries multibyte chars (U+00B7
+# header · em-dash / arrow bodies), so a byte cut must never split a codepoint.
 readonly LESSON_MAX_BYTES=1200
 # top-K CTM lessons + top-K EPM warnings per matched agent (AD-3: 3-5 range).
 readonly LESSON_TOP_K=5
 # CTM injectability floor — mirrors the aggregator CTM_MIN_SCORE / core-learning-log.md score>=4.
 readonly LESSON_MIN_SCORE=4
+# Min residual (bytes) below which a ceiling-pressed lesson is FULL-dropped instead of truncate-kept.
+# Empirically (build_lesson_block): the block header is 84B and the "Apply (worked before):\n- [tag] "
+# bullet prefix adds 36B (120B before any lesson TEXT), so a 150B floor guarantees a truncate-keep
+# preserves the header PLUS at least one WHOLE CTM line (~30B of first-line text). A sub-floor residual
+# would keep only a contentless/partial header, so it full-drops instead (correct for the heaviest DEV
+# agents; lighter agents keep a real truncated lesson).
+readonly LESSON_MIN_RESIDUAL_BYTES=150
+# join_block appends the lesson to the assembled base with a 2-byte "\n\n" separator; the residual
+# available for lesson TEXT is the full-ceiling headroom minus this separator.
+readonly LESSON_JOIN_SEP_BYTES=2
 
 # Comment-logging AGENT-INJECT block boundaries — literal anchors (stable across file edits).
 readonly MARKER_START='<!-- AGENT-INJECT:START -->'
@@ -217,7 +228,7 @@ readonly INJECT_MARKER_RESERVE=256
 # under HOOK_LOG_DIR = ~/.glass-atrium/logs (the Bats HOME override redirects it clear of the real
 # logs). `glass-atrium doctor` (§10) surfaces the count. Env-overridable for the Bats sandbox.
 readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOOK_LOG_DIR}/inject-scope-rules.diag.log}"
-readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
+readonly INJECT_DROP_LOG_MAX_BYTES=1048576 # 1 MiB soft cap → truncate-on-exceed
 
 # Injection-attempted spawn counter — the DENOMINATOR of the drop-rate aggregation (rate = drops /
 # spawns-with-injection-attempted). A SEPARATE artifact from the drop sink so a no-drop spawn writes
@@ -367,6 +378,47 @@ byte_len() {
   printf '%s' "${1}" | wc -c | tr -cd '0-9'
 }
 
+# Byte-truncate a string to at most N bytes, then strip any trailing INCOMPLETE UTF-8 sequence so the
+# result is ALWAYS valid UTF-8. BOUNDARY-SAFE rationale (do NOT assume "English → head -c is safe"):
+# the lesson header carries U+00B7 (·) and lesson bodies carry em-dash / arrow multibyte chars, so a
+# raw `head -c N` can split a codepoint mid-sequence → invalid UTF-8. That invalid tail then breaks the
+# downstream `jq -nc --arg ctx` in a jq-version-dependent way — a strict jq REJECTS it → empty
+# OUTPUT_JSON → the fail-open path skips the ENTIRE injection (every block lost, not just the lesson) —
+# while a lenient jq (1.7.x-apple) SUBSTITUTES the split byte with U+FFFD, injecting a corrupted lesson.
+# Both outcomes are wrong, so truncation must never split a codepoint. Algorithm: head -c to the byte
+# cap, then inspect the final up-to-4 bytes (max UTF-8 sequence length): walk back to the sequence lead
+# byte and, when the trailing bytes are fewer than the lead's declared length, drop that partial tail.
+# Args: $1=string $2=max bytes · stdout: a valid-UTF-8 truncation (<= $2 bytes).
+truncate_bytes_utf8_safe() {
+  local s="${1}" max="${2}" out out_bytes strip keep
+  out="$(printf '%s' "${s}" | head -c "${max}")"
+  out_bytes="$(byte_len "${out}")"
+  [[ "${out_bytes}" -eq 0 ]] && return 0
+  # od → decimal byte values of the last <=4 bytes; awk finds the final sequence's lead byte and
+  # reports how many trailing bytes to drop (0 when the final sequence is complete).
+  strip="$(printf '%s' "${out}" | tail -c 4 | od -An -tu1 | tr -s ' ' '\n' | grep -E '^[0-9]+$' | awk '
+    { b[NR] = $1 }
+    END {
+      n = NR
+      if (n == 0) { print 0; exit }
+      cont = 0; i = n
+      while (i >= 1 && b[i] >= 128 && b[i] <= 191) { cont++; i-- }
+      if (i < 1) { print 0; exit }
+      lead = b[i]
+      if (lead < 128) len = 1
+      else if (lead >= 240) len = 4
+      else if (lead >= 224) len = 3
+      else if (lead >= 192) len = 2
+      else len = 1
+      seqlen = cont + 1
+      if (seqlen < len) print seqlen; else print 0
+    }')"
+  [[ -z "${strip}" ]] && strip=0
+  keep=$((out_bytes - strip))
+  [[ "${keep}" -lt 0 ]] && keep=0
+  printf '%s' "${out}" | head -c "${keep}"
+}
+
 # AD-3: build the spawn-time lesson-recall block (Reflexion / LangMem procedural memory).
 # Selects the current AGENT_TYPE's top-K CTM lessons (score >= LESSON_MIN_SCORE, live) +
 # top-K EPM warnings (live) from the lesson store, sorted by score then frequency, formatted
@@ -405,12 +457,15 @@ build_lesson_block() {
     body="$(printf '%s\nAvoid (failed before):\n%s' "${body}" "${epm}")"
   fi
 
-  # Hard byte cap — the block is the first-dropped candidate but this bounds its size at the
-  # source too. head -c is byte-safe here (lessons are English per the Outcome-record invariant).
+  # Hard byte cap — the block is the first-dropped candidate but this bounds its size at the source
+  # too. UTF-8-boundary-safe: the header (U+00B7 ·) and bodies (em-dash / arrow) are multibyte, so a
+  # raw head -c could split a codepoint → invalid UTF-8 → downstream jq rejection (or a U+FFFD
+  # substitution on lenient jq) → whole-injection fail-open or a corrupted lesson; truncate_bytes_
+  # utf8_safe strips any partial trailing sequence.
   local body_bytes
   body_bytes="$(byte_len "${body}")"
   if [[ "${body_bytes}" -gt "${LESSON_MAX_BYTES}" ]]; then
-    body="$(printf '%s' "${body}" | head -c "${LESSON_MAX_BYTES}")"
+    body="$(truncate_bytes_utf8_safe "${body}" "${LESSON_MAX_BYTES}")"
   fi
   printf '%s' "${body}"
 }
@@ -667,26 +722,56 @@ marker_entries=""
 shed_count=0
 for drop_block in wiki-untrusted lesson budget-analysis budget-dev naming styleref minimalism comment; do
   [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
-  # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
-  # the block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would
-  # under-report the size that actually breached the ceiling.
-  pre_drop_bytes="${ctx_bytes}"
-  # T16 conditional reserve: the FIRST shed lowers the ceiling ONCE (a marker exists only once a shed
-  # occurred, so an under-full-ceiling spawn never reserves and grows no marker). The reserve is a
-  # nonzero constant, so "still at the full ceiling" is the derivable "not yet lowered" guard →
-  # lowers at most once per invocation.
-  if [[ "${effective_ceiling}" -eq "${INJECT_CTX_MAX_BYTES}" ]]; then
-    effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
-    printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
+
+  # AD-3 lesson TRUNCATE-AND-KEEP short-circuit (attempted BEFORE the full-drop path). The 1200B-
+  # capped lesson is the CTM/EPM recall signal — fully dropping it on every near-ceiling DEV spawn
+  # loses the whole signal, so keep a truncated slice when one whole CTM line still fits. Residual =
+  # the room left for the lesson TEXT measured against the FULL ceiling (never effective_ceiling — a
+  # marker reserve must not also shrink the lesson's own budget) minus the join separator. residual
+  # >= floor → keep a UTF-8-boundary-safe truncation (guaranteed >=1 whole CTM line) and BREAK WITHOUT
+  # lowering the ceiling / recording a shed / writing a drop-log, so shed_count stays 0 and no drop
+  # marker is emitted. Only a sub-floor residual falls through to the normal full-drop path below.
+  if [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" ]]; then
+    lesson_base_ctx="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" 0 "${keep_wiki_untrusted}")"
+    lesson_base_bytes="$(byte_len "${lesson_base_ctx}")"
+    lesson_residual=$((INJECT_CTX_MAX_BYTES - lesson_base_bytes - LESSON_JOIN_SEP_BYTES))
+    if [[ "${lesson_residual}" -ge "${LESSON_MIN_RESIDUAL_BYTES}" ]]; then
+      LESSON_BLOCK="$(truncate_bytes_utf8_safe "${LESSON_BLOCK}" "${lesson_residual}")"
+      keep_lesson=1
+      CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
+      ctx_bytes="$(byte_len "${CTX}")"
+      printf '[inject-scope-rules] lesson block truncated to %d-byte residual and kept (agent=%s)\n' "${lesson_residual}" "${AGENT_TYPE}" >&2
+      break
+    fi
   fi
-  # T16 marker accumulation — name only a block that was ACTUALLY present (block_is_present); an
-  # absent block is not a real shed, so naming it would claim a phantom drop + phantom AM-T16 path.
-  # Pure predicate → the if-condition disabling set -e (SC2310) is intended.
+
+  # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE the
+  # block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would under-
+  # report the size that actually breached the ceiling.
+  pre_drop_bytes="${ctx_bytes}"
+
+  # T16 shed side-effects (ceiling-lower + marker record + drop-log) fire ONLY for a block ACTUALLY
+  # present in the assembly. An empty/phantom block (e.g. wiki-untrusted for a non-roster DEV agent)
+  # is a FULL no-op here: it does NOT lower effective_ceiling, does NOT inflate shed_count, and writes
+  # NO phantom drop-log entry — which also removes the phantom drop-count inflation. Pure predicate →
+  # the if-condition disabling set -e (SC2310) is intended.
   # shellcheck disable=SC2310
   if block_is_present "${drop_block}"; then
+    # First REAL shed lowers the ceiling ONCE to reserve room for the post-loop marker; the full-
+    # ceiling equality is the "not yet lowered" guard, so it lowers at most once per invocation.
+    if [[ "${effective_ceiling}" -eq "${INJECT_CTX_MAX_BYTES}" ]]; then
+      effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
+      printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
+    fi
     marker_entries="$(append_marker_entry "${marker_entries}" "${drop_block}")"
     shed_count=$((shed_count + 1))
+    printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
+    append_drop_log "${drop_block}" "${pre_drop_bytes}"
   fi
+
+  # Reassembly stays OUTSIDE the presence gate so keep_X=0 takes effect for a genuine shed AND a
+  # phantom no-op (a phantom block's keep flag flips, but its absence makes the reassembly byte-
+  # identical to before).
   case "${drop_block}" in
     wiki-untrusted) keep_wiki_untrusted=0 ;;
     lesson) keep_lesson=0 ;;
@@ -700,8 +785,17 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev naming styler
   esac
   CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
   ctx_bytes="$(byte_len "${CTX}")"
-  printf '[inject-scope-rules] injected context exceeded %d bytes; dropped %s block (agent=%s)\n' "${INJECT_CTX_MAX_BYTES}" "${drop_block}" "${AGENT_TYPE}" >&2
-  append_drop_log "${drop_block}" "${pre_drop_bytes}"
+  # After a PRESENT lesson's FULL-drop, BREAK *iff the lesson-free assembly now fits the FULL ceiling*.
+  # For a real agent the nodrop invariant pins that base <= the FULL ceiling, so the marker-reserve
+  # lowering (effective_ceiling 9984→9728) is the ONLY reason the top-of-loop guard would keep going and
+  # cascade into a proven block whenever the base sits inside the 256B reserve band (e.g. dev-front's
+  # 9891B base > 9728) — the marker instead fits the 256B engine margin ABOVE the full ceiling, so this
+  # break upholds the 7-proven-blocks-never-shed invariant. THREE guards, all required: (a) this IS the
+  # lesson iteration, (b) a lesson was actually present (else the loop must proceed to shed the lower-
+  # priority blocks — the forced-shed path the marker / dropsink suites exercise), (c) the lesson-free
+  # ctx already fits the FULL ceiling (a SYNTHETIC over-full assembly, e.g. a 9000B test comment block,
+  # is genuinely too big and MUST keep shedding past the lesson).
+  [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" && "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
 done
 
 # T16 in-context drop marker — appended AFTER the loop, so it is NON-DROPPABLE by placement (no shed
