@@ -1357,6 +1357,12 @@ SH
 
 INSTALL_SH_T6="${GA}/install.sh"
 
+# install.sh is a REPO-ONLY bootstrap (deliberately not a manifest bundle member), so a
+# consumer install has no T6 target — skip there; in the repo T6 still runs in full.
+t6_require_install_sh() {
+  [[ -f "${INSTALL_SH_T6}" ]] || skip "install.sh absent (consumer install — repo-only bootstrap)"
+}
+
 # Symlink an allowlist of real tools into a fresh TOOLBIN (the ONLY PATH entry for the
 # restricted runs) — jq and gh are deliberately never linked. Args: tool names.
 # `uname` is written as a Darwin STUB, never a symlink: these runs exercise the
@@ -1388,6 +1394,7 @@ t6_extract_fn() {
 }
 
 @test "T6(static): install.sh preflight requires tar+curl+sha256+manifest parser — no jq, no gh" {
+  t6_require_install_sh
   body="$(awk '/^preflight\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${INSTALL_SH_T6}")"
   [[ "${body}" == *'require_tool tar'* ]] || return 1
   [[ "${body}" == *'require_tool curl'* ]] || return 1
@@ -1398,6 +1405,7 @@ t6_extract_fn() {
 }
 
 @test "T6(static): zero gh invocations remain in install.sh AND scripts/update.sh" {
+  t6_require_install_sh
   # comment-stripped scan: any non-comment gh invocation is a regression of the
   # D2-R1 de-dependency (unauthenticated curl is the ONLY fetch path).
   run bash -c "sed 's/#.*//' '${INSTALL_SH_T6}' '${GA}/scripts/update.sh' | grep -nE '(^|[^a-zA-Z0-9_./-])gh[[:space:]]+(release|api|auth)'"
@@ -1407,6 +1415,7 @@ t6_extract_fn() {
 }
 
 @test "T6: stock-Mac preflight PASSES with no gh and no jq on PATH (runnable python3 fallback)" {
+  t6_require_install_sh
   # TOOLBIN carries only what a stock Mac ships (+ python3); GA_RELEASE_REPO is a
   # deliberately slash-less slug so the run exits 12 in fetch_release — PROOF that
   # preflight (and the parser resolution) already passed without gh/jq, with zero network.
@@ -1419,6 +1428,7 @@ t6_extract_fn() {
 }
 
 @test "T6: neither jq nor python3 usable → loud exit 11 naming BOTH parsers + the brew remedy" {
+  t6_require_install_sh
   t6_build_toolbin uname tar shasum curl mktemp mkdir dirname ls cp rm mv cat || return 1
   run env -i PATH="${TOOLBIN}" HOME="${SANDBOX}" TMPDIR="${SANDBOX}" \
     GA_DIR="${SANDBOX}/ga-dir" GA_RELEASE_REPO="owner/repo" \
@@ -1452,24 +1462,28 @@ PROBE
 }
 
 @test "T6: probe REJECTS the Apple /usr/bin/python3 shim when CLT is absent (GUI stub ≠ runnable)" {
+  t6_require_install_sh
   driver="$(t6_build_probe /usr/bin/python3 2)" || return 1
   run bash "${driver}"
   [[ "${status}" -eq 1 ]] || return 1
 }
 
 @test "T6: probe accepts /usr/bin/python3 when CLT is present (xcode-select -p succeeds)" {
+  t6_require_install_sh
   driver="$(t6_build_probe /usr/bin/python3 0)" || return 1
   run bash "${driver}"
   [[ "${status}" -eq 0 ]] || return 1
 }
 
 @test "T6: CLT gate applies ONLY to the Apple shim — a brew python3 passes WITHOUT CLT" {
+  t6_require_install_sh
   driver="$(t6_build_probe /opt/homebrew/bin/python3 2)" || return 1
   run bash "${driver}"
   [[ "${status}" -eq 0 ]] || return 1
 }
 
 @test "T6: no python3 on PATH at all → probe returns 1" {
+  t6_require_install_sh
   driver="$(t6_build_probe '' 0)" || return 1
   run bash "${driver}"
   [[ "${status}" -eq 1 ]] || return 1
@@ -1494,6 +1508,7 @@ t6_seed_manifests() {
 }
 
 @test "T6: python3 backend parity — version-or-empty ≡ jq '.version // empty'" {
+  t6_require_install_sh
   t6_seed_manifests
   driver="$(t6_build_manifest_get python3)" || return 1
   run bash "${driver}" version-or-empty "${SANDBOX}/empty.json"
@@ -1503,6 +1518,7 @@ t6_seed_manifests() {
 }
 
 @test "T6: python3 backend parity — version-or-unknown ≡ jq '.version // \"unknown\"'" {
+  t6_require_install_sh
   t6_seed_manifests
   driver="$(t6_build_manifest_get python3)" || return 1
   run bash "${driver}" version-or-unknown "${SANDBOX}/empty.json"
@@ -1512,6 +1528,7 @@ t6_seed_manifests() {
 }
 
 @test "T6: python3 backend parity — files ≡ jq '.files[]' (incl. iterate-null → exit 5)" {
+  t6_require_install_sh
   t6_seed_manifests
   driver="$(t6_build_manifest_get python3)" || return 1
   run bash "${driver}" files "${SANDBOX}/full.json"
@@ -1522,6 +1539,7 @@ t6_seed_manifests() {
 }
 
 @test "T6: jq and python3 backends emit IDENTICAL output across all three modes" {
+  t6_require_install_sh
   command -v jq >/dev/null 2>&1 || skip "jq required for the cross-backend compare"
   t6_seed_manifests
   jq_drv="$(t6_build_manifest_get jq)" || return 1
