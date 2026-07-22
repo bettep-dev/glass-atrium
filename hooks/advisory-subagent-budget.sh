@@ -2,9 +2,13 @@
 # advisory-subagent-budget.sh — PreToolUse advisory on a SUBAGENT's own inner tool_use.
 #
 # Per-agent_id TOOL_USE counter; fires a STDERR advisory at ~70%/~80% of a TOOL_USE budget.
-# ADVISORY-FIRST — exits 0 by default. The ONE block path is the no-progress brake (N consecutive
-# exact-duplicate call signatures), and it exits 2 ONLY when the burn-in flag SUBAGENT_NOPROGRESS_BLOCK=1
-# arms it; unarmed it warns and continues. Everything else always fails open to exit 0.
+# ADVISORY-FIRST — exits 0 by default. The block path is the no-progress brake (N consecutive
+# exact-duplicate call signatures) over TWO independent limits: a one-shot STDERR advisory at
+# SUBAGENT_NOPROGRESS_LIMIT and an exit-2 block at the higher SUBAGENT_NOPROGRESS_BLOCK_LIMIT. The block
+# is DEFAULT-ARMED; SUBAGENT_NOPROGRESS_DISARM=1 downgrades it to advisory-only. Everything else always
+# fails open to exit 0. The two limits are split (not one nested branch) so the advisory can fire on a
+# streak that later blocks — the single-limit shape hid the advisory inside the block branch, so once
+# armed it never fired.
 # WHY: a subagent has no runtime budget meter, so it runs to its maxTurns hard cap, which kills it
 # mid-tool-use → no [COMPLETION] → costly orchestrator recovery. The SubagentStart meter states the
 # budget at spawn; THIS hook nudges again as the live count climbs, while the agent can still act.
@@ -168,19 +172,40 @@ if [[ ! "${tool_budget}" =~ ^[0-9]+$ ]] || ((10#${tool_budget} == 0)); then
   tool_budget="${DEFAULT_TOOL_BUDGET}"
 fi
 
-# TUNE: no-progress brake — N consecutive exact-duplicate call signatures (same tool_name + tool_input)
-# is a stuck loop with zero forward delta (identical op → no new state). 6 leaves room for a legitimate
-# short retry burst while still catching a wedged loop well before the tool_use budget is exhausted.
-# Same octal-safe validation as the tool_budget (10#-forced zero-check after the digit-string guard).
+# TUNE: no-progress brake — two INDEPENDENT limits over the streak of consecutive exact-duplicate call
+# signatures (same tool_name + tool_input = a stuck loop with zero forward delta, identical op → no new
+# state). The advisory limit fires a one-shot warning; the higher block limit exits 2. 6 leaves room for
+# a legitimate short retry burst before the advisory. Both use the same octal-safe validation as the
+# tool_budget (digit-string guard, then 10#-forced zero-check), and are normalized to a base-10 int so
+# every downstream (( )) is octal-safe (a leading-zero override like 08 is read as decimal, never octal).
 readonly DEFAULT_NOPROGRESS_LIMIT=6
 noprogress_limit="${SUBAGENT_NOPROGRESS_LIMIT:-${DEFAULT_NOPROGRESS_LIMIT}}"
 if [[ ! "${noprogress_limit}" =~ ^[0-9]+$ ]] || ((10#${noprogress_limit} == 0)); then
   noprogress_limit="${DEFAULT_NOPROGRESS_LIMIT}"
 fi
-# ADVISORY-FIRST rollout: the brake WARNS by default and blocks (exit 2) only when the burn-in flag arms
-# it, so it cannot wall off real work during rollout. Arm with SUBAGENT_NOPROGRESS_BLOCK=1.
-noprogress_block_armed=0
-[[ "${SUBAGENT_NOPROGRESS_BLOCK:-}" == "1" ]] && noprogress_block_armed=1
+noprogress_limit=$((10#${noprogress_limit}))
+
+readonly DEFAULT_NOPROGRESS_BLOCK_LIMIT=10
+noprogress_block_limit="${SUBAGENT_NOPROGRESS_BLOCK_LIMIT:-${DEFAULT_NOPROGRESS_BLOCK_LIMIT}}"
+if [[ ! "${noprogress_block_limit}" =~ ^[0-9]+$ ]] || ((10#${noprogress_block_limit} == 0)); then
+  noprogress_block_limit="${DEFAULT_NOPROGRESS_BLOCK_LIMIT}"
+fi
+noprogress_block_limit=$((10#${noprogress_block_limit}))
+
+# Clamp block-limit >= advisory-limit — a lower block limit fires BEFORE the advisory, inverting them.
+# The live install raises the advisory limit (to 100) without a block override, so an un-clamped lower
+# default would silently invert the ordering there.
+if ((noprogress_block_limit < noprogress_limit)); then
+  noprogress_block_limit="${noprogress_limit}"
+fi
+
+# Block is DEFAULT-ARMED. SUBAGENT_NOPROGRESS_DISARM=1 disarms it (advisory-only, exit 0 at any depth) —
+# a NEW flag with an un-inverted meaning. The OLD arming flag SUBAGENT_NOPROGRESS_BLOCK is now IGNORED:
+# repurposing it as a disarm would invert its meaning for anyone who had set it to arm. Staging: an
+# operator sets SUBAGENT_NOPROGRESS_DISARM=1 while observing the sibling reviewer-miss block in an
+# earlier release, then clears it to arm this brake in a later release.
+noprogress_disarmed=0
+[[ "${SUBAGENT_NOPROGRESS_DISARM:-}" == "1" ]] && noprogress_disarmed=1
 
 # 1. Read input. This hook has matcher "" (all tools) — every inner tool_use is one count.
 input="$(hook_read_input)"
@@ -258,18 +283,20 @@ if [[ -n "${signature}" ]]; then
   # Persist the streak; write failure → fail-open (the brake may misfire next call, never crashes).
   printf '%s\n%s\n' "${signature}" "${repeat}" >"${sig_file}" 2>/dev/null || true
 
-  if ((repeat >= noprogress_limit)); then
-    if ((noprogress_block_armed == 1)); then
-      emit_error "NOPROGRESS-001" "block" \
-        "No-progress loop blocked: ${repeat} consecutive identical tool calls (same tool + input) with zero forward delta" \
-        "Vary the approach or emit a terminal [COMPLETION] (result: needs_context); unset SUBAGENT_NOPROGRESS_BLOCK to downgrade to advisory-only" \
-        "{\"consecutive_identical_calls\":${repeat},\"limit\":${noprogress_limit}}"
-      exit 2
-    elif ((repeat == noprogress_limit)); then
-      # One-shot advisory at the crossing (== not >=) so a continuing loop does not spam every call.
-      printf '[subagent-tool-budget-advisory] %s\n' \
-        "NO-PROGRESS advisory: ${repeat} consecutive identical tool calls (same tool + input) — a stuck loop with zero forward delta. Vary the approach or emit a terminal [COMPLETION] (result: needs_context). Non-blocking (advisory-first rollout; set SUBAGENT_NOPROGRESS_BLOCK=1 to enforce)." >&2
-    fi
+  # Two INDEPENDENT branches over the same streak. BLOCK first (armed + streak at the block limit) so a
+  # streak that climbed past both limits blocks rather than re-advising. Otherwise a one-shot advisory
+  # fires at EXACTLY the advisory limit (== not >=) so a continuing loop does not spam every call — this
+  # fires whether or not the block is armed, since block_limit >= advisory_limit (clamped) leaves a window
+  # between them (or, when they coincide, the block branch takes the crossing).
+  if ((noprogress_disarmed == 0 && repeat >= noprogress_block_limit)); then
+    emit_error "NOPROGRESS-001" "block" \
+      "No-progress loop blocked: ${repeat} consecutive identical tool calls (same tool + input) with zero forward delta" \
+      "Vary the approach or emit a terminal [COMPLETION] (result: needs_context); set SUBAGENT_NOPROGRESS_DISARM=1 to downgrade to advisory-only" \
+      "{\"consecutive_identical_calls\":${repeat},\"limit\":${noprogress_block_limit}}"
+    exit 2
+  elif ((repeat == noprogress_limit)); then
+    printf '[subagent-tool-budget-advisory] %s\n' \
+      "NO-PROGRESS advisory: ${repeat} consecutive identical tool calls (same tool + input) — a stuck loop with zero forward delta. Vary the approach or emit a terminal [COMPLETION] (result: needs_context). Non-blocking (advisory only; the separate SUBAGENT_NOPROGRESS_BLOCK_LIMIT gates exit 2)." >&2
   fi
 fi
 
