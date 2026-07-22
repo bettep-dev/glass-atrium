@@ -259,17 +259,29 @@ if ! is_dev_agent "${subagent_type}"; then
   exit 0
 fi
 
+# Spawn ORIGIN, computed ONCE over the immutable ${input} and reused by both the [SIZE-EST] gate (3a)
+# and the reviewer-miss gate (4). hook_is_subagent spawns a python3 read, so a single evaluation drops
+# a redundant interpreter cold-start on this PreToolUse hot path. orchestrator_origin=true ⇔ agent_id
+# ABSENT (main-session/orchestrator spawn, which loads the token-defining rules); a nested sub-worker
+# origin (agent_id present) is never false-blocked. Directionally fail-safe — a misread ⇒ skipped
+# block, never a false-block — inheriting the fail-open ERR trap above.
+orchestrator_origin=false
+# SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
+# shellcheck disable=SC2310
+if ! hook_is_subagent "${input}"; then
+  orchestrator_origin=true
+fi
+
 # 3a. [SIZE-EST] presence gate — EVERY orchestrator DEV spawn MUST carry a [SIZE-EST] self-attestation
 # token (T1 contract, orchestrator-role.md ### Spawn Budget). Placed BEFORE the entry-decision branch
 # so a plan-bearing orchestrator spawn is STILL size-checked — revoking the header's former
-# plan-bearing zero-false-block guarantee for this dimension. GUARDED by hook_is_subagent (reused
-# VERBATIM from hook-utils.sh, as enforce-delegation.sh / advisory-subagent-budget.sh do): block ONLY
-# when agent_id is ABSENT (main-session/orchestrator origin, which loads the token-defining rules); a
-# nested sub-worker origin (agent_id present) does NOT load those rules → never blocked. Directionally
-# fail-safe — a misread ⇒ skipped block, never a false-block — inheriting the fail-open ERR trap above.
-# SC2310: hook_is_subagent/has_size_est_token are pure predicates — set -e disable under `if` intended.
+# plan-bearing zero-false-block guarantee for this dimension. GUARDED by orchestrator_origin (the cached
+# hook_is_subagent, reused VERBATIM from hook-utils.sh as enforce-delegation.sh / advisory-subagent-budget.sh
+# do): block ONLY when agent_id is ABSENT (main-session/orchestrator origin, which loads the token-defining
+# rules); a nested sub-worker origin (agent_id present) does NOT load those rules → never blocked.
+# SC2310: has_size_est_token is a pure predicate — set -e disable under `if` intended.
 # shellcheck disable=SC2310
-if ! hook_is_subagent "${input}" && ! has_size_est_token "${prompt_full}"; then
+if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (orchestrator-role.md ### Spawn Budget)."
   size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. Under-estimating is the DANGEROUS error — round UP on a borderline count."
   emit_error "VGATE-SIZE-001" "block" "${size_reason}" "${size_fix}" \
@@ -293,16 +305,14 @@ if references_plan "${prompt_full}"; then
   # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
   # from a stderr-advisory to a channel-a BLOCK (emit_error stderr JSON + exit 2, code
   # VGATE-REVIEWER-001, reason phrase reviewer-miss), matching its sibling attestation checks
-  # (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by hook_is_subagent exactly like the [SIZE-EST] gate:
+  # (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by orchestrator_origin exactly like the [SIZE-EST] gate:
   # only an orchestrator-origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV}
   # verification team, so it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the
   # informational advisory and is never false-blocked (nested spawns remain ungated per the header
   # note). "no qa-code-reviewer recorded" is retained verbatim in both messages so a downstream log
   # scan keys on one phrase across both surfaces.
   reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (orchestrator-role.md Stage-2 gate)."
-  # SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
-  # shellcheck disable=SC2310
-  if ! hook_is_subagent "${input}"; then
+  if [[ "${orchestrator_origin}" == true ]]; then
     reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then passes. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
     emit_error "VGATE-REVIEWER-001" "block" "${reviewer_reason}" "${reviewer_fix}" \
       "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}"
