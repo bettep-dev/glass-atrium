@@ -133,7 +133,7 @@ run_doctor_sandbox() {
   [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-daemon"* ]] || return 1
   # advisory: the drift feeds the warn summary, never a hard FAIL banner.
   [[ "${output}" == *"stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy"* ]] || return 1
-  [[ "${output}" == *"launchd-drift warning(s)"* ]] || return 1
+  [[ "${output}" == *"launchd-drift + "*"data-sep-leftover warning(s)"* ]] || return 1
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
 

@@ -39,13 +39,13 @@
 # post-hoc rollback anchor (one before-image = one patch); no VCS commit/revert.
 #
 # A JSONL log of applied patches is appended to:
-#     ~/.claude/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
+#     ~/.glass-atrium/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl
 #
 # Idempotency: re-running on the same JSON skips patches whose
 # (pattern_label, target_file) tuple already appears in today's applied log.
 #
 # Concurrency: a directory-based lock at
-#     ~/.claude/data/daemon-reports/.apply-lock
+#     ~/.glass-atrium/data/daemon-reports/.apply-lock
 # prevents two concurrent applies. The lock is auto-released on script exit
 # via trap, even on SIGINT/SIGTERM.
 #
@@ -215,7 +215,7 @@ source "${SCRIPT_DIR}/lib/git-txn.sh"
 
 # -- Constants -------------------------------------------------------------
 
-REPORTS_DIR="${AUTOAGENT_REPORTS_DIR:-${HOME}/.claude/data/daemon-reports}"
+REPORTS_DIR="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
 # Glass Atrium (GA) single-monorepo target:
 #   ~/.claude/{agents,rules,...} are facade dirs whose FILES are symlinks →
 #   ~/.glass-atrium/<dir>/<file>. The transaction is git-FREE (before-image copy

@@ -208,7 +208,7 @@ atrium_load_timezone() {
 # Arg $1 = config path — each caller passes its OWN seam var; empty/absent → the
 # canonical default. daemon-config.json mirrors hooks/daemon_config.py (Python SoT).
 atrium_resolve_haiku_model() {
-  local config_path="${1:-${HOME}/.claude/data/daemon-config.json}"
+  local config_path="${1:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-config.json}"
   local model="claude-haiku-4-5" cfg_model
   if command -v jq >/dev/null 2>&1 && [[ -f "${config_path}" ]]; then
     cfg_model="$(jq -r '.haiku_model // empty' "${config_path}" 2>/dev/null || true)"

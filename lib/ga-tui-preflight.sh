@@ -880,7 +880,7 @@ preflight_provision_headless_token() {
 doctor_headless_auth_advisory() {
   local secrets_file reports_dir advise=0
   secrets_file="${GA_ROOT:-${HOME}/.glass-atrium}/secrets/claude-auth.env"
-  reports_dir="${DOCTOR_AUTH_REPORTS_DIR:-${HOME}/.claude/data/daemon-reports}"
+  reports_dir="${DOCTOR_AUTH_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
 
   log "  ---- headless launchd auth advisory (non-fatal) ----"
 

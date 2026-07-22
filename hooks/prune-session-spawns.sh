@@ -2,7 +2,7 @@
 # prune-session-spawns.sh — SessionStart hook (advisory, fail-open, always exit 0).
 #
 # enforce-verification-gate.sh writes a per-session spawn marker to
-# ~/.claude/data/session-spawns/<session-key> on every PostToolUse(Agent) spawn-success,
+# ~/.glass-atrium/data/session-spawns/<session-key> on every PostToolUse(Agent) spawn-success,
 # but nothing reaps them. This SessionStart reaper mtime-TTL-sweeps stale markers.
 #
 # Design: runs at SessionStart (NOT an in-hook sweep) to keep the spawn hot path
@@ -28,7 +28,7 @@ else
   _GA_STAT_MTIME=(-c %Y)
 fi
 
-readonly DEFAULT_SPAWNS_DIR="${HOME}/.claude/data/session-spawns"
+readonly DEFAULT_SPAWNS_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/session-spawns"
 readonly DEFAULT_TRASH_DIR="${HOME}/.Trash"
 readonly DEFAULT_TTL_SECONDS=86400
 
@@ -54,11 +54,11 @@ if [[ ! -t 0 ]]; then
 fi
 
 # DF-28: budget-counter dir. advisory-subagent-budget.sh writes DURABLE per-agent_id TOOL_USE
-# counters to ~/.claude/data/agent-tool-budget/<key> (durable so a maxTurns hard-kill's sequence
+# counters to ~/.glass-atrium/data/agent-tool-budget/<key> (durable so a maxTurns hard-kill's sequence
 # survives), and nothing reaps them → they accumulate across sessions. Same mtime-TTL sweep as the
 # spawn markers: the active session re-creates its counter on the next tool call, so the TTL window
 # preserves live state without a session_id lookup. Env override for the Bats sandbox.
-readonly DEFAULT_BUDGET_DIR="${HOME}/.claude/data/agent-tool-budget"
+readonly DEFAULT_BUDGET_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/agent-tool-budget"
 budget_dir="${AGENT_TOOL_BUDGET_DIR:-${DEFAULT_BUDGET_DIR}}"
 
 # 4. Compute mtime cutoff (macOS BSD `date` works the same as GNU for `+%s`).

@@ -48,7 +48,8 @@ HOME = Path(os.environ.get("HOME", str(Path.home())))
 # the glass-atrium store. This is the LIVE default — the bash wrappers do not pass
 # --wiki-root by default, so the env read MUST live on this constant.
 DEFAULT_WIKI_ROOT = Path(os.environ.get("WIKI_ROOT") or str(HOME / ".glass-atrium" / "wiki"))
-DEFAULT_REPORTS_DIR = HOME / ".claude" / "data" / "daemon-reports"
+# DEFAULT_REPORTS_DIR derives from the ga_paths seam — defined below, AFTER the
+# hooks-dir sys.path insert that makes ga_paths importable.
 DEFAULT_SYNC_SCRIPT = HOME / ".claude" / "scripts" / "wiki-sync.sh"
 
 # CLI binary — overridable for tests (matches AutoAgent convention)
@@ -74,6 +75,12 @@ from daemon_config import (  # noqa: E402 — sys.path insert immediately above
     HAIKU_MAX_BUDGET_USD,
     HAIKU_MODEL,
 )
+import ga_paths  # noqa: E402 — hooks dir pinned by the insert above
+
+# Cycle-report output root via the shared ga_paths seam (.glass-atrium default,
+# GA_DATA_ROOT-overridable) — daemon-reports moved in the .claude→.glass-atrium
+# data migration; matches the autoagent daemon_cycle.py DEFAULT_REPORTS_DIR.
+DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 
 # Truncate raw file content fed to Haiku (keep prompt small + cost bounded).
 RAW_EXCERPT_CHARS = 6000

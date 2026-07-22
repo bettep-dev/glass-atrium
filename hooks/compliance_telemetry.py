@@ -29,16 +29,22 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-_HOME = Path(os.environ.get("HOME", str(Path.home())))
+# Pin this hook's own dir on sys.path so the sibling ga_paths seam resolves under
+# any invocation (script or importlib) — mirrors learning-aggregator.py's insert.
+_HOOKS_DIR = str(Path(__file__).resolve().parent)
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+import ga_paths  # noqa: E402 — sys.path insert immediately above
 
 # --- signal store sink (single SoT for both writers) -----------------------
 
 # JSONL under the learning data dir (sibling of feature-flags.json). One JSON
 # object per line; append-only. Env-overridable so tests redirect it to a tmp
 # file (no real store mutation under test). Both daemon_cycle.py and
-# learning-aggregator.py import THIS constant — it is declared once here.
+# learning-aggregator.py import THIS constant — it is declared once here. Root
+# via the ga_paths seam (.glass-atrium default, GA_DATA_ROOT-overridable).
 _DEFAULT_SIGNAL_STORE = str(
-    _HOME / ".claude" / "data" / "learning" / "self-improve-signals.jsonl"
+    ga_paths.get_data_root() / "learning" / "self-improve-signals.jsonl"
 )
 SIGNAL_STORE_FILE = Path(
     os.environ.get("AUTOAGENT_SIGNAL_STORE_FILE", _DEFAULT_SIGNAL_STORE)
@@ -85,7 +91,7 @@ def insufficient_data_rate(*, source: object = None) -> dict[str, object]:
 # supplies the denominator (all rows) and the trip numerator (verdict=block*).
 # Env-overridable for tests. NOTE: a block* verdict is a TRIP (the gate fired),
 # not an override.
-_DEFAULT_GATE_LOG = str(_HOME / ".claude" / "data" / "workflow-gate-fired.log")
+_DEFAULT_GATE_LOG = str(ga_paths.get_data_root() / "workflow-gate-fired.log")
 WORKFLOW_GATE_LOG_FILE = Path(
     os.environ.get("WORKFLOW_GATE_LOG_FILE", _DEFAULT_GATE_LOG)
 )

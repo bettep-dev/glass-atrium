@@ -83,14 +83,14 @@
 # uninspected (fail-open); no full-coverage claim. Measured 53 of 1000 recorded firings (~5.3%) as of
 # 2026-07-21. The figure is a ROLLING-BUFFER reading, not a lifetime rate: the log caps at 1000 lines,
 # so it ages out and this count drifts — re-derive rather than trust the date, via
-# `grep -c pass-noscript ~/.claude/data/workflow-gate-fired.log`.
+# `grep -c pass-noscript ~/.glass-atrium/data/workflow-gate-fired.log`.
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
-# one-line trace is appended to ${HOME}/.claude/data/workflow-gate-fired.log (timestamp · tool_name ·
+# one-line trace is appended to ${HOME}/.glass-atrium/data/workflow-gate-fired.log (timestamp · tool_name ·
 # verdict · script-length). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
 # block-norev · block-noverifydev · block-declspawn · block-undecl · block-computed · block-order ·
 # block-upstream · block-docroute · block-entry · block-sizeest; python3-absent / helper-error
-# fallbacks emit bare "pass". How to check: `cat ~/.claude/data/workflow-gate-fired.log`. The trace is
+# fallbacks emit bare "pass". How to check: `cat ~/.glass-atrium/data/workflow-gate-fired.log`. The trace is
 # fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
 #
 # Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
@@ -119,7 +119,7 @@ readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev
 # Firing-trace log path (passive probe). Lives in the live runtime data dir alongside
 # session-spawns/. WORKFLOW_GATE_FIRED_LOG override exists for Bats fail-safe testing only —
 # default resolves to the real runtime path.
-WORKFLOW_GATE_FIRED_LOG="${WORKFLOW_GATE_FIRED_LOG:-${HOME}/.claude/data/workflow-gate-fired.log}"
+WORKFLOW_GATE_FIRED_LOG="${WORKFLOW_GATE_FIRED_LOG:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/workflow-gate-fired.log}"
 
 # Firing-trace line cap. emit_trace appends one line per Workflow firing with no rotation, so a
 # long-lived install grows the log unboundedly (no SessionStart reaper sweeps it). The trace is

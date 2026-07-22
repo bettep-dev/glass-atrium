@@ -117,7 +117,7 @@ setup_file() {
   # filename suffix, never a TCP bind, so this literal can never collide.
   export EPH_PORT="55441"
   export EPH_HOME="${BATS_FILE_TMPDIR}/home"
-  mkdir -p "${EPH_HOME}/.claude/logs"
+  mkdir -p "${EPH_HOME}/.glass-atrium/logs"
 
   export DC_HOOKS_DIR DC_PG_HELPER DC_HOOK_SH
   DC_HOOKS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"

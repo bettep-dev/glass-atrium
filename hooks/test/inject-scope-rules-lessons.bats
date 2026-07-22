@@ -161,3 +161,27 @@ json.dump({"ctm":[{"agent":"glass-atrium-dev-shell","task_type":"feature","text"
   local ctx nbytes; ctx="$(ctx_of)"; nbytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
   [[ "${nbytes}" -lt 3000 ]] || { echo "expected capped ctx < 3000 bytes, got ${nbytes}" >&2; return 1; }
 }
+
+# (e) DEFAULT lesson path (no INJECT_SCOPE_RULES_LESSONS_SRC override) resolves under the seam root
+# HOOK_DATA_DIR = ~/.glass-atrium/data. Seam-flip AC: at HEAD the default was ~/.claude/data/lessons.json
+# (absent in the sandbox → no block), so this row FAILS pre-flip and PASSES post-flip. -u GA_DATA_ROOT
+# forces HOME-anchoring so a leaked GA_DATA_ROOT cannot mask the default.
+@test "default lesson path resolves under seam root ~/.glass-atrium/data (no override)" {
+  local home="${BATS_TEST_TMPDIR}/seam-home"
+  mkdir -p "${home}/.glass-atrium/data"
+  cp "${LESSON_FIXTURE}" "${home}/.glass-atrium/data/lessons.json"
+  run bash -c '
+    agent="$1"; hook="$2"; home="$3"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env -u GA_DATA_ROOT \
+      HOME="${home}" \
+      INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      SUBAGENT_BUDGET_METER_OFF=1 \
+      INJECT_SCOPE_RULES_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      bash "${hook}"
+  ' _ "glass-atrium-dev-shell" "${HOOK_SH}" "${home}"
+  assert_status 0
+  assert_ctx_contains "${LESSON_NEEDLE}"
+}

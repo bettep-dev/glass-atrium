@@ -19,7 +19,7 @@
 #   AGENTS_DIR env overrides are pointed at the repo files + real agents/ frontmatter (maxTurns →
 #   the real meter size). Meter is LEFT ON (SUBAGENT_BUDGET_METER_OFF unset) — the meter is part of
 #   the worst-case sum. INJECT_SCOPE_RULES_DROP_LOG is redirected into the Bats tmpdir so any marker
-#   write never touches the real ~/.claude/logs.
+#   write never touches the real ~/.glass-atrium/logs.
 #
 # BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail. Every
 #   assertion is guarded with a helper that `return 1`s on mismatch, so EACH one independently fails.

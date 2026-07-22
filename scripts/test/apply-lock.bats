@@ -11,7 +11,7 @@
 #
 # Hermetic: per-test mktemp sandbox; the lib is sourced under set -Eeuo pipefail in
 # disposable `bash -c` children (proving strict-mode — apply-lock.sh installs no ERR
-# trap, so none leaks into the bats shell). The live ~/.claude/data/daemon-reports/
+# trap, so none leaks into the bats shell). The live ~/.glass-atrium/data/daemon-reports/
 # .apply-lock is NEVER touched. TTL is steered via ATRIUM_APPLY_LOCK_TTL_SECS and
 # mtime via python3 os.utime — never BSD/GNU-divergent `touch -d` / `stat -f` / `stat -c`.
 
@@ -418,4 +418,58 @@ fingerprint_of() {
   [[ "$output" == *"acquired=false"* ]]                       # acquire FAILED, not silently degraded
   [[ "$output" == *"[apply-lock] ERROR: pid-write failed"* ]] # named loud error on stderr
   [[ ! -e "${LOCK}" ]]                                        # partial dir released, not left owner-less
+}
+
+# === T4b — daemon-reports seam (shared .apply-lock root moved to ~/.glass-atrium)
+# The lock LIBRARY takes an explicit path (tested hermetically above); the DEFAULT
+# location both writers contend on is resolved by update.sh's update_reports_dir /
+# update_apply_lock_dir, matching daemon-apply.sh. The domain-data-separation seam
+# flips that Tier-A default from ~/.claude to ${GA_DATA_ROOT:-~/.glass-atrium}/data
+# so the shared lock stays a single canonical directory at the new root.
+
+UPDATE_SH="${GA}/scripts/update.sh"
+
+@test "T4b seam: update_reports_dir with no override defaults under ~/.glass-atrium/data" {
+  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
+  run env -u AUTOAGENT_REPORTS_DIR -u GA_DATA_ROOT bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    update_reports_dir
+  ' _ "${UPDATE_SH}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "${HOME}/.glass-atrium/data/daemon-reports" ]]
+  [[ "$output" != *".claude"* ]] # the seam moved off the CLI home
+}
+
+@test "T4b seam: update_apply_lock_dir places the shared lock under the new daemon-reports root" {
+  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
+  run env -u AUTOAGENT_REPORTS_DIR -u GA_DATA_ROOT bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    update_apply_lock_dir
+  ' _ "${UPDATE_SH}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "${HOME}/.glass-atrium/data/daemon-reports/.apply-lock" ]]
+}
+
+@test "T4b seam: an exported AUTOAGENT_REPORTS_DIR override still wins (regression guard)" {
+  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
+  run env -u GA_DATA_ROOT AUTOAGENT_REPORTS_DIR="/tmp/custom-reports" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    update_reports_dir
+  ' _ "${UPDATE_SH}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "/tmp/custom-reports" ]]
+}
+
+@test "T4b seam: GA_DATA_ROOT redirects the daemon-reports default" {
+  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
+  run env -u AUTOAGENT_REPORTS_DIR GA_DATA_ROOT="/tmp/ga-data-root" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    update_reports_dir
+  ' _ "${UPDATE_SH}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "/tmp/ga-data-root/data/daemon-reports" ]]
 }

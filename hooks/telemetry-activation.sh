@@ -150,7 +150,7 @@ fi
 #    the hook exits — it never waits on curl (nor the --max-time window). Because stderr is
 #    gone by the time the detached curl returns, the http_code diagnostic (formerly a stderr
 #    line) is appended to a log file instead of being dropped.
-telemetry_log_dir="${TELEMETRY_ACTIVATION_LOG_DIR:-${HOME}/.claude/logs}"
+telemetry_log_dir="${TELEMETRY_ACTIVATION_LOG_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/logs}"
 telemetry_log_sink="/dev/null"
 # Conscious drop: if the log dir cannot be created, the diagnostic goes to /dev/null (worker
 # outcome unrecorded) rather than failing the hook — the telemetry POST is best-effort and

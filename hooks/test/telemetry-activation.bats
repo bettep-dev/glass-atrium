@@ -15,7 +15,7 @@
 #
 # Isolation: curl is PATH-shimmed (real loopback POST fully mocked — no live monitor);
 # ATRIUM_MONITOR_PORT short-circuits the port resolver; TELEMETRY_ACTIVATION_LOG_DIR
-# redirects the log sink into a per-test tmp dir (production ~/.claude/logs untouched).
+# redirects the log sink into a per-test tmp dir (production ~/.glass-atrium/logs untouched).
 # jq / base64 / date stay real.
 
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
@@ -147,4 +147,25 @@ _wait_grep() {
   _fire "${PRE_JSON}" CURL_SHIM_HTTP_CODE=
   [ "${status}" -eq 0 ] || return 1
   _wait_grep "${LOG_FILE}" 'monitor unreachable' 5 || return 1
+}
+
+# Seam-flip AC: with TELEMETRY_ACTIVATION_LOG_DIR unset, the sink defaults to the seam root
+# ${GA_DATA_ROOT:-$HOME/.glass-atrium}/logs. At HEAD this defaulted to ~/.claude/logs, so the
+# diagnostic never reaches the .glass-atrium sink → this row FAILS pre-flip, PASSES post-flip.
+# -u GA_DATA_ROOT forces HOME-anchoring so a leaked GA_DATA_ROOT cannot mask the default.
+@test "default log sink resolves under seam root ~/.glass-atrium/logs (no TELEMETRY_ACTIVATION_LOG_DIR)" {
+  local home="${TEST_TMP}/seam-home"
+  mkdir -p "${home}"
+  local expected="${home}/.glass-atrium/logs/telemetry-activation.log"
+  run env -u GA_DATA_ROOT -u TELEMETRY_ACTIVATION_LOG_DIR \
+    "PATH=${SHIM_DIR}:${PATH}" \
+    HOME="${home}" \
+    ATRIUM_MONITOR_PORT="19999" \
+    "CURL_PAYLOAD_LOG=${PAYLOAD_LOG}" \
+    bash -c 'printf "%s" "$1" | bash "$2"' _ "${PRE_JSON}" "${HOOK_SH}"
+  [ "${status}" -eq 0 ] || return 1
+  _wait_grep "${expected}" 'ok event=PreToolUse source=orchestrator' 5 || {
+    echo "expected diagnostic at seam-default sink ${expected}" >&2
+    return 1
+  }
 }

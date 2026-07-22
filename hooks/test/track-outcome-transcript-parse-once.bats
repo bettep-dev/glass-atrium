@@ -39,7 +39,7 @@ setup() {
   # literal would be PII in the tracked tree (pii-scan gate).
   PROJ_SLUG="${HOME//\//-}"
   TRANSCRIPT_DIR="${SANDBOX_HOME}/.claude/projects/${PROJ_SLUG}/${SESSION_ID}/subagents"
-  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs"
+  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.glass-atrium/logs"
   TRANSCRIPT="${TRANSCRIPT_DIR}/agent-${AGENT_ID}.jsonl"
   TRANSCRIPT_BASENAME="agent-${AGENT_ID}.jsonl"
 

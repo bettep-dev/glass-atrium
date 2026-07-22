@@ -391,9 +391,11 @@ spine_apply() {
 # T14 — baseline (base@install) anchor capture + read
 
 # Resolve the update-state directory holding the baseline anchor. Precedence:
-# $1 arg → ATRIUM_UPDATE_STATE_DIR env → ${HOME}/.claude/data/update (the same
-# ~/.claude/data/<subdir> runtime-state convention as the daemon's
-# AUTOAGENT_REPORTS_DIR default).
+# $1 arg → ATRIUM_UPDATE_STATE_DIR env → ${HOME}/.claude/data/update. This Tier-C
+# spine baseline stays under ~/.claude by design — the updater reads its own
+# baseline DURING the update that would relocate it, so unlike the Tier-A daemon
+# reports (now ${GA_DATA_ROOT:-~/.glass-atrium}/data) it needs a separate
+# teach-then-migrate cycle before it can move.
 spine_baseline_dir() {
   printf '%s\n' "${1:-${ATRIUM_UPDATE_STATE_DIR:-${HOME}/.claude/data/update}}"
 }

@@ -11,16 +11,21 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
 # fail-open ERR trap — an internal error must not cut the session.
 trap 'printf "[post-edit-typecheck] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-readonly DEFAULT_MARKER_DIR="${HOME}/.claude/data"
+# Default marker store on the shared GA_DATA_ROOT data-root seam (HOOK_DATA_DIR from hook-utils.sh),
+# decoupled from the install tree; TYPECHECK_MARKER_DIR still overrides.
+readonly DEFAULT_MARKER_DIR="${HOOK_DATA_DIR}"
 marker_dir="${TYPECHECK_MARKER_DIR:-${DEFAULT_MARKER_DIR}}"
 
 INPUT="$(hook_read_input)"
 # Single-pass extraction of the two always-read top-level fields (one python3, not two).
+# SC2310: hook_get_fields' `|| true` is intentional fail-open — set -e disable under the condition is by design.
+# shellcheck disable=SC2310
 {
   IFS= read -r -d '' EVENT
   IFS= read -r -d '' SESSION_ID

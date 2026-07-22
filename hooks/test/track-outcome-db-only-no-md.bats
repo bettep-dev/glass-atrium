@@ -43,7 +43,7 @@ setup() {
   # Subagent transcript at the exact path _resolve_subagent_transcript() globs.
   PROJ_SLUG="${SANDBOX_HOME//\//-}"
   TRANSCRIPT_DIR="${SANDBOX_HOME}/.claude/projects/${PROJ_SLUG}/${SESSION_ID}/subagents"
-  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.claude/logs"
+  mkdir -p "${TRANSCRIPT_DIR}" "${SANDBOX_HOME}/.glass-atrium/logs"
   TRANSCRIPT="${TRANSCRIPT_DIR}/agent-${AGENT_ID}.jsonl"
   PAYLOAD_FILE="${DB_TMP}/payload.json"
 
