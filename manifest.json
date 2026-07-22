@@ -697,7 +697,7 @@
     "hooks/enforce-delegation.sh": "0e7cf7eb3a73b498e4e7afb380687365bf820aca546b678d4c24b95b5bdedcea",
     "hooks/enforce-foreground-harness.sh": "4da8e13871c18ba6a34a955a230fdc5ea4ac64f721a654333227f8863e04db2a",
     "hooks/enforce-harness-critical.sh": "220e27394ef4b94beb6fb5f16db254db6fd72c0137538604cdff4c0e2ddbdf70",
-    "hooks/enforce-verification-gate.sh": "4809c1f2b0755ace1a12f0280cf16631a8e2e31453ac68cd5da16177581dbdb3",
+    "hooks/enforce-verification-gate.sh": "ccd87a92c8153dc2433d4a17edbe7ef2d28558ae873c58fae513a3932532f86f",
     "hooks/enforce-workflow-verify-stage.sh": "0e39a8e31b47ecade75bce23e97a6939f48cc265127a888270fd5dce22d53061",
     "hooks/hook-utils.sh": "ce34ee5d61470c7afc46d170245c3648a112d9282fb674f0eb726ae46f07143c",
     "hooks/inject-scope-rules.sh": "5b402ad66c43a00bf8c402ed16685d36d48b68aaaf082fd0774b328a4a4a0173",
