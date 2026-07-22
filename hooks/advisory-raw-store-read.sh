@@ -56,10 +56,10 @@ command_str="$(hook_get_tool_input "${input}" "command")"
 [[ -z "${command_str}" ]] && exit 0
 
 # 3. Trigger: the command references the raw store — either the resolved WIKI_RAW_DIR or the literal
-#    `wiki/raw/` store path (belt-and-suspenders). Fixed-string matches (grep -F), so path
-#    metacharacters are literal. No match → silent exit 0 (an ordinary command carries no note).
-if ! printf '%s\n' "${command_str}" | grep -qF -- "${WIKI_RAW_DIR}" \
-  && ! printf '%s\n' "${command_str}" | grep -qF -- 'wiki/raw/'; then
+#    `wiki/raw/` store path (belt-and-suspenders). One grep -F with two -e patterns matches EITHER
+#    token (fixed-string, so path metacharacters stay literal). No match → silent exit 0 (an ordinary
+#    command carries no note).
+if ! printf '%s\n' "${command_str}" | grep -qF -e "${WIKI_RAW_DIR}" -e 'wiki/raw/'; then
   exit 0
 fi
 
