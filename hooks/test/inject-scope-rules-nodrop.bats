@@ -44,6 +44,17 @@ DEV_FRONT_MAX_BYTES=9935
 # BUDGET-DEV source-block byte contract (hard bound; target 260B) — the D3 ceiling math input: the
 # 9984 ceiling admits the seven-block assembly ONLY while this block stays <=300B.
 BUDGET_DEV_MAX_BYTES=300
+# Engine persist threshold: additionalContext larger than this is file-persisted + delivered as a
+# ~2KB preview (stripping later blocks). A lesson-drop marker legitimately overflows the 9984 ceiling
+# into the 256B margin below THIS threshold ("emit + accept"), so a full-drop assembly (7 proven blocks
+# + a lesson-drop marker) is bounded by THIS, not CEILING. In sync with INJECT_CTX_MAX_BYTES header.
+ENGINE_MAX_BYTES=10240
+# The lesson truncate-keep residual floor — in sync with inject-scope-rules.sh LESSON_MIN_RESIDUAL_BYTES.
+LESSON_FLOOR=150
+# Lesson-path needles.
+LESSON_HEADER_NEEDLE="Prior-lesson recall"
+LESSON_KEPT_LINE="- [bug-fix] KEPTLINE_ONE_WHOLE"
+DROP_MARKER_NEEDLE="Injection shed"
 
 # Stable, unique first-line needles for each of the eight blocks (proves none was dropped).
 EMIT_NEEDLE="REQUIRED by the outcome recorder"
@@ -103,6 +114,101 @@ run_hook_real() {
     "${AGENTS_DIR}" "${BATS_TEST_TMPDIR}/inject-drop.log"
 }
 
+# HERMETIC lesson driver: meter OFF + all scope sources /nonexistent, so the assembled base is JUST
+# the emit block. That makes the lesson residual a precise function of the injected ceiling, letting a
+# test dial the truncate-keep / full-drop boundary deterministically without depending on real-source
+# sizes. $1=agent $2=lessons.json path $3=ceiling override.
+run_hook_lesson() {
+  local agent="${1}" lessons="${2}" ceiling="${3}"
+  run bash -c '
+    agent="$1"; hook="$2"; lessons="$3"; ceiling="$4"; droplog="$5"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env \
+      SUBAGENT_BUDGET_METER_OFF=1 \
+      INJECT_SCOPE_RULES_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
+      INJECT_SCOPE_RULES_CTX_MAX_BYTES="${ceiling}" \
+      bash "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${lessons}" "${ceiling}" "${BATS_TEST_TMPDIR}/inject-drop-lesson.log"
+}
+
+# REAL-SOURCE lesson driver: like run_hook_real (meter ON, real repo sources) but with a populated
+# lessons store, so the nodrop invariant is verified with a lesson present beside the proven blocks.
+run_hook_real_lesson() {
+  local agent="${1}" lessons="${2}"
+  run bash -c '
+    agent="$1"; hook="$2"; comment="$3"; styleref="$4"; naming="$5"; budget="$6"; agents="$7"; droplog="$8"; lessons="$9"
+    payload="$(jq -nc --arg a "${agent}" '\''{agent_type:$a}'\'')"
+    printf "%s" "${payload}" | env \
+      INJECT_SCOPE_RULES_SRC="${comment}" \
+      INJECT_SCOPE_RULES_STYLEREF_SRC="${styleref}" \
+      INJECT_SCOPE_RULES_NAMING_SRC="${naming}" \
+      INJECT_SCOPE_RULES_BUDGET_SRC="${budget}" \
+      INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+      INJECT_SCOPE_RULES_AGENTS_DIR="${agents}" \
+      INJECT_SCOPE_RULES_DROP_LOG="${droplog}" \
+      INJECT_SCOPE_RULES_LESSONS_SRC="${lessons}" \
+      bash "${hook}"
+  ' _ "${agent}" "${HOOK_SH}" "${COMMENT_SRC}" "${STYLEREF_SRC}" "${NAMING_SRC}" "${BUDGET_SRC}" \
+    "${AGENTS_DIR}" "${BATS_TEST_TMPDIR}/inject-drop-realL.log" "${lessons}"
+}
+
+# Emit-only base byte count for an agent (meter OFF, no scope, no lesson). The hermetic lesson
+# residual = ceiling - this base - 2 (the join separator), so tests compute ceilings from it.
+measure_base_bytes() {
+  local agent="${1}" out
+  out="$(printf '%s' "$(jq -nc --arg a "${agent}" '{agent_type:$a}')" | env \
+    SUBAGENT_BUDGET_METER_OFF=1 \
+    INJECT_SCOPE_RULES_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_STYLEREF_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_NAMING_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_BUDGET_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_WIKI_UNTRUSTED_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_AGENTS_DIR=/nonexistent \
+    INJECT_SCOPE_RULES_DROP_LOG="${BATS_TEST_TMPDIR}/measure-drop.log" \
+    INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
+    INJECT_SCOPE_RULES_CTX_MAX_BYTES=20000 \
+    bash "${HOOK_SH}" 2>/dev/null)"
+  printf '%s' "${out}" | python3 -c '
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        d = json.loads(line)
+    except ValueError:
+        continue
+    sys.stdout.write(d.get("hookSpecificOutput", {}).get("additionalContext", ""))
+    break
+' 2>/dev/null | wc -c | tr -cd '0-9'
+}
+
+# Write a lessons.json fixture with a SHORT first CTM line (KEPTLINE_ONE_WHOLE) plus a long filler
+# second line, so a truncate-keep preserves the whole first line while the filler is what gets cut.
+# $1=agent $2=output path $3=filler char-count.
+write_lessons_short_first() {
+  local agent="${1}" out="${2}" fill="${3}"
+  python3 -c "
+import json, sys
+agent, out, fill = sys.argv[1], sys.argv[2], int(sys.argv[3])
+data = {
+    'ctm': [
+        {'agent': agent, 'task_type': 'bug-fix', 'text': 'KEPTLINE_ONE_WHOLE', 'score': 5, 'frequency': 9},
+        {'agent': agent, 'task_type': 'feature', 'text': 'F' * fill, 'score': 5, 'frequency': 8},
+    ],
+    'epm': [],
+}
+open(out, 'w').write(json.dumps(data))
+" "${agent}" "${out}" "${fill}"
+}
+
 # additionalContext string from the hook's JSON stdout (empty if no JSON emitted).
 ctx_of() {
   printf '%s' "${output}" | python3 -c '
@@ -144,6 +250,32 @@ assert_ctx_within_ceiling() {
   local ctx bytes; ctx="$(ctx_of)"
   bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
   [[ -n "${bytes}" && "${bytes}" -le "${CEILING}" ]] || { echo "ctx ${bytes}B exceeds ceiling ${CEILING}B" >&2; return 1; }
+}
+# The assembled context must decode as valid UTF-8. A mid-multibyte truncation would emit invalid
+# UTF-8 → jq rejects it → OUTPUT_JSON empty → fail-open drops the WHOLE injection, so an empty ctx is
+# ALSO a failure here (that is the exact corruption / fail-open this pins).
+assert_ctx_valid_utf8() {
+  local ctx; ctx="$(ctx_of)"
+  [[ -n "${ctx}" ]] || { echo "ctx empty — fail-open (invalid UTF-8 → jq rejection) suspected" >&2; return 1; }
+  printf '%s' "${ctx}" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' 2>/dev/null \
+    || { echo "ctx is NOT valid UTF-8 (mid-codepoint truncation)" >&2; return 1; }
+}
+# The assembled context must fit under the ENGINE persist threshold (a full-drop marker may overflow
+# CEILING into the 256B engine margin, but must never reach the ~2KB-preview-stripping threshold).
+assert_ctx_within_engine() {
+  local ctx bytes; ctx="$(ctx_of)"
+  bytes="$(printf '%s' "${ctx}" | wc -c | tr -cd '0-9')"
+  [[ -n "${bytes}" && "${bytes}" -le "${ENGINE_MAX_BYTES}" ]] || { echo "ctx ${bytes}B exceeds engine threshold ${ENGINE_MAX_BYTES}B" >&2; return 1; }
+}
+# jq-version-robust corruption guard for the multibyte-boundary case: a naive mid-codepoint cut is
+# handled DIFFERENTLY by jq builds — an older/strict jq REJECTS it → empty OUTPUT_JSON → fail-open
+# (empty ctx, caught by assert_ctx_valid_utf8) — while jq-1.7.x-apple SUBSTITUTES the split byte with
+# U+FFFD (�), yielding a non-empty but CORRUPTED lesson. Assert the replacement char is absent so the
+# pin bites regardless of the local jq's leniency.
+assert_ctx_no_replacement_char() {
+  local ctx; ctx="$(ctx_of)"
+  printf '%s' "${ctx}" | python3 -c 'import sys; sys.exit(1 if "�" in sys.stdin.buffer.read().decode("utf-8", "replace") else 0)' \
+    || { echo "ctx contains U+FFFD replacement char — mid-codepoint corruption leaked through jq" >&2; return 1; }
 }
 
 # (a) Every NAMING-roster DEV member: the six proven blocks present, budget-dev present for roster
@@ -253,4 +385,114 @@ assert_ctx_within_ceiling() {
   run_hook_real "glass-atrium-dev-front"
   assert_status 0 || return 1
   [[ ! -s "${BATS_TEST_TMPDIR}/inject-drop.log" ]] || { echo "unexpected drop marker written: $(cat "${BATS_TEST_TMPDIR}/inject-drop.log")" >&2; return 1; }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# FIX #2 (inject-block-drop): a near-ceiling lesson is TRUNCATED-AND-KEPT (not fully shed), the
+# truncation is UTF-8-boundary-safe, a sub-floor residual full-drops, and the proven blocks never
+# shed beside a lesson. These pin the CTM/EPM signal-loss root cause + its 3 review-caught defects.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+# (i)+(ii) TRUNCATE-AND-KEEP: with a residual well above the floor, the lesson is kept as a UTF-8-safe
+# truncation containing >=1 WHOLE CTM line, bounded by the residual, with NO drop marker emitted.
+
+@test "lesson truncate-and-keep: >=1 whole CTM line kept, within residual, no drop marker" {
+  local base residual ceiling
+  base="$(measure_base_bytes glass-atrium-dev-front)"
+  [[ -n "${base}" && "${base}" -gt 0 ]] || { echo "could not measure base bytes" >&2; return 1; }
+  residual=400
+  ceiling=$((base + 2 + residual))
+  write_lessons_short_first "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-keep.json" 1000
+  run_hook_lesson "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-keep.json" "${ceiling}"
+  assert_status 0                              || return 1
+  assert_ctx_contains "${EMIT_NEEDLE}"         || return 1   # non-droppable block survives
+  assert_ctx_contains "${LESSON_HEADER_NEEDLE}" || return 1  # lesson PRESENT (not fully shed)
+  assert_ctx_contains "${LESSON_KEPT_LINE}"    || return 1   # >=1 WHOLE CTM line, not just header
+  assert_ctx_not_contains "${DROP_MARKER_NEEDLE}" || return 1 # kept ⇒ no post-loop drop marker
+  assert_ctx_within_ceiling                    || return 1   # bounded by base+2+residual = ceiling
+  assert_ctx_valid_utf8                         || return 1
+  [[ "${output}" != *"dropped lesson block"* ]] || { echo "lesson was shed, not kept: ${output}" >&2; return 1; }
+  [[ ! -s "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" ]] || { echo "unexpected drop-log on a KEPT lesson" >&2; return 1; }
+}
+
+# (iii) FULL-DROP: a residual BELOW the floor cannot hold a whole CTM line, so the lesson is fully
+# dropped (drop marker + drop-log emitted) while the non-droppable emit block still survives.
+
+@test "lesson full-drop below floor: lesson absent, drop marker + drop-log emitted, emit survives" {
+  local base residual ceiling
+  base="$(measure_base_bytes glass-atrium-dev-front)"
+  [[ -n "${base}" && "${base}" -gt 0 ]] || { echo "could not measure base bytes" >&2; return 1; }
+  residual=$((LESSON_FLOOR - 50))            # 100 < floor(150) ⇒ full-drop
+  ceiling=$((base + 2 + residual))
+  write_lessons_short_first "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-drop.json" 1000
+  run_hook_lesson "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-drop.json" "${ceiling}"
+  assert_status 0                                 || return 1
+  assert_ctx_not_contains "${LESSON_HEADER_NEEDLE}" || return 1  # lesson fully dropped
+  assert_ctx_not_contains "${LESSON_KEPT_LINE}"   || return 1
+  assert_ctx_contains "${DROP_MARKER_NEEDLE}"     || return 1    # a genuine shed ⇒ marker present
+  assert_ctx_contains "${EMIT_NEEDLE}"            || return 1    # non-droppable block survives
+  assert_ctx_valid_utf8                            || return 1
+  [[ "${output}" == *"dropped lesson block"* ]] || { echo "expected a lesson full-drop diagnostic" >&2; return 1; }
+  [[ -s "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" ]] || { echo "expected a drop-log entry on full-drop" >&2; return 1; }
+}
+
+# (iv) UTF-8 MUST-FIX: force the truncation boundary onto a MULTIBYTE char (em-dash run, residual
+# offset ≡ 1 mod 3) — a naive head -c would split the codepoint → invalid UTF-8 → jq rejection →
+# fail-open (empty ctx). The boundary-safe helper strips the partial tail, so ctx is valid + non-empty.
+
+@test "lesson truncation on a multibyte boundary yields VALID UTF-8 (no fail-open corruption)" {
+  local base prefix_len residual ceiling
+  base="$(measure_base_bytes glass-atrium-dev-front)"
+  [[ -n "${base}" && "${base}" -gt 0 ]] || { echo "could not measure base bytes" >&2; return 1; }
+  # Byte length of the lesson block PREFIX before the first CTM line's text (header + Apply sub-header
+  # + "- [bug-fix] "), mirroring build_lesson_block. residual = prefix + 100 lands 100 bytes into a
+  # 3-byte-em-dash run (100 mod 3 = 1 ⇒ mid-codepoint) and stays above the 150B floor (prefix ~120).
+  prefix_len="$(printf '%s\nApply (worked before):\n- [bug-fix] ' \
+    '**Prior-lesson recall (auto-injected · CTM success + EPM warnings, agent-matched)**' \
+    | wc -c | tr -cd '0-9')"
+  residual=$((prefix_len + 100))
+  ceiling=$((base + 2 + residual))
+  # Lesson text = a 500-em-dash run (3 bytes each), so the residual cut is guaranteed inside it.
+  python3 -c "
+import json
+open('${BATS_TEST_TMPDIR}/lessons-utf8.json', 'w').write(json.dumps({
+    'ctm': [{'agent': 'glass-atrium-dev-front', 'task_type': 'bug-fix', 'text': '—' * 500, 'score': 5, 'frequency': 9}],
+    'epm': [],
+}))
+"
+  run_hook_lesson "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-utf8.json" "${ceiling}"
+  assert_status 0                               || return 1
+  assert_ctx_valid_utf8                          || return 1   # non-empty + valid (strict-jq fail-open path)
+  assert_ctx_no_replacement_char                 || return 1   # THE must-fix: no U+FFFD (lenient-jq path)
+  assert_ctx_contains "${LESSON_HEADER_NEEDLE}"  || return 1   # lesson kept (truncate path), not fail-open
+  assert_ctx_contains "${EMIT_NEEDLE}"           || return 1   # whole injection survived (no fail-open)
+}
+
+# (v) NODROP INVARIANT beside a lesson (REAL sources, meter ON): dev-front's 7 proven blocks all
+# survive even when a lesson is present — the marker-reserve cascade into budget-dev is prevented, and
+# the assembly (proven blocks + lesson-drop marker) stays under the engine persist threshold.
+
+@test "real dev-front + lesson: 7 proven blocks never shed, within engine threshold" {
+  python3 -c "
+import json
+open('${BATS_TEST_TMPDIR}/lessons-real.json', 'w').write(json.dumps({
+    'ctm': [{'agent': 'glass-atrium-dev-front', 'task_type': 'bug-fix', 'text': 'R' * 400, 'score': 5, 'frequency': 9}],
+    'epm': [],
+}))
+"
+  run_hook_real_lesson "glass-atrium-dev-front" "${BATS_TEST_TMPDIR}/lessons-real.json"
+  assert_status 0                              || return 1
+  assert_ctx_contains "${EMIT_NEEDLE}"         || return 1
+  assert_ctx_contains "${METER_NEEDLE}"        || return 1
+  assert_ctx_contains "${COMMENT_NEEDLE}"      || return 1
+  assert_ctx_contains "${STYLEREF_NEEDLE}"     || return 1
+  assert_ctx_contains "${MINIMALISM_NEEDLE}"   || return 1
+  assert_ctx_contains "${NAMING_NEEDLE}"       || return 1
+  assert_ctx_contains "${BUDGET_DEV_NEEDLE}"   || return 1
+  assert_ctx_valid_utf8                         || return 1
+  assert_ctx_within_engine                      || return 1
+  # NO proven block may appear in a drop diagnostic (the lesson itself MAY be dropped).
+  for proven in budget-dev naming styleref minimalism comment; do
+    [[ "${output}" != *"dropped ${proven} block"* ]] || { echo "proven block '${proven}' was SHED beside a lesson: ${output}" >&2; return 1; }
+  done
 }

@@ -9,16 +9,20 @@
 # the readonly can never re-fire under set -e.
 if [[ -z "${GA_TIER_A_SUBPATHS_INITED:-}" ]]; then
   GA_TIER_A_SUBPATHS=(
+    data/agent-circuit-breaker
     data/agent-tool-budget
     data/audit
     data/daemon-config.json
     data/daemon-reports
     data/doc-routing-leak-fired.log
+    data/egress-secret-advisory-fired.log
     data/learning
     data/lessons.json
+    data/outcome-spool
     data/outcomes
     data/outcomes-audit-queue.txt
     data/outcomes-audit-queue-pg-offset
+    data/raw-store-read-advisory-fired.log
     data/safety-overrides
     data/session-spawns
     data/wiki-dedup-verified-hashes.json

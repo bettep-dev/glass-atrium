@@ -47,8 +47,9 @@ trap 'printf "[egress-secret-advisory] internal error at line %d: %s — fail-op
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# Durable record sink (env-overridable for hermetic tests). Mirrors block-doc-routing-leak.sh.
-EGRESS_SECRET_ADVISORY_FIRED_LOG="${EGRESS_SECRET_ADVISORY_FIRED_LOG:-${HOME}/.claude/data/egress-secret-advisory-fired.log}"
+# Durable record sink (env-overridable for hermetic tests). DATA-tier via the resolved HOOK_DATA_DIR
+# seam (hook-utils.sh) — GA_DATA_ROOT-anchored, decoupled from the legacy ~/.claude location.
+EGRESS_SECRET_ADVISORY_FIRED_LOG="${EGRESS_SECRET_ADVISORY_FIRED_LOG:-${HOOK_DATA_DIR}/egress-secret-advisory-fired.log}"
 
 # Credential-shaped classes — parallel pattern/label arrays. The gate folds the patterns into one
 # ERE; the label is resolved only after the gate fires (cheap). Patterns mirror validate-secret-scan.sh
