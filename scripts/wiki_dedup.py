@@ -44,6 +44,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 from daemon_config import HAIKU_MAX_BUDGET_USD, HAIKU_MODEL  # noqa: E402
+import ga_paths  # noqa: E402 — hooks dir pinned by the insert above
 
 # Cost guard: max 5 Haiku calls per cycle.
 MAX_LLM_CALLS = 5
@@ -312,7 +313,9 @@ def _cluster_hash(slug_a: str, slug_b: str) -> str:
 # State file storing cluster hashes already LLM-verified in PRIOR cycles, so the
 # fixed-5 per-cycle budget skips them and reaches the sub-0.90 tail (otherwise
 # starved, with llm_calls_used pinned at 5).
-DEFAULT_VERIFIED_HASHES_PATH = HOME / ".claude" / "data" / "wiki-dedup-verified-hashes.json"
+# Root via the ga_paths seam (.glass-atrium default, GA_DATA_ROOT-overridable) —
+# wiki-dedup-verified-hashes.json moved in the .claude→.glass-atrium data migration.
+DEFAULT_VERIFIED_HASHES_PATH = ga_paths.get_data_root() / "wiki-dedup-verified-hashes.json"
 
 
 def load_verified_hashes(path: Path = DEFAULT_VERIFIED_HASHES_PATH) -> set[str]:

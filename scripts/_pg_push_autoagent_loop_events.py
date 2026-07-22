@@ -2,7 +2,7 @@
 # _pg_push_autoagent_loop_events.py — invoked by daemon-cycle.sh after the
 # autoagent cycle pipeline completes. Mirrors _pg_push_autoagent_cycle.py.
 #
-# Reads ~/.claude/logs/autoagent-loop.jsonl (append-only ndjson emitted by the
+# Reads ~/.glass-atrium/logs/autoagent-loop.jsonl (append-only ndjson emitted by the
 # autoagent runner at every loop iteration) and pushes each line into
 # core.autoagent_loop_events via _pg_dual_write_daemon.py (subprocess).
 #
@@ -37,10 +37,18 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
+# The home-anchored data/log-root seam lives under hooks/; pin its dir on sys.path
+# so this scripts/ module resolves the same log root as the shell + python siblings.
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+if str(_HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(_HOOKS_DIR))
+import ga_paths  # noqa: E402 — sys.path insert immediately above
+
 # Path constants — same helper location as _pg_push_autoagent_cycle.py
-LOOP_LOG: str = os.path.expanduser("~/.claude/logs/autoagent-loop.jsonl")
+LOOP_LOG: str = str(ga_paths.get_log_root() / "autoagent-loop.jsonl")
 # Sibling of this module — scripts/ is consumed in place from the store.
 HELPER: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
 

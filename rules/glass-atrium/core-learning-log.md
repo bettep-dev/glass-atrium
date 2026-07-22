@@ -38,11 +38,11 @@ The self-improvement loop (daemon_cycle.py) user-approval queue is **safety-only
 
 - Each instruction-improvement attempt is recorded as 3-tuple: `(instruction_version, score 1–5, applied_date)`.
 - Top-20 entries (sorted ascending by score) provided as meta-context for the next optimization cycle — ascending order maximizes in-context learning effect.
-- Successful patches (score ≥ 4) → CTM bucket. Repeated failures (revision_count ≥ 2 OR result=fail) → EPM bucket.
+- Successful patches → CTM bucket via the tiered admission rule: high confidence admits immediately at the injectable floor (score ≥ 4); medium confidence stores a provisional sub-floor score (3, non-injectable) and promotes to the floor on corroborating re-observation (frequency ≥ 2); a `grader_verdict` of `verified_fail` never admits. Repeated failures (revision_count ≥ 2 OR result=fail) → EPM bucket.
 
 ## Memory Type Classification (CTM / EPM)
 
-- **CTM** (Correct-Template Memory): reusable success patterns — instruction variants that achieved score ≥ 4 on a given task_type
+- **CTM** (Correct-Template Memory): reusable success patterns — tiered admission per task_type: a high-confidence variant enters at the injectable floor (score ≥ 4) immediately, a medium-confidence one enters provisional (sub-floor score 3) and promotes at frequency ≥ 2, and `grader_verdict=verified_fail` is never admitted
 - **EPM** (Error-Pattern Memory): repeated failure patterns — revision_count ≥ 2 or result=fail accumulations
 - New task start → query CTM for similar success examples + EPM for patterns to avoid
 - Both buckets stored in `memory/core-learning-log.md` under labelled sub-sections (`### CTM` / `### EPM`); separate files NOT required at this stage
@@ -50,11 +50,11 @@ The self-improvement loop (daemon_cycle.py) user-approval queue is **safety-only
 
 ### CTM/EPM Lesson Store (size-capped, consolidation-op ingest)
 
-The runtime CTM/EPM buckets are materialized as a machine-readable lesson store — a JSON file the learning-aggregator writes (`hooks/learning-aggregator.py`, `ingest_outcome_lessons`) and the spawn-time injector reads (`hooks/inject-scope-rules.sh`). This is the operational store distinct from the human-readable `memory/core-learning-log.md` narrative; both hold the same CTM (score ≥ 4 success) / EPM (failure) lesson classification.
+The runtime CTM/EPM buckets are materialized as a machine-readable lesson store — a JSON file the learning-aggregator writes (`hooks/learning-aggregator.py`, `ingest_outcome_lessons`) and the spawn-time injector reads (`hooks/inject-scope-rules.sh`). This is the operational store distinct from the human-readable `memory/core-learning-log.md` narrative; both hold the same CTM (tiered success admission: high immediate at the injectable floor, medium provisional sub-floor until corroborated at frequency ≥ 2, `verified_fail` excluded) / EPM (failure) lesson classification.
 
 - **AD-1 — size-capped labeled blocks (MemGPT/Letta precedent)**: each bucket carries a per-bucket char cap (`CTM_BUCKET_MAX_CHARS` / `EPM_BUCKET_MAX_CHARS`, 4000 each). On overflow, `enforce_bucket_cap` runs summarize-and-evict: tombstoned dead-weight is evicted first, then live entries ascending by (score, frequency), until the ACTIVE (non-tombstoned) lesson-text sum is ≤ cap. **Invariant**: a bucket's active size never exceeds its cap. Capacity eviction is the SOLE hard-removal path and is distinct from the AD-2 tombstone (staleness, not capacity).
 - **AD-2 — consolidation ops on ingest (Mem0 precedent)**: lesson ingest is ADD / UPDATE / MERGE / TOMBSTONE — NEVER a hard-delete. A DUPLICATE lesson (same agent + task_type + numeric/case/space-normalized text) bumps frequency and keeps the max score (`UPDATE`), it never appends a new row. A re-observed tombstoned lesson resurrects (`MERGE`). A STALE lesson is soft-deleted via `tombstone_lesson` (row retained, `tombstoned: true`), excluded from injection and the active-cap sum but resurrectable.
-- **AD-3 — spawn-time lesson injection (Reflexion / LangMem procedural-memory precedent)**: on SubagentStart, `inject-scope-rules.sh` injects the current agent's top-K (K=5) live CTM lessons (score ≥ 4) + EPM warnings, agent-matched, hard-capped at `LESSON_MAX_BYTES` (1200 B), as the LOWEST-priority (first-dropped) injection block so the proven scope blocks always win the ~9984 B assembly ceiling. task_type is not known at spawn (the envelope carries only agent_type), so matching is agent-keyed with each lesson carrying its task_type as an inline tag. A no-match spawn (or absent store) is left unchanged (fail-open).
+- **AD-3 — spawn-time lesson injection (Reflexion / LangMem procedural-memory precedent)**: on SubagentStart, `inject-scope-rules.sh` injects the current agent's top-K (K=5) live CTM lessons (score ≥ 4 — the injectable floor; a provisional medium lesson sits below it at sub-floor score 3 until its frequency ≥ 2 promotion) + EPM warnings, agent-matched, hard-capped at `LESSON_MAX_BYTES` (1200 B), as the LOWEST-priority (first-dropped) injection block so the proven scope blocks always win the ~9984 B assembly ceiling. task_type is not known at spawn (the envelope carries only agent_type), so matching is agent-keyed with each lesson carrying its task_type as an inline tag. A no-match spawn (or absent store) is left unchanged (fail-open).
 
 ## Correction Signal Capture
 

@@ -66,7 +66,7 @@ seed_outcome() { # dir name result cid mtime
 # Build a HOME sandbox with an outcomes dir + a transcript; echo the HOME path.
 make_home() { # home_root
   local home="${1}"
-  mkdir -p "${home}/.claude/data/outcomes"
+  mkdir -p "${home}/.glass-atrium/data/outcomes"
   printf '{"line":1}\n' >"${home}/transcript.jsonl"
 }
 
@@ -83,7 +83,9 @@ run_hook() { # home  stat_count_file  awk_count_file  [k]
     '{session_id:"sesPC", trigger:"auto", transcript_path:$t}')"
   : >"${scf}"
   : >"${acf}"
-  run env \
+  # -u GA_DATA_ROOT: the seam default (${GA_DATA_ROOT:-$HOME/.glass-atrium}) must HOME-anchor to the
+  # sandbox, so a GA_DATA_ROOT leaked from the runner's env cannot misdirect the outcomes read.
+  run env -u GA_DATA_ROOT \
     HOME="${home}" \
     PATH="${SHIM_DIR}:${PATH}" \
     STAT_COUNT_FILE="${scf}" \
@@ -107,7 +109,7 @@ packet_tail() { # home
 @test "(a) corpus <= K: summary rows + correlation lines byte-identical to the per-file scan" {
   HOME_A="${PC_TMP}/a"
   make_home "${HOME_A}"
-  local OUT="${HOME_A}/.claude/data/outcomes"
+  local OUT="${HOME_A}/.glass-atrium/data/outcomes"
   # o1 oldest … o4 newest. o3 is done+cid (active-status filter must EXCLUDE it); o1 has no cid.
   seed_outcome "${OUT}" o1 done "" 202607120801
   seed_outcome "${OUT}" o2 needs_context cid-2 202607120802
@@ -145,9 +147,9 @@ EOF
   # Small corpus (3).
   HOME_S="${PC_TMP}/small"
   make_home "${HOME_S}"
-  seed_outcome "${HOME_S}/.claude/data/outcomes" s1 done cid-s1 202607120801
-  seed_outcome "${HOME_S}/.claude/data/outcomes" s2 blocked cid-s2 202607120802
-  seed_outcome "${HOME_S}/.claude/data/outcomes" s3 done cid-s3 202607120803
+  seed_outcome "${HOME_S}/.glass-atrium/data/outcomes" s1 done cid-s1 202607120801
+  seed_outcome "${HOME_S}/.glass-atrium/data/outcomes" s2 blocked cid-s2 202607120802
+  seed_outcome "${HOME_S}/.glass-atrium/data/outcomes" s3 done cid-s3 202607120803
   run_hook "${HOME_S}" "${PC_TMP}/s_stat" "${PC_TMP}/s_awk"
   [ "${status}" -eq 0 ] || return 1
   local stat_small awk_small
@@ -159,7 +161,7 @@ EOF
   make_home "${HOME_B}"
   local i
   for i in 1 2 3 4 5 6 7 8; do
-    seed_outcome "${HOME_B}/.claude/data/outcomes" "b${i}" done "cid-b${i}" "20260712080${i}"
+    seed_outcome "${HOME_B}/.glass-atrium/data/outcomes" "b${i}" done "cid-b${i}" "20260712080${i}"
   done
   run_hook "${HOME_B}" "${PC_TMP}/b_stat" "${PC_TMP}/b_awk"
   [ "${status}" -eq 0 ] || return 1
@@ -184,7 +186,7 @@ EOF
 @test "(c) full correlation coverage by default; operator K windows correlation only, not the summary" {
   HOME_C="${PC_TMP}/c"
   make_home "${HOME_C}"
-  local OUT="${HOME_C}/.claude/data/outcomes"
+  local OUT="${HOME_C}/.glass-atrium/data/outcomes"
   # 2 OLD active outcomes, then 5 NEWER done — the actives sit BELOW the newest-5 summary window AND
   # below a small correlation window (K=3).
   seed_outcome "${OUT}" old_a blocked cid-old-a 202607120801
@@ -226,7 +228,7 @@ EOF
 
 @test "(d) empty outcomes dir degrades cleanly: (none) summary + correlation, exit 0" {
   HOME_D="${PC_TMP}/d"
-  make_home "${HOME_D}" # creates an EMPTY .claude/data/outcomes
+  make_home "${HOME_D}" # creates an EMPTY .glass-atrium/data/outcomes
   run_hook "${HOME_D}" "${PC_TMP}/d_stat" "${PC_TMP}/d_awk"
   [ "${status}" -eq 0 ] || return 1
   local pkt

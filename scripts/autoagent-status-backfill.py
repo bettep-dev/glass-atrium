@@ -8,7 +8,7 @@
 #   each `applied` entry into the PG row (matched by composite key).
 #
 # Inputs (read-only):
-#   * ~/.claude/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl  (N files)
+#   * ~/.glass-atrium/data/daemon-reports/autoagent-applied-YYYY-MM-DD.jsonl  (N files)
 #     -- *.dryrun.jsonl excluded by glob design
 #
 # Writes (single transaction, idempotent):
@@ -26,7 +26,7 @@
 #
 # Summary outputs:
 #   * stderr: [backfill-status] tuples=N updated=M no_match=K errors=E elapsed=X.Xs
-#   * file:   ~/.claude/data/daemon-reports/status-backfill-YYYY-MM-DD-HHMMSS.json
+#   * file:   ~/.glass-atrium/data/daemon-reports/status-backfill-YYYY-MM-DD-HHMMSS.json
 #
 # Exit codes (named — a supervising wrapper branches on these; a precondition is
 # never absorbed silently per shared-self-improve-hygiene Precondition Loud-Fail):
@@ -45,6 +45,15 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
+
+# The home-anchored data/log-root seam lives under hooks/; pin its dir on sys.path
+# before the psycopg precondition so the reports root resolves from this scripts/
+# module identically to the shell + python siblings, independent of the DB driver.
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+if str(_HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(_HOOKS_DIR))
+import ga_paths  # noqa: E402 — sys.path insert immediately above
 
 # Named exit codes (see header). Self-improve-hygiene Precondition Loud-Fail: an
 # unmet precondition exits with a documented, branchable code + explicit stderr,
@@ -81,7 +90,7 @@ except ImportError as exc:
     sys.exit(EXIT_NO_LIBPQ)
 
 
-REPORTS_DIR = os.path.expanduser("~/.claude/data/daemon-reports")
+REPORTS_DIR = str(ga_paths.get_data_root() / "daemon-reports")
 INPUT_GLOB = os.path.join(REPORTS_DIR, "autoagent-applied-*.jsonl")
 # Filename pattern — captures cycle_date; excludes *.dryrun.jsonl by anchored regex.
 _FNAME_RE = re.compile(r"^autoagent-applied-(\d{4}-\d{2}-\d{2})\.jsonl$")

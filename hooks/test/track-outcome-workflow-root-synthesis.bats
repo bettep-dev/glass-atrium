@@ -71,7 +71,7 @@ setup() {
 
   WR_TMP="$(mktemp -d)"
   SANDBOX_HOME="${WR_TMP}/home"
-  mkdir -p "${SANDBOX_HOME}/.claude/logs"
+  mkdir -p "${SANDBOX_HOME}/.glass-atrium/logs"
 
   # A workflow-controller identity: agent_id present, but no leaf sidecar and (deliberately) no
   # own transcript created — so _resolve_subagent_transcript() globs nothing under the sandbox HOME.

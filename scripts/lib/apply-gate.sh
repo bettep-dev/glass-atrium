@@ -21,9 +21,13 @@
 # a missing proposed file is a non-zero return + stderr, never a silent skip; no
 # TTY and no injected answer → DECLINE (zero writes), never an implicit yes.
 #
-# Change-record stream (TSV, one record/line): <label>\t<current>\t<proposed> —
-# current EMPTY when no live file exists (previewed as new vs /dev/null),
-# proposed holds the bytes that WOULD be written.
+# Change-record stream (one record/line, fields joined by ASCII Unit Separator
+# 0x1f): <label>\x1f<current>\x1f<proposed> — current EMPTY when no live file
+# exists (previewed as new vs /dev/null), proposed holds the bytes that WOULD be
+# written. The separator MUST be non-whitespace: an IFS-whitespace delimiter (tab)
+# collapses the empty <current> field of a new-file record, shifting proposed into
+# current and leaving proposed empty → fail-closes the whole gate (no new file ever
+# deploys). 0x1f never appears in a path, so every field round-trips intact.
 #
 # ATRIUM_UPDATE_CONFIRM_ANSWER, when SET (even empty), is the ONLY injection seam
 # (used verbatim instead of /dev/tty) — prod interactive is never silently bypassed.
@@ -101,7 +105,7 @@ gate_build_nonagent_records() {
     else
       current=""
     fi
-    printf '%s\t%s\t%s\n' "${path}" "${current}" "${proposed}"
+    printf '%s\x1f%s\x1f%s\n' "${path}" "${current}" "${proposed}"
   done
 }
 
@@ -113,7 +117,7 @@ gate_build_nonagent_records() {
 gate_confirm_changes() {
   local -a labels=() currents=() proposeds=()
   local label current proposed n i
-  while IFS=$'\t' read -r label current proposed; do
+  while IFS=$'\x1f' read -r label current proposed; do
     [[ -n "${label}" ]] || continue
     labels+=("${label}")
     currents+=("${current}")

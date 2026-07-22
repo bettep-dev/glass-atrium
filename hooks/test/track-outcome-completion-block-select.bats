@@ -32,7 +32,7 @@ setup() {
 
   BS_TMP="$(mktemp -d)"
   SANDBOX_HOME="${BS_TMP}/home"
-  mkdir -p "${SANDBOX_HOME}/.claude/logs"
+  mkdir -p "${SANDBOX_HOME}/.glass-atrium/logs"
   PAYLOAD_FILE="${BS_TMP}/payload.json"
 
   # The canonical emit-format template block (pipe-joined placeholders) an agent might quote.

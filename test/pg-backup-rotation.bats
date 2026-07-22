@@ -10,7 +10,7 @@
 #
 # Hermetic strategy: HOME is redirected to a mktemp sandbox (so the script's
 # BACKUP_DIR + TRASH_DIR resolve inside it), and a fake pg_dump on PATH writes a
-# non-empty payload — the real glass_atrium database and the real ~/.claude
+# non-empty payload — the real glass_atrium database and the real ~/.glass-atrium
 # backups are never touched (SECURITY: no real pg_dump ever runs).
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
@@ -21,7 +21,7 @@ setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "script not found: ${REAL_SCRIPT}"
   SANDBOX="$(mktemp -d -t ga-pgbackup-bats.XXXXXX)"
   FAKE_HOME="${SANDBOX}/home"
-  BACKUP_DIR="${FAKE_HOME}/.claude/backups/postgres"
+  BACKUP_DIR="${FAKE_HOME}/.glass-atrium/backups/postgres"
   TRASH_DIR="${FAKE_HOME}/.Trash"
   # The script assumes ~/.Trash exists (a real user always has it); create it so
   # rotation mv targets resolve instead of silently WARN-skipping.
@@ -70,7 +70,9 @@ count_nightly() {
 }
 
 run_backup() {
-  HOME="${FAKE_HOME}" PATH="${FAKE_BIN}:${PATH}" run bash "${REAL_SCRIPT}"
+  # Unset GA_DATA_ROOT/GA_ROOT so the default-path seam resolves under FAKE_HOME
+  # (a leaked env var would otherwise redirect BACKUP_DIR off the sandbox).
+  run env -u GA_DATA_ROOT -u GA_ROOT HOME="${FAKE_HOME}" PATH="${FAKE_BIN}:${PATH}" bash "${REAL_SCRIPT}"
 }
 
 @test "rotation retains 14 nightly dumps despite a keep-forever pre-uninstall dump" {

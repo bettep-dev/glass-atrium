@@ -122,7 +122,7 @@ fi
 # Resolve output JSON path
 
 CYCLE_DATE="$(date -u +%Y-%m-%d)"
-REPORTS_DIR="${HOME}/.claude/data/daemon-reports"
+REPORTS_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
     OUT_PATH="${OUT_PATH:-/tmp/wiki-dedup-${CYCLE_DATE}.dryrun.json}"

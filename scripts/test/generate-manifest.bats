@@ -54,10 +54,10 @@ seed_manifest_doc() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, _doc_settings_json, files, hashes" {
+@test "generate: top-level key order is version, _doc_settings_json, files, hashes, modes" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes" ]]
+  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes,modes" ]]
 }
 
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {
@@ -100,6 +100,35 @@ seed_manifest_doc() {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
   [[ "$(cat "${MANIFEST}")" == "${first}" ]]
+}
+
+@test "generate: modes map records a symlink's TARGET mode, not its lstat bits (FB-2)" {
+  # A tracked symlink is stored git-mode 120000; on disk it lstats 0755 (macOS)
+  # or 0777 (Linux), but post-extract `chmod` FOLLOWS the link, so the modes map
+  # must record the TARGET's 0644. Pre-fix mode_of used bare `stat -f %Lp` (no
+  # -L / lstat) and recorded the link's own bits — observed 755 at HEAD on the
+  # live macOS host, which then chmod'd the real GLASS_ATRIUM_GLOBAL_RULES.md
+  # target (the tree's one symlink) to 755. This row FAILS at HEAD (recorded=755
+  # != 644) and passes once mode_of dereferences via `stat -L`.
+  # Assertions are `|| return 1` gated: bats fails a test only on its LAST
+  # command, so a bare intermediate `[[ ]]` would not gate the recorded==644
+  # check (mirrors the sibling manifest-mode-integrity.bats convention).
+  printf '# real rule target\n' >"${WORK}/rules/target.md"
+  chmod 644 "${WORK}/rules/target.md"
+  ln -s target.md "${WORK}/rules/link.md"
+  git -C "${WORK}" add rules/target.md rules/link.md
+  run "${SCRIPT}"
+  [[ "${status}" -eq 0 ]] || return 1
+  local link_lstat recorded
+  link_lstat="$(stat -f '%Lp' "${WORK}/rules/link.md" 2>/dev/null || stat -c '%a' "${WORK}/rules/link.md")"
+  recorded="$(jq -r '.modes["rules/link.md"]' "${MANIFEST}")"
+  # the link's own lstat bits are NOT 644 (755 macOS / 777 Linux) — proving a
+  # recorded 644 came from dereferencing the link, not lstat'ing it.
+  [[ "${link_lstat}" != "644" ]] || return 1
+  # the contract: modes[link] follows the link to the 644 target.
+  [[ "${recorded}" == "644" ]] || return 1
+  # the target's own entry is 644 too.
+  [[ "$(jq -r '.modes["rules/target.md"]' "${MANIFEST}")" == "644" ]] || return 1
 }
 
 @test "--check: exit 0 on a freshly generated, matching tree" {

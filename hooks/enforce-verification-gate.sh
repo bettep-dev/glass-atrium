@@ -36,7 +36,7 @@ IFS=$'\n\t'
 # fail-open ERR trap — never interfere with spawn.
 trap 'printf "[enforce-verification-gate] internal error at line %d: %s — fail-open (exit 0)\n" "${LINENO}" "${BASH_COMMAND}" >&2; exit 0' ERR
 
-readonly DEFAULT_DATA_DIR="${HOME}/.claude/data"
+readonly DEFAULT_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
 # Capture the data dir BEFORE sourcing hook-utils.sh — that library assigns HOOK_DATA_DIR
 # unconditionally, which would clobber the Bats-sandbox env override read here. (block-doc-routing-leak.sh
 # captures its override path before sourcing for the same reason.)

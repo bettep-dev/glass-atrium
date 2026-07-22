@@ -349,3 +349,38 @@ run_recreate() {
   [[ "${status}" -eq 0 ]]
   [[ ! -e "${SANDBOX}/dropdb-called" ]]
 }
+
+# --- backup_dir default seam (Tier-A backups/postgres relocation) ------------
+# recreate_database's backup dir default (GA_DB_BACKUP_DIR unset) must resolve under
+# the migrated ${GA_DATA_ROOT:-$HOME/.glass-atrium}/backups/postgres seam (mirroring the
+# already-converted ga-db.sh / pg-backup.sh), never the legacy ~/.claude/backups/postgres.
+# The GA_DB_BACKUP_DIR override case is proven by the "backs up BEFORE dropping" test
+# above (dump lands under the ${SANDBOX}/backups override); this pins the DEFAULT.
+
+@test "GA_DB_RECREATE backup_dir DEFAULT resolves under the .glass-atrium seam (not ~/.claude)" {
+  # HOME is redirected at a sandbox so the ${HOME}/.glass-atrium default resolves inside
+  # it. dropdb fails (exit 1) so the run exits EXIT_RECREATE=8 right AFTER the backup dir
+  # + dump file are created — isolating the default-resolution assertion from the rest of
+  # the recreate flow. GA_DB_BACKUP_DIR + GA_DATA_ROOT are unset so the bare HOME default
+  # is exercised.
+  printf '#!/bin/bash\ncase "$*" in *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 5 ;; *) echo 1 ;; esac\nexit 0\n' >"${STUB_BIN}/psql"
+  # pg_dump writes a non-empty custom-format dump at the -f path (backup_db_to_file's
+  # non-empty precondition); dropdb fails so the run stops at the drop step.
+  printf '#!/bin/bash\nout=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-f" ]] && { out="$2"; shift; }; shift; done\nprintf "PGDMP" >"${out}"\nexit 0\n' >"${STUB_BIN}/pg_dump"
+  printf '#!/bin/bash\nexit 1\n' >"${STUB_BIN}/dropdb"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb"
+  local fake_home="${SANDBOX}/home"
+  mkdir -p "${fake_home}"
+  # env -u options MUST precede the NAME=value assignments (else env treats -u as the cmd).
+  run env -u GA_DB_BACKUP_DIR -u GA_DATA_ROOT \
+    GA_DB_RECREATE=1 GA_DB_NAME=claude_oss_e2e HOME="${fake_home}" \
+    PATH="${STUB_BIN}:/usr/bin:/bin" \
+    bash -c "cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
+  [[ "${status}" -eq 8 ]] || { echo "expected EXIT_RECREATE=8, got ${status}; out=${output}" >&2; return 1; }
+  # the backup landed under the migrated .glass-atrium seam …
+  local dumps=("${fake_home}"/.glass-atrium/backups/postgres/claude_oss_e2e-recreate-*.dump)
+  [[ -e "${dumps[0]}" ]] || { echo "no dump under .glass-atrium seam; out=${output}" >&2; return 1; }
+  # … and NOT the legacy ~/.claude root
+  [[ ! -d "${fake_home}/.claude/backups/postgres" ]] \
+    || { echo "legacy .claude/backups/postgres created (seam leaked)" >&2; return 1; }
+}

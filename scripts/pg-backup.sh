@@ -3,7 +3,7 @@
 # Runs from launchd at 02:30 daily
 # (com.glass-atrium.pg-backup). Idempotent and safe to invoke manually any time.
 #
-# Storage:   ~/.claude/backups/postgres/glass_atrium-YYYYMMDD-HHMMSS.dump (custom -F c)
+# Storage:   ~/.glass-atrium/backups/postgres/glass_atrium-YYYYMMDD-HHMMSS.dump (custom -F c)
 # Retention: keep 14 newest dumps; older ones moved to ~/.Trash/ (NEVER rm —
 #            per feedback_delete_to_trash.md and global file-deletion policy).
 # Auth:      peer authentication via Unix socket (/tmp). Socket-only absolute —
@@ -11,7 +11,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-readonly BACKUP_DIR="${HOME}/.claude/backups/postgres"
+readonly BACKUP_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/backups/postgres"
 readonly TRASH_DIR="${HOME}/.Trash"
 readonly RETAIN_COUNT=14
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"

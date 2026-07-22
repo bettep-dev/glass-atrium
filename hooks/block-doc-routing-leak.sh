@@ -32,7 +32,7 @@ trap 'printf "[block-doc-routing-leak] internal error at line %d: %s — fail-op
 # Firing-trace log override — captured BEFORE sourcing hook-utils.sh (which assigns
 # HOOK_DATA_DIR) so the default resolves to the real runtime path; the override is for
 # Bats fail-safe testing (mirrors enforce-workflow-verify-stage.sh's WORKFLOW_GATE_FIRED_LOG).
-DOC_ROUTING_LEAK_FIRED_LOG="${DOC_ROUTING_LEAK_FIRED_LOG:-${HOME}/.claude/data/doc-routing-leak-fired.log}"
+DOC_ROUTING_LEAK_FIRED_LOG="${DOC_ROUTING_LEAK_FIRED_LOG:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/doc-routing-leak-fired.log}"
 
 # Instant kill switch — non-empty disables without touching settings.json.
 [[ -n "${DOC_ROUTING_LEAK_OFF:-}" ]] && exit 0

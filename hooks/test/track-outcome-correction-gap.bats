@@ -31,7 +31,7 @@ setup() {
 
   CG_TMP="$(mktemp -d)"
   SANDBOX_HOME="${CG_TMP}/home"
-  mkdir -p "${SANDBOX_HOME}/.claude/logs"
+  mkdir -p "${SANDBOX_HOME}/.glass-atrium/logs"
   PAYLOAD_FILE="${CG_TMP}/payload.json"
 }
 

@@ -4,7 +4,7 @@
 # task's Outcome Record = `result: done`. This hook watches Write events for new outcome files,
 # then flips the status of any open progress file whose slug the outcome references.
 # Matching rule (conservative — false positives worse than misses):
-#   1. path ends in /.claude/data/outcomes/*.md (canonical) OR /memory/outcomes/*.md (deprecated
+#   1. path ends in /.glass-atrium/data/outcomes/*.md (canonical) OR /memory/outcomes/*.md (deprecated
 #      legacy stray matches; primary sink is PG core.outcomes, not the file system).
 #   2. frontmatter contains `result: done`.
 #   3. slug (length >= 4) appears verbatim in the outcome body/frontmatter; short slugs ignored
@@ -31,10 +31,10 @@ TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
 FILE_PATH="$(hook_get_tool_input "${INPUT}" "file_path")"
 [[ -n "${FILE_PATH}" ]] || exit 0
 
-# Path filter — outcome records only (canonical /.claude/data/outcomes/*.md · deprecated
+# Path filter — outcome records only (canonical /.glass-atrium/data/outcomes/*.md · deprecated
 # legacy /memory/outcomes/*.md for stray writes).
 case "${FILE_PATH}" in
-  */.claude/data/outcomes/*.md) ;;
+  */.glass-atrium/data/outcomes/*.md) ;;
   */memory/outcomes/*.md) ;;
   *) exit 0 ;;
 esac

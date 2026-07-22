@@ -52,13 +52,14 @@ HOME = Path(os.environ.get("HOME", str(Path.home())))
 # core.learning_log (the aggregator's UPSERT target — see
 # read_user_pending_patterns); the file stays on disk untouched and the
 # constant survives only for run_cycle/--log-path call compatibility.
+# Intentionally kept LEGACY (~/.claude): learning-log.md was NOT part of the
+# Tier-A data migration (only the data/learning/ DIR moved), and the daemon
+# neither reads nor writes it — repointing would strand a stray empty file.
 DEFAULT_LEARNING_LOG = HOME / ".claude" / "data" / "learning-log.md"
-# data/outcomes/ holds only the legacy `.md` fallback path — new records sink to
-# core.outcomes. fetch_related_outcomes() does PG-first + file-fallback. Directory
-# kept for residual `.md` + revision_count lookup (track-outcome.sh).
-DEFAULT_OUTCOMES_DIR = HOME / ".claude" / "data" / "outcomes"
+# agents/ is the harness agent farm, not a migrated data store — stays legacy.
 DEFAULT_AGENTS_DIR = HOME / ".claude" / "agents"
-DEFAULT_REPORTS_DIR = HOME / ".claude" / "data" / "daemon-reports"
+# DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR now derive from the ga_paths seam —
+# defined below, AFTER the hooks-dir sys.path insert that makes ga_paths importable.
 
 # PG read source — _pg_learning_dualwrite is the single helper SoT (same import
 # path + fallback policy as learning-aggregator.py). Missing psycopg →
@@ -76,6 +77,16 @@ _REPO_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
     if str(_hooks_dir) not in sys.path:
         sys.path.insert(0, str(_hooks_dir))
+import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
+
+# Runtime data roots via the shared ga_paths seam (.glass-atrium default,
+# GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
+# resolve after the .claude→.glass-atrium data migration.
+# data/outcomes/ holds only the legacy `.md` fallback path — new records sink to
+# core.outcomes. fetch_related_outcomes() does PG-first + file-fallback. Directory
+# kept for residual `.md` + revision_count lookup (track-outcome.sh).
+DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
+DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
 # shells out and imports it purely to reach the compiled refusal patterns) MUST
@@ -260,7 +271,7 @@ _NON_ADJUDICATION_CLASSES = frozenset(
 # Per-call Haiku failure logs — one NON-overwritten file per (date, agent,
 # attempt) so the NEXT 04:30 failure carries the full untruncated streams that
 # the raw_response[:400] collapse currently destroys.
-HAIKU_FAILURE_LOG_DIR = HOME / ".claude" / "logs" / "autoagent-haiku-failures"
+HAIKU_FAILURE_LOG_DIR = ga_paths.get_log_root() / "autoagent-haiku-failures"
 # Bounded FAIL-OPEN reachability probe budget (LLM10 / Loud-Fail): a probe error
 # must never fail or block the cycle.
 HAIKU_PROBE_HOST = "api.anthropic.com"
@@ -732,7 +743,7 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
 # Feature-flag file — confidence_filter_enabled toggle (3-state):
 #   true → active (posterior gate ON) · false → bypass (floorless, operator OFF)
 #   · missing/malformed/unset → floor (fail-CLOSED — every row floored to 'mention').
-FEATURE_FLAGS_FILE = HOME / ".claude" / "data" / "learning" / "feature-flags.json"
+FEATURE_FLAGS_FILE = ga_paths.get_data_root() / "learning" / "feature-flags.json"
 _CONFIDENCE_FLAG_KEY = "confidence_filter_enabled"
 
 # Promotion ladder thresholds. The n>=MIN_OBSERVATIONS candidate floor gates on

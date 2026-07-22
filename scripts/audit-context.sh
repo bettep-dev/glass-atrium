@@ -5,7 +5,7 @@
 # Behavior:
 #   1. Scan agents/ rules/ skills/ + agent-registry.json + settings*.json
 #   2. Count tokens via tiktoken cl100k_base (approx, ~10% error vs Anthropic count_tokens)
-#   3. Write per-file JSON to ~/.claude/data/audit/YYYY-MM-DD-context-budget.json
+#   3. Write per-file JSON to ~/.glass-atrium/data/audit/YYYY-MM-DD-context-budget.json
 #   4. Emit compact stdout summary (top-5 per dimension + threshold verdict)
 #
 # Exit codes:
@@ -21,7 +21,9 @@ IFS=$'\n\t'
 readonly CLAUDE_ROOT="${HOME}/.claude"
 readonly SKILL_DIR="${CLAUDE_ROOT}/skills/glass-atrium-ops-token-audit"
 readonly THRESHOLDS="${SKILL_DIR}/thresholds.yaml"
-readonly AUDIT_DIR="${CLAUDE_ROOT}/data/audit"
+# AUDIT_DIR decouples from CLAUDE_ROOT: the scan TARGET is the ~/.claude ecosystem, but the
+# output store is Atrium runtime data → HOME-anchored GA_DATA_ROOT seam (default ~/.glass-atrium).
+readonly AUDIT_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/audit"
 DATE_TAG="$(date +%Y-%m-%d)"
 readonly DATE_TAG
 DEFAULT_OUT="${AUDIT_DIR}/${DATE_TAG}-context-budget.json"

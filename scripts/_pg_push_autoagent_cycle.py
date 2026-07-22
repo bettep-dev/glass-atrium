@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # _pg_push_autoagent_cycle.py — invoked by daemon-cycle.sh after the cycle
-# stage emits ~/.claude/data/daemon-reports/autoagent-YYYY-MM-DD.json.
+# stage emits ~/.glass-atrium/data/daemon-reports/autoagent-YYYY-MM-DD.json.
 #
 # Reads the daily JSON (env OUT_PATH) and pushes:
 #   * core.daemon_runs (daemon_name='autoagent', run_date=CYCLE_DATE) with

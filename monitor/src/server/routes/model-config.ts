@@ -56,10 +56,17 @@ const INHERIT_SETTINGS_LABEL = "inherit (settings.json)";
 
 // external-surface path resolution (env overrides = test seams)
 
-function getDaemonConfigPath(): string {
+// GA runtime-state root — the daemon stores live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data`
+// (twin of the shell/py seam in hooks/ga_paths.py), NOT under ~/.claude. Exported for the
+// path-resolution unit test (pure string build — reads no filesystem).
+export function getGaDataRoot(): string {
+  return process.env.GA_DATA_ROOT ?? path.join(os.homedir(), ".glass-atrium");
+}
+
+export function getDaemonConfigPath(): string {
   return (
     process.env.MODEL_CONFIG_DAEMON_CONFIG_PATH ??
-    path.join(os.homedir(), ".claude", "data", "daemon-config.json")
+    path.join(getGaDataRoot(), "data", "daemon-config.json")
   );
 }
 
@@ -67,10 +74,10 @@ function getAgentsDir(): string {
   return process.env.MODEL_CONFIG_AGENTS_DIR ?? path.join(os.homedir(), ".glass-atrium", "agents");
 }
 
-function getApplyLockPath(): string {
+export function getApplyLockPath(): string {
   return (
     process.env.MODEL_CONFIG_APPLY_LOCK_PATH ??
-    path.join(os.homedir(), ".claude", "data", "daemon-reports", ".apply-lock")
+    path.join(getGaDataRoot(), "data", "daemon-reports", ".apply-lock")
   );
 }
 
@@ -329,7 +336,7 @@ async function handlePut(
     const current = new Map<string, string>(currentRows.map((r) => [r.configKey, r.configValue]));
 
     // daemon-apply stash-window guard (D4 amended): the real lock is the filesystem dir
-    // ~/.claude/data/daemon-reports/.apply-lock — fail-open when absent.
+    // ~/.glass-atrium/data/daemon-reports/.apply-lock — fail-open when absent.
     const touchesFrontmatter =
       modelChanges.has("model.dev") ||
       modelChanges.has("model.research") ||

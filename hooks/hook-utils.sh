@@ -243,8 +243,11 @@ hook_join_alt() {
   printf '%s' "$*"
 }
 
-HOOK_LOG_DIR="${HOME}/.claude/logs"
-HOOK_DATA_DIR="${HOME}/.claude/data"
+# Runtime log/data roots — HOME-anchored (GA_DATA_ROOT override), DECOUPLED from the install-tree GA_ROOT,
+# which is unset in the CLI-fired-hook + launchd-daemon contexts these consumers run in. Python twin:
+# hooks/ga_paths.py. Default-only change: an exported GA_DATA_ROOT still redirects both roots.
+HOOK_LOG_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/logs"
+HOOK_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
 
 # English-only alias for hooks using the 5-param emit_error signature → hook_emit_error.
 emit_error() {
