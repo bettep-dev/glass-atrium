@@ -1124,7 +1124,18 @@ PY
   # Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
   # unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
-  helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null)" || helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT'
+  # The inner `|| true` keeps a verdict-engine CRASH (python3 interpreter failure — its PRESENCE was
+  # already checked upstream at ~L320) from tripping the errtrace ERR trap INSIDE this command
+  # substitution; such a crash then yields EMPTY output, which the T12 branch below detects. A
+  # successful helper always prints >=1 line (even its own except-branch emits PASS), so empty ⇔ crash.
+  helper_out="$(printf '%s' "${script_src}" | python3 -c "${verdict_py}" "${DEV_SET}" 2>/dev/null || true)"
+  if [[ -z "${helper_out}" ]]; then
+    # T12 manifest site (gate-evaluation): the verdict engine could NOT run, so the gate silently falls
+    # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
+    # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
+    printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT'
+  fi
 
   # Parse the four lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then

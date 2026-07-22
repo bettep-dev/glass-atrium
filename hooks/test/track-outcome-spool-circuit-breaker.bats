@@ -233,6 +233,27 @@ spool_count() {
   printf '%s\n' "${output}" | grep -q 'DATA-071' || { echo "no DATA-071 uncreatable-dir record"; return 1; }
 }
 
+@test "T12 Site C: a present-but-unwritable spool dir emits DATA-080 (distinct from DATA-071), drops the write, exits 0" {
+  write_transcript done
+  write_payload
+
+  # The spool DIR exists (spool_dir_ensure's `-d` test passes → not the DATA-071 uncreatable path), but
+  # is not writable, so the per-entry mktemp inside spool_write fails — the distinct write-failure branch.
+  mkdir -p "${SPOOL_DIR}"
+  chmod 0555 "${SPOOL_DIR}"
+  STUB_PG_EXIT=6
+  run_hook
+  chmod 0755 "${SPOOL_DIR}" 2>/dev/null || true
+  [ "${status}" -eq 0 ] || { echo "hook must exit 0 on a failed spool write: ${status} ${output}"; return 1; }
+
+  local n; n="$(spool_count)"
+  [ "${n}" = "0" ] || { echo "expected the write to be dropped (0 entries), got ${n}"; return 1; }
+
+  printf '%s\n' "${output}" | grep -q 'DATA-080' || { echo "no DATA-080 spool-write-failure record"; return 1; }
+  # It must NOT be misreported as the uncreatable-dir case.
+  ! printf '%s\n' "${output}" | grep -q 'DATA-071' || { echo "wrongly emitted DATA-071 for a present dir"; return 1; }
+}
+
 # ---------------------------------------------------------------------------
 # T9 — recovery-loop circuit-breaker
 # ---------------------------------------------------------------------------

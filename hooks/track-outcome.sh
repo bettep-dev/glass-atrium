@@ -2501,6 +2501,17 @@ spool_persist() {
   fi
   if spool_write "${1}"; then
     spool_evict
+  else
+    # T12 manifest site (verification-result / cross-session state persistence): the spool dir exists
+    # (spool_dir_ensure passed) but the entry write itself failed (temp-create refusal / disk full /
+    # unwritable dir), so the recorded outcome — the verification result a LATER session's spool_drain
+    # replays — is dropped. spool_dir-uncreatable already loud-fails as DATA-071; this is the distinct
+    # write-failure branch. Named code, envelope dropped, hook still exits 0 (advisory).
+    emit_error "DATA-080" "warn" \
+      "Outcome spool write failed — failed outcome dropped despite a present spool dir" \
+      "Outcome spool write failed — failed outcome dropped despite a present spool dir" \
+      "Check free space/permissions on ${OUTCOME_SPOOL_DIR}" \
+      "Check free space/permissions on ${OUTCOME_SPOOL_DIR}"
   fi
   return 0
 }

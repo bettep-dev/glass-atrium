@@ -225,9 +225,19 @@ prune_marker_file() {
 # fail-safe: never stamp on ambiguity.
 if [[ "${hook_event}" == "PostToolUse" ]]; then
   if [[ -n "${subagent_type}" ]]; then
-    mkdir -p "${spawn_dir}" 2>/dev/null || true
-    printf '%s\n' "${subagent_type}" >>"${marker_path}" 2>/dev/null || true
-    prune_marker_file "${marker_path}"
+    # T12 manifest site (cross-hook/cross-session state persistence): this marker line is the ONLY
+    # record of the spawn-success, read by a LATER session's reviewer-presence gate (line ~179) AND by
+    # advisory-spawn-budget.sh (a DIFFERENT hook). A swallowed append silently loses that signal → both
+    # consumers read stale state. A genuine write failure now emits a named code; exit stays 0 and the
+    # success path is unchanged (mkdir failure is folded in — it makes the append fail too).
+    if { mkdir -p "${spawn_dir}" 2>/dev/null && printf '%s\n' "${subagent_type}" >>"${marker_path}" 2>/dev/null; }; then
+      prune_marker_file "${marker_path}"
+    else
+      emit_error "VGATE-STAMP-001" "warn" \
+        "session-spawns marker append failed — spawn-success signal not persisted; cross-hook reviewer-presence + spawn-count consumers see stale state" \
+        "Check permissions/free space on ${spawn_dir}" \
+        "{\"marker\":\"${session_key}\"}"
+    fi
   fi
   exit 0
 fi
