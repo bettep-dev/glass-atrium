@@ -1416,7 +1416,28 @@ sys.stdout.write("\n".join(out))
     return 1
 }
 
-# verify_patched — confirm the file has new bytes and still parses (basic).
+# verify_patched — post-apply preservation-semantics check on the patched target.
+# Return 0 = preserved (keep) · non-0 = fail (git_txn_apply restores from the
+# before-image). This runs in the ONLY deterministic slot between a generated patch
+# and the live harness — the pre-apply gates are all judgment.
+#
+# The before-image path travels through the VERIFY_BEFORE_IMAGE global (the caller
+# sets it right before the transaction, the pattern scripts/update.sh uses), so the
+# callback signature stays ONE argument and the editable-merge caller's own one-arg
+# verify callback is unaffected.
+#
+# Preservation semantics — present-before implies present-after, NOT unconditional
+# presence: a target that never had frontmatter or a `> Rules:` anchor is not
+# penalized for its continued absence (the rules files and the global-rules file
+# never carried frontmatter). Checks: non-empty · one heading · present-before
+# frontmatter kept · present-before `> Rules:` anchor kept · not shrunk below half
+# the before-image line count.
+#
+# DEFECT CLASSES IT CANNOT DETECT: markdown has no compiler and a heading-bearing
+# file IS structurally valid, so a SEMANTIC regression that keeps the frontmatter,
+# the anchor, and the size — reworded guidance, an inverted rule, a present-but-
+# gutted section — is undetectable in this deterministic slot by design; that class
+# needs the judgment the pre-apply gates already own.
 #
 # shellcheck disable=SC2329
 #   Invoked INDIRECTLY as the verify callback injected into git_txn_apply
@@ -1424,9 +1445,40 @@ sys.stdout.write("\n".join(out))
 #   reachability pass cannot see the call site.
 verify_patched() {
     local target="$1"
+    # Retained base checks: non-empty, at least one heading line.
     [[ -s "${target}" ]] || return 1
-    # Markdown sanity: at least one heading line. Cheap, no external deps.
     grep -q '^#' "${target}" || return 1
+
+    # Preservation layer keys on the before-image (VERIFY_BEFORE_IMAGE global). An
+    # absent/unreadable anchor degrades to the base checks only — a missing anchor
+    # is a caller-wiring gap, not a patch fault (fail-open on this layer).
+    local before="${VERIFY_BEFORE_IMAGE:-}"
+    [[ -n "${before}" && -r "${before}" ]] || return 0
+
+    # Frontmatter: present-before implies present-after (first line is '---').
+    # Separated command substitution (not inside the [[ ]]) so head's exit is not
+    # masked (SC2312) — before/target are readable, so head cannot fail here.
+    local before_fm after_fm
+    before_fm="$(head -n 1 "${before}")"
+    after_fm="$(head -n 1 "${target}")"
+    if [[ "${before_fm}" == "---" && "${after_fm}" != "---" ]]; then
+        return 1
+    fi
+
+    # `> Rules:` anchor: present-before implies present-after.
+    if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${target}"; then
+        return 1
+    fi
+
+    # Proportional shrink floor: keep at least half the before-image line count.
+    # Guts a body-stripping patch while a normal edit (near-original size) passes.
+    local before_lines after_lines
+    before_lines="$(wc -l <"${before}")"
+    after_lines="$(wc -l <"${target}")"
+    if ((after_lines * 2 < before_lines)); then
+        return 1
+    fi
+
     return 0
 }
 
@@ -1761,6 +1813,12 @@ ERRORS=0
 # distinct from ERRORS so the summary distinguishes "deferred" from "failed".
 NEEDS_REGEN=0
 
+# Before-image path for the post-apply verify predicate (verify_patched). SET
+# per-iteration right before git_txn_apply (below) and READ by verify_patched — the
+# same caller-scope verify-context contract scripts/update.sh uses. git_txn_apply
+# hands the verify callback only the target, so this anchor travels as a global.
+VERIFY_BEFORE_IMAGE=""
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -1972,6 +2030,12 @@ PY
     short="$(short_label "${PATCH_LABEL}")"
     apply_msg="${APPLY_PREFIX} T7 patch: ${PATCH_AGENT} ${short}"
     backup_subdir="${BACKUP_DIR}/${patch_cycle}_p${patch_id}"
+    # T20: verify_patched compares the post-apply target against the before-image
+    # git_txn_apply captures at <backup_subdir>/<target basename>.bak
+    # (_git_txn_capture_before_image). The one-arg verify callback receives only the
+    # target, so the before-image path travels through this global — set HERE, before
+    # the transaction; capture precedes verify, so the file exists when verify reads it.
+    VERIFY_BEFORE_IMAGE="${backup_subdir}/${GIT_TARGET##*/}.bak"
     # Invoked BARE (never `|| rc=$?`) — see git-txn.sh "set -e contract": bare
     # invocation keeps set -e active inside the function, so a contract violation
     # (wrong arity / bad callback) loud-fails the daemon instead of being masked.
@@ -2026,6 +2090,23 @@ PY
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
+        continue
+    fi
+    if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_RESTORE_FAIL}" ]]; then
+        # verify_patched failed AND the atomic restore ALSO failed — the target may
+        # still hold the applied bytes (unrecovered in place). Escalated over
+        # verify_failed: this is NOT a clean rollback, so it must NEVER reach the OK
+        # fall-through (APPLIED++). Count as an error, log a distinct reason, and
+        # loud-fail to stderr (shared-self-improve-hygiene Loud-Fail) — the
+        # before-image in the backup dir is the manual recovery anchor.
+        ERRORS=$((ERRORS + 1))
+        emit_log "$(printf '{"ts":%s,"status":"error","reason":"restore_failed","pattern_label":%s,"target_file":%s,"recovery_anchor":%s}' \
+            "$(printf '%s' "${timestamp}" | json_escape)" \
+            "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
+            "$(printf '%s' "${PATCH_TARGET}" | json_escape)" \
+            "$(printf '%s' "${VERIFY_BEFORE_IMAGE}" | json_escape)")"
+        printf '[daemon-apply] ERROR: atomic restore FAILED for %s (%s) — target may hold applied bytes, unrecovered. Recover manually from before-image: %s\n' \
+            "${PATCH_TARGET}" "${PATCH_LABEL}" "${VERIFY_BEFORE_IMAGE}" >&2
         continue
     fi
 
