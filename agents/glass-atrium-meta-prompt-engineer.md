@@ -7,7 +7,6 @@ tools:
   - Grep
   - Edit
   - Write
-  - Bash
   - WebSearch
   - WebFetch
 maxTurns: 80

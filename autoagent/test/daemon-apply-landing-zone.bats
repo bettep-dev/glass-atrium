@@ -172,8 +172,12 @@ PY
 
 # run_apply — invoke daemon-apply.sh on the report fixture with the psql-masked
 # stub PATH (report fallback) and the plain agents dir (no git repo).
+# AUTOAGENT_PREFLIGHT_ACTIVE=1: this suite exercises the landing-zone guard, not
+# the test-suite preflight — the sentinel skips the batch-path green-suite (whose
+# roots ARE present under the live GA_ROOT here) so the apply path runs directly.
 run_apply() {
   run env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
 }
 
@@ -444,6 +448,7 @@ applied_log_path() {
 
   env PATH="${STUB}" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     LZ_GIT_APPLY_READY="${ready}" LZ_GIT_APPLY_RESUME="${resume}" \
+    AUTOAGENT_PREFLIGHT_ACTIVE=1 \
     bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}" \
     </dev/null >"${WORK}/daemon.log" 2>&1 3>&- &
   DAEMON_PID=$!

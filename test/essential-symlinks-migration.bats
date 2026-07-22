@@ -89,8 +89,10 @@ run_ga() {
   seed_src "scripts/wiki-sync.sh"            # newly-excluded surface
   seed_src "autoagent/daemon-cycle.sh"       # newly-excluded surface
   seed_src "agent-registry.json"             # excluded surface
+  seed_src "test/root-suite.bats"            # root test/ — bundled, run in place, never farmed
   write_manifest "agents/dev-x.md" "rules/glass-atrium/rule-a.md" "hooks/hook-a.sh" \
-    "scripts/wiki-sync.sh" "autoagent/daemon-cycle.sh" "agent-registry.json"
+    "scripts/wiki-sync.sh" "autoagent/daemon-cycle.sh" "agent-registry.json" \
+    "test/root-suite.bats"
 
   # precondition: no rules subdir yet
   [[ ! -e "${TARGET}/rules" ]]
@@ -110,6 +112,8 @@ run_ga() {
   [[ ! -e "${TARGET}/scripts" ]]
   [[ ! -e "${TARGET}/autoagent" ]]
   [[ ! -e "${TARGET}/agent-registry.json" ]]
+  # root test/ rides the SYMLINK_EXCLUDE_PREFIXES "test/" prefix — bundled but never symlinked
+  [[ ! -e "${TARGET}/test" ]]
 }
 
 # === 2. UNINSTALL symmetry for the foldered layout ===========================

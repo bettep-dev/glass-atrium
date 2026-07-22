@@ -19,14 +19,47 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 INPUT=$(hook_read_input)
 
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.
-# WHY: without python3, hook_get_tool_input degrades to EMPTY — which the `[[ -z FILE_PATH ]] && exit 0`
-# below would misread as "no file" → ALLOW an orchestrator harness write.
+# WHY: without python3 the tool_input probe fail-opens to `empty` (T3 AC4) — which the
+# empty-state ALLOW below would misread as "nothing to guard" → ALLOW an orchestrator
+# harness write. Blocking non-empty input here keeps that fail-open from disarming the
+# gate; a genuinely-empty stdin ("" / "{}" / "{ }") still passes (nothing to guard).
 hook_require_python3_unless_empty "${INPUT}" "DEL-002" \
   "Delegation gate unavailable: python3 is required to parse hook input"
 
-# 1. Extract file_path
-FILE_PATH=$(hook_get_tool_input "${INPUT}" "file_path")
-[[ -z "${FILE_PATH}" ]] && exit 0
+# 1. Consume T3's three-state tool_input probe (present · empty · unrecognized).
+#    The old `empty path → ALLOW` conflated a legitimately-empty field with a DRIFTED
+#    envelope (host renamed/dropped tool_input) — the drift silently, permanently
+#    DISARMED the gate (empty misread as "no file"). The probe tells the two apart.
+STATE=""
+FILE_PATH=""
+# SC2312: the probe's own exit is deliberately unread — the in-band NUL-framed state
+# record, not the pipeline exit, is what this gate consumes (the probe always fail-opens to 0).
+# shellcheck disable=SC2312
+{
+  IFS= read -r -d '' STATE || true
+  IFS= read -r -d '' FILE_PATH || true
+} < <(hook_probe_tool_input "${INPUT}" "file_path")
+
+case "${STATE}" in
+  present) : ;; # real file_path in FILE_PATH — fall through to the path/basename/subagent checks
+  unrecognized)
+    # A degenerate empty stdin ("" / "{}" / "{ }") is nothing-to-guard, not drift →
+    # keep the silent allow the DEL-002 input-empty carve-out already grants.
+    # shellcheck disable=SC2310
+    #   Intended predicate call in an if-condition (hook_input_is_empty returns 0/1).
+    if hook_input_is_empty "${INPUT}"; then
+      exit 0
+    fi
+    # A real drift (renamed / malformed / non-object tool_input) would disarm the gate →
+    # emit a loud, aggregation-visible error, then ALLOW (ADR-2: emit-and-allow, not block).
+    emit_error "DEL-003" "warn" \
+      "Delegation gate disarmed: tool_input envelope unrecognized (host schema drift?)" \
+      "Verify the PreToolUse tool_input schema — the gate is failing OPEN until it is fixed" \
+      "{}"
+    exit 0
+    ;;
+  *) exit 0 ;; # empty (legit-empty field OR python3-absent fail-open) — today's silent allow
+esac
 
 # 2. Allow exact basenames (memory-index + root-rule files).
 BASENAME=$(basename "${FILE_PATH}")

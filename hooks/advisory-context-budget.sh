@@ -28,9 +28,9 @@ trap 'printf "[context-budget-advisory] internal error at line %d: %s — fail-o
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# TUNE: per-turn occupancy threshold (tokens). Set far above the GLOBAL_RULES "Context drift at
-# 80K+" onset so it speaks only on a genuinely heavy turn, not routine cache reads. Env-overridable.
-readonly DEFAULT_CONTEXT_TOKEN_THRESHOLD=350000
+# TUNE: per-turn occupancy threshold (tokens) = the GLOBAL_RULES "Context drift at 80K+" onset, so the
+# advisory fires as drift begins rather than long after. Env-overridable.
+readonly DEFAULT_CONTEXT_TOKEN_THRESHOLD=80000
 context_threshold="${CONTEXT_BUDGET_ADVISORY_THRESHOLD:-${DEFAULT_CONTEXT_TOKEN_THRESHOLD}}"
 # Non-integer override → default (silent). Input-validation failure must not block the spawn.
 if [[ ! "${context_threshold}" =~ ^[0-9]+$ ]]; then

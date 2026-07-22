@@ -13,13 +13,21 @@
 # to style-ref-verify.sh's original inline rule — do not diverge.
 #
 # collect_read_paths uses a per-session INCREMENTAL cache (below): a repeated fire
-# on the SAME growing transcript reuses the Read-path set accumulated from earlier
-# bytes instead of re-reading the whole file. Correctness invariant — the returned
-# set is ALWAYS the full-scan set: the cache only supplies the already-scanned
-# [0, consumed) prefix, and the [consumed, EOF) tail is scanned fresh every fire.
-# A bounded TAIL-read accessor is deliberately NOT used: it would drop early-session
-# Reads and produce FALSE Gaming-the-Judge WARNs. Any cache miss / fingerprint
-# mismatch / truncation / cache-layer error falls open to a full scan.
+# on the SAME growing transcript reuses the path set accumulated from earlier bytes
+# instead of re-reading the whole file. Correctness invariant — the returned set is
+# ALWAYS the full-scan set: the cache only supplies the already-scanned [0, consumed)
+# prefix, and the [consumed, EOF) tail is scanned fresh every fire. A bounded
+# TAIL-read accessor is deliberately NOT used: it would drop early-session tool_uses
+# and produce FALSE Gaming-the-Judge WARNs. Any cache miss / fingerprint mismatch /
+# truncation / cache-layer error falls open to a full scan.
+#
+# Tool-filter: the scanner selects tool_use entries by a NAME-SET (default {"Read"}
+# for style_ref verification; {"Write","Edit"} for the grader's write-history
+# cross-check). Two distinct collectors run against the SAME transcript, so the cache
+# is namespaced by the tool-filter in BOTH the cache FILENAME and the fingerprint
+# check — otherwise the write collector would read the read collector's cached paths
+# (a schema-version bump alone does NOT fix this: the filename keys on schema+path,
+# so both collectors at one schema still hit one file).
 #
 # Compatibility: Python 3 (stdlib only — json/os/hashlib, no third-party).
 
@@ -40,6 +48,19 @@ def _srm_sha(data_bytes):
     return _srm_hashlib.sha1(data_bytes).hexdigest()
 
 
+def _srm_normalize_tool_names(tool_names):
+    """Normalize the tool-name filter to a stable (frozenset, tag) pair. The tag is a
+    lowercased, sorted, hyphen-joined string used to namespace the cache — {"Read"} →
+    'read', {"Write","Edit"} → 'edit-write'. Empty / None falls back to {"Read"}."""
+    if not tool_names:
+        tool_names = ("Read",)
+    if isinstance(tool_names, str):
+        tool_names = (tool_names,)
+    name_set = frozenset(tool_names)
+    tag = "-".join(sorted(n.lower() for n in name_set)) or "read"
+    return name_set, tag
+
+
 def _srm_cache_enabled():
     """False when the kill switch STYLE_REF_READCACHE_OFF is set (any non-empty)."""
     return not _srm_os.environ.get("STYLE_REF_READCACHE_OFF", "").strip()
@@ -58,9 +79,13 @@ def _srm_cache_dir():
     return _srm_os.path.join(tmp, "glass-atrium-style-ref-readcache")
 
 
-def _srm_cache_file(cache_dir, transcript_path):
+def _srm_cache_file(cache_dir, transcript_path, filter_tag):
+    """Cache filename namespaced by schema, tool-filter tag, AND transcript-path hash,
+    so the read and write collectors never share one file."""
     digest = _srm_sha(transcript_path.encode("utf-8", "replace"))
-    return _srm_os.path.join(cache_dir, "v%d-%s.json" % (_SRM_CACHE_SCHEMA, digest))
+    return _srm_os.path.join(
+        cache_dir, "v%d-%s-%s.json" % (_SRM_CACHE_SCHEMA, filter_tag, digest)
+    )
 
 
 def _srm_load_cache(cache_file):
@@ -86,13 +111,16 @@ def _srm_store_cache(cache_file, obj):
         pass
 
 
-def _srm_fingerprint_offset(prev, st, header_fp):
+def _srm_fingerprint_offset(prev, st, header_fp, filter_tag):
     """Validated `consumed` byte offset when prev matches the current file for an
     incremental scan, else None (→ full scan). Conservative: ANY mismatch → None.
-    Guards: schema · device+inode (file replaced) · size monotonicity (truncation)
-    · header hash (in-place rewrite of an append-only log)."""
+    Guards: schema · tool-filter tag (a read-cache is never reused for a write scan)
+    · device+inode (file replaced) · size monotonicity (truncation) · header hash
+    (in-place rewrite of an append-only log)."""
     try:
         if int(prev.get("schema", -1)) != _SRM_CACHE_SCHEMA:
+            return None
+        if prev.get("filter") != filter_tag:
             return None
         if int(prev.get("dev", -1)) != int(st.st_dev):
             return None
@@ -119,8 +147,9 @@ def _srm_split_committed(chunk):
     return chunk[: nl + 1], chunk[nl + 1:]
 
 
-def _srm_read_paths_from_bytes(chunk):
-    """Extract Read tool_use file_path values from a bytes chunk of jsonl.
+def _srm_read_paths_from_bytes(chunk, name_set):
+    """Extract tool_use file_path values from a bytes chunk of jsonl, selecting only
+    tool_uses whose name is in `name_set` (e.g. {"Read"} or {"Write","Edit"}).
 
     Faithful to a text-mode per-line scan: decode (errors=replace), normalize
     universal newlines, strip each line, skip blanks + unparseable JSON. Returns a
@@ -148,7 +177,7 @@ def _srm_read_paths_from_bytes(chunk):
                 continue
             if item.get("type") != "tool_use":
                 continue
-            if item.get("name") != "Read":
+            if item.get("name") not in name_set:
                 continue
             tool_input = item.get("input", {})
             if not isinstance(tool_input, dict):
@@ -159,12 +188,13 @@ def _srm_read_paths_from_bytes(chunk):
     return paths
 
 
-def _srm_collect_incremental(transcript_path):
-    """Cache-assisted collection. Returns a list, or None when caching is disabled
-    (caller does the plain full scan). Transcript read errors (OSError/IOError)
-    propagate — the caller's fail-open contract is preserved. Cache-layer errors
-    are contained here → they degrade to a within-function full scan, never a
-    partial set."""
+def _srm_collect_incremental(transcript_path, name_set, filter_tag):
+    """Cache-assisted collection for the given tool-filter. Returns a list, or None
+    when caching is disabled (caller does the plain full scan). Transcript read
+    errors (OSError/IOError) propagate — the caller's fail-open contract is preserved.
+    Cache-layer errors are contained here → they degrade to a within-function full
+    scan, never a partial set. The cache file + fingerprint are namespaced by
+    filter_tag, so a read scan and a write scan of one transcript never collide."""
     if not _srm_cache_enabled():
         return None
     cache_dir = _srm_cache_dir()
@@ -174,7 +204,7 @@ def _srm_collect_incremental(transcript_path):
     # stat OSError = genuine transcript error → propagate (matches original open()).
     st = _srm_os.stat(transcript_path)
 
-    cache_file = _srm_cache_file(cache_dir, transcript_path)
+    cache_file = _srm_cache_file(cache_dir, transcript_path, filter_tag)
     prev = _srm_load_cache(cache_file)
 
     # Single transcript open. open() OSError = genuine transcript error → propagate.
@@ -185,7 +215,7 @@ def _srm_collect_incremental(transcript_path):
         consumed = 0
         base_paths = []
         if prev is not None:
-            offset = _srm_fingerprint_offset(prev, st, header_fp)
+            offset = _srm_fingerprint_offset(prev, st, header_fp, filter_tag)
             if offset is not None:
                 prior = prev.get("paths", [])
                 if isinstance(prior, list):
@@ -196,13 +226,14 @@ def _srm_collect_incremental(transcript_path):
         chunk = fh.read()
 
     committed, tail = _srm_split_committed(chunk)
-    all_committed = base_paths + _srm_read_paths_from_bytes(committed)
-    tail_paths = _srm_read_paths_from_bytes(tail)
+    all_committed = base_paths + _srm_read_paths_from_bytes(committed, name_set)
+    tail_paths = _srm_read_paths_from_bytes(tail, name_set)
 
     _srm_store_cache(
         cache_file,
         {
             "schema": _SRM_CACHE_SCHEMA,
+            "filter": filter_tag,
             "path": transcript_path,
             "dev": st.st_dev,
             "ino": st.st_ino,
@@ -216,18 +247,21 @@ def _srm_collect_incremental(transcript_path):
     return all_committed + tail_paths
 
 
-def collect_read_paths(transcript_path):
-    """Enumerate Read tool_use file_path values from a transcript jsonl file.
+def collect_read_paths(transcript_path, tool_names=("Read",)):
+    """Enumerate tool_use file_path values from a transcript jsonl file, selecting
+    only the tool_uses named in `tool_names` (default {"Read"} for style_ref).
 
     Returns a list of file_path strings (may be empty). Raises OSError/IOError on
     an unreadable transcript — the caller decides fail-open behavior.
 
-    Backed by the per-session incremental cache above; the returned set is always
-    the full-scan set (a cache miss / mismatch / any cache-layer defect falls open
-    to a full scan — never a partial set, never a false Gaming-the-Judge WARN).
+    Backed by the per-session incremental cache above, NAMESPACED by the tool-filter;
+    the returned set is always the full-scan set (a cache miss / mismatch / any
+    cache-layer defect falls open to a full scan — never a partial set, never a false
+    Gaming-the-Judge WARN, never the other collector's cached paths).
     """
+    name_set, filter_tag = _srm_normalize_tool_names(tool_names)
     try:
-        cached = _srm_collect_incremental(transcript_path)
+        cached = _srm_collect_incremental(transcript_path, name_set, filter_tag)
     except (OSError, IOError):
         # Genuine transcript read error → preserve the raise contract.
         raise
@@ -239,7 +273,14 @@ def collect_read_paths(transcript_path):
     # Cache disabled/unavailable → plain full scan (may raise OSError/IOError).
     with open(transcript_path, "rb") as fh:
         data = fh.read()
-    return _srm_read_paths_from_bytes(data)
+    return _srm_read_paths_from_bytes(data, name_set)
+
+
+def collect_write_paths(transcript_path):
+    """Enumerate Write/Edit tool_use file_path values — the grader's write-history
+    cross-check collector. A thin alias over collect_read_paths with the {"Write",
+    "Edit"} filter; the cache is namespaced away from the read collector's."""
+    return collect_read_paths(transcript_path, ("Write", "Edit"))
 
 
 def style_ref_matches(style_ref, read_paths):

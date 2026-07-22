@@ -50,8 +50,9 @@ CONFIG_PATH = Path(
     or str(ga_paths.get_data_root() / "daemon-config.json")
 )
 
-# Defensive fallback literals — MUST mirror the current in-code constants so a
-# missing/unreadable config file preserves the validated behavior exactly.
+# Defensive fallback literals. The budget floors mirror the validated ceiling so a
+# missing/unreadable config file preserves budget behavior exactly; the model
+# fallback is the unpinned session-default alias per T13 (see its inline note).
 # 0.10 is too low (triggers immediate CLI exit 1); 0.50 is the validated ceiling.
 # NOTE: '0.50' here is the absent-file safety floor (used only when daemon-config.json
 #   is missing/unreadable), NOT the shipped DB default — the monitor.model_config seed
@@ -61,7 +62,12 @@ CONFIG_PATH = Path(
 _FALLBACK: dict[str, str] = {
     "haiku_max_budget_usd": "0.50",
     "pre_verify_max_budget_usd": "0.50",
-    "haiku_model": "claude-haiku-4-5",
+    # T13 honest de-scope: the absent-config fallback is the unpinned `haiku`
+    # family alias (the session default), NEVER a dated version pin — the daemon
+    # has no tier-selection infrastructure, so a fresh install inherits the
+    # session default rather than freezing a version. Mirrors the agent-frontmatter
+    # rule where an omitted `model:` line inherits the model from settings.json.
+    "haiku_model": "haiku",
 }
 
 

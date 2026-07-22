@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 # enforce-verification-gate.bats — Bats suite for the PreToolUse(Agent) verification-gate hook.
 #   Three distinct surfaces, asserted independently:
-#     1) reviewer-advisory (STDERR + exit 0) — plan-ref DEV spawn, no qa-code-reviewer recorded.
+#     1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, VGATE-REVIEWER-001) —
+#        orchestrator-origin plan-ref DEV spawn, no qa-code-reviewer recorded. Guarded by
+#        hook_is_subagent, so a nested sub-worker origin keeps only the informational advisory (exit 0).
 #     2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — ORCHESTRATOR-ORIGIN DEV
 #        spawn (agent_id absent) with NO [SIZE-EST] token. Guarded by hook_is_subagent: a nested
 #        sub-worker origin (agent_id present) is NEVER blocked. Applies to every DEV spawn, plan-ref
@@ -138,10 +140,11 @@ assert_marker_present() {
   assert_contains "entry-miss"
 }
 
-@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer advisory, exit 0" {
+@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss BLOCK, exit 2" {
   run_hook "glass-atrium-dev-react" "implement per plan-6569 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 0
-  assert_contains "no qa-code-reviewer recorded"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
 }
 
@@ -165,10 +168,11 @@ assert_marker_present() {
 
 # (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked)
 
-@test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer advisory + exit 0 (NOT entry-miss block)" {
+@test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer-miss BLOCK exit 2 (NOT entry-miss)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 0
-  assert_contains "no qa-code-reviewer recorded"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
 }
 
@@ -187,10 +191,11 @@ assert_marker_present() {
   assert_empty
 }
 
-@test "token present AND plan-ref (SIZE-EST present) → reviewer branch wins (plan-ref checked first), exit 0" {
+@test "token present AND plan-ref (SIZE-EST present) → plan-ref branch wins (checked first) → reviewer-miss BLOCK exit 2" {
   run_hook "glass-atrium-dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
-  assert_status 0
-  assert_contains "no qa-code-reviewer recorded"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
 }
 
@@ -301,8 +306,9 @@ assert_marker_present() {
   assert_empty
 }
 
-@test "DF-5: PreToolUse DEV plan-ref spawn does NOT stamp itself (read-only on PreToolUse)" {
+@test "DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss BLOCK) does NOT stamp itself (read-only on PreToolUse)" {
   run_hook_event "PreToolUse" "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 0
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
   assert_marker_absent "glass-atrium-dev-react"
 }

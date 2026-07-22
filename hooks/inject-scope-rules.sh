@@ -39,6 +39,17 @@
 # fail-open: SubagentStart cannot block; every failure (file/marker/jq absent, empty
 # extraction) → exit 0 + 1 stderr diagnostic, injecting whatever IS available (a
 # missing block must NOT suppress the others).
+#
+# T8 — membership vs. delivery (roster disclaimer): this hook injects a FIXED set of extracted
+# AGENT-INJECT MARKER blocks (comment-logging · style_ref · minimalism · naming · budget-dev ·
+# budget-analysis) against the HARDCODED rosters below (INJECT_AGENTS, STYLEREF_AGENTS,
+# MINIMALISM_AGENTS, NAMING_AGENTS, BUDGET_DEV_AGENTS, BUDGET_ANALYSIS_AGENTS). It performs NO
+# per-agent Tier-2 scope-file SELECTION and injects NO Tier-2 scope-file BODY — a subagent's
+# scope-rule body reaches it through the HOST project-instructions context channel, which is
+# UNCEILINGED and UNMEASURED (unlike this hook's byte-accurate 9984-byte SubagentStart budget). So
+# Tier-2 MEMBERSHIP (core-compliance-matrix.md) is NOT the same as delivery through this hook, and
+# the corpus this hook budgets carefully is the MINOR channel. (Matrix SoT: core-compliance-matrix.md
+# → "Membership vs. Delivery".)
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -161,7 +172,19 @@ readonly BUDGET_ANALYSIS_AGENTS=" glass-atrium-intel-planner glass-atrium-intel-
 # drop invariant is pinned by hooks/test/inject-scope-rules-nodrop.bats against the real repo
 # sources. UNIVERSAL: the envelope carries no spawn-mode discriminator, so engine/schema-mode
 # spawns are bounded identically to manual ones.
-readonly INJECT_CTX_MAX_BYTES=9984
+readonly INJECT_CTX_MAX_BYTES="${INJECT_SCOPE_RULES_CTX_MAX_BYTES:-9984}"
+
+# T16 in-context drop marker reserve — a FIXED byte reserve subtracted from the ceiling the drop
+# loop compares against, applied CONDITIONALLY (only after the first shed; an under-ceiling spawn
+# keeps the full ceiling and grows no marker). Sized to the engine SAFETY MARGIN: the 9984 ceiling
+# sits 256B below the ~10240 engine persist threshold (see INJECT_CTX_MAX_BYTES), so a 256B reserve
+# guarantees that even when the widened marker overflows the reserve, the total stays below the
+# engine threshold (the overflow rule's "emit + accept" is absorbed by this margin, never triggering
+# the file-persist that strips the meter). The reserve is FIXED (not marker-length-derived) and the
+# ceiling lowers exactly ONCE, so a widening marker can never re-trigger a shed — the byte arithmetic
+# converges because each named shed just freed a whole block (hundreds-to-1200B) while its name+path
+# costs ~40-60B (net negative). A larger reserve would needlessly shed blocks that fit the margin.
+readonly INJECT_MARKER_RESERVE=256
 
 # Persisted drop marker — a dropped block is a SILENT regression: Claude Code DISCARDS
 # SubagentStart hook stderr, so the drop-loop diagnostic below never reaches an operator. Mirror
@@ -171,12 +194,50 @@ readonly INJECT_CTX_MAX_BYTES=9984
 readonly INJECT_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG:-${HOOK_LOG_DIR}/inject-scope-rules.diag.log}"
 readonly INJECT_DROP_LOG_MAX_BYTES=1048576  # 1 MiB soft cap → truncate-on-exceed
 
+# Injection-attempted spawn counter — the DENOMINATOR of the drop-rate aggregation (rate = drops /
+# spawns-with-injection-attempted). A SEPARATE artifact from the drop sink so a no-drop spawn writes
+# NO drop record yet the denominator still advances; the drop sink stays numerator-only. A monotonic
+# integer (not an append log), so it never grows in size and never needs rotation. Lives on the same
+# HOOK_LOG_DIR data-separation seam as the drop sink. Env-overridable for the Bats sandbox. An absent
+# counter reads as 0 (first run), NOT as missing data.
+readonly INJECT_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER:-${HOOK_LOG_DIR}/inject-scope-rules.spawns.count}"
+
 # Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3
 # maxTurns budget (glass-atrium-sec-guard's maxTurns:3 → ceiling 2) is a self-contradictory "stop
 # after 2 of 3 turns" advisory for the verdict-only agent GLOBAL_RULES already EXEMPTS from the
 # ceiling mechanic (Turn Budget & Graceful Exit → Exempt). Requiring maxTurns >= 4 keeps the meter
 # meaningful (ceiling >= 3, a real gap) and leaves the sec-guard spawn context meter-free.
 readonly METER_MIN_MAX_TURNS=4
+
+# Named aggregation query over the drop sink — reports the block-drop count (numerator, from the drop
+# sink) against spawns-with-injection-attempted (denominator, from the spawn counter) plus the drop
+# rate. Read-only: never writes, never touches injected content. Absent sink OR absent counter reads
+# as 0 (a first run is 0 drops over 0 attempts → rate 0), NOT missing data. jq-free (awk/grep/tr only),
+# so it works even where the injection path would fail-open on absent jq.
+aggregate_drop_rate() {
+  local drops=0 attempts=0 rate="0"
+  if [[ -f "${INJECT_DROP_LOG}" ]]; then
+    # grep -c prints "0" AND exits 1 on zero matches — capture with `|| true`, never `|| echo 0`
+    # (the latter yields "0\n0"); the empty-guard then covers a read error.
+    drops="$(grep -c ' DROP ' "${INJECT_DROP_LOG}" 2>/dev/null || true)"
+    [[ -z "${drops}" ]] && drops=0
+  fi
+  if [[ -f "${INJECT_SPAWN_COUNTER}" ]]; then
+    attempts="$(tr -cd '0-9' <"${INJECT_SPAWN_COUNTER}" 2>/dev/null || true)"
+    [[ -z "${attempts}" ]] && attempts=0
+  fi
+  # awk float division; denominator 0 → rate 0 (absent sink counts as 0, not missing data).
+  rate="$(awk -v n="${drops}" -v d="${attempts}" 'BEGIN { if (d > 0) printf "%.4f", n / d; else printf "0" }' 2>/dev/null || printf '0')"
+  printf 'inject-scope-rules drop-rate: drops=%s injection_attempted=%s drop_rate=%s\n' "${drops}" "${attempts}" "${rate}"
+}
+
+# Operator/doctor aggregation-query mode — dispatched BEFORE reading the SubagentStart envelope so
+# `inject-scope-rules.sh --drop-rate` never blocks on hook_read_input's cat. The hook path is invoked
+# with NO args, so ${1:-} is empty and this is skipped there.
+if [[ "${1:-}" == "--drop-rate" ]]; then
+  aggregate_drop_rate
+  exit 0
+fi
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -335,18 +396,106 @@ build_lesson_block() {
 # INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=pre-drop byte
 # size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size).
 append_drop_log() {
-  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts=""
+  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
-    sz="$(wc -c < "${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
+    sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
     if [[ -n "${sz}" && "${sz}" -gt "${INJECT_DROP_LOG_MAX_BYTES}" ]]; then
       rm -f "${INJECT_DROP_LOG}" 2>/dev/null || true
     fi
   fi
+  # Byte overage = how far the pre-drop assembly exceeded the ceiling (the record names it explicitly,
+  # not only the raw sizes). Sanitize pre_drop_bytes to digits first so a non-numeric arg can never
+  # trip the arithmetic → the fail-open ERR trap → a spawn-suppressing exit.
+  pdb="$(printf '%s' "${pre_drop_bytes}" | tr -cd '0-9')"
+  [[ -z "${pdb}" ]] && pdb=0
+  overage=$((10#${pdb} - INJECT_CTX_MAX_BYTES))
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s\n' \
-    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" \
+  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s\n' \
+    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" \
     >>"${INJECT_DROP_LOG}" 2>/dev/null || true
+  return 0
+}
+
+# AM-T16: map a shed block label to its Read-resolvable rule-doc source path. Returns the SAME
+# *_SRC_FILE constant the block was extracted from, so a marker path can never drift from the real
+# source. The lesson block is the ONE runtime-derived exception (sourced at runtime from a JSON store
+# via jq, NOT a rule document) — it has no Read-resolvable path, so it returns empty and the caller
+# tags it instead. Args: $1=block label · stdout: source path (empty for lesson / unknown).
+marker_source_path() {
+  case "${1}" in
+    comment) printf '%s' "${SRC_FILE}" ;;
+    styleref | minimalism) printf '%s' "${STYLEREF_SRC_FILE}" ;;
+    naming) printf '%s' "${NAMING_SRC_FILE}" ;;
+    budget-dev | budget-analysis) printf '%s' "${BUDGET_SRC_FILE}" ;;
+    *) : ;; # lesson (runtime-derived) + any unknown → no path
+  esac
+}
+
+# AM-T16: append one shed-block entry to the running (semicolon-joined, single-line) marker-entry
+# list. A rule-doc-sourced block carries its resolvable source path; the lesson block is tagged
+# EXACTLY "runtime-derived, no source path — recovers via re-spawn, not Read" and carries NO path
+# (its most-frequent-shed blind spot would otherwise pass the path-existence criterion vacuously, or
+# worse point at the all-agent JSON store). Args: $1=existing entries $2=block label · stdout: joined.
+append_marker_entry() {
+  local existing="${1}" label="${2}" entry="" src_path
+  if [[ "${label}" == "lesson" ]]; then
+    entry="lesson: runtime-derived, no source path — recovers via re-spawn, not Read"
+  else
+    src_path="$(marker_source_path "${label}")"
+    entry="${label}: ${src_path}"
+  fi
+  if [[ -z "${existing}" ]]; then
+    printf '%s' "${entry}"
+  else
+    printf '%s; %s' "${existing}" "${entry}"
+  fi
+}
+
+# T16: build the single-line, post-loop drop marker naming each shed block. The count field is
+# fixed-width (%02d padded) so a variable count can never nudge the marker across the reserve
+# boundary. AM-T16: the header states ONCE that a listed source path MAY be Read to recover the
+# dropped guidance (per-rule-doc-block paths carried in the entries). Args: $1=shed count $2=entries.
+build_drop_marker() {
+  local count="${1}" entries="${2}" padded
+  # count is shed_count — an integer accumulated only via $((shed_count + 1)) — so the width format
+  # cannot fail; no error fallback needed.
+  printf -v padded '%02d' "${count}"
+  printf '**Injection shed %s (auto-injected — you MAY Read a listed source path to recover it):** %s.' \
+    "${padded}" "${entries}"
+}
+
+# T16: was the block for a shed label ACTUALLY present (non-empty) in the assembly? Reads the
+# module-level *_BLOCK variables (set before the loop). Only a present-then-shed block is a REAL
+# shed the marker should name — naming an absent block would claim a phantom drop + phantom AM-T16
+# path. Each branch ends on the [[ ]] so the function returns its truth value (set -e safe in an
+# `if` condition). Args: $1=block label · returns: 0 if present, 1 otherwise.
+block_is_present() {
+  case "${1}" in
+    lesson) [[ -n "${LESSON_BLOCK}" ]] ;;
+    budget-analysis) [[ -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
+    budget-dev) [[ -n "${BUDGET_DEV_BLOCK}" ]] ;;
+    naming) [[ -n "${NAMING_BLOCK}" ]] ;;
+    styleref) [[ -n "${STYLEREF_BLOCK}" ]] ;;
+    minimalism) [[ -n "${MINIMALISM_BLOCK}" ]] ;;
+    comment) [[ -n "${COMMENT_BLOCK}" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Increment the injection-attempted spawn counter — the drop-rate DENOMINATOR. Separate from the drop
+# sink so a no-drop spawn advances the denominator WITHOUT writing a drop record. Fail-open on every
+# statement (a counter glitch must never break the spawn nor alter injected content — AC4). Read-
+# modify-write races are acceptable for an approximate observability rate (drops are rare).
+increment_spawn_attempts() {
+  local dir="${INJECT_SPAWN_COUNTER%/*}" cur="" next=0
+  mkdir -p "${dir}" 2>/dev/null || return 0
+  if [[ -f "${INJECT_SPAWN_COUNTER}" ]]; then
+    cur="$(tr -cd '0-9' <"${INJECT_SPAWN_COUNTER}" 2>/dev/null || true)"
+  fi
+  [[ -z "${cur}" ]] && cur=0
+  next=$((10#${cur} + 1))
+  printf '%s\n' "${next}" >"${INJECT_SPAWN_COUNTER}" 2>/dev/null || return 0
   return 0
 }
 
@@ -467,12 +616,36 @@ ctx_bytes="$(byte_len "${CTX}")"
 # (newest, least proven — DISJOINT rosters, mutual order inert) shed next, before the proven four
 # (worst-case DEV seven-block assembly <=9935B under 9984 → a full-DEV spawn sheds lessons first;
 # lighter agents keep them).
+#
+# T16: the loop compares against effective_ceiling (starts FULL; lowers ONCE by INJECT_MARKER_RESERVE
+# on the first shed, then never again — a widening marker can never lower it a second time) and
+# accumulates a marker entry for every ACTUALLY-PRESENT block it sheds. The post-loop marker is
+# NON-DROPPABLE by placement (appended after the loop, never re-size-checked).
+effective_ceiling="${INJECT_CTX_MAX_BYTES}"
+marker_entries=""
+shed_count=0
 for drop_block in lesson budget-analysis budget-dev naming styleref minimalism comment; do
-  [[ "${ctx_bytes}" -le "${INJECT_CTX_MAX_BYTES}" ]] && break
+  [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
   # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
   # the block is removed. The post-drop reassembly below shrinks ctx_bytes, so logging that would
   # under-report the size that actually breached the ceiling.
   pre_drop_bytes="${ctx_bytes}"
+  # T16 conditional reserve: the FIRST shed lowers the ceiling ONCE (a marker exists only once a shed
+  # occurred, so an under-full-ceiling spawn never reserves and grows no marker). The reserve is a
+  # nonzero constant, so "still at the full ceiling" is the derivable "not yet lowered" guard →
+  # lowers at most once per invocation.
+  if [[ "${effective_ceiling}" -eq "${INJECT_CTX_MAX_BYTES}" ]]; then
+    effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
+    printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
+  fi
+  # T16 marker accumulation — name only a block that was ACTUALLY present (block_is_present); an
+  # absent block is not a real shed, so naming it would claim a phantom drop + phantom AM-T16 path.
+  # Pure predicate → the if-condition disabling set -e (SC2310) is intended.
+  # shellcheck disable=SC2310
+  if block_is_present "${drop_block}"; then
+    marker_entries="$(append_marker_entry "${marker_entries}" "${drop_block}")"
+    shed_count=$((shed_count + 1))
+  fi
   case "${drop_block}" in
     lesson) keep_lesson=0 ;;
     budget-analysis) keep_budget_analysis=0 ;;
@@ -489,11 +662,25 @@ for drop_block in lesson budget-analysis budget-dev naming styleref minimalism c
   append_drop_log "${drop_block}" "${pre_drop_bytes}"
 done
 
+# T16 in-context drop marker — appended AFTER the loop, so it is NON-DROPPABLE by placement (no shed
+# can remove it). Emitted only when >=1 actually-present block was shed, and never re-size-checked:
+# the OVERFLOW RULE accepts the pathological case where the two non-droppable blocks plus the marker
+# exceed the reduced ceiling (emit + accept, NEVER loop). The byte arithmetic otherwise converges —
+# each named shed freed a whole block (hundreds-to-1200B) while its name+path costs ~40-60B.
+if [[ "${shed_count}" -gt 0 ]]; then
+  drop_marker="$(build_drop_marker "${shed_count}" "${marker_entries}")"
+  CTX="$(join_block "${CTX}" "${drop_marker}")"
+fi
+
 # All blocks empty → nothing to inject, fail-open exit.
 if [[ -z "${CTX}" ]]; then
   printf '[inject-scope-rules] no injectable block available; skipping injection (agent=%s)\n' "${AGENT_TYPE}" >&2
   exit 0
 fi
+
+# Injection is attempted (non-empty CTX proceeding to emit) → advance the drop-rate denominator. Placed
+# AFTER the empty-CTX skip so a no-inject spawn does not count. Fail-open (never alters CTX / the exit).
+increment_spawn_attempts
 
 # Assemble JSON — jq --arg escapes the combined context. additionalContext = the child injection point.
 OUTPUT_JSON=""
