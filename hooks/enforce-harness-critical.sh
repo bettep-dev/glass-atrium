@@ -16,6 +16,12 @@
 #       is a tampered state: Edit AND Write both block until repaired via a
 #       sanctioned path / launch-env grant.
 #   (d) Write of a NEW agents/*.md — creation routes through the agent_lifecycle CLI.
+#   (e) scheduled-execution surface — ~/.glass-atrium/{autoagent,scripts,skills}/;
+#       launchd runs autoagent/ code unattended, so a plain Edit persists code the
+#       scheduler later executes (LLM06). rules/ + scoped/ are EXCLUDED by design —
+#       hand-edited live and often, so blocking them would train a hook-disable
+#       habit; sanctioned autoagent maintenance reroutes via HARNESS_PROTECTION_APPROVE=1.
+#       PROT_RE mirrors these three dirs for the Bash arm.
 #
 # Bash arm (best-effort, bar-raising ONLY): a >/>> redirect blocks when the > sits
 # at start/after whitespace-or-separator (optional fd digit) AND the protected path
@@ -108,6 +114,9 @@ PROT_RE = re.compile(
     r"|\.glass-atrium/hooks/"
     r"|\.claude/agents/"
     r"|\.glass-atrium/agents/"
+    r"|\.glass-atrium/autoagent/"
+    r"|\.glass-atrium/scripts/"
+    r"|\.glass-atrium/skills/"
     r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist"
 )
 
@@ -335,6 +344,9 @@ write_edit_arm() {
       ;;
     "${GA_DIR}/hooks/"* | "${CLAUDE_DIR}/hooks/"*)
       block_critical "HAR-001" "live-hooks-dir" "${norm}"
+      ;;
+    "${GA_DIR}/autoagent/"* | "${GA_DIR}/scripts/"* | "${GA_DIR}/skills/"*)
+      block_critical "HAR-001" "scheduled-exec-dir" "${norm}"
       ;;
     *) : ;;
   esac
