@@ -23,8 +23,9 @@ trap 'printf "[raw-store-read-advisory] internal error at line %d: %s — fail-o
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# Durable record sink (env-overridable for hermetic tests). Mirrors advisory-egress-secret.sh.
-RAW_STORE_READ_ADVISORY_FIRED_LOG="${RAW_STORE_READ_ADVISORY_FIRED_LOG:-${HOME}/.claude/data/raw-store-read-advisory-fired.log}"
+# Durable record sink (env-overridable for hermetic tests). DATA-tier via the resolved HOOK_DATA_DIR
+# seam (hook-utils.sh) — GA_DATA_ROOT-anchored, decoupled from the legacy ~/.claude location.
+RAW_STORE_READ_ADVISORY_FIRED_LOG="${RAW_STORE_READ_ADVISORY_FIRED_LOG:-${HOOK_DATA_DIR}/raw-store-read-advisory-fired.log}"
 
 # Raw-store path token. WIKI_ROOT-derived (env-overridable for tests) plus the literal glass-atrium
 # store as a belt-and-suspenders default — mirrors validate-pre-write-raw.sh's trigger derivation.

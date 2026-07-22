@@ -2354,9 +2354,11 @@ emit_error "DATA-070" "info" \
 # T9 backs the Failure Recovery Loop's "3+ consecutive fails → suspend agent" clause, which had
 # no backing code. T10 keeps a bounded on-disk spool so a DB outage does not silently lose the
 # outcome. Separate state dirs — the two mechanisms never share files (non-conflicting).
-CIRCUIT_BREAKER_DIR="${CIRCUIT_BREAKER_DIR:-${HOME}/.claude/data/agent-circuit-breaker}"
+# DATA-tier via the resolved HOOK_DATA_DIR seam (hook-utils.sh) — mirrors the L1581 agent-tool-budget
+# precedent (GA_DATA_ROOT-anchored), decoupled from the legacy ~/.claude location.
+CIRCUIT_BREAKER_DIR="${CIRCUIT_BREAKER_DIR:-${HOOK_DATA_DIR}/agent-circuit-breaker}"
 CIRCUIT_BREAKER_THRESHOLD="${CIRCUIT_BREAKER_THRESHOLD:-3}"
-OUTCOME_SPOOL_DIR="${OUTCOME_SPOOL_DIR:-${HOME}/.claude/data/outcome-spool}"
+OUTCOME_SPOOL_DIR="${OUTCOME_SPOOL_DIR:-${HOOK_DATA_DIR}/outcome-spool}"
 OUTCOME_SPOOL_MAX_ENTRIES="${OUTCOME_SPOOL_MAX_ENTRIES:-100}"
 OUTCOME_SPOOL_MAX_AGE_DAYS="${OUTCOME_SPOOL_MAX_AGE_DAYS:-7}"
 OUTCOME_SPOOL_DRAIN_BATCH="${OUTCOME_SPOOL_DRAIN_BATCH:-25}"
