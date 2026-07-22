@@ -707,6 +707,27 @@ EPM_BUCKET_MAX_CHARS = 4000
 # AD-3 CTM injection floor — mirrors the core-learning-log.md "score >= 4 → CTM" bar.
 CTM_MIN_SCORE = 4
 
+# T19 admission polarity (measured, not reasoned). The T0 baseline replay
+# (autoagent/baseline/baseline-2026-07-22.md) found `verified_pass` fires ONLY for bug-fix and
+# feature; refactor and every other code arm are structurally `verified_pass = 0`. A naive
+# "verified_pass-or-discard" flip therefore starves refactor to 0 CTM forever while it keeps
+# minting EPM rows. R-a instead admits an unverified code lesson at a provisional SUB-FLOOR
+# score (below the injectable floor, so not IMMEDIATELY injectable) rather than discarding it,
+# then promotes it to the floor on corroborating re-observation.
+GRADER_VERDICT_PASS = "verified_pass"
+# Code task_types (the canonical 9-type set's code arms). Only these route through the grader-
+# verdict polarity; non-code types keep the self-report confidence gate byte-identical.
+_CODE_TASK_TYPES = frozenset({"bug-fix", "feature", "refactor"})
+# Provisional admission score for an unverified code lesson — one below the injectable floor, so
+# it enters CTM but is NOT injected until corroborated (mirrors core-learning-log.md sub-floor 3).
+CTM_SUBFLOOR_SCORE = 3
+# Corroboration-promotion frequency — a provisional lesson re-observed this many times promotes
+# to the injectable floor (mirrors core-learning-log.md "promotes to the floor at frequency >= 2").
+CTM_PROMOTE_FREQUENCY = 2
+# Eviction grace window (days) for a young provisional entry — long enough to reach the promotion
+# frequency before capacity eviction can cull it (the R-a mandatory eviction guard).
+CTM_PROVISIONAL_GRACE_DAYS = 14
+
 # confidence enum → lesson score (self-report; high=5 medium=4 low=3, unknown=3).
 _CONFIDENCE_SCORE = {"high": 5, "medium": 4, "low": 3}
 
@@ -759,30 +780,68 @@ def _record_is_negative(record: dict) -> bool:
     return rf is True or str(rf).strip().lower() == "true"
 
 
+def _is_code_task_type(record: dict) -> bool:
+    """True when the row's task_type is a code arm (bug-fix/feature/refactor) — the only arms the
+    T19 grader-verdict polarity governs. Non-code arms keep the self-report confidence gate."""
+    return str(record.get("task_type", "")).strip() in _CODE_TASK_TYPES
+
+
+def _grader_verified_pass(record: dict) -> bool:
+    """True when the deterministic grader certified this row (grader_verdict == verified_pass).
+    Per the T0 baseline this fires only for bug-fix/feature; refactor is structurally never
+    verified_pass, which is exactly why R-a must not gate CTM injectable admission on it."""
+    return str(record.get("grader_verdict", "")).strip().lower() == GRADER_VERDICT_PASS
+
+
+def _admission_score(record: dict) -> int:
+    """T19 admission polarity → a CTM entry's initial score.
+
+    Code task_types: the GRADER verdict (not the self-report confidence) is the injectable gate.
+    `verified_pass` admits at the injectable floor (confidence-derived, floored to CTM_MIN_SCORE);
+    any other verdict is forced to the provisional SUB-FLOOR — NOT discarded — so an unverified
+    code lesson (esp. refactor, which is structurally verified_pass=0) enters provisionally and
+    reaches the floor only via corroboration-promotion. This closes G2: the writer's self-reported
+    confidence can no longer buy immediate injectable admission for an ungraded code lesson.
+    Non-code task_types keep the self-report confidence score (AC5 predicate byte-identical)."""
+    if _is_code_task_type(record):
+        if _grader_verified_pass(record):
+            return max(_lesson_score(record), CTM_MIN_SCORE)
+        return CTM_SUBFLOOR_SCORE
+    return _lesson_score(record)
+
+
 def classify_lesson_bucket(record: dict) -> str | None:
     """Route one outcome's lesson to "ctm" (success) / "epm" (failure) / None (skip).
-    Negative signal → EPM; a clean done + metric_pass + score>=4 → CTM; anything else skipped."""
+
+    Negative signal → EPM. Otherwise a clean done + metric_pass row admits to CTM:
+    - CODE task_types (T19): ALWAYS admit — the grader verdict sets the SCORE (injectable floor
+      vs provisional sub-floor via _admission_score), it never discards. This keeps refactor,
+      whose grader verdict is structurally never verified_pass, off zero CTM.
+    - NON-code task_types: byte-identical to the prior predicate — self-report confidence
+      (score >= CTM_MIN_SCORE) gates admission, anything below is skipped."""
     if _record_is_negative(record):
         return "epm"
     mp = record.get("metric_pass")
     mp_true = mp is True or str(mp).strip().lower() == "true"
-    if (
-        str(record.get("result", "")).strip() == "done"
-        and mp_true
-        and _lesson_score(record) >= CTM_MIN_SCORE
-    ):
+    if not (str(record.get("result", "")).strip() == "done" and mp_true):
+        return None
+    if _is_code_task_type(record):
+        return "ctm"
+    if _lesson_score(record) >= CTM_MIN_SCORE:
         return "ctm"
     return None
 
 
 def _outcome_to_lesson_entry(record: dict, today: str) -> dict:
-    """Distil one outcome record into a lesson-store entry (canonical agent key + score)."""
+    """Distil one outcome record into a lesson-store entry (canonical agent key + admission score).
+    `added` anchors the eviction grace window (T19) — set once at first ADD, never refreshed."""
     return {
         "agent": _canonical_agent(record.get("agent", "")),
         "task_type": str(record.get("task_type", "")).strip(),
         "text": str(record.get("lesson", "")).strip(),
-        "score": _lesson_score(record),
+        "score": _admission_score(record),
         "updated": today,
+        "added": today,
     }
 
 
@@ -808,10 +867,17 @@ def ingest_lesson(bucket: list[dict], entry: dict) -> str:
             _normalize_lesson_text(existing.get("text")),
         )
         if ekey == key:
-            existing["frequency"] = int(existing.get("frequency", 0) or 0) + 1
+            freq = int(existing.get("frequency", 0) or 0) + 1
+            existing["frequency"] = freq
             existing["score"] = max(
                 int(existing.get("score", 0) or 0), int(entry.get("score", 0) or 0)
             )
+            # T19 corroboration-promotion: a provisional (sub-floor) lesson that reaches the
+            # configured minimum frequency promotes to the injectable floor. Re-observation is
+            # the non-grader corroboration gate an unverified code lesson structurally requires —
+            # without it a sub-floor entry could never cross the floor into injection.
+            if existing["score"] < CTM_MIN_SCORE and freq >= CTM_PROMOTE_FREQUENCY:
+                existing["score"] = CTM_MIN_SCORE
             existing["updated"] = entry.get("updated", existing.get("updated", ""))
             if existing.get("tombstoned"):
                 existing["tombstoned"] = False
@@ -825,6 +891,9 @@ def ingest_lesson(bucket: list[dict], entry: dict) -> str:
         "frequency": 1,
         "tombstoned": False,
         "updated": entry.get("updated", ""),
+        # `added` anchors the eviction grace window; falls back to `updated` for entries built
+        # without it (e.g. a direct ingest_lesson call from a test) so age stays computable.
+        "added": entry.get("added", entry.get("updated", "")),
     })
     return "ADD"
 
@@ -891,7 +960,21 @@ def _update_evicted_digest(bucket: list[dict], evicted: list[dict]) -> None:
     digest["text"] = _render_evicted_digest_text(digest["evicted_count"], tags)
 
 
-def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
+def _entry_age_days(added: object, today_str: str) -> int | None:
+    """Whole days from an entry's `added` date to today (both %Y-%m-%d). None when either is
+    missing / unparseable — an entry with no computable age is NOT grace-eligible (evicted per
+    the normal rank), which keeps legacy entries that predate the `added` field unaffected."""
+    try:
+        a = datetime.strptime(str(added), "%Y-%m-%d")
+        t = datetime.strptime(str(today_str), "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+    return (t - a).days
+
+
+def enforce_bucket_cap(
+    bucket: list[dict], max_chars: int, today: str | None = None
+) -> list[dict]:
     """AD-1 evict-with-digest — keep the ACTIVE lesson-text sum <= max_chars.
 
     Eviction order (lowest value first): tombstoned dead-weight, then live ascending by
@@ -901,16 +984,37 @@ def enforce_bucket_cap(bucket: list[dict], max_chars: int) -> list[dict]:
     Evicted entries are then folded into a single NO-LLM evicted-digest footer (count +
     per-task_type tags) so the dropped signal leaves a trace (Letta summarize-and-evict INTENT,
     sans LLM). The digest footer is cap-EXCLUDED and is NEVER an eviction candidate.
+
+    T19 eviction guard (R-a MANDATORY): a YOUNG provisional (sub-floor score) entry ranks to be
+    evicted AFTER tombstoned dead-weight AND corroborated/normal live entries, so it survives long
+    enough to reach the corroboration-promotion frequency. Without it, score-3 provisionals — the
+    lowest-scored rows — are culled first (every corroborated live entry outscores them) and never
+    promote. The guard is a best-effort ORDER change bounded by an age window, NOT a hard
+    reservation: if protected provisionals are the only candidates left, they are still evicted so
+    the cap invariant holds. `today` defaults to the wallclock date; callers/tests may pin it.
     Mutates `bucket` in place; returns the evicted entries for the caller's audit.
     AC: on return, _bucket_active_size(bucket) <= max_chars."""
+    today_str = today or datetime.now().strftime("%Y-%m-%d")
     evicted: list[dict] = []
 
+    def _is_protected_provisional(e: dict) -> bool:
+        if e.get("tombstoned") or e.get("digest"):
+            return False
+        if int(e.get("score", 0) or 0) >= CTM_MIN_SCORE:
+            return False  # already at/above the injectable floor → no grace needed
+        age = _entry_age_days(e.get("added"), today_str)
+        return age is not None and 0 <= age <= CTM_PROVISIONAL_GRACE_DAYS
+
     def _evict_rank(e: dict) -> tuple:
-        return (
-            0 if e.get("tombstoned") else 1,  # tombstoned evicted first
-            int(e.get("score", 0) or 0),
-            int(e.get("frequency", 0) or 0),
-        )
+        # tombstoned (0) < corroborated/normal live (1) < protected provisional (2): the guard
+        # pushes a young sub-floor entry to the BACK of the eviction order.
+        if e.get("tombstoned"):
+            tier = 0
+        elif _is_protected_provisional(e):
+            tier = 2
+        else:
+            tier = 1
+        return (tier, int(e.get("score", 0) or 0), int(e.get("frequency", 0) or 0))
 
     # Evicting a tombstoned row does not shrink the active sum, so the loop keeps going until a
     # live row is removed — it terminates because the candidate pool strictly shrinks each pass.
@@ -970,7 +1074,7 @@ def ingest_outcome_lessons(records: list[dict], path: str | None = None) -> dict
                 continue  # no roster stem → not injectable at spawn (AD-3 matches on agent)
             ops[ingest_lesson(store[bucket_name], entry)] += 1
         for name, cap in (("ctm", CTM_BUCKET_MAX_CHARS), ("epm", EPM_BUCKET_MAX_CHARS)):
-            evicted = enforce_bucket_cap(store[name], cap)
+            evicted = enforce_bucket_cap(store[name], cap, today)
             if evicted:
                 ops["EVICT"] += len(evicted)
         save_lesson_store(store_path, store)
