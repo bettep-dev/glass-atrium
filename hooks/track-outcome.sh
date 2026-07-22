@@ -1129,12 +1129,72 @@ def _compute_style_ref_verified(completion_d, payload_d):
             _lib_src = _lf.read()
         _ns = {}
         exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
-        read_paths = _ns['collect_read_paths'](tpath)
+        # Explicit Read tool-filter: the matcher namespaces its incremental cache by
+        # this tag, so style_ref's read-history scan never collides with the grader's
+        # Write/Edit write-history scan (collect_write_paths) over the same transcript.
+        read_paths = _ns['collect_read_paths'](tpath, ('Read',))
         return 'true' if _ns['style_ref_matches'](style_ref_val, read_paths) else 'false'
     except (OSError, IOError, KeyError, SyntaxError, ValueError):
         return ''
 
 out('style_ref_verified', _compute_style_ref_verified(completion, d))
+
+
+# Grader Step 4-5 transcript Write/Edit cross-check (plan T2, ADR-6). Scans the
+# SUBAGENT's OWN transcript for Write/Edit file_path history via the single-SoT
+# collector style_ref_match.py::collect_write_paths (the {"Write","Edit"} tool-filter,
+# cache namespaced away from the style_ref Read scan). Emits two internal @@fields@@ the
+# bash side feeds to code_based_grader_check:
+#   grader_write_scan  = 'verifiable' (own transcript readable + lib present) |
+#                        'unverifiable' (main-session row / unreadable transcript / missing
+#                        lib) → the grader WITHHOLDS promotion (AC 265).
+#   grader_write_path  = one line per Write/Edit history path (verifiable only), deduped +
+#                        bounded; the grader matches claimed files: paths against these.
+# Fail-open by contract: any error → ('unverifiable', []) → withhold, NEVER a false
+# contradiction. Does NOT fall back to the parent transcript — a row with no resolvable
+# per-agent transcript is unverifiable by Step 5, not graded against the parent's writes.
+def _compute_write_crosscheck(payload_d):
+    import os as _os
+    lib_path = _os.environ.get('STYLE_REF_MATCH_LIB', '')
+    if not lib_path or not _os.path.isfile(lib_path):
+        return ('unverifiable', [])
+    tpath = _resolve_subagent_transcript(payload_d)
+    if not tpath or not _os.path.isfile(tpath):
+        return ('unverifiable', [])
+    try:
+        with open(lib_path, 'r', encoding='utf-8') as _lf:
+            _lib_src = _lf.read()
+        _ns = {}
+        exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
+        _wpaths = _ns['collect_write_paths'](tpath)
+    except (OSError, IOError, KeyError, SyntaxError, ValueError):
+        return ('unverifiable', [])
+    _seen = set()
+    _out = []
+    for _p in _wpaths:
+        if isinstance(_p, str) and _p and _p not in _seen:
+            _seen.add(_p)
+            _out.append(_p)
+            if len(_out) >= 200:
+                break
+    return ('verifiable', _out)
+
+# Gate the scan (a SECOND transcript open) to rows the grader's feature/bug-fix arms can
+# actually consume: metric_pass=true + a success result + a non-empty files: field. A row
+# with no claimed files has nothing to cross-check (falls to the files-evidence/body path),
+# and this gate keeps the single-open perf invariant (track-outcome-transcript-parse-once)
+# on the common no-files path — mirroring how the style_ref read-scan opens only when a
+# style_ref field is present.
+_cc_files = (completion.get('files', '') or '').strip()
+_cc_metric = (completion.get('metric_pass', '') or '').strip().lower()
+_cc_result = (completion.get('result', '') or '').strip()
+if _cc_files and _cc_metric == 'true' and _cc_result in ('done', 'done_with_concerns'):
+    _write_scan, _write_paths = _compute_write_crosscheck(d)
+else:
+    _write_scan, _write_paths = '', []
+out('grader_write_scan', _write_scan)
+for _wp in _write_paths:
+    out('grader_write_path', _wp)
 out('c_confidence_observed', completion.get('confidence_observed', ''))
 out('parse_tier', str(parse_tier))
 out('tool_use_count', str(tool_use_count))
@@ -1214,6 +1274,17 @@ case "${STYLE_REF_VERIFIED}" in
   true | false) ;;
   *) STYLE_REF_VERIFIED="" ;;
 esac
+# Grader Step 4-5 transcript cross-check inputs (plan T2, ADR-6), computed in the python
+# block from the subagent's OWN transcript. GRADER_WRITE_SCAN is whitelisted to the two
+# literals (else empty → grader treats as unwired → pure files-evidence). GRADER_WRITE_PATHS
+# is the newline-separated Write/Edit history (multiple @@grader_write_path@@ lines → all
+# extracted, NOT head -1 like extract_field). Both fed to code_based_grader_check below.
+GRADER_WRITE_SCAN=$(extract_field grader_write_scan)
+case "${GRADER_WRITE_SCAN}" in
+  verifiable | unverifiable) ;;
+  *) GRADER_WRITE_SCAN="" ;;
+esac
+GRADER_WRITE_PATHS=$(printf '%s\n' "$PARSED" | sed -n 's/^@@grader_write_path@@//p')
 # confidence_observed: daemon-computed posterior float 0.0-1.0. Passive recognition only —
 # valid → keep · invalid → warn+skip (no block) · absent → no-op.
 CONFIDENCE_OBSERVED=$(extract_field c_confidence_observed)
@@ -2103,11 +2174,11 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
     else
       GRADER_BODY_TEXT="${MSG_HEAD} ${MSG_TAIL}"
     fi
-    export GRADER_BODY_TEXT GRADER_FILES_FIELD
+    export GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
     # shellcheck source=lib/code-based-grader.sh
     source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
     GRADER_VERDICT="$(code_based_grader_check)"
-    unset GRADER_BODY_TEXT GRADER_FILES_FIELD
+    unset GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
   fi
 fi
 
