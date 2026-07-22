@@ -216,16 +216,26 @@ hook_require_python3() {
   exit 2
 }
 
+# Degenerate-empty hook envelope predicate — the canonical "nothing to guard" set, owned once
+# so every hook classifies the same literals. Args: $1=raw stdin · returns 0 when empty
+# ("" / "{}" / "{ }"), 1 otherwise.
+hook_input_is_empty() {
+  case "${1}" in
+    "" | "{}" | "{ }") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Fail-closed python3 precondition, gated on there being real input to guard: empty
 # stdin ("" / "{}" / "{ }") keeps the fail-open exit-0 contract (nothing to guard),
 # any other input delegates to hook_require_python3 (block + exit 2 on absence).
 # Args: $1=hook_input · $2=block_code · $3=message.
 hook_require_python3_unless_empty() {
   local input="${1}" code="${2}" message="${3}"
-  case "${input}" in
-    "" | "{}" | "{ }") return 0 ;;
-    *) hook_require_python3 "${code}" "${message}" ;;
-  esac
+  if hook_input_is_empty "${input}"; then
+    return 0
+  fi
+  hook_require_python3 "${code}" "${message}"
 }
 
 # Normalize a POSIX path by collapsing "." and ".." segments without touching the

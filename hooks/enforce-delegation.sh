@@ -45,10 +45,11 @@ case "${STATE}" in
   unrecognized)
     # A degenerate empty stdin ("" / "{}" / "{ }") is nothing-to-guard, not drift →
     # keep the silent allow the DEL-002 input-empty carve-out already grants.
-    case "${INPUT}" in
-      "" | "{}" | "{ }") exit 0 ;;
-      *) : ;;
-    esac
+    # shellcheck disable=SC2310
+    #   Intended predicate call in an if-condition (hook_input_is_empty returns 0/1).
+    if hook_input_is_empty "${INPUT}"; then
+      exit 0
+    fi
     # A real drift (renamed / malformed / non-object tool_input) would disarm the gate →
     # emit a loud, aggregation-visible error, then ALLOW (ADR-2: emit-and-allow, not block).
     emit_error "DEL-003" "warn" \
