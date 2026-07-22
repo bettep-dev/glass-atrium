@@ -44,6 +44,47 @@ print(d.get('tool_input', {}).get(sys.argv[1], ''))
 " "${field}" 2>/dev/null || printf '%s\n' ""
 }
 
+# Three-state companion probe for hook_get_tool_input — resolves the ambiguity the value-only
+# extractor cannot: an empty return conflates "field legitimately empty" with "the host renamed
+# the envelope and the field is gone", so a fail-open security gate reading empty=allow disarms
+# silently and permanently on a schema drift. This reports WHICH of three conditions produced the
+# value so a consumer can keep allow on a real empty yet fail LOUD on drift.
+# Emits TWO NUL-terminated records — <state>\0<value>\0 — where state is one of:
+#   present       tool_input is an object AND the extracted value is non-empty
+#   empty         tool_input is an object AND the field is absent or extracts to empty
+#   unrecognized  root non-object · malformed JSON · tool_input absent · tool_input non-object
+# The value is byte-identical to $(hook_get_tool_input ...) on the present path: str() of the
+# value, trailing newlines AND embedded NULs stripped to mirror the $() command-substitution
+# capture (bash drops NUL bytes). State keys on the FINAL extracted value, so present ⇔ non-empty
+# value — an all-newline value that rstrips to empty reports `empty`, matching the extractor.
+# Fail-open (AC4): python3 absent / hard failure → `empty\0\0`, NOT `unrecognized` — preserving
+# today's silent allow rather than raising a drift error the missing interpreter cannot justify.
+# Args: $1=json_input $2=field_name.
+# Consume with two reads:
+#   { IFS= read -r -d '' state; IFS= read -r -d '' value; } < <(hook_probe_tool_input "${in}" f)
+hook_probe_tool_input() {
+  local input="${1}" field="${2}"
+  printf '%s\n' "${input}" \
+    | python3 -c '
+import sys, json
+field = sys.argv[1]
+state = "unrecognized"
+value = ""
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = None
+if isinstance(d, dict) and isinstance(d.get("tool_input"), dict):
+    value = str(d["tool_input"].get(field, "")).rstrip("\n").replace("\x00", "")
+    state = "present" if value != "" else "empty"
+out = sys.stdout
+out.write(state)
+out.write("\0")
+out.write(value)
+out.write("\0")
+' "${field}" 2>/dev/null || printf 'empty\0\0'
+}
+
 # Single-pass multi-field extractor for TOP-LEVEL fields — parses the hook JSON input ONCE and
 # emits each requested field's value in ONE python3 invocation (one interpreter cold-start instead
 # of N). Per-field output is byte-identical to hook_get_field for the same key: str() of the value,
