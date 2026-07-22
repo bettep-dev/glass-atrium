@@ -457,7 +457,9 @@ append_marker_entry() {
 # dropped guidance (per-rule-doc-block paths carried in the entries). Args: $1=shed count $2=entries.
 build_drop_marker() {
   local count="${1}" entries="${2}" padded
-  padded="$(printf '%02d' "${count}" 2>/dev/null || printf '%s' "${count}")"
+  # count is shed_count — an integer accumulated only via $((shed_count + 1)) — so the width format
+  # cannot fail; no error fallback needed.
+  printf -v padded '%02d' "${count}"
   printf '**Injection shed %s (auto-injected — you MAY Read a listed source path to recover it):** %s.' \
     "${padded}" "${entries}"
 }
@@ -621,7 +623,6 @@ ctx_bytes="$(byte_len "${CTX}")"
 effective_ceiling="${INJECT_CTX_MAX_BYTES}"
 marker_entries=""
 shed_count=0
-ceiling_lowered=0
 for drop_block in lesson budget-analysis budget-dev naming styleref minimalism comment; do
   [[ "${ctx_bytes}" -le "${effective_ceiling}" ]] && break
   # DF-15: the OFFENDING size is the over-ceiling total that PROMPTED this drop — captured BEFORE
@@ -629,11 +630,11 @@ for drop_block in lesson budget-analysis budget-dev naming styleref minimalism c
   # under-report the size that actually breached the ceiling.
   pre_drop_bytes="${ctx_bytes}"
   # T16 conditional reserve: the FIRST shed lowers the ceiling ONCE (a marker exists only once a shed
-  # occurred, so an under-full-ceiling spawn never reserves and grows no marker). Guarded → lowers at
-  # most once per invocation.
-  if [[ "${ceiling_lowered}" -eq 0 ]]; then
+  # occurred, so an under-full-ceiling spawn never reserves and grows no marker). The reserve is a
+  # nonzero constant, so "still at the full ceiling" is the derivable "not yet lowered" guard →
+  # lowers at most once per invocation.
+  if [[ "${effective_ceiling}" -eq "${INJECT_CTX_MAX_BYTES}" ]]; then
     effective_ceiling=$((INJECT_CTX_MAX_BYTES - INJECT_MARKER_RESERVE))
-    ceiling_lowered=1
     printf '[inject-scope-rules] injection ceiling lowered to %d bytes to reserve room for the drop marker (agent=%s)\n' "${effective_ceiling}" "${AGENT_TYPE}" >&2
   fi
   # T16 marker accumulation — name only a block that was ACTUALLY present (block_is_present); an
