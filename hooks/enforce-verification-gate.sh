@@ -2,9 +2,13 @@
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
 # Three distinct surfaces on a DEV subagent spawn:
-#   1) reviewer-advisory (STDERR + exit 0) — a plan-referencing DEV spawn with no qa-code-reviewer
-#      recorded this session, surfacing the missing Stage-2 gate. ADVISORY-ONLY (complex/simple plan
-#      judgment is the orchestrator's) → never blocks.
+#   1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, code VGATE-REVIEWER-001) — a
+#      plan-referencing DEV spawn with no qa-code-reviewer recorded this session, surfacing the missing
+#      Stage-2 gate. Promoted from a stderr-advisory to a block so it matches its sibling attestation
+#      checks (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by hook_is_subagent like surface 2: only an
+#      orchestrator-origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV} team, so
+#      it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the informational
+#      stderr advisory (exit 0) and is never false-blocked (see the nested-spawn scope note below).
 #   2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — an ORCHESTRATOR-ORIGIN DEV
 #      spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies to EVERY DEV spawn
 #      (orchestrator-role.md ### Spawn Budget), so it fires even for a plan-bearing spawn. GUARDED by
@@ -15,6 +19,12 @@
 #      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
 #      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
 #      clear THIS branch (but still face surface 2).
+#
+# Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
+#   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
+#   no-op. NESTED spawns therefore remain UNGATED (recorded here, not masked): both the reviewer-miss
+#   and [SIZE-EST] blocks fire on orchestrator origin only (the hook_is_subagent guard), so a nested
+#   sub-worker origin is never false-blocked.
 #
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
 #   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
@@ -280,9 +290,26 @@ if references_plan "${prompt_full}"; then
   if [[ "${reviewer_present}" == true ]]; then
     exit 0
   fi
-  # 4. STDERR reviewer-advisory fire (no stdout JSON · not a block · exit 0).
-  reason="Verification-gate advisory: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (orchestrator-role.md Stage-2 gate). If this is a simple task (typo/import/config) the gate is exempt — ignore this advisory."
-  printf '[enforce-verification-gate] %s\n' "${reason}" >&2
+  # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
+  # from a stderr-advisory to a channel-a BLOCK (emit_error stderr JSON + exit 2, code
+  # VGATE-REVIEWER-001, reason phrase reviewer-miss), matching its sibling attestation checks
+  # (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by hook_is_subagent exactly like the [SIZE-EST] gate:
+  # only an orchestrator-origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV}
+  # verification team, so it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the
+  # informational advisory and is never false-blocked (nested spawns remain ungated per the header
+  # note). "no qa-code-reviewer recorded" is retained verbatim in both messages so a downstream log
+  # scan keys on one phrase across both surfaces.
+  reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (orchestrator-role.md Stage-2 gate)."
+  # SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
+  # shellcheck disable=SC2310
+  if ! hook_is_subagent "${input}"; then
+    reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then passes. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
+    emit_error "VGATE-REVIEWER-001" "block" "${reviewer_reason}" "${reviewer_fix}" \
+      "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}"
+    exit 2
+  fi
+  # Nested sub-worker origin → informational advisory only (never a false-block).
+  printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
   exit 0
 fi
 
