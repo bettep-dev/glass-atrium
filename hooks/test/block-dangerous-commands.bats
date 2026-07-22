@@ -129,3 +129,25 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
   run_with_no_python3 ''
   [[ "${status}" -eq 0 ]] || return 1
 }
+
+# Header relabel (clauded-docs/290 T18): the hook is a heuristic backstop, not a
+# security boundary. These assertions grep the script header — they gate the
+# labeling ACs, not matching behavior (byte-identical behavior is covered by the
+# malicious/benign fixtures above, which stay green because the change is comment-only).
+
+@test "header: labels the hook NOT a security boundary and names bypass classes" {
+  grep -qi 'not a security boundary' "${HOOK_SH}" || return 1
+  grep -qi 'bypass class' "${HOOK_SH}" || return 1
+  grep -qi 'variable indirection' "${HOOK_SH}" || return 1
+  grep -qi 'indirect naming' "${HOOK_SH}" || return 1
+}
+
+@test "header: cross-references UD-1" {
+  grep -qE 'UD-1' "${HOOK_SH}" || return 1
+}
+
+@test "header: non-reliance clause appears under Constraints" {
+  grep -q 'Constraints:' "${HOOK_SH}" || return 1
+  grep -qi 'non-reliance' "${HOOK_SH}" || return 1
+  grep -qi 'compensating factor' "${HOOK_SH}" || return 1
+}
