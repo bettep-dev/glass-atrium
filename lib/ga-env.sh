@@ -186,6 +186,8 @@ ga_init_env() {
   # all read this one array (the prior per-script duplication collapsed here).
   EXPECTED_HOOK_BINDINGS=(
     "PreToolUse	advisory-context-budget.sh	Agent"
+    "PreToolUse	advisory-egress-secret.sh	Bash"
+    "PreToolUse	advisory-raw-store-read.sh	Bash"
     "PreToolUse	advisory-spawn-budget.sh	Agent"
     "PreToolUse	advisory-spawn-cost.sh	Agent"
     "PreToolUse	advisory-subagent-budget.sh	"

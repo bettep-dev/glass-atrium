@@ -4,8 +4,10 @@
 # PreToolUse(Write|Edit + Bash) harness-critical gate, agent_id-INDEPENDENT:
 #   Write|Edit arm → live settings.json/settings.local.json · live hook dirs ·
 #   agents/*.md frontmatter identity keys {name, tools, scope} (model excluded,
-#   body edits pass) · NEW agents/*.md Write. Bash arm → best-effort mutation-verb
-#   + protected-path-literal text match (indirection residual PASSES by design).
+#   body edits pass) · NEW agents/*.md Write · scheduled-exec dirs
+#   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
+#   best-effort mutation-verb + protected-path-literal text match (indirection
+#   residual PASSES by design).
 # Block channel: HAR-001/HAR-002 emit_error + exit 2 · fail-closed HAR-003 on a
 # python3-less PATH · HARNESS_PROTECTION_APPROVE=1 launch-env grant passes.
 #
@@ -274,6 +276,90 @@ MD
 
 @test "unprotected path Write → pass (exit 0)" {
   run_hook "Write" "$(write_input "${FAKE_HOME}/project/src/app.ts" 'code')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── H1: scheduled-execution surface — autoagent/ + scripts/ + skills/ ─────────
+#
+# launchd runs autoagent/ code unattended, so a plain Write/Edit persists code the
+# scheduler later executes (LLM06). H1 extends BOTH arms to the three dirs. Every
+# block row is exit-0 at HEAD (no deterministic case, no PROT_RE literal) and
+# exit-2 after — a genuine before/after. rules/ + scoped/ are EXCLUDED by design
+# (H1-D1); the four permit rows guard that exclusion against a later
+# "complete the pattern" edit.
+
+@test "H1 Write into autoagent/ → HAR-001 scheduled-exec block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/autoagent/daemon-apply.sh" 'echo pwned')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-001"* ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into autoagent/ → block (agent cannot rewrite scheduled code)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/autoagent/daemon_cycle.py" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Write into scripts/ → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/scripts/generate-manifest.sh" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into scripts/ → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/scripts/wiki-query.sh" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "H1 Write into skills/ → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/skills/foo/SKILL.md" 'x')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+@test "H1 Edit into skills/ → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/skills/foo/SKILL.md" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Bash arm — redirect / copy verb targeting the three dirs (3 of 3 blocked).
+
+@test "H1 bash redirect into autoagent/ → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/.glass-atrium/autoagent/daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "H1 bash cp into scripts/ → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.sh ~/.glass-atrium/scripts/generate-manifest.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "H1 bash tee into skills/ → block" {
+  run_hook "Bash" "$(bash_input 'echo pwn | tee ~/.glass-atrium/skills/foo/SKILL.md')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# rules/ + scoped/ DELIBERATELY EXCLUDED (H1-D1) — permit rows guard the exclusion.
+
+@test "H1 Write into rules/ → pass (excluded, hand-edited live)" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/rules/glass-atrium/foo.md" 'x')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Edit into rules/ → pass (excluded)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/rules/glass-atrium/foo.md" 'a' 'b')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Write into scoped/ → pass (excluded)" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/scoped/scope-dev.md" 'x')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "H1 Edit into scoped/ → pass (excluded)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/scoped/scope-dev.md" 'a' 'b')"
   [[ "${status}" -eq 0 ]] || return 1
 }
 

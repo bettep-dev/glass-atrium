@@ -49,6 +49,8 @@ write_full_settings() {
   "hooks": {
     "PreToolUse": [
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-context-budget.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-egress-secret.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-raw-store-read.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-budget.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-spawn-cost.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-subagent-budget.sh" } ] },
@@ -244,9 +246,10 @@ run_doctor_ga_sandbox() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 46-binding set across all 7 events
-  # (PreToolUse 24 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
-  # SubagentStop 3 / PreCompact 1). The total is counted per FLATTENED matcher-leaf,
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE 48-binding set across all 7 events
+  # (PreToolUse 26 / PostToolUse 8 / SessionStart 4 / Stop 3 / SubagentStart 3 /
+  # SubagentStop 3 / PreCompact 1 — PreToolUse carries the two advisory Bash leaves
+  # advisory-egress-secret.sh + advisory-raw-store-read.sh). The total is counted per FLATTENED matcher-leaf,
   # NOT per unique hook basename: validate-secret-scan.sh AND enforce-harness-critical.sh
   # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
   # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
@@ -255,8 +258,8 @@ run_doctor_ga_sandbox() {
   # post-edit-typecheck.sh, telemetry-activation.sh) — each occurrence is a distinct
   # leaf. advisory-preedit-facts.sh binds on Stop ONLY (SubagentStop sees a parent
   # transcript that predates the subagent's edits). With settings.json absent, every
-  # leaf is unwired, so all 46 report dormant.
-  [[ "${output}" == *"46 dormant hook binding(s)"* ]]
+  # leaf is unwired, so all 48 report dormant.
+  [[ "${output}" == *"48 dormant hook binding(s)"* ]]
 }
 
 @test "doctor is mutation-free: settings.json byte-identical after run" {

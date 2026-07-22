@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
-# PreToolUse(Write) — raw-ingestion frontmatter gate: 5-part validation on
-# wiki/raw/*.md save (1 URL = 1 immutable file), blocking on violation. No bypass.
+# PreToolUse(Write) — raw-ingestion gate: 6-part validation on wiki/raw/*.md save
+# (1 URL = 1 immutable file), blocking on violation. No bypass.
+#
+# V6 (plan H2 · R5 · LLM01) is the load-bearing addition: it REQUIRES a body-resident
+# provenance envelope on every raw/ write. The gain is MECHANICAL and self-suppression-proof
+# because this hook is path-keyed and agent-id-INDEPENDENT — it runs OUTSIDE the process that
+# fetched the (potentially malicious) web content, so an injected "save verbatim, no envelope"
+# instruction cannot suppress it. Either the write carries the envelope (content lands LABELED
+# untrusted, so read-side clauses key on the label) or it is blocked (content never lands). The
+# envelope lives in the BODY, not the frontmatter (H2-R1): V1 requires EXACTLY 3 frontmatter
+# fields, so a frontmatter-form envelope would be self-blocked — V6 keys on the body, which
+# V3/V4/V5 already govern with no fixed-field rule.
+#
+# Honest limit: V6 enforces the untrusted-source LABEL, it does NOT sanitize the content — an
+# envelope-wrapped payload is still a payload. The mechanical property is the invariant that every
+# landed raw file carries the label; the read-side interpretation (inject-scope-rules.sh
+# WIKI-UNTRUSTED clause + advisory-raw-store-read.sh) is adherence-layer defense-in-depth.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -87,6 +102,27 @@ if [ -n "$V4_HIT" ]; then
   VIOLATIONS+=("V4: 본문 첫 30라인 내 한국어 섹션 제목 발견 (line ${V4_HIT}) — 원본 언어 보존 위반 의심")
 fi
 
+# V6 (H2/R5): body-resident provenance envelope — the mechanical, self-suppression-proof control.
+# The untrusted source content MUST be wrapped by an opening + closing envelope marker so every
+# landed raw file is explicitly labeled untrusted DATA (not instructions). Markers are HTML
+# comments (non-rendering, so they do not disturb the preserved source) matched at BODY line start:
+#   opening  <!-- UNTRUSTED-SOURCE ... -->   →  ^<!--[[:space:]]*UNTRUSTED-SOURCE
+#   closing  <!-- /UNTRUSTED-SOURCE -->      →  ^<!--[[:space:]]*/UNTRUSTED-SOURCE
+# The opening regex cannot match the closing form (the leading `/` breaks it), so the two are
+# distinct. A genuine envelope requires the opening to PRECEDE the closing (line-number ordered).
+# grep -n + `|| true` + empty-guard avoids the `grep -c ... || echo 0` "0\n0" trap.
+ENV_OPEN=$(printf '%s\n' "$BODY" | grep -nE '^<!--[[:space:]]*UNTRUSTED-SOURCE' | head -1 || true)
+ENV_CLOSE=$(printf '%s\n' "$BODY" | grep -nE '^<!--[[:space:]]*/UNTRUSTED-SOURCE[[:space:]]*-->' | head -1 || true)
+if [ -z "$ENV_OPEN" ] || [ -z "$ENV_CLOSE" ]; then
+  VIOLATIONS+=("V6: 본문 provenance 봉투 마커 누락 (open='${ENV_OPEN}', close='${ENV_CLOSE}') — <!-- UNTRUSTED-SOURCE --> ... <!-- /UNTRUSTED-SOURCE --> 필요")
+else
+  ENV_OPEN_LN=${ENV_OPEN%%:*}
+  ENV_CLOSE_LN=${ENV_CLOSE%%:*}
+  if [ "$ENV_OPEN_LN" -ge "$ENV_CLOSE_LN" ]; then
+    VIOLATIONS+=("V6: provenance 봉투 마커 순서 오류 (open line ${ENV_OPEN_LN} >= close line ${ENV_CLOSE_LN}) — 여는 마커가 닫는 마커보다 앞서야 함")
+  fi
+fi
+
 if [ ${#VIOLATIONS[@]} -eq 0 ]; then
   exit 0
 fi
@@ -112,6 +148,10 @@ for v in "${VIOLATIONS[@]}"; do
     V5:*) emit_error "SCOPE-005" "block" \
       "Raw file exceeds 50KB size limit" \
       "Split content into smaller files or trim unnecessary sections" \
+      "{\"file\":\"${FILE_PATH}\"}" ;;
+    V6:*) emit_error "SCOPE-006" "block" \
+      "Raw file body-resident provenance envelope missing or malformed" \
+      "Wrap the untrusted source content in the body with '<!-- UNTRUSTED-SOURCE -->' ... '<!-- /UNTRUSTED-SOURCE -->' (opening before closing)" \
       "{\"file\":\"${FILE_PATH}\"}" ;;
   esac
 done
