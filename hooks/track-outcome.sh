@@ -2244,6 +2244,189 @@ emit_error "DATA-070" "info" \
   "N/A (automatic)" \
   "{\"agent\":\"${AGENT_TYPE}\",\"task_type\":\"${TASK_TYPE}\",\"result\":\"${RESULT}\"}"
 
+# --- T9 circuit-breaker + T10 dead-letter spool (both keyed off this recorded outcome) ---
+# T9 backs the Failure Recovery Loop's "3+ consecutive fails → suspend agent" clause, which had
+# no backing code. T10 keeps a bounded on-disk spool so a DB outage does not silently lose the
+# outcome. Separate state dirs — the two mechanisms never share files (non-conflicting).
+CIRCUIT_BREAKER_DIR="${CIRCUIT_BREAKER_DIR:-${HOME}/.claude/data/agent-circuit-breaker}"
+CIRCUIT_BREAKER_THRESHOLD="${CIRCUIT_BREAKER_THRESHOLD:-3}"
+OUTCOME_SPOOL_DIR="${OUTCOME_SPOOL_DIR:-${HOME}/.claude/data/outcome-spool}"
+OUTCOME_SPOOL_MAX_ENTRIES="${OUTCOME_SPOOL_MAX_ENTRIES:-100}"
+OUTCOME_SPOOL_MAX_AGE_DAYS="${OUTCOME_SPOOL_MAX_AGE_DAYS:-7}"
+OUTCOME_SPOOL_DRAIN_BATCH="${OUTCOME_SPOOL_DRAIN_BATCH:-25}"
+
+# Path-safe per-agent key: everything outside [A-Za-z0-9._-] collapses to '_' so an agent type
+# can never escape its state dir.
+circuit_breaker_key() {
+  printf '%s' "${1}" | tr -c 'A-Za-z0-9._-' '_'
+}
+
+# Update the per-agent consecutive-fail counter for a recorded outcome. At the threshold, write a
+# suspension signal at a stable path a SubagentStart reader can consult (T9 AC1); any non-fail
+# resets the counter to zero and clears the suspension (T9 AC2). Fail-open — never crashes the hook.
+circuit_breaker_record() {
+  local agent="${1}" result="${2}"
+  [ -z "${agent}" ] && return 0
+  local key counter_file susp_file
+  key="$(circuit_breaker_key "${agent}")"
+  counter_file="${CIRCUIT_BREAKER_DIR}/${key}.fails"
+  susp_file="${CIRCUIT_BREAKER_DIR}/${key}.suspended"
+  if [ "${result}" = "fail" ]; then
+    if [ ! -d "${CIRCUIT_BREAKER_DIR}" ] && ! mkdir -p "${CIRCUIT_BREAKER_DIR}" 2>/dev/null; then
+      emit_error "DATA-078" "warn" \
+        "Circuit-breaker state dir uncreatable — fail counter skipped" \
+        "Circuit-breaker state dir uncreatable — fail counter skipped" \
+        "Check permissions on ${CIRCUIT_BREAKER_DIR}" \
+        "Check permissions on ${CIRCUIT_BREAKER_DIR}"
+      return 0
+    fi
+    local count=0
+    if [ -r "${counter_file}" ]; then
+      count="$(cat "${counter_file}" 2>/dev/null)"
+    fi
+    case "${count}" in
+      '' | *[!0-9]*) count=0 ;;
+    esac
+    count=$((count + 1))
+    printf '%s\n' "${count}" >"${counter_file}" 2>/dev/null || true
+    if [ "${count}" -ge "${CIRCUIT_BREAKER_THRESHOLD}" ]; then
+      if command -v jq >/dev/null 2>&1; then
+        jq -nc --arg agent "${agent}" --argjson fails "${count}" --arg ts "${TIMESTAMP}" \
+          '{agent: $agent, consecutive_fails: $fails, suspended_ts: $ts}' \
+          >"${susp_file}" 2>/dev/null || true
+      else
+        printf '{"agent":"%s","consecutive_fails":%s,"suspended_ts":"%s"}\n' \
+          "${agent}" "${count}" "${TIMESTAMP}" >"${susp_file}" 2>/dev/null || true
+      fi
+      emit_error "DATA-079" "warn" \
+        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+        "{\"agent\":\"${key}\",\"consecutive_fails\":${count}}"
+    fi
+  else
+    # Non-fail resets to zero. Skip when no state was ever written (happy-path common case).
+    [ -d "${CIRCUIT_BREAKER_DIR}" ] || return 0
+    rm -f "${counter_file}" "${susp_file}" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Ensure the spool dir exists; return 1 (not fatal) when uncreatable so the caller drops the
+# envelope and the hook still exits 0 (T10 AC4).
+spool_dir_ensure() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] && return 0
+  mkdir -p "${OUTCOME_SPOOL_DIR}" 2>/dev/null
+}
+
+# Persist one failed envelope as a spool file. The epoch-second name prefix keeps entries
+# lexically oldest-first for FIFO drain + eviction; mktemp adds the unique suffix.
+spool_write() {
+  local ts spool_file
+  ts="$(date +%s 2>/dev/null)" || ts=0
+  case "${ts}" in
+    '' | *[!0-9]*) ts=0 ;;
+  esac
+  spool_file="$(mktemp "${OUTCOME_SPOOL_DIR}/${ts}-XXXXXX" 2>/dev/null)" || return 1
+  printf '%s' "${1}" >"${spool_file}" 2>/dev/null || {
+    rm -f "${spool_file}" 2>/dev/null || true
+    return 1
+  }
+  return 0
+}
+
+# Bound the spool: prune entries older than the max age, then evict oldest-first when the count
+# exceeds the max, recording how many were removed (T10 AC3).
+spool_evict() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] || return 0
+  local now cutoff f prefix aged=0
+  now="$(date +%s 2>/dev/null)" || now=0
+  case "${now}" in
+    '' | *[!0-9]*) now=0 ;;
+  esac
+  cutoff=$((now - OUTCOME_SPOOL_MAX_AGE_DAYS * 86400))
+  for f in "${OUTCOME_SPOOL_DIR}"/*; do
+    [ -e "${f}" ] || continue
+    prefix="${f##*/}"
+    prefix="${prefix%%-*}"
+    case "${prefix}" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ]; then
+      rm -f "${f}" 2>/dev/null && aged=$((aged + 1))
+    fi
+  done
+  local entries=() evicted=0 over i=0
+  for f in "${OUTCOME_SPOOL_DIR}"/*; do
+    [ -e "${f}" ] || continue
+    entries+=("${f}")
+  done
+  if [ "${#entries[@]}" -gt "${OUTCOME_SPOOL_MAX_ENTRIES}" ]; then
+    over=$((${#entries[@]} - OUTCOME_SPOOL_MAX_ENTRIES))
+    while [ "${i}" -lt "${over}" ]; do
+      rm -f "${entries[${i}]}" 2>/dev/null && evicted=$((evicted + 1))
+      i=$((i + 1))
+    done
+  fi
+  if [ "${aged}" -gt 0 ] || [ "${evicted}" -gt 0 ]; then
+    emit_error "DATA-072" "warn" \
+      "Outcome spool bound exceeded — removed entries oldest-first" \
+      "Outcome spool bound exceeded — removed entries oldest-first" \
+      "Spooled outcomes exceeded the age/count bound and were dropped oldest-first" \
+      "Spooled outcomes exceeded the age/count bound and were dropped oldest-first" \
+      "{\"aged\":${aged},\"evicted\":${evicted}}"
+  fi
+  return 0
+}
+
+# Dead-letter a failed outcome write: persist to the spool (T10 AC1), then enforce the bound.
+# Uncreatable spool dir → loud named code, drop the envelope, hook still exits 0 (T10 AC4).
+spool_persist() {
+  if ! spool_dir_ensure; then
+    emit_error "DATA-071" "warn" \
+      "Outcome spool dir uncreatable — failed write dropped" \
+      "Outcome spool dir uncreatable — failed write dropped" \
+      "Check permissions on ${OUTCOME_SPOOL_DIR}" \
+      "Check permissions on ${OUTCOME_SPOOL_DIR}"
+    return 0
+  fi
+  if spool_write "${1}"; then
+    spool_evict
+  fi
+  return 0
+}
+
+# Replay spooled envelopes after a confirmed live write, removing each ONLY on a confirmed
+# re-write (T10 AC2). Stop at the first failure (DB still down) and cap the batch so a large
+# post-outage backlog cannot blow the hook's sub-second budget.
+spool_drain() {
+  [ -d "${OUTCOME_SPOOL_DIR}" ] || return 0
+  local f drained=0
+  for f in "${OUTCOME_SPOOL_DIR}"/*; do
+    [ -e "${f}" ] || continue
+    [ "${drained}" -ge "${OUTCOME_SPOOL_DRAIN_BATCH}" ] && break
+    if python3 "${PG_HELPER}" <"${f}" >/dev/null 2>&1; then
+      rm -f "${f}" 2>/dev/null && drained=$((drained + 1))
+    else
+      break
+    fi
+  done
+  if [ "${drained}" -gt 0 ]; then
+    emit_error "DATA-073" "info" \
+      "Outcome spool drained ${drained} entries after write recovery" \
+      "Outcome spool drained ${drained} entries after write recovery" \
+      "N/A (automatic)" \
+      "N/A (automatic)" \
+      "{\"drained\":${drained}}"
+  fi
+  return 0
+}
+
+# T9: fold this recorded outcome into the per-agent circuit-breaker before persistence — the
+# fail/non-fail signal is independent of whether the DB write below succeeds.
+circuit_breaker_record "${AGENT_TYPE}" "${RESULT}"
+
 # PHASE3-OUTCOME-DUALWRITE-BEGIN
 # Write to PostgreSQL — PG is the single sink; the body_md column carries the full markdown body so
 # the renderer CLI can reconstruct output, and the signals[] envelope below is the single sink for
@@ -2334,10 +2517,18 @@ if [ -x "${PG_HELPER}" ]; then
     }' 2>/dev/null || true)
 
   if [ -n "${PG_ENVELOPE}" ]; then
-    # Helper exit code is always 0; stderr carries elapsed_ms + status.
-    # Background would lose stderr ordering vs other emit_error lines, so run
-    # synchronously — helper budget is <50ms typical.
-    printf '%s' "${PG_ENVELOPE}" | python3 "${PG_HELPER}" || true
+    # T10: capture the helper exit code instead of swallowing it — the helper emits a named
+    # non-zero code on failure (DB unreachable / write-failed). Non-zero → dead-letter the
+    # envelope so the outcome is not silently lost; zero → drain any previously-spooled entries.
+    # Background would lose stderr ordering vs other emit_error lines, so run synchronously —
+    # helper budget is <50ms typical.
+    _pg_rc=0
+    printf '%s' "${PG_ENVELOPE}" | python3 "${PG_HELPER}" || _pg_rc=$?
+    if [ "${_pg_rc}" -ne 0 ]; then
+      spool_persist "${PG_ENVELOPE}"
+    else
+      spool_drain
+    fi
   fi
 fi
 # PHASE3-OUTCOME-DUALWRITE-END
