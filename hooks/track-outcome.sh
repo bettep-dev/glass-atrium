@@ -263,6 +263,14 @@ except Exception:
 # source. Defined here (before the msg assignment below) so the parse and the
 # tool_use / write-target counters all reuse one resolution point.
 # --------------------------------------------------------------------------
+# (agent_id, session_id) → resolved transcript path memo. The resolver globs every
+# project dir and is called 3-4x per fire with identical ids (style_ref scan, the
+# write-crosscheck, and the transcript-readable predicate), so the glob result — stable
+# within one process — is computed once. Per-process only (each fire is its own
+# process), so it never crosses the cross-fire disk caches.
+_SUBAGENT_TPATH_CACHE = {}
+
+
 def _resolve_subagent_transcript(payload_d):
     # Resolve the SUBAGENT's OWN transcript. On SubagentStop the payload
     # transcript_path points at the PARENT, so a subagent's own Read history /
@@ -278,6 +286,9 @@ def _resolve_subagent_transcript(payload_d):
     session_val = payload_d.get('session_id', '') or ''
     if not agent_id_val or not session_val:
         return ''
+    _key = (agent_id_val, session_val)
+    if _key in _SUBAGENT_TPATH_CACHE:
+        return _SUBAGENT_TPATH_CACHE[_key]
     filename = f'agent-{agent_id_val}.jsonl'
     patterns = (
         _os.path.expanduser(
@@ -287,11 +298,16 @@ def _resolve_subagent_transcript(payload_d):
             f'~/.claude/projects/*/{session_val}/subagents/workflows/wf_*/{filename}'
         ),
     )
+    result = ''
     for pattern in patterns:
         for match in _glob.glob(pattern):
             if _os.path.isfile(match):
-                return match
-    return ''
+                result = match
+                break
+        if result:
+            break
+    _SUBAGENT_TPATH_CACHE[_key] = result
+    return result
 
 
 def _effective_transcript_path(payload_d):
@@ -1101,6 +1117,26 @@ out('c_style_ref', completion.get('style_ref', ''))
 # and style_ref verification cross-check the subagent's own transcript, not the parent.
 
 
+# STYLE_REF_MATCH_LIB compiled-namespace memo, keyed on lib_path. Both consumers below
+# (_compute_style_ref_verified's Read scan + _compute_write_crosscheck's Write/Edit scan)
+# need the same in-repo matcher; without this each did its own open()+compile() of the
+# identical fixed-path source, compiling it twice per fire on a common DEV row. Only a
+# SUCCESSFUL compile is cached — an OSError/SyntaxError propagates to the caller's
+# existing fail-open catch, and the next call retries fresh (nothing poisoned).
+_SRM_NS_CACHE = {}
+
+
+def _load_srm_ns(lib_path):
+    if lib_path in _SRM_NS_CACHE:
+        return _SRM_NS_CACHE[lib_path]
+    with open(lib_path, 'r', encoding='utf-8') as _lf:
+        _lib_src = _lf.read()
+    _ns = {}
+    exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
+    _SRM_NS_CACHE[lib_path] = _ns
+    return _ns
+
+
 # style_ref_verified: cross-verify the emitted style_ref against the session's
 # Read tool_use history (single SoT matcher in lib/style_ref_match.py, shared with
 # style-ref-verify.sh — no rule divergence). Emitted as a 3-state token:
@@ -1125,10 +1161,7 @@ def _compute_style_ref_verified(completion_d, payload_d):
         tpath = _resolve_subagent_transcript(payload_d) or (payload_d.get('transcript_path', '') or '')
         if not isinstance(tpath, str) or not tpath or not _os.path.isfile(tpath):
             return ''
-        with open(lib_path, 'r', encoding='utf-8') as _lf:
-            _lib_src = _lf.read()
-        _ns = {}
-        exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
+        _ns = _load_srm_ns(lib_path)
         # Explicit Read tool-filter: the matcher namespaces its incremental cache by
         # this tag, so style_ref's read-history scan never collides with the grader's
         # Write/Edit write-history scan (collect_write_paths) over the same transcript.
@@ -1162,10 +1195,7 @@ def _compute_write_crosscheck(payload_d):
     if not tpath or not _os.path.isfile(tpath):
         return ('unverifiable', [])
     try:
-        with open(lib_path, 'r', encoding='utf-8') as _lf:
-            _lib_src = _lf.read()
-        _ns = {}
-        exec(compile(_lib_src, lib_path, 'exec'), _ns)  # noqa: S102 — trusted in-repo lib, fixed path
+        _ns = _load_srm_ns(lib_path)
         _wpaths = _ns['collect_write_paths'](tpath)
     except (OSError, IOError, KeyError, SyntaxError, ValueError):
         return ('unverifiable', [])
@@ -2326,20 +2356,18 @@ OUTCOME_SPOOL_MAX_ENTRIES="${OUTCOME_SPOOL_MAX_ENTRIES:-100}"
 OUTCOME_SPOOL_MAX_AGE_DAYS="${OUTCOME_SPOOL_MAX_AGE_DAYS:-7}"
 OUTCOME_SPOOL_DRAIN_BATCH="${OUTCOME_SPOOL_DRAIN_BATCH:-25}"
 
-# Path-safe per-agent key: everything outside [A-Za-z0-9._-] collapses to '_' so an agent type
-# can never escape its state dir.
-circuit_breaker_key() {
-  printf '%s' "${1}" | tr -c 'A-Za-z0-9._-' '_'
-}
-
 # Update the per-agent consecutive-fail counter for a recorded outcome. At the threshold, write a
 # suspension signal at a stable path a SubagentStart reader can consult (T9 AC1); any non-fail
 # resets the counter to zero and clears the suspension (T9 AC2). Fail-open — never crashes the hook.
 circuit_breaker_record() {
+  # Path-safe agent key via the shared hook_path_safe_key (sourced from hook-utils.sh) — the SAME
+  # transform detect_budget_truncation reuses, so no private twin can drift. An unsourced helper
+  # fails open here (mirrors line ~1541), never errors.
+  command -v hook_path_safe_key >/dev/null 2>&1 || return 0
   local agent="${1}" result="${2}"
   [ -z "${agent}" ] && return 0
   local key counter_file susp_file
-  key="$(circuit_breaker_key "${agent}")"
+  key="$(hook_path_safe_key "${agent}")"
   counter_file="${CIRCUIT_BREAKER_DIR}/${key}.fails"
   susp_file="${CIRCUIT_BREAKER_DIR}/${key}.suspended"
   if [ "${result}" = "fail" ]; then
@@ -2391,14 +2419,22 @@ spool_dir_ensure() {
   mkdir -p "${OUTCOME_SPOOL_DIR}" 2>/dev/null
 }
 
+# Current epoch seconds as a sanitized integer — empty / non-numeric / a date failure all degrade
+# to 0. Shared by the spool helpers so the epoch-guard idiom lives once.
+_now_epoch() {
+  local t
+  t="$(date +%s 2>/dev/null)" || t=0
+  case "${t}" in
+    '' | *[!0-9]*) t=0 ;;
+  esac
+  printf '%s' "${t}"
+}
+
 # Persist one failed envelope as a spool file. The epoch-second name prefix keeps entries
 # lexically oldest-first for FIFO drain + eviction; mktemp adds the unique suffix.
 spool_write() {
   local ts spool_file
-  ts="$(date +%s 2>/dev/null)" || ts=0
-  case "${ts}" in
-    '' | *[!0-9]*) ts=0 ;;
-  esac
+  ts="$(_now_epoch)"
   spool_file="$(mktemp "${OUTCOME_SPOOL_DIR}/${ts}-XXXXXX" 2>/dev/null)" || return 1
   printf '%s' "${1}" >"${spool_file}" 2>/dev/null || {
     rm -f "${spool_file}" 2>/dev/null || true
@@ -2412,26 +2448,27 @@ spool_write() {
 spool_evict() {
   [ -d "${OUTCOME_SPOOL_DIR}" ] || return 0
   local now cutoff f prefix aged=0
-  now="$(date +%s 2>/dev/null)" || now=0
-  case "${now}" in
-    '' | *[!0-9]*) now=0 ;;
-  esac
+  local entries=() evicted=0 over i=0
+  now="$(_now_epoch)"
   cutoff=$((now - OUTCOME_SPOOL_MAX_AGE_DAYS * 86400))
+  # Single directory scan: age-prune numeric-prefix entries past the cutoff AND collect every
+  # survivor into entries for the count-bound eviction below (no second glob of the same dir).
   for f in "${OUTCOME_SPOOL_DIR}"/*; do
     [ -e "${f}" ] || continue
     prefix="${f##*/}"
     prefix="${prefix%%-*}"
     case "${prefix}" in
-      '' | *[!0-9]*) continue ;;
+      '' | *[!0-9]*)
+        # non-numeric prefix: not age-gradeable, but still a live entry for the count bound.
+        entries+=("${f}")
+        continue
+        ;;
     esac
-    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ]; then
-      rm -f "${f}" 2>/dev/null && aged=$((aged + 1))
+    if [ "${now}" -gt 0 ] && [ "${prefix}" -lt "${cutoff}" ] && rm -f "${f}" 2>/dev/null; then
+      aged=$((aged + 1))
+    else
+      entries+=("${f}")
     fi
-  done
-  local entries=() evicted=0 over i=0
-  for f in "${OUTCOME_SPOOL_DIR}"/*; do
-    [ -e "${f}" ] || continue
-    entries+=("${f}")
   done
   if [ "${#entries[@]}" -gt "${OUTCOME_SPOOL_MAX_ENTRIES}" ]; then
     over=$((${#entries[@]} - OUTCOME_SPOOL_MAX_ENTRIES))
