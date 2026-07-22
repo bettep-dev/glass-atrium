@@ -98,8 +98,10 @@ run_raw_hook() {
 }
 
 @test "validate-pre-write-raw: valid 3-field raw file → pass (exit 0)" {
+  # V6 (plan H2/R5) requires a body-resident provenance envelope in addition to the 3-field
+  # frontmatter — a conforming raw write wraps the preserved content in the UNTRUSTED-SOURCE markers.
   local content
-  content="$(printf -- '---\nsource_url: https://example.com/article\ncollected: 2026-07-20\ncollector: glass-atrium-intel-researcher\n---\n# Original Title\n\nBody paragraph.\n')"
+  content="$(printf -- '---\nsource_url: https://example.com/article\ncollected: 2026-07-20\ncollector: glass-atrium-intel-researcher\n---\n<!-- UNTRUSTED-SOURCE -->\n# Original Title\n\nBody paragraph.\n<!-- /UNTRUSTED-SOURCE -->\n')"
   run_raw_hook "${SANDBOX}/wiki/raw/good.md" "${content}"
   [[ "${status}" -eq 0 ]] || return 1
 }
