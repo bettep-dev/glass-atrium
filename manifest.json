@@ -1158,7 +1158,7 @@
     "test/continuous-index.bats": "98afc528437a49ba21976c23b02ea4b814929197e5eb2af63b082eadf141e7d6",
     "test/data-root-seam-wiki-audit.bats": "6732afe71df47f145c0c33952fdc525cbd0076c8ae68e1489463f581214a18a9",
     "test/deps-preflight-exec-harness.sh": "2a0cd1ecc8a5060c83e236e22f50b09149edf5723fe72d7fa4938596e84a872c",
-    "test/deps-preflight-noninteractive.bats": "71da8a9cebd389b155bb4b40c01892a7bb5b3e7e836156864c1440ae14aa46e1",
+    "test/deps-preflight-noninteractive.bats": "5cdbcfe89f594d371b9cc20bdabb14b2402e0a86dc814c09c7280f6e152036ff",
     "test/doctor-auth-report-scan-sigpipe.bats": "3a4f7432eb9b4fc3c05b1222fd337742acca4d65935b376fcaecab2b03820022",
     "test/doctor-consumer-install.bats": "6293e8eb0e3cbfcf46abebc52709f7c00c277e4289a9d5a798ea53713dbb590f",
     "test/doctor-fail-err-trap.bats": "f76cb7f42672bb073be3658e84bfd79fbba0faf0da569f8fb5530f597e62f7ca",
