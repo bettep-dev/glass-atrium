@@ -70,20 +70,38 @@ CREATE UNIQUE INDEX agent_events_dedup
 SQL
 }
 
+# Replay the captured bring-up log to stderr so the failing step's diagnostics
+# reach the bats output (Precondition Loud-Fail — a discarded-stderr failure is
+# undiagnosable in the unattended gate context). Args: $1=step-name $2=logfile.
+eph_pg_fail() {
+  local step="${1}" log="${2}"
+  echo "eph_pg_start: ${step} failed — captured bring-up output (${log}):" >&2
+  cat -- "${log}" >&2 2>/dev/null || true
+  return 1
+}
+
 # Stand up + initialize the cluster. Args: $1=datadir $2=sockdir $3=port $4=dbname
 # Each step is guarded so setup_file fails LOUDLY (never a half-up cluster).
+# initdb/pg_ctl/createdb output is captured to eph-pg.log and replayed on
+# failure, never silently discarded.
 eph_pg_start() {
   local datadir="${1}" sockdir="${2}" port="${3}" dbname="${4}"
-  local osuser schema
+  local osuser schema log
+  log="${BATS_FILE_TMPDIR:-${TMPDIR:-/tmp}}/eph-pg.log"
   osuser="$(id -un)" || return 1
   mkdir -p "${sockdir}" || return 1
-  initdb -D "${datadir}" -A trust -U "${osuser}" -E UTF8 >/dev/null 2>&1 || return 1
+  initdb -D "${datadir}" -A trust -U "${osuser}" -E UTF8 >>"${log}" 2>&1 \
+    || { eph_pg_fail "initdb" "${log}"; return 1; }
   # listen_addresses='' → no TCP bind (zero port-collision risk); the socket
   # lives at ${sockdir}/.s.PGSQL.${port}, addressed by PGHOST/PGPORT.
+  # -w -t 120: generous readiness window — the gate context runs many suites
+  # concurrently, where a cold-start can outlast a tight 30s wait.
   pg_ctl -D "${datadir}" \
     -o "-p ${port} -k ${sockdir} -c listen_addresses=''" \
-    -w -t 30 start >/dev/null 2>&1 || return 1
-  createdb -h "${sockdir}" -p "${port}" "${dbname}" || return 1
+    -w -t 120 start >>"${log}" 2>&1 \
+    || { eph_pg_fail "pg_ctl start" "${log}"; return 1; }
+  createdb -h "${sockdir}" -p "${port}" "${dbname}" >>"${log}" 2>&1 \
+    || { eph_pg_fail "createdb" "${log}"; return 1; }
   # Capture the DDL first (assignment preserves the generator's exit) so the
   # psql exit is the checked one — no pipe masking.
   schema="$(eph_pg_schema_sql)" || return 1
