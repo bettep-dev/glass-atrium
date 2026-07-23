@@ -96,7 +96,22 @@ teardown() {
 # tracked mode (release gate — two independent checks)
 # ---------------------------------------------------------------------------
 
+# The live-tree tracked-mode tests scan the GA root the scanner anchors to
+# (script dirname/.. → BATS_TEST_DIRNAME/../..). A consumer install has no .git
+# there, where the scanner loud-fails (exit 2) — mirror its own --git-dir probe
+# verbatim so skip is exactly equivalent to that loud-fail. PER-TEST (not
+# setup-wide): dir-mode + isolated-fixture-repo tests build their own trees and
+# must keep running. The --worktree-only arg-rejection test stays UNGUARDED —
+# its loud-fail fires before the repo check, so it is repo-independent.
+require_ga_repo() {
+  local ga_root
+  ga_root="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+  git -C "${ga_root}" rev-parse --git-dir >/dev/null 2>&1 \
+    || skip "not a git repo: ${ga_root} (consumer install — tracked-set mode needs the GA repo)"
+}
+
 @test "tracked mode: worktree is clean (release-gate invariant — no PII in HEAD tree)" {
+  require_ga_repo
   # The two checks are separate, so worktree cleanliness is asserted on its own — holds regardless of history state.
   run bash "${SCANNER}" --worktree-only
   [[ "${status}" -eq 0 ]]
@@ -104,12 +119,14 @@ teardown() {
 }
 
 @test "tracked mode: --worktree-only skips history and exits 0" {
+  require_ga_repo
   run bash "${SCANNER}" --worktree-only
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == *"history-clean SKIPPED"* ]]
 }
 
 @test "tracked mode: full scan reports worktree + history as two distinct labeled checks" {
+  require_ga_repo
   run bash "${SCANNER}"
   [[ "${output}" == *"check 1/2: worktree-clean"* ]]
   [[ "${output}" == *"check 2/2: history-clean"* ]]
@@ -122,6 +139,7 @@ teardown() {
   #   repo's expected state is history PASS — the combination assertion still
   #   holds in an environment where a non-approved identifier entered history
   #   (the bit is checked only on the FAIL branch).
+  require_ga_repo
   run bash "${SCANNER}"
   if [[ "${output}" == *"history-clean: FAIL"* ]]; then
     # bit 4 set

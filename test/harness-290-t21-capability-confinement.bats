@@ -35,6 +35,13 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
 }
 
+# settings.template.json is a REPO-ONLY template (not a manifest bundle member), so a
+# consumer install has no settings target — skip there; PER-TEST (not setup-wide)
+# because the agents/hook rows target BUNDLED files and must keep running.
+require_settings_template() {
+  [[ -f "${SETTINGS}" ]] || skip "settings.template.json absent (consumer install — repo-only template)"
+}
+
 # Emit the frontmatter block (lines strictly between the first two `---` fences).
 frontmatter_block() {
   awk 'NR==1 && $0=="---"{infm=1; next} infm && $0=="---"{exit} infm{print}' "${1}"
@@ -64,6 +71,7 @@ frontmatter_block() {
 }
 
 @test "settings deny carries the four interpreter-invocation negations" {
+  require_settings_template
   local negation
   for negation in 'Bash(bash -c:*)' 'Bash(sh -c:*)' 'Bash(zsh -c:*)' 'Bash(eval:*)'; do
     run jq -e --arg n "${negation}" '.permissions.deny | index($n)' "${SETTINGS}"
@@ -75,6 +83,7 @@ frontmatter_block() {
 }
 
 @test "each interpreter negation is a well-formed command-prefix matcher (expressible)" {
+  require_settings_template
   # A settings command-prefix matcher is Bash(<non-empty prefix>:*), anchored on
   # the leading command token. Every interpreter negation MUST fit this shape.
   run jq -r '.permissions.deny[] | select(test("^Bash\\((bash|sh|zsh) -c:\\*\\)$") or . == "Bash(eval:*)")' "${SETTINGS}"
@@ -83,6 +92,7 @@ frontmatter_block() {
 }
 
 @test "redirect-into-harness is INEXPRESSIBLE in settings deny (no harness-path entry)" {
+  require_settings_template
   # A '> harness-path' redirect cannot be a command-prefix matcher: the > operator
   # and its target appear anywhere in the command, not at the leading-token anchor.
   # Proof: no deny row references a harness path — such a matcher would be inert.
@@ -105,6 +115,7 @@ frontmatter_block() {
 }
 
 @test "AC6 regression: blanket grant + auto mode + rm denies unchanged" {
+  require_settings_template
   run jq -e '.permissions.allow == ["Bash(*)"]' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
   run jq -e '.permissions.defaultMode == "auto"' "${SETTINGS}"

@@ -171,7 +171,15 @@ DRV
 
 # --- install.sh ------------------------------------------------------------
 
+# install.sh is a REPO-ONLY bootstrap (deliberately not a manifest bundle member), so a
+# consumer install has no install target — skip there; PER-TEST (not setup-wide) because
+# the generator/update tests target BUNDLED scripts and must keep running.
+require_install_sh() {
+  [[ -f "${GA}/install.sh" ]] || skip "install.sh absent (consumer install — repo-only bootstrap)"
+}
+
 @test "install: mode-stripped hook lands executable via apply-then-verify (direct command)" {
+  require_install_sh
   [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
   make_install_fixture with-modes
   run -0 env GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
@@ -186,6 +194,7 @@ DRV
 }
 
 @test "install: modes-less manifest skips fail-open with one notice" {
+  require_install_sh
   [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
   make_install_fixture no-modes
   run -0 env GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
@@ -197,6 +206,7 @@ DRV
 }
 
 @test "install: malformed octal in modes map is a loud named failure (exit 19)" {
+  require_install_sh
   [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
   make_install_fixture bad-octal
   run -19 env GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
