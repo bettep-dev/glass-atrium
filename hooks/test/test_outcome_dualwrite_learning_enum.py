@@ -45,7 +45,15 @@ _MIGRATION = (
 if str(_HOOKS_ROOT) not in sys.path:
     sys.path.insert(0, str(_HOOKS_ROOT))
 
-import _pg_outcome_dualwrite as dw  # noqa: E402 — sys.path insert immediately above
+# The module hard-exits (module-level sys.exit) when psycopg is absent, so SystemExit
+# must be caught alongside ImportError — this suite only reads the SQL literal, no DB.
+try:
+    import _pg_outcome_dualwrite as dw  # noqa: E402 — sys.path insert immediately above
+
+    _IMPORT_ERROR: BaseException | None = None
+except (SystemExit, Exception) as exc:  # noqa: BLE001 — psycopg absent → skip, not error
+    dw = None  # type: ignore[assignment]
+    _IMPORT_ERROR = exc
 
 # The cast literal fed to core."LearningStatus" in the learning-log UPSERT — the
 # defect site. Captures the single-quoted value immediately preceding the cast.
@@ -73,6 +81,7 @@ def _cast_literal() -> str:
     return match.group(1)
 
 
+@unittest.skipIf(dw is None, f"import failed: {_IMPORT_ERROR}")
 class LearningStatusEnumCastTest(unittest.TestCase):
     def test_cast_literal_is_a_migration_enum_member(self) -> None:
         members = _migration_enum_members()

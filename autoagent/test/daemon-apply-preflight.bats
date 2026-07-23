@@ -5,8 +5,10 @@
 # on the batch/cron path the suite prerequisites must be installed and the suite
 # must exit 0. Escape hatches (AUTOAGENT_ALLOW_UNVERIFIED / --dry-run / the
 # AUTOAGENT_PREFLIGHT_ACTIVE re-entry sentinel) and the single-proposal green-
-# suite exemption are pinned too. Every code-behavior row FAILS at HEAD (no
-# preflight exists there) and passes after.
+# suite exemption are pinned too, plus the ONE flaky retry (a first suite
+# failure re-runs the FULL suite once behind a loud green_gate_flaky_retry WARN;
+# a second failure hits the unchanged preflight_fatal). Every code-behavior row
+# FAILS at HEAD (no preflight exists there) and passes after.
 #
 # Assertion idiom: `[[ ... ]] || return 1`. Bats does NOT catch a bare non-final
 # `[[ ]]` failure — the double-bracket keyword is treated as a tested condition,
@@ -79,6 +81,7 @@ setup() {
   REPORTS="${WORK}/reports"
   FAKE_HOME="${WORK}/home"
   MARKER="${WORK}/runner.fired"
+  RUNNER_LOG="${WORK}/runner.calls"
   mkdir -p -- "${AGENTS}" "${REPORTS}" "${FAKE_HOME}"
   printf '%s\n' '{"patches": []}' >"${WORK}/report.json"
 }
@@ -117,6 +120,21 @@ make_runner() {
 #!/usr/bin/env bash
 : >"${MARKER}"
 exit ${code}
+EOF
+  chmod +x "${dest}"
+}
+
+# make_counting_runner — runner STUB that appends one line per invocation (with
+# the sentinel value it saw) to ${RUNNER_LOG}, exiting 1 for the first $2 calls
+# and 0 after. red_calls=1 simulates a transient flake (red once, green on the
+# retry); a large red_calls simulates a deterministic red; 0 is always green.
+make_counting_runner() {
+  local dest="$1" red_calls="$2"
+  cat >"${dest}" <<EOF
+#!/usr/bin/env bash
+printf 'call sentinel=%s\n' "\${AUTOAGENT_PREFLIGHT_ACTIVE:-unset}" >>"${RUNNER_LOG}"
+[[ "\$(wc -l <"${RUNNER_LOG}")" -gt ${red_calls} ]] || exit 1
+exit 0
 EOF
   chmod +x "${dest}"
 }
@@ -340,4 +358,51 @@ run_single() {
     bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
   [[ "${status}" -ne 16 ]] || return 1
   [[ ! -f "${MARKER}" ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# 14. flaky suite (red once, green on the retry) → ONE full-suite re-run behind
+#     the loud named WARN, the daemon proceeds
+# ---------------------------------------------------------------------------
+
+@test "flaky: a red-then-green suite proceeds after ONE green_gate_flaky_retry re-run" {
+  make_sandbox roots
+  make_counting_runner "${WORK}/runner-flaky.sh" 1
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-flaky.sh"
+  [[ "${status}" -ne 16 ]] || return 1
+  [[ "${output}" == *"green_gate_flaky_retry"* ]] || return 1
+  [[ "${output}" != *"test suite FAILED"* ]] || return 1
+  # exactly TWO runner invocations (the red first run + the single retry),
+  # BOTH carrying the re-entry sentinel export
+  [[ "$(wc -l <"${RUNNER_LOG}")" -eq 2 ]] || return 1
+  [[ "$(grep -c 'sentinel=1' "${RUNNER_LOG}")" -eq 2 ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# 15. deterministic red → fails BOTH runs → the SAME preflight_fatal, exactly
+#     one retry (never N)
+# ---------------------------------------------------------------------------
+
+@test "flaky: a deterministic red suite fails both runs → preflight_fatal after one retry" {
+  make_sandbox roots
+  make_counting_runner "${WORK}/runner-red2.sh" 99
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red2.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "${output}" == *"green_gate_flaky_retry"* ]] || return 1
+  [[ "${output}" == *"test suite FAILED"* ]] || return 1
+  # exactly TWO invocations: first run + ONE retry — the retry is bounded
+  [[ "$(wc -l <"${RUNNER_LOG}")" -eq 2 ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# 16. green first run → exactly ONE invocation, no spurious retry, no WARN
+# ---------------------------------------------------------------------------
+
+@test "flaky: a green first run fires the runner exactly once (no spurious retry)" {
+  make_sandbox roots
+  make_counting_runner "${WORK}/runner-green1.sh" 0
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-green1.sh"
+  [[ "${status}" -ne 16 ]] || return 1
+  [[ "${output}" != *"green_gate_flaky_retry"* ]] || return 1
+  [[ "$(wc -l <"${RUNNER_LOG}")" -eq 1 ]] || return 1
 }

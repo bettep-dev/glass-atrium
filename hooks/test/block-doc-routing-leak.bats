@@ -135,6 +135,32 @@ run_hook() {
   grep -q 'verdict=block' "${FIRED_LOG}" || return 1
 }
 
+# ── P0-2: hook_normalize_path leading-~ expansion — deliberate permissive pin ────────────
+#
+# A "~/..." file_path arrives verbatim (never shell-expanded). Before the expansion it
+# stayed literal, missed the "${MONITOR_ROOT}"/* arm, and BLOCKED the legitimate
+# monitor-root write — the flip to ALLOW is the intended direction and is pinned here.
+# Fake absolute anchors (no FS touch — the arm is pure string matching) keep NORM_PATH
+# out of the /tmp + TMPDIR staging arms so the monitor-root arm is the one that fires.
+
+@test "P0-2 tilde path under env monitor root → allow-monitor-root-env (exit 0)" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"~/monitor-root/report.md\"}}" \
+    HOME="/fixture-home" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
+  [[ "${status}" -eq 0 ]] || return 1
+  grep -q 'verdict=allow-monitor-root-env' "${FIRED_LOG}" || return 1
+}
+
+@test "P0-2 tilde path NOT under monitor root still blocks (expansion is not a blanket allow)" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"~/reports/leak.md\"}}" \
+    HOME="/fixture-home" CLAUDED_DOCS_HTML_ROOT="/fixture-home/monitor-root" TMPDIR="/fixture-tmp"
+  [[ "${status}" -eq 2 ]] || return 1
+  grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
+
 # ── Perf-invariant: the batch collapses transcript+session into one python3 cold-start ────
 
 @test "PERF full block path spawns exactly 4 python3 (transcript+session batched into one)" {

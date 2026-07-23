@@ -8,7 +8,8 @@
 #
 # Provides:
 #   git_txn_apply  — run one before-image -> apply -> verify -> (leave | restore)
-#                    transaction, reporting the structured outcome in GIT_TXN_RC.
+#                    transaction, reporting the structured outcome in GIT_TXN_RC
+#                    and the captured before-image path in GIT_TXN_BEFORE_IMAGE.
 #   GIT_TXN_OK / GIT_TXN_BACKUP_CAPTURE_FAIL / GIT_TXN_APPLY_REGEN /
 #   GIT_TXN_APPLY_FAIL / GIT_TXN_VERIFY_FAIL / GIT_TXN_RESTORE_FAIL — the
 #   GIT_TXN_RC outcome constants.
@@ -46,6 +47,12 @@
 #   writes: GIT_TXN_RC — the structured outcome (one of the GIT_TXN_* constants).
 #           Read it AFTER the call; the function's own return status is 0 on every
 #           HANDLED outcome (see "set -e contract" below).
+#           GIT_TXN_BEFORE_IMAGE — the captured before-image path, published the
+#           moment capture succeeds (BEFORE the apply/verify callbacks run) so an
+#           injected verify callback can read the anchor from the transaction
+#           itself instead of re-deriving <backup_dir>/<basename>.bak by
+#           convention (a dual derivation that can silently drift). "" at entry;
+#           still "" when capture never ran or failed.
 #
 # set -e contract (behavior-preserving — read before changing the call site):
 #   git_txn_apply MUST be invoked BARE (NOT `git_txn_apply ... || rc=$?`). It
@@ -234,13 +241,19 @@ _git_txn_restore() {
 #   $9 diff_target  — OPTIONAL, attribution passed through to apply_fn (4th arg).
 #
 # Result: sets GIT_TXN_RC to one of the GIT_TXN_* constants and returns 0 on every
-# handled outcome. Returns NON-ZERO only on a contract violation (wrong arity /
-# non-function callback) — see the "set -e contract" in the file header.
+# handled outcome; publishes the captured before-image path in
+# GIT_TXN_BEFORE_IMAGE (see the "Caller-scope contract" in the file header).
+# Returns NON-ZERO only on a contract violation (wrong arity / non-function
+# callback) — see the "set -e contract" in the file header.
 #
 # shellcheck disable=SC2034
-#   GIT_TXN_RC is the caller-scope output contract — assigned here, read by the
-#   source-er (daemon-apply.sh apply_patch_rows). Not used inside this lib.
+#   GIT_TXN_RC + GIT_TXN_BEFORE_IMAGE are the caller-scope output contract —
+#   assigned here, read by the source-er (daemon-apply.sh apply_patch_rows /
+#   verify_patched). Not used inside this lib.
 git_txn_apply() {
+  # Output-global reset FIRST (a literal, safe before the arity guard): a stale
+  # value from a PREVIOUS transaction must never leak into this one's verify.
+  GIT_TXN_BEFORE_IMAGE=""
   # -- Contract guard: arity FIRST (before any $N read, so it is safe under
   #    set -u), then callback shape. A wrong-arity/shape call is a miswired call
   #    site, not a data outcome — loud-fail with a non-zero return.
@@ -300,6 +313,9 @@ git_txn_apply() {
     GIT_TXN_RC="${GIT_TXN_BACKUP_CAPTURE_FAIL}"
     return 0
   fi
+  # Publish the anchor BEFORE the apply/verify callbacks: the verify callback
+  # reads this exact captured path — no convention-coupled re-derivation.
+  GIT_TXN_BEFORE_IMAGE="${before_image}"
 
   # -- Apply. Branch on the callback's rc: 0=applied · 3=located diff rejected
   #    (kept pending, no bytes) · other=malformed (no bytes). On 3 and other the

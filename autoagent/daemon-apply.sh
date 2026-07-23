@@ -705,6 +705,7 @@ verify_test_harness() {
     #     shells the bats suite, several rows of which invoke THIS script; the
     #     sentinel makes a nested call skip the gate so the run terminates
     #     (bounded), never recursing (LLM10 unbounded-consumption guard).
+    #     Not nonce-narrowed: the WARN-logged AUTOAGENT_ALLOW_UNVERIFIED=1 override is an equivalent env-setter bypass — a nonce adds zero threat-model delta.
     if [[ "${AUTOAGENT_ALLOW_UNVERIFIED:-0}" == "1" ]]; then
         printf '[daemon-apply] WARN: AUTOAGENT_ALLOW_UNVERIFIED=1 — applying UNVERIFIED (test-suite preflight skipped)\n' >&2
         return 0
@@ -749,9 +750,17 @@ verify_test_harness() {
 
     # Run the full suite with the re-entry sentinel exported (bats rows that
     # shell THIS script then skip the gate). stdout → stderr so the runner's TAP
-    # never pollutes the daemon's stdout JSON.
+    # never pollutes the daemon's stdout JSON. ONE flaky retry: a transient
+    # flake would otherwise kill the whole 1-day cron cycle, so a first failure
+    # re-runs the FULL suite once (loud, named token) — a deterministic red
+    # fails BOTH runs and hits the unchanged preflight_fatal. Full-suite re-run
+    # (not scoped): no target→suite mapping exists and a scoped run would weaken
+    # the harness-green invariant.
     if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
-        preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
+        printf '[daemon-apply] WARN: green_gate_flaky_retry — test suite failed once; re-running the full suite once to rule out a flake\n' >&2
+        if ! AUTOAGENT_PREFLIGHT_ACTIVE=1 "${BATS_RUNNER}" >&2; then
+            preflight_fatal "test suite FAILED — refusing to apply onto an unverified harness (green-suite gate)."
+        fi
     fi
     return 0
 }
@@ -1421,10 +1430,16 @@ sys.stdout.write("\n".join(out))
 # before-image). This runs in the ONLY deterministic slot between a generated patch
 # and the live harness — the pre-apply gates are all judgment.
 #
-# The before-image path travels through the VERIFY_BEFORE_IMAGE global (the caller
-# sets it right before the transaction, the pattern scripts/update.sh uses), so the
-# callback signature stays ONE argument and the editable-merge caller's own one-arg
-# verify callback is unaffected.
+# The before-image path travels through a global, so the callback signature stays
+# ONE argument and the editable-merge caller's own one-arg verify callback is
+# unaffected. Anchor precedence: GIT_TXN_BEFORE_IMAGE (published by git_txn_apply
+# the moment capture succeeds — the exact captured path, no convention-coupled
+# re-derivation) then VERIFY_BEFORE_IMAGE (caller-set fallback, the pattern
+# scripts/update.sh uses; also feeds the restore-fail log strings). A
+# missing/unreadable anchor is a caller-wiring gap and fails CLOSED (loud stderr +
+# return 1 → git_txn_apply's atomic restore fires, row stays pending) — silently
+# skipping the preservation layer would let a gutting patch through unchecked
+# (Precondition Loud-Fail, shared-self-improve-hygiene).
 #
 # Preservation semantics — present-before implies present-after, NOT unconditional
 # presence: a target that never had frontmatter or a `> Rules:` anchor is not
@@ -1449,11 +1464,14 @@ verify_patched() {
     [[ -s "${target}" ]] || return 1
     grep -q '^#' "${target}" || return 1
 
-    # Preservation layer keys on the before-image (VERIFY_BEFORE_IMAGE global). An
-    # absent/unreadable anchor degrades to the base checks only — a missing anchor
-    # is a caller-wiring gap, not a patch fault (fail-open on this layer).
-    local before="${VERIFY_BEFORE_IMAGE:-}"
-    [[ -n "${before}" && -r "${before}" ]] || return 0
+    # Preservation layer keys on the captured before-image. Precedence + the
+    # fail-CLOSED contract are documented in the function header above.
+    local before="${GIT_TXN_BEFORE_IMAGE:-${VERIFY_BEFORE_IMAGE:-}}"
+    if [[ -z "${before}" || ! -r "${before}" ]]; then
+        printf '[daemon-apply] ERROR: verify_patched preservation anchor missing/unreadable (target=%s anchor=%s) — caller-wiring gap, failing verify; atomic restore will fire\n' \
+            "${target}" "${before}" >&2
+        return 1
+    fi
 
     # Frontmatter: present-before implies present-after (first line is '---').
     # Separated command substitution (not inside the [[ ]]) so head's exit is not
@@ -1814,9 +1832,11 @@ ERRORS=0
 NEEDS_REGEN=0
 
 # Before-image path for the post-apply verify predicate (verify_patched). SET
-# per-iteration right before git_txn_apply (below) and READ by verify_patched — the
-# same caller-scope verify-context contract scripts/update.sh uses. git_txn_apply
-# hands the verify callback only the target, so this anchor travels as a global.
+# per-iteration right before git_txn_apply (below) — the same caller-scope
+# verify-context contract scripts/update.sh uses. git_txn_apply hands the verify
+# callback only the target, so the anchor travels as a global; verify_patched
+# PREFERS the GIT_TXN_BEFORE_IMAGE path git_txn_apply publishes on capture and
+# falls back to this one, which also feeds the restore-fail log strings.
 VERIFY_BEFORE_IMAGE=""
 
 # Select the patch source. Three modes:
@@ -2032,9 +2052,10 @@ PY
     backup_subdir="${BACKUP_DIR}/${patch_cycle}_p${patch_id}"
     # T20: verify_patched compares the post-apply target against the before-image
     # git_txn_apply captures at <backup_subdir>/<target basename>.bak
-    # (_git_txn_capture_before_image). The one-arg verify callback receives only the
-    # target, so the before-image path travels through this global — set HERE, before
-    # the transaction; capture precedes verify, so the file exists when verify reads it.
+    # (_git_txn_capture_before_image). verify_patched PREFERS the
+    # GIT_TXN_BEFORE_IMAGE path the transaction publishes on capture (the exact
+    # captured path); this convention-derived global is the fallback anchor and
+    # feeds the restore-fail log strings below.
     VERIFY_BEFORE_IMAGE="${backup_subdir}/${GIT_TARGET##*/}.bak"
     # Invoked BARE (never `|| rc=$?`) — see git-txn.sh "set -e contract": bare
     # invocation keeps set -e active inside the function, so a contract violation

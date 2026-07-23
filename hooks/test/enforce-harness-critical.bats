@@ -341,6 +341,43 @@ MD
   [[ "${status}" -eq 2 ]] || return 1
 }
 
+# ── P0-2: tilde-form targets — hook_normalize_path leading-~ expansion ────────
+#
+# A tool envelope carries file_path VERBATIM (the shell never expanded it), so a
+# "~/" target dodged every ${HOME}-anchored case arm before the expansion landed
+# in hook_normalize_path — each block row here was exit-0 at HEAD. "~user" stays
+# literal by design (no portable resolution on stock Bash 3.2) → still passes.
+# SC2088 disabled per-row: the quoted leading ~ IS the literal under test — an
+# envelope byte, not a tilde meant for shell expansion.
+
+# shellcheck disable=SC2088
+@test "P0-2 tilde Edit into autoagent/ → HAR-001 block (tilde no longer dodges)" {
+  run_hook "Edit" "$(edit_input '~/.glass-atrium/autoagent/daemon-apply.sh' 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-001"* ]] || return 1
+  [[ "${output}" == *"scheduled-exec-dir"* ]] || return 1
+}
+
+# shellcheck disable=SC2088
+@test "P0-2 tilde Write onto live settings.json → HAR-001 block" {
+  run_hook "Write" "$(write_input '~/.claude/settings.json' '{"hooks":{}}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-001"* ]] || return 1
+}
+
+# shellcheck disable=SC2088
+@test "P0-2 tilde + traversal Edit into live GA hooks dir → block" {
+  run_hook "Edit" "$(edit_input '~/x/../.glass-atrium/hooks/track-outcome.sh' 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"live-hooks-dir"* ]] || return 1
+}
+
+# shellcheck disable=SC2088
+@test "P0-2 ~user form stays literal → pass (deliberately not expanded)" {
+  run_hook "Edit" "$(edit_input '~other/.glass-atrium/autoagent/daemon-apply.sh' 'a' 'b')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
 # rules/ + scoped/ DELIBERATELY EXCLUDED (H1-D1) — permit rows guard the exclusion.
 
 @test "H1 Write into rules/ → pass (excluded, hand-edited live)" {

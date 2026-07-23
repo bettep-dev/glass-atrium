@@ -16,6 +16,12 @@
 #                         script already uses). The callback stays ONE-argument
 #                         (target) and reads this global — the signature is NOT
 #                         widened (a second caller injects its own 1-arg callback).
+#   GIT_TXN_BEFORE_IMAGE  PREFERRED anchor — the exact captured path git_txn_apply
+#                         (lib/git-txn.sh) publishes the moment capture succeeds;
+#                         VERIFY_BEFORE_IMAGE stays as the caller-set fallback.
+#                         A missing/unreadable anchor fails CLOSED (loud stderr +
+#                         non-0 → the atomic restore fires) — the preservation
+#                         layer is never silently skipped (Precondition Loud-Fail).
 #
 # PRESERVATION SEMANTICS (present-before ⇒ present-after — NOT unconditional
 # presence, which would self-reject the rules files that never had frontmatter):
@@ -172,6 +178,141 @@ verify() {
   : >"${empty}"
   verify "${BEFORE_FM}" "${empty}"
   [[ "${status}" -ne 0 ]] || { echo "an empty target must fail the predicate" >&2; return 1; }
+}
+
+# --- ANCHOR CONTRACT (P1-4): precedence + fail-CLOSED + transaction wiring ---
+
+@test "GIT_TXN_BEFORE_IMAGE takes precedence over VERIFY_BEFORE_IMAGE" {
+  # Same after-image; the two globals point at DIFFERENT before-images. The
+  # verdict must follow GIT_TXN_BEFORE_IMAGE: had-frontmatter there → FAIL,
+  # never-had-frontmatter there → PASS (regardless of VERIFY_BEFORE_IMAGE).
+  run env TXN="${BEFORE_FM}" VBI="${BEFORE_NO_FM}" TGT="${AFTER_NO_FM}" SNIP="${SNIPPET}" bash -c '
+    source "${SNIP}"
+    GIT_TXN_BEFORE_IMAGE="${TXN}"
+    VERIFY_BEFORE_IMAGE="${VBI}"
+    verify_patched "${TGT}"
+  '
+  [[ "${status}" -ne 0 ]] || {
+    echo "predicate keyed on VERIFY_BEFORE_IMAGE, not the published GIT_TXN_BEFORE_IMAGE" >&2
+    return 1
+  }
+  run env TXN="${BEFORE_NO_FM}" VBI="${BEFORE_FM}" TGT="${AFTER_NO_FM}" SNIP="${SNIPPET}" bash -c '
+    source "${SNIP}"
+    GIT_TXN_BEFORE_IMAGE="${TXN}"
+    VERIFY_BEFORE_IMAGE="${VBI}"
+    verify_patched "${TGT}"
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "a never-had-frontmatter GIT_TXN_BEFORE_IMAGE anchor must win over the fallback" >&2
+    return 1
+  }
+}
+
+@test "forced-empty anchor fails CLOSED with a loud stderr line" {
+  run env TGT="${AFTER_FM_OK}" SNIP="${SNIPPET}" bash -c '
+    source "${SNIP}"
+    GIT_TXN_BEFORE_IMAGE=""
+    VERIFY_BEFORE_IMAGE=""
+    verify_patched "${TGT}"
+  '
+  [[ "${status}" -ne 0 ]] || {
+    echo "an empty anchor must FAIL the predicate (fail-closed), got 0" >&2
+    return 1
+  }
+  [[ "${output}" == *"preservation anchor missing/unreadable"* ]] || {
+    echo "missing the loud anchor stderr line: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"caller-wiring gap"* ]] || {
+    echo "stderr line must name the caller-wiring gap: ${output}" >&2
+    return 1
+  }
+}
+
+@test "unreadable (nonexistent) anchor fails CLOSED with the same loud stderr line" {
+  run env VBI="${WORK}/no-such-before-image.bak" TGT="${AFTER_FM_OK}" SNIP="${SNIPPET}" bash -c '
+    source "${SNIP}"
+    VERIFY_BEFORE_IMAGE="${VBI}"
+    verify_patched "${TGT}"
+  '
+  [[ "${status}" -ne 0 ]] || {
+    echo "an unreadable anchor must FAIL the predicate (fail-closed), got 0" >&2
+    return 1
+  }
+  [[ "${output}" == *"preservation anchor missing/unreadable"* ]] || {
+    echo "missing the loud anchor stderr line: ${output}" >&2
+    return 1
+  }
+}
+
+@test "transaction: forced-empty anchor → verify fails closed and the atomic restore fires" {
+  local tree="${WORK}/txn-tree"
+  mkdir -p -- "${tree}"
+  local tgt="${tree}/probe.md"
+  cp -p -- "${BEFORE_FM}" "${tgt}"
+  run env SNIP="${SNIPPET}" LIB="${GA}/autoagent/lib/git-txn.sh" \
+    TGT="${tgt}" BAK="${WORK}/txn-bak" bash -c '
+    source "${LIB}"
+    source "${SNIP}"
+    _apply_mut() { printf "%s\n" "mutated line" >>"$1"; }
+    _verify_forced_empty() {
+      GIT_TXN_BEFORE_IMAGE=""
+      VERIFY_BEFORE_IMAGE=""
+      verify_patched "$1"
+    }
+    git_txn_apply "${TGT%/*}" "${TGT}" "${TGT}" "the-diff" "${BAK}" _apply_mut _verify_forced_empty
+    [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_VERIFY_FAIL}" ]]
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "expected GIT_TXN_VERIFY_FAIL on a forced-empty anchor: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"preservation anchor missing/unreadable"* ]] || {
+    echo "missing the loud anchor stderr line: ${output}" >&2
+    return 1
+  }
+  # restore fired: target back to pristine pre-apply bytes
+  cmp -s "${BEFORE_FM}" "${tgt}" || {
+    echo "atomic restore did not fire (target still mutated)" >&2
+    return 1
+  }
+  ! grep -q 'mutated line' "${tgt}" || {
+    echo "applied bytes survived the restore" >&2
+    return 1
+  }
+}
+
+@test "transaction: SYMLINK target (agent-file scenario) — anchor readable, preserving patch verifies OK" {
+  # Daemon wiring mirrored: target = facade symlink, real_target = resolved GA
+  # file, VERIFY_BEFORE_IMAGE convention-derived from the REAL basename (:2038).
+  # Fail-closed makes an OK verdict PROOF the anchor was readable mid-verify.
+  local ga_agents="${WORK}/ga-agents" facade="${WORK}/facade"
+  mkdir -p -- "${ga_agents}" "${facade}"
+  local real="${ga_agents}/probe.md"
+  cp -p -- "${BEFORE_FM}" "${real}"
+  ln -s "${real}" "${facade}/probe.md"
+  run env SNIP="${SNIPPET}" LIB="${GA}/autoagent/lib/git-txn.sh" \
+    LINK="${facade}/probe.md" REAL="${real}" BAK="${WORK}/sym-bak" bash -c '
+    source "${LIB}"
+    source "${SNIP}"
+    _apply_edit() { printf "%s\n" "an appended body line" >>"$1"; }
+    VERIFY_BEFORE_IMAGE="${BAK}/${REAL##*/}.bak"
+    git_txn_apply "${REAL%/*}" "${LINK}" "${REAL}" "the-diff" "${BAK}" _apply_edit verify_patched
+    [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]]
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "symlink-target transaction did not verify OK: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"preservation anchor missing/unreadable"* ]] || {
+    echo "anchor unreadable for a symlink target: ${output}" >&2
+    return 1
+  }
+  # the apply landed through the symlink on the real file and was kept
+  grep -q 'an appended body line' "${real}" || {
+    echo "applied bytes missing from the real file" >&2
+    return 1
+  }
 }
 
 # --- STRUCTURAL GUARDS (GREEN at HEAD and after) ---

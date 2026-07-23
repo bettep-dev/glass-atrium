@@ -28,7 +28,8 @@ REAL_LIB="${BATS_TEST_DIRNAME}/../lib/code-based-grader.sh"
 
 setup() {
   [[ -f "${REAL_LIB}" ]] || skip "code-based-grader.sh not found: ${REAL_LIB}"
-  # Real files for the existence-gated feature promotion cases (W1 files-evidence).
+  # Real files for the existence-gated code-arm (bug-fix / feature) promotion cases
+  # (W1 files-evidence).
   # Absolute paths keep resolution deterministic (no cwd/repo-root coupling). The
   # NON-existent / glob / prose forms are exhaustively pinned in the sibling
   # code-based-grader-files-evidence.bats — this suite keeps only representative
@@ -124,8 +125,8 @@ zero_evidence() {
 }
 
 @test "result=done_with_concerns is a success-family value (reaches per-type check)" {
-  # success-family + bug-fix + block-resident test/pass evidence → verified_pass.
-  grade bug-fix true "done_with_concerns" hook-input "added test, suite passing exit 0" "fix.test.ts"
+  # success-family + bug-fix + EXISTING test-path files-evidence → verified_pass.
+  grade bug-fix true "done_with_concerns" hook-input "regression pinned" "${EX_TEST}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "verified_pass" ]]
 }
@@ -208,14 +209,25 @@ zero_evidence() {
 
 # Step 6: per-task-type verified_pass checks
 
-@test "bug-fix with test + passing phrasing → verified_pass" {
-  grade bug-fix true "done" hook-input "added regression test, suite passing" "src/fix.ts"
+# Bug-fix promotion is files-evidence ONLY (same W1 rule as feature): body prose is
+# writer-authored free text and never promotes — an empty files: field skips the Step 4-5
+# write cross-check (track-outcome.sh gates the scan on a non-empty files:), so a prose-only
+# promotion would land unchecked (P0-1 regression pins).
+
+@test "bug-fix prose 'tests pass, exit 0' + EMPTY files → unverified (prose never promotes)" {
+  grade bug-fix true "done" hook-input "tests pass, exit 0" ""
   [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "verified_pass" ]]
+  [[ "${output}" == "unverified" ]]
 }
 
-@test "bug-fix with 'spec' + 'exit 0' phrasing → verified_pass" {
-  grade bug-fix true "done" hook-input "spec reproduces, exit 0 now" "src/fix.ts"
+@test "bug-fix prose pass-phrasing + only non-test files → unverified (path evidence required)" {
+  grade bug-fix true "done" hook-input "added regression test, suite passing" "src/fix.ts"
+  [[ "${status}" -eq 0 ]]
+  [[ "${output}" == "unverified" ]]
+}
+
+@test "bug-fix with an EXISTING test-file path in files: → verified_pass" {
+  grade bug-fix true "done" hook-input "patched the null deref in handler" "${EX_PLAIN}, ${EX_TEST}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "verified_pass" ]]
 }
@@ -224,21 +236,6 @@ zero_evidence() {
   grade bug-fix true "done" hook-input "patched the null deref in handler" "src/fix.ts"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "unverified" ]]
-}
-
-# Word-boundary regression pins (finding #30): bare-substring co-occurrence
-# ("laTEST" + "passWORD") must NOT promote, while a genuine "test passes" must.
-
-@test "bug-fix 'latest password' substrings → unverified (word-boundary guard)" {
-  grade bug-fix true "done" hook-input "summary: updated the latest password validation" "src/fix.ts" || return 1
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == "unverified" ]] || return 1
-}
-
-@test "bug-fix 'test passes' → verified_pass (boundary preserves true positive)" {
-  grade bug-fix true "done" hook-input "test passes" "src/fix.ts" || return 1
-  [[ "${status}" -eq 0 ]] || return 1
-  [[ "${output}" == "verified_pass" ]] || return 1
 }
 
 @test "feature with an EXISTING test-file path in files: → verified_pass" {

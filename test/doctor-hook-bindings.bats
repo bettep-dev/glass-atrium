@@ -69,7 +69,7 @@ write_full_settings() {
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/telemetry-activation.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-edit-syntax.sh" } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-pre-write-raw.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-prompt.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-scope-drift.sh" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-secret-scan.sh" } ] },

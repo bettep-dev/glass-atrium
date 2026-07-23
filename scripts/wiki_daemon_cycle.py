@@ -147,9 +147,10 @@ def _detect_budget_too_low(stderr: str, stdout: str) -> bool:
     return bool(_BUDGET_TOO_LOW_PATTERN.search(combined))
 
 
-# Type aliases (PEP 695 — Python 3.12+).
-type Classification = Literal["notes-auto", "notes-dryrun", "reject"]
-type SyncMode = Literal["real", "dry-run", "skipped"]
+# Type aliases (assignment form — the PEP 695 `type` statement is 3.12+ syntax and
+# the CI unittest matrix floor is Python 3.11).
+Classification = Literal["notes-auto", "notes-dryrun", "reject"]
+SyncMode = Literal["real", "dry-run", "skipped"]
 
 
 # -- Data models ------------------------------------------------------------
