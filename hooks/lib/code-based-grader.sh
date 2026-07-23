@@ -95,15 +95,14 @@ code_based_grader_check() {
   # Only a block-resident structured field promotes; absence → unverified, NEVER verified_fail (step 5 only).
   case "${TASK_TYPE:-}" in
     bug-fix)
-      # Promotion signal (either): (a) block-resident test/spec phrasing (word-bounded, common
-      # inflections — "laTEST passWORD" is NOT a match) co-occurring with pass / green / "exit 0";
-      # (b) the W1 files-evidence rule (≥1 EXISTING test/spec-shaped path), so a bug-fix naming a real
-      # test artifact promotes even without the body phrasing. _cbg_gated_verdict then applies the
-      # shared Step 4-5 cross-check routing (contradicted → verified_fail; withhold → unverified).
+      # W1 files-evidence rule, same promotion signal as the feature arm: ≥1 EXISTING test/spec-shaped
+      # path in files:. Body phrasing NEVER promotes — prose is writer-authored free text (Gaming-the-
+      # Judge), and a prose-only promotion carries no path for the Step 4-5 cross-check (track-outcome.sh
+      # gates the write-scan on a non-empty files: field), so it would land unchecked. Empty files: →
+      # no promotion → unverified. _cbg_gated_verdict then applies the shared Step 4-5 cross-check
+      # routing (contradicted → verified_fail; withhold → unverified).
       local promote=0
-      if { [[ "${body}" =~ (^|[^[:alpha:]])(test|spec)(s|ed|ing)?([^[:alpha:]]|$) ]] &&
-        [[ "${body}" =~ (^|[^[:alpha:]])(pass(es|ed|ing)?|green|exit[[:space:]]0)([^[:alpha:]]|$) ]]; } ||
-        _cbg_files_test_evidence "${files}"; then
+      if _cbg_files_test_evidence "${files}"; then
         promote=1
       fi
       _cbg_gated_verdict "${promote}" "${files}"
@@ -181,6 +180,7 @@ _cbg_classify_entry() {
       _cbg_is_glob=1
       return 0
       ;;
+    *) ;;
   esac
   # leading ~ → $HOME (live entries use this form). SC2088 is a false positive: the '~/'* pattern
   # DETECTS a literal leading ~/ to expand it ourselves — not a tilde meant for shell expansion.
@@ -255,8 +255,8 @@ _cbg_path_matches_writes() {
   cbase="${claimed##*/}"
   while IFS= read -r wp; do
     [[ -z "${wp}" ]] && continue
-    case "${wp}" in *"${claimed}"*) return 0 ;; esac
-    case "${claimed}" in *"${wp}"*) return 0 ;; esac
+    case "${wp}" in *"${claimed}"*) return 0 ;; *) ;; esac
+    case "${claimed}" in *"${wp}"*) return 0 ;; *) ;; esac
     [[ -n "${cbase}" && "${cbase}" == "${wp##*/}" ]] && return 0
   done <<<"${writes}"
   return 1
@@ -286,7 +286,10 @@ _cbg_write_crosscheck() {
   local scan="${GRADER_WRITE_SCAN:-}"
   local writes="${GRADER_WRITE_PATHS:-}"
   # unwired → files-evidence only (backward-compatible default).
-  [[ -z "${scan}" ]] && { printf 'na\n'; return 0; }
+  [[ -z "${scan}" ]] && {
+    printf 'na\n'
+    return 0
+  }
   # attempted but degraded → withhold promotion (AC 265).
   if [[ "${scan}" != "verifiable" ]]; then
     printf 'withhold\n'
