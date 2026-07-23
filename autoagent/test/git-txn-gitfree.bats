@@ -9,8 +9,10 @@
 #   GIT_TXN_VERIFY_FAIL        → verify cb fails → target restored byte-for-byte
 # Also pins: the "set -e contract" (git_txn_apply returns 0 on every HANDLED
 # outcome), the wrong-arity / non-function-callback loud-fail (NON-zero return),
-# the atomic temp+rename restore (inode changes → no in-place truncate-write), and
-# the single-file scope guard.
+# the atomic temp+rename restore (inode changes → no in-place truncate-write),
+# the single-file scope guard, and the GIT_TXN_BEFORE_IMAGE output contract
+# (reset "" at entry; the captured anchor path published BEFORE the verify
+# callback runs — incl. the symlink-target agent-file scenario).
 #
 # Run via: bats autoagent/test/git-txn-gitfree.bats
 # Requires: bats >= 1.5.0, bash 3.2+
@@ -74,6 +76,15 @@ _apply_regen() { return 3; }
 _apply_malformed() { return 1; }
 _verify_ok() { return 0; }
 _verify_fail() { return 1; }
+
+# _verify_anchor_probe — verify cb pinning the GIT_TXN_BEFORE_IMAGE output
+#    contract MID-transaction: records the path it saw, then fails unless the
+#    published anchor is non-empty, readable, and holds the PRE-apply bytes.
+_verify_anchor_probe() {
+  printf '%s\n' "${GIT_TXN_BEFORE_IMAGE:-}" >"${WORK}/anchor.seen"
+  [[ -n "${GIT_TXN_BEFORE_IMAGE:-}" && -r "${GIT_TXN_BEFORE_IMAGE}" ]] || return 1
+  cmp -s "${PRISTINE}" "${GIT_TXN_BEFORE_IMAGE}"
+}
 
 # _apply_via_gitapply — apply the diff through REAL `git apply` (via the shim), in
 #    a NON-git tree. Proves `git apply` is the ONLY git call the transaction path
@@ -317,6 +328,66 @@ _inode_of() {
   [ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]
   [ -f "${BACKUP_DIR}/probe.md.bak" ]
   cmp -s "${PRISTINE}" "${BACKUP_DIR}/probe.md.bak"
+}
+
+# ---------------------------------------------------------------------------
+# (9b) output contract: GIT_TXN_BEFORE_IMAGE publishes the captured anchor path
+#      BEFORE the verify callback runs, so the verify predicate reads the exact
+#      captured path instead of re-deriving <backup_dir>/<basename>.bak by
+#      convention (a dual derivation that can silently drift).
+# ---------------------------------------------------------------------------
+@test "GIT_TXN_BEFORE_IMAGE: captured anchor published before verify runs" {
+  GIT_TXN_RC=999
+  GIT_TXN_BEFORE_IMAGE="stale-from-a-previous-txn"
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "the-diff" \
+    "${BACKUP_DIR}" _apply_ok _verify_anchor_probe "lbl" "${TARGET}"
+
+  # OK proves the probe SAW a readable pre-apply anchor mid-verify.
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]
+  [ "${GIT_TXN_BEFORE_IMAGE}" = "${BACKUP_DIR}/probe.md.bak" ]
+  [ "$(cat "${WORK}/anchor.seen")" = "${BACKUP_DIR}/probe.md.bak" ]
+}
+
+# ---------------------------------------------------------------------------
+# (9c) symlink target (facade → real, the agent-file scenario): capture keys on
+#      the RESOLVED real_target, and the published anchor stays readable inside
+#      the verify callback.
+# ---------------------------------------------------------------------------
+@test "GIT_TXN_BEFORE_IMAGE: anchor readable inside verify for a SYMLINK target" {
+  local facade="${WORK}/facade"
+  mkdir -p -- "${facade}"
+  ln -s "${TARGET}" "${facade}/probe.md"
+
+  GIT_TXN_RC=999
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${facade}/probe.md" "${TARGET}" "the-diff" \
+    "${BACKUP_DIR}" _apply_ok _verify_anchor_probe "lbl" "${facade}/probe.md"
+
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_OK}" ]
+  # capture keyed on the resolved real target's basename, pre-apply bytes intact
+  [ "${GIT_TXN_BEFORE_IMAGE}" = "${BACKUP_DIR}/probe.md.bak" ]
+  cmp -s "${PRISTINE}" "${BACKUP_DIR}/probe.md.bak"
+  # the apply wrote THROUGH the symlink onto the real file
+  grep -q 'inserted line' "${TARGET}"
+}
+
+# ---------------------------------------------------------------------------
+# (9d) stale-value reset: "" at entry, so a capture-fail transaction leaves no
+#      previous transaction's anchor for verify to consume.
+# ---------------------------------------------------------------------------
+@test "GIT_TXN_BEFORE_IMAGE: reset to empty at entry (capture-fail leaves no stale anchor)" {
+  local blocker="${WORK}/blocker-9d"
+  : >"${blocker}"
+
+  GIT_TXN_RC=999
+  GIT_TXN_BEFORE_IMAGE="stale-from-a-previous-txn"
+  git_txn_apply \
+    "${INSTALL_ROOT}" "${TARGET}" "${TARGET}" "the-diff" \
+    "${blocker}/p43" _apply_ok _verify_ok "lbl" "${TARGET}"
+
+  [ "${GIT_TXN_RC}" -eq "${GIT_TXN_BACKUP_CAPTURE_FAIL}" ]
+  [ -z "${GIT_TXN_BEFORE_IMAGE}" ]
 }
 
 # ---------------------------------------------------------------------------
