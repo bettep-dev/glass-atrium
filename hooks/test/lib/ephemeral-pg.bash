@@ -90,22 +90,29 @@ eph_pg_start() {
   log="${BATS_FILE_TMPDIR:-${TMPDIR:-/tmp}}/eph-pg.log"
   osuser="$(id -un)" || return 1
   mkdir -p "${sockdir}" || return 1
-  initdb -D "${datadir}" -A trust -U "${osuser}" -E UTF8 >>"${log}" 2>&1 \
+  # LC_ALL=C on EVERY PG invocation: under a non-C caller locale (daemon launchd
+  # context, ko_KR) macOS CoreFoundation spawns a thread during locale init and
+  # the postmaster dies with FATAL "postmaster became multithreaded during
+  # startup" (PG's own hint: set LC_ALL). C never touches CoreFoundation and is
+  # valid on every POSIX system; --locale=C makes the cluster itself
+  # locale-independent while -E UTF8 keeps the data encoding explicit.
+  LC_ALL=C initdb -D "${datadir}" -A trust -U "${osuser}" --locale=C -E UTF8 \
+    >>"${log}" 2>&1 \
     || { eph_pg_fail "initdb" "${log}"; return 1; }
   # listen_addresses='' → no TCP bind (zero port-collision risk); the socket
   # lives at ${sockdir}/.s.PGSQL.${port}, addressed by PGHOST/PGPORT.
   # -w -t 120: generous readiness window — the gate context runs many suites
   # concurrently, where a cold-start can outlast a tight 30s wait.
-  pg_ctl -D "${datadir}" \
+  LC_ALL=C pg_ctl -D "${datadir}" \
     -o "-p ${port} -k ${sockdir} -c listen_addresses=''" \
     -w -t 120 start >>"${log}" 2>&1 \
     || { eph_pg_fail "pg_ctl start" "${log}"; return 1; }
-  createdb -h "${sockdir}" -p "${port}" "${dbname}" >>"${log}" 2>&1 \
+  LC_ALL=C createdb -h "${sockdir}" -p "${port}" "${dbname}" >>"${log}" 2>&1 \
     || { eph_pg_fail "createdb" "${log}"; return 1; }
   # Capture the DDL first (assignment preserves the generator's exit) so the
   # psql exit is the checked one — no pipe masking.
   schema="$(eph_pg_schema_sql)" || return 1
-  psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
+  LC_ALL=C psql -h "${sockdir}" -p "${port}" -d "${dbname}" -v ON_ERROR_STOP=1 -q \
     <<<"${schema}" || return 1
 }
 
@@ -114,7 +121,7 @@ eph_pg_start() {
 eph_pg_stop() {
   local datadir="${1}"
   [[ -d "${datadir}" ]] || return 0
-  pg_ctl -D "${datadir}" -m immediate -w stop >/dev/null 2>&1 || true
+  LC_ALL=C pg_ctl -D "${datadir}" -m immediate -w stop >/dev/null 2>&1 || true
 }
 
 # Build the fixture session tree under $1. The hook derives the session dir as

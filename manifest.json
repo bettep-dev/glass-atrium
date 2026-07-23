@@ -786,7 +786,7 @@
     "hooks/test/inject-scope-rules-nodrop.bats": "cf690d941090fd5bcd83ff56efd56c739f8a3d18aac1a551b6bbd0439d0c3328",
     "hooks/test/inject-scope-rules.bats": "eed434423d5303a1f937ab48c16d8c7bf35a9127e1a9d8edb86ad44f33abfcc9",
     "hooks/test/inject-session-context.bats": "f077d491dea0a5e671a9a635ec9be9310b7a885a4f1c106829f6b592af6aa30d",
-    "hooks/test/lib/ephemeral-pg.bash": "1b63038192829c1313be1a759fa71a35c6a571d2e8b00befe963e43aa27a8cab",
+    "hooks/test/lib/ephemeral-pg.bash": "1e8476ad01def8ddf6b79f426caf8dcc126a1076506f60320c4eef6f157e97b1",
     "hooks/test/lib/no-python3.bash": "29728a703471b5c0a6ae537450f46ded1d277ebd12472ac728353486f96eb31a",
     "hooks/test/lint-workflow-template-literal.bats": "4733a86bdf282cbbdf0ef046444b80b88c415d51c2c86000f4002192633b1c29",
     "hooks/test/post-edit-format.bats": "ddb135bd1851dc41979800a7b593b246566b7710ca038d5e1a044bd4618a2ef0",
