@@ -80,7 +80,7 @@ run_md_hook() {
   [[ "${status}" -eq 0 ]] || return 1
 }
 
-# ── validate-pre-write-raw.sh — PreToolUse(Write) wiki raw-ingestion gate ────────────
+# ── validate-pre-write-raw.sh — PreToolUse(Write|Edit) wiki raw-ingestion gate ───────
 
 # Run validate-pre-write-raw on a jq-built Write envelope, WIKI_ROOT sandboxed.
 # Args: $1=file_path $2=content.

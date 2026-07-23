@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse(Write) — raw-ingestion gate: 6-part validation on wiki/raw/*.md save
-# (1 URL = 1 immutable file), blocking on violation. No bypass.
+# PreToolUse(Write|Edit) — raw-ingestion gate: 6-part validation on wiki/raw/*.md save
+# (1 URL = 1 immutable file) + V7 immutability (any Edit on a raw file is blocked
+# unconditionally), blocking on violation. No bypass.
 #
 # V6 (plan H2 · R5 · LLM01) is the load-bearing addition: it REQUIRES a body-resident
 # provenance envelope on every raw/ write. The gain is MECHANICAL and self-suppression-proof
@@ -27,7 +28,10 @@ INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
 
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
-[[ "${TOOL_NAME}" = "Write" ]] || exit 0
+case "${TOOL_NAME}" in
+  Write | Edit) ;;
+  *) exit 0 ;;
+esac
 
 FILE_PATH=$(printf "%s" "${INPUT}" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [[ -z "${FILE_PATH}" ]] && exit 0
@@ -41,6 +45,17 @@ case "${FILE_PATH}" in
   */.glass-atrium/wiki/raw/*.md) ;;
   *) exit 0 ;;
 esac
+
+# V7: the raw store is IMMUTABLE after save (1 URL = 1 immutable file — header + core-wiki-reference.md).
+# No sanctioned Edit flow exists (legacy-envelope backfill is forbidden by the Unmarked-legacy rule)
+# → any Edit on a raw trigger path blocks UNCONDITIONALLY; correction = delete + full Write re-save.
+if [[ "${TOOL_NAME}" = "Edit" ]]; then
+  emit_error "SCOPE-007" "block" \
+    "Raw store is immutable — Edit forbidden" \
+    "Delete the raw file and re-save the corrected full content via Write (V1-V6 re-validated)" \
+    "{\"file\":\"${FILE_PATH}\"}"
+  exit 2
+fi
 
 CONTENT=$(printf "%s" "${INPUT}" | jq -r '.tool_input.content // ""' 2>/dev/null)
 
