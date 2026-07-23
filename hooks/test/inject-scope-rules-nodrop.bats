@@ -394,7 +394,8 @@ assert_ctx_no_replacement_char() {
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 # (i)+(ii) TRUNCATE-AND-KEEP: with a residual well above the floor, the lesson is kept as a UTF-8-safe
-# truncation containing >=1 WHOLE CTM line, bounded by the residual, with NO drop marker emitted.
+# truncation containing >=1 WHOLE CTM line, bounded by the residual, with NO in-context drop marker —
+# the only sink record is a PARTIAL row (never a DROP row; row-shape pins live in the dropsink suite).
 
 @test "lesson truncate-and-keep: >=1 whole CTM line kept, within residual, no drop marker" {
   local base residual ceiling
@@ -412,7 +413,9 @@ assert_ctx_no_replacement_char() {
   assert_ctx_within_ceiling                    || return 1   # bounded by base+2+residual = ceiling
   assert_ctx_valid_utf8                         || return 1
   [[ "${output}" != *"dropped lesson block"* ]] || { echo "lesson was shed, not kept: ${output}" >&2; return 1; }
-  [[ ! -s "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" ]] || { echo "unexpected drop-log on a KEPT lesson" >&2; return 1; }
+  # A kept lesson records a PARTIAL sink row — never a DROP row (which would inflate the drop count).
+  ! grep -q ' DROP ' "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" 2>/dev/null || { echo "unexpected DROP row on a KEPT lesson: $(cat "${BATS_TEST_TMPDIR}/inject-drop-lesson.log")" >&2; return 1; }
+  grep -q ' PARTIAL ' "${BATS_TEST_TMPDIR}/inject-drop-lesson.log" 2>/dev/null || { echo "missing PARTIAL sink row on a KEPT lesson" >&2; return 1; }
 }
 
 # (iii) FULL-DROP: a residual BELOW the floor cannot hold a whole CTM line, so the lesson is fully

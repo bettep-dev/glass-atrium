@@ -474,9 +474,13 @@ build_lesson_block() {
 # / if-then) so a logging glitch can NEVER trip set -e → the ERR trap → a spawn-suppressing exit
 # (a logging failure must not cost the injection). Bounded: the log is removed once it crosses
 # INJECT_DROP_LOG_MAX_BYTES (cheap soft rotation). Args: $1=dropped block label $2=pre-drop byte
-# size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size).
+# size (DF-15: the OFFENDING over-ceiling total that prompted the drop, NOT the shrunk post-drop size)
+# $3=event token (optional, default DROP; PARTIAL = lesson truncate-and-keep — a DISTINCT word so the
+# aggregate_drop_rate ' DROP ' grep never counts partials as full drops) $4=kept residual bytes
+# (optional, PARTIAL rows only — appended as a trailing kept_bytes=N field; DROP rows are byte-identical
+# to the 2-arg form).
 append_drop_log() {
-  local block="${1}" pre_drop_bytes="${2}" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
+  local block="${1}" pre_drop_bytes="${2}" event="${3:-DROP}" kept_bytes="${4:-}" kept_field="" log_dir="${INJECT_DROP_LOG%/*}" sz="" ts="" pdb="" overage=0
   mkdir -p "${log_dir}" 2>/dev/null || return 0
   if [[ -f "${INJECT_DROP_LOG}" ]]; then
     sz="$(wc -c <"${INJECT_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
@@ -491,8 +495,9 @@ append_drop_log() {
   [[ -z "${pdb}" ]] && pdb=0
   overage=$((10#${pdb} - INJECT_CTX_MAX_BYTES))
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
-  printf '%s [inject-scope-rules] DROP agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s\n' \
-    "${ts}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" \
+  [[ -n "${kept_bytes}" ]] && kept_field=" kept_bytes=${kept_bytes}"
+  printf '%s [inject-scope-rules] %s agent=%s block=%s pre_drop_bytes=%s ceiling=%s overage_bytes=%s%s\n' \
+    "${ts}" "${event}" "${AGENT_TYPE}" "${block}" "${pre_drop_bytes}" "${INJECT_CTX_MAX_BYTES}" "${overage}" "${kept_field}" \
     >>"${INJECT_DROP_LOG}" 2>/dev/null || true
   return 0
 }
@@ -729,13 +734,17 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev naming styler
   # the room left for the lesson TEXT measured against the FULL ceiling (never effective_ceiling — a
   # marker reserve must not also shrink the lesson's own budget) minus the join separator. residual
   # >= floor → keep a UTF-8-boundary-safe truncation (guaranteed >=1 whole CTM line) and BREAK WITHOUT
-  # lowering the ceiling / recording a shed / writing a drop-log, so shed_count stays 0 and no drop
-  # marker is emitted. Only a sub-floor residual falls through to the normal full-drop path below.
+  # lowering the ceiling / recording a shed, so shed_count stays 0 and no in-context drop marker is
+  # emitted; the ONLY record is a PARTIAL sink row (distinct event token — never counted by the
+  # aggregate ' DROP ' grep). Only a sub-floor residual falls through to the normal full-drop path below.
   if [[ "${drop_block}" == "lesson" && -n "${LESSON_BLOCK}" ]]; then
     lesson_base_ctx="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" 0 "${keep_wiki_untrusted}")"
     lesson_base_bytes="$(byte_len "${lesson_base_ctx}")"
     lesson_residual=$((INJECT_CTX_MAX_BYTES - lesson_base_bytes - LESSON_JOIN_SEP_BYTES))
     if [[ "${lesson_residual}" -ge "${LESSON_MIN_RESIDUAL_BYTES}" ]]; then
+      # Sink row FIRST — ctx_bytes still holds the pre-truncation over-ceiling assembled total here
+      # (the reassembly below overwrites it, and truncate overwrites LESSON_BLOCK in place).
+      append_drop_log "lesson" "${ctx_bytes}" "PARTIAL" "${lesson_residual}"
       LESSON_BLOCK="$(truncate_bytes_utf8_safe "${LESSON_BLOCK}" "${lesson_residual}")"
       keep_lesson=1
       CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
