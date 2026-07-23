@@ -109,6 +109,11 @@ EOF
 @test "generate-manifest --check reports no source-vs-manifest drift (doctor §8 clean)" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   command -v git >/dev/null 2>&1 || skip "git required"
+  # Mirrors the generator's own precondition probe verbatim: a consumer install
+  # is not a git work tree, where the generator loud-fails (git ls-files is the
+  # file-list SoT) — skip is exactly equivalent to that loud-fail.
+  git -C "${GA}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || skip "not a git work tree: ${GA} (consumer install — drift check is repo-only)"
   run bash "${GEN_MANIFEST}" --check
   [ "$status" -eq 0 ]
 }

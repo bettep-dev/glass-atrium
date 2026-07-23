@@ -262,6 +262,13 @@ source_and_call() {
 
 INSTALL_SH="${GA}/install.sh"
 
+# install.sh is a REPO-ONLY bootstrap (deliberately not a manifest bundle member), so a
+# consumer install has no T6 target — skip there; PER-TEST (not setup-wide) because the
+# ga-core/bootstrap engine tests above guard on the BUNDLED lib and must keep running.
+t6_require_install_sh() {
+  [[ -f "${INSTALL_SH}" ]] || skip "install.sh absent (consumer install — repo-only bootstrap)"
+}
+
 # Build a hash-true release fixture: mini install tree (launcher + the real
 # apply-spine.sh, which install.sh sources from the extracted bundle), its
 # manifest {version, files, hashes} (plain heredoc — no jq needed), and the
@@ -354,6 +361,7 @@ SH
 }
 
 @test "install.sh fetch: STOCK-Mac end-to-end — no gh, no jq → preflight passes, download verifies, install lands" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
@@ -370,6 +378,7 @@ SH
 }
 
 @test "install.sh fetch: latest-form manifest URL then v<version> tag-form bundle URL (manifest-first)" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   t6_build_stock_toolbin || return 1
@@ -388,6 +397,7 @@ SH
 }
 
 @test "install.sh fetch: GA_RELEASE_TAG pins BOTH assets to the tag-form URLs" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   run env PATH="${FETCH_BIN}:${PATH}" \
@@ -400,6 +410,7 @@ SH
 }
 
 @test "install.sh fetch: manifest download HTTP failure → exit 14 naming the failing URL" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   run env PATH="${FETCH_BIN}:${PATH}" FETCH_FAIL_MANIFEST=1 \
@@ -410,6 +421,7 @@ SH
 }
 
 @test "install.sh fetch: bundle download HTTP failure → exit 14 naming the tag-form URL" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   t6_build_fetch_stub
   run env PATH="${FETCH_BIN}:${PATH}" FETCH_FAIL_BUNDLE=1 \
@@ -420,6 +432,7 @@ SH
 }
 
 @test "install.sh fetch: hash mismatch after download still exits 15 (SHA-256 manifest = sole trust anchor)" {
+  t6_require_install_sh
   t6_build_release_fixture 1.0.9
   # tamper AFTER hashing: rebuild the bundle with a drifted launcher so the
   # downloaded content no longer matches manifest.hashes.
