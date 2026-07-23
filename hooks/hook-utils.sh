@@ -241,9 +241,21 @@ hook_require_python3_unless_empty() {
 # Normalize a POSIX path by collapsing "." and ".." segments without touching the
 # filesystem (the target may not exist yet). Traversal-safety: "hooks/../x" resolves
 # to "x", so a protected prefix cannot be dodged — and a protected segment cannot be
-# forged — via "..". Args: $1 = path. Echoes the normalized path.
+# forged — via "..". A leading "~" / "~/" expands to ${HOME} at entry — envelope paths
+# arrive verbatim (never shell-expanded), so a tilde form would dodge callers'
+# ${HOME}-anchored match arms. "~user" stays literal (no portable resolution on stock
+# Bash 3.2); a post-collapse "~" segment is NOT re-expanded. Args: $1 = path.
+# Echoes the normalized path.
 hook_normalize_path() {
   local path="${1}" seg
+  # SC2088 false positive: the '~/'* pattern DETECTS a literal leading ~/ to expand it
+  # ourselves — not a tilde meant for shell expansion (precedent: _cbg_classify_entry).
+  # shellcheck disable=SC2088
+  if [[ "${path}" == '~' && -n "${HOME:-}" ]]; then
+    path="${HOME}"
+  elif [[ "${path}" == '~/'* && -n "${HOME:-}" ]]; then
+    path="${HOME}/${path#\~/}"
+  fi
   local -a out=()
   local lead=""
   [[ "${path}" == /* ]] && lead="/"
