@@ -8,9 +8,12 @@
 #   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
 #   best-effort, three block classes over three shared structural pre-passes
 #   (heredoc stripping · quote mask · ordered segmenter with a cwd-arming flag):
-#   bash-mutation (redirect / command-position verb + protected-path literal),
-#   bash-interp-write (interpreter code-string write), bash-cwd-relative-write
-#   (relative write from an armed cwd). Indirection residual PASSES by design.
+#   bash-mutation (redirect / command-position verb + protected-path literal, in
+#   its file OR bare-directory spelling), bash-interp-write (interpreter
+#   code-string write, discriminated by ARGUMENT POSITION so a protected path
+#   READ passes), bash-cwd-relative-write (relative write from an armed cwd,
+#   incl. an unnameable `cd -` / `popd` return). Indirection residual PASSES by
+#   design.
 # Block channel: HAR-001/HAR-002 emit_error + exit 2 · fail-closed HAR-003 on a
 # python3-less PATH · HARNESS_PROTECTION_APPROVE=1 launch-env grant passes.
 #
@@ -670,6 +673,38 @@ MD
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# ── R2-2: the bare-directory spelling of a protected path ────────────────────
+#
+# PROT_RE matches the FILE form (`.glass-atrium/hooks/`, slash included), so a
+# target written as a directory — the conventional `cp src <dir>` spelling —
+# matched nothing at the redirect and mutation-verb sites while the identical
+# trailing-slash form blocked. Both spellings are asserted together so the two
+# call sites cannot drift apart again.
+
+@test "R2-2 cp into a protected dir: no trailing slash AND trailing slash → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/e.sh ~/.glass-atrium/hooks')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-mutation"* ]] || return 1
+  run_hook "Bash" "$(bash_input 'cp /tmp/e.sh ~/.glass-atrium/hooks/')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-2 redirect whose target is a bare protected dir → block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/.glass-atrium/agents')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'echo x > ~/.claude/hooks')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# The name-boundary lookahead is what keeps the dir form from over-reaching —
+# it must survive being wired into the two new call sites.
+@test "R2-2-neg cp into a longer sibling dir name → pass (boundary lookahead)" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/e.sh ~/.glass-atrium/autoagent-backup')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cp /tmp/e.sh ~/.glass-atrium/rules')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
 # ── Arm A: interpreter code-string writes (bash-interp-write) ─────────────────
 #
 # A write expressed as a call inside a -c/-e code string presents NEITHER legacy
@@ -785,7 +820,13 @@ MD
 }
 
 # Reading a protected file THROUGH an interpreter is the production false-positive
-# class — the write-intent set is a closed allowlist precisely so these pass.
+# class. A closed write-intent allowlist does NOT settle it on its own: a code
+# string may legitimately write SOMEWHERE ELSE while only READING the protected
+# path, and matching write-intent and the path independently blocked exactly
+# that. What makes these pass is the ARGUMENT-POSITION check — a protected
+# literal blocks only where the API writes. The R2-1 rows below pair each read
+# shape with its write-position twin so the discrimination cannot collapse in
+# either direction (all-pass or all-block).
 
 @test "ArmA-neg python3 json.load / .read() of a protected path → pass" {
   run_hook "Bash" "$(bash_input "python3 -c \"import json;print(json.load(open('~/.claude/settings.json')))\"")"
@@ -853,6 +894,147 @@ MD
   run_hook "Bash" "$(bash_input 'wc -l ~/.glass-atrium/hooks/a.sh')"
   [[ "${status}" -eq 0 ]] || return 1
   run_hook "Bash" "$(bash_input "sed -n '1,5p' ~/.claude/settings.json")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R2-1: write-POSITION discrimination inside interpreter code strings ───────
+#
+# Reproduced review regression: a code string that READS a protected path while
+# writing somewhere unprotected blocked (exit 2) — write intent and the path
+# were matched independently, so any co-occurrence sufficed. Each row pairs the
+# read shape (must pass) with the same API called with the arguments swapped
+# (must block), which is the only way a fix can be shown to discriminate rather
+# than flip the default.
+
+@test "R2-1 shutil.copy: FROM a protected path → pass · INTO one → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import shutil;shutil.copy('~/.claude/settings.json','/tmp/backup.sh')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"import shutil;shutil.copy('/tmp/backup.sh','~/.claude/settings.json')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "R2-1 json round-trip: load(protected) + dump(/tmp) → pass · dump(protected) → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import json;d=json.load(open('~/.claude/settings.json'));json.dump(d,open('/tmp/o.json','w'))\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"import json;d=json.load(open('/tmp/o.json'));json.dump(d,open('~/.claude/settings.json','w'))\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-1 open('/tmp','w').write(open(protected).read()) → pass · swapped → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"open('/tmp/o','w').write(open('~/.claude/settings.json').read())\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.claude/settings.json','w').write(open('/tmp/o').read())\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-1 node writeFileSync(/tmp, readFileSync(protected)) → pass · swapped → block" {
+  run_hook "Bash" "$(bash_input "node -e \"fs.writeFileSync('/tmp/o.json', fs.readFileSync('~/.claude/settings.json','utf8'))\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "node -e \"fs.writeFileSync('~/.claude/settings.json', fs.readFileSync('/tmp/o.json','utf8'))\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-1 ruby File.write('/tmp', File.read(protected)) → pass · swapped → block" {
+  run_hook "Bash" "$(bash_input "ruby -e \"File.write('/tmp/o', File.read('~/.claude/settings.json'))\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"File.write('~/.claude/settings.json', File.read('/tmp/o'))\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# perl names its target after the mode in the 3-arg form and inside it in the
+# 2-arg form, so read/write discrimination there is the mode, not the position.
+@test "R2-1 perl open: read handle on a protected path → pass · '>' handle → block" {
+  run_hook "Bash" "$(bash_input "perl -e \"open(I,'<','~/.claude/settings.json');open(O,'>','/tmp/o')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "perl -e \"open(I,'<','/tmp/o');open(O,'>','~/.claude/settings.json')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# The move/rename family DESTROYS its source, so a protected SOURCE is a write
+# to the protected path — the position rule admits it deliberately.
+@test "R2-1 shutil.move OUT of a protected path → block (source is destroyed)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import shutil;shutil.move('~/.glass-atrium/hooks/a.sh','/tmp/a.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# ── R2-4: two-char redirect operators (>| clobber, >& fd-or-file, &>) ─────────
+#
+# `>|` and `>&` were structurally invisible: the segmenter split on the unquoted
+# | / & BEFORE tokenizing, stranding the operator at a segment end so its target
+# token was never examined. `&>` already reached the recogniser (the split
+# leaves `> target` intact) — it is pinned here so the segmenter change cannot
+# regress it silently.
+
+@test "R2-4 clobber redirect >| into live settings → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'echo x >| ~/.claude/settings.json')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "R2-4 >& redirect into a live hook file → block" {
+  run_hook "Bash" "$(bash_input 'echo x >& ~/.glass-atrium/hooks/track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-4 &> redirect into live settings → block (separator-form, pinned)" {
+  run_hook "Bash" "$(bash_input 'echo x &> ~/.claude/settings.json')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# A bare fd after >& names no path — the armed relative-target rule must not
+# read the `1` of `2>&1` as a filename.
+@test "R2-4-neg fd dup 2>&1 while armed → pass (no false relative target)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && grep x f 2>&1')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && grep x f 2>&1 > /tmp/out')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R2-6: mutation-verb allowlist additions (CLOSED set, no wildcarding) ──────
+
+@test "R2-6 install / rsync / truncate onto a protected path → block" {
+  run_hook "Bash" "$(bash_input 'install -m 755 /tmp/e.sh ~/.glass-atrium/hooks/a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-mutation"* ]] || return 1
+  run_hook "Bash" "$(bash_input 'rsync -a /tmp/e.sh ~/.glass-atrium/hooks/a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'truncate -s 0 ~/.glass-atrium/hooks/a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# dd names its target in of= — if= is the READ source, so the segment-wide match
+# the other verbs use would have blocked a backup taken FROM a protected path.
+@test "R2-6 dd of= a protected path → block · dd if= a protected path → pass" {
+  run_hook "Bash" "$(bash_input 'dd if=/tmp/e.sh of=~/.glass-atrium/hooks/a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-mutation"* ]] || return 1
+  run_hook "Bash" "$(bash_input 'dd if=~/.glass-atrium/hooks/a.sh of=/tmp/backup.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "R2-6 cp -t into a protected dir → block (target precedes the sources)" {
+  run_hook "Bash" "$(bash_input 'cp -t ~/.glass-atrium/hooks /tmp/e.sh /tmp/f.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-6 sed --in-place on a protected path → block (long twin of sed -i)" {
+  run_hook "Bash" "$(bash_input "sed --in-place 's/a/b/' ~/.glass-atrium/hooks/a.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "sed --in-place=.bak 's/a/b/' ~/.glass-atrium/hooks/a.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-6-neg the added verbs on unprotected paths → pass (no false blocks)" {
+  run_hook "Bash" "$(bash_input 'install -m 755 /tmp/e.sh /tmp/dest.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'rsync -a /tmp/a/ /tmp/b/')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'dd if=/tmp/a of=/tmp/b')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'truncate -s 0 /tmp/log')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "sed --in-place 's/a/b/' /tmp/f.txt")"
   [[ "${status}" -eq 0 ]] || return 1
 }
 
@@ -941,6 +1123,30 @@ MD
 
 @test "ArmB-neg absolute cd out disarms → pass" {
   run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cd /tmp && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# R2-5: `cd -` returns to the PREVIOUS directory, which a text machine cannot
+# name — disarming there made `cd <prot> && cd /tmp && cd - && printf x > f` a
+# one-line bypass of the row above. Arming is a boolean over-approximation, so
+# an unnameable return re-arms whenever this command entered a protected dir
+# earlier; `popd` is the same shape through the directory stack.
+
+@test "R2-5 cd - back toward a protected dir → block (unknown return re-arms)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cd /tmp && cd - && printf x > daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-cwd-relative-write"* ]] || return 1
+}
+
+@test "R2-5 popd back toward a protected dir → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && pushd /tmp && popd && printf x > track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R2-5-neg cd - / popd with no protected dir in the history → pass" {
+  run_hook "Bash" "$(bash_input 'cd /tmp && cd /var && cd - && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd /tmp && pushd /var && popd && printf x > f')"
   [[ "${status}" -eq 0 ]] || return 1
 }
 

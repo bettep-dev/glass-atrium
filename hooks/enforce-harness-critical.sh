@@ -29,20 +29,30 @@
 # recognition to UNQUOTED offsets; an ordered segmenter walks unquoted
 # `; & | newline ( )` boundaries carrying a cwd-arming flag (parens push/pop it).
 # On top of those, three block classes:
-#   bash-mutation — a >/>> redirect whose IMMEDIATE target token is a protected
-#     path, or a COMMAND-POSITION copy/permission verb (tee, cp, mv, ln, chmod,
-#     sed -i) followed by a protected-path literal in the same segment (the
+#   bash-mutation — a redirect whose IMMEDIATE target token is a protected path
+#     (operators > >> >| >&, and &> via the segmenter; a bare fd after >& is an
+#     fd dup, not a path), or a COMMAND-POSITION copy/permission verb (tee, cp,
+#     mv, ln, chmod, install, rsync, truncate, sed -i/--in-place, dd through its
+#     of= operand) followed by a protected-path literal in the same segment (the
 #     launchctl-bootstrap plists com.{claude,glass-atrium}.*.plist count as
-#     protected-path literals). A quoted '>' (grep -- '->', awk '$1 > 5') and a
+#     protected-path literals). Both the file form and the bare-directory form
+#     of a protected path count, so `cp x <prot>/hooks` blocks like the
+#     trailing-slash spelling. A quoted '>' (grep -- '->', awk '$1 > 5') and a
 #     non-command-position verb word never present these shapes.
 #   bash-interp-write — an interpreter (python/node/perl/ruby/awk, plus the shell
 #     members) invoked with a CODE FLAG in its contiguous leading flag run, whose
-#     code string carries BOTH a narrow write-intent API and a protected path.
+#     code string names a protected path in the WRITE POSITION of a narrow
+#     write-intent API. Position is what separates a write from a read: a
+#     protected path read (shutil.copy(<prot>, /tmp/x), open(<prot>).read(),
+#     readFileSync(<prot>)) passes even when the same code writes elsewhere.
 #     Shell members enumerate no APIs: their code string re-enters the same
 #     scanner (depth-capped), so `bash -c` composes with every rule above.
 #   bash-cwd-relative-write — while a `cd`/`pushd` has armed a protected dir, a
 #     RELATIVE redirect target or mutation-verb argument (an absolute one stays
-#     allowed, so `cd <prot> && grep x f > /tmp/out` passes).
+#     allowed, so `cd <prot> && grep x f > /tmp/out` passes). A return to an
+#     unnameable directory (`cd -`, `popd`) re-arms whenever this command
+#     entered a protected dir earlier — arming is a boolean over-approximation
+#     and staying armed is the safe direction.
 # DOCUMENTED RESIDUAL (not covered): variable
 # indirection (P=...; echo > "$P"), command substitution, quote-split paths,
 # non-command-position verb runs (xargs/find -exec), an interpreter fed code on
@@ -149,8 +159,12 @@ PROT_DIR_RE = re.compile(
 
 # Copy/mutation/permission verbs recognised in COMMAND position (sed only with an
 # in-place flag run). chmod is here because a mode-644 flip on a live hook
-# silently disarms it. A CLOSED allowlist — read-only verbs never join it.
-MUTATION_VERBS = ("tee", "cp", "mv", "ln", "chmod", "sed")
+# silently disarms it. dd carries its target in an `of=` operand rather than a
+# trailing argument, so it is recognised through a dedicated operand check.
+# A CLOSED allowlist — read-only verbs never join it, and no wildcarding.
+MUTATION_VERBS = (
+    "tee", "cp", "mv", "ln", "chmod", "sed", "install", "rsync", "dd", "truncate",
+)
 NEUTRAL_PREFIX = ("sudo", "env", "command", "nohup", "time", "exec")
 
 # Interpreter class. Shell members carry no write-API list: their code string is
@@ -168,39 +182,84 @@ ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 CODE_FLAG_RE = re.compile(r"^-[a-zA-Z]*[cep]$")
 LONG_CODE_FLAG_RE = re.compile(r"^--(?:eval|print)(?:=(.*))?$")
 # In-place flag run — perl/ruby ONLY (`python3 -i` is the REPL), mirroring sed -i.
+# The long twin `--in-place[=SUF]` is GNU sed's own spelling of the same flag.
 INPLACE_FLAG_RE = re.compile(r"^-[a-zA-Z]*i(?:\.\S*)?$")
+LONG_INPLACE_FLAG_RE = re.compile(r"^--in-place(?:=.*)?$")
 HEREDOC_OP_RE = re.compile(r"<<(-?)(?!<)[ \t]*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\2")
 AWK_REDIR_RE = re.compile(r">{1,2}[ \t]*(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 
-# Write-intent APIs, per language and deliberately narrow. A bare `.write(` is
-# EXCLUDED: `sys.stdout.write(open(p).read())` is a read, and a genuine write
-# always carries a write-mode open or a named write API. Mode strings match
-# WHOLE (mode letters only), so `errors='replace'` cannot pose as a mode.
-PY_WRITE_RE = re.compile(
-    r"\bopen\s*\([^)]*,\s*(['\"])[rwaxbt+]*[wax+][rwaxbt+]*\1"
-    r"|\.write_text\b|\.write_bytes\b|\.writelines\b"
-    r"|\bos\.(?:remove|unlink|rename|replace|truncate|chmod|mkdir|makedirs"
-    r"|symlink|link|rmdir)\b"
-    r"|\bshutil\.(?:copy2?|copyfile|copytree|move|rmtree)\b"
-    r"|\bjson\.dump\s*\("
-    r"|\bos\.open\s*\([^)]*O_(?:WRONLY|CREAT|APPEND|TRUNC)"
-    r"|\binplace\s*=\s*True\b"
+# Write-intent APIs, per language and deliberately narrow, each carrying the
+# ARGUMENT POSITIONS that name a WRITE target. Position is the discrimination
+# the arm turns on: shutil.copy(<prot>, /tmp/backup) reads the protected path
+# and writes elsewhere, while the same literal at position 1 is a write TO it —
+# a target-blind match cannot tell those apart and over-blocks the read.
+# Positions are 0-based; ALL_ARGS / TAIL_ARGS cover the list-taking verbs
+# (unlink(a, b) · chmod(mode, a, b)). A source position joins the write set only
+# when the call DESTROYS the source (rename / move), never for a plain copy.
+# A bare `.write(` stays EXCLUDED: `sys.stdout.write(open(p).read())` is a read.
+# Mode strings match WHOLE (mode letters only), so `errors='replace'` cannot
+# pose as a mode.
+ALL_ARGS = "*"
+TAIL_ARGS = "1:"
+
+QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+PY_MODE_ARG_RE = re.compile(r"^\s*(?:mode\s*=\s*)?(['\"])[rwaxbt+]*[wax+][rwaxbt+]*\1\s*$")
+PY_OSFLAG_ARG_RE = re.compile(r"\bO_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)\b")
+NODE_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxs+]*[wax+][rwaxs+]*\1\s*$")
+RUBY_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxb+]*[wax+][rwaxb+]*\1\s*$")
+
+# (api regex ending at its own '(', write-position spec, mode-argument guard).
+PY_WRITE_RULES = (
+    (re.compile(r"\bopen\s*\("), (0,), PY_MODE_ARG_RE),
+    (re.compile(r"\bos\.open\s*\("), (0,), PY_OSFLAG_ARG_RE),
+    (re.compile(r"\bos\.(?:remove|unlink|truncate|chmod|makedirs|mkdir|rmdir)\s*\("), (0,), None),
+    (re.compile(r"\bos\.(?:rename|replace)\s*\("), (0, 1), None),
+    (re.compile(r"\bos\.(?:symlink|link)\s*\("), (1,), None),
+    (re.compile(r"\bshutil\.(?:copy2|copyfile|copytree|copy)\s*\("), (1,), None),
+    (re.compile(r"\bshutil\.move\s*\("), (0, 1), None),
+    (re.compile(r"\bshutil\.rmtree\s*\("), (0,), None),
 )
-NODE_WRITE_RE = re.compile(
-    r"\b(?:writeFile|appendFile|copyFile|rename|unlink|rm|rmdir|truncate"
-    r"|chmod|mkdir|symlink)(?:Sync)?\s*\("
-    r"|\bcreateWriteStream\s*\("
-    r"|\bopenSync\s*\([^)]*,\s*(['\"])[rwaxs+]*[wax+][rwaxs+]*\1"
+# Receiver form — Path('<target>').write_text(...) names its target BEFORE the API.
+PY_RECEIVER_RE = re.compile(
+    r"(['\"])(?P<t>[^'\"]*)\1\s*\)?\s*\.(?:write_text|write_bytes|writelines)\s*\("
 )
-PERL_WRITE_RE = re.compile(
-    r"\b(?:sys)?open\b[^;\n]{0,120}?['\"][ \t]*\+?>{1,2}"
-    r"|\b(?:unlink|rename|chmod|truncate|mkdir|symlink)\b"
+# fileinput rewrites the files it is HANDED and there is no argument position to
+# key on, so every literal in the code string counts as a candidate target.
+PY_INPLACE_RE = re.compile(r"\binplace\s*=\s*True\b")
+
+NODE_WRITE_RULES = (
+    (re.compile(r"\b(?:writeFile|appendFile)(?:Sync)?\s*\("), (0,), None),
+    (re.compile(r"\b(?:unlink|rmdir|truncate|chmod|mkdir|rm)(?:Sync)?\s*\("), (0,), None),
+    (re.compile(r"\bcopyFile(?:Sync)?\s*\("), (1,), None),
+    (re.compile(r"\brename(?:Sync)?\s*\("), (0, 1), None),
+    (re.compile(r"\bsymlink(?:Sync)?\s*\("), (1,), None),
+    (re.compile(r"\bcreateWriteStream\s*\("), (0,), None),
+    (re.compile(r"\bopenSync\s*\("), (0,), NODE_MODE_ARG_RE),
 )
-RUBY_WRITE_RE = re.compile(
-    r"\b(?:File|IO)\.write\b"
-    r"|\bFile\.(?:delete|unlink|rename)\b"
-    r"|\bFile\.(?:open|new)\s*\([^)]*,\s*(['\"])[rwaxb+]*[wax+][rwaxb+]*\1"
-    r"|\bFileUtils\.(?:cp|mv|rm_rf|rm|install|mkdir_p|chmod)\b"
+
+# perl: 3-arg open names the target after the mode, 2-arg carries it inside the
+# mode string. A read mode ('<') matches neither, so a read open never fires.
+PERL_OPEN3_RE = re.compile(
+    r"\b(?:sys)?open\b[^;\n]{0,60}?(['\"])[ \t]*\+?>{1,2}[ \t]*\1[ \t]*,[ \t]*(['\"])(?P<t>[^'\"]*)\2"
+)
+PERL_OPEN2_RE = re.compile(
+    r"\b(?:sys)?open\b[^;\n]{0,60}?(['\"])[ \t]*\+?>{1,2}[ \t]*(?P<t>[^'\"]+)\1"
+)
+# perl's list verbs are routinely written without parentheses, so the target
+# window is the rest of the statement rather than a parsed argument list.
+PERL_VERB_RE = re.compile(
+    r"\b(?:unlink|rename|chmod|truncate|mkdir|rmdir|symlink)\b(?P<t>[^;\n]{0,120})"
+)
+
+RUBY_WRITE_RULES = (
+    (re.compile(r"\b(?:File|IO)\.write\s*\("), (0,), None),
+    (re.compile(r"\bFile\.(?:delete|unlink)\s*\("), (ALL_ARGS,), None),
+    (re.compile(r"\bFile\.rename\s*\("), (0, 1), None),
+    (re.compile(r"\b(?:File|IO)\.(?:open|new)\s*\("), (0,), RUBY_MODE_ARG_RE),
+    (re.compile(r"\bFileUtils\.(?:cp_r|cp|install)\s*\("), (1,), None),
+    (re.compile(r"\bFileUtils\.mv\s*\("), (0, 1), None),
+    (re.compile(r"\bFileUtils\.(?:rm_rf|rm_r|rm|mkdir_p|mkdir)\s*\("), (ALL_ARGS,), None),
+    (re.compile(r"\bFileUtils\.chmod\s*\("), (TAIL_ARGS,), None),
 )
 # Shell escape hatches inside a code string — the argument is shell text, so it
 # is re-scanned rather than met with a second API enumeration. The backtick is
@@ -214,6 +273,11 @@ ESCAPE_RE = re.compile(
 BACKTICK_RE = re.compile(r"\x60([^\x60]*)\x60")
 
 MAX_SCAN_DEPTH = 2
+
+# Scan-scoped: a protected dir was entered by some earlier cd in THIS command.
+# It is what makes a return to an unnameable directory (`cd -`, `popd`) decide
+# conservatively without false-blocking a command that never went near one.
+PROT_CD_SEEN = [False]
 
 
 def frontmatter_span(text):
@@ -412,7 +476,8 @@ def tokenize(seg):
             i += 1
             continue
         if ch == ">":
-            j = i + 2 if seg[i:i + 2] == ">>" else i + 1
+            # Two-char redirect OPERATORS: >> append, >| clobber, >& fd-or-file.
+            j = i + 2 if seg[i:i + 2] in (">>", ">|", ">&") else i + 1
             # A lone fd digit glued to the operator is part of the redirect.
             if toks and toks[-1][0] == "word" and toks[-1][4] == i and toks[-1][1].isdigit():
                 toks.pop()
@@ -474,10 +539,23 @@ def command_argv(toks):
     return argv[i:]
 
 
+def is_protected(value):
+    """A protected path in either spelling — PROT_RE's file form (trailing
+    slash or a plist label) or PROT_DIR_RE's bare-directory form. A copy target
+    is conventionally written WITHOUT a trailing slash (`cp x <prot>/hooks`),
+    which PROT_RE alone never matches."""
+    return bool(PROT_RE.search(value) or PROT_DIR_RE.search(value))
+
+
 def is_relative(value):
     """A write target resolved against the CURRENT directory. `&1` (fd dup) and
     a flag-looking token are excluded — neither names a path."""
     return bool(value) and not value.startswith(("/", "~", "$", "&", "-"))
+
+
+def is_inplace_flag(value):
+    """Short (`-i`, `-i.bak`, `-pi`) or long (`--in-place=.bak`) in-place flag."""
+    return bool(INPLACE_FLAG_RE.match(value) or LONG_INPLACE_FLAG_RE.match(value))
 
 
 def trailing_arg(argv):
@@ -536,16 +614,112 @@ def awk_program(argv):
     return argv[i][1] if i < len(argv) else None
 
 
-def has_write_intent(name, code):
-    """Write-intent dispatch by language — a cross-language union would import
-    each language's false positives into every other one."""
+def call_args(text, lparen):
+    """Top-level comma-split argument texts of the call whose '(' sits at
+    `lparen`. Nested calls, brackets and quoted commas stay inside their own
+    argument, so an argument INDEX means what it says. An unbalanced tail
+    returns what was collected — best effort, never an exception."""
+    args = []
+    buf = []
+    depth = 0
+    quote = ""
+    i = lparen
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            i += 1
+            if ch == "\\" and i < n:
+                buf.append(text[i])
+                i += 1
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch in "([{":
+            depth += 1
+            if depth > 1:
+                buf.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append("".join(buf))
+                return args
+            buf.append(ch)
+        elif ch == "," and depth == 1:
+            args.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    args.append("".join(buf))
+    return args
+
+
+def quoted_literals(text):
+    """String literals inside one argument text — the only spelling of a target
+    this machine can read (a variable target is the indirection residual)."""
+    return [m.group(1) if m.group(1) is not None else m.group(2)
+            for m in QUOTED_RE.finditer(text)]
+
+
+def pick_args(args, positions):
+    """Arguments at the rule's WRITE positions."""
+    if positions == ALL_ARGS:
+        return args
+    if positions == TAIL_ARGS:
+        return args[1:]
+    return [args[i] for i in positions if i < len(args)]
+
+
+def rules_scan(code, rules):
+    """(a write API fired, [literals at its WRITE positions]) over a rule table."""
+    fired = False
+    targets = []
+    for api_re, positions, mode_re in rules:
+        for m in api_re.finditer(code):
+            args = call_args(code, m.end() - 1)
+            if mode_re is not None and not (len(args) > 1 and mode_re.search(args[1])):
+                continue
+            fired = True
+            for arg in pick_args(args, positions):
+                targets.extend(quoted_literals(arg))
+    return fired, targets
+
+
+def write_scan(name, code):
+    """(a write API fired, [WRITE-POSITION target literals]), dispatched by
+    language — a cross-language union would import each language's false
+    positives into every other one. The two halves answer different questions:
+    `fired` alone drives the ARMED over-approximation (the target is relative
+    and unnameable from the code text), while the targets are what a protected
+    literal is matched against, so a protected path in a READ position passes."""
     if PYTHON_NAME_RE.match(name):
-        return bool(PY_WRITE_RE.search(code))
+        fired, targets = rules_scan(code, PY_WRITE_RULES)
+        for m in PY_RECEIVER_RE.finditer(code):
+            fired = True
+            targets.append(m.group("t"))
+        if PY_INPLACE_RE.search(code):
+            fired = True
+            targets.extend(quoted_literals(code))
+        return fired, targets
     if name in INTERP_NODE:
-        return bool(NODE_WRITE_RE.search(code))
+        return rules_scan(code, NODE_WRITE_RULES)
     if name == "perl":
-        return bool(PERL_WRITE_RE.search(code))
-    return bool(RUBY_WRITE_RE.search(code))
+        fired = False
+        targets = []
+        for open_re in (PERL_OPEN3_RE, PERL_OPEN2_RE):
+            for m in open_re.finditer(code):
+                fired = True
+                targets.append(m.group("t"))
+        for m in PERL_VERB_RE.finditer(code):
+            fired = True
+            targets.extend(quoted_literals(m.group("t")))
+        return fired, targets
+    return rules_scan(code, RUBY_WRITE_RULES)
 
 
 def scan_escapes(code, backticks, depth, armed):
@@ -575,7 +749,7 @@ def scan_interpreter(name, argv, seg, depth, armed):
             return ""
         for m in AWK_REDIR_RE.finditer(prog):
             target = m.group(1) or m.group(2) or m.group(3) or ""
-            if PROT_RE.search(target):
+            if is_protected(target):
                 return "bash-interp-write"
             # A BARE target is an awk comparison far more often than a redirect
             # ('$1 > 5'), so the armed-relative case needs a quoted filename.
@@ -585,31 +759,66 @@ def scan_interpreter(name, argv, seg, depth, armed):
     if not (PYTHON_NAME_RE.match(name) or name in INTERP_NODE or name in ("perl", "ruby")):
         return ""
     flags, code = leading_flag_run(argv)
-    if name in ("perl", "ruby") and PROT_RE.search(seg) \
-            and any(INPLACE_FLAG_RE.match(f) for f in flags):
+    if name in ("perl", "ruby") and is_protected(seg) \
+            and any(is_inplace_flag(f) for f in flags):
         return "bash-interp-write"
     if not code:
         return ""
-    # Write intent alone is never enough: the code string must ALSO name a
-    # protected path — or the cwd must already be one, where the target is
-    # relative and lives inside the code (a deliberate over-approximation).
-    if has_write_intent(name, code) and (armed or PROT_RE.search(code)):
+    fired, targets = write_scan(name, code)
+    # Armed: the cwd is already a protected dir, so a target spelled relatively
+    # inside the code string cannot be named from the text — write intent alone
+    # blocks (a deliberate over-approximation, bounded by the explicit cd).
+    if armed and fired:
+        return "bash-interp-write"
+    # Unarmed: a protected literal blocks ONLY in a WRITE position. The same
+    # literal read — copied FROM, opened for reading, passed to readFileSync —
+    # writes somewhere else entirely and passes.
+    if any(is_protected(target) for target in targets):
         return "bash-interp-write"
     return scan_escapes(code, name in ("perl", "ruby"), depth, armed)
+
+
+def unknown_dir_armed(armed):
+    """`cd -` lands in the PREVIOUS directory, which this text machine cannot
+    name. Over-approximate in the safe direction: once any protected dir was
+    entered in this command, `cd -` may return to it → re-arm (disarming there
+    is the one-line bypass `cd <prot> && cd /tmp && cd - && printf x > f`).
+    With nothing protected in the history the destination is unprotected as far
+    as this command shows, so the current state simply carries."""
+    return True if PROT_CD_SEEN[0] else armed
 
 
 def next_armed(argv, armed):
     """Arm B state transition. A protected-dir argument ARMS; any other
     absolute/~/$-rooted argument DISARMS; a relative one KEEPS the state —
     `cd ..` must stay armed, else it is a one-line bypass."""
-    args = [tok[1] for tok in argv[1:] if tok[1] and not tok[1].startswith("-")]
-    if not args or args[0] == "-":
+    raw = [tok[1] for tok in argv[1:] if tok[1]]
+    if "-" in raw:
+        return unknown_dir_armed(armed)
+    args = [val for val in raw if not val.startswith("-")]
+    if not args:
         return False
     if PROT_DIR_RE.search(args[0]):
+        PROT_CD_SEEN[0] = True
         return True
     if args[0].startswith(("/", "~", "$")):
         return False
     return armed
+
+
+def scan_dd(argv, armed):
+    """dd names its target in an `of=` operand, never a trailing argument — and
+    `if=` is the READ source, so the segment-wide match the other verbs use
+    would block `dd if=<prot> of=/tmp/backup`."""
+    for tok in argv[1:]:
+        if not tok[1].startswith("of="):
+            continue
+        target = tok[1][3:]
+        if is_protected(target):
+            return "bash-mutation", armed
+        if armed and is_relative(target):
+            return "bash-cwd-relative-write", armed
+    return "", armed
 
 
 def scan_segment(seg, depth, armed):
@@ -623,7 +832,10 @@ def scan_segment(seg, depth, armed):
         target = toks[idx + 1] if idx + 1 < len(toks) else None
         if target is None or target[0] != "word" or not target[1]:
             continue
-        if PROT_RE.search(target[1]):
+        # `>&` takes an fd as often as a file (`2>&1`); a bare fd names no path.
+        if tok[1] == ">&" and (target[1].isdigit() or target[1] == "-"):
+            continue
+        if is_protected(target[1]):
             return "bash-mutation", armed
         if armed and is_relative(target[1]):
             return "bash-cwd-relative-write", armed
@@ -633,10 +845,14 @@ def scan_segment(seg, depth, armed):
     name = argv[0][1].rsplit("/", 1)[-1]
     if name in ("cd", "pushd"):
         return "", next_armed(argv, armed)
+    if name == "popd":
+        return "", unknown_dir_armed(armed)
     if name in MUTATION_VERBS:
-        if name == "sed" and not any(INPLACE_FLAG_RE.match(a[1]) for a in argv[1:]):
+        if name == "sed" and not any(is_inplace_flag(a[1]) for a in argv[1:]):
             return "", armed
-        if PROT_RE.search(seg[argv[0][4]:]):
+        if name == "dd":
+            return scan_dd(argv, armed)
+        if is_protected(seg[argv[0][4]:]):
             return "bash-mutation", armed
         if armed and is_relative(trailing_arg(argv)):
             return "bash-cwd-relative-write", armed
@@ -657,6 +873,11 @@ def scan_command(text, depth, armed):
     start = 0
     for i, ch in enumerate(code):
         if mask[i] or ch not in ";&|\n()":
+            continue
+        # `>|` and `>&` are two-char redirect OPERATORS, not separators. Cutting
+        # the segment between the two characters would strand the operator at a
+        # segment end and hide its target token from the redirect recogniser.
+        if ch in "|&" and i > 0 and code[i - 1] == ">" and not mask[i - 1]:
             continue
         reason, armed = scan_segment(code[start:i], depth, armed)
         if reason:
@@ -681,6 +902,7 @@ def detect_bash(tool_input):
     """Redirect / copy verb whose target is a protected path (bash-mutation),
     an interpreter code-string write (bash-interp-write), or a relative write
     made from a protected cwd (bash-cwd-relative-write)."""
+    PROT_CD_SEEN[0] = False
     return scan_command(tool_input.get("command", ""), 0, False)
 
 

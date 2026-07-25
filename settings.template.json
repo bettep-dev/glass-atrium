@@ -36,7 +36,8 @@
     "REDIRECT INEXPRESSIBILITY (T21): 'a redirect INTO a harness path' (echo x > ~/.claude/hooks/y) is",
     "  INEXPRESSIBLE as a Bash(<prefix>:*) deny — the > operator and its path target appear anywhere in the",
     "  command, not as a leading prefix the matcher anchors on. That pattern therefore lives ONLY in",
-    "  enforce-harness-critical.sh's redirect regex (DETECT_PY REDIR_RE + PROT_RE), never here."
+    "  enforce-harness-critical.sh's Bash-arm segment scanner (scan_segment's redirect walk over the",
+    "  tokenized segment + PROT_RE/PROT_DIR_RE), never here."
   ],
   "hooks": {
     "PreToolUse": [
