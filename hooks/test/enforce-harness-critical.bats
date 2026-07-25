@@ -106,6 +106,23 @@ bin_with_broken_python3() {
   printf '%s\n' "${bindir}"
 }
 
+# A hook copy whose classifier raises inside detect_bash — the real hook, real
+# python3, one injected internal defect. It isolates an EXCEPTION in the
+# refinement from python3 being absent or stubbed, which the fixtures above
+# cover. hook-utils.sh is symlinked alongside because the hook sources it
+# relative to its own path.
+hook_with_injected_classifier_error() {
+  local dir="${BATS_TEST_TMPDIR}/injected"
+  mkdir -p "${dir}"
+  ln -sf "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${dir}/hook-utils.sh"
+  sed -e 's|^            reason = detect_bash(tool_input)$|            raise RuntimeError("injected-classifier-defect")|' \
+    -e 's|^            reason = detect_agent_edit(tool_input)$|            raise RuntimeError("injected-classifier-defect")|' \
+    "${HOOK_SH}" >"${dir}/enforce-harness-critical.sh"
+  [[ "$(grep -c 'injected-classifier-defect' "${dir}/enforce-harness-critical.sh")" == "2" ]] || return 1
+  chmod +x "${dir}/enforce-harness-critical.sh"
+  printf '%s\n' "${dir}/enforce-harness-critical.sh"
+}
+
 # PATH with jq stripped and python3 real — drives the pure-bash escaper fallback.
 bin_without_jq() {
   link_bin "${BATS_TEST_TMPDIR}/nojq" env bash python3 basename cat grep tr sed mktemp dirname

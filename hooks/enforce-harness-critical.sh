@@ -115,10 +115,11 @@ readonly CLAUDE_DIR GA_DIR
 # Single-pass envelope classifier (python3 — robust JSON/frontmatter/regex parsing),
 # ONE spawn for the whole hook: emits tool_name, the arm target (file_path for
 # Write|Edit, command for Bash), and the content-inspection verdict
-# (block:<reason> | allow), each NUL-terminated (hook_get_fields consumer
-# convention). The verdict refinement fails OPEN on an internal exception — the
-# deterministic path classes (live settings / hook dirs / new-agent creation) block
-# in pure bash and never depend on it.
+# (block:<reason> | allow | error:<ExcType>), each NUL-terminated (hook_get_fields
+# consumer convention). An internal refinement exception NEVER resolves to allow:
+# the refinement is the sole owner of the interpreter classes, so swallowing one
+# disarms them silently. It names its exception type in the verdict field and
+# exits non-zero, engaging the HAR-003 fail-closed gate below.
 # `read -d ''` builtin assignment (no command-substitution-of-cat subshell); read
 # returns 1 at heredoc EOF without a NUL → `|| true`.
 IFS= read -r -d '' DETECT_PY <<'PY' || true
@@ -307,8 +308,15 @@ def identity_lines(text):
 
 
 def read_disk(path):
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        return fh.read()
+    """On-disk text, or "" when the path is absent/unreadable. Absence is the
+    EXPECTED shape for a new-file Write and must not read as an internal defect:
+    the bash arm blocks a new agents/*.md by its own -e check, and every other
+    new path leaves this arm before the verdict is consulted."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
 
 
 def fence_count(text):
@@ -923,6 +931,7 @@ def main():
         target = str(tool_input.get("command", ""))
     else:
         target = ""
+    status = 0
     try:
         if tool_name == "Write":
             reason = detect_agent_write(tool_input)
@@ -932,13 +941,20 @@ def main():
             reason = detect_bash(tool_input)
         else:
             reason = ""
-    except Exception:  # noqa: BLE001 — refinement fails open; bash-side classes stay armed
-        reason = ""
-    verdict = "block:" + reason if reason else "allow"
+        verdict = "block:" + reason if reason else "allow"
+    except Exception as exc:  # noqa: BLE001 — an internal defect is fail-CLOSED
+        # This refinement is the SOLE owner of the interpreter classes, so an
+        # exception resolved to allow passes the entire command. Name the type
+        # for the block payload, then exit non-zero so HAR-003 blocks.
+        verdict = "error:" + type(exc).__name__
+        status = 3
     # NUL-strip mirrors hook_get_fields (a JSON string MAY carry \u0000; an embedded
     # NUL would truncate the `read -r -d ''` consumer mid-value).
     for field in (tool_name, target, verdict):
         sys.stdout.write(field.rstrip("\n").replace("\x00", "") + "\0")
+    sys.stdout.flush()
+    if status:
+        sys.exit(status)
 
 
 main()
@@ -1001,7 +1017,16 @@ block_critical() {
   printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || st=$?
   printf '%s\0' "${st}"
 )
-[[ "${PY_STATUS}" == "0" ]] || block_critical "HAR-003" "classifier-failure" "python3 classifier exit ${PY_STATUS:-EOF}"
+if [[ "${PY_STATUS}" != "0" ]]; then
+  # `error:<ExcType>` is the classifier naming its OWN internal exception; any
+  # other verdict value means it died before it could say anything.
+  CLASSIFIER_DETAIL="python3 classifier exit ${PY_STATUS:-EOF}"
+  case "${VERDICT}" in
+    error:*) CLASSIFIER_DETAIL="${CLASSIFIER_DETAIL} (${VERDICT})" ;;
+    *) : ;;
+  esac
+  block_critical "HAR-003" "classifier-failure" "${CLASSIFIER_DETAIL}"
+fi
 
 write_edit_arm() {
   local norm
