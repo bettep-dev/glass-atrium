@@ -6,8 +6,13 @@ Covered behaviors (T21 — consolidated, full base-content path):
     (clean merge + overlapping conflict, candidate-level apply/verify both ways);
   * only-local / only-vendor change -> deterministic take-release/keep-local, NO LLM;
   * no-op (nothing changed anywhere) -> deterministic, NO LLM, apply no-op code;
-  * base-content-unavailable -> gated 2-way present-both, Haiku-gated when sides
-    differ / deterministic keep-local when sides match (no faked 3-way);
+  * base-content-unavailable -> gated 2-way present-both REPORT when sides differ
+    (never landed) / deterministic keep-local when sides match (no faked 3-way);
+  * conflict-marker tripwire -> a marker-bearing candidate is refused at apply
+    (zero bytes) and at verify (on-disk backstop), with prose about git conflicts
+    excluded as a false positive;
+  * same-release re-run -> no-op against an ADVANCED base, refused against a STALE
+    one (the idempotency defect: markers landing in a live agent body);
   * sensitive refusal by PATH -> GLOBAL_RULES / security rule / com.glass-atrium plist
     AND by DIFF body -> an added irreversible command (rm -rf / DROP TABLE),
     each with hard-fail apply (never written) + hard-fail verify + NO LLM call;
@@ -473,13 +478,13 @@ class CheapPathNoLLMTest(unittest.TestCase):
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class GatedTwoWayCandidateTest(unittest.TestCase):
-    """T21 — the base-UNAVAILABLE differing-sides path is Haiku-gated at candidate level.
+    """The base-UNAVAILABLE differing-sides path is a REPORT — it never lands.
 
-    resolve_file-level gating was covered; the MergeCandidate apply/verify wiring of
-    the GATED_2WAY verdict (which IS in _LLM_REQUIRED) was not.
+    GATED_2WAY synthesizes present-both marker text, so the tripwire refuses it at
+    both transaction seats; the caller routes it to the manual ceremony instead.
     """
 
-    def test_gated_two_way_differing_sides_invokes_haiku(self) -> None:
+    def test_gated_two_way_present_both_never_lands(self) -> None:
         local = _doc(top="# A", region="local learned", bottom="z")
         release = _doc(top="# A", region="vendor variant", bottom="z")
         stub = _StubVerify(passed=True)
@@ -488,33 +493,32 @@ class GatedTwoWayCandidateTest(unittest.TestCase):
             "dev-rag.md", local, release, base_text=None, verify_fn=stub
         )
         self.assertEqual(cand.resolution.regions[0].verdict, em.GATED_2WAY)
-        self.assertTrue(cand.resolution.needs_llm)
+        self.assertTrue(cand.resolution.has_conflict)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dev-rag.md"
-            self.assertEqual(cand.apply(str(p)), em.APPLY_OK)
-            self.assertEqual(cand.verify(str(p)), 0)
-        self.assertEqual(stub.calls, 1)  # present-both -> exactly one Haiku gate
+            self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertFalse(p.exists())  # zero bytes written
+            self.assertEqual(cand.verify(str(p)), 1)
+        self.assertEqual(stub.calls, 0)  # refused before any Haiku spend
 
-    def test_gated_two_way_haiku_reject_fails_verify(self) -> None:
+    def test_gated_two_way_report_still_surfaces_both_sides(self) -> None:
+        # The candidate is un-landable but remains the ceremony's report artifact:
+        # both sides stay visible so a human can resolve them.
         local = _doc(top="# A", region="local learned", bottom="z")
         release = _doc(top="# A", region="vendor variant", bottom="z")
-        stub = _StubVerify(passed=False)
 
         cand = em.build_merge_candidate(
-            "dev-rag.md", local, release, base_text=None, verify_fn=stub
+            "dev-rag.md", local, release, base_text=None, verify_fn=_StubVerify(True)
         )
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "dev-rag.md"
-            cand.apply(str(p))
-            self.assertEqual(cand.verify(str(p)), 1)
-        self.assertEqual(stub.calls, 1)
+        self.assertIn("local learned", cand.resolution.candidate_text)
+        self.assertIn("vendor variant", cand.resolution.candidate_text)
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ConflictCandidateTest(unittest.TestCase):
-    """T21 — an overlapping both-changed conflict is Haiku-gated at candidate level."""
+    """An overlapping both-changed conflict is a REPORT — it never lands."""
 
-    def test_conflict_candidate_carries_markers_and_gates(self) -> None:
+    def test_conflict_candidate_is_refused_and_writes_zero_bytes(self) -> None:
         base = _doc(top="# A", region="same-old", bottom="z")
         local = _doc(top="# A", region="LOCAL rewrite", bottom="z")
         release = _doc(top="# A", region="VENDOR rewrite", bottom="z")
@@ -524,14 +528,164 @@ class ConflictCandidateTest(unittest.TestCase):
             "dev-android.md", local, release, base_text=base, verify_fn=stub
         )
         self.assertEqual(cand.resolution.verdict, em.MERGE_CONFLICT)
-        self.assertTrue(cand.resolution.needs_llm)
+        self.assertTrue(cand.resolution.has_conflict)
         self.assertIn("LOCAL rewrite", cand.resolution.candidate_text)
         self.assertIn("VENDOR rewrite", cand.resolution.candidate_text)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dev-android.md"
+            self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertFalse(p.exists())
+            self.assertEqual(cand.verify(str(p)), 1)
+        self.assertEqual(stub.calls, 0)  # a marker candidate never buys an LLM call
+
+    def test_apply_leaves_an_existing_local_body_byte_identical(self) -> None:
+        # The realistic seat: the target already holds the live body. A refused
+        # apply must not touch it (git_txn then reports APPLY_FAIL, nothing lands).
+        base = _doc(top="# A", region="same-old", bottom="z")
+        local = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+        release = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+
+        cand = em.build_merge_candidate(
+            "dev-android.md",
+            local,
+            release,
+            base_text=base,
+            verify_fn=_StubVerify(True),
+        )
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-android.md"
+            p.write_text(local, encoding="utf-8")
+            self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertEqual(p.read_text(encoding="utf-8"), local)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ConflictMarkerTripwireTest(unittest.TestCase):
+    """The marker scan itself: polarity + false-positive safety."""
+
+    def test_exact_updater_markers_are_detected(self) -> None:
+        for marker in (
+            "<<<<<<< LOCAL (learned)",
+            "||||||| BASE (base@install)",
+            ">>>>>>> RELEASE (vendor)",
+        ):
+            with self.subTest(marker=marker):
+                self.assertTrue(em.has_conflict_markers(f"intro\n{marker}\ntail\n"))
+
+    def test_prose_about_git_conflicts_is_not_a_false_positive(self) -> None:
+        # An agent body may legitimately DOCUMENT conflict markers. Only the exact
+        # updater-authored lines count — a bare marker or a separator does not.
+        body = (
+            "# dev-git\n"
+            "Resolve a conflict by deleting the `<<<<<<<` and `>>>>>>>` lines.\n"
+            "<<<<<<< HEAD\n"
+            "=======\n"
+            ">>>>>>> feature/x\n"
+        )
+        self.assertFalse(em.has_conflict_markers(body))
+
+    def test_verify_rejects_markers_reaching_the_file_from_any_source(self) -> None:
+        # BACKSTOP polarity: the candidate itself is clean (deterministic keep-local,
+        # no LLM), yet the on-disk file carries markers — from a stale base, a
+        # restored backup, a crash window. verify() must fail so git_txn restores.
+        base = _doc(top="# A", region="learned", bottom="v1")
+        local = _doc(top="# A", region="learned", bottom="v1")
+        release = _doc(top="# A", region="learned", bottom="v2")
+        stub = _StubVerify(passed=True)
+
+        cand = em.build_merge_candidate(
+            "dev-python.md", local, release, base_text=base, verify_fn=stub
+        )
+        self.assertFalse(cand.resolution.has_conflict)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-python.md"
             self.assertEqual(cand.apply(str(p)), em.APPLY_OK)
-            self.assertEqual(cand.verify(str(p)), 0)
-        self.assertEqual(stub.calls, 1)
+            self.assertEqual(cand.verify(str(p)), 0)  # clean landing passes
+            p.write_text(
+                _doc(
+                    top="# A",
+                    region="<<<<<<< LOCAL (learned)\nlearned\n>>>>>>> RELEASE (vendor)",
+                    bottom="v2",
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(cand.verify(str(p)), 1)  # tampered on-disk state fails
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class RerunIdempotencyTest(unittest.TestCase):
+    """Same-release re-run behavior against an ADVANCED vs a STALE merge base.
+
+    The live defect: after run 1 merged and the merged body was committed, run 2 with
+    the SAME release re-diffed against the un-advanced base@install anchor and wrote
+    literal conflict markers into the live agent file.
+    """
+
+    _BASE = _doc(top="# dev-react", region="b1\nb2", bottom="old rules")
+    _LOCAL = _doc(top="# dev-react", region="LOCAL learned\nb1\nb2", bottom="old rules")
+    _RELEASE = _doc(top="# dev-react", region="b1\nb2\nVENDOR", bottom="NEW rules")
+
+    def test_advanced_base_rerun_is_a_zero_write_no_op(self) -> None:
+        # Run 1: both changed, non-overlapping -> clean merge.
+        merged = em.resolve_file(
+            "dev-react.md", self._LOCAL, self._RELEASE, self._BASE
+        ).candidate_text
+
+        # The base ADVANCES to the RELEASE body (never to the merged result — see the
+        # next test for why). Run 2 with the same release now sees release == base.
+        rerun = em.resolve_file("dev-react.md", merged, self._RELEASE, self._RELEASE)
+
+        self.assertEqual(rerun.verdict, em.NO_OP)
+        self.assertFalse(rerun.is_changed)
+        self.assertFalse(rerun.has_conflict)
+        self.assertFalse(em.has_conflict_markers(rerun.candidate_text))
+        self.assertIn("LOCAL learned", rerun.candidate_text)  # learned content intact
+
+    def test_advanced_base_keeps_learned_content_on_the_next_release(self) -> None:
+        # Why the base advances to the RELEASE body and NOT the merged result:
+        # base := merged would make local == base, classifying the learned region as
+        # TAKE_RELEASE and silently stripping it on the next real release.
+        merged = em.resolve_file(
+            "dev-react.md", self._LOCAL, self._RELEASE, self._BASE
+        ).candidate_text
+        release_v2 = _doc(
+            top="# dev-react", region="b1\nb2\nVENDOR v2", bottom="NEWER rules"
+        )
+
+        correct = em.resolve_file("dev-react.md", merged, release_v2, self._RELEASE)
+        inverted = em.resolve_file("dev-react.md", merged, release_v2, merged)
+
+        self.assertIn("LOCAL learned", correct.candidate_text)
+        self.assertIn("VENDOR v2", correct.candidate_text)
+        self.assertNotIn("LOCAL learned", inverted.candidate_text)  # the anchor trap
+
+    def test_stale_base_rerun_reconflicts_and_is_refused(self) -> None:
+        # THE DEFECT, reproduced: run 1 conflicted, so run 2 against the un-advanced
+        # base re-conflicts the already-merged region. The tripwire refuses the write.
+        base = _doc(top="# dev-react", region="same-old", bottom="old rules")
+        local = _doc(top="# dev-react", region="LOCAL rewrite", bottom="old rules")
+        release = _doc(top="# dev-react", region="VENDOR rewrite", bottom="NEW rules")
+        first = em.resolve_file("dev-react.md", local, release, base)
+        self.assertEqual(first.verdict, em.MERGE_CONFLICT)
+
+        # Simulate the pre-fix landed state (markers in the live body), then re-run
+        # against the STILL-STALE base: the markers nest instead of resolving.
+        rerun = em.build_merge_candidate(
+            "dev-react.md",
+            first.candidate_text,
+            release,
+            base_text=base,
+            verify_fn=_StubVerify(True),
+        )
+        self.assertTrue(rerun.resolution.has_conflict)
+        self.assertGreaterEqual(
+            rerun.resolution.candidate_text.count("<<<<<<< LOCAL (learned)"), 2
+        )
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-react.md"
+            p.write_text(first.candidate_text, encoding="utf-8")
+            self.assertEqual(rerun.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertEqual(p.read_text(encoding="utf-8"), first.candidate_text)
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
