@@ -266,11 +266,128 @@ rewrite_hook_paths() {
   log "rewrite_hook_paths: repointed ${pending} hook command(s) ${old_dir} -> ${new_dir} (backup: ${backup})"
 }
 
+# wire reconcile primitive: DROP a stale-matcher binding left behind by a matcher change.
+# WHY: the wire loop is ADD-ONLY — is_hook_bound is (event, matcher, basename)-scoped, so when a hook's EXPECTED_HOOK_BINDINGS matcher CHANGES (validate-pre-write-raw.sh Write -> Write|Edit) the new row is ADDED while the OLD-matcher row survives → the hook DOUBLE-FIRES on every matching tool call. This pass removes every Atrium binding whose (event, basename) IS expected but whose matcher is NOT.
+# NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding / update_retire_swept_hook_bindings, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh and enforce-harness-critical.sh each legitimately hold TWO matcher rows under PreToolUse).
+# DATA-SAFETY (same "only Atrium commands" property as retire_hook_binding): a command is Atrium-owned only when its tilde-normalized path resolves under ${HOME}/.claude/hooks/ or ${HOME}/.glass-atrium/hooks/ — a foreign user hook at any other path is invisible to this pass. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), KEY-PRUNE symmetry, injection-safe (--arg everywhere), IDEMPOTENT (a re-run drops nothing).
+reconcile_stale_hook_matchers() {
+  [[ -f "${SETTINGS_JSON}" ]] || return 0
+
+  # expected (event, basename, matcher) key set + its (event, basename) projection.
+  # US (\x1f) joined, NOT tab: tab is IFS WHITESPACE, so a trailing tab collapses and an empty matcher field would vanish on read-back.
+  local expected="" expected_pair="" binding event hook matcher
+  for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
+    IFS=$'\t' read -r event hook matcher <<<"${binding}"
+    expected+="${event}"$'\x1f'"${hook}"$'\x1f'"${matcher}"$'\n'
+    expected_pair+="${event}"$'\x1f'"${hook}"$'\n'
+  done
+
+  # enumerate the LIVE Atrium-owned bindings as event/basename/matcher keys. Basename via split("/")|last (never a regex — a $HOME with metachars stays byte-safe); the leading '~' normalized by string slicing, mirroring retire_hook_binding.
+  local live
+  # jq status masked by the pipeline BY DESIGN: a malformed settings.json already died in wire_hooks, so any residual failure yields empty output → the emptiness guard below returns a clean no-op rather than a bogus drop list (SC2312).
+  # shellcheck disable=SC2312
+  live="$(
+    jq -r --arg home "${HOME}" \
+      --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
+      def norm: (. // "") | (if startswith("~/") then $home + .[1:] else . end);
+      (.hooks // {}) | to_entries[]
+      | select((.value | type) == "array")
+      | .key as $ev
+      | .value[]
+      | ((.matcher // "") | tostring) as $m
+      | (.hooks // [])[]?
+      | select((.command | type) == "string")
+      | (.command | norm)
+      | select(startswith($d1) or startswith($d2))
+      | [ $ev, (split("/") | last), $m ] | join("\u001f")
+    ' -- "${SETTINGS_JSON}" 2>/dev/null | sort -u || printf ''
+  )"
+  [[ -n "${live}" ]] || return 0
+
+  # stale = the basename IS expected under this event, but THIS matcher is not.
+  local key drop=""
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    grep -Fxq -- "${key%$'\x1f'*}" <<<"${expected_pair}" || continue
+    grep -Fxq -- "${key}" <<<"${expected}" && continue
+    drop+="${key}"$'\n'
+  done <<<"${live}"
+  [[ -n "${drop}" ]] || return 0
+
+  local backup="" removed=0 ev base m before after
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    # US-split: a NON-whitespace IFS keeps an empty matcher a real (empty) field.
+    IFS=$'\x1f' read -r ev base m <<<"${key}"
+
+    # DROP every hook-group under this event that BOTH carries the stale matcher AND holds the exact wire command for this basename in either Atrium dir. A sibling matcher row, a foreign path, and a different basename all fail the predicate and are preserved.
+    RENDER_TMP="${SETTINGS_JSON}.ga-stale.$$"
+    jq --arg ev "${ev}" --arg m "${m}" --arg base "${base}" --arg home "${HOME}" \
+      --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
+      def is_target:
+        (. // "")
+        | (if startswith("~/") then $home + .[1:] else . end)
+        | (. == ($d1 + $base)) or (. == ($d2 + $base));
+      if (.hooks[$ev] | type) == "array" then
+        .hooks[$ev] |= map(
+          select(
+            ( ((.matcher // "") == $m)
+              and ([ (.hooks // [])[]? | .command | is_target ] | any)
+            ) | not
+          )
+        )
+      else . end
+    ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
+
+    if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
+      rm -f -- "${RENDER_TMP}"
+      RENDER_TMP=""
+      die "reconcile_stale_hook_matchers: edit produced invalid JSON for ${ev} -> ${base} — backup: ${backup:-(none taken — no mutation occurred)}"
+    fi
+
+    before="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${SETTINGS_JSON}")"
+    after="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${RENDER_TMP}")"
+    # no change → discard WITHOUT a write/backup (keeps the no-op zero-write property).
+    if [[ "${before}" -eq "${after}" ]]; then
+      rm -f -- "${RENDER_TMP}"
+      RENDER_TMP=""
+      continue
+    fi
+
+    # KEY-PRUNE symmetry (mirrors retire_hook_binding): wire_hooks CREATES an event key, so a drop that empties it MUST prune the key; a pre-existing user-owned empty [] (before==0) is left alone.
+    if [[ "${after}" -eq 0 && "${before}" -gt 0 ]]; then
+      local pruned="${SETTINGS_JSON}.ga-stale-prune.$$"
+      jq --arg ev "${ev}" 'del(.hooks[$ev])' -- "${RENDER_TMP}" >"${pruned}"
+      if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
+        rm -f -- "${pruned}" "${RENDER_TMP}"
+        RENDER_TMP=""
+        die "reconcile_stale_hook_matchers: prune produced invalid JSON for event ${ev} — backup: ${backup:-(none taken — no mutation occurred)}"
+      fi
+      mv -f -- "${pruned}" "${RENDER_TMP}"
+    fi
+
+    # lazy backup: taken EXACTLY once, immediately before the first real write. Distinct suffix from wire_hooks' own so a same-second wire backup cannot overwrite this pre-reconcile image.
+    if [[ -z "${backup}" ]]; then
+      backup="${SETTINGS_JSON}.ga-stale-backup.$(date +%Y%m%d-%H%M%S)"
+      cp -p -- "${SETTINGS_JSON}" "${backup}"
+      log "reconcile_stale_hook_matchers: backed up settings.json -> ${backup}"
+    fi
+
+    mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
+    RENDER_TMP=""
+    removed=$((removed + before - after))
+    log "  dropped stale matcher: ${ev} -> ${base} (matcher=${m:-<none>})"
+  done <<<"${drop}"
+
+  log "reconcile_stale_hook_matchers: ${removed} stale binding(s) dropped (backup: ${backup:-none — no mutation})"
+}
+
 # settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium hook commands, never any other key).
 # Upserts each EXPECTED_HOOK_BINDINGS entry under its event with the declared matcher + the "$HOME/.glass-atrium/hooks/<basename>" command.
 # SAFETY CONTRACT (why this cannot clobber user config):
 #   * MERGE not overwrite — the jq transform reads the FULL existing object and only APPENDS a hook-group to one .hooks.<event>; every other key (permissions, env, model, statusLine, user hook entries) flows through `.` unchanged — no key ever deleted, replaced, or reordered.
 #   * IDEMPOTENT — is_hook_bound() (basename compare within the event) checked first; an already-present command is a no-op (the 8 pre-wired hooks skip).
+#   * RECONCILED — the add loop alone is add-only, so a CHANGED matcher would leave the old-matcher row bound (double-fire); reconcile_stale_hook_matchers drops it after the adds. Scoped to basenames this event expects — a retired or hand-wired Atrium binding is left to retire_hook_binding/unwire_hooks.
 #   * ATOMIC — each upsert writes a temp, re-validates with `jq .`, then mv over settings.json (never a half-written file).
 #   * BACKED UP — settings.json copied to a timestamped backup before the FIRST mutation; the backup path is printed for rollback.
 #   * LOUD-FAIL — absent settings.json → create a minimal {} skeleton (clean install still wires); a malformed (unparseable) settings.json ABORTS rather than risk corrupting user config.
@@ -350,6 +467,9 @@ wire_hooks() {
     log "  wired: ${event} -> ${hook} (matcher=${matcher:-<none>})"
     added=$((added + 1))
   done
+
+  # RECONCILE stale matchers AFTER the add loop: the correct binding is already in place, so the hook is never momentarily unbound while the old-matcher row is dropped.
+  reconcile_stale_hook_matchers
 
   log "wire_hooks: ${added} binding(s) added, ${already} already wired (backup: ${backup:-none — no mutation})"
 }
