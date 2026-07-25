@@ -29,6 +29,7 @@ const CUSTOM_OPTION_MC = "__custom__";
 
 // 모델별 1줄 역량 설명 — radio-card 옵션 보조 라벨 (T-MDL-3). GET 응답에 없는 표시 파생값이라 UI 상수.
 const MODEL_CAP_MC = {
+	"claude-opus-5": "Latest Opus — agentic coding, long-horizon work",
 	"claude-fable-5": "Highest capability — deep reasoning, long-horizon agents",
 	"claude-opus-4-8": "Strong default — implementation, review, design",
 	"claude-sonnet-5": "Sonnet tier — balanced speed/cost",
