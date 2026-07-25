@@ -173,7 +173,7 @@ DEFAULT_PATTERN_LIMIT = int(os.environ.get("AUTOAGENT_AGENT_LIMIT", "0") or "0")
 HAIKU_TIMEOUT_SEC = 90
 # Budget ceiling + model id read from the daemon-config.json SoT via the shared
 # loader (hooks/daemon_config.py), which degrades to validated literals
-# ('0.50' / 'claude-haiku-4-5') on missing/corrupt file — NEVER raises (test
+# ('0.50' / the unpinned 'haiku' alias) on missing/corrupt file — NEVER raises (test
 # modules import at collection time). Live-verified: 0.10 is too low (immediate
 # EXIT 1); 0.50 passes (Anthropic minimum call cost ~$0.02-0.10). Cost ceiling:
 # agents-per-cycle × 0.50.
