@@ -738,8 +738,10 @@ update_filter_clean_path() {
 #   * REFUSED (sensitive path/diff, plan rc 3)  -> skipped, reported (never written)
 #   * structural-change (region-count mismatch) -> routed to the agent_lifecycle
 #                                                  ceremony (NOT auto-applied)
+#   * merge-conflict / gated-2way-present-both  -> marker-bearing REPORT, never
+#                                                  landable -> same ceremony route
 #   * keep-local / no-op (changed=False)         -> no write
-#   * keep-local|take-release|merge-* (changed)  -> candidate collected -> gate -> txn
+#   * keep-local|take-release|merge-clean (changed) -> collected -> gate -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
 # ROSTER change already handled by update_roster_gate; the merge skips it (the add
 # belongs to the agent_lifecycle ceremony, not an in-band content merge).
