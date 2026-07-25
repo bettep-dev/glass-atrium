@@ -18,9 +18,19 @@ import esbuild from "esbuild";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENTS_SRC = resolve(__dirname, "../public/src/screens/agents.jsx");
 const PRICING_SRC = resolve(__dirname, "../public/src/data/pricing.js");
+const PRICING_SOT = resolve(__dirname, "../../hooks/pricing.json");
 
 interface Rates {
   input: number; output: number; cache_read: number; cache_creation: number;
+}
+// A SoT row may carry a dated `tiers` window; the mirror has no tier/date input.
+interface SotModel extends Rates {
+  tiers?: Array<{ until: string }>;
+}
+
+// Base row only — a windowed tier expires, so comparing it would rot the guard.
+function getBaseRow(r: Rates): Rates {
+  return { input: r.input, output: r.output, cache_read: r.cache_read, cache_creation: r.cache_creation };
 }
 interface AgentsHelpers {
   buildSuccessRateMatrix: (rows: unknown) => {
@@ -98,25 +108,41 @@ const pricing = loadPricing();
 test("getTokenRate: exact catalog key resolves directly", () => {
   const r = pricing.getTokenRate("claude-opus-4-8");
   assert.ok(r);
-  assert.strictEqual(r.input, 15);
+  assert.strictEqual(r.input, 5);
 });
 
 test("getTokenRate: date-suffixed id resolves the family rate (silent COUNT-fallback avoided)", () => {
   const r = pricing.getTokenRate("claude-opus-4-8-20260101");
   assert.ok(r, "date-suffixed opus id must resolve");
-  assert.strictEqual(r.input, 15, "resolves the claude-opus-4-8 family rate");
+  assert.strictEqual(r.input, 5, "resolves the claude-opus-4-8 family rate");
 });
 
 test("getTokenRate: longest-prefix wins (opus-4-8 not shadowed by opus-4)", () => {
   const r = pricing.getTokenRate("claude-opus-4-8-20260515");
-  // opus-4 and opus-4-8 share the same rate here, but the boundary + longest-prefix
-  // rule guarantees the more specific stem is selected.
-  assert.strictEqual(r?.output, 75);
+  // opus-4 ($75, retained) and opus-4-8 ($25, SoT) now carry different rates.
+  // Longest-prefix regression to the shorter stem → this assertion fails.
+  assert.strictEqual(r?.output, 25);
 });
 
 test("getTokenRate: a genuine miss returns null (pill trigger)", () => {
   assert.strictEqual(pricing.getTokenRate("gpt-4o"), null);
   assert.strictEqual(pricing.getTokenRate(""), null);
+});
+
+// --- SoT consistency: hooks/pricing.json → the pricing.js display mirror ---
+
+test("getTokenRate: every SoT model resolves to its base-row rate (mirror drift guard)", () => {
+  const sot = JSON.parse(readFileSync(PRICING_SOT, "utf8")) as { models: Record<string, SotModel> };
+  const models = Object.entries(sot.models);
+  assert.ok(models.length > 0, "SoT declares no model — path or schema regression");
+
+  for (const [model, sotRate] of models) {
+    const r = pricing.getTokenRate(model);
+    assert.ok(r, `${model}: unresolved → COUNT-ratio fallback + 'unpriced' pill`);
+    assert.deepStrictEqual(
+      getBaseRow(r), getBaseRow(sotRate), `${model}: mirror drifted from the SoT base row`,
+    );
+  }
 });
 
 // --- DF-24: matrix consumes reconstructed_count (writer-emitted basis) ---
