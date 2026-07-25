@@ -204,9 +204,13 @@ ALL_ARGS = "*"
 TAIL_ARGS = "1:"
 
 QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+# node spells a string three ways — the template literal is the third, and only
+# the node dispatch reads it (a backtick is command substitution in perl/ruby).
+# The backquote is spelled \x60 throughout, per the enclosing-heredoc convention.
+NODE_QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\x60([^\x60]*)\x60")
 PY_MODE_ARG_RE = re.compile(r"^\s*(?:mode\s*=\s*)?(['\"])[rwaxbt+]*[wax+][rwaxbt+]*\1\s*$")
 PY_OSFLAG_ARG_RE = re.compile(r"\bO_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)\b")
-NODE_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxs+]*[wax+][rwaxs+]*\1\s*$")
+NODE_MODE_ARG_RE = re.compile(r"^\s*(['\"\x60])[rwaxs+]*[wax+][rwaxs+]*\1\s*$")
 RUBY_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxb+]*[wax+][rwaxb+]*\1\s*$")
 
 # (api regex ending at its own '(', write-position spec, mode-argument guard).
@@ -223,6 +227,11 @@ PY_WRITE_RULES = (
 # Receiver form — Path('<target>').write_text(...) names its target BEFORE the API.
 PY_RECEIVER_RE = re.compile(
     r"(['\"])(?P<t>[^'\"]*)\1\s*\)?\s*\.(?:write_text|write_bytes|writelines)\s*\("
+)
+# Receiver form carrying a MODE — Path('<target>').open('w'). The mode is the
+# whole discrimination: the same receiver with no mode, or a read one, is a read.
+PY_RECEIVER_OPEN_RE = re.compile(
+    r"(['\"])(?P<t>[^'\"]*)\1\s*\)?\s*\.open\s*\((?P<a>[^)]*)\)"
 )
 # fileinput rewrites the files it is HANDED and there is no argument position to
 # key on, so every literal in the code string counts as a candidate target.
@@ -667,23 +676,30 @@ def call_args(text, lparen):
     return args
 
 
-def quoted_literals(text):
+def quoted_literals(text, literal_re=QUOTED_RE):
     """String literals inside one argument text — the only spelling of a target
     this machine can read (a variable target is the indirection residual)."""
-    return [m.group(1) if m.group(1) is not None else m.group(2)
-            for m in QUOTED_RE.finditer(text)]
+    out = []
+    for m in literal_re.finditer(text):
+        for group in m.groups():
+            if group is not None:
+                out.append(group)
+                break
+    return out
 
 
 def pick_args(args, positions):
-    """Arguments at the rule's WRITE positions."""
-    if positions == ALL_ARGS:
+    """Arguments at the rule's WRITE positions. A rule's position spec is ALWAYS
+    a TUPLE — membership, not equality, is what reads the list-taking sentinels,
+    so the table spelling and this reader cannot drift into a silent mismatch."""
+    if ALL_ARGS in positions:
         return args
-    if positions == TAIL_ARGS:
+    if TAIL_ARGS in positions:
         return args[1:]
     return [args[i] for i in positions if i < len(args)]
 
 
-def rules_scan(code, rules):
+def rules_scan(code, rules, literal_re=QUOTED_RE):
     """(a write API fired, [literals at its WRITE positions]) over a rule table."""
     fired = False
     targets = []
@@ -694,7 +710,7 @@ def rules_scan(code, rules):
                 continue
             fired = True
             for arg in pick_args(args, positions):
-                targets.extend(quoted_literals(arg))
+                targets.extend(quoted_literals(arg, literal_re))
     return fired, targets
 
 
@@ -710,12 +726,17 @@ def write_scan(name, code):
         for m in PY_RECEIVER_RE.finditer(code):
             fired = True
             targets.append(m.group("t"))
+        for m in PY_RECEIVER_OPEN_RE.finditer(code):
+            if not PY_MODE_ARG_RE.match(m.group("a").split(",")[0]):
+                continue
+            fired = True
+            targets.append(m.group("t"))
         if PY_INPLACE_RE.search(code):
             fired = True
             targets.extend(quoted_literals(code))
         return fired, targets
     if name in INTERP_NODE:
-        return rules_scan(code, NODE_WRITE_RULES)
+        return rules_scan(code, NODE_WRITE_RULES, NODE_QUOTED_RE)
     if name == "perl":
         fired = False
         targets = []

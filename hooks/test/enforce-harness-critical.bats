@@ -975,6 +975,169 @@ MD
   [[ "${status}" -eq 2 ]] || return 1
 }
 
+# ── R3-1: the list-taking sentinel rule rows (ALL_ARGS / TAIL_ARGS) ───────────
+#
+# The sentinels are a SECOND spelling of the write-position spec, and a spec the
+# reader cannot decode takes the classifier down rather than reporting a verdict
+# — a crash the fail-open path then served as `allow`, i.e. the whole command
+# passed. One row per sentinel-bearing rule-table row, every alternation member
+# named, so no member of these tables is green by proxy again.
+
+@test "R3-1 ruby File.delete/unlink (ALL_ARGS) → block, incl. the multi-arg form" {
+  run_hook "Bash" "$(bash_input "ruby -e \"File.delete('~/.claude/hooks/a.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"File.unlink('~/.glass-atrium/hooks/b.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"File.unlink('/tmp/a', '~/.claude/agents/x.md')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-1 ruby FileUtils.rm_rf/rm_r/rm/mkdir_p/mkdir (ALL_ARGS) → block" {
+  local verb
+  for verb in rm_rf rm_r rm mkdir_p mkdir; do
+    run_hook "Bash" "$(bash_input "ruby -e \"FileUtils.${verb}('~/.glass-atrium/hooks/')\"")"
+    [[ "${status}" -eq 2 ]] || return 1
+    [[ "${output}" == *"bash-interp-write"* ]] || return 1
+  done
+}
+
+@test "R3-1 ruby FileUtils.chmod (TAIL_ARGS) → block on any tail argument" {
+  run_hook "Bash" "$(bash_input "ruby -e \"FileUtils.chmod(0644, '~/.claude/hooks/a.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"FileUtils.chmod(0755, '/tmp/a', '~/.glass-atrium/scripts/b.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-1-neg the same sentinel rules on unprotected paths → pass (no blanket block)" {
+  run_hook "Bash" "$(bash_input "ruby -e \"File.delete('/tmp/a.sh')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"FileUtils.rm_rf('/tmp/build')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"FileUtils.chmod(0644, '/tmp/a.sh')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R3-2: an internal classifier exception fails CLOSED ───────────────────────
+#
+# The class the rows above belong to: a defect anywhere in the refinement used
+# to resolve to `allow`, and the refinement SOLELY owns the interpreter classes,
+# so one exception passed the whole command while the suite stayed green. These
+# rows assert the polarity itself — an injected internal error blocks — so the
+# guarantee no longer rests on having enumerated every crashing input.
+
+@test "R3-2 injected classifier exception → HAR-003 block naming the exception" {
+  local hook
+  hook="$(hook_with_injected_classifier_error)"
+  run env "HOME=${FAKE_HOME}" "${hook}" <<<"$(jq -cn '{tool_name:"Bash",
+    tool_input:{command:"printf x > ~/.claude/hooks/a.sh"}}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-003"* ]] || return 1
+  [[ "${output}" == *"classifier-failure"* ]] || return 1
+  [[ "${output}" == *"error:RuntimeError"* ]] || return 1
+}
+
+@test "R3-2 injected classifier exception on a Write envelope → HAR-003 block" {
+  local hook
+  hook="$(hook_with_injected_classifier_error)"
+  run env "HOME=${FAKE_HOME}" "${hook}" \
+    <<<"$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+      '{tool_name:"Edit", tool_input:{file_path:$p, old_string:"# Body", new_string:"# Body2"}}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-003"* ]] || return 1
+}
+
+@test "R3-2-neg injected classifier exception on a NON-protected envelope → pass" {
+  local hook
+  hook="$(hook_with_injected_classifier_error)"
+  run env "HOME=${FAKE_HOME}" "${hook}" \
+    <<<"$(jq -cn '{tool_name:"Bash", tool_input:{command:"printf x > /tmp/o"}}')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# A new-file Write is the one ABSENT-path shape the refinement meets in normal
+# operation. It must stay a structural pass, not an exception — otherwise
+# fail-closed turns every first write of a file into a block.
+@test "R3-2-neg Write to a new unprotected file → pass (absence is not a defect)" {
+  run_hook "Write" "$(write_input "${BATS_TEST_TMPDIR}/brand-new.ts" 'const p = "~/.claude/settings.json";')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R3-3: node template literals are a third string spelling ──────────────────
+#
+# A backtick target reads as no literal at all, so a fully-literal write passed
+# with nothing indirect about it. Only the node dispatch reads backticks — in
+# perl/ruby the same character is command substitution.
+
+@test "R3-3 node writeFileSync with a template-literal target → block" {
+  run_hook "Bash" "$(bash_input 'node -e "fs.writeFileSync(`~/.claude/settings.json`, \"x\")"')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "R3-3 node createWriteStream / openSync with template literals → block" {
+  run_hook "Bash" "$(bash_input 'node -e "fs.createWriteStream(`~/.glass-atrium/hooks/a.sh`)"')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'node -e "fs.openSync(`~/.glass-atrium/hooks/a.sh`, `w`)"')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-3-neg node template-literal READ of a protected path → pass" {
+  run_hook "Bash" "$(bash_input 'node -e "console.log(fs.readFileSync(`~/.claude/settings.json`, `utf8`))"')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'node -e "fs.writeFileSync(`/tmp/o.json`, fs.readFileSync(`~/.claude/settings.json`))"')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# perl/ruby must NOT gain the backtick spelling: there it is shell command
+# substitution, and reading it as a string literal would mis-frame the text.
+@test "R3-3-neg ruby backtick stays shell text, not a string literal → pass" {
+  run_hook "Bash" "$(bash_input 'ruby -e "puts \`cat /tmp/o\`"')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R3-4: the receiver+mode write shape — Path(<literal>).open("w") ───────────
+#
+# The receiver names the target BEFORE the API and the mode is the whole
+# read/write discrimination, so neither the argument-position table nor the
+# mode-less receiver rule presents this shape.
+
+@test "R3-4 Path(protected).open write modes → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"Path('~/.claude/settings.json').open('w').write('x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"Path('~/.glass-atrium/hooks/a.sh').open(mode='a')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-4 json.dump into Path(protected).open('w') → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import json;json.dump({}, Path('~/.claude/settings.json').open('w'))\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-4-neg Path(protected).open() with no mode or a read mode → pass" {
+  run_hook "Bash" "$(bash_input "python3 -c \"print(Path('~/.claude/settings.json').open().read())\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"print(Path('~/.claude/settings.json').open('r').read())\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── R3-5: the DOCUMENTED RESIDUAL boundary, pinned ────────────────────────────
+#
+# Every target reader is literal-only, so a variable-bound target passes — the
+# same indirection residual the header names, now with a test on it. Moving this
+# boundary is a deliberate decision, not an accident to be discovered later.
+
+@test "R3-5 variable-bound target inside a code string → pass (documented residual)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"p = '~/.claude/settings.json'; open(p, 'w').write('x')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "node -e \"const p = '~/.claude/settings.json'; fs.writeFileSync(p, 'x')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"p = '~/.claude/hooks/a.sh'; File.delete(p)\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
 # ── R2-4: two-char redirect operators (>| clobber, >& fd-or-file, &>) ─────────
 #
 # `>|` and `>&` were structurally invisible: the segmenter split on the unquoted
