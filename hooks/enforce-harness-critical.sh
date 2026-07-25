@@ -50,19 +50,28 @@
 #   bash-cwd-relative-write — while a `cd`/`pushd` has armed a protected dir, a
 #     RELATIVE redirect target or mutation-verb argument (an absolute one stays
 #     allowed, so `cd <prot> && grep x f > /tmp/out` passes). A return to an
-#     unnameable directory (`cd -`, `popd`) re-arms whenever this command
-#     entered a protected dir earlier — arming is a boolean over-approximation
-#     and staying armed is the safe direction.
-# DOCUMENTED RESIDUAL (not covered): variable
-# indirection (P=...; echo > "$P"), command substitution, quote-split paths,
+#     unnameable directory (`cd -`, `popd`, a bare `pushd` stack swap, a
+#     `pushd +N`/`-N` rotation) re-arms whenever this command entered a protected
+#     dir earlier — arming is a boolean over-approximation and staying armed is
+#     the safe direction.
+# DOCUMENTED RESIDUAL (not covered): variable indirection, in shell
+# (P=...; echo > "$P") AND inside an interpreter code string
+# (p = "<prot>"; open(p, "w")) — every target reader is literal-only, so a
+# variable-bound target passes; command substitution, quote-split paths,
 # non-command-position verb runs (xargs/find -exec), an interpreter fed code on
-# STDIN rather than through a code flag, and a cd issued in an EARLIER Bash call
-# (the machine is per-command; the envelope cwd field is deliberately unread until
-# its live-cwd semantics are confirmed) — the settings deny layer + the
+# STDIN rather than through a code flag, a `pushd -n` (pushes WITHOUT moving, so
+# its argument reads as a destination change), and a cd issued in an EARLIER Bash
+# call (the machine is per-command; the envelope cwd field is deliberately unread
+# until its live-cwd semantics are confirmed) — the settings deny layer + the
 # Write|Edit arm remain the primary gates. The pure-bash hot-path prefilter (raw
 # envelope must contain a ".claude" / ".glass-atrium" dir-name literal, else exit 0
 # with zero python3 spawns) shares the same residual: an envelope hiding those
 # literals behind indirection or JSON \uXXXX escapes skips this gate.
+# KNOWN FALSE POSITIVES (over-block — the safe direction, left uncorrected): the
+# entered-a-protected-dir flag is scan-scoped rather than paren-scoped, so a
+# SUBSHELL cd into a protected dir keeps a later `cd -`/`popd` conservative
+# outside that subshell; and the copy verbs match segment-wide, so rsync/install
+# naming a protected path as their SOURCE block like a target.
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
@@ -115,10 +124,11 @@ readonly CLAUDE_DIR GA_DIR
 # Single-pass envelope classifier (python3 — robust JSON/frontmatter/regex parsing),
 # ONE spawn for the whole hook: emits tool_name, the arm target (file_path for
 # Write|Edit, command for Bash), and the content-inspection verdict
-# (block:<reason> | allow), each NUL-terminated (hook_get_fields consumer
-# convention). The verdict refinement fails OPEN on an internal exception — the
-# deterministic path classes (live settings / hook dirs / new-agent creation) block
-# in pure bash and never depend on it.
+# (block:<reason> | allow | error:<ExcType>), each NUL-terminated (hook_get_fields
+# consumer convention). An internal refinement exception NEVER resolves to allow:
+# the refinement is the sole owner of the interpreter classes, so swallowing one
+# disarms them silently. It names its exception type in the verdict field and
+# exits non-zero, engaging the HAR-003 fail-closed gate below.
 # `read -d ''` builtin assignment (no command-substitution-of-cat subshell); read
 # returns 1 at heredoc EOF without a NUL → `|| true`.
 IFS= read -r -d '' DETECT_PY <<'PY' || true
@@ -203,9 +213,13 @@ ALL_ARGS = "*"
 TAIL_ARGS = "1:"
 
 QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+# node spells a string three ways — the template literal is the third, and only
+# the node dispatch reads it (a backtick is command substitution in perl/ruby).
+# The backquote is spelled \x60 throughout, per the enclosing-heredoc convention.
+NODE_QUOTED_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\x60([^\x60]*)\x60")
 PY_MODE_ARG_RE = re.compile(r"^\s*(?:mode\s*=\s*)?(['\"])[rwaxbt+]*[wax+][rwaxbt+]*\1\s*$")
 PY_OSFLAG_ARG_RE = re.compile(r"\bO_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)\b")
-NODE_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxs+]*[wax+][rwaxs+]*\1\s*$")
+NODE_MODE_ARG_RE = re.compile(r"^\s*(['\"\x60])[rwaxs+]*[wax+][rwaxs+]*\1\s*$")
 RUBY_MODE_ARG_RE = re.compile(r"^\s*(['\"])[rwaxb+]*[wax+][rwaxb+]*\1\s*$")
 
 # (api regex ending at its own '(', write-position spec, mode-argument guard).
@@ -222,6 +236,11 @@ PY_WRITE_RULES = (
 # Receiver form — Path('<target>').write_text(...) names its target BEFORE the API.
 PY_RECEIVER_RE = re.compile(
     r"(['\"])(?P<t>[^'\"]*)\1\s*\)?\s*\.(?:write_text|write_bytes|writelines)\s*\("
+)
+# Receiver form carrying a MODE — Path('<target>').open('w'). The mode is the
+# whole discrimination: the same receiver with no mode, or a read one, is a read.
+PY_RECEIVER_OPEN_RE = re.compile(
+    r"(['\"])(?P<t>[^'\"]*)\1\s*\)?\s*\.open\s*\((?P<a>[^)]*)\)"
 )
 # fileinput rewrites the files it is HANDED and there is no argument position to
 # key on, so every literal in the code string counts as a candidate target.
@@ -274,6 +293,10 @@ BACKTICK_RE = re.compile(r"\x60([^\x60]*)\x60")
 
 MAX_SCAN_DEPTH = 2
 
+# Directory-stack rotation argument (`pushd +1`, `popd -0`) — it names a stack
+# SLOT, never a path, so the destination is as unnameable as `cd -`.
+ROTATE_ARG_RE = re.compile(r"^[+-]\d+$")
+
 # Scan-scoped: a protected dir was entered by some earlier cd in THIS command.
 # It is what makes a return to an unnameable directory (`cd -`, `popd`) decide
 # conservatively without false-blocking a command that never went near one.
@@ -307,8 +330,15 @@ def identity_lines(text):
 
 
 def read_disk(path):
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        return fh.read()
+    """On-disk text, or "" when the path is absent/unreadable. Absence is the
+    EXPECTED shape for a new-file Write and must not read as an internal defect:
+    the bash arm blocks a new agents/*.md by its own -e check, and every other
+    new path leaves this arm before the verdict is consulted."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
 
 
 def fence_count(text):
@@ -659,23 +689,30 @@ def call_args(text, lparen):
     return args
 
 
-def quoted_literals(text):
+def quoted_literals(text, literal_re=QUOTED_RE):
     """String literals inside one argument text — the only spelling of a target
     this machine can read (a variable target is the indirection residual)."""
-    return [m.group(1) if m.group(1) is not None else m.group(2)
-            for m in QUOTED_RE.finditer(text)]
+    out = []
+    for m in literal_re.finditer(text):
+        for group in m.groups():
+            if group is not None:
+                out.append(group)
+                break
+    return out
 
 
 def pick_args(args, positions):
-    """Arguments at the rule's WRITE positions."""
-    if positions == ALL_ARGS:
+    """Arguments at the rule's WRITE positions. A rule's position spec is ALWAYS
+    a TUPLE — membership, not equality, is what reads the list-taking sentinels,
+    so the table spelling and this reader cannot drift into a silent mismatch."""
+    if ALL_ARGS in positions:
         return args
-    if positions == TAIL_ARGS:
+    if TAIL_ARGS in positions:
         return args[1:]
     return [args[i] for i in positions if i < len(args)]
 
 
-def rules_scan(code, rules):
+def rules_scan(code, rules, literal_re=QUOTED_RE):
     """(a write API fired, [literals at its WRITE positions]) over a rule table."""
     fired = False
     targets = []
@@ -686,7 +723,7 @@ def rules_scan(code, rules):
                 continue
             fired = True
             for arg in pick_args(args, positions):
-                targets.extend(quoted_literals(arg))
+                targets.extend(quoted_literals(arg, literal_re))
     return fired, targets
 
 
@@ -702,12 +739,17 @@ def write_scan(name, code):
         for m in PY_RECEIVER_RE.finditer(code):
             fired = True
             targets.append(m.group("t"))
+        for m in PY_RECEIVER_OPEN_RE.finditer(code):
+            if not PY_MODE_ARG_RE.match(m.group("a").split(",")[0]):
+                continue
+            fired = True
+            targets.append(m.group("t"))
         if PY_INPLACE_RE.search(code):
             fired = True
             targets.extend(quoted_literals(code))
         return fired, targets
     if name in INTERP_NODE:
-        return rules_scan(code, NODE_WRITE_RULES)
+        return rules_scan(code, NODE_WRITE_RULES, NODE_QUOTED_RE)
     if name == "perl":
         fired = False
         targets = []
@@ -788,16 +830,20 @@ def unknown_dir_armed(armed):
     return True if PROT_CD_SEEN[0] else armed
 
 
-def next_armed(argv, armed):
+def next_armed(name, argv, armed):
     """Arm B state transition. A protected-dir argument ARMS; any other
     absolute/~/$-rooted argument DISARMS; a relative one KEEPS the state —
-    `cd ..` must stay armed, else it is a one-line bypass."""
+    `cd ..` must stay armed, else it is a one-line bypass. Every unnameable
+    destination shares one treatment: `cd -`, a stack ROTATION (`pushd +1`) and
+    a bare `pushd` (which swaps the top two stack entries rather than going
+    HOME, unlike a bare `cd`) all land where the text cannot say, so they take
+    the conservative return. Only a bare `cd` names a destination — HOME."""
     raw = [tok[1] for tok in argv[1:] if tok[1]]
-    if "-" in raw:
+    if "-" in raw or any(ROTATE_ARG_RE.match(val) for val in raw):
         return unknown_dir_armed(armed)
     args = [val for val in raw if not val.startswith("-")]
     if not args:
-        return False
+        return unknown_dir_armed(armed) if name == "pushd" else False
     if PROT_DIR_RE.search(args[0]):
         PROT_CD_SEEN[0] = True
         return True
@@ -844,7 +890,7 @@ def scan_segment(seg, depth, armed):
         return "", armed
     name = argv[0][1].rsplit("/", 1)[-1]
     if name in ("cd", "pushd"):
-        return "", next_armed(argv, armed)
+        return "", next_armed(name, argv, armed)
     if name == "popd":
         return "", unknown_dir_armed(armed)
     if name in MUTATION_VERBS:
@@ -923,6 +969,7 @@ def main():
         target = str(tool_input.get("command", ""))
     else:
         target = ""
+    status = 0
     try:
         if tool_name == "Write":
             reason = detect_agent_write(tool_input)
@@ -932,13 +979,20 @@ def main():
             reason = detect_bash(tool_input)
         else:
             reason = ""
-    except Exception:  # noqa: BLE001 — refinement fails open; bash-side classes stay armed
-        reason = ""
-    verdict = "block:" + reason if reason else "allow"
+        verdict = "block:" + reason if reason else "allow"
+    except Exception as exc:  # noqa: BLE001 — an internal defect is fail-CLOSED
+        # This refinement is the SOLE owner of the interpreter classes, so an
+        # exception resolved to allow passes the entire command. Name the type
+        # for the block payload, then exit non-zero so HAR-003 blocks.
+        verdict = "error:" + type(exc).__name__
+        status = 3
     # NUL-strip mirrors hook_get_fields (a JSON string MAY carry \u0000; an embedded
     # NUL would truncate the `read -r -d ''` consumer mid-value).
     for field in (tool_name, target, verdict):
         sys.stdout.write(field.rstrip("\n").replace("\x00", "") + "\0")
+    sys.stdout.flush()
+    if status:
+        sys.exit(status)
 
 
 main()
@@ -1001,7 +1055,16 @@ block_critical() {
   printf '%s\n' "${INPUT}" | python3 -c "${DETECT_PY}" 2>/dev/null || st=$?
   printf '%s\0' "${st}"
 )
-[[ "${PY_STATUS}" == "0" ]] || block_critical "HAR-003" "classifier-failure" "python3 classifier exit ${PY_STATUS:-EOF}"
+if [[ "${PY_STATUS}" != "0" ]]; then
+  # `error:<ExcType>` is the classifier naming its OWN internal exception; any
+  # other verdict value means it died before it could say anything.
+  CLASSIFIER_DETAIL="python3 classifier exit ${PY_STATUS:-EOF}"
+  case "${VERDICT}" in
+    error:*) CLASSIFIER_DETAIL="${CLASSIFIER_DETAIL} (${VERDICT})" ;;
+    *) : ;;
+  esac
+  block_critical "HAR-003" "classifier-failure" "${CLASSIFIER_DETAIL}"
+fi
 
 write_edit_arm() {
   local norm
