@@ -135,7 +135,7 @@ export const DIAGRAMS = [
 
     subgraph pre_gate["Before the action runs"]
         safety_gates["Pre-execution safety gates"]
-        advisories["Budget advisories (warnings only)"]
+        advisories["Advisory checks (warnings only)"]
     end
 
     matrix["Rule-consistency check"]
