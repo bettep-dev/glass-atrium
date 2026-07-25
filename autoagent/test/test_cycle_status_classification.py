@@ -11,6 +11,8 @@ loud-fail fallback:
       silent 'ok' (pipeline loud-fail hygiene).
 Successful patches (empty error) are excluded from the failing-class set, so a
 cycle with successes alongside all-quota failures still reads 'quota_exceeded'.
+A chronic-timeout back-off row rides branch (3) for the same reason: run_cycle
+leaves its error empty because the skip is intentional, not a cycle fault.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_cycle_status_classification -v
@@ -70,6 +72,23 @@ class CycleStatusClassification(unittest.TestCase):
     def test_when_non_quota_failure_then_partial(self) -> None:
         payload = {"patches": [_fail("chronic-timeout")]}
         self.assertEqual(writer._aggregate(payload)["status"], "partial")
+
+    def test_when_chronic_backoff_skip_row_then_ok(self) -> None:
+        # Back-off skip shape as run_cycle emits it: empty error (the skip is
+        # intentional, not a cycle fault) carried alongside the distinguishing
+        # haiku_status/status. Pairs with the fresh-timeout pin above — the
+        # first N timeouts stay 'partial', only the backed-off row reads 'ok'.
+        payload = {
+            "patches": [
+                _patch(
+                    error="",
+                    failure_class="",
+                    haiku_status="skipped:chronic-timeout-backoff",
+                    status="snoozed",
+                )
+            ]
+        }
+        self.assertEqual(writer._aggregate(payload)["status"], "ok")
 
     def test_when_no_error_bearing_patch_then_ok(self) -> None:
         payload = {"patches": [_patch(classification="body-tweak", error="")]}
