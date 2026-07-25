@@ -103,10 +103,15 @@ vendor rules v2'
 # (c) BOTH-CHANGED agent fixture: base, local, release all differ in the region ->
 # net-new diff3 candidate, needs_llm=True (Haiku improvement-verify gate). With the
 # failing claude stub the verify conservative-fails -> git_txn rolls it back (gated).
+# Both-changed fixture: the two sides edit DIFFERENT lines of the region, so the
+# resolver produces a CLEAN diff3 candidate that still needs the Haiku gate. An
+# OVERLAPPING rewrite would instead be marker-bearing — report-only under the
+# conflict-marker tripwire, so it never reaches the verify these tests exercise.
 BOTH_BASE='# dev-both
 ## Goal
 <!-- EDITABLE:BEGIN -->
 base both goal
+shared tail line
 <!-- EDITABLE:END -->
 ## Rules
 vendor base rules'
@@ -114,12 +119,15 @@ BOTH_LOCAL='# dev-both
 ## Goal
 <!-- EDITABLE:BEGIN -->
 LOCAL learned both goal
+shared tail line
 <!-- EDITABLE:END -->
 ## Rules
 vendor base rules'
 BOTH_RELEASE='# dev-both
 ## Goal
 <!-- EDITABLE:BEGIN -->
+base both goal
+shared tail line
 VENDOR changed both goal
 <!-- EDITABLE:END -->
 ## Rules

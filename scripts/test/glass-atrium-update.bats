@@ -1649,6 +1649,10 @@ rm -rf /tmp/everything
   [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
 }
 
+# Same-release idempotency (second-run no-op · fatal-sweep capture ordering ·
+# conflict routing) lives in scripts/test/glass-atrium-update-idempotency.bats —
+# a separate file so it gets its own CI per-file parallel timeout slot.
+
 # ---------------------------------------------------------------------------
 # finding #8 — a rolled-back NON-agent commit must NOT collide with the confirm
 # gate's 1=declined verdict. gate_apply_confirmed propagates the callback's rc

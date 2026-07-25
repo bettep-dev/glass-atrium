@@ -40,12 +40,30 @@ Resolution (chosen, not faked):
      relocated install without retained bodies) the resolver does NOT fabricate a
      base anchor. It compares vendor-region vs local-region only:
        * identical  -> keep-local (unambiguous, no merge, no LLM).
-       * different  -> GATED_2WAY verdict: a present-both candidate surfacing BOTH
-                       sides, forced through the Haiku verify + the foreground
-                       confirm — never silently auto-picked, never a faked 3-way.
+       * different  -> GATED_2WAY verdict: a present-both REPORT surfacing BOTH
+                       sides, routed to the manual ceremony — never silently
+                       auto-picked, never a faked 3-way.
 
 So a missing base-content store DEGRADES safety-conservatively (more human
 gating), it never silently corrupts a learned region.
+
+==============================================================================
+CONFLICT-MARKER TRIPWIRE — a marker-bearing candidate NEVER lands
+==============================================================================
+Conflict markers are a REPORT format, not a file format: literal ``<<<<<<<`` /
+``>>>>>>>`` lines inside a live agent body are corruption (a stale merge base
+re-conflicts an already-merged region and the markers land in the agent). So a
+resolution carrying markers (MERGE_CONFLICT / GATED_2WAY / any ``had_conflict``
+region) is refused at BOTH transaction seats: ``MergeCandidate.apply`` returns
+APPLY_MALFORMED pre-write (zero bytes written), and ``MergeCandidate.verify``
+re-scans the ON-DISK file post-write so any marker that reached the target from
+any other source fails the transaction into the git_txn before-image restore.
+The scan is line-anchored on the EXACT updater-authored markers below — never a
+bare ``<<<<<<<``, so an agent body documenting git conflicts is not a hit.
+
+Consequence (deliberate, not incidental): MERGE_CONFLICT and GATED_2WAY lose
+their write path entirely and become report-only verdicts the caller routes to
+the manual ceremony, exactly like STRUCTURAL.
 
 No third-party dependencies — stdlib only (difflib, dataclasses, pathlib).
 Bash-callback seam for git_txn_apply (T19): see ``MergeCandidate.apply`` /
@@ -87,6 +105,10 @@ NO_OP = "no-op"  # candidate identical to current local file
 # make NO LLM call (T18 AC: "only-local or only-vendor changes make NO LLM call").
 _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
+# Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
+# never writable to a live agent file (see the module header's tripwire section).
+_MARKER_VERDICTS = frozenset({MERGE_CONFLICT, GATED_2WAY})
+
 # git_txn_apply apply-callback contract (mirrors daemon-apply.sh apply_diff):
 #   0 = applied · 3 = located-diff-won't-land (no bytes written) · other = malformed.
 APPLY_OK = 0
@@ -109,6 +131,21 @@ _C_LOCAL = "<<<<<<< LOCAL (learned)\n"
 _C_BASE = "||||||| BASE (base@install)\n"
 _C_REL = "=======\n"
 _C_END = ">>>>>>> RELEASE (vendor)\n"
+
+# Tripwire scan set — the three DISTINCTIVE updater-authored markers. `_C_REL`
+# ("=======") is deliberately EXCLUDED: a bare separator collides with markdown
+# setext rules and table borders in real agent bodies.
+_CONFLICT_MARKER_LINES = frozenset(m.rstrip("\n") for m in (_C_LOCAL, _C_BASE, _C_END))
+
+
+def has_conflict_markers(text: str) -> bool:
+    """Whether ``text`` carries an updater-authored conflict-marker line.
+
+    Line-anchored EXACT matching against ``_CONFLICT_MARKER_LINES`` — a bare
+    ``<<<<<<<`` never matches, so an agent body that documents git conflicts (or
+    quotes this module's own literals) is not a false positive.
+    """
+    return any(line in _CONFLICT_MARKER_LINES for line in text.splitlines())
 
 
 @dataclass(frozen=True)
@@ -140,6 +177,18 @@ class FileResolution:
     def is_changed(self) -> bool:
         """Whether the candidate differs from the current local file."""
         return self.candidate_text != self.local_text
+
+    @property
+    def has_conflict(self) -> bool:
+        """Whether the candidate is marker-bearing (report-only, never landable).
+
+        Keys on the VERDICT plus each region's own ``had_conflict`` flag, so a
+        marker-bearing region still trips the tripwire when a lower-severity
+        sibling verdict wins the overall severity pick.
+        """
+        return self.verdict in _MARKER_VERDICTS or any(
+            region.had_conflict for region in self.regions
+        )
 
 
 # -- Region extraction -------------------------------------------------------
@@ -538,6 +587,8 @@ class MergeCandidate:
             return APPLY_MALFORMED  # never write a sensitive-refused candidate
         if self.resolution.verdict == STRUCTURAL:
             return APPLY_MALFORMED  # roster/region mismatch is not an in-band apply
+        if self.resolution.has_conflict:
+            return APPLY_MALFORMED  # tripwire: markers are a report, never a file
         if not self.resolution.is_changed:
             return APPLY_NOOP  # located diff won't land (candidate == local)
         dst = Path(target_path or self.target_file)
@@ -559,12 +610,19 @@ class MergeCandidate:
             return 1
         if self.resolution.verdict == STRUCTURAL:
             return 1
+        if self.resolution.has_conflict:
+            return 1
         # Re-scan the actually-written file (defends against an unexpected on-disk
         # state introducing a sensitive added line).
         dst = Path(target_path or self.target_file)
         try:
             on_disk = dst.read_text(encoding="utf-8")
         except OSError:
+            return 1
+        # Tripwire BACKSTOP — markers on disk from ANY source (a stale base, a
+        # restored backup, a crash window) fail the transaction into the git_txn
+        # before-image restore rather than leaving a corrupted live agent body.
+        if has_conflict_markers(on_disk):
             return 1
         post_diff = _unified_diff(self.resolution.local_text, on_disk, self.target_file)
         if dc.match_sensitive_diff(post_diff) is not None:
