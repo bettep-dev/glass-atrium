@@ -978,6 +978,14 @@ update_merge_agent_editable_regions() {
       update_log "agent merge: STRUCTURAL change (EDITABLE region-count mismatch) in agents/${base} — route to the agent_lifecycle ceremony, NOT auto-applied"
       continue
     fi
+    # Marker-bearing verdicts are REPORTS, not files: their candidate carries literal
+    # conflict markers, which in a live agent body is corruption. Route them to the
+    # manual ceremony like structural-change instead of offering an un-landable
+    # candidate at the confirm gate (the merge lib refuses the write regardless).
+    if [[ "${verdict}" == 'merge-conflict' || "${verdict}" == 'gated-2way-present-both' ]]; then
+      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; route to the agent_lifecycle ceremony, local body kept"
+      continue
+    fi
     if [[ "${changed}" != 'True' ]]; then
       update_log "agent merge: agents/${base} resolves with no net change (regions kept local) — no write"
       # No net change → the resolved body is stable, so the base may advance (finding #9).
@@ -2370,11 +2378,16 @@ update_sweep_removed_files() {
   esac
 }
 
-# The merge → vendor-sweep → baseline-capture → base-content-capture finalize
+# The merge → base-content-capture → vendor-sweep → baseline-capture finalize
 # sequence, shared by the main post-apply path and both early-return paths
-# (already-up-to-date / all-sensitive). ORDER is load-bearing: the sweep keys off
-# the STILL-OLD baseline, so it MUST precede update_capture_baseline advancing the
-# anchor, and update_capture_base_content follows once the manifest is the new base.
+# (already-up-to-date / all-sensitive). TWO order constraints, both load-bearing:
+#   * update_capture_base_content IMMEDIATELY follows the merge. The sweep is FATAL
+#     on failure (update_die_code 13), so any step between the two can strand a
+#     LANDED merge at the OLD base — and a stale base re-conflicts that already-
+#     merged region on the next same-release run. It reads only the release tree +
+#     the merge's own ledger/backup globals, so it has no sweep dependency.
+#   * the sweep keys off the STILL-OLD baseline, so it MUST precede
+#     update_capture_baseline advancing the hash anchor.
 # finding #9 (anchors advance for landed agent merges even on an agent-only /
 # sensitive-only update) + finding #14 (a drop-only release still sweeps). Args: $1
 # = new-release tree · $2 = manifest · $3 = install root · $4 = prior-vendor
@@ -2382,9 +2395,9 @@ update_sweep_removed_files() {
 update_finalize_merge_and_anchors() {
   local new_dir="$1" manifest="$2" root="$3" baseline_manifest="$4"
   update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
+  update_capture_base_content "${new_dir}"
   update_sweep_removed_files "${baseline_manifest}" "${manifest}" "${root}"
   update_capture_baseline "${manifest}"
-  update_capture_base_content "${new_dir}"
 }
 
 # post-landing mode enforcement (D6 R1: apply-then-verify)

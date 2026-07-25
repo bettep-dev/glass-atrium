@@ -1650,6 +1650,102 @@ rm -rf /tmp/everything
 }
 
 # ---------------------------------------------------------------------------
+# same-release idempotency — re-running the SAME release must no-op.
+#
+# The live defect: run 1 merged and the merged body was committed, but the base
+# store stayed at the OLD anchor, so run 2 re-diffed the already-merged region
+# against a stale base and wrote literal conflict markers into the live agent
+# file. Two pins: the end-to-end second run, and the capture ORDERING that keeps
+# the base advancing even when the (fatal) vendor sweep dies right after a merge.
+# ---------------------------------------------------------------------------
+
+@test "idempotency: a SECOND run of the SAME release no-ops (no markers, no content change)" {
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  local merged
+  merged="$(cat "${INSTALL}/agents/dev-a.md")"
+  [[ "${merged}" == *"local learned goal"* ]] || return 1
+  [[ "${merged}" == *"NEW vendor rules"* ]] || return 1
+  # the base advanced to the RELEASE body — the anchor that makes run 2 a no-op
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_RELEASE}" ]] || return 1
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"no net change"* ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${merged}" ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
+}
+
+@test "idempotency: base-content capture survives a FATAL vendor sweep (ordering pin)" {
+  # update_sweep_removed_files hard-dies (update_die_code 13). With the capture
+  # sequenced AFTER it, that death strands a LANDED merge at the old base — the
+  # stale anchor that re-conflicts on the next same-release run. The capture must
+  # therefore run IMMEDIATELY after the merge, before any fatal step.
+  mkdir -p "${NEWSRC}/agents" "${STATE}/update-state/base-agents"
+  printf 'RELEASE body' >"${NEWSRC}/agents/dev-a.md"
+  printf 'BASE v0' >"${STATE}/update-state/base-agents/dev-a.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    bash -c '
+      source "'"${SKILL}"'"
+      source "'"${REAL_LIB_ROOT}"'/scripts/lib/apply-spine.sh"
+      # a merge that LANDED dev-a.md — the outcome ledger is the carrier the
+      # capture reads to decide which files may advance.
+      update_merge_agent_editable_regions() {
+        _update_agent_outcomes_file="'"${WORK}"'/agent-outcomes.ledger"
+        printf "dev-a.md\n" >"${_update_agent_outcomes_file}"
+      }
+      update_sweep_removed_files() { exit 13; }  # the fatal-sweep crash window
+      update_capture_baseline() { :; }
+      update_finalize_merge_and_anchors \
+        "'"${NEWSRC}"'" "/dev/null" "'"${INSTALL}"'" "/dev/null"
+    '
+
+  [ "$status" -eq 13 ] || return 1  # the sweep still hard-fails, loudly (unchanged)
+  # … yet the landed merge already advanced past the stale anchor.
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
+}
+
+@test "a conflict verdict routes to the ceremony and NEVER writes markers into the live body" {
+  # Overlapping both-changed region: the merged candidate carries conflict markers,
+  # which in a live agent body is corruption. It must be reported + skipped, with
+  # the local body byte-identical and its base entry left at the prior anchor.
+  local conflict_local='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+LOCAL rewrite
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+  local conflict_release='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+VENDOR rewrite
+<!-- EDITABLE:END -->
+## Rules
+NEW vendor rules'
+  seed_file "${INSTALL}" "agents/dev-a.md" "${conflict_local}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
 # finding #8 — a rolled-back NON-agent commit must NOT collide with the confirm
 # gate's 1=declined verdict. gate_apply_confirmed propagates the callback's rc
 # VERBATIM; update_commit_callback now remaps ANY spine failure to rc 3 (disjoint
