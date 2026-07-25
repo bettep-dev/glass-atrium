@@ -1099,15 +1099,18 @@ function rowToCorrectionSignal(row: CorrectionSignalDbRow): CorrectionSignalRow 
 
 // Resolves the daemon-apply.sh path. The script flips status itself (single SoT
 // — the route does NOT double-write on apply). Path defaults to the fixed
-// user-home autoagent dir — never taken from request input, so this execFile is
-// not a shell-injection / SSRF surface. The AUTOAGENT_APPLY_SCRIPT env override
-// is a server-startup testing seam — process-env, never request-derived.
-function resolveApplyScript(): string {
+// `~/.glass-atrium/autoagent` dir (the GA data-separation root — the daemon
+// installs there, not under the CLI-owned ~/.claude) — never taken from request
+// input, so this execFile is not a shell-injection / SSRF surface. The
+// AUTOAGENT_APPLY_SCRIPT env override is a server-startup testing seam —
+// process-env, never request-derived. Exported for the path-resolution unit test
+// (pure string build — reads no filesystem).
+export function resolveApplyScript(): string {
   const override = process.env.AUTOAGENT_APPLY_SCRIPT;
   if (typeof override === "string" && override.length > 0) {
     return override;
   }
-  return path.join(homedir(), ".claude", "autoagent", "daemon-apply.sh");
+  return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
 // daemon-apply.sh --proposal-id --auto-regen exit-code contract:

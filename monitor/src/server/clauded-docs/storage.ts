@@ -12,8 +12,9 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 // Env variable keys — literal union prevents typo at refactor sites.
 type DocsRootEnvKey = "CLAUDED_DOCS_HTML_ROOT";
 
-// Default document root — monitor-internal.
-const DEFAULT_HTML_ROOT_RELATIVE = join(".claude", "monitor", "data", "documents");
+// Default document root — monitor-internal, under the GA data-separation root so a
+// lost env render cannot silently write into the CLI-owned ~/.claude.
+const DEFAULT_HTML_ROOT_RELATIVE = join(".glass-atrium", "monitor", "data", "documents");
 
 let cachedHtmlBodyRoot: string | null = null;
 
