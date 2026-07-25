@@ -50,19 +50,28 @@
 #   bash-cwd-relative-write — while a `cd`/`pushd` has armed a protected dir, a
 #     RELATIVE redirect target or mutation-verb argument (an absolute one stays
 #     allowed, so `cd <prot> && grep x f > /tmp/out` passes). A return to an
-#     unnameable directory (`cd -`, `popd`) re-arms whenever this command
-#     entered a protected dir earlier — arming is a boolean over-approximation
-#     and staying armed is the safe direction.
-# DOCUMENTED RESIDUAL (not covered): variable
-# indirection (P=...; echo > "$P"), command substitution, quote-split paths,
+#     unnameable directory (`cd -`, `popd`, a bare `pushd` stack swap, a
+#     `pushd +N`/`-N` rotation) re-arms whenever this command entered a protected
+#     dir earlier — arming is a boolean over-approximation and staying armed is
+#     the safe direction.
+# DOCUMENTED RESIDUAL (not covered): variable indirection, in shell
+# (P=...; echo > "$P") AND inside an interpreter code string
+# (p = "<prot>"; open(p, "w")) — every target reader is literal-only, so a
+# variable-bound target passes; command substitution, quote-split paths,
 # non-command-position verb runs (xargs/find -exec), an interpreter fed code on
-# STDIN rather than through a code flag, and a cd issued in an EARLIER Bash call
-# (the machine is per-command; the envelope cwd field is deliberately unread until
-# its live-cwd semantics are confirmed) — the settings deny layer + the
+# STDIN rather than through a code flag, a `pushd -n` (pushes WITHOUT moving, so
+# its argument reads as a destination change), and a cd issued in an EARLIER Bash
+# call (the machine is per-command; the envelope cwd field is deliberately unread
+# until its live-cwd semantics are confirmed) — the settings deny layer + the
 # Write|Edit arm remain the primary gates. The pure-bash hot-path prefilter (raw
 # envelope must contain a ".claude" / ".glass-atrium" dir-name literal, else exit 0
 # with zero python3 spawns) shares the same residual: an envelope hiding those
 # literals behind indirection or JSON \uXXXX escapes skips this gate.
+# KNOWN FALSE POSITIVES (over-block — the safe direction, left uncorrected): the
+# entered-a-protected-dir flag is scan-scoped rather than paren-scoped, so a
+# SUBSHELL cd into a protected dir keeps a later `cd -`/`popd` conservative
+# outside that subshell; and the copy verbs match segment-wide, so rsync/install
+# naming a protected path as their SOURCE block like a target.
 #
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
