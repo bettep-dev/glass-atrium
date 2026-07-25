@@ -21,7 +21,7 @@ Rules specific to REPORT agents: glass-atrium-intel-reporter.
 | Mode | Trigger | Format | Storage / Exposure |
 |------|---------|--------|--------------------|
 | **Agent-only record (DEFAULT fallback)** | User did NOT request a document, but the agent judges a record is worth keeping (Case 1) | LLM autonomous selection from {md, yaml, json, txt} per content shape (token-optimized · see `glass-atrium-intel-reporter.md` Format Selection Matrix · no silent default) | monitor-internal (via POST API) · viewer default-hidden (not-exposed bit) |
-| **User-requested HTML** | User explicitly requested HTML / a shareable artifact (Case 2 + HTML trigger — see "HTML request test" below) | HTML primary (single self-contained output) | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.claude/monitor/data/documents/` — outside the vault) · viewer-exposed (visual artifact) |
+| **User-requested HTML** | User explicitly requested HTML / a shareable artifact (Case 2 + HTML trigger — see "HTML request test" below) | HTML primary (single self-contained output) | monitor-internal (`$CLAUDED_DOCS_HTML_ROOT`, default `~/.glass-atrium/monitor/data/documents/` — outside the vault) · viewer-exposed (visual artifact) |
 | **User-requested non-HTML** | User requested a document but did NOT specify HTML / a shareable artifact (Case 2, no HTML trigger) | the form the user asked for · unspecified (a bare "organize/summarize this" with no form) → **md default** (when in doubt, non-HTML — asymmetric cost) | monitor-internal (via POST API) · exposure follows the format (md/yaml/json/txt → default-hidden) |
 
 **HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)**: HTML primary is produced ONLY when 1+ of these explicit signals is present —
