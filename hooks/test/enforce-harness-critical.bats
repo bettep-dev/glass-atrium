@@ -6,8 +6,11 @@
 #   agents/*.md frontmatter identity keys {name, tools, scope} (model excluded,
 #   body edits pass) · NEW agents/*.md Write · scheduled-exec dirs
 #   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
-#   best-effort mutation-verb + protected-path-literal text match (indirection
-#   residual PASSES by design).
+#   best-effort, three block classes over three shared structural pre-passes
+#   (heredoc stripping · quote mask · ordered segmenter with a cwd-arming flag):
+#   bash-mutation (redirect / command-position verb + protected-path literal),
+#   bash-interp-write (interpreter code-string write), bash-cwd-relative-write
+#   (relative write from an armed cwd). Indirection residual PASSES by design.
 # Block channel: HAR-001/HAR-002 emit_error + exit 2 · fail-closed HAR-003 on a
 # python3-less PATH · HARNESS_PROTECTION_APPROVE=1 launch-env grant passes.
 #
@@ -664,5 +667,406 @@ MD
 # to a plist path must pass (no verb in command position, no redirect shape).
 @test "bash: read-only cat of a launchd plist → pass" {
   run_hook "Bash" "$(bash_input 'cat ~/Library/LaunchAgents/com.glass-atrium.monitor.plist')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Arm A: interpreter code-string writes (bash-interp-write) ─────────────────
+#
+# A write expressed as a call inside a -c/-e code string presents NEITHER legacy
+# shape: no '>' character exists anywhere, and no interpreter is in the verb
+# alternation. Every block row here is exit-0 at HEAD. The conjunctive
+# requirement (write-intent API AND a protected path, both inside the extracted
+# code string) is what keeps the read rows below passing.
+
+@test "ArmA python3 -c open(...,'w') → HAR-002 bash-interp-write block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.glass-atrium/autoagent/daemon-apply.sh','w').write('x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmA python3 -c open() write modes a / w+ / r+ → block (each mode)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.glass-atrium/autoagent/f','a')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.glass-atrium/autoagent/f','w+')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.glass-atrium/autoagent/f','r+')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA python3 Path().write_text → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"Path('~/.glass-atrium/scripts/x.sh').write_text('x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmA python3 shutil.copy onto a protected path → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import shutil;shutil.copy('/tmp/e','~/.glass-atrium/hooks/a.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA python3 os.remove / os.chmod on a protected path → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import os;os.remove('~/.glass-atrium/hooks/a.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"import os;os.chmod('~/.glass-atrium/hooks/a.sh',0o644)\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA node -e writeFileSync → block" {
+  run_hook "Bash" "$(bash_input "node -e \"require('fs').writeFileSync('~/.glass-atrium/autoagent/f','x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmA node --eval appendFileSync → block (long code flag)" {
+  run_hook "Bash" "$(bash_input "node --eval \"fs.appendFileSync('~/.glass-atrium/autoagent/f','x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA perl -e open with a > mode → block" {
+  run_hook "Bash" "$(bash_input "perl -e \"open(F,'>','~/.glass-atrium/autoagent/f')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmA perl -i -pe in-place on a protected path → block (path is an argument)" {
+  run_hook "Bash" "$(bash_input "perl -i -pe 's/a/b/' ~/.glass-atrium/autoagent/daemon-apply.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "perl -pi -e 's/a/b/' ~/.glass-atrium/autoagent/daemon-apply.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA ruby -e File.write → block" {
+  run_hook "Bash" "$(bash_input "ruby -e \"File.write('~/.glass-atrium/autoagent/f','x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA ruby -i -pe in-place on a protected path → block" {
+  run_hook "Bash" "$(bash_input "ruby -i -pe 'gsub(/a/,\"b\")' ~/.glass-atrium/autoagent/daemon-apply.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA env-prefixed / absolute-binary / version-suffixed interpreters → block" {
+  run_hook "Bash" "$(bash_input "/usr/bin/env python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "/opt/homebrew/bin/node -e \"fs.writeFileSync('~/.glass-atrium/autoagent/f','x')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3.12 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA assignment / sudo prefix before the interpreter → block" {
+  run_hook "Bash" "$(bash_input "FOO=1 python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "sudo python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA interpreter after | && ; and inside ( → block (command-position variants)" {
+  run_hook "Bash" "$(bash_input "echo hi | python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "true && python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "true ; python3 -c \"open('~/.glass-atrium/autoagent/f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "(python3 -c \"open('~/.glass-atrium/autoagent/f','w')\")")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmA interpreter write onto a launchd plist literal → block" {
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/Library/LaunchAgents/com.glass-atrium.monitor.plist','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmA os.system shell escape → block (escaped string re-scanned as shell)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import os;os.system('cp /tmp/e ~/.glass-atrium/autoagent/daemon-apply.sh')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Reading a protected file THROUGH an interpreter is the production false-positive
+# class — the write-intent set is a closed allowlist precisely so these pass.
+
+@test "ArmA-neg python3 json.load / .read() of a protected path → pass" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import json;print(json.load(open('~/.claude/settings.json')))\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "python3 -c \"print(open('~/.claude/settings.json').read())\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg sys.stdout.write(open(p).read()) → pass (bare .write( excluded)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"import sys;sys.stdout.write(open('~/.claude/settings.json').read())\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# A non-mode keyword whose value merely CONTAINS a mode letter ('replace') must
+# not pose as a write mode — the mode string is matched whole.
+@test "ArmA-neg open(p,'r',errors='replace') → pass (mode matched whole)" {
+  run_hook "Bash" "$(bash_input "python3 -c \"open('~/.claude/settings.json','r',errors='replace').read()\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg python3 -m module form → pass (code flag absent from the flag run)" {
+  run_hook "Bash" "$(bash_input 'python3 -m json.tool ~/.claude/settings.json')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# Sanctioned CLI: agent creation traverses the session Bash tool as `python3 -m`.
+# It passes because of the code-flag requirement, NOT an exemption — this row
+# pins that a later "also match -m" edit cannot silently break agent creation.
+@test "ArmA-neg python3 -m agent_lifecycle → pass (sanctioned CLI unchanged)" {
+  run_hook "Bash" "$(bash_input 'python3 -m agent_lifecycle sync-inject --root ~/.glass-atrium/agents')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg python3 script-file form → pass (no code flag)" {
+  run_hook "Bash" "$(bash_input 'python3 /opt/tools/dump.py ~/.claude/settings.json')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg node readFileSync / -p require → pass" {
+  run_hook "Bash" "$(bash_input "node -e \"console.log(fs.readFileSync('~/.claude/settings.json','utf8'))\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "node -p \"require('~/.claude/settings.json').x\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg perl -pe without -i / ruby File.read → pass" {
+  run_hook "Bash" "$(bash_input "perl -pe 's/a/b/' ~/.claude/settings.json")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "ruby -e \"puts File.read('~/.claude/settings.json')\"")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# jq has no file-write primitive, so it is deliberately NOT in the interpreter
+# class — its '>' redirect stays the redirect arm's job.
+@test "ArmA-neg jq read of live settings → pass (jq is not an interpreter)" {
+  run_hook "Bash" "$(bash_input "jq -r '.model' ~/.claude/settings.json")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmA-neg read-only verbs on protected paths → pass" {
+  run_hook "Bash" "$(bash_input 'grep -n foo ~/.claude/settings.json')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'head -5 ~/.claude/settings.json')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'wc -l ~/.glass-atrium/hooks/a.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "sed -n '1,5p' ~/.claude/settings.json")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Arm B: cwd-context tracking (bash-cwd-relative-write) ─────────────────────
+#
+# The arm is a TEXT state machine — no filesystem canonicalization. A PreToolUse
+# gate must not stat the FS (the target usually does not exist yet), and arming
+# needs only a boolean: every spelling of the cd argument carries the protected
+# literal. Every block row here is exit-0 at HEAD.
+
+@test "ArmB cd into a protected dir then relative redirect → HAR-002 block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && printf x > daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+  [[ "${output}" == *"bash-cwd-relative-write"* ]] || return 1
+}
+
+@test "ArmB semicolon separator + append redirect → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent; printf x >> daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmB armed mutation verbs (cp / tee / sed -i / chmod) with relative targets → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cp /tmp/e.sh daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && echo x | tee track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "cd ~/.glass-atrium/hooks && sed -i '' s/a/b/ track-outcome.sh")"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && chmod 644 track-outcome.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "ArmB subshell and pushd arming forms → block" {
+  run_hook "Bash" "$(bash_input '(cd ~/.glass-atrium/autoagent && printf x > f)')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'pushd ~/.glass-atrium/autoagent && printf x > f')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Arming spellings: no trailing slash, trailing slash, quoted $HOME, tilde, and
+# an absolute /Users path all carry the protected literal → all arm.
+@test "ArmB arming spellings (bare / slash / quoted \$HOME / tilde / absolute) → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && printf x > f')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent/ && printf x > f')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd "$HOME/.glass-atrium/autoagent" && printf x > f')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input "cd ${FAKE_HOME}/.glass-atrium/autoagent && printf x > f")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# `cd ..` while armed STAYS armed — the alternative is a one-line bypass
+# (cd <prot>/sub && cd .. && printf > f).
+@test "ArmB relative cd while armed stays armed → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent/lib && cd .. && printf x > daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Deliberate over-approximation: while armed, a write-intent interpreter call
+# blocks WITHOUT a protected-path match, because the relative target lives
+# inside the code string. The precondition (an explicit unquoted cd into a
+# protected dir in the SAME command) keeps the cost narrow.
+@test "ArmB armed + interpreter write without a path match → block (documented over-approximation)" {
+  run_hook "Bash" "$(bash_input "cd ~/.glass-atrium/autoagent && python3 -c \"open('f','w')\"")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-interp-write"* ]] || return 1
+}
+
+@test "ArmB-neg armed read / absolute redirect target / status commands → pass" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cat daemon-apply.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && grep -c x f > /tmp/out')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && ls -la')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && git status')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmB-neg unarmed relative write → pass (HEAD behaviour preserved)" {
+  run_hook "Bash" "$(bash_input 'cd /tmp && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "ArmB-neg absolute cd out disarms → pass" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cd /tmp && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# H1-D1: rules/ + scoped/ are deliberately unprotected. PROT_DIR_RE derives from
+# the same roots as PROT_RE, so the exclusion is inherited — these rows guard it
+# against a "complete the pattern" edit that arms on .glass-atrium/ wholesale.
+@test "ArmB-neg cd into rules/ or scoped/ then relative write → pass (H1-D1)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/rules && printf x > foo.md')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/scoped && printf x > foo.md')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# The git repo tree has no leading dot, so it never arms — this is the
+# implementing agent's own working directory.
+@test "ArmB-neg cd into the repo tree then write → pass (leading dot required)" {
+  run_hook "Bash" "$(bash_input "cd ${FAKE_HOME}/git/glass-atrium/hooks && printf x > foo.sh")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "cd ${FAKE_HOME}/git/glass-atrium/hooks && cp /tmp/a.sh enforce-harness-critical.sh")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# PROT_DIR_RE boundary: a longer sibling directory name must not arm.
+@test "ArmB-neg cd into autoagent-backup → pass (name-boundary lookahead)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent-backup && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Shell -c code strings + the quote-mask regression guards ──────────────────
+#
+# The verb recogniser was blind inside every quoted code string while the
+# redirect recogniser was not, so `bash -c 'cp ...'` passed while
+# `bash -c 'echo x > ...'` blocked. The mask closes that asymmetry — but the mask
+# ALONE would convert the two rows below from true positives into false
+# negatives, which is why mask + shell recursion + awk scanning are one change.
+
+@test "S4 bash -c with a copy verb → block (was a bypass at HEAD)" {
+  run_hook "Bash" "$(bash_input "bash -c 'cp /tmp/e.sh ~/.glass-atrium/autoagent/daemon-apply.sh'")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"HAR-002"* ]] || return 1
+}
+
+@test "S4 sh -c with a nested cd + relative redirect → block (was a bypass at HEAD)" {
+  run_hook "Bash" "$(bash_input "sh -c 'cd ~/.glass-atrium/autoagent && printf x > daemon-apply.sh'")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-cwd-relative-write"* ]] || return 1
+}
+
+@test "S5 REGRESSION GUARD: bash -c with a redirect still blocks after the mask" {
+  run_hook "Bash" "$(bash_input "bash -c 'echo x > ~/.glass-atrium/autoagent/daemon-apply.sh'")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "S5 REGRESSION GUARD: awk in-program redirect still blocks after the mask" {
+  run_hook "Bash" "$(bash_input "awk 'BEGIN{print \"x\" > \"~/.glass-atrium/autoagent/daemon-apply.sh\"}'")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "S4-neg shell -c with a non-protected cd → pass" {
+  run_hook "Bash" "$(bash_input "bash -c 'cd /tmp/repo && npm test' # ~/.glass-atrium/hooks")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "S4-neg bash with a script-file argument → pass (no code flag)" {
+  run_hook "Bash" "$(bash_input 'bash ~/.glass-atrium/scripts/update.sh')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── Quote mask + heredoc stripping: the reproduced false positives ────────────
+#
+# Both rows below BLOCK at HEAD (exit 2) purely because the redirect recogniser
+# is quote-blind — a progress note documenting this very repair would block
+# itself. These fixtures assert the fix, not a bar-raise.
+
+@test "FP-FIX echo of a quoted redirect command → pass (blocked at HEAD)" {
+  run_hook "Bash" "$(bash_input "echo 'run: echo x > ~/.claude/settings.json'")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "FP-FIX heredoc BODY quoting a redirect into live settings → pass (blocked at HEAD)" {
+  run_hook "Bash" "$(bash_input "$(printf 'cat > /tmp/notes.md <<%sMD%s\nrun: echo x > ~/.claude/settings.json\nMD\n' "'" "'")")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "FP-FIX heredoc BODY quoting the cd and interpreter bypasses → pass" {
+  run_hook "Bash" "$(bash_input "$(printf 'cat > /tmp/notes.md <<%sMD%s\nnote: cd ~/.glass-atrium/autoagent && printf x > daemon-apply.sh\nMD\n' "'" "'")")"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input "$(printf 'cat > /tmp/notes.md <<%sMD%s\nnote: python3 -c "open(%s~/.glass-atrium/autoagent/f%s,%sw%s)"\nMD\n' "'" "'" "'" "'" "'" "'")")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "FP-FIX quoted bypass text appended to a notes file → pass" {
+  run_hook "Bash" "$(bash_input "printf '%s\n' 'cd ~/.glass-atrium/autoagent && printf x > f' >> /tmp/notes.md")"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# A heredoc consumed by a SHELL is code, not data — its body is re-scanned.
+@test "heredoc consumed by bash carrying cd + relative redirect → block" {
+  run_hook "Bash" "$(bash_input "$(printf 'bash <<%sSH%s\ncd ~/.glass-atrium/autoagent\nprintf x > daemon-apply.sh\nSH\n' "'" "'")")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-cwd-relative-write"* ]] || return 1
+}
+
+# The body is data, but the heredoc LINE keeps its own redirect — the strip
+# removes the body only.
+@test "heredoc line whose redirect target is protected → block (body stripped, line kept)" {
+  run_hook "Bash" "$(bash_input "$(printf 'cat > ~/.claude/settings.json <<%sEOF%s\nharmless\nEOF\n' "'" "'")")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Ambiguity (an unterminated body) falls back to scanning the raw text — the
+# pre-strip behaviour, never a new miss.
+@test "unterminated heredoc → raw scan fallback (still blocks)" {
+  run_hook "Bash" "$(bash_input "$(printf 'cat > /tmp/n.md <<%sMD%s\nrun: echo x > ~/.claude/settings.json\n' "'" "'")")"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# ── Carve-out invariant: the launch-env grant short-circuits before the arms ──
+#
+# The grant returns before hook_read_input and before the classifier, so every
+# new arm lives strictly downstream. This row pins that structurally.
+
+@test "carve-out HARNESS_PROTECTION_APPROVE=1 + an Arm A payload → pass (grant unchanged)" {
+  local envelope
+  envelope="$(jq -cn --arg c "python3 -c \"open('${FAKE_HOME}/.glass-atrium/autoagent/f','w')\"" \
+    '{tool_name: "Bash", tool_input: {command: $c}}')"
+  run env "HOME=${FAKE_HOME}" HARNESS_PROTECTION_APPROVE=1 "${HOOK_SH}" <<<"${envelope}"
   [[ "${status}" -eq 0 ]] || return 1
 }
