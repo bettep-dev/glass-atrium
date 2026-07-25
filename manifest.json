@@ -1075,7 +1075,7 @@
     "scripts/test/glass-atrium-dispatch.bats": "9999a2285cfcc954bf6361938d0abf3c31cc6efb11e2303a1cee53ad71ce2ecf",
     "scripts/test/glass-atrium-install.bats": "a592c488d63f679578e93a3588cb7ae9d7f5387718eb7fab295bb7ff7dcdd3c4",
     "scripts/test/glass-atrium-update-e2e.bats": "5fa14c6efb03ebd9a2eb92868475141e5a2699e24a4e0eceed7dc3c722d96b7f",
-    "scripts/test/glass-atrium-update.bats": "455313afd1c735af3a2a861ea0249d38e7f33b30c7153d418ab5279eb5fee1c0",
+    "scripts/test/glass-atrium-update.bats": "3048a83da3b08b6c5f765129e8457a29a1a238a47d91640f81ddf672f3eb6d93",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
     "scripts/test/manifest-mode-integrity.bats": "41a553540d820c90497f45f99d9e16ff9665d72ac1963a09375c359836cbdec6",
     "scripts/test/migrate-claude-to-ga-data.bats": "71d7ad10246670c9f81877345789643fff13e83a57c2d1702d263fe8b4c1a87c",
