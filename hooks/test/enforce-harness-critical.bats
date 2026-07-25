@@ -1330,6 +1330,40 @@ MD
   [[ "${status}" -eq 0 ]] || return 1
 }
 
+# R3-6: the remaining unnameable destinations on the pushd side. A BARE `pushd`
+# swaps the top two stack entries (unlike a bare `cd`, which names HOME), and
+# `pushd +N`/`-N` rotates to a stack SLOT — neither argument is a path, so both
+# belong to the `cd -` treatment rather than the disarm branch.
+
+@test "R3-6 bare pushd back toward a protected dir → block (stack swap re-arms)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && cd /tmp && pushd && printf x > a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"bash-cwd-relative-write"* ]] || return 1
+}
+
+@test "R3-6 pushd +N / -N rotation back toward a protected dir → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && cd /tmp && pushd +1 && printf x > a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/autoagent && cd /tmp && pushd -0 && printf x > a.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "R3-6-neg bare pushd / rotation with no protected dir in the history → pass" {
+  run_hook "Bash" "$(bash_input 'cd /tmp && pushd && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd /tmp && pushd +1 && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+  run_hook "Bash" "$(bash_input 'cd /tmp && pushd -0 && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# A bare `cd` names HOME, which is not protected — it must keep disarming, or
+# the whole unnameable treatment collapses into "every cd re-arms".
+@test "R3-6-neg bare cd out of a protected dir → pass (HOME is nameable)" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/hooks && cd && printf x > f')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
 # H1-D1: rules/ + scoped/ are deliberately unprotected. PROT_DIR_RE derives from
 # the same roots as PROT_RE, so the exclusion is inherited — these rows guard it
 # against a "complete the pattern" edit that arms on .glass-atrium/ wholesale.

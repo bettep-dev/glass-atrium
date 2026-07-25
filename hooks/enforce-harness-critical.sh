@@ -284,6 +284,10 @@ BACKTICK_RE = re.compile(r"\x60([^\x60]*)\x60")
 
 MAX_SCAN_DEPTH = 2
 
+# Directory-stack rotation argument (`pushd +1`, `popd -0`) — it names a stack
+# SLOT, never a path, so the destination is as unnameable as `cd -`.
+ROTATE_ARG_RE = re.compile(r"^[+-]\d+$")
+
 # Scan-scoped: a protected dir was entered by some earlier cd in THIS command.
 # It is what makes a return to an unnameable directory (`cd -`, `popd`) decide
 # conservatively without false-blocking a command that never went near one.
@@ -817,16 +821,20 @@ def unknown_dir_armed(armed):
     return True if PROT_CD_SEEN[0] else armed
 
 
-def next_armed(argv, armed):
+def next_armed(name, argv, armed):
     """Arm B state transition. A protected-dir argument ARMS; any other
     absolute/~/$-rooted argument DISARMS; a relative one KEEPS the state —
-    `cd ..` must stay armed, else it is a one-line bypass."""
+    `cd ..` must stay armed, else it is a one-line bypass. Every unnameable
+    destination shares one treatment: `cd -`, a stack ROTATION (`pushd +1`) and
+    a bare `pushd` (which swaps the top two stack entries rather than going
+    HOME, unlike a bare `cd`) all land where the text cannot say, so they take
+    the conservative return. Only a bare `cd` names a destination — HOME."""
     raw = [tok[1] for tok in argv[1:] if tok[1]]
-    if "-" in raw:
+    if "-" in raw or any(ROTATE_ARG_RE.match(val) for val in raw):
         return unknown_dir_armed(armed)
     args = [val for val in raw if not val.startswith("-")]
     if not args:
-        return False
+        return unknown_dir_armed(armed) if name == "pushd" else False
     if PROT_DIR_RE.search(args[0]):
         PROT_CD_SEEN[0] = True
         return True
@@ -873,7 +881,7 @@ def scan_segment(seg, depth, armed):
         return "", armed
     name = argv[0][1].rsplit("/", 1)[-1]
     if name in ("cd", "pushd"):
-        return "", next_armed(argv, armed)
+        return "", next_armed(name, argv, armed)
     if name == "popd":
         return "", unknown_dir_armed(armed)
     if name in MUTATION_VERBS:
