@@ -270,8 +270,10 @@ def three_way_merge(
     A gap changed by only one side is taken from that side; a gap both sides
     changed identically collapses to one copy; a gap both sides changed
     DIFFERENTLY emits git-style conflict markers and sets ``had_conflict`` — the
-    candidate then routes through the Haiku verify + foreground confirm rather
-    than being silently auto-applied.
+    candidate is then report-only: ``apply`` refuses it pre-write
+    (APPLY_MALFORMED, zero bytes) and ``verify``'s on-disk marker scan fails the
+    transaction into the before-image restore, so the caller routes the file to
+    the manual ceremony instead of landing it.
     """
     sync = _find_sync_regions(base, local, release)
     iz = ia = ib = 0
