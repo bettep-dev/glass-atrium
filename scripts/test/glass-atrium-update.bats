@@ -803,6 +803,49 @@ base goal
 ## Rules
 NEW vendor rules'
 
+# U-A fixture: the same three-anchor shape PLUS frontmatter, where the LIVE body
+# carries an operator `model:` pin the release does NOT ship. Everything outside the
+# EDITABLE regions is rebuilt from the release skeleton, so the pin is exactly what a
+# naive merge drops (orchestrator-role.md Cost-Tier Selection sanctions it as
+# local-only config that is NEVER ported to git).
+PIN_BASE='---
+name: dev-a
+tools: Read, Write
+---
+
+# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+base goal
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+PIN_LOCAL='---
+name: dev-a
+tools: Read, Write
+model: claude-opus-4-8
+---
+
+# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+local learned goal
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+PIN_RELEASE='---
+name: dev-a
+tools: Read, Write
+---
+
+# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+base goal
+<!-- EDITABLE:END -->
+## Rules
+NEW vendor rules'
+
 run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -835,6 +878,47 @@ run_update() {
   # runs NO git op, so the on-disk content above IS the applied-state proof. The merge
   # created no repo — a plain non-git INSTALL sandbox stays git-free end to end.
   [[ ! -d "${INSTALL}/.git" ]]
+}
+
+@test "T19/U-A: a live-only operator model: pin survives the merge (release ships none)" {
+  # The applied INSTALL body must hold the NEW vendor rules AND still carry the
+  # operator pin — the release frontmatter has no model: key, so the pin is
+  # keep-local by doctrine, not vendor-owned content.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${PIN_LOCAL}"
+  seed_base_store "dev-a.md" "${PIN_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${PIN_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ]
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"model: claude-opus-4-8"* ]] # pin kept
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]       # structure taken
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]     # region kept
+}
+
+@test "T19/U-A: a pin-only delta is a no-op (nothing to apply, live body untouched)" {
+  # Release == local except for the pin the release lacks → the candidate collapses
+  # to the local body, so the merge reports no net change and writes nothing.
+  local pin_only_release='---
+name: dev-a
+tools: Read, Write
+---
+
+# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+local learned goal
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+  seed_file "${INSTALL}" "agents/dev-a.md" "${PIN_LOCAL}"
+  seed_base_store "dev-a.md" "${PIN_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${pin_only_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ]
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${PIN_LOCAL}" ]] # byte-identical
 }
 
 @test "T19: a declined confirm leaves the agent file unmerged (zero writes)" {

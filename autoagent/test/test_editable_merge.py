@@ -153,6 +153,95 @@ class ThreeAnchorResolverTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class LiveOnlyFrontmatterPinTest(unittest.TestCase):
+    """U-A — a live-only operator ``model:`` pin survives the vendor merge.
+
+    Everything outside the EDITABLE regions is rebuilt from the RELEASE skeleton,
+    and the release ships NO ``model:`` key, so an operator pin was stripped on
+    every merge. Precedence is LIVE-WINS (orchestrator-role.md Cost-Tier
+    Selection: a live pin is local-only config, never ported to git).
+    """
+
+    _FM = "name: dev-x\ntools: Read, Write\n"
+
+    def _body(self, frontmatter: str, region: str, bottom: str) -> str:
+        return _doc(
+            top=f"---\n{frontmatter}---\n\n# X\n", region=region, bottom=bottom
+        )
+
+    def test_live_only_pin_survives_release_without_one(self) -> None:
+        release = self._body(self._FM, "base goal", "vendor rules v2")
+        local = self._body(f"{self._FM}model: claude-opus-4-8\n", "learned", "old")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertEqual(res.verdict, em.KEEP_LOCAL)
+        self.assertIn("model: claude-opus-4-8\n", res.candidate_text)
+        # the vendor structure + the learned region both still land.
+        self.assertIn("vendor rules v2", res.candidate_text)
+        self.assertIn("learned", res.candidate_text)
+
+    def test_live_pin_wins_over_a_release_carried_one(self) -> None:
+        # Currently VACUOUS in practice — the release ships zero ^model: keys — but
+        # pinned so the doctrine holds the day a vendor pin returns. Base-aware
+        # refinement (live == base -> take-release) is deliberately NOT implemented:
+        # an operator override outranks a vendor value unconditionally.
+        release = self._body(f"{self._FM}model: vendor-y\n", "base goal", "v2")
+        local = self._body(f"{self._FM}model: claude-opus-4-8\n", "learned", "old")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertIn("model: claude-opus-4-8\n", res.candidate_text)
+        self.assertNotIn("model: vendor-y", res.candidate_text)
+
+    def test_release_pin_lands_when_live_has_none(self) -> None:
+        release = self._body(f"{self._FM}model: vendor-y\n", "base goal", "v2")
+        local = self._body(self._FM, "learned", "old")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertIn("model: vendor-y\n", res.candidate_text)
+
+    def test_pin_only_delta_collapses_to_a_zero_write_no_op(self) -> None:
+        # The pin is the ONLY difference -> candidate == local -> no-op, so a
+        # pure pin-preservation run writes nothing at all.
+        release = self._body(self._FM, "same", "same")
+        local = self._body(f"{self._FM}model: claude-opus-4-8\n", "same", "same")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertEqual(res.verdict, em.NO_OP)
+        self.assertFalse(res.is_changed)
+
+    def test_merge_is_idempotent_across_reruns(self) -> None:
+        release = self._body(self._FM, "g", "v2")
+        local = self._body(f"{self._FM}model: claude-opus-4-8\n", "g", "v1")
+
+        first = em.resolve_file("dev-x.md", local, release, release).candidate_text
+        second = em.resolve_file("dev-x.md", first, release, release).candidate_text
+
+        self.assertEqual(first, second)
+        self.assertIn("model: claude-opus-4-8\n", second)
+
+    def test_no_frontmatter_on_either_side_is_left_unchanged(self) -> None:
+        # fail-open: never fabricate a frontmatter block.
+        local = _doc(top="# plain", region="x", bottom="v1")
+        release = _doc(top="# plain", region="x", bottom="v2")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertEqual(res.candidate_text, release)
+
+    def test_mid_body_horizontal_rule_is_not_read_as_a_fence(self) -> None:
+        # A body '---' must never be mistaken for a frontmatter fence.
+        body = _doc(top="# plain\n\n---\n", region="x", bottom="v1")
+
+        res = em.resolve_file("dev-x.md", body, body, body)
+
+        self.assertEqual(res.candidate_text, body)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class BaseUnavailableFallbackTest(unittest.TestCase):
     """T17 — gated 2-way present-both when base CONTENT is unavailable."""
 

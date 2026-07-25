@@ -93,6 +93,17 @@ APPLY_OK = 0
 APPLY_NOOP = 3
 APPLY_MALFORMED = 2
 
+# Frontmatter keys the LIVE install owns EXCLUSIVELY — a sanctioned operator
+# override that is never ported to git (orchestrator-role.md Cost-Tier Selection:
+# a live `model:` pin is "local-only config, NEVER ported to git"). The release
+# ships zero of them, and the candidate's frontmatter comes verbatim from the
+# release skeleton, so without this allowlist every merge silently strips the pin.
+# NARROW by design — NOT "preserve all live-only keys": the identity keys
+# {name, tools, scope} stay vendor-owned (hooks/enforce-harness-critical.sh
+# protects those and explicitly excludes model). Tuple, not set → the append
+# order below is deterministic across runs.
+_LOCAL_ONLY_FRONTMATTER_KEYS = ("model",)
+
 # Conflict markers for an overlapping both-changed region (diff3 / git style).
 _C_LOCAL = "<<<<<<< LOCAL (learned)\n"
 _C_BASE = "||||||| BASE (base@install)\n"
@@ -318,6 +329,69 @@ def _assemble(
     return "".join(out)
 
 
+def _frontmatter_span(lines: list[str]) -> tuple[int, int] | None:
+    """Return (first_key_idx, closing_fence_idx) of a byte-0 YAML frontmatter block.
+
+    Anchored at byte 0 (a ``---`` opening line) and closed by the NEXT line that is
+    exactly ``---``, so a mid-body horizontal rule is never mistaken for a fence.
+    No such block -> None.
+    """
+    if not lines or lines[0].rstrip("\n") != "---":
+        return None
+    for idx in range(1, len(lines)):
+        if lines[idx].rstrip("\n") == "---":
+            return 1, idx
+    return None
+
+
+def _keep_local_frontmatter(candidate_text: str, local_text: str) -> str:
+    """Carry the LIVE-only frontmatter keys of ``local_text`` into the candidate.
+
+    Runs at candidate-assembly time (upstream of the diff, the sensitive re-scan,
+    the Haiku gate and the no-op comparison) so every downstream channel sees one
+    pin-stable file — never a post-merge re-write.
+
+    Precedence is LIVE-WINS unconditionally: an operator pin is a local-only
+    override, so a release-carried value for the same key is non-authoritative.
+    Each allowlisted key present locally REPLACES its candidate line, or is
+    APPENDED as the block's last line when the candidate lacks it (a fixed
+    position keeps re-runs byte-stable). The local line is copied VERBATIM
+    (spacing / trailing comment preserved). Either side lacking a frontmatter
+    block -> candidate returned unchanged (fail-open, never fabricate one).
+    """
+    local_lines = _split_lines(local_text)
+    out = _split_lines(candidate_text)
+    local_span = _frontmatter_span(local_lines)
+    if local_span is None or _frontmatter_span(out) is None:
+        return candidate_text
+
+    local_begin, local_close = local_span
+    for key in _LOCAL_ONLY_FRONTMATTER_KEYS:
+        prefix = f"{key}:"
+        local_line = next(
+            (
+                line
+                for line in local_lines[local_begin:local_close]
+                if line.startswith(prefix)
+            ),
+            None,
+        )
+        # absent locally -> nothing to keep; a release-carried value lands normally.
+        if local_line is None:
+            continue
+        # re-read the span each pass — a prior append shifted the closing fence.
+        span = _frontmatter_span(out)
+        if span is None:
+            break
+        begin, close = span
+        hit = next((i for i in range(begin, close) if out[i].startswith(prefix)), None)
+        if hit is None:
+            out.insert(close, local_line)
+        else:
+            out[hit] = local_line
+    return "".join(out)
+
+
 def resolve_file(
     target_file: str,
     local_text: str,
@@ -368,6 +442,7 @@ def resolve_file(
         resolutions.append(_resolve_region(idx, base_c, local_c, release_c))
 
     candidate = _assemble(release_lines, release_regions, resolutions)
+    candidate = _keep_local_frontmatter(candidate, local_text)
     needs_llm = any(r.verdict in _LLM_REQUIRED for r in resolutions)
 
     # Overall verdict = the worst-case region verdict (severity order).
