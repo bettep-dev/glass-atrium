@@ -25,7 +25,7 @@ artifact and this verdict must be re-evaluated.
 - **Manifests audited**: `monitor/package.json` (versions pinned by the tracked
   `monitor/package-lock.json`), `autoagent/package.json` (lockfile untracked — versions
   read from the installed tree), and Python third-party imports enumerated across all
-  92 tracked `*.py` files plus the tracked root `requirements.txt` (no `pyproject.toml`
+  93 tracked `*.py` files plus the tracked root `requirements.txt` (no `pyproject.toml`
   exists in the repo).
 - **License sources**: installed `node_modules/*/package.json` `license` fields; bundled
   LICENSE texts where the field is absent; npm registry metadata (`npm view`) for unmet

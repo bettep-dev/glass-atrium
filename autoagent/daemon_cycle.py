@@ -2403,6 +2403,13 @@ def _detect_transient_overload(stderr: str, stdout: str) -> bool:
 MAX_TRANSIENT_RETRIES = 2
 _TRANSIENT_BACKOFF_BASE_SEC = 2.0
 _TRANSIENT_BACKOFF_JITTER_SEC = 1.0
+# Timeout-class backoff — FLAT (constant + jitter), not the exponential ladder.
+# A timeout already burned HAIKU_TIMEOUT_SEC → a 2s wait retries into the stall.
+# Flat over exponential: doubling the 2nd wait buys no extra stall clearance.
+# Band 30-60s; env-overridable (a chronically slower backend wants the top).
+_TRANSIENT_TIMEOUT_BACKOFF_SEC = float(
+    os.environ.get("AUTOAGENT_TRANSIENT_TIMEOUT_BACKOFF_SEC", "45.0") or "45.0"
+)
 
 
 # Strict re-prompt suffix for retry-on-parse-failure. Appended to the original
@@ -2896,11 +2903,17 @@ def _run_haiku_with_retry(
                 completed=completed,
             )
 
-        # Backoff before the next attempt — exponential base + jitter spreads the
-        # retry off the synchronized overload window.
-        backoff = _TRANSIENT_BACKOFF_BASE_SEC * (2 ** attempt) + random.uniform(
-            0.0, _TRANSIENT_BACKOFF_JITTER_SEC
-        )
+        # Backoff before the next attempt — class-aware, re-decided each attempt.
+        # Overload → exponential 2s ladder (spreads off the 04:30 overload window).
+        # Timeout → flat band, since the stall already consumed the whole timeout_sec.
+        # Not sticky — a mixed timeout→overload ladder keeps overload fast.
+        # Exhausted timeout target: ~277s (3x90+2+4) → ~365s (3x90+2x45) wall clock.
+        # Accepted — the 2s ladder absorbed none of the measured 90s empty stalls.
+        if is_timeout_transient:
+            base = _TRANSIENT_TIMEOUT_BACKOFF_SEC
+        else:
+            base = _TRANSIENT_BACKOFF_BASE_SEC * (2 ** attempt)
+        backoff = base + random.uniform(0.0, _TRANSIENT_BACKOFF_JITTER_SEC)
         sys.stderr.write(
             f"[daemon-cycle] WARN: haiku transient overload for "
             f"{target_file.name} (attempt {attempt + 1}/"
