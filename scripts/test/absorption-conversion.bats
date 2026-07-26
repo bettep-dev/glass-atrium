@@ -7,8 +7,16 @@
 # shape, which exits clean and writes no marker.
 # Hermetic: unit tests source the real sink lib and awk-extract the writer function
 # into a shim; full-flow tests copy wiki-daily-compile.sh + its libs into a
-# sandbox with a PG helper stub that always exits 1, HOME/GA_DATA_ROOT/WIKI_ROOT
-# all inside the sandbox. No live install, PG connection, or real log is touched.
+# sandbox with a PG helper stub, HOME/GA_DATA_ROOT/WIKI_ROOT all inside the
+# sandbox. No live install, PG connection, or real log is touched.
+#
+# Stub vs REAL helper: the stub models the helper's failure contract (exit 4 =
+# pg-write failure after retry) and stays where the subject under test is the
+# wrapper. The `REAL helper` cases below run the production
+# _pg_dual_write_daemon.py itself against a forced precondition failure, so the
+# sink contract is pinned to the shipped exit codes rather than to a fixture's
+# — the exit-0-always helper this suite once paired with made every stub-based
+# assertion vacuous in production.
 
 bats_require_minimum_version 1.5.0
 
@@ -17,6 +25,7 @@ RESTART_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 WIKI_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
+REAL_PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
 
 setup() {
   [[ -f "${RESTART_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${RESTART_SCRIPT}"
@@ -35,27 +44,57 @@ teardown() {
 
 # Extract one top-level writer function (declaration line → first column-0 brace)
 # on top of the real sink lib, into a sourceable shim.
+# $3 selects the donor script (default: daemon-daily-restart.sh).
 extract_sink_shim() {
-  local fn_name="$1" shim="$2"
+  local fn_name="$1" shim="$2" donor="${3:-${RESTART_SCRIPT}}"
   printf 'PG_DROP_TAG="daemon-daily-restart"\n. "%s"\n' "${SINK_LIB}" >"${shim}"
   awk -v fn="${fn_name}" '
     $0 == fn "() {" { capture = 1 }
     capture { print }
     capture && /^\}/ { exit }
-  ' "${RESTART_SCRIPT}" >>"${shim}"
+  ' "${donor}" >>"${shim}"
   grep -q "^${fn_name}() {" "${shim}" || skip "function extraction failed: ${fn_name}"
 }
 
-# PG helper stub that always fails — the forced-failure fixture behind AC-2/AC-3.
+# PG helper stub that always fails with the helper's named pg-write-failure code
+# — the forced-failure fixture behind the wrapper-level AC-2/AC-3 cases.
 make_failing_pg_helper() {
   local dest="$1"
   cat >"${dest}" <<'PY'
 #!/usr/bin/env python3
 import sys
 sys.stderr.write("forced PG failure fixture\n")
-sys.exit(1)
+sys.exit(4)
 PY
   chmod +x "${dest}"
+}
+
+# The production helper itself, run against a forced precondition failure.
+make_real_pg_helper() {
+  cp "${REAL_PG_HELPER}" "${PG_HELPER}"
+  chmod +x "${PG_HELPER}"
+}
+
+# Drive the real helper down the connect-failure path: the "dbname=glass_atrium"
+# conninfo leaves host unset, so libpq consults PGHOST — a nonexistent socket dir
+# fails deterministically for every user, with no DB anywhere in reach.
+force_pg_unreachable() {
+  export PGHOST="${WORK}/nonexistent-pg-socket-dir"
+}
+
+# Drive the real helper down the psycopg-absent path: a PYTHONPATH-prepended
+# package whose import always raises shadows any installed psycopg. Needs no DB
+# and no psycopg, so this case pins the sink chain to the production helper on
+# every machine.
+force_psycopg_absent() {
+  mkdir -p "${WORK}/pyshim/psycopg"
+  printf 'raise ImportError("shim")\n' >"${WORK}/pyshim/psycopg/__init__.py"
+  export PYTHONPATH="${WORK}/pyshim${PYTHONPATH:+:${PYTHONPATH}}"
+}
+
+require_psycopg() {
+  python3 -c "import psycopg" 2>/dev/null ||
+    skip "psycopg absent — the CLI takes the exit-5 branch before any DB path"
 }
 
 # PG helper stub that always succeeds and records the delivered envelope beside
@@ -92,7 +131,7 @@ set_restart_globals() {
   run bash -c "source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z"
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run"* ]]
-  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=1' "${DROP_LOG}"
+  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=4' "${DROP_LOG}"
 }
 
 @test "AC-2 pg_write_autoagent_run: a failed PG report emits its own site-tagged drop record" {
@@ -102,7 +141,7 @@ set_restart_globals() {
   run bash -c "source '${WORK}/shim.sh'; pg_write_autoagent_run quota_exceeded 2026-06-10T00:01:00Z note"
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN: PG daemon-run report failed (site=autoagent-quota-run"* ]]
-  grep -q 'PG_REPORT_DROP site=autoagent-quota-run exit=1' "${DROP_LOG}"
+  grep -q 'PG_REPORT_DROP site=autoagent-quota-run exit=4' "${DROP_LOG}"
 }
 
 @test "AC-3 pg_write_run: the conversion branch never changes the caller's status" {
@@ -112,6 +151,50 @@ set_restart_globals() {
   run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run error 2026-06-10T00:01:00Z fatal; echo REACHED"
   [ "$status" -eq 0 ]
   [[ "$output" == *"REACHED"* ]]
+}
+
+# ---- REAL helper: the sink contract pinned to the shipped exit codes ----
+
+@test "REAL helper psycopg-absent: the chain fires and the drop record pins exit=5" {
+  extract_sink_shim pg_write_run "${WORK}/shim.sh"
+  set_restart_globals
+  make_real_pg_helper
+  force_psycopg_absent
+  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REACHED"* ]] # AC-3: the primary work still completes under set -e
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run, exit=5)"* ]]
+  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=5' "${DROP_LOG}"
+  # The helper's own diagnostic lands in LOG_FILE — the WARN above is the
+  # separate stderr channel, not that redirected line.
+  grep -q 'import_error' "${LOG_FILE}"
+}
+
+@test "REAL helper pg-unreachable: the chain fires and the drop record pins exit=4" {
+  require_psycopg
+  extract_sink_shim pg_write_run "${WORK}/shim.sh"
+  set_restart_globals
+  make_real_pg_helper
+  force_pg_unreachable
+  run bash -c "set -Eeuo pipefail; source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REACHED"* ]]
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=daily-restart-run, exit=4)"* ]]
+  grep -q 'PG_REPORT_DROP site=daily-restart-run exit=4' "${DROP_LOG}"
+  grep -q 'pg_write=fail' "${LOG_FILE}"
+}
+
+@test "REAL helper unknown-op: wiki pg_write_report records the named exit=3" {
+  require_psycopg
+  extract_sink_shim pg_write_report "${WORK}/shim.sh" "${WIKI_SCRIPT}"
+  set_restart_globals
+  make_real_pg_helper
+  printf '{"op":"no_such_op"}\n' >"${WORK}/envelope.json"
+  run bash -c "set -euo pipefail; source '${WORK}/shim.sh'; pg_write_report probe-unknown-op \"\$(cat '${WORK}/envelope.json')\"; echo REACHED"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REACHED"* ]]
+  [[ "$output" == *"WARN: PG daemon-run report failed (site=probe-unknown-op, exit=3)"* ]]
+  grep -q 'PG_REPORT_DROP site=probe-unknown-op exit=3' "${DROP_LOG}"
 }
 
 @test "sink rotation: a drop log above the byte ceiling is restarted, not appended forever" {
