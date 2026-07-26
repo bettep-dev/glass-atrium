@@ -40,7 +40,7 @@ import sys
 import tempfile
 import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -1425,6 +1425,10 @@ class PatchProposal:
     failure_attempt: int | None = None        # 0-based transient-retry attempt index
     failure_probe_result: str = ""            # bounded fail-open reachability verdict
     failure_log_path: str = ""                # per-call untruncated stderr+stdout sink
+    # Wall-clock duration of a SUCCESSFUL generation call, in ms.
+    # Distinct field, never failure_duration_ms — that one documents failure evidence.
+    # Makes budget tightness (slow but under timeout) measurable with no failure row.
+    generation_duration_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1511,6 +1515,8 @@ class PatchResult:
     # (notably auth/401) is diagnosable from the row alone. Empty on the happy path.
     # MUST stay redacted (redact_secrets) — a 401 stream may echo a token.
     failure_raw_head: str = ""
+    # Mirror of the proposal's successful-call duration (None on every failure path).
+    generation_duration_ms: int | None = None
 
 
 @dataclass
@@ -2403,6 +2409,13 @@ def _detect_transient_overload(stderr: str, stdout: str) -> bool:
 MAX_TRANSIENT_RETRIES = 2
 _TRANSIENT_BACKOFF_BASE_SEC = 2.0
 _TRANSIENT_BACKOFF_JITTER_SEC = 1.0
+# Timeout-class backoff — FLAT (constant + jitter), not the exponential ladder.
+# A timeout already burned HAIKU_TIMEOUT_SEC → a 2s wait retries into the stall.
+# Flat over exponential: doubling the 2nd wait buys no extra stall clearance.
+# Band 30-60s; env-overridable (a chronically slower backend wants the top).
+_TRANSIENT_TIMEOUT_BACKOFF_SEC = float(
+    os.environ.get("AUTOAGENT_TRANSIENT_TIMEOUT_BACKOFF_SEC", "45.0") or "45.0"
+)
 
 
 # Strict re-prompt suffix for retry-on-parse-failure. Appended to the original
@@ -2896,11 +2909,17 @@ def _run_haiku_with_retry(
                 completed=completed,
             )
 
-        # Backoff before the next attempt — exponential base + jitter spreads the
-        # retry off the synchronized overload window.
-        backoff = _TRANSIENT_BACKOFF_BASE_SEC * (2 ** attempt) + random.uniform(
-            0.0, _TRANSIENT_BACKOFF_JITTER_SEC
-        )
+        # Backoff before the next attempt — class-aware, re-decided each attempt.
+        # Overload → exponential 2s ladder (spreads off the 04:30 overload window).
+        # Timeout → flat band, since the stall already consumed the whole timeout_sec.
+        # Not sticky — a mixed timeout→overload ladder keeps overload fast.
+        # Exhausted timeout target: ~277s (3x90+2+4) → ~365s (3x90+2x45) wall clock.
+        # Accepted — the 2s ladder absorbed none of the measured 90s empty stalls.
+        if is_timeout_transient:
+            base = _TRANSIENT_TIMEOUT_BACKOFF_SEC
+        else:
+            base = _TRANSIENT_BACKOFF_BASE_SEC * (2 ** attempt)
+        backoff = base + random.uniform(0.0, _TRANSIENT_BACKOFF_JITTER_SEC)
         sys.stderr.write(
             f"[daemon-cycle] WARN: haiku transient overload for "
             f"{target_file.name} (attempt {attempt + 1}/"
@@ -2999,7 +3018,8 @@ def _run_haiku_with_retry(
 
     # Happy path — strict or fuzzy parsed clean.
     if first_proposal.parse_mode in ("strict", "fuzzy"):
-        return first_proposal
+        # Attach the successful call's wall clock; _parse_haiku_response never sees it.
+        return replace(first_proposal, generation_duration_ms=last_duration_ms)
 
     # -- Attempt 2: retry with strict header suffix ------------------------
     # Triggered ONLY on parse_mode='failed' — fuzzy + strict both missed.
@@ -3009,7 +3029,7 @@ def _run_haiku_with_retry(
         f"strict header suffix\n"
     )
     retry_prompt = base_prompt + _HAIKU_STRICT_RETRY_SUFFIX
-    retry_completed, retry_early_exit, _retry_duration_ms = _invoke_haiku_cli(
+    retry_completed, retry_early_exit, retry_duration_ms = _invoke_haiku_cli(
         prompt=retry_prompt, claude_bin=claude_bin, timeout_sec=timeout_sec
     )
     if retry_early_exit is not None or retry_completed is None:
@@ -3033,6 +3053,7 @@ def _run_haiku_with_retry(
             estimated_added_lines=retry_proposal.estimated_added_lines,
             raw_response=retry_proposal.raw_response,
             parse_mode="retried",
+            generation_duration_ms=retry_duration_ms,
         )
 
     # Both attempts failed — return first failure (already logged by
@@ -8163,6 +8184,9 @@ def run_cycle(
                 failure_probe_result=proposal.failure_probe_result,
                 failure_log_path=proposal.failure_log_path,
                 failure_raw_head=redact_secrets(proposal.raw_response[:400]),
+                # Same explicit-copy duty as the failure_* block above — an omitted
+                # mirror silently reaches PG as the dataclass default.
+                generation_duration_ms=proposal.generation_duration_ms,
             )
         )
 
