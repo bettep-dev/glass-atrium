@@ -20,6 +20,16 @@ WIKI_COMPILE_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/atrium-config.sh
 . "$WIKI_COMPILE_SELF_DIR/lib/atrium-config.sh"
 
+# Terminal best-effort drop sink for the converted PG reporting channel — shared
+# with daemon-daily-restart.sh, so the record format and rotation ceiling stay one
+# definition. PG_DROP_TAG must be bound before the source, and the source itself
+# stays above the helper block wiki-source-raw.bats extracts as a shim.
+# SC2034: consumed by the sourced sink lib, invisible to a per-file scan.
+# shellcheck disable=SC2034
+PG_DROP_TAG="wiki-daily-compile"
+# shellcheck source=lib/pg-report-drop.sh
+. "$WIKI_COMPILE_SELF_DIR/lib/pg-report-drop.sh"
+
 # claude CLI resolution: WIKI_COMPILE_CLAUDE_BIN (Bats stub override) →
 # [paths].claude_bin (config.toml) → daemon-cycle.sh fallback chain (PATH →
 # Homebrew Apple Silicon → Homebrew Intel). Loud-fail when nothing is runnable
@@ -279,15 +289,6 @@ _inject_source_raw() {
     rm -f "${_tmp}" 2>/dev/null || true # GA-ABSORB[benign]: teardown removal of a possibly-absent temp
   fi
 }
-
-# Terminal best-effort drop sink for the converted PG reporting channel — shared
-# with daemon-daily-restart.sh, so the record format and rotation ceiling stay one
-# definition. PG_DROP_TAG must be bound before the source.
-# SC2034: consumed by the sourced sink lib, invisible to a per-file scan.
-# shellcheck disable=SC2034
-PG_DROP_TAG="wiki-daily-compile"
-# shellcheck source=lib/pg-report-drop.sh
-. "$WIKI_COMPILE_SELF_DIR/lib/pg-report-drop.sh"
 
 # Deliver one write_daemon_run envelope. Every reporting site shares this failure
 # contract: surface on stderr, land a durable drop record, leave the caller's exit
