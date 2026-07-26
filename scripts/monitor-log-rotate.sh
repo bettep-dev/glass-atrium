@@ -76,6 +76,7 @@ rotate_one() {
 prune_archives() {
   # `|| true` justified: find exits non-zero on an empty dir or a concurrent-delete
   # race — a no-op here that MUST NOT fail the rotation cycle.
+  # GA-ABSORB[benign]: find exits non-zero on an empty dir or a concurrent-delete race — a prune no-op, never a failure
   find "${LOG_ROOT}" -maxdepth 1 -name "*.gz" -mtime +"${ARCHIVE_RETENTION_DAYS}" -delete 2>/dev/null || true
 }
 

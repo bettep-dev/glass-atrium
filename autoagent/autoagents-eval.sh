@@ -45,7 +45,7 @@ diagnose_failure() {
     total_lines=$(wc -l < "$filepath" | tr -d ' ')
     [ "$total_lines" -eq 0 ] && total_lines=1
     local numstat
-    numstat=$(cd "$AGENTS_DIR" && git diff --numstat -- "$file" 2>/dev/null || true)
+    numstat=$(cd "$AGENTS_DIR" && git diff --numstat -- "$file" 2>/dev/null || true) # GA-ABSORB[handled@empty-numstat-continue-guard-next-line]: no diff is data — the guard skips the file
     [ -z "$numstat" ] && continue
     local added removed
     added=$(echo "$numstat" | awk '{print $1}')
@@ -80,7 +80,7 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
   # Branch on tracked status first (untracked new files are valid targets too)
   if ! git ls-files --error-unmatch -- "$POST_COMMIT_FILE" >/dev/null 2>&1; then
     log "untracked new file confirmed — ${POST_COMMIT_FILE}"
-  elif git diff --quiet -- "$POST_COMMIT_FILE" 2>/dev/null; then
+  elif git diff --quiet -- "$POST_COMMIT_FILE" 2>/dev/null; then # GA-ABSORB[handled@post-commit-if-elif-else-chain]: exit status IS the branch selector; every branch logs
     log "warn: no unstaged diff on ${POST_COMMIT_FILE} (committed or unchanged)"
   else
     log "unstaged diff confirmed — ${POST_COMMIT_FILE}"
@@ -89,7 +89,7 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
 else
   # unstaged + untracked .md files (archive/ excluded)
   # D(staged or worktree deletion) excluded: eval LLM cannot read deleted files -> false-positive FAIL
-  CHANGED=$(git status --porcelain -- '*.md' 2>/dev/null | grep -E '^\s*[MAR\?]' | grep -v '^.D' | grep -v 'archive/' || true)
+  CHANGED=$(git status --porcelain -- '*.md' 2>/dev/null | grep -E '^\s*[MAR\?]' | grep -v '^.D' | grep -v 'archive/' || true) # GA-ABSORB[handled@no-changes-exit-branch-below]: grep no-match is data — empty routes to the logged "no changes" exit
 
   if [ -z "$CHANGED" ]; then
     log "no changes — exit"
@@ -159,7 +159,7 @@ EVAL_RESULT=$(OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none CLAUDE_CODE_ENA
   --permission-mode bypassPermissions \
   --max-budget-usd 2.00 \
   --output-format text \
-  "$EVAL_PROMPT" 2>/dev/null | sed '/^{$/,/^}$/d' || echo "EVAL_ERROR")
+  "$EVAL_PROMPT" 2>/dev/null | sed '/^{$/,/^}$/d' || echo "EVAL_ERROR") # GA-ABSORB[handled@EVAL_ERROR-sentinel-branch]: a failed run yields the sentinel that the branch below turns into RESULT: FAIL
 
 log "eval result: $(echo "$EVAL_RESULT" | head -5)"
 

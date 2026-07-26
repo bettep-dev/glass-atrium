@@ -95,8 +95,8 @@ PY
 # rule). `|| :` keeps a no-trailing-newline read from wiping the captured line.
 update_pause_flag_pid() {
   local p="$1" line="" pid=""
-  [[ -e "${p}" ]] || return 0
-  IFS= read -r line <"${p}" 2>/dev/null || :
+  [[ -e "${p}" ]] || return 0                # GA-ABSORB[benign]: absent flag -> empty owner, the documented contract
+  IFS= read -r line <"${p}" 2>/dev/null || : # GA-ABSORB[benign]: read rc 1 at EOF keeps the captured line
   case "${line}" in
     pid=*)
       pid="${line#pid=}"
@@ -127,6 +127,7 @@ update_pause_create() {
   flag="${dir}/autoagent-pause.flag"
   if [[ -e "${flag}" ]]; then
     owner="$(update_pause_flag_pid "${flag}")"
+    # GA-ABSORB[benign]: kill -0 rc is the liveness answer; a dead pid's stderr is noise
     if [[ -n "${owner}" && "${owner}" != "$$" ]] && kill -0 "${owner}" 2>/dev/null; then
       ttl="$(update_pause_ttl_secs)"
       if age="$(update_pause_flag_age_secs "${flag}")" && [[ "${age}" -le "${ttl}" ]]; then
@@ -155,7 +156,7 @@ update_pause_create() {
 update_pause_remove() {
   local flag owner
   flag="$(update_pause_flag_path "${1:-}")"
-  [[ -e "${flag}" ]] || return 0
+  [[ -e "${flag}" ]] || return 0 # GA-ABSORB[benign]: absent flag -> rc 0, the documented idempotent result
   owner="$(update_pause_flag_pid "${flag}")"
   if [[ -z "${owner}" || "${owner}" == "$$" ]]; then
     rm -f -- "${flag}"

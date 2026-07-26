@@ -65,18 +65,19 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 # 2. Session exists?
-if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
+if ! tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[handled@fail-branch]: nonzero -> fail() below
   fail "session '${SESSION}' does not exist"
 fi
 
 # 3. Pane PID still alive? pane_pid = the leaf process in the pane (now claude
 #    itself, post-fakechat-pivot, no PTY wrapper). bash-3.2-safe `head -n 1`.
+# GA-ABSORB[handled@empty-pane_pid-check]: stderr hidden; empty result -> fail()
 pane_pid="$(tmux list-panes -t "${SESSION}" -F '#{pane_pid}' 2>/dev/null | head -n 1)"
 if [[ -z "${pane_pid}" ]]; then
   fail "no pane PID for session '${SESSION}'"
 fi
 
-if ! kill -0 "${pane_pid}" 2>/dev/null; then
+if ! kill -0 "${pane_pid}" 2>/dev/null; then # GA-ABSORB[handled@fail-branch]: dead pid -> fail() below
   fail "pane PID ${pane_pid} not running"
 fi
 
@@ -84,6 +85,7 @@ fi
 #    pane_current_command sometimes reports `node`). Reject `python3` (the
 #    falsified pty_wrapper.py model) loud = a stale daemon on the old
 #    architecture that must be respawned.
+# GA-ABSORB[handled@pane_cmd-case]: stderr hidden; empty/unexpected cmd -> fail()
 pane_cmd="$(tmux list-panes -t "${SESSION}" -F '#{pane_current_command}' 2>/dev/null | head -n 1)"
 case "${pane_cmd}" in
   claude | claude.exe | node) ;;
@@ -97,6 +99,7 @@ esac
 #    127.0.0.1:${FAKECHAT_PORT} and serves the chat UI at GET /. A 200 proves plugin
 #    loaded + socket bound + can accept POST /upload. -sf returns non-zero on any
 #    HTTP error AND on connect-refused → one curl covers all modes; -m bounds connect.
+# GA-ABSORB[handled@fail-branch]: probe stderr hidden; nonzero -> fail() below
 if ! curl -sf -m "${HTTP_TIMEOUT_SEC}" -o /dev/null "${FAKECHAT_BASE_URL}/" 2>/dev/null; then
   fail "fakechat HTTP server not responding on ${FAKECHAT_BASE_URL}/ — channel plugin not running?"
 fi
@@ -114,14 +117,14 @@ pg_status="unreachable"
 pg_pid=$!
 (
   sleep 5
-  kill -0 "${pg_pid}" 2>/dev/null && kill -9 "${pg_pid}" 2>/dev/null
+  kill -0 "${pg_pid}" 2>/dev/null && kill -9 "${pg_pid}" 2>/dev/null # GA-ABSORB[benign]: already-exited pid is normal
 ) &
 watchdog_pid=$!
-if wait "${pg_pid}" 2>/dev/null; then
+if wait "${pg_pid}" 2>/dev/null; then # GA-ABSORB[handled@pg_status-branch]: nonzero -> stderr notice below
   pg_status="ok"
 fi
-kill -9 "${watchdog_pid}" 2>/dev/null || true
-wait "${watchdog_pid}" 2>/dev/null || true
+kill -9 "${watchdog_pid}" 2>/dev/null || true # GA-ABSORB[benign]: watchdog already exited is the normal case
+wait "${watchdog_pid}" 2>/dev/null || true    # GA-ABSORB[benign]: wait on a SIGKILLed child always returns nonzero
 if [[ "${pg_status}" != "ok" ]]; then
   printf '[healthcheck] postgres unreachable via Unix socket\n' >&2
 fi
@@ -145,6 +148,7 @@ if [[ "${skip_cron_watchdog}" -eq 0 ]]; then
   if ! command -v jq >/dev/null 2>&1; then
     fail "cron watchdog: jq not on PATH — required to parse '${session_record}'"
   fi
+  # GA-ABSORB[handled@empty-field-check]: parse failure -> empty -> fail() below
   session_fields="$(jq -r '[.sessionId, .cwd] | @tsv' "${session_record}" 2>/dev/null || true)"
   IFS=$'\t' read -r session_id session_cwd <<<"${session_fields}"
   if [[ -z "${session_id}" || -z "${session_cwd}" ]]; then

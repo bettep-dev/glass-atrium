@@ -51,6 +51,7 @@ gate_render_diff() {
   else
     old_src="${current}"
   fi
+  # GA-ABSORB[benign]: diff rc1 = files differ = the expected preview case
   diff -u -- "${old_src}" "${proposed}" || true
   printf '\n'
 }

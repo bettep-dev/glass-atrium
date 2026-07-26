@@ -207,7 +207,7 @@ daemon_bootstrap_create_session() {
     # between the idempotency guard and this call — the racer's session is the
     # live one, so treat as success but flag it; main then skips the duplicate
     # inject (the winner owns it) and heads straight to its mode gate.
-    if tmux has-session -t "${SESSION}" 2>/dev/null; then
+    if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr is noise
       create_raced=true
       log "WARN: session create raced a concurrent bootstrap — '${SESSION}' already exists, adopting the winner's session"
       return 0
@@ -216,7 +216,7 @@ daemon_bootstrap_create_session() {
     exit 1
   fi
 
-  if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
+  if ! tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr is noise
     log "FATAL: session '${SESSION}' creation failed"
     exit 1
   fi
@@ -235,6 +235,7 @@ daemon_bootstrap_wait_http_ready() {
   local attempt
   http_ready=false
   for ((attempt = 1; attempt <= HTTP_READY_MAX_ATTEMPTS; attempt++)); do
+    # GA-ABSORB[benign]: rc is the probe answer; -fsS already reports real errors
     if curl -fsS -m "${HTTP_READY_TIMEOUT_SEC}" -o /dev/null "${probe_url}" 2>/dev/null; then
       log "fakechat HTTP server ready on attempt ${attempt}/${HTTP_READY_MAX_ATTEMPTS} (${probe_url})"
       http_ready=true
@@ -298,11 +299,12 @@ restart_lock_waited=0
 daemon_bootstrap_wait_restart_lock() {
   while :; do
     daemon_lock_read_holder "${DAEMON_RESTART_LOCK}"
+    # GA-ABSORB[benign]: kill -0 rc is the liveness answer; a dead pid's stderr is noise
     if [[ -z "${daemon_lock_holder}" ]] || ! kill -0 "${daemon_lock_holder}" 2>/dev/null; then
       restart_lock_outcome="free"
       return 0
     fi
-    if tmux has-session -t "${SESSION}" 2>/dev/null; then
+    if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr is noise
       restart_lock_outcome="session"
       return 0
     fi
@@ -359,12 +361,13 @@ daemon_bootstrap_monitor_loop() {
     # tmux session gone → exit immediately → whole daemon restarts (manual kill).
     # A missing session is unambiguous (not a transient probe miss), so the
     # consecutive-fail threshold does NOT apply here.
-    if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
+    if ! tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr noise
       log "FATAL: tmux session '${SESSION}' missing — exit 3 (launchd respawn)"
       exit 3
     fi
 
     # fakechat HTTP probe — a dead bun releases the socket bind → curl fails.
+    # GA-ABSORB[benign]: rc is the probe answer; -fsS already reports real errors
     if curl -fsS -m "${MONITOR_PROBE_TIMEOUT_SEC}" -o /dev/null "${probe_url}" 2>/dev/null; then
       fail_count=0
       continue
@@ -377,6 +380,7 @@ daemon_bootstrap_monitor_loop() {
     fi
 
     log "FATAL: fakechat port ${FAKECHAT_PORT_DEFAULT} unresponsive ${fail_count}/${DAEMON_MONITOR_FAIL_THRESHOLD} consecutive probes — kill tmux + exit 3 (launchd respawn)"
+    # GA-ABSORB[handled@exit-3-next-line]: already-gone session is the goal state; exit 3 -> launchd respawn
     tmux kill-session -t "${SESSION}" 2>/dev/null || true
     exit 3
   done
@@ -416,7 +420,7 @@ daemon_bootstrap_main() {
   # pre-existing session would run unmonitored until next login. ADOPT it
   # instead: straight to the step-6 loop, no reclaim/create/inject (the live
   # session owns its port and REPL).
-  if tmux has-session -t "${SESSION}" 2>/dev/null; then
+  if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr is noise
     if [[ "${bootstrap_mode}" == "return" ]]; then
       log "session '${SESSION}' already exists — no-op (return mode)"
       exit 0
@@ -438,7 +442,7 @@ daemon_bootstrap_main() {
   if [[ "${bootstrap_mode}" == "supervise" ]]; then
     while :; do
       daemon_bootstrap_wait_restart_lock
-      if tmux has-session -t "${SESSION}" 2>/dev/null; then
+      if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: rc is the probe answer; stderr noise
         log "session '${SESSION}' appeared during restart-window wait — adopting for supervision"
         daemon_bootstrap_monitor_loop
       fi

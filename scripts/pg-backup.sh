@@ -84,11 +84,11 @@ if ((dump_total > RETAIN_COUNT)); then
   while IFS= read -r old_path; do
     [[ -z "${old_path}" ]] && continue
     rotation_targets+=("${old_path}")
-  done < <(
+  done < <(# GA-ABSORB[benign]: pipeline failure yields an empty rotation set — a no-op, not a lost deliverable
     printf '%s\n' "${all_dumps[@]}" \
       | sort -r 2>/dev/null \
       | awk -v keep="${RETAIN_COUNT}" 'NR>keep' \
-      || true
+      || true # GA-ABSORB[benign]: same pipeline guard under pipefail — an empty rotation set is a valid no-op
   )
 
   for old_path in "${rotation_targets[@]}"; do

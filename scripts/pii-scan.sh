@@ -63,7 +63,7 @@ WORD_FLAGS=()
 add_pattern() {
   # $1 = fixed string · $2 = "w" | "" — empty/duplicate/approved-disclosure identifiers are ignored (each pattern scanned once)
   local pat="$1" flag="${2:-}" existing approved
-  [[ -n "${pat}" ]] || return 0
+  [[ -n "${pat}" ]] || return 0 # GA-ABSORB[benign]: an empty pattern is a normal skip, not a failure
   for approved in "${APPROVED_MAINTAINER_IDS[@]}"; do
     if [[ "${pat}" == "${approved}" ]]; then
       # The pattern value itself keeps the existing masking convention (log length only)
@@ -86,15 +86,17 @@ collect_patterns() {
   add_pattern "${HOME}" ""
   add_pattern "/Users/${user}" ""
   add_pattern "${user}" "w"
+  # GA-ABSORB[handled@unset-email-else-branch]: unset email -> logged note below
   email="$(git -C "${GA_ROOT}" config user.email 2>/dev/null || true)"
   if [[ -n "${email}" ]]; then
     add_pattern "${email}" ""
   else
     log "note: git user.email unset — email pattern skipped"
   fi
-  host="$(hostname -s 2>/dev/null || true)"
+  host="$(hostname -s 2>/dev/null || true)" # GA-ABSORB[handled@add_pattern-empty-guard]: empty host skipped there
   add_pattern "${host}" "w"
   if command -v scutil >/dev/null 2>&1; then
+    # GA-ABSORB[handled@add_pattern-empty-guard]: empty LocalHostName skipped there
     local_host="$(scutil --get LocalHostName 2>/dev/null || true)"
     add_pattern "${local_host}" "w"
   fi
@@ -127,8 +129,10 @@ filter_public_org() {
 scan_tracked() {
   local pat="$1" flag="$2"
   if [[ "${flag}" == "w" ]]; then
+    # GA-ABSORB[benign]: git grep exits 1 on no-match - zero hits is data
     git -C "${GA_ROOT}" grep -I -n -w -F -e "${pat}" -- ':!node_modules' || true
   else
+    # GA-ABSORB[benign]: git grep exits 1 on no-match - zero hits is data
     git -C "${GA_ROOT}" grep -I -n -F -e "${pat}" -- ':!node_modules' || true
   fi
 }
@@ -137,10 +141,10 @@ scan_tree() {
   local pat="$1" flag="$2" dir="$3"
   if [[ "${flag}" == "w" ]]; then
     grep -R -I -n -w -F -e "${pat}" \
-      --exclude-dir=.git --exclude-dir=node_modules -- "${dir}" || true
+      --exclude-dir=.git --exclude-dir=node_modules -- "${dir}" || true # GA-ABSORB[benign]: grep exit 1 = no match
   else
     grep -R -I -n -F -e "${pat}" \
-      --exclude-dir=.git --exclude-dir=node_modules -- "${dir}" || true
+      --exclude-dir=.git --exclude-dir=node_modules -- "${dir}" || true # GA-ABSORB[benign]: grep exit 1 = no match
   fi
 }
 
@@ -151,7 +155,7 @@ scan_tree() {
 #   as the git grep worktree mode. Output = the matching commits, oneline.
 scan_history() {
   local pat="$1"
-  git -C "${GA_ROOT}" log -S "${pat}" --oneline -- ':!node_modules' || true
+  git -C "${GA_ROOT}" log -S "${pat}" --oneline -- ':!node_modules' || true # GA-ABSORB[benign]: no-match exits 1
 }
 
 # Check functions return the hit-pattern count via the global CHECK_HITS — the
