@@ -71,18 +71,19 @@ def _invoke_helper(envelope: dict[str, Any]) -> bool:
     """Invoke helper — fail-loud-and-skip. Returns bool indicating success.
 
     Same signature/exception policy as _invoke_helper in _pg_push_autoagent_cycle.py.
-    The helper script always exits 0 → returncode alone cannot determine failure.
-    Here we track only subprocess exceptions (PG failures are recorded in the helper's internal hook_failures).
+    The helper reports a write failure through a named non-zero exit code (4 =
+    PG write failure after retry), so the returncode is the success signal here;
+    the failure detail is still recorded in the helper's own hook_failures row.
     """
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["python3", HELPER],
             input=json.dumps(envelope),
             text=True,
             timeout=10,
             check=False,
         )
-        return True
+        return proc.returncode == 0
     except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
         # WHY: helper invocation itself failed (timeout, FileNotFoundError, etc.) → report to stderr and continue
         sys.stderr.write(

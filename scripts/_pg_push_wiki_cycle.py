@@ -13,7 +13,9 @@
 #   0 — happy path (helpers invoked; their own failures are logged but not propagated)
 #   2 — env_missing OR path_missing (invalid invocation; caller must detect)
 #   3 — parse_error (OUT_PATH contains non-JSON; surfaced to /tmp/wiki-daemon-loop.log)
-# Helper subprocess failures still suppressed (return 0) — daemon must not block on PG transient errors.
+# Helper subprocess failures still suppressed (return 0) — the helper now exits
+# with a named non-zero code per failure path, but this pusher deliberately does
+# not propagate it: the daemon must not block on PG transient errors.
 
 import json
 import os
