@@ -18,7 +18,15 @@
 #     core.hook_failures INSERT (errors swallowed — never recurse).
 #   * Unix-socket only via psycopg.connect("dbname=glass_atrium").
 #     NEVER -h, -p, host=, 127.0.0.1, localhost.
-#   * Exit 0 always when invoked as CLI — daemon must not block on PG failure.
+#
+# CLI exit-code semantics (named codes — a caller MUST be able to tell a
+# committed write from a swallowed failure; callers that must not block on PG
+# absorb these with `|| <fallback>`):
+#   0 = committed (stdout elapsed_ms token + stderr pg_write=ok)
+#   2 = envelope parse failure (stdin was not a valid single-line JSON envelope)
+#   3 = unknown op (not in OP_TABLE)
+#   4 = PG write failure after the retry (structured JSON + pg_write=fail stderr)
+#   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
 #
 # CLI contract (single-line JSON envelope on stdin):
 #   {"op": "write_wiki_note",            "args": {"path": "...", "title": "...", ...}}
@@ -40,8 +48,8 @@ import time
 # SystemExit (a BaseException that escapes that guard, silently exiting the
 # importer mid-import and reporting a degraded run as false-clean). When run
 # directly as the CLI (__name__ == "__main__"), psycopg-absence is self-handled
-# with a clean exit 0 (no traceback): a subprocess CLI invocation owns its own
-# graceful degradation, the import path owns re-raising for the importer.
+# with the named exit 5 (no traceback): a subprocess CLI invocation reports the
+# precondition loudly, the import path owns re-raising for the importer.
 try:
     import psycopg
     from psycopg import errors as pg_errors
@@ -53,7 +61,7 @@ except ImportError as exc:
     )
     if __name__ != "__main__":
         raise
-    sys.exit(0)
+    sys.exit(5)
 
 
 # Map psycopg exception class -> core."HookErrorKind" enum value
@@ -506,13 +514,13 @@ def main():
             '[_pg_dual_write_daemon] envelope parse failed: %s\n'
             % str(exc).replace('"', "'")
         )
-        sys.exit(0)
+        sys.exit(2)
 
     if op not in OP_TABLE:
         sys.stderr.write(
             '[_pg_dual_write_daemon] unknown op: %s\n' % op.replace('"', "'")
         )
-        sys.exit(0)
+        sys.exit(3)
 
     func, target_table = OP_TABLE[op]
     # hook_name: prefer args.daemon_name when present (write_daemon_run/payload
@@ -563,7 +571,7 @@ def main():
     )
 
     _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry_attempted)
-    sys.exit(0)
+    sys.exit(4)
 
 
 if __name__ == "__main__":

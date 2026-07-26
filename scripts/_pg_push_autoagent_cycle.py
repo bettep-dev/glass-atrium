@@ -108,12 +108,12 @@ def _invoke_helper(envelope):
     """Invoke the dual-write helper for one envelope; return True on a committed
     write, False on any failure.
 
-    The helper ALWAYS exits 0 (fail-loud-and-skip: it records a write failure to
-    core.hook_failures + stderr, never blocking the daemon), so its exit code is
-    not a usable success discriminator. The reliable signal is its stdout token:
-    a committed write emits the elapsed_ms integer on stdout, a failed write
-    emits nothing there (the failure detail goes to stderr). stderr is inherited
-    so the log aggregator still sees the pg_write=ok/fail line.
+    The helper exits with a named non-zero code on every internal failure path
+    (2 envelope-parse / 3 unknown-op / 4 PG-write-after-retry / 5 psycopg-absent),
+    so the exit code IS a success discriminator. The stdout token stays a
+    belt-and-suspenders conjunct: a committed write emits the elapsed_ms integer
+    on stdout, every failure path emits nothing there. stderr is inherited so the
+    log aggregator still sees the pg_write=ok/fail line.
     """
     try:
         result = subprocess.run(
@@ -130,8 +130,8 @@ def _invoke_helper(envelope):
             % (envelope.get("op", "?"), str(exc).replace('"', "'"))
         )
         return False
-    # Empty stdout = the write failed (helper still exited 0). Non-empty stdout
-    # (the elapsed_ms token) = committed.
+    # Committed = named exit 0 AND the elapsed_ms stdout token; every helper
+    # failure path fails both conjuncts.
     return result.returncode == 0 and bool((result.stdout or "").strip())
 
 
