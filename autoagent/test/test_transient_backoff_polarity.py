@@ -1,4 +1,4 @@
-"""Polarity tests for the class-aware transient-retry backoff.
+"""Polarity tests for the class-aware transient backoff + successful-call duration.
 
 ``_run_haiku_with_retry`` retries TWO transient classes with opposite cost shapes,
 so one shared backoff cannot serve both:
@@ -17,11 +17,16 @@ Pinned invariants:
     the overload attempt fast;
   - the exhausted-timeout rationale still starts with
     ``HAIKU_TIMEOUT_RATIONALE_PREFIX`` (``consecutive_timeout_count`` keys on it —
-    a sleep-only change must stay chronic-snooze neutral).
+    a sleep-only change must stay chronic-snooze neutral);
+  - a SUCCESSFUL call records ``generation_duration_ms`` on both happy paths
+    (attempt-1 strict/fuzzy and the attempt-2 'retried' reconstruction), while a
+    failure proposal leaves it None.
 
 Hermetic: ``_invoke_haiku_cli`` is stubbed (no CLI, no network), ``time.sleep`` is
 captured instead of slept, ``random.uniform`` is pinned to 0.0, and the failure
 evidence sink (reachability probe + per-call log dir) is redirected to a tmp dir.
+``_parse_haiku_response`` is stubbed on the success paths so the pin isolates the
+duration attachment rather than re-testing the parser + diff normalization.
 
 Run with either runner:
     python3 -m unittest autoagent.test.test_transient_backoff_polarity -v
@@ -116,6 +121,15 @@ class TransientBackoffPolarity(unittest.TestCase):
             stderr="API Error: 529 Overloaded",
         ), None, _OVERLOAD_MS
 
+    @staticmethod
+    def _ok_call(duration_ms: int) -> tuple[subprocess.CompletedProcess[str], None, int]:
+        return subprocess.CompletedProcess(
+            args=["claude"],
+            returncode=0,
+            stdout="RATIONALE: probe\nDIFF:\n--- a/x\n+++ b/x\n",
+            stderr="",
+        ), None, duration_ms
+
     def _run(self, calls: list[object]) -> "dc.PatchProposal":
         """Drive the retry ladder over a scripted _invoke_haiku_cli sequence."""
         pending = list(calls)
@@ -145,6 +159,8 @@ class TransientBackoffPolarity(unittest.TestCase):
         self.assertTrue(
             proposal.rationale.startswith(dc.HAIKU_TIMEOUT_RATIONALE_PREFIX)
         )
+        # A failure row never claims a successful-call duration.
+        self.assertIsNone(proposal.generation_duration_ms)
         self.assertEqual(proposal.failure_duration_ms, _STALL_MS)
 
     def test_when_overload_transient_then_fast_exponential_backoff(self) -> None:
@@ -167,6 +183,55 @@ class TransientBackoffPolarity(unittest.TestCase):
         self.assertEqual(
             self.sleeps, [_TIMEOUT_BACKOFF_SEC, dc._TRANSIENT_BACKOFF_BASE_SEC * 2]
         )
+
+    def test_when_call_succeeds_then_generation_duration_recorded(self) -> None:
+        parsed = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="probe",
+            proposed_diff="--- a/x\n+++ b/x\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="",
+            parse_mode="strict",
+        )
+        with mock.patch.object(dc, "_parse_haiku_response", lambda *_a: parsed):
+            proposal = self._run([self._ok_call(31_400)])
+
+        # THE PIN: a healthy call's wall clock survives onto the proposal, so
+        # budget tightness is measurable without waiting for a failure row.
+        self.assertEqual(proposal.generation_duration_ms, 31_400)
+        self.assertEqual(proposal.parse_mode, "strict")
+        self.assertEqual(self.sleeps, [])
+
+    def test_when_strict_retry_succeeds_then_retry_duration_recorded(self) -> None:
+        failed = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="",
+            proposed_diff="",
+            touched_frontmatter=False,
+            estimated_added_lines=0,
+            raw_response="no markers",
+            parse_mode="failed",
+        )
+        retried = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="probe",
+            proposed_diff="--- a/x\n+++ b/x\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="",
+            parse_mode="strict",
+        )
+        parses = [failed, retried]
+        with mock.patch.object(
+            dc, "_parse_haiku_response", lambda *_a: parses.pop(0)
+        ):
+            proposal = self._run([self._ok_call(11_000), self._ok_call(22_000)])
+
+        # The 'retried' reconstruction must carry the RETRY call's duration, not
+        # the discarded first-attempt one.
+        self.assertEqual(proposal.parse_mode, "retried")
+        self.assertEqual(proposal.generation_duration_ms, 22_000)
 
 
 if __name__ == "__main__":
