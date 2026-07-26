@@ -116,13 +116,20 @@ set_restart_globals() {
 @test "sink failure is terminal: an unwritable data root never aborts the caller or re-reports" {
   extract_sink_shim pg_write_run "${WORK}/shim.sh"
   set_restart_globals
-  mkdir -p "${WORK}/locked"
-  chmod 555 "${WORK}/locked"
-  run bash -c "set -Eeuo pipefail; GA_DATA_ROOT='${WORK}/locked/ga' PG_DROP_LOG='${WORK}/locked/ga/data/pg-report-drops.log' source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
-  [ "$status" -eq 0 ]
+  # A regular file where the sink expects a parent directory: mkdir -p fails
+  # with ENOTDIR for EVERY user. A mode-bit denial would not — a privileged
+  # runner sails straight through 555 and the fixture stops proving anything.
+  printf 'blocker\n' >"${WORK}/blocked"
+  run bash -c "set -Eeuo pipefail; GA_DATA_ROOT='${WORK}/blocked/ga' source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
+  [ "$status" -eq 0 ] || {
+    echo "unexpected abort: status=${status}"
+    printf '%s\n' "${output}"
+    false
+  }
   [[ "$output" == *"REACHED"* ]]
   # Exactly one diagnostic channel fires — the sink failure itself is silent by design.
   [ "$(grep -c 'WARN: PG daemon-run report failed' <<<"$output")" -eq 1 ]
+  [ ! -e "${WORK}/blocked/ga/data/pg-report-drops.log" ]
 }
 
 # ---- wiki-daily-compile.sh: full-flow, exit contract preserved ----

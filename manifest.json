@@ -1076,7 +1076,7 @@
     "scripts/snapshot-live-repos.sh": "040056a6e118fb4f3c0482811b39d45326cd298202407c35c1722a3904ba4195",
     "scripts/sync-registry-tools.sh": "d60f3efe31891f9192986dd379ea734664b231f72a1b8d8386f3bb7f9b44a90b",
     "scripts/test/absorption-benign-idiom.bats": "682efada0d041319c0b47118755efb6b4d4913c18fb6a2d6717102535b10f129",
-    "scripts/test/absorption-conversion.bats": "a246adcee1823d66a26f31607f7124cfe717810f8fe6931ed43c2a7759bdd7ad",
+    "scripts/test/absorption-conversion.bats": "6256fd222ad67e749b789525d9c60fe1fa7f80cf10949b4c4c8d4e33b25b39bd",
     "scripts/test/apply-gate.bats": "8d46b4f339c98ac6deaf81e4e7339fd70060accb8862132c4eb4002bb7654997",
     "scripts/test/apply-lock.bats": "2233f3d1e73b772404ac0fbea141a877c1605c2e24bcff2912481ef1351781a3",
     "scripts/test/apply-spine.bats": "2fb3a1629ed8cd8c6cb3e8b1b8fe852fdc9f026374d8b6e51d7f502e0a207e85",
