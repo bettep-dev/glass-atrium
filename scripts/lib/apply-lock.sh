@@ -103,6 +103,7 @@ _apply_lock_tomb_guard() {
 # between probes) or ps unavailable — callers treat empty as "no fingerprint".
 _apply_lock_pid_fingerprint() {
   local pid="$1" fp
+  # GA-ABSORB[benign]: ps rc1 when the pid is gone; empty fp is the no-fingerprint value
   fp="$(ps -p "${pid}" -o lstart= 2>/dev/null || true)"
   fp="${fp#"${fp%%[![:space:]]*}"}" # ltrim
   fp="${fp%"${fp##*[![:space:]]}"}" # rtrim
@@ -123,8 +124,9 @@ _apply_lock_pid_fingerprint() {
 _apply_lock_write_pid() {
   local lock_dir="$1" fp tmp
   tmp="${lock_dir}/.pid.tmp.$$"
+  # GA-ABSORB[handled@write_pid-error-branch]: pid-write failure → named stderr ERROR + rc 1
   if ! printf '%s\n' "$$" >"${tmp}" 2>/dev/null \
-    || ! mv -f -- "${tmp}" "${lock_dir}/pid" 2>/dev/null; then
+    || ! mv -f -- "${tmp}" "${lock_dir}/pid" 2>/dev/null; then # GA-ABSORB[handled@write_pid-error-branch]: rename rc → ERROR + rc 1
     printf '[apply-lock] ERROR: pid-write failed (owner-less lock would degrade mutual exclusion): %s\n' \
       "${lock_dir}" >&2
     return 1
@@ -134,8 +136,9 @@ _apply_lock_write_pid() {
     return 0 # no fingerprint capturable → legacy liveness semantics
   fi
   tmp="${lock_dir}/.fp.tmp.$$"
+  # GA-ABSORB[handled@write_pid-fingerprint-error-branch]: fp-write failure → stderr ERROR + rc 1
   if ! printf '%s\n' "${fp}" >"${tmp}" 2>/dev/null \
-    || ! mv -f -- "${tmp}" "${lock_dir}/fingerprint" 2>/dev/null; then
+    || ! mv -f -- "${tmp}" "${lock_dir}/fingerprint" 2>/dev/null; then # GA-ABSORB[handled@fingerprint-error-branch]: rename rc → ERROR + rc 1
     printf '[apply-lock] ERROR: fingerprint-write failed (recycled-PID guard unrecorded): %s\n' \
       "${lock_dir}" >&2
     return 1
@@ -149,7 +152,8 @@ _apply_lock_write_pid() {
 _apply_lock_delete_partial() {
   local lock_dir="$1"
   rm -f -- "${lock_dir}/.pid.tmp.$$" "${lock_dir}/.fp.tmp.$$" \
-    "${lock_dir}/pid" "${lock_dir}/fingerprint" 2>/dev/null || true
+    "${lock_dir}/pid" "${lock_dir}/fingerprint" 2>/dev/null || true # GA-ABSORB[benign]: teardown of our own record files; absent is the normal case
+  # GA-ABSORB[benign]: a foreign-populated dir must survive this failure path
   rmdir -- "${lock_dir}" 2>/dev/null || true
 }
 
@@ -165,14 +169,17 @@ _apply_lock_delete_partial() {
 _apply_lock_holder_live() {
   local lock_dir="$1" pid="" recorded="" current=""
   if [[ -f "${lock_dir}/pid" ]]; then
+    # GA-ABSORB[handled@pid-case-branch]: empty pid falls to the not-live verdict
     pid="$(cat -- "${lock_dir}/pid" 2>/dev/null || true)"
   fi
   case "${pid}" in
     '' | *[!0-9]*) return 1 ;;
     *) ;; # numeric pid → fall through to the liveness probe
   esac
+  # GA-ABSORB[benign]: kill -0 rc1 IS the not-live verdict, not an absorbed error
   kill -0 "${pid}" 2>/dev/null || return 1
   if [[ -f "${lock_dir}/fingerprint" ]]; then
+    # GA-ABSORB[handled@legacy-fingerprint-branch]: empty record → bare kill -0 semantics
     recorded="$(cat -- "${lock_dir}/fingerprint" 2>/dev/null || true)"
   fi
   if [[ -z "${recorded}" ]]; then
@@ -207,17 +214,20 @@ _apply_lock_reclaim() {
   if [[ -e "${tomb}" ]]; then
     return 1 # tomb-name collision (crash leftover) — never risk an mv-into
   fi
+  # GA-ABSORB[handled@apply_lock_acquire-contended-path]: rc1 = lost the takeover race → held
   mv -- "${lock_dir}" "${tomb}" 2>/dev/null || return 1 # lost the takeover race
   # Sole owner of the tomb now — re-verify the stale decision race-free.
   ttl="$(apply_lock_ttl_secs)"
   if ! _apply_lock_holder_live "${tomb}" \
     && age="$(apply_lock_age_secs "${tomb}")" \
     && [[ "${age}" -gt "${ttl}" ]]; then
+    # GA-ABSORB[benign]: tomb teardown; residue is re-reclaimed on a later acquire
     rm -rf -- "${tomb}" 2>/dev/null || true
     return 0
   fi
   # NOT stale residue after all — we displaced a winner's fresh (or live) lock
   # in the decided-stale-then-stalled interleave. Put it back atomically.
+  # GA-ABSORB[handled@restore-failure-branch]: named stderr ERROR + tomb preserved
   if ! mv -- "${tomb}" "${lock_dir}" 2>/dev/null; then
     # Restore lost to a fast-path racer that re-created the lock dir. Preserve
     # the displaced dir for inspection — destroying it here could erase a live
@@ -256,6 +266,7 @@ apply_lock_acquire() {
   apply_lock_acquired=false
 
   # Fast path — uncontended acquire (mkdir is atomic on POSIX).
+  # GA-ABSORB[benign]: mkdir rc1 = contended; the contended path below decides
   if mkdir -- "${lock_dir}" 2>/dev/null; then
     _apply_lock_stamp_or_release "${lock_dir}"
     return 0
@@ -283,10 +294,13 @@ apply_lock_acquire() {
   # Dead holder AND stale → single-winner takeover, then acquire fresh. The
   # path-guard precedes the takeover so a mis-derived lock_dir can never let the
   # mv / rm -rf escape onto an unrelated path.
+  # GA-ABSORB[handled@caller-loud-fail-on-not-acquired]: guard refuses reclaim → held
   _apply_lock_path_guard "${lock_dir}" || return 0
   printf '[apply-lock] reclaiming stale lock (age=%ss > ttl=%ss, holder not live): %s\n' \
     "${age}" "${ttl}" "${lock_dir}" >&2
+  # GA-ABSORB[handled@caller-loud-fail-on-not-acquired]: lost the takeover → held
   _apply_lock_reclaim "${lock_dir}" || return 0 # lost the takeover → held
+  # GA-ABSORB[benign]: a concurrent acquirer won; apply_lock_acquired stays false
   if mkdir -- "${lock_dir}" 2>/dev/null; then
     _apply_lock_stamp_or_release "${lock_dir}"
   fi
@@ -303,11 +317,14 @@ apply_lock_acquire() {
 # returns 0.
 apply_lock_release() {
   local lock_dir="$1" held=""
+  # GA-ABSORB[benign]: guard rc1 is a security refusal; release is contract-bound to rc 0
   _apply_lock_path_guard "${lock_dir}" || return 0
   if [[ -f "${lock_dir}/pid" ]]; then
+    # GA-ABSORB[handled@ownership-check-below]: empty held = our own partial lock
     held="$(cat -- "${lock_dir}/pid" 2>/dev/null || true)"
   fi
   if [[ -z "${held}" || "${held}" == "$$" ]]; then
+    # GA-ABSORB[benign]: release teardown; an already-gone dir is the idempotent case
     rm -rf -- "${lock_dir}" 2>/dev/null || true
   fi
 }

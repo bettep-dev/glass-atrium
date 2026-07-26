@@ -408,7 +408,7 @@ prune_backup_retention() {
             "${BACKUP_DIR}" >&2
         return 0
     fi
-    [[ -d "${BACKUP_DIR}" ]] || return 0
+    [[ -d "${BACKUP_DIR}" ]] || return 0 # GA-ABSORB[benign]: no backup dir means nothing to prune — housekeeping no-op, not a precondition
     # Find the newest cycle subdir by mtime (bash `-nt`, no external stat/ls) so
     # it can be excluded from the prune.
     local newest="" d
@@ -417,7 +417,7 @@ prune_backup_retention() {
             newest="${d}"
         fi
     done < <(find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -print0)
-    [[ -n "${newest}" ]] || return 0
+    [[ -n "${newest}" ]] || return 0 # GA-ABSORB[benign]: no cycle subdir found means nothing to prune — housekeeping no-op, not a precondition
     if ! find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d \
         -mtime +"${BACKUP_TTL_DAYS}" ! -path "${newest}" -exec rm -rf {} +; then
         printf '[daemon-apply] WARN: backup retention prune hit errors (BACKUP_DIR=%s)\n' \
@@ -1193,7 +1193,8 @@ WHERE id::text = :'pid'
   -- (:'allow_haiku_skip' = '1', warned loudly in the shell above). LIKE 'ok%'
   -- keeps ok / ok:retried / ok:fuzzy-parsed; a NULL haiku_status yields NULL
   -- (not TRUE) so it stays EXCLUDED — fail-closed. Pure SELECT-predicate add: no
-  -- 2>/dev/null / || true, ON_ERROR_STOP=1 loud-fail intact.
+  -- absorption idiom (no stderr-to-null, no forced-success), ON_ERROR_STOP=1
+  -- loud-fail intact.
   AND (:'allow_haiku_skip' = '1' OR haiku_status LIKE 'ok%');
 PSQL
     )"; then
@@ -1379,7 +1380,7 @@ apply_diff() {
         # from a genuine recount/context reject — the 21-day backlog stall was a
         # path bug MISLABELED as a recount reject by the old hardcoded WARN.
         local apply_stderr reason
-        apply_stderr="$(cat "${apply_err}" 2>/dev/null || true)"
+        apply_stderr="$(cat "${apply_err}" 2>/dev/null || true)" # GA-ABSORB[handled@located-diff-WARN+emit_log-needs_regen-block]: a missing capture file still leaves the loud WARN and the needs_regen log row below
         if grep -qi 'No such file or directory' "${apply_err}"; then
             reason="apply_path_not_found"
         else
@@ -2196,11 +2197,11 @@ run_regen_for_single() {
     # (script already prefers jq with python fallback); else python3.
     local action axes
     if command -v jq >/dev/null 2>&1; then
-        action="$(printf '%s' "${dc_out}" | jq -r '.action // "unrecoverable"' 2>/dev/null || true)"
-        axes="$(printf '%s' "${dc_out}" | jq -r '(.preverify_axes // {}) | to_entries | map("\(.key)=\(.value)") | join(",")' 2>/dev/null || true)"
+        action="$(printf '%s' "${dc_out}" | jq -r '.action // "unrecoverable"' 2>/dev/null || true)" # GA-ABSORB[handled@action-unrecoverable-default+regen-log-line]: a parse failure falls through to the unrecoverable default, which is logged
+        axes="$(printf '%s' "${dc_out}" | jq -r '(.preverify_axes // {}) | to_entries | map("\(.key)=\(.value)") | join(",")' 2>/dev/null || true)" # GA-ABSORB[benign]: axes is optional log decoration — an empty value prints as an empty axes list
     else
-        action="$(printf '%s' "${dc_out}" | python3 -c "${REGEN_PARSE_ACTION_PY}" 2>/dev/null || true)"
-        axes="$(printf '%s' "${dc_out}" | python3 -c "${REGEN_PARSE_AXES_PY}" 2>/dev/null || true)"
+        action="$(printf '%s' "${dc_out}" | python3 -c "${REGEN_PARSE_ACTION_PY}" 2>/dev/null || true)" # GA-ABSORB[handled@action-unrecoverable-default+regen-log-line]: a parse failure falls through to the unrecoverable default, which is logged
+        axes="$(printf '%s' "${dc_out}" | python3 -c "${REGEN_PARSE_AXES_PY}" 2>/dev/null || true)" # GA-ABSORB[benign]: axes is optional log decoration — an empty value prints as an empty axes list
     fi
     [[ -n "${action}" ]] || action="unrecoverable"
 

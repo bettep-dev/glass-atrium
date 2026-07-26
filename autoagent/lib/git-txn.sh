@@ -203,13 +203,13 @@ _git_txn_restore() {
   local real_target="$1" before_image="$2" install_root="$3"
   local tmp="${real_target}.rollback.$$"
   if ! cp -p -- "${before_image}" "${tmp}"; then
-    rm -f -- "${tmp}" 2>/dev/null || true
+    rm -f -- "${tmp}" 2>/dev/null || true # GA-ABSORB[handled@_git_txn_restore-cp-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
     printf 'git-txn: rollback stage FAILED (before_image=%s target=%s install_root=%s) — target NOT restored; recover from agents-bak\n' \
       "${before_image}" "${real_target}" "${install_root}" >&2
     return 1
   fi
   if ! mv -f -- "${tmp}" "${real_target}"; then
-    rm -f -- "${tmp}" 2>/dev/null || true
+    rm -f -- "${tmp}" 2>/dev/null || true # GA-ABSORB[handled@_git_txn_restore-mv-branch-stderr+return-1]: stray-temp cleanup only; the branch loud-fails to stderr and returns 1
     printf 'git-txn: rollback rename FAILED (target=%s install_root=%s) — target may hold applied bytes; recover from agents-bak\n' \
       "${real_target}" "${install_root}" >&2
     return 1

@@ -180,7 +180,7 @@ fi
 http_get_status() {
   curl -s -o /dev/null -w '%{http_code}' \
     -m "${HTTP_TIMEOUT_SEC}" \
-    "${FAKECHAT_BASE_URL}/" 2>/dev/null || true
+    "${FAKECHAT_BASE_URL}/" 2>/dev/null || true # GA-ABSORB[handled@liveness-200-check]: empty status fails loud below
 }
 
 liveness_status="$(http_get_status)"
@@ -194,6 +194,7 @@ log "fakechat HTTP server is live on ${FAKECHAT_BASE_URL} (200 OK)"
 #    (see resolve_transcript_path); the pane repaints (-S -1500 deep scrollback still
 #    drops scrolled-off one-time echoes), so it cannot certify registration.
 capture_pane() {
+  # GA-ABSORB[handled@verify-loop-timeout-fatal]: pane capture is a demoted breadcrumb; the transcript poll certifies
   tmux capture-pane -t "${SESSION}" -p -S -1500 2>/dev/null || true
 }
 
@@ -212,6 +213,7 @@ capture_pane() {
 TRANSCRIPT_PATH=""
 resolve_transcript_path() {
   local pane_pid session_json session_id cwd cwd_slug
+  # GA-ABSORB[handled@empty-pane_pid-fatal-below]: an unresolvable pane PID fails loud two lines down
   pane_pid="$(tmux list-panes -t "${SESSION}" -F '#{pane_pid}' 2>/dev/null | head -n 1)"
   if [[ -z "${pane_pid}" ]]; then
     fatal "no pane PID for session ${SESSION} — cannot resolve transcript"
@@ -222,7 +224,9 @@ resolve_transcript_path() {
     fatal "session state file missing: ${session_json} (pane_pid=${pane_pid})"
   fi
 
+  # GA-ABSORB[handled@empty-sessionid-cwd-fatal-below]: a missing/unparseable field fails loud below
   session_id="$(jq -r '.sessionId // empty' "${session_json}" 2>/dev/null || true)"
+  # GA-ABSORB[handled@empty-sessionid-cwd-fatal-below]: a missing/unparseable field fails loud below
   cwd="$(jq -r '.cwd // empty' "${session_json}" 2>/dev/null || true)"
   if [[ -z "${session_id}" || -z "${cwd}" ]]; then
     fatal "session state file lacks sessionId/cwd: ${session_json}"
@@ -283,7 +287,7 @@ http_status="$(printf '%s' "${prompt_content}" \
     -X POST "${UPLOAD_URL}" \
     -F "id=${inject_id}" \
     -F "text=<-" \
-    2>/dev/null || true)"
+    2>/dev/null || true)" # GA-ABSORB[handled@http-204-check]: a non-204/empty status fails loud below
 
 if [[ "${http_status}" != "204" ]]; then
   fatal "POST ${UPLOAD_URL} returned HTTP ${http_status} (expected 204)"
@@ -314,6 +318,7 @@ while :; do
   # PRIMARY (sole certifier): canonical cron line in the durable transcript.
   # 2>/dev/null tolerates a virgin session's still-absent transcript — this poll
   # loop then doubles as the file-appearance poll.
+  # GA-ABSORB[benign]: a virgin session has no transcript yet — absence is a poll condition, and the timeout fails loud
   if grep -qE "${CRON_REGISTERED_RE}" "${TRANSCRIPT_PATH}" 2>/dev/null; then
     log "verified: canonical cron line in transcript (cron registered)"
     verify_passed=1

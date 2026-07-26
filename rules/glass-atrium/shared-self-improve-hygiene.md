@@ -15,6 +15,25 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 - Exit-code semantics spec required — the wrapper script can branch on it + automatically triggers monitor dashboard alerting
 - Cascade cost: on the launchd 1-day unattended cycle, a lost first-failure visibility fossilizes into a multi-day `status=pending` backlog amplified across days × N-agents — the loud-fail cost-benefit asymmetry
 
+### Absorption Taxonomy & Annotation Convention [DEV+ORCHESTRATOR]
+
+A grep count of the absorption idioms is a POPULATION, not a defect set: the large majority of occurrences are load-bearing shell idioms or explicitly-handled failure paths, and driving the count down is the failure mode, not the fix. Classify before judging, and classify BLOCK-scoped — never line-local.
+
+- **Category 1 — benign idiom** (the non-zero status is a normal outcome; removing the suppression breaks the script under `set -Eeuo pipefail`): a NUL-delimited heredoc read reaching EOF without a NUL terminator (the critical hook loads its own classifier source this way); a pattern search exiting 1 because nothing matched (`grep`/`find` — zero hits is data); trap or teardown cleanup of a file that may already be gone. Anchor these by SHAPE and by function-relative description, never by a raw line number.
+- **Category 2 — explicitly handled** (the opposite of silent): the suppression covers the stderr stream only, or a redundant channel only, while the status is captured, branched on, or defaulted. Worked shapes: the critical hook's classifier invocation whose captured status routes a failure to a named fail-closed block (the PR #88 contract — untouchable); the wiki-compile FATAL-echo whose suppressed log append is redundant because the very next line emits the same notice unsuppressed to stderr, a status row records the error, and the block ends in a non-zero exit. Judging that line without reading its block gets it wrong.
+- **Category 3 — genuine silent absorption** (no branch, no captured status, no loud channel anywhere in the block): the only category the principle above forbids. It is CONVERTED, never annotated — the located family is the daemon-run reporting channel, which absorbed the third leg of the very remedy triad this rule mandates.
+
+**Enforced surface (unattended execution).** The principle's cascade-cost rationale is about failures nobody is watching, so the enforced scope is the autoagent pipeline (its declared scope, kept) plus the launchd-driven `scripts/*.sh` plus the `scripts/lib/*.sh` libraries those depend on — the 17-file list carried by the auditor. The hooks directory and the non-daemon scripts are EXPLICITLY DEFERRED, not forgotten: a synchronous pre-tool hook fails in front of an operator within seconds, which is the opposite profile. Coverage extends to them by the promotion path below (advisory coverage first, then promote), never by re-litigating the scope decision.
+
+**Annotation convention.** Every sanctioned suppression in the enforced scope carries an adjacent annotation:
+
+- `# GA-ABSORB[benign]: <reason>` — category 1 · `# GA-ABSORB[handled@<where>]: <reason>` — category 2, where `<where>` NAMES the handling (function, sentinel, or relative location) and is never a bare line number, because line numbers drift on the next edit.
+- The vocabulary is CLOSED at two labels. No third label exists: a category-3 site is converted, and a converted site carries `# GA-CONVERTED: <note>` instead.
+- Placement is an end-of-line trailing comment on the same physical line as the idiom (canonical, zero drift). Own-line-immediately-above is permitted ONLY when the trailing form is forced out — the line would exceed 120 columns, the site sits on a `\`-continued line, or a trailing comment is illegal inside a multi-line pipeline segment. When the site and its predecessor are both `\`-continued, the token sits on the first physical line of the continued statement.
+- The reason is non-empty one-line English prose. Presence and grammar are mechanical; truthfulness is the annotator's — the same trust model the orchestration attestation tokens use.
+
+**Auditor.** `scripts/audit-absorption.sh` — presence-only, ADVISORY: it reports unannotated sites and grammar rejects on stdout and still exits 0 (exit 2 = usage error, exit 3 = a scope-listed file missing or unreadable). It never adjudicates a category, because the disambiguating evidence is block-scoped and a tool confident enough to classify mislabels exactly the category-2 sites that matter most. Annotation and conversion counts are reported as DISTINCT fields, so an annotation-only outcome is visibly incomplete. Promotion to blocking requires, verbatim: *"coverage complete, auditor false-positive rate zero across the scope, and the conversion set landed."*
+
 ## Prose-Only-Add Patch Classification (DETECTION, not reject) [DEV+ORCHESTRATOR]
 
 - A self-improvement patch is classified `prose-only-add` when `added > 0 AND removed == 0 AND no hook file touched` → emit a WARNING into the signal store; do NOT fail-closed-reject (false-blocking the learning loop is the worse failure). A conversion/subtraction patch (removes prose OR touches a hook) does NOT warn. Detector lives in `daemon_cycle.py` (DEV-owned); this record is the criteria SoT.
@@ -24,7 +43,7 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 - `backup_capture_failed` path (`GIT_TXN_BACKUP_CAPTURE_FAIL`) → hard PRE-apply abort + emit_log — nothing was applied, so there is nothing to restore
 - Verification failure after apply (`GIT_TXN_VERIFY_FAIL`) → atomic restore of the target from the `agents-bak` before-image (sibling temp + `mv -f` rename, same-FS) → keeps a user-retryable state
 - In-place `cp` restore FORBIDDEN — a crash mid-copy truncates the target; only the atomic temp+rename swap is permitted
-- Bats test coverage required for the apply / atomic-restore / lock-reclaim branches (`autoagent/test/git-txn-gitfree.bats` — source-repo-only: this suite lives in the dev source tree, NOT bundled into the live `~/.glass-atrium/autoagent/` install)
+- Bats test coverage required for the apply / atomic-restore / lock-reclaim branches (`autoagent/test/git-txn-gitfree.bats` — bundled into the live install per the release manifest)
 
 ## Harness Git Track Status
 

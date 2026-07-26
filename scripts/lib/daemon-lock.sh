@@ -27,7 +27,7 @@ readonly DAEMON_SUPERVISOR_LOCK="${DAEMON_LOCK_DIR}/daemon-supervisor-${ROLE}.lo
 # Reads the holder pid into daemon_lock_holder ("" when unlocked).
 daemon_lock_holder=""
 daemon_lock_read_holder() {
-  daemon_lock_holder="$(readlink -- "$1" 2>/dev/null || true)"
+  daemon_lock_holder="$(readlink -- "$1" 2>/dev/null || true)" # GA-ABSORB[benign]: absent lock -> holder "" (unlocked)
 }
 
 # Sets daemon_lock_acquired=true when the lock is taken (link target = owner
@@ -37,18 +37,20 @@ daemon_lock_acquired=false
 daemon_lock_acquire() {
   local lock_path="$1" owner_pid="$2"
   daemon_lock_acquired=false
-  if ln -s "${owner_pid}" "${lock_path}" 2>/dev/null; then
+  if ln -s "${owner_pid}" "${lock_path}" 2>/dev/null; then # GA-ABSORB[benign]: ln rc is the answer; EEXIST expected
     daemon_lock_acquired=true
     return 0
   fi
   daemon_lock_read_holder "${lock_path}"
+  # GA-ABSORB[benign]: kill -0 rc is the liveness answer; a dead pid's stderr is noise
   if [[ -n "${daemon_lock_holder}" ]] && kill -0 "${daemon_lock_holder}" 2>/dev/null; then
     return 0
   fi
   # rm failure is not silent: the retry below then reports daemon_lock_acquired
   # =false and the caller surfaces it (yield / exit 7).
+  # GA-ABSORB[handled@ln-retry-below]: a failed rm leaves daemon_lock_acquired=false for the caller
   rm -f -- "${lock_path}" 2>/dev/null || true
-  if ln -s "${owner_pid}" "${lock_path}" 2>/dev/null; then
+  if ln -s "${owner_pid}" "${lock_path}" 2>/dev/null; then # GA-ABSORB[benign]: ln rc is the answer; EEXIST expected
     daemon_lock_acquired=true
   fi
 }
@@ -60,6 +62,7 @@ daemon_lock_release() {
   local lock_path="$1" owner_pid="$2"
   daemon_lock_read_holder "${lock_path}"
   if [[ "${daemon_lock_holder}" == "${owner_pid}" ]]; then
+    # GA-ABSORB[handled@daemon_lock_acquire-dead-holder-reclaim]: a stale link is reclaimed on next acquire
     rm -f -- "${lock_path}" 2>/dev/null || true
   fi
 }
