@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # audit-absorption.sh — presence-only audit of silent-fail absorption annotations
-# Usage: audit-absorption.sh [--path <file>]... [--root <dir>] [--quiet]
+# Usage: audit-absorption.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Behavior:
 #   1. Walk the in-script SCOPE_FILES list (the unattended-execution surface) or the --path overrides
 #   2. Match the absorption idiom pattern set on non-comment physical lines
 #   3. Require an adjacent `# GA-ABSORB[...]` / `# GA-CONVERTED:` annotation on each matched site
 #   4. Emit per-finding lines plus a summary carrying four distinct counts
+#   5. Fail on findings when the run is blocking (see the surface split below)
+#
+# Surface split: a default scope-list run BLOCKS (the enforced 17-file surface, promoted once its
+# coverage condition was met), while a `--path` run stays ADVISORY — the deferred hooks surface and
+# ad-hoc probes cannot red a build by accident. `--strict` blocks on a `--path` run, `--advisory`
+# reports without failing anywhere; the findings print identically in every mode.
 #
 # Exit codes:
-#   0 = audit completed (findings are ADVISORY — a non-zero unannotated count still exits 0)
+#   0 = audit completed with no blocking findings (or an advisory-surface run)
+#   1 = blocking run reporting findings (unannotated site or grammar reject)
 #   2 = usage error
 #   3 = IO/scope error (a scope-listed or --path file is missing or unreadable)
 #
@@ -63,17 +70,21 @@ converted=0
 unannotated=0
 quality_reject=0
 QUIET=0
+ADVISORY=0
+STRICT=0
 
 usage() {
   printf '%s\n' \
-    'Usage: audit-absorption.sh [--path <file>]... [--root <dir>] [--quiet]' \
+    'Usage: audit-absorption.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]' \
     '' \
     '  --path <file>  audit the given file instead of the scope list (repeatable)' \
     '  --root <dir>   repo root used to resolve scope-relative paths' \
     '  --quiet        print the summary line only' \
+    '  --advisory     report findings without failing (exit 0 even with findings)' \
+    '  --strict       apply the blocking exit semantics to a --path run too' \
     '  -h, --help     this message' \
     '' \
-    'Exit: 0 audit completed (advisory) · 2 usage error · 3 IO/scope error'
+    'Exit: 0 no blocking findings · 1 findings on a blocking run · 2 usage error · 3 IO/scope error'
 }
 
 report() {
@@ -197,6 +208,7 @@ audit_file() {
 
 main() {
   local root_override="" root_dir="" rel="" abs="" target=""
+  local blocking=0
   local -a paths=()
 
   while (($# > 0)); do
@@ -221,6 +233,14 @@ main() {
         QUIET=1
         shift
         ;;
+      --advisory)
+        ADVISORY=1
+        shift
+        ;;
+      --strict)
+        STRICT=1
+        shift
+        ;;
       -h | --help)
         usage
         exit 0
@@ -233,6 +253,11 @@ main() {
     esac
   done
 
+  if ((ADVISORY == 1 && STRICT == 1)); then
+    printf 'ERROR: --advisory and --strict are mutually exclusive\n' >&2
+    exit 2
+  fi
+
   if [[ -n "${root_override}" ]]; then
     if [[ ! -d "${root_override}" ]]; then
       printf 'ERROR: --root directory not found: %s\n' "${root_override}" >&2
@@ -241,6 +266,10 @@ main() {
     root_dir="${root_override}"
   else
     root_dir="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+  fi
+
+  if ((ADVISORY == 0)) && { ((${#paths[@]} == 0)) || ((STRICT == 1)); }; then
+    blocking=1
   fi
 
   if ((${#paths[@]} > 0)); then
@@ -264,6 +293,14 @@ main() {
 
   printf 'annotated=%d converted=%d unannotated=%d quality_reject=%d\n' \
     "${annotated}" "${converted}" "${unannotated}" "${quality_reject}"
+
+  # The findings are already printed above — this branch only decides the exit status, so an
+  # advisory run loses no information relative to a blocking one.
+  if ((blocking == 1)) && ((unannotated + quality_reject > 0)); then
+    printf 'FAIL: %d unannotated site(s) and %d grammar reject(s) in the audited surface\n' \
+      "${unannotated}" "${quality_reject}" >&2
+    exit 1
+  fi
 }
 
 main "$@"
