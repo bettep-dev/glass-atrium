@@ -305,6 +305,26 @@ jobs:
       - name: Install GNU parallel (bats --jobs dependency)
         run: sudo apt-get update && sudo apt-get install -y parallel
 
+      # Blocking absorption audit of the 17-file unattended-execution scope
+      # (doc-739 promotion). Pinned to ONE leg via the matrix-root condition so
+      # it runs once on the shared checkout; ci-pass already observes test-bash
+      # as a single node, so a non-zero auditor exit reddens the gate with no
+      # extra `needs` wiring.
+      #
+      # ORDERING IS LOAD-BEARING: a step-level `if:` defaults to `success()`, so
+      # an auditor placed AFTER the bats step would be skipped exactly when the
+      # leg is already red — a blocking gate that stops gating on failure. It
+      # runs BEFORE the bats step instead.
+      #
+      # DISCLOSURE (residual, stated rather than overstated): the job carries
+      # `if: needs.detect-changes.outputs.bash == 'true'`, so a PR touching no
+      # shell/bats file skips this leg and the auditor with it. No non-shell
+      # change can introduce a scope absorption site, but the gate is
+      # change-conditional — not unconditional.
+      - name: Audit silent-fail absorption annotations (blocking)
+        if: matrix.root == 'scripts/test'
+        run: bash scripts/audit-absorption.sh
+
       # DIAGNOSTIC (per-file timeout + filename tag): each *.bats file runs as
       # its OWN GNU parallel job instead of a single `bats --jobs` call. Why:
       # `bats --jobs` buffers a file's TAP and flushes only on file COMPLETION,

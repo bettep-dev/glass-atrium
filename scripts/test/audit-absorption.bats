@@ -7,6 +7,11 @@
 # `handled` label naming no location are rejected, and an unannotated site is reported.
 #
 # Every fixture is written into a per-test temp tree — no repository file is read as a fixture.
+#
+# Surface split after the blocking promotion: a default scope-list run FAILS on findings, a `--path`
+# run stays advisory unless `--strict` is passed. Every `--path` case below (F1-F16 and the advisory
+# case) therefore keeps asserting exit 0 with findings — that is the advisory surface, not an
+# unpromoted auditor; the blocking contract is pinned by the T5-* cases at the end of this file.
 
 AUDIT_SH="${BATS_TEST_DIRNAME}/../audit-absorption.sh"
 
@@ -260,11 +265,79 @@ EOF
   assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
 }
 
-@test "default scope run resolves the in-script file list and exits 0" {
+@test "default scope run resolves the in-script file list and exits 0 on the clean repo scope" {
   run bash "${AUDIT_SH}" --quiet
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
   [[ "${output}" =~ annotated=[0-9]+\ converted=[0-9]+\ unannotated=[0-9]+\ quality_reject=[0-9]+ ]] || {
     echo "${output}"
     return 1
   }
+  # Under the blocking contract the exit-0 above is a substantive claim about the repository, not a
+  # tautology: it asserts the live scope carries zero findings.
+  assert_summary "unannotated=0 quality_reject=0"
+}
+
+# Materializes an empty stand-in for every path the auditor's own scope list names, so the scope-run
+# contract is exercised without reading a repository file. The list is derived from the auditor
+# source rather than restated here — a restated copy would drift the moment the scope changes.
+make_scope_root() {
+  local root="${1}" rel=""
+  while IFS= read -r rel; do
+    mkdir -p "${root}/$(dirname "${rel}")"
+    printf '#!/usr/bin/env bash\n:\n' >"${root}/${rel}"
+  done < <(awk '/^SCOPE_FILES=\(/ { inside = 1; next }
+                inside && /^\)/ { exit }
+                inside { gsub(/[[:space:]]/, ""); if ($0 != "") print }' "${AUDIT_SH}")
+}
+
+seed_scope_finding() {
+  printf 'stale_probe || true\n' >>"${1}/scripts/pii-scan.sh"
+}
+
+@test "T5-1: a scope-run finding is blocking (exit 1) and still prints the finding" {
+  make_scope_root "${AA_TMP}/repo"
+  seed_scope_finding "${AA_TMP}/repo"
+  run bash "${AUDIT_SH}" --root "${AA_TMP}/repo"
+  [ "${status}" -eq 1 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
+  [[ "${output}" == *"UNANNOTATED"*"scripts/pii-scan.sh:3"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "T5-2: a grammar reject is blocking on a scope run, a clean scope exits 0" {
+  make_scope_root "${AA_TMP}/clean"
+  run bash "${AUDIT_SH}" --root "${AA_TMP}/clean"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=0 quality_reject=0"
+
+  make_scope_root "${AA_TMP}/reject"
+  printf 'probe || true  # GA-ABSORB[benign]:\n' >>"${AA_TMP}/reject/scripts/pii-scan.sh"
+  run bash "${AUDIT_SH}" --root "${AA_TMP}/reject"
+  [ "${status}" -eq 1 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=0 quality_reject=1"
+}
+
+@test "T5-3: --advisory keeps a scope-run finding non-blocking without hiding it" {
+  make_scope_root "${AA_TMP}/repo"
+  seed_scope_finding "${AA_TMP}/repo"
+  run bash "${AUDIT_SH}" --advisory --root "${AA_TMP}/repo"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
+  [[ "${output}" == *"UNANNOTATED"*"scripts/pii-scan.sh:3"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "T5-4: --path stays advisory, --strict blocks it, the two mode flags conflict" {
+  write_fixture "${AA_TMP}/deferred.sh" <<'EOF'
+#!/usr/bin/env bash
+probe || true
+EOF
+  run bash "${AUDIT_SH}" --path "${AA_TMP}/deferred.sh"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
+
+  run bash "${AUDIT_SH}" --strict --path "${AA_TMP}/deferred.sh"
+  [ "${status}" -eq 1 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
+
+  run bash "${AUDIT_SH}" --advisory --strict --path "${AA_TMP}/deferred.sh"
+  [ "${status}" -eq 2 ] || { echo "exit ${status}: ${output}"; return 1; }
 }
