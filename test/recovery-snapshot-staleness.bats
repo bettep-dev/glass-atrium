@@ -8,17 +8,34 @@
 # rolls the directory BACKWARD. §13 SURFACES that drift and nothing more — the write side
 # is a separate deliberate reconcile run (scripts/snapshot-live-repos.sh).
 #
+# TWO COUNTERS ON DISJOINT CONDITIONS: snapshot staleness and a control-character PATH
+# ANOMALY are different findings with different remediations. A snapshot run fixes
+# staleness; it no-ops on a file-less pathological tree, so scoring an anomaly as staleness
+# prescribes a fix that cannot work — misleading on the dangerous side, since the install
+# then reads as missing a restore point it actually has. The scan therefore returns BOTH
+# totals on one stdout line (`<stale> <path_anomaly>`), increments them on independently
+# evaluated conditions, and emits the clean-tree ok line regardless of the anomaly count.
+#
 # What this suite pins:
 #   * dirty tree -> STALE warn naming the remediation, counted into the warn summary
 #   * clean tree -> ok, and NO recency line even with a far-future tracked mtime (on a clean
 #     tree on-disk == index == HEAD, so an mtime comparison could only invent staleness —
 #     a symlink-farm redeploy or a touch flips its sign with byte-identical content)
 #   * absent dir / absent .git -> not-applicable info, never a warn (git-less install fail-open)
+#   * control-character path -> the path-anomaly counter ONLY, its warn carrying the mandatory
+#     "NOT snapshot staleness" disclaimer, and the clean-tree ok line still emitted
+#   * non-masking, pinned per combination: dirty+anomaly -> BOTH counters and both warns ·
+#     clean+anomaly -> the anomaly counter alone · commitless+anomaly -> both (a snapshot IS
+#     the commitless remediation, and the HEAD-independent anomaly scan still sees the tree)
+#   * doctor route: the anomaly footer + its summary token appear WITHOUT the staleness footer,
+#     and the no-staleness ok line fires underneath the anomaly warns
 #   * doctor still PASSes in every case (advisory-only: §13 never changes the verdict)
 #   * read-only: the scan stages nothing, commits nothing, leaves HEAD and the dirty tree as-is
 #
-# fail-before/pass-after: §13 and snapshot_staleness_scan did not exist before this change,
-# so every assertion below is unsatisfiable against the prior lib.
+# fail-before/pass-after: an implementation that scores a control-character path as staleness
+# withholds the clean-tree ok and inflates the stale total, failing the clean+anomaly and
+# doctor-route cases; one that counts the anomaly only inside the clean branch reports zero on
+# a dirty or commitless repo, failing those two.
 #
 # Run via: bats test/recovery-snapshot-staleness.bats
 # Requires: bats >= 1.5.0, bash 3.2+, git (python3 only for the recency detail line)
@@ -88,6 +105,14 @@ make_repo() {
   git -C "${dir}" commit -qm 'baseline'
 }
 
+# The live pathology reproduced inside <GA_SBX>/$1: a FILE-LESS directory tree whose name
+# carries a newline. `git status` and `ls-files --others` are both blind to it, so only
+# `--directory` surfaces it — and holding no committable file is precisely why a snapshot
+# run no-ops on it, which is what makes it a path anomaly rather than staleness.
+make_anomaly_tree() {
+  mkdir -p "${GA_SBX}/$1/$(printf 'payload.txt\nnested')"
+}
+
 # --- runners -------------------------------------------------------------------
 
 # The scan alone, in a fresh strict-mode subprocess against an explicit scan root. ga_init_env
@@ -99,9 +124,12 @@ run_scan() {
       source "$1/lib/ga-core.sh"
       snapshot_staleness_scan "$2"
     ' _ "${GA}" "${GA_SBX}"
-  # The flagged-repo total is the stdout verdict while every finding goes to stderr, so under
-  # bats' merged capture the count is the last line — exposed as a variable the tests read.
-  scan_count="${lines[$((${#lines[@]} - 1))]}"
+  # Both totals ride ONE stdout line while every finding goes to stderr, so under bats' merged
+  # capture that line is the last one — split into the two variables the tests read. Parameter
+  # expansion rather than `read`, mirroring the caller: the launcher pins IFS=$'\n\t'.
+  scan_verdict="${lines[$((${#lines[@]} - 1))]}"
+  scan_stale="${scan_verdict%% *}"
+  scan_path_anomaly="${scan_verdict##* }"
 }
 
 # The REAL run_doctor against the sandbox GA root, so §13 scans the fixture repos.
@@ -132,7 +160,8 @@ run_doctor_sandbox() {
   [[ "${output}" == *"1 uncommitted tracked change(s), 0 untracked file(s)"* ]] || return 1
   [[ "${output}" == *"run scripts/snapshot-live-repos.sh"* ]] || return 1
   [[ "${output}" == *"HEAD trails the newest tracked-file mtime by"* ]] || return 1
-  [[ "${scan_count}" == "1" ]] || return 1
+  [[ "${scan_stale}" == "1" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
 # === 2. clean tree -> ok, and the mtime comparison is SUPPRESSED ===============
@@ -150,7 +179,8 @@ run_doctor_sandbox() {
   [[ "${output}" == *"rules recovery snapshot current (clean tree"* ]] || return 1
   [[ "${output}" != *"rules recovery snapshot STALE"* ]] || return 1
   [[ "${output}" != *"HEAD trails the newest tracked-file mtime"* ]] || return 1
-  [[ "${scan_count}" == "0" ]] || return 1
+  [[ "${scan_stale}" == "0" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
 # === 3. absent directory -> not-applicable, never a warn ======================
@@ -163,7 +193,8 @@ run_doctor_sandbox() {
   [[ "${output}" == *"autoagent — no such directory (recovery snapshot n/a)"* ]] || return 1
   [[ "${output}" == *"hooks/test — no such directory (recovery snapshot n/a)"* ]] || return 1
   [[ "${output}" != *"warn :"* ]] || return 1
-  [[ "${scan_count}" == "0" ]] || return 1
+  [[ "${scan_stale}" == "0" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
 # === 4. directory present without .git -> git-less install fail-open ==========
@@ -177,7 +208,8 @@ run_doctor_sandbox() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"monitor — not a git repo (git-less install; recovery snapshot n/a)"* ]] || return 1
   [[ "${output}" != *"warn :"* ]] || return 1
-  [[ "${scan_count}" == "0" ]] || return 1
+  [[ "${scan_stale}" == "0" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
 # === 5. untracked-only drift -> STALE ========================================
@@ -192,7 +224,8 @@ run_doctor_sandbox() {
 
   [[ "${output}" == *"agents recovery snapshot STALE"* ]] || return 1
   [[ "${output}" == *"0 uncommitted tracked change(s), 1 untracked file(s)"* ]] || return 1
-  [[ "${scan_count}" == "1" ]] || return 1
+  [[ "${scan_stale}" == "1" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
 # === 6. initialized-but-commitless repo -> its own anomaly warn ===============
@@ -205,26 +238,67 @@ run_doctor_sandbox() {
 
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == *"test — recovery repo has no commit yet (nothing to restore to)"* ]] || return 1
-  [[ "${scan_count}" == "1" ]] || return 1
+  [[ "${scan_stale}" == "1" ]] || return 1
+  [[ "${scan_path_anomaly}" == "0" ]] || return 1
 }
 
-# === 7. control-character path -> its own warn ================================
+# === 7. clean tree + control-character path -> ANOMALY ONLY ====================
 
-# A file-less pathological tree is invisible to `git status` and to `ls-files --others`;
-# only --directory surfaces it. Two such trees exist on the live install today, and a path
-# carrying a newline corrupts both porcelain parsing and any blanket stage downstream.
-@test "control-character path -> warn, even on an otherwise clean tree" {
+# The live shape (two such trees sat on the install): a provably current recovery repo that
+# also carries a file-less newline-named tree. Scoring that as staleness prescribed a snapshot
+# run that would no-op, and withheld the ok line that was the truth about the repo.
+@test "clean tree + control-character path -> path-anomaly counted, staleness zero, ok still emitted" {
   make_repo scripts/test
-  mkdir -p "${GA_SBX}/scripts/test/$(printf 'payload.txt\nnested')"
+  make_anomaly_tree scripts/test
 
   run_scan
 
-  [[ "${output}" == *"scripts/test — control-character path, unsafe for a blanket snapshot stage"* ]] || return 1
-  [[ "${output}" != *"scripts/test recovery snapshot current"* ]] || return 1
-  [[ "${scan_count}" == "1" ]] || return 1
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"scripts/test — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness)"* ]] || return 1
+  [[ "${output}" == *"scripts/test recovery snapshot current (clean tree"* ]] || return 1
+  [[ "${output}" != *"scripts/test recovery snapshot STALE"* ]] || return 1
+  [[ "${scan_stale}" == "0" ]] || return 1
+  [[ "${scan_path_anomaly}" == "1" ]] || return 1
 }
 
-# === 8. read-only: the scan stages nothing and commits nothing ================
+# === 8. dirty tree + control-character path -> BOTH counters ==================
+
+# The non-masking property in code rather than prose: one repo carrying both findings must
+# increment both totals and emit both warns — neither condition gates the other.
+@test "one repo dirty AND carrying a control-character path -> stale 1 and path-anomaly 1" {
+  make_repo autoagent
+  printf 'release-v2-deployed\n' >"${GA_SBX}/autoagent/payload.txt"
+  make_anomaly_tree autoagent
+
+  run_scan
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"autoagent — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness)"* ]] || return 1
+  [[ "${output}" == *"autoagent recovery snapshot STALE"* ]] || return 1
+  [[ "${scan_stale}" == "1" ]] || return 1
+  [[ "${scan_path_anomaly}" == "1" ]] || return 1
+}
+
+# === 9. commitless repo + control-character path -> BOTH counters =============
+
+# Pins the block order: the anomaly scan carries no HEAD dependency, so it must run ABOVE the
+# commitless gate whose `continue` would otherwise drop the finding on the one repo that has
+# neither a restore point nor a stageable tree.
+@test "commitless repo carrying a control-character path -> both findings surfaced" {
+  mkdir -p "${GA_SBX}/test"
+  git -C "${GA_SBX}/test" init -q .
+  make_anomaly_tree test
+
+  run_scan
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"test — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness)"* ]] || return 1
+  [[ "${output}" == *"test — recovery repo has no commit yet (nothing to restore to)"* ]] || return 1
+  [[ "${scan_stale}" == "1" ]] || return 1
+  [[ "${scan_path_anomaly}" == "1" ]] || return 1
+}
+
+# === 10. read-only: the scan stages nothing and commits nothing ===============
 
 @test "scan is read-only: HEAD, index, and dirty tree all unchanged" {
   make_repo autoagent
@@ -246,7 +320,7 @@ run_doctor_sandbox() {
   git -C "${GA_SBX}/autoagent" diff --cached --quiet || return 1
 }
 
-# === 9. doctor integration: warn summary carries it, verdict stays PASS =======
+# === 11. doctor integration: warn summary carries it, verdict stays PASS ======
 
 @test "dirty repo via run_doctor -> snapshot-stale in the warn summary, doctor PASSes" {
   make_repo autoagent
@@ -258,11 +332,13 @@ run_doctor_sandbox() {
   [[ "${output}" == *"autoagent recovery snapshot STALE"* ]] || return 1
   [[ "${output}" == *"1 live recovery repo(s) need a snapshot"* ]] || return 1
   [[ "${output}" == *"1 snapshot-stale"* ]] || return 1
+  [[ "${output}" == *"0 snapshot-path-anomaly"* ]] || return 1
+  [[ "${output}" != *"carry a control-character path"* ]] || return 1
   [[ "${output}" == *"== doctor: PASS"* ]] || return 1
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
 
-# === 10. doctor integration: no drift -> ok line, verdict stays PASS ==========
+# === 12. doctor integration: no drift -> ok line, verdict stays PASS =========
 
 @test "clean and absent repos via run_doctor -> ok line, doctor PASSes" {
   make_repo rules
@@ -273,5 +349,29 @@ run_doctor_sandbox() {
   [[ "${output}" == *"ok   : no live recovery-repo snapshot staleness"* ]] || return 1
   [[ "${output}" != *"recovery snapshot STALE"* ]] || return 1
   [[ "${output}" == *"== doctor: PASS"* ]] || return 1
+  [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
+}
+
+# === 13. doctor integration: anomaly-only footer, no staleness prescription ====
+
+# The live install's exact shape end-to-end: the operator sees the anomaly with an INSPECTION
+# remedy (doctor is mutation-free), is never told to run a snapshot that would no-op, still
+# gets the no-staleness ok, and the anomaly is enumerated in the warn summary — otherwise the
+# zero-warning PASS line prints directly beneath its own warn lines.
+@test "clean repo with a control-character path via run_doctor -> anomaly footer, no snapshot prescription" {
+  make_repo rules
+  make_anomaly_tree rules
+
+  run_doctor_sandbox
+
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"rules — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness)"* ]] || return 1
+  [[ "${output}" == *"1 live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness"* ]] || return 1
+  [[ "${output}" == *"inspect the path named above and remove the empty tree once verified"* ]] || return 1
+  [[ "${output}" != *"need a snapshot"* ]] || return 1
+  [[ "${output}" == *"ok   : no live recovery-repo snapshot staleness"* ]] || return 1
+  [[ "${output}" == *"0 snapshot-stale"* ]] || return 1
+  [[ "${output}" == *"1 snapshot-path-anomaly"* ]] || return 1
+  [[ "${output}" == *"== doctor: PASS (with"* ]] || return 1
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
