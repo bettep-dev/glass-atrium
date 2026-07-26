@@ -5,6 +5,9 @@
 #   (2) --unstaged <file>: runner.js flow — eval one uncommitted file; never rollback/commit
 #       → emits RESULT: PASS|FAIL on stdout, exit 0/1
 #   (3) --post-commit <file>: legacy-compat alias
+# Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5):
+#   0 = PASS or nothing to eval · 1 = FAIL (eval verdict, preflight, or claude run)
+#   4 = claude binary not found · 5 = git status failed on the default-mode scan
 
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
@@ -89,7 +92,23 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
 else
   # unstaged + untracked .md files (archive/ excluded)
   # D(staged or worktree deletion) excluded: eval LLM cannot read deleted files -> false-positive FAIL
-  CHANGED=$(git status --porcelain -- '*.md' 2>/dev/null | grep -E '^\s*[MAR\?]' | grep -v '^.D' | grep -v 'archive/' || true) # GA-ABSORB[handled@no-changes-exit-branch-below]: grep no-match is data — empty routes to the logged "no changes" exit
+  # git is split OUT of the filter pipeline: under pipefail a substitution reports the RIGHTMOST
+  # status, so a trailing grep no-match (1) and a git failure (128) both collapsed into the same
+  # empty string and the same affirmative-false "no changes" success below.
+  GIT_ERR_FILE="$(mktemp)"
+  trap 'rm -f "${GIT_ERR_FILE}"' EXIT
+  GIT_RC=0
+  GIT_OUT="$(git status --porcelain -- '*.md' 2>"${GIT_ERR_FILE}")" || GIT_RC=$?
+  GIT_ERR_TEXT="$(cat "${GIT_ERR_FILE}")"
+  if [[ "${GIT_RC}" -ne 0 ]]; then # GA-CONVERTED: git-status failure loud-fails (captured git stderr + named exit 5) instead of collapsing into the empty no-changes path
+    printf '%s\n' "[autoagents-eval] FATAL: git status failed (exit ${GIT_RC}) in ${AGENTS_DIR}" >&2
+    if [[ -n "${GIT_ERR_TEXT}" ]]; then
+      printf '%s\n' "${GIT_ERR_TEXT}" >&2
+    fi
+    log "FATAL: git status failed (exit ${GIT_RC}) — ${GIT_ERR_TEXT}"
+    exit 5
+  fi
+  CHANGED=$(printf '%s\n' "${GIT_OUT}" | grep -E '^\s*[MAR\?]' | grep -v '^.D' | grep -v 'archive/' || true) # GA-ABSORB[benign]: grep exit 1 = no match — zero rows is data
 
   if [ -z "$CHANGED" ]; then
     log "no changes — exit"
