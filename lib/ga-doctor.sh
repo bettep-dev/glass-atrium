@@ -495,22 +495,31 @@ run_doctor() {
   #     is therefore a DETAIL line on an already-dirty repo, never an independent verdict.
   #     A repo directory that is absent or carries no .git is the git-less consumer install: reported
   #     not-applicable, never a warn (fail-open). WARN-only either way (doctor still PASSes on §1-12).
-  local snapshot_stale=0
-  # snapshot_staleness_scan logs each per-repo verdict to stderr + echoes the flagged-repo count (stdout verdict).
+  #     A control-character path rides a SECOND counter, never the staleness one: the staleness
+  #     remediation IS a snapshot run, and a snapshot no-ops on a file-less pathological tree — folding
+  #     it into the stale count would prescribe a fix that cannot work, on the dangerous side.
+  local snapshot_stale=0 snapshot_path_anomaly=0 snapshot_counts
+  # snapshot_staleness_scan logs each per-repo verdict to stderr + echoes BOTH totals on one stdout
+  # line, field order `<stale> <path_anomaly>` (single-line verdict precedent: _resolve_sha256_cmd).
   # shellcheck disable=SC2311
-  snapshot_stale="$(snapshot_staleness_scan "${GA_ROOT}")"
+  snapshot_counts="$(snapshot_staleness_scan "${GA_ROOT}")"
+  snapshot_stale="${snapshot_counts%% *}"
+  snapshot_path_anomaly="${snapshot_counts##* }"
   if [[ "${snapshot_stale}" -eq 0 ]]; then
     log "  ok   : no live recovery-repo snapshot staleness"
   else
     log "  ---- ${snapshot_stale} live recovery repo(s) need a snapshot — run 'bash ${GA_ROOT}/scripts/snapshot-live-repos.sh' (a stale HEAD restores the install BACKWARD) ----"
   fi
+  if [[ "${snapshot_path_anomaly}" -ne 0 ]]; then
+    log "  ---- ${snapshot_path_anomaly} live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness: a snapshot run would no-op; inspect the path named above and remove the empty tree once verified ----"
+  fi
 
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + snapshot_stale + data_sep_stale))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
     fi
     return 0
   fi
@@ -678,18 +687,24 @@ PY
 #   * dirty tree (tracked changes vs HEAD, or untracked files) -> STALE warn + the counted verdict,
 #     with the HEAD-vs-newest-tracked-mtime lag as a detail line (recency is derived, not independent).
 #   * clean tree -> current; no mtime comparison (it could only report false staleness there).
-#   * control-character path -> its own warn: `ls-files --others --directory` sees a FILE-LESS
-#     pathological tree that `git status` structurally cannot, and such a path corrupts both porcelain
-#     parsing and any blanket snapshot stage downstream.
-# Each finding is logged to stderr (log -> fd2) and the flagged-repo total is the stdout verdict
-# (mirrors manifest_hash_drift); a repo is counted at most ONCE however many findings it carries.
+#   * control-character path -> a PATH ANOMALY on its own SECOND counter, never the staleness one:
+#     `ls-files --others --directory` sees a FILE-LESS pathological tree that `git status` structurally
+#     cannot, such a path corrupts both porcelain parsing and any blanket snapshot stage downstream,
+#     and a snapshot run — the staleness remediation — no-ops on a tree that holds no committable file.
+#     The scan carries ZERO HEAD dependency and therefore sits ABOVE the commitless gate, whose
+#     `continue` would otherwise hide the anomaly on exactly the repo least able to absorb it.
+# Each finding is logged to stderr (log -> fd2); the stdout verdict is ONE line carrying BOTH totals in
+# the field order `<stale> <path_anomaly>` (one line so a merged-capture reader still reads the last
+# one; one function so the seven-repo loop, its .git/absent/git-missing preconditions and its n/a lines
+# are not duplicated per counter). A repo is counted at most ONCE PER COUNTER however many findings it
+# carries, and the two counters are independent — a dirty repo carrying an anomaly lands in both.
 snapshot_staleness_scan() {
   local root="$1"
   # The recovery-repo whitelist — the same seven per-directory repositories the write side
   # (scripts/snapshot-live-repos.sh) reconciles. A directory absent from this list is invisible here.
   local repos=(autoagent agents monitor scripts/test rules test hooks/test)
   local rel repo entry shown changed untracked flagged head_epoch newest lag
-  local stale=0 git_warned=0
+  local stale=0 path_anomaly=0 git_warned=0
   for rel in "${repos[@]}"; do
     repo="${root}/${rel}"
     if [[ ! -d "${repo}" ]]; then
@@ -710,8 +725,24 @@ snapshot_staleness_scan() {
       continue
     fi
     flagged=0
+    # --directory collapses an untracked tree to its top entry, which is the ONLY way a file-less
+    # control-char tree becomes visible at all (git ignores empty directories everywhere else).
+    # HEAD-independent, so it runs BEFORE the commitless gate whose `continue` would skip it.
+    # shellcheck disable=SC2312
+    while IFS= read -r -d '' entry; do
+      [[ -n "${entry}" ]] || continue
+      [[ "${entry}" == *[[:cntrl:]]* ]] || continue
+      # printf %q so the log line cannot itself be broken by the embedded control character.
+      shown="$(printf '%q' "${entry}")"
+      log "  warn : ${rel} — control-character path, unsafe for a blanket snapshot stage (path anomaly, NOT snapshot staleness): ${shown}"
+      flagged=1
+    done < <(git -C "${repo}" ls-files --others --directory --exclude-standard -z 2>/dev/null || true)
+    # Counted OUTSIDE the clean/dirty branch, on a condition evaluated independently of the staleness
+    # one — that disjointness is what keeps either finding from masking the other.
+    [[ "${flagged}" -eq 0 ]] || path_anomaly=$((path_anomaly + 1))
     # An initialized-but-commitless repo has nothing to restore TO — its own anomaly class, and
-    # `diff HEAD` below would fail on it.
+    # `diff HEAD` below would fail on it. A snapshot run IS the remediation here, so it counts as
+    # stale even when the same repo already carried a path anomaly.
     if ! git -C "${repo}" rev-parse --verify -q HEAD >/dev/null 2>&1; then
       log "  warn : ${rel} — recovery repo has no commit yet (nothing to restore to) — run scripts/snapshot-live-repos.sh"
       stale=$((stale + 1))
@@ -719,7 +750,7 @@ snapshot_staleness_scan() {
     fi
     changed=0
     # NUL-delimited reads throughout: a path may legitimately contain whitespace, and the anomaly
-    # scan below exists precisely because one may contain a newline. `|| true` keeps a git read
+    # scan above exists precisely because one may contain a newline. `|| true` keeps a git read
     # failure from aborting the enclosing command substitution; an empty stream reads as no findings.
     # shellcheck disable=SC2312
     while IFS= read -r -d '' entry; do
@@ -732,20 +763,12 @@ snapshot_staleness_scan() {
       [[ -n "${entry}" ]] || continue
       untracked=$((untracked + 1))
     done < <(git -C "${repo}" ls-files --others --exclude-standard -z 2>/dev/null || true)
-    # --directory collapses an untracked tree to its top entry, which is the ONLY way a file-less
-    # control-char tree becomes visible at all (git ignores empty directories everywhere else).
-    # shellcheck disable=SC2312
-    while IFS= read -r -d '' entry; do
-      [[ -n "${entry}" ]] || continue
-      [[ "${entry}" == *[[:cntrl:]]* ]] || continue
-      # printf %q so the log line cannot itself be broken by the embedded control character.
-      shown="$(printf '%q' "${entry}")"
-      log "  warn : ${rel} — control-character path, unsafe for a blanket snapshot stage: ${shown}"
-      flagged=1
-    done < <(git -C "${repo}" ls-files --others --directory --exclude-standard -z 2>/dev/null || true)
+    # The ok line is UNCONDITIONAL: the untracked count above reads `ls-files --others` WITHOUT
+    # --directory, which recurses into an untracked tree, so a control-char tree holding any
+    # committable file inflates `untracked` and routes here to STALE. Reaching this branch therefore
+    # ENTAILS that whatever the anomaly scan flagged holds no file — the snapshot really is current.
     if [[ "${changed}" -eq 0 && "${untracked}" -eq 0 ]]; then
-      [[ "${flagged}" -eq 0 ]] && log "  ok   : ${rel} recovery snapshot current (clean tree — HEAD matches on-disk)"
-      [[ "${flagged}" -eq 0 ]] || stale=$((stale + 1))
+      log "  ok   : ${rel} recovery snapshot current (clean tree — HEAD matches on-disk)"
       continue
     fi
     log "  warn : ${rel} recovery snapshot STALE — ${changed} uncommitted tracked change(s), ${untracked} untracked file(s); a restore would roll this directory BACKWARD — run scripts/snapshot-live-repos.sh"
@@ -766,7 +789,7 @@ snapshot_staleness_scan() {
       log "         recency lag unavailable (python3 missing or the tracked set is unreadable)"
     fi
   done
-  printf '%d\n' "${stale}"
+  printf '%d %d\n' "${stale}" "${path_anomaly}"
 }
 
 # verify-clean (parity doctor)
