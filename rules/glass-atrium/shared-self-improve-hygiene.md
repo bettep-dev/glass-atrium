@@ -12,6 +12,7 @@ Applies to ORCHESTRATOR scope (main session / global coordinator) + DEV agents t
 
 - Pipeline stage entry conditions (git repo exists / TCC permission / launchd active / API endpoint reachability, etc.) → silent-fail absorption patterns (`2>/dev/null` / `|| true` / `|| return 0`) FORBIDDEN
 - When a precondition is unmet → named exit code (e.g., daemon-apply.sh exit 5 = "apply-lock lib missing", exit 4 = "another apply in progress") + explicit stderr message + automatic log-aggregator surface
+- Exit codes are PER-SCRIPT, never a shared table — autoagents-eval.sh exit 5 = "git status failed on the default-mode scan" (its exit 4 = "claude binary not found"), which is unrelated to daemon-apply.sh's 4/5 above; read each script's own header Modes block before reusing a number
 - Exit-code semantics spec required — the wrapper script can branch on it + automatically triggers monitor dashboard alerting
 - Cascade cost: on the launchd 1-day unattended cycle, a lost first-failure visibility fossilizes into a multi-day `status=pending` backlog amplified across days × N-agents — the loud-fail cost-benefit asymmetry
 
