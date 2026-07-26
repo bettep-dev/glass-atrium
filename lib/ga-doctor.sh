@@ -482,12 +482,35 @@ run_doctor() {
     log "  ---- ${data_sep_stale} stale Tier-A store(s) under ${TARGET_HOME} — run scripts/migrate-claude-to-ga-data.sh to relocate ----"
   fi
 
+  # 13. live recovery-repo snapshot staleness (surfacing complement of scripts/snapshot-live-repos.sh).
+  #     The install carries per-directory git repositories whose ONLY job is to be an operator restore
+  #     point. The updater is deliberately git-free (zero git invocations in scripts/update.sh, so the
+  #     no-.git consumer install stays supported), so a deploy NEVER commits into them: their HEAD
+  #     silently falls behind the deployed release and a restore rolls the directory BACKWARD instead of
+  #     forward. Surface that drift; the fix is a separate deliberate reconcile run, never a write from
+  #     here (mutation-free like every other section — this check stages/commits nothing).
+  #     A DIRTY working tree is the AUTHORITATIVE staleness signal: on a clean tree on-disk == index ==
+  #     HEAD for every tracked path, so a HEAD-vs-mtime comparison there can only invent false staleness
+  #     (a symlink-farm redeploy or a touch flips the sign with byte-identical content) — the recency lag
+  #     is therefore a DETAIL line on an already-dirty repo, never an independent verdict.
+  #     A repo directory that is absent or carries no .git is the git-less consumer install: reported
+  #     not-applicable, never a warn (fail-open). WARN-only either way (doctor still PASSes on §1-12).
+  local snapshot_stale=0
+  # snapshot_staleness_scan logs each per-repo verdict to stderr + echoes the flagged-repo count (stdout verdict).
+  # shellcheck disable=SC2311
+  snapshot_stale="$(snapshot_staleness_scan "${GA_ROOT}")"
+  if [[ "${snapshot_stale}" -eq 0 ]]; then
+    log "  ok   : no live recovery-repo snapshot staleness"
+  else
+    log "  ---- ${snapshot_stale} live recovery repo(s) need a snapshot — run 'bash ${GA_ROOT}/scripts/snapshot-live-repos.sh' (a stale HEAD restores the install BACKWARD) ----"
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + data_sep_stale))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + snapshot_stale + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
     fi
     return 0
   fi
@@ -609,6 +632,138 @@ data_sep_leftover_scan() {
     if [[ -e "${claude_root}/${rel}" || -L "${claude_root}/${rel}" ]]; then
       log "  warn : stale Tier-A store under legacy root: ${claude_root}/${rel} — run scripts/migrate-claude-to-ga-data.sh"
       stale=$((stale + 1))
+    fi
+  done
+  printf '%d\n' "${stale}"
+}
+
+# newest tracked-file mtime (snapshot_staleness_scan helper) — echoes the max mtime epoch across the
+# tracked set of the repo at $1, rc 1 when un-computable (python3 absent / git read failed). python3
+# os.stat is the portable mtime idiom the apply-lock + update-pause-flag libs already use, NEVER the
+# BSD/GNU-divergent `stat -f` / `stat -c`. The program body is captured FIRST and passed via -c so the
+# NUL-delimited path list can travel on STDIN (a heredoc body would occupy stdin instead, SC2259), and
+# the repo root travels through argv — an exotic path is never interpolated into the program text.
+_snapshot_newest_mtime() {
+  local repo="$1" py
+  command -v python3 >/dev/null 2>&1 || return 1
+  py="$(
+    cat <<'PY'
+import os, sys
+root = os.fsencode(sys.argv[1])
+newest = 0
+for rel in sys.stdin.buffer.read().split(b"\0"):
+    if not rel:
+        continue
+    try:
+        mtime = int(os.stat(os.path.join(root, rel)).st_mtime)
+    except OSError:
+        continue
+    if mtime > newest:
+        newest = mtime
+print(newest)
+PY
+  )"
+  # The entry point's pipefail propagates a failed `git ls-files` into the `|| return 1`, so the
+  # rc is NOT actually lost — the mask is visible only to a standalone lint of this sourced lib
+  # (which cannot see the caller's strict mode, same reason as the file-header SC2154 disable).
+  # shellcheck disable=SC2312
+  git -C "${repo}" ls-files -z 2>/dev/null | python3 -c "${py}" "${repo}" 2>/dev/null || return 1
+}
+
+# live recovery-repo snapshot staleness scan (run_doctor §13 helper). $1 = the install root holding the
+# per-directory recovery repositories. Per WHITELISTED repo, read-only (never stages/commits/writes):
+#   * absent dir OR absent .git -> not-applicable info line (git-less consumer install — fail-open).
+#   * .git presence ROUTES the git reads (mirrors §8/§9b): a `git -C` on a bare directory inside a
+#     source checkout would be answered by the PARENT repo, reporting a tree that is not this one's.
+#   * dirty tree (tracked changes vs HEAD, or untracked files) -> STALE warn + the counted verdict,
+#     with the HEAD-vs-newest-tracked-mtime lag as a detail line (recency is derived, not independent).
+#   * clean tree -> current; no mtime comparison (it could only report false staleness there).
+#   * control-character path -> its own warn: `ls-files --others --directory` sees a FILE-LESS
+#     pathological tree that `git status` structurally cannot, and such a path corrupts both porcelain
+#     parsing and any blanket snapshot stage downstream.
+# Each finding is logged to stderr (log -> fd2) and the flagged-repo total is the stdout verdict
+# (mirrors manifest_hash_drift); a repo is counted at most ONCE however many findings it carries.
+snapshot_staleness_scan() {
+  local root="$1"
+  # The recovery-repo whitelist — the same seven per-directory repositories the write side
+  # (scripts/snapshot-live-repos.sh) reconciles. A directory absent from this list is invisible here.
+  local repos=(autoagent agents monitor scripts/test rules test hooks/test)
+  local rel repo entry shown changed untracked flagged head_epoch newest lag
+  local stale=0 git_warned=0
+  for rel in "${repos[@]}"; do
+    repo="${root}/${rel}"
+    if [[ ! -d "${repo}" ]]; then
+      log "  info : ${rel} — no such directory (recovery snapshot n/a)"
+      continue
+    fi
+    if [[ ! -e "${repo}/.git" ]]; then
+      log "  info : ${rel} — not a git repo (git-less install; recovery snapshot n/a)"
+      continue
+    fi
+    # git is required only once a real .git exists, so a git-less install missing the binary
+    # never draws a spurious warn; the skip is loud (Precondition Loud-Fail) but logged once.
+    if ! command -v git >/dev/null 2>&1; then
+      if [[ "${git_warned}" -eq 0 ]]; then
+        log "  warn : recovery-repo staleness scan skipped — git not installed (cannot inspect ${rel} or any further repo)"
+        git_warned=1
+      fi
+      continue
+    fi
+    flagged=0
+    # An initialized-but-commitless repo has nothing to restore TO — its own anomaly class, and
+    # `diff HEAD` below would fail on it.
+    if ! git -C "${repo}" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+      log "  warn : ${rel} — recovery repo has no commit yet (nothing to restore to) — run scripts/snapshot-live-repos.sh"
+      stale=$((stale + 1))
+      continue
+    fi
+    changed=0
+    # NUL-delimited reads throughout: a path may legitimately contain whitespace, and the anomaly
+    # scan below exists precisely because one may contain a newline. `|| true` keeps a git read
+    # failure from aborting the enclosing command substitution; an empty stream reads as no findings.
+    # shellcheck disable=SC2312
+    while IFS= read -r -d '' entry; do
+      [[ -n "${entry}" ]] || continue
+      changed=$((changed + 1))
+    done < <(git -C "${repo}" diff --name-only -z HEAD 2>/dev/null || true)
+    untracked=0
+    # shellcheck disable=SC2312
+    while IFS= read -r -d '' entry; do
+      [[ -n "${entry}" ]] || continue
+      untracked=$((untracked + 1))
+    done < <(git -C "${repo}" ls-files --others --exclude-standard -z 2>/dev/null || true)
+    # --directory collapses an untracked tree to its top entry, which is the ONLY way a file-less
+    # control-char tree becomes visible at all (git ignores empty directories everywhere else).
+    # shellcheck disable=SC2312
+    while IFS= read -r -d '' entry; do
+      [[ -n "${entry}" ]] || continue
+      [[ "${entry}" == *[[:cntrl:]]* ]] || continue
+      # printf %q so the log line cannot itself be broken by the embedded control character.
+      shown="$(printf '%q' "${entry}")"
+      log "  warn : ${rel} — control-character path, unsafe for a blanket snapshot stage: ${shown}"
+      flagged=1
+    done < <(git -C "${repo}" ls-files --others --directory --exclude-standard -z 2>/dev/null || true)
+    if [[ "${changed}" -eq 0 && "${untracked}" -eq 0 ]]; then
+      [[ "${flagged}" -eq 0 ]] && log "  ok   : ${rel} recovery snapshot current (clean tree — HEAD matches on-disk)"
+      [[ "${flagged}" -eq 0 ]] || stale=$((stale + 1))
+      continue
+    fi
+    log "  warn : ${rel} recovery snapshot STALE — ${changed} uncommitted tracked change(s), ${untracked} untracked file(s); a restore would roll this directory BACKWARD — run scripts/snapshot-live-repos.sh"
+    stale=$((stale + 1))
+    # Recency DETAIL on an already-stale repo (AC-3 as a derived property, never its own verdict).
+    # Both reads are advisory: a masked failure degrades to the un-ageable note, never to a false ok.
+    head_epoch="$(git -C "${repo}" log -1 --format=%ct 2>/dev/null || true)"
+    # `|| true` keeps an un-computable mtime (no python3) from aborting under the caller's set -e;
+    # the empty capture then falls through to the "unavailable" note below, never to a false ok.
+    # shellcheck disable=SC2310,SC2311
+    newest="$(_snapshot_newest_mtime "${repo}" || true)"
+    if [[ "${head_epoch}" =~ ^[0-9]+$ && "${newest}" =~ ^[0-9]+$ ]]; then
+      lag=$((newest - head_epoch))
+      if [[ "${lag}" -gt 0 ]]; then
+        log "         HEAD trails the newest tracked-file mtime by ${lag}s (snapshot recency lag)"
+      fi
+    else
+      log "         recency lag unavailable (python3 missing or the tracked set is unreadable)"
     fi
   done
   printf '%d\n' "${stale}"
