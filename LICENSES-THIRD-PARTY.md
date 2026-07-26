@@ -132,7 +132,7 @@ Import sites (tracked files):
 - autoagent production Python (`daemon_cycle.py`, `lib/confidence.py`,
   `lib/project_key.py`) is **stdlib-only**.
 
-All other imports across the 92 tracked `*.py` files are Python standard library or
+All other imports across the 93 tracked `*.py` files are Python standard library or
 repo-local modules — with one **build-time-only** exception: `docs/assets/bulldog-braille-gen.py`
 imports `Pillow` (PIL) to pre-render the TUI bulldog art. It is never bundled, installed, or
 run at runtime — the launcher ships only its pre-generated `docs/assets/bulldog-braille.txt`
