@@ -106,6 +106,13 @@ if [ -x "$LOCK_SCRIPT" ]; then
   trap '"$LOCK_SCRIPT" release wiki-compile 2>/dev/null || true' EXIT INT TERM # GA-ABSORB[benign]: EXIT-trap release of an already-released lock is normal teardown
 fi
 
+# Trace dir hoisted here — section 0.5's abort branch appends to LOG_FILE and redirects its PG report there.
+# Absent LOG_DIR → a healthy PG channel records a spurious drop, and the raw-absent fall-through dies under errexit.
+# Unguarded by design — a genuine mkdir failure must abort loudly, never be absorbed.
+# Below the lock guard — a lock-contended no-op run stays side-effect-free.
+# Above the helper definitions — wiki-source-raw.bats extracts that block as an executable-free shim.
+mkdir -p "${LOG_DIR}"
+
 # Helper: extract source_url from a raw/note file's frontmatter — reads only the
 # first source_url: line inside the --- block, returns blank if absent/malformed.
 # bash 3.2 compatible (awk, no declare -A).
@@ -342,9 +349,8 @@ done < <(find "$RAW_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>>/tmp/wiki-c
 if [ ${#UNPROCESSED[@]} -eq 0 ]; then
   # 0 unprocessed files → record PG status 'ok' (with monitor-card counts), exit.
   # Emit an explicit human-readable trace line so a clean 0-work day is visibly
-  # distinct from a crash (Precondition Loud-Fail / observability). LOG_DIR is not
-  # yet created at this early-exit branch (mkdir happens later), so ensure it
-  # exists before the trace + envelope writes.
+  # distinct from a crash (Precondition Loud-Fail / observability).
+  # Redundant with the section-0.5 hoist above — idempotent, kept as a local guarantee.
   mkdir -p "$LOG_DIR"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile: 0 unprocessed raw sources — nothing to compile, exiting clean" >>"$LOG_FILE"
   if [ -x "$PG_HELPER" ]; then
