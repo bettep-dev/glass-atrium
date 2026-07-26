@@ -8,7 +8,7 @@
 # (default = glass-atrium store; env overrides); re-asserted at the main resolver below.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 
-echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cron fork OK pid=$$ ppid=$PPID HOME=${HOME:-EMPTY} PWD=$PWD USER=${USER:-EMPTY} SHELL=${SHELL:-EMPTY} raw_count=$(ls "${WIKI_ROOT}/raw/"*.md 2>/dev/null | wc -l | tr -d ' ') glob_test=$(printf '%s\n' "${WIKI_ROOT}/raw/"*.md | head -1)" >>/tmp/wiki-compile.log
+echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cron fork OK pid=$$ ppid=$PPID HOME=${HOME:-EMPTY} PWD=$PWD USER=${USER:-EMPTY} SHELL=${SHELL:-EMPTY} raw_count=$(ls "${WIKI_ROOT}/raw/"*.md 2>/dev/null | wc -l | tr -d ' ') glob_test=$(printf '%s\n' "${WIKI_ROOT}/raw/"*.md | head -1)" >>/tmp/wiki-compile.log # GA-ABSORB[benign]: ls stderr on a non-matching glob is normal for an unseeded store — the count is the datum
 
 set -euo pipefail
 set +f # defensive: ensure pathname expansion is enabled
@@ -103,7 +103,7 @@ if [ -x "$LOCK_SCRIPT" ]; then
     echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] wiki-daily-compile: another run holds wiki-compile lock, skipping pid=$$" >>/tmp/wiki-compile.log
     exit 0
   fi
-  trap '"$LOCK_SCRIPT" release wiki-compile 2>/dev/null || true' EXIT INT TERM
+  trap '"$LOCK_SCRIPT" release wiki-compile 2>/dev/null || true' EXIT INT TERM # GA-ABSORB[benign]: EXIT-trap release of an already-released lock is normal teardown
 fi
 
 # Helper: extract source_url from a raw/note file's frontmatter — reads only the
@@ -118,7 +118,7 @@ _extract_source_url() {
   # removes) — without it the block never opens on a fully-CRLF file (the cross-detector
   # divergence). Extracted value is CR-stripped for byte-parity with the Python detector.
   # awk: n=1 after the first delimiter, exit at the second; print + exit on first source_url.
-  awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_url:/{sub(/^source_url:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true
+  awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_url:/{sub(/^source_url:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true # GA-ABSORB[handled@_classify_raw-empty-url-guard]: blank output is the documented absent/malformed contract
 }
 
 # Extract source_raw (a note's stable back-reference to its originating raw basename)
@@ -128,7 +128,7 @@ _extract_source_url() {
 # re-detected as backlog. Same delimiter / CR-strip / trailing-trim; only the key differs.
 _extract_source_raw() {
   local file="$1"
-  awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_raw:/{sub(/^source_raw:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true
+  awk '{sub(/\r$/,"")} /^---[ \t]*$/{n++; if(n==2)exit} n==1 && /^source_raw:/{sub(/^source_raw:[ \t]*/,""); sub(/[ \t]*$/,""); gsub(/\r/,""); print; exit}' "$file" 2>/dev/null || true # GA-ABSORB[handled@_classify_raw-basename-primary-match]: blank output is the documented absent/malformed contract
 }
 
 # Collect every notes/*.md source_url into a newline-separated string. Per-file
@@ -180,7 +180,7 @@ _collect_collision_source_urls() {
   # uniq -d keeps lines occurring 2+ times → the collision set (grep -v drops the
   # trailing blank). The 0-url case: grep -v matches nothing (exit 1) → under pipefail
   # + set -e the assignment would abort, but an empty collision set is correct → suppress.
-  printf '%s' "${_all}" | grep -v '^$' | sort | uniq -d || true
+  printf '%s' "${_all}" | grep -v '^$' | sort | uniq -d || true # GA-ABSORB[benign]: uniq -d exits 1 with no duplicates — an empty collision set is the correct result
 }
 
 # List, per colliding source_url, the basenames of the raws sharing it — the body
@@ -251,7 +251,7 @@ _inject_source_raw() {
   { [[ -n "${_have_url}" ]] || [[ -z "${_url}" ]]; } && _need_url=0
   [[ "${_need_raw}" -eq 0 && "${_need_url}" -eq 0 ]] && return 0
   local _tmp
-  _tmp=$(mktemp "${_note}.inject.XXXXXX") || return 0
+  _tmp=$(mktemp "${_note}.inject.XXXXXX") || return 0 # GA-ABSORB[handled@_classify_raw-basename-fallback]: mktemp failure skips an optional stamp, not the classification
   # Inject right after the opening delimiter only — the CR-stripped copy drives the
   # `^---[ \t]*$` test (ASCII, locale-independent), while each existing record is
   # printed unmodified so it keeps its own ending; the injected key line is LF.
@@ -266,11 +266,29 @@ _inject_source_raw() {
       next
     }
     { print line }
-  ' "${_note}" >"${_tmp}" 2>/dev/null; then
-    mv -f "${_tmp}" "${_note}" 2>/dev/null || rm -f "${_tmp}" 2>/dev/null || true
+  ' "${_note}" >"${_tmp}" 2>/dev/null; then                                       # GA-ABSORB[handled@else-branch-temp-cleanup]: awk status is the if condition; the else removes the temp
+    mv -f "${_tmp}" "${_note}" 2>/dev/null || rm -f "${_tmp}" 2>/dev/null || true # GA-ABSORB[handled@rm-fallback-same-line]: a failed atomic rename falls back to removing the temp, note untouched
   else
-    rm -f "${_tmp}" 2>/dev/null || true
+    rm -f "${_tmp}" 2>/dev/null || true # GA-ABSORB[benign]: teardown removal of a possibly-absent temp
   fi
+}
+
+# Terminal best-effort drop sink for the converted PG reporting channel. Never
+# recurses into the PG channel that failed and never aborts its caller.
+PG_DROP_LOG="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/pg-report-drops.log"
+PG_DROP_LOG_MAX_BYTES=65536
+append_pg_drop() {
+  local site="${1}" status="${2}" dir="${PG_DROP_LOG%/*}" sz="" ts=""
+  mkdir -p "${dir}" 2>/dev/null || return 0 # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+  if [ -f "${PG_DROP_LOG}" ]; then
+    sz="$(wc -c <"${PG_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+    if [ -n "${sz}" ] && [ "${sz}" -gt "${PG_DROP_LOG_MAX_BYTES}" ]; then
+      rm -f "${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+    fi
+  fi
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+  printf '%s [%s] PG_REPORT_DROP site=%s exit=%s\n' "${ts}" "wiki-daily-compile" "${site}" "${status}" \
+    >>"${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
 }
 
 # 0.5 Named precondition (Loud-Fail): distinguish a relocation-miss from a not-yet-seeded
@@ -280,12 +298,16 @@ _inject_source_raw() {
 #     absent → no raw sources yet → benign, fall through (find yields 0, normal exit-0).
 if [ ! -d "$RAW_DIR" ]; then
   if [ ! -d "$WIKI_ROOT" ]; then
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] FATAL: configured wiki root missing: $WIKI_ROOT (possible relocation-miss; verify WIKI_ROOT)" >>"$LOG_FILE" 2>/dev/null || true
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] FATAL: configured wiki root missing: $WIKI_ROOT (possible relocation-miss; verify WIKI_ROOT)" >>"$LOG_FILE" 2>/dev/null || true # GA-ABSORB[handled@stderr-echo-next-line+pg-error-row+exit-1]: log append is the redundant channel
     echo "[wiki-daily-compile] FATAL: configured wiki root missing: $WIKI_ROOT — possible relocation-miss, verify WIKI_ROOT" >&2
     if [ -x "$PG_HELPER" ]; then
       MISS_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: configured wiki root missing (%s) — possible relocation-miss"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 0 "$WIKI_ROOT")
-      printf '%s\n' "$MISS_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+      printf '%s\n' "$MISS_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+        st=$?
+        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=wiki-root-missing, exit=$st) — run record not persisted" >&2
+        append_pg_drop "wiki-root-missing" "$st"
+      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
     fi
     exit 1
   fi
@@ -328,7 +350,11 @@ if [ ${#UNPROCESSED[@]} -eq 0 ]; then
   if [ -x "$PG_HELPER" ]; then
     SKIP_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"ok","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile skipped: no unprocessed files"}}' \
       "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 0)
-    printf '%s\n' "$SKIP_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+    printf '%s\n' "$SKIP_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+      st=$?
+      echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=no-unprocessed-skip, exit=$st) — run record not persisted" >&2
+      append_pg_drop "no-unprocessed-skip" "$st"
+    } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
   fi
   exit 0
 fi
@@ -385,13 +411,18 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   # own their envelopes + exit 0, so this defers to them; only the residual generic case emits
   # here. Without this row the health-check readback false-negatives "missing" (the late step-7
   # aggregate can be skipped if a downstream step aborts under set -e). compiled_count=0.
+  # GA-ABSORB[handled@enclosing-if-not-condition]: grep no-match is the tested condition; 2>/dev/null covers an absent LOG_FILE
   if ! grep -qE 'Exceeded USD budget' "$LOG_FILE" 2>/dev/null \
-    && ! grep -qE 'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets .* \('"$TZ_ERE"'\)' "$LOG_FILE" 2>/dev/null; then
+    && ! grep -qE 'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets .* \('"$TZ_ERE"'\)' "$LOG_FILE" 2>/dev/null; then # GA-ABSORB[handled@enclosing-if-not-condition]: quota-token grep no-match is the tested condition
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-llm-fail] generic claude -p failure (exit=${CLAUDE_EXIT}) — recording status='error', aborting cycle" >>"$LOG_FILE"
     if [ -x "$PG_HELPER" ]; then
       LLM_FAIL_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: generic claude -p failure (exit=%d); not budget-config, not quota"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL" "$CLAUDE_EXIT")
-      printf '%s\n' "$LLM_FAIL_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+      printf '%s\n' "$LLM_FAIL_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+        st=$?
+        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=llm-generic-fail, exit=$st) — run record not persisted" >&2
+        append_pg_drop "llm-generic-fail" "$st"
+      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
     fi
     exit 1
   fi
@@ -407,13 +438,17 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   # --max-budget-usd shortfall (self-inflicted config error), NOT an external quota — kept
   # separate so a too-low-budget bug isn't masked (same split as _detect_budget_too_low). No
   # budget-specific DaemonStatus → record status='error', distinct from quota_exceeded.
-  if grep -qE 'Exceeded USD budget' "$LOG_FILE" 2>/dev/null; then
+  if grep -qE 'Exceeded USD budget' "$LOG_FILE" 2>/dev/null; then # GA-ABSORB[handled@enclosing-if-condition]: budget-token grep no-match is the tested condition
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-budget-config] local --max-budget-usd ceiling too low (budget=\$${BUDGET}) — recording status='error' (not quota), aborting cycle" >>"$LOG_FILE"
     if [ -x "$PG_HELPER" ]; then
       # compiled_count=0 — LLM call aborted, so confirmed completions = 0.
       BUDGET_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: local --max-budget-usd ceiling too low (budget=%s); NOT an external quota cap"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL" "$BUDGET")
-      printf '%s\n' "$BUDGET_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+      printf '%s\n' "$BUDGET_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+        st=$?
+        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=budget-config, exit=$st) — run record not persisted" >&2
+        append_pg_drop "budget-config" "$st"
+      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
     fi
     exit 0
   fi
@@ -422,13 +457,17 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   # tokens; on match, dual-write PG status='quota_exceeded', exit 0 (avoid noisy
   # "N failed" downstream). 'Exceeded USD budget' is handled by the 5.4
   # budget-config branch above (kept out of this alternation).
-  if grep -qE 'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets .* \('"$TZ_ERE"'\)' "$LOG_FILE" 2>/dev/null; then
+  if grep -qE 'Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets .* \('"$TZ_ERE"'\)' "$LOG_FILE" 2>/dev/null; then # GA-ABSORB[handled@enclosing-if-condition]: quota-token grep no-match is the tested condition
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-quota-detect] Claude Max quota reached — recording status='quota_exceeded', aborting cycle" >>"$LOG_FILE"
     if [ -x "$PG_HELPER" ]; then
       # compiled_count=0 — LLM call aborted, so confirmed completions = 0.
       QUOTA_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"quota_exceeded","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: Claude Max quota reached"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL")
-      printf '%s\n' "$QUOTA_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+      printf '%s\n' "$QUOTA_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+        st=$?
+        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=quota-exceeded, exit=$st) — run record not persisted" >&2
+        append_pg_drop "quota-exceeded" "$st"
+      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
     fi
     exit 0
   fi
@@ -487,5 +526,9 @@ fi
 if [ -x "$PG_HELPER" ]; then
   WIKI_AGG_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile via cron, wiki-sync exit=%d"}}' \
     "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WIKI_AGG_STATUS" "$SUCCESS" "$TOTAL" "$SYNC_EXIT")
-  printf '%s\n' "$WIKI_AGG_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || true
+  printf '%s\n' "$WIKI_AGG_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
+    st=$?
+    echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=wiki-agg, exit=$st) — run record not persisted" >&2
+    append_pg_drop "wiki-agg" "$st"
+  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 fi

@@ -183,11 +183,11 @@ run_with_timeout() {
   # immediately if the command already finished (kill -0 fails → nothing to do).
   (
     sleep "${duration_sec}"
-    if kill -0 "${cmd_pid}" 2>/dev/null; then
-      kill -TERM "${cmd_pid}" 2>/dev/null || true
+    if kill -0 "${cmd_pid}" 2>/dev/null; then     # GA-ABSORB[benign]: kill -0 exits 1 on an already-finished child — that is the liveness probe
+      kill -TERM "${cmd_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the child can exit between probe and signal — nothing left to TERM
       sleep "${grace_sec}"
-      if kill -0 "${cmd_pid}" 2>/dev/null; then
-        kill -KILL "${cmd_pid}" 2>/dev/null || true
+      if kill -0 "${cmd_pid}" 2>/dev/null; then     # GA-ABSORB[benign]: kill -0 exits 1 on an already-finished child — that is the liveness probe
+        kill -KILL "${cmd_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the child can exit during the grace window — nothing left to KILL
       fi
     fi
   ) &
@@ -196,11 +196,11 @@ run_with_timeout() {
   # Wait for the command; capture its raw status. `wait` on a known PID returns
   # that child's exit status (128+signal when signalled).
   local cmd_rc=0
-  wait "${cmd_pid}" 2>/dev/null || cmd_rc=$?
+  wait "${cmd_pid}" 2>/dev/null || cmd_rc=$? # GA-ABSORB[handled@cmd_rc-case-mapping]: the status is captured and mapped to the timeout(1) 124/137 contract
 
   # Command done (one way or another) → stop the watchdog if it is still waiting.
-  kill "${watchdog_pid}" 2>/dev/null || true
-  wait "${watchdog_pid}" 2>/dev/null || true
+  kill "${watchdog_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the watchdog may have already self-exited — nothing left to kill
+  wait "${watchdog_pid}" 2>/dev/null || true # GA-ABSORB[benign]: waiting on an already-reaped watchdog is normal teardown
 
   # Map signal-deaths to timeout(1)'s 124/137 convention.
   case "${cmd_rc}" in
@@ -225,7 +225,7 @@ detect_quota_in_pane() {
   # function standalone, so it must not depend on the sourced lib.
   tz="${ATRIUM_TIMEZONE:-Asia/Seoul}"
   tz_ere="$(printf '%s' "${tz}" | sed -e 's/[][\.^$|?*+(){}\\]/\\&/g')"
-  pane_dump="$(tmux capture-pane -t "${session}" -p -S -100 2>/dev/null || true)"
+  pane_dump="$(tmux capture-pane -t "${session}" -p -S -100 2>/dev/null || true)" # GA-ABSORB[handled@grep-on-empty-pane_dump]: an absent session degrades to an empty dump, reported as no-quota by the grep below
   grep -qE 'Limit reached|Usage ⚠ Limit|Exceeded USD budget|out of extra usage|/rate-limit-options|resets .* \('"${tz_ere}"'\)' <<<"${pane_dump}"
 }
 
@@ -243,7 +243,7 @@ quota_reset_passed() {
   # function standalone, so it must not depend on the sourced lib.
   tz="${ATRIUM_TIMEZONE:-Asia/Seoul}"
   tz_ere="$(printf '%s' "${tz}" | sed -e 's/[][\.^$|?*+(){}\\]/\\&/g')"
-  pane_dump="$(tmux capture-pane -t "${session}" -p -S -100 2>/dev/null || true)"
+  pane_dump="$(tmux capture-pane -t "${session}" -p -S -100 2>/dev/null || true)" # GA-ABSORB[handled@empty-reset_line-fallback]: an empty dump falls through to the WARN plus proceed fallback below
   # Last match = most recent footer. || true — grep no-match exits 1; under
   # pipefail the inherited ERR trap (set -E reaches the substitution subshell
   # even from an if-test, bash 3.2) logs a spurious "ERROR: line N: tail -1".
@@ -272,7 +272,7 @@ quota_reset_passed() {
   hour_ampm="${hour}:00:00${ampm}"
   now_epoch="$(date +%s)"
   year="$(date +%Y)"
-  parsed_epoch="$(TZ="${tz}" date -j -f '%Y %B %d %I:%M:%S%p' "${year} ${month} ${day} ${hour_ampm}" +%s 2>/dev/null || true)"
+  parsed_epoch="$(TZ="${tz}" date -j -f '%Y %B %d %I:%M:%S%p' "${year} ${month} ${day} ${hour_ampm}" +%s 2>/dev/null || true)" # GA-ABSORB[handled@empty-parsed_epoch-guard]: an unparseable footer date falls through to the WARN plus proceed fallback below
   if [[ -z "${parsed_epoch}" ]]; then
     log "WARN: quota reset timestamp parse failed (date conversion year=${year}) — fallback: proceed with restart"
     return 0
@@ -280,7 +280,7 @@ quota_reset_passed() {
   # Dec→Jan rollover: a current-year parse before yesterday → retry with year+1.
   if ((parsed_epoch < now_epoch - 86400)); then
     year=$((year + 1))
-    parsed_epoch="$(TZ="${tz}" date -j -f '%Y %B %d %I:%M:%S%p' "${year} ${month} ${day} ${hour_ampm}" +%s 2>/dev/null || true)"
+    parsed_epoch="$(TZ="${tz}" date -j -f '%Y %B %d %I:%M:%S%p' "${year} ${month} ${day} ${hour_ampm}" +%s 2>/dev/null || true)" # GA-ABSORB[handled@rollover-empty-parsed_epoch-guard]: an unparseable rollover date falls through to the WARN plus proceed fallback below
     if [[ -z "${parsed_epoch}" ]]; then
       log "WARN: quota reset timestamp parse failed (date conversion rollover year=${year}) — fallback: proceed with restart"
       return 0
@@ -332,6 +332,24 @@ STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_DATE="$(date +%Y-%m-%d)"
 PG_HELPER="${SCRIPT_DIR}/_pg_dual_write_daemon.py"
 
+# Terminal best-effort drop sink for the converted PG reporting channel. Never
+# recurses into the PG channel that failed and never aborts its caller.
+PG_DROP_LOG="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/pg-report-drops.log"
+PG_DROP_LOG_MAX_BYTES=65536
+append_pg_drop() {
+  local site="${1}" status="${2}" dir="${PG_DROP_LOG%/*}" sz="" ts=""
+  mkdir -p "${dir}" 2>/dev/null || return 0 # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+  if [[ -f "${PG_DROP_LOG}" ]]; then
+    sz="$(wc -c <"${PG_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+    if [[ -n "${sz}" ]] && [[ "${sz}" -gt "${PG_DROP_LOG_MAX_BYTES}" ]]; then
+      rm -f "${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+    fi
+  fi
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+  printf '%s [%s] PG_REPORT_DROP site=%s exit=%s\n' "${ts}" "daemon-daily-restart" "${site}" "${status}" \
+    >>"${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+}
+
 # Helper: write_daemon_run via JSON envelope subprocess. Best-effort (|| true).
 # daemon_name is role-qualified (daily-restart-<role>): both roles run the same
 # date, so a shared name would collide on the (run_date, daemon_name) UPSERT
@@ -339,7 +357,7 @@ PG_HELPER="${SCRIPT_DIR}/_pg_dual_write_daemon.py"
 # Args: $1=status (ok|partial|error|missing|stale), $2=ended_at ISO UTC, $3=notes (optional)
 # status MUST be a PG DaemonStatus enum value.
 pg_write_run() {
-  local status="$1" ended_at="$2" notes="${3:-}"
+  local status="$1" ended_at="$2" notes="${3:-}" st=""
   if [[ ! -x "${PG_HELPER}" ]]; then
     return 0
   fi
@@ -351,7 +369,11 @@ pg_write_run() {
     envelope="$(printf '{"op":"write_daemon_run","args":{"daemon_name":"daily-restart-%s","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s"}}' \
       "${ROLE}" "${RUN_DATE}" "${STARTED_AT}" "${ended_at}" "${status}")"
   fi
-  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || true
+  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || {
+    st=$?
+    echo "[daemon-daily-restart] WARN: PG daemon-run report failed (site=daily-restart-run, exit=${st}) — run record not persisted" >&2
+    append_pg_drop "daily-restart-run" "${st}"
+  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
 # 2. Pre-flight: binary + script existence.
@@ -387,7 +409,7 @@ log "starting daily restart for session=${SESSION}"
 # expectedAt window.
 # Args: $1=status (quota_exceeded), $2=ended_at ISO UTC, $3=notes (required for quota traceability)
 pg_write_autoagent_run() {
-  local status="$1" ended_at="$2" notes="$3"
+  local status="$1" ended_at="$2" notes="$3" st=""
   if [[ ! -x "${PG_HELPER}" ]]; then
     return 0
   fi
@@ -395,7 +417,11 @@ pg_write_autoagent_run() {
   autoagent_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   envelope="$(printf '{"op":"write_daemon_run","args":{"daemon_name":"autoagent","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","notes":"%s"}}' \
     "${RUN_DATE}" "${autoagent_started_at}" "${ended_at}" "${status}" "${notes}")"
-  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || true
+  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || {
+    st=$?
+    echo "[daemon-daily-restart] WARN: PG daemon-run report failed (site=autoagent-quota-run, exit=${st}) — run record not persisted" >&2
+    append_pg_drop "autoagent-quota-run" "${st}"
+  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
 # 3. Pre-restart healthcheck. Warn-only: the whole purpose of this script is to
@@ -415,7 +441,7 @@ fi
 # once the reset time has passed (or the timestamp parse failed — quota status
 # unknown, the gate's WARN line carries that verdict), else skip (mirror
 # status='quota_exceeded', exit 0) and let the next 24h daily-restart re-evaluate.
-if tmux has-session -t "${SESSION}" 2>/dev/null && detect_quota_in_pane "${SESSION}"; then
+if tmux has-session -t "${SESSION}" 2>/dev/null && detect_quota_in_pane "${SESSION}"; then # GA-ABSORB[benign]: has-session exits 1 when the session is absent — that is the tested condition
   if quota_reset_passed "${SESSION}"; then
     log "quota detect ignored — gate cleared (reset time passed, or parse failed: quota status unknown; see preceding line), proceeding with restart"
   else
@@ -450,9 +476,9 @@ trap 'daemon_lock_release "${DAEMON_RESTART_LOCK}" "$$"' EXIT
 #    rc 1 = kill refused or session survived KILL_TIMEOUT_SEC (caller decides
 #    fatality). Bash 3.2 compatible loop.
 kill_session_and_confirm() {
-  if tmux has-session -t "${SESSION}" 2>/dev/null; then
+  if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: has-session exits 1 when the session is absent — that is the tested condition
     log "killing tmux session '${SESSION}'"
-    if ! tmux kill-session -t "${SESSION}" 2>/dev/null; then
+    if ! tmux kill-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[handled@return-1-below]: kill-session failure is branched to a WARN plus return 1
       log "WARN: tmux kill-session failed for '${SESSION}'"
       return 1
     fi
@@ -461,13 +487,13 @@ kill_session_and_confirm() {
   fi
   local waited=0
   while ((waited < KILL_TIMEOUT_SEC)); do
-    if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
+    if ! tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: has-session exits 1 once teardown completed — that is the loop-exit condition
       break
     fi
     sleep "${KILL_POLL_INTERVAL_SEC}"
     waited=$((waited + KILL_POLL_INTERVAL_SEC))
   done
-  if tmux has-session -t "${SESSION}" 2>/dev/null; then
+  if tmux has-session -t "${SESSION}" 2>/dev/null; then # GA-ABSORB[benign]: has-session exits 1 once teardown completed — that is the tested condition
     log "WARN: session '${SESSION}' still present ${KILL_TIMEOUT_SEC}s after kill-session"
     return 1
   fi
@@ -486,7 +512,7 @@ fi
 # wired but dead). Sweep all such markers before bootstrap so the next claude
 # spawn re-bootstraps every plugin's MCP server.
 # These are build artifacts (regenerable) — rm exception per core-security.md.
-find "${HOME}/.claude/plugins/cache/claude-plugins-official" -name .orphaned_at -delete 2>/dev/null || true
+find "${HOME}/.claude/plugins/cache/claude-plugins-official" -name .orphaned_at -delete 2>/dev/null || true # GA-ABSORB[benign]: -delete over a possibly-absent plugin cache; regenerable markers only
 log "orphan-marker sweep complete"
 
 # 6. Recreate via bootstrap in RETURN mode. Bootstrap is idempotent and self-
@@ -527,7 +553,7 @@ while :; do
   log "WARN: bootstrap attempt ${bootstrap_attempt}/${BOOTSTRAP_RETRY_MAX} failed (rc=${bootstrap_rc}) — clearing any half-created session, retrying in ${backoff}s"
   # A failed attempt can leave a created-but-uninjected session whose presence
   # would no-op the next return-mode attempt — clear it so the retry recreates.
-  kill_session_and_confirm || true
+  kill_session_and_confirm || true # GA-ABSORB[handled@bootstrap-retry-loop]: a failed pre-retry clear is decided by the next bootstrap attempt
   sleep "${backoff}"
   bootstrap_attempt=$((bootstrap_attempt + 1))
 done
@@ -647,7 +673,7 @@ if ! run_healthcheck --skip-cron-watchdog; then
     sleep 5
     if ! run_healthcheck; then
       log "pane snapshot at fail moment (last 20 lines of scrollback):"
-      tmux capture-pane -t "${SESSION}" -p -S -200 2>/dev/null | tail -20 >>"${LOG_FILE}" || true
+      tmux capture-pane -t "${SESSION}" -p -S -200 2>/dev/null | tail -20 >>"${LOG_FILE}" || true # GA-ABSORB[handled@fatal-next-line]: a best-effort pane snapshot precedes the unconditional fatal below
       fatal "post-restart healthcheck FAILED on all 3 attempts — session recreated but unhealthy"
     fi
     log "post-restart healthcheck attempt 3 (full) OK"
