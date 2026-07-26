@@ -5,8 +5,8 @@
 # on the pg-report-drops sink (AC-2), while never changing the caller's exit
 # contract (AC-3). Every assertion here fails against the pre-conversion `|| true`
 # shape, which exits clean and writes no marker.
-# Hermetic: unit tests awk-extract the sink + writer functions into a sourceable
-# shim; full-flow tests copy wiki-daily-compile.sh + lib/atrium-config.sh into a
+# Hermetic: unit tests source the real sink lib and awk-extract the writer function
+# into a shim; full-flow tests copy wiki-daily-compile.sh + its libs into a
 # sandbox with a PG helper stub that always exits 1, HOME/GA_DATA_ROOT/WIKI_ROOT
 # all inside the sandbox. No live install, PG connection, or real log is touched.
 
@@ -16,6 +16,7 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 RESTART_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 WIKI_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
+SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
 
 setup() {
   [[ -f "${RESTART_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${RESTART_SCRIPT}"
@@ -32,16 +33,11 @@ teardown() {
   fi
 }
 
-# Extract one top-level function (declaration line → first column-0 brace) plus
-# the two sink globals, into a sourceable shim.
+# Extract one top-level writer function (declaration line → first column-0 brace)
+# on top of the real sink lib, into a sourceable shim.
 extract_sink_shim() {
   local fn_name="$1" shim="$2"
-  grep -E '^(PG_DROP_LOG|PG_DROP_LOG_MAX_BYTES)=' "${RESTART_SCRIPT}" >"${shim}"
-  awk '
-    $0 == "append_pg_drop() {" { capture = 1 }
-    capture { print }
-    capture && /^\}/ { exit }
-  ' "${RESTART_SCRIPT}" >>"${shim}"
+  printf 'PG_DROP_TAG="daemon-daily-restart"\n. "%s"\n' "${SINK_LIB}" >"${shim}"
   awk -v fn="${fn_name}" '
     $0 == fn "() {" { capture = 1 }
     capture { print }
@@ -171,6 +167,7 @@ make_wiki_sandbox() {
   mkdir -p "${SANDBOX}/lib"
   cp "${WIKI_SCRIPT}" "${SANDBOX}/wiki-daily-compile.sh"
   cp "${CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
   PG_REPORT_RECORD="${SANDBOX}/pg-report.jsonl"
   if [[ "${pg_posture}" == "healthy" ]]; then
     make_healthy_pg_helper "${SANDBOX}/_pg_dual_write_daemon.py"

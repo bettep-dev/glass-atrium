@@ -332,23 +332,14 @@ STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_DATE="$(date +%Y-%m-%d)"
 PG_HELPER="${SCRIPT_DIR}/_pg_dual_write_daemon.py"
 
-# Terminal best-effort drop sink for the converted PG reporting channel. Never
-# recurses into the PG channel that failed and never aborts its caller.
-PG_DROP_LOG="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/pg-report-drops.log"
-PG_DROP_LOG_MAX_BYTES=65536
-append_pg_drop() {
-  local site="${1}" status="${2}" dir="${PG_DROP_LOG%/*}" sz="" ts=""
-  mkdir -p "${dir}" 2>/dev/null || return 0 # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-  if [[ -f "${PG_DROP_LOG}" ]]; then
-    sz="$(wc -c <"${PG_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-    if [[ -n "${sz}" ]] && [[ "${sz}" -gt "${PG_DROP_LOG_MAX_BYTES}" ]]; then
-      rm -f "${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-    fi
-  fi
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-  printf '%s [%s] PG_REPORT_DROP site=%s exit=%s\n' "${ts}" "daemon-daily-restart" "${site}" "${status}" \
-    >>"${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-}
+# Terminal best-effort drop sink for the converted PG reporting channel — shared
+# with wiki-daily-compile.sh, so the record format and rotation ceiling stay one
+# definition. PG_DROP_TAG must be bound before the source.
+# SC2034: consumed by the sourced sink lib, invisible to a per-file scan.
+# shellcheck disable=SC2034
+PG_DROP_TAG="daemon-daily-restart"
+# shellcheck source=lib/pg-report-drop.sh
+source "${SCRIPT_DIR}/lib/pg-report-drop.sh"
 
 # Helper: write_daemon_run via JSON envelope subprocess. Best-effort (|| true).
 # daemon_name is role-qualified (daily-restart-<role>): both roles run the same
@@ -357,7 +348,7 @@ append_pg_drop() {
 # Args: $1=status (ok|partial|error|missing|stale), $2=ended_at ISO UTC, $3=notes (optional)
 # status MUST be a PG DaemonStatus enum value.
 pg_write_run() {
-  local status="$1" ended_at="$2" notes="${3:-}" st=""
+  local status="$1" ended_at="$2" notes="${3:-}"
   if [[ ! -x "${PG_HELPER}" ]]; then
     return 0
   fi
@@ -369,11 +360,8 @@ pg_write_run() {
     envelope="$(printf '{"op":"write_daemon_run","args":{"daemon_name":"daily-restart-%s","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s"}}' \
       "${ROLE}" "${RUN_DATE}" "${STARTED_AT}" "${ended_at}" "${status}")"
   fi
-  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || {
-    st=$?
-    echo "[daemon-daily-restart] WARN: PG daemon-run report failed (site=daily-restart-run, exit=${st}) — run record not persisted" >&2
-    append_pg_drop "daily-restart-run" "${st}"
-  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 \
+    || drop_pg_report "daily-restart-run" "$?" # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
 # 2. Pre-flight: binary + script existence.
@@ -409,7 +397,7 @@ log "starting daily restart for session=${SESSION}"
 # expectedAt window.
 # Args: $1=status (quota_exceeded), $2=ended_at ISO UTC, $3=notes (required for quota traceability)
 pg_write_autoagent_run() {
-  local status="$1" ended_at="$2" notes="$3" st=""
+  local status="$1" ended_at="$2" notes="$3"
   if [[ ! -x "${PG_HELPER}" ]]; then
     return 0
   fi
@@ -417,11 +405,8 @@ pg_write_autoagent_run() {
   autoagent_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   envelope="$(printf '{"op":"write_daemon_run","args":{"daemon_name":"autoagent","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","notes":"%s"}}' \
     "${RUN_DATE}" "${autoagent_started_at}" "${ended_at}" "${status}" "${notes}")"
-  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 || {
-    st=$?
-    echo "[daemon-daily-restart] WARN: PG daemon-run report failed (site=autoagent-quota-run, exit=${st}) — run record not persisted" >&2
-    append_pg_drop "autoagent-quota-run" "${st}"
-  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+  printf '%s\n' "${envelope}" | python3 "${PG_HELPER}" >>"${LOG_FILE}" 2>&1 \
+    || drop_pg_report "autoagent-quota-run" "$?" # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
 # 3. Pre-restart healthcheck. Warn-only: the whole purpose of this script is to

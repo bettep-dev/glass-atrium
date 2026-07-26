@@ -25,6 +25,7 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 REAL_LOCK_LIB="${GA}/scripts/lib/daemon-lock.sh"
 REAL_CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
+REAL_SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "daemon-daily-restart.sh not found: ${REAL_SCRIPT}"
@@ -232,6 +233,7 @@ make_flow_sandbox() {
   cp "${REAL_SCRIPT}" "${SANDBOX}/daemon-daily-restart.sh"
   cp "${REAL_LOCK_LIB}" "${SANDBOX}/lib/daemon-lock.sh"
   cp "${REAL_CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
+  cp "${REAL_SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
   chmod +x "${SANDBOX}/daemon-daily-restart.sh"
 
   printf '#!/usr/bin/env bash\nexit 0\n' >"${SANDBOX}/wiki-daemon-healthcheck.sh"

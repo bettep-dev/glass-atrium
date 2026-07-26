@@ -20,6 +20,16 @@ WIKI_COMPILE_SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/atrium-config.sh
 . "$WIKI_COMPILE_SELF_DIR/lib/atrium-config.sh"
 
+# Terminal best-effort drop sink for the converted PG reporting channel — shared
+# with daemon-daily-restart.sh, so the record format and rotation ceiling stay one
+# definition. PG_DROP_TAG must be bound before the source, and the source itself
+# stays above the helper block wiki-source-raw.bats extracts as a shim.
+# SC2034: consumed by the sourced sink lib, invisible to a per-file scan.
+# shellcheck disable=SC2034
+PG_DROP_TAG="wiki-daily-compile"
+# shellcheck source=lib/pg-report-drop.sh
+. "$WIKI_COMPILE_SELF_DIR/lib/pg-report-drop.sh"
+
 # claude CLI resolution: WIKI_COMPILE_CLAUDE_BIN (Bats stub override) →
 # [paths].claude_bin (config.toml) → daemon-cycle.sh fallback chain (PATH →
 # Homebrew Apple Silicon → Homebrew Intel). Loud-fail when nothing is runnable
@@ -280,22 +290,13 @@ _inject_source_raw() {
   fi
 }
 
-# Terminal best-effort drop sink for the converted PG reporting channel. Never
-# recurses into the PG channel that failed and never aborts its caller.
-PG_DROP_LOG="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/pg-report-drops.log"
-PG_DROP_LOG_MAX_BYTES=65536
-append_pg_drop() {
-  local site="${1}" status="${2}" dir="${PG_DROP_LOG%/*}" sz="" ts=""
-  mkdir -p "${dir}" 2>/dev/null || return 0 # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-  if [ -f "${PG_DROP_LOG}" ]; then
-    sz="$(wc -c <"${PG_DROP_LOG}" 2>/dev/null | tr -cd '0-9' || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-    if [ -n "${sz}" ] && [ "${sz}" -gt "${PG_DROP_LOG_MAX_BYTES}" ]; then
-      rm -f "${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-    fi
-  fi
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
-  printf '%s [%s] PG_REPORT_DROP site=%s exit=%s\n' "${ts}" "wiki-daily-compile" "${site}" "${status}" \
-    >>"${PG_DROP_LOG}" 2>/dev/null || true # GA-ABSORB[handled@stderr-note-in-caller-branch]: terminal sink; no further channel by design
+# Deliver one write_daemon_run envelope. Every reporting site shares this failure
+# contract: surface on stderr, land a durable drop record, leave the caller's exit
+# status untouched.
+pg_write_report() {
+  local site="$1" envelope="$2"
+  printf '%s\n' "$envelope" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 \
+    || drop_pg_report "$site" "$?" # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
 # 0.5 Named precondition (Loud-Fail): distinguish a relocation-miss from a not-yet-seeded
@@ -310,11 +311,7 @@ if [ ! -d "$RAW_DIR" ]; then
     if [ -x "$PG_HELPER" ]; then
       MISS_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: configured wiki root missing (%s) — possible relocation-miss"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 0 "$WIKI_ROOT")
-      printf '%s\n' "$MISS_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-        st=$?
-        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=wiki-root-missing, exit=$st) — run record not persisted" >&2
-        append_pg_drop "wiki-root-missing" "$st"
-      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+      pg_write_report "wiki-root-missing" "$MISS_ENVELOPE"
     fi
     exit 1
   fi
@@ -335,7 +332,6 @@ COLLISION_URLS=$(_collect_collision_source_urls "${RAW_DIR}")
 # are basename-matched only, so the shared url cannot mask an uncompiled twin.
 # Surface it loudly (Precondition Loud-Fail / observability).
 if [ -n "$COLLISION_URLS" ]; then
-  mkdir -p "$LOG_DIR"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: source_url collisions detected (basename-only match enforced for these raws):" >>"$LOG_FILE"
   _collision_warn_lines "${RAW_DIR}" "${COLLISION_URLS}" >>"$LOG_FILE"
 fi
@@ -350,24 +346,17 @@ if [ ${#UNPROCESSED[@]} -eq 0 ]; then
   # 0 unprocessed files → record PG status 'ok' (with monitor-card counts), exit.
   # Emit an explicit human-readable trace line so a clean 0-work day is visibly
   # distinct from a crash (Precondition Loud-Fail / observability).
-  # Redundant with the section-0.5 hoist above — idempotent, kept as a local guarantee.
-  mkdir -p "$LOG_DIR"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile: 0 unprocessed raw sources — nothing to compile, exiting clean" >>"$LOG_FILE"
   if [ -x "$PG_HELPER" ]; then
     SKIP_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"ok","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile skipped: no unprocessed files"}}' \
       "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 0)
-    printf '%s\n' "$SKIP_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-      st=$?
-      echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=no-unprocessed-skip, exit=$st) — run record not persisted" >&2
-      append_pg_drop "no-unprocessed-skip" "$st"
-    } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+    pg_write_report "no-unprocessed-skip" "$SKIP_ENVELOPE"
   fi
   exit 0
 fi
 TOTAL=${#UNPROCESSED[@]}
 
 # 2. Start log
-mkdir -p "$LOG_DIR"
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile started pid=$$ total=${TOTAL}" >>"$LOG_FILE"
 printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 
@@ -424,11 +413,7 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
     if [ -x "$PG_HELPER" ]; then
       LLM_FAIL_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: generic claude -p failure (exit=%d); not budget-config, not quota"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL" "$CLAUDE_EXIT")
-      printf '%s\n' "$LLM_FAIL_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-        st=$?
-        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=llm-generic-fail, exit=$st) — run record not persisted" >&2
-        append_pg_drop "llm-generic-fail" "$st"
-      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+      pg_write_report "llm-generic-fail" "$LLM_FAIL_ENVELOPE"
     fi
     exit 1
   fi
@@ -450,11 +435,7 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
       # compiled_count=0 — LLM call aborted, so confirmed completions = 0.
       BUDGET_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: local --max-budget-usd ceiling too low (budget=%s); NOT an external quota cap"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL" "$BUDGET")
-      printf '%s\n' "$BUDGET_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-        st=$?
-        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=budget-config, exit=$st) — run record not persisted" >&2
-        append_pg_drop "budget-config" "$st"
-      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+      pg_write_report "budget-config" "$BUDGET_ENVELOPE"
     fi
     exit 0
   fi
@@ -469,11 +450,7 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
       # compiled_count=0 — LLM call aborted, so confirmed completions = 0.
       QUOTA_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"quota_exceeded","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: Claude Max quota reached"}}' \
         "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 0 "$TOTAL")
-      printf '%s\n' "$QUOTA_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-        st=$?
-        echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=quota-exceeded, exit=$st) — run record not persisted" >&2
-        append_pg_drop "quota-exceeded" "$st"
-      } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+      pg_write_report "quota-exceeded" "$QUOTA_ENVELOPE"
     fi
     exit 0
   fi
@@ -532,9 +509,5 @@ fi
 if [ -x "$PG_HELPER" ]; then
   WIKI_AGG_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile via cron, wiki-sync exit=%d"}}' \
     "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WIKI_AGG_STATUS" "$SUCCESS" "$TOTAL" "$SYNC_EXIT")
-  printf '%s\n' "$WIKI_AGG_ENVELOPE" | python3 "$PG_HELPER" >>"$LOG_FILE" 2>&1 || {
-    st=$?
-    echo "[wiki-daily-compile] WARN: PG daemon-run report failed (site=wiki-agg, exit=$st) — run record not persisted" >&2
-    append_pg_drop "wiki-agg" "$st"
-  } # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
+  pg_write_report "wiki-agg" "$WIKI_AGG_ENVELOPE"
 fi
