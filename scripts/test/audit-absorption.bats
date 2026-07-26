@@ -204,6 +204,51 @@ EOF
   assert_summary "annotated=2 converted=0 unannotated=0 quality_reject=0"
 }
 
+@test "F14: a closer abutting the idiom terminates it (command substitution, pipe, ampersand)" {
+  write_fixture "${AA_TMP}/f14.sh" <<'EOF'
+#!/usr/bin/env bash
+count="$(grep -c foo bar || true)"
+lines=$(wc -l <x || :)
+probe || true | tee log
+sweep || return 0 &
+EOF
+  run bash "${AUDIT_SH}" --path "${AA_TMP}/f14.sh"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=4 quality_reject=0"
+}
+
+@test "F15: the word boundary survives the widened terminator class" {
+  write_fixture "${AA_TMP}/f15.sh" <<'EOF'
+#!/usr/bin/env bash
+alpha || trueish
+beta || truex
+gamma || true_flag
+delta || returns 0
+EOF
+  run bash "${AUDIT_SH}" --path "${AA_TMP}/f15.sh"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=0 quality_reject=0"
+}
+
+@test "F16: a closer abutting || exit 0 terminates it in a sourced library" {
+  write_fixture "${AA_TMP}/lib/closer.sh" <<'EOF'
+#!/usr/bin/env bash
+cfg="$(load_config || exit 0)"
+EOF
+  run bash "${AUDIT_SH}" --path "${AA_TMP}/lib/closer.sh"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=1 quality_reject=0"
+
+  # The exit-form word boundary holds too: `exit 01` is a different status, not the no-op contract.
+  write_fixture "${AA_TMP}/lib/boundary.sh" <<'EOF'
+#!/usr/bin/env bash
+cfg="$(load_config || exit 01)"
+EOF
+  run bash "${AUDIT_SH}" --path "${AA_TMP}/lib/boundary.sh"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+  assert_summary "annotated=0 converted=0 unannotated=0 quality_reject=0"
+}
+
 @test "advisory mode: findings never change the exit status, --quiet prints the summary only" {
   write_fixture "${AA_TMP}/adv.sh" <<'EOF'
 #!/usr/bin/env bash

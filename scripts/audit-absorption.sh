@@ -46,11 +46,15 @@ SCOPE_FILES=(
 readonly SCOPE_FILES
 
 readonly RE_COMMENT='^[[:space:]]*#'
+# The terminator is any non-word character or end of line: a closer abutting the idiom (`)`, a
+# backtick, a no-space pipe or ampersand) ends it just as a space or semicolon does, while the class
+# still denies the word boundary — `|| trueish`, `|| true_flag` and `|| exit 01` stay non-sites.
+readonly RE_TERM='([^[:alnum:]_]|$)'
 # P1 `|| true` · P2 `|| :` (anti-evasion synonym) · P3 stderr-only suppression · P4 `|| return 0`
-readonly RE_SITE_BASE='\|\|[[:space:]]*true([[:space:]]|;|$)|\|\|[[:space:]]*:([[:space:]]|;|$)|2>[[:space:]]*/dev/null|\|\|[[:space:]]*return[[:space:]]+0([[:space:]]|;|$)'
+readonly RE_SITE_BASE="\\|\\|[[:space:]]*true${RE_TERM}|\\|\\|[[:space:]]*:${RE_TERM}|2>[[:space:]]*/dev/null|\\|\\|[[:space:]]*return[[:space:]]+0${RE_TERM}"
 # P5 `|| exit 0` — required only in sourced libraries, where a success-exit terminates the SOURCING
 # script; in an executed script the same shape is frequently the correct no-op-and-succeed contract.
-readonly RE_SITE_EXIT='\|\|[[:space:]]*exit[[:space:]]+0([[:space:]]|;|$)'
+readonly RE_SITE_EXIT="\\|\\|[[:space:]]*exit[[:space:]]+0${RE_TERM}"
 readonly RE_ABSORB='GA-ABSORB\[([^]]*)\]:(.*)$'
 readonly RE_BARE_LINE_REF='^:?[0-9]+$'
 
