@@ -276,7 +276,7 @@ prompt_echo_marker="$(printf '%s' "${prompt_content}" | tr '\n' ' ' | head -c 40
 #    AND trip shell-escaping bugs on $/`/" characters.
 #    HTTP 204 = success per server.ts.
 inject_id="daemon-inject-${ROLE}-$(date +%s)"
-prompt_bytes="$(printf '%s' "${prompt_content}" | wc -c | tr -d ' ' || true)"
+prompt_bytes="$(printf '%s' "${prompt_content}" | wc -c | tr -d ' ' || true)" # GA-ABSORB[benign]: byte count for the log line only — the POST below carries the payload and its own status check
 log "POST ${UPLOAD_URL} id=${inject_id} text=${prompt_bytes}bytes"
 
 # Capture HTTP status code; route response body to /dev/null because we only

@@ -124,7 +124,7 @@ _git_txn_valid_callback() {
 _git_txn_count_file_headers() {
   local diff="$1"
   local gitdiff pairs
-  gitdiff="$(printf '%s\n' "${diff}" | grep -c '^diff --git ' || true)"
+  gitdiff="$(printf '%s\n' "${diff}" | grep -c '^diff --git ' || true)" # GA-ABSORB[handled@gitdiff-empty-guard-next-line]: grep -c exits 1 on zero matches while printing 0 — the empty guard below normalises it
   [[ -z "${gitdiff}" ]] && gitdiff=0
   pairs="$(printf '%s\n' "${diff}" | awk '
     prev ~ /^--- / && $0 ~ /^\+\+\+ / { c++ }

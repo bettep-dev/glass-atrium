@@ -250,7 +250,7 @@ quota_reset_passed() {
   # The empty-result fallback below is the real no-match signal.
   reset_line="$(printf '%s\n' "${pane_dump}" \
     | grep -E 'resets [A-Z][a-z]+ [0-9]+ at [0-9]+(am|pm) \('"${tz_ere}"'\)' \
-    | tail -1 || true)"
+    | tail -1 || true)" # GA-ABSORB[handled@empty-reset_line-fallback]: grep no-match yields an empty reset_line, which the WARN plus proceed fallback below treats as the no-match signal
   if [[ -z "${reset_line}" ]]; then
     log "WARN: quota reset timestamp parse failed (no match) — fallback: proceed with restart"
     return 0
@@ -318,7 +318,7 @@ fatal() {
 # lookup and the kill below; -x follows the link, a vanished target fails it.
 verify_claude_runnable() {
   local claude_path
-  claude_path="$(command -v claude || true)"
+  claude_path="$(command -v claude || true)" # GA-ABSORB[handled@verify_claude_runnable-return]: a PATH miss is the datum — the empty path fails the -n/-x test below and the function returns nonzero
   [[ -n "${claude_path}" && -x "${claude_path}" ]]
 }
 
