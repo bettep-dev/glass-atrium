@@ -9,8 +9,8 @@
 #   4. Emit per-finding lines plus a summary carrying four distinct counts
 #   5. Fail on findings when the run is blocking (see the surface split below)
 #
-# Surface split: a default scope-list run BLOCKS (the enforced 17-file surface, promoted once its
-# coverage condition was met), while a `--path` run stays ADVISORY — the deferred hooks surface and
+# Surface split: a default scope-list run BLOCKS (the enforced surface = the SCOPE_FILES list below,
+# its single source of truth, promoted once its coverage condition was met), while a `--path` run stays ADVISORY — the deferred hooks surface and
 # ad-hoc probes cannot red a build by accident. `--strict` blocks on a `--path` run, `--advisory`
 # reports without failing anywhere; the findings print identically in every mode.
 #
