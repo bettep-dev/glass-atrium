@@ -190,8 +190,7 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
     log "post-commit FAIL (claude execution failed)"
     exit 1
   fi
-  # On PASS, grep -v filters everything → exit 1; guard so pipefail+set -e don't silently kill the script
-  ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true)
+  ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true) # GA-ABSORB[handled@empty-ISSUES_LINES-PASS-branch]: on PASS grep -v filters everything → exit 1; the -z test on the next line is the real signal
   if echo "$EVAL_RESULT" | grep -qi "RESULT: PASS" || [ -z "$ISSUES_LINES" ]; then
     echo "RESULT: PASS"
     SUMMARY=$(echo "$EVAL_RESULT" | sed -n 's/^SUMMARY:[[:space:]]*//p' | head -1)
@@ -208,7 +207,7 @@ if [ "$POST_COMMIT_MODE" -eq 1 ]; then
       echo "DIAGNOSIS:"
       echo "$DIAGNOSIS"
     fi
-    log "post-commit FAIL — $(echo "$DIAGNOSIS" | grep RECOMMENDATION || true)"
+    log "post-commit FAIL — $(echo "$DIAGNOSIS" | grep RECOMMENDATION || true)" # GA-ABSORB[benign]: a missing RECOMMENDATION line degrades the message only — exit 1 fires regardless
     exit 1
   fi
 fi
@@ -221,7 +220,7 @@ if echo "$EVAL_RESULT" | grep -q "EVAL_ERROR"; then
 fi
 
 # PASS when "RESULT: PASS" or ISSUES is effectively empty
-ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true)
+ISSUES_LINES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:\|^$' | head -10 || true) # GA-ABSORB[handled@empty-ISSUES_LINES-PASS-branch]: on PASS grep -v filters everything → exit 1; the -z test on the next line is the real signal
 if echo "$EVAL_RESULT" | grep -qi "RESULT: PASS" || [ -z "$ISSUES_LINES" ]; then
   # pass → no commit (user manual-commit policy)
   log "PASS — awaiting commit (manual policy)"
@@ -231,6 +230,6 @@ else
   # fail → diagnose + log, await approval
   ISSUES=$(echo "$EVAL_RESULT" | sed -n '/^ISSUES:/,$p' | tail -n +2 | grep -v '^SUMMARY:\|^FILES_CHECKED:\|^RESULT:' | head -15)
   DIAGNOSIS=$(diagnose_failure "$FILE_LIST" "$ISSUES")
-  log "FAIL — awaiting approval — $(echo "$DIAGNOSIS" | grep RECOMMENDATION || true)"
+  log "FAIL — awaiting approval — $(echo "$DIAGNOSIS" | grep RECOMMENDATION || true)" # GA-ABSORB[benign]: a missing RECOMMENDATION line degrades the message only — exit 1 fires regardless
   exit 1
 fi

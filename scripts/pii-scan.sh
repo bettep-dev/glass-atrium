@@ -203,7 +203,7 @@ scan_history_check() {
     pat="${PATTERNS[${i}]}"
     hits="$(scan_history "${pat}")"
     if [[ -n "${hits}" ]]; then
-      commit_count="$(printf '%s\n' "${hits}" | grep -c '' || true)"
+      commit_count="$(printf '%s\n' "${hits}" | grep -c '' || true)" # GA-ABSORB[handled@commit_count-empty-guard]: the empty guard on the next line normalises a countless result; CHECK_HITS is driven by the non-empty hits test, not by this count
       [[ -z "${commit_count}" ]] && commit_count=0
       log "HISTORY HIT pattern #$((i + 1)) (${#pat} chars) — ${commit_count} commit(s):"
       printf '%s\n' "${hits}"
