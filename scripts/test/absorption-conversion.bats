@@ -133,8 +133,18 @@ set_restart_globals() {
   extract_sink_shim pg_write_run "${WORK}/shim.sh"
   set_restart_globals
   # A regular file where the sink expects a parent directory: mkdir -p fails
-  # with ENOTDIR for EVERY user. A mode-bit denial would not — a privileged
-  # runner sails straight through 555 and the fixture stops proving anything.
+  # with ENOTDIR for EVERY user — path resolution, not a permission check,
+  # so no privilege level can bypass it.
+  # Established about the predecessor chmod-555 fixture (CI run 30195910825):
+  # it ABORTED the caller (status != 0), so a privileged sail-through was never
+  # the cause — ci.yml runs test-bash on plain ubuntu-latest with no container:
+  # key, i.e. the non-root `runner` user;
+  # and its `PG_DROP_LOG=… source` prefix left PG_DROP_LOG UNSET, the same-name
+  # temp-env assignment being discarded by the shim's own reassignment.
+  # Inferred, not established: bash >= 4.4 nounset then made the sink's
+  # `${PG_DROP_LOG%/*}` fatal, which bash 3.2 tolerates → the macOS pass.
+  # The retained CI log carries no command trace, so that last step stands as
+  # the only candidate consistent with the evidence, not as a confirmed one.
   printf 'blocker\n' >"${WORK}/blocked"
   run bash -c "set -Eeuo pipefail; GA_DATA_ROOT='${WORK}/blocked/ga' source '${WORK}/shim.sh'; pg_write_run ok 2026-06-10T00:01:00Z; echo REACHED"
   [ "$status" -eq 0 ] || {
