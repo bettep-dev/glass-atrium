@@ -62,6 +62,22 @@ PY
   chmod +x "${dest}"
 }
 
+# PG helper stub that always succeeds and records the delivered envelope beside
+# itself — a landed report is then observable without a PG connection.
+make_healthy_pg_helper() {
+  local dest="$1"
+  cat >"${dest}" <<'PY'
+#!/usr/bin/env python3
+import os
+import sys
+
+record = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pg-report.jsonl")
+with open(record, "a", encoding="utf-8") as fh:
+    fh.write(sys.stdin.read())
+PY
+  chmod +x "${dest}"
+}
+
 set_restart_globals() {
   export ROLE="wiki"
   export RUN_DATE="2026-06-10"
@@ -134,22 +150,34 @@ set_restart_globals() {
 
 # ---- wiki-daily-compile.sh: full-flow, exit contract preserved ----
 
-# Sandbox the compile script with a failing PG helper and a stub claude binary.
+# Sandbox the compile script with a PG helper stub and a stub claude binary.
+# $1 PG posture: `failing` (default, the AC-2/AC-3 forced-failure fixture) or
+# `healthy` (records the envelope at ${PG_REPORT_RECORD}).
+# $2 LOG_DIR posture: `present` (default) or `absent` — `absent` reproduces the
+# first-cron-day state where the trace dir does not exist yet.
 make_wiki_sandbox() {
+  local pg_posture="${1:-failing}" log_dir_posture="${2:-present}"
   SANDBOX="${WORK}/sandbox"
   mkdir -p "${SANDBOX}/lib"
   cp "${WIKI_SCRIPT}" "${SANDBOX}/wiki-daily-compile.sh"
   cp "${CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
-  make_failing_pg_helper "${SANDBOX}/_pg_dual_write_daemon.py"
+  PG_REPORT_RECORD="${SANDBOX}/pg-report.jsonl"
+  if [[ "${pg_posture}" == "healthy" ]]; then
+    make_healthy_pg_helper "${SANDBOX}/_pg_dual_write_daemon.py"
+  else
+    make_failing_pg_helper "${SANDBOX}/_pg_dual_write_daemon.py"
+  fi
   printf '#!/bin/sh\nexit 0\n' >"${SANDBOX}/claude-stub"
   chmod +x "${SANDBOX}/claude-stub"
   export WIKI_COMPILE_CLAUDE_BIN="${SANDBOX}/claude-stub"
   export HOME="${WORK}/home"
-  # Claude-Code project-dir cwd encoding, mirrored so LOG_DIR exists before the
-  # abort branch runs — otherwise the log redirect, not the helper, would fail.
+  # Claude-Code project-dir cwd encoding, mirrored so the trace dir is locatable.
   local proj="-${HOME#/}"
   proj="${proj//\//-}"
-  mkdir -p "${HOME}/.claude-work/projects/${proj}/memory/traces"
+  WIKI_LOG_DIR="${HOME}/.claude-work/projects/${proj}/memory/traces"
+  if [[ "${log_dir_posture}" != "absent" ]]; then
+    mkdir -p "${WIKI_LOG_DIR}"
+  fi
 }
 
 @test "AC-2/AC-3 wiki-daily-compile: wiki-root-missing reports the drop and still exits 1" {
@@ -171,6 +199,35 @@ make_wiki_sandbox() {
   grep -q 'PG_REPORT_DROP site=no-unprocessed-skip exit=' "${DROP_LOG}"
   # Primary work still completed: the clean-zero-work trace line was written.
   grep -qr '0 unprocessed raw sources' "${HOME}/.claude-work/projects"
+}
+
+@test "T1 AC-1 wiki-daily-compile: an absent LOG_DIR never fakes a PG drop on the abort branch" {
+  make_wiki_sandbox healthy absent
+  export WIKI_ROOT="${WORK}/absent-wiki-root"
+  [ ! -d "${WIKI_LOG_DIR}" ]
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FATAL: configured wiki root missing"* ]]
+  # PG is healthy here, so a WARN or a drop record can only come from the log
+  # redirect failing ahead of the helper — the ordering defect, not a real drop.
+  [[ "$output" != *"WARN: PG daemon-run report failed"* ]] || {
+    echo "spurious PG WARN against a healthy helper"
+    printf '%s\n' "${output}"
+    false
+  }
+  [ ! -e "${DROP_LOG}" ]
+  grep -q '"status":"error"' "${PG_REPORT_RECORD}"
+}
+
+@test "T1 AC-2 wiki-daily-compile: an absent LOG_DIR never aborts the raw-absent fall-through" {
+  make_wiki_sandbox healthy absent
+  export WIKI_ROOT="${WORK}/wiki"
+  mkdir -p "${WIKI_ROOT}"
+  [ ! -d "${WIKI_LOG_DIR}" ]
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'raw/ absent' "${WIKI_LOG_DIR}"/wiki-compile-*.log
+  [ ! -e "${DROP_LOG}" ]
 }
 
 @test "drop record format: ISO8601 UTC timestamp, script basename, site slug, exit status" {
