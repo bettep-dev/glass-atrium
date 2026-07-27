@@ -106,3 +106,44 @@ def test_when_cli_built_then_no_migrate_subcommand() -> None:
             commands.update(action.choices)
     assert "migrate" not in commands
     assert {"add", "delete", "orphan-scan"} <= commands
+
+
+# --- AC-S2 (clauded-docs/743): the sanctioned lifecycle write path still works ---
+
+
+def test_when_add_then_extend_on_fixture_root_then_round_trip_holds(
+    tmp_path: Path,
+) -> None:
+    """ADD + EXTEND round-trip confined to a fixture root.
+
+    StorePaths.for_root keeps every write inside tmp_path; default_ga_root()
+    resolves from the module location and would reach the real registry.
+    """
+    from agent_lifecycle.extend import ExtendRequest, run_extend
+
+    paths = _write_registry(tmp_path, {})
+    paths.agents_dir.mkdir(parents=True, exist_ok=True)
+    (paths.agents_dir / "glass-atrium-dev-fixture.md").write_text(
+        "---\n"
+        "name: glass-atrium-dev-fixture\n"
+        "description: fixture agent (AC-S2 round-trip).\n"
+        "tools: [Read, Glob, Grep, Edit, Write, Bash]\n"
+        "maxTurns: 40\n"
+        "---\n"
+        "\n"
+        "> Rules: GLASS_ATRIUM_GLOBAL_RULES.md (ALL + DEV)\n",
+        encoding="utf-8",
+    )
+
+    add_entry(
+        paths,
+        "glass-atrium-dev-fixture",
+        build_entry(domains=["fixtures"], origin="user"),
+    )
+    assert "glass-atrium-dev-fixture" in load_json(paths.registry)["agents"]
+
+    run_extend(
+        paths, ExtendRequest(name="glass-atrium-dev-fixture", add_domain="probes")
+    )
+    row = load_json(paths.registry)["agents"]["glass-atrium-dev-fixture"]
+    assert row["domains"] == ["fixtures", "probes"]

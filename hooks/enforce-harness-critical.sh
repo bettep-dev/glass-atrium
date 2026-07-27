@@ -129,15 +129,31 @@ readonly CLAUDE_DIR GA_DIR
 # the refinement is the sole owner of the interpreter classes, so swallowing one
 # disarms them silently. It names its exception type in the verdict field and
 # exits non-zero, engaging the HAR-003 fail-closed gate below.
+# Unparseable agent frontmatter blocks the tool layer only — repair the frontmatter
+# in the SOURCE repository with a non-tool-layer editor and ship it through the
+# release path; this is a detour around the tool layer, never a lockout.
 # `read -d ''` builtin assignment (no command-substitution-of-cat subshell); read
 # returns 1 at heredoc EOF without a NUL → `|| true`.
 IFS= read -r -d '' DETECT_PY <<'PY' || true
 import json
+import os
 import re
 import sys
 
 
-IDENTITY_LINE_RE = re.compile(r"^(?:name|tools|scope)[ \t]*:", re.MULTILINE)
+# Identity trio ONLY — the operator pin key (model:) stays OUT of the guarded set
+# by governance, so a live model pin edits freely. Column-0 anchoring is what keeps
+# a folded continuation or a nested-map value from impersonating a guarded key.
+GUARDED_KEY_RE = re.compile(r"^(name|tools|scope)[ \t]*:(.*)$")
+ANY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
+LIST_ITEM_RE = re.compile(r"^[ \t]*-[ \t]+(.*)$")
+NESTED_KEY_RE = re.compile(r"^[ \t]+[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
+
+
+class FrontmatterUnparseable(Exception):
+    """A GUARDED key's value is outside the parse contract — the guard cannot answer
+    the identity question, so it must not allow (fail-closed). Raised only from
+    guarded-key value paths; exotic shapes under non-guarded keys traverse inertly."""
 
 # Protected-path literals (best-effort text match — Bash arm). The launchd
 # alternation matches the harness launchctl-bootstrap plists by label
@@ -316,16 +332,145 @@ def frontmatter_span(text):
     return None
 
 
-def identity_lines(text):
-    """Identity key → stripped value, read from the frontmatter block only."""
+def normalize_path(path):
+    """Mirror of hook_normalize_path (hook-utils.sh) — leading ~ / ~/ expansion via
+    HOME, ~user left literal (no portable stock-Bash resolution), then "." / ".."
+    segment collapse without touching the filesystem. The classifier reads the disk
+    itself, so it needs the resolved form BEFORE read_disk; parity with the shell
+    helper is pinned by a bats row feeding one shared corpus through both, and the
+    helper itself is NOT modified."""
+    home = os.environ.get("HOME", "")
+    if path == "~" and home:
+        path = home
+    elif path.startswith("~/") and home:
+        path = home + "/" + path[2:]
+    lead = "/" if path.startswith("/") else ""
+    out = []
+    for seg in path.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            # Pop the last real segment (never past root / a leading "..").
+            if out and out[-1] != "..":
+                out.pop()
+            elif not lead:
+                out.append("..")
+            continue
+        out.append(seg)
+    return lead + "/".join(out)
+
+
+def strip_inline_comment(text):
+    """Drop a trailing ` #` comment that starts OUTSIDE a quoted span. An unbalanced
+    quote leaves the remainder quoted, so nothing is stripped — literal, never lossy."""
+    quote = None
+    for i, ch in enumerate(text):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and i > 0 and text[i - 1] in (" ", "\t"):
+            return text[:i]
+    return text
+
+
+def canon(text):
+    """Canonical form of a scalar or list item: whitespace-trimmed, inline comment
+    dropped, ONE balanced surrounding quote pair removed. An UNBALANCED quote is
+    taken literally — safe, because a genuine widening still differs."""
+    out = strip_inline_comment(text.strip()).rstrip()
+    if len(out) >= 2 and out[0] == out[-1] and out[0] in ("'", '"'):
+        out = out[1:-1]
+    return out
+
+
+def split_flow(body):
+    """Inline-flow body → canonical items, splitting on commas outside quotes."""
+    items = []
+    buf = []
+    quote = None
+    for ch in body:
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            items.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    items.append("".join(buf))
+    return [c for c in (canon(x) for x in items) if c != ""]
+
+
+def identity_struct(text):
+    """Guarded key → the STRUCTURE it grants, parsed from the frontmatter region only.
+
+    `tools` folds to a frozenset of canonical items in BOTH the inline-flow and the
+    block-list form, so the two spellings of one grant compare equal and a widening
+    is visible in either. `name`/`scope` are canonical scalars. An ABSENT guarded key
+    is absent from the dict (both-absent compares equal); `tools:` with no items is
+    an EMPTY frozenset, which differs from absence — revoking every grant is a change.
+    Raises FrontmatterUnparseable when a guarded value leaves the parse contract."""
     span = frontmatter_span(text)
     if span is None:
         return {}
     out = {}
+    key = None
+    items = []
+
+    def flush():
+        if key is not None:
+            out[key] = frozenset(items)
+
     for line in text[span[0]:span[1]].split("\n"):
-        m = re.match(r"^(name|tools|scope)[ \t]*:(.*)$", line)
-        if m:
-            out[m.group(1)] = m.group(2).strip()
+        # Blank lines and full-line comments PRESERVE block-list state — a live agent
+        # file puts a comment directly above `tools:` and between its items.
+        if not line.strip() or re.match(r"^[ \t]*#", line):
+            continue
+        guarded = GUARDED_KEY_RE.match(line)
+        if guarded is not None:
+            flush()
+            key, items = None, []
+            name, rest = guarded.group(1), canon(guarded.group(2))
+            if rest == "":
+                key = name
+            elif rest.startswith("["):
+                if not rest.endswith("]"):
+                    raise FrontmatterUnparseable("multi-line flow on " + name)
+                out[name] = frozenset(split_flow(rest[1:-1]))
+            elif rest[0] in (">", "|", "&", "*") or rest.startswith("!!"):
+                raise FrontmatterUnparseable("block scalar/anchor/tag on " + name)
+            else:
+                out[name] = rest
+            continue
+        if line[:1] not in (" ", "\t"):
+            item = LIST_ITEM_RE.match(line) if key is not None else None
+            if item is not None:
+                # Column-0 list items are legal YAML and appear in live agent files.
+                items.append(canon(item.group(1)))
+                continue
+            # Any other column-0 line (a non-guarded key, a fence) closes the block
+            # list and is traversed inertly.
+            flush()
+            key, items = None, []
+            continue
+        if key is None:
+            # Folded continuations, nested maps and list items under a NON-guarded
+            # key never reach the guarded state — this is the containment boundary.
+            continue
+        item = LIST_ITEM_RE.match(line)
+        if item is not None:
+            items.append(canon(item.group(1)))
+            continue
+        if NESTED_KEY_RE.match(line):
+            raise FrontmatterUnparseable("nested map under " + key)
+        raise FrontmatterUnparseable("unrecognised value line under " + key)
+    flush()
     return out
 
 
@@ -352,20 +497,23 @@ def unterminated(disk):
 
 
 def detect_agent_write(tool_input):
-    """Write on an EXISTING agents/*.md — block when identity lines differ from
-    disk, or when the on-disk frontmatter is unterminated (tampered state)."""
+    """Write on an EXISTING agents/*.md — block when the parsed identity structure
+    differs from disk, or when the on-disk frontmatter is unterminated (tampered)."""
     disk = read_disk(tool_input.get("file_path", ""))
     content = tool_input.get("content", "")
     if unterminated(disk):
         return "unterminated-frontmatter"
-    if identity_lines(disk) != identity_lines(content):
-        return "identity-frontmatter-write"
+    try:
+        if identity_struct(disk) != identity_struct(content):
+            return "identity-frontmatter-write"
+    except FrontmatterUnparseable:
+        return "frontmatter-unparseable"
     return ""
 
 
 def detect_agent_edit(tool_input):
     """Edit on agents/*.md — block when old_string overlaps the on-disk frontmatter
-    AND the edit alters the fence-line count OR carries a line-start identity key.
+    AND the edit alters the fence-line count OR the parsed identity structure.
     An unterminated opening fence blocks outright (tampered state)."""
     old = tool_input.get("old_string", "")
     new = tool_input.get("new_string", "")
@@ -388,8 +536,14 @@ def detect_agent_edit(tool_input):
         return ""
     if fence_count(old) != fence_count(new):
         return "frontmatter-fence-edit"
-    if IDENTITY_LINE_RE.search(old) or IDENTITY_LINE_RE.search(new):
-        return "identity-frontmatter-edit"
+    # Apply the edit and compare the parsed region before vs after. `replace_all`
+    # mirrors the Edit tool's own semantics; the default is first-occurrence.
+    after = disk.replace(old, new) if tool_input.get("replace_all") else disk.replace(old, new, 1)
+    try:
+        if identity_struct(disk) != identity_struct(after):
+            return "identity-frontmatter-edit"
+    except FrontmatterUnparseable:
+        return "frontmatter-unparseable"
     return ""
 
 
@@ -963,10 +1117,19 @@ def main():
     if not isinstance(tool_input, dict):
         tool_input = {}
     tool_name = str(data.get("tool_name", ""))
+    raw_target = ""
     if tool_name in ("Write", "Edit"):
-        target = str(tool_input.get("file_path", ""))
+        # Normalisation is the FIRST operation on the parsed envelope — ahead of
+        # every disk read and arm dispatch. A tilde/traversal spelling reaching
+        # read_disk unresolved yields "" (OSError), which reads as "no frontmatter"
+        # and passes an identity edit; resolving here is what closes that evasion.
+        raw_target = str(tool_input.get("file_path", ""))
+        target = normalize_path(raw_target)
+        tool_input = dict(tool_input)
+        tool_input["file_path"] = target
     elif tool_name == "Bash":
         target = str(tool_input.get("command", ""))
+        raw_target = target
     else:
         target = ""
     status = 0
@@ -988,7 +1151,7 @@ def main():
         status = 3
     # NUL-strip mirrors hook_get_fields (a JSON string MAY carry \u0000; an embedded
     # NUL would truncate the `read -r -d ''` consumer mid-value).
-    for field in (tool_name, target, verdict):
+    for field in (tool_name, target, verdict, raw_target):
         sys.stdout.write(field.rstrip("\n").replace("\x00", "") + "\0")
     sys.stdout.flush()
     if status:
@@ -1007,9 +1170,25 @@ PY
 # is NON-blocking, i.e. the gate would fail open inside its own block path. It is
 # NEVER python3-based: the HAR-003 classifier-failure branch fires precisely when
 # python3 is broken, so a python3 escaper would be dead exactly when needed.
-# Args: $1=class $2=target · stdout: a JSON object.
+# raw_target is the pre-normalisation spelling, reported ONLY when it differs from
+# the resolved target — an operator reading the payload otherwise cannot tell which
+# envelope produced a block. Absent key on every already-resolved path keeps the
+# payload byte-identical for the common case.
+# Args: $1=class $2=target $3=raw_target (optional) · stdout: a JSON object.
 block_context() {
-  local class="${1}" target="${2}" e_class e_target
+  local class="${1}" target="${2}" raw="${3:-}" e_class e_target e_raw
+  if [[ -n "${raw}" ]]; then
+    if command -v jq >/dev/null 2>&1 \
+      && jq -cn --arg class "${class}" --arg target "${target}" --arg raw "${raw}" \
+        '{class:$class,target:$target,raw_target:$raw}' 2>/dev/null; then
+      return 0
+    fi
+    e_class="$(_hook_json_escape "${class}")"
+    e_target="$(_hook_json_escape "${target}")"
+    e_raw="$(_hook_json_escape "${raw}")"
+    printf '{"class":"%s","target":"%s","raw_target":"%s"}' "${e_class}" "${e_target}" "${e_raw}"
+    return 0
+  fi
   if command -v jq >/dev/null 2>&1 \
     && jq -cn --arg class "${class}" --arg target "${target}" \
       '{class:$class,target:$target}' 2>/dev/null; then
@@ -1020,19 +1199,20 @@ block_context() {
   printf '{"class":"%s","target":"%s"}' "${e_class}" "${e_target}"
 }
 
-# Emit the block payload + exit 2. Args: $1=code $2=class $3=target (path or command).
+# Emit the block payload + exit 2.
+# Args: $1=code $2=class $3=target (path or command) $4=raw_target (optional).
 block_critical() {
-  local code="${1}" class="${2}" target="${3}" ctx
-  ctx="$(block_context "${class}" "${target}")"
+  local code="${1}" class="${2}" target="${3}" raw="${4:-}" ctx
+  ctx="$(block_context "${class}" "${target}" "${raw}")"
   emit_error "${code}" "block" \
     "Harness-critical write blocked (${class})" \
-    "This surface is protected agent_id-independent. Use the sanctioned path (installer / update.sh / agent_lifecycle CLI), or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change" \
+    "This surface is protected agent_id-independent. Use the sanctioned path (installer / update.sh / agent_lifecycle CLI), or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change. Unparseable agent frontmatter blocks the tool layer only — repair it in the SOURCE repository with a non-tool-layer editor and ship it through the release path" \
     "${ctx}"
   exit 2
 }
 
 # One detector pass over the hook INPUT, fail-CLOSED: the producer appends the
-# classifier's exit status as a FOURTH NUL-framed field, and the gate below
+# classifier's exit status as a FIFTH NUL-framed field, and the gate below
 # compares it against the LITERAL zero string — non-zero, EMPTY, or misaligned all
 # block, so a classifier crashing mid-stream can never smuggle a pass through
 # partial output. A SIGPIPE (141) blocks too, which is the correct direction.
@@ -1049,6 +1229,7 @@ block_critical() {
   IFS= read -r -d '' TOOL_NAME || true
   IFS= read -r -d '' TARGET || true
   IFS= read -r -d '' VERDICT || true
+  IFS= read -r -d '' RAW_TARGET || true
   IFS= read -r -d '' PY_STATUS || true
 } < <(
   st=0
@@ -1067,19 +1248,24 @@ if [[ "${PY_STATUS}" != "0" ]]; then
 fi
 
 write_edit_arm() {
-  local norm
+  local norm raw
   [[ -z "${TARGET}" ]] && exit 0
+  # TARGET already arrives normalised (the classifier resolves it before its own
+  # disk read), so this is a deliberate idempotent second pass — defence in depth
+  # for the shell-side match arms, not the live normalisation.
   norm="$(hook_normalize_path "${TARGET}")"
+  raw=""
+  [[ "${RAW_TARGET}" != "${norm}" ]] && raw="${RAW_TARGET}"
 
   case "${norm}" in
     "${CLAUDE_DIR}/settings.json" | "${CLAUDE_DIR}/settings.local.json")
-      block_critical "HAR-001" "live-settings" "${norm}"
+      block_critical "HAR-001" "live-settings" "${norm}" "${raw}"
       ;;
     "${GA_DIR}/hooks/"* | "${CLAUDE_DIR}/hooks/"*)
-      block_critical "HAR-001" "live-hooks-dir" "${norm}"
+      block_critical "HAR-001" "live-hooks-dir" "${norm}" "${raw}"
       ;;
     "${GA_DIR}/autoagent/"* | "${GA_DIR}/scripts/"* | "${GA_DIR}/skills/"*)
-      block_critical "HAR-001" "scheduled-exec-dir" "${norm}"
+      block_critical "HAR-001" "scheduled-exec-dir" "${norm}" "${raw}"
       ;;
     *) : ;;
   esac
