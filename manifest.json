@@ -1107,7 +1107,7 @@
     "scripts/test/render-monitor-env.bats": "9915cb82bde942859096c59d787f0c7604834c0ae0a0c77c8f1b2bcf05595327",
     "scripts/test/snapshot-live-repos.bats": "529e323972c8207bc169186bcd2740fa703d9bf155c031e54cb9c2cc958f933c",
     "scripts/test/swap-symlink-collision.bats": "962f44f0327504eefe9c31818468db946568bf5f2ebecfb226afa0604c8377bf",
-    "scripts/test/test_agent_lifecycle_overhaul.py": "d96a1e622ede3be5fbc1bfaccfb79410cde9252184eeefd04550207bca03836d",
+    "scripts/test/test_agent_lifecycle_overhaul.py": "14af58e2754d7d71f3dbe626bc0b2eae0dc67852da3eef023558bc675b56339a",
     "scripts/test/test_agent_model_frontmatter.py": "734f5ecb362636bd17f5863716bfe34598587b07c4b2a23d2f50f7795092ce38",
     "scripts/test/test_gate_roster_sync.py": "34db41bc69adce0101023dbf356ca75571324c679a865e937ea8d45517a25a93",
     "scripts/test/test_inject_sync.py": "0bdb86345c5d9cce574b290b491eece339f8525e61094f7a24e49d84e1e5a5aa",
