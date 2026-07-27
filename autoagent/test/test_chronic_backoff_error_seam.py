@@ -13,7 +13,12 @@ Pinned invariants:
       haiku_status='skipped:chronic-timeout-backoff', status='snoozed' — the
       rationale still rides the proposal row for observability;
   (2) streak < threshold → the fresh timeout keeps its error, so the first N
-      timeouts stay visible as 'partial' (the suppression is bounded, not blanket).
+      timeouts stay visible as 'partial' (the suppression is bounded, not blanket);
+  (3) parse_mode='timeout-stall' → haiku_status='skipped:timeout-stall' — the
+      escalated-retry true stall stays queryable instead of collapsing into the
+      generic 'skipped:empty-or-error' bucket;
+  (4) parse_mode='escalated' → haiku_status='ok:escalated', apply-eligible by the
+      documented `ok` prefix — slow generation is a normal apply candidate.
 
 The cycle runs with ``skip_haiku=False`` on purpose: ``skip_haiku`` forces the
 streak to 0 and would bypass the branch under test. No network is reached — the
@@ -134,7 +139,7 @@ class BackoffErrorSeam(unittest.TestCase):
     def test_when_streak_below_threshold_then_fresh_timeout_keeps_error(self) -> None:
         # Bound of the suppression: the first N timeouts still flip the cycle to
         # 'partial', so a newly-flaky target stays visible.
-        rationale = f"{dc.HAIKU_TIMEOUT_RATIONALE_PREFIX} 90s"
+        rationale = f"{dc.HAIKU_TIMEOUT_RATIONALE_PREFIX} {dc.HAIKU_TIMEOUT_SEC}s"
         timeout_proposal = dc.PatchProposal(
             target_file=str(self.target_md),
             rationale=rationale,
@@ -151,6 +156,49 @@ class BackoffErrorSeam(unittest.TestCase):
         self.assertEqual(patch.error, rationale)
         self.assertEqual(patch.haiku_status, "skipped:empty-or-error")
         self.assertNotEqual(patch.status, "snoozed")
+
+    def test_when_timeout_stall_proposal_then_status_timeout_stall(self) -> None:
+        stall_proposal = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale=(
+                f"{dc.HAIKU_TIMEOUT_RATIONALE_PREFIX} {dc.HAIKU_TIMEOUT_SEC}s + "
+                f"escalated {dc.HAIKU_ESCALATED_TIMEOUT_SEC}s — true stall "
+                "(escalated retry also timed out)"
+            ),
+            proposed_diff="",
+            touched_frontmatter=False,
+            estimated_added_lines=0,
+            raw_response="",
+            parse_mode="timeout-stall",
+        )
+        patch = self._run(streak=0, proposal=stall_proposal)
+
+        # THE PIN: an escalated-retry stall branches BEFORE the empty-diff
+        # fallback, so it stays distinguishable from a parse-failed output.
+        self.assertEqual(patch.haiku_status, "skipped:timeout-stall")
+
+    def test_when_escalated_proposal_then_status_ok_escalated(self) -> None:
+        escalated_proposal = dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="probe",
+            proposed_diff=(
+                f"--- a/{self.target_md.name}\n"
+                f"+++ b/{self.target_md.name}\n"
+                "@@ -1 +1,2 @@\n"
+                " # probe agent\n"
+                "+probe line\n"
+            ),
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="",
+            parse_mode="escalated",
+        )
+        patch = self._run(streak=0, proposal=escalated_proposal)
+
+        # A slow generation that completed is an ordinary apply candidate — the
+        # distinct status is observability, not a gate.
+        self.assertEqual(patch.haiku_status, "ok:escalated")
+        self.assertTrue(dc.is_apply_eligible_haiku_status(patch.haiku_status))
 
 
 if __name__ == "__main__":
