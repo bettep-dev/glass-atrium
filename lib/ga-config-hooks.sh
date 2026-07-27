@@ -269,7 +269,8 @@ rewrite_hook_paths() {
 # wire reconcile primitive: DROP a stale-matcher binding left behind by a matcher change.
 # WHY: the wire loop is ADD-ONLY — is_hook_bound is (event, matcher, basename)-scoped, so when a hook's EXPECTED_HOOK_BINDINGS matcher CHANGES (validate-pre-write-raw.sh Write -> Write|Edit) the new row is ADDED while the OLD-matcher row survives → the hook DOUBLE-FIRES on every matching tool call. This pass removes every Atrium binding whose (event, basename) IS expected but whose matcher is NOT.
 # NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding / update_retire_swept_hook_bindings, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh and enforce-harness-critical.sh each legitimately hold TWO matcher rows under PreToolUse).
-# DATA-SAFETY (same "only Atrium commands" property as retire_hook_binding): a command is Atrium-owned only when its tilde-normalized path resolves under ${HOME}/.claude/hooks/ or ${HOME}/.glass-atrium/hooks/ — a foreign user hook at any other path is invisible to this pass. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), KEY-PRUNE symmetry, injection-safe (--arg everywhere), IDEMPOTENT (a re-run drops nothing).
+# COMMAND granularity (matches is_hook_bound's (event, matcher, basename) scope): the drop unit is the COMMAND, never the hook-group OBJECT. A CONSOLIDATED group — several commands under ONE matcher, the idiomatic Claude Code shape — would otherwise lose every sibling command, so the filter assigns INTO the group's command list (matcher and every other group key survive) and removes the group only when its own drop emptied it.
+# DATA-SAFETY (same "only Atrium commands" property as retire_hook_binding): a command is Atrium-owned only when its tilde-normalized path resolves under ${HOME}/.claude/hooks/ or ${HOME}/.glass-atrium/hooks/ — a foreign user hook at any other path is neither a match TARGET nor collateral, because a non-target command inside a matched group is preserved too. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), KEY-PRUNE symmetry, injection-safe (--arg everywhere), IDEMPOTENT (a re-run drops nothing).
 reconcile_stale_hook_matchers() {
   [[ -f "${SETTINGS_JSON}" ]] || return 0
 
@@ -314,13 +315,13 @@ reconcile_stale_hook_matchers() {
   done <<<"${live}"
   [[ -n "${drop}" ]] || return 0
 
-  local backup="" removed=0 ev base m before after
+  local backup="" removed=0 ev base m before after group_before group_after
   while IFS= read -r key; do
     [[ -n "${key}" ]] || continue
     # US-split: a NON-whitespace IFS keeps an empty matcher a real (empty) field.
     IFS=$'\x1f' read -r ev base m <<<"${key}"
 
-    # DROP every hook-group under this event that BOTH carries the stale matcher AND holds the exact wire command for this basename in either Atrium dir. A sibling matcher row, a foreign path, and a different basename all fail the predicate and are preserved.
+    # DROP the stale COMMAND from every hook-group under this event that BOTH carries the stale matcher AND holds the exact wire command for this basename in either Atrium dir. A sibling matcher row, a foreign path, a different basename — and every SIBLING COMMAND inside the matched group — all fail the command predicate and are preserved. The group object is removed only when this drop left its command list empty.
     RENDER_TMP="${SETTINGS_JSON}.ga-stale.$$"
     jq --arg ev "${ev}" --arg m "${m}" --arg base "${base}" --arg home "${HOME}" \
       --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
@@ -329,13 +330,15 @@ reconcile_stale_hook_matchers() {
         | (if startswith("~/") then $home + .[1:] else . end)
         | (. == ($d1 + $base)) or (. == ($d2 + $base));
       if (.hooks[$ev] | type) == "array" then
-        .hooks[$ev] |= map(
-          select(
-            ( ((.matcher // "") == $m)
-              and ([ (.hooks // [])[]? | .command | is_target ] | any)
-            ) | not
-          )
-        )
+        .hooks[$ev] |= [
+          .[]
+          | if ((.matcher // "") == $m) and ([ (.hooks // [])[]? | .command | is_target ] | any)
+            then (
+              .hooks = [ (.hooks // [])[]? | select((.command | is_target) | not) ]
+              | select((.hooks | length) > 0)
+            )
+            else . end
+        ]
       else . end
     ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
 
@@ -345,8 +348,9 @@ reconcile_stale_hook_matchers() {
       die "reconcile_stale_hook_matchers: edit produced invalid JSON for ${ev} -> ${base} — backup: ${backup:-(none taken — no mutation occurred)}"
     fi
 
-    before="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${SETTINGS_JSON}")"
-    after="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${RENDER_TMP}")"
+    # change predicate reads COMMANDS, the unit the filter drops — a group-count read is unchanged by a sibling-preserving drop and would discard this write as a no-op.
+    before="$(get_event_command_count "${SETTINGS_JSON}" "${ev}")"
+    after="$(get_event_command_count "${RENDER_TMP}" "${ev}")"
     # no change → discard WITHOUT a write/backup (keeps the no-op zero-write property).
     if [[ "${before}" -eq "${after}" ]]; then
       rm -f -- "${RENDER_TMP}"
@@ -354,8 +358,10 @@ reconcile_stale_hook_matchers() {
       continue
     fi
 
-    # KEY-PRUNE symmetry (mirrors retire_hook_binding): wire_hooks CREATES an event key, so a drop that empties it MUST prune the key; a pre-existing user-owned empty [] (before==0) is left alone.
-    if [[ "${after}" -eq 0 && "${before}" -gt 0 ]]; then
+    # KEY-PRUNE symmetry (mirrors retire_hook_binding): wire_hooks CREATES an event key, so a drop that empties it MUST prune the key; a pre-existing user-owned empty [] (group_before==0) is left alone. GROUP granularity deliberately — the key is empty when no group remains, which a command count cannot express.
+    group_before="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${SETTINGS_JSON}")"
+    group_after="$(jq --arg ev "${ev}" '(.hooks[$ev] // []) | length' -- "${RENDER_TMP}")"
+    if [[ "${group_after}" -eq 0 && "${group_before}" -gt 0 ]]; then
       local pruned="${SETTINGS_JSON}.ga-stale-prune.$$"
       jq --arg ev "${ev}" 'del(.hooks[$ev])' -- "${RENDER_TMP}" >"${pruned}"
       if ! jq -e . -- "${pruned}" >/dev/null 2>&1; then
@@ -376,10 +382,17 @@ reconcile_stale_hook_matchers() {
     mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
     RENDER_TMP=""
     removed=$((removed + before - after))
-    log "  dropped stale matcher: ${ev} -> ${base} (matcher=${m:-<none>})"
+    # LOUD per drop: the command delta, plus the group verdict, so a consolidated group's surviving siblings are visible in the log rather than implied by a group count.
+    log "  dropped stale matcher: ${ev} -> ${base} (matcher=${m:-<none>}) — $((before - after)) command(s), group(s) ${group_before} -> ${group_after}"
   done <<<"${drop}"
 
-  log "reconcile_stale_hook_matchers: ${removed} stale binding(s) dropped (backup: ${backup:-none — no mutation})"
+  log "reconcile_stale_hook_matchers: ${removed} stale hook command(s) dropped (backup: ${backup:-none — no mutation})"
+}
+
+# command-granularity census for ONE event ($1 = settings file, $2 = event): hook commands summed across every group under it.
+# WHY a shared helper: the reconcile change predicate and its removal counter MUST read the SAME unit the filter drops. A group-array length is UNCHANGED by a sibling-preserving drop, so a group-granularity read there would discard the pass's own write and under-report the removal.
+get_event_command_count() {
+  jq -r --arg ev "$2" '[ (.hooks[$ev] // [])[] | (.hooks // []) | length ] | add // 0' -- "$1"
 }
 
 # settings.json hook-binding MERGE (idempotent upsert — owns ONLY the Atrium hook commands, never any other key).
