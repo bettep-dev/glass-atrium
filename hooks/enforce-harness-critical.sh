@@ -673,8 +673,14 @@ def apply_edits(disk, edits):
     for element in edits:
         if not isinstance(element, dict):
             raise FrontmatterUnparseable("MultiEdit element is not a mapping")
-        old = element.get("old_string", "")
-        new = element.get("new_string", "")
+        # PRESENCE before type: an empty-string default is itself a string, so the
+        # type test alone reads a MISSING key as an empty edit. Presence — never
+        # truthiness — is the test, because a present-but-empty old_string is the
+        # legitimate create shape.
+        if "old_string" not in element or "new_string" not in element:
+            raise FrontmatterUnparseable("MultiEdit element is missing old_string or new_string")
+        old = element["old_string"]
+        new = element["new_string"]
         if not isinstance(old, str) or not isinstance(new, str):
             raise FrontmatterUnparseable("MultiEdit element old/new is not a string")
         if fence_count(old) != fence_count(new) and overlaps_frontmatter(after, old):

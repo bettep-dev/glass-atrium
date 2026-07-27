@@ -352,3 +352,36 @@ materialize_case_variant() {
     'Tail line.' $'Tail line.\n\n---\ntools: [Read, Glob, Bash, Write]\n---'
   passed_clean
 }
+
+# ── T4: a MISSING old/new key is unreadable, not an empty string (753 F3) ──────
+#
+# The type test alone cannot see a missing key: the empty-string default IS a
+# string, so `{}` composed to disk unchanged and passed. M9/M10 did block, but
+# only INCIDENTALLY — an empty old_string prepends the replacement and the
+# identity structure changes as a side effect. The presence test makes all three
+# close on the same intended raise, so the reason token is asserted here.
+#
+# DEFENSIVE, not live: no MultiEdit envelope is emittable on this host.
+
+@test "T4-M14 edits element with BOTH keys missing → frontmatter-unparseable" {
+  run_multiedit "${AGENTS}/t7-stage.md" '[{}]'
+  blocked_unparseable
+}
+
+@test "T4-M9 edits element missing new_string → frontmatter-unparseable" {
+  run_multiedit "${AGENTS}/t7-stage.md" '[{"old_string": "tools: [Read, Glob]"}]'
+  blocked_unparseable
+}
+
+@test "T4-M10 edits element missing old_string → frontmatter-unparseable" {
+  run_multiedit "${AGENTS}/t7-stage.md" '[{"new_string": "Intro line edited."}]'
+  blocked_unparseable
+}
+
+# An empty old_string is the legitimate create shape (AC-M6), so presence — never
+# truthiness — is what the raise keys on: both keys PRESENT here, one empty.
+@test "T4-M14neg control: present-but-empty old_string on an EXISTING file → pass" {
+  run_multiedit "${AGENTS}/t7-repeat.md" \
+    '[{"old_string": "repeat token here.", "new_string": ""}]'
+  passed_clean
+}
