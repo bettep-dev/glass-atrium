@@ -16,8 +16,9 @@ Pinned invariants:
     ONE flat wait at the long band, never a third identical attempt;
   - a timeout that survives the escalated bound records ``parse_mode='timeout-stall'``
     (true stall) with the timeout rationale prefix intact;
-  - a timeout that COMPLETES on the escalated bound records
-    ``parse_mode='escalated'`` plus that call's ``generation_duration_ms``;
+  - a timeout that COMPLETES on the escalated bound records ``escalated_timeout``
+    plus that call's ``generation_duration_ms``, while its parse path (strict /
+    fuzzy) survives on ``parse_mode`` — the two are orthogonal axes;
   - escalation is MONOTONIC — a mixed timeout → overload tail stays escalated;
   - a timeout landing at the retry-budget edge (never escalated) keeps the
     ``HAIKU_TIMEOUT_RATIONALE_PREFIX`` rationale so ``consecutive_timeout_count``
@@ -229,8 +230,10 @@ class TransientBackoffPolarity(unittest.TestCase):
             proposal = self._run([self._timeout_call(), self._ok_call(150_000)])
 
         # THE PIN: slow generation is a SUCCESS, surfaced distinctly from a plain
-        # attempt-1 success so tonight's payload separates it from a true stall.
-        self.assertEqual(proposal.parse_mode, "escalated")
+        # attempt-1 success so tonight's payload separates it from a true stall —
+        # on the orthogonal flag, so the parse path is not spent to say it.
+        self.assertTrue(proposal.escalated_timeout)
+        self.assertEqual(proposal.parse_mode, "strict")
         self.assertEqual(proposal.generation_duration_ms, 150_000)
         self.assertEqual(self.sleeps, [_TIMEOUT_BACKOFF_SEC])
         self.assertEqual(self.invocations[1]["timeout_sec"], _ESCALATED_TIMEOUT_SEC)

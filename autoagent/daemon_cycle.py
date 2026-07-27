@@ -851,6 +851,29 @@ def is_apply_eligible_haiku_status(haiku_status: str | None) -> bool:
     return bool(haiku_status) and haiku_status.startswith(HAIKU_APPLY_ELIGIBLE_PREFIX)
 
 
+# Timeout escalation is an axis ORTHOGONAL to the parse path (strict / fuzzy /
+# retried) — composing it as a trailing suffix keeps both facts readable, where
+# folding it into parse_mode destroyed whichever axis was written second.
+ESCALATED_HAIKU_STATUS_SUFFIX = ":escalated"
+
+
+def build_escalated_haiku_status(base: str, *, escalated_timeout: bool) -> str:
+    """Compose the escalation axis onto an ok-arm haiku_status.
+
+    Suffix-only so the 'ok' prefix keeps leading — is_apply_eligible_haiku_status
+    (and the apply-side `LIKE 'ok%'` mirror) gate on that prefix. A non-ok base
+    is returned untouched: decorating a skipped:*/error: row would forge
+    apply-eligibility it never earned.
+    """
+    if not escalated_timeout:
+        return base
+    if not base.startswith(HAIKU_APPLY_ELIGIBLE_PREFIX):
+        return base
+    if base.endswith(ESCALATED_HAIKU_STATUS_SUFFIX):
+        return base
+    return base + ESCALATED_HAIKU_STATUS_SUFFIX
+
+
 def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
     """Tested reference spec for the JSON-fallback auto-apply eligibility rule.
 
@@ -1432,7 +1455,16 @@ class PatchProposal:
     #               (MAX_TRANSIENT_RETRIES) were exhausted. Distinct from generic
     #               'skipped' so an infra blip is told apart from a genuinely
     #               empty/parse-failed output. Surfaces as haiku_status='skipped:transient'.
+    #   'escalated' — LEGACY tag, no longer produced (escalated_timeout carries
+    #               the fact now); the derivation switch still maps it so a
+    #               persisted or out-of-tree shape keeps its status.
     parse_mode: str = "skipped"
+    # Whether the call that produced this proposal ran at HAIKU_ESCALATED_TIMEOUT_SEC.
+    # ORTHOGONAL to parse_mode: escalation is a timing fact, the parse path is a
+    # parsing fact, and one enum cannot carry both without destroying the other.
+    # Default-off — only the two clean-parse return sites in _run_haiku_with_retry
+    # set it, so every other producer stays zero-touch.
+    escalated_timeout: bool = False
     # Structured failure discriminator (Loud-Fail instrumentation) — set on ANY
     # Haiku failure boundary from the classify_failure_rationale taxonomy so the
     # in-cycle class cannot diverge from the persisted-history classifier (FIX #2
@@ -2846,8 +2878,8 @@ def _run_haiku_with_retry(
           * TIMEOUT → exactly 2 attempts, the second at HAIKU_ESCALATED_TIMEOUT_SEC.
             Re-running an identical bound that already killed the call is futile,
             so the escalation doubles as the discriminator: completing at the
-            longer bound was slow generation (parse_mode='escalated' →
-            haiku_status='ok:escalated'), timing out again is a true stall
+            longer bound was slow generation (escalated_timeout=True → an
+            ':escalated' haiku_status suffix), timing out again is a true stall
             (parse_mode='timeout-stall' → haiku_status='skipped:timeout-stall').
           * OVERLOAD (529 / Overloaded / connection reset) → unchanged exponential
             ladder, MAX_TRANSIENT_RETRIES (3 attempts) → parse_mode=
@@ -3079,14 +3111,11 @@ def _run_haiku_with_retry(
     if first_proposal.parse_mode in ("strict", "fuzzy"):
         # Attach the successful call's wall clock; _parse_haiku_response never sees it.
         # An escalated attempt that parses clean = slow generation, not a stall —
-        # surfaced distinctly (haiku_status='ok:escalated') so the payload
-        # separates the two per pattern.
-        resolved_parse_mode = (
-            "escalated" if timeout_attempts else first_proposal.parse_mode
-        )
+        # recorded on the orthogonal flag so strict-vs-fuzzy still reaches the
+        # payload (haiku_status='ok:escalated' / 'ok:fuzzy-parsed:escalated').
         return replace(
             first_proposal,
-            parse_mode=resolved_parse_mode,
+            escalated_timeout=bool(timeout_attempts),
             generation_duration_ms=last_duration_ms,
         )
 
@@ -3113,6 +3142,9 @@ def _run_haiku_with_retry(
     # If retry parsed cleanly, prefer retry result with explicit 'retried' tag
     # (NOT 'strict') — caller (run_cycle) detects this via parse_mode and
     # records haiku_status='ok:retried'. Per C2: no silent coerce.
+    # The retry inherits the ladder's bound (effective_timeout_sec), so it also
+    # inherits the escalation fact — otherwise an escalated-bound retry reads as
+    # a normal-bound one.
     if retry_proposal.parse_mode in ("strict", "fuzzy"):
         return PatchProposal(
             target_file=retry_proposal.target_file,
@@ -3122,6 +3154,7 @@ def _run_haiku_with_retry(
             estimated_added_lines=retry_proposal.estimated_added_lines,
             raw_response=retry_proposal.raw_response,
             parse_mode="retried",
+            escalated_timeout=bool(timeout_attempts),
             generation_duration_ms=retry_duration_ms,
         )
 
@@ -8016,6 +8049,8 @@ def run_cycle(
         elif not proposal.proposed_diff:
             haiku_status = "skipped:empty-or-error"
         elif proposal.parse_mode == "escalated":
+            # Legacy tag — no longer produced, kept so a persisted or out-of-tree
+            # shape still resolves instead of collapsing into the plain 'ok' else.
             haiku_status = "ok:escalated"
         elif proposal.parse_mode == "retried":
             haiku_status = "ok:retried"
@@ -8023,6 +8058,12 @@ def run_cycle(
             haiku_status = "ok:fuzzy-parsed"
         else:
             haiku_status = "ok"
+
+        # Second axis: a clean parse at the escalated bound is slow generation,
+        # not a stall. Suffix-composed so the parse path above survives it.
+        haiku_status = build_escalated_haiku_status(
+            haiku_status, escalated_timeout=proposal.escalated_timeout
+        )
 
         # Pre-verify gate. Only body-auto candidates pay the LLM cost;
         # frontmatter-dryrun is already user-bound, reject is a no-op.
