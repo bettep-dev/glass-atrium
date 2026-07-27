@@ -23,7 +23,9 @@
 #   orphans=registry entry with no file (reported, NOT removed) · missing=active file
 #   with no registry entry (reported, NOT added).
 #
-# Exit codes: 0=success · 1=JSON parse/write error · 2=frontmatter parse error.
+# Exit codes: 0=success · 1=JSON parse/write error · 2=frontmatter parse error
+#   (includes a DUPLICATE frontmatter key — last-wins would let a second
+#   `tools:` line pick the mirrored value; the mirror refuses instead).
 #
 # Idempotency: re-run on a clean tree yields `updated=0` + zero file changes
 # (post-merge JSON computed in memory, compared to on-disk bytes, write skipped if equal).
@@ -53,6 +55,35 @@ import sys
 from pathlib import Path
 
 import yaml
+
+
+class DuplicateKeyRejectingLoader(yaml.SafeLoader):
+    """SafeLoader that REFUSES a duplicate mapping key instead of taking the last.
+
+    `tools:` and `"tools":` resolve to the SAME scalar, so a second guarded key
+    silently becomes the mirrored value under PyYAML's default last-wins rule —
+    a widening smuggle the mirror would then write into the registry. A mirror
+    that cannot tell which value was intended must refuse: ConstructorError is a
+    YAMLError, so it lands on the existing parse-error exit-2 path, before any
+    write. Keys are collected in a list (not a set) so an unhashable key falls
+    through to SafeLoader's own "found unhashable key" error.
+    """
+
+    def construct_mapping(self, node, deep: bool = False) -> dict:
+        seen: list = []
+        for key_node, _value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"duplicate key {key!r} — refused (last-wins would hide the "
+                    "first value; the frontmatter is the tools SoT)",
+                    key_node.start_mark,
+                )
+            seen.append(key)
+        return super().construct_mapping(node, deep=deep)
+
 
 registry_path = Path(os.environ["REGISTRY_PATH"])
 agents_dir = Path(os.environ["AGENTS_DIR"])
@@ -84,7 +115,9 @@ for md_path in sorted(agents_dir.glob("*.md")):
         parse_errors.append(md_path.name)
         continue
     try:
-        fm = yaml.safe_load(parts[1])
+        # load() over a SafeLoader SUBCLASS — same safety as safe_load(), plus
+        # the duplicate-key refusal.
+        fm = yaml.load(parts[1], Loader=DuplicateKeyRejectingLoader)
     except yaml.YAMLError as exc:
         print(f"ERROR: yaml parse failed for {md_path.name}: {exc}", file=sys.stderr)
         parse_errors.append(md_path.name)
