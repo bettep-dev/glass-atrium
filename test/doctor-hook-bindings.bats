@@ -156,6 +156,17 @@ run_doctor_ga_sandbox() {
     run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
+# Drop ONE hook-group, keyed on (event, matcher, command basename) so a sibling group
+# of the SAME hook under a different matcher survives — the facet-vs-whole-gate fixtures
+# below need exactly that asymmetry. Empty matcher arg = the matcher-less group.
+drop_group() {
+  local matcher="$1" hook="$2" event="${3:-PreToolUse}"
+  jq --arg ev "${event}" --arg m "${matcher}" --arg h "${hook}" \
+    'del(.hooks[$ev][] | select(((.matcher // "") == $m) and (.hooks[].command | endswith($h))))' \
+    "${SETTINGS}" >"${SETTINGS}.new"
+  mv -f "${SETTINGS}.new" "${SETTINGS}"
+}
+
 @test "present binding -> ok line (advisory-spawn-budget wired)" {
   write_full_settings
   run_doctor_sandbox
@@ -211,20 +222,88 @@ run_doctor_ga_sandbox() {
   [[ "${output}" == *"dormant hook binding(s)"* ]]
 }
 
-@test "two-matcher one-hook -> missing Bash matcher reported dormant, Write|Edit still ok" {
-  # drop ONLY the Bash validate-secret-scan group; the Write|Edit one stays. The
-  # matcher-scoped check must flag the missing Bash channel as DORMANT while the
-  # surviving Write|Edit binding still reports ok (no masking either way).
+@test "two-matcher one-hook -> missing Bash matcher reported as a FACET miss, Write|Edit still ok" {
+  # PER-FACET class: drop ONLY the Bash validate-secret-scan group; the Write|Edit one
+  # stays, so the hook IS wired and DOES fire. The missing channel must be reported as a
+  # facet miss, never as whole-gate inertness (the operator-misleading direction).
   write_full_settings
-  jq 'del(.hooks.PreToolUse[]
-        | select((.matcher == "Bash")
-                 and (.hooks[].command | endswith("validate-secret-scan.sh"))))' \
-    "${SETTINGS}" >"${SETTINGS}.new"
-  mv -f "${SETTINGS}.new" "${SETTINGS}"
+  drop_group Bash validate-secret-scan.sh
   run_doctor_sandbox
-  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> validate-secret-scan.sh (matcher=Bash) (DORMANT"* ]]
-  [[ "${output}" == *"ok   : hook bound — PreToolUse -> validate-secret-scan.sh (matcher=Write|Edit)"* ]]
-  [[ "${output}" == *"dormant hook binding(s)"* ]]
+  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> validate-secret-scan.sh (matcher=Bash) (PARTIAL"* ]] \
+    && [[ "${output}" == *"ok   : hook bound — PreToolUse -> validate-secret-scan.sh (matcher=Write|Edit)"* ]] \
+    && [[ "${output}" != *"validate-secret-scan.sh (matcher=Bash) (DORMANT"* ]] \
+    && [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
+# --- facet-vs-whole-gate diagnostic classification (F-DOC / T6) ----------------
+#
+# A per-tuple miss on a hook that IS wired under another matcher is NOT a dormant
+# gate: the hook fires. Reporting it as "deployed but never fires" is wrong in the
+# dangerous direction — it steers the operator onto a redeploy path to satisfy a
+# warning about a facet, while the protection is already live. The rows below pin the
+# two classes apart; the negative control is what stops a blanket reword from passing.
+
+@test "DX1 facet-only miss -> per-tuple line names the FACET, never whole-gate dormancy" {
+  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit — the live
+  # host shape. Drop only the Write|Edit|MultiEdit facet; the Bash binding keeps firing.
+  write_full_settings
+  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  run_doctor_sandbox
+  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
+    && [[ "${output}" == *"ok   : hook bound — PreToolUse -> enforce-harness-critical.sh (matcher=Bash)"* ]] \
+    && [[ "${output}" != *"enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (DORMANT"* ]]
+}
+
+@test "DX2 NEGATIVE CONTROL: hook bound under NO matcher -> whole-gate dormant preserved" {
+  # advisory-spawn-budget.sh has exactly one binding; dropping it leaves the hook wired
+  # nowhere. This row is what a blanket reword cannot satisfy: the genuinely-dormant
+  # signal must survive verbatim, and the facet wording must NOT appear for it.
+  write_full_settings
+  drop_group Agent advisory-spawn-budget.sh
+  run_doctor_sandbox
+  [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
+    && [[ "${output}" == *"dormant hook binding(s)"* ]] \
+    && [[ "${output}" != *"advisory-spawn-budget.sh (matcher=Agent) (PARTIAL"* ]]
+}
+
+@test "DX3 facet-only miss -> aggregate line is facet-scoped, no whole-gate dormant claim" {
+  write_full_settings
+  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  run_doctor_sandbox
+  [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
+    && [[ "${output}" != *"dormant hook binding(s)"* ]]
+}
+
+@test "DX4 facet-only miss -> remediation never steers to a redeploy" {
+  # the redeploy path is hazardous until the reconcile fix lands, and it is not the
+  # remedy for a facet miss anyway — the fix is a hand edit of one matcher list.
+  write_full_settings
+  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  run_doctor_sandbox
+  # scoped to the §6 facet lines: an unrelated section may legitimately mention the installer,
+  # so a whole-output grep would be a false positive. Line count asserted first — an empty
+  # extraction would pass every content check vacuously.
+  local facet_block
+  facet_block="$(printf '%s\n' "${output}" | grep -E 'hook matcher facet NOT wired|unwired matcher facet|hand-add the missing matcher' || true)"
+  [[ "$(printf '%s\n' "${facet_block}" | grep -c .)" == "3" ]] \
+    && [[ "${facet_block}" == *"hand-add the missing matcher"* ]] \
+    && [[ "${facet_block}" != *install* ]] \
+    && [[ "${facet_block}" != *rewire* ]] \
+    && [[ "${output}" != *"add each to"* ]]
+}
+
+@test "DX5 mixed run: facet miss AND a truly unbound hook -> BOTH classes reported" {
+  # a single-branch reword either mislabels the facet miss or suppresses the remedy the
+  # genuine miss needs; both aggregates must fire independently in one run.
+  write_full_settings
+  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group Agent advisory-spawn-budget.sh
+  run_doctor_sandbox
+  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
+    && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
+    && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
+    && [[ "${output}" == *"1 dormant hook binding(s)"* ]] \
+    && [[ "${output}" == *"never writes settings.json"* ]]
 }
 
 @test "missing binding -> warn line (advisory-spawn-budget dropped)" {
