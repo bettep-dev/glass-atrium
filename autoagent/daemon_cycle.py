@@ -170,7 +170,25 @@ CLAUDE_BIN = os.environ.get("AUTOAGENT_CLAUDE_BIN", "claude")
 # Override via AUTOAGENT_AGENT_LIMIT env or --limit.
 DEFAULT_PATTERN_LIMIT = int(os.environ.get("AUTOAGENT_AGENT_LIMIT", "0") or "0")
 # 0 = unlimited (ALL agents). _resolve_agent_limit() maps 0/negative → unlimited sentinel.
-HAIKU_TIMEOUT_SEC = 90
+# Per-call Haiku CLI timeout (seconds). 180 ≈ 2.1x the worst healthy generation
+# (84.2s; median ~79s), so a slow-but-healthy call finishes on attempt 1 instead
+# of dying at the subprocess kill. Env-overridable like the backoff/threshold vars.
+HAIKU_TIMEOUT_SEC = int(os.environ.get("AUTOAGENT_HAIKU_TIMEOUT_SEC", "180") or "180")
+# Timeout-class escalated retry bound — also the in-cycle discriminator ceiling:
+# a call that completes here was slow generation, one that times out here is a
+# true stall.
+HAIKU_ESCALATED_TIMEOUT_SEC = int(
+    os.environ.get("AUTOAGENT_HAIKU_ESCALATED_TIMEOUT_SEC", "300") or "300"
+)
+if HAIKU_ESCALATED_TIMEOUT_SEC < HAIKU_TIMEOUT_SEC:
+    # An escalated bound below the base would DE-escalate the retry — clamp loudly
+    # rather than absorb (the daemon must still run, so no raise).
+    sys.stderr.write(
+        "[daemon-cycle] WARN: AUTOAGENT_HAIKU_ESCALATED_TIMEOUT_SEC="
+        f"{HAIKU_ESCALATED_TIMEOUT_SEC}s < AUTOAGENT_HAIKU_TIMEOUT_SEC="
+        f"{HAIKU_TIMEOUT_SEC}s — clamping escalated to base\n"
+    )
+    HAIKU_ESCALATED_TIMEOUT_SEC = HAIKU_TIMEOUT_SEC
 # Budget ceiling + model id read from the daemon-config.json SoT via the shared
 # loader (hooks/daemon_config.py), which degrades to validated literals
 # ('0.50' / the unpinned 'haiku' alias) on missing/corrupt file — NEVER raises (test
@@ -198,7 +216,8 @@ OUTCOME_SAMPLE_LIMIT = 5
 #
 # A candidate (target_file) whose Haiku dry-run keeps timing out re-selects from
 # core.learning_log EVERY cycle (read_user_pending_patterns has no memory of
-# prior generation failures), burning a HAIKU_TIMEOUT_SEC call + emitting an
+# prior generation failures), burning the base+escalated timeout ladder
+# (HAIKU_TIMEOUT_SEC + HAIKU_ESCALATED_TIMEOUT_SEC) + emitting an
 # `error` that flips the whole cycle to 'partial'. The apply-side stale-drain
 # (daemon-apply.sh mark_stale_attempt) bounds APPLY-side stale diffs, but the
 # GENERATION-side chronic timeout had NO back-off at all. This threshold bounds
@@ -214,7 +233,8 @@ TIMEOUT_BACKOFF_THRESHOLD = int(
 )
 # Rationale prefix written by _invoke_haiku_cli on TimeoutExpired — the durable,
 # queryable signal that a proposal row was a Haiku timeout. MUST stay in sync with
-# the f-string at the TimeoutExpired branch (single SoT for the timeout marker).
+# BOTH emitters: the TimeoutExpired branch in _invoke_haiku_cli and the true-stall
+# exhaustion rationale in _run_haiku_with_retry (single SoT for the timeout marker).
 HAIKU_TIMEOUT_RATIONALE_PREFIX = "haiku timeout after"
 # Rationale stamped on a back-off skip row (observable, grep-able). N filled in.
 TIMEOUT_BACKOFF_RATIONALE_TEMPLATE = (
@@ -2413,6 +2433,8 @@ _TRANSIENT_BACKOFF_JITTER_SEC = 1.0
 # A timeout already burned HAIKU_TIMEOUT_SEC → a 2s wait retries into the stall.
 # Flat over exponential: doubling the 2nd wait buys no extra stall clearance.
 # Band 30-60s; env-overridable (a chronically slower backend wants the top).
+# Orthogonal to the escalated retry bound — the wait clears the stall, the bound
+# sizes the call.
 _TRANSIENT_TIMEOUT_BACKOFF_SEC = float(
     os.environ.get("AUTOAGENT_TRANSIENT_TIMEOUT_BACKOFF_SEC", "45.0") or "45.0"
 )
@@ -2818,11 +2840,18 @@ def _run_haiku_with_retry(
     retried branch semantics.
 
     Two distinct retry mechanisms, by failure class:
-      - TRANSIENT infra failure (Overloaded / 529 / connection reset / timeout):
-        bounded backoff retry loop on Attempt 1 (MAX_TRANSIENT_RETRIES) — the
+      - TRANSIENT infra failure: bounded backoff retry loop on Attempt 1 — the
         transient check runs BEFORE the budget-too-low / quota branches so those
-        real caps still short-circuit with NO retry. Exhausted → parse_mode=
-        'transient-overload' → haiku_status='skipped:transient'.
+        real caps still short-circuit with NO retry. The loop splits by class:
+          * TIMEOUT → exactly 2 attempts, the second at HAIKU_ESCALATED_TIMEOUT_SEC.
+            Re-running an identical bound that already killed the call is futile,
+            so the escalation doubles as the discriminator: completing at the
+            longer bound was slow generation (parse_mode='escalated' →
+            haiku_status='ok:escalated'), timing out again is a true stall
+            (parse_mode='timeout-stall' → haiku_status='skipped:timeout-stall').
+          * OVERLOAD (529 / Overloaded / connection reset) → unchanged exponential
+            ladder, MAX_TRANSIENT_RETRIES (3 attempts) → parse_mode=
+            'transient-overload' → haiku_status='skipped:transient'.
       - parse failure (parse_mode='failed' after a clean returncode==0): one
         strict-suffix retry (Attempt 2), unchanged.
     """
@@ -2840,9 +2869,11 @@ def _run_haiku_with_retry(
     last_transient_was_timeout = False
     last_attempt = 0
     last_duration_ms = 0
+    timeout_attempts = 0
+    effective_timeout_sec = timeout_sec
     for attempt in range(MAX_TRANSIENT_RETRIES + 1):
         completed, early_exit, last_duration_ms = _invoke_haiku_cli(
-            prompt=base_prompt, claude_bin=claude_bin, timeout_sec=timeout_sec
+            prompt=base_prompt, claude_bin=claude_bin, timeout_sec=effective_timeout_sec
         )
         last_attempt = attempt
 
@@ -2871,6 +2902,29 @@ def _run_haiku_with_retry(
         else:
             assert completed is not None
             last_transient_raw = (completed.stderr or completed.stdout or "")[:400]
+
+        if is_timeout_transient and timeout_attempts >= 1:
+            # The escalated attempt itself stalled → a TRUE stall, not slow
+            # generation. Exhaust here: the discriminator already answered, so a
+            # third identical attempt buys nothing (LLM10 bounded consumption).
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: haiku true stall for {target_file.name} "
+                f"(pattern={label_hint!r}) — base {timeout_sec}s + escalated "
+                f"{effective_timeout_sec}s both timed out, giving up\n"
+            )
+            return _build_failure_proposal(
+                target_file=target_file,
+                rationale=(
+                    f"{HAIKU_TIMEOUT_RATIONALE_PREFIX} {timeout_sec}s + escalated "
+                    f"{effective_timeout_sec}s — true stall (escalated retry also "
+                    "timed out)"
+                ),
+                raw_response=last_transient_raw,
+                parse_mode="timeout-stall",
+                attempt=attempt,
+                duration_ms=last_duration_ms,
+                completed=completed,
+            )
 
         if attempt >= MAX_TRANSIENT_RETRIES:
             # Retries exhausted — surface a distinct transient-overload proposal
@@ -2913,9 +2967,14 @@ def _run_haiku_with_retry(
         # Overload → exponential 2s ladder (spreads off the 04:30 overload window).
         # Timeout → flat band, since the stall already consumed the whole timeout_sec.
         # Not sticky — a mixed timeout→overload ladder keeps overload fast.
-        # Exhausted timeout target: ~277s (3x90+2+4) → ~365s (3x90+2x45) wall clock.
-        # Accepted — the 2s ladder absorbed none of the measured 90s empty stalls.
+        # Timeout-class worst case: base 180s + flat 45s wait + escalated 300s
+        # = ~525s wall clock, then the chronic-streak skip caps the repeat.
         if is_timeout_transient:
+            # One escalation per call, MONOTONIC — a slow generation needs the
+            # longer bound on every remaining attempt, including a mixed
+            # timeout → overload tail.
+            timeout_attempts = 1
+            effective_timeout_sec = HAIKU_ESCALATED_TIMEOUT_SEC
             base = _TRANSIENT_TIMEOUT_BACKOFF_SEC
         else:
             base = _TRANSIENT_BACKOFF_BASE_SEC * (2 ** attempt)
@@ -3019,7 +3078,17 @@ def _run_haiku_with_retry(
     # Happy path — strict or fuzzy parsed clean.
     if first_proposal.parse_mode in ("strict", "fuzzy"):
         # Attach the successful call's wall clock; _parse_haiku_response never sees it.
-        return replace(first_proposal, generation_duration_ms=last_duration_ms)
+        # An escalated attempt that parses clean = slow generation, not a stall —
+        # surfaced distinctly (haiku_status='ok:escalated') so the payload
+        # separates the two per pattern.
+        resolved_parse_mode = (
+            "escalated" if timeout_attempts else first_proposal.parse_mode
+        )
+        return replace(
+            first_proposal,
+            parse_mode=resolved_parse_mode,
+            generation_duration_ms=last_duration_ms,
+        )
 
     # -- Attempt 2: retry with strict header suffix ------------------------
     # Triggered ONLY on parse_mode='failed' — fuzzy + strict both missed.
@@ -3030,7 +3099,7 @@ def _run_haiku_with_retry(
     )
     retry_prompt = base_prompt + _HAIKU_STRICT_RETRY_SUFFIX
     retry_completed, retry_early_exit, retry_duration_ms = _invoke_haiku_cli(
-        prompt=retry_prompt, claude_bin=claude_bin, timeout_sec=timeout_sec
+        prompt=retry_prompt, claude_bin=claude_bin, timeout_sec=effective_timeout_sec
     )
     if retry_early_exit is not None or retry_completed is None:
         # Retry crashed (timeout / CLI not found) — keep first failure record.
@@ -7938,8 +8007,16 @@ def run_cycle(
             # monitor cost-guard chip reads this to show "Auth fault", not a
             # spending warning.
             haiku_status = "skipped:auth"
+        elif proposal.parse_mode == "timeout-stall":
+            # Escalated-retry timeout — a TRUE stall (even the longer bound
+            # produced nothing), distinct from a slow generation that completed.
+            # Always an empty diff → branch before empty-or-error so the stall
+            # stays queryable.
+            haiku_status = "skipped:timeout-stall"
         elif not proposal.proposed_diff:
             haiku_status = "skipped:empty-or-error"
+        elif proposal.parse_mode == "escalated":
+            haiku_status = "ok:escalated"
         elif proposal.parse_mode == "retried":
             haiku_status = "ok:retried"
         elif proposal.parse_mode == "fuzzy":
