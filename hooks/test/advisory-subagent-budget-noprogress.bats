@@ -36,9 +36,12 @@ teardown() {
 # Run the hook once. Args: $1=input JSON; $2..=extra env assignments (e.g. SUBAGENT_NOPROGRESS_BLOCK_LIMIT=3).
 run_hook() {
   printf '%s' "$1" >"${SANDBOX}/input.json"
+  # Scrub SUBAGENT_NOPROGRESS_DISARM: an ambient disarm in the runner's env silently downgrades every
+  # block branch to advisory, so the arming assertions would pass vacuously. Empty == unset to the hook.
   run env \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
     SUBAGENT_NOPROGRESS_LIMIT="${LIMIT}" \
+    SUBAGENT_NOPROGRESS_DISARM="" \
     "${@:2}" \
     bash "${HOOK_SH}" <"${SANDBOX}/input.json"
 }
