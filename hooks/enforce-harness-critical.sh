@@ -19,9 +19,11 @@
 #       missing or non-string is unreadable — both block fail-closed (the latter
 #       two shapes are host-REJECTED by the strict Edit schema, so they are closed
 #       defensively). A MultiEdit is folded onto disk element
-#       by element IN ORDER and the composed result compared ONCE — per-element
+#       by element IN ORDER and the composed IDENTITY compared ONCE — per-element
 #       comparison passes a widening staged across two elements, because a later
-#       element's old_string exists only after an earlier one has landed. An edits
+#       element's old_string exists only after an earlier one has landed; its fence
+#       delta counts only the elements overlapping the accumulator's CURRENT
+#       frontmatter span, which is the Edit arm's rule composed. An edits
 #       payload this gate cannot read is unanswerable, so it blocks fail-closed.
 #   (d) Write, Edit or MultiEdit of a NEW agents/*.md — creation routes through the
 #       agent_lifecycle CLI (MultiEdit creates via an empty first old_string, Edit
@@ -583,6 +585,21 @@ def unterminated(disk):
     return frontmatter_span(disk) is None and disk.split("\n", 1)[0].strip() == "---"
 
 
+def overlaps_frontmatter(text, old):
+    """True when SOME occurrence of `old` in `text` intersects text's frontmatter
+    span. One definition serves both arms, so the MultiEdit fence delta is scoped by
+    the same rule as the Edit one instead of re-deriving it."""
+    span = frontmatter_span(text)
+    if span is None:
+        return False
+    start = text.find(old)
+    while start != -1:
+        if start < span[1] and (start + len(old)) > span[0]:
+            return True
+        start = text.find(old, start + 1)
+    return False
+
+
 def detect_agent_write(tool_input):
     """Write on an EXISTING agents/*.md — block when the parsed identity structure
     differs from disk, or when the on-disk frontmatter is unterminated (tampered)."""
@@ -621,17 +638,7 @@ def detect_agent_edit(tool_input):
     disk = read_disk(tool_input.get("file_path", ""))
     if unterminated(disk):
         return "unterminated-frontmatter"
-    span = frontmatter_span(disk)
-    if span is None:
-        return ""
-    overlap = False
-    start = disk.find(old)
-    while start != -1:
-        if start < span[1] and (start + len(old)) > span[0]:
-            overlap = True
-            break
-        start = disk.find(old, start + 1)
-    if not overlap:
+    if not overlaps_frontmatter(disk, old):
         return ""
     if fence_count(old) != fence_count(new):
         return "frontmatter-fence-edit"
@@ -647,13 +654,22 @@ def detect_agent_edit(tool_input):
 
 
 def apply_edits(disk, edits):
-    """disk with every edits[] element applied IN ORDER, each honouring its OWN
-    replace_all — the Edit tool's semantics, composed. A payload that is not a
-    non-empty list of dicts carrying string old/new is one this gate cannot read,
-    and an unreadable envelope on a guarded path is unanswerable, not inert."""
+    """(composed text, fence-tamper flag) for every edits[] element applied IN ORDER,
+    each honouring its OWN replace_all — the Edit tool's semantics, composed. A
+    payload that is not a non-empty list of dicts carrying string old/new is one this
+    gate cannot read, and an unreadable envelope on a guarded path is unanswerable,
+    not inert.
+
+    The fence flag is scoped per element against the ACCUMULATOR, never against disk:
+    an element's `---` delta counts only while its old_string overlaps the
+    accumulator's CURRENT frontmatter span. Scoping it to the accumulator is what
+    keeps the staged shape visible (a later element's old_string exists only after an
+    earlier one lands, so a disk probe would miss it), and scoping it at all is what
+    keeps a body horizontal rule out of the count."""
     if not isinstance(edits, list) or not edits:
         raise FrontmatterUnparseable("unreadable MultiEdit edits payload")
     after = disk
+    fence_tamper = False
     for element in edits:
         if not isinstance(element, dict):
             raise FrontmatterUnparseable("MultiEdit element is not a mapping")
@@ -661,8 +677,10 @@ def apply_edits(disk, edits):
         new = element.get("new_string", "")
         if not isinstance(old, str) or not isinstance(new, str):
             raise FrontmatterUnparseable("MultiEdit element old/new is not a string")
+        if fence_count(old) != fence_count(new) and overlaps_frontmatter(after, old):
+            fence_tamper = True
         after = after.replace(old, new) if element.get("replace_all") else after.replace(old, new, 1)
-    return after
+    return after, fence_tamper
 
 
 def detect_agent_multiedit(tool_input):
@@ -673,14 +691,28 @@ def detect_agent_multiedit(tool_input):
     frontmatter-overlapping but struct-NEUTRAL change, and element 2's old_string
     exists only AFTER element 1 lands, so its own overlap test misses while the
     composed file widens `tools`. Folding first is what makes the staged shape
-    visible. The overlap short-circuit the single-pair Edit arm uses is unnecessary
-    here — a body-only fold leaves both compared structures equal."""
+    visible, so the IDENTITY comparison stays unconditional on the composed result.
+
+    Only the FENCE delta is per-element (apply_edits, scoped to the accumulator's
+    current frontmatter span). A whole-file `---` count cannot tell a frontmatter
+    fence from a body horizontal rule, so it blocked benign body rules the Edit arm
+    allows — and its only unique coverage was an f3-shaped second `---`…`---` block
+    appended AFTER the real closing fence, a shape a whole-file count cannot
+    distinguish from that same benign rule. That shape is now NOT COVERED: whether
+    the host parser reads a second block as frontmatter at all is UNPROBED, and
+    trading one unprobed assumption for another is not a fix (the post-rescope
+    verdict is pinned as a characterization row in the MultiEdit suite).
+
+    A composed file whose frontmatter span is GONE while disk had one is a tampered
+    state no per-element overlap need establish, so it fails closed on its own."""
     disk = read_disk(tool_input.get("file_path", ""))
     if unterminated(disk):
         return "unterminated-frontmatter"
     try:
-        after = apply_edits(disk, tool_input.get("edits"))
-        if fence_count(disk) != fence_count(after):
+        after, fence_tamper = apply_edits(disk, tool_input.get("edits"))
+        if fence_tamper:
+            return "frontmatter-fence-edit"
+        if frontmatter_span(disk) is not None and frontmatter_span(after) is None:
             return "frontmatter-fence-edit"
         if identity_struct(disk) != identity_struct(after):
             return "identity-frontmatter-edit"

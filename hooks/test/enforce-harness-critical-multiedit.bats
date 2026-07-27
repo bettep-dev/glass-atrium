@@ -46,6 +46,25 @@ Intro line.
 Second line.
 MD
 
+  # 2 frontmatter fences + 2 body fences — the shape that separates a whole-file
+  # `---` count from a frontmatter-scoped one, and the host for the f3 residual row.
+  cat >"${AGENTS}/t7-hr.md" <<'MD'
+---
+name: t7-hr
+tools: [Read, Glob]
+model: claude-model-a
+---
+# Body
+
+---
+
+After the horizontal rule.
+
+---
+
+Tail line.
+MD
+
   cat >"${AGENTS}/t7-repeat.md" <<'MD'
 ---
 name: t7-repeat
@@ -289,5 +308,47 @@ materialize_case_variant() {
 @test "T1-neg case-varied .MD under the excluded rules dir → still pass" {
   run_multiedit "${FAKE_HOME}/.glass-atrium/rules/example.MD" \
     "$(edits_array 'a' 'b')"
+  passed_clean
+}
+
+# ── T2: the fence delta is accumulator-scoped, matching the Edit arm (753 F-REG) ─
+#
+# A WHOLE-FILE `---` count cannot tell a body horizontal rule from a frontmatter
+# fence, so it blocked a benign body rule that the byte-identical Edit allows (the
+# shipped Edit polarity row: "agents body Edit touching a body --- hr" in
+# enforce-harness-critical.bats). G1/G2 port that polarity onto this arm; G3 keeps
+# the frontmatter-scoped block; G4 pins the residual the rescope leaves behind.
+#
+# DEFENSIVE, not live: the divergence is a correctness defect in the arm rather than
+# an operator-facing breakage, since no MultiEdit envelope is emittable on this host
+# — these rows are forward-compat insurance for whenever one becomes emittable.
+
+@test "G1 MultiEdit ADDING a body --- hr → pass (fence delta is span-scoped)" {
+  multiedit_agent "t7-hr.md" \
+    'Tail line.' $'---\n\nTail line.'
+  passed_clean
+}
+
+@test "G2 MultiEdit REMOVING a body --- hr → pass (same old/new as the Edit row)" {
+  multiedit_agent "t7-hr.md" \
+    $'---\n\nAfter the horizontal rule.' 'After the rule.'
+  passed_clean
+}
+
+@test "G3 MultiEdit inserting a fence INSIDE the frontmatter → still block" {
+  multiedit_agent "t7-hr.md" \
+    'model: claude-model-a' $'---\nmodel: claude-model-a'
+  blocked_reason "frontmatter-fence-edit"
+}
+
+# CHARACTERIZATION, not a demand: an f3-shaped second `---`…`---` block appended
+# AFTER the real closing fence is NOT covered once the delta is span-scoped — the
+# body element never overlaps the frontmatter span and the composed identity
+# structure is unchanged. Whether the host parser reads such a second block as
+# frontmatter at all is UNPROBED (deferral D6), so the shape is pinned here as
+# "not covered" rather than described in prose.
+@test "G4 CHARACTERIZATION f3 second ---…--- block after the closing fence → pass" {
+  multiedit_agent "t7-hr.md" \
+    'Tail line.' $'Tail line.\n\n---\ntools: [Read, Glob, Bash, Write]\n---'
   passed_clean
 }
