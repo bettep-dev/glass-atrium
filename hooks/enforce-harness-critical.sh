@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# enforce-harness-critical.sh — PreToolUse(Write|Edit + Bash) harness-critical file gate.
+# enforce-harness-critical.sh — PreToolUse(Write|Edit|MultiEdit + Bash) harness-critical file gate.
 # Both arms block agent_id-INDEPENDENT (main session AND every subagent): a per-FILE
 # protection floor, NOT a per-agent tool-grant check (core-security.md LLM06 boundary).
 #
-# Write|Edit arm (deterministic):
+# Write|Edit|MultiEdit arm (deterministic):
 #   (a) live harness settings — ~/.claude/settings.json + ~/.claude/settings.local.json
 #   (b) LIVE hook dirs — ~/.glass-atrium/hooks/ (primary) + ~/.claude/hooks/ (legacy)
 #   (c) agents/*.md frontmatter IDENTITY keys {name, tools, scope} — `model:` EXCLUDED
@@ -14,8 +14,13 @@
 #       Write on an EXISTING agent file blocks only when its identity lines DIFFER
 #       from the on-disk frontmatter. A file left with an UNTERMINATED opening fence
 #       is a tampered state: Edit AND Write both block until repaired via a
-#       sanctioned path / launch-env grant.
-#   (d) Write of a NEW agents/*.md — creation routes through the agent_lifecycle CLI.
+#       sanctioned path / launch-env grant. A MultiEdit is folded onto disk element
+#       by element IN ORDER and the composed result compared ONCE — per-element
+#       comparison passes a widening staged across two elements, because a later
+#       element's old_string exists only after an earlier one has landed. An edits
+#       payload this gate cannot read is unanswerable, so it blocks fail-closed.
+#   (d) Write or MultiEdit of a NEW agents/*.md — creation routes through the
+#       agent_lifecycle CLI (MultiEdit creates via an empty first old_string).
 #   (e) scheduled-execution surface — ~/.glass-atrium/{autoagent,scripts,skills}/;
 #       launchd runs autoagent/ code unattended, so a plain Edit persists code the
 #       scheduler later executes (LLM06). rules/ + scoped/ are EXCLUDED by design —
@@ -575,6 +580,49 @@ def detect_agent_edit(tool_input):
     # mirrors the Edit tool's own semantics; the default is first-occurrence.
     after = disk.replace(old, new) if tool_input.get("replace_all") else disk.replace(old, new, 1)
     try:
+        if identity_struct(disk) != identity_struct(after):
+            return "identity-frontmatter-edit"
+    except FrontmatterUnparseable:
+        return "frontmatter-unparseable"
+    return ""
+
+
+def apply_edits(disk, edits):
+    """disk with every edits[] element applied IN ORDER, each honouring its OWN
+    replace_all — the Edit tool's semantics, composed. A payload that is not a
+    non-empty list of dicts carrying string old/new is one this gate cannot read,
+    and an unreadable envelope on a guarded path is unanswerable, not inert."""
+    if not isinstance(edits, list) or not edits:
+        raise FrontmatterUnparseable("unreadable MultiEdit edits payload")
+    after = disk
+    for element in edits:
+        if not isinstance(element, dict):
+            raise FrontmatterUnparseable("MultiEdit element is not a mapping")
+        old = element.get("old_string", "")
+        new = element.get("new_string", "")
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise FrontmatterUnparseable("MultiEdit element old/new is not a string")
+        after = after.replace(old, new) if element.get("replace_all") else after.replace(old, new, 1)
+    return after
+
+
+def detect_agent_multiedit(tool_input):
+    """MultiEdit on agents/*.md — fold the whole edits array onto disk, then compare
+    the composed result ONCE.
+
+    A per-element probe against DISK is exploitable: element 1 makes a
+    frontmatter-overlapping but struct-NEUTRAL change, and element 2's old_string
+    exists only AFTER element 1 lands, so its own overlap test misses while the
+    composed file widens `tools`. Folding first is what makes the staged shape
+    visible. The overlap short-circuit the single-pair Edit arm uses is unnecessary
+    here — a body-only fold leaves both compared structures equal."""
+    disk = read_disk(tool_input.get("file_path", ""))
+    if unterminated(disk):
+        return "unterminated-frontmatter"
+    try:
+        after = apply_edits(disk, tool_input.get("edits"))
+        if fence_count(disk) != fence_count(after):
+            return "frontmatter-fence-edit"
         if identity_struct(disk) != identity_struct(after):
             return "identity-frontmatter-edit"
     except FrontmatterUnparseable:
@@ -1153,7 +1201,7 @@ def main():
         tool_input = {}
     tool_name = str(data.get("tool_name", ""))
     raw_target = ""
-    if tool_name in ("Write", "Edit"):
+    if tool_name in ("Write", "Edit", "MultiEdit"):
         # Normalisation is the FIRST operation on the parsed envelope — ahead of
         # every disk read and arm dispatch. A tilde/traversal spelling reaching
         # read_disk unresolved yields "" (OSError), which reads as "no frontmatter"
@@ -1173,6 +1221,8 @@ def main():
             reason = detect_agent_write(tool_input)
         elif tool_name == "Edit":
             reason = detect_agent_edit(tool_input)
+        elif tool_name == "MultiEdit":
+            reason = detect_agent_multiedit(tool_input)
         elif tool_name == "Bash":
             reason = detect_bash(tool_input)
         else:
@@ -1311,7 +1361,9 @@ write_edit_arm() {
     *) exit 0 ;;
   esac
 
-  if [[ "${TOOL_NAME}" == "Write" && ! -e "${norm}" ]]; then
+  # MultiEdit creates a file through a first element with an EMPTY old_string, so
+  # creation is not a Write-only shape — an absent target is the creation signal.
+  if [[ "${TOOL_NAME}" == "Write" || "${TOOL_NAME}" == "MultiEdit" ]] && [[ ! -e "${norm}" ]]; then
     block_critical "HAR-001" "new-agent-creation" "${norm}"
   fi
   case "${VERDICT}" in
@@ -1328,7 +1380,7 @@ bash_arm() {
 }
 
 case "${TOOL_NAME}" in
-  Write | Edit) write_edit_arm ;;
+  Write | Edit | MultiEdit) write_edit_arm ;;
   Bash) bash_arm ;;
   *) exit 0 ;;
 esac

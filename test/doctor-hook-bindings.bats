@@ -63,7 +63,7 @@ write_full_settings() {
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
+      { "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
@@ -302,7 +302,7 @@ run_doctor_ga_sandbox() {
 }
 
 @test "one hook wired under two matchers -> ONE executability FAIL line (per-file, not per-tuple)" {
-  # enforce-harness-critical.sh binds under Bash AND Write|Edit. The binding verdict is
+  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit. The binding verdict is
   # per-tuple, but the mode is a property of the single FILE — so it must not double-report.
   make_ga_sandbox
   write_full_settings
