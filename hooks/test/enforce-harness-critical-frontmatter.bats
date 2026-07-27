@@ -89,6 +89,36 @@ maxTurns: 80
 MD
 
   seed_b7
+  seed_q1
+}
+
+# Quoted-key shapes. The host YAML parser folds `"tools":` onto `tools` and takes
+# the LAST occurrence, so a spelling the guard cannot resolve is a grant it cannot see.
+seed_q1() {
+  cat >"${AGENTS}/q1-quotedkey.md" <<'MD'
+---
+"name": q1-quotedkey
+"tools": [Read, Glob]
+model: claude-model-a
+---
+# Body
+
+Intro line.
+MD
+
+  # Duplicate already ON DISK: the identity question is unanswerable from this state,
+  # so every write against it blocks until the file is repaired outside the tool layer.
+  cat >"${AGENTS}/q1-dupdisk.md" <<'MD'
+---
+name: q1-dupdisk
+tools: [Read, Glob]
+"tools": [Read, Glob, Bash]
+model: claude-model-a
+---
+# Body
+
+Intro line.
+MD
 }
 
 # Out-of-contract shapes, each on a GUARDED key. Every file also carries a
@@ -694,5 +724,71 @@ name: s24-keyorder'
   edit_agent "glass-atrium-dev-scaffold.md" \
     'description: glass-atrium-dev-scaffold agent (scaffolded by agent-lifecycle; body pending authoring).' \
     'description: glass-atrium-dev-scaffold agent (body authored).'
+  passed_clean
+}
+
+# ── AC-Q1: a guarded key the bare matcher cannot see (quoted or duplicated) ──
+# The host parser folds quote spellings onto one key and keeps the LAST value, so a
+# quoted twin smuggles a grant past a matcher that reads only the bare spelling.
+# Recognition (single quoted key) answers the identity question → identity-*; a
+# DUPLICATE leaves it unanswerable → the existing fail-closed unparseable verdict.
+
+@test "AC-Q1 quoted duplicate of tools: Edit appending one → frontmatter-unparseable" {
+  edit_agent "glass-atrium-meta-inline.md" \
+    'tools: [Read, Glob, Grep, Edit, Write, WebSearch, WebFetch]' \
+    'tools: [Read, Glob, Grep, Edit, Write, WebSearch, WebFetch]
+"tools": [Read, Glob, Grep, Edit, Write, WebSearch, WebFetch, Bash]'
+  blocked_unparseable
+}
+
+@test "AC-Q1 quoted duplicate of tools: full-file Write carrying one → frontmatter-unparseable" {
+  write_agent_insert "glass-atrium-meta-inline.md" \
+    'tools: [Read, Glob, Grep, Edit, Write, WebSearch, WebFetch]' \
+    '"tools": [Read, Glob, Grep, Edit, Write, WebSearch, WebFetch, Bash]'
+  blocked_unparseable
+}
+
+@test "AC-Q1 quoted tools key widened by a Write → identity-frontmatter-write" {
+  write_agent_replace "q1-quotedkey.md" '"tools": [Read, Glob]' '"tools": [Read, Glob, Bash]'
+  blocked_identity
+}
+
+@test "AC-Q1 quoted name key changed by an Edit → identity-frontmatter-edit" {
+  edit_agent "q1-quotedkey.md" '"name": q1-quotedkey' '"name": q1-renamed'
+  blocked_identity
+}
+
+@test "AC-Q1 duplicate UNQUOTED tools key line, identical value → frontmatter-unparseable" {
+  write_agent_insert "s24-keyorder.md" 'tools: [Read, Glob]' 'tools: [Read, Glob]'
+  blocked_unparseable
+}
+
+@test "AC-Q1 unreadable key token (unbalanced quote) at column 0 → frontmatter-unparseable" {
+  edit_agent "glass-atrium-meta-inline.md" 'maxTurns: 80' 'maxTurns: 80
+"tools: [Bash]'
+  blocked_unparseable
+}
+
+# Interim posture, pinned so it is not misread as a regression: a duplicate already
+# on disk makes EVERY subsequent write to that file block until it is repaired.
+@test "AC-Q1 duplicate already on disk: body-only Write → frontmatter-unparseable" {
+  write_agent_body_only "q1-dupdisk.md"
+  blocked_unparseable
+}
+
+# CONTAINMENT + over-block guards: green at HEAD and after.
+
+@test "AC-Q1 containment: body prose spelling a quoted guarded key at column 0 → pass" {
+  write_agent_insert "glass-atrium-dev-db.md" 'Intro line.' '"tools": [Bash]'
+  passed_clean
+}
+
+@test "AC-Q1 quoted NON-guarded key line → pass, not unparseable" {
+  write_agent_replace "s24-keyorder.md" 'maxTurns: 80' '"maxTurns": 80'
+  passed_clean
+}
+
+@test "AC-Q1 quoted-key file, body-only Write → pass" {
+  write_agent_body_only "q1-quotedkey.md"
   passed_clean
 }

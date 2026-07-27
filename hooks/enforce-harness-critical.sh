@@ -144,8 +144,9 @@ import sys
 # Identity trio ONLY — the operator pin key (model:) stays OUT of the guarded set
 # by governance, so a live model pin edits freely. Column-0 anchoring is what keeps
 # a folded continuation or a nested-map value from impersonating a guarded key.
+GUARDED_KEYS = ("name", "tools", "scope")
 GUARDED_KEY_RE = re.compile(r"^(name|tools|scope)[ \t]*:(.*)$")
-ANY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
+PLAIN_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 LIST_ITEM_RE = re.compile(r"^[ \t]*-[ \t]+(.*)$")
 NESTED_KEY_RE = re.compile(r"^[ \t]+[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
 
@@ -407,6 +408,34 @@ def split_flow(body):
     return [c for c in (canon(x) for x in items) if c != ""]
 
 
+def guarded_key_line(line):
+    """(name, raw value) for a column-0 guarded key line, else None.
+
+    The host parser folds `"tools":` onto `tools`, so the bare matcher alone reads a
+    quoted twin as prose while the grant it carries is real — key-side quote tolerance
+    is the same allowance canon() already gives the value side. A column-0 key spelling
+    that resolves to NEITHER a guarded key nor a plain identifier (an escape, an
+    unbalanced quote) is one the host may still fold onto a guarded key, so it is
+    unanswerable rather than inert. Colon-LESS column-0 lines — the fences among them
+    — carry no key at all and stay inert."""
+    bare = GUARDED_KEY_RE.match(line)
+    if bare is not None:
+        return bare.group(1), bare.group(2)
+    if line[:1] in (" ", "\t") or LIST_ITEM_RE.match(line) is not None:
+        return None
+    head, sep, rest = line.partition(":")
+    if not sep:
+        return None
+    spelling = head.strip()
+    if len(spelling) >= 2 and spelling[0] == spelling[-1] and spelling[0] in ("'", '"'):
+        spelling = spelling[1:-1]
+    if spelling in GUARDED_KEYS:
+        return spelling, rest
+    if PLAIN_KEY_RE.match(spelling) is None:
+        raise FrontmatterUnparseable("unreadable key spelling: " + head.strip())
+    return None
+
+
 def identity_struct(text):
     """Guarded key → the STRUCTURE it grants, parsed from the frontmatter region only.
 
@@ -415,13 +444,16 @@ def identity_struct(text):
     is visible in either. `name`/`scope` are canonical scalars. An ABSENT guarded key
     is absent from the dict (both-absent compares equal); `tools:` with no items is
     an EMPTY frozenset, which differs from absence — revoking every grant is a change.
-    Raises FrontmatterUnparseable when a guarded value leaves the parse contract."""
+    Raises FrontmatterUnparseable when a guarded value leaves the parse contract, and
+    when a guarded key occurs TWICE in any quoting mix: the host keeps the LAST value,
+    so reproducing that fold here would make the winning grant unanswerable."""
     span = frontmatter_span(text)
     if span is None:
         return {}
     out = {}
     key = None
     items = []
+    seen = set()
 
     def flush():
         if key is not None:
@@ -432,11 +464,14 @@ def identity_struct(text):
         # file puts a comment directly above `tools:` and between its items.
         if not line.strip() or re.match(r"^[ \t]*#", line):
             continue
-        guarded = GUARDED_KEY_RE.match(line)
+        guarded = guarded_key_line(line)
         if guarded is not None:
             flush()
             key, items = None, []
-            name, rest = guarded.group(1), canon(guarded.group(2))
+            name, rest = guarded[0], canon(guarded[1])
+            if name in seen:
+                raise FrontmatterUnparseable("duplicate guarded key: " + name)
+            seen.add(name)
             if rest == "":
                 key = name
             elif rest.startswith("["):
