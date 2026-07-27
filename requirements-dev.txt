@@ -1,0 +1,11 @@
+# Glass Atrium — CI-only Python test dependencies.
+#
+# Deliberately SEPARATE from requirements.txt: that file is the runtime SoT the
+# end-user bootstrap installs (lib/ga-deps.sh / the glass-atrium entry point),
+# so a test-only package must never ship into a user install. Consumed only by
+# the `test-python-pytest` CI job:
+#   python3 -m pip install -r requirements-dev.txt
+#
+# The scripts/test suites import stdlib + pytest + in-repo packages only
+# (psycopg is a degrade-on-absence local import), so pytest is the whole set.
+pytest
