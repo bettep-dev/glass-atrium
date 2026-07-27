@@ -55,8 +55,12 @@ writer_calls() {
 # Run the hook with the stub writer + redirected counter dir. Args: $1=input JSON.
 run_hook() {
   printf '%s' "$1" >"${SANDBOX}/input.json"
+  # Scrub the ambient kill switch + budget override: either one in the runner's env would silently
+  # disable or reshape every crossing assertion here. Empty == unset to the hook.
   run env \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
+    SUBAGENT_TOOL_BUDGET_OFF="" \
+    SUBAGENT_TOOL_BUDGET="" \
     SUBAGENT_OVERAGE_WRITER="${STUB_WRITER}" \
     bash "${HOOK_SH}" <"${SANDBOX}/input.json"
 }

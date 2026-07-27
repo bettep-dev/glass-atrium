@@ -54,8 +54,12 @@ teardown() {
 # limits, disarm/arm flags). SUBAGENT_TOOL_BUDGET_DIR is always sandboxed.
 run_hook() {
   printf '%s' "$1" >"${SANDBOX}/input.json"
+  # Scrub SUBAGENT_NOPROGRESS_DISARM: an ambient disarm in the runner's env silently downgrades every
+  # block branch to advisory, so the arming assertions would pass vacuously. Empty == unset to the hook;
+  # a per-invocation DISARM=1 passed via "${@:2}" still wins (later env assignment).
   run env \
     SUBAGENT_TOOL_BUDGET_DIR="${BUDGET_DIR}" \
+    SUBAGENT_NOPROGRESS_DISARM="" \
     "${@:2}" \
     "${HOOK_SH}" <"${SANDBOX}/input.json"
 }
