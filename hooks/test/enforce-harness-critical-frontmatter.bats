@@ -374,9 +374,15 @@ passed_clean() {
 # refuses a non-unique old_string without replace_all, and the hook's
 # first-occurrence model resolves this one to the frontmatter item.
 @test "AC-B6 body bullet duplicating a tools item → block (fail-closed, unreachable in practice)" {
+  # The ADDED item must be one the file does not already grant. `Write` is already
+  # in this file's tools, so adding it yields an identical grant set — a ruled
+  # non-change (S2.4 duplicate row), which would make this row vacuous: a hook that
+  # inspected only the BODY occurrence would pass too, so it could not discriminate.
+  # `WebSearch` is ungranted, so a pass here can only mean the frontmatter
+  # occurrence was missed — which is exactly the property this row pins.
   printf '  - Read\n' >>"${AGENTS}/glass-atrium-dev-shell.md"
   edit_agent "glass-atrium-dev-shell.md" '  - Read' '  - Read
-  - Write'
+  - WebSearch'
   blocked_identity
 }
 
