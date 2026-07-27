@@ -14,13 +14,18 @@
 #       Write on an EXISTING agent file blocks only when its identity lines DIFFER
 #       from the on-disk frontmatter. A file left with an UNTERMINATED opening fence
 #       is a tampered state: Edit AND Write both block until repaired via a
-#       sanctioned path / launch-env grant. A MultiEdit is folded onto disk element
+#       sanctioned path / launch-env grant. An Edit whose old_string is EMPTY is
+#       the host's create shape rather than a no-op, and one whose old/new keys are
+#       missing or non-string is unreadable — both block fail-closed (the latter
+#       two shapes are host-REJECTED by the strict Edit schema, so they are closed
+#       defensively). A MultiEdit is folded onto disk element
 #       by element IN ORDER and the composed result compared ONCE — per-element
 #       comparison passes a widening staged across two elements, because a later
 #       element's old_string exists only after an earlier one has landed. An edits
 #       payload this gate cannot read is unanswerable, so it blocks fail-closed.
-#   (d) Write or MultiEdit of a NEW agents/*.md — creation routes through the
-#       agent_lifecycle CLI (MultiEdit creates via an empty first old_string).
+#   (d) Write, Edit or MultiEdit of a NEW agents/*.md — creation routes through the
+#       agent_lifecycle CLI (MultiEdit creates via an empty first old_string, Edit
+#       via an empty top-level one).
 #   (e) scheduled-execution surface — ~/.glass-atrium/{autoagent,scripts,skills}/;
 #       launchd runs autoagent/ code unattended, so a plain Edit persists code the
 #       scheduler later executes (LLM06). rules/ + scoped/ are EXCLUDED by design —
@@ -596,11 +601,23 @@ def detect_agent_write(tool_input):
 def detect_agent_edit(tool_input):
     """Edit on agents/*.md — block when old_string overlaps the on-disk frontmatter
     AND the edit alters the fence-line count OR the parsed identity structure.
-    An unterminated opening fence blocks outright (tampered state)."""
-    old = tool_input.get("old_string", "")
-    new = tool_input.get("new_string", "")
-    if not old:
-        return ""
+    An unterminated opening fence blocks outright (tampered state).
+
+    An EMPTY old_string is the host's own CREATE operation, not a no-op, so it can
+    never take the overlap short-circuit: an absent target is owned by the shell
+    arm's creation guard, and on an EXISTING guarded file the result is a whole-file
+    overwrite this pair-wise arm cannot model — unanswerable, hence fail-closed.
+    Missing or non-string old/new is likewise unreadable. Presence is tested BEFORE
+    type and never by truthiness, because "" is exactly the legitimate create
+    spelling and a truthiness gate would collapse the two shapes into one."""
+    if "old_string" not in tool_input or "new_string" not in tool_input:
+        return "unreadable-edit-payload"
+    old = tool_input["old_string"]
+    new = tool_input["new_string"]
+    if not isinstance(old, str) or not isinstance(new, str):
+        return "unreadable-edit-payload"
+    if old == "":
+        return "edit-create-shape"
     disk = read_disk(tool_input.get("file_path", ""))
     if unterminated(disk):
         return "unterminated-frontmatter"
@@ -1408,9 +1425,11 @@ write_edit_arm() {
     *) exit 0 ;;
   esac
 
-  # MultiEdit creates a file through a first element with an EMPTY old_string, so
-  # creation is not a Write-only shape — an absent target is the creation signal.
-  if [[ "${TOOL_NAME}" == "Write" || "${TOOL_NAME}" == "MultiEdit" ]] && [[ ! -e "${norm}" ]]; then
+  # Creation is not a Write-only shape — an absent target is the creation signal
+  # for every tool this arm dispatches: MultiEdit creates through an EMPTY first
+  # element old_string, and a plain Edit through an EMPTY top-level one, which the
+  # host accepts and classifies as a create.
+  if [[ "${TOOL_NAME}" == "Write" || "${TOOL_NAME}" == "Edit" || "${TOOL_NAME}" == "MultiEdit" ]] && [[ ! -e "${norm}" ]]; then
     block_critical "HAR-001" "new-agent-creation" "${norm}"
   fi
   case "${VERDICT}" in

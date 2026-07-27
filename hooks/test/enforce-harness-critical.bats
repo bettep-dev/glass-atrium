@@ -4,7 +4,8 @@
 # PreToolUse(Write|Edit + Bash) harness-critical gate, agent_id-INDEPENDENT:
 #   Write|Edit arm → live settings.json/settings.local.json · live hook dirs ·
 #   agents/*.md frontmatter identity keys {name, tools, scope} (model excluded,
-#   body edits pass) · NEW agents/*.md Write · scheduled-exec dirs
+#   body edits pass) · NEW agents/*.md creation on any write-shaped tool ·
+#   unreadable or empty-old_string Edit payloads (fail-closed) · scheduled-exec dirs
 #   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
 #   best-effort, three block classes over three shared structural pre-passes
 #   (heredoc stripping · quote mask · ordered segmenter with a cwd-arming flag):
@@ -1644,5 +1645,77 @@ scope: DEV
 
 @test "T1-neg case-varied .MD under an EXCLUDED rules dir → still pass" {
   run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/rules/example.MD" 'notes')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── T3: Edit-as-create + Edit-arm payload fail-close (clauded-docs/753 F2) ─────
+#
+# An Edit carrying an EMPTY old_string is host-ACCEPTED and is the host's own
+# CREATE shape, so E2/E3 are LIVE: the creation guard predicated on Write and
+# MultiEdit alone, and the Edit detector returned empty on a falsy old_string.
+# E1/E5/E6 are HOST-REJECTED by the strict Edit schema (unknown key `edits`,
+# required typed `old_string`) — pinned as DEFENSIVE fail-close rows, never as
+# live bypasses.
+
+@test "T3-E3 LIVE Edit old_string:'' creating a NEW agent file → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-new.md" \
+    '' $'---\nname: glass-atrium-dev-new\ntools: [Read, Bash, Write]\nscope: DEV\n---\n# Body\n')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"new-agent-creation"* ]] || return 1
+}
+
+@test "T3-E3b LIVE Edit old_string:'' creating a NEW agent file (subagent) → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.claude/agents/glass-atrium-dev-new.md" \
+    '' $'---\nname: glass-atrium-dev-new\n---\n# Body\n')" "a1"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E2 LIVE Edit old_string:'' with evil frontmatter on an EXISTING agent file → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '' $'---\nname: glass-atrium-dev-shell\ntools: [Read, Bash, Write]\nscope: DEV\n---\n')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E5 DEFENSIVE (host-rejected) Edit with old_string ABSENT → fail-closed block" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, new_string: "tools: [Read, Bash, Write]"}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E6 DEFENSIVE (host-rejected) Edit with old_string null → fail-closed block" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, old_string: null, new_string: "x"}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E1 DEFENSIVE (host-rejected) Edit carrying edits[] → fail-closed, not folded" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, edits: [{old_string: "tools: [Read, Bash]", new_string: "tools: [Read, Bash, Write]"}]}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+  # Fail-closed on the unreadable payload, NOT a MultiEdit-arm identity verdict.
+  [[ "${output}" != *"identity-frontmatter-edit"* ]] || return 1
+}
+
+# ── T3 controls: the fail-close must not reach a body edit or a free path ──────
+
+@test "T3-ctl legitimate body Edit on an agent file → still pass" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '# Body' '# Body text')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T3-ctl Edit old_string:'' on a NON-agent path → still pass (no global false positive)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.claude/data/notes.md" '' 'fresh content')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T3-ctl Edit old_string:'' under the EXCLUDED rules dir → still pass" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/rules/example.md" '' 'notes')"
   [[ "${status}" -eq 0 ]] || return 1
 }
