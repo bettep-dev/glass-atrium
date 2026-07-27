@@ -700,12 +700,16 @@ PY
 # carries, and the two counters are independent — a dirty repo carrying an anomaly lands in both.
 snapshot_staleness_scan() {
   local root="$1"
-  # The recovery-repo whitelist — the same seven per-directory repositories the write side
-  # (scripts/snapshot-live-repos.sh) reconciles. A directory absent from this list is invisible here.
-  local repos=(autoagent agents monitor scripts/test rules test hooks/test)
   local rel repo entry shown changed untracked flagged head_epoch newest lag
   local stale=0 path_anomaly=0 git_warned=0
-  for rel in "${repos[@]}"; do
+  # The recovery-repo whitelist — the shared leaf (SoT) the write side
+  # (scripts/snapshot-live-repos.sh) reads too, so neither side can go blind to a repo the
+  # other reconciles. Sourced lazily + idempotently, source-path agnostic via BASH_SOURCE so
+  # a standalone-sourced doctor lib (bats fixture) still resolves it.
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/recovery-repos.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/recovery-repos.sh"
+  for rel in "${RECOVERY_REPOS[@]}"; do
     repo="${root}/${rel}"
     if [[ ! -d "${repo}" ]]; then
       log "  info : ${rel} — no such directory (recovery snapshot n/a)"
