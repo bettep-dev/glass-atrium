@@ -25,7 +25,7 @@ artifact and this verdict must be re-evaluated.
 - **Manifests audited**: `monitor/package.json` (versions pinned by the tracked
   `monitor/package-lock.json`), `autoagent/package.json` (lockfile untracked — versions
   read from the installed tree), and Python third-party imports enumerated across all
-  97 tracked `*.py` files plus the tracked root `requirements.txt` and the CI-only
+  98 tracked `*.py` files plus the tracked root `requirements.txt` and the CI-only
   `requirements-dev.txt` (no `pyproject.toml` exists in the repo).
 - **License sources**: installed `node_modules/*/package.json` `license` fields; bundled
   LICENSE texts where the field is absent; npm registry metadata (`npm view`) for unmet
@@ -132,7 +132,7 @@ Import sites (tracked files):
 - autoagent production Python (`daemon_cycle.py`, `lib/confidence.py`,
   `lib/project_key.py`) is **stdlib-only**.
 
-All other imports across the 97 tracked `*.py` files are Python standard library or
+All other imports across the 98 tracked `*.py` files are Python standard library or
 repo-local modules — with two exceptions, both outside the distributed runtime surface.
 The first is **test-only**: `pytest` (MIT), imported by the `scripts/test` pytest suites
 and pinned in the CI-only `requirements-dev.txt`, which the end-user bootstrap never
