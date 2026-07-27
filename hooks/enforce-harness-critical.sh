@@ -91,6 +91,10 @@
 # empty-target allow. Non-trivial input with python3 missing — or a classifier
 # that exits non-zero, or whose in-band status trailer reads empty or misaligned
 # — is a HAR-003 block (exit 2), never a pass.
+# Path matching is CASE-INSENSITIVE on BOTH arms, at every layer (prefilter,
+# protected-path regexes, dispatch globs): the real volume is APFS, which resolves a
+# case-varied spelling onto the protected file. Widening-only — on a case-SENSITIVE
+# volume it blocks more, never less.
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
 # Scope: LIVE install paths ONLY (HOME-anchored) — the git repo tree is untouched.
 
@@ -110,6 +114,35 @@ INPUT="$(hook_read_input)"
 # (mirrors enforce-delegation.sh DEL-002). Empty input ("{}") stays exit 0.
 hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
   "Harness-critical gate unavailable: python3 is required to parse hook input"
+
+# Case-insensitive shell matching — the ONE bash-layer normalisation point (the
+# python counterpart is re.IGNORECASE on the two protected-path regexes), so the
+# prefilter, the dispatch globs and any future protection class inherit the
+# property instead of re-deriving it per class.
+# Why: the real volume is APFS (case-INSENSITIVE), so the OS resolves
+# `.claude/Settings.json` onto the protected file while a case-SENSITIVE gate
+# discards the block.
+# MONOTONE-WIDENING BY CONSTRUCTION, not by inspection: for a fixed pattern every
+# string matching case-sensitively still matches, and none of this file's 7 `case`
+# sites is an allowlist-shaped early exit-0-on-match → the option can only ever
+# block MORE.
+# Shell-GLOBAL, so two further enumerations complete that argument — record them
+# here, or the next hook-utils.sh edit silently invalidates it:
+#   (a) hook-utils.sh patterns reachable from here — hook_normalize_path's
+#       '~' / '~/'* / /* / "" / "." / ".." arms · hook_input_is_empty's
+#       "" / "{}" / "{ }" arms · _hook_json_escape's substitutions — are all
+#       LETTER-FREE, so folding is a provable no-op there.
+#   (b) the `[[ ]]` and parameter-expansion patterns it equally governs — the
+#       PY_STATUS digit literal · the `error:*` / `block:*` verdict arms and the
+#       `${VERDICT#block:}` strip (classifier-generated lowercase) · the TOOL_NAME
+#       comparison (folds wider, harmless). The ONE collapse it would cause is
+#       held out in POSIX test form at write_edit_arm's raw-vs-normalised
+#       inequality, which this option does not govern.
+# Accepted trades: an over-block on a case-SENSITIVE volume (fail-toward-blocking
+# is the correct direction for a security floor) · folding is locale-dependent, so
+# a Turkish-locale dotless-i spelling still evades — an INCOMPLETE widening
+# relative to HEAD, never a narrowing.
+shopt -s nocasematch
 
 # Hot-path prefilter (pure bash, zero spawns): every protected class textually
 # requires one of the two protected-root dir-name literals in the raw envelope —
@@ -166,6 +199,13 @@ class FrontmatterUnparseable(Exception):
 # (com.claude.* legacy + com.glass-atrium.* live) — the same label form
 # daemon_cycle.py treats as a safety-tier surface; the label itself carries the
 # prefilter literal, so a plist envelope reaches this classifier.
+# IGNORECASE is the python counterpart of the shell's nocasematch and is purely
+# WIDENING; it lands on exactly these two compiles, which covers every consumer of
+# both at once — the combined protected-path predicate and the cwd-arming site.
+# NOT re.ASCII alongside it — that redefines PROT_DIR_RE's
+# trailing lookahead below. And NEVER a global locale export: the classifier
+# inherits the hook environment, where a stdin decode failure degrades to an empty
+# tool name and a fallthrough exit 0, so a locale pin can turn the gate FAIL-OPEN.
 PROT_RE = re.compile(
     r"\.claude/settings(?:\.local)?\.json"
     r"|\.claude/hooks/"
@@ -175,7 +215,8 @@ PROT_RE = re.compile(
     r"|\.glass-atrium/autoagent/"
     r"|\.glass-atrium/scripts/"
     r"|\.glass-atrium/skills/"
-    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist"
+    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist",
+    re.IGNORECASE,
 )
 
 # Directory form of the protected roots, for cwd arming. A `cd` argument
@@ -186,7 +227,8 @@ PROT_RE = re.compile(
 PROT_DIR_RE = re.compile(
     r"(?:\.claude/(?:hooks|agents)"
     r"|\.glass-atrium/(?:hooks|agents|autoagent|scripts|skills))"
-    r"(?![\w.\-])"
+    r"(?![\w.\-])",
+    re.IGNORECASE,
 )
 
 # Copy/mutation/permission verbs recognised in COMMAND position (sed only with an
@@ -1340,7 +1382,12 @@ write_edit_arm() {
   # for the shell-side match arms, not the live normalisation.
   norm="$(hook_normalize_path "${TARGET}")"
   raw=""
-  [[ "${RAW_TARGET}" != "${norm}" ]] && raw="${RAW_TARGET}"
+  # POSIX test, deliberately NOT `[[ ]]`: the shell-global nocasematch set above
+  # governs `[[ ]]` but not `[ ]`, and folding here would report a case-varied
+  # envelope as already-resolved — deleting the raw spelling from the block payload,
+  # i.e. exactly the forensic evidence of the case-variance attack.
+  # shellcheck disable=SC2292
+  [ "${RAW_TARGET}" != "${norm}" ] && raw="${RAW_TARGET}"
 
   case "${norm}" in
     "${CLAUDE_DIR}/settings.json" | "${CLAUDE_DIR}/settings.local.json")

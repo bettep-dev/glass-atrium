@@ -240,3 +240,54 @@ tools: [Read, Glob, Bash, Write]
     '[{"old_string": "repeat token here.", "new_string": "changed.", "replace_all": true}]'
   passed_clean
 }
+
+# ── T1: case-varied protected paths through the MultiEdit dispatch (753 F1) ───
+#
+# APFS is case-INSENSITIVE, so a case-varied spelling resolves onto the protected
+# agent file while the case-SENSITIVE dispatch glob discards the block. Three
+# spellings, one per position that can vary: the EXTENSION (the sharpest — every
+# earlier layer works), the agents DIRECTORY, and the protected ROOT.
+# EXIT CODE ONLY: CI runs on a case-SENSITIVE volume where the block class
+# legitimately diverges, and each row materializes its target under BOTH spellings
+# so the classifier's disk read finds it on either platform.
+
+# Args: $1=existing source path $2=case-varied destination path.
+materialize_case_variant() {
+  mkdir -p "$(dirname "${2}")"
+  # On a case-INSENSITIVE volume the destination ALREADY resolves to the source, so
+  # a copy would truncate the fixture it is meant to duplicate — only a
+  # case-SENSITIVE volume needs the second file.
+  [[ -e "${2}" ]] || cp "${1}" "${2}"
+}
+
+@test "T1-K1 case-varied .MD extension, MultiEdit widening → block" {
+  local variant="${AGENTS}/t7-stage.MD"
+  materialize_case_variant "${AGENTS}/t7-stage.md" "${variant}"
+  run_multiedit "${variant}" \
+    "$(edits_array 'tools: [Read, Glob]' 'tools: [Read, Glob, Bash]')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K2 case-varied agents DIRECTORY, MultiEdit widening → block" {
+  local variant="${FAKE_HOME}/.glass-atrium/Agents/t7-stage.md"
+  materialize_case_variant "${AGENTS}/t7-stage.md" "${variant}"
+  run_multiedit "${variant}" \
+    "$(edits_array 'tools: [Read, Glob]' 'tools: [Read, Glob, Bash]')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K3 case-varied protected ROOT, MultiEdit widening → block" {
+  local variant="${FAKE_HOME}/.Glass-atrium/agents/t7-stage.md"
+  materialize_case_variant "${AGENTS}/t7-stage.md" "${variant}"
+  run_multiedit "${variant}" \
+    "$(edits_array 'tools: [Read, Glob]' 'tools: [Read, Glob, Bash]')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# Over-shoot control: the folded extension glob must not reach an EXCLUDED dir.
+
+@test "T1-neg case-varied .MD under the excluded rules dir → still pass" {
+  run_multiedit "${FAKE_HOME}/.glass-atrium/rules/example.MD" \
+    "$(edits_array 'a' 'b')"
+  passed_clean
+}
