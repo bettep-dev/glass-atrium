@@ -234,11 +234,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
   # git-txn / daemon-apply suites — split across a matrix into 6 legs so each runs
-  # on its OWN runner concurrently. test/ (49 suites, incl. the two heaviest files
-  # doctor-auth-report-scan-sigpipe + deps-preflight-noninteractive) is sharded
-  # 3-way by a deterministic round-robin over its sorted *.bats, so its wall-clock
-  # drops to ~1/3; hooks/test (35), scripts/test (19), autoagent/test (5) each run
-  # as a single leg. The shards + single legs cover ALL 108 suites in aggregate. A
+  # on its OWN runner concurrently. test/ (the largest root, and the home of the
+  # two heaviest files doctor-auth-report-scan-sigpipe +
+  # deps-preflight-noninteractive) is sharded 3-way by a deterministic round-robin
+  # over its sorted *.bats, so its wall-clock drops to ~1/3; hooks/test,
+  # scripts/test and autoagent/test each run as a single leg. Per-root suite counts
+  # are deliberately NOT quoted here — they move with every suite added, so a
+  # hand-copied census re-drifts on the next edit; read them from a
+  # `find <root> -name '*.bats'` run instead. The shards + single legs cover every
+  # suite under those four roots in aggregate, which is the invariant that matters. A
   # matrix job is a SINGLE node in the `needs` graph, so ci-pass observing
   # `test-bash` already aggregates every leg (any one leg's failure reddens the
   # whole test-bash node). Every suite is hermetic
