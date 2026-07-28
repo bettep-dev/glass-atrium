@@ -35,8 +35,17 @@ _ANCHOR_RE = re.compile(
 # block. Matched at line start (allowing leading whitespace) so only a real
 # YAML-key line trips it; the same word appearing inside prose below the anchor
 # is intentionally NOT matched (the gate slices on the anchor position).
+#
+# The key token is quote-tolerant (`tools:` / `"tools":` / `'tools':`): YAML folds
+# a quoted key to the same scalar, so a quote-blind gate reads as a guard the
+# attacker can spell around. The backreference forces a BALANCED pair.
+# Ceiling (deliberate): an escaped spelling inside a double-quoted key
+# (`"\x74ools":`) is still unrecognized here. Reaching it requires the body to
+# also form a second `---` block, which _assert_single_frontmatter_block refuses
+# on fence count — upgrade path is YAML-unescaping the key token if that fence
+# check ever loosens.
 _FRONTMATTER_KEY_RE = re.compile(
-    r"^[ \t]*(name|tools|scope|maxTurns)[ \t]*:",
+    r"^[ \t]*(?P<quote>[\"']?)(?P<key>name|tools|scope|maxTurns)(?P=quote)[ \t]*:",
     re.MULTILINE,
 )
 
@@ -198,7 +207,7 @@ def assert_body_no_smuggled_frontmatter(body: str) -> None:
       - begins with a `---` frontmatter fence (after lstrip), OR
       - carries a `name:` / `tools:` / `scope:` / `maxTurns:` key line BEFORE the
         `> Rules:` anchor (a frontmatter-shaped declaration shadowing the
-        canonical block).
+        canonical block), in either the bare or a quoted (`"tools":`) spelling.
     These tokens are TOLERATED below the anchor as ordinary body prose — the risk
     is a frontmatter block above/instead of the canonical one, not the word
     "tools" in a sentence in the body. When the body carries no anchor, the whole
@@ -216,7 +225,7 @@ def assert_body_no_smuggled_frontmatter(body: str) -> None:
     head = body[: anchor.start()] if anchor is not None else body
     key_match = _FRONTMATTER_KEY_RE.search(head)
     if key_match is not None:
-        key = key_match.group(1)
+        key = key_match.group("key")
         raise BodyFrontmatterError(
             f"authored body carries a frontmatter-shaped {key!r}: line before the "
             "`> Rules:` anchor — such a key shadows the canonical frontmatter; "

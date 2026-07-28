@@ -108,13 +108,32 @@ run_doctor() {
   #    not apply. Scoped by three guards — EXISTING files only (an absent file is §4/§7's deploy-presence
   #    class, never double-reported here), the GA_ROOT hooks dir wire_hooks emits, and the expected-roster
   #    loop (never a settings.json sweep, so foreign user hooks and sourced libraries cannot false-fail).
-  local unbound=0 nonexec=0 nonexec_seen=""
+  #    THIRD class, split out of the missing-binding warning: a hook wired under one matcher but
+  #    MISSING another expected tuple is NOT dormant — it fires, only that facet is unwired. Reporting
+  #    it as "deployed but never fires" is wrong in the dangerous direction: the operator reads an inert
+  #    gate and reaches for a full re-wire to satisfy a facet warning. Whole-hook bound state is not
+  #    knowable inside the per-tuple loop at the moment it logs (a LATER tuple may be bound), so a
+  #    PRE-PASS collects bound basenames first and the loop branches on it.
+  local unbound=0 facet_unbound=0 nonexec=0 nonexec_seen="" bound_seen=""
   if [[ ! -f "${SETTINGS_JSON}" ]]; then
     log "  warn : settings.json absent (${SETTINGS_JSON}) — ALL hook event-bindings are unwired; deployed hooks are DORMANT"
     unbound=${#EXPECTED_HOOK_BINDINGS[@]}
   elif ! command -v jq >/dev/null 2>&1; then
     log "  warn : jq absent — cannot read hook bindings from settings.json (skipping binding check)"
   else
+    # PRE-PASS: bound-basename set (bash-3.2-safe substring set, same idiom as nonexec_seen —
+    # no assoc arrays). Basename-keyed, NOT per-tuple: the question it answers is "does this hook
+    # file ever fire?", which is what the dormant wording claims. Deduped, so a hook bound under
+    # two matchers costs one query.
+    local pre_binding pre_event pre_hook pre_matcher
+    for pre_binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
+      IFS=$'\t' read -r pre_event pre_hook pre_matcher <<<"${pre_binding}"
+      [[ "${bound_seen}" != *" ${pre_hook} "* ]] || continue
+      # shellcheck disable=SC2310,SC2311,SC2312
+      if [[ "$(is_hook_bound "${pre_event}" "${pre_hook}" "${pre_matcher}")" == "yes" ]]; then
+        bound_seen="${bound_seen} ${pre_hook} "
+      fi
+    done
     local binding event hook matcher hook_path
     for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
       IFS=$'\t' read -r event hook matcher <<<"${binding}"
@@ -132,16 +151,26 @@ run_doctor() {
           nonexec_seen="${nonexec_seen} ${hook} "
           nonexec=$((nonexec + 1))
         fi
+      elif [[ "${bound_seen}" == *" ${hook} "* ]]; then
+        log "  warn : hook matcher facet NOT wired — ${event} -> ${hook} (matcher=${matcher:-<none>}) (PARTIAL: this hook IS wired elsewhere and DOES fire — the gate is live, only this facet is missing)"
+        facet_unbound=$((facet_unbound + 1))
       else
         log "  warn : hook NOT bound — ${event} -> ${hook} (matcher=${matcher:-<none>}) (DORMANT: deployed but never fires)"
         unbound=$((unbound + 1))
       fi
     done
   fi
+  # two CLASS-SCOPED aggregates so a mixed run (a facet miss AND a genuinely unbound hook) reports
+  # both truthfully — one flattened line would either mislabel the facet or suppress the remedy the
+  # real miss needs.
+  if [[ "${facet_unbound}" -gt 0 ]]; then
+    log "  ---- ${facet_unbound} unwired matcher facet(s) on hooks that ARE wired and firing — the gate is LIVE, not inert ----"
+    log "       fix: hand-add the missing matcher as its own .hooks.<event> group in ${SETTINGS_JSON}; a live gate needs no redeploy."
+  fi
   if [[ "${unbound}" -gt 0 ]]; then
     log "  ---- ${unbound} dormant hook binding(s): add each to ${SETTINGS_JSON} under .hooks.<event> ----"
     log "       example entry (PreToolUse): {\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"~/.glass-atrium/hooks/<hook>.sh\"}]}"
-    log "       NOTE: this doctor check is read-only and never writes settings.json. To apply these bindings, run 'glass-atrium install' — wire_hooks performs an idempotent, timestamped-backup MERGE of ONLY the Atrium hook bindings (it never deletes/overwrites user-owned keys; 'agents-only' skips it). You may also add them by hand."
+    log "       NOTE: this doctor check is read-only and never writes settings.json. Add each missing binding BY HAND (example above) — a full installer run is NOT the reflex remedy: it reconciles EVERY Atrium binding at once, a far wider mutation than the gap reported here."
   fi
   if [[ "${nonexec}" -gt 0 ]]; then
     log "  ---- ${nonexec} wired hook(s) missing the executable bit — bound but permanently inert ----"
@@ -700,12 +729,16 @@ PY
 # carries, and the two counters are independent — a dirty repo carrying an anomaly lands in both.
 snapshot_staleness_scan() {
   local root="$1"
-  # The recovery-repo whitelist — the same seven per-directory repositories the write side
-  # (scripts/snapshot-live-repos.sh) reconciles. A directory absent from this list is invisible here.
-  local repos=(autoagent agents monitor scripts/test rules test hooks/test)
   local rel repo entry shown changed untracked flagged head_epoch newest lag
   local stale=0 path_anomaly=0 git_warned=0
-  for rel in "${repos[@]}"; do
+  # The recovery-repo whitelist — the shared leaf (SoT) the write side
+  # (scripts/snapshot-live-repos.sh) reads too, so neither side can go blind to a repo the
+  # other reconciles. Sourced lazily + idempotently, source-path agnostic via BASH_SOURCE so
+  # a standalone-sourced doctor lib (bats fixture) still resolves it.
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/recovery-repos.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/recovery-repos.sh"
+  for rel in "${RECOVERY_REPOS[@]}"; do
     repo="${root}/${rel}"
     if [[ ! -d "${repo}" ]]; then
       log "  info : ${rel} — no such directory (recovery snapshot n/a)"

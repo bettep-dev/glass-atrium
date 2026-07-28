@@ -26,7 +26,8 @@
 # Job graph (4-stage gated DAG, not a flat parallel fan-out):
 #   Stage 1  fast-gate (no services): gate-lint · gate-typecheck · gate-doctor
 #   Stage 2  language jobs (gated on fast-gate + per-stack `detect-changes` filter):
-#            test-bash · test-python · test-monitor (the sole Postgres+chromium job)
+#            test-bash · test-python · test-python-pytest · test-monitor (the
+#            sole Postgres+chromium job)
 #   Stage 3  test-e2e (advisory / PR-optional, continue-on-error)
 #   Stage 4  ci-pass — the SINGLE required status check; aggregates the gate.
 
@@ -233,11 +234,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # Bats suites for hooks, operational scripts, the installer, AND the autoagent
   # git-txn / daemon-apply suites — split across a matrix into 6 legs so each runs
-  # on its OWN runner concurrently. test/ (49 suites, incl. the two heaviest files
-  # doctor-auth-report-scan-sigpipe + deps-preflight-noninteractive) is sharded
-  # 3-way by a deterministic round-robin over its sorted *.bats, so its wall-clock
-  # drops to ~1/3; hooks/test (35), scripts/test (19), autoagent/test (5) each run
-  # as a single leg. The shards + single legs cover ALL 108 suites in aggregate. A
+  # on its OWN runner concurrently. test/ (the largest root, and the home of the
+  # two heaviest files doctor-auth-report-scan-sigpipe +
+  # deps-preflight-noninteractive) is sharded 3-way by a deterministic round-robin
+  # over its sorted *.bats, so its wall-clock drops to ~1/3; hooks/test,
+  # scripts/test and autoagent/test each run as a single leg. Per-root suite counts
+  # are deliberately NOT quoted here — they move with every suite added, so a
+  # hand-copied census re-drifts on the next edit; read them from a
+  # `find <root> -name '*.bats'` run instead. The shards + single legs cover every
+  # suite under those four roots in aggregate, which is the invariant that matters. A
   # matrix job is a SINGLE node in the `needs` graph, so ci-pass observing
   # `test-bash` already aggregates every leg (any one leg's failure reddens the
   # whole test-bash node). Every suite is hermetic
@@ -305,8 +310,10 @@ jobs:
       - name: Install GNU parallel (bats --jobs dependency)
         run: sudo apt-get update && sudo apt-get install -y parallel
 
-      # Blocking absorption audit of the 17-file unattended-execution scope
-      # (doc-739 promotion). Pinned to ONE leg via the matrix-root condition so
+      # Blocking absorption audit of the SCOPE_FILES-listed unattended-execution
+      # scope (the array in scripts/audit-absorption.sh is its single source of
+      # truth — read the list, never a count quoted in prose; doc-739
+      # promotion). Pinned to ONE leg via the matrix-root condition so
       # it runs once on the shared checkout; ci-pass already observes test-bash
       # as a single node, so a non-zero auditor exit reddens the gate with no
       # extra `needs` wiring.
@@ -521,6 +528,82 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # ---------------------------------------------------------------------------
+  # scripts/test Python suites: a SIBLING job rather than a step inside
+  # test-python, because that job is declared pure-stdlib by design and this one
+  # installs pytest. pytest natively collects the unittest-style files too, so a
+  # single invocation covers every scripts/test/test_*.py — none of which any CI
+  # job read before. Dependencies come from requirements-dev.txt (CI-only) so the
+  # end-user bootstrap manifest requirements.txt never ships a test package.
+  # scripts/ is put on sys.path by scripts/test/conftest.py, so the invocation
+  # needs no cwd/PYTHONPATH contortion.
+  # ---------------------------------------------------------------------------
+  test-python-pytest:
+    name: "test: scripts pytest"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
+    if: needs.detect-changes.outputs.python == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install CI-only test dependencies
+        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      # Collection guard: pytest exits 5 on zero collected, but a SUBSET
+      # collapse (one file silently dropped by an import error the run masks)
+      # would still look green, so assert per-FILE presence instead of a total
+      # count — a count literal drifts on the next added suite.
+      - name: Assert every scripts/test suite is collected
+        run: |
+          set -o pipefail
+          python3 -m pytest scripts/test/ --collect-only -q --color=no >collected.txt
+          rc=0
+          for f in scripts/test/test_*.py; do
+            if ! grep -qF "${f}::" collected.txt; then
+              echo "FATAL: pytest collected no tests from ${f}" >&2
+              rc=1
+            fi
+          done
+          lifecycle="$(grep -cF 'scripts/test/test_agent_lifecycle_overhaul.py::' collected.txt || true)"
+          if [[ -z "${lifecycle}" ]]; then lifecycle=0; fi
+          if ((lifecycle < 9)); then
+            echo "FATAL: expected >=9 collected tests in test_agent_lifecycle_overhaul.py, got ${lifecycle}" >&2
+            rc=1
+          fi
+          exit "${rc}"
+
+      - name: Run scripts/test pytest suites
+        id: pytest
+        run: |
+          set -o pipefail
+          # --color=no: pytest emits ANSI even into a pipe, which would break the
+          # summary step's plain-text verdict grep below.
+          python3 -m pytest scripts/test/ -v --color=no 2>&1 | tee pytest.log
+
+      - name: Summarize scripts pytest results
+        if: always()
+        run: |
+          {
+            echo "## scripts/test pytest (Python 3.12)"
+            echo ""
+            if [[ ! -f pytest.log ]]; then
+              echo "> no pytest output captured (suite did not run)"
+              exit 0
+            fi
+            verdict="$(grep -E '^=+ .*(passed|failed|error).* =+$' pytest.log | tail -n1)"
+            echo "- result: ${verdict:-unknown}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # ---------------------------------------------------------------------------
   # Monitor: typecheck + node:test. Both need a LIVE peer-auth Postgres on the
   # /tmp socket (Prisma $queryRaw oracles) AND real chromium (browser-pool /
   # html/pdf export tests use Playwright with no mock — see browser-pool.ts).
@@ -696,6 +779,7 @@ jobs:
       - gate-doctor
       - test-bash
       - test-python
+      - test-python-pytest
       - test-monitor
     steps:
       # SECURITY (audited-safe — expression-injection avoidance): the `${{ }}`

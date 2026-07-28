@@ -4,7 +4,8 @@
 # PreToolUse(Write|Edit + Bash) harness-critical gate, agent_id-INDEPENDENT:
 #   Write|Edit arm → live settings.json/settings.local.json · live hook dirs ·
 #   agents/*.md frontmatter identity keys {name, tools, scope} (model excluded,
-#   body edits pass) · NEW agents/*.md Write · scheduled-exec dirs
+#   body edits pass) · NEW agents/*.md creation on any write-shaped tool ·
+#   unreadable or empty-old_string Edit payloads (fail-closed) · scheduled-exec dirs
 #   autoagent/+scripts/+skills/ (rules/+scoped/ EXCLUDED per H1-D1). Bash arm →
 #   best-effort, three block classes over three shared structural pre-passes
 #   (heredoc stripping · quote mask · ordered segmenter with a cwd-arming flag):
@@ -135,6 +136,20 @@ quoted_hook_path() { printf '%s' "${FAKE_HOME}/.glass-atrium/hooks/a\"b\\c.sh"; 
 write_input() { jq -cn --arg p "${1}" --arg c "${2}" '{file_path: $p, content: $c}'; }
 edit_input() { jq -cn --arg p "${1}" --arg o "${2}" --arg n "${3}" '{file_path: $p, old_string: $o, new_string: $n}'; }
 bash_input() { jq -cn --arg c "${1}" '{command: $c}'; }
+
+# Materialize a case-varied spelling of an existing fixture target: a no-op
+# overwrite on a case-INSENSITIVE volume, a real second file on a case-SENSITIVE
+# one (CI). Every case-varied row whose semantics need the target readable on disk
+# MUST call it — otherwise the classifier's read returns empty on CI and the row
+# silently changes meaning by platform.
+# Args: $1=existing source path $2=case-varied destination path.
+materialize_case_variant() {
+  mkdir -p "$(dirname "${2}")"
+  # On a case-INSENSITIVE volume the destination ALREADY resolves to the source, so
+  # a copy would truncate the fixture it is meant to duplicate — only a
+  # case-SENSITIVE volume needs the second file.
+  [[ -e "${2}" ]] || cp "${1}" "${2}"
+}
 
 # ── AC2-1: block classes, each with AND without agent_id ─────────────────────
 
@@ -1488,5 +1503,219 @@ MD
   envelope="$(jq -cn --arg c "python3 -c \"open('${FAKE_HOME}/.glass-atrium/autoagent/f','w')\"" \
     '{tool_name: "Bash", tool_input: {command: $c}}')"
   run env "HOME=${FAKE_HOME}" HARNESS_PROTECTION_APPROVE=1 "${HOOK_SH}" <<<"${envelope}"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── T1: case-varied protected paths, both arms (clauded-docs/753 F1) ──────────
+#
+# The real volume is APFS (case-INSENSITIVE), so the OS resolves
+# `.claude/Settings.json` onto the protected file while a case-SENSITIVE gate
+# discards the block. Three layers were independently defective — the pure-bash
+# prefilter root literals (T1-BC3 pins that one, arm-independent), the two python
+# protected-path regexes (Bash arm), and the write-arm dispatch globs — so the rows
+# run one case-varied spelling per protection class per arm.
+# EXIT CODE ONLY on every case-varied row: CI runs on a case-SENSITIVE volume where
+# the same spelling resolves to nothing, so the block CLASS legitimately diverges by
+# platform while the exit code does not.
+
+@test "T1-BC1 case-varied legacy hooks dir, Bash mutation verb → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.claude/Hooks/x.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC2 case-varied agents dir, Bash mutation verb → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Agents/victim.md')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC4 case-varied live settings, Bash redirect → block" {
+  run_hook "Bash" "$(bash_input 'echo x > ~/.claude/Settings.json')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC5 case-varied autoagent dir, Bash mutation verb → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/AutoAgent/daemon-apply.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC6 case-varied scripts dir, Bash mutation verb → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Scripts/x.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC7 case-varied skills dir, Bash mutation verb → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Skills/x.md')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# The plist LABEL is a SEPARATE PROT_RE alternative — the label itself carries the
+# prefilter literal, so a case-varied label defeats the prefilter and the regex in
+# one move.
+
+@test "T1-BC8 case-varied glass-atrium plist label → block" {
+  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.Glass-Atrium.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC8b case-varied legacy claude plist label → block" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/Library/LaunchAgents/com.CLAUDE.monitor.plist')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# PROT_DIR_RE is the SECOND consumer — the bare-directory form that arms a cwd.
+
+@test "T1-BC10 case-varied cwd arming on the GA hooks dir → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/Hooks && printf x > y.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-BC10b case-varied cwd arming on the legacy agents dir → block" {
+  run_hook "Bash" "$(bash_input 'cd ~/.claude/Agents && echo x | tee y.md')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# The prefilter root literal is the OUTERMOST layer and is shared by both arms: a
+# case-varied ROOT exits 0 before any classifier runs, so this row is defective
+# independently of everything downstream.
+
+@test "T1-BC3 case-varied protected ROOT literal → block (prefilter layer)" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.Claude/hooks/x.sh')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# ── T1 guarded-write arm, one row per protection class ────────────────────────
+
+@test "T1-K4 case-varied .MD Write of a NEW agent file → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/agents/victim.MD" '---
+name: victim
+tools: [Read, Bash, Write]
+scope: DEV
+---
+# Body
+')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K5 case-varied .MD Edit widening the identity trio → block" {
+  local variant="${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.MD"
+  materialize_case_variant \
+    "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" "${variant}"
+  run_hook "Edit" "$(edit_input "${variant}" 'tools: [Read, Bash]' 'tools: [Read, Bash, Write]')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K6 case-varied live settings Write → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.claude/Settings.json" '{"hooks":{}}')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K7 case-varied live hooks dir Write → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/Hooks/somehook.sh" 'echo pwn')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T1-K8 case-varied scheduled-exec dir Write → block" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/AutoAgent/daemon-apply.sh" 'echo pwn')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+# T1-K10 — the forensic row. The block payload for a raw-carrying path class must
+# still report the UNFOLDED envelope spelling; a case-insensitive raw-vs-normalised
+# comparison would silently drop it, deleting the evidence of the very attack this
+# closes. Asserts the exit code AND the raw string, never the class.
+
+@test "T1-K10 case-varied live-settings block payload carries the raw target" {
+  run_hook "Write" "$(write_input '~/.claude/Settings.json' '{"hooks":{}}')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *'"raw_target"'* ]] || return 1
+  [[ "${output}" == *'~/.claude/Settings.json'* ]] || return 1
+}
+
+# ── T1 over-shoot controls: the widening must not reach a non-protected path ──
+
+@test "T1-BC13 non-protected .claude/data path, Bash arm → still pass" {
+  run_hook "Bash" "$(bash_input 'echo x | tee ~/.claude/data/x.txt')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T1-BC13w non-protected .claude/data path, Write arm → still pass" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.claude/data/x.txt" 'notes')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T1-neg case-varied .MD under an EXCLUDED rules dir → still pass" {
+  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/rules/example.MD" 'notes')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+# ── T3: Edit-as-create + Edit-arm payload fail-close (clauded-docs/753 F2) ─────
+#
+# An Edit carrying an EMPTY old_string is host-ACCEPTED and is the host's own
+# CREATE shape, so E2/E3 are LIVE: the creation guard predicated on Write and
+# MultiEdit alone, and the Edit detector returned empty on a falsy old_string.
+# E1/E5/E6 are HOST-REJECTED by the strict Edit schema (unknown key `edits`,
+# required typed `old_string`) — pinned as DEFENSIVE fail-close rows, never as
+# live bypasses.
+
+@test "T3-E3 LIVE Edit old_string:'' creating a NEW agent file → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-new.md" \
+    '' $'---\nname: glass-atrium-dev-new\ntools: [Read, Bash, Write]\nscope: DEV\n---\n# Body\n')"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"new-agent-creation"* ]] || return 1
+}
+
+@test "T3-E3b LIVE Edit old_string:'' creating a NEW agent file (subagent) → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.claude/agents/glass-atrium-dev-new.md" \
+    '' $'---\nname: glass-atrium-dev-new\n---\n# Body\n')" "a1"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E2 LIVE Edit old_string:'' with evil frontmatter on an EXISTING agent file → block" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '' $'---\nname: glass-atrium-dev-shell\ntools: [Read, Bash, Write]\nscope: DEV\n---\n')"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E5 DEFENSIVE (host-rejected) Edit with old_string ABSENT → fail-closed block" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, new_string: "tools: [Read, Bash, Write]"}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E6 DEFENSIVE (host-rejected) Edit with old_string null → fail-closed block" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, old_string: null, new_string: "x"}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+}
+
+@test "T3-E1 DEFENSIVE (host-rejected) Edit carrying edits[] → fail-closed, not folded" {
+  local tin
+  tin="$(jq -cn --arg p "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '{file_path: $p, edits: [{old_string: "tools: [Read, Bash]", new_string: "tools: [Read, Bash, Write]"}]}')"
+  run_hook "Edit" "${tin}"
+  [[ "${status}" -eq 2 ]] || return 1
+  # Fail-closed on the unreadable payload, NOT a MultiEdit-arm identity verdict.
+  [[ "${output}" != *"identity-frontmatter-edit"* ]] || return 1
+}
+
+# ── T3 controls: the fail-close must not reach a body edit or a free path ──────
+
+@test "T3-ctl legitimate body Edit on an agent file → still pass" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" \
+    '# Body' '# Body text')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T3-ctl Edit old_string:'' on a NON-agent path → still pass (no global false positive)" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.claude/data/notes.md" '' 'fresh content')"
+  [[ "${status}" -eq 0 ]] || return 1
+}
+
+@test "T3-ctl Edit old_string:'' under the EXCLUDED rules dir → still pass" {
+  run_hook "Edit" "$(edit_input "${FAKE_HOME}/.glass-atrium/rules/example.md" '' 'notes')"
   [[ "${status}" -eq 0 ]] || return 1
 }

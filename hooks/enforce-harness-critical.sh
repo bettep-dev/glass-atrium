@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# enforce-harness-critical.sh — PreToolUse(Write|Edit + Bash) harness-critical file gate.
+# enforce-harness-critical.sh — PreToolUse(Write|Edit|MultiEdit + Bash) harness-critical file gate.
 # Both arms block agent_id-INDEPENDENT (main session AND every subagent): a per-FILE
 # protection floor, NOT a per-agent tool-grant check (core-security.md LLM06 boundary).
 #
-# Write|Edit arm (deterministic):
+# Write|Edit|MultiEdit arm (deterministic):
 #   (a) live harness settings — ~/.claude/settings.json + ~/.claude/settings.local.json
 #   (b) LIVE hook dirs — ~/.glass-atrium/hooks/ (primary) + ~/.claude/hooks/ (legacy)
 #   (c) agents/*.md frontmatter IDENTITY keys {name, tools, scope} — `model:` EXCLUDED
@@ -14,8 +14,20 @@
 #       Write on an EXISTING agent file blocks only when its identity lines DIFFER
 #       from the on-disk frontmatter. A file left with an UNTERMINATED opening fence
 #       is a tampered state: Edit AND Write both block until repaired via a
-#       sanctioned path / launch-env grant.
-#   (d) Write of a NEW agents/*.md — creation routes through the agent_lifecycle CLI.
+#       sanctioned path / launch-env grant. An Edit whose old_string is EMPTY is
+#       the host's create shape rather than a no-op, and one whose old/new keys are
+#       missing or non-string is unreadable — both block fail-closed (the latter
+#       two shapes are host-REJECTED by the strict Edit schema, so they are closed
+#       defensively). A MultiEdit is folded onto disk element
+#       by element IN ORDER and the composed IDENTITY compared ONCE — per-element
+#       comparison passes a widening staged across two elements, because a later
+#       element's old_string exists only after an earlier one has landed; its fence
+#       delta counts only the elements overlapping the accumulator's CURRENT
+#       frontmatter span, which is the Edit arm's rule composed. An edits
+#       payload this gate cannot read is unanswerable, so it blocks fail-closed.
+#   (d) Write, Edit or MultiEdit of a NEW agents/*.md — creation routes through the
+#       agent_lifecycle CLI (MultiEdit creates via an empty first old_string, Edit
+#       via an empty top-level one).
 #   (e) scheduled-execution surface — ~/.glass-atrium/{autoagent,scripts,skills}/;
 #       launchd runs autoagent/ code unattended, so a plain Edit persists code the
 #       scheduler later executes (LLM06). rules/ + scoped/ are EXCLUDED by design —
@@ -86,6 +98,10 @@
 # empty-target allow. Non-trivial input with python3 missing — or a classifier
 # that exits non-zero, or whose in-band status trailer reads empty or misaligned
 # — is a HAR-003 block (exit 2), never a pass.
+# Path matching is CASE-INSENSITIVE on BOTH arms, at every layer (prefilter,
+# protected-path regexes, dispatch globs): the real volume is APFS, which resolves a
+# case-varied spelling onto the protected file. Widening-only — on a case-SENSITIVE
+# volume it blocks more, never less.
 # Block channel: stderr emit_error + exit 2 (shared-hook-capability-contract.md).
 # Scope: LIVE install paths ONLY (HOME-anchored) — the git repo tree is untouched.
 
@@ -105,6 +121,35 @@ INPUT="$(hook_read_input)"
 # (mirrors enforce-delegation.sh DEL-002). Empty input ("{}") stays exit 0.
 hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
   "Harness-critical gate unavailable: python3 is required to parse hook input"
+
+# Case-insensitive shell matching — the ONE bash-layer normalisation point (the
+# python counterpart is re.IGNORECASE on the two protected-path regexes), so the
+# prefilter, the dispatch globs and any future protection class inherit the
+# property instead of re-deriving it per class.
+# Why: the real volume is APFS (case-INSENSITIVE), so the OS resolves
+# `.claude/Settings.json` onto the protected file while a case-SENSITIVE gate
+# discards the block.
+# MONOTONE-WIDENING BY CONSTRUCTION, not by inspection: for a fixed pattern every
+# string matching case-sensitively still matches, and none of this file's 7 `case`
+# sites is an allowlist-shaped early exit-0-on-match → the option can only ever
+# block MORE.
+# Shell-GLOBAL, so two further enumerations complete that argument — record them
+# here, or the next hook-utils.sh edit silently invalidates it:
+#   (a) hook-utils.sh patterns reachable from here — hook_normalize_path's
+#       '~' / '~/'* / /* / "" / "." / ".." arms · hook_input_is_empty's
+#       "" / "{}" / "{ }" arms · _hook_json_escape's substitutions — are all
+#       LETTER-FREE, so folding is a provable no-op there.
+#   (b) the `[[ ]]` and parameter-expansion patterns it equally governs — the
+#       PY_STATUS digit literal · the `error:*` / `block:*` verdict arms and the
+#       `${VERDICT#block:}` strip (classifier-generated lowercase) · the TOOL_NAME
+#       comparison (folds wider, harmless). The ONE collapse it would cause is
+#       held out in POSIX test form at write_edit_arm's raw-vs-normalised
+#       inequality, which this option does not govern.
+# Accepted trades: an over-block on a case-SENSITIVE volume (fail-toward-blocking
+# is the correct direction for a security floor) · folding is locale-dependent, so
+# a Turkish-locale dotless-i spelling still evades — an INCOMPLETE widening
+# relative to HEAD, never a narrowing.
+shopt -s nocasematch
 
 # Hot-path prefilter (pure bash, zero spawns): every protected class textually
 # requires one of the two protected-root dir-name literals in the raw envelope —
@@ -144,8 +189,9 @@ import sys
 # Identity trio ONLY — the operator pin key (model:) stays OUT of the guarded set
 # by governance, so a live model pin edits freely. Column-0 anchoring is what keeps
 # a folded continuation or a nested-map value from impersonating a guarded key.
+GUARDED_KEYS = ("name", "tools", "scope")
 GUARDED_KEY_RE = re.compile(r"^(name|tools|scope)[ \t]*:(.*)$")
-ANY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
+PLAIN_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 LIST_ITEM_RE = re.compile(r"^[ \t]*-[ \t]+(.*)$")
 NESTED_KEY_RE = re.compile(r"^[ \t]+[A-Za-z_][A-Za-z0-9_.\-]*[ \t]*:")
 
@@ -160,6 +206,13 @@ class FrontmatterUnparseable(Exception):
 # (com.claude.* legacy + com.glass-atrium.* live) — the same label form
 # daemon_cycle.py treats as a safety-tier surface; the label itself carries the
 # prefilter literal, so a plist envelope reaches this classifier.
+# IGNORECASE is the python counterpart of the shell's nocasematch and is purely
+# WIDENING; it lands on exactly these two compiles, which covers every consumer of
+# both at once — the combined protected-path predicate and the cwd-arming site.
+# NOT re.ASCII alongside it — that redefines PROT_DIR_RE's
+# trailing lookahead below. And NEVER a global locale export: the classifier
+# inherits the hook environment, where a stdin decode failure degrades to an empty
+# tool name and a fallthrough exit 0, so a locale pin can turn the gate FAIL-OPEN.
 PROT_RE = re.compile(
     r"\.claude/settings(?:\.local)?\.json"
     r"|\.claude/hooks/"
@@ -169,7 +222,8 @@ PROT_RE = re.compile(
     r"|\.glass-atrium/autoagent/"
     r"|\.glass-atrium/scripts/"
     r"|\.glass-atrium/skills/"
-    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist"
+    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist",
+    re.IGNORECASE,
 )
 
 # Directory form of the protected roots, for cwd arming. A `cd` argument
@@ -180,7 +234,8 @@ PROT_RE = re.compile(
 PROT_DIR_RE = re.compile(
     r"(?:\.claude/(?:hooks|agents)"
     r"|\.glass-atrium/(?:hooks|agents|autoagent|scripts|skills))"
-    r"(?![\w.\-])"
+    r"(?![\w.\-])",
+    re.IGNORECASE,
 )
 
 # Copy/mutation/permission verbs recognised in COMMAND position (sed only with an
@@ -407,6 +462,34 @@ def split_flow(body):
     return [c for c in (canon(x) for x in items) if c != ""]
 
 
+def guarded_key_line(line):
+    """(name, raw value) for a column-0 guarded key line, else None.
+
+    The host parser folds `"tools":` onto `tools`, so the bare matcher alone reads a
+    quoted twin as prose while the grant it carries is real — key-side quote tolerance
+    is the same allowance canon() already gives the value side. A column-0 key spelling
+    that resolves to NEITHER a guarded key nor a plain identifier (an escape, an
+    unbalanced quote) is one the host may still fold onto a guarded key, so it is
+    unanswerable rather than inert. Colon-LESS column-0 lines — the fences among them
+    — carry no key at all and stay inert."""
+    bare = GUARDED_KEY_RE.match(line)
+    if bare is not None:
+        return bare.group(1), bare.group(2)
+    if line[:1] in (" ", "\t") or LIST_ITEM_RE.match(line) is not None:
+        return None
+    head, sep, rest = line.partition(":")
+    if not sep:
+        return None
+    spelling = head.strip()
+    if len(spelling) >= 2 and spelling[0] == spelling[-1] and spelling[0] in ("'", '"'):
+        spelling = spelling[1:-1]
+    if spelling in GUARDED_KEYS:
+        return spelling, rest
+    if PLAIN_KEY_RE.match(spelling) is None:
+        raise FrontmatterUnparseable("unreadable key spelling: " + head.strip())
+    return None
+
+
 def identity_struct(text):
     """Guarded key → the STRUCTURE it grants, parsed from the frontmatter region only.
 
@@ -415,13 +498,16 @@ def identity_struct(text):
     is visible in either. `name`/`scope` are canonical scalars. An ABSENT guarded key
     is absent from the dict (both-absent compares equal); `tools:` with no items is
     an EMPTY frozenset, which differs from absence — revoking every grant is a change.
-    Raises FrontmatterUnparseable when a guarded value leaves the parse contract."""
+    Raises FrontmatterUnparseable when a guarded value leaves the parse contract, and
+    when a guarded key occurs TWICE in any quoting mix: the host keeps the LAST value,
+    so reproducing that fold here would make the winning grant unanswerable."""
     span = frontmatter_span(text)
     if span is None:
         return {}
     out = {}
     key = None
     items = []
+    seen = set()
 
     def flush():
         if key is not None:
@@ -432,11 +518,14 @@ def identity_struct(text):
         # file puts a comment directly above `tools:` and between its items.
         if not line.strip() or re.match(r"^[ \t]*#", line):
             continue
-        guarded = GUARDED_KEY_RE.match(line)
+        guarded = guarded_key_line(line)
         if guarded is not None:
             flush()
             key, items = None, []
-            name, rest = guarded.group(1), canon(guarded.group(2))
+            name, rest = guarded[0], canon(guarded[1])
+            if name in seen:
+                raise FrontmatterUnparseable("duplicate guarded key: " + name)
+            seen.add(name)
             if rest == "":
                 key = name
             elif rest.startswith("["):
@@ -496,6 +585,21 @@ def unterminated(disk):
     return frontmatter_span(disk) is None and disk.split("\n", 1)[0].strip() == "---"
 
 
+def overlaps_frontmatter(text, old):
+    """True when SOME occurrence of `old` in `text` intersects text's frontmatter
+    span. One definition serves both arms, so the MultiEdit fence delta is scoped by
+    the same rule as the Edit one instead of re-deriving it."""
+    span = frontmatter_span(text)
+    if span is None:
+        return False
+    start = text.find(old)
+    while start != -1:
+        if start < span[1] and (start + len(old)) > span[0]:
+            return True
+        start = text.find(old, start + 1)
+    return False
+
+
 def detect_agent_write(tool_input):
     """Write on an EXISTING agents/*.md — block when the parsed identity structure
     differs from disk, or when the on-disk frontmatter is unterminated (tampered)."""
@@ -514,25 +618,27 @@ def detect_agent_write(tool_input):
 def detect_agent_edit(tool_input):
     """Edit on agents/*.md — block when old_string overlaps the on-disk frontmatter
     AND the edit alters the fence-line count OR the parsed identity structure.
-    An unterminated opening fence blocks outright (tampered state)."""
-    old = tool_input.get("old_string", "")
-    new = tool_input.get("new_string", "")
-    if not old:
-        return ""
+    An unterminated opening fence blocks outright (tampered state).
+
+    An EMPTY old_string is the host's own CREATE operation, not a no-op, so it can
+    never take the overlap short-circuit: an absent target is owned by the shell
+    arm's creation guard, and on an EXISTING guarded file the result is a whole-file
+    overwrite this pair-wise arm cannot model — unanswerable, hence fail-closed.
+    Missing or non-string old/new is likewise unreadable. Presence is tested BEFORE
+    type and never by truthiness, because "" is exactly the legitimate create
+    spelling and a truthiness gate would collapse the two shapes into one."""
+    if "old_string" not in tool_input or "new_string" not in tool_input:
+        return "unreadable-edit-payload"
+    old = tool_input["old_string"]
+    new = tool_input["new_string"]
+    if not isinstance(old, str) or not isinstance(new, str):
+        return "unreadable-edit-payload"
+    if old == "":
+        return "edit-create-shape"
     disk = read_disk(tool_input.get("file_path", ""))
     if unterminated(disk):
         return "unterminated-frontmatter"
-    span = frontmatter_span(disk)
-    if span is None:
-        return ""
-    overlap = False
-    start = disk.find(old)
-    while start != -1:
-        if start < span[1] and (start + len(old)) > span[0]:
-            overlap = True
-            break
-        start = disk.find(old, start + 1)
-    if not overlap:
+    if not overlaps_frontmatter(disk, old):
         return ""
     if fence_count(old) != fence_count(new):
         return "frontmatter-fence-edit"
@@ -540,6 +646,80 @@ def detect_agent_edit(tool_input):
     # mirrors the Edit tool's own semantics; the default is first-occurrence.
     after = disk.replace(old, new) if tool_input.get("replace_all") else disk.replace(old, new, 1)
     try:
+        if identity_struct(disk) != identity_struct(after):
+            return "identity-frontmatter-edit"
+    except FrontmatterUnparseable:
+        return "frontmatter-unparseable"
+    return ""
+
+
+def apply_edits(disk, edits):
+    """(composed text, fence-tamper flag) for every edits[] element applied IN ORDER,
+    each honouring its OWN replace_all — the Edit tool's semantics, composed. A
+    payload that is not a non-empty list of dicts carrying string old/new is one this
+    gate cannot read, and an unreadable envelope on a guarded path is unanswerable,
+    not inert.
+
+    The fence flag is scoped per element against the ACCUMULATOR, never against disk:
+    an element's `---` delta counts only while its old_string overlaps the
+    accumulator's CURRENT frontmatter span. Scoping it to the accumulator is what
+    keeps the staged shape visible (a later element's old_string exists only after an
+    earlier one lands, so a disk probe would miss it), and scoping it at all is what
+    keeps a body horizontal rule out of the count."""
+    if not isinstance(edits, list) or not edits:
+        raise FrontmatterUnparseable("unreadable MultiEdit edits payload")
+    after = disk
+    fence_tamper = False
+    for element in edits:
+        if not isinstance(element, dict):
+            raise FrontmatterUnparseable("MultiEdit element is not a mapping")
+        # PRESENCE before type: an empty-string default is itself a string, so the
+        # type test alone reads a MISSING key as an empty edit. Presence — never
+        # truthiness — is the test, because a present-but-empty old_string is the
+        # legitimate create shape.
+        if "old_string" not in element or "new_string" not in element:
+            raise FrontmatterUnparseable("MultiEdit element is missing old_string or new_string")
+        old = element["old_string"]
+        new = element["new_string"]
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise FrontmatterUnparseable("MultiEdit element old/new is not a string")
+        if fence_count(old) != fence_count(new) and overlaps_frontmatter(after, old):
+            fence_tamper = True
+        after = after.replace(old, new) if element.get("replace_all") else after.replace(old, new, 1)
+    return after, fence_tamper
+
+
+def detect_agent_multiedit(tool_input):
+    """MultiEdit on agents/*.md — fold the whole edits array onto disk, then compare
+    the composed result ONCE.
+
+    A per-element probe against DISK is exploitable: element 1 makes a
+    frontmatter-overlapping but struct-NEUTRAL change, and element 2's old_string
+    exists only AFTER element 1 lands, so its own overlap test misses while the
+    composed file widens `tools`. Folding first is what makes the staged shape
+    visible, so the IDENTITY comparison stays unconditional on the composed result.
+
+    Only the FENCE delta is per-element (apply_edits, scoped to the accumulator's
+    current frontmatter span). A whole-file `---` count cannot tell a frontmatter
+    fence from a body horizontal rule, so it blocked benign body rules the Edit arm
+    allows — and its only unique coverage was an f3-shaped second `---`…`---` block
+    appended AFTER the real closing fence, a shape a whole-file count cannot
+    distinguish from that same benign rule. That shape is now NOT COVERED: whether
+    the host parser reads a second block as frontmatter at all is UNPROBED, and
+    trading one unprobed assumption for another is not a fix (the post-rescope
+    verdict is pinned as a characterization row in the MultiEdit suite).
+
+    A composed file whose frontmatter span is GONE while disk had one is a tampered
+    state no per-element overlap need establish, so it fails closed on its own."""
+    disk = read_disk(tool_input.get("file_path", ""))
+    if unterminated(disk):
+        return "unterminated-frontmatter"
+    try:
+        after, fence_tamper = apply_edits(disk, tool_input.get("edits"))
+        if fence_tamper:
+            return "frontmatter-fence-edit"
+        if frontmatter_span(disk) is not None and frontmatter_span(after) is None:
+            return "frontmatter-fence-edit"
         if identity_struct(disk) != identity_struct(after):
             return "identity-frontmatter-edit"
     except FrontmatterUnparseable:
@@ -1118,7 +1298,7 @@ def main():
         tool_input = {}
     tool_name = str(data.get("tool_name", ""))
     raw_target = ""
-    if tool_name in ("Write", "Edit"):
+    if tool_name in ("Write", "Edit", "MultiEdit"):
         # Normalisation is the FIRST operation on the parsed envelope — ahead of
         # every disk read and arm dispatch. A tilde/traversal spelling reaching
         # read_disk unresolved yields "" (OSError), which reads as "no frontmatter"
@@ -1138,6 +1318,8 @@ def main():
             reason = detect_agent_write(tool_input)
         elif tool_name == "Edit":
             reason = detect_agent_edit(tool_input)
+        elif tool_name == "MultiEdit":
+            reason = detect_agent_multiedit(tool_input)
         elif tool_name == "Bash":
             reason = detect_bash(tool_input)
         else:
@@ -1255,7 +1437,12 @@ write_edit_arm() {
   # for the shell-side match arms, not the live normalisation.
   norm="$(hook_normalize_path "${TARGET}")"
   raw=""
-  [[ "${RAW_TARGET}" != "${norm}" ]] && raw="${RAW_TARGET}"
+  # POSIX test, deliberately NOT `[[ ]]`: the shell-global nocasematch set above
+  # governs `[[ ]]` but not `[ ]`, and folding here would report a case-varied
+  # envelope as already-resolved — deleting the raw spelling from the block payload,
+  # i.e. exactly the forensic evidence of the case-variance attack.
+  # shellcheck disable=SC2292
+  [ "${RAW_TARGET}" != "${norm}" ] && raw="${RAW_TARGET}"
 
   case "${norm}" in
     "${CLAUDE_DIR}/settings.json" | "${CLAUDE_DIR}/settings.local.json")
@@ -1276,7 +1463,11 @@ write_edit_arm() {
     *) exit 0 ;;
   esac
 
-  if [[ "${TOOL_NAME}" == "Write" && ! -e "${norm}" ]]; then
+  # Creation is not a Write-only shape — an absent target is the creation signal
+  # for every tool this arm dispatches: MultiEdit creates through an EMPTY first
+  # element old_string, and a plain Edit through an EMPTY top-level one, which the
+  # host accepts and classifies as a create.
+  if [[ "${TOOL_NAME}" == "Write" || "${TOOL_NAME}" == "Edit" || "${TOOL_NAME}" == "MultiEdit" ]] && [[ ! -e "${norm}" ]]; then
     block_critical "HAR-001" "new-agent-creation" "${norm}"
   fi
   case "${VERDICT}" in
@@ -1293,7 +1484,7 @@ bash_arm() {
 }
 
 case "${TOOL_NAME}" in
-  Write | Edit) write_edit_arm ;;
+  Write | Edit | MultiEdit) write_edit_arm ;;
   Bash) bash_arm ;;
   *) exit 0 ;;
 esac

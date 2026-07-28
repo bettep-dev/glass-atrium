@@ -283,7 +283,10 @@ def _extract_source_url(file_path: Path) -> str:
         # newline="" disables universal-newline translation so a lone \r reaches
         # the parser as a value byte, mirroring awk's \n-only record split — the
         # default translation would rewrite \r to \n and truncate the value here.
-        text = file_path.read_text(encoding="utf-8", errors="replace", newline="")
+        # Path.open carries newline on the 3.11 CI floor → Path.read_text accepts
+        # it only from 3.13.
+        with file_path.open(encoding="utf-8", errors="replace", newline="") as fh:
+            text = fh.read()
     except OSError:
         return ""
 
@@ -327,7 +330,10 @@ def _extract_source_raw(file_path: Path) -> str:
     try:
         # newline="" disables universal-newline translation so a lone \r reaches
         # the parser as a value byte, mirroring awk's \n-only record split.
-        text = file_path.read_text(encoding="utf-8", errors="replace", newline="")
+        # Path.open carries newline on the 3.11 CI floor → Path.read_text accepts
+        # it only from 3.13.
+        with file_path.open(encoding="utf-8", errors="replace", newline="") as fh:
+            text = fh.read()
     except OSError:
         return ""
 

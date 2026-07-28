@@ -15,7 +15,8 @@
 #   GA_ROOT env overrides ~/.glass-atrium (tests point it at a sandbox root).
 #
 # Guarantees:
-#   * whitelist-scoped — only the seven relative dirs below, never the GA root
+#   * whitelist-scoped — only the seven relative dirs of the shared roster leaf
+#     (scripts/lib/recovery-repos.sh), never the GA root
 #   * idempotent — a clean repo is a logged no-op, so a second run adds no commit
 #   * human-in-the-loop — porcelain summary + diffstat + untracked list print
 #     BEFORE anything is staged, and --dry-run stages/commits nothing at all
@@ -36,6 +37,7 @@
 #   4  apply-lock held by a live writer (daemon-apply.sh parity)
 #   5  apply-lock lib missing (daemon-apply.sh parity)
 #   6  refusal screen matched (loud-fail, nothing staged, nothing committed)
+#   7  recovery-repo roster lib missing (scope undefined, nothing staged)
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -55,25 +57,12 @@ unset _self_dir
 # (same idiom as init-test-repos.sh).
 readonly GA_ROOT="${GA_ROOT:-${HOME}/.glass-atrium}"
 
-# Scope is EXACTLY these seven relative dirs — the GA root itself is never a
-# candidate (it holds secrets, logs, runtime data and the before-image sink).
-# Clean members are a no-op, so listing all seven costs nothing and covers a
-# repo that goes dirty later.
-readonly LIVE_REPOS=(
-  'autoagent'
-  'agents'
-  'monitor'
-  'scripts/test'
-  'rules'
-  'test'
-  'hooks/test'
-)
-
 readonly EXIT_ARGS=2
 readonly EXIT_MISSING_DIR=3
 readonly EXIT_LOCK_HELD=4
 readonly EXIT_LOCK_LIB=5
 readonly EXIT_REFUSED=6
+readonly EXIT_ROSTER_LIB=7
 
 # Shared writer lock — SAME precedence as daemon-apply.sh and update.sh, so all
 # three writers contend on ONE canonical lock directory.
@@ -140,6 +129,26 @@ fi
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/apply-lock.sh
 . "${APPLY_LOCK_LIB}"
+
+# Scope is EXACTLY the seven relative dirs of the shared roster leaf — the GA root
+# itself is never a candidate (it holds secrets, logs, runtime data and the
+# before-image sink). Clean members are a no-op, so listing all seven costs nothing
+# and covers a repo that goes dirty later. The roster is shared with the read side
+# (lib/ga-doctor.sh snapshot_staleness_scan) so neither side can go blind to a repo
+# the other reconciles. Resolution is script-relative first (the installed tree keeps
+# lib/ beside this script); only the DEFAULT path falls back to the GA root, for an
+# invocation through a facade dir with no lib/ mirror.
+ROSTER_LIB="${SCRIPT_DIR}/lib/recovery-repos.sh"
+if [[ ! -f "${ROSTER_LIB}" ]]; then
+  ROSTER_LIB="${GA_ROOT}/scripts/lib/recovery-repos.sh"
+fi
+readonly ROSTER_LIB
+if [[ ! -f "${ROSTER_LIB}" ]]; then
+  die "recovery-repo roster lib missing (${ROSTER_LIB}) — the snapshot scope is undefined" "${EXIT_ROSTER_LIB}"
+fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/recovery-repos.sh
+. "${ROSTER_LIB}"
 
 # Release the lock only if we still hold it, and drop the status scratch dir.
 cleanup() {
@@ -396,7 +405,7 @@ main() {
   # zero partial side effects.
   [[ -d "${GA_ROOT}" ]] || die "GA root not found: ${GA_ROOT}" "${EXIT_MISSING_DIR}"
   local rel dir
-  for rel in "${LIVE_REPOS[@]}"; do
+  for rel in "${RECOVERY_REPOS[@]}"; do
     [[ -d "${GA_ROOT}/${rel}" ]] || die "repo dir missing: ${GA_ROOT}/${rel}" "${EXIT_MISSING_DIR}"
   done
 
@@ -409,7 +418,7 @@ main() {
   # Phase 1 — record every repo's candidate set and screen it. Screening ALL
   # seven before committing ANY is what makes a refusal all-or-nothing.
   local idx=0
-  for rel in "${LIVE_REPOS[@]}"; do
+  for rel in "${RECOVERY_REPOS[@]}"; do
     dir="${GA_ROOT}/${rel}"
     idx=$((idx + 1))
     if [[ ! -e "${dir}/.git" ]]; then
@@ -427,7 +436,7 @@ main() {
   # diffstat immediately before the commit it produces.
   local recorded=0 clean=0 absent=0
   idx=0
-  for rel in "${LIVE_REPOS[@]}"; do
+  for rel in "${RECOVERY_REPOS[@]}"; do
     dir="${GA_ROOT}/${rel}"
     idx=$((idx + 1))
     if [[ ! -e "${dir}/.git" ]]; then
