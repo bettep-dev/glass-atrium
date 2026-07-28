@@ -52,6 +52,23 @@
 # clauded-docs routing instruction. Workflow-script mirror of the runtime PreToolUse(Write) hook
 # (block-doc-routing-leak.sh); defense-in-depth, fail-open dominant. Details at the doc-routing helper.
 #
+# THIRD ADVISORY PASS (schema-cap, PRESENCE-ONLY, advisory — NEVER exit 2): flags the StructuredOutput
+# schema cap shapes that drive the engine's "retry cap (5) exceeded" collapse loop. Three scoped rules
+# over a comment-stripped + string-masked operand (the mask computed over the ALREADY-stripped text, so
+# a cap inside a comment stays inert): (R1) maxLength on a completion-block field, (R2) maxLength /
+# maxItems inside an `items` object literal, (R3) maxLength strictly between 64 and 300. The per-rule
+# one-edit remediations, the published non-flag list, and the honest scan limits ship IN the message
+# (print_schema_cap_advisory). VERDICT ISOLATION: the scan is its own top-level python function with
+# its own internal except -> False, so a scan failure can never reach the module-level handler (which
+# emits PASS) and silently convert a real BLOCK into a fail-open pass.
+#
+# PROMOTION CONDITION (verbatim — this header is the referenced SoT; the authoring guidance points here
+# rather than restating it):
+#   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
+#   positives across a full rolling firing-log window, the copy-verbatim skeletons in
+#   skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit
+#   remediation in the advisory text for each of the three scoped rules.
+#
 # HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
 # enforcement. It verifies the declaration is PRESENT and CONSISTENT with the code's spawns; it does
 # NOT verify a feasible verdict was emitted or that a gating expression consumes it (those stay the
@@ -240,6 +257,19 @@ print_resilience_advisory() {
 # workflow — matching the resilience-advisory posture + the plan (clauded-docs/279 D2) fail-open floor.
 print_analysis_size_advisory() {
   printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (analysis size-attestation, non-blocking): this workflow spawns a schema-mode NON-DEV analysis/research/audit agent (researcher/planner/reporter/reviewer) but carries NO [SIZE-EST] delegation-size token. A single broad-read + high-effort + 3-4-field schema agent exhausts the turn budget before the terminal StructuredOutput (the non-emit failure class). RIGHT-SIZE at Decision time: emit the analysis-mode token log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>'), and if reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) SPLIT by domain into N narrow agents up front (never one broad agent then a reactive split). Bound each track: a file/dir read allowlist (NOT a repo sweep), effort matched to depth (default medium for broad reads; high only for narrow deep reasoning), <=2-3 output fields, and a HARD BUDGET guard ('STOP and EMIT partial when approaching ~N tool uses'). Presence-only, never estimate correctness — parity with the DEV [SIZE-EST]. ADVISORY ONLY, this check NEVER blocks (fail-open on ambiguous shapes)." >&2
+  return 0
+}
+
+# print_schema_cap_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
+# DECISION fires INSIDE the python3 verdict helper (schema_cap_advisory_needed) and arrives as a
+# SCHEMA_CAP_ADVISE / SCHEMA_CAP_SILENT flag on its FIFTH output line. PRESENCE-ONLY: the seam carries
+# ONE binary token, so the message enumerates all three rules and their one-edit fixes rather than
+# naming the matched rule or field — deliberate, and stated in the text so silence on a detail is not
+# read as a clean bill. Shipping the per-rule remediations + the published non-flag list from day one
+# is required by the promotion condition in the header (building them at promotion time would block
+# promotion on a message rewrite).
+print_schema_cap_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (measured real blocks run 285/284/1224 chars against caps of 600/900/1200, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header." >&2
   return 0
 }
 
@@ -898,6 +928,166 @@ def analysis_size_advisory_needed(stripped, attestation_src, dev_present, dev_se
         return False
 
 
+# Schema-cap token shape + the completion-block key shape (R1). The key shape admits an underscore or
+# hyphen separator (and none), matched case-insensitively.
+SCHEMA_CAP_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_$])(maxLength|maxItems)(?![A-Za-z0-9_$])")
+COMPLETION_KEY_RE = re.compile(r"completion[_-]?block", re.IGNORECASE)
+
+
+def schema_cap_advisory_needed(stripped):
+    # ADVISORY-ONLY presence scan for the StructuredOutput cap shapes that drive the engine-internal
+    # "retry cap (5) exceeded" collapse loop. Three scoped rules: R1 a maxLength on a completion-block
+    # field (unconditional — the standing rule mandates the FULL block, so schema compliance and rule
+    # compliance are mutually exclusive at any cap); R2 a maxLength/maxItems inside an `items` object
+    # literal (per-element caps MULTIPLY the constraint count, so shrinking one element overflows
+    # another — the non-converging shape); R3 a maxLength strictly between 64 and 300.
+    # VERDICT ISOLATION (blocking requirement): this is a TOP-LEVEL function with its OWN terminal
+    # except -> False. Inlining it at module scope would put the scan inside the module-level handler
+    # whose recovery path emits PASS, so an index/pattern/brace-walk failure would silently convert a
+    # real BLOCK into a fail-open pass — a gate WEAKENING, not a tidiness point.
+    # OPERAND (blocking requirement): the comment-stripped source with every string-literal position
+    # blanked, the mask computed over the ALREADY-comment-stripped text. Order is load-bearing —
+    # _string_mask deliberately leaves comment interiors unmasked, so masking raw source first would
+    # re-expose caps living inside comments. Consequence by construction: a cap inside a commented-out
+    # example and a cap word quoted inside a delegation template literal are both INERT, which is what
+    # lets the canonical skeletons in this repository pass unmodified.
+    # KEY tokens resolve from `stripped` at the SAME offsets (the mask is offset-preserving) while the
+    # cap-token and colon/paren anchors resolve from the masked operand: a QUOTED key has its interior
+    # blanked, so reading the key off the masked text would silently miss every quoted-key schema.
+    # HONEST LIMITS (also published in the advisory text): no JS parse, so a schema built by a helper /
+    # spread / import, a variable-valued cap, and a fully-quoted JSON-style schema (the cap TOKEN itself
+    # string-resident) are all invisible; the `items` span stays a brace-scan text heuristic.
+    try:
+        if "maxLength" not in stripped and "maxItems" not in stripped:
+            return False
+        smask = _string_mask(stripped)
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        caps = [(m.start(), m.end(), m.group(1)) for m in SCHEMA_CAP_TOKEN_RE.finditer(struct)]
+        if not caps:
+            return False
+        n = len(struct)
+        obrace, cbrace, oparen = chr(123), chr(125), chr(40)
+        ws = " \t\r\n\f\v"
+        walk_limit = 200
+
+        def skip_ws_left(j, stop):
+            # Whitespace is read from `stripped`: a masked string interior is a SPACE in struct, so
+            # skipping over struct here would walk straight through a quoted key.
+            while j > stop and j >= 0 and stripped[j] in ws:
+                j -= 1
+            return j
+
+        def enclosing_brace(idx):
+            # Innermost UNCLOSED opening brace left of idx, bounded so the scan stays linear.
+            depth = 0
+            j = idx - 1
+            stop = idx - walk_limit
+            while j > stop and j >= 0:
+                c = struct[j]
+                if c == cbrace:
+                    depth += 1
+                elif c == obrace:
+                    if depth == 0:
+                        return j
+                    depth -= 1
+                j -= 1
+            return None
+
+        def brace_key(brace_idx):
+            # The property key owning the object literal that opens at brace_idx, or None when
+            # unresolvable — unresolvable NEVER fires. Walking left from the brace: whitespace, then
+            # OPTIONALLY one opening paren preceded by an identifier or dotted-identifier chain, then
+            # a colon, then the key token, bare or quoted. The optional paren step covers a
+            # builder-style property declaration alongside a plain object-literal one.
+            stop = brace_idx - walk_limit
+            j = skip_ws_left(brace_idx - 1, stop)
+            if j < 0 or j <= stop:
+                return None
+            if struct[j] == oparen:
+                j = skip_ws_left(j - 1, stop)
+                while j > stop and j >= 0 and (struct[j].isalnum() or struct[j] in "_$."):
+                    j -= 1
+                j = skip_ws_left(j, stop)
+            if j < 0 or j <= stop or struct[j] != ":":
+                return None
+            j = skip_ws_left(j - 1, stop)
+            if j < 0 or j <= stop:
+                return None
+            ch = stripped[j]
+            if ch in (chr(39), chr(34), chr(96)):
+                k = j - 1
+                while k > stop and k >= 0 and stripped[k] != ch:
+                    k -= 1
+                if k < 0 or k <= stop:
+                    return None
+                return stripped[k + 1:j] or None
+            k = j
+            while k > stop and k >= 0 and (stripped[k].isalnum() or stripped[k] in "_$"):
+                k -= 1
+            return stripped[k + 1:j + 1] or None
+
+        def cap_value(end_idx):
+            # The numeric literal a cap token binds to, or None (a variable-valued cap is unreadable).
+            k = end_idx
+            while k < n and struct[k] in ws:
+                k += 1
+            if k >= n or struct[k] != ":":
+                return None
+            k += 1
+            while k < n and struct[k] in ws:
+                k += 1
+            d = k
+            while d < n and struct[d].isdigit():
+                d += 1
+            if d == k:
+                return None
+            return int(struct[k:d])
+
+        for (start, end, token) in caps:
+            if token != "maxLength":
+                continue
+            # R1 — completion-block field.
+            brace = enclosing_brace(start)
+            if brace is not None:
+                key = brace_key(brace)
+                if key is not None and COMPLETION_KEY_RE.fullmatch(key):
+                    return True
+            # R3 — numeric literal strictly inside the risk band (both edges exclusive). maxItems is
+            # deliberately OUT of the R3 scope.
+            value = cap_value(end)
+            if value is not None and 64 < value < 300:
+                return True
+
+        # R2 — any cap inside the lexical span of an `items` object literal. A top-level array
+        # maxItems is excluded on its own merits: one constraint that does not multiply across
+        # elements cannot produce the re-balance loop that defines the observed failure.
+        bi = struct.find(obrace)
+        while bi != -1:
+            key = brace_key(bi)
+            if key is not None and key.lower() == "items":
+                depth = 0
+                k = bi
+                end_span = None
+                while k < n:
+                    c = struct[k]
+                    if c == obrace:
+                        depth += 1
+                    elif c == cbrace:
+                        depth -= 1
+                        if depth == 0:
+                            end_span = k
+                            break
+                    k += 1
+                if end_span is not None:
+                    for (start, _end, _token) in caps:
+                        if bi < start < end_span:
+                            return True
+            bi = struct.find(obrace, bi + 1)
+        return False
+    except Exception:
+        return False
+
+
 # RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
 # SILENT so a fail-open exit (an exception before the scan) never fires a spurious advisory.
 RESIL_FLAG = "RESIL_SILENT"
@@ -907,12 +1097,17 @@ RESIL_FLAG = "RESIL_SILENT"
 # The DEV [SIZE-EST] gate (BLOCK_SIZEEST) is UNCHANGED — this is the parallel non-DEV advisory branch.
 ANALYSIS_SIZE_FLAG = "ANALYSIS_SIZE_SILENT"
 
+# SCHEMA_CAP_FLAG — presence-only StructuredOutput cap advisory, printed as the FIFTH helper output
+# line by emit(). Default SILENT so a fail-open exit never fires a spurious nudge.
+SCHEMA_CAP_FLAG = "SCHEMA_CAP_SILENT"
+
 
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
     print(ANALYSIS_SIZE_FLAG)
+    print(SCHEMA_CAP_FLAG)
     sys.exit(0)
 
 
@@ -927,6 +1122,12 @@ try:
     # scan is decoupled from the verdict: it only sets the advisory flag the bash side prints.
     if resilience_advisory_needed(antigaming_src):
         RESIL_FLAG = "RESIL_ADVISE"
+
+    # Schema-cap advisory decision — computed here so EVERY emit path carries it on line 5, including
+    # the early non-DEV pass. The scan owns its internal guard, so a failure inside it can never reach
+    # the module-level handler below (which emits PASS) and disarm a real block.
+    if schema_cap_advisory_needed(antigaming_src):
+        SCHEMA_CAP_FLAG = "SCHEMA_CAP_ADVISE"
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
 
@@ -1121,9 +1322,13 @@ except Exception:
 PY
   )"
 
-  # Run the helper. It prints THREE lines: line 1 = verdict token, line 2 = entry marker
-  # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT). A non-zero exit OR
-  # unparseable output → fail-open (PASS + ENTRY_OK + RESIL_SILENT).
+  # Run the helper. It prints FIVE lines: line 1 = verdict token, line 2 = entry marker
+  # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
+  # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
+  # (SCHEMA_CAP_ADVISE|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
+  # ENTRY_OK + all flags SILENT). The fallback literal below MUST gain a token in LOCKSTEP with emit()
+  # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
+  # stale literal is byte-identical in observable behaviour (pre-seeded defaults + swallowed EOF).
   # The inner `|| true` keeps a verdict-engine CRASH (python3 interpreter failure — its PRESENCE was
   # already checked upstream at ~L320) from tripping the errtrace ERR trap INSIDE this command
   # substitution; such a crash then yields EMPTY output, which the T12 branch below detects. A
@@ -1134,26 +1339,29 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT'
   fi
 
-  # Parse the four lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # Parse the five lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
   # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
   entry_marker="ENTRY_OK"
   resil_flag="RESIL_SILENT"
   analysis_size_flag="ANALYSIS_SIZE_SILENT"
+  schema_cap_flag="SCHEMA_CAP_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
     IFS= read -r resil_flag
     IFS= read -r analysis_size_flag
+    IFS= read -r schema_cap_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
+  [[ "${schema_cap_flag}" == "SCHEMA_CAP_ADVISE" ]] || schema_cap_flag="SCHEMA_CAP_SILENT"
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
@@ -1167,6 +1375,14 @@ PY
   # DEV BLOCK_SIZEEST hard-block path stays exit 2 and is decided independently in the case dispatch).
   if [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]]; then
     print_analysis_size_advisory
+  fi
+
+  # SCHEMA-CAP ADVISORY (fail-open, stderr-only) — the helper's isolated scan matched one of the three
+  # scoped cap rules; nudge here so it rides ANY verdict. Placed BEFORE the entry-miss block and the
+  # verdict case dispatch, so it can NEVER alter an exit code — a flagged cap on a hard-blocking script
+  # still exits 2 (pinned by the disarm-regression fixture).
+  if [[ "${schema_cap_flag}" == "SCHEMA_CAP_ADVISE" ]]; then
+    print_schema_cap_advisory
   fi
 
   # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
