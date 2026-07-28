@@ -68,6 +68,25 @@ run_lint_file() {
   ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
 }
 
+# DIRECT-INVOCATION siblings (P6). The four helpers above drive the hook through a `bash <hook>`
+# prefix, which bypasses the exec bit — not admitted for NEW assertions. These invoke the hook AS a
+# command so the shebang + exec bit are exercised; the existing helpers keep their form and the
+# pre-existing tests stay untouched.
+run_hook_exec() {
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"
+    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
+    printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+}
+
+run_lint_exec() {
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"
+    printf "%s" "${script}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}" --lint
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+}
+
 # firing-trace tag assertion — verdict=<tag> recorded on the most recent firing.
 assert_trace() { grep -q "verdict=${1}" "${TRACE_LOG}"; }
 
@@ -1393,6 +1412,151 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 }
 
 # =====================================================================================================
+# SECTION N3 — SCHEMA-CAP ADVISORY (presence-only, advisory-only, NEVER blocks). Three scoped rules
+#   over a comment-stripped + string-masked operand: R1 a maxLength on a completion-block field, R2 a
+#   maxLength/maxItems inside an `items` object literal, R3 a maxLength strictly between 64 and 300.
+#   Fixtures are minimal NON-DEV scripts carrying no quoted DEV literal (P5) so the advisory is
+#   exercised without entangling the entry / size-est / composition gates — the single exception is the
+#   disarm-regression fixture, which is deliberately DEV-bearing. Every assertion invokes the hook
+#   DIRECTLY as a command (P6).
+# =====================================================================================================
+
+# R1 — a cap on a completion-block field is an UNCONDITIONAL defect (the standing rule mandates the
+# full multi-line block, so schema compliance and rule compliance are mutually exclusive at any cap).
+@test "schema-cap(R1): maxLength on a completion_block property → PASS + schema-cap advisory fires" {
+  run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# R2 — a per-element cap inside an `items` object multiplies the constraint count (shrinking one
+# element re-balances and overflows another): the non-converging shape that burns all five retries.
+@test "schema-cap(R2): maxLength inside an items object → PASS + schema-cap advisory fires" {
+  run_hook_exec "const Out = { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', properties: { detail: { type: 'string', maxLength: 800 } } } } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# R3 — a numeric maxLength strictly inside the 64/300 risk band (both edges exclusive).
+@test "schema-cap(R3): maxLength value strictly between 64 and 300 → PASS + schema-cap advisory fires" {
+  run_hook_exec "const Out = { type: 'object', properties: { summary: { type: 'string', maxLength: 260 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# PUBLISHED NON-FLAGS — a short-token cap, a generous non-completion non-item cap, and a top-level
+# array item-count cap are all deliberate misses. Regression guard: like any non-firing assertion this
+# passes trivially at 02e7d9e, which is inherent to a negative assertion rather than a defect.
+@test "schema-cap(non-flag): low cap / generous cap / top-level maxItems → PASS, NO advisory" {
+  run_hook_exec "const Out = { type: 'object', properties: { verdict: { type: 'string', maxLength: 40 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+  run_hook_exec "const Out = { type: 'object', properties: { notes: { type: 'string', maxLength: 500 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+  run_hook_exec "const Out = { type: 'object', properties: { findings: { type: 'array', maxItems: 8, items: { type: 'object' } } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# OPERAND PIN — cap words quoted in a delegation goal template literal and in a shorthand type
+# descriptor are INERT (string-masked), and a cap inside a // comment is INERT (comment-stripped).
+# This is the day-one satisfiability of the promotion condition's second conjunct: the repository's own
+# canonical skeletons carry all three shapes, so a raw scan would fire on every copy-verbatim workflow.
+# Regression guard, same negative-assertion note as above.
+@test "schema-cap(operand): canonical-skeleton cap prose in a template literal + comment → PASS, NO advisory" {
+  local skeleton
+  skeleton=$'// retry cannot hit the same maxLength/shape validator; keep { detail: { maxLength: 120 } } out of it\nconst AnalysisSchema = { findings: \'string(maxLength)\', completion_block: \'string\' };\nconst g = `RETRY — respect every maxLength/maxItems cap; the example { completion_block: { maxLength: 600 } } is illustrative only`;'
+  run_hook_exec "${skeleton}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# SEAM ARITY PIN (source-structural, NOT behavioural). The fail-open fallback literal must gain the new
+# silent token in LOCKSTEP with the helper's emit routine and the shell-side read group. A black-box
+# fixture CANNOT see a stale literal: the reads are pre-seeded to their silent defaults and the group
+# swallows EOF, so a stale 4-token literal and a correct 5-token one are byte-identical in observable
+# behaviour. Each arity is counted SPAN-SCOPED (the whole-file equivalence is accidental and would rot).
+@test "schema-cap(seam): fail-open literal carries the silent token; emit/literal/read arities are equal" {
+  local literal_line emit_n literal_n read_n
+  literal_line="$(grep -F "helper_out=\$'PASS" "${HOOK_SH}")"
+  [[ "${literal_line}" == *"SCHEMA_CAP_SILENT"* ]] || {
+    echo "SEAM: fail-open fallback literal lacks SCHEMA_CAP_SILENT: ${literal_line}" >&2
+    return 1
+  }
+  emit_n="$(awk 'index($0,"def emit(")==1{f=1;next} f&&index($0,"sys.exit(0)"){print n+0;exit} f&&index($0,"print(")>0{n++}' "${HOOK_SH}")"
+  literal_n="$(printf '%s' "${literal_line}" | grep -o '\\n' | grep -c . )"
+  literal_n=$((literal_n + 1))
+  read_n="$(awk 'index($0,"IFS= read -r verdict"){f=1} f&&index($0,"IFS= read -r"){n++} f&&index($0,"helper_out}\""){print n+0;exit}' "${HOOK_SH}")"
+  [[ "${emit_n}" -eq "${literal_n}" && "${literal_n}" -eq "${read_n}" ]] || {
+    echo "SEAM ARITY DRIFT: emit=${emit_n} literal=${literal_n} read=${read_n}" >&2
+    return 1
+  }
+}
+
+# NO-SPURIOUS-ADVISORY REGRESSION GUARD (retained separately from the arity pin above, which is the
+# real lockstep assertion): a verdict helper producing NO output falls open to PASS and must stay
+# silent — the flag defaults to SILENT on every fail-open path.
+@test "schema-cap(failopen): verdict helper produces no output → PASS, NO schema-cap advisory" {
+  local stub_dir
+  stub_dir="${BATS_TEST_TMPDIR}/stub-bin-cap"
+  mkdir -p "${stub_dir}"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${stub_dir}/python3"
+  chmod +x "${stub_dir}/python3"
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"; stub="$4"
+    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
+    printf "%s" "${payload}" | PATH="${stub}:${PATH}" WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
+  ' _ "const Out = { properties: { completion_block: { maxLength: 600 } } };" "${HOOK_SH}" "${TRACE_LOG}" "${stub_dir}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+}
+
+# DISARM REGRESSION GUARD — the ONE test that catches a scan failure silently converting a BLOCK into
+# a fail-open PASS. A DEV-bearing script with NO composition declaration must STILL exit 2, and the
+# advisory must ride along on that block (the printers sit before both the entry-miss block and the
+# verdict case dispatch, so an advisory rides ANY verdict without touching the exit code).
+@test "schema-cap(disarm): flagged cap + missing declaration on a DEV workflow → exit 2 AND advisory" {
+  run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 600 } } };
+agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+  [[ "${output}" == *"missing composition declaration"* ]] || return 1
+  assert_trace block-nodecl || return 1
+}
+
+# ADVISORY TEXT SHIPS COMPLETE (P7) — the promotion condition requires a named one-edit remediation per
+# rule plus the published non-flag list from day one, so building it at promotion time would block
+# promotion on a message rewrite.
+@test "schema-cap(text): advisory names all three rules, their one-edit fixes, and the non-flag list" {
+  run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"(R1)"* && "${output}" == *"(R2)"* && "${output}" == *"(R3)"* ]] || return 1
+  [[ "${output}" == *"DROP the cap"* ]] || return 1
+  [[ "${output}" == *"single top-level item-count cap"* ]] || return 1
+  [[ "${output}" == *"realistic worst case"* ]] || return 1
+  [[ "${output}" == *"DELIBERATE NON-FLAGS"* ]] || return 1
+}
+
+# PROMOTION CONDITION recorded VERBATIM in the hook header (the referenced SoT the guidance points at).
+@test "schema-cap(promotion): the verbatim promotion condition is recorded in the hook header" {
+  local header
+  header="$(sed -n '1,140p' "${HOOK_SH}" | grep '^#' | sed 's/^# \{0,3\}//' | tr '\n' ' ' | tr -s ' ')"
+  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
+    echo "PROMOTION CONDITION not recorded verbatim in the hook header" >&2
+    return 1
+  }
+}
+
+# LINT PARITY — the offline preview surfaces the same advisory and stays side-effect-free (zero trace).
+@test "schema-cap(lint): capped script previewed via --lint → advisory, exit 0, zero trace" {
+  run_lint_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 900 } } };"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
+  assert_trace_empty || return 1
+}
+
+# =====================================================================================================
 # SECTION O — CORPUS (T8): the 3 undeclared originals are missing-declaration BLOCK pins; the 4
 #   declared variants (both declaration forms) are PASS pins. The real archived scripts are the
 #   durable regression anchor.
@@ -1727,8 +1891,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 @test "meta(T6): suite @test count equals the pinned expected total" {
   local actual
   actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 136 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 136 @test, found ${actual}" >&2
+  [[ "${actual}" -eq 147 ]] || {
+    echo "SUITE-SIZE DRIFT: expected 147 @test, found ${actual}" >&2
     return 1
   }
 }
