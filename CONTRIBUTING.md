@@ -68,6 +68,88 @@ but Prisma's config resolves `env()` eagerly, so export dummy `DATABASE_URL`
 and `SHADOW_DATABASE_URL` values first (see the `gate-typecheck` job in
 `.github/workflows/ci.yml` for the exact shape).
 
+## Testing changes against a live install
+
+The bats suites are hermetic, so a hook or script change can pass them all and
+still misbehave on a real install. The updater has a seam for exercising your
+own tree against one: it can take a local source directory instead of a
+published release.
+
+**This is not an install or deploy mechanism.** A normal `glass-atrium update`
+downloads the latest GitHub Release bundle and verifies every changed file
+against the published manifest (`scripts/update.sh`, `update_fetch_release`).
+The two variables below make it skip the network entirely and use your tree
+verbatim — which bypasses the whole release-integrity story. Use it to validate
+your changes on your own machine before merge. Never use it to install Glass
+Atrium, and never use it to ship.
+
+Both variables must be set; either alone is ignored:
+
+- `ATRIUM_UPDATE_SRC_DIR` — the source tree to apply.
+- `ATRIUM_UPDATE_SRC_MANIFEST` — the manifest to verify it against.
+
+Regenerate the manifest first. The seam copies your manifest in verbatim, so a
+stale one propagates: staging re-hashes each changed file and compares it to
+`hashes[path]`, then aborts with `hash mismatch staging <path>` and leaves the
+install untouched.
+
+```sh
+# the checkout (or git worktree) holding your change
+SRC=~/src/glass-atrium
+cd "$SRC" && ./scripts/generate-manifest.sh
+
+# 1. dry run — per-file diffs, zero writes, no lock
+ATRIUM_UPDATE_SRC_DIR="$SRC" \
+ATRIUM_UPDATE_SRC_MANIFEST="$SRC/manifest.json" \
+  glass-atrium update --preview
+
+# 2. apply, answering the confirm prompt non-interactively
+ATRIUM_UPDATE_SRC_DIR="$SRC" \
+ATRIUM_UPDATE_SRC_MANIFEST="$SRC/manifest.json" \
+ATRIUM_UPDATE_CONFIRM_ANSWER=y \
+  glass-atrium update
+```
+
+`ATRIUM_UPDATE_CONFIRM_ANSWER` is the confirm gate's only injection seam. It is
+matched literally against `y`, `Y`, `yes`, `Yes`, and `YES`; anything else —
+including an empty value — declines and writes zero files. Leave it unset to
+answer the prompt by hand.
+
+Read the `--preview` output before you apply. Besides content diffs it lists
+impending deletions as `(would be removed -> Trash) <path>` — files the previous
+release shipped that your tree no longer has. On a branch a few commits ahead of
+the install that list should be empty; if it is not, your tree is missing files
+rather than intentionally dropping them.
+
+Then check that it worked:
+
+- **Exit code.** 0 means applied. A decline at the confirm gate exits 1. The
+  named exit codes in the `scripts/update.sh` header identify which step failed
+  and what to re-run — several of them mean the files landed but a post-apply
+  step did not.
+- **`glass-atrium doctor`**, via the *live* launcher on your `PATH`. Do not run
+  the checkout's `./glass-atrium doctor`: the launcher anchors `GA_ROOT` to its
+  own resolved location, so the repo copy inspects the repo tree and reports the
+  manifest entries it checks as `FAIL : manifest entry mis-linked` — the
+  symlinks under `~/.claude` point at the install, not at your checkout. That is
+  an artifact of which launcher you ran, not a finding.
+
+Two effects of an apply that are easy to miss:
+
+- **Your harness config can be rewritten.** A post-apply step reconciles the
+  hook bindings by running `glass-atrium wire-hooks`, which edits
+  `~/.claude/settings.json`. It merges rather than replaces (bindings outside the
+  Atrium hooks directories are preserved) and backs the file up once, immediately
+  before its first write, to `settings.json.ga-backup.<YYYYmmdd-HHMMSS>`. A run
+  with nothing to wire writes nothing and takes no backup.
+- **Agent files do not simply overwrite.** Files under `agents/` are excluded
+  from the deterministic file sync and go through the editable-region three-way
+  merge in `autoagent/lib/editable_merge.py`, which keeps locally-evolved regions
+  (see *A note on `agents/*.md`* below). So an agent-file change may correctly
+  report `resolves with no net change (regions kept local) — no write` instead of
+  landing, and a region-count mismatch or a merge conflict is reported and
+  skipped rather than applied.
+
 ## Before you push
 
 - `./scripts/generate-manifest.sh` — regenerate `manifest.json` if you touched
