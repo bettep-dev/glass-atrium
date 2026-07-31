@@ -3941,6 +3941,189 @@ def _heading_level(line: str) -> int:
     return len(line) - len(line.lstrip("#"))
 
 
+# -- Removal evidence gate --------------------------------------------------
+# The loop may only delete a line it can POINT AT. Every declared removal must
+# match exactly one line of the target, that line must sit inside an editable
+# region, and it must not be a protected line. Anything else — no match, several
+# matches, out of region, protected — rejects the WHOLE diff: partial application
+# of a replace is the failure this gate exists to design out.
+#
+# An addition defect is visible in the file; a removal defect is an absence
+# nobody reads, on a loop that writes live bodies unattended — so every
+# ambiguous input refuses rather than admits.
+
+# Opt-in for LIVE removal. Read at CALL time, not captured as an import-time
+# constant like the tuning knobs above: the apply path invokes this module per
+# patch, so a call-time read lets an operator arm and disarm the capability
+# without a daemon restart.
+REMOVAL_LIVE_ENV = "AUTOAGENT_REMOVAL_LIVE"
+
+REMOVAL_VERDICT_OK = "ok"
+REMOVAL_VERDICT_NO_REMOVAL = "no_removal"          # nothing declared, nothing implied
+REMOVAL_VERDICT_NO_MATCH = "no_match"
+REMOVAL_VERDICT_MULTIPLE_MATCH = "multiple_match"
+REMOVAL_VERDICT_OUT_OF_REGION = "out_of_region"
+REMOVAL_VERDICT_PROTECTED = "protected"
+REMOVAL_VERDICT_AMBIGUOUS = "ambiguous_removal_set"
+REMOVAL_VERDICT_UNREADABLE = "unreadable"
+
+
+class RemovalEvidence(NamedTuple):
+    """Verdict of the evidence rule plus the removal set it was derived from."""
+
+    ok: bool
+    verdict: str
+    declared: tuple[str, ...]
+    detail: str
+
+
+def get_removal_live() -> bool:
+    """Whether LIVE removal is armed (default OFF — dry-run reports only)."""
+    return os.environ.get(REMOVAL_LIVE_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
+    """Removal set declared by a stored diff, plus whether it LOOKS removal-bearing.
+
+    Enumerated from the RAW hunk lines — every line after an `@@` header — rather
+    than through `_split_fragment_lines`, which drops any `---`-prefixed line as a
+    file header. That partition cannot see the two removals that matter most here:
+    a deleted frontmatter delimiter (`---` → the diff line `----`) and a deleted
+    `-- `-prefixed line (→ `--- `). Inside a hunk those ARE removals, so the file
+    header is recognised only in the pre-hunk preamble.
+
+    The second element is the AMBIGUITY probe: a diff whose preamble carries a
+    removal-shaped line while no hunk exists to declare it (a header-less
+    fragment) is removal-bearing with an EMPTY declared set — unreadable intent,
+    which the caller refuses rather than admits.
+    """
+    declared: list[str] = []
+    preamble_removal = False
+    in_hunk = False
+    for raw in diff_text.splitlines():
+        if raw.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk:
+            # Pre-hunk preamble: `--- a/x` / `+++ b/x` / `diff --git` / `index`
+            # are headers; anything else starting with '-' is a stray removal
+            # the hunk enumeration below can never see.
+            if raw.startswith(("--- ", "+++ ", "diff --git", "index ")):
+                continue
+            if raw.startswith("-"):
+                preamble_removal = True
+            continue
+        if raw.startswith("diff --git"):
+            in_hunk = False  # next file's preamble
+            continue
+        if raw.startswith("-"):
+            declared.append(raw[1:])
+    return tuple(declared), preamble_removal or bool(declared)
+
+
+def _get_protected_kind(line: str) -> str | None:
+    """Name the protected class of a line, or None when it is ordinary content.
+
+    Every member here is structure the body's readers depend on: deleting one is
+    not an edit but a change to what the later guards can still reason about. The
+    blank member is protected because a blank line carries no identity — it can
+    never be evidenced as "exactly one" anything.
+    """
+    body = line.rstrip("\n")
+    if not body.strip():
+        return "blank"
+    if body.strip() == "---":
+        return "frontmatter-delimiter"
+    if body.startswith("> Rules:"):
+        return "rules-anchor"
+    if "<!-- EDITABLE:BEGIN -->" in body or "<!-- EDITABLE:END -->" in body:
+        return "region-marker"
+    if _heading_level(body) > 0:
+        return "heading"
+    return None
+
+
+def verify_removal_evidence(diff_text: str, target_text: str) -> RemovalEvidence:
+    """Does this diff's removal set satisfy the evidence rule?
+
+    The declared set is derived HERE, from the stored diff about to be applied —
+    never transported from the generation side. One source of truth that cannot
+    desync from what lands, and it covers the majority path: a removal that never
+    entered the repair path at all.
+    """
+    declared, removal_bearing = _get_declared_removals(diff_text)
+    if not removal_bearing:
+        return RemovalEvidence(True, REMOVAL_VERDICT_NO_REMOVAL, (), "")
+    if not declared:
+        return RemovalEvidence(
+            False,
+            REMOVAL_VERDICT_AMBIGUOUS,
+            (),
+            "diff carries removal-shaped lines but declares an empty removal set",
+        )
+    if not target_text:
+        return RemovalEvidence(
+            False, REMOVAL_VERDICT_UNREADABLE, declared, "target body empty or unreadable"
+        )
+
+    target_lines = target_text.splitlines()
+    spans = _editable_spans(target_lines)
+    for removed in declared:
+        protected = _get_protected_kind(removed)
+        if protected is not None:
+            return RemovalEvidence(
+                False, REMOVAL_VERDICT_PROTECTED, declared, f"{protected}: {removed[:60]}"
+            )
+        hits = [idx for idx, line in enumerate(target_lines, start=1) if line == removed]
+        if not hits:
+            return RemovalEvidence(
+                False, REMOVAL_VERDICT_NO_MATCH, declared, removed[:60]
+            )
+        if len(hits) > 1:
+            return RemovalEvidence(
+                False,
+                REMOVAL_VERDICT_MULTIPLE_MATCH,
+                declared,
+                f"{len(hits)} matches: {removed[:60]}",
+            )
+        if not _anchor_in_editable_region(hits[0], spans):
+            return RemovalEvidence(
+                False,
+                REMOVAL_VERDICT_OUT_OF_REGION,
+                declared,
+                f"line {hits[0]}: {removed[:60]}",
+            )
+    return RemovalEvidence(True, REMOVAL_VERDICT_OK, declared, "")
+
+
+def _emit_removal_evidence(diff_text: str, target_file: Path) -> int:
+    """CLI arm: print `verdict<TAB>live<TAB>count` then one declared line each.
+
+    Line-oriented rather than JSON because the apply script consumes it directly:
+    a removal line can never contain a newline, so the framing is unambiguous and
+    the shell needs no parser. A read failure is reported as the UNREADABLE
+    verdict rather than raised — the caller fails closed on it either way.
+    """
+    try:
+        target_text = target_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        evidence = RemovalEvidence(
+            False, REMOVAL_VERDICT_UNREADABLE, (), f"{type(exc).__name__}"
+        )
+    else:
+        evidence = verify_removal_evidence(diff_text, target_text)
+    live = "1" if get_removal_live() else "0"
+    sys.stdout.write(f"{evidence.verdict}\t{live}\t{len(evidence.declared)}\n")
+    for line in evidence.declared:
+        sys.stdout.write(line + "\n")
+    if evidence.detail:
+        sys.stderr.write(
+            f"[daemon-cycle] removal evidence {evidence.verdict} "
+            f"({target_file.name}): {evidence.detail}\n"
+        )
+    return 0
+
+
 def _is_gfm_table_delimiter(line: str) -> bool:
     """Whether a line is a GFM table delimiter row (`| --- | :-: |`, `|---|`).
 
@@ -9377,7 +9560,30 @@ def _main(argv: list[str]) -> int:
         "to 'skipped:auth' when a per-row 401 failure log exists, then exit (no "
         "cycle). Evidence-gated + idempotent. Honors --dry-run.",
     )
+    parser.add_argument(
+        "--removal-evidence",
+        action="store_true",
+        help="Removal gate query (requires --target): read a stored diff on "
+        "stdin and print `verdict<TAB>live<TAB>count` plus the declared removal "
+        "set. Read-only; the apply path calls it per patch.",
+    )
+    parser.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help="Agent body the --removal-evidence query resolves its removal set "
+        "against.",
+    )
     args = parser.parse_args(argv)
+
+    if args.removal_evidence:
+        # Answered BEFORE the pause gate below: this arm is a read-only query
+        # that writes nothing, and returning the gate's clean exit 0 here would
+        # hand the apply path an empty verdict it would (correctly, but for the
+        # wrong reason) fail closed on.
+        if args.target is None:
+            parser.error("--removal-evidence requires --target")
+        return _emit_removal_evidence(sys.stdin.read(), args.target)
 
     # Decision-to-run gate (T10): an in-flight Glass Atrium update holds the
     # pause flag while it swaps files — cooperatively SUSPEND ALL daemon work

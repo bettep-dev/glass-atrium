@@ -1297,6 +1297,108 @@ assert_diff_in_editable_region() {
     return 1
 }
 
+# assert_removal_evidence — apply-time REMOVAL gate. The loop may only delete a
+# line it can POINT AT: every declared removal must match exactly one line of the
+# CURRENT target, inside an editable region, and must not be a protected line.
+# The rule itself lives on the python side (daemon_cycle.py
+# `verify_removal_evidence`) — this is its shell caller, and this script gains NO
+# second dry-run convention: --dry-run short-circuits the whole iteration long
+# before this point, so a dry-run invocation never removes regardless of the
+# opt-in variable.
+#
+# The declared set is derived from the STORED diff about to be applied, so it
+# cannot desync from what lands and it covers removals that never entered the
+# repair path — which is the majority path.
+#
+# Outcome travels in two globals (the caller picks the counter bucket):
+#   REMOVAL_VERDICT       — no_removal | dry_run | marker_guard_absent | the
+#                           python verdict token (no_match, multiple_match,
+#                           out_of_region, protected, ambiguous_removal_set,
+#                           unreadable)
+#   REMOVAL_DECLARED_FILE — set ONLY on the armed live path; verify_patched
+#                           asserts the absent multiset equals its content.
+#
+# Returns 0 = proceed with the apply · 1 = do NOT apply (every non-ok verdict,
+# and the un-armed dry-run report). Fail-CLOSED throughout: an unreadable or
+# unparseable verdict refuses, because a removal defect is an absence nobody
+# reads on a loop that writes live bodies unattended.
+assert_removal_evidence() {
+    local target="$1"
+    local diff="$2"
+    local label="${3:-}"
+    local diff_target="${4:-}"
+
+    REMOVAL_VERDICT=""
+    REMOVAL_DECLARED_FILE=""
+
+    # Loud read (same contract as the landing-zone guard above): no absorption on
+    # the python call, so a crash aborts rather than passing through.
+    local evidence
+    evidence="$(printf '%s' "${diff}" | python3 "${DAEMON_CYCLE_PY}" \
+        --removal-evidence --target "${target}")"
+
+    local header verdict live count
+    header="${evidence%%$'\n'*}"
+    IFS=$'\t' read -r verdict live count <<<"${header}"
+    [[ -n "${verdict}" ]] || verdict="unreadable"
+    REMOVAL_VERDICT="${verdict}"
+
+    # Dominant path: the diff declares no removal at all → nothing to gate.
+    if [[ "${verdict}" == "no_removal" ]]; then
+        return 0
+    fi
+
+    if [[ "${verdict}" != "ok" ]]; then
+        printf '[daemon-apply] WARN removal_evidence_reject verdict=%s target=%s pattern=%s (declared removal set not evidenced; whole diff refused, row kept pending)\n' \
+            "${verdict}" "${target}" "${label}" >&2
+        emit_log "$(printf '{"ts":%s,"status":"reject","reason":"removal_evidence_reject","verdict":%s,"pattern_label":%s,"target_file":%s}' \
+            "$(ts_now_json)" \
+            "$(printf '%s' "${verdict}" | json_escape)" \
+            "$(printf '%s' "${label}" | json_escape)" \
+            "$(printf '%s' "${diff_target:-${target}}" | json_escape)")"
+        return 1
+    fi
+
+    # S2 precondition, enforced by the ARTIFACT and not only by the task graph: a
+    # deletion power without the guard that detects a wrong deletion is privilege
+    # escalation, not a feature. If this file is ever split from the marker check,
+    # the live path refuses loudly instead of removing unwatched.
+    if ! declare -f verify_patched | grep -q 'EDITABLE:BEGIN'; then
+        REMOVAL_VERDICT="marker_guard_absent"
+        printf '[daemon-apply] FATAL removal_gate_precondition: verify_patched carries NO editable-region marker check — refusing live removal for target=%s pattern=%s (row kept pending)\n' \
+            "${target}" "${label}" >&2
+        emit_log "$(printf '{"ts":%s,"status":"reject","reason":"removal_gate_precondition","pattern_label":%s,"target_file":%s}' \
+            "$(ts_now_json)" \
+            "$(printf '%s' "${label}" | json_escape)" \
+            "$(printf '%s' "${diff_target:-${target}}" | json_escape)")"
+        return 1
+    fi
+
+    local declared
+    declared="$(printf '%s' "${evidence}" | tail -n +2)"
+
+    if [[ "${live}" != "1" ]]; then
+        REMOVAL_VERDICT="dry_run"
+        # Membership, not just a count: this line IS the promotion evidence an
+        # operator reads back before arming AUTOAGENT_REMOVAL_LIVE.
+        printf '[daemon-apply] removal_dry_run would-remove=%s target=%s pattern=%s members=[%s]\n' \
+            "${count}" "${target}" "${label}" "$(printf '%s' "${declared}" | tr '\n' '|')" >&2
+        emit_log "$(printf '{"ts":%s,"status":"skip","reason":"removal_dry_run","would_remove":%s,"pattern_label":%s,"target_file":%s,"members":%s}' \
+            "$(ts_now_json)" \
+            "$(printf '%s' "${count}" | json_escape)" \
+            "$(printf '%s' "${label}" | json_escape)" \
+            "$(printf '%s' "${diff_target:-${target}}" | json_escape)" \
+            "$(printf '%s' "${declared}" | tr '\n' '|' | json_escape)")"
+        return 1
+    fi
+
+    REMOVAL_DECLARED_FILE="$(mktemp -t autoagent-removal.XXXXXX)"
+    printf '%s\n' "${declared}" >"${REMOVAL_DECLARED_FILE}"
+    printf '[daemon-apply] removal_live armed removals=%s target=%s pattern=%s\n' \
+        "${count}" "${target}" "${label}" >&2
+    return 0
+}
+
 # apply_diff — write proposal patch to a tempfile and apply.
 # Return codes (caller branches on the specific value):
 #   0 — applied. Either Strategy A (unified diff landed at its intended mid-file
@@ -1447,7 +1549,8 @@ sys.stdout.write("\n".join(out))
 # penalized for its continued absence (the rules files and the global-rules file
 # never carried frontmatter). Checks: non-empty · one heading · present-before
 # frontmatter kept · present-before `> Rules:` anchor kept · editable-region
-# marker COUNTS not reduced · not shrunk below half
+# marker COUNTS not reduced · the multiset of lines absent after the apply equal
+# to the declared removal set (gate-armed patches only) · not shrunk below half
 # the before-image line count.
 #
 # Why the marker check COUNTS rather than tests presence: a patch that deletes one
@@ -1511,6 +1614,32 @@ verify_patched() {
             return 1
         fi
     done
+
+    # Declared-removal multiset. Engaged ONLY when the removal gate armed THIS
+    # patch (REMOVAL_DECLARED_FILE set on the live path), so every other patch
+    # keeps its exact previous semantics. Compared as MULTISETS, not as sets: a
+    # body holding the same line twice with one instance declared removed must
+    # verify, while both instances vanishing must not — a membership test passes
+    # exactly the case worth catching. A line that vanished undeclared fails, and
+    # the transaction's atomic restore is the revert.
+    if [[ -n "${REMOVAL_DECLARED_FILE:-}" ]]; then
+        if [[ ! -r "${REMOVAL_DECLARED_FILE}" ]]; then
+            printf '[daemon-apply] ERROR: verify_patched declared-removal set unreadable (target=%s set=%s) — failing verify; atomic restore will fire\n' \
+                "${target}" "${REMOVAL_DECLARED_FILE}" >&2
+            return 1
+        fi
+        # awk consumes one after-image occurrence per before-image line, so what
+        # it prints is the multiset difference (before minus after) in order.
+        local absent_sorted declared_sorted
+        absent_sorted="$(awk 'NR==FNR { seen[$0]++; next } { if (seen[$0] > 0) { seen[$0]--; next } print }' \
+            "${target}" "${before}" | sort)"
+        declared_sorted="$(sort "${REMOVAL_DECLARED_FILE}")"
+        if [[ "${absent_sorted}" != "${declared_sorted}" ]]; then
+            printf '[daemon-apply] WARN verify_patched removal_multiset_mismatch target=%s — the lines absent after apply are not exactly the declared removal set; failing verify\n' \
+                "${target}" >&2
+            return 1
+        fi
+    fi
 
     # Proportional shrink floor: keep at least half the before-image line count.
     # Guts a body-stripping patch while a normal edit (near-original size) passes.
@@ -1863,6 +1992,13 @@ NEEDS_REGEN=0
 # falls back to this one, which also feeds the restore-fail log strings.
 VERIFY_BEFORE_IMAGE=""
 
+# Removal-gate context, SET per-iteration by assert_removal_evidence and read by
+# verify_patched (same caller-scope contract as VERIFY_BEFORE_IMAGE above). An
+# EMPTY declared-set path is the un-armed default: every patch that declares no
+# removal keeps its exact previous apply semantics.
+REMOVAL_DECLARED_FILE=""
+REMOVAL_VERDICT=""
+
 # Select the patch source. Three modes:
 #   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
 #              bypassed (explicit user approval). Highest priority.
@@ -2057,6 +2193,32 @@ PY
         continue
     fi
 
+    # -- Sanity 5: removal evidence gate (pre-apply) ----------------------
+    # The landing-zone guard above answers "does this diff land in an editable
+    # region"; this one answers "can every line it DELETES be pointed at". Both
+    # are read-only, so they join the pre-apply Sanity checks. The helper owns the
+    # loud named line and the emit_log for each verdict.
+    if ! assert_removal_evidence "${GIT_TARGET}" "${PATCH_DIFF}" "${PATCH_LABEL}" "${PATCH_TARGET}"; then
+        if [[ "${REMOVAL_VERDICT}" == "dry_run" ]]; then
+            # DELIBERATE divergence from the two reject sites: the dry-run
+            # deferral does NOT drain. The row is meant to be re-observed each
+            # cycle — that recurring would-remove line IS the evidence the
+            # promotion gate reads before arming AUTOAGENT_REMOVAL_LIVE, and
+            # draining it to 'snoozed' after three cycles would delete the
+            # evidence before an operator could act on it. It is bounded by the
+            # operator decision, not by the counter, and it is never silent.
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
+        # Every other verdict is a HARD refusal (unevidenceable removal set, or
+        # the S2 marker guard missing) — ERRORS, and drained on the same bounded
+        # retry the landing-zone reject uses, since a diff that can never be
+        # evidenced would otherwise re-select forever.
+        ERRORS=$((ERRORS + 1))
+        emit_stale_drain "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" "${patch_id}" "${timestamp}"
+        continue
+    fi
+
     # -- Transaction: capture before-image -> apply -> verify -> (keep | restore) ---
     # git_txn_apply (lib/git-txn.sh) owns the before-image capture, the apply +
     # verify steps, and the atomic restore-from-before-image on verify failure; it
@@ -2088,6 +2250,14 @@ PY
         "${GIT_ROOT}" "${PATCH_TARGET}" "${GIT_TARGET}" "${PATCH_DIFF}" \
         "${backup_subdir}" \
         apply_diff verify_patched "${PATCH_LABEL}" "${PATCH_TARGET}"
+
+    # The verify callback has run inside the transaction, so the declared-removal
+    # set has served its purpose — drop it here, on the ONE path every outcome
+    # branch below flows from, so no `continue` can leak it.
+    if [[ -n "${REMOVAL_DECLARED_FILE}" ]]; then
+        rm -f "${REMOVAL_DECLARED_FILE}"
+        REMOVAL_DECLARED_FILE=""
+    fi
 
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_BACKUP_CAPTURE_FAIL}" ]]; then
         # Before-image capture failed — nothing was applied, nothing to restore.
