@@ -285,10 +285,11 @@ print_analysis_size_advisory() {
 }
 
 # print_schema_cap_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
-# DECISION fires INSIDE the python3 verdict helper (schema_cap_advisory_needed) and arrives as a
-# SCHEMA_CAP_ADVISE / SCHEMA_CAP_SILENT flag on its FIFTH output line. PRESENCE-ONLY: the seam carries
-# ONE binary token, so the message enumerates all three rules and their one-edit fixes rather than
-# naming the matched rule or field — deliberate, and stated in the text so silence on a detail is not
+# DECISION fires INSIDE the python3 verdict helper (get_schema_cap_rule) and arrives as a
+# SCHEMA_CAP_ADVISE[:R<n>] / SCHEMA_CAP_SILENT flag on its FIFTH output line. The `:R<n>` suffix is
+# TRACE instrumentation only (it names the matched rule for the per-rule promotion window); the message
+# itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather than naming
+# the matched rule or field — deliberate, and stated in the text so silence on a detail is not
 # read as a clean bill. Shipping the per-rule remediations + the published non-flag list from day one
 # is required by the promotion condition in the header (building them at promotion time would block
 # promotion on a message rewrite).
@@ -1353,7 +1354,7 @@ PY
   # Run the helper. It prints FIVE lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
-  # (SCHEMA_CAP_ADVISE|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
+  # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
   # ENTRY_OK + all flags SILENT). The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
   # stale literal is byte-identical in observable behaviour (pre-seeded defaults + swallowed EOF).
@@ -1391,10 +1392,14 @@ PY
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
   # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
   # bare SCHEMA_CAP_ADVISE stays admitted so a legacy/short helper output is not silently re-classified.
-  case "${schema_cap_flag}" in
-    "SCHEMA_CAP_ADVISE" | "SCHEMA_CAP_ADVISE:R1" | "SCHEMA_CAP_ADVISE:R2" | "SCHEMA_CAP_ADVISE:R3") ;;
-    *) schema_cap_flag="SCHEMA_CAP_SILENT" ;;
-  esac
+  # Admitted by SHAPE, never by an enumeration of today's rule tags: a fourth scoped rule added to
+  # get_schema_cap_rule would fall through an enumeration to SILENT, so its advisory would stop printing
+  # AND stop being traced with no error anywhere — silently under-counting the very per-rule promotion
+  # window the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
+  # non-`R<digits>` suffix still collapses to SILENT.
+  if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
+    schema_cap_flag="SCHEMA_CAP_SILENT"
+  fi
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
