@@ -302,6 +302,11 @@ FAILURE_CLASS_TRANSIENT = "transient-overload"  # Overloaded / 529 / reset blip
 FAILURE_CLASS_TIMEOUT = "chronic-timeout"    # Haiku call timed out
 FAILURE_CLASS_SUPERSEDE = "supersede"        # mechanical cross-day supersede
 FAILURE_CLASS_AUTH = "auth-failure"          # 401/credential — expired OAuth token
+# ADJUDICATING (advances the streak, like quality) but named apart from it so an
+# operator can filter the pattern rows a removal refusal terminalizes: a pattern
+# whose only expressible fix needs a removal the loop cannot evidence is one the
+# loop should stop regenerating.
+FAILURE_CLASS_REMOVAL_REFUSAL = "removal-refusal"
 
 # Non-adjudication classes the kill streak looks PAST. A class NOT in this set
 # (notably FAILURE_CLASS_QUALITY and any unrecognized rationale) advances the
@@ -321,6 +326,13 @@ _NON_ADJUDICATION_CLASSES = frozenset(
         FAILURE_CLASS_AUTH,
     }
 )
+# FAILURE_CLASS_REMOVAL_REFUSAL is deliberately ABSENT from the set above — the
+# refusal is evidence-based adjudication, so the streak must advance on it.
+
+# Rationale prefix stamped on a proposal the add-only rebuild sites refused
+# because its diff carried removed lines. Load-bearing: classify_failure_rationale
+# prefix-matches this literal to separate a refusal row from a quality reject.
+REMOVAL_REFUSAL_REASON_PREFIX = "removal-preserving refusal"
 
 # Per-call Haiku failure logs — one NON-overwritten file per (date, agent,
 # attempt) so the NEXT 04:30 failure carries the full untruncated streams that
@@ -3697,6 +3709,32 @@ def _split_fragment_lines(body: str) -> tuple[list[str], list[str], list[str]]:
     return context, added, removed
 
 
+def _diff_is_replace_shape(diff_text: str) -> bool:
+    """True iff the fragment carries BOTH added and removed lines.
+
+    The REPLACE shape is the one the add-only rebuilders convert into a silent
+    append: the removals bind to a throwaway and the rebuild uses the added lines
+    alone, so the subtraction lands as an absence nobody reads. A pure-add rebuild
+    is lossless and a pure-removal diff already rejects visibly at generation, so
+    neither is refused — this predicate is the single SoT for that boundary.
+    """
+    _context, added, removed = _split_fragment_lines(diff_text)
+    return bool(added) and bool(removed)
+
+
+def _warn_removal_refusal(*, site: str, target_file: Path, removed_count: int) -> None:
+    """Loud-fail line for a refused add-only rebuild — countable, not inferable.
+
+    Emitted in the file's established stderr shape so a refusal shows up in the
+    daemon log as its own record rather than as a missing append.
+    """
+    sys.stderr.write(
+        f"[daemon-cycle] REMOVAL REFUSAL: {site} would rebuild "
+        f"{target_file.name} from added lines only, discarding {removed_count} "
+        f"removed line(s) — refusing (stored empty)\n"
+    )
+
+
 def _find_anchor_line(target_lines: list[str], context_lines: list[str]) -> int | None:
     """Locate the 1-indexed line number in target_lines where context anchors.
 
@@ -3797,7 +3835,16 @@ def _normalize_to_unified_diff(raw_diff: str, target_file: Path) -> str:
             added_lines=added_lines,
         )
 
-    # Fallback: difflib append-to-EOF (or last EDITABLE:END region).
+    # Fallback: difflib append-to-EOF (or last EDITABLE:END region). A REPLACE
+    # fragment cannot go through it — the builder takes added lines only, so the
+    # removal would land as a silent append instead of a subtraction.
+    if added_lines and removed_lines:
+        _warn_removal_refusal(
+            site="normalization fallback",
+            target_file=target_file,
+            removed_count=len(removed_lines),
+        )
+        return ""
     return _build_difflib_append_diff(
         rel_name=rel_name,
         target_lines=target_lines,
@@ -4300,7 +4347,11 @@ def _diff_header_target_basename(diff: str) -> str | None:
     return None
 
 
-def _gate_validated_diff(diff: str, target_file: Path) -> str:
+def _gate_validated_diff(
+    diff: str,
+    target_file: Path,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
+) -> str:
     """F2 GATE: return a parseable diff or "" (reject) — never a broken one.
 
     Promotes the former WARN-only `_validate_unified_diff` call to a repair-or-
@@ -4316,7 +4367,15 @@ def _gate_validated_diff(diff: str, target_file: Path) -> str:
          caller stores an EMPTY diff (caught downstream as nothing-to-apply)
          rather than a known-broken one that funnels to rc=128 on every drain.
 
+    Step 3 refuses a REPLACE diff outright: its builder takes added lines only,
+    so rebuilding one drops the removal silently.
+
     C2 constraint: every branch emits a stderr line; nothing is dropped silently.
+
+    `agents_dir` is the applicability-check seam — it resolves the git scope the
+    inner `_validate_unified_diff` calls run under, so a test can point the gate
+    at a temporary work tree instead of the live install. The module default
+    keeps production callers unchanged.
     """
     if not diff.strip():
         return diff
@@ -4336,14 +4395,14 @@ def _gate_validated_diff(diff: str, target_file: Path) -> str:
         )
         return ""
 
-    parseable, stderr_excerpt = _validate_unified_diff(diff)
+    parseable, stderr_excerpt = _validate_unified_diff(diff, agents_dir)
     if parseable:
         return diff
 
     # Step 2 — count repair.
     repaired = _recount_hunk_header(diff)
     if repaired != diff:
-        re_parseable, re_stderr = _validate_unified_diff(repaired)
+        re_parseable, re_stderr = _validate_unified_diff(repaired, agents_dir)
         if re_parseable:
             sys.stderr.write(
                 f"[daemon-cycle] F2 GATE: recount-repaired diff now passes "
@@ -4364,14 +4423,21 @@ def _gate_validated_diff(diff: str, target_file: Path) -> str:
                 f"{target_file.name}: {exc} — rejecting diff\n"
             )
             return ""
-        _, added_lines, _ = _split_fragment_lines(diff)
+        _, added_lines, removed_lines = _split_fragment_lines(diff)
+        if added_lines and removed_lines:
+            _warn_removal_refusal(
+                site="F2 GATE rebuild",
+                target_file=target_file,
+                removed_count=len(removed_lines),
+            )
+            return ""
         if added_lines:
             rebuilt = _build_difflib_append_diff(
                 rel_name=target_file.name,
                 target_lines=target_lines,
                 added_lines=added_lines,
             )
-            rb_parseable, rb_stderr = _validate_unified_diff(rebuilt)
+            rb_parseable, rb_stderr = _validate_unified_diff(rebuilt, agents_dir)
             if rb_parseable:
                 sys.stderr.write(
                     f"[daemon-cycle] F2 GATE: rebuilt diff from current file "
@@ -4542,11 +4608,31 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     # applies inside _normalize_to_unified_diff for the headers-present path).
     diff = _normalize_to_unified_diff(raw_diff, target_file)
 
+    # A REPLACE fragment that came back empty was refused by one of the add-only
+    # rebuild sites rather than rebuilt into a silent append. The flag is read
+    # below to stamp the rationale, so the pattern rows this class terminalizes
+    # are filterable apart from a quality reject.
+    is_removal_refused = not diff.strip() and _diff_is_replace_shape(
+        _strip_markdown_fences(raw_diff)
+    )
+
     # Validation gate — repair-or-reject: recount → rebuild → reject, never
     # store a diff that fails git apply --check. Every branch logs (no silent
     # drop).
     if diff.strip():
+        gate_input = diff
         diff = _gate_validated_diff(diff, target_file)
+        # Scoped past the gate's wrong-file arm, which also returns "" but is a
+        # basename verdict rather than a refusal.
+        is_removal_refused = (
+            not diff.strip()
+            and _diff_is_replace_shape(gate_input)
+            and _diff_header_target_basename(gate_input)
+            in (None, target_file.name)
+        )
+
+    if is_removal_refused:
+        rationale = f"{REMOVAL_REFUSAL_REASON_PREFIX}: {rationale}"
 
     touches = False
     if touches_m and touches_m.group(1).strip().lower() in {"true", "yes", "1"}:
@@ -6173,6 +6259,16 @@ def _rederive_diff_against_file(diff_text: str, target_file: Path) -> str:
     context_lines, added_lines, removed_lines = _split_fragment_lines(diff_text)
     if not added_lines:
         return ""
+    # A REPLACE diff re-derived through either builder below comes back as a pure
+    # append — both take added lines only — so the removal it was written to make
+    # disappears. Refuse instead; the caller's existing unrecoverable arm handles "".
+    if removed_lines:
+        _warn_removal_refusal(
+            site="stale re-derivation",
+            target_file=target_file,
+            removed_count=len(removed_lines),
+        )
+        return ""
 
     rel_name = target_file.name
     # Mirror _normalize_to_unified_diff's EDITABLE-region membership guard so a
@@ -7383,6 +7479,11 @@ def classify_failure_rationale(rationale: str) -> str:
     if not text:
         # Empty rationale carries no quality verdict → non-adjudication.
         return FAILURE_CLASS_SKIPPED
+    if text.startswith(REMOVAL_REFUSAL_REASON_PREFIX):
+        # ADJUDICATING: the diff was refused on its own evidence, so the streak
+        # MUST advance (a pattern the loop cannot express should stop being
+        # regenerated). Named apart from quality only so the rows are filterable.
+        return FAILURE_CLASS_REMOVAL_REFUSAL
     if text.startswith(_SUPERSEDE_REASON):
         return FAILURE_CLASS_SUPERSEDE
     if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
