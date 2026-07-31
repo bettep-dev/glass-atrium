@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import functools
 import io
 import subprocess
 import sys
@@ -188,6 +189,21 @@ class _WorkTreeCase(unittest.TestCase):
         self.work_tree, self.target = _write_work_tree(
             "glass-atrium-dev-db.md", DEV_DB_WORK_RULES
         )
+
+    def pin_gate_to_work_tree(self) -> None:
+        """Bind the gate's agents-dir seam to the fixture tree for this test.
+
+        A caller that reaches the gate indirectly (`_parse_haiku_response`) cannot
+        pass the seam itself, so it would otherwise resolve the apply scope against
+        whatever install the operator happens to have — passing on a developer box
+        and failing on a clean runner where no live agents dir exists. Pinning here
+        is what makes those callers hermetic; torn down on the test's own exit.
+        """
+        unpinned = dc._gate_validated_diff
+        dc._gate_validated_diff = functools.partial(  # type: ignore[assignment]
+            unpinned, agents_dir=self.work_tree
+        )
+        self.addCleanup(setattr, dc, "_gate_validated_diff", unpinned)
 
 
 class TestStaleRederivationRefusal(_WorkTreeCase):
@@ -427,6 +443,7 @@ class TestCallerAbsorbsEmptyReturn(_WorkTreeCase):
     def test_when_haiku_emits_replace_then_proposal_carries_refusal_reason(
         self,
     ) -> None:
+        self.pin_gate_to_work_tree()
         stdout = (
             "RATIONALE: tighten the budget checkpoint bullet\n"
             "DIFF:\n"
@@ -442,6 +459,7 @@ class TestCallerAbsorbsEmptyReturn(_WorkTreeCase):
         self.assertEqual(proposal.estimated_added_lines, 0)
 
     def test_when_haiku_emits_add_only_then_no_refusal_reason(self) -> None:
+        self.pin_gate_to_work_tree()
         stdout = (
             "RATIONALE: add a retention window rule\n"
             "DIFF:\n"
