@@ -1446,8 +1446,16 @@ sys.stdout.write("\n".join(out))
 # presence: a target that never had frontmatter or a `> Rules:` anchor is not
 # penalized for its continued absence (the rules files and the global-rules file
 # never carried frontmatter). Checks: non-empty · one heading · present-before
-# frontmatter kept · present-before `> Rules:` anchor kept · not shrunk below half
+# frontmatter kept · present-before `> Rules:` anchor kept · editable-region
+# marker COUNTS not reduced · not shrunk below half
 # the before-image line count.
+#
+# Why the marker check COUNTS rather than tests presence: a patch that deletes one
+# END marker of several leaves markers present while silently merging two regions
+# into one — the case a presence test passes and the one worth catching. Deleting
+# a boundary widens the editable surface every later landing-zone check reasons
+# against, so it is protected here, in the one deterministic slot before the bytes
+# reach the live harness.
 #
 # DEFECT CLASSES IT CANNOT DETECT: markdown has no compiler and a heading-bearing
 # file IS structurally valid, so a SEMANTIC regression that keeps the frontmatter,
@@ -1488,6 +1496,21 @@ verify_patched() {
     if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${target}"; then
         return 1
     fi
+
+    # Editable-region markers: present-before implies present-after, per-marker
+    # COUNT (rationale in the header). A marker-less before-image counts 0 and so
+    # is never penalized, inheriting the same present-before semantics as the two
+    # checks above. awk (not `grep -c`) does the counting because it exits 0 on a
+    # zero count — no `|| true` suppression to reason about under set -e, and no
+    # `grep -c` no-match exit-1 trap.
+    local marker before_markers after_markers
+    for marker in '<!-- EDITABLE:BEGIN -->' '<!-- EDITABLE:END -->'; do
+        before_markers="$(awk -v m="${marker}" 'index($0, m) { n++ } END { print n + 0 }' "${before}")"
+        after_markers="$(awk -v m="${marker}" 'index($0, m) { n++ } END { print n + 0 }' "${target}")"
+        if ((after_markers < before_markers)); then
+            return 1
+        fi
+    done
 
     # Proportional shrink floor: keep at least half the before-image line count.
     # Guts a body-stripping patch while a normal edit (near-original size) passes.
@@ -2107,11 +2130,29 @@ PY
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_VERIFY_FAIL}" ]]; then
         # verify_patched failed. git_txn_apply already ATOMICALLY restored the
         # target (GIT_TARGET, the GA real path) from its before-image.
+        #
+        # COUNTER CLASSIFICATION (same DELIBERATE divergence the landing-zone
+        # reject above documents): this branch keeps incrementing ERRORS, NOT the
+        # apply_rc==3 NEEDS_REGEN bucket. A patch that lands and then guts its
+        # target is a hard preservation violation, not the softer "stored diff no
+        # longer applies" deferral. Only the stale-drain WIRING below is mirrored.
         ERRORS=$((ERRORS + 1))
         emit_log "$(printf '{"ts":%s,"status":"error","reason":"verify_failed","pattern_label":%s,"target_file":%s}' \
             "$(printf '%s' "${timestamp}" | json_escape)" \
             "$(printf '%s' "${PATCH_LABEL}" | json_escape)" \
             "$(printf '%s' "${PATCH_TARGET}" | json_escape)")"
+
+        # Bounded-retry → terminal-drain via the shared emit_stale_drain helper (the
+        # third call site; landing-zone reject + apply_rc==3 are the other two). The
+        # restore leaves the row pending holding the SAME stored diff, so a patch
+        # that can NEVER verify re-selects, re-applies and re-restores against a
+        # live agent body every cycle forever — the identical fossil the other two
+        # sites were wired to bound. The helper owns the AUTO_REGEN / patch-source
+        # gate, the enforce=1 loud-fail and the verdict handling. The restore has
+        # already run, so — as at the landing-zone site — the single trailing
+        # `continue` is the sole exit.
+        emit_stale_drain "${PATCH_LABEL}" "${PATCH_TARGET}" "${patch_cycle}" "${patch_id}" "${timestamp}"
+
         continue
     fi
     if [[ "${GIT_TXN_RC}" -eq "${GIT_TXN_RESTORE_FAIL}" ]]; then
