@@ -43,7 +43,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 # -- Constants --------------------------------------------------------------
 
@@ -105,7 +105,12 @@ try:
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
             reject_learning_pattern as _pg_reject_learning_pattern,
+            discharge_learning_pattern as _pg_discharge_learning_pattern,
             is_negative_signal_outcome as _pg_is_negative_signal_outcome,
+            DischargeResult,
+            DISCHARGE_APPLIED,
+            DISCHARGE_NOT_MATCHED,
+            DISCHARGE_FAILED,
         )
     HAS_PG_OUTCOME_READ = True
     HAS_PG_PATTERN_READ = True
@@ -113,6 +118,20 @@ except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     HAS_PG_OUTCOME_READ = False
     HAS_PG_PATTERN_READ = False
     _PG_OUTCOME_IMPORT_EXC = _pg_import_exc
+
+    # Discharge vocabulary must exist even on the degraded path — the stage
+    # below names these outcomes in its report, and a NameError there would
+    # convert a driver-absent environment into a crash.
+    class DischargeResult(NamedTuple):  # type: ignore[no-redef]
+        outcome: str
+        row_id: int | None
+
+    DISCHARGE_APPLIED = "applied"
+    DISCHARGE_NOT_MATCHED = "not_matched"
+    DISCHARGE_FAILED = "failed"
+
+    def _pg_discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
+        return DischargeResult(DISCHARGE_FAILED, None)
 
 # PG outcome lookback window — PG is the single sink, so 90 days yields enough
 # history to sample 100+ rows per agent (cost: WHERE record_ts > now()-N index
@@ -7713,6 +7732,223 @@ def _warn_pattern_skip(
     )
 
 
+# -- Applied-proposal discharge (pattern-first coverage resolution) ----------
+#
+# An applied proposal's patch lands but the core.learning_log rows it was
+# generated from stay 'identified', so their frequency keeps growing and the
+# same prose rule re-fires stricter every cycle. This stage resolves an applied
+# proposal to the rows it covers and discharges them to terminal 'applied'.
+#
+# Resolution is PATTERN-FIRST: iterate the agent's stored rows (row ids already
+# in hand) and ask _covers_pattern_label whether the proposal label covers each.
+# Nothing is reconstructed from the label, so a constituent's nested parentheses
+# sit inside the haystack instead of being parsed.
+
+# Live transitioning is opt-in; dry-run is the default (file env convention).
+DISCHARGE_LIVE_ENV = "AUTOAGENT_DISCHARGE_LIVE"
+# Apply-side status-flip window. 2 days against a daily cycle = one cycle of
+# overlap; a re-discharge is a no-op (the SQL terminal guard reports not-matched).
+DISCHARGE_WINDOW_DAYS = int(
+    os.environ.get("AUTOAGENT_DISCHARGE_WINDOW_DAYS", "2") or "2"
+)
+
+_APPLIED_FOR_DISCHARGE_SELECT_SQL = (
+    "SELECT id, target_agent, pattern_label "
+    "FROM core.autoagent_proposals "
+    "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
+    "AND target_agent IS NOT NULL AND pattern_label IS NOT NULL "
+    "AND reviewed_at > now() - make_interval(days => %s) "
+    "ORDER BY reviewed_at DESC"
+)
+
+
+class DischargeReport(NamedTuple):
+    """Outcome of one discharge stage — an outage is never an empty result."""
+
+    outage: bool
+    would_discharge: list[int]
+    discharged: list[int]
+    failed: list[int]
+    unresolved: list[int]
+
+
+def _canon_agent_key(agent: str) -> str:
+    """Bare-stem key for an agent alias.
+
+    Accumulated learning_log rows carry the bare stem ('dev-shell') while a
+    proposal carries the prefixed one — the same bare↔prefixed alias resolution
+    _get_roster_alias performs, minus the roster read. Narrowing on the raw
+    string instead would silently drop the legacy bare-form rows.
+    """
+    stem = (agent or "").strip()
+    if stem.startswith(_ROSTER_STEM_PREFIX):
+        return stem[len(_ROSTER_STEM_PREFIX):]
+    return stem
+
+
+def get_pattern_rows_by_agent() -> dict[str, list[dict]] | None:
+    """Untruncated core.learning_log intake rows indexed by bare agent key.
+
+    Read ONCE per cycle and shared across every proposal in the window: several
+    proposals commonly target the same agent, and a per-proposal read multiplies
+    the query for no new information.
+
+    Deliberately NOT read_user_pending_patterns' result — that list is
+    roster-filtered (cross-cutting and roster-mismatch rows skipped) and
+    agent-capped downstream, so a covered row outside it would never discharge,
+    its frequency would keep growing, and it would re-fire.
+
+    Helper import absent → None, reported by the caller as an OUTAGE. A read
+    ERROR degrades upstream to [] (the intake module's own fail-open), so the
+    applied-proposal read — which does return None — is the outage canary.
+    """
+    if not HAS_PG_PATTERN_READ:
+        return None
+    rows = _pg_read_pending_patterns()
+    if rows is None:
+        return None
+    index: dict[str, list[dict]] = {}
+    for row in rows:
+        index.setdefault(_canon_agent_key(row.get("agent") or ""), []).append(row)
+    return index
+
+
+def find_covered_pattern_rows(
+    proposal_label: str,
+    agent: str,
+    rows_by_agent: dict[str, list[dict]],
+) -> list[int]:
+    """Row ids of `agent`'s stored pattern rows that `proposal_label` covers.
+
+    Reuses the shipped _covers_pattern_label matcher by name — the matcher
+    already handles both the legacy numeric form and the consolidated
+    multi-signal form, and already canonicalizes a display-remapped constituent
+    back to its stored signature core.
+
+    Resolution is PER-AGENT, which is what absorbs the forked legacy signature
+    core: each agent's label was generated from that agent's own rows, so needle
+    and haystack are always on the same side of the fork. Cross-fork containment
+    is false in both directions by design — the shared matcher is NOT loosened
+    to bridge it, because its three other consumers all terminalize on a match.
+
+    A shape the matcher cannot resolve yields an empty list, never a guess.
+    """
+    covered: list[int] = []
+    for row in rows_by_agent.get(_canon_agent_key(agent), ()):
+        signature = row.get("pattern_signature") or ""
+        # signature = "<label>|<agent>" (aggregator UPSERT contract).
+        if _covers_pattern_label(signature.rsplit("|", 1)[0], proposal_label):
+            covered.append(row["id"])
+    return covered
+
+
+def discharge_live_enabled() -> bool:
+    """True only on an explicit opt-in — dry-run is the default."""
+    return os.environ.get(DISCHARGE_LIVE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _fetch_applied_for_discharge() -> list[tuple] | None:
+    """(id, target_agent, pattern_label) for proposals applied inside the window.
+
+    Deliberately not _fetch_applied_proposals: that one carries LIMIT 50 and the
+    90-day outcome-read horizon, so reusing it would re-import on the proposal
+    side the same silent truncation the untruncated pattern read exists to avoid.
+
+    PG off / read error → None, which the caller reports as an OUTAGE, never as
+    "nothing to discharge".
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_APPLIED_FOR_DISCHARGE_SELECT_SQL, (DISCHARGE_WINDOW_DAYS,))
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — outage, reported as such by caller
+        sys.stderr.write(
+            f"[daemon-cycle] discharge: applied-proposal read failed — "
+            f"{type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def discharge_applied_patterns(
+    applied_rows: list[tuple] | None,
+    rows_by_agent: dict[str, list[dict]] | None,
+    *,
+    live: bool = False,
+) -> DischargeReport:
+    """Discharge the pattern rows covered by each proposal applied this window.
+
+    Ambiguity discharges NOTHING: an unreadable input is an outage and an
+    unresolvable label is a loud skip, so the stage can never fall back to
+    terminalizing an agent's whole row set.
+    """
+    if applied_rows is None or rows_by_agent is None:
+        sys.stderr.write(
+            "[daemon-cycle] WARN: discharge SKIPPED this cycle — read outage "
+            "(applied-proposal or pattern read unavailable); this is NOT "
+            "'nothing to discharge', and no row was transitioned\n"
+        )
+        return DischargeReport(True, [], [], [], [])
+
+    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    would: list[int] = []
+    discharged: list[int] = []
+    failed: list[int] = []
+    unresolved: list[int] = []
+
+    for proposal_id, agent, label in applied_rows:
+        covered = find_covered_pattern_rows(label or "", agent or "", rows_by_agent)
+        if not covered:
+            unresolved.append(proposal_id)
+            _warn_pattern_skip(
+                agent or "",
+                label or "",
+                event_ts,
+                eval_result="discharge-unresolved",
+                reason=(
+                    f"applied proposal id={proposal_id} covers no stored pattern "
+                    "row — label shape unrecognized, nothing discharged"
+                ),
+            )
+            continue
+        if not live:
+            would.extend(covered)
+            continue
+        for row_id in covered:
+            result = _pg_discharge_learning_pattern(
+                row_id, f"discharged by applied proposal id={proposal_id}"
+            )
+            if result.outcome == DISCHARGE_APPLIED:
+                discharged.append(row_id)
+            elif result.outcome == DISCHARGE_FAILED:
+                failed.append(row_id)
+                sys.stderr.write(
+                    f"[daemon-cycle] WARN: discharge transition failed — "
+                    f"learning_log id={row_id} (proposal id={proposal_id}); the "
+                    "call never completed, retried next cycle\n"
+                )
+
+    if live:
+        sys.stderr.write(
+            f"[daemon-cycle] discharge: {len(discharged)} row(s) transitioned "
+            f"{sorted(discharged)}, {len(failed)} failed {sorted(failed)}, "
+            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+        )
+    else:
+        sys.stderr.write(
+            f"[daemon-cycle] discharge (dry-run, {DISCHARGE_LIVE_ENV} unset): "
+            f"would-discharge {len(would)} row(s) {sorted(would)}; "
+            f"{len(unresolved)} proposal(s) unresolved {sorted(unresolved)}\n"
+        )
+    return DischargeReport(False, would, discharged, failed, unresolved)
+
+
 # -- Per-agent grouping -----------------------------------------------------
 
 
@@ -7859,6 +8095,16 @@ def run_cycle(
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
     # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
     # agent cap → 4) one consolidated multi-hunk proposal per agent.
+    # Discharge first: a pattern whose patch already landed must not seed this
+    # cycle's intake. Dry-run by default — live transitioning is opt-in.
+    # One untruncated pattern read serves both consumers — the discharge and the
+    # regression gate ask the same coverage question of the same rows.
+    pattern_rows_by_agent = get_pattern_rows_by_agent()
+    discharge_applied_patterns(
+        _fetch_applied_for_discharge(),
+        pattern_rows_by_agent,
+        live=discharge_live_enabled(),
+    )
     patterns = read_user_pending_patterns(
         log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
     )
