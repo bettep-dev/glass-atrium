@@ -7949,6 +7949,260 @@ def discharge_applied_patterns(
     return DischargeReport(False, would, discharged, failed, unresolved)
 
 
+# -- Post-apply regression gate ---------------------------------------------
+#
+# alert_post_apply_regression() emits a 'post-apply-regression' loop event and
+# stops there; the verdict had no consumer. This is that consumer: while a
+# warning is live, the pattern rows the regressing proposal covered may not
+# re-fire for that agent.
+#
+# The warning row carries only (event_ts, agent, eval_result) — no pattern and
+# no proposal identity. Per-pattern granularity comes from the join the detector
+# deliberately built: event_ts IS the proposal's own apply timestamp, so the
+# warning resolves to its proposal by (timestamp, agent) and then to that
+# proposal's covered rows through R4's resolver. Blocking by agent instead would
+# be the whole-agent lockout this gate exists to avoid.
+
+REGRESSION_LIVENESS_ENV = "AUTOAGENT_REGRESSION_LIVENESS_DAYS"
+# How long ONE degradation observation still binds a decision — deliberately not
+# PG_OUTCOME_LOOKBACK_DAYS, which is a data-read horizon sized so a rate sample
+# has rows behind it. 14 days mirrors STALE_WINDOW_DAYS (2x the 7-day sustain
+# window) and, against a daily cycle, is 14 chances for a fresh apply to re-raise
+# a warning that still deserves to bind.
+REGRESSION_LIVENESS_DAYS = int(
+    os.environ.get(REGRESSION_LIVENESS_ENV, "14") or "14"
+)
+# Live exclusion is opt-in; dry-run is the default (file env convention).
+REGRESSION_GATE_LIVE_ENV = "AUTOAGENT_REGRESSION_GATE_LIVE"
+
+_REGRESSION_WARNINGS_SELECT_SQL = (
+    "SELECT event_ts, agent "
+    "FROM core.autoagent_loop_events "
+    "WHERE eval_result = %s AND event_ts IS NOT NULL AND agent IS NOT NULL "
+    "AND event_ts > now() - make_interval(days => %s) "
+    "ORDER BY event_ts DESC"
+)
+
+# status 'reverted' is SELECTed, not filtered out: a human back-out releases the
+# gate early, and the release is decided in python so it is testable.
+_REGRESSION_PROPOSALS_SELECT_SQL = (
+    "SELECT id, target_agent, reviewed_at, pattern_label, status::text "
+    "FROM core.autoagent_proposals "
+    "WHERE status::text IN ('applied', 'reverted') AND reviewed_at IS NOT NULL "
+    "AND target_agent IS NOT NULL AND pattern_label IS NOT NULL "
+    "AND reviewed_at > now() - make_interval(days => %s) "
+    "ORDER BY reviewed_at DESC"
+)
+
+
+class RegressionGateReport(NamedTuple):
+    """Gate verdict for one cycle — an indeterminate read is never an empty set."""
+
+    indeterminate: bool
+    blocked_rows: frozenset[int]
+    entries: tuple[tuple[str, int, int], ...]  # (agent, row_id, warning_age_days)
+
+
+def _as_utc(value: object) -> datetime | None:
+    """UTC-aware datetime from a stored timestamp, or None when unparseable."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def find_regression_blocked_rows(
+    warnings: list[tuple] | None,
+    applied_rows: list[tuple] | None,
+    rows_by_agent: dict[str, list[dict]] | None,
+    *,
+    now: datetime | None = None,
+) -> RegressionGateReport:
+    """Pattern rows bound by a LIVE regression warning, with each warning's age.
+
+    Args:
+        warnings: ``[(event_ts, agent), ...]`` post-apply-regression loop events.
+        applied_rows: ``[(id, target_agent, reviewed_at, pattern_label, status), ...]``.
+        rows_by_agent: the untruncated per-agent pattern index (R4's read).
+        now: liveness reference instant (injected by tests).
+
+    The fail direction is SPLIT and the split is the point: an INDETERMINATE
+    verdict — an unreadable input or an unparseable timestamp — reports
+    ``indeterminate`` and blocks every candidate that cycle, because there is no
+    per-pattern verdict to key on. A CLEANLY ABSENT verdict (read succeeded, no
+    warning) admits; absence is the normal state for most rows, so conflating
+    the two would halt the loop entirely.
+
+    A warning binds only while its proposal is inside REGRESSION_LIVENESS_DAYS,
+    so the block is self-releasing without any actor having to act. A 'reverted'
+    status releases earlier — an accelerator, never the only path.
+    """
+    if warnings is None or applied_rows is None or rows_by_agent is None:
+        return RegressionGateReport(True, frozenset(), ())
+
+    reference = now or datetime.now(timezone.utc)
+    live_window_seconds = REGRESSION_LIVENESS_DAYS * 86400
+
+    proposals: dict[tuple[datetime, str], list[tuple[str, str]]] = {}
+    for _proposal_id, agent, reviewed_at, label, status in applied_rows:
+        applied_ts = _as_utc(reviewed_at)
+        if applied_ts is None:
+            return RegressionGateReport(True, frozenset(), ())
+        key = (applied_ts, _canon_agent_key(agent or ""))
+        proposals.setdefault(key, []).append((label or "", status or ""))
+
+    blocked: set[int] = set()
+    entries: list[tuple[str, int, int]] = []
+    for event_ts, agent in warnings:
+        warned_at = _as_utc(event_ts)
+        if warned_at is None:
+            return RegressionGateReport(True, frozenset(), ())
+        age_seconds = (reference - warned_at).total_seconds()
+        if age_seconds >= live_window_seconds:
+            continue
+        age_days = int(age_seconds // 86400)
+        for label, status in proposals.get(
+            (warned_at, _canon_agent_key(agent or "")), ()
+        ):
+            if status != "applied":
+                continue
+            for row_id in find_covered_pattern_rows(label, agent or "", rows_by_agent):
+                if row_id in blocked:
+                    continue
+                blocked.add(row_id)
+                entries.append((agent or "", row_id, age_days))
+
+    return RegressionGateReport(False, frozenset(blocked), tuple(entries))
+
+
+def regression_gate_live_enabled() -> bool:
+    """True only on an explicit opt-in — dry-run is the default."""
+    return os.environ.get(REGRESSION_GATE_LIVE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _fetch_regression_warnings() -> list[tuple] | None:
+    """Post-apply regression loop events inside the liveness window, newest-first.
+
+    PG off / read error → None, reported by the caller as INDETERMINATE.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _REGRESSION_WARNINGS_SELECT_SQL,
+                    (POST_APPLY_REGRESSION_EVAL_RESULT, REGRESSION_LIVENESS_DAYS),
+                )
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — fail-CLOSED, reported by caller
+        sys.stderr.write(
+            f"[daemon-cycle] regression gate: warning read failed — "
+            f"{type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def _fetch_proposals_for_regression_gate() -> list[tuple] | None:
+    """Applied/reverted proposals inside the liveness window, newest-first.
+
+    Deliberately not _fetch_applied_proposals: that one carries LIMIT 50 and the
+    90-day outcome-read horizon, so a truncated read would silently un-block.
+    PG off / read error → None, reported by the caller as INDETERMINATE.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _REGRESSION_PROPOSALS_SELECT_SQL, (REGRESSION_LIVENESS_DAYS,)
+                )
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — fail-CLOSED, reported by caller
+        sys.stderr.write(
+            f"[daemon-cycle] regression gate: proposal read failed — "
+            f"{type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def build_regression_gate_report(
+    rows_by_agent: dict[str, list[dict]] | None,
+) -> RegressionGateReport:
+    """Read this cycle's verdict once and publish its would-block set loudly."""
+    report = find_regression_blocked_rows(
+        _fetch_regression_warnings(),
+        _fetch_proposals_for_regression_gate(),
+        rows_by_agent,
+    )
+    live = regression_gate_live_enabled()
+    if report.indeterminate:
+        sys.stderr.write(
+            "[daemon-cycle] WARN: regression gate INDETERMINATE — verdict read "
+            "failed or returned an unparseable row. FAIL-CLOSED (this file's "
+            "only inverted read: over-proposing is the disease, so a one-cycle "
+            "pause errs safely): every candidate is blocked for THIS cycle "
+            f"only{'' if live else ' (dry-run: nothing excluded)'}; the next "
+            "cycle re-reads and admits normally\n"
+        )
+        return report
+
+    members = ", ".join(
+        f"agent={agent} row={row_id} warning_age={age}d"
+        for agent, row_id, age in report.entries
+    )
+    sys.stderr.write(
+        f"[daemon-cycle] regression gate "
+        f"({'live' if live else f'dry-run, {REGRESSION_GATE_LIVE_ENV} unset'}): "
+        f"would-block {len(report.blocked_rows)} row(s) [{members}]"
+        f"{'' if live else '; nothing excluded this cycle'}\n"
+    )
+    return report
+
+
+def drop_regression_blocked_patterns(
+    agent: str,
+    patterns: list[Pattern],
+    report: RegressionGateReport,
+    *,
+    live: bool,
+) -> list[Pattern]:
+    """Drop this agent's patterns bound by a live regression warning.
+
+    Dry-run keeps everything — the report is still published, since the deploy
+    gate is checked against that would-block set. Nothing is terminalized: the
+    block lapses when the warning ages out of the liveness window, so a pattern
+    suppressed here returns on its own.
+    """
+    if not live:
+        return patterns
+    if report.indeterminate:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: regression gate blocked all {len(patterns)} "
+            f"candidate(s) for agent={agent} — indeterminate verdict, THIS cycle "
+            "only\n"
+        )
+        return []
+    kept = [p for p in patterns if p.row_id not in report.blocked_rows]
+    if len(kept) != len(patterns):
+        sys.stderr.write(
+            f"[daemon-cycle] regression gate: {len(patterns) - len(kept)} "
+            f"pattern(s) blocked for agent={agent} — covered by a live "
+            "post-apply regression warning\n"
+        )
+    return kept
+
+
 # -- Per-agent grouping -----------------------------------------------------
 
 
@@ -8105,6 +8359,7 @@ def run_cycle(
         pattern_rows_by_agent,
         live=discharge_live_enabled(),
     )
+    regression_gate = build_regression_gate_report(pattern_rows_by_agent)
     patterns = read_user_pending_patterns(
         log_path, UNLIMITED_AGENTS, agents_dir=agents_dir
     )
@@ -8181,6 +8436,13 @@ def run_cycle(
                 )
             agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
             agent_patterns = drop_stale_patterns(agent, agent_patterns)
+            # Non-terminalizing and reversible: the block lapses with the warning.
+            agent_patterns = drop_regression_blocked_patterns(
+                agent,
+                agent_patterns,
+                regression_gate,
+                live=regression_gate_live_enabled(),
+            )
             if not agent_patterns:
                 continue
         # GENERATION outcomes = all of yesterday (no sample cap) — separate from promotion stats.
