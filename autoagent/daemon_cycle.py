@@ -255,11 +255,26 @@ TIMEOUT_BACKOFF_THRESHOLD = int(
 # BOTH emitters: the TimeoutExpired branch in _invoke_haiku_cli and the true-stall
 # exhaustion rationale in _run_haiku_with_retry (single SoT for the timeout marker).
 HAIKU_TIMEOUT_RATIONALE_PREFIX = "haiku timeout after"
+# Every timeout emitter writes the ceiling it was measured against right after the
+# prefix, so a stored row's own regime is recoverable from its text alone.
+_RECORDED_CEILING_RE = re.compile(
+    rf"^{re.escape(HAIKU_TIMEOUT_RATIONALE_PREFIX)}\s+(\d+)s"
+)
 # Rationale stamped on a back-off skip row (observable, grep-able). N filled in.
+TIMEOUT_BACKOFF_RATIONALE_PREFIX = "chronic haiku-timeout back-off"
 TIMEOUT_BACKOFF_RATIONALE_TEMPLATE = (
-    "chronic haiku-timeout back-off: {n} consecutive timeouts on this target "
+    TIMEOUT_BACKOFF_RATIONALE_PREFIX + ": {n} consecutive timeouts on this target "
     "(threshold {thr}) — generation snoozed to stop burning budget; recovers on "
     "the next non-timeout generation. Resolve the candidate or raise the timeout."
+)
+TIMEOUT_BACKOFF_PROBE_ENV = "AUTOAGENT_TIMEOUT_BACKOFF_PROBE_CYCLES"
+# Self-lock guard: the documented recovery ("a non-timeout row breaks the streak")
+# names an actor the closed gate suppresses, so the state is unreachable from
+# inside itself. After this many CONSECUTIVE back-off cycles the gate opens for
+# exactly one cycle — that probe is the missing actor. Clamped at 1: a bound below
+# it probes every cycle, silently disabling the protection.
+TIMEOUT_BACKOFF_PROBE_CYCLES = max(
+    1, int(os.environ.get(TIMEOUT_BACKOFF_PROBE_ENV, "3") or "3")
 )
 
 # Haiku failure-class de-conflation (kill-streak root-cause fix) ------------
@@ -6917,39 +6932,100 @@ def supersede_prior_pending_for_agent(target_agent: str, target_file: str) -> in
 # -- Chronic Haiku-timeout back-off (generation side) -----------------------
 
 
-def consecutive_timeout_count(target_file: str) -> int:
-    """Count the leading run of consecutive Haiku-timeout proposals for a target.
+class BackoffState(NamedTuple):
+    """One target's back-off standing — a held hold is never a silent one."""
 
-    Reads core.autoagent_proposals for ``target_file`` ordered by cycle_date DESC
-    and counts how many of the MOST RECENT rows were Haiku timeouts (rationale
-    begins with ``HAIKU_TIMEOUT_RATIONALE_PREFIX``). The count stops at the first
-    non-timeout row — so a single successful ('ok') generation since the last
-    timeout resets the streak to 0 (the candidate re-arms automatically; this is
-    the recovery path for a transiently-flaky-but-generatable target).
+    streak: int  # consecutive timeouts recorded under the CURRENT ceiling
+    held_cycles: int  # consecutive back-off skip cycles at the head
+    superseded_skipped: int  # timeouts looked past as measured under another ceiling
+    probe_due: bool
+
+
+def get_recorded_timeout_ceiling(rationale: str) -> int | None:
+    """Recover the ceiling a timeout row was measured against, or None."""
+    match = _RECORDED_CEILING_RE.match((rationale or "").strip())
+    return int(match.group(1)) if match else None
+
+
+def build_backoff_state(
+    rationales: "list[str]",
+    *,
+    ceiling_sec: int | None = None,
+    probe_cycles: int | None = None,
+) -> BackoffState:
+    """Evaluate a target's back-off standing from its newest-first rationales.
+
+    Three row classes, each answering a different question:
+
+    * A timeout recorded under the CURRENT ceiling is evidence and advances the
+      streak. One recorded under a SUPERSEDED ceiling is evidence about a regime
+      that no longer exists — it is looked past, neither advancing nor breaking.
+      An UNPARSEABLE ceiling counts as not-superseded, so an unreadable value
+      keeps the back-off rather than releasing it.
+    * A back-off skip row is not itself a timeout, so it is looked past for the
+      streak — but counted separately, because that count IS "held for N cycles"
+      and nothing else in the history carries it.
+    * Any other row is a genuine adjudication and breaks the run, unchanged.
+
+    Args:
+        rationales: proposal rationales for one target, newest first.
+        ceiling_sec: ceiling to evaluate against (default HAIKU_TIMEOUT_SEC).
+        probe_cycles: hold bound (default TIMEOUT_BACKOFF_PROBE_CYCLES).
+
+    Returns:
+        BackoffState — streak, held cycles, superseded count, probe verdict.
+    """
+    ceiling = HAIKU_TIMEOUT_SEC if ceiling_sec is None else ceiling_sec
+    bound = TIMEOUT_BACKOFF_PROBE_CYCLES if probe_cycles is None else probe_cycles
+    streak = 0
+    held_cycles = 0
+    superseded_skipped = 0
+    in_head_run = True
+    for rationale in rationales:
+        text = (rationale or "").strip()
+        if text.startswith(TIMEOUT_BACKOFF_RATIONALE_PREFIX):
+            if in_head_run:
+                held_cycles += 1
+            continue
+        in_head_run = False
+        if not text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
+            break
+        recorded = get_recorded_timeout_ceiling(text)
+        if recorded is not None and recorded != ceiling:
+            superseded_skipped += 1
+            continue
+        streak += 1
+    return BackoffState(
+        streak=streak,
+        held_cycles=held_cycles,
+        superseded_skipped=superseded_skipped,
+        probe_due=held_cycles >= bound,
+    )
+
+
+def read_backoff_state(target_file: str) -> BackoffState:
+    """Read one target's proposal history and evaluate its back-off standing.
 
     Keyed on ``target_file`` ALONE — one consolidated proposal is emitted per agent
     per cycle, so "consecutive" is a per-TARGET aggregate across that agent's
     patterns, not strictly per-pattern. Slightly more eager back-off, but any single
     'ok' still resets it → no suppression risk.
 
-    Back-off skip rows authored by this feature (rationale begins with the
-    back-off marker) are SKIPPED in the count — they are not themselves timeouts,
-    and counting them would let the streak grow without a real Haiku call. A
-    back-off row does NOT break the streak either (it represents "we did not even
-    try"), so the count looks past it to the underlying timeout history.
-
-    PG unavailable (HAS_PG_LOOP_WRITE False) or any read error → 0 (fail-OPEN:
-    a read failure must never silently snooze a healthy candidate). Empty
-    target_file → 0.
+    PG unavailable (HAS_PG_LOOP_WRITE False) or any read error → an all-zero state
+    (fail-OPEN: a read failure must never silently snooze a healthy candidate).
+    Empty target_file → the same.
 
     Args:
         target_file: target agent .md absolute path (core.autoagent_proposals.target_file).
 
     Returns:
-        int — length of the leading consecutive-timeout run (0 when none / on error).
+        BackoffState — all-zero, probe_due False, when nothing could be read.
     """
+    empty = BackoffState(
+        streak=0, held_cycles=0, superseded_skipped=0, probe_due=False
+    )
     if not HAS_PG_LOOP_WRITE or not target_file:
-        return 0
+        return empty
 
     # Bounded window — only the recent history matters for a back-off decision;
     # LIMIT keeps the scan cheap and avoids walking years of rows.
@@ -6970,21 +7046,27 @@ def consecutive_timeout_count(target_file: str) -> int:
             f"target={target_file} — fail-open (count=0): "
             f"{type(exc).__name__}: {str(exc)[:200]}\n"
         )
-        return 0
+        return empty
 
-    streak = 0
-    for (rationale,) in rows:
-        text = (rationale or "").strip()
-        if text.startswith(HAIKU_TIMEOUT_RATIONALE_PREFIX):
-            streak += 1
-            continue
-        if text.startswith("chronic haiku-timeout back-off"):
-            # A prior back-off skip row — look past it (not a timeout, not a
-            # success). Does not increment or break the streak.
-            continue
-        # First genuine non-timeout, non-backoff row breaks the streak.
-        break
-    return streak
+    return build_backoff_state([(row[0] or "") for row in rows])
+
+
+def consecutive_timeout_count(target_file: str) -> int:
+    """Length of the leading consecutive-timeout run for a target.
+
+    The gate's own seam, kept as the run_cycle entry point. A single non-timeout
+    row resets it to 0 (the candidate re-arms automatically; this is the recovery
+    path for a transiently-flaky-but-generatable target) — but that row can only
+    be produced by the Haiku call a closed gate suppresses, which is why
+    ``BackoffState.probe_due`` exists beside this count.
+
+    Args:
+        target_file: target agent .md absolute path.
+
+    Returns:
+        int — 0 when none, on read error, or when PG is unavailable.
+    """
+    return read_backoff_state(target_file).streak
 
 
 def backoff_skip_proposal(target_file: str, streak: int) -> PatchProposal:
@@ -8686,6 +8768,21 @@ def run_cycle(
             0 if skip_haiku else consecutive_timeout_count(str(target_md))
         )
         is_backoff_skip = timeout_streak >= TIMEOUT_BACKOFF_THRESHOLD
+        if is_backoff_skip:
+            # Self-lock guard: the streak's own break condition is produced only
+            # by the call this branch suppresses, so a bounded hold opens for one
+            # cycle and lets that call happen. Read only here — the rare path.
+            backoff_state = read_backoff_state(str(target_md))
+            if backoff_state.probe_due:
+                is_backoff_skip = False
+                sys.stderr.write(
+                    f"[daemon-cycle] timeout-backoff: agent={agent} held "
+                    f"{backoff_state.held_cycles} consecutive cycles "
+                    f"(bound {TIMEOUT_BACKOFF_PROBE_CYCLES}) — admitting ONE probe "
+                    f"generation (streak {timeout_streak}, "
+                    f"{backoff_state.superseded_skipped} row(s) looked past as "
+                    f"recorded under a superseded ceiling).\n"
+                )
         if is_backoff_skip:
             sys.stderr.write(
                 f"[daemon-cycle] timeout-backoff: agent={agent} target={target_md.name} "
