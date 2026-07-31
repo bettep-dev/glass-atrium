@@ -746,7 +746,7 @@
     "autoagent/test/test_py_consumer_data_seam.py": "96d300ec2a291fac9332870d652f5708a519abe1ccc5859f1cfa311a241bcee0",
     "autoagent/test/test_quota_limit_detection.py": "2db71ca0058ad17c99003fbc41b91cc00d4cf36694c388e0ebd37176c9704698",
     "autoagent/test/test_regression_gate.py": "ebe70c385c9b11b17925d17f688ef52ec823037891550a0f48b480920a94d929",
-    "autoagent/test/test_removal_discard_refusal.py": "3286623c836465618fc9a05f2a7653bf77ca026579b5120307bc047d4f6bb629",
+    "autoagent/test/test_removal_discard_refusal.py": "e77f2058fe9ca33c63c383cb2a791cb7d113197491d2223bdda23409794af7de",
     "autoagent/test/test_removal_exact_match_gate.py": "4d6617997bd5cecebc3e32b63538ed51c1bc414c91ab735053d5de50cb1a3c69",
     "autoagent/test/test_sensitive_patterns.py": "6a5179272f291c2f36b981621f2088d230fc8fcb3c64359711293cebf071fc42",
     "autoagent/test/test_timeout_backoff_release.py": "eba09fb08f520ac9c9e09271bf0ad53d6b3cb7c629e39ec91e3d708ef39930b8",
