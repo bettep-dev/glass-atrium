@@ -5,6 +5,7 @@ PG is the single sink/source: core.learning_log · core.aggregator_state.
 Read paths go through the _pg_learning_dualwrite.read_* helpers.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -835,6 +836,31 @@ def _grader_verified_pass(record: dict) -> bool:
     return str(record.get("grader_verdict", "")).strip().lower() == GRADER_VERDICT_PASS
 
 
+def _files_test_evidence(files: object) -> bool:
+    """True when a changed-file list carries at least one test/specification path.
+
+    Mirrors the grader's files-evidence rule MINUS its existence check: the aggregator runs
+    batched from an unrelated cwd where a repo-relative path never resolves, so mirroring
+    existence would measure the daemon's cwd rather than the row's evidence (measured on the live
+    corpus: four qualifying rows become one, and that one already sits at the floor — a change
+    that cannot do anything). A glob anywhere makes the whole field non-gradeable."""
+    if not isinstance(files, (list, tuple)):
+        return False
+    found = False
+    for raw in files:
+        entry = str(raw or "").strip()
+        if not entry:
+            continue
+        if any(c in entry for c in _GLOB_METACHARS):
+            return False
+        if "/" not in entry and not re.search(r"\.[A-Za-z0-9]+$", entry):
+            continue  # not path-shaped → carries no evidence either way
+        base = os.path.basename(entry)
+        if any(fnmatch.fnmatchcase(base, pattern) for pattern in _TEST_PATH_GLOBS):
+            found = True
+    return found
+
+
 def _admission_score(record: dict) -> int:
     """T19 admission polarity → a CTM entry's initial score.
 
@@ -844,10 +870,19 @@ def _admission_score(record: dict) -> int:
     code lesson (esp. refactor, which is structurally verified_pass=0) enters provisionally and
     reaches the floor only via corroboration-promotion. This closes G2: the writer's self-reported
     confidence can no longer buy immediate injectable admission for an ungraded code lesson.
-    Non-code task_types keep the self-report confidence score (AC5 predicate byte-identical)."""
+    Non-code task_types keep the self-report confidence score (AC5 predicate byte-identical).
+
+    R8: `verified_pass` is gated on a two-arm task-type bar refactor can never clear, which
+    starves the whole channel, so recorded test-path evidence admits AT the floor on any code arm
+    — the grader's own evidence, minus that bar. Exactly the floor, never confidence-derived, so
+    the self-report stays out; `verified_fail` is excluded, and an absent or non-gradeable field
+    falls back to the provisional sub-floor rather than discarding the lesson."""
     if _is_code_task_type(record):
         if _grader_verified_pass(record):
             return max(_lesson_score(record), CTM_MIN_SCORE)
+        verdict = str(record.get("grader_verdict", "")).strip().lower()
+        if verdict != "verified_fail" and _files_test_evidence(record.get("files_modified")):
+            return CTM_MIN_SCORE
         return CTM_SUBFLOOR_SCORE
     return _lesson_score(record)
 
