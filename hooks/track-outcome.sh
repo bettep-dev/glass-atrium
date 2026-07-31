@@ -2249,6 +2249,17 @@ elif [[ -z "${METRIC_PASS}" ]]; then
   esac
 fi
 
+# Degraded-row visibility: a writer-absent row carries confidence=low + metric_pass=false, so no
+# branch above trips and it reads as healthy. Set-only — the branches above keep their semantics.
+# EXPLICIT two-literal allowlist, never a negation over the synthesized family: budget-truncation and
+# truncated_completion are real negatives already, and sweeping them in amplifies the very truncation
+# family under remediation. Negative-signal neutrality is carried by the paired exclusions in
+# _pg_learning_dualwrite.negative_signal_hits and learning-aggregator._record_is_negative.
+case "${ATTRIBUTION_SOURCE}" in
+  structuredoutput-derived | completion-synthesized) REVIEW_FLAG="true" ;;
+  *) ;;
+esac
+
 # Code-Based grader verdict is ADVISORY only. metric_pass is the WRITER self-report and is NEVER
 # force-overwritten — a grader/writer disagreement is surfaced via review_flag + the separate
 # grader_verdict / downgrade_origin columns, never by rewriting the writer value (core-outcome-record.md:

@@ -15,6 +15,7 @@
 
 import sys
 import time
+from typing import NamedTuple
 
 try:
     import psycopg
@@ -378,6 +379,97 @@ def reject_learning_pattern(pattern_id: int, reason: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Lifecycle transition: core.learning_log → terminal 'applied' (discharge)
+# ---------------------------------------------------------------------------
+#
+# Discharges a pattern row whose proposal was applied, so its frequency stops
+# growing and the same prose rule cannot re-fire stricter every cycle. Sibling
+# of reject_learning_pattern: same SQL terminal-status guard, same reason
+# truncation, same retry wrapper. No migration — 'applied' is an existing
+# "LearningStatus" member, _validate_status_transition already treats it as
+# terminal, and both audit columns already exist.
+#
+# The sibling's single None answers both "no row matched" and "the call failed";
+# a caller reading an outage as "nothing to discharge" is the silent no-op this
+# task exists to remove, so the discharge answers a tri-state instead.
+
+DISCHARGE_APPLIED = "applied"
+DISCHARGE_NOT_MATCHED = "not_matched"
+DISCHARGE_FAILED = "failed"
+
+
+class DischargeResult(NamedTuple):
+    """One of the three DISCHARGE_* outcomes, with the row id on a match only."""
+
+    outcome: str
+    row_id: int | None
+
+
+_LEARNING_LOG_DISCHARGE_SQL = """
+UPDATE core.learning_log
+SET status = 'applied'::core."LearningStatus",
+    last_transition_at = now(),
+    last_transition_reason = %(reason)s,
+    last_updated = now()
+WHERE id = %(pattern_id)s
+  AND status NOT IN ('applied'::core."LearningStatus",
+                     'rejected'::core."LearningStatus")
+RETURNING id
+"""
+
+
+def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
+    """Transition one core.learning_log row to terminal 'applied' + audit reason.
+
+    The WHERE status guard — not python control flow — is what makes the call
+    idempotent: an already-terminal row matches nothing and reports NOT_MATCHED.
+
+    Returns DISCHARGE_APPLIED with the row id, DISCHARGE_NOT_MATCHED when the
+    guard excluded the row, or DISCHARGE_FAILED when the call never completed.
+    Raises ValueError on input validation only (before any PG call).
+    """
+    if not isinstance(pattern_id, int) or pattern_id <= 0:
+        raise ValueError("pattern_id must be positive int, got %r" % (pattern_id,))
+    if not reason or not isinstance(reason, str):
+        raise ValueError("reason must be non-empty str")
+
+    updated: list[int] = []
+    committed: list[bool] = []
+
+    def _do():
+        # A retry re-runs the whole round-trip — a stale first-attempt id must
+        # not survive into the answer.
+        updated.clear()
+        committed.clear()
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _LEARNING_LOG_DISCHARGE_SQL,
+                    # varchar(500) guard — mirrors the agent[:64] boundary style.
+                    {"pattern_id": pattern_id, "reason": reason[:500]},
+                )
+                updated.extend(row[0] for row in cur.fetchall())
+            conn.commit()
+        committed.append(True)
+
+    _run_with_retry(
+        op_name="discharge_learning_pattern",
+        target_table="core.learning_log",
+        payload_ref="learning_log:%d" % pattern_id,
+        fn=_do,
+    )
+    # Fail-closed: absent a completed round-trip the answer is FAILED, never the
+    # not-matched no-op.
+    if not committed:
+        return DischargeResult(DISCHARGE_FAILED, None)
+    if updated:
+        return DischargeResult(DISCHARGE_APPLIED, updated[0])
+    return DischargeResult(DISCHARGE_NOT_MATCHED, None)
+
+
+# ---------------------------------------------------------------------------
 # UPSERT: core.aggregator_state
 # ---------------------------------------------------------------------------
 #
@@ -710,11 +802,12 @@ ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
 ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 # Third synthesized-provenance sibling track-outcome.sh stamps when a schema-mode
 # subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
-# confidence=low + metric_pass=false, writer-unverified. Decision (recorded): NO
-# negative-signal behavior change here — 'done' is not in NEGATIVE_SIGNAL_RESULTS
-# and the stamp carries no other OR-term, so such a row already yields zero
-# negative hits arithmetically. Polarity handling (NEUTRAL, never a SUCCESS
-# exemplar) lives in daemon_cycle's partition, which keys on this token.
+# confidence=low + metric_pass=false, writer-unverified. 'done' is not in
+# NEGATIVE_SIGNAL_RESULTS, so the row's RESULT contributes nothing — but
+# track-outcome.sh now sets review_flag on it for degraded-row visibility, and that
+# OR-term is excluded by _is_visibility_flag_row so the count stays neutral.
+# Polarity handling (NEUTRAL, never a SUCCESS exemplar) lives in daemon_cycle's
+# partition, which keys on this token.
 ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
@@ -767,8 +860,9 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
     invariant even if the completion-synthesized match is ever broadened.
 
     structuredoutput-derived (result=done, writer-unverified) is the third sibling
-    provenance and needs NO carve-out here: done is not a negative OR-term, so the
-    row yields zero hits arithmetically; its SUCCESS-side exclusion (NEUTRAL
+    provenance: its result contributes no OR-term, but its review_flag now does —
+    that term is excluded by _is_visibility_flag_row, not here, because the row is
+    not a done_with_concerns measurement gap. Its SUCCESS-side exclusion (NEUTRAL
     polarity) lives in daemon_cycle._is_success_outcome."""
     if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
         return False
@@ -776,6 +870,18 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
         (row.get("attribution_source") or "") == ATTRIBUTION_SYNTHESIZED
         and (row.get("result") or "") == "done_with_concerns"
     )
+
+
+def _is_visibility_flag_row(row: dict) -> bool:
+    """True when the row's review_flag was set purely for degraded-row VISIBILITY by
+    track-outcome.sh (writer-absent provenance), not as a writer-side ambiguity signal —
+    so that OR-term must not count. Scoped to structuredoutput-derived alone: the sibling
+    completion-synthesized provenance pairs with done_with_concerns, which
+    _is_synthesized_measurement_gap already short-circuits to zero hits. The two flag-side
+    literals are the SAME allowlist track-outcome.sh sets the flag on; budget-truncation and
+    truncated_completion are never flagged, so no exclusion exists for them here."""
+    src = row.get("attribution_source") or ""
+    return src == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
 
 
 def negative_signal_hits(row: dict) -> tuple[str, ...]:
@@ -799,7 +905,13 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
     The carve-out is review_flag-SPECIFIC: result=fail / grader_verdict=verified_fail
     / revision_count>=2 on a structural row are GENUINE failures and still count.
     A genuine code row (dev-* on-role bug-fix/feature) keeps review_flag=true as a
-    real overconfidence signal (real-signal guard)."""
+    real overconfidence signal (real-signal guard).
+
+    Visibility carve-out (lockstep with the track-outcome.sh degraded-row widening):
+    on a writer-absent provenance the review_flag is a legibility marker, not a
+    writer-side signal, so it does NOT count — see _is_visibility_flag_row. Every
+    other OR-term on such a row (result=fail, verified_fail, revision_count>=2) is a
+    genuine failure and still counts."""
     if _is_synthesized_measurement_gap(row):
         return ()
     hits: list[str] = []
@@ -808,7 +920,11 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
         hits.append("result=%s" % result)
     if (row.get("grader_verdict") or "") == GRADER_VERDICT_FAIL:
         hits.append("grader_verdict=verified_fail")
-    if bool(row.get("review_flag")) and not _is_structural_row(row):
+    if (
+        bool(row.get("review_flag"))
+        and not _is_structural_row(row)
+        and not _is_visibility_flag_row(row)
+    ):
         hits.append("review_flag=true")
     try:
         revision = int(row.get("revision_count") or 0)
