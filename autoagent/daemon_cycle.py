@@ -8203,6 +8203,219 @@ def drop_regression_blocked_patterns(
     return kept
 
 
+# -- Attribution-confound signature -----------------------------------------
+#
+# "Patches applied, budget-overage rate unchanged" is the observable consequence
+# of a signal that cannot name its actor: core.budget_overages carries the agent,
+# the tool-use count, the budget and the crossing percentage, so an over-packed
+# delegation and an undisciplined agent produce literally the same row. This
+# makes that consequence computable per agent instead of invisible.
+#
+# Row shape follows the sibling regression detector exactly (Decision 6): the
+# event table has no text payload and one decimal column, so the verdict rides
+# the row while both rates ride the daemon log line.
+#
+# DETECTION-ONLY — it owns no gate and no transition, so no lockout is reachable
+# from here; the only write is the loop event.
+
+CONFOUND_SIGNATURE_EVAL_RESULT = "attribution-confound"  # VARCHAR(32) verdict
+CONFOUND_WINDOW_ENV = "AUTOAGENT_CONFOUND_WINDOW_DAYS"
+# Apply-window AND pre-window span. 14 days = 2x the 7-day sustain window, the
+# same proportion the stale window uses, and enough days for a daily-cycle rate
+# to have rows behind it on both sides of an apply.
+CONFOUND_WINDOW_DAYS = int(os.environ.get(CONFOUND_WINDOW_ENV, "14") or "14")
+# Relative fall in the per-day overage rate that counts as the patch working.
+CONFOUND_MATERIAL_DROP = 0.20
+# Below this much elapsed post-apply time a rate is an artifact of its divisor.
+CONFOUND_MIN_POST_DAYS = 1.0
+
+_APPLIED_FOR_CONFOUND_SELECT_SQL = (
+    "SELECT target_agent, reviewed_at "
+    "FROM core.autoagent_proposals "
+    "WHERE status::text = 'applied' AND reviewed_at IS NOT NULL "
+    "AND target_agent IS NOT NULL "
+    "AND reviewed_at > now() - make_interval(days => %s) "
+    "ORDER BY reviewed_at DESC"
+)
+
+_OVERAGE_ROWS_SELECT_SQL = (
+    "SELECT agent_type, ts "
+    "FROM core.budget_overages "
+    "WHERE agent_type IS NOT NULL "
+    "AND ts > now() - make_interval(days => %s)"
+)
+
+
+class ConfoundSignature(NamedTuple):
+    """One agent's "patches landed, overage rate did not move" observation."""
+
+    agent: str
+    event_ts: datetime  # the agent's latest apply in the window — the dedup key
+    applied_count: int
+    pre_rate: float  # overage crossings per day before that apply
+    post_rate: float  # overage crossings per day after it
+
+
+def find_confound_signatures(
+    applied_rows: list[tuple] | None,
+    overage_rows: list[tuple] | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[ConfoundSignature, ...]:
+    """Agents whose patches landed without a material fall in the overage rate.
+
+    Args:
+        applied_rows: ``[(target_agent, reviewed_at), ...]`` applied proposals.
+        overage_rows: ``[(agent_type, ts), ...]`` core.budget_overages crossings.
+        now: post-window end instant (injected by tests).
+
+    An unreadable input yields NO signature: a detector that fabricates on a
+    failed read manufactures the very evidence it exists to collect. An agent
+    with no pre-apply crossing yields none either — there was nothing to reduce.
+    """
+    if applied_rows is None or overage_rows is None:
+        return ()
+
+    reference = now or datetime.now(timezone.utc)
+    boundaries: dict[str, datetime] = {}
+    applied_counts: dict[str, int] = {}
+    display: dict[str, str] = {}
+    for agent, reviewed_at in applied_rows:
+        applied_ts = _as_utc(reviewed_at)
+        if applied_ts is None:
+            continue
+        key = _canon_agent_key(agent or "")
+        applied_counts[key] = applied_counts.get(key, 0) + 1
+        display.setdefault(key, agent or "")
+        latest = boundaries.get(key)
+        if latest is None or applied_ts > latest:
+            boundaries[key] = applied_ts
+
+    crossings: dict[str, list[datetime]] = {}
+    for agent, ts in overage_rows:
+        crossed_at = _as_utc(ts)
+        if crossed_at is None:
+            continue
+        crossings.setdefault(_canon_agent_key(agent or ""), []).append(crossed_at)
+
+    found: list[ConfoundSignature] = []
+    for key, boundary in boundaries.items():
+        post_days = (reference - boundary).total_seconds() / 86400
+        if post_days < CONFOUND_MIN_POST_DAYS:
+            continue
+        pre_start = boundary - timedelta(days=CONFOUND_WINDOW_DAYS)
+        agent_crossings = crossings.get(key, ())
+        pre_count = sum(1 for ts in agent_crossings if pre_start <= ts < boundary)
+        post_count = sum(1 for ts in agent_crossings if boundary <= ts <= reference)
+        pre_rate = pre_count / CONFOUND_WINDOW_DAYS
+        post_rate = post_count / post_days
+        if pre_rate <= 0:
+            continue
+        if post_rate < pre_rate * (1 - CONFOUND_MATERIAL_DROP):
+            continue
+        found.append(
+            ConfoundSignature(
+                display.get(key, key),
+                boundary,
+                applied_counts.get(key, 0),
+                pre_rate,
+                post_rate,
+            )
+        )
+    return tuple(found)
+
+
+def _fetch_applied_for_confound() -> list[tuple] | None:
+    """(target_agent, reviewed_at) for proposals applied inside the window.
+
+    Deliberately not _fetch_applied_proposals: that one carries LIMIT 50 and the
+    90-day outcome-read horizon, so a truncated read would silently under-report
+    which agents actually received a patch. PG off / read error → None, reported
+    by the caller as an OUTAGE.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_APPLIED_FOR_CONFOUND_SELECT_SQL, (CONFOUND_WINDOW_DAYS,))
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — outage, reported as such by caller
+        sys.stderr.write(
+            f"[daemon-cycle] confound signature: applied-proposal read failed — "
+            f"{type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def _fetch_overage_rows() -> list[tuple] | None:
+    """(agent_type, ts) budget crossings spanning both sides of the apply window.
+
+    2x the window: an apply at the far edge still needs a full pre-window behind
+    it. PG off / read error → None, reported by the caller as an OUTAGE.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_OVERAGE_ROWS_SELECT_SQL, (2 * CONFOUND_WINDOW_DAYS,))
+                return cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 — outage, reported as such by caller
+        sys.stderr.write(
+            f"[daemon-cycle] confound signature: overage read failed — "
+            f"{type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+
+
+def alert_attribution_confound(*, now: datetime | None = None) -> None:
+    """Emit one loop event per agent showing patches applied and the rate flat.
+
+    Verdict on the row, both rates on the log line — the sibling detector's
+    convention, and the only split the event table's columns can hold.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return
+
+    applied_rows = _fetch_applied_for_confound()
+    overage_rows = _fetch_overage_rows()
+    if applied_rows is None or overage_rows is None:
+        sys.stderr.write(
+            "[daemon-cycle] WARN: confound signature SKIPPED this cycle — read "
+            "outage (applied-proposal or budget-overage read unavailable); this "
+            "is NOT 'the rate did not move', and no event was emitted\n"
+        )
+        return
+
+    for signature in find_confound_signatures(applied_rows, overage_rows, now=now):
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: attribution confound — agent="
+            f"{signature.agent} applied={signature.applied_count} patch(es) in "
+            f"{CONFOUND_WINDOW_DAYS}d; budget-overage crossings per day "
+            f"pre={signature.pre_rate:.3f} → post={signature.post_rate:.3f} "
+            f"(no material reduction, threshold {CONFOUND_MATERIAL_DROP:.0%}); "
+            "the overage row cannot name WHICH actor crossed the budget — an "
+            "over-packed delegation and an undisciplined agent write the same "
+            "row; DETECTION-ONLY — no gate, no transition, no status mutation\n"
+        )
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    # Apply-timestamp key → the (event_ts, agent, eval_result)
+                    # UPSERT lands every re-detection on the SAME row.
+                    "event_ts": signature.event_ts.isoformat(),
+                    "agent": signature.agent[:64],  # varchar(64) guard
+                    "eval_result": CONFOUND_SIGNATURE_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                },
+            }
+        )
+
+
 # -- Per-agent grouping -----------------------------------------------------
 
 
@@ -8857,6 +9070,16 @@ def run_cycle(
             sys.stderr.write(
                 "[daemon-cycle] WARN: alert_post_apply_regression raised — "
                 f"watch lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+        # Second-order sibling: the regression watch above asks whether a landed
+        # patch made things worse; this one asks whether it changed anything at
+        # all on the signal that drove it.
+        try:
+            alert_attribution_confound()
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
+            sys.stderr.write(
+                "[daemon-cycle] WARN: alert_attribution_confound raised — "
+                f"signature lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
         try:
             emit_loop_events(report)
