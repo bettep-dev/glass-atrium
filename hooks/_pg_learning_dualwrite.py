@@ -802,11 +802,12 @@ ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
 ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
 # Third synthesized-provenance sibling track-outcome.sh stamps when a schema-mode
 # subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
-# confidence=low + metric_pass=false, writer-unverified. Decision (recorded): NO
-# negative-signal behavior change here — 'done' is not in NEGATIVE_SIGNAL_RESULTS
-# and the stamp carries no other OR-term, so such a row already yields zero
-# negative hits arithmetically. Polarity handling (NEUTRAL, never a SUCCESS
-# exemplar) lives in daemon_cycle's partition, which keys on this token.
+# confidence=low + metric_pass=false, writer-unverified. 'done' is not in
+# NEGATIVE_SIGNAL_RESULTS, so the row's RESULT contributes nothing — but
+# track-outcome.sh now sets review_flag on it for degraded-row visibility, and that
+# OR-term is excluded by _is_visibility_flag_row so the count stays neutral.
+# Polarity handling (NEUTRAL, never a SUCCESS exemplar) lives in daemon_cycle's
+# partition, which keys on this token.
 ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
 # Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
 # improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
@@ -859,8 +860,9 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
     invariant even if the completion-synthesized match is ever broadened.
 
     structuredoutput-derived (result=done, writer-unverified) is the third sibling
-    provenance and needs NO carve-out here: done is not a negative OR-term, so the
-    row yields zero hits arithmetically; its SUCCESS-side exclusion (NEUTRAL
+    provenance: its result contributes no OR-term, but its review_flag now does —
+    that term is excluded by _is_visibility_flag_row, not here, because the row is
+    not a done_with_concerns measurement gap. Its SUCCESS-side exclusion (NEUTRAL
     polarity) lives in daemon_cycle._is_success_outcome."""
     if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
         return False
@@ -868,6 +870,18 @@ def _is_synthesized_measurement_gap(row: dict) -> bool:
         (row.get("attribution_source") or "") == ATTRIBUTION_SYNTHESIZED
         and (row.get("result") or "") == "done_with_concerns"
     )
+
+
+def _is_visibility_flag_row(row: dict) -> bool:
+    """True when the row's review_flag was set purely for degraded-row VISIBILITY by
+    track-outcome.sh (writer-absent provenance), not as a writer-side ambiguity signal —
+    so that OR-term must not count. Scoped to structuredoutput-derived alone: the sibling
+    completion-synthesized provenance pairs with done_with_concerns, which
+    _is_synthesized_measurement_gap already short-circuits to zero hits. The two flag-side
+    literals are the SAME allowlist track-outcome.sh sets the flag on; budget-truncation and
+    truncated_completion are never flagged, so no exclusion exists for them here."""
+    src = row.get("attribution_source") or ""
+    return src == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
 
 
 def negative_signal_hits(row: dict) -> tuple[str, ...]:
@@ -891,7 +905,13 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
     The carve-out is review_flag-SPECIFIC: result=fail / grader_verdict=verified_fail
     / revision_count>=2 on a structural row are GENUINE failures and still count.
     A genuine code row (dev-* on-role bug-fix/feature) keeps review_flag=true as a
-    real overconfidence signal (real-signal guard)."""
+    real overconfidence signal (real-signal guard).
+
+    Visibility carve-out (lockstep with the track-outcome.sh degraded-row widening):
+    on a writer-absent provenance the review_flag is a legibility marker, not a
+    writer-side signal, so it does NOT count — see _is_visibility_flag_row. Every
+    other OR-term on such a row (result=fail, verified_fail, revision_count>=2) is a
+    genuine failure and still counts."""
     if _is_synthesized_measurement_gap(row):
         return ()
     hits: list[str] = []
@@ -900,7 +920,11 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
         hits.append("result=%s" % result)
     if (row.get("grader_verdict") or "") == GRADER_VERDICT_FAIL:
         hits.append("grader_verdict=verified_fail")
-    if bool(row.get("review_flag")) and not _is_structural_row(row):
+    if (
+        bool(row.get("review_flag"))
+        and not _is_structural_row(row)
+        and not _is_visibility_flag_row(row)
+    ):
         hits.append("review_flag=true")
     try:
         revision = int(row.get("revision_count") or 0)

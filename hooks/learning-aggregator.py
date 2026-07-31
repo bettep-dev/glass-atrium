@@ -754,6 +754,16 @@ CTM_PROMOTE_FREQUENCY = 2
 # Eviction grace window (days) for a young provisional entry — long enough to reach the promotion
 # frequency before capacity eviction can cull it (the R-a mandatory eviction guard).
 CTM_PROVISIONAL_GRACE_DAYS = 14
+# Provenance whose review_flag is a degraded-row VISIBILITY marker rather than a writer signal.
+# Literal (not imported) because this mirror must keep working when psycopg is absent; the value
+# is the _pg_learning_dualwrite.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED token track-outcome.sh stamps.
+_VISIBILITY_FLAG_ATTRIBUTION = "structuredoutput-derived"
+
+# R8 test-path evidence — the SAME basename shapes _cbg_files_test_evidence
+# (hooks/lib/code-based-grader.sh) promotes on, kept as its glob patterns so the two lists stay
+# greppable against each other. Metacharacters mirror the grader's non-gradeable veto.
+_TEST_PATH_GLOBS = ("*.test.*", "*.spec.*", "*.bats", "test_*.*", "*_test.*", "*_spec.*")
+_GLOB_METACHARS = "*?[{}"
 
 # Numeric/whitespace strip for lesson-text dedup — two lessons differing only in a
 # count/date/percentage are ONE lesson (a duplicate bumps frequency, never a new row).
@@ -790,7 +800,13 @@ def _lesson_score(record: dict) -> int:
 def _record_is_negative(record: dict) -> bool:
     """DB-independent negative-signal check (mirrors the _negative_signal_hits OR-terms) so
     classify_lesson_bucket unit-tests without the PG helper: fail/blocked/done_with_concerns,
-    revision_count>=2, evaluative_signal=-1, or review_flag=true → EPM-bound."""
+    revision_count>=2, evaluative_signal=-1, or review_flag=true → EPM-bound.
+
+    Visibility carve-out: track-outcome.sh sets review_flag on a schema-derived row purely so a
+    writer-unverified row is legible, so that flag alone must not route a healthy row into
+    failure memory. Scoped to the review_flag term — any other negative term on such a row still
+    routes to EPM. The mirror's pre-existing divergence from the shared predicate (no
+    measurement-gap and no structural carve-out) is untouched here."""
     if str(record.get("result", "")).strip() in ("fail", "blocked", "done_with_concerns"):
         return True
     try:
@@ -800,6 +816,8 @@ def _record_is_negative(record: dict) -> bool:
         pass
     if str(record.get("evaluative_signal", "")).strip() == "-1":
         return True
+    if str(record.get("attribution_source", "")).strip() == _VISIBILITY_FLAG_ATTRIBUTION:
+        return False
     rf = record.get("review_flag")
     return rf is True or str(rf).strip().lower() == "true"
 
