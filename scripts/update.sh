@@ -939,12 +939,15 @@ update_merge_agent_editable_regions() {
   : >"${_update_agent_outcomes_file}"
 
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
-  # top-level only (references/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md charter excluded,
-  # same scoping as the roster scan).
+  # top-level only (references/ + templates/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md
+  # charter excluded, same scoping as the roster scan). The claim is expressed
+  # through the SHARED spine predicate, whose complement is the spine's
+  # agents-markdown exclusion — one edit site, so the two deploy consumers cannot
+  # drift into a path claimed by neither.
   for file in "${new_dir}"/agents/*.md; do
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
-    [[ "${base}" == 'GLASS_ATRIUM_GLOBAL_RULES.md' ]] && continue
+    spine_is_merge_claimed_path "agents/${base}" || continue
     local_file="${root}/agents/${base}"
     if [[ ! -f "${local_file}" ]]; then
       update_log "agent merge: ${base} is release-only (ADD) — defer to the agent_lifecycle ceremony, skipping"
@@ -2217,6 +2220,29 @@ update_commit_callback() {
   return 3
 }
 
+# Deploy-coverage detection half: name every manifest path claimed by NEITHER
+# consumer. An unclaimed path is never staged, so it is never hash-verified, so
+# the deploy reports success without having delivered it — the failure mode this
+# names out loud instead of leaving silent. Detection only: an uncovered path is
+# an authoring gap for an operator to close, never a reason to abort a release,
+# so this always returns 0 and a scan failure is itself reported rather than
+# absorbed. Arg: $1 = new-release manifest.
+update_report_uncovered_paths() {
+  local manifest="$1" uncovered path
+  if ! uncovered="$(spine_find_uncovered_paths "${manifest}")"; then
+    update_log "WARN: deploy-coverage scan FAILED for ${manifest} — coverage NOT verified this run"
+    return 0
+  fi
+  [[ -n "${uncovered}" ]] || return 0
+  update_log "WARN: deploy coverage gap — manifest path(s) claimed by NEITHER the agent merge nor the deterministic sync (they will NOT be delivered or hash-verified):"
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] && update_log "  (uncovered, never synced) ${path}"
+  done <<<"${uncovered}"
+  # Explicit: a blank trailing line would leave the loop's status at 1, and a
+  # detection helper must never be the thing that aborts a deploy under set -e.
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Vendor-removal sweep (#14) — the deletion counterpart of the non-agent sync
 # ---------------------------------------------------------------------------
@@ -2552,8 +2578,11 @@ update_run() {
   # binary — loud-fail exit 7 if not, so the merge cannot fail cryptically mid-flight.
   update_headless_verify_claude
 
-  # Step 3 — select the changed NON-AGENT files (agent md / overlays / config are
-  # excluded by the spine), then partition out sensitive harness files.
+  # Step 3 — select the changed NON-AGENT files (merge-claimed agent md / overlays
+  # / config are excluded by the spine), then partition out sensitive harness
+  # files. The coverage scan runs first so an unclaimed path is named BEFORE the
+  # run reports success without having delivered it.
+  update_report_uncovered_paths "${manifest}"
   changed="$(spine_find_changed_files "${manifest}" "${root}")" \
     || update_die "change selection failed (manifest hash gap) — refusing to apply"
   if [[ -z "${changed}" ]]; then

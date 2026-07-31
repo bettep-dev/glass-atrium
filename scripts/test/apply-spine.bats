@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
-# T13 spine_find_changed_files — hash-diff selection, excluding agents/**/*.md +
-# *.local.md + config.toml, with the missing-locally → changed rule.
+# T13 spine_find_changed_files — hash-diff selection, excluding the agents markdown
+# the E4 merge CLAIMS (top-level agents/<name>.md minus the charter) + *.local.md +
+# config.toml, with the missing-locally → changed rule.
 # T11 spine_stage_and_verify (per-file SHA-256 verify; loud-fail on a hash mismatch
 # with ZERO install mutation) · spine_commit_staged (swap + rollback to pre-swap:
 # existing files restored, newly created files DELETED) · spine_apply (full
@@ -118,19 +119,30 @@ spine() {
   [[ "${output}" == "scripts/new.sh" ]]
 }
 
-@test "T13: agents/**/*.md is EXCLUDED even when changed (E4 merge path)" {
+@test "T13: a MERGE-CLAIMED agent body is EXCLUDED, the rest of agents/ is SELECTED" {
   seed_file "${NEW}" "agents/dev-shell.md" "vendor-new-body"
   seed_file "${LIVE}" "agents/dev-shell.md" "local-learned-body"
+  seed_file "${NEW}" "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "vendor-charter"
+  seed_file "${LIVE}" "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "local-charter"
   seed_file "${NEW}" "agents/sub/nested.md" "vendor-nested"
   seed_file "${LIVE}" "agents/sub/nested.md" "local-nested"
   seed_file "${NEW}" "hooks/a.sh" "new"
   seed_file "${LIVE}" "hooks/a.sh" "old"
   build_manifest "${WORK}/manifest.json" "${NEW}" \
-    "agents/dev-shell.md" "agents/sub/nested.md" "hooks/a.sh"
+    "agents/dev-shell.md" "agents/GLASS_ATRIUM_GLOBAL_RULES.md" \
+    "agents/sub/nested.md" "hooks/a.sh"
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "hooks/a.sh" ]]
-  [[ "${output}" != *"agents/"* ]]
+  [[ "${status}" -eq 0 ]] || return 1
+  # `|| return 1` is load-bearing: under bats a FAILING bare `[[ ]]` that is not
+  # the test's final command does not fail the test.
+  # the E4 merge CLAIMS a top-level agent body → the spine must never touch it
+  [[ "${output}" != *"agents/dev-shell.md"* ]] || return 1
+  # the merge reaches NEITHER the charter nor a nested doc (basename skip / the
+  # non-recursive glob), so the spine owns them — the deploy partition, which
+  # previously left both hash-verified by nobody.
+  [[ "${output}" == *"agents/GLASS_ATRIUM_GLOBAL_RULES.md"* ]] || return 1
+  [[ "${output}" == *"agents/sub/nested.md"* ]] || return 1
+  [[ "${output}" == *"hooks/a.sh"* ]] || return 1
 }
 
 @test "T13: *.local.md overlay and config.toml are EXCLUDED" {
