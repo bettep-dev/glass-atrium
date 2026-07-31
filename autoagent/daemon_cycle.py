@@ -6459,9 +6459,7 @@ def _rederive_diff_against_file(diff_text: str, target_file: Path) -> str:
     # reuse path that reproduced dev-front.md:49). Out-of-region or no resolved
     # anchor → difflib append; region-less file → append (the guard rejects it).
     spans = _editable_spans(target_lines)
-    synthetic_anchor: int | None = None
-    if not removed_lines:
-        synthetic_anchor = _resolve_in_region_anchor(target_lines, context_lines, spans)
+    synthetic_anchor = _resolve_in_region_anchor(target_lines, context_lines, spans)
     if synthetic_anchor is not None:
         rebuilt = _build_synthetic_diff_at_anchor(
             rel_name=rel_name,

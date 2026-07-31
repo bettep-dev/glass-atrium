@@ -66,6 +66,7 @@ from test_removal_discard_refusal import (  # noqa: E402
     HEADERLESS_REPLACE_FRAGMENT,
     PROPOSAL_314_DIFF,
     PROPOSAL_318_DIFF,
+    qa_debugger_before,
 )
 
 BEGIN_MARK = "<!-- EDITABLE:BEGIN -->"
@@ -101,19 +102,6 @@ def _diff(*hunk_lines: str, name: str = "probe-agent.md") -> str:
     """A single-hunk located diff whose body is exactly `hunk_lines`."""
     body = "".join(line + "\n" for line in hunk_lines)
     return f"--- a/{name}\n+++ b/{name}\n@@ -1,1 +1,1 @@\n{body}"
-
-
-def _qa_debugger_before() -> str:
-    """The qa-debugger BEFORE state, reconstructed from proposal 314's own hunk.
-
-    The applied pure-removal diff is the fixture proving removals reach
-    production without the repair path, so its target is rebuilt from the stored
-    hunk (context + removed lines) rather than invented.
-    """
-    body = BEGIN_MARK + "\n"
-    for line in PROPOSAL_314_DIFF.splitlines()[3:]:
-        body += line[1:] + "\n"
-    return body + END_MARK + "\n"
 
 
 # -- Shell-side driver ------------------------------------------------------
@@ -261,11 +249,11 @@ class TestAppliedPureRemoval314(unittest.TestCase):
     """Coverage is total, not repair-path-only: 314 never entered the repair path."""
 
     def test_when_314_verified_against_its_own_stored_diff_then_admitted(self) -> None:
-        evidence = dc.verify_removal_evidence(PROPOSAL_314_DIFF, _qa_debugger_before())
+        evidence = dc.verify_removal_evidence(PROPOSAL_314_DIFF, qa_debugger_before())
         self.assertTrue(evidence.ok)
         self.assertEqual(len(evidence.declared), 2)
         for declared in evidence.declared:
-            self.assertEqual(_qa_debugger_before().splitlines().count(declared), 1)
+            self.assertEqual(qa_debugger_before().splitlines().count(declared), 1)
 
 
 class TestEvidenceRuleRefuses(unittest.TestCase):

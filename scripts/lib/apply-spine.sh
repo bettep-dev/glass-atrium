@@ -181,14 +181,18 @@ spine_find_uncovered_paths() {
   spine_require_tools jq || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
+    # Exclusion first: a path the spine syncs is covered, and every non-agent path
+    # answers that without consulting the merge predicate at all. The conjunction
+    # is the same either way — both predicates are pure.
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
-    if spine_is_merge_claimed_path "${path}"; then
+    if ! spine_is_excluded_path "${path}"; then
       continue
     fi
     # shellcheck disable=SC2310
-    if spine_is_excluded_path "${path}"; then
-      printf '%s\n' "${path}"
+    if spine_is_merge_claimed_path "${path}"; then
+      continue
     fi
+    printf '%s\n' "${path}"
   done < <(jq -r '.files[]' -- "${manifest}")
 }
 

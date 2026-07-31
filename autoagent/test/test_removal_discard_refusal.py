@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -182,6 +183,20 @@ def _capture(fn, *args, **kwargs) -> tuple[object, str]:
     return result, buf.getvalue()
 
 
+def qa_debugger_before() -> str:
+    """The qa-debugger BEFORE state, reconstructed from proposal 314's own hunk.
+
+    The applied pure-removal diff is the fixture proving removals reach production
+    without the repair path, so its target is rebuilt from the stored hunk
+    (context + removed lines) rather than invented. Public because the S2 suite
+    consumes the same reconstruction — one definition, as with the fixtures.
+    """
+    body = "<!-- EDITABLE:BEGIN -->\n"
+    for line in PROPOSAL_314_DIFF.splitlines()[3:]:
+        body += line[1:] + "\n"
+    return body + "<!-- EDITABLE:END -->\n"
+
+
 class _WorkTreeCase(unittest.TestCase):
     """Shared dev-db work tree — every test here is database-free and hermetic."""
 
@@ -189,6 +204,7 @@ class _WorkTreeCase(unittest.TestCase):
         self.work_tree, self.target = _write_work_tree(
             "glass-atrium-dev-db.md", DEV_DB_WORK_RULES
         )
+        self.addCleanup(shutil.rmtree, self.work_tree, ignore_errors=True)
 
     def pin_gate_to_work_tree(self) -> None:
         """Bind the gate's agents-dir seam to the fixture tree for this test.
@@ -313,15 +329,10 @@ class TestPureRemovalPathUntouched(unittest.TestCase):
     """A removal-only diff keeps its existing arm — asserted on the RETURN VALUE."""
 
     def setUp(self) -> None:
-        # The qa-debugger BEFORE state, reconstructed from the applied proposal
-        # 314 hunk itself (context + removed lines, as stored).
-        before = "<!-- EDITABLE:BEGIN -->\n"
-        for line in PROPOSAL_314_DIFF.splitlines()[3:]:
-            before += line[1:] + "\n"
-        before += "<!-- EDITABLE:END -->\n"
         self.work_tree, self.target = _write_work_tree(
-            "glass-atrium-qa-debugger.md", before
+            "glass-atrium-qa-debugger.md", qa_debugger_before()
         )
+        self.addCleanup(shutil.rmtree, self.work_tree, ignore_errors=True)
 
     def test_when_removal_only_gated_then_no_refusal_and_no_append(self) -> None:
         result, err = _capture(
