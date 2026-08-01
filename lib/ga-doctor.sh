@@ -396,33 +396,75 @@ run_doctor() {
     fi
   fi
 
-  # 10. inject-scope-rules drop marker (recurrence surface). inject-scope-rules.sh compresses the four
-  #     AGENT-INJECT source blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; if a
-  #     future block edit re-inflates the assembly past the ceiling, a scope block is dropped SILENTLY
-  #     (Claude Code discards SubagentStart hook stderr), so the hook persists each drop to a
-  #     HOME-relative diag log. Surface it as a WARN (never a FAIL): a recorded drop means a scope
-  #     block stopped reaching subagents — recompress the AGENT-INJECT source blocks. Mutation-free.
-  local drop_events=0
+  # 10. inject-scope-rules shed surface. inject-scope-rules.sh compresses the AGENT-INJECT source
+  #     blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; when the assembly still
+  #     overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
+  #     hook persists each shed to a HOME-relative diag log. Two properties of that log decide the
+  #     verdict shape here, and getting either wrong emits an unclearable imperative:
+  #       · APPEND-ONLY + lifetime-scoped — a count over the whole file asserts a condition that may
+  #         have ended months ago, so the verdict is computed over a DATE WINDOW only.
+  #       · the shed classes have DIFFERENT remedies, and only one has any remedy at all:
+  #           non-lesson DROP    → warn. A scope block stopped reaching subagents; recompressing the
+  #                                AGENT-INJECT source blocks clears it.
+  #           lesson DROP/PARTIAL → info, NO remedy. The lesson block is assembled at runtime from the
+  #                                CTM/EPM store (build_lesson_block), not extracted from an
+  #                                AGENT-INJECT source, so recompression cannot affect it — and lesson
+  #                                is the designed lowest-priority first-shed block, i.e. the ceiling
+  #                                mechanism working as specified.
+  #     PARTIAL is surfaced rather than merely excluded so a future mechanism shift cannot move the
+  #     live signal outside the monitored token unnoticed. Verdict shape mirrors §9e (age vs TTL,
+  #     three outcomes). Mutation-free.
+  local inject_drop_warns=0
   # Must read the SAME root inject-scope-rules.sh writes to: GA_DATA_ROOT/logs (the migrated
   # Tier-A seam = the producer's INJECT_DROP_LOG = HOOK_LOG_DIR) — reader + producer share one root.
   local inject_drop_log="${GA_DATA_ROOT}/logs/inject-scope-rules.diag.log"
-  if [[ -f "${inject_drop_log}" ]]; then
-    # grep -c prints "0" + exits 1 on zero matches → `|| true` swallows the rc without double-counting
-    # (masked substitution rc keeps set -e intact; SC2312 fires only for the lib's lack of file-scope set -e).
-    # shellcheck disable=SC2312
-    drop_events="$(grep -c 'inject-scope-rules] DROP' "${inject_drop_log}" 2>/dev/null || true)"
-    [[ -n "${drop_events}" ]] || drop_events=0
-    if [[ "${drop_events}" -gt 0 ]]; then
-      log "  warn : ${drop_events} inject-scope-rules block-drop event(s) recorded (${inject_drop_log}) — a scope block exceeded INJECT_CTX_MAX_BYTES and was NOT injected into subagents; recompress the AGENT-INJECT source blocks"
-      local last_drop
-      # shellcheck disable=SC2312
-      last_drop="$(grep 'inject-scope-rules] DROP' "${inject_drop_log}" 2>/dev/null | tail -n1 || true)"
-      [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
-    else
-      log "  ok   : no inject-scope-rules block-drop events recorded"
-    fi
+  local drop_cutoff="" drop_counts="" win_drop=0 win_lesson=0 win_partial=0 life_events=0
+  # A missing window boundary is the §9e un-ageable case: the condition cannot be ESTABLISHED, so the
+  # elif below says so loudly instead of falling back to the lifetime total (which would restate the
+  # defect this section exists to remove). SC2310/SC2311 disabled for the whole compound — the
+  # helper rc IS the branch, and both helpers are stdout-only (Precondition Loud-Fail Principle:
+  # the skip is named, never a silent OK).
+  # shellcheck disable=SC2310,SC2311
+  if [[ ! -f "${inject_drop_log}" ]]; then
+    log "  ok   : no inject-scope-rules drop log (no block-shed events)"
+  elif ! drop_cutoff="$(_drop_window_cutoff_date "${INJECT_DROP_WINDOW_DAYS}")"; then
+    log "  warn : inject-scope-rules drop log present but un-windowable (${inject_drop_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so live sheds cannot be separated from history; install a BSD- or GNU-compatible date(1)"
+    inject_drop_warns=1
   else
-    log "  ok   : no inject-scope-rules drop log (no block-drop events)"
+    # Single stdout line, field order `<non-lesson-drop> <lesson-drop> <partial> <lifetime>` — the
+    # multi-field verdict-line precedent already used by snapshot_staleness_scan. A failed scan
+    # (no awk, unreadable log) or a malformed line is LOUD, never zeroed into a clean OK.
+    local drop_counts_re='^[0-9]+ [0-9]+ [0-9]+ [0-9]+$'
+    # shellcheck disable=SC2310,SC2311
+    if ! drop_counts="$(_inject_drop_scan "${inject_drop_log}" "${drop_cutoff}")" \
+      || [[ ! "${drop_counts}" =~ ${drop_counts_re} ]]; then
+      log "  warn : inject-scope-rules drop log unclassifiable (${inject_drop_log}) — the awk scan produced no counts, so live sheds cannot be separated from history; check awk(1) and the log's readability"
+      inject_drop_warns=1
+    else
+      # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
+      # space-separated verdict line into its four fields.
+      IFS=' ' read -r win_drop win_lesson win_partial life_events <<<"${drop_counts}"
+      if [[ "${win_drop}" -gt 0 ]]; then
+        log "  warn : ${win_drop} inject-scope-rules scope-block drop(s) in the last ${INJECT_DROP_WINDOW_DAYS}d (${inject_drop_log}) — a scope block exceeded INJECT_CTX_MAX_BYTES and was NOT injected into subagents; recompress the AGENT-INJECT source blocks"
+        inject_drop_warns="${win_drop}"
+        local last_drop=""
+        # Latest ACTIONABLE row: win_drop > 0 guarantees one exists inside the window, and the newest
+        # non-lesson row is at least that recent. SC2312 — the lib carries no file-scope set -e.
+        # shellcheck disable=SC2312
+        last_drop="$(grep 'inject-scope-rules] DROP ' "${inject_drop_log}" 2>/dev/null | grep -v 'block=lesson ' | tail -n1 || true)"
+        [[ -n "${last_drop}" ]] && log "         latest: ${last_drop}"
+      fi
+      if [[ "${win_lesson}" -gt 0 || "${win_partial}" -gt 0 ]]; then
+        log "  info : ${win_lesson} lesson-block drop(s) + ${win_partial} lesson truncation(s) in the last ${INJECT_DROP_WINDOW_DAYS}d — designed shedding of the lowest-priority block; no action (recompression cannot affect a runtime-assembled block)"
+      fi
+      if [[ "${win_drop}" -eq 0 && "${win_lesson}" -eq 0 && "${win_partial}" -eq 0 ]]; then
+        if [[ "${life_events}" -gt 0 ]]; then
+          log "  ok   : no inject-scope-rules shed events in the last ${INJECT_DROP_WINDOW_DAYS}d (${life_events} historical event(s) on record in ${inject_drop_log})"
+        else
+          log "  ok   : no inject-scope-rules block-shed events recorded"
+        fi
+      fi
+    fi
   fi
 
   # 11. launchd deploy-drift gate (recurrence guard for the stale-deployed PATH incident). The plist
@@ -544,16 +586,65 @@ run_doctor() {
   fi
 
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + drop_events + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${drop_events} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
+      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
     fi
     return 0
   fi
   log "== doctor: FAIL =="
   return 1
+}
+
+# §10 recency window (days) over the append-only inject-scope-rules shed log. Sized to the SIGNAL'S
+# CADENCE, not to the daemon's 14d stale-pattern convention: a shed fires per subagent spawn, so a
+# live over-ceiling condition emits tens-to-hundreds of rows per DAY. Seven consecutive days of
+# silence is therefore strong evidence the condition ended — a fortnight would keep asserting a
+# burst that was remediated a week earlier, which is the defect this section exists to remove.
+# Env-overridable so an operator can widen it and a test can pin either side of the boundary.
+INJECT_DROP_WINDOW_DAYS="${INJECT_DROP_WINDOW_DAYS:-7}"
+
+# Emit the UTC calendar date $1 days ago as YYYY-MM-DD, or NOTHING with rc 1 when neither date(1)
+# dialect is available. BSD (`-v-Nd`) is tried first, then GNU (`-d 'N days ago'`); python3 is
+# deliberately not a fallback here because §9e already treats a missing python3 as a live condition.
+# The caller branches on the rc — an un-resolvable window is surfaced, never defaulted away.
+_drop_window_cutoff_date() {
+  local days="${1}"
+  date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null && return 0
+  date -u -d "${days} days ago" +%Y-%m-%d 2>/dev/null && return 0
+  return 1
+}
+
+# Classify the inject-scope-rules shed log against a YYYY-MM-DD cutoff. Producer line grammar
+# (hooks/inject-scope-rules.sh append_drop_log):
+#   <ISO8601Z> [inject-scope-rules] <DROP|PARTIAL> agent=<t> block=<label> pre_drop_bytes=N ceiling=N overage_bytes=N[ kept_bytes=N]
+# ISO-8601 dates compare correctly as strings, so the window needs no date arithmetic per row.
+# A row whose timestamp field is EMPTY (the producer's date(1) failed, and its ts is fail-open) is
+# counted as IN-window: an un-ageable row is surfaced, never silently aged out.
+# Args: $1=log path $2=cutoff date · stdout: `<non-lesson-drop> <lesson-drop> <partial> <lifetime>`.
+_inject_drop_scan() {
+  awk -v cutoff="${2}" '
+    index($0, "[inject-scope-rules]") == 0 { next }
+    {
+      event = ""; block = ""; in_window = 1
+      if ($1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) {
+        in_window = (substr($1, 1, 10) >= cutoff)
+        event = $3
+      } else {
+        event = $2
+      }
+      for (i = 1; i <= NF; i++) {
+        if (substr($i, 1, 6) == "block=") { block = substr($i, 7) }
+      }
+      life++
+      if (!in_window) { next }
+      if (event == "PARTIAL") { partial++ }
+      else if (event == "DROP") { if (block == "lesson") { lesson++ } else { actionable++ } }
+    }
+    END { printf "%d %d %d %d\n", actionable + 0, lesson + 0, partial + 0, life + 0 }
+  ' "${1}"
 }
 
 # sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens

@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -187,6 +188,29 @@ class _AggregatorRunFixture(unittest.TestCase):
         self.upserts: list[dict] = []
         self._tmpdir = tempfile.mkdtemp(prefix="ap3-agg-test-")
         self.addCleanup(self._cleanup_tmpdir)
+        # Fixture roster for the registry allowlist gate — the probe agents exist ONLY
+        # here, so the gate is exercised identically with or without a live
+        # ~/.glass-atrium install (reading the live registry makes an install-less runner
+        # fail open, i.e. green for the wrong reason). The poisoned probe is registered on
+        # purpose: its no-pattern assertion must prove the poisoned filter, not this gate.
+        self.registry_path = os.path.join(self._tmpdir, "agent-registry.json")
+        Path(self.registry_path).write_text(
+            json.dumps(
+                {
+                    "agents": {
+                        "glass-atrium-" + bare: {}
+                        for bare in (_TRIGGER_AGENT, _POISONED_AGENT, _CLEAN_AGENT)
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        # main() ingests this batch's lessons on every run → keep them off the live store
+        lessons = mock.patch.object(
+            agg, "LESSON_STORE_FILE", os.path.join(self._tmpdir, "lessons.json")
+        )
+        lessons.start()
+        self.addCleanup(lessons.stop)
 
     def _cleanup_tmpdir(self) -> None:
         for name in os.listdir(self._tmpdir):
@@ -220,7 +244,7 @@ class _AggregatorRunFixture(unittest.TestCase):
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            agg.main()
+            agg.main(registry_path=self.registry_path)
         return stderr.getvalue()
 
     def _upsert_signatures(self) -> set[str]:
@@ -382,7 +406,7 @@ class TestPoisonedRowsEmitNoPattern(_AggregatorRunFixture):
             self.addCleanup(patcher.stop)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            agg.main()
+            agg.main(registry_path=self.registry_path)
         return stderr.getvalue()
 
     def test_when_rows_poisoned_then_no_pattern_for_agent(self) -> None:

@@ -245,11 +245,20 @@ jobs:
   # suite under those four roots in aggregate, which is the invariant that matters. A
   # matrix job is a SINGLE node in the `needs` graph, so ci-pass observing
   # `test-bash` already aggregates every leg (any one leg's failure reddens the
-  # whole test-bash node). Every suite is hermetic
-  # (mktemp sandboxes + PATH-prepended stub binaries for
-  # psql/createdb/launchctl/tmux/claude), so this job needs neither Postgres nor
-  # launchd nor the claude CLI. None of the suites load bats-support/bats-assert
-  # helper libraries, so a plain bats-core install suffices (no BATS_LIB_PATH).
+  # whole test-bash node). No suite REQUIRES a Postgres service, launchd or the
+  # claude CLI: most are hermetic (mktemp sandboxes + PATH-prepended stub
+  # binaries for psql/createdb/launchctl/tmux/claude), and the six DB-dualwrite
+  # suites under hooks/test (agent-tracker, cost-tracker-dualwrite,
+  # ephemeral-pg-locale, pre-compact-db-source, track-outcome-dedup-collision,
+  # track-outcome-qa-score-persist) instead spin their OWN ephemeral cluster into
+  # BATS_FILE_TMPDIR via initdb/pg_ctl. Those six therefore REDUCE coverage —
+  # they do not fail — when initdb/pg_ctl/createdb/psql/python3 are absent from
+  # the runner: setup_file sets an EPH_SKIP marker that each test's setup()
+  # turns into a per-test `skip`. That reduction is not silent; it lands in the
+  # junit `skipped=` count the summarize step prints, so the claim "green with N
+  # visible skips" is verifiable from the step summary rather than asserted here.
+  # None of the suites load bats-support/bats-assert helper libraries, so a plain
+  # bats-core install suffices (no BATS_LIB_PATH).
   # ---------------------------------------------------------------------------
   test-bash:
     name: "test: bats (${{ matrix.name }})"
@@ -342,11 +351,22 @@ jobs:
       # file path), while `--tagstring '{}'` prefixes every output line with the
       # file path — so the offender is unmistakable either way.
       #
-      # junit output is intentionally dropped: concurrent per-file bats writes
-      # to one `--output` dir would collide. The annotate step tolerates a
-      # missing report (if:always + require_tests:false), and the ci-pass gate
-      # keys on parallel's exit code — NOT swallowed (no `|| true`), so a failed
-      # or timed-out file still reddens the leg.
+      # junit output goes to a PER-FILE report directory. bats always names the
+      # report `report.xml` and only `--output <dir>` varies, so collision-freedom
+      # has to come from the DIRECTORY, not the filename. The directory is keyed
+      # on `{.}` — the input path minus its extension — NOT on `{/.}` (basename
+      # minus extension): test/ nests a comment-audit/ subdir, so a basename key
+      # maps test/x.bats and test/comment-audit/x.bats onto ONE dir where the
+      # second report silently clobbers the first. Path keys are unique by
+      # construction, which is what makes the aggregate count trustworthy.
+      # `--output` requires the dir to already exist (bats errors "not writeable"
+      # otherwise), hence the inline `mkdir -p` per job. `--report-formatter` is
+      # deliberately NOT `--formatter`: it adds the report file and leaves stdout
+      # as TAP, so the per-file `--tagstring` hang diagnostic above survives
+      # intact. The ci-pass gate still keys on parallel's exit code — NOT
+      # swallowed (no `|| true`), so a failed or timed-out file reddens the leg.
+      # A timed-out file writes no report, so a report count below the file count
+      # is itself a signal that a file was killed.
       - name: Run bats suite (${{ matrix.name }})
         env:
           # env-indirection: bind each matrix value to a shell var and dereference
@@ -376,7 +396,7 @@ jobs:
           # ci-pass gate sees the real code.
           run_bats() {
             parallel -0 --timeout 240 --jobs "$(nproc)" --tagstring '{}' \
-              bats {}
+              'mkdir -p reports/bats/{.} && bats --report-formatter junit --output reports/bats/{.} {}'
           }
           if [[ "${SHARDS}" -gt 0 ]]; then
             # Sharded root: deterministic round-robin partition of this root's *.bats
@@ -413,16 +433,20 @@ jobs:
         if: always()
         uses: mikepenz/action-junit-report@d9f48fc87bc235f7e214acf696ca5abc0a986f16 # v6.4.2
         with:
-          report_paths: reports/bats/report.xml
+          # Glob, not a single path: one report.xml per test file, nested under a
+          # path-keyed directory (see the run step). Depth varies with the root.
+          report_paths: reports/bats/**/report.xml
           # Per-leg check_name → 6 distinct check runs (one per leg) instead of
           # legs colliding on a single "bats results" check.
           check_name: "bats results (${{ matrix.name }})"
           fail_on_failure: false
           require_tests: false
 
-      # GITHUB_STEP_SUMMARY aggregate. Parses the junit report.xml (tests /
-      # failures / errors / skipped counts live on the <testsuite(s)> element)
-      # into a one-line pass/fail summary. Honest-skip visibility: this ALSO
+      # GITHUB_STEP_SUMMARY aggregate. Parses every per-file junit report.xml
+      # (tests / failures / errors / skipped counts live on the <testsuite>
+      # element) into a one-line pass/fail summary; the `files` column is the
+      # number of reports found, i.e. the evidence that the suite actually ran.
+      # Honest-skip visibility: this ALSO
       # surfaces IN-JOB skipped bats tests (junit `skipped=` count) as a visible
       # line — path-filter JOB skips are out of scope here (a skipped job runs
       # zero steps; those are surfaced by ci-pass's skip=OK semantics instead).
@@ -431,17 +455,32 @@ jobs:
         env:
           LABEL: ${{ matrix.name }}
         run: |
-          report="reports/bats/report.xml"
-          if [[ ! -f "${report}" ]]; then
+          # One report.xml per test file (path-keyed dirs, see the run step), so
+          # the counts are summed across every report the leg produced.
+          reports_root="reports/bats"
+          if [[ -d "${reports_root}" ]]; then
+            report_files="$(find "${reports_root}" -name report.xml | wc -l | tr -d ' ')"
+          else
+            report_files=0
+          fi
+          # Kept deliberately: with per-file reports wired, a zero count is now a
+          # TRUE statement that the suite produced nothing, not an artifact of
+          # never having asked bats for a report.
+          if [[ "${report_files}" -eq 0 ]]; then
             echo "## bats (${LABEL}) — no junit report produced (suite did not run)" >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
-          # Sum the attributes across all <testsuite> elements. grep -o keeps
-          # this dependency-free (no xmllint); awk sums the extracted integers.
+          # Sum the attributes across every <testsuite> element in every report.
+          # grep -o keeps this dependency-free (no xmllint); awk sums the
+          # extracted integers. The <testsuites> wrapper carries only `time` (see
+          # bats-format-junit), so whole-file matching cannot double-count.
           extract_sum() {
-            grep -oE "$1=\"[0-9]+\"" "${report}" | grep -oE '[0-9]+' \
-              | awk '{ s += $1 } END { print s + 0 }'
+            find "${reports_root}" -name report.xml -exec grep -ohE "$1=\"[0-9]+\"" {} + \
+              | grep -oE '[0-9]+' | awk '{ s += $1 } END { print s + 0 }'
           }
+          # No `|| true` on the sums: every <testsuite> line carries all four
+          # attributes, so a zero-match means the report format changed. Failing
+          # the step loudly beats printing a confident 0.
           tests="$(extract_sum tests)"
           failures="$(extract_sum failures)"
           errors="$(extract_sum errors)"
@@ -450,12 +489,12 @@ jobs:
           {
             echo "## bats results (${LABEL})"
             echo ""
-            echo "| total | passed | failed | errors | skipped |"
-            echo "|------:|-------:|-------:|-------:|--------:|"
-            echo "| ${tests} | ${passed} | ${failures} | ${errors} | ${skipped} |"
+            echo "| files | total | passed | failed | errors | skipped |"
+            echo "|------:|------:|-------:|-------:|-------:|--------:|"
+            echo "| ${report_files} | ${tests} | ${passed} | ${failures} | ${errors} | ${skipped} |"
             if [[ "${skipped}" -gt 0 ]]; then
               echo ""
-              echo "> ⚠️ ${skipped} in-job test(s) SKIPPED — see the annotated run for the skip reason (e.g. the metered \`claude\` CLI path, per the honest-skip contract in the workflow header)."
+              echo "> ⚠️ ${skipped} in-job test(s) SKIPPED — see the annotated run for the per-test skip reason. On hooks/test the usual cause is the six DB-dualwrite suites finding no initdb/pg_ctl/createdb/psql/python3 on the runner (they self-skip rather than fail); elsewhere it is typically the metered \`claude\` CLI path."
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 

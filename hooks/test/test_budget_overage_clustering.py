@@ -18,8 +18,11 @@ dashed module, unittest, sys.path insertion).
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -132,6 +135,87 @@ class EmitFloorAndIntake(unittest.TestCase):
             "전체",
         )
         self.assertEqual(entries, [])
+
+
+class EmitRosterGate(unittest.TestCase):
+    """_emit_xc roster allowlist — an agent key outside the registry resolves to a
+    nonexistent agents/<stem>.md, so the pattern is unpatchable by construction.
+    The fail-open branch is the load-bearing one: an unreadable registry must skip
+    validation, never drop real patterns."""
+
+    REGISTRY = frozenset({"glass-atrium-dev-python", "glass-atrium-dev-shell"})
+
+    def _emit(self, agent, registry):
+        entries: list[str] = []
+        entry = agg._build_entry("2026-08-01", agg.BUDGET_OVERAGE_LABEL, "3", agent, 3)
+        reason = agg._emit_xc(entries, entry, agent, registry)
+        return entries, reason
+
+    def test_when_registered_agent_then_emitted(self):
+        entries, reason = self._emit("glass-atrium-dev-python", self.REGISTRY)
+        self.assertEqual(reason, "")
+        self.assertEqual(len(entries), 1)
+
+    def test_when_unregistered_agent_then_dropped(self):
+        # 'concerns-slot' is a bare worktree slug — exactly the fabricated key form
+        # _canonical_agent prefixes into a nonexistent glass-atrium-concerns-slot target.
+        entries, reason = self._emit("glass-atrium-concerns-slot", self.REGISTRY)
+        self.assertEqual(reason, "unregistered_agent")
+        self.assertEqual(entries, [])
+
+    def test_when_unregistered_agent_then_drop_is_loud(self):
+        # a silent drop would trade log noise for lost signal — the rejected key must
+        # stay greppable as evidence of the still-live upstream feed defect.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self._emit("glass-atrium-concerns-slot", self.REGISTRY)
+        self.assertIn("glass-atrium-concerns-slot", err.getvalue())
+
+    def test_when_registry_unavailable_then_fail_open_emits(self):
+        # FORBIDDEN SHORTCUT guard: registry=None (missing/malformed) must SKIP
+        # validation, mirroring the lesson path — a fail-closed gate would silently
+        # drop every real pattern the moment the registry is unreadable.
+        entries, reason = self._emit("glass-atrium-dev-python", None)
+        self.assertEqual(reason, "")
+        self.assertEqual(len(entries), 1)
+
+    def test_when_registry_unavailable_then_unregistered_also_emits(self):
+        entries, reason = self._emit("glass-atrium-concerns-slot", None)
+        self.assertEqual(reason, "")
+        self.assertEqual(len(entries), 1)
+
+    def test_when_cross_cutting_agent_then_not_patchable_takes_precedence(self):
+        entries, reason = self._emit("전체", self.REGISTRY)
+        self.assertEqual(reason, "not_patchable")
+        self.assertEqual(entries, [])
+
+
+class RegistryLoaderFailOpen(unittest.TestCase):
+    """_load_registry_agents (reused from the lesson path) — every unusable shape
+    returns None, which _emit_xc reads as 'skip validation'."""
+
+    def _write(self, text):
+        path = Path(self.tmp.name) / "agent-registry.json"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_when_registry_missing_then_none(self):
+        missing = str(Path(self.tmp.name) / "absent.json")
+        self.assertIsNone(agg._load_registry_agents(missing))
+
+    def test_when_registry_malformed_then_none(self):
+        self.assertIsNone(agg._load_registry_agents(self._write("{not json")))
+
+    def test_when_registry_empty_agents_then_none(self):
+        self.assertIsNone(agg._load_registry_agents(self._write('{"agents": {}}')))
+
+    def test_when_registry_valid_then_agent_keys(self):
+        path = self._write('{"agents": {"glass-atrium-dev-python": {}}}')
+        self.assertEqual(agg._load_registry_agents(path), frozenset({"glass-atrium-dev-python"}))
 
 
 if __name__ == "__main__":

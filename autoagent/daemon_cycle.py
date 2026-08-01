@@ -442,6 +442,31 @@ REVERTED_SNOOZE_REASON = (
     "back-out) — pattern excluded from re-application; re-arm by setting "
     "status back to 'identified'"
 )
+# Repeat-apply cap. Non-redundant with the reject-streak gate precisely because
+# an 'applied' row RESETS that streak (consecutive_reject_count breaks on it), so
+# an apply/reject alternation regenerates forever and every apply stacks another
+# prose rule onto the same LIVE agent body — the observed fossil landed four
+# budget thresholds on one agent where the 65% rule makes the 70%/80% rules
+# structurally unreachable. The harm is ACCUMULATION of contradictory rules, not
+# proposal rate, so this is a hard cap (no self re-arm) rather than a cooldown:
+# a rate limiter would leave the accumulation path open.
+# Default 3 mirrors REJECT_STREAK_THRESHOLD / ALL_REJECT_ALERT_THRESHOLD, and
+# stays well inside _fetch_proposal_history's LIMIT 50 window (~45 days at the
+# observed per-agent proposal rate) so the cap cannot silently un-arm as older
+# applies scroll off — a materially larger cap would forfeit that guarantee.
+APPLY_CAP_THRESHOLD = int(os.environ.get("AUTOAGENT_APPLY_CAP_THRESHOLD", "3") or "3")
+# last_transition_reason stamped on a repeat-apply cap. The wording is
+# load-bearing: terminal 'rejected' means STOP PROPOSING and NOTHING else. The
+# targeted signal is still live (the overage counters keep recording it), so this
+# row is an OPEN item awaiting a human design decision. Never restate this
+# transition as resolved / fixed / closed, and never route it through the
+# applied-discharge path — that would claim a resolution the evidence refutes.
+APPLY_CAP_REASON_TEMPLATE = (
+    "repeat-apply cap: {n} applied proposals (cap {thr}) did NOT abate the "
+    "signal — STOP PROPOSING; the underlying problem is UNRESOLVED and needs a "
+    "human design decision, not another patch — re-arm by setting status back "
+    "to 'identified'"
+)
 # Rolling live-rate window. 14d = 2× the 7-day promotion sustain window — long
 # enough to smooth weekday gaps, short enough that a stale failure burst decays.
 STALE_WINDOW_DAYS = int(os.environ.get("AUTOAGENT_STALE_WINDOW_DAYS", "14") or "14")
@@ -7387,12 +7412,12 @@ def _terminalize_pattern(
     log_label: str,
     eval_result: str,
 ) -> None:
-    """Shared terminal action for the reverted-snooze, reject-streak, and
-    non-auto-fixable gates.
+    """Shared terminal action for every pattern-drop gate — deliberately unenumerated
+    so adding a gate needs no docstring edit (grep the callers for the current set).
 
     Transitions a fossil pattern's core.learning_log row to terminal 'rejected'
     (the intake predicate stops selecting it next cycle on), then loudly records
-    the drop (fail-on-None stderr WARN + loop-event emit). The three gates differ
+    the drop (fail-on-None stderr WARN + loop-event emit). The gates differ
     only in WHICH patterns reach here (their own predicate) plus the reason /
     log_label / eval_result strings — this tail MUST stay in lockstep, so it lives
     once. A failed transition (PG write error) still drops for this cycle.
@@ -7517,6 +7542,79 @@ def drop_reverted_patterns(
             reason=REVERTED_SNOOZE_REASON,
             log_label="reverted-snooze",
             eval_result="reverted-snooze",
+        )
+    return kept
+
+
+def drop_apply_capped_patterns(
+    agent: str,
+    patterns: list[Pattern],
+    rows: list[tuple[str, str, str]] | None = None,
+) -> list[Pattern]:
+    """Repeat-apply cap — stop proposing once N patches failed to fix the problem.
+
+    A pattern that has already landed APPLY_CAP_THRESHOLD patches and is STILL
+    being selected has had its remedy disproven N times: each apply stacked
+    another prose rule onto the live agent body without retiring the previous
+    one, which is how one agent accumulated four mutually-unreachable budget
+    thresholds. Cap it — transition the covering core.learning_log row to
+    terminal 'rejected' (the intake predicate stops selecting it from the next
+    cycle on) and drop it from THIS cycle. Loud (stderr WARN +
+    eval_result='repeat-apply-cap' loop event), never silent.
+
+    NAMING BOUNDARY — do not collapse this into a resolution. Terminal
+    'rejected' means STOP PROPOSING and nothing more. The targeted signal is
+    still live; the cap only stops the loop from stacking an (N+1)th
+    contradictory rule on top of it, and the capped row is an OPEN item needing
+    a human design decision. It MUST NOT be renamed, aliased or documented as
+    resolved / fixed / closed, MUST NOT write the 'applied' terminal status, and
+    MUST NOT route through discharge_learning_pattern — that path claims the
+    underlying problem is discharged, which the still-accumulating live signal
+    refutes. Pinned by TestApplyCapNamingBoundary.
+
+    Evidence caveat: selection-implies-emission holds only while the staleness
+    gate can actually run (drop_stale_patterns fails OPEN on unreadable live
+    stats and on an unknown label family), so a high apply count is strong
+    evidence of non-abatement, NOT proof of it. The cap is deliberately sized so
+    a false positive costs one manual status reset.
+
+    Fail-open: proposal-history read failure / synthetic row_id → pattern kept.
+    A failed transition (PG write error) still drops for this cycle — the apply
+    evidence stands — and retries naturally on the next cycle.
+
+    Args:
+        agent: pattern target agent (group key).
+        patterns: the agent's intake patterns (freq DESC).
+        rows: pre-fetched _fetch_proposal_history result — run_cycle shares one
+            fetch across every proposal-history gate (read-only here). None →
+            self-fetch (backward-compatible for direct callers).
+
+    Returns:
+        surviving patterns, input order preserved.
+    """
+    if rows is None:
+        rows = _fetch_proposal_history(agent)
+    if rows is None:
+        return patterns
+
+    event_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+    kept: list[Pattern] = []
+    for pattern in patterns:
+        if pattern.row_id <= 0:
+            kept.append(pattern)
+            continue
+        applies = covering_apply_count(pattern.label, rows)
+        if applies < APPLY_CAP_THRESHOLD:
+            kept.append(pattern)
+            continue
+        reason = APPLY_CAP_REASON_TEMPLATE.format(n=applies, thr=APPLY_CAP_THRESHOLD)
+        _terminalize_pattern(
+            agent,
+            pattern,
+            event_ts,
+            reason=reason,
+            log_label="repeat-apply-cap",
+            eval_result="repeat-apply-cap",
         )
     return kept
 
@@ -7799,6 +7897,34 @@ def consecutive_reject_count(
             continue
         break
     return streak
+
+
+def covering_apply_count(
+    pattern_label: str,
+    proposal_rows: list[tuple[str, str, str]],
+) -> int:
+    """Count APPLIED proposals in the window whose label covers one pattern.
+
+    proposal_rows: (status, pattern_label, rationale) newest-first — the SAME
+    shared per-agent fetch consecutive_reject_count walks
+    (_fetch_proposal_history), so the cap costs no extra read and needs no new
+    observation channel.
+
+    TOTAL, not consecutive, by design: the harm is the ACCUMULATION of stacked
+    rules on one live agent body, and an intervening reject does not un-stack an
+    already-landed one. That is also exactly what makes this gate non-redundant
+    with the reject-streak gate, whose streak an 'applied' row RESETS.
+
+    A 'reverted' row is deliberately NOT discounted here: a human back-out is
+    owned by drop_reverted_patterns, which terminalizes first and outranks every
+    generation-side verdict, so such a pattern never reaches this counter.
+    """
+    return sum(
+        1
+        for status, proposal_label, _rationale in proposal_rows
+        if status == "applied"
+        and _covers_pattern_label(pattern_label, proposal_label)
+    )
 
 
 def _fetch_proposal_rows(
@@ -8992,13 +9118,16 @@ def run_cycle(
     solution_attempts: list[SolutionAttempt] = []
     for agent, agent_patterns in agent_groups:
         # Anti-fossil lifecycle gates — BEFORE any outcome fetch / Haiku spend.
-        # All four gates write PG (learning_log transition + skip loop events),
+        # All five gates write PG (learning_log transition + skip loop events),
         # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
         # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the three
-        # terminalizing gates (reverted, reject-streak, non-auto-fixable) run
-        # before the transient staleness snooze; reverted runs FIRST (a human
-        # back-out outranks every generation-side verdict).
+        # mode) bypasses them like the supersede. Order matters — the four
+        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
+        # non-auto-fixable) run before the transient staleness snooze; reverted
+        # runs FIRST (a human back-out outranks every generation-side verdict).
+        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
+        # that streak: the alternating apply/reject fossil is invisible to the
+        # streak gate and is exactly what the cap exists to catch.
         if not skip_haiku and not skip_loop_emit:
             # One shared fetch serves both proposal-history gates (neither
             # mutates rows). None (PG off / read error) → skip both, matching
@@ -9009,6 +9138,9 @@ def run_cycle(
                     agent, agent_patterns, rows=history_rows
                 )
                 agent_patterns = drop_reject_streak_patterns(
+                    agent, agent_patterns, rows=history_rows
+                )
+                agent_patterns = drop_apply_capped_patterns(
                     agent, agent_patterns, rows=history_rows
                 )
             agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)

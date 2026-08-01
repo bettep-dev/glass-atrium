@@ -1,12 +1,17 @@
 """Behavioral tests for the generation-side anti-fossil gates (AP-4).
 
-``daemon_cycle.run_cycle`` now filters intake patterns through two lifecycle
-gates before any Haiku spend:
+``daemon_cycle.run_cycle`` filters intake patterns through a set of lifecycle
+gates before any Haiku spend. Covered here:
 (1) reject-streak snooze — N consecutive genuinely-rejected proposals for the
     same pattern+agent transition the ``core.learning_log`` row to terminal
     'rejected' via ``_pg_learning_dualwrite.reject_learning_pattern`` (the
     intake predicate stops selecting it), loudly (stderr WARN +
     ``eval_result='reject-streak-snooze'`` loop event);
+(1b) repeat-apply cap — N APPLIED proposals covering one pattern terminalize it
+    the same way (``eval_result='repeat-apply-cap'``). Non-redundant with (1):
+    an 'applied' row RESETS the reject streak, so the apply/reject alternation
+    is invisible to that gate. 'rejected' here means STOP PROPOSING only — the
+    underlying signal stays UNRESOLVED, pinned by TestApplyCapNamingBoundary;
 (2) staleness skip — the pattern's live rate recomputed from a rolling
     outcomes window (poisoned rows excluded inside ``read_outcomes_since``)
     below the aggregator's emit threshold → skipped this cycle with a logged
@@ -88,6 +93,10 @@ def _reject(
     rationale: str = "quality reject — pre-verify failed",
 ) -> tuple[str, str, str]:
     return ("rejected", label, rationale)
+
+
+def _applied(label: str = _LEGACY_PROPOSAL_LABEL) -> tuple[str, str, str]:
+    return ("applied", label, "landed")
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
@@ -219,6 +228,152 @@ class TestDropRejectStreakPatterns(_GateFixture):
 
         self.assertEqual(kept, [pattern])
         self.assertEqual(self.transitions, [])
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class TestCoveringApplyCount(unittest.TestCase):
+    """Apply walk: covering 'applied' rows are counted in TOTAL, not in a run."""
+
+    def test_when_three_applied_rows_then_count_is_three(self) -> None:
+        rows = [_applied(), _applied(), _applied()]
+        self.assertEqual(dc.covering_apply_count(_LEGACY_LABEL, rows), 3)
+
+    def test_when_rejects_interleaved_then_applies_still_counted(self) -> None:
+        # The alternation the reject-streak gate cannot see: every 'applied' row
+        # resets that streak, yet each one stacked a rule on the live body.
+        rows = [_applied(), _reject(), _applied(), _reject(), _applied()]
+        self.assertEqual(dc.covering_apply_count(_LEGACY_LABEL, rows), 3)
+        self.assertLess(
+            dc.consecutive_reject_count(_LEGACY_LABEL, rows),
+            dc.REJECT_STREAK_THRESHOLD,
+        )
+
+    def test_when_label_not_covering_then_row_ignored(self) -> None:
+        rows = [_applied(label="some unrelated pattern label"), _applied()]
+        self.assertEqual(dc.covering_apply_count(_LEGACY_LABEL, rows), 1)
+
+    def test_when_non_applied_statuses_then_not_counted(self) -> None:
+        rows = [
+            _reject(),
+            ("pending", _LEGACY_PROPOSAL_LABEL, ""),
+            ("snoozed", _LEGACY_PROPOSAL_LABEL, ""),
+            ("reverted", _LEGACY_PROPOSAL_LABEL, ""),
+        ]
+        self.assertEqual(dc.covering_apply_count(_LEGACY_LABEL, rows), 0)
+
+
+class TestDropApplyCappedPatterns(_GateFixture):
+    """N applied patches that did not abate the signal → terminalize + drop."""
+
+    def _drop(self, history, patterns):
+        with mock.patch.object(dc, "_fetch_proposal_history", lambda agent: history):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                kept = dc.drop_apply_capped_patterns("wiki-curator", patterns)
+        return kept, stderr.getvalue()
+
+    def test_when_applies_reach_cap_then_row_transitions_and_drops(self) -> None:
+        kept, stderr_text = self._drop(
+            [_applied()] * dc.APPLY_CAP_THRESHOLD, [_pattern(row_id=15)]
+        )
+
+        self.assertEqual(kept, [])
+        self.assertEqual(len(self.transitions), 1)
+        row_id, reason = self.transitions[0]
+        self.assertEqual(row_id, 15)
+        self.assertIn("repeat-apply cap:", reason)
+        self.assertIn("repeat-apply-cap", self._event_results())
+        self.assertIn("WARN: pattern repeat-apply-cap", stderr_text)
+
+    def test_when_applies_below_cap_then_pattern_survives(self) -> None:
+        pattern = _pattern(row_id=15)
+        kept, _ = self._drop([_applied()] * (dc.APPLY_CAP_THRESHOLD - 1), [pattern])
+
+        self.assertEqual(kept, [pattern])
+        self.assertEqual(self.transitions, [])
+        self.assertEqual(self.emitted, [])
+
+    def test_when_history_unavailable_then_fail_open(self) -> None:
+        pattern = _pattern(row_id=15)
+        kept, _ = self._drop(None, [pattern])
+
+        self.assertEqual(kept, [pattern])
+        self.assertEqual(self.transitions, [])
+
+    def test_when_row_id_synthetic_then_no_transition(self) -> None:
+        pattern = _pattern(row_id=0)
+        kept, _ = self._drop([_applied()] * dc.APPLY_CAP_THRESHOLD, [pattern])
+
+        self.assertEqual(kept, [pattern])
+        self.assertEqual(self.transitions, [])
+
+    def test_when_alternating_history_then_cap_fires_where_streak_cannot(
+        self,
+    ) -> None:
+        # The live fossil shape: an apply between rejects keeps the reject streak
+        # permanently below threshold while the rules keep stacking.
+        history = []
+        for _ in range(dc.APPLY_CAP_THRESHOLD):
+            history.extend([_applied(), _reject()])
+        pattern = _pattern(row_id=15)
+
+        with mock.patch.object(dc, "_fetch_proposal_history", lambda agent: history):
+            with contextlib.redirect_stderr(io.StringIO()):
+                streak_kept = dc.drop_reject_streak_patterns("wiki-curator", [pattern])
+                cap_kept = dc.drop_apply_capped_patterns("wiki-curator", [pattern])
+
+        self.assertEqual(streak_kept, [pattern])
+        self.assertEqual(cap_kept, [])
+
+
+class TestApplyCapNamingBoundary(_GateFixture):
+    """The cap says STOP PROPOSING — never that the problem was resolved.
+
+    Pins the one rename that would turn this gate into the forbidden shortcut:
+    routing an apply-triggered transition through the applied-discharge path (or
+    wording it as a resolution) would claim the signal is discharged while the
+    live counters keep recording it.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.discharges: list[tuple[int, str]] = []
+        patcher = mock.patch.object(
+            dc,
+            "_pg_discharge_learning_pattern",
+            lambda pattern_id, reason: self.discharges.append((pattern_id, reason)),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _fire(self):
+        history = [_applied()] * dc.APPLY_CAP_THRESHOLD
+        with mock.patch.object(dc, "_fetch_proposal_history", lambda agent: history):
+            with contextlib.redirect_stderr(io.StringIO()):
+                dc.drop_apply_capped_patterns("wiki-curator", [_pattern(row_id=15)])
+        return self.transitions[0][1]
+
+    def test_when_cap_fires_then_discharge_path_never_invoked(self) -> None:
+        self._fire()
+
+        self.assertEqual(self.discharges, [])
+        self.assertEqual(len(self.transitions), 1)
+
+    def test_when_cap_fires_then_reason_states_unresolved(self) -> None:
+        reason = self._fire()
+
+        self.assertIn("UNRESOLVED", reason)
+        self.assertIn("STOP PROPOSING", reason)
+        for resolved_word in ("resolved:", "fixed", "closed", "discharged"):
+            self.assertNotIn(resolved_word, reason.lower())
+
+    def test_when_cap_fires_then_eval_result_is_its_own_token(self) -> None:
+        self._fire()
+
+        # A distinct token keeps the capped-but-live set separately queryable in
+        # the loop-event eval_result distribution — folding it into the
+        # reject-streak token would erase that.
+        self.assertEqual(self._event_results(), ["repeat-apply-cap"])
 
 
 class TestDropStalePatterns(_GateFixture):
