@@ -329,12 +329,31 @@ def _build_entry(
     return f"| {today} | {pattern_label} | {freq_str} | {agent_label} | identified | {tier} |"
 
 
-def _emit_xc(entries: list, entry: str, agent_label: str) -> None:
-    """Intake gate — appends only patchable-agent patterns. NOT_PATCHABLE_AGENTS are blocked
-    (downstream daemon_cycle skips the same set, so they would only churn learning_log)."""
+def _emit_xc(
+    entries: list, entry: str, agent_label: str, registry: frozenset[str] | None = None
+) -> str:
+    """Intake gate — appends only patchable, roster-registered agent patterns.
+    Returns the drop reason ('' = emitted), mirroring the _should_include_outcome convention.
+
+    - NOT_PATCHABLE_AGENTS are blocked (downstream daemon_cycle skips the same set, so they
+      would only churn learning_log)
+    - an agent key outside the registry resolves to a nonexistent agents/<stem>.md, so the
+      pattern is unpatchable by construction — blocked loudly, never silently
+    - registry=None means the roster is unavailable → validation SKIPPED (fail-open: a
+      registry problem must never drop real patterns, sibling policy to the lesson-key gate)
+    """
     if agent_label in NOT_PATCHABLE_AGENTS:
-        return
+        return "not_patchable"
+    if registry is not None and agent_label not in registry:
+        # the rejected key is the evidence trail for the still-live upstream defect
+        # (core.budget_overages.agent_type carries bare worktree slugs) → never a silent drop
+        print(
+            f"[learning-aggregator] pattern skip (unregistered agent '{agent_label}')",
+            file=sys.stderr,
+        )
+        return "unregistered_agent"
     entries.append(entry)
+    return ""
 
 
 def _regex_yaml_parse(text: str) -> dict | None:
@@ -1270,7 +1289,10 @@ def ingest_outcome_lessons(
     return dict(ops)
 
 
-def main() -> None:
+def main(registry_path: str | None = None) -> None:
+    """registry_path overrides the live AGENT_REGISTRY_FILE for BOTH allowlist consumers
+    (pattern intake + lesson ingest) — same seam shape as ingest_outcome_lessons. None keeps
+    the production default; a caller that must not depend on a live install injects a roster."""
     if not os.path.isdir(OUTCOMES_DIR):
         return
 
@@ -1380,6 +1402,26 @@ def main() -> None:
     today = datetime.now().strftime("%Y-%m-%d")
     entries = []
 
+    # Roster allowlist for every agent-keyed pattern write (1/5/7) — reuses the lesson path's
+    # loader + fail-open contract, so an unreadable/malformed registry skips validation rather
+    # than dropping real patterns. _canonical_agent output and registry keys share the
+    # glass-atrium-<stem> form, so membership is a direct lookup.
+    registry = _load_registry_agents(registry_path or AGENT_REGISTRY_FILE)
+    if registry is None:
+        print(
+            "[learning-aggregator] agent registry unavailable, "
+            "pattern-key validation skipped (fail-open)",
+            file=sys.stderr,
+        )
+    emit_skips: dict[str, int] = defaultdict(int)
+
+    def emit_agent_pattern(entry: str, agent_label: str) -> None:
+        """Agent-keyed emit — routes patterns 1/5/7 through the one intake gate, tallying
+        drops so a filtered pattern stays visible as a run total, never a silent loss."""
+        reason = _emit_xc(entries, entry, agent_label, registry)
+        if reason:
+            emit_skips[reason] += 1
+
     # pattern 1: same agent tripping the negative-signal trigger 3+ times. The DISPLAY
     # label is decoupled (P3a) — an actual result=fail keeps the verbatim
     # PATTERN1_FAIL_LABEL, a soft-signal-only concentration gets the accurate
@@ -1390,7 +1432,7 @@ def main() -> None:
     for agent, count in agent_negative.items():
         if count >= AUTO_FAILURE_THRESHOLD:
             label = _pattern1_display_label(agent_hard_fail.get(agent, False))
-            entries.append(_build_entry(today, label, str(count), agent, count))
+            emit_agent_pattern(_build_entry(today, label, str(count), agent, count), agent)
 
     # pattern 2: revision_count average 2+. '전체' is in NOT_PATCHABLE_AGENTS so _emit_xc blocks it
     # (no agent file to patch); the task_type signal is preserved in the label.
@@ -1411,7 +1453,7 @@ def main() -> None:
     for agent, negative in agent_negative.items():
         total = agent_total.get(agent, 0)
         if total >= RATE_MIN_SAMPLE and negative / total >= RATE_FAILURE_FLOOR:
-            entries.append(_build_entry(today, f"agent instruction-improvement candidate (failure rate {round(negative/total*100)}%)", f"{negative}/{total}", agent, negative))
+            emit_agent_pattern(_build_entry(today, f"agent instruction-improvement candidate (failure rate {round(negative/total*100)}%)", f"{negative}/{total}", agent, negative), agent)
 
     # pattern 6: per-task_type success rate ('전체' → blocked by _emit_xc, same as pattern 2)
     for task_type, counts in task_type_results.items():
@@ -1431,11 +1473,19 @@ def main() -> None:
     overage_counts = _cluster_budget_overages(_read_budget_overages(since))
     for agent, overages in overage_counts.items():
         if overages >= BUDGET_OVERAGE_MIN_OCCURRENCE:
-            _emit_xc(
-                entries,
+            emit_agent_pattern(
                 _build_entry(today, BUDGET_OVERAGE_LABEL, str(overages), agent, overages),
                 agent,
             )
+
+    # Outside the `if entries:` block on purpose — a run whose every pattern was gated still
+    # reports the drop total, so the filtered signal never disappears with the rows.
+    if emit_skips:
+        print(
+            "[learning-aggregator] pattern intake skips: "
+            + ", ".join(f"{reason}={n}" for reason, n in sorted(emit_skips.items())),
+            file=sys.stderr,
+        )
 
     # UPSERT into core.learning_log keyed on pattern_signature = "<pat_core>|<agent>".
     # _pg_read_learning_log_signatures returns the same (pat_core, agent) key, so dedup is symmetric:
@@ -1519,7 +1569,7 @@ def main() -> None:
 
     # AD-1/AD-2: consolidate this batch's lessons into the size-capped CTM/EPM store the
     # spawn-time injector (AD-3) reads. Fail-soft — never blocks the core aggregation.
-    lesson_ops = ingest_outcome_lessons(new_records)
+    lesson_ops = ingest_outcome_lessons(new_records, registry_path=registry_path)
     if lesson_ops:
         print(
             "[learning-aggregator] lesson store: "
