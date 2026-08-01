@@ -121,25 +121,79 @@ PY
   python3 -c "${py_src}" "${path}" "${manifest}"
 }
 
+# Predicate: does the E4 agent three-anchor merge path CLAIM this manifest path?
+# Returns 0 (claimed) / 1 (not claimed). The merge iterates a NON-recursive
+# agents/*.md glob and skips the non-agent charter by basename before its lib is
+# ever invoked (update.sh update_merge_agent_editable_regions), so its claim is
+# exactly "a top-level agents/<name>.md that is not the charter".
+#
+# SINGLE source of truth for both deploy consumers: the merge loop iterates
+# through this predicate and the spine's agents-markdown exclusion below is its
+# complement, so the two scopes cannot drift apart into a path claimed by neither
+# (which is how the charter, the reference documents and the templates were
+# excluded here AND unreachable there, hash-verified by no deploy path at all).
+spine_is_merge_claimed_path() {
+  local path="$1" rest
+  [[ "${path}" == agents/*.md ]] || return 1
+  rest="${path#agents/}"
+  [[ "${rest}" == */* ]] && return 1                            # below the non-recursive glob
+  [[ "${rest}" == 'GLASS_ATRIUM_GLOBAL_RULES.md' ]] && return 1 # non-agent charter
+  return 0
+}
+
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
-# sync? Returns 0 (excluded) / 1 (included). Exclusions (T13 CRITICAL):
-#   * any markdown under agents/ — resolved by the SEPARATE E4 agent three-anchor
-#     merge path (base@install / vendor / local), never here
+# sync? Returns 0 (excluded) / 1 (included). THREE disjoint arms (T13 CRITICAL):
 #   * *.local.md   — learned local-overlay files (never vendor-owned)
 #   * config.toml  — rendered, git-ignored runtime config (user-owned)
+#   * agents-subtree markdown the E4 merge CLAIMS — resolved by that separate
+#     three-anchor merge path (base@install / vendor / local), never here
+#
+# The two user-owned arms are UNCONDITIONAL and run FIRST: they are not part of
+# the merge's complement and must never be folded into it, because a user-owned
+# file routed into this hash-verified byte-swap is overwritten from the release
+# manifest — silent user-data destruction. Only the agents-markdown arm is the
+# merge's business, and there the exclusion is EXACTLY the merge's complement.
 spine_is_excluded_path() {
   local path="$1"
-  # any markdown anywhere under agents/ → E4 merge path
-  if [[ "${path}" == agents/* && "${path}" == *.md ]]; then
-    return 0
-  fi
   if [[ "${path}" == *.local.md ]]; then
     return 0
   fi
   case "${path}" in
     config.toml | */config.toml) return 0 ;;
   esac
+  if [[ "${path}" == agents/* && "${path}" == *.md ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_merge_claimed_path "${path}"; then
+      return 0
+    fi
+    return 1
+  fi
   return 1
+}
+
+# Emit (one relative path per line) every manifest path claimed by NEITHER deploy
+# consumer — the merge does not reach it and the spine excludes it, so no path
+# ever hash-verifies it and a deploy reports success without having considered it.
+# Detection only: the CALLER owns the loud line (same split as
+# spine_find_changed_files → update_commit_callback). Arg: $1 = manifest.json.
+spine_find_uncovered_paths() {
+  local manifest="$1" path
+  spine_require_tools jq || return 1
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # Exclusion first: a path the spine syncs is covered, and every non-agent path
+    # answers that without consulting the merge predicate at all. The conjunction
+    # is the same either way — both predicates are pure.
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if ! spine_is_excluded_path "${path}"; then
+      continue
+    fi
+    # shellcheck disable=SC2310
+    if spine_is_merge_claimed_path "${path}"; then
+      continue
+    fi
+    printf '%s\n' "${path}"
+  done < <(jq -r '.files[]' -- "${manifest}")
 }
 
 # T13 — non-agent hash-diff change selection

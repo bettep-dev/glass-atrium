@@ -104,11 +104,21 @@
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
 # one-line trace is appended to ${HOME}/.glass-atrium/data/workflow-gate-fired.log (timestamp · tool_name ·
-# verdict · script-length). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
+# verdict · script-length · advisory). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
 # block-norev · block-noverifydev · block-declspawn · block-undecl · block-computed · block-order ·
 # block-upstream · block-docroute · block-entry · block-sizeest; python3-absent / helper-error
 # fallbacks emit bare "pass". How to check: `cat ~/.glass-atrium/data/workflow-gate-fired.log`. The trace is
 # fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
+#
+# ADVISORY FIELD (presence-only, LAST field — backward compatible): `advisory=` records WHICH advisories
+# fired on that invocation and, for the schema-cap advisory, WHICH of its three scoped rules matched
+# (`advisory=schema-cap:R1`); several tags join with a comma; none fired → `advisory=none`. This exists so
+# the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
+# window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
+# window could be constructed. It records only that a firing happened, NEVER whether it was correct:
+# adjudication stays human, and this field neither promotes the advisory nor touches a verdict or exit
+# code. The field is APPENDED LAST so a reader keyed on the existing four positions is unaffected
+# (hooks/compliance_telemetry.py parse_gate_log splits on TAB and reads `verdict=` by key).
 #
 # Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
 #   missing-declaration (block-nodecl) · malformed-declaration (block-grammar) · the five
@@ -150,6 +160,20 @@ if [[ ! "${trace_line_cap}" =~ ^[1-9][0-9]*$ ]]; then
   trace_line_cap="${DEFAULT_TRACE_LINE_CAP}"
 fi
 
+# advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
+# emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the pass-path trace
+# emit and before block_and_exit, so a tag set here is always visible inside emit_trace's subshell and
+# nothing needs to escape it. Empty (no advisory fired, or a path that never reaches the advisory
+# printers such as pass-noscript) records as `none`.
+advisory_trace=""
+
+# add_advisory TAG — append one advisory tag to the accumulator. Never fails (the trace must never be
+# able to alter a verdict).
+add_advisory() {
+  advisory_trace="${advisory_trace:+${advisory_trace},}${1}"
+  return 0
+}
+
 # LINT_MODE — 0 = the real PreToolUse(Workflow) envelope path (default) · 1 = the offline --lint preview
 # path (--lint flag set below). The offline path reuses the IDENTICAL verdict helper + dispatch, but MUST
 # have NO side effects: LINT_MODE=1 makes emit_trace a no-op so a preview never appends to the firing log.
@@ -169,8 +193,8 @@ emit_trace() {
     log_dir="$(dirname -- "${WORKFLOW_GATE_FIRED_LOG}")"
     mkdir -p -- "${log_dir}" 2>/dev/null || exit 0
     ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || ts="unknown"
-    printf '%s\ttool_name=%s\tverdict=%s\tscript_len=%s\n' \
-      "${ts}" "Workflow" "${verdict}" "${script_len}" \
+    printf '%s\ttool_name=%s\tverdict=%s\tscript_len=%s\tadvisory=%s\n' \
+      "${ts}" "Workflow" "${verdict}" "${script_len}" "${advisory_trace:-none}" \
       >>"${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null || exit 0
     # Fail-safe prune — bound the trace log to trace_line_cap lines (most-recent retention). The
     # log is observability-only, so this can NEVER alter a verdict; any error here is swallowed
@@ -261,10 +285,11 @@ print_analysis_size_advisory() {
 }
 
 # print_schema_cap_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
-# DECISION fires INSIDE the python3 verdict helper (schema_cap_advisory_needed) and arrives as a
-# SCHEMA_CAP_ADVISE / SCHEMA_CAP_SILENT flag on its FIFTH output line. PRESENCE-ONLY: the seam carries
-# ONE binary token, so the message enumerates all three rules and their one-edit fixes rather than
-# naming the matched rule or field — deliberate, and stated in the text so silence on a detail is not
+# DECISION fires INSIDE the python3 verdict helper (get_schema_cap_rule) and arrives as a
+# SCHEMA_CAP_ADVISE[:R<n>] / SCHEMA_CAP_SILENT flag on its FIFTH output line. The `:R<n>` suffix is
+# TRACE instrumentation only (it names the matched rule for the per-rule promotion window); the message
+# itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather than naming
+# the matched rule or field — deliberate, and stated in the text so silence on a detail is not
 # read as a clean bill. Shipping the per-rule remediations + the published non-flag list from day one
 # is required by the promotion condition in the header (building them at promotion time would block
 # promotion on a message rewrite).
@@ -934,7 +959,10 @@ SCHEMA_CAP_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_$])(maxLength|maxItems)(?![A-Z
 COMPLETION_KEY_RE = re.compile(r"completion[_-]?block", re.IGNORECASE)
 
 
-def schema_cap_advisory_needed(stripped):
+def get_schema_cap_rule(stripped):
+    # Returns the FIRST matched scoped rule tag ("R1" / "R2" / "R3") or "" when none matched — the tag
+    # rides the SCHEMA_CAP_ADVISE flag so the firing trace can name the matched rule and a promotion
+    # window is adjudicable PER RULE rather than in aggregate. The advisory MESSAGE stays presence-only.
     # ADVISORY-ONLY presence scan for the StructuredOutput cap shapes that drive the engine-internal
     # "retry cap (5) exceeded" collapse loop. Three scoped rules: R1 a maxLength on a completion-block
     # field (unconditional — the standing rule mandates the FULL block, so schema compliance and rule
@@ -959,12 +987,12 @@ def schema_cap_advisory_needed(stripped):
     # string-resident) are all invisible; the `items` span stays a brace-scan text heuristic.
     try:
         if "maxLength" not in stripped and "maxItems" not in stripped:
-            return False
+            return ""
         smask = _string_mask(stripped)
         struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
         caps = [(m.start(), m.end(), m.group(1)) for m in SCHEMA_CAP_TOKEN_RE.finditer(struct)]
         if not caps:
-            return False
+            return ""
         n = len(struct)
         obrace, cbrace, oparen = chr(123), chr(125), chr(40)
         ws = " \t\r\n\f\v"
@@ -1051,12 +1079,12 @@ def schema_cap_advisory_needed(stripped):
             if brace is not None:
                 key = brace_key(brace)
                 if key is not None and COMPLETION_KEY_RE.fullmatch(key):
-                    return True
+                    return "R1"
             # R3 — numeric literal strictly inside the risk band (both edges exclusive). maxItems is
             # deliberately OUT of the R3 scope.
             value = cap_value(end)
             if value is not None and 64 < value < 300:
-                return True
+                return "R3"
 
         # R2 — any cap inside the lexical span of an `items` object literal. A top-level array
         # maxItems is excluded on its own merits: one constraint that does not multiply across
@@ -1081,11 +1109,11 @@ def schema_cap_advisory_needed(stripped):
                 if end_span is not None:
                     for (start, _end, _token) in caps:
                         if bi < start < end_span:
-                            return True
+                            return "R2"
             bi = struct.find(obrace, bi + 1)
-        return False
+        return ""
     except Exception:
-        return False
+        return ""
 
 
 # RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
@@ -1126,8 +1154,9 @@ try:
     # Schema-cap advisory decision — computed here so EVERY emit path carries it on line 5, including
     # the early non-DEV pass. The scan owns its internal guard, so a failure inside it can never reach
     # the module-level handler below (which emits PASS) and disarm a real block.
-    if schema_cap_advisory_needed(antigaming_src):
-        SCHEMA_CAP_FLAG = "SCHEMA_CAP_ADVISE"
+    schema_cap_rule = get_schema_cap_rule(antigaming_src)
+    if schema_cap_rule:
+        SCHEMA_CAP_FLAG = "SCHEMA_CAP_ADVISE:" + schema_cap_rule
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
 
@@ -1325,7 +1354,7 @@ PY
   # Run the helper. It prints FIVE lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
-  # (SCHEMA_CAP_ADVISE|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
+  # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
   # ENTRY_OK + all flags SILENT). The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
   # stale literal is byte-identical in observable behaviour (pre-seeded defaults + swallowed EOF).
@@ -1361,13 +1390,23 @@ PY
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
-  [[ "${schema_cap_flag}" == "SCHEMA_CAP_ADVISE" ]] || schema_cap_flag="SCHEMA_CAP_SILENT"
+  # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
+  # bare SCHEMA_CAP_ADVISE stays admitted so a legacy/short helper output is not silently re-classified.
+  # Admitted by SHAPE, never by an enumeration of today's rule tags: a fourth scoped rule added to
+  # get_schema_cap_rule would fall through an enumeration to SILENT, so its advisory would stop printing
+  # AND stop being traced with no error anywhere — silently under-counting the very per-rule promotion
+  # window the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
+  # non-`R<digits>` suffix still collapses to SILENT.
+  if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
+    schema_cap_flag="SCHEMA_CAP_SILENT"
+  fi
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
   # BLOCK below). This NEVER alters the exit code.
   if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
     print_resilience_advisory
+    add_advisory "resilience"
   fi
 
   # ANALYSIS-SIZE ADVISORY (fail-open, stderr-only) — the helper decided a schema-mode NON-DEV analysis
@@ -1375,14 +1414,18 @@ PY
   # DEV BLOCK_SIZEEST hard-block path stays exit 2 and is decided independently in the case dispatch).
   if [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]]; then
     print_analysis_size_advisory
+    add_advisory "analysis-size"
   fi
 
   # SCHEMA-CAP ADVISORY (fail-open, stderr-only) — the helper's isolated scan matched one of the three
   # scoped cap rules; nudge here so it rides ANY verdict. Placed BEFORE the entry-miss block and the
   # verdict case dispatch, so it can NEVER alter an exit code — a flagged cap on a hard-blocking script
   # still exits 2 (pinned by the disarm-regression fixture).
-  if [[ "${schema_cap_flag}" == "SCHEMA_CAP_ADVISE" ]]; then
+  if [[ "${schema_cap_flag}" == SCHEMA_CAP_ADVISE* ]]; then
     print_schema_cap_advisory
+    # Trace tag carries the matched rule when the helper supplied one (`SCHEMA_CAP_ADVISE:R1`); a bare
+    # flag records as plain `schema-cap` rather than inventing a rule it never reported.
+    add_advisory "schema-cap${schema_cap_flag#SCHEMA_CAP_ADVISE}"
   fi
 
   # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
