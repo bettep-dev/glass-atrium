@@ -2471,6 +2471,22 @@ update_enforce_manifest_modes() {
       update_log "WARN: mode target missing on disk (skipped): ${rel}"
       continue
     fi
+    # A SYMLINK row has nothing of its own to reconcile, and reconciling it is
+    # not merely useless but impossible: the gate above and `chmod` both FOLLOW
+    # the link, while update_file_mode_octal's `stat -f '%Lp'` is BSD LSTAT and
+    # reads the LINK's own mode — so the re-read can never move and the verify
+    # below fired on EVERY run (deterministic deploy abort). The manifest entry
+    # describes the TARGET (generate-manifest.sh probes with `stat -L`, i.e.
+    # FOLLOW), and that target is itself a files[] member reconciled on its own
+    # row, so skipping loses no coverage. Repairing THROUGH the alias instead
+    # would log the delta against the link's path while chmod'ing a different
+    # file — defeating the very delta-logging that keeps auto-repair from
+    # masking an upstream mode-dropping bug (D6 R1). Regular files keep the
+    # loud verify untouched.
+    if [[ -L "${root}/${rel}" ]]; then
+      update_log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
+      continue
+    fi
     actual="$(update_file_mode_octal "${root}/${rel}")"
     [[ -n "${actual}" ]] || update_die "cannot read the on-disk mode of ${rel}"
     if [[ "$((8#${actual}))" -ne "$((8#${mode}))" ]]; then
