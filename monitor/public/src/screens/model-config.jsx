@@ -466,6 +466,9 @@ function SectionHeadMC({ label, sub, right }) {
 	);
 }
 
+// 총 컬럼 수 (설명 행 colSpan) — Target·Saved target·Actual·Sync·Enforcement = 5.
+const DOMAIN_TABLE_COLSPAN_MC = 5;
+
 // 모델 도메인 섹션 — Saved target(편집) vs Actual(실측) + apply/enforcement 칩.
 function DomainsSectionMC({
 	domains,
@@ -510,17 +513,17 @@ function DomainsSectionMC({
 
 // drift/in-sync 상태 배지 — actual↔saved(또는 daemon-config) 정합성 공시. DomainRowMC/BudgetRowMC 공용
 // (드리프트 소스 boolean + title 문구만 상이 — span[title]>Badge 구조는 동일).
-function DriftBadgeMC({ drift, driftTitle, syncTitle }) {
+function DriftBadgeMC({ drift, driftTitle, syncTitle, className = "" }) {
 	const { Badge } = window.UI;
 	return drift ? (
 		<span title={driftTitle}>
-			<Badge role="status" tone="warn" icon={true}>
+			<Badge role="status" tone="warn" icon={true} className={className}>
 				drift
 			</Badge>
 		</span>
 	) : (
 		<span title={syncTitle}>
-			<Badge role="status" tone="ok" icon={true}>
+			<Badge role="status" tone="ok" icon={true} className={className}>
 				in sync
 			</Badge>
 		</span>
@@ -547,61 +550,74 @@ function DomainRowMC({
 	const enforceMeta =
 		ENFORCEMENT_META_MC[meta.enforcement] || ENFORCEMENT_META_MC.applied;
 
-	// 행 간격 10px(상하 5px) — 모델+설명+칩 한 묶음이 개별 행으로 읽히게 (W3-T2 (a) ~4px→10px).
+	// 행 간격 10px(상하 5px) — 라벨/컨트롤 묶음이 개별 행으로 읽히게.
 	const cellPad = { paddingTop: 5, paddingBottom: 5 };
 
 	return (
-		<tr style={{ verticalAlign: "top" }}>
-			<td style={cellPad}>
-				{/* label + desc 스택 블록 — 좁은 td 대신 라벨/설명을 세로로 쌓아 산문이 숨쉬게. */}
-				<div className="flex items-center gap-2 min-w-0">
-					<span className="shrink-0 fs-body font-medium text-ink">
-						{meta.label}
-					</span>
-				</div>
-				{meta.desc && (
-					// is-wrap 로 card-sub 기본 1행 ellipsis 클램프 해제 — bounded column(280) 안에서 역할 설명 전문을 멀티라인 랩 (D3).
-					// 전문이 항상 보이므로 hover-only title 툴팁 제거 — 운영자가 모델 선택 전 도메인 역할을 전부 읽게.
-					<div className="card-sub is-wrap mt-1" style={{ maxWidth: 280 }}>
-						{meta.desc}
+		<>
+			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+				<td style={cellPad}>
+					<div className="flex items-center gap-2 min-w-0">
+						<span className="shrink-0 fs-body font-medium text-ink">
+							{meta.label}
+						</span>
 					</div>
-				)}
-			</td>
-			<td style={{ ...cellPad, minWidth: 220 }}>
-				{editable ? (
-					<ModelSelectMC
-						domain={d.domain}
-						knownModels={knownModels}
-						value={value}
-						defaultValue={defaultValue}
-						error={error}
-						pricingKnown={d.pricing_known}
-						onChange={onChange}
-					/>
-				) : (
-					// read-only fallback 배지 — 표시 전용 칩이므로 표준 22px .pill (편집 행 <select> 높이 매치 안 함: 컬럼 인접일 뿐 인라인 컨트롤 그룹 아님).
-					<Badge role="metadata">{value || d.desired || "—"}</Badge>
-				)}
-			</td>
-			<td style={cellPad}>
-				{/* ACTUAL 모델명은 read-only 표시 배지 → 표준 22px .pill 로 status 배지와 높이 통일. <select> height-match 안 함: 읽기 전용 셀/컬럼 인접이지 인라인 컨트롤 그룹 아님. */}
-				<Badge role="metadata">{d.actual ?? "—"}</Badge>
-			</td>
-			<td style={cellPad}>
-				<DriftBadgeMC
-					drift={d.drift}
-					driftTitle="Actual differs from saved target"
-					syncTitle="Actual matches saved target"
-				/>
-			</td>
-			<td style={cellPad}>
-				<span title={enforceMeta.desc}>
-					<Badge role="status" tone={enforceMeta.tone} glyph={false}>
-						{enforceMeta.label}
+				</td>
+				<td style={{ ...cellPad, minWidth: 220 }}>
+					{editable ? (
+						<ModelSelectMC
+							domain={d.domain}
+							knownModels={knownModels}
+							value={value}
+							defaultValue={defaultValue}
+							error={error}
+							pricingKnown={d.pricing_known}
+							onChange={onChange}
+						/>
+					) : (
+						// read-only fallback 배지 — <select> 자리를 그대로 차지하므로 같은 높이라야 컬럼 리듬이 유지된다.
+						<Badge role="metadata" className="pill--ctl-h">
+							{value || d.desired || "—"}
+						</Badge>
+					)}
+				</td>
+				<td style={cellPad}>
+					{/* 메타/상태 배지는 SAVED TARGET <select> 와 같은 높이(--ctl-h)로 맞춘다 — 사용자 요구.
+					    한 행 안에서 높이가 어긋나면 버그로 읽힌다. 공용 Badge 로 이관할 때도 이 height-match 는 유지할 것
+					    (이전 이관에서 표준 22px 로 되돌아가 회귀했던 지점). */}
+					<Badge role="metadata" className="pill--ctl-h">
+						{d.actual ?? "—"}
 					</Badge>
-				</span>
-			</td>
-		</tr>
+				</td>
+				<td style={cellPad}>
+					<DriftBadgeMC
+						drift={d.drift}
+						driftTitle="Actual differs from saved target"
+						syncTitle="Actual matches saved target"
+						className="pill--ctl-h"
+					/>
+				</td>
+				<td style={cellPad}>
+					<span title={enforceMeta.desc}>
+						<Badge
+							role="status"
+							tone={enforceMeta.tone}
+							glyph={false}
+							className="pill--ctl-h">
+							{enforceMeta.label}
+						</Badge>
+					</span>
+				</td>
+			</tr>
+			{meta.desc && (
+				// 설명은 전 컬럼 폭 행으로 — 좁은 첫 컬럼에 갇히면 여러 줄로 접혀 읽히지 않는다.
+				<tr className="row-desc">
+					<td colSpan={DOMAIN_TABLE_COLSPAN_MC}>
+						<div className="card-sub is-wrap">{meta.desc}</div>
+					</td>
+				</tr>
+			)}
+		</>
 	);
 }
 
@@ -702,6 +718,9 @@ function GhostResetMC({ overridden, defaultValue, onReset }) {
 	);
 }
 
+// 총 컬럼 수 (설명 행 colSpan) — Background call·Per-call cap·Actual·Sync = 4.
+const BUDGET_TABLE_COLSPAN_MC = 4;
+
 // per-call 예산 상한 섹션 — 입력 + apply/drift 칩 + OAuth 맥락 정직 공시 (월 청구 캡이 아님).
 function BudgetsSectionMC({ budgets, form, baseline, errors, onBudgetChange }) {
 	const rows = sortBudgetsMC(budgets || []);
@@ -745,62 +764,65 @@ function BudgetRowMC({ budget: b, value, defaultValue, error, onChange }) {
 	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
-		<tr style={{ verticalAlign: "top" }}>
-			<td>
-				<div className="fs-body">{meta.label}</div>
-				{/* auto table-layout: cap the desc so truncate engages instead of stretching the label column. */}
-				<div
-					className="fs-meta text-faint mt-0.5 truncate"
-					style={{ maxWidth: 260 }}
-					title={window.UI.titleOf(meta.desc)}
-				>
-					{meta.desc}
-				</div>
-			</td>
-			<td style={{ minWidth: 180 }}>
-				<div className="flex items-center gap-2">
-					<span
-						className={`field-affix${showError ? " is-error" : ""}`}
-						style={{ width: "6rem" }}
-					>
-						<span className="field-affix__sym">$</span>
-						<input
-							type="text"
-							inputMode="decimal"
-							className="field field--mono text-right"
-							value={value}
-							placeholder="0.50"
-							onChange={(e) => onChange(e.target.value)}
-							onBlur={() => setTouched(true)}
-							aria-label={`${meta.label} per-call cap in USD`}
-							aria-invalid={showError ? "true" : undefined}
-						/>
-					</span>
-				</div>
-				{showError && (
-					<div className="fs-meta text-crit mt-1" role="alert">
-						{error}
+		<>
+			<tr className="is-grouped" style={{ verticalAlign: "top" }}>
+				<td>
+					<div className="fs-body">{meta.label}</div>
+				</td>
+				<td style={{ minWidth: 180 }}>
+					<div className="flex items-center gap-2">
+						<span
+							className={`field-affix${showError ? " is-error" : ""}`}
+							style={{ width: "6rem" }}
+						>
+							<span className="field-affix__sym">$</span>
+							<input
+								type="text"
+								inputMode="decimal"
+								className="field field--mono text-right"
+								value={value}
+								placeholder="0.50"
+								onChange={(e) => onChange(e.target.value)}
+								onBlur={() => setTouched(true)}
+								aria-label={`${meta.label} per-call cap in USD`}
+								aria-invalid={showError ? "true" : undefined}
+							/>
+						</span>
 					</div>
-				)}
-				<GhostResetMC
-					overridden={overridden}
-					defaultValue={defaultValue}
-					onReset={() => onChange(defaultValue)}
-				/>
-			</td>
-			<td>
-				<span className="font-mono fs-body">
-					{b.actual ? `$${b.actual}` : "—"}
-				</span>
-			</td>
-			<td>
-				<DriftBadgeMC
-					drift={b.drift}
-					driftTitle="daemon-config.json differs from saved target — press Save"
-					syncTitle="daemon-config.json matches saved target"
-				/>
-			</td>
-		</tr>
+					{showError && (
+						<div className="fs-meta text-crit mt-1" role="alert">
+							{error}
+						</div>
+					)}
+					<GhostResetMC
+						overridden={overridden}
+						defaultValue={defaultValue}
+						onReset={() => onChange(defaultValue)}
+					/>
+				</td>
+				<td>
+					<span className="font-mono fs-body">
+						{b.actual ? `$${b.actual}` : "—"}
+					</span>
+				</td>
+				<td>
+					<DriftBadgeMC
+						drift={b.drift}
+						driftTitle="daemon-config.json differs from saved target — press Save"
+						syncTitle="daemon-config.json matches saved target"
+						className="pill--ctl-h"
+					/>
+				</td>
+			</tr>
+			{meta.desc && (
+				// 설명은 전 컬럼 폭 행으로 — ellipsis 로 잘려 hover 툴팁에만 있던 문장을 인라인 전문 노출.
+				<tr className="row-desc">
+					<td colSpan={BUDGET_TABLE_COLSPAN_MC}>
+						<div className="fs-meta text-faint">{meta.desc}</div>
+					</td>
+				</tr>
+			)}
+		</>
 	);
 }
 
