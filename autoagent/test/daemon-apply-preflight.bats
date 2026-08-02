@@ -406,3 +406,112 @@ run_single() {
   [[ "${output}" != *"green_gate_flaky_retry"* ]] || return 1
   [[ "$(wc -l <"${RUNNER_LOG}")" -eq 1 ]] || return 1
 }
+
+# ---------------------------------------------------------------------------
+# 17-20. PERSISTENCE LEG — the abort's third Loud-Fail leg. stderr scrolls past
+#     unread on the launchd path, so each abort also lands ONE row in the daily
+#     applied-log JSONL sink. These rows are what a doctor check can read after
+#     the cycle ends; without them a red gate leaves no durable trace at all.
+#     Reverting the sink-definition hoist turns 17/18/20 red (the abort path
+#     would call an undefined emit_log, so no row is written).
+# ---------------------------------------------------------------------------
+
+# The daily applied-log the daemon appends to under the sandbox reports dir.
+applied_log_path() {
+  printf '%s/autoagent-applied-%s.jsonl' "${REPORTS}" "$(date -u +%Y-%m-%d)"
+}
+
+# Count abort rows in the daily applied log (0 when the log does not exist).
+count_abort_rows() {
+  local log
+  log="$(applied_log_path)"
+  [[ -f "${log}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  grep -c '"status":"abort"' "${log}" || true
+}
+
+@test "persistence: each of the four abort paths writes exactly one abort row with its own clause" {
+  local log
+  log="$(applied_log_path)"
+
+  # (a) absent test root
+  make_sandbox roots
+  rmdir "${REAL}/hooks/test"
+  run_batch PATH="${PSQL_MASKED}"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 1 ]] || return 1
+  grep -q '"clause":"test root absent: hooks/test' "${log}" || return 1
+
+  # (b) absent prerequisite tool
+  rm -f -- "${log}"
+  make_sandbox roots
+  run_batch PATH="${NOPREREQ}"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 1 ]] || return 1
+  grep -q '"clause":"test-suite prerequisite absent: bats' "${log}" || return 1
+
+  # (c) runner present but not executable
+  rm -f -- "${log}"
+  make_sandbox roots
+  printf '%s\n' '#!/usr/bin/env bash' >"${WORK}/runner-noexec.sh"
+  chmod -x "${WORK}/runner-noexec.sh"
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-noexec.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 1 ]] || return 1
+  grep -q 'bats runner not executable' "${log}" || return 1
+
+  # (d) red suite
+  rm -f -- "${log}"
+  make_sandbox roots
+  make_runner "${WORK}/runner-red.sh" 1
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 1 ]] || return 1
+  grep -q '"clause":"test suite FAILED' "${log}" || return 1
+}
+
+@test "persistence: the abort row is valid JSON carrying the named exit code and the suite runner" {
+  make_sandbox roots
+  make_runner "${WORK}/runner-red.sh" 1
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh"
+  [[ "${status}" -eq 16 ]] || return 1
+  local log row
+  log="$(applied_log_path)"
+  row="$(grep '"status":"abort"' "${log}" | tail -n1)"
+  [[ -n "${row}" ]] || return 1
+  # Parse-and-project through python3 (already a hard dependency of the daemon)
+  # so a malformed row fails here rather than silently passing a substring match.
+  local fields
+  fields="$(printf '%s' "${row}" | python3 -c '
+import json, sys
+row = json.load(sys.stdin)
+print("%s|%s|%s|%s" % (row["status"], row["reason"], row["exit_code"], row["suite_runner"]))
+')" || return 1
+  [[ "${fields}" == "abort|preflight_fatal|16|${WORK}/runner-red.sh" ]] || return 1
+}
+
+@test "persistence: a clean run past the gate writes no abort row" {
+  make_sandbox roots
+  make_runner "${WORK}/runner-green.sh" 0
+  run_batch PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-green.sh"
+  [[ "${status}" -ne 16 ]] || return 1
+  [[ "$(count_abort_rows)" -eq 0 ]] || return 1
+}
+
+@test "persistence: an unwritable sink degrades to a loud WARN, never a changed exit code" {
+  make_sandbox roots
+  make_runner "${WORK}/runner-red.sh" 1
+  local unwritable="${WORK}/no-write-reports"
+  mkdir -p -- "${unwritable}"
+  chmod a-w "${unwritable}"
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
+    HOME="${FAKE_HOME}" AUTOAGENT_REPORTS_DIR="${unwritable}" \
+    PATH="${PSQL_MASKED}" AUTOAGENT_BATS_RUNNER="${WORK}/runner-red.sh" \
+    bash "${SANDBOX_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+  # The gate's own named exit survives a failed persistence attempt.
+  [[ "${status}" -eq 16 ]] || return 1
+  [[ "${output}" == *"abort row NOT persisted"* ]] || return 1
+  [[ "${output}" == *"test suite FAILED"* ]] || return 1
+}

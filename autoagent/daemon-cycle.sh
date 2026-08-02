@@ -426,6 +426,94 @@ run_pg_push_stage() {
     return "${pg_rc}"
 }
 
+# The enum label the compose op's SQL casts to (`'apply_failed'::core."DaemonStatus"`) and the
+# migration that adds it. PostgreSQL resolves that cast when it PLANS the statement, so on a DB
+# predating the migration the compose errors on EVERY cycle — a clean apply included — and folds a
+# non-zero rc into PIPELINE_RC. A daily false-degraded cycle is no better than the false-green one
+# this composition exists to remove, so the stage is coupled to the label's presence rather than
+# shipped uncoupled from its own schema dependency.
+APPLY_STATUS_ENUM_LABEL="apply_failed"
+APPLY_STATUS_ENUM_MIGRATION="20260802000000_add_daemon_status_apply_failed"
+
+# Emit ONE verdict token for that dependency: `present` (label in the enum) · `absent` (migration
+# unapplied) · `unknown` (no psql, or the catalog query itself failed / returned an unreadable
+# count). A pg_catalog SELECT is the cheapest probe available and mutates nothing. psql's own stderr
+# is deliberately NOT redirected: an unreachable DB stays diagnosable in the daemon log rather than
+# collapsing into a bare token. `unknown` is distinct from `absent` because only `absent` is
+# evidence — an un-probeable DB must not silently disable the composition.
+get_apply_status_enum_state() {
+    if ! command -v psql >/dev/null 2>&1; then
+        printf 'unknown'
+        return 0
+    fi
+    local probe_out rc=0
+    probe_out="$(
+        psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
+            -v "lbl=${APPLY_STATUS_ENUM_LABEL}" <<'PSQL'
+SELECT count(*)
+FROM pg_enum e
+JOIN pg_type t ON t.oid = e.enumtypid
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'core' AND t.typname = 'DaemonStatus' AND e.enumlabel = :'lbl';
+PSQL
+    )" || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        printf 'unknown'
+        return 0
+    fi
+    case "${probe_out//[[:space:]]/}" in
+        0) printf 'absent' ;;
+        [1-9]*) printf 'present' ;;
+        *) printf 'unknown' ;;
+    esac
+}
+
+# APPLY_STATUS: fold the apply stage's outcome INTO the run record's status.
+# The run row is written by run_pg_push_stage BEFORE apply runs and its status
+# derives solely from per-patch generation errors, so an aborted apply stage
+# reached no operator surface at all — a cycle that applied nothing rendered
+# green. The driver owns this write, not the apply dispatcher: the dispatcher is
+# a pure stage and the driver already holds CYCLE_DATE plus every stage rc.
+# The COMPOSITION lives in the helper's SQL (a CASE), because only the database
+# knows the patch-generation verdict this driver never sees — a read-then-write
+# here would race the very row it is composing. Runs AFTER the tail push so a
+# non-full dispatch cannot overwrite the composed value with a pre-apply one.
+# A helper/DB failure returns non-zero and is folded into PIPELINE_RC: the cycle
+# degrades, it never crashes.
+run_apply_status_stage() {
+    local helper="${HOME}/.glass-atrium/scripts/_pg_dual_write_daemon.py"
+    local rc=0 apply_status="ok" helper_label="present"
+    if [[ ! -f "${helper}" ]]; then
+        helper_label="missing"
+    fi
+    if [[ "${DRY_RUN}" -eq 1 || "${helper_label}" == "missing" ]]; then
+        printf '[daemon-cycle] APPLY_STATUS SKIP dry=%d helper=%s date=%s\n' \
+            "${DRY_RUN}" "${helper_label}" "${CYCLE_DATE}" >&2
+        return 0
+    fi
+    local enum_state
+    enum_state="$(get_apply_status_enum_state)"
+    if [[ "${enum_state}" == "absent" ]]; then
+        printf '[daemon-cycle] APPLY_STATUS SKIP enum=absent label=%s migration=%s date=%s apply_rc=%d — core."DaemonStatus" cannot express the composed value; apply that migration and the next cycle records apply health\n' \
+            "${APPLY_STATUS_ENUM_LABEL}" "${APPLY_STATUS_ENUM_MIGRATION}" "${CYCLE_DATE}" "${APPLY_RC}" >&2
+        return 0
+    fi
+    if [[ "${enum_state}" != "present" ]]; then
+        printf '[daemon-cycle] APPLY_STATUS WARN enum=unknown label=%s — presence unprobeable (psql absent or catalog query failed); composing anyway, a DB predating migration %s degrades this cycle\n' \
+            "${APPLY_STATUS_ENUM_LABEL}" "${APPLY_STATUS_ENUM_MIGRATION}" >&2
+    fi
+    if [[ "${APPLY_RC}" -ne 0 ]]; then
+        apply_status="apply_failed"
+    fi
+    printf '[daemon-cycle] APPLY_STATUS start date=%s apply_rc=%d status=%s\n' \
+        "${CYCLE_DATE}" "${APPLY_RC}" "${apply_status}" >&2
+    printf '{"op":"compose_daemon_run_apply_status","args":{"daemon_name":"autoagent","run_date":"%s","apply_status":"%s"}}\n' \
+        "${CYCLE_DATE}" "${apply_status}" \
+        | "${PYTHON_BIN}" "${helper}" >/dev/null || rc=$?
+    printf '[daemon-cycle] APPLY_STATUS end rc=%d\n' "${rc}" >&2
+    return "${rc}"
+}
+
 # aggregate: scan outcomes/ → update core-learning-log.md + feedback-clusters.json.
 # STATE_FILE mtime since-filter makes it idempotent (no double-counting a file).
 # dry-run skipped — aggregator has no --dry-run flag.
@@ -465,6 +553,19 @@ record_stage_rc() {
     fi
 }
 
+# Apply-stage outcome, kept SEPARATE from PIPELINE_RC: that aggregate collapses
+# every stage to one bit, so it cannot say WHICH stage degraded — and the apply
+# stage's own rc is the only input to the composed run-record status below.
+# APPLY_RAN distinguishes "apply succeeded" from "apply never dispatched" (the
+# cycle/regression/aggregate modes), which must not be written as clean apply
+# health.
+APPLY_RAN=0
+APPLY_RC=0
+record_apply_rc() {
+    APPLY_RAN=1
+    APPLY_RC="$1"
+}
+
 set +e
 case "${STAGE_MODE}" in
     full)
@@ -482,7 +583,9 @@ case "${STAGE_MODE}" in
         run_regenerate_stale_stage
         record_stage_rc "$?"
         run_apply_stage
-        record_stage_rc "$?"
+        apply_rc=$?
+        record_apply_rc "${apply_rc}"
+        record_stage_rc "${apply_rc}"
         run_aggregate_stage
         record_stage_rc "$?"
         ;;
@@ -499,7 +602,9 @@ case "${STAGE_MODE}" in
         run_regenerate_stale_stage
         record_stage_rc "$?"
         run_apply_stage
-        record_stage_rc "$?"
+        apply_rc=$?
+        record_apply_rc "${apply_rc}"
+        record_stage_rc "${apply_rc}"
         ;;
     regression)
         run_regression_stage
@@ -531,6 +636,19 @@ if [[ "${FULL_MODE_PG_PUSHED}" -eq 0 ]]; then
     record_stage_rc "${pg_tail_rc}"
 fi
 # PHASE2-AUTOAGENT-DUALWRITE-END
+
+# APPLY-HEALTH-COMPOSE-BEGIN
+# Sequenced AFTER the tail push on purpose: in `apply` mode FULL_MODE_PG_PUSHED
+# stays 0, so the tail push above runs post-apply and would blind-overwrite an
+# earlier composed status with the pre-apply one. Only a dispatch that actually
+# ran the apply stage writes here — the cycle/regression/aggregate modes leave
+# apply health untouched rather than asserting a clean apply that never ran.
+if [[ "${APPLY_RAN}" -eq 1 ]]; then
+    apply_status_rc=0
+    run_apply_status_stage || apply_status_rc=$?
+    record_stage_rc "${apply_status_rc}"
+fi
+# APPLY-HEALTH-COMPOSE-END
 
 # LOOP-EVENTS-DUALWRITE-BEGIN
 # After the weekly-heartbeat.sh publisher was archived, core.autoagent_loop_events

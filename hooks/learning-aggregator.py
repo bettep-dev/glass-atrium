@@ -729,6 +729,15 @@ LESSON_STORE_FILE = os.environ.get(
 # (non-tombstoned, non-digest) lesson-text sum; overflow triggers evict-with-digest — a
 # hard-evict plus a NO-LLM evicted-digest footer (the non-agentic hook has no LLM call, so
 # true Letta-style summarization is not portable; the footer preserves a count/tag trace).
+#
+# Cap sizing, decided on measurement and DEFERRED this cycle — recorded so the number is inherited
+# rather than re-derived. Observed pressure at decision time: CTM active 3936/4000 (98.4%), 11
+# resident entries, 1499 cumulative evictions, ~312 chars per entry, 17 distinct lesson-producing
+# agents. The spawn-time injector reads top-5 per agent, so covering every producing agent asks for
+# 5 x 17 x 312 ~= 26.5k chars; 4000 buys ~13 entries, i.e. one agent's read set and no more. The
+# raise is NOT taken here because the eviction population changes completely once the polarity is
+# bounded (below), and sizing measured against the broken steady state would size the wrong store.
+# Re-measure resident injectable rows per agent after one full cycle on the bounded ranking.
 CTM_BUCKET_MAX_CHARS = 4000
 EPM_BUCKET_MAX_CHARS = 4000
 
@@ -774,6 +783,15 @@ CTM_PROMOTE_FREQUENCY = 2
 # Eviction grace window (days) for a young provisional entry — long enough to reach the promotion
 # frequency before capacity eviction can cull it (the R-a mandatory eviction guard).
 CTM_PROVISIONAL_GRACE_DAYS = 14
+# Bound on how MANY young provisionals hold that grace at once. The guard was written as
+# unconditional precedence, which under a permanently saturated store degenerates into "protect
+# everything that cannot be injected, evict everything that can" — measured: 1632 injectable
+# admissions over 30 days, 0 injectable rows resident, 1499 cumulative CTM evictions. Bounding the
+# COUNT keeps the corroboration intent (a provisional still gets headroom to be re-observed) while
+# capping what sub-floor rows may displace. Value: CTM_PROMOTE_FREQUENCY - 1 in-flight slots plus
+# one of slack — the minimum that can still promote — held deliberately independent of the cap so
+# a later cap resize does not silently re-open the displacement.
+CTM_PROVISIONAL_HEADROOM = 2
 # Provenance whose review_flag is a degraded-row VISIBILITY marker rather than a writer signal.
 # Literal (not imported) because this mirror must keep working when psycopg is absent; the value
 # is the _pg_learning_dualwrite.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED token track-outcome.sh stamps.
@@ -1139,11 +1157,13 @@ def enforce_bucket_cap(
     per-task_type tags) so the dropped signal leaves a trace (Letta summarize-and-evict INTENT,
     sans LLM). The digest footer is cap-EXCLUDED and is NEVER an eviction candidate.
 
-    T19 eviction guard (R-a MANDATORY): a YOUNG provisional (sub-floor score) entry ranks to be
-    evicted AFTER tombstoned dead-weight AND corroborated/normal live entries, so it survives long
-    enough to reach the corroboration-promotion frequency. Without it, score-3 provisionals — the
-    lowest-scored rows — are culled first (every corroborated live entry outscores them) and never
-    promote. The guard is a best-effort ORDER change bounded by an age window, NOT a hard
+    T19 eviction guard (R-a MANDATORY), bounded: a young provisional (sub-floor score) entry ranks
+    to be evicted AFTER tombstoned dead-weight AND corroborated/normal live entries, so it survives
+    long enough to reach the corroboration-promotion frequency. The grace is BOUNDED to
+    CTM_PROVISIONAL_HEADROOM entries per pass — as unconditional precedence it inverted the
+    channel's whole purpose under a saturated store, evicting every injectable row while holding
+    rows that are by definition not injectable. Beyond the bound a provisional ranks normally, i.e.
+    below every at-or-above-floor entry by score. Still a best-effort ORDER change, NOT a hard
     reservation: if protected provisionals are the only candidates left, they are still evicted so
     the cap invariant holds. `today` defaults to the wallclock date; callers/tests may pin it.
     Mutates `bucket` in place; returns the evicted entries for the caller's audit.
@@ -1151,7 +1171,7 @@ def enforce_bucket_cap(
     today_str = today or datetime.now().strftime("%Y-%m-%d")
     evicted: list[dict] = []
 
-    def _is_protected_provisional(e: dict) -> bool:
+    def _is_grace_eligible(e: dict) -> bool:
         if e.get("tombstoned") or e.get("digest"):
             return False
         if int(e.get("score", 0) or 0) >= CTM_MIN_SCORE:
@@ -1159,12 +1179,25 @@ def enforce_bucket_cap(
         age = _entry_age_days(e.get("added"), today_str)
         return age is not None and 0 <= age <= CTM_PROVISIONAL_GRACE_DAYS
 
+    # The headroom slots go to the YOUNGEST eligible entries — the ones with the most window left
+    # to be re-observed. Frequency descending then text breaks ties deterministically, so the same
+    # bucket always yields the same protected set. Identity set is call-scoped: every entry stays
+    # referenced by `bucket` or `evicted` for the whole call, so no id() can be reused.
+    _eligible = sorted(
+        (e for e in bucket if _is_grace_eligible(e)),
+        key=lambda e: (
+            _entry_age_days(e.get("added"), today_str) or 0,
+            -int(e.get("frequency", 0) or 0),
+            str(e.get("text", "")),
+        ),
+    )
+    _protected_ids = {id(e) for e in _eligible[:CTM_PROVISIONAL_HEADROOM]}
+
     def _evict_rank(e: dict) -> tuple:
-        # tombstoned (0) < corroborated/normal live (1) < protected provisional (2): the guard
-        # pushes a young sub-floor entry to the BACK of the eviction order.
+        # tombstoned (0) < normal live incl. over-bound provisionals (1) < protected provisional (2).
         if e.get("tombstoned"):
             tier = 0
-        elif _is_protected_provisional(e):
+        elif id(e) in _protected_ids:
             tier = 2
         else:
             tier = 1
@@ -1238,6 +1271,10 @@ def ingest_outcome_lessons(
     core aggregation (sibling policy to the PG read helpers). Returns per-op counts for the log."""
     store_path = path or LESSON_STORE_FILE
     ops: dict[str, int] = defaultdict(int)
+    # Seeded so a pass that discards nothing still REPORTS zero — an omitted field and a clean pass
+    # would otherwise be indistinguishable, which is the shape that let this loss go unmeasured.
+    ops["SKIP_UNREGISTERED"] = 0
+    skipped_agents: dict[str, int] = defaultdict(int)
     try:
         registry = _load_registry_agents(registry_path or AGENT_REGISTRY_FILE)
         if registry is None:
@@ -1267,6 +1304,7 @@ def ingest_outcome_lessons(
                     file=sys.stderr,
                 )
                 ops["SKIP_UNREGISTERED"] += 1
+                skipped_agents[entry["agent"]] += 1
                 continue
             ops[ingest_lesson(store[bucket_name], entry)] += 1
         promoted = promote_corroborated_lessons(store["ctm"])
@@ -1284,6 +1322,19 @@ def ingest_outcome_lessons(
         print(
             f"[learning-aggregator] lesson-store ingest failed, skip "
             f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+    finally:
+        # Emitted on EVERY pass, zero included, and from `finally` so a fail-soft abort still
+        # reports what was already discarded. The registry gate drops lessons whose value is
+        # unmeasured; an accepted loss with no counter is indistinguishable from an unnoticed one.
+        # Token deliberately distinct from the per-occurrence "lesson skip" line above: that one is
+        # an EVENT, this is the pass-level LOSS COUNTER, and test_lesson_store_integrity pins the
+        # event token's absence on a clean pass.
+        identities = ", ".join(f"{a}x{n}" for a, n in sorted(skipped_agents.items()))
+        print(
+            f"[learning-aggregator] unregistered-lesson loss: "
+            f"count={ops['SKIP_UNREGISTERED']} identities=[{identities}]",
             file=sys.stderr,
         )
     return dict(ops)

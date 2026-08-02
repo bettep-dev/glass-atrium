@@ -10,7 +10,10 @@ export type DaemonStatusValue =
   | "error"
   | "missing"
   | "stale"
-  | "quota_exceeded";
+  | "quota_exceeded"
+  // Apply stage aborted on an otherwise clean cycle — distinct from `partial`,
+  // which means partial patch generation.
+  | "apply_failed";
 
 // Mirrors prisma CostGuardState enum — duplicated locally per "Module independence".
 // infra_fault = 401/credential auth failure (NOT a spend/usage signal).

@@ -169,7 +169,21 @@ class CorroborationPromotion(unittest.TestCase):
 
 
 class EvictionGuard(unittest.TestCase):
-    """AC4 — a young provisional survives capacity eviction long enough to reach promotion."""
+    """AC4 — a young provisional keeps BOUNDED eviction headroom, enough to reach promotion.
+
+    The guard's original shape gave provisionals unconditional precedence over every other live
+    entry. Its intent is preserved here and only its shape changes: sub-floor entries still outrank
+    corroborated ones for survival, but only CTM_PROVISIONAL_HEADROOM of them at a time. The
+    unbounded form inverted the channel — under a permanently saturated store the only rows the
+    injector can ever read (score >= CTM_MIN_SCORE) were structurally the first discarded, while
+    rows that are by definition not injectable were held. Measured on the live store at reversal
+    time: 1632 injectable admissions over 30 days, 0 injectable rows resident.
+
+    Of the four cases below only test_when_provisionals_exceed_headroom_then_injectable_survives is
+    red against the pre-change ranking; the other three assert the intent the reversal PRESERVES and
+    are green on both sides by construction. Flipping them would mean discarding the corroboration
+    path, which is the trade this reversal explicitly refuses.
+    """
 
     def _corroborated(self, tag, n=100):
         return {"agent": "a", "task_type": "feature", "text": tag * n, "score": 5,
@@ -179,9 +193,9 @@ class EvictionGuard(unittest.TestCase):
         return {"agent": "a", "task_type": "refactor", "text": tag * n, "score": 3,
                 "frequency": 1, "tombstoned": False, "added": added}
 
-    def test_when_young_provisional_over_cap_then_it_survives_over_corroborated(self):
-        # Without the guard the score-3 provisional is the FIRST victim (every live entry
-        # outscores it). The guard ranks it LAST, so corroborated entries are evicted first.
+    def test_when_young_provisional_within_headroom_then_it_survives_over_corroborated(self):
+        # Intent PRESERVED: inside the bound a score-3 provisional still outranks corroborated
+        # entries for survival, so it lives long enough to be re-observed.
         bucket = [self._corroborated(c) for c in "ABCD"] + [self._provisional("P", "2026-07-22")]
         agg.enforce_bucket_cap(bucket, 250, today="2026-07-22")  # 500 active → must drop 3
         self.assertLessEqual(agg._bucket_active_size(bucket), 250)  # cap invariant
@@ -190,8 +204,35 @@ class EvictionGuard(unittest.TestCase):
             any(e.get("score") == 3 for e in bucket if not e.get("digest"))
         )
 
+    def test_when_provisionals_exceed_headroom_then_injectable_survives(self):
+        # The reversal itself, and the ONLY case here that is red pre-change. Five young
+        # provisionals against three corroborated, with room for five survivors: the unbounded
+        # guard protects all five provisionals and evicts every injectable row (the live outage's
+        # exact shape). Bounded, the over-bound provisionals rank normally — below every
+        # at-or-above-floor entry by score — so the injectable rows survive instead.
+        provisionals = [
+            self._provisional(c, "2026-07-%02d" % (18 + i)) for i, c in enumerate("PQRST")
+        ]
+        bucket = [self._corroborated(c) for c in "ABC"] + provisionals
+        agg.enforce_bucket_cap(bucket, 500, today="2026-07-22")  # 800 active → drop 3
+        self.assertLessEqual(agg._bucket_active_size(bucket), 500)  # cap invariant
+        live = [e for e in bucket if not e.get("digest")]
+        injectable = [e for e in live if e.get("score", 0) >= agg.CTM_MIN_SCORE]
+        self.assertEqual(
+            len(injectable), 3,
+            "every at-or-above-floor entry must survive when provisionals exceed the headroom",
+        )
+        # Headroom is a bound, not a reservation of the whole bucket.
+        surviving_provisionals = [e for e in live if e.get("score", 0) < agg.CTM_MIN_SCORE]
+        self.assertEqual(len(surviving_provisionals), agg.CTM_PROVISIONAL_HEADROOM)
+        # The slots go to the YOUNGEST eligible entries — most window left to be re-observed.
+        self.assertEqual(
+            sorted(e["added"] for e in surviving_provisionals), ["2026-07-21", "2026-07-22"]
+        )
+
     def test_when_provisional_beyond_grace_then_evicted_normally(self):
-        # An aged-out provisional (past the grace window) loses protection → evicted by score.
+        # Intent PRESERVED and untouched by the bound: past the grace window an entry is not
+        # eligible for headroom at all, so age still culls it before any corroborated entry.
         bucket = [self._corroborated(c) for c in "ABCD"] + [self._provisional("P", "2020-01-01")]
         agg.enforce_bucket_cap(bucket, 350, today="2026-07-22")  # 500 active → drop ~2
         self.assertLessEqual(agg._bucket_active_size(bucket), 350)
@@ -207,16 +248,17 @@ class EvictionGuard(unittest.TestCase):
         self.assertLessEqual(agg._bucket_active_size(bucket), 250)
 
     def test_end_to_end_provisional_survives_then_promotes(self):
-        # The full R-a loop: admit provisional → survive eviction → corroborate → promote.
+        # The full R-a loop, one provisional so it sits inside the headroom: admit → survive
+        # eviction → corroborate → promote. Intent PRESERVED; the bound is not exercised at N=1.
         bucket = [self._corroborated(c) for c in "ABCD"]
         entry = agg._outcome_to_lesson_entry(
             _rec("refactor", "unverified", "high", lesson="prefer pathlib over os.path"), "2026-07-22"
         )
         agg.ingest_lesson(bucket, entry)  # provisional score-3 added, young
         self.assertEqual(len(bucket), 5)
-        agg.enforce_bucket_cap(bucket, 250, today="2026-07-22")  # over cap → guard protects it
+        agg.enforce_bucket_cap(bucket, 250, today="2026-07-22")  # over cap → headroom protects it
         surviving = [e for e in bucket if e.get("task_type") == "refactor" and not e.get("digest")]
-        self.assertEqual(len(surviving), 1, "young provisional must survive eviction")
+        self.assertEqual(len(surviving), 1, "provisional inside the headroom must survive eviction")
         agg.ingest_lesson(bucket, entry)  # re-observed → promotes
         promoted = next(e for e in bucket if e.get("task_type") == "refactor" and not e.get("digest"))
         self.assertGreaterEqual(promoted["score"], agg.CTM_MIN_SCORE)
@@ -226,16 +268,25 @@ class RefactorNotStarved(unittest.TestCase):
     """AC3 — refactor CTM contribution is greater than zero after the change (end-to-end)."""
 
     def test_when_refactor_unverified_batch_then_ctm_nonzero(self):
+        import json
+
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "lessons.json")
+            # Roster pinned to a fixture: without it this reads the LIVE install registry and is
+            # green for two unrelated reasons (a roster that happens to list the fixture agent, or
+            # an absent registry taking the fail-open branch) while going red on any install whose
+            # roster differs. The gate is not what this case is asserting.
+            registry_path = os.path.join(d, "agent-registry.json")
+            Path(registry_path).write_text(
+                json.dumps({"agents": {_rec("refactor")["agent"]: {}}}), encoding="utf-8"
+            )
             # A realistic refactor stream: done + metric_pass, but the grader is (as T0 measured)
             # structurally unable to certify refactor → verdict never verified_pass.
             records = [
                 _rec("refactor", "unverified", "high", lesson=f"refactor lesson {i}")
                 for i in range(4)
             ]
-            agg.ingest_outcome_lessons(records, path)
-            import json
+            agg.ingest_outcome_lessons(records, path, registry_path=registry_path)
 
             store = json.loads(Path(path).read_text())
             refactor_ctm = [e for e in store["ctm"] if e.get("task_type") == "refactor"]

@@ -32,6 +32,8 @@
 #   {"op": "write_wiki_note",            "args": {"path": "...", "title": "...", ...}}
 #   {"op": "bump_wiki_dirty",            "args": {}}
 #   {"op": "write_daemon_run",           "args": {"daemon_name": "wiki", "run_date": "...", ...}}
+#   {"op": "compose_daemon_run_apply_status",
+#                                        "args": {"daemon_name": "autoagent", "run_date": "...", "apply_status": "ok|apply_failed"}}
 #   {"op": "write_daemon_run_payload",   "args": {"daemon_name": "wiki", "run_date": "...", "payload": {...}}}
 #   {"op": "write_autoagent_proposal",   "args": {"cycle_date": "...", "pattern_label": "...", "target_file": "...", ...}}
 #   {"op": "write_autoagent_loop_event", "args": {"event_ts": "...", "agent": "...", "eval_result": "...", ...}}
@@ -208,6 +210,59 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
         with conn.cursor() as cur:
             cur.execute(sql, vals)
         conn.commit()
+    return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
+    """Compose apply-stage health INTO an existing core.daemon_runs row's status.
+
+    The run row is written before the apply stage runs and its status derives
+    solely from per-patch generation errors, so an aborted apply left no trace on
+    any surface. This op folds the apply outcome in AFTER the stage returns.
+
+    Composition is a SQL CASE rather than a read-modify-write: the driver never
+    learns the patch-generation verdict, so only the database can decide without
+    a race. Exactly ONE pair composes — clean ('ok') and apply-aborted
+    ('apply_failed') swap in both directions, which lets a same-date re-run whose
+    apply succeeds clear a stale apply_failed. Every other value (partial / error
+    / missing / stale / quota_exceeded) is patch generation's OWN verdict and is
+    preserved untouched, so a failed generation can never be erased by a clean
+    apply. An absent row (push skipped) updates nothing — this op never INSERTs,
+    because the driver holds no patch stats and would fabricate a run record.
+
+    apply_status: 'ok' | 'apply_failed'. Returns elapsed_ms.
+    """
+    start_ns = time.monotonic_ns()
+    sql = """
+        UPDATE core.daemon_runs SET status = CASE
+            WHEN %(apply_status)s = 'apply_failed' AND status = 'ok'
+                THEN 'apply_failed'::core."DaemonStatus"
+            WHEN %(apply_status)s = 'ok' AND status = 'apply_failed'
+                THEN 'ok'::core."DaemonStatus"
+            ELSE status
+        END
+        WHERE run_date = %(run_date)s
+          AND daemon_name = %(daemon_name)s::core."DaemonType"
+    """
+    params = {
+        "apply_status": apply_status,
+        "run_date": run_date,
+        "daemon_name": daemon_name,
+    }
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            matched = cur.rowcount
+        conn.commit()
+    if matched == 0:
+        # Not a write failure, so it must not raise — but a compose that matched nothing recorded
+        # no apply health at all, which is the exact silence this op exists to remove. stderr is
+        # the channel the log aggregator reads, same as the pg_write=ok/fail line.
+        sys.stderr.write(
+            "[%s-daemon] op=compose_daemon_run_apply_status matched no run row "
+            "(run_date=%s) — apply health NOT recorded for this cycle\n"
+            % (daemon_name, run_date)
+        )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
@@ -480,6 +535,10 @@ OP_TABLE = {
     "bump_wiki_dirty": (bump_wiki_dirty, "wiki.dirty_flag"),
     "clear_wiki_dirty": (clear_wiki_dirty, "wiki.dirty_flag"),
     "write_daemon_run": (write_daemon_run, "core.daemon_runs"),
+    "compose_daemon_run_apply_status": (
+        compose_daemon_run_apply_status,
+        "core.daemon_runs",
+    ),
     "write_daemon_run_payload": (write_daemon_run_payload, "core.daemon_run_payload"),
     "write_autoagent_proposal": (write_autoagent_proposal, "core.autoagent_proposals"),
     "write_autoagent_loop_event": (write_autoagent_loop_event, "core.autoagent_loop_events"),

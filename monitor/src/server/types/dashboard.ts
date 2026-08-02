@@ -50,7 +50,10 @@ export type DaemonStatusValue =
   | "error"
   | "missing"
   | "stale"
-  | "quota_exceeded";
+  | "quota_exceeded"
+  // Apply stage aborted on an otherwise clean cycle — distinct from `partial`,
+  // which means partial patch generation.
+  | "apply_failed";
 
 export interface DaemonStatusItem {
   // Active daemons + legacy "daily-restart" (historical rows only — restart runs

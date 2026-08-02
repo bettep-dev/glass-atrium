@@ -649,6 +649,40 @@ else
     APPLIED_LOG="${REPORTS_DIR}/autoagent-applied-${CYCLE_DATE}.jsonl"
 fi
 
+# -- JSONL sink primitives -------------------------------------------------
+# Defined HERE — directly under APPLIED_LOG and ABOVE the preflight gate —
+# because the preflight abort path is the earliest writer of a row: a definition
+# further down would leave preflight_fatal calling an undefined function, which
+# is why a red gate had no durable record at all (Precondition Loud-Fail's third
+# leg). Pure append/format helpers with no dependency on anything between here
+# and their former position, so the earlier definition changes position only.
+
+# emit_log — append one JSON object (already serialised) as a JSONL row.
+emit_log() {
+    local payload="$1"
+    printf '%s\n' "${payload}" >>"${APPLIED_LOG}"
+}
+
+# json_escape — minimal escaping for embedding strings in our JSONL payload.
+# We rely on python3 for correctness rather than hand-rolling sed.
+json_escape() {
+    python3 -c '
+import json, sys
+sys.stdout.write(json.dumps(sys.stdin.read()))
+'
+}
+
+# ts_now — current UTC timestamp in our JSONL millisecond-zero format. Single
+# source of the format string so a clock/format change touches one place.
+ts_now() {
+    date -u +%Y-%m-%dT%H:%M:%S.000Z
+}
+
+# ts_now_json — ts_now() pre-escaped for direct embedding in a JSONL payload.
+ts_now_json() {
+    printf '%s' "$(ts_now)" | json_escape
+}
+
 # -- Cooperative update pause-flag gate (T10) ------------------------------
 # The apply stage is the daemon's WRITER (it swaps agent-file content in place),
 # so honor the update pause flag here too (defense in depth beyond
@@ -684,12 +718,44 @@ GA_ROOT="$(dirname -- "${SCRIPT_DIR}")"
 # never shell the real suite recursively).
 BATS_RUNNER="${AUTOAGENT_BATS_RUNNER:-${GA_ROOT}/scripts/run-bats-parallel.sh}"
 
+# preflight_abort_row — serialise ONE abort row for the JSONL sink. Every field
+# is built and checked separately: a nested `$(… | json_escape)` inside the
+# printf would swallow a python3-absent failure and emit a MALFORMED row, which
+# is a worse outcome than no row at all (the reader cannot tell it from a parse
+# bug). Returns non-zero instead, so the caller reports the miss out loud.
+preflight_abort_row() {
+    local clause="$1" ts_json clause_json runner_json
+    ts_json="$(ts_now_json)" || return 1
+    clause_json="$(printf '%s' "${clause}" | json_escape)" || return 1
+    runner_json="$(printf '%s' "${BATS_RUNNER}" | json_escape)" || return 1
+    [[ -n "${ts_json}" && -n "${clause_json}" && -n "${runner_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"preflight_fatal","exit_code":16,"clause":%s,"suite_runner":%s}' \
+        "${ts_json}" "${clause_json}" "${runner_json}"
+}
+
 # preflight_fatal — the four verify_test_harness abort sites share one framing
 # ([daemon-apply] FATAL: <clause> Override: AUTOAGENT_ALLOW_UNVERIFIED=1.); pass
 # only the distinct clause so the shared prefix/suffix live in one place.
+# The abort also lands ONE row in the JSONL sink: stderr scrolls past on the
+# launchd path with no reader, so a gate that only prints degrades to silence
+# once the cycle ends. Emitting from the SHARED helper covers all four sites at
+# once — a per-site emit would inherit the same blindness the incident had.
+# The emit can NEVER change the exit: exit 16 is what the callers' tests assert,
+# so a failed row is a loud WARN and the named code is preserved.
+# The gate fires BEFORE the apply lock, so this is the sink's one unlocked write.
+# Safe: a single O_APPEND line cannot interleave with the locked writer's rows.
 preflight_fatal() {
     local clause="$1"
     printf '[daemon-apply] FATAL: %s Override: AUTOAGENT_ALLOW_UNVERIFIED=1.\n' "${clause}" >&2
+    local row=""
+    # GA-ABSORB[handled@preflight_fatal-else-WARN]: the rc IS the branch — a
+    # failed build or append falls to the named WARN below, never a silent skip.
+    if row="$(preflight_abort_row "${clause}")" && emit_log "${row}"; then
+        printf '[daemon-apply] preflight abort recorded → %s\n' "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: preflight abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${APPLIED_LOG}" >&2
+    fi
     exit 16
 }
 
@@ -821,32 +887,6 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
 fi
 
 # -- Helpers ---------------------------------------------------------------
-
-# emit_log — append one JSON object (already serialised) as a JSONL row.
-emit_log() {
-    local payload="$1"
-    printf '%s\n' "${payload}" >>"${APPLIED_LOG}"
-}
-
-# json_escape — minimal escaping for embedding strings in our JSONL payload.
-# We rely on python3 for correctness rather than hand-rolling sed.
-json_escape() {
-    python3 -c '
-import json, sys
-sys.stdout.write(json.dumps(sys.stdin.read()))
-'
-}
-
-# ts_now — current UTC timestamp in our JSONL millisecond-zero format. Single
-# source of the format string so a clock/format change touches one place.
-ts_now() {
-    date -u +%Y-%m-%dT%H:%M:%S.000Z
-}
-
-# ts_now_json — ts_now() pre-escaped for direct embedding in a JSONL payload.
-ts_now_json() {
-    printf '%s' "$(ts_now)" | json_escape
-}
 
 # already_applied — return 0 (true) if a matching applied row already exists in
 # today's applied log.

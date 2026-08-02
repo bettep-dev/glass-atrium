@@ -623,7 +623,9 @@ function resolveBadge(key) {
 }
 
 // 데몬 status enum → tone/라벨 SoT (A2) — dashboard·health·architecture 공용 단일 테이블.
-// 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded + 합성 missing/stale) — 미발행 키 보유 금지.
+// 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded/apply_failed + 합성 missing/stale) — 미발행 키 보유 금지.
+// apply_failed = patch 는 생성됐으나 apply stage 중단 → crit 'Apply failed'. 미등록 시 fallback info 로
+// 떨어져 raw enum 토큰을 그대로 노출하므로, enum 추가와 이 항목은 항상 같은 변경에 포함.
 // quota_exceeded = 외부 한도 도달 → warn 'Usage limit' (health/map/sidebar 전반 일관된 주의 톤 · 이전 neutral 유지 대체).
 // missing = 실행 행 0개 → info (신규 설치 안전 기본값). '설치됐으나 한 번도 안 뜀' 은
 // 서버(resolveDaemonStatuses)가 설치 앵커(min(started_at)) 기준 시스템이 1 cadence 초과로
@@ -638,6 +640,7 @@ const DAEMON_STATUS_TONE = {
   missing:        { tone: 'info',    label: 'No data' },
   stale:          { tone: 'crit',    label: 'Overdue' },
   quota_exceeded: { tone: 'warn',    label: 'Usage limit' },
+  apply_failed:   { tone: 'crit',    label: 'Apply failed' },
 };
 
 function daemonStatusTone(status) {

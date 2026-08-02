@@ -585,6 +585,50 @@ run_doctor() {
     log "  ---- ${snapshot_path_anomaly} live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness: a snapshot run would no-op; inspect the path named above and remove the empty tree once verified ----"
   fi
 
+  # 14. autoagent apply-preflight abort surface. daemon-apply.sh loud-fails (exit 16) when the
+  #     green-suite gate cannot certify the harness, and persists ONE abort row per abort into the
+  #     daily applied-log JSONL. That row is the only durable trace of a red gate: the launchd path
+  #     discards the daemon's stderr, so without this section an aborted apply stage is invisible
+  #     once the cycle ends. FAIL rather than warn — an install whose daemon has stopped applying is
+  #     a live condition with a concrete remedy (fix the red suite, or apply the named override
+  #     deliberately), not an advisory.
+  #     SUPERSESSION, not counting: any later POST-GATE row means the gate re-opened and the daemon
+  #     resumed, so the older abort is history. Supersession is the whole post-gate set rather than a
+  #     landed patch, because a recovered daemon with nothing eligible to apply never lands one (see
+  #     _apply_abort_scan). The verdict is therefore the LAST apply-relevant event in the window
+  #     (append-only rows + date-ordered filenames make that a single ordered scan), never an abort
+  #     tally — a tally would keep asserting a condition that already cleared.
+  local apply_abort_fail=0
+  local apply_reports_dir="${DOCTOR_AUTH_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+  local abort_cutoff="" abort_scan="" abort_state="" abort_row=""
+  # shellcheck disable=SC2310,SC2311
+  if [[ ! -d "${apply_reports_dir}" ]]; then
+    log "  ok   : no autoagent daemon-reports dir (no apply cycles recorded)"
+  elif ! abort_cutoff="$(_drop_window_cutoff_date "${APPLY_ABORT_WINDOW_DAYS}")"; then
+    log "  warn : apply-abort rows present but un-windowable (${apply_reports_dir}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so a live abort cannot be separated from history; install a BSD- or GNU-compatible date(1)"
+    apply_abort_fail=1
+  else
+    # Two stdout lines: the verdict token, then the abort row itself (empty on a non-abort verdict).
+    # shellcheck disable=SC2311
+    abort_scan="$(_apply_abort_scan "${apply_reports_dir}" "${abort_cutoff}")"
+    abort_state="$(printf '%s\n' "${abort_scan}" | sed -n '1p')"
+    abort_row="$(printf '%s\n' "${abort_scan}" | sed -n '2p')"
+    case "${abort_state}" in
+      abort)
+        log "  FAIL : autoagent apply aborted in the last ${APPLY_ABORT_WINDOW_DAYS}d with no later post-gate cycle (${apply_reports_dir}) — the daemon has not reached its apply loop since; fix the named cause, then let the next cycle re-open the gate"
+        log "         abort row: ${abort_row}"
+        apply_abort_fail=1
+        ;;
+      clean) log "  ok   : autoagent apply-preflight abort superseded by a later post-gate cycle (last ${APPLY_ABORT_WINDOW_DAYS}d)" ;;
+      none) log "  ok   : no autoagent apply-preflight aborts in the last ${APPLY_ABORT_WINDOW_DAYS}d" ;;
+      *)
+        log "  warn : autoagent applied-log unclassifiable (${apply_reports_dir}) — the scan produced no verdict, so an abort cannot be separated from a clean cycle; check awk(1) and the log's readability"
+        apply_abort_fail=1
+        ;;
+    esac
+  fi
+  [[ "${apply_abort_fail}" -eq 0 ]] || fail=1
+
   if [[ "${fail}" -eq 0 ]]; then
     local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
@@ -645,6 +689,55 @@ _inject_drop_scan() {
     }
     END { printf "%d %d %d %d\n", actionable + 0, lesson + 0, partial + 0, life + 0 }
   ' "${1}"
+}
+
+# §14 recency window (days) over the daily autoagent applied-log JSONL files. Sized to the SIGNAL'S
+# CADENCE like §10, but the cadence is the opposite shape: an apply abort fires at most ONCE per
+# daily cycle, so a week of silence is only ~7 possible events and a single abort followed by six
+# skipped/failed cycles would age out while the condition still holds. 14 days is the daemon's own
+# stale-pattern retention (the agents-bak prune window), which keeps the abort visible for as long as
+# the artifacts that would explain it. Env-overridable so a test can pin either side of the boundary.
+APPLY_ABORT_WINDOW_DAYS="${APPLY_ABORT_WINDOW_DAYS:-14}"
+
+# Classify the daily applied-log JSONL files under $1 against the YYYY-MM-DD cutoff $2. Producer
+# grammar (autoagent/daemon-apply.sh): one JSON object per line carrying a `"status":"<literal>"`
+# field. `abort` is the sole PRE-gate literal — preflight_fatal writes it before the apply lock is
+# taken, so the gate never opened. Every other literal (applied · skip · reject · needs_regen ·
+# dryrun · error) is written from inside the per-patch apply loop, which preflight has already
+# cleared. The classifier keys on THAT boundary rather than on `applied` alone: `applied` fires only
+# when a patch actually LANDS, so a recovered daemon with nothing eligible emits skips and would
+# hold the verdict red for the rest of the window over a condition that already cleared. Any
+# post-gate row supersedes. A producer adding a per-patch literal needs no change here; the covering
+# test pins the producer's literal set so a NEW pre-gate literal fails loudly instead of reading as
+# recovery.
+# Filenames are autoagent-applied-YYYY-MM-DD.jsonl, so the glob's lexicographic order IS date order
+# and the append-only rows inside preserve it — one ordered pass therefore yields the LAST
+# apply-relevant event without any date arithmetic per row.
+# stdout: line 1 = verdict (`abort` | `clean` | `none`), line 2 = the deciding abort row (empty
+# unless the verdict is `abort`). A file whose name carries no parseable date is skipped, never
+# guessed into the window.
+_apply_abort_scan() {
+  local dir="$1" cutoff="$2" f base fdate
+  local -a in_window=()
+  for f in "${dir}"/autoagent-applied-*.jsonl; do
+    [[ -f "${f}" ]] || continue
+    base="${f##*/}"
+    fdate="${base#autoagent-applied-}"
+    fdate="${fdate%.jsonl}"
+    [[ "${fdate}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    # `! <` is the bash 3.2-safe form of `>=` for the ISO-8601 string compare.
+    [[ ! "${fdate}" < "${cutoff}" ]] || continue
+    in_window+=("${f}")
+  done
+  if [[ "${#in_window[@]}" -eq 0 ]]; then
+    printf 'none\n\n'
+    return 0
+  fi
+  awk '
+    index($0, "\"status\":\"abort\"") { state = "abort"; row = $0; next }
+    /"status":"[^"]+"/               { state = "clean"; row = "";  next }
+    END { printf "%s\n%s\n", (state == "" ? "none" : state), row }
+  ' "${in_window[@]}"
 }
 
 # sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens

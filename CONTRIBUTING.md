@@ -150,6 +150,33 @@ Two effects of an apply that are easy to miss:
   landing, and a region-count mismatch or a merge conflict is reported and
   skipped rather than applied.
 
+### Repairing a conflict-declined agent body
+
+A `CONFLICT (merge-conflict)` decline is the tripwire working, not a fault: the
+merged candidate carried literal conflict markers and a marker-bearing body is
+corruption, so the local copy is kept and nothing is written. The decline is
+recorded, one line per declined file, in `update-declines/conflict-declines.log`
+beside the `agents-bak` rollback store — read it when a deploy transcript has
+already scrolled past.
+
+`agent_lifecycle` is not the repair route. Its six subcommands (`add`, `extend`,
+`delete`, `orphan-scan`, `sync-inject`, `sync-gate-roster`) express no in-region
+reconcile, and `extend` is additive-only — it halts on exactly the value mutation
+a conflicted region requires. The pair below is the repair that works:
+
+1. **Capture a pre-change image of both the live body and its base-store entry.**
+   Required, not optional: steps 2 and 3 are hand edits to two files that must
+   agree, and without the images the result can be neither verified nor reversed.
+2. **Edit the live body** under `agents/` to resolve the conflicted region by
+   hand, taking the vendor lines the release brought.
+3. **Sync the base store** entry (`<state>/base-agents/<name>.md`) to the release
+   body the conflict was reported against, so the next same-release run diffs
+   against the anchor you actually resolved to rather than the stale one.
+4. **Replay the resolver against the captured images.** The verdict transitions
+   from `merge-conflict` to a no-op, and that transition is what proves closure —
+   a green suite afterwards does not, since it cannot distinguish a resolved
+   region from an untouched one.
+
 ## Before you push
 
 - `./scripts/generate-manifest.sh` — regenerate `manifest.json` if you touched
