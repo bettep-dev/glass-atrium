@@ -139,6 +139,10 @@ run_update() {
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${merged}" ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
+  # Neither run declined anything, so the decline record must not exist at all —
+  # an always-created empty file would make "no declines" and "never recorded"
+  # indistinguishable at exactly the moment an operator is asking which it was.
+  [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
 }
 
 @test "base-content capture survives a FATAL vendor sweep (ordering pin)" {
@@ -174,10 +178,13 @@ run_update() {
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
 }
 
-@test "a conflict verdict routes to the ceremony and NEVER writes markers into the live body" {
+@test "a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {
   # Overlapping both-changed region: the merged candidate carries conflict markers,
   # which in a live agent body is corruption. It must be reported + skipped, with
   # the local body byte-identical and its base entry left at the prior anchor.
+  # The decline also has to OUTLIVE the run that produced it — the stderr line is
+  # gone the moment the deploy transcript scrolls — and it must not send the reader
+  # to the agent_lifecycle ceremony, whose subcommand set cannot reconcile a region.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -202,4 +209,22 @@ NEW vendor rules'
   [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
+
+  # The emitted line names the repair that works and routes nobody to the ceremony.
+  local conflict_line
+  conflict_line="$(printf '%s\n' "$output" | grep 'CONFLICT (merge-conflict)')"
+  [[ "${conflict_line}" != *"ceremony"* ]] || return 1
+  [[ "${conflict_line}" == *"capture a pre-change image"* ]] || return 1
+  [[ "${conflict_line}" == *"sync the base store"* ]] || return 1
+
+  # Durable: the record sits beside the agents-bak store, so it is still readable
+  # after the run that wrote it has exited and its workdir has been torn down.
+  local declines="${INSTALL}/update-declines/conflict-declines.log"
+  [[ -f "${declines}" ]] || return 1
+  [[ "$(wc -l <"${declines}" | tr -d ' ')" == "1" ]] || return 1
+  local entry
+  entry="$(cat "${declines}")"
+  [[ "${entry}" == *"merge-conflict"* ]] || return 1
+  [[ "${entry}" == *"agents/dev-a.md"* ]] || return 1
+  [[ "${entry}" == *"local-body-kept"* ]] || return 1
 }

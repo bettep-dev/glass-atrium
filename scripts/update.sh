@@ -277,6 +277,31 @@ update_preserve_snapshot() {
   fi
 }
 
+# Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
+# (the tripwire working), so it gets no named failure code — but announcing it through
+# a single stderr line means an operator not watching the deploy scroll by has no later
+# way to learn that a body was declined and the local copy kept. The record is durable
+# in the install area, BESIDE the agents-bak rollback store and the preserved failed
+# snapshots above (same parent derivation, so all three post-mortem artifacts sit
+# together), and append-only so a re-run adds rather than replaces. Best-effort with a
+# loud WARN: a decline must never abort the rest of the deploy.
+# $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
+# The root is passed rather than re-derived: the merge caller already holds the install
+# root it is merging into, and the backup dir it computes must resolve to the same base.
+update_record_conflict_decline() {
+  local root="$1" rel="$2" verdict="$3" base dest
+  base="$(update_agents_bak_base "${root}")"
+  dest="$(dirname -- "${base}")/update-declines"
+  if mkdir -p -- "${dest}" \
+    && printf '%s\t%s\t%s\tlocal-body-kept\trepair=live-body-edit+base-store-sync\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${verdict}" "${rel}" \
+      >>"${dest}/conflict-declines.log"; then
+    update_log "  decline recorded → ${dest}/conflict-declines.log"
+  else
+    update_log "WARN: could not persist the conflict decline for ${rel} (${dest}) — this decline is stderr-only"
+  fi
+}
+
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
 # EXIT INT TERM so the pause flag clears and the daemon resumes on any exit path —
 # the trap-guarded quiesce/restore the T10 contract requires.
@@ -739,12 +764,25 @@ update_filter_clean_path() {
 #   * structural-change (region-count mismatch) -> routed to the agent_lifecycle
 #                                                  ceremony (NOT auto-applied)
 #   * merge-conflict / gated-2way-present-both  -> marker-bearing REPORT, never
-#                                                  landable -> same ceremony route
+#                                                  landable -> local body kept, decline
+#                                                  recorded, repaired by hand (below)
 #   * keep-local / no-op (changed=False)         -> no write
 #   * keep-local|take-release|merge-clean (changed) -> collected -> gate -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
 # ROSTER change already handled by update_roster_gate; the merge skips it (the add
 # belongs to the agent_lifecycle ceremony, not an in-band content merge).
+#
+# CONFLICT REPAIR — the ceremony is NOT the route for a conflicted region. Its six
+# subcommands (add / extend / delete / orphan-scan / sync-inject / sync-gate-roster)
+# express no in-region reconcile, and `extend` is additive-only: it HALTS on exactly
+# the value mutation a conflicted region requires. The pair below is the repair that
+# works, and the image capture is a REQUIRED step, not an optional one — without it
+# the resolution can be neither verified nor reversed:
+#   1. capture a pre-change image of BOTH the live body and its base-store entry
+#   2. edit the LIVE body to resolve the region by hand (vendor lines transplanted in)
+#   3. sync the base store to the release the conflict was reported against
+#   4. re-run the resolver against the captured images — the verdict transitions from
+#      merge-conflict to no-op, which is what proves closure (asserting it does not)
 
 # Resolve a (possibly facade-symlink) path to its real location so the before-image
 # capture + copy-apply act on the REAL file rather than a symlink (mirrors the
@@ -984,11 +1022,15 @@ update_merge_agent_editable_regions() {
       continue
     fi
     # Marker-bearing verdicts are REPORTS, not files: their candidate carries literal
-    # conflict markers, which in a live agent body is corruption. Route them to the
-    # manual ceremony like structural-change instead of offering an un-landable
-    # candidate at the confirm gate (the merge lib refuses the write regardless).
+    # conflict markers, which in a live agent body is corruption. Skip them instead of
+    # offering an un-landable candidate at the confirm gate (the merge lib refuses the
+    # write regardless), and name the repair pair that actually resolves one — see the
+    # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
+    # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
+    # watching, which leaves an operator no later way to learn a body was declined.
     if [[ "${verdict}" == 'merge-conflict' || "${verdict}" == 'gated-2way-present-both' ]]; then
-      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; route to the agent_lifecycle ceremony, local body kept"
+      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
+      update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
       continue
     fi
     if [[ "${changed}" != 'True' ]]; then
