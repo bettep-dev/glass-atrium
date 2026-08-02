@@ -626,6 +626,7 @@ const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
   "missing",
   "stale",
   "quota_exceeded",
+  "apply_failed",
 ]);
 
 function narrowDaemonStatus(raw: string | null): DaemonStatusValue | null {
