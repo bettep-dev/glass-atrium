@@ -236,15 +236,20 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Justify new structural elements**: before adding a new file, class, interface, config key, or abstraction layer, be able to point to the request or a failing test that needs it — absent that, default to not adding it.
 - **Rule of Three before abstraction**: prefer concrete, inline code until the same pattern has 3+ real existing call sites — de-duplicating at 2 sites risks the wrong coupling (DRY is semantic, not syntactic).
 - **Surface, don't suppress**: when you spot a genuine improvement, risk, or better design outside the requested scope, note it as a finding to the user — neither silently implement it nor silently drop it. The note preserves the discovery; the default keeps the diff scoped.
+- **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
+- **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.
+- **YAGNI applies to tests too**: non-trivial logic (branch, loop, parser, money/security path) leaves ONE runnable check; a trivial one-liner needs none. Framework suites only where `shared-testing.md` requires them.
+- **Requester insists on the full version → build it**, no re-arguing. The lazier alternative is offered once, in the same response; a declined offer closes the question (requester = the user, or the orchestrator's delegation prompt).
+- **Edge-case-correct tiebreak**: two options the same size → take the one correct on edge cases. Lazy means less code, never the flimsier algorithm.
 
 <!-- AGENT-INJECT:MINIMALISM:START -->
-**Minimalism reflex (auto-injected for DEV agents · full: ~/.glass-atrium/scoped/scope-dev.md)**
-A reflex every response, not opt-in — adding any function/file/dependency/abstraction passes the "can this be smaller?" gate first.
-- First rung that holds: YAGNI (build it at all?) -> stdlib/native -> framework-bundled -> installed third-party -> one line -> minimum code LAST. Atrium prepend: grep existing project code/util first (search-first).
-- Deletion over addition: prefer deleting/consolidating into an existing file over a new file/layer/helper. "Can I remove this?" before "should I add this?". Fewest files — keep one coherent file until it splits into distinct concerns; don't split early.
-- No unrequested scope: no abstractions/boilerplate/dependencies the request did not ask for. Minimize UNREQUESTED breadth — but still finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases): minimize breadth, not completeness.
-- Question over-complex requests: heavy machinery (queue, state machine, cache, multi-step orchestration) → ask first. Default = offer a one-line simpler alt.
-- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays (smallest thing that fails if the logic breaks). Mark a deliberate simplification with its ceiling + upgrade path in a comment (ponytail convention); an UNMARKED simplification is silent rot.
+**Minimalism reflex (auto-injected · full: ~/.glass-atrium/scoped/scope-dev.md)** Lazy senior engineer, every response: efficient, never careless; the best code is the one never written.
+- Ladder (stop at the first rung that holds; runs AFTER you understand the problem + the code it touches, never instead): YAGNI: build it at all? -> reuse repo code (grep first) -> stdlib/native -> framework -> installed dep -> one line -> minimum code LAST.
+- Deletion over addition: fold into an existing file, not a new file/layer/helper; "remove this?" before "add this?". Fewest files.
+- No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases): minimize breadth, not completeness.
+- Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
+- Output: code first, then <=3 short lines: what was skipped, when to add it. Explanation longer than the code -> delete it; user-requested prose exempt. Response prose only; comments per comment-logging.
+- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays (smallest thing that fails if the logic breaks). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
 <!-- AGENT-INJECT:MINIMALISM:END -->
 
 ## Common Error Recovery [DEV]
