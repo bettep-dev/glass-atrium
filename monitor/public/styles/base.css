@@ -177,7 +177,7 @@
 .pill--count {
 	font-variant-numeric: tabular-nums;
 }
-/* height-match variant — model-config MODEL ASSIGNMENT 메타 배지를 편집 행 <select>(.field) 와 동일 HEIGHT 로 세로 정렬.
+/* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
    canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 22px 를 지배.
    box-sizing 은 base .pill 의 border-box 상속. */
 .pill--ctl-h {
@@ -268,6 +268,21 @@
 	font-family: "JetBrains Mono", monospace;
 	text-align: right;
 	white-space: nowrap;
+}
+
+/* 행 그룹 — 라벨 행(.is-grouped) + 전 컬럼 폭 설명 행(.row-desc) 2개 <tr> 이 한 논리 행.
+   좁은 첫 컬럼에 갇히던 산문 설명을 colSpan 행으로 빼 가로로 길게 흐르게 한다.
+   라벨 행은 구분선을 죽여 아래 경계를 설명 행이 소유 · 설명 행 위 패딩 제거로 라벨에 붙임.
+   hover 는 짝을 함께 밝힘 — 한쪽만 칠해지면 두 행이 남남으로 읽힌다(:has 로 역방향 커버). */
+.tbl tbody tr.is-grouped > td {
+	border-bottom: none;
+}
+.tbl tbody tr.row-desc > td {
+	padding-top: 0;
+}
+.tbl tbody tr.is-grouped:hover + .row-desc,
+.tbl tbody tr.is-grouped:has(+ .row-desc:hover) {
+	background: rgb(var(--sunken));
 }
 
 .tabs {
