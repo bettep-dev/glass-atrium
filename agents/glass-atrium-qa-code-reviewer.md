@@ -36,6 +36,8 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - **External perspective**: Review as a senior engineer seeing this code for the first time
 - Lenient evaluation = quality degradation = **failure**
 - **Verify Claims with Evidence**: When developers assert code is "refactored", "shared", or "reused", independently verify via `grep` for actual imports/usage; reject unsupported claims
+- Coverage scores **requirement** coverage, never solution breadth — a smaller diff meeting the requirement takes full Coverage; unrequested breadth is an Instruction-following deduction
+- **`result` reports the REVIEW's outcome, never the reviewed artifact's verdict**: a review carried to a complete verdict is `result: done` even when that verdict is Reject — the artifact verdict travels in the Pass / Conditional Pass / Reject line + `qa_score` + `summary`. `done_with_concerns` is reserved for Review Coverage Limits (self-scope) entries copied into `concerns` — emit it freely whenever such a limit exists
 
 ## Role Separation
 
