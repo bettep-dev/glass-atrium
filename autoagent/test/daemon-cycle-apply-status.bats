@@ -24,8 +24,10 @@
 # Run via: bats autoagent/test/daemon-cycle-apply-status.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
 #
-# Hermetic: a mktemp "real tree" holds a COPIED driver plus STUB stages, and a fake HOME supplies the
-# stub dual-write helper. Nothing under the live tree or the live DB is read or written.
+# Hermetic: a mktemp "real tree" holds a COPIED driver plus STUB stages, a fake HOME supplies the
+# stub dual-write helper, and a fixture bin supplies every binary the driver resolves (psql, claude).
+# Nothing under the live tree or the live DB is read or written, and no case depends on what the host
+# happens to have installed.
 #
 # BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
 #   Every assertion `return 1`s on mismatch, so EACH one independently fails the test.
@@ -50,6 +52,7 @@ setup() {
   # migrated DB so the ACs that are not ABOUT the probe keep asserting the write, and so no test in
   # this file can reach a real psql (the hermetic claim above).
   make_psql_stub present
+  make_claude_stub
 }
 
 teardown() {
@@ -109,10 +112,25 @@ EOF
   chmod +x "${WORK}/bin/psql"
 }
 
+# make_claude_stub — the driver resolves the claude CLI at LOAD time and exits 4 when it finds none,
+# dying before the compose stage this file is about. PATH-prepended by run_driver, so resolution lands
+# here whether or not the host has a real binary — the ACs assert the same thing either way. Never
+# executed: the stage stubs reach no LLM, so an invocation means a stage stub was bypassed.
+make_claude_stub() {
+  cat >"${WORK}/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'claude stub invoked — this suite must never reach an LLM\n' >&2
+exit 1
+EOF
+  chmod +x "${WORK}/bin/claude"
+}
+
 # --out (not the OUT_PATH env var): the driver initialises OUT_PATH to empty before arg-parse, so an
 # inherited env value is discarded and the daily report path would be used instead of the fixture.
+# AUTOAGENT_CLAUDE_BIN is unset because an ambient value short-circuits the resolution the stub feeds.
 run_driver() {
-  run env HOME="${FAKE_HOME}" AUTOAGENT_PYTHON_BIN=python3 PATH="${WORK}/bin:${PATH}" \
+  run env -u AUTOAGENT_CLAUDE_BIN \
+    HOME="${FAKE_HOME}" AUTOAGENT_PYTHON_BIN=python3 PATH="${WORK}/bin:${PATH}" \
     bash "${DRIVER}" --out "${OUT_JSON}" "$@"
 }
 
