@@ -42,7 +42,12 @@
 #   {"op": "write_autoagent_proposal",   "args": {"cycle_date": "...", "pattern_label": "...", "target_file": "...", ...}}
 #   {"op": "write_autoagent_loop_event", "args": {"event_ts": "...", "agent": "...", "eval_result": "...", ...}}
 #
-# Stdout on success: elapsed_ms (single integer line).
+# Stdout on success: elapsed_ms (single integer line). compose_daemon_run_apply_status
+#   appends ONE trailer line — "provenance=composed:<token>" or "provenance=declined:<prior
+#   status>" — because the driver reads stdout while the scheduled path drops stderr. Line 1
+#   stays a bare integer: every caller parses it positionally. On a DB predating the
+#   provenance migration the op DEGRADES: the status still composes, no trailer is written,
+#   and the missing migration is named on stderr (exit stays 0 — see the docstring).
 # Stderr (always): structured op + elapsed_ms log line (parseable by daemon-reports).
 
 import json
@@ -176,7 +181,7 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
       wiki: deadlinks_count, dedup_count, compiled_count, compiled_total,
             compile_ms, notes
       autoagent: cost_guard_state, patches_count, patches_apply_count,
-                 patches_reject_count, notes
+                 patches_reject_count, apply_status_provenance, notes
     Unknown kwargs are silently dropped (forward-compatible). NULLable columns
     omitted from kwargs default to NULL.
     """
@@ -184,6 +189,9 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
     cols = ["run_date", "daemon_name", "started_at", "ended_at", "status"]
     vals = [run_date, daemon_name, started_at, ended_at, status]
     allowed = {
+        # Compose provenance for the exits that never reach the compose op (a skipped stage
+        # writes no CASE arm); the compose statement writes this column itself.
+        "apply_status_provenance",
         "cost_guard_state",
         "patches_count",
         "patches_apply_count",
@@ -231,6 +239,21 @@ class UnsupportedApplyStatus(ValueError):
 # so a fourth token cannot land in one place only.
 APPLY_STATUS_TOKENS = ("ok", "apply_failed", "apply_unavailable")
 
+# Provenance vocabulary — pinned verbatim against the SQL literals by the composition suite,
+# so a reader of one never learns a token the other does not write.
+COMPOSED_PREFIX = "composed:"
+DECLINED_PREFIX = "declined:"
+
+# Provenance the compose statement reported this process, handed to main() for the stdout
+# trailer. Every op returns elapsed_ms and nothing else, so the CASE arm the database
+# actually took has no other way back to the driver.
+_COMPOSE_PROVENANCE = None
+
+# The migration that adds apply_status_provenance, named in the degradation notice so one
+# stderr line tells an operator exactly what to apply — the same shape the driver's enum
+# probe uses when a core."DaemonStatus" label is missing.
+PROVENANCE_MIGRATION = "20260803000001_add_daemon_run_apply_status_provenance"
+
 
 def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
     """Compose apply-stage health INTO an existing core.daemon_runs row's status.
@@ -257,6 +280,23 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
     detect it — a CASE fall-through matches the row, reports a hit and leaves the
     operator surface reading whatever it read before.
 
+    That same blindness applies to the ELSE arm itself, which is why the statement
+    also writes apply_status_provenance and RETURNS it: the preserved verdict is
+    the contract, but a decline that reports nothing drops apply health with no
+    signal on any channel. Provenance names the arm the database took —
+    'composed:<token>' or 'declined:<pre-existing status>' — durably on the same
+    row as the status it explains, and on stdout for the driver. It is decided
+    INSIDE this statement because a read-then-write in the driver would race the
+    row being composed.
+
+    The provenance column ships as a migration and this helper ships in a release
+    bundle, so an install can hold the new helper against an older DB — and the
+    update path runs no migration. Writing the column unconditionally would turn a
+    WORKING compose into a hard failure every cycle there, which is the inverse of
+    the silence provenance exists to remove. So the write DEGRADES: an absent
+    column composes the status alone and names the migration on stderr (exit 0,
+    no trailer), and a migrated DB records full provenance.
+
     apply_status: one of APPLY_STATUS_TOKENS. Returns elapsed_ms.
     """
     start_ns = time.monotonic_ns()
@@ -266,26 +306,76 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
             "(accepted: %s) — run row left unchanged, apply health NOT recorded"
             % (apply_status, " ".join(APPLY_STATUS_TOKENS))
         )
+    # Both CASE arms read the PRE-existing status: PostgreSQL and sqlite alike evaluate every
+    # SET expression against the old row, so the ELSE arm's `status` is the verdict being kept.
     sql = """
-        UPDATE core.daemon_runs SET status = CASE
-            WHEN status IN ('ok', 'apply_failed', 'apply_unavailable')
-                THEN %(apply_status)s::core."DaemonStatus"
-            ELSE status
-        END
+        UPDATE core.daemon_runs SET
+            status = CASE
+                WHEN status IN ('ok', 'apply_failed', 'apply_unavailable')
+                    THEN %(apply_status)s::core."DaemonStatus"
+                ELSE status
+            END,
+            apply_status_provenance = CASE
+                WHEN status IN ('ok', 'apply_failed', 'apply_unavailable')
+                    THEN 'composed:' || %(apply_status)s
+                ELSE 'declined:' || status::text
+            END
         WHERE run_date = %(run_date)s
           AND daemon_name = %(daemon_name)s::core."DaemonType"
+        RETURNING apply_status_provenance
+    """
+    # The same composition minus the column an unmigrated DB does not have. RETURNING is kept
+    # — on `status`, which every DB has — because the matched-nothing guard below reads returned
+    # ROWS, not a row count; dropping the clause would trade the provenance silence for that one.
+    degraded_sql = """
+        UPDATE core.daemon_runs SET
+            status = CASE
+                WHEN status IN ('ok', 'apply_failed', 'apply_unavailable')
+                    THEN %(apply_status)s::core."DaemonStatus"
+                ELSE status
+            END
+        WHERE run_date = %(run_date)s
+          AND daemon_name = %(daemon_name)s::core."DaemonType"
+        RETURNING status
     """
     params = {
         "apply_status": apply_status,
         "run_date": run_date,
         "daemon_name": daemon_name,
     }
+    global _COMPOSE_PROVENANCE
+    degraded = False
     with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            matched = cur.rowcount
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                returned = cur.fetchall()
+        except pg_errors.UndefinedColumn:
+            # Keyed on SQLSTATE 42703 by class, NOT on a catalog probe: a probe has to answer
+            # "what if the probe itself failed", and every answer either reports a connection or
+            # permission fault as an absent column or restores the hard fail. This arm masks
+            # nothing — every other error propagates into _retry and the named exit 4 exactly as
+            # before, and a 42703 from degraded_sql (i.e. `status` itself missing, a different
+            # disaster) is outside the try and is NOT caught.
+            degraded = True
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute(degraded_sql, params)
+                returned = cur.fetchall()
         conn.commit()
-    if matched == 0:
+    if degraded:
+        # Before the row-outcome guards: this reports the INSTALL's state, which is true whether
+        # or not a row matched.
+        sys.stderr.write(
+            "[%s-daemon] op=compose_daemon_run_apply_status DEGRADED "
+            "column=apply_status_provenance absent (run_date=%s) — status composed, provenance "
+            "NOT recorded; apply migration %s and the next cycle records it\n"
+            % (daemon_name, run_date, PROVENANCE_MIGRATION)
+        )
+    # RETURNING rows, never the matched-row count: the count is 1 on BOTH arms because the row
+    # is selected by key and not by the CASE condition, so it reports a hit for a compose that
+    # changed nothing. Only the returned token names the arm.
+    if not returned:
         # Not a write failure, so it must not raise — but a compose that matched nothing recorded
         # no apply health at all, which is the exact silence this op exists to remove. stderr is
         # the channel the log aggregator reads, same as the pg_write=ok/fail line.
@@ -293,6 +383,26 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
             "[%s-daemon] op=compose_daemon_run_apply_status matched no run row "
             "(run_date=%s) — apply health NOT recorded for this cycle\n"
             % (daemon_name, run_date)
+        )
+        return (time.monotonic_ns() - start_ns) // 1_000_000
+    if degraded:
+        # degraded_sql returns the composed STATUS, never provenance — reporting it as
+        # provenance would name a value no channel can distinguish from a stored one.
+        return (time.monotonic_ns() - start_ns) // 1_000_000
+    _COMPOSE_PROVENANCE = returned[0][0]
+    if _COMPOSE_PROVENANCE.startswith(DECLINED_PREFIX):
+        # The decline is the contract, its silence was the defect: the row matched, so the
+        # matched-nothing guard above stays quiet and the driver logs a clean end.
+        sys.stderr.write(
+            "[%s-daemon] op=compose_daemon_run_apply_status declined apply_status=%s "
+            "(run_date=%s) — pre-existing %s is patch generation's own verdict and is kept, "
+            "apply health NOT recorded for this cycle\n"
+            % (
+                daemon_name,
+                apply_status,
+                run_date,
+                _COMPOSE_PROVENANCE[len(DECLINED_PREFIX):],
+            )
         )
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
@@ -630,6 +740,9 @@ def main():
 
     if fail is None:
         sys.stdout.write("%d\n" % elapsed_ms)
+        if _COMPOSE_PROVENANCE is not None:
+            # Trailer, never line 1 — callers parse the elapsed_ms token positionally.
+            sys.stdout.write("provenance=%s\n" % _COMPOSE_PROVENANCE)
         sys.stderr.write(
             "[%s] op=%s elapsed_ms=%d pg_write=ok attempt=%d\n"
             % (hook_name, op, elapsed_ms, attempt)
