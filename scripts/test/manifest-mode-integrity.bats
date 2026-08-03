@@ -29,6 +29,7 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
@@ -52,13 +53,19 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
 }
 
-# Throwaway git fixture holding a COPY of the generator (GA_ROOT = the fixture),
-# one 755 hook + one 644 agent file, and a seed manifest carrying the required
-# _doc_settings_json contract key. git index only — ls-files needs no commit.
+# Throwaway git fixture holding a COPY of the generator + the vendor-digest leaf it
+# sources (GA_ROOT = the fixture), one 755 hook + one 644 agent file, and a seed
+# manifest carrying the required _doc_settings_json contract key. git index only —
+# ls-files needs no commit. The lib guard is PER-FIXTURE (not setup-wide) because
+# the install/update rows never run the generator and must keep running without it.
 make_gen_fixture() {
+  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
   FIX="${SANDBOX}/genfix"
-  mkdir -p "${FIX}/scripts" "${FIX}/hooks" "${FIX}/agents"
+  mkdir -p "${FIX}/scripts/lib" "${FIX}/hooks" "${FIX}/agents"
   cp -p -- "${GA}/scripts/generate-manifest.sh" "${FIX}/scripts/generate-manifest.sh"
+  # the generator sources this leaf for the vendor-region map — a sandbox without
+  # it exits 7 (loud-fail), so the copy is part of the generator's fixture.
+  cp -p -- "${REAL_VENDOR_LIB}" "${FIX}/scripts/lib/vendor-digest.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"

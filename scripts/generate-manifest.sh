@@ -12,6 +12,15 @@
 #                        not executables only, so every landing surface (tar
 #                        extract, spine cp -p, agent-merge copy) has a map target.
 #                        Additive optional key: pre-modes consumers ignore it.
+#   vendor_hashes        {path: sha256} over the VENDOR-OWNED lines only (outside
+#                        the EDITABLE regions + the live-only frontmatter pins),
+#                        for the agents/*.md subset ONLY — the daemon's evolvable
+#                        surface. Lets the doctor tell SANCTIONED local evolution
+#                        (learned bullets, an operator `model:` pin) apart from
+#                        real tampering inside vendor prose, which a whole-file
+#                        hash cannot. Boundary SoT: scripts/lib/vendor-digest.sh.
+#                        Additive optional key: a consumer that ignores it keeps
+#                        exactly the pre-vendor_hashes whole-file behaviour.
 # files[] stays a string array (NOT files-as-objects) so every `jq -r '.files[]'`
 # consumer (ga-core.sh read/remove_manifest_links + doctor, validate-compliance-matrix,
 # acceptance/e2e) works UNCHANGED; hashes adds integrity + O(1) hashes["agents/foo.md"] lookup.
@@ -53,7 +62,8 @@
 #                                  HASH mismatch (content changed, path unchanged)
 #
 # Named exit codes: 1=--check divergence · 3=git absent/not a work tree ·
-# 4=jq or sha256 tool absent · 5=manifest or _doc_settings_json missing · 6=empty generation.
+# 4=jq or sha256 tool absent · 5=manifest or _doc_settings_json missing · 6=empty generation ·
+# 7=vendor-digest lib missing (the shared region-boundary SoT — never guessed inline).
 set -euo pipefail
 
 # Single Atrium system version-of-record. Stamped into manifest.version on
@@ -116,6 +126,19 @@ command -v jq >/dev/null 2>&1 || {
   echo "generate-manifest: jq required" >&2
   exit 4
 }
+
+# Vendor-region digest boundary — the SAME leaf lib/ga-doctor.sh §8 reads, so the
+# producer and the consumer can never disagree about where an EDITABLE region
+# begins. Loud-fail on absence: a silently skipped vendor_hashes map would ship a
+# manifest whose doctor-side split does not exist.
+readonly VENDOR_DIGEST_LIB="${GA_ROOT}/scripts/lib/vendor-digest.sh"
+[[ -f "${VENDOR_DIGEST_LIB}" ]] || {
+  echo "generate-manifest: vendor-digest lib missing: ${VENDOR_DIGEST_LIB}" >&2
+  exit 7
+}
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/vendor-digest.sh
+source "${VENDOR_DIGEST_LIB}"
 
 # SHA-256 tool — shasum (macOS / perl-backed, also on CI ubuntu) preferred,
 # coreutils sha256sum as the Linux fallback. Both honor `--` end-of-options.
@@ -202,6 +225,20 @@ emit_mode_lines() {
   done | LC_ALL=C sort
 }
 
+# Emit `<path>\t<vendor sha256>` for each IN-SCOPE path read from stdin (agents/*.md
+# — is_vendor_digest_target), sorted by path. Out-of-scope paths are dropped, so the
+# map is a SUBSET of files[] by construction and every other file keeps the
+# whole-file gate untouched. Same memoized-list stdin contract as emit_hash_lines.
+emit_vendor_hash_lines() {
+  local f
+  while IFS= read -r f; do
+    # shellcheck disable=SC2310  # predicate in a condition: disabling set -e there is the point
+    is_vendor_digest_target "${f}" || continue
+    # shellcheck disable=SC2312  # same masking contract as emit_hash_lines — a sha failure still fails the inner pipeline
+    printf '%s\t%s\n' "${f}" "$(vendor_digest_of "${GA_ROOT}/${f}" "${SHA256_CMD[@]}")"
+  done | LC_ALL=C sort
+}
+
 # Emit the tracked manifest's file list, sorted (for --check comparison).
 read_manifest_files() {
   jq -r '.files[]' -- "${MANIFEST}" | LC_ALL=C sort
@@ -222,6 +259,14 @@ read_manifest_mode_lines() {
     | LC_ALL=C sort
 }
 
+# Emit the tracked manifest's `<path>\t<vendor sha256>` lines, sorted by path.
+# `.vendor_hashes // {}` tolerates a pre-vendor_hashes manifest (the count gate
+# flags that gap separately) instead of a jq null error.
+read_manifest_vendor_lines() {
+  jq -r '(.vendor_hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}" \
+    | LC_ALL=C sort
+}
+
 # The _doc_settings_json contract doc must survive every regeneration —
 # losing it silently drops the settings.json never-touch documentation.
 read_doc_key() {
@@ -238,6 +283,7 @@ read_doc_key() {
 run_check() {
   local doc orphans missing mismatches manifest_version gen_count rc=0
   local modes_count mode_mismatches files
+  local vendor_count vendor_expected vendor_mismatches
   doc="$(read_doc_key)" || exit $?
   [[ -n "${doc}" ]] || exit 5
 
@@ -309,8 +355,28 @@ run_check() {
     rc=1
   fi
 
+  # vendor gate — the agents/*.md vendor-region map. The whole-file hash gate above
+  # already fails on ANY content change, so this adds the map's OWN freshness: an
+  # absent/short map (a new agent file, or a manifest generated before the key
+  # existed) and per-file vendor drift are separate findings, mirroring modes.
+  vendor_expected="$(printf '%s\n' "${files}" | emit_vendor_hash_lines | wc -l | tr -d ' ')"
+  vendor_count="$(jq -r '(.vendor_hashes // {}) | length' -- "${MANIFEST}")"
+  # shellcheck disable=SC2312  # same join-on-intersection contract as the hash gate
+  vendor_mismatches="$(LC_ALL=C join -t "$(printf '\t')" \
+    <(read_manifest_vendor_lines) <(printf '%s\n' "${files}" | emit_vendor_hash_lines) \
+    | awk -F'\t' '$2 != $3 { printf "%s (manifest=%s actual=%s)\n", $1, $2, $3 }')"
+  if [[ "${vendor_count}" != "${vendor_expected}" ]]; then
+    echo "generate-manifest --check: VENDOR_HASHES map incomplete (${vendor_count} entries, expected ${vendor_expected})" >&2
+    rc=1
+  fi
+  if [[ -n "${vendor_mismatches}" ]]; then
+    echo "generate-manifest --check: VENDOR-REGION mismatches (non-EDITABLE content changed):" >&2
+    printf '%s\n' "${vendor_mismatches}" | sed 's/^/  ~ /' >&2
+    rc=1
+  fi
+
   if [[ "${rc}" -eq 0 ]]; then
-    echo "generate-manifest --check: manifest matches generated set (${gen_count} files, version ${ATRIUM_VERSION}, hashes + both directions clean)"
+    echo "generate-manifest --check: manifest matches generated set (${gen_count} files, version ${ATRIUM_VERSION}, ${vendor_count} vendor digests, hashes + both directions clean)"
   else
     echo "generate-manifest --check: DIVERGED — run scripts/generate-manifest.sh to regenerate" >&2
   fi
@@ -318,7 +384,7 @@ run_check() {
 }
 
 run_generate() {
-  local doc count tmp files files_json hashes_json modes_json
+  local doc count tmp files files_json hashes_json modes_json vendor_json vendor_count
   doc="$(read_doc_key)" || exit $?
   # Single git ls-files pass — the sorted list feeds count, files_json, and BOTH
   # emitters (one pass instead of four independent re-runs).
@@ -339,6 +405,11 @@ run_generate() {
   hashes_json="$(printf '%s\n' "${files}" | emit_hash_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
   # modes = {path: octal}, same per-line merge as hashes (FB-2 enforcement SoT).
   modes_json="$(printf '%s\n' "${files}" | emit_mode_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
+  # vendor_hashes = {agents/*.md: vendor-region sha256}, a SUBSET of files[] —
+  # `add // {}` keeps a defined (possibly empty) object when the deploy set holds
+  # no agent bodies at all.
+  vendor_json="$(printf '%s\n' "${files}" | emit_vendor_hash_lines | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s 'add // {}')"
+  vendor_count="$(printf '%s' "${vendor_json}" | jq -r 'length')"
 
   tmp="${MANIFEST}.ga-gen.$$"
   jq -n \
@@ -347,7 +418,8 @@ run_generate() {
     --argjson files "${files_json}" \
     --argjson hashes "${hashes_json}" \
     --argjson modes "${modes_json}" \
-    '{version: $ver, _doc_settings_json: $doc, files: $files, hashes: $hashes, modes: $modes}' \
+    --argjson vendor "${vendor_json}" \
+    '{version: $ver, _doc_settings_json: $doc, files: $files, hashes: $hashes, modes: $modes, vendor_hashes: $vendor}' \
     >"${tmp}"
 
   # re-validate before the swap — a malformed temp must never replace the live
@@ -364,6 +436,9 @@ run_generate() {
     and (.modes | type == "object")
     and ((.modes | length) == (.files | length))
     and (.modes | to_entries | all(.value | test("^[0-7]{3,4}$")))
+    and (.vendor_hashes | type == "object")
+    and (.vendor_hashes | to_entries | all(.value | test("^[0-9a-f]{64}$")))
+    and ((.vendor_hashes | keys) - .files | length == 0)
   ' -- "${tmp}" >/dev/null 2>&1 || {
     rm -f -- "${tmp}"
     echo "generate-manifest: generated manifest failed validation — aborting" >&2
@@ -371,7 +446,7 @@ run_generate() {
   }
 
   mv -f -- "${tmp}" "${MANIFEST}"
-  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes, ${count} modes)"
+  echo "generate-manifest: wrote ${MANIFEST} (${count} files, version ${ATRIUM_VERSION}, ${count} hashes, ${count} modes, ${vendor_count} vendor digests)"
   refresh_deployed_farm
 }
 
