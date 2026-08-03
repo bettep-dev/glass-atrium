@@ -738,6 +738,10 @@ LESSON_STORE_FILE = os.environ.get(
 # raise is NOT taken here because the eviction population changes completely once the polarity is
 # bounded (below), and sizing measured against the broken steady state would size the wrong store.
 # Re-measure resident injectable rows per agent after one full cycle on the bounded ranking.
+# That measurement now HAS a channel: _build_bucket_census emits per-agent injectable counts and
+# the injectable-versus-sub-floor eviction split on every pass. Read five consecutive passes of it
+# before touching this constant — near-zero injectable evictions mean the cap is not the binding
+# constraint, and raising it then buys nothing.
 CTM_BUCKET_MAX_CHARS = 4000
 EPM_BUCKET_MAX_CHARS = 4000
 
@@ -826,6 +830,55 @@ def _bucket_active_size(bucket: list[dict]) -> int:
     on THIS; the evicted-digest footer carries no active weight, so it is cap-excluded here."""
     return sum(
         _lesson_size(e) for e in bucket if not e.get("tombstoned") and not e.get("digest")
+    )
+
+
+def _lesson_is_injectable(entry: dict, bucket_name: str) -> bool:
+    """AD-3 injection eligibility of ONE row, mirroring the injector's own selection:
+    a live CTM row at or above CTM_MIN_SCORE, or ANY live EPM row (the EPM query in
+    inject-scope-rules.sh applies no score floor). Tombstoned and digest rows never inject."""
+    if entry.get("tombstoned") or entry.get("digest"):
+        return False
+    if bucket_name == "epm":
+        return True
+    return int(entry.get("score", 0) or 0) >= CTM_MIN_SCORE
+
+
+def _build_bucket_census(
+    bucket_name: str, bucket: list[dict], cap: int, evicted: list[dict]
+) -> str:
+    """One measurement line per bucket per pass — the input the deferred cap sizing needs.
+
+    Aggregate totals cannot answer either sizing question. Per-agent injectable counts say
+    whether the store covers the producing roster or one agent's read set; splitting evictions
+    by injectable versus sub-floor says whether capacity pressure is discarding rows that would
+    have been injected — a near-zero injectable-eviction count means the cap is not the binding
+    constraint, which is the opposite remedy from raising it.
+
+    The wording deliberately carries no `skip` token: three clean-pass assertions in
+    test_lesson_store_integrity require that substring to be absent from a clean pass's stderr."""
+    per_agent: dict[str, list[int]] = {}
+    for entry in bucket:
+        if entry.get("tombstoned") or entry.get("digest"):
+            continue
+        counts = per_agent.setdefault(str(entry.get("agent", "")), [0, 0])
+        counts[0] += 1
+        if _lesson_is_injectable(entry, bucket_name):
+            counts[1] += 1
+    breakdown = ", ".join(f"{a}:{c[1]}/{c[0]}" for a, c in sorted(per_agent.items()))
+    dead = [e for e in evicted if e.get("tombstoned")]
+    live_evicted = [e for e in evicted if not e.get("tombstoned")]
+    lost = [e for e in live_evicted if _lesson_is_injectable(e, bucket_name)]
+    return (
+        f"[learning-aggregator] {bucket_name} census: "
+        f"agents={len(per_agent)} "
+        f"rows={sum(c[0] for c in per_agent.values())} "
+        f"injectable={sum(c[1] for c in per_agent.values())} "
+        f"active={_bucket_active_size(bucket)}/{cap} "
+        f"evicted_injectable={len(lost)} "
+        f"evicted_subfloor={len(live_evicted) - len(lost)} "
+        f"evicted_tombstoned={len(dead)} "
+        f"per_agent=[{breakdown}]"
     )
 
 
@@ -1317,6 +1370,9 @@ def ingest_outcome_lessons(
             evicted = enforce_bucket_cap(store[name], cap, today)
             if evicted:
                 ops["EVICT"] += len(evicted)
+            # Emitted on every pass, zero included — the cap-sizing decision is gated on
+            # consecutive passes of this line, so a silent pass is a hole in the series.
+            print(_build_bucket_census(name, store[name], cap, evicted), file=sys.stderr)
         save_lesson_store(store_path, store)
     except Exception as exc:  # noqa: BLE001 — fail-soft: lesson store MUST NOT block aggregation
         print(

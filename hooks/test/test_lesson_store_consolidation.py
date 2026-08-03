@@ -16,6 +16,7 @@ aggregator-test convention (importlib load of the dashed module, unittest).
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -189,6 +190,120 @@ class StoreRoundTrip(unittest.TestCase):
             self.assertEqual(len(store["ctm"]), 1)  # dup did not create a 2nd CTM row
             self.assertEqual(store["ctm"][0]["frequency"], 2)
             self.assertEqual(len(store["epm"]), 1)
+
+
+class CoverageCensus(unittest.TestCase):
+    """T4 measurement: the per-pass census the deferred cap sizing is gated on.
+
+    Aggregate totals cannot say whether the store covers the producing roster, nor whether
+    capacity pressure is discarding injectable rows or sub-floor ones — and those two have
+    opposite remedies. Every assertion here reads the emitted line, never an internal count."""
+
+    def _pass(self, ctm_rows, epm_rows=()):
+        """One real ingest pass over a seeded store, returning the captured stderr.
+
+        The registry is seeded in the temp dir rather than read from the live install: a
+        roster that happens to hold the fixture keys and an absent registry taking the
+        fail-open branch are two different reasons for the same green."""
+        import io
+        import json
+        import os
+        import tempfile
+        from contextlib import redirect_stderr
+
+        with tempfile.TemporaryDirectory() as d:
+            store_path = os.path.join(d, "lessons.json")
+            registry_path = os.path.join(d, "agent-registry.json")
+            agents = {e["agent"] for e in list(ctm_rows) + list(epm_rows)}
+            Path(registry_path).write_text(
+                json.dumps({"agents": {a: {} for a in agents}}), encoding="utf-8"
+            )
+            Path(store_path).write_text(
+                json.dumps({"ctm": list(ctm_rows), "epm": list(epm_rows)}), encoding="utf-8"
+            )
+            err = io.StringIO()
+            with redirect_stderr(err):
+                agg.ingest_outcome_lessons([], store_path, registry_path=registry_path)
+        return err.getvalue()
+
+    @staticmethod
+    def _row(agent, text, score=5, age_days=0):
+        # Dates are computed, never literals: a pinned date silently ages past the staleness
+        # sweep and the grace window, turning a real pin into a test that measures the calendar.
+        from datetime import datetime, timedelta
+
+        today = datetime.now()
+        return {
+            "agent": agent,
+            "task_type": "feature",
+            "text": text,
+            "score": score,
+            "frequency": 1,
+            "tombstoned": False,
+            "updated": today.strftime("%Y-%m-%d"),
+            "added": (today - timedelta(days=age_days)).strftime("%Y-%m-%d"),
+        }
+
+    def _census_line(self, err, bucket_name):
+        for line in err.splitlines():
+            if f"{bucket_name} census:" in line:
+                return line
+        self.fail(f"no {bucket_name} census line emitted:\n{err}")
+
+    def test_when_pass_completes_then_every_resident_agent_is_named_with_counts(self):
+        err = self._pass([
+            self._row("glass-atrium-dev-shell", "a" * 40),
+            self._row("glass-atrium-dev-shell", "b" * 40, score=3),
+            self._row("glass-atrium-dev-node", "c" * 40),
+            self._row("glass-atrium-dev-python", "d" * 40, score=3),
+        ])
+        line = self._census_line(err, "ctm")
+
+        self.assertIn("agents=3", line)
+        self.assertIn("rows=4", line)
+        self.assertIn("injectable=2", line)
+        self.assertIn("glass-atrium-dev-shell:1/2", line)   # 1 injectable of 2 resident
+        self.assertIn("glass-atrium-dev-node:1/1", line)
+        self.assertIn("glass-atrium-dev-python:0/1", line)
+
+    def test_when_pass_completes_then_each_bucket_reports_active_sum_against_its_cap(self):
+        err = self._pass(
+            [self._row("glass-atrium-dev-shell", "a" * 40)],
+            [self._row("glass-atrium-dev-node", "e" * 40)],
+        )
+
+        for bucket_name, cap in (
+            ("ctm", agg.CTM_BUCKET_MAX_CHARS),
+            ("epm", agg.EPM_BUCKET_MAX_CHARS),
+        ):
+            matched = re.search(r"active=(\d+)/(\d+)", self._census_line(err, bucket_name))
+            self.assertIsNotNone(matched, bucket_name)
+            active, reported_cap = int(matched.group(1)), int(matched.group(2))
+            self.assertEqual(reported_cap, cap)
+            self.assertLessEqual(active, cap)  # AD-1 invariant, re-verified every pass
+
+    def test_when_saturated_then_injectable_and_subfloor_evictions_count_separately(self):
+        # 8000 active chars against the 4000 cap: the sub-floor row goes first (lowest score),
+        # then one injectable row — the number the cap decision actually turns on.
+        big = agg.CTM_BUCKET_MAX_CHARS // 2
+        err = self._pass([
+            self._row("glass-atrium-dev-shell", "a" * big),
+            self._row("glass-atrium-dev-shell", "b" * big),
+            self._row("glass-atrium-dev-node", "c" * big),
+            self._row("glass-atrium-dev-node", "d" * big, score=3, age_days=90),
+        ])
+        line = self._census_line(err, "ctm")
+
+        self.assertIn("evicted_subfloor=1", line)
+        self.assertIn("evicted_injectable=1", line)
+
+    def test_when_clean_pass_then_census_carries_no_skip_token(self):
+        # Three clean-pass assertions in test_lesson_store_integrity require `lesson skip` to be
+        # absent from stderr; a census phrased around a skip word would redden a suite this
+        # measurement never touches.
+        err = self._pass([self._row("glass-atrium-dev-shell", "a" * 40)])
+
+        self.assertNotIn("skip", self._census_line(err, "ctm"))
 
 
 if __name__ == "__main__":
