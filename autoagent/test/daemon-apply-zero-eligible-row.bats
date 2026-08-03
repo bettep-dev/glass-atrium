@@ -342,3 +342,68 @@ PY
     return 1
   }
 }
+
+# ── AC6/AC7 — the row states WHICH of the two things the preflight gate did ────────────────────
+#
+# The row's own comment used to claim it was proof the cycle CLEARED the gate. That is false on the
+# operator-override hatch: the gate was skipped, nothing was verified, and doctor §14 read the row as
+# a recovery and silently cleared a real abort. A FIELD rather than a new status literal, because a
+# new literal reddens the AC5 pin under the preflight test root — tripping a fatal preflight and
+# writing the very abort row this row exists to supersede.
+
+# run_apply_gate — the same fixture cycle WITHOUT the re-entry sentinel, so the gate genuinely runs.
+# A stub runner exits 0 in place of the full suite (this suite exercises the emit, not the suite), and
+# the four test roots the gate requires are the repo's own — the real script runs in place.
+run_apply_gate() {
+  local runner="${WORK}/bats-runner-ok"
+  rm -f -- "${runner}" # a fresh file, never a redirect onto an inherited symlink
+  printf '#!/bin/bash\nexit 0\n' >"${runner}"
+  chmod +x "${runner}"
+  run env -u AUTOAGENT_ALLOW_UNVERIFIED -u AUTOAGENT_PREFLIGHT_ACTIVE \
+    PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    AUTOAGENT_BATS_RUNNER="${runner}" \
+    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+}
+
+@test "AC6: a cycle that CLEARED the gate writes gate=cleared on the heartbeat row" {
+  run_apply_gate
+  [[ "${status}" -eq 0 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "$(row_count '"gate":"cleared"')" -eq 1 ]] || {
+    dump_log
+    return 1
+  }
+}
+
+@test "AC7: a cycle that SKIPPED the gate via the operator override writes gate=skipped" {
+  run env PATH="${MIRROR}" HOME="${WORK}/home" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
+    AUTOAGENT_ALLOW_UNVERIFIED=1 \
+    bash "${REAL_SCRIPT}" --report "${WORK}/report.json" --agents-dir "${AGENTS}"
+  [[ "${status}" -eq 0 ]] || {
+    dump_log
+    return 1
+  }
+  [[ "$(row_count '"gate":"skipped"')" -eq 1 ]] || {
+    dump_log
+    return 1
+  }
+}
+
+@test "AC8: the gate field is additive — the pinned status-literal set is untouched" {
+  # The guard that keeps AC6/AC7 cheap: doctor-apply-abort-rows.bats AC7 derives its expected set by
+  # extracting `"status":"<lit>"` occurrences from this producer, so a new FIELD leaves it intact.
+  # Asserted here against the producer source, so a later drift toward a dedicated literal fails on
+  # the row that introduces it rather than three suites away.
+  [[ "$(grep -c '"gate":"' "${REAL_SCRIPT}")" -ge 1 ]] || {
+    echo "producer no longer writes a gate field" >&2
+    return 1
+  }
+  local observed
+  observed="$(grep -o '"status":"[a-z_]*"' "${REAL_SCRIPT}" | sed 's/^"status":"//;s/"$//' | sort -u | tr '\n' ' ')"
+  [[ "${observed}" == "abort applied dryrun error needs_regen reject skip " ]] || {
+    echo "producer status-literal set changed: ${observed}" >&2
+    return 1
+  }
+}

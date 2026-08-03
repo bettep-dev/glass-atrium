@@ -170,8 +170,18 @@ extract_detect_py() {
   dir="$(extract_detect_py)" || return 1
   # The bash helper prints a trailing newline; command substitution strips it, and
   # no corpus entry ends in one, so the two sides compare on identical bytes.
+  # The trailing group is the Bash-arm repair's dependency set (clauded-docs/774
+  # T1-1.g): the five discrete-token recognition sites resolve their token through
+  # this normaliser, so parity is asserted for exactly the redundant-separator,
+  # dot-segment and backtrack spellings that repair relies on.
   for p in '~' '~/x' '~/' '~other/x' '~user/.glass-atrium/agents/a.md' \
     '/a/../b/./c' 'a/b' '/a/b/' '..' '/..' '' '~/x/../y' '//a//b' \
+    '/a///b' '/a/./b' '/a/.//./b' 'a/b/../c' '/a/b/../../c' '/a/b/..' './a/b' \
+    '~//x' '~/./x' '~/x/../../y' '/a/b/../..' '../a/b' \
+    "${FAKE_HOME}/.claude//settings.json" \
+    "${FAKE_HOME}/.claude/todos/../settings.json" \
+    "${FAKE_HOME}/.glass-atrium/wiki/../hooks" \
+    "${FAKE_HOME}/.glass-atrium/hooks/../../work" \
     "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md"; do
     py="$(env "HOME=${FAKE_HOME}" python3 -c \
       'import sys; sys.path.insert(0, sys.argv[1]); import detect_py; sys.stdout.write(detect_py.normalize_path(sys.argv[2]))' \

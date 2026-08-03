@@ -66,7 +66,32 @@
 #     `pushd +N`/`-N` rotation) re-arms whenever this command entered a protected
 #     dir earlier — arming is a boolean over-approximation and staying armed is
 #     the safe direction.
-# DOCUMENTED RESIDUAL (not covered): variable indirection, in shell
+# PATH NORMALISATION. A protected path is recognised at seven sites. The five that
+# hold a DISCRETE path token — a redirect target, an interpreter write target, an awk
+# redirect target, dd's of= operand, and the cwd-arming argument — resolve it through
+# the classifier's normalize_path before matching, so a redundant separator, a dot
+# segment and a `..` backtrack all name the path they resolve to (parity with
+# hook_normalize_path is pinned by a shared-corpus bats row). Resolution is LEXICAL —
+# "resolves to" is the path the TEXT names, never the one the filesystem walks — so it
+# cuts both ways only while no intermediate segment is a symlink: a backtrack OUT of the
+# protected tree stops blocking a spelling that lands nowhere protected, and a symlinked
+# segment makes that same resolution name a destination the filesystem does not (residual
+# below). The cwd-arming DISARM test deliberately keeps reading the RAW token —
+# it keys on the leading character, which the normaliser preserves. The two
+# recognisers that hold a SLICE OF COMMAND TEXT instead (a mutation verb's argument
+# region, an in-place perl/ruby segment) have no single token to resolve, so the two
+# protected-path patterns tolerate redundant separators and dot segments there by
+# construction; a `..` backtrack in those two positions is the residual below.
+# DOCUMENTED RESIDUAL (not covered): a `..` backtrack spelled inside a COMMAND-TEXT
+# region — a mutation verb's argument run or an in-place perl/ruby segment — because
+# no pattern resolves a path and those two sites hold no token to resolve (the
+# resulting over-block, e.g. `cp x <prot>/hooks/../../tmp/y`, is the safe direction);
+# a protected path reached through a SYMLINKED intermediate segment — the normaliser is
+# lexical, so `<prot>/link/../x` resolves by text alone and stops matching while the write
+# lands wherever the link points; the direct spelling through that link is unrecognised
+# too, so link-following is uniformly outside this arm's reach and no spelling of it is
+# narrower than another;
+# variable indirection, in shell
 # (P=...; echo > "$P") AND inside an interpreter code string
 # (p = "<prot>"; open(p, "w")) — every target reader is literal-only, so a
 # variable-bound target passes; command substitution, quote-split paths,
@@ -213,16 +238,29 @@ class FrontmatterUnparseable(Exception):
 # trailing lookahead below. And NEVER a global locale export: the classifier
 # inherits the hook environment, where a stdin decode failure degrades to an empty
 # tool name and a fallthrough exit 0, so a locale pin can turn the gate FAIL-OPEN.
+# A separator run the filesystem resolves to ONE separator: `/`, `//`, `/./`, `///`.
+# Inserted only BETWEEN a protected root name and what follows it — never BEFORE a
+# root name, because the leading dot on every alternative is what keeps this
+# repository's own development checkout (.../git/glass-atrium/hooks/) out. It is a
+# REPEATED separator, never an optional one, so the file form's trailing separator
+# survives and a suffixed sibling (.glass-atrium/hooksx) still fails to match.
+# It cannot resolve a `..` backtrack — no pattern can, because a backtrack is a
+# resolution and not a spelling; the five discrete-token sites call normalize_path
+# for that, and the two command-text sites carry it as a documented residual.
+SEP = r"/(?:\.?/)*"
+
 PROT_RE = re.compile(
-    r"\.claude/settings(?:\.local)?\.json"
-    r"|\.claude/hooks/"
-    r"|\.glass-atrium/hooks/"
-    r"|\.claude/agents/"
-    r"|\.glass-atrium/agents/"
-    r"|\.glass-atrium/autoagent/"
-    r"|\.glass-atrium/scripts/"
-    r"|\.glass-atrium/skills/"
-    r"|com\.(?:claude|glass-atrium)\.[^/]+\.plist",
+    "|".join((
+        r"\.claude" + SEP + r"settings(?:\.local)?\.json",
+        r"\.claude" + SEP + r"hooks" + SEP,
+        r"\.glass-atrium" + SEP + r"hooks" + SEP,
+        r"\.claude" + SEP + r"agents" + SEP,
+        r"\.glass-atrium" + SEP + r"agents" + SEP,
+        r"\.glass-atrium" + SEP + r"autoagent" + SEP,
+        r"\.glass-atrium" + SEP + r"scripts" + SEP,
+        r"\.glass-atrium" + SEP + r"skills" + SEP,
+        r"com\.(?:claude|glass-atrium)\.[^/]+\.plist",
+    )),
     re.IGNORECASE,
 )
 
@@ -232,9 +270,9 @@ PROT_RE = re.compile(
 # name (.glass-atrium/autoagent-backup) OUT. The leading dot is what keeps the
 # git repo tree (.../git/glass-atrium/hooks/) from arming.
 PROT_DIR_RE = re.compile(
-    r"(?:\.claude/(?:hooks|agents)"
-    r"|\.glass-atrium/(?:hooks|agents|autoagent|scripts|skills))"
-    r"(?![\w.\-])",
+    r"(?:\.claude" + SEP + r"(?:hooks|agents)"
+    + r"|\.glass-atrium" + SEP + r"(?:hooks|agents|autoagent|scripts|skills))"
+    + r"(?![\w.\-])",
     re.IGNORECASE,
 )
 
@@ -1125,7 +1163,7 @@ def scan_interpreter(name, argv, seg, depth, armed):
             return ""
         for m in AWK_REDIR_RE.finditer(prog):
             target = m.group(1) or m.group(2) or m.group(3) or ""
-            if is_protected(target):
+            if is_protected(normalize_path(target)):
                 return "bash-interp-write"
             # A BARE target is an awk comparison far more often than a redirect
             # ('$1 > 5'), so the armed-relative case needs a quoted filename.
@@ -1149,7 +1187,7 @@ def scan_interpreter(name, argv, seg, depth, armed):
     # Unarmed: a protected literal blocks ONLY in a WRITE position. The same
     # literal read — copied FROM, opened for reading, passed to readFileSync —
     # writes somewhere else entirely and passes.
-    if any(is_protected(target) for target in targets):
+    if any(is_protected(normalize_path(target)) for target in targets):
         return "bash-interp-write"
     return scan_escapes(code, name in ("perl", "ruby"), depth, armed)
 
@@ -1178,7 +1216,11 @@ def next_armed(name, argv, armed):
     args = [val for val in raw if not val.startswith("-")]
     if not args:
         return unknown_dir_armed(armed) if name == "pushd" else False
-    if PROT_DIR_RE.search(args[0]):
+    # The PROTECTED test resolves the destination — an intermediate segment plus a
+    # backtrack (`cd <prot>/wiki/../hooks`) is a spelling no pattern can collapse.
+    # The disarm test below deliberately keeps reading the RAW token: it keys on the
+    # leading character, which the normaliser preserves in every shape it produces.
+    if PROT_DIR_RE.search(normalize_path(args[0])):
         PROT_CD_SEEN[0] = True
         return True
     if args[0].startswith(("/", "~", "$")):
@@ -1194,7 +1236,7 @@ def scan_dd(argv, armed):
         if not tok[1].startswith("of="):
             continue
         target = tok[1][3:]
-        if is_protected(target):
+        if is_protected(normalize_path(target)):
             return "bash-mutation", armed
         if armed and is_relative(target):
             return "bash-cwd-relative-write", armed
@@ -1215,7 +1257,7 @@ def scan_segment(seg, depth, armed):
         # `>&` takes an fd as often as a file (`2>&1`); a bare fd names no path.
         if tok[1] == ">&" and (target[1].isdigit() or target[1] == "-"):
             continue
-        if is_protected(target[1]):
+        if is_protected(normalize_path(target[1])):
             return "bash-mutation", armed
         if armed and is_relative(target[1]):
             return "bash-cwd-relative-write", armed

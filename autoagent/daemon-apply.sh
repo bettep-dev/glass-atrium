@@ -759,6 +759,21 @@ preflight_fatal() {
     exit 16
 }
 
+# GATE_OUTCOME — what verify_test_harness actually did, carried onto the post-gate
+# heartbeat row. `cleared` means the gate RAN and passed; `skipped` means one of the
+# three escape hatches short-circuited it, so the cycle verified nothing and the
+# doctor must not read it as a recovery.
+# SCOPE — the heartbeat row ONLY, deliberately: every other post-gate row, an
+# `applied` cycle above all, carries no gate field, and absence DEFAULTS to
+# superseding, so an operator-override cycle that finds work and applies still
+# clears an in-window abort (asserted by the abort-rows suite). This narrows the
+# mis-read to the row that is the sole evidence a cycle ran; it does not close it
+# on every row a cycle can write.
+# A FIELD rather than a new status literal, because the literal-set pin under the
+# preflight test root would redden on a new literal and trip the very abort this
+# row exists to supersede.
+GATE_OUTCOME="cleared"
+
 # verify_test_harness — abort (exit 16) unless the four test roots are present
 # and, on the batch/cron path, the suite's prerequisites are installed and the
 # suite exits 0. "verify" is a domain verb: none of the canonical get/set/find
@@ -774,12 +789,15 @@ verify_test_harness() {
     #     Not nonce-narrowed: the WARN-logged AUTOAGENT_ALLOW_UNVERIFIED=1 override is an equivalent env-setter bypass — a nonce adds zero threat-model delta.
     if [[ "${AUTOAGENT_ALLOW_UNVERIFIED:-0}" == "1" ]]; then
         printf '[daemon-apply] WARN: AUTOAGENT_ALLOW_UNVERIFIED=1 — applying UNVERIFIED (test-suite preflight skipped)\n' >&2
+        GATE_OUTCOME="skipped"
         return 0
     fi
     if [[ "${DRY_RUN}" -eq 1 ]]; then
+        GATE_OUTCOME="skipped"
         return 0
     fi
     if [[ "${AUTOAGENT_PREFLIGHT_ACTIVE:-0}" == "1" ]]; then
+        GATE_OUTCOME="skipped"
         return 0
     fi
 
@@ -2095,12 +2113,17 @@ zero_eligible_row() {
     source_json="$(printf '%s' "${source}" | json_escape)" || return 1
     cycle_json="$(printf '%s' "${CYCLE_DATE}" | json_escape)" || return 1
     [[ -n "${ts_json}" && -n "${source_json}" && -n "${cycle_json}" ]] || return 1
-    printf '{"ts":%s,"status":"skip","reason":"zero_eligible","patch_source":%s,"cycle_date":%s}' \
-        "${ts_json}" "${source_json}" "${cycle_json}"
+    # `gate` is a producer-controlled closed literal (cleared | skipped), so it needs
+    # no json_escape pass and adds no failure path to the field-by-field build above.
+    # It sits AFTER patch_source deliberately: the literal-set pin extracts
+    # `"status":"<lit>"` occurrences, so appending a FIELD leaves that set untouched.
+    printf '{"ts":%s,"status":"skip","reason":"zero_eligible","patch_source":%s,"gate":"%s","cycle_date":%s}' \
+        "${ts_json}" "${source_json}" "${GATE_OUTCOME}" "${cycle_json}"
 }
 
 # emit_zero_eligible_row — land that row, or say out loud that it could not be landed. The row is the
-# ONLY durable evidence that this cycle cleared the preflight gate: without it a recovered-but-idle
+# ONLY durable evidence of what this cycle did with the preflight gate — cleared it or skipped it,
+# which its `gate` field now says rather than leaves the reader to assume: without it a recovered-but-idle
 # daemon writes nothing at all, so an earlier abort in the window is never superseded and the doctor
 # keeps reporting a condition that already cleared. Never changes the exit — a cycle with nothing to
 # apply is a clean cycle whether or not its heartbeat landed.

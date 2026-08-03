@@ -452,6 +452,10 @@ model DaemonRun {
   compiledCount      Int?            @map("compiled_count")
   compiledTotal      Int?            @map("compiled_total")
   compileMs          BigInt?         @map("compile_ms")
+  // apply 단계 health 합성(compose)의 출처 — 'composed:<token>' | 'declined:<직전 status>'.
+  // nullable 필수: 컬럼 도입 이전 row 는 "합성됨"이 아니라 "기록 없음"으로 읽혀야 한다
+  // (partial-upsert 관례와 동일 — 미포함 시 NULL 보존)
+  applyStatusProvenance String?      @map("apply_status_provenance") @db.VarChar(64)
   notes              String?
   insertedAt         DateTime        @default(now()) @map("inserted_at") @db.Timestamptz(6)
 

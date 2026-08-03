@@ -1,0 +1,29 @@
+-- Add core.daemon_runs.apply_status_provenance — the durable record of which arm the apply
+-- health composition took. The compose statement is a CASE that preserves patch generation's
+-- own verdict (quota_exceeded / partial / error / missing / stale) against a clean apply, and
+-- that preservation is the contract. Its SILENCE was the defect: the row is selected by key,
+-- so the CASE matches on both arms, the matched-row count reports a hit, the matched-nothing
+-- guard never fires, and apply health is dropped with no signal on any channel. 27 of 94 live
+-- run rows (28.7%) sat outside the composable set and took that path unrecorded.
+--
+-- Values are written by the composing statement itself, inside the same UPDATE, because a
+-- read-then-write in the driver would race the row it is composing:
+--   'composed:<apply token>'      — the apply verdict replaced the stored status
+--   'declined:<pre-existing status>' — generation's verdict was kept, apply health not recorded
+-- The skipped-stage exits (dry run, absent enum labels) never reach the compose op and are
+-- written through the run-row upsert instead, hence a text column rather than an enum: one
+-- vocabulary, two producers, and a new reason costs no type migration.
+--
+-- NULLable with NO default, deliberately: every row written before this column existed must
+-- read as ABSENT, never as a composed outcome. A default would tell a reader that every
+-- historical cycle composed successfully — the same false-recovery shape this round is
+-- removing elsewhere. The run-row upsert omits the column unless a producer supplies it, so
+-- the documented partial-upsert idiom preserves it as NULL.
+--
+-- VarChar(64) bounds the free text without constraining the vocabulary: the longest value the
+-- producers can write is 'declined:quota_exceeded' (23 chars).
+--
+-- Reversal: ALTER TABLE "core"."daemon_runs" DROP COLUMN "apply_status_provenance";
+-- IF NOT EXISTS keeps a re-run, and a future pre-release re-squash into the init CREATE TABLE,
+-- a no-op (migrate deploy checksum-verifies applied migrations).
+ALTER TABLE "core"."daemon_runs" ADD COLUMN IF NOT EXISTS "apply_status_provenance" VARCHAR(64);
