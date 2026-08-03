@@ -268,6 +268,11 @@ run_doctor() {
   #    a git-INDEPENDENT hash reconciliation (sha256 each manifest.hashes entry vs its on-disk file),
   #    which catches real content drift + a listed-but-missing file without needing git. Still a
   #    WARNING either way (doctor PASSes on §1-7); a skip (missing tool/generator) stays loud.
+  #    The consumer reconciliation additionally applies the VENDOR-REGION split for agents/*.md
+  #    (manifest.vendor_hashes) so designed local evolution — daemon-learned EDITABLE-region bullets,
+  #    an operator `model:` pin — stops reading as drift while altered vendor prose still does; see
+  #    manifest_hash_drift. The source-dev --check branch stays STRICT on purpose: there the
+  #    whole-file hash IS the regeneration trigger.
   local drift=0
   if [[ -e "${GA_ROOT}/.git" ]]; then
     if [[ -x "${GENERATE_MANIFEST}" ]]; then
@@ -302,7 +307,14 @@ run_doctor() {
       if [[ "${drift}" -eq 0 ]]; then
         log "  ok   : manifest matches on-disk hashes (git-independent consumer-install reconciliation)"
       else
-        log "  ---- ${drift} manifest hash drift(s) on this consumer install (regenerate on the source tree, then re-release) ----"
+        # Remedy names an action that CLEARS the reported condition. Every surviving drift is now
+        # either a missing/unreadable file or altered vendor-owned prose — both are restored by
+        # re-running the updater, which re-lays the vendor structure from the release while
+        # preserving the EDITABLE regions and the live-only `model:` pins. The former "regenerate on
+        # the source tree, then re-release" could not clear it: the source tree has no drift, and
+        # forcing live to match the whole-file hash would overwrite exactly those pins.
+        log "  ---- ${drift} manifest hash drift(s) on this consumer install ----"
+        log "         remedy: run 'glass-atrium update' to restore the listed file(s) from the release (EDITABLE regions + model: pins are preserved)"
       fi
     fi
   fi
@@ -888,11 +900,28 @@ _sha_hex() {
 # to stderr (log → fd2) and the total is the stdout verdict (mirrors is_hook_bound). Detects real
 # content drift + a dropped file; it CANNOT see a NEW untracked file (needs git ls-files) — an
 # accepted gap off a dev tree. Callers pre-verify jq + MANIFEST presence.
+#
+# VENDOR-REGION SPLIT (agents/*.md only). A whole-file hash cannot tell SANCTIONED local evolution
+# from tampering: the daemon writes learned bullets INSIDE the EDITABLE regions and the operator pins
+# `model:` in the frontmatter (live-only by rule, 0 in the repo), so every deployed install reported
+# those as drift under a remedy that could not clear them. When manifest.vendor_hashes carries an
+# entry for the drifting path, the file is re-digested over its VENDOR-OWNED lines only
+# (scripts/lib/vendor-digest.sh — the SAME leaf generate-manifest.sh produced the entry with): equal
+# ⇒ designed evolution, counted separately and NOT drift; different ⇒ vendor-owned prose was altered
+# and the drift stands. A path with NO entry (every non-agent file, and any manifest predating the
+# key) keeps the whole-file verdict byte-unchanged — the backward-compatible default.
 manifest_hash_drift() {
-  local sha_path sha_hash actual abs drift=0
-  # jq streams `path\thash`; process substitution keeps the counter in this shell (mirrors §7).
+  local sha_path sha_hash sha_vendor actual abs drift=0 evolved=0
+  # The vendor-region boundary leaf — shared with the producer so neither side can read a region
+  # edge differently. Sourced lazily + source-path agnostic via BASH_SOURCE (mirrors the
+  # recovery-repos.sh idiom in snapshot_staleness_scan), so a bats-sourced doctor lib resolves it.
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/vendor-digest.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/vendor-digest.sh"
+  # jq streams `path\thash\tvendor_hash` (empty third field = no vendor entry); process substitution
+  # keeps the counter in this shell (mirrors §7).
   # shellcheck disable=SC2312
-  while IFS=$'\t' read -r sha_path sha_hash; do
+  while IFS=$'\t' read -r sha_path sha_hash sha_vendor; do
     [[ -n "${sha_path}" ]] || continue
     abs="${GA_ROOT}/${sha_path}"
     if [[ ! -e "${abs}" ]]; then
@@ -908,11 +937,23 @@ manifest_hash_drift() {
     # _sha_hex propagates a sha failure via || return (the assignment rc still trips set -e); SC2311 masking is moot.
     # shellcheck disable=SC2311
     actual="$(_sha_hex "$@" -- "${abs}")"
-    if [[ "${actual}" != "${sha_hash}" ]]; then
-      log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
+    [[ "${actual}" != "${sha_hash}" ]] || continue
+    if [[ -n "${sha_vendor}" ]]; then
+      # shellcheck disable=SC2310,SC2311,SC2312  # stdout-verdict helper in a condition: a sha failure yields a non-matching digest, which keeps the drift verdict (fail-safe direction)
+      if [[ "$(vendor_digest_of "${abs}" "$@")" == "${sha_vendor}" ]]; then
+        evolved=$((evolved + 1))
+        continue
+      fi
+      log "  warn : manifest DRIFT — vendor-owned content altered outside the EDITABLE regions: ${sha_path}"
       drift=$((drift + 1))
+      continue
     fi
-  done < <(jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}")
+    log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
+    drift=$((drift + 1))
+  done < <(jq -r '(.vendor_hashes // {}) as $v | (.hashes // {}) | to_entries[] | "\(.key)\t\(.value)\t\($v[.key] // "")"' -- "${MANIFEST}")
+  if [[ "${evolved}" -gt 0 ]]; then
+    log "  info : ${evolved} agent file(s) differ only inside EDITABLE regions / live-only frontmatter pins (designed local evolution, not drift)"
+  fi
   printf '%d\n' "${drift}"
 }
 

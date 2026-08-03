@@ -12,16 +12,20 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
+REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
+  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
   # pwd -P resolves /var -> /private/var so GA_ROOT (pwd -P inside the script)
   # matches the paths the test computes.
   WORK="$(cd -- "$(mktemp -d -t genman-bats.XXXXXX)" && pwd -P)"
   SCRIPT="${WORK}/scripts/generate-manifest.sh"
   MANIFEST="${WORK}/manifest.json"
-  mkdir -p "${WORK}/scripts" "${WORK}/agents" "${WORK}/rules"
+  mkdir -p "${WORK}/scripts/lib" "${WORK}/agents" "${WORK}/rules"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
+  # the generator sources this leaf for the vendor-region map (exit 7 without it).
+  cp "${REAL_VENDOR_LIB}" "${WORK}/scripts/lib/vendor-digest.sh"
   seed_manifest_doc
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
@@ -54,10 +58,10 @@ seed_manifest_doc() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, _doc_settings_json, files, hashes, modes" {
+@test "generate: top-level key order is version, _doc_settings_json, files, hashes, modes, vendor_hashes" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes,modes" ]]
+  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes,modes,vendor_hashes" ]]
 }
 
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {
