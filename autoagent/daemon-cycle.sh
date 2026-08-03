@@ -529,6 +529,49 @@ PSQL
     printf 'present||\n'
 }
 
+# Record the provenance of the apply-health compose. Called on EVERY exit of the stage below.
+# The exits that never REACH the compose statement are exactly the ones that recorded nothing: no CASE
+# arm runs, so the row's own apply_status_provenance stays absent and this line is the only thing that
+# names the reason. Durability differs by exit and is stated rather than implied — on the two exits
+# that reach the statement the same value is also on the run row (the helper's CASE writes it), so the
+# line is a second surface for a durable fact; on the skipped exits it is the only surface, because
+# recording the reason on the row needs a provenance-only write op the helper does not expose (its two
+# daemon_runs ops either compose the status or upsert it wholesale, and the wholesale one would erase
+# the patch-generation verdict this composition exists to preserve).
+record_apply_status_provenance() {
+    printf '[daemon-cycle] APPLY_STATUS provenance=%s date=%s\n' "$1" "${CYCLE_DATE}" >&2
+}
+
+# Derive the compose provenance from what the helper REPORTED, never from the token this driver SENT.
+# The statement's ELSE arm keeps a pre-existing generation verdict and the sent token lands nowhere, so
+# a value read off the request would record a compose that never happened — the same silence at one
+# remove. The matched-row count cannot discriminate either (1 on BOTH arms, which is why the helper
+# reports the arm on a stdout trailer at all). $1 = helper rc · $2 = its captured stdout.
+get_compose_provenance() {
+    local rc="$1" helper_out="$2" line reported=""
+    while IFS= read -r line; do
+        case "${line}" in
+            provenance=*)
+                reported="${line#provenance=}"
+                break
+                ;;
+        esac
+    done <<<"${helper_out}"
+    if [[ "${rc}" -ne 0 ]]; then
+        printf 'unreported:helper_rc_%d\n' "${rc}"
+        return 0
+    fi
+    if [[ -z "${reported}" ]]; then
+        # A trailer-less success is a compose that ran and said nothing: a DB predating the provenance
+        # column composes the status alone, and a compose matching no row writes nothing at all. Both
+        # are unknown outcomes, and naming either after the sent token would assert a value no channel
+        # observed.
+        printf 'unreported:no_trailer\n'
+        return 0
+    fi
+    printf '%s\n' "${reported}"
+}
+
 # APPLY_STATUS: fold the apply stage's outcome INTO the run record's status.
 # The run row is written by run_pg_push_stage BEFORE apply runs and its status
 # derives solely from per-patch generation errors, so an aborted apply stage
@@ -550,6 +593,14 @@ run_apply_status_stage() {
     if [[ "${DRY_RUN}" -eq 1 || "${helper_label}" == "missing" ]]; then
         printf '[daemon-cycle] APPLY_STATUS SKIP dry=%d helper=%s date=%s\n' \
             "${DRY_RUN}" "${helper_label}" "${CYCLE_DATE}" >&2
+        # One exit, two reasons that must not collapse: a dry run DECLINES to write, an absent helper
+        # CANNOT. dry-run is tested first because a dry run without the helper installed is still a
+        # dry run — the write was never going to happen.
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+            record_apply_status_provenance "skipped:dry_run"
+        else
+            record_apply_status_provenance "skipped:helper_missing"
+        fi
         return 0
     fi
     local enum_state="" missing_labels="" missing_migrations="" enum_probe
@@ -559,6 +610,9 @@ run_apply_status_stage() {
         printf '[daemon-cycle] APPLY_STATUS SKIP enum=absent labels=%s migrations=%s date=%s apply_rc=%d — core."DaemonStatus" cannot express the composed value; apply those migrations and the next cycle records apply health\n' \
             "${missing_labels}" "${missing_migrations}" \
             "${CYCLE_DATE}" "${APPLY_RC}" >&2
+        # The missing labels travel WITH the value: the reason is not "enum" but which migration is
+        # unapplied, and an operator reading the row's absent provenance has no other way to learn it.
+        record_apply_status_provenance "skipped:enum_absent:${missing_labels}"
         return 0
     fi
     if [[ "${enum_state}" != "present" ]]; then
@@ -574,9 +628,16 @@ run_apply_status_stage() {
     fi
     printf '[daemon-cycle] APPLY_STATUS start date=%s apply_rc=%d status=%s\n' \
         "${CYCLE_DATE}" "${APPLY_RC}" "${apply_status}" >&2
-    printf '{"op":"compose_daemon_run_apply_status","args":{"daemon_name":"autoagent","run_date":"%s","apply_status":"%s"}}\n' \
-        "${CYCLE_DATE}" "${apply_status}" \
-        | "${PYTHON_BIN}" "${helper}" >/dev/null || rc=$?
+    # Stdout is CAPTURED, not discarded: line 1 is the elapsed-milliseconds figure every op returns and
+    # the trailer below it names the CASE arm the database actually took. Discarding it is what left a
+    # declined compose indistinguishable from a composed one.
+    local helper_out=""
+    helper_out="$(
+        printf '{"op":"compose_daemon_run_apply_status","args":{"daemon_name":"autoagent","run_date":"%s","apply_status":"%s"}}\n' \
+            "${CYCLE_DATE}" "${apply_status}" \
+            | "${PYTHON_BIN}" "${helper}"
+    )" || rc=$?
+    record_apply_status_provenance "$(get_compose_provenance "${rc}" "${helper_out}")"
     printf '[daemon-cycle] APPLY_STATUS end rc=%d\n' "${rc}" >&2
     return "${rc}"
 }
