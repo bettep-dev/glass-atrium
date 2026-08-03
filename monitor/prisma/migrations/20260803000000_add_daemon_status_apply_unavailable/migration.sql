@@ -1,0 +1,29 @@
+-- Add 'apply_unavailable' to core."DaemonStatus" — the value the autoagent cycle driver
+-- composes when the apply stage could not run at all because its script is absent or has
+-- lost its executable bit. The precondition guard returns success for that case, so the
+-- composed status was 'ok': a stage that never ran rendered as a healthy apply.
+-- 'apply_failed' is deliberately NOT reused — it means the stage RAN and aborted, and an
+-- operator repairs the two conditions differently (a gate abort vs a broken install).
+-- Semantics are unavailability, not failure: the value renders at a warn tone and is
+-- excluded from the needs-auth predicate, because no credential repair applies to it.
+--
+-- Transaction note: Prisma Migrate wraps each migration file in a single transaction on
+-- PostgreSQL. ALTER TYPE ... ADD VALUE is allowed inside a transaction since PG 12 PROVIDED
+-- the new value is not consumed in the same transaction. This file only adds the value (no
+-- DML uses it) and the project floor is PostgreSQL 14+ (README badge) → transactional apply
+-- is safe. No existing row changes value: an ADD VALUE never rewrites stored labels.
+--
+-- IF NOT EXISTS keeps a re-run — and a future pre-release re-squash that folds the value into
+-- the init CREATE TYPE — a no-op. The applied init_squashed migration stays untouched
+-- (migrate deploy checksum-verifies applied migrations).
+--
+-- Reversal: PostgreSQL has no ALTER TYPE ... DROP VALUE, so this migration is not reversible
+-- in place; the reversal is a type recreate, stated here because Prisma keeps no down file.
+-- Run inside one transaction, and only after confirming no row still carries the value
+-- (SELECT count(*) FROM core.daemon_runs WHERE status = 'apply_unavailable' → must be 0):
+--   ALTER TYPE "core"."DaemonStatus" RENAME TO "DaemonStatus_old";
+--   CREATE TYPE "core"."DaemonStatus" AS ENUM ('ok','partial','error','missing','stale','quota_exceeded','apply_failed');
+--   ALTER TABLE "core"."daemon_runs" ALTER COLUMN "status" TYPE "core"."DaemonStatus"
+--     USING "status"::text::"core"."DaemonStatus";
+--   DROP TYPE "core"."DaemonStatus_old";
+ALTER TYPE "core"."DaemonStatus" ADD VALUE IF NOT EXISTS 'apply_unavailable';

@@ -184,7 +184,7 @@ async function handleDaemons(
         rule === undefined || stalenessMinutes === null
           ? false
           : stalenessMinutes > expectedIntervalMinutes(rule) * STALE_MULTIPLIER;
-      // Narrow PG `status::text` → DaemonStatusValue union (6 values incl. quota_exceeded).
+      // Narrow PG `status::text` → DaemonStatusValue union (unknown → null).
       const lastStatus = narrowDaemonStatus(row?.last_status ?? null);
       // Spec: cost_guard_state is for autoagent only; other daemons report null.
       // Narrow PG `cost_guard_state::text` → CostGuardStateValue union (unknown → null).
@@ -627,6 +627,7 @@ const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
   "stale",
   "quota_exceeded",
   "apply_failed",
+  "apply_unavailable",
 ]);
 
 function narrowDaemonStatus(raw: string | null): DaemonStatusValue | null {
@@ -719,10 +720,10 @@ async function isSecretsFileAbsent(request: FastifyRequest): Promise<boolean> {
   return absent;
 }
 
-// needs_auth firing proxy (A-D2), pure. firing = ran AND not stale · failing = non-ok
-// status OR infra_fault cost-guard · unable = secrets file absent. A never-run/disabled
-// daemon (lastRunAt null OR stale) is NOT firing → stays false even when secrets absent.
-// Exported for unit test (no DB required).
+// needs_auth firing proxy (A-D2), pure. firing = ran AND not stale · failing = a status
+// a credential repair could fix, OR an infra_fault cost-guard · unable = secrets file
+// absent. A never-run/disabled daemon (lastRunAt null OR stale) is NOT firing → stays
+// false even when secrets absent. Exported for unit test (no DB required).
 export function deriveNeedsAuth(params: {
   lastRunAt: Date | null;
   isStale: boolean;
@@ -731,7 +732,11 @@ export function deriveNeedsAuth(params: {
   secretsAbsent: boolean;
 }): boolean {
   const isFiring = params.lastRunAt !== null && !params.isStale;
-  const isFailing = params.lastStatus !== "ok" || params.costGuardState === "infra_fault";
+  // 'apply_unavailable' means the apply script is absent or non-executable — no credential
+  // repairs that, so prompting a re-auth would send the operator to the wrong repair.
+  const isFailing =
+    (params.lastStatus !== "ok" && params.lastStatus !== "apply_unavailable") ||
+    params.costGuardState === "infra_fault";
   return isFiring && isFailing && params.secretsAbsent;
 }
 

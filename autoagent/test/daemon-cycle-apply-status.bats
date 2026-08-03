@@ -20,6 +20,12 @@
 #   AC7  a DB that HAS the label still composes — the coupling is a gate on evidence, not a blanket
 #        skip.
 #   AC8  an unprobeable enum warns loudly and composes anyway — only absence is evidence.
+#   AC9  an apply script whose executable bit is cleared composes apply_unavailable, not ok.
+#   AC10 an ABSENT apply script composes the SAME token — one condition, one label.
+#   AC11 a healthy apply still composes exactly ok, with no unavailability line.
+#   AC12 a real apply failure still composes apply_failed — the new state swallows no failure.
+#   AC13 a DB carrying the older label but NOT the new one reports the dependency absent and
+#        composes nothing — a probe pinning one label would read `present` and fail its cast.
 #
 # Run via: bats autoagent/test/daemon-cycle-apply-status.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -94,20 +100,46 @@ open("${ENVELOPE_LOG}", "a").write('{"op":"write_daemon_run","args":{"source":"p
 EOF
 }
 
-# make_psql_stub — the enum-presence probe's seam. $1: present (label in the enum) · absent
-# (migration unapplied) · fail (catalog query errored, e.g. an unreachable DB). PATH-prepended by
-# run_driver, so the probe resolves to this stub and never to a real psql.
+# make_psql_stub — the enum-presence probe's seam, keyed on the LABEL SET the probe asks about. $1:
+# present (every composable label) · legacy (only the older apply_failed label — a DB migrated for
+# one label and not the other) · absent (neither) · fail (catalog query errored, e.g. an unreachable
+# DB). PATH-prepended by run_driver, so the probe resolves to this stub and never to a real psql.
+# The stub answers the query it is ACTUALLY handed: it reads the probe's `-v lbls=<csv>` argument and
+# echoes back the intersection with the labels it holds. A probe that asks about one label therefore
+# cannot read `present` against the legacy fixture by construction — the seam cannot be satisfied by
+# a narrower question than the composer can ask.
 make_psql_stub() {
-  local body
+  local have
   case "$1" in
-    present) body='printf "1\n"' ;;
-    absent) body='printf "0\n"' ;;
-    fail) body='printf "psql: error: connection to server failed\n" >&2; exit 2' ;;
+    present) have="apply_failed,apply_unavailable" ;;
+    legacy) have="apply_failed" ;;
+    absent) have="" ;;
+    fail)
+      cat >"${WORK}/bin/psql" <<'EOF'
+#!/usr/bin/env bash
+printf 'psql: error: connection to server failed\n' >&2
+exit 2
+EOF
+      chmod +x "${WORK}/bin/psql"
+      return 0
+      ;;
     *) return 1 ;;
   esac
   cat >"${WORK}/bin/psql" <<EOF
 #!/usr/bin/env bash
-${body}
+have=",${have},"
+req=""
+for arg in "\$@"; do
+  case "\${arg}" in
+    lbls=*) req="\${arg#lbls=}" ;;
+  esac
+done
+IFS=','
+for lbl in \${req}; do
+  case "\${have}" in
+    *",\${lbl},"*) printf '%s\n' "\${lbl}" ;;
+  esac
+done
 EOF
   chmod +x "${WORK}/bin/psql"
 }
@@ -239,6 +271,7 @@ PY
   # no envelope: the statement the helper would run cannot be PLANNED on this DB.
   [[ -z "$(compose_status)" ]] || {
     echo "envelopes: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    echo "driver output: ${output}" >&2
     return 1
   }
   # loud, and actionable — the notice names the migration the operator has to apply.
@@ -289,3 +322,100 @@ PY
     return 1
   }
 }
+
+# ── AC9 — a stage that could not run is not a clean stage ─────────────────────────────────────
+
+@test "AC9: an apply script with its executable bit cleared composes apply_unavailable" {
+  make_stage_stubs 0
+  chmod 644 "${WORK}/real/autoagent/daemon-apply.sh"
+  make_helper 0
+  run_driver --apply-only
+  [[ "$(compose_status)" == "apply_unavailable" ]] || {
+    echo "envelopes: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # the operator log has to name the condition too — the composed row is queried, the log is read.
+  [[ "${output}" == *"stage=apply UNAVAILABLE"* ]] || return 1
+}
+
+# ── AC10 — an absent script is the SAME condition, not a second one ───────────────────────────
+
+@test "AC10: an absent apply script composes the same value as a non-executable one" {
+  make_stage_stubs 0
+  rm -f -- "${WORK}/real/autoagent/daemon-apply.sh"
+  make_helper 0
+  run_driver --apply-only
+  local absent_composed
+  absent_composed="$(compose_status)"
+  # re-run the non-executable fixture in the same case so the two are COMPARED, never assumed equal
+  rm -f -- "${ENVELOPE_LOG}"
+  make_stage_stubs 0
+  chmod 644 "${WORK}/real/autoagent/daemon-apply.sh"
+  run_driver --apply-only
+  [[ "${absent_composed}" == "apply_unavailable" && "$(compose_status)" == "${absent_composed}" ]] || {
+    echo "absent=${absent_composed} non-executable=$(compose_status)" >&2
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC11 — the healthy path is untouched ──────────────────────────────────────────────────────
+
+@test "AC11: a healthy apply still composes exactly ok with no unavailability line" {
+  make_stage_stubs 0
+  make_helper 0
+  run_driver --apply-only
+  [[ "$(compose_status)" == "ok" ]] || {
+    echo "envelopes: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    return 1
+  }
+  # negative polarity: a fix that fires on the healthy path would degrade every clean cycle.
+  [[ "${output}" != *"UNAVAILABLE"* ]] || {
+    echo "healthy cycle claimed unavailability — output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC12 — a real failure is still a failure ──────────────────────────────────────────────────
+
+@test "AC12: an apply that RAN and failed still composes apply_failed" {
+  make_stage_stubs 16
+  make_helper 0
+  run_driver --apply-only
+  # negative polarity: unavailability outranks the rc in the composer, so this pins that the
+  # ordering never re-labels a stage that DID run and abort.
+  [[ "$(compose_status)" == "apply_failed" ]] || {
+    echo "envelopes: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    return 1
+  }
+  [[ "${output}" != *"UNAVAILABLE"* ]] || return 1
+}
+
+# ── AC13 — the probe pins the label SET, not one member ───────────────────────────────────────
+
+@test "AC13: a DB carrying only the older label reports the dependency absent and composes nothing" {
+  make_stage_stubs 0
+  chmod 644 "${WORK}/real/autoagent/daemon-apply.sh" # the cycle that needs the NEW label
+  make_helper 0
+  make_psql_stub legacy
+  run_driver --apply-only
+  # the cast the compose would plan is 'apply_unavailable'::core."DaemonStatus" — unplannable here.
+  [[ -z "$(compose_status)" ]] || {
+    echo "composed against a DB that cannot store the value — envelopes: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    return 1
+  }
+  [[ "${output}" == *"APPLY_STATUS SKIP enum=absent"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # actionable: the notice names the MISSING label and its migration, not the whole required set.
+  [[ "${output}" == *"labels=apply_unavailable"* ]] || return 1
+  [[ "${output}" == *"20260803000000_add_daemon_status_apply_unavailable"* ]] || return 1
+  # a skip is not a failure — the same contract AC6 pins for a wholly unmigrated DB.
+  [[ "${status}" -eq 0 ]] || {
+    echo "driver exited ${status} — output: ${output}" >&2
+    return 1
+  }
+}
+

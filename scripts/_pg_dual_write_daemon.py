@@ -27,13 +27,17 @@
 #   3 = unknown op (not in OP_TABLE)
 #   4 = PG write failure after the retry (structured JSON + pg_write=fail stderr)
 #   5 = psycopg absent, CLI mode only (import mode re-raises ImportError instead)
+#   6 = unsupported apply_status token — a caller contract violation the database
+#       cannot store. Refused BEFORE connecting, so nothing was written and no
+#       retry runs; a silent fall-through here would report apply health the
+#       cycle never recorded.
 #
 # CLI contract (single-line JSON envelope on stdin):
 #   {"op": "write_wiki_note",            "args": {"path": "...", "title": "...", ...}}
 #   {"op": "bump_wiki_dirty",            "args": {}}
 #   {"op": "write_daemon_run",           "args": {"daemon_name": "wiki", "run_date": "...", ...}}
 #   {"op": "compose_daemon_run_apply_status",
-#                                        "args": {"daemon_name": "autoagent", "run_date": "...", "apply_status": "ok|apply_failed"}}
+#                                        "args": {"daemon_name": "autoagent", "run_date": "...", "apply_status": "ok|apply_failed|apply_unavailable"}}
 #   {"op": "write_daemon_run_payload",   "args": {"daemon_name": "wiki", "run_date": "...", "payload": {...}}}
 #   {"op": "write_autoagent_proposal",   "args": {"cycle_date": "...", "pattern_label": "...", "target_file": "...", ...}}
 #   {"op": "write_autoagent_loop_event", "args": {"event_ts": "...", "agent": "...", "eval_result": "...", ...}}
@@ -213,6 +217,21 @@ def write_daemon_run(daemon_name, run_date, started_at, ended_at, status, **stat
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
+class UnsupportedApplyStatus(ValueError):
+    """apply_status outside APPLY_STATUS_TOKENS — a contract violation, not a PG fault.
+
+    Non-retryable by construction: the token is wrong on every attempt, and _retry's
+    backoff would only delay the named exit."""
+
+
+# Statuses the apply stage OWNS — the composable set of compose_daemon_run_apply_status
+# and, verbatim, its SQL CASE membership list. Every other core."DaemonStatus" value is
+# patch generation's own verdict and is never composed over. The declaration is pinned
+# against the SQL, the docstring and the CLI-contract header by the composition suite,
+# so a fourth token cannot land in one place only.
+APPLY_STATUS_TOKENS = ("ok", "apply_failed", "apply_unavailable")
+
+
 def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
     """Compose apply-stage health INTO an existing core.daemon_runs row's status.
 
@@ -222,23 +241,35 @@ def compose_daemon_run_apply_status(daemon_name, run_date, apply_status):
 
     Composition is a SQL CASE rather than a read-modify-write: the driver never
     learns the patch-generation verdict, so only the database can decide without
-    a race. Exactly ONE pair composes — clean ('ok') and apply-aborted
-    ('apply_failed') swap in both directions, which lets a same-date re-run whose
-    apply succeeds clear a stale apply_failed. Every other value (partial / error
-    / missing / stale / quota_exceeded) is patch generation's OWN verdict and is
-    preserved untouched, so a failed generation can never be erased by a clean
-    apply. An absent row (push skipped) updates nothing — this op never INSERTs,
-    because the driver holds no patch stats and would fabricate a run record.
+    a race. The composable set is APPLY_STATUS_TOKENS — the statuses the apply
+    stage OWNS: clean ('ok'), aborted ('apply_failed') and script-unusable
+    ('apply_unavailable', absent or non-executable apply script — unavailability,
+    not failure). Any of them replaces any other in EITHER direction, so a
+    same-date re-run always carries the latest apply verdict and no stale one
+    sticks. Every other value (partial / error / missing / stale /
+    quota_exceeded) is patch generation's OWN verdict and is preserved untouched,
+    so a failed generation can never be erased by a clean apply. An absent row
+    (push skipped) updates nothing — this op never INSERTs, because the driver
+    holds no patch stats and would fabricate a run record.
 
-    apply_status: 'ok' | 'apply_failed'. Returns elapsed_ms.
+    A token outside the set is REFUSED (UnsupportedApplyStatus, CLI exit 6)
+    before connecting: the enum cannot store it, and the matched-row count cannot
+    detect it — a CASE fall-through matches the row, reports a hit and leaves the
+    operator surface reading whatever it read before.
+
+    apply_status: one of APPLY_STATUS_TOKENS. Returns elapsed_ms.
     """
     start_ns = time.monotonic_ns()
+    if apply_status not in APPLY_STATUS_TOKENS:
+        raise UnsupportedApplyStatus(
+            "op=compose_daemon_run_apply_status refused apply_status=%r "
+            "(accepted: %s) — run row left unchanged, apply health NOT recorded"
+            % (apply_status, " ".join(APPLY_STATUS_TOKENS))
+        )
     sql = """
         UPDATE core.daemon_runs SET status = CASE
-            WHEN %(apply_status)s = 'apply_failed' AND status = 'ok'
-                THEN 'apply_failed'::core."DaemonStatus"
-            WHEN %(apply_status)s = 'ok' AND status = 'apply_failed'
-                THEN 'ok'::core."DaemonStatus"
+            WHEN status IN ('ok', 'apply_failed', 'apply_unavailable')
+                THEN %(apply_status)s::core."DaemonStatus"
             ELSE status
         END
         WHERE run_date = %(run_date)s
@@ -552,6 +583,8 @@ def _retry(func, args_dict, hook_name, target_table, payload_ref):
         try:
             elapsed_ms = func(**args_dict)
             return elapsed_ms, attempt, None
+        except UnsupportedApplyStatus as exc:
+            return None, attempt, (exc, False)
         except Exception as exc:  # noqa: BLE001 — intentional broad catch
             last_exc = exc
             if attempt == 1:
@@ -604,6 +637,14 @@ def main():
         sys.exit(0)
 
     last_exc, retry_attempted = fail
+    if isinstance(last_exc, UnsupportedApplyStatus):
+        # Named exit 6, not the pg_write=fail path: nothing was written and nothing failed
+        # in PG, so a hook_failures row would misattribute a caller bug to the database.
+        sys.stderr.write(
+            "[%s] op=%s pg_write=refused %s\n" % (hook_name, op, last_exc)
+        )
+        sys.exit(6)
+
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
     error_msg = str(last_exc)[:200].replace('"', "'").replace("\n", " ")

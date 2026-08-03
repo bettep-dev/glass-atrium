@@ -34,6 +34,7 @@ const KNOWN_DAEMON_STATUSES: ReadonlySet<WikiDaemonStatusValue> = new Set([
   // Autoagent-only in practice — kept in parity with the shared enum so a wiki-side
   // read never silently nulls it.
   "apply_failed",
+  "apply_unavailable",
 ]);
 
 export async function registerWikiRoutes(app: FastifyInstance): Promise<void> {

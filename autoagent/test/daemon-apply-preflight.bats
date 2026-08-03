@@ -41,7 +41,14 @@ REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 mirror_path() {
   local dest="$1"
   shift
-  local excl=" $* "
+  # psql and claude are excluded UNCONDITIONALLY, not per call site: a `cat >` onto a mirrored
+  # symlink follows it and truncates the REAL binary at the far end, and a call site that forgets
+  # the argument is all it takes. (Precedent: daemon-apply-zero-eligible-row.bats, which also
+  # excludes git — this suite cannot, because the daemon's tool-presence loop hard-requires git and
+  # this suite carries no git shim to satisfy it. Any stub aimed at a mirror must add its name here
+  # AND `rm -f` the target first.) claude is safe to drop: the fixtures never reach a model call,
+  # which is why this suite already passes on a claude-less CI runner.
+  local excl=" $* psql claude "
   mkdir -p -- "${dest}"
   local d f name
   local old_ifs="${IFS}"
@@ -116,6 +123,7 @@ make_sandbox() {
 # marker's ABSENCE, that it was skipped/exempt) without shelling the real suite.
 make_runner() {
   local dest="$1" code="$2"
+  rm -f -- "${dest}" # never redirect onto an inherited symlink (it truncates the far end)
   cat >"${dest}" <<EOF
 #!/usr/bin/env bash
 : >"${MARKER}"
@@ -130,6 +138,7 @@ EOF
 # retry); a large red_calls simulates a deterministic red; 0 is always green.
 make_counting_runner() {
   local dest="$1" red_calls="$2"
+  rm -f -- "${dest}" # never redirect onto an inherited symlink (it truncates the far end)
   cat >"${dest}" <<EOF
 #!/usr/bin/env bash
 printf 'call sentinel=%s\n' "\${AUTOAGENT_PREFLIGHT_ACTIVE:-unset}" >>"${RUNNER_LOG}"

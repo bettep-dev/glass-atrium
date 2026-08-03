@@ -18,7 +18,8 @@ export type WikiDaemonStatusValue =
   | "quota_exceeded"
   // Autoagent-only in practice (the wiki daemon has no apply stage), carried so the
   // shared core.DaemonStatus enum never narrows to null on a wiki-side read.
-  | "apply_failed";
+  | "apply_failed"
+  | "apply_unavailable";
 
 // GET /api/wiki/summary
 

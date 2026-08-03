@@ -629,6 +629,54 @@ run_doctor() {
   fi
   [[ "${apply_abort_fail}" -eq 0 ]] || fail=1
 
+  # 15. agent-body merge-decline surface. scripts/update.sh declines a deploy of any agent body whose
+  #     EDITABLE-region merge conflicts, keeps the LOCAL body, and persists one entry per decline into
+  #     an append-only record — but nothing read that record, so the divergence it names (local body
+  #     ahead of the base store) reached an operator only through a deploy line that scrolls past.
+  #     FAIL rather than warn on an in-window entry: the decline itself is a CORRECT outcome, yet the
+  #     prescribed remedy is a HAND repair (re-apply the local edit onto the new base, then re-sync),
+  #     and a warn leaves a prescribed repair permanently optional. The window is what keeps that from
+  #     becoming a forever-red: an aged entry is history and reports `note`, never a failure.
+  local decline_fail=0
+  local decline_log="" decline_cutoff="" decline_scan="" decline_counts="" decline_body=""
+  local decline_in=0 decline_out=0 decline_malformed=0
+  # shellcheck disable=SC2310,SC2311
+  decline_log="$(_decline_record_path)"
+  # shellcheck disable=SC2310,SC2311
+  if [[ ! -f "${decline_log}" ]]; then
+    log "  ok   : no agent-body merge declines recorded (${decline_log})"
+  elif ! decline_cutoff="$(_drop_window_cutoff_date "${DECLINE_WINDOW_DAYS}")"; then
+    log "  warn : merge-decline entries present but un-windowable (${decline_log}) — neither 'date -u -v-Nd' nor 'date -u -d \"N days ago\"' works here, so an un-repaired decline cannot be separated from history; install a BSD- or GNU-compatible date(1)"
+    decline_fail=1
+  else
+    # Two stdout lines: `<in-window> <out-of-window> <malformed>`, then the first declined body.
+    # shellcheck disable=SC2311
+    decline_scan="$(_decline_scan "${decline_log}" "${decline_cutoff}")"
+    decline_counts="$(printf '%s\n' "${decline_scan}" | sed -n '1p')"
+    decline_body="$(printf '%s\n' "${decline_scan}" | sed -n '2p')"
+    # Explicit IFS: the entry point runs under IFS=$'\n\t', which would NOT split this
+    # space-joined count line (same reason as the §10 drop-count read).
+    IFS=' ' read -r decline_in decline_out decline_malformed <<<"${decline_counts}"
+    if [[ "${decline_in}" -gt 0 ]]; then
+      log "  FAIL : ${decline_in} agent body/bodies declined a merge in the last ${DECLINE_WINDOW_DAYS}d and the local copy was kept (${decline_log}) — the live body is diverged from the base store until it is hand-repaired: re-apply the local edit onto the new base, then re-sync the base store"
+      log "         declined body: ${decline_body}"
+      decline_fail=1
+    elif [[ "${decline_out}" -gt 0 ]]; then
+      log "  note : ${decline_out} agent-body merge decline(s) recorded, all older than ${DECLINE_WINDOW_DAYS}d (${decline_log}) — history, not a live divergence (advisory)"
+    elif [[ "${decline_malformed}" -eq 0 ]]; then
+      # Gated on the malformed count: a record holding ONLY a truncated line is not empty, and
+      # reporting it as such would contradict the note the next block emits.
+      log "  ok   : merge-decline record present but carries no entries (${decline_log})"
+    fi
+    # Additive, never a substitute for the verdict above: a truncated entry names no body, so the
+    # window and the prescribed repair cannot be derived from it — but it is still an entry the
+    # updater wrote, and reporting the record clean over it is the silence this line removes.
+    if [[ "${decline_malformed}" -gt 0 ]]; then
+      log "  note : ${decline_malformed} merge-decline entry/entries carry fewer than 3 tab-separated fields (${decline_log}) — no body name and no timestamp to age them by; inspect the record by hand"
+    fi
+  fi
+  [[ "${decline_fail}" -eq 0 ]] || fail=1
+
   if [[ "${fail}" -eq 0 ]]; then
     local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
     if [[ "${warns}" -eq 0 ]]; then
@@ -716,6 +764,10 @@ APPLY_ABORT_WINDOW_DAYS="${APPLY_ABORT_WINDOW_DAYS:-14}"
 # stdout: line 1 = verdict (`abort` | `clean` | `none`), line 2 = the deciding abort row (empty
 # unless the verdict is `abort`). A file whose name carries no parseable date is skipped, never
 # guessed into the window.
+# `clean` means SUPERSEDED and therefore requires an abort EARLIER in the window: post-gate rows on
+# their own are an ordinary cycle, not a recovery. Reporting `clean` for them told every install that
+# has never aborted its abort was superseded — daily, and the heartbeat row now guarantees a post-gate
+# row on idle cycles too, so that false line would fire on every healthy install.
 _apply_abort_scan() {
   local dir="$1" cutoff="$2" f base fdate
   local -a in_window=()
@@ -733,11 +785,64 @@ _apply_abort_scan() {
     printf 'none\n\n'
     return 0
   fi
+  # A post-gate row clears only an abort that PRECEDED it (state is non-empty exactly when one did);
+  # with nothing to supersede the verdict stays `none`.
   awk '
     index($0, "\"status\":\"abort\"") { state = "abort"; row = $0; next }
-    /"status":"[^"]+"/               { state = "clean"; row = "";  next }
+    /"status":"[^"]+"/               { if (state != "") { state = "clean"; row = "" } next }
     END { printf "%s\n%s\n", (state == "" ? "none" : state), row }
   ' "${in_window[@]}"
+}
+
+# §15 recency window (days) over the append-only merge-decline record. Sized to the agents-bak
+# retention (14d): the prescribed hand repair reads the before-image the updater kept, so once that
+# per-run backup is pruned the material the repair needs is gone and a still-open entry is history an
+# operator can no longer act on from the record alone. Env-overridable so a test can pin either side.
+DECLINE_WINDOW_DAYS="${DECLINE_WINDOW_DAYS:-14}"
+
+# Resolve the merge-decline record path, mirroring the PRODUCER's own derivation
+# (scripts/update.sh update_agents_bak_base + update_record_conflict_decline) rather than hardcoding
+# a sibling of GA_ROOT: the writer honours AUTOAGENT_BACKUP_DIR, so a reader that ignored it would
+# report `absent` on exactly the install that redirected its post-mortem artifacts.
+_decline_record_path() {
+  local base agents_dir resolved
+  if [[ -n "${AUTOAGENT_BACKUP_DIR:-}" ]]; then
+    base="${AUTOAGENT_BACKUP_DIR}"
+  else
+    agents_dir="${GA_ROOT}/agents"
+    if resolved="$(cd -- "${agents_dir}" 2>/dev/null && pwd -P)"; then
+      agents_dir="${resolved}"
+    fi
+    base="$(dirname -- "${agents_dir}")/agents-bak"
+  fi
+  printf '%s\n' "$(dirname -- "${base}")/update-declines/conflict-declines.log"
+}
+
+# Classify the merge-decline record $1 against the YYYY-MM-DD cutoff $2. Producer line grammar
+# (scripts/update.sh update_record_conflict_decline), tab-separated:
+#   <ISO8601Z>\t<resolver verdict>\t<repo-relative body>\tlocal-body-kept\trepair=<hint>
+# ISO-8601 dates compare correctly as strings, so the window needs no date arithmetic per row (same
+# bash-3.2-safe idiom as _apply_abort_scan). A row whose first field is NOT a timestamp is counted
+# IN-window: an un-ageable entry is surfaced, never silently aged out.
+# A row carrying FEWER than 3 fields yields neither a body nor a window verdict, so it is COUNTED and
+# reported rather than dropped: the entry still testifies to a divergence, and dropping it silently
+# would tell an operator the record is clean (Precondition Loud-Fail Principle). A blank separator
+# line is not an entry and is not counted.
+# stdout: line 1 = `<in-window> <out-of-window> <malformed>`, line 2 = the first in-window body.
+_decline_scan() {
+  awk -F'\t' -v cutoff="${2}" '
+    $0 == "" { next }
+    NF < 3 { malformed++; next }
+    {
+      in_window = 1
+      if ($1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) {
+        in_window = (substr($1, 1, 10) >= cutoff)
+      }
+      if (in_window) { inw++; if (body == "") { body = $3 } }
+      else { aged++ }
+    }
+    END { printf "%d %d %d\n%s\n", inw + 0, aged + 0, malformed + 0, body }
+  ' "${1}"
 }
 
 # sha256 tool resolver (run_doctor §8 + §11 shared) — emits the sha256 command tokens

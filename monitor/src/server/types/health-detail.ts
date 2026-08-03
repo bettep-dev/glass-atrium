@@ -13,7 +13,10 @@ export type DaemonStatusValue =
   | "quota_exceeded"
   // Apply stage aborted on an otherwise clean cycle — distinct from `partial`,
   // which means partial patch generation.
-  | "apply_failed";
+  | "apply_failed"
+  // Apply stage could not run (script absent or non-executable) — unavailability,
+  // not failure, so `deriveNeedsAuth` deliberately does not treat it as failing.
+  | "apply_unavailable";
 
 // Mirrors prisma CostGuardState enum — duplicated locally per "Module independence".
 // infra_fault = 401/credential auth failure (NOT a spend/usage signal).
