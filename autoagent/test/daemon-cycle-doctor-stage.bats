@@ -22,6 +22,15 @@
 #                loudly and keeps the cycle clean. The stage must not become the new silent failure it
 #                was added to remove, and a mode-644 entry is the condition the apply stage's own
 #                unavailability flag already exists to name.
+#   AC7          a report that is absent or empty makes the verdict UNRECORDABLE, and a GREEN verdict
+#                still leaves the cycle clean. A recording guard folded into the cycle aggregate is
+#                how a healthy install goes non-zero — reachable in --apply-only / --aggregate-only
+#                and on any cycle whose report was never written, where it stacks a second misleading
+#                failure on top of the real one.
+#   AC8          the same unrecordable verdict never SOFTENS a red doctor: the doctor rc is folded
+#                independently of the recording, so a failing verdict degrades the cycle whether or
+#                not it reached the report. AC7 without AC8 would be satisfiable by ignoring the
+#                verdict entirely.
 #   T3-1.f (absorption annotation) is NOT duplicated here: scripts/test/audit-absorption.bats plus the
 #   blocking CI auditor step already run the auditor over its own scope list, which carries this
 #   driver. A second copy here would red THIS suite for an unrelated file's finding.
@@ -310,6 +319,73 @@ PY
   }
   [[ "${status}" -eq 0 ]] || {
     echo "a non-executable entry point degraded the cycle — exit ${status}" >&2
+    return 1
+  }
+}
+
+# ── AC7 — an unrecordable verdict is a durability miss, never a cycle failure ─────────────────
+
+@test "AC7: an absent or empty report keeps a clean cycle clean and names the miss" {
+  rm -f -- "${OUT_JSON}"
+  run_driver --apply-only
+  require_doctor_stage
+  # the doctor still ran and still reached a verdict — only its durable landing is missing.
+  [[ "${output}" == *"stage=doctor verdict=pass"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # loud: the miss reaches the log with the verdict attached, so an unrecorded verdict is not a lost
+  # one. The reason is named because an absent report is the normal shape of a dispatch that writes
+  # none, while an empty one means a report write was truncated.
+  [[ "${output}" == *"RECORD-MISS"* && "${output}" == *"reason=absent"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  [[ "${status}" -eq 0 ]] || {
+    echo "an absent report degraded a green cycle — exit ${status}, output: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"DEGRADED"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # empty reaches the same exit by a different route and carries its own reason token.
+  : >"${OUT_JSON}"
+  run_driver --apply-only
+  [[ "${output}" == *"RECORD-MISS"* && "${output}" == *"reason=empty"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  [[ "${status}" -eq 0 ]] || {
+    echo "an empty report degraded a green cycle — exit ${status}, output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC8 — the anti-masking polarity: a miss never softens a red doctor ────────────────────────
+
+@test "AC8: a failing doctor still degrades the cycle when the verdict cannot be recorded" {
+  rm -f -- "${OUT_JSON}"
+  make_doctor_stub 1
+  run_driver --apply-only
+  require_doctor_stage
+  [[ "${output}" == *"stage=doctor verdict=fail"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"RECORD-MISS"* ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # the escalation survives the miss because the DOCTOR's rc is what the driver folds — the recording
+  # outcome is not in that path at all, so AC7's clean-cycle guarantee cannot be bought by swallowing
+  # a red verdict.
+  [[ "${status}" -eq 1 ]] || {
+    echo "a red doctor was masked by the recording miss — exit ${status}, output: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"cycle finished DEGRADED"* ]] || {
+    echo "driver output: ${output}" >&2
     return 1
   }
 }

@@ -152,6 +152,10 @@ REGRESSION_SH="${SCRIPT_DIR}/archive/daemon-regression-deprecated-2026-05-02.sh"
 # Store-root form (same convention as CLAUDE_AUTH_ENV_LIB / PAUSE_FLAG_LIB): hooks
 # are consumed in place from the store — ~/.claude/hooks is no longer farmed.
 AGGREGATOR_PY="${HOME}/.glass-atrium/hooks/learning-aggregator.py"
+# The harness entry point sits at the store root, one level above this driver's own dir. Resolved
+# from SCRIPT_DIR and NOT from HOME, so a driver running out of a fixture tree reaches that tree's
+# entry point instead of the live install's.
+DOCTOR_ENTRY="${SCRIPT_DIR%/*}/glass-atrium"
 
 if [[ ! -f "${PY_MODULE}" ]]; then
     printf '[daemon-cycle] FATAL: missing %s\n' "${PY_MODULE}" >&2
@@ -664,6 +668,98 @@ run_aggregate_stage() {
     return "${rc}"
 }
 
+# Record the doctor verdict into the per-cycle report — the durable channel, since every stage line
+# in this driver goes to a run log that evaporates. Returns 0 ALWAYS, and that is the load-bearing
+# property: a recording failure is a DURABILITY problem, not a cycle failure, so folding it would
+# turn a healthy install into a degraded one on every dispatch that legitimately writes no report
+# (--apply-only / --aggregate-only against an absent daily file), stacking a second misleading
+# failure on top of whatever the real one was.
+# It cannot mask a failing doctor either: run_doctor_stage returns the DOCTOR's rc and the caller
+# folds THAT, independently of this function — a red verdict degrades the cycle whether or not it
+# reached the report — and the notice below carries the verdict onto the log, so an unrecordable
+# verdict is loud rather than lost.
+record_doctor_verdict() {
+    local verdict="$1" rc="$2" checked_at="" record_rc=0
+    if [[ ! -s "${OUT_PATH}" ]]; then
+        # Absent and empty are one exit with two reasons that must not collapse: absent is the normal
+        # shape of a dispatch that writes no daily report, empty means a report write was truncated.
+        local why="empty"
+        if [[ ! -e "${OUT_PATH}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=doctor RECORD-MISS verdict=%s rc=%d report=%s reason=%s — verdict is on this log only; the cycle rc is unchanged\n' \
+            "${verdict}" "${rc}" "${OUT_PATH}" "${why}" >&2
+        return 0
+    fi
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "${PYTHON_BIN}" - "${OUT_PATH}" "${verdict}" "${rc}" "${checked_at}" <<'PY' || record_rc=$?
+import json
+import os
+import sys
+import tempfile
+
+path, verdict, rc, checked_at = sys.argv[1:5]
+with open(path) as fh:
+    report = json.load(fh)
+if not isinstance(report, dict):
+    raise SystemExit("per-cycle report is not a JSON object: %s" % path)
+report["doctor"] = {"verdict": verdict, "rc": int(rc), "checked_at": checked_at}
+# Same-directory temp + rename: the report is the durable channel, so a crash mid-write must not
+# leave the cycle's own record truncated.
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".doctor-verdict.")
+try:
+    with os.fdopen(fd, "w") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+PY
+    if [[ "${record_rc}" -ne 0 ]]; then
+        printf '[daemon-cycle] stage=doctor RECORD-FAILED verdict=%s rc=%d report=%s writer_rc=%d — verdict is on this log only; the cycle rc is unchanged\n' \
+            "${verdict}" "${rc}" "${OUT_PATH}" "${record_rc}" >&2
+        return 0
+    fi
+    printf '[daemon-cycle] stage=doctor recorded verdict=%s report=%s\n' "${verdict}" "${OUT_PATH}" >&2
+    return 0
+}
+
+# DOCTOR: the terminal stage. Nothing else on this machine runs the doctor unattended — no scheduled
+# job invokes it — so every check it carries reached an operator only when one asked, and the cycle
+# is the scheduled carrier that already writes a durable per-cycle report.
+# It runs LAST on purpose: apply health is composed and the run row is written before this point, so
+# a verdict can never re-label an apply outcome. The doctor is an observability surface, and one that
+# reddened the apply loop would be worse than the gap it closes.
+# stdout → stderr: the doctor writes its report on stderr but leaves terminal escapes on stdout, and
+# this driver's stdout carries no status.
+run_doctor_stage() {
+    if [[ ! -x "${DOCTOR_ENTRY}" ]]; then
+        # Loud, and rc 0: an install shipping without the entry point is a standing warn rather than a
+        # permanently degraded cycle, but the reason is named so this stage cannot become the silent
+        # failure it was added to remove. A cleared executable bit is the same condition as absence
+        # here and is reported apart from it — an interpreter prefix would hide it by running a file
+        # no operator can run.
+        local why="not executable"
+        if [[ ! -e "${DOCTOR_ENTRY}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=doctor SKIP: %s %s — no verdict recorded this cycle\n' \
+            "${DOCTOR_ENTRY}" "${why}" >&2
+        return 0
+    fi
+    local rc=0 verdict="pass"
+    printf '[daemon-cycle] stage=doctor start entry=%s\n' "${DOCTOR_ENTRY}" >&2
+    "${DOCTOR_ENTRY}" doctor >&2 || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        verdict="fail"
+    fi
+    printf '[daemon-cycle] stage=doctor verdict=%s rc=%d\n' "${verdict}" "${rc}" >&2
+    record_doctor_verdict "${verdict}" "${rc}"
+    return "${rc}"
+}
+
 # -- Dispatch --------------------------------------------------------------
 
 # Aggregate exit tracking: each stage is independent (a failure logs its own rc
@@ -805,6 +901,17 @@ else
         "${DRY_RUN}" "${loop_helper_label}" >&2
 fi
 # LOOP-EVENTS-DUALWRITE-END
+
+# DOCTOR-STAGE-BEGIN
+# Terminal by construction: apply rc, the composed apply health and the run row are all written
+# above, so this stage observes the install and changes none of them. The rc goes through the same
+# non-fatal fold every other stage uses — a red doctor degrades the cycle's aggregate (exit 1) and
+# never aborts it. Runs in every dispatch mode, including dry-run: the doctor is mutation-free, and a
+# mode that skipped it would be a mode whose install health nobody checks.
+doctor_rc=0
+run_doctor_stage || doctor_rc=$?
+record_stage_rc "${doctor_rc}"
+# DOCTOR-STAGE-END
 
 # Final exit reflects the aggregate dispatch result: 0 = all dispatched stages
 # clean · 1 = degraded (≥1 stage non-zero) · 2 = arg/stage-mode error · 3 =
