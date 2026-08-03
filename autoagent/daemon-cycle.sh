@@ -318,7 +318,18 @@ run_cycle_stage() {
 
 run_apply_stage() {
     if [[ ! -x "${APPLY_SH}" ]]; then
-        printf '[daemon-cycle] stage=apply SKIP: %s not executable\n' "${APPLY_SH}" >&2
+        # A stage that could not run is NOT a stage that ran cleanly: the rc alone cannot tell the
+        # two apart, so the composed run status read `ok` for the mode-644 incident this branch
+        # covers. The condition travels in its own flag and reaches the operator as a distinct
+        # composed token; the rc stays 0 so an install that legitimately ships without the script
+        # is a standing warn rather than a permanently degraded exit.
+        local why="not executable"
+        if [[ ! -e "${APPLY_SH}" ]]; then
+            why="absent"
+        fi
+        APPLY_UNAVAILABLE=1
+        printf '[daemon-cycle] stage=apply UNAVAILABLE: %s %s — composing status=%s\n' \
+            "${APPLY_SH}" "${why}" "${APPLY_STATUS_UNAVAILABLE_LABEL}" >&2
         return 0
     fi
     local rc=0
@@ -426,46 +437,96 @@ run_pg_push_stage() {
     return "${pg_rc}"
 }
 
-# The enum label the compose op's SQL casts to (`'apply_failed'::core."DaemonStatus"`) and the
-# migration that adds it. PostgreSQL resolves that cast when it PLANS the statement, so on a DB
+# Every enum label the compose op's SQL can cast to (`'<label>'::core."DaemonStatus"`), paired with
+# the migration that adds it. PostgreSQL resolves that cast when it PLANS the statement, so on a DB
 # predating the migration the compose errors on EVERY cycle — a clean apply included — and folds a
 # non-zero rc into PIPELINE_RC. A daily false-degraded cycle is no better than the false-green one
-# this composition exists to remove, so the stage is coupled to the label's presence rather than
+# this composition exists to remove, so the stage is coupled to the labels' presence rather than
 # shipped uncoupled from its own schema dependency.
-APPLY_STATUS_ENUM_LABEL="apply_failed"
-APPLY_STATUS_ENUM_MIGRATION="20260802000000_add_daemon_status_apply_failed"
-
-# Emit ONE verdict token for that dependency: `present` (label in the enum) · `absent` (migration
-# unapplied) · `unknown` (no psql, or the catalog query itself failed / returned an unreadable
-# count). A pg_catalog SELECT is the cheapest probe available and mutates nothing. psql's own stderr
-# is deliberately NOT redirected: an unreachable DB stays diagnosable in the daemon log rather than
+# The probe pins the SET, never one member: a DB migrated for an earlier label alone would otherwise
+# report the dependency satisfied, and the cycle that composes the NEWER label then fails its cast
+# at plan time — which is the same false-green shape, moved one label along. Adding a composable
+# token means adding its pair here, so the coupling widens with the vocabulary rather than lagging it.
+APPLY_STATUS_ENUM_REQUIRED=(
+    "apply_failed:20260802000000_add_daemon_status_apply_failed"
+    "apply_unavailable:20260803000000_add_daemon_status_apply_unavailable"
+)
+# The label composed when the apply stage could not run at all (script absent or non-executable).
+APPLY_STATUS_UNAVAILABLE_LABEL="apply_unavailable"
+# The required labels as one comma-joined string — the probe's query argument and the notices' text.
+APPLY_STATUS_ENUM_LABELS=""
+for _pair in "${APPLY_STATUS_ENUM_REQUIRED[@]}"; do
+    APPLY_STATUS_ENUM_LABELS="${APPLY_STATUS_ENUM_LABELS:+${APPLY_STATUS_ENUM_LABELS},}${_pair%%:*}"
+done
+unset _pair
+# Emit the dependency verdict as ONE pipe-separated line — `<state>|<labels>|<migrations>` for an
+# `IFS='|' read -r` — because the MISSING half has to travel with the verdict: the caller runs this in
+# a command substitution, so a global set inside would be discarded with the subshell and the notice
+# would name the whole required set instead of the one migration an operator must apply. The
+# separator is a NON-whitespace character on purpose: this file's IFS carries no space, and an empty
+# trailing field survives only a non-whitespace split.
+# State: `present` (EVERY required label in the enum) · `absent` (at least one missing — its
+# migration is unapplied) · `unknown` (no psql, or the catalog query itself failed / answered with
+# something outside the queried set). The two trailing fields are empty unless the state is `absent`.
+# A pg_catalog SELECT is the cheapest probe available and mutates nothing. psql's own stderr is
+# deliberately NOT redirected: an unreachable DB stays diagnosable in the daemon log rather than
 # collapsing into a bare token. `unknown` is distinct from `absent` because only `absent` is
 # evidence — an un-probeable DB must not silently disable the composition.
 get_apply_status_enum_state() {
     if ! command -v psql >/dev/null 2>&1; then
-        printf 'unknown'
+        printf 'unknown||\n'
         return 0
     fi
+    local pair labels="${APPLY_STATUS_ENUM_LABELS}"
     local probe_out rc=0
     probe_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
-            -v "lbl=${APPLY_STATUS_ENUM_LABEL}" <<'PSQL'
-SELECT count(*)
+            -v "lbls=${labels}" <<'PSQL'
+SELECT e.enumlabel
 FROM pg_enum e
 JOIN pg_type t ON t.oid = e.enumtypid
 JOIN pg_namespace n ON n.oid = t.typnamespace
-WHERE n.nspname = 'core' AND t.typname = 'DaemonStatus' AND e.enumlabel = :'lbl';
+WHERE n.nspname = 'core' AND t.typname = 'DaemonStatus'
+  AND e.enumlabel::text = ANY(string_to_array(:'lbls', ','));
 PSQL
     )" || rc=$?
     if [[ "${rc}" -ne 0 ]]; then
-        printf 'unknown'
+        printf 'unknown||\n'
         return 0
     fi
-    case "${probe_out//[[:space:]]/}" in
-        0) printf 'absent' ;;
-        [1-9]*) printf 'present' ;;
-        *) printf 'unknown' ;;
-    esac
+    # Intersect the answer with what was asked. A row naming something OUTSIDE the queried set means
+    # the probe did not answer the question that was put to it, which is `unknown` (not evidence of
+    # absence) — the same distinction the branch below rests on.
+    local found="" line
+    while IFS= read -r line; do
+        line="${line//[[:space:]]/}"
+        if [[ -z "${line}" ]]; then
+            continue
+        fi
+        case ",${labels}," in
+            *",${line},"*) found="${found:+${found},}${line}" ;;
+            *)
+                printf 'unknown||\n'
+                return 0
+                ;;
+        esac
+    done <<<"${probe_out}"
+    local label missing_labels="" missing_migrations=""
+    for pair in "${APPLY_STATUS_ENUM_REQUIRED[@]}"; do
+        label="${pair%%:*}"
+        case ",${found}," in
+            *",${label},"*) ;;
+            *)
+                missing_labels="${missing_labels:+${missing_labels},}${label}"
+                missing_migrations="${missing_migrations:+${missing_migrations},}${pair#*:}"
+                ;;
+        esac
+    done
+    if [[ -n "${missing_labels}" ]]; then
+        printf 'absent|%s|%s\n' "${missing_labels}" "${missing_migrations}"
+        return 0
+    fi
+    printf 'present||\n'
 }
 
 # APPLY_STATUS: fold the apply stage's outcome INTO the run record's status.
@@ -491,18 +552,24 @@ run_apply_status_stage() {
             "${DRY_RUN}" "${helper_label}" "${CYCLE_DATE}" >&2
         return 0
     fi
-    local enum_state
-    enum_state="$(get_apply_status_enum_state)"
+    local enum_state="" missing_labels="" missing_migrations="" enum_probe
+    enum_probe="$(get_apply_status_enum_state)"
+    IFS='|' read -r enum_state missing_labels missing_migrations <<<"${enum_probe}"
     if [[ "${enum_state}" == "absent" ]]; then
-        printf '[daemon-cycle] APPLY_STATUS SKIP enum=absent label=%s migration=%s date=%s apply_rc=%d — core."DaemonStatus" cannot express the composed value; apply that migration and the next cycle records apply health\n' \
-            "${APPLY_STATUS_ENUM_LABEL}" "${APPLY_STATUS_ENUM_MIGRATION}" "${CYCLE_DATE}" "${APPLY_RC}" >&2
+        printf '[daemon-cycle] APPLY_STATUS SKIP enum=absent labels=%s migrations=%s date=%s apply_rc=%d — core."DaemonStatus" cannot express the composed value; apply those migrations and the next cycle records apply health\n' \
+            "${missing_labels}" "${missing_migrations}" \
+            "${CYCLE_DATE}" "${APPLY_RC}" >&2
         return 0
     fi
     if [[ "${enum_state}" != "present" ]]; then
-        printf '[daemon-cycle] APPLY_STATUS WARN enum=unknown label=%s — presence unprobeable (psql absent or catalog query failed); composing anyway, a DB predating migration %s degrades this cycle\n' \
-            "${APPLY_STATUS_ENUM_LABEL}" "${APPLY_STATUS_ENUM_MIGRATION}" >&2
+        printf '[daemon-cycle] APPLY_STATUS WARN enum=unknown labels=%s — presence unprobeable (psql absent or catalog query failed); composing anyway, a DB predating those migrations degrades this cycle\n' \
+            "${APPLY_STATUS_ENUM_LABELS}" >&2
     fi
-    if [[ "${APPLY_RC}" -ne 0 ]]; then
+    # Unavailability outranks the rc: the guard returns 0 for a stage that never ran, so testing the
+    # rc first would compose `ok` for exactly the condition this token exists to name.
+    if [[ "${APPLY_UNAVAILABLE}" -eq 1 ]]; then
+        apply_status="${APPLY_STATUS_UNAVAILABLE_LABEL}"
+    elif [[ "${APPLY_RC}" -ne 0 ]]; then
         apply_status="apply_failed"
     fi
     printf '[daemon-cycle] APPLY_STATUS start date=%s apply_rc=%d status=%s\n' \
@@ -561,6 +628,10 @@ record_stage_rc() {
 # health.
 APPLY_RAN=0
 APPLY_RC=0
+# Set by run_apply_stage when the apply script is absent or non-executable. SEPARATE from APPLY_RC
+# because that guard returns 0 — an rc alone cannot distinguish a stage that ran cleanly from one
+# that never ran, and composing `ok` for the latter is the defect this flag removes.
+APPLY_UNAVAILABLE=0
 record_apply_rc() {
     APPLY_RAN=1
     APPLY_RC="$1"

@@ -623,9 +623,11 @@ function resolveBadge(key) {
 }
 
 // 데몬 status enum → tone/라벨 SoT (A2) — dashboard·health·architecture 공용 단일 테이블.
-// 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded/apply_failed + 합성 missing/stale) — 미발행 키 보유 금지.
+// 서버 emit 가능 enum 만 보유 (ok/partial/error/quota_exceeded/apply_failed/apply_unavailable + 합성 missing/stale) — 미발행 키 보유 금지.
 // apply_failed = patch 는 생성됐으나 apply stage 중단 → crit 'Apply failed'. 미등록 시 fallback info 로
 // 떨어져 raw enum 토큰을 그대로 노출하므로, enum 추가와 이 항목은 항상 같은 변경에 포함.
+// apply_unavailable = apply script 부재/실행권한 상실로 stage 실행 자체가 불가 → warn 'Apply unavailable'
+// (실패가 아닌 불가용 · script 없이 정상 운영되는 설치가 영구 crit 로 남지 않도록 crit 아닌 warn).
 // quota_exceeded = 외부 한도 도달 → warn 'Usage limit' (health/map/sidebar 전반 일관된 주의 톤 · 이전 neutral 유지 대체).
 // missing = 실행 행 0개 → info (신규 설치 안전 기본값). '설치됐으나 한 번도 안 뜀' 은
 // 서버(resolveDaemonStatuses)가 설치 앵커(min(started_at)) 기준 시스템이 1 cadence 초과로
@@ -634,13 +636,14 @@ const DAEMON_STATUS_TONE = {
   // 'Healthy' 는 BADGE_TONE_META.ok.label 과 의도적 동일 리터럴 — daemon-nodata-consistency.test.ts 의
   // 소스 정규식 파서가 `label: '...'` 문자열 리터럴을 요구(참조식 불가)하므로 여기서 단일화 불가.
   // 드리프트는 ui.badge-registry.unit.test.ts 의 동치 단언(=== BADGE_TONE_META.ok.label)이 차단.
-  ok:             { tone: 'ok',      label: 'Healthy' },
-  partial:        { tone: 'warn',    label: 'Warning' },
-  error:          { tone: 'crit',    label: 'Down' },
-  missing:        { tone: 'info',    label: 'No data' },
-  stale:          { tone: 'crit',    label: 'Overdue' },
-  quota_exceeded: { tone: 'warn',    label: 'Usage limit' },
-  apply_failed:   { tone: 'crit',    label: 'Apply failed' },
+  ok:                { tone: 'ok',      label: 'Healthy' },
+  partial:           { tone: 'warn',    label: 'Warning' },
+  error:             { tone: 'crit',    label: 'Down' },
+  missing:           { tone: 'info',    label: 'No data' },
+  stale:             { tone: 'crit',    label: 'Overdue' },
+  quota_exceeded:    { tone: 'warn',    label: 'Usage limit' },
+  apply_failed:      { tone: 'crit',    label: 'Apply failed' },
+  apply_unavailable: { tone: 'warn',    label: 'Apply unavailable' },
 };
 
 function daemonStatusTone(status) {

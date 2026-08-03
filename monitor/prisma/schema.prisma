@@ -45,6 +45,9 @@ enum DaemonStatus {
   /// patch 생성은 성공했으나 apply stage 가 중단(green-suite gate exit 16 등) — 'partial'(패치
   /// 생성 부분실패)과 분리해야 두 신호를 구분 가능. cycle driver 가 apply rc 를 합성해 기록.
   apply_failed
+  /// apply script 부재/실행권한 상실로 stage 자체가 실행 불가 — 실패가 아닌 '불가용' 신호이므로
+  /// 'apply_failed'(실행 후 중단)와 분리. 미분리 시 rc 0 이 'ok' 로 합성되어 false green.
+  apply_unavailable
 
   @@schema("core")
 }

@@ -6,6 +6,13 @@ never erase a generation verdict. A plain `SET status = <apply_status>` overwrit
 would satisfy the driver, pass every other suite, and silently reintroduce that
 erasure — so the semantics need a test that goes red on exactly that edit.
 
+Two shapes beyond that erasure are pinned here, both of which read green on every
+other surface while the operator sees a stale status. A token the swap does not
+compose leaves the row untouched yet still matches it, so the matched-nothing
+guard stays silent and the driver logs a clean end — pinned by the refusal cases.
+And a token declared in one place only (constant, SQL, docstring or CLI header)
+makes the contract lie about itself — pinned by the declaration-parity case.
+
 Why a shim instead of a live database: the op's SQL is PG-specific (schema-
 qualified table, `::core."DaemonStatus"` casts) and the 'apply_failed' enum label
 ships as an unapplied migration, so a live run fails for reasons unrelated to the
@@ -24,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -38,6 +46,10 @@ _HELPER = _SCRIPTS_ROOT / "_pg_dual_write_daemon.py"
 _TIMEOUT_S = 30
 _DAEMON = "autoagent"
 _RUN_DATE = "2026-08-02"
+# Apply-script unavailability (absent or non-executable) — the third composable token.
+_UNAVAILABLE = "apply_unavailable"
+# Named CLI code for a token the enum cannot store (helper header exit-semantics table).
+_EXIT_UNSUPPORTED_TOKEN = 6
 
 _PSYCOPG_SHIM = r'''"""Minimal psycopg stand-in that executes the caller's SQL through sqlite3.
 
@@ -193,7 +205,10 @@ def _compose(env: dict[str, str], apply_status: str):
     )
 
 
-@pytest.mark.parametrize("generation_verdict", ["quota_exceeded", "partial", "error"])
+_GENERATION_VERDICTS = ["quota_exceeded", "partial", "error", "missing", "stale"]
+
+
+@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
 def test_when_generation_failed_then_apply_failure_preserves_its_verdict(
     pg_shim: dict[str, str], generation_verdict: str
 ):
@@ -207,7 +222,7 @@ def test_when_generation_failed_then_apply_failure_preserves_its_verdict(
     assert _get_status(pg_shim) == generation_verdict
 
 
-@pytest.mark.parametrize("generation_verdict", ["quota_exceeded", "partial", "error"])
+@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
 def test_when_generation_failed_then_clean_apply_preserves_its_verdict(
     pg_shim: dict[str, str], generation_verdict: str
 ):
@@ -246,3 +261,92 @@ def test_when_no_run_row_exists_then_nothing_is_inserted_and_silence_is_reported
     assert result.returncode == 0
     assert _get_status(pg_shim) is None
     assert "matched no run row" in result.stderr
+
+
+def test_when_row_is_ok_then_unavailability_composes_in(pg_shim: dict[str, str]):
+    # The third arm. Against the two-arm swap this token changed nothing while the
+    # matched-row count still reported a hit — deployed, green everywhere, inert.
+    _seed(pg_shim, "ok")
+
+    result = _compose(pg_shim, _UNAVAILABLE)
+
+    assert result.returncode == 0
+    assert _get_status(pg_shim) == _UNAVAILABLE
+
+
+@pytest.mark.parametrize("generation_verdict", _GENERATION_VERDICTS)
+def test_when_generation_failed_then_unavailability_preserves_its_verdict(
+    pg_shim: dict[str, str], generation_verdict: str
+):
+    _seed(pg_shim, generation_verdict)
+
+    result = _compose(pg_shim, _UNAVAILABLE)
+
+    assert result.returncode == 0
+    assert _get_status(pg_shim) == generation_verdict
+
+
+@pytest.mark.parametrize(
+    ("seeded", "composed"),
+    [
+        (_UNAVAILABLE, "ok"),          # the script came back → the stale warn clears
+        (_UNAVAILABLE, "apply_failed"),  # executable again, then aborted
+        ("apply_failed", _UNAVAILABLE),  # executable bit lost after an abort
+    ],
+)
+def test_when_row_carries_an_apply_verdict_then_the_latest_one_replaces_it(
+    pg_shim: dict[str, str], seeded: str, composed: str
+):
+    # Every apply-owned status swaps to every other in both directions, so a same-date
+    # re-run never inherits a verdict from the run before it.
+    _seed(pg_shim, seeded)
+
+    result = _compose(pg_shim, composed)
+
+    assert result.returncode == 0
+    assert _get_status(pg_shim) == composed
+
+
+@pytest.mark.parametrize("token", ["apply_skipped", "OK", "", "ok; DROP TABLE core"])
+def test_when_token_is_unsupported_then_row_unchanged_and_refusal_is_named(
+    pg_shim: dict[str, str], token: str
+):
+    # The enum cannot store these, and the matched-row count cannot detect them: a CASE
+    # fall-through matches the row, reports a hit and exits clean. Refusal must be loud.
+    _seed(pg_shim, "ok")
+
+    result = _compose(pg_shim, token)
+
+    assert result.returncode == _EXIT_UNSUPPORTED_TOKEN
+    assert _get_status(pg_shim) == "ok"
+    assert "pg_write=refused" in result.stderr
+    assert "apply health NOT recorded" in result.stderr
+    assert "pg_write=ok" not in result.stderr
+
+
+def test_when_tokens_are_declared_then_every_declaration_names_the_same_set():
+    # A third arm landing in one place only leaves the contract lying about itself —
+    # the CLI header and the docstring are what a caller and a reader actually read.
+    source = _HELPER.read_text(encoding="utf-8")
+
+    declared = re.search(r"APPLY_STATUS_TOKENS = \(([^)]*)\)", source)
+    assert declared, "APPLY_STATUS_TOKENS declaration not found"
+    tokens = set(re.findall(r'"([^"]+)"', declared.group(1)))
+    assert _UNAVAILABLE in tokens
+
+    sql_arm = re.search(r"WHEN status IN \(([^)]*)\)", source)
+    assert sql_arm, "composable-set SQL membership list not found"
+    assert set(re.findall(r"'([^']+)'", sql_arm.group(1))) == tokens
+
+    header = re.search(r'"apply_status": "([^"]+)"', source)
+    assert header, "CLI-contract header apply_status line not found"
+    assert set(header.group(1).split("|")) == tokens
+
+    docstring = re.search(
+        r'def compose_daemon_run_apply_status\([^)]*\):\n    """(.*?)"""',
+        source,
+        re.DOTALL,
+    )
+    assert docstring, "compose docstring not found"
+    for token in tokens:
+        assert "'%s'" % token in docstring.group(1)

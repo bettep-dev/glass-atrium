@@ -53,7 +53,10 @@ export type DaemonStatusValue =
   | "quota_exceeded"
   // Apply stage aborted on an otherwise clean cycle — distinct from `partial`,
   // which means partial patch generation.
-  | "apply_failed";
+  | "apply_failed"
+  // Apply stage could not run (script absent or non-executable) — unavailability,
+  // not failure, so it renders at a warn tone rather than `apply_failed`'s crit.
+  | "apply_unavailable";
 
 export interface DaemonStatusItem {
   // Active daemons + legacy "daily-restart" (historical rows only — restart runs
