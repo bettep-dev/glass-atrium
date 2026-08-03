@@ -93,10 +93,13 @@ emit_abort_row() {
 
 # Append the zero-eligible heartbeat row under the date $1, in daemon-apply.sh zero_eligible_row's
 # field sequence ($2 = the drained source, default report). AC4 pins the sequence against the source.
+# $3 = the gate outcome; EMPTY (the default) writes the LEGACY field-less shape every row already in
+# the window carries, which is the polarity AC7 exists to keep passing.
 append_zero_eligible_row() {
-  local date_key="$1" source="${2:-report}"
-  printf '{"ts":"%sT04:35:00.000Z","status":"skip","reason":"zero_eligible","patch_source":"%s","cycle_date":"%s"}\n' \
-    "${date_key}" "${source}" "${date_key}" \
+  local date_key="$1" source="${2:-report}" gate="${3:-}" gate_field=""
+  [[ -z "${gate}" ]] || gate_field="\"gate\":\"${gate}\","
+  printf '{"ts":"%sT04:35:00.000Z","status":"skip","reason":"zero_eligible","patch_source":"%s",%s"cycle_date":"%s"}\n' \
+    "${date_key}" "${source}" "${gate_field}" "${date_key}" \
     >>"${REPORTS}/autoagent-applied-${date_key}.jsonl"
 }
 
@@ -182,6 +185,129 @@ assert_output_lacks() {
   grep -qF '"status":"skip","reason":"zero_eligible","patch_source":' "${APPLY_SH}" || {
     echo "producer heartbeat row shape changed — this suite's fixture no longer matches it" >&2
     grep -n 'zero_eligible' "${APPLY_SH}" >&2
+    return 1
+  }
+  # The gate field sits AFTER patch_source, which is what keeps the status-literal pin intact. The
+  # producer-side polarities live in autoagent/test/daemon-apply-zero-eligible-row.bats (AC6-AC8);
+  # this row only pins that the fixture below spells the field where the producer does.
+  grep -qF '"patch_source":%s,"gate":"%s"' "${APPLY_SH}" || {
+    echo "producer gate-field position changed — the AC5..AC7 fixtures no longer match it" >&2
+    grep -n 'zero_eligible' "${APPLY_SH}" >&2
+    return 1
+  }
+}
+
+# ── AC5 — a skipped-gate heartbeat is NOT a recovery ──────────────────────────────────────────
+
+@test "AC5: an abort followed only by a skipped-gate heartbeat stays a live condition" {
+  emit_abort_row || {
+    echo "producer wrote no abort row" >&2
+    return 1
+  }
+  append_zero_eligible_row "${TODAY}" backlog skipped
+  run_doctor_seam
+  assert_output_has "FAIL : autoagent apply aborted in the last" || return 1
+  assert_output_has "abort row:" || return 1
+  assert_output_lacks "abort superseded by a later post-gate cycle" || return 1
+  [[ "${status}" -ne 0 ]] || {
+    echo "doctor exited 0 despite the §14 FAIL line — output:" >&2
+    echo "${output}" >&2
+    return 1
+  }
+}
+
+# ── AC6 — a cleared-gate heartbeat still supersedes ───────────────────────────────────────────
+
+@test "AC6: an abort followed by a cleared-gate heartbeat is superseded" {
+  emit_abort_row || {
+    echo "producer wrote no abort row" >&2
+    return 1
+  }
+  append_zero_eligible_row "${TODAY}" backlog cleared
+  run_doctor_seam
+  assert_output_has "abort superseded by a later post-gate cycle" || return 1
+  assert_output_lacks "FAIL : autoagent apply aborted"
+}
+
+# ── AC7 — a row carrying NO gate field supersedes, which is the correctness condition ─────────
+
+@test "AC7: every field-less post-gate row still supersedes an in-window abort" {
+  # Every row already in the fourteen-day window predates the field, and five of the six producer
+  # statuses will never carry one. Keying as "supersede only when it says cleared" would report
+  # every recovered daemon as still-aborted — a wider false-red than the one this task closes.
+  local st failed=""
+  for st in applied reject needs_regen dryrun error; do
+    rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+    emit_abort_row || {
+      echo "producer wrote no abort row (${st})" >&2
+      return 1
+    }
+    printf '{"ts":"%sT12:00:00.000Z","status":"%s","pattern_label":"probe","target_file":"agents/probe.md"}\n' \
+      "${TODAY}" "${st}" >>"${REPORTS}/autoagent-applied-${TODAY}.jsonl"
+    run_doctor_seam
+    [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]] || failed="${failed} ${st}(no-ok)"
+    [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} ${st}(fail-line)"
+  done
+  # The legacy heartbeat shape: skip + zero_eligible, written before the gate field existed.
+  rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+  emit_abort_row || {
+    echo "producer wrote no abort row (legacy heartbeat)" >&2
+    return 1
+  }
+  append_zero_eligible_row "${TODAY}" backlog
+  run_doctor_seam
+  [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]] || failed="${failed} legacy-heartbeat(no-ok)"
+  [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} legacy-heartbeat(fail-line)"
+  [[ -z "${failed}" ]] || {
+    echo "field-less rows that did NOT supersede:${failed}" >&2
+    echo "last doctor output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC8 — the classifier reads the field identically under both awk implementations ──────────
+
+@test "AC8: the gate-keyed classifier gives identical verdicts under BSD and GNU awk" {
+  # CI is ubuntu-only and the deployment host is BSD userland, so a GNU-only construct passes CI and
+  # fails on the only machine that matters. The shim is a plain wrapper script in a fresh dir on a
+  # PREPENDED PATH — never a symlink-populated mirror of a real bin dir.
+  # HONEST COVERAGE SPLIT. On a macOS host with no gawk/mawk installed this row SKIPS, and the BSD
+  # side is still covered — every other row here resolves `awk` to the BSD one-true-awk. The GNU side
+  # is covered by CI, which runs these same rows on ubuntu where `awk` IS gawk or mawk. This row is
+  # what closes the gap on a host carrying both, and it is a skip rather than a silent pass so the
+  # difference is visible rather than assumed.
+  local gnu bsd shimdir verdicts=""
+  gnu="$(command -v gawk 2>/dev/null || command -v mawk 2>/dev/null || true)"
+  bsd="/usr/bin/awk"
+  [[ -n "${gnu}" ]] || skip "no gawk/mawk on this host — BSD side covered by the rows above, GNU side by CI"
+  [[ -x "${bsd}" ]] || skip "BSD awk not present at ${bsd}"
+  local impl fixture
+  for fixture in skipped cleared; do
+    for impl in "${bsd}" "${gnu}"; do
+      shimdir="${WORK}/awkshim-$(basename "${impl}")"
+      mkdir -p -- "${shimdir}"
+      printf '#!/bin/bash\nexec %s "$@"\n' "${impl}" >"${shimdir}/awk"
+      chmod +x "${shimdir}/awk"
+      rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
+      emit_abort_row || {
+        echo "producer wrote no abort row (${fixture}/${impl})" >&2
+        return 1
+      }
+      append_zero_eligible_row "${TODAY}" backlog "${fixture}"
+      GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
+        DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" PATH="${shimdir}:${PATH}" \
+        run "${REAL_GA}" doctor
+      if [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]]; then
+        verdicts="${verdicts} ${fixture}:superseded"
+      elif [[ "${output}" == *"FAIL : autoagent apply aborted"* ]]; then
+        verdicts="${verdicts} ${fixture}:aborted"
+      else
+        verdicts="${verdicts} ${fixture}:unrecognised"
+      fi
+    done
+  done
+  [[ "${verdicts}" == " skipped:aborted skipped:aborted cleared:superseded cleared:superseded" ]] || {
+    echo "awk implementations disagree (or a verdict was unrecognised): ${verdicts}" >&2
     return 1
   }
 }

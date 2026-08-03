@@ -787,9 +787,21 @@ _apply_abort_scan() {
   fi
   # A post-gate row clears only an abort that PRECEDED it (state is non-empty exactly when one did);
   # with nothing to supersede the verdict stays `none`.
+  # A row whose `gate` field says `skipped` is a cycle that took a preflight escape hatch, so it
+  # verified nothing and supersedes nothing — reading it as a recovery clears real aborts silently.
+  # ABSENCE of the field DEFAULTS to superseding, and that polarity is the correctness condition, not
+  # a nicety: legacy rows carry none, and five of the six producer statuses will never carry one, so
+  # keying on "supersede only when it says cleared" would report every recovered daemon as
+  # still-aborted. The producer emits the field on the zero-eligible HEARTBEAT row only, so a
+  # skipped-gate cycle that finds work and applies supersedes here too — that scope is deliberate,
+  # and this guard narrows the mis-read to the row carrying the evidence rather than closing it on
+  # every row a cycle can write. `index` over a match, for BSD/GNU awk parity.
   awk '
     index($0, "\"status\":\"abort\"") { state = "abort"; row = $0; next }
-    /"status":"[^"]+"/               { if (state != "") { state = "clean"; row = "" } next }
+    /"status":"[^"]+"/               {
+      if (state != "" && index($0, "\"gate\":\"skipped\"") == 0) { state = "clean"; row = "" }
+      next
+    }
     END { printf "%s\n%s\n", (state == "" ? "none" : state), row }
   ' "${in_window[@]}"
 }
