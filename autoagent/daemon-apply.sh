@@ -2079,18 +2079,56 @@ else
     done < <(extract_body_auto_patches "${REPORT_PATH}")
 fi
 
+# zero_eligible_row — serialise the ONE post-gate row a cycle with nothing to apply writes. Built
+# field-by-field for the same reason preflight_abort_row is: a nested `$(… | json_escape)` inside the
+# printf would swallow a python3-absent failure and emit a MALFORMED row, which reads worse than no
+# row at all. Returns non-zero instead, so the caller reports the miss out loud.
+# `skip` is DELIBERATELY reused rather than given a dedicated literal: the reader (doctor §14) keys on
+# the pre/post-gate boundary, `skip` already sits in the post-gate set the producer emits with a
+# reason field at two other sites, and a NEW literal would redden the literal-set pin under the
+# preflight test root — tripping a fatal preflight and writing the very abort row this row exists to
+# supersede. The condition itself travels in `reason`.
+# $1 = the patch source this cycle drained (backlog | report).
+zero_eligible_row() {
+    local source="$1" ts_json source_json cycle_json
+    ts_json="$(ts_now_json)" || return 1
+    source_json="$(printf '%s' "${source}" | json_escape)" || return 1
+    cycle_json="$(printf '%s' "${CYCLE_DATE}" | json_escape)" || return 1
+    [[ -n "${ts_json}" && -n "${source_json}" && -n "${cycle_json}" ]] || return 1
+    printf '{"ts":%s,"status":"skip","reason":"zero_eligible","patch_source":%s,"cycle_date":%s}' \
+        "${ts_json}" "${source_json}" "${cycle_json}"
+}
+
+# emit_zero_eligible_row — land that row, or say out loud that it could not be landed. The row is the
+# ONLY durable evidence that this cycle cleared the preflight gate: without it a recovered-but-idle
+# daemon writes nothing at all, so an earlier abort in the window is never superseded and the doctor
+# keeps reporting a condition that already cleared. Never changes the exit — a cycle with nothing to
+# apply is a clean cycle whether or not its heartbeat landed.
+emit_zero_eligible_row() {
+    local row=""
+    if row="$(zero_eligible_row "$1")" && emit_log "${row}"; then
+        printf '[daemon-apply] zero-eligible post-gate row recorded → %s\n' "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: zero-eligible post-gate row NOT persisted (%s) — an earlier abort in the window will not be superseded\n' \
+            "${APPLIED_LOG}" >&2
+    fi
+}
+
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "single" ]]; then
         # Idempotent no-op: id absent OR status not in pending/snoozed
         # (already applied/rejected/approved). Distinct exit 8 so the API can
-        # report "nothing to do" vs an apply failure.
+        # report "nothing to do" vs an apply failure. NO post-gate row: this path is
+        # human-gated, not a scheduled cycle, and the window reasons about cycles.
         printf '[daemon-apply] proposal id=%s not actionable (not found, or status not in pending/snoozed) — no-op\n' \
             "${PROPOSAL_ID}" >&2
         exit 8
     elif [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
+        emit_zero_eligible_row backlog
     else
         printf '[daemon-apply] 0 body-auto patches in %s\n' "${REPORT_PATH}" >&2
+        emit_zero_eligible_row report
     fi
     exit 0
 fi
