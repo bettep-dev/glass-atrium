@@ -11,7 +11,8 @@ The domains append reuses registry_ops.add_domain_token (atomic, idempotent,
 value-immutable). The body append writes the new section after the existing
 content (append-only), via the atomic text writer; the existing body bytes are
 never rewritten, only extended. EXTEND is gated through the same <name>
-validation + realpath-inside-agents chokepoint as ADD.
+validation + realpath-inside-agents chokepoint as ADD, and the section file
+through the same exists / non-empty / secret-scan reader ADD's --body-file uses.
 """
 
 from __future__ import annotations
@@ -23,9 +24,15 @@ from pathlib import Path
 from .paths import StorePaths
 from .readers import load_registry_agents
 from .registry_ops import RegistryMutationError, add_domain_token
+from .scaffold import (
+    BodyAnchorError,
+    BodyFrontmatterError,
+    assert_section_no_fence_or_anchor,
+)
+from .secret_scan import SecretDetected
 from .stanza import atomic_write_text
 from .transaction import RollbackFailedError, Transaction, TransactionError
-from .validation import validated_agent_md
+from .validation import ValidationError, read_gated_text, validated_agent_md
 
 
 class ExtendRefused(RuntimeError):
@@ -76,11 +83,9 @@ def run_extend(paths: StorePaths, req: ExtendRequest) -> str:
     new_section = ""
     if req.append_section_file is not None:
         section = Path(req.append_section_file)
-        if not section.exists():
-            raise ExtendRefused(f"--append-section file not found: {section}")
+        new_section = _gated_section_text(section)
         if not md_path.exists():
             raise ExtendRefused(f"agents/{req.name}.md not found — cannot append")
-        new_section = section.read_text(encoding="utf-8")
 
     before_domains = list(agents[req.name].get("domains") or [])
     applied: list[str] = []
@@ -128,6 +133,27 @@ def run_extend(paths: StorePaths, req: ExtendRequest) -> str:
         applied.append(f"appended body section from {section.name}")
 
     return f"extended {req.name}: " + "; ".join(applied)
+
+
+def _gated_section_text(section: Path) -> str:
+    """Read the --append-section file through every gate, or refuse with zero writes.
+
+    run_extend — not only the CLI — is the gate home: it is reachable directly,
+    and its pre-flight block is the designated zero-writes refusal site. Every
+    gate failure is re-raised as ExtendRefused so the caller's existing HALT
+    mapping covers the new refusals without widening its except tuple.
+    """
+    try:
+        raw = read_gated_text(section, label="--append-section file")
+        assert_section_no_fence_or_anchor(raw)
+    except (
+        ValidationError,
+        SecretDetected,
+        BodyFrontmatterError,
+        BodyAnchorError,
+    ) as exc:
+        raise ExtendRefused(str(exc)) from exc
+    return raw
 
 
 __all__ = [

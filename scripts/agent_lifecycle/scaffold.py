@@ -88,11 +88,13 @@ class PreflightError(RuntimeError):
 
 
 class BodyAnchorError(ValueError):
-    """The authored body carries a `> Rules:` anchor for the WRONG scope — HALT.
+    """Supplied text carries a `> Rules:` anchor the renderer cannot reconcile — HALT.
 
-    A wrong-scope anchor mis-attaches Tier-2 rules (worse than an absent one,
-    which can be injected). Distinct from ValidationError so the CLI can map it
-    to the same EXIT_HALT path with a body-specific message.
+    On the ADD path that means a WRONG-scope anchor, which mis-attaches Tier-2
+    rules (worse than an absent one, which can be injected). On the EXTEND path
+    it means ANY anchor, since an append has no strip step. Distinct from
+    ValidationError so the CLI can map it to the same EXIT_HALT path with a
+    body-specific message.
     """
 
 
@@ -230,6 +232,39 @@ def assert_body_no_smuggled_frontmatter(body: str) -> None:
             f"authored body carries a frontmatter-shaped {key!r}: line before the "
             "`> Rules:` anchor — such a key shadows the canonical frontmatter; "
             f"move it below the anchor or remove it (the canonical {key} is fixed); HALT"
+        )
+
+
+def assert_section_no_fence_or_anchor(section: str) -> None:
+    """Input gate: HALT an EXTEND section that breaks a rendered-.md invariant.
+
+    An appended section always lands at end-of-file — below both the canonical
+    frontmatter and the anchor — so it structurally cannot shadow the
+    frontmatter, and assert_body_no_smuggled_frontmatter deliberately does NOT
+    apply here (its anchorless-head slicing would refuse ordinary body prose
+    that the ADD path tolerates below the anchor). Two invariants an append can
+    still break AFTER render, where no render-time assertion runs again:
+      - the exactly-2 `---` fence count _assert_single_frontmatter_block pins,
+        including a lone thematic break a last-wins loader could read as a
+        block boundary;
+      - the single `> Rules:` anchor — ADD tolerates a matching-scope one only
+        because reconcile_body_anchor strips it before render.
+    Fail-closed (BodyFrontmatterError / BodyAnchorError).
+    """
+    if _FENCE_RE.search(section):
+        raise BodyFrontmatterError(
+            "appended section carries a `---` fence line — the agent .md must "
+            f"keep exactly {_CANONICAL_FENCE_COUNT} fence lines (the single "
+            "canonical frontmatter block), and an appended fence could be read "
+            "as a second block boundary shadowing the canonical tools "
+            "allowlist; remove the `---` line; HALT"
+        )
+    if _ANCHOR_RE.search(section):
+        raise BodyAnchorError(
+            "appended section carries its own `> Rules:` anchor — the append "
+            "would leave the .md with a SECOND anchor (--body-file tolerates a "
+            "matching-scope anchor only because render strips it first; an "
+            "append has no strip step); remove the anchor line; HALT"
         )
 
 

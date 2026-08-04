@@ -64,11 +64,11 @@ from .scaffold import (
     assert_body_no_smuggled_frontmatter,
     reconcile_body_anchor,
 )
-from .secret_scan import SecretDetected, scan_for_secrets
+from .secret_scan import SecretDetected
 from .stanza import StanzaError
 from .subproc import StepError
 from .transaction import RollbackFailedError, TransactionError
-from .validation import ValidationError, validate_name
+from .validation import ValidationError, read_gated_text, validate_name
 
 # Exit codes (named, like generate-manifest.sh): 0 ok · 2 usage · 4 validation/
 # safety/gate HALT · 5 transaction failed (rolled back cleanly) · 6 rollback
@@ -145,26 +145,18 @@ def _run_transactional(thunk: Callable[[], str]) -> int:
 def _load_validated_body(body_file: str, scope: str) -> str:
     """Read + gate an authored body file at the CLI boundary (the single chokepoint).
 
-    Mirrors extend's refuse-on-missing-file behavior, then applies the body gates
-    IN THE SAME CALL (never a follow-up): (1) non-empty; (2) fail-closed
-    secret-scan (HALT on any credential pattern); (3) no smuggled frontmatter —
-    HALT a body that begins with a `---` fence or carries a frontmatter-shaped
+    Runs the shared gated read (exists / non-empty / fail-closed secret-scan —
+    the same core EXTEND's --append-section goes through), then the two ADD-only
+    body terms IN THE SAME CALL (never a follow-up): (1) no smuggled frontmatter
+    — HALT a body that begins with a `---` fence or carries a frontmatter-shaped
     name/tools/scope/maxTurns key above the anchor (privilege-escalation guard);
-    (4) `> Rules:` anchor reconciliation against `scope` — injected if absent,
+    (2) `> Rules:` anchor reconciliation against `scope` — injected if absent,
     HALT on a wrong-scope anchor. Raises ValidationError / BodyFrontmatterError /
     BodyAnchorError / SecretDetected, all mapped to EXIT_HALT by the caller.
     """
-    path = Path(body_file)
-    if not path.exists():
-        raise ValidationError(f"--body-file not found: {path}")
-    raw = path.read_text(encoding="utf-8")
-    if not raw.strip():
-        raise ValidationError(f"--body-file is empty: {path}")
-    # fail-closed secret-scan FIRST — a credential must never reach the store,
-    # even transiently, regardless of the anchor outcome.
-    scan_for_secrets(raw)
-    # frontmatter-smuggle gate on the RAW body (before the anchor is stripped) —
-    # a body must not carry its own frontmatter block shadowing the canonical one.
+    raw = read_gated_text(Path(body_file), label="--body-file")
+    # smuggle gate on the RAW body (before the anchor is stripped) — a body must
+    # not carry its own frontmatter block shadowing the canonical one.
     assert_body_no_smuggled_frontmatter(raw)
     # anchor reconcile: inject if absent, HALT on scope mismatch (BodyAnchorError).
     return reconcile_body_anchor(raw, scope)
