@@ -597,22 +597,25 @@ run_doctor() {
     log "  ---- ${snapshot_path_anomaly} live recovery repo(s) carry a control-character path (file-less pathological tree) — NOT staleness: a snapshot run would no-op; inspect the path named above and remove the empty tree once verified ----"
   fi
 
-  # 14. autoagent apply-preflight abort surface. daemon-apply.sh loud-fails (exit 16) when the
-  #     green-suite gate cannot certify the harness, and persists ONE abort row per abort into the
-  #     daily applied-log JSONL. That row is the only durable trace of a red gate: the launchd path
-  #     discards the daemon's stderr, so without this section an aborted apply stage is invisible
-  #     once the cycle ends. FAIL rather than warn — an install whose daemon has stopped applying is
-  #     a live condition with a concrete remedy (fix the red suite, or apply the named override
-  #     deliberately), not an advisory.
-  #     SUPERSESSION, not counting: any later POST-GATE row means the gate re-opened and the daemon
-  #     resumed, so the older abort is history. Supersession is the whole post-gate set rather than a
-  #     landed patch, because a recovered daemon with nothing eligible to apply never lands one (see
-  #     _apply_abort_scan). The verdict is therefore the LAST apply-relevant event in the window
-  #     (append-only rows + date-ordered filenames make that a single ordered scan), never an abort
-  #     tally — a tally would keep asserting a condition that already cleared.
+  # 14. autoagent apply-abort surface. daemon-apply.sh loud-fails on two terminal paths and persists
+  #     ONE abort row per abort into the daily applied-log JSONL: PRE-gate (exit 16) when the
+  #     green-suite gate cannot certify the harness, and POST-gate (exit 7) when the eligible-pending
+  #     backlog exceeds the anomaly threshold and the apply loop refuses to drain it. Both carry the
+  #     same `abort` literal (why: _apply_abort_scan below); the row's `reason` names which, and the
+  #     verdict line reads it to print the matching remedy. That row is the only durable trace of
+  #     either: the launchd path discards the daemon's stderr, so without this section an aborted
+  #     apply stage is invisible once the cycle ends. FAIL rather than warn — an install whose daemon
+  #     has stopped applying is a live condition with a concrete remedy (fix the red suite / drain
+  #     the flooded proposal table), not an advisory.
+  #     SUPERSESSION, not counting: a later row that is neither an abort nor gate-skipped means a
+  #     subsequent cycle got far enough to write one, so the older abort is history. Supersession is
+  #     that set rather than a landed patch, because a recovered daemon with nothing eligible to apply
+  #     never lands one (see _apply_abort_scan). The verdict is therefore the LAST apply-relevant
+  #     event in the window (append-only rows + date-ordered filenames make that a single ordered
+  #     scan), never an abort tally — a tally would keep asserting a condition that already cleared.
   local apply_abort_fail=0
   local apply_reports_dir="${DOCTOR_AUTH_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
-  local abort_cutoff="" abort_scan="" abort_state="" abort_row=""
+  local abort_cutoff="" abort_scan="" abort_state="" abort_row="" abort_cause=""
   # shellcheck disable=SC2310,SC2311
   if [[ ! -d "${apply_reports_dir}" ]]; then
     log "  ok   : no autoagent daemon-reports dir (no apply cycles recorded)"
@@ -627,12 +630,22 @@ run_doctor() {
     abort_row="$(printf '%s\n' "${abort_scan}" | sed -n '2p')"
     case "${abort_state}" in
       abort)
-        log "  FAIL : autoagent apply aborted in the last ${APPLY_ABORT_WINDOW_DAYS}d with no later post-gate cycle (${apply_reports_dir}) — the daemon has not reached its apply loop since; fix the named cause, then let the next cycle re-open the gate"
+        # The two producers need opposite remedies, so the row's `reason` picks the clause: naming
+        # the gate on a backlog anomaly sends the operator at a suite that was never red.
+        case "${abort_row}" in
+          *'"reason":"backlog_anomaly"'*)
+            abort_cause="the apply loop refused to drain an eligible-pending backlog above the anomaly threshold; drain or correct core.autoagent_proposals (a generation runaway floods it), then let the next cycle apply"
+            ;;
+          *)
+            abort_cause="the daemon has not reached its apply loop since; fix the named cause, then let the next cycle re-open the gate"
+            ;;
+        esac
+        log "  FAIL : autoagent apply aborted in the last ${APPLY_ABORT_WINDOW_DAYS}d with no later non-abort row to supersede it — a row marked \"gate\":\"skipped\" does not supersede (${apply_reports_dir}) — ${abort_cause}"
         log "         abort row: ${abort_row}"
         apply_abort_fail=1
         ;;
-      clean) log "  ok   : autoagent apply-preflight abort superseded by a later post-gate cycle (last ${APPLY_ABORT_WINDOW_DAYS}d)" ;;
-      none) log "  ok   : no autoagent apply-preflight aborts in the last ${APPLY_ABORT_WINDOW_DAYS}d" ;;
+      clean) log "  ok   : autoagent apply abort superseded by a later non-abort row not marked \"gate\":\"skipped\" (last ${APPLY_ABORT_WINDOW_DAYS}d)" ;;
+      none) log "  ok   : no autoagent apply aborts in the last ${APPLY_ABORT_WINDOW_DAYS}d" ;;
       *)
         log "  warn : autoagent applied-log unclassifiable (${apply_reports_dir}) — the scan produced no verdict, so an abort cannot be separated from a clean cycle; check awk(1) and the log's readability"
         apply_abort_fail=1
@@ -761,25 +774,29 @@ APPLY_ABORT_WINDOW_DAYS="${APPLY_ABORT_WINDOW_DAYS:-14}"
 
 # Classify the daily applied-log JSONL files under $1 against the YYYY-MM-DD cutoff $2. Producer
 # grammar (autoagent/daemon-apply.sh): one JSON object per line carrying a `"status":"<literal>"`
-# field. `abort` is the sole PRE-gate literal — preflight_fatal writes it before the apply lock is
-# taken, so the gate never opened. Every other literal (applied · skip · reject · needs_regen ·
-# dryrun · error) is written from inside the per-patch apply loop, which preflight has already
-# cleared. The classifier keys on THAT boundary rather than on `applied` alone: `applied` fires only
-# when a patch actually LANDS, so a recovered daemon with nothing eligible emits skips and would
-# hold the verdict red for the rest of the window over a condition that already cleared. Any
-# post-gate row supersedes. A producer adding a per-patch literal needs no change here; the covering
-# test pins the producer's literal set so a NEW pre-gate literal fails loudly instead of reading as
-# recovery.
+# field. `abort` is the sole abort-class literal, and the axis is the literal itself rather than
+# which gate stage produced it: the pre-gate preflight abort (exit 16) and the post-gate
+# backlog-anomaly tripwire (exit 7) both write it — two different producer sites, one literal (why
+# the tripwire reuses it rather than taking its own: the backlog_anomaly_row header in
+# autoagent/daemon-apply.sh). Their `reason` fields separate them for the verdict line.
+# Every other literal (applied · skip · reject · needs_regen · dryrun · error) is a non-abort
+# literal, and the classifier treats them alike — it keys on the abort/non-abort split rather than
+# on `applied` alone: `applied` fires only when a patch actually LANDS, so a recovered daemon with
+# nothing eligible emits skips and would hold the verdict red for the rest of the window over a
+# condition that already cleared. A non-abort row supersedes unless it carries `"gate":"skipped"`. A
+# producer adding a per-patch literal needs no change here; the covering test pins the producer's
+# literal set so a NEW literal the abort/non-abort split has not classified fails loudly instead of
+# reading as recovery.
 # Filenames are autoagent-applied-YYYY-MM-DD.jsonl, so the glob's lexicographic order IS date order
 # and the append-only rows inside preserve it — one ordered pass therefore yields the LAST
 # apply-relevant event without any date arithmetic per row.
 # stdout: line 1 = verdict (`abort` | `clean` | `none`), line 2 = the deciding abort row (empty
 # unless the verdict is `abort`). A file whose name carries no parseable date is skipped, never
 # guessed into the window.
-# `clean` means SUPERSEDED and therefore requires an abort EARLIER in the window: post-gate rows on
-# their own are an ordinary cycle, not a recovery. Reporting `clean` for them told every install that
-# has never aborted its abort was superseded — daily, and the heartbeat row now guarantees a post-gate
-# row on idle cycles too, so that false line would fire on every healthy install.
+# `clean` means SUPERSEDED and therefore requires an abort EARLIER in the window: non-abort rows on
+# their own supersede nothing, so they are not a recovery. Reporting `clean` for them told every
+# install that has never aborted its abort was superseded — daily, and the heartbeat row now
+# guarantees such a row on idle cycles too, so that false line would fire on every healthy install.
 _apply_abort_scan() {
   local dir="$1" cutoff="$2" f base fdate
   local -a in_window=()
@@ -797,7 +814,7 @@ _apply_abort_scan() {
     printf 'none\n\n'
     return 0
   fi
-  # A post-gate row clears only an abort that PRECEDED it (state is non-empty exactly when one did);
+  # A non-abort row clears only an abort that PRECEDED it (state is non-empty exactly when one did);
   # with nothing to supersede the verdict stays `none`.
   # A row whose `gate` field says `skipped` is a cycle that took a preflight escape hatch, so it
   # verified nothing and supersedes nothing — reading it as a recovery clears real aborts silently.

@@ -3,7 +3,7 @@
 # zero-eligible heartbeat row daemon-apply.sh now writes (T3-2 over T3-1).
 #
 # WHY A SECOND §14 SUITE. doctor-apply-abort-rows.bats pins the classifier's row vocabulary (which
-# literal is pre-gate, which set supersedes). This one pins the three-way VERDICT the operator reads,
+# literal is abort-class, which set is not). This one pins the three-way VERDICT the operator reads,
 # across the file boundary the heartbeat row introduced: an abort in one daily log, the superseding
 # row in a LATER one. The two failure shapes it guards are opposite and both silent —
 #   * a recovered-but-idle daemon held red forever (nothing ever superseded its abort), and
@@ -11,15 +11,15 @@
 #
 # FIXTURE PROVENANCE. The abort row is PRODUCER-AUTHORED: the real daemon-apply.sh is driven into its
 # root-absence preflight abort, so a producer-side rename fails these tests instead of degrading the
-# check. The heartbeat row cannot be produced without a full post-gate cycle (PATH mirror, psql shim,
-# report fixture — that is autoagent/test/daemon-apply-zero-eligible-row.bats' job), so it is
-# hand-written here AND its field sequence is pinned against the producer source by AC4.
+# check. The heartbeat is the post-gate zero-eligible row daemon-apply.sh writes INSTEAD of entering
+# the apply loop, and producing it needs the heavier producer harness (PATH mirror, psql shim, report
+# fixture — that is autoagent/test/daemon-apply-zero-eligible-row.bats' job), so it is hand-written
+# here AND its field sequence is pinned against the producer source by AC4.
 #
 #   AC1  an in-window abort + a LATER file whose only content is the heartbeat row → superseded, ok
-#   AC2  an in-window abort with no later post-gate row of any kind → FAIL, the row echoed, exit != 0
-#   AC3  post-gate rows with NO abort anywhere in the window → the no-aborts ok line, never a
-#        supersession claim (the polarity that is RED at HEAD: any post-gate row marks the window
-#        clean, so an install that has never aborted reads "abort superseded" every day)
+#   AC2  an in-window abort with no later non-abort row of any kind → FAIL, the row echoed, exit != 0
+#   AC3  non-abort rows with NO abort anywhere in the window → the no-aborts ok line, never a
+#        supersession claim
 #   AC4  the heartbeat fixture's field sequence is the one daemon-apply.sh writes
 #
 # Hermetic: GA_TARGET_HOME + GA_DATA_ROOT point at throwaway temp dirs and DOCTOR_AUTH_REPORTS_DIR
@@ -141,13 +141,13 @@ assert_output_lacks() {
   append_zero_eligible_row "${TODAY}" backlog
   [[ -s "${REPORTS}/autoagent-applied-${aborted_on}.jsonl" ]] || return 1
   run_doctor_seam
-  assert_output_has "abort superseded by a later post-gate cycle" || return 1
+  assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
 # ── AC2 — an abort with nothing after it stays a live condition ────────────────────────────────
 
-@test "AC2: an in-window abort with no later post-gate row FAILs and echoes the row" {
+@test "AC2: an in-window abort with no later non-abort row FAILs and echoes the row" {
   emit_abort_row || {
     echo "producer wrote no abort row" >&2
     return 1
@@ -165,17 +165,17 @@ assert_output_lacks() {
   }
 }
 
-# ── AC3 — post-gate rows alone are not a supersession ──────────────────────────────────────────
+# ── AC3 — non-abort rows alone are not a supersession ─────────────────────────────────────────
 
-@test "AC3: post-gate rows with no abort in the window report no aborts, not a supersession" {
+@test "AC3: non-abort rows with no abort in the window report no aborts, not a supersession" {
   # The steady state of every healthy install once T3-1 landed: a heartbeat row every cycle and no
   # abort anywhere. Claiming a supersession here reports a recovery from a condition that never
   # happened — a daily false line on an install that has never aborted.
   append_zero_eligible_row "${TODAY}" backlog
   append_zero_eligible_row "${TODAY}" report
   run_doctor_seam
-  assert_output_has "ok   : no autoagent apply-preflight aborts in the last" || return 1
-  assert_output_lacks "abort superseded by a later post-gate cycle" || return 1
+  assert_output_has "ok   : no autoagent apply aborts in the last" || return 1
+  assert_output_lacks 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
@@ -208,7 +208,9 @@ assert_output_lacks() {
   run_doctor_seam
   assert_output_has "FAIL : autoagent apply aborted in the last" || return 1
   assert_output_has "abort row:" || return 1
-  assert_output_lacks "abort superseded by a later post-gate cycle" || return 1
+  assert_output_lacks 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
+  # The exclusion is the clause two prior rewordings dropped, so the FAIL line has to keep stating it.
+  assert_output_has 'does not supersede' || return 1
   [[ "${status}" -ne 0 ]] || {
     echo "doctor exited 0 despite the §14 FAIL line — output:" >&2
     echo "${output}" >&2
@@ -225,13 +227,13 @@ assert_output_lacks() {
   }
   append_zero_eligible_row "${TODAY}" backlog cleared
   run_doctor_seam
-  assert_output_has "abort superseded by a later post-gate cycle" || return 1
+  assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
 # ── AC7 — a row carrying NO gate field supersedes, which is the correctness condition ─────────
 
-@test "AC7: every field-less post-gate row still supersedes an in-window abort" {
+@test "AC7: every field-less non-abort row still supersedes an in-window abort" {
   # Every row already in the fourteen-day window predates the field, and five of the six producer
   # statuses will never carry one. Keying as "supersede only when it says cleared" would report
   # every recovered daemon as still-aborted — a wider false-red than the one this task closes.
@@ -245,7 +247,7 @@ assert_output_lacks() {
     printf '{"ts":"%sT12:00:00.000Z","status":"%s","pattern_label":"probe","target_file":"agents/probe.md"}\n' \
       "${TODAY}" "${st}" >>"${REPORTS}/autoagent-applied-${TODAY}.jsonl"
     run_doctor_seam
-    [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]] || failed="${failed} ${st}(no-ok)"
+    [[ "${output}" == *'abort superseded by a later non-abort row not marked "gate":"skipped"'* ]] || failed="${failed} ${st}(no-ok)"
     [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} ${st}(fail-line)"
   done
   # The legacy heartbeat shape: skip + zero_eligible, written before the gate field existed.
@@ -256,7 +258,7 @@ assert_output_lacks() {
   }
   append_zero_eligible_row "${TODAY}" backlog
   run_doctor_seam
-  [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]] || failed="${failed} legacy-heartbeat(no-ok)"
+  [[ "${output}" == *'abort superseded by a later non-abort row not marked "gate":"skipped"'* ]] || failed="${failed} legacy-heartbeat(no-ok)"
   [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} legacy-heartbeat(fail-line)"
   [[ -z "${failed}" ]] || {
     echo "field-less rows that did NOT supersede:${failed}" >&2
@@ -297,7 +299,7 @@ assert_output_lacks() {
       GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
         DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" PATH="${shimdir}:${PATH}" \
         run "${REAL_GA}" doctor
-      if [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]]; then
+      if [[ "${output}" == *'abort superseded by a later non-abort row not marked "gate":"skipped"'* ]]; then
         verdicts="${verdicts} ${fixture}:superseded"
       elif [[ "${output}" == *"FAIL : autoagent apply aborted"* ]]; then
         verdicts="${verdicts} ${fixture}:aborted"

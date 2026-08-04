@@ -2162,9 +2162,45 @@ fi
 # a proposal-generation bug flooding core.autoagent_proposals. Loud-fail
 # (exit 7) and apply NOTHING rather than risk a runaway mass-apply. The single
 # path (1 row) and the JSON-report fallback are naturally bounded, so exempt.
+
+# backlog_anomaly_row — serialise the ONE row this tripwire lands. Field-by-field for the same reason
+# preflight_abort_row is: a nested `$(… | json_escape)` inside the printf would swallow a
+# python3-absent failure and emit a MALFORMED row, which reads worse than no row at all.
+# The `abort` literal is load-bearing in BOTH directions. A dedicated literal would redden the
+# producer literal-set pin under the preflight test root — tripping the fatal green-suite gate. And
+# any POST-gate literal (skip/error) would tell doctor §14 the gate re-opened, silently clearing an
+# unrelated preflight abort still live in its window: strictly worse than the silence this row fixes.
+# `abort` therefore carries the shared meaning "this cycle did not complete its apply loop"; `reason`
+# is what separates this post-gate refusal from the pre-gate one, and §14 reads it to pick the remedy.
+# $1 = the observed eligible-pending count. Both counts are shell-side integers (an array length, and
+# a threshold already regex-validated at parse time), so they add no escaping failure path.
+backlog_anomaly_row() {
+    local eligible="$1" ts_json
+    ts_json="$(ts_now_json)" || return 1
+    [[ -n "${ts_json}" ]] || return 1
+    printf '{"ts":%s,"status":"abort","reason":"backlog_anomaly","exit_code":7,"eligible_pending":%d,"threshold":%d,"patch_source":"backlog"}' \
+        "${ts_json}" "${eligible}" "${ANOMALY_THRESHOLD}"
+}
+
+# emit_backlog_anomaly_row — land that row, or say out loud that it could not be landed. The exit is
+# NEVER the emit's to change: exit 7 is what the caller's tests assert, so a failed row degrades to a
+# named WARN and the exit code stands.
+emit_backlog_anomaly_row() {
+    local row=""
+    if row="$(backlog_anomaly_row "$1")" && emit_log "${row}"; then
+        printf '[daemon-apply] backlog-anomaly abort recorded → %s\n' "${APPLIED_LOG}" >&2
+    else
+        printf '[daemon-apply] WARN: backlog-anomaly abort row NOT persisted (%s) — this abort is stderr-only\n' \
+            "${APPLIED_LOG}" >&2
+    fi
+}
+
 if [[ "${PATCH_SOURCE}" == "backlog" ]] && [[ ${#PATCH_ROWS[@]} -gt ${ANOMALY_THRESHOLD} ]]; then
     printf '[daemon-apply] FATAL: backlog anomaly — %d eligible-pending rows exceed ANOMALY_THRESHOLD=%d; applying nothing (likely proposal-generation runaway, investigate core.autoagent_proposals)\n' \
         "${#PATCH_ROWS[@]}" "${ANOMALY_THRESHOLD}" >&2
+    # stderr alone is silence on the launchd path (Precondition Loud-Fail's third leg): this was the
+    # one terminal path in the file whose FATAL left no durable trace behind the cycle.
+    emit_backlog_anomaly_row "${#PATCH_ROWS[@]}"
     exit 7
 fi
 
