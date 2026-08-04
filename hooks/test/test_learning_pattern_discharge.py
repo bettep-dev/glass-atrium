@@ -99,8 +99,8 @@ def _driver_on_sys_modules():
     Scoped, not permanent, and that scoping is load-bearing: sibling modules in the
     same discovery run key their own skip on psycopg being genuinely absent, so a stub
     left behind would silently un-skip them. ``_pg_outcome_dualwrite`` is restored for
-    the same reason — the module under test imports it, and a neighbouring test file
-    imports it directly, so leaving it cached would decide that file's skip for it.
+    the same reason — a neighbouring test file imports it directly, so leaving it cached
+    would decide that file's skip for it.
     """
     names = ("psycopg", "psycopg.errors", "_pg_outcome_dualwrite")
     saved = {name: sys.modules.get(name) for name in names}

@@ -1,10 +1,13 @@
 """<name> input validation + realpath-inside-agents assertion (SEC-4 / dev-note 2).
 
 Responsibilities:
-    Reject any agent name that is not a safe charset token, and prove a composed
+    Reject any agent name that is not a safe charset token, prove a composed
     agents/<name>.md path resolves to a real location INSIDE the GA agents/ dir
-    before any caller composes a path or hands the name to a subprocess. This
-    closes path-traversal (`../`, `..%2f`) and symlink-boundary-escape reach.
+    before any caller composes a path or hands the name to a subprocess, and
+    read every operator-supplied text file through one gated reader. The first
+    two close path-traversal (`../`, `..%2f`) and symlink-boundary-escape reach;
+    the third keeps ADD's --body-file and EXTEND's --append-section on the same
+    exists / non-empty / secret-scan floor.
 
 These guards MUST run before path composition / subprocess in every action
 handler — they are the single chokepoint, not a per-call afterthought.
@@ -14,6 +17,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from .secret_scan import scan_for_secrets
 
 # Safe agent-name charset — lowercase alphanumerics + hyphen only. No dot, no
 # slash, no percent, so `../x`, `..%2f`, and `a.md` are all rejected at the gate.
@@ -73,3 +78,30 @@ def validated_agent_md(agents_dir: Path, name: str) -> Path:
     candidate = agents_dir / f"{safe}.md"
     assert_inside_agents(agents_dir, candidate)
     return candidate
+
+
+def read_gated_text(path: Path, *, label: str) -> str:
+    """Read an operator-supplied text file through the gates every entry shares.
+
+    exists -> non-empty -> fail-closed secret scan, in that order. Both text
+    inputs that reach the store (ADD's --body-file, EXTEND's --append-section)
+    call this, so neither can drift onto a weaker floor than the other. `label`
+    names the originating flag so the refusal points at the operator's own
+    argument. Raises ValidationError (missing / unreadable / empty) or SecretDetected.
+    """
+    if not path.exists():
+        raise ValidationError(f"{label} not found: {path}")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # A directory argument (IsADirectoryError) or a non-UTF-8 file passes exists()
+        # and escapes read_text as a BUILTIN no caller's except tuple names — an exit-1
+        # traceback where the contract promises the named HALT. Re-raised as the shared
+        # refusal type so both entry points keep their mapping without widening it.
+        raise ValidationError(f"{label} is not readable UTF-8 text: {path}") from exc
+    if not raw.strip():
+        raise ValidationError(f"{label} is empty: {path}")
+    # scanned before any structural gate — a credential must never reach the
+    # store even transiently, whatever the structural verdict turns out to be.
+    scan_for_secrets(raw)
+    return raw

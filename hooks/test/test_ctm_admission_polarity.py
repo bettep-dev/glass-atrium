@@ -100,13 +100,26 @@ class ClassifyPolarity(unittest.TestCase):
 
     def test_when_code_done_metricpass_then_always_ctm_regardless_of_verdict_or_confidence(self):
         for tt in _CODE_TYPES:
-            for verdict in ("verified_pass", "unverified", "verified_fail", ""):
+            for verdict in ("verified_pass", "unverified", ""):
                 for conf in ("high", "medium", "low"):
                     self.assertEqual(
                         agg.classify_lesson_bucket(_rec(tt, verdict, conf)),
                         "ctm",
                         msg=f"{tt}/{verdict}/{conf} should route to ctm, never be discarded",
                     )
+
+    def test_when_code_verified_fail_then_failure_memory_not_discarded(self):
+        # The shared negative-signal predicate counts the grader's failure verdict as a term
+        # of its own, so a graded-failed code row is stored in failure memory rather than as a
+        # success exemplar. Still not a discard, which is what T19 protects. Production pairs
+        # verified_fail with review_flag (track-outcome.sh), so this route is unchanged there.
+        for tt in _CODE_TYPES:
+            for conf in ("high", "medium", "low"):
+                self.assertEqual(
+                    agg.classify_lesson_bucket(_rec(tt, "verified_fail", conf)),
+                    "epm",
+                    msg=f"{tt}/verified_fail/{conf} should route to epm",
+                )
 
     def test_when_low_confidence_code_then_ctm_not_none(self):
         # The behaviour flip vs HEAD: a low-confidence code lesson was dropped (None); now it is

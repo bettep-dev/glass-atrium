@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# doctor-apply-abort-rows.bats — pins run_doctor §14 (autoagent apply-preflight abort surface).
+# doctor-apply-abort-rows.bats — pins run_doctor §14 (autoagent apply-abort surface).
 #
 # WHY THIS SECTION EXISTS: daemon-apply.sh loud-fails exit 16 when the green-suite gate cannot
 # certify the harness, and the launchd path discards its stderr. The abort row in the daily
@@ -7,24 +7,27 @@
 # a healthy install while the daemon had applied nothing for days.
 #
 # GRAMMAR: §14 classifies on row tokens owned by another file. `"status":"abort"` is the sole
-# PRE-gate literal; every other literal is written from inside the per-patch apply loop and so proves
-# the gate re-opened. The abort fixture is therefore PRODUCER-AUTHORED (the real daemon-apply.sh is
-# driven into its root-absence abort against the fixture reports dir), so a producer-side rename
-# fails these tests instead of degrading the check. Post-gate rows cannot be produced without a full
-# apply transaction, so they are hand-written AND the producer's whole literal set is pinned in AC5
-# and AC7.
+# abort-class literal — written by the pre-gate preflight abort AND by the post-gate backlog
+# anomaly tripwire, which is why the axis is the literal rather than the gate stage; every other
+# literal is a non-abort literal the classifier treats alike. The abort fixture is therefore
+# PRODUCER-AUTHORED (the real daemon-apply.sh is driven into its root-absence abort against the
+# fixture reports dir), so a producer-side rename fails these tests instead of degrading the check.
+# Superseding rows need the heavier producer harness (PATH mirror, psql shim, report fixture), so
+# they are hand-written AND the producer's whole literal set is pinned in AC5 and AC7.
 #
 # ACs pinned here:
-#   AC1  an in-window abort row with no later post-gate row FAILs and names the clause.
+#   AC1  an in-window abort row with no later non-abort row FAILs and names the clause.
 #   AC2  a later landed-patch row supersedes the abort → ok.
 #   AC3  no rows at all → ok, never an error.
 #   AC4  an abort row older than the window is history → ok.
 #   AC5  the producer literals §14 classifies on are the ones daemon-apply.sh writes.
-#   AC6  a later NON-landing post-gate row (skip/reject/needs_regen/dryrun/error) also supersedes —
+#   AC6  a later NON-landing non-abort row (skip/reject/needs_regen/dryrun/error) also supersedes —
 #        a recovered daemon with nothing eligible to apply never lands a patch, so keying only on
 #        `applied` would hold the verdict red for the rest of the window.
-#   AC7  the producer's full status-literal set is the one the pre/post-gate split assumes, so a NEW
-#        pre-gate literal fails loudly instead of being read as recovery.
+#   AC7  the producer's full status-literal set is the one the abort/non-abort split assumes, so a
+#        NEW unclassified literal fails loudly instead of being read as recovery.
+#   AC8  a post-gate backlog-anomaly abort is classified as an abort (not as recovery) and its FAIL
+#        line names ITS remedy, not the green-suite gate's.
 #
 # Run via: bats test/doctor-apply-abort-rows.bats
 # Requires: bats, bash 3.2+, python3
@@ -96,10 +99,10 @@ emit_abort_row() {
   [[ -s "${REPORTS}/autoagent-applied-${TODAY}.jsonl" ]] || return 1
 }
 
-# Append one post-gate row ($2 = its status literal) under the date $1. Hand-written: every post-gate
-# literal is emitted from inside the apply loop, which a fixture cannot reach without a full apply
-# transaction. The literals used here are pinned against the producer source by AC5 and AC7.
-append_post_gate_row() {
+# Append one non-abort row ($2 = its status literal) under the date $1. Hand-written: reaching the
+# producer sites needs the heavier producer harness. The literals used here are pinned against the
+# producer source by AC5 and AC7.
+append_non_abort_row() {
   local date_key="$1" status="$2"
   printf '%s\n' \
     '{"ts":"'"${date_key}"'T12:00:00.000Z","status":"'"${status}"'","pattern_label":"probe","target_file":"agents/probe.md"}' \
@@ -132,7 +135,7 @@ assert_output_lacks() {
 
 # ── AC1 — an unsuperseded in-window abort FAILs and names the clause ───────────────────────────
 
-@test "AC1: an in-window abort row with no later clean apply FAILs and names the clause" {
+@test "AC1: an in-window abort row with no later non-abort row FAILs and names the clause" {
   emit_abort_row || {
     echo "producer wrote no abort row" >&2
     return 1
@@ -144,16 +147,16 @@ assert_output_lacks() {
   assert_output_has "abort row:" || return 1
 }
 
-# ── AC2 — a later clean apply supersedes the abort ─────────────────────────────────────────────
+# ── AC2 — a later landed-patch row supersedes the abort ────────────────────────────────────────
 
-@test "AC2: a later clean apply row supersedes the abort → ok" {
+@test "AC2: a later landed-patch (applied) row supersedes the abort → ok" {
   emit_abort_row || {
     echo "producer wrote no abort row" >&2
     return 1
   }
-  append_post_gate_row "${TODAY}" "applied"
+  append_non_abort_row "${TODAY}" "applied"
   run_doctor_seam
-  assert_output_has "abort superseded by a later post-gate cycle" || return 1
+  assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
@@ -162,7 +165,7 @@ assert_output_lacks() {
 @test "AC3: an empty daemon-reports dir passes rather than erroring" {
   [[ -z "$(ls -A "${REPORTS}")" ]] || return 1
   run_doctor_seam
-  assert_output_has "no autoagent apply-preflight aborts in the last" || return 1
+  assert_output_has "no autoagent apply aborts in the last" || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
@@ -175,7 +178,7 @@ assert_output_lacks() {
   }
   age_applied_log 30 >/dev/null
   run_doctor_seam
-  assert_output_has "no autoagent apply-preflight aborts in the last" || return 1
+  assert_output_has "no autoagent apply aborts in the last" || return 1
   assert_output_lacks "FAIL : autoagent apply aborted"
 }
 
@@ -196,9 +199,9 @@ assert_output_lacks() {
   }
 }
 
-# ── AC6 — a non-landing post-gate row supersedes too ───────────────────────────────────────────
+# ── AC6 — a non-landing non-abort row supersedes too ──────────────────────────────────────────
 
-@test "AC6: any post-gate row supersedes the abort, not only a landed patch" {
+@test "AC6: any non-abort row supersedes the abort, not only a landed patch" {
   local status failed=""
   for status in skip reject needs_regen dryrun error; do
     rm -f -- "${REPORTS}"/autoagent-applied-*.jsonl
@@ -206,30 +209,70 @@ assert_output_lacks() {
       echo "producer wrote no abort row (${status})" >&2
       return 1
     }
-    append_post_gate_row "${TODAY}" "${status}"
+    append_non_abort_row "${TODAY}" "${status}"
     run_doctor_seam
-    [[ "${output}" == *"abort superseded by a later post-gate cycle"* ]] || failed="${failed} ${status}(no-ok)"
+    [[ "${output}" == *'abort superseded by a later non-abort row not marked "gate":"skipped"'* ]] || failed="${failed} ${status}(no-ok)"
     [[ "${output}" != *"FAIL : autoagent apply aborted"* ]] || failed="${failed} ${status}(fail-line)"
   done
   [[ -z "${failed}" ]] || {
-    echo "post-gate literals that did not clear the abort:${failed}" >&2
+    echo "non-abort literals that did not clear the abort:${failed}" >&2
     echo "last doctor output: ${output}" >&2
     return 1
   }
 }
 
-# ── AC7 — producer literal-SET pin (guards the pre/post-gate split) ────────────────────────────
+# ── AC7 — producer literal-SET pin (guards the abort/non-abort split) ──────────────────────────
 
-@test "AC7: the producer's status-literal set is the one the pre/post-gate split assumes" {
+@test "AC7: the producer's status-literal set is the one the abort/non-abort split assumes" {
   local observed expected
   # grep -o yields one `"status":"<lit>"` per emit site; strip to the bare literal and dedupe.
   observed="$(grep -o '"status":"[a-z_]*"' "${APPLY_SH}" | sed 's/^"status":"//;s/"$//' | sort -u | tr '\n' ' ')"
   expected="abort applied dryrun error needs_regen reject skip "
   [[ "${observed}" == "${expected}" ]] || {
-    echo "producer status-literal set changed — §14 treats 'abort' as the ONLY pre-gate literal and" >&2
-    echo "every other literal as proof the gate re-opened. Classify the new literal before widening." >&2
+    echo "producer status-literal set changed — §14 treats 'abort' as the ONLY abort-class literal" >&2
+    echo "(both the pre-gate preflight abort and the post-gate backlog anomaly write it) and every" >&2
+    echo "other literal as non-abort. Classify the new literal before widening." >&2
     echo "observed: ${observed}" >&2
     echo "expected: ${expected}" >&2
     return 1
   }
+}
+
+# ── AC8 — the POST-gate abort producer: classified as an abort, remedied as itself ──────────────
+#
+# Reaching the tripwire needs a psql-stubbed backlog the doctor sandbox has no mirror for, so the
+# row is hand-written here for the same reason the superseding rows above are — and its two literals
+# are pinned against the producer source so a rename fails this test rather than degrading it. The
+# producer-authored half lives in autoagent/test/daemon-apply-backlog-anomaly-row.bats.
+
+append_anomaly_abort_row() {
+  printf '%s\n' \
+    '{"ts":"'"${TODAY}"'T12:00:00.000Z","status":"abort","reason":"backlog_anomaly","exit_code":7,"eligible_pending":137,"threshold":100,"patch_source":"backlog"}' \
+    >>"${REPORTS}/autoagent-applied-${TODAY}.jsonl"
+}
+
+@test "AC8: a post-gate backlog-anomaly abort FAILs and names the backlog remedy, not the gate" {
+  local missing=""
+  grep -q '"status":"abort","reason":"backlog_anomaly"' "${APPLY_SH}" || missing="${missing} anomaly-reason"
+  grep -q '"reason":"preflight_fatal"' "${APPLY_SH}" || missing="${missing} preflight-reason"
+  [[ -z "${missing}" ]] || {
+    echo "producer grammar changed — the reason literals §14 branches on are absent:${missing}" >&2
+    return 1
+  }
+  append_anomaly_abort_row
+  run_doctor_seam
+  assert_output_has "FAIL : autoagent apply aborted in the last" || return 1
+  assert_output_has "abort row:" || return 1
+  # the remedy has to be THIS producer's: the green-suite clause would send the operator at a suite
+  # that was never red, which is the same wrong-cause report the silent tripwire used to cause.
+  assert_output_has "core.autoagent_proposals" || return 1
+  assert_output_lacks "re-open the gate"
+}
+
+@test "AC8b: a later non-abort row supersedes the anomaly abort too" {
+  append_anomaly_abort_row
+  append_non_abort_row "${TODAY}" "applied"
+  run_doctor_seam
+  assert_output_has 'abort superseded by a later non-abort row not marked "gate":"skipped"' || return 1
+  assert_output_lacks "FAIL : autoagent apply aborted"
 }

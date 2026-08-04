@@ -227,11 +227,14 @@ class AdmissionFloorRelease(unittest.TestCase):
             ),
             "epm",
         )
-        # non-code verified_fail is still not admitted at all.
-        self.assertIsNone(
+        # non-code verified_fail is still not admitted to the success channel — the shared
+        # predicate counts the grader verdict itself, so it lands in failure memory whether or
+        # not the review_flag the production path always pairs with it is present.
+        self.assertEqual(
             agg.classify_lesson_bucket(
                 _rec("doc", ["e2e/a.spec.ts"], verdict="verified_fail", confidence="high")
-            )
+            ),
+            "epm",
         )
 
     def test_when_non_code_then_admission_unchanged(self):

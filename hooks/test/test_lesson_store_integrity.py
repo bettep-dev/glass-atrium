@@ -215,14 +215,17 @@ class CorroborationTier(IngestFixture):
         self.assertEqual(self._store()["ctm"], [])
 
     def test_when_grader_verified_fail_then_ctm_never_admitted(self):
-        # non-code + verified_fail (review_flag unset) — the FB-1d branch verified_fail gate rejects
+        # non-code + verified_fail (review_flag unset) — the FB-1d branch verified_fail gate keeps
+        # it out of the success channel. The shared negative-signal predicate counts the grader
+        # verdict as a term of its own, so the lesson is kept as a failure pattern rather than
+        # dropped; production pairs verified_fail with review_flag, which routed here already.
         ops, _ = self._ingest(
             [_record("bogus win", grader_verdict="verified_fail", task_type="review")]
         )
         store = self._store()
         self.assertEqual(store["ctm"], [])
-        self.assertEqual(store["epm"], [])  # excluded entirely, not rerouted
-        self.assertFalse(any(op in ops for op in ("ADD", "UPDATE", "MERGE")))
+        self.assertEqual([e["text"] for e in store["epm"]], ["bogus win"])
+        self.assertEqual(ops.get("ADD"), 1)
 
 
 class DocLockstep(unittest.TestCase):

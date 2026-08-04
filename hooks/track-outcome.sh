@@ -1671,7 +1671,7 @@ role_default_task_type() {
 }
 
 # role_task_type_allowed — is task_type $1 within ${AGENT_TYPE}'s Role → Allowed allowlist? SINGLE
-# SoT with the core-outcome-record.md Role → Allowed table and the _pg_outcome_dualwrite.py mirror.
+# SoT with the core-outcome-record.md Role → Allowed table and the _outcome_signal.py mirror.
 # Echoes "1" (allowed) / "0" (off-role). A role NOT enumerated (dev-* / unknown) has no constraining
 # allowlist → always "1" (DEV allowlist is broad: bug-fix/feature/refactor/cleanup/research/plan).
 # Prefix-match so a versioned/suffixed id resolves. LAYER-3 mis-classification guard: an off-role
@@ -2223,7 +2223,11 @@ fi
 # EXPECTED even on perfect work → high+false there is a definitional non-signal, not overconfidence.
 # Gate it off for those structural rows; keep it for a GENUINE code row (dev-* on-role bug-fix/feature).
 # Predicate (SAME SoT the python D2 mirrors): STRUCTURAL == (task_type_has_hard_test_bar == 0) OR
-# (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED.
+# (WAS_OFF_ROLE == true). The underconfidence (low+true) and EMPTY-metric_pass branches are UNCHANGED —
+# they still flag structural rows, so the consumer-side carve-out mirrors this BRANCH (structural AND
+# high AND metric_pass=false), never the structural predicate alone: _outcome_signal
+# ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would discard those two
+# live signals from both lesson buckets.
 REVIEW_FLAG="false"
 if [[ "${CONFIDENCE}" = "high" ]] && [[ "${METRIC_PASS}" = "false" ]]; then
   if [[ "$(task_type_has_hard_test_bar "${TASK_TYPE}")" == "0" ]] || [[ "${WAS_OFF_ROLE:-false}" == "true" ]]; then
@@ -2254,7 +2258,7 @@ fi
 # EXPLICIT two-literal allowlist, never a negation over the synthesized family: budget-truncation and
 # truncated_completion are real negatives already, and sweeping them in amplifies the very truncation
 # family under remediation. Negative-signal neutrality is carried by the paired exclusions in
-# _pg_learning_dualwrite.negative_signal_hits and learning-aggregator._record_is_negative.
+# _outcome_signal.negative_signal_hits, the ONE predicate every learning consumer reads.
 case "${ATTRIBUTION_SOURCE}" in
   structuredoutput-derived | completion-synthesized) REVIEW_FLAG="true" ;;
   *) ;;
