@@ -152,6 +152,10 @@ REGRESSION_SH="${SCRIPT_DIR}/archive/daemon-regression-deprecated-2026-05-02.sh"
 # Store-root form (same convention as CLAUDE_AUTH_ENV_LIB / PAUSE_FLAG_LIB): hooks
 # are consumed in place from the store — ~/.claude/hooks is no longer farmed.
 AGGREGATOR_PY="${HOME}/.glass-atrium/hooks/learning-aggregator.py"
+# The harness entry point sits at the store root, one level above this driver's own dir. Resolved
+# from SCRIPT_DIR and NOT from HOME, so a driver running out of a fixture tree reaches that tree's
+# entry point instead of the live install's.
+DOCTOR_ENTRY="${SCRIPT_DIR%/*}/glass-atrium"
 
 if [[ ! -f "${PY_MODULE}" ]]; then
     printf '[daemon-cycle] FATAL: missing %s\n' "${PY_MODULE}" >&2
@@ -529,6 +533,49 @@ PSQL
     printf 'present||\n'
 }
 
+# Record the provenance of the apply-health compose. Called on EVERY exit of the stage below.
+# The exits that never REACH the compose statement are exactly the ones that recorded nothing: no CASE
+# arm runs, so the row's own apply_status_provenance stays absent and this line is the only thing that
+# names the reason. Durability differs by exit and is stated rather than implied — on the two exits
+# that reach the statement the same value is also on the run row (the helper's CASE writes it), so the
+# line is a second surface for a durable fact; on the skipped exits it is the only surface, because
+# recording the reason on the row needs a provenance-only write op the helper does not expose (its two
+# daemon_runs ops either compose the status or upsert it wholesale, and the wholesale one would erase
+# the patch-generation verdict this composition exists to preserve).
+record_apply_status_provenance() {
+    printf '[daemon-cycle] APPLY_STATUS provenance=%s date=%s\n' "$1" "${CYCLE_DATE}" >&2
+}
+
+# Derive the compose provenance from what the helper REPORTED, never from the token this driver SENT.
+# The statement's ELSE arm keeps a pre-existing generation verdict and the sent token lands nowhere, so
+# a value read off the request would record a compose that never happened — the same silence at one
+# remove. The matched-row count cannot discriminate either (1 on BOTH arms, which is why the helper
+# reports the arm on a stdout trailer at all). $1 = helper rc · $2 = its captured stdout.
+get_compose_provenance() {
+    local rc="$1" helper_out="$2" line reported=""
+    while IFS= read -r line; do
+        case "${line}" in
+            provenance=*)
+                reported="${line#provenance=}"
+                break
+                ;;
+        esac
+    done <<<"${helper_out}"
+    if [[ "${rc}" -ne 0 ]]; then
+        printf 'unreported:helper_rc_%d\n' "${rc}"
+        return 0
+    fi
+    if [[ -z "${reported}" ]]; then
+        # A trailer-less success is a compose that ran and said nothing: a DB predating the provenance
+        # column composes the status alone, and a compose matching no row writes nothing at all. Both
+        # are unknown outcomes, and naming either after the sent token would assert a value no channel
+        # observed.
+        printf 'unreported:no_trailer\n'
+        return 0
+    fi
+    printf '%s\n' "${reported}"
+}
+
 # APPLY_STATUS: fold the apply stage's outcome INTO the run record's status.
 # The run row is written by run_pg_push_stage BEFORE apply runs and its status
 # derives solely from per-patch generation errors, so an aborted apply stage
@@ -550,6 +597,14 @@ run_apply_status_stage() {
     if [[ "${DRY_RUN}" -eq 1 || "${helper_label}" == "missing" ]]; then
         printf '[daemon-cycle] APPLY_STATUS SKIP dry=%d helper=%s date=%s\n' \
             "${DRY_RUN}" "${helper_label}" "${CYCLE_DATE}" >&2
+        # One exit, two reasons that must not collapse: a dry run DECLINES to write, an absent helper
+        # CANNOT. dry-run is tested first because a dry run without the helper installed is still a
+        # dry run — the write was never going to happen.
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+            record_apply_status_provenance "skipped:dry_run"
+        else
+            record_apply_status_provenance "skipped:helper_missing"
+        fi
         return 0
     fi
     local enum_state="" missing_labels="" missing_migrations="" enum_probe
@@ -559,6 +614,9 @@ run_apply_status_stage() {
         printf '[daemon-cycle] APPLY_STATUS SKIP enum=absent labels=%s migrations=%s date=%s apply_rc=%d — core."DaemonStatus" cannot express the composed value; apply those migrations and the next cycle records apply health\n' \
             "${missing_labels}" "${missing_migrations}" \
             "${CYCLE_DATE}" "${APPLY_RC}" >&2
+        # The missing labels travel WITH the value: the reason is not "enum" but which migration is
+        # unapplied, and an operator reading the row's absent provenance has no other way to learn it.
+        record_apply_status_provenance "skipped:enum_absent:${missing_labels}"
         return 0
     fi
     if [[ "${enum_state}" != "present" ]]; then
@@ -574,9 +632,16 @@ run_apply_status_stage() {
     fi
     printf '[daemon-cycle] APPLY_STATUS start date=%s apply_rc=%d status=%s\n' \
         "${CYCLE_DATE}" "${APPLY_RC}" "${apply_status}" >&2
-    printf '{"op":"compose_daemon_run_apply_status","args":{"daemon_name":"autoagent","run_date":"%s","apply_status":"%s"}}\n' \
-        "${CYCLE_DATE}" "${apply_status}" \
-        | "${PYTHON_BIN}" "${helper}" >/dev/null || rc=$?
+    # Stdout is CAPTURED, not discarded: line 1 is the elapsed-milliseconds figure every op returns and
+    # the trailer below it names the CASE arm the database actually took. Discarding it is what left a
+    # declined compose indistinguishable from a composed one.
+    local helper_out=""
+    helper_out="$(
+        printf '{"op":"compose_daemon_run_apply_status","args":{"daemon_name":"autoagent","run_date":"%s","apply_status":"%s"}}\n' \
+            "${CYCLE_DATE}" "${apply_status}" \
+            | "${PYTHON_BIN}" "${helper}"
+    )" || rc=$?
+    record_apply_status_provenance "$(get_compose_provenance "${rc}" "${helper_out}")"
     printf '[daemon-cycle] APPLY_STATUS end rc=%d\n' "${rc}" >&2
     return "${rc}"
 }
@@ -600,6 +665,98 @@ run_aggregate_stage() {
     else
         printf '[daemon-cycle] stage=aggregate rc=%d (continuing)\n' "${rc}" >&2
     fi
+    return "${rc}"
+}
+
+# Record the doctor verdict into the per-cycle report — the durable channel, since every stage line
+# in this driver goes to a run log that evaporates. Returns 0 ALWAYS, and that is the load-bearing
+# property: a recording failure is a DURABILITY problem, not a cycle failure, so folding it would
+# turn a healthy install into a degraded one on every dispatch that legitimately writes no report
+# (--apply-only / --aggregate-only against an absent daily file), stacking a second misleading
+# failure on top of whatever the real one was.
+# It cannot mask a failing doctor either: run_doctor_stage returns the DOCTOR's rc and the caller
+# folds THAT, independently of this function — a red verdict degrades the cycle whether or not it
+# reached the report — and the notice below carries the verdict onto the log, so an unrecordable
+# verdict is loud rather than lost.
+record_doctor_verdict() {
+    local verdict="$1" rc="$2" checked_at="" record_rc=0
+    if [[ ! -s "${OUT_PATH}" ]]; then
+        # Absent and empty are one exit with two reasons that must not collapse: absent is the normal
+        # shape of a dispatch that writes no daily report, empty means a report write was truncated.
+        local why="empty"
+        if [[ ! -e "${OUT_PATH}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=doctor RECORD-MISS verdict=%s rc=%d report=%s reason=%s — verdict is on this log only; the cycle rc is unchanged\n' \
+            "${verdict}" "${rc}" "${OUT_PATH}" "${why}" >&2
+        return 0
+    fi
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "${PYTHON_BIN}" - "${OUT_PATH}" "${verdict}" "${rc}" "${checked_at}" <<'PY' || record_rc=$?
+import json
+import os
+import sys
+import tempfile
+
+path, verdict, rc, checked_at = sys.argv[1:5]
+with open(path) as fh:
+    report = json.load(fh)
+if not isinstance(report, dict):
+    raise SystemExit("per-cycle report is not a JSON object: %s" % path)
+report["doctor"] = {"verdict": verdict, "rc": int(rc), "checked_at": checked_at}
+# Same-directory temp + rename: the report is the durable channel, so a crash mid-write must not
+# leave the cycle's own record truncated.
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".doctor-verdict.")
+try:
+    with os.fdopen(fd, "w") as fh:
+        json.dump(report, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+PY
+    if [[ "${record_rc}" -ne 0 ]]; then
+        printf '[daemon-cycle] stage=doctor RECORD-FAILED verdict=%s rc=%d report=%s writer_rc=%d — verdict is on this log only; the cycle rc is unchanged\n' \
+            "${verdict}" "${rc}" "${OUT_PATH}" "${record_rc}" >&2
+        return 0
+    fi
+    printf '[daemon-cycle] stage=doctor recorded verdict=%s report=%s\n' "${verdict}" "${OUT_PATH}" >&2
+    return 0
+}
+
+# DOCTOR: the terminal stage. Nothing else on this machine runs the doctor unattended — no scheduled
+# job invokes it — so every check it carries reached an operator only when one asked, and the cycle
+# is the scheduled carrier that already writes a durable per-cycle report.
+# It runs LAST on purpose: apply health is composed and the run row is written before this point, so
+# a verdict can never re-label an apply outcome. The doctor is an observability surface, and one that
+# reddened the apply loop would be worse than the gap it closes.
+# stdout → stderr: the doctor writes its report on stderr but leaves terminal escapes on stdout, and
+# this driver's stdout carries no status.
+run_doctor_stage() {
+    if [[ ! -x "${DOCTOR_ENTRY}" ]]; then
+        # Loud, and rc 0: an install shipping without the entry point is a standing warn rather than a
+        # permanently degraded cycle, but the reason is named so this stage cannot become the silent
+        # failure it was added to remove. A cleared executable bit is the same condition as absence
+        # here and is reported apart from it — an interpreter prefix would hide it by running a file
+        # no operator can run.
+        local why="not executable"
+        if [[ ! -e "${DOCTOR_ENTRY}" ]]; then
+            why="absent"
+        fi
+        printf '[daemon-cycle] stage=doctor SKIP: %s %s — no verdict recorded this cycle\n' \
+            "${DOCTOR_ENTRY}" "${why}" >&2
+        return 0
+    fi
+    local rc=0 verdict="pass"
+    printf '[daemon-cycle] stage=doctor start entry=%s\n' "${DOCTOR_ENTRY}" >&2
+    "${DOCTOR_ENTRY}" doctor >&2 || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+        verdict="fail"
+    fi
+    printf '[daemon-cycle] stage=doctor verdict=%s rc=%d\n' "${verdict}" "${rc}" >&2
+    record_doctor_verdict "${verdict}" "${rc}"
     return "${rc}"
 }
 
@@ -744,6 +901,17 @@ else
         "${DRY_RUN}" "${loop_helper_label}" >&2
 fi
 # LOOP-EVENTS-DUALWRITE-END
+
+# DOCTOR-STAGE-BEGIN
+# Terminal by construction: apply rc, the composed apply health and the run row are all written
+# above, so this stage observes the install and changes none of them. The rc goes through the same
+# non-fatal fold every other stage uses — a red doctor degrades the cycle's aggregate (exit 1) and
+# never aborts it. Runs in every dispatch mode, including dry-run: the doctor is mutation-free, and a
+# mode that skipped it would be a mode whose install health nobody checks.
+doctor_rc=0
+run_doctor_stage || doctor_rc=$?
+record_stage_rc "${doctor_rc}"
+# DOCTOR-STAGE-END
 
 # Final exit reflects the aggregate dispatch result: 0 = all dispatched stages
 # clean · 1 = degraded (≥1 stage non-zero) · 2 = arg/stage-mode error · 3 =

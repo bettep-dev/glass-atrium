@@ -8,6 +8,14 @@
 # sends, when it sends nothing at all, and that it is sequenced past the tail push. The SQL CASE that
 # preserves a patch-generation failure lives in the helper and is pinned with the helper.
 #
+# PROVENANCE (AC14-AC23): sending the token was never the same as recording it. The compose statement
+# keeps a pre-existing patch-generation verdict on its ELSE arm and the matched-row count is 1 on BOTH
+# arms, so a driver that discarded the helper's stdout could not tell a composed cycle from a declined
+# one — and the exits that never reach the statement recorded nothing at all. The driver now records a
+# provenance value on EVERY exit, derived from what the helper REPORTED and never from what the driver
+# SENT: AC17 and AC19 assert those two apart on purpose, because a value read off the request would be
+# true by construction and blind to exactly the arm the finding is about.
+#
 # ACs pinned here:
 #   AC1  an aborted apply on an otherwise dispatched cycle sends apply_status=apply_failed.
 #   AC2  a clean apply sends apply_status=ok.
@@ -26,6 +34,19 @@
 #   AC12 a real apply failure still composes apply_failed — the new state swallows no failure.
 #   AC13 a DB carrying the older label but NOT the new one reports the dependency absent and
 #        composes nothing — a probe pinning one label would read `present` and fail its cast.
+#   AC14 a dry run records provenance naming the dry run, and composes nothing.
+#   AC15 an absent helper records its OWN reason on that shared exit, not the dry-run one.
+#   AC16 an enum-absent skip records the reason AND the missing labels — "enum absent" alone names
+#        no migration.
+#   AC17 a DECLINED compose records the DB-reported decline while the sent token was `ok`.
+#   AC18 a successful compose records the composed value the DB reported.
+#   AC19 a compose that reported no trailer (a DB predating the provenance column) records unknown,
+#        never the sent token.
+#   AC20 a failed helper records the failure with its rc and still degrades rather than crashes.
+#   AC21 a decline triggers no follow-up write — a corrective write is what WOULD erase the kept
+#        generation verdict.
+#   AC22 recording provenance writes no new file into the report directory.
+#   AC23 the doctor's abort surface still FAILs on an unsuperseded abort after such a cycle.
 #
 # Run via: bats autoagent/test/daemon-cycle-apply-status.bats
 # Requires: bats >= 1.5.0, bash 3.2+, python3
@@ -83,13 +104,29 @@ EOF
 
 # make_helper — stub dual-write helper at the HOME-anchored path the driver invokes. Records every
 # envelope it is handed (one JSON line each) and exits $1, so a failing DB is simulated by a code.
+# $2 (optional) = the provenance trailer the real helper appends when the compose statement reports
+# its CASE arm. Stdout mirrors the real contract in BOTH halves: line 1 is always the bare
+# elapsed_ms integer, the trailer only ever follows it. Omitting $2 reproduces the trailer-less
+# success a DB predating the provenance column produces — which is a fixture, not an oversight.
 make_helper() {
-  local code="$1"
+  local code="$1" trailer="${2-}"
   cat >"${FAKE_HOME}/.glass-atrium/scripts/_pg_dual_write_daemon.py" <<EOF
 import sys
 open("${ENVELOPE_LOG}", "a").write(sys.stdin.read().strip() + "\n")
+sys.stdout.write("7\n")
+trailer = "${trailer}"
+if trailer:
+    sys.stdout.write("provenance=%s\n" % trailer)
 sys.exit(${code})
 EOF
+}
+
+# The provenance value the driver RECORDED for this run (empty when it recorded none). Reads the
+# driver's own line rather than the envelope, because what the driver sent is exactly what these
+# cases must not accept as evidence.
+recorded_provenance() {
+  printf '%s\n' "${output}" \
+    | sed -n 's/.*\[daemon-cycle\] APPLY_STATUS provenance=\([^ ]*\) .*/\1/p'
 }
 
 # make_push_helper — stub pg-push helper. It writes an envelope line of its own so the ORDER of the
@@ -419,3 +456,190 @@ PY
   }
 }
 
+# ── AC14 — a dry run records WHY it composed nothing ──────────────────────────────────────────
+
+@test "AC14: a dry run records provenance naming the dry run" {
+  make_stage_stubs 0
+  make_helper 0 "composed:ok"
+  run_driver --apply-only --dry-run
+  [[ "$(recorded_provenance)" == "skipped:dry_run" ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # the reason has to be recorded BECAUSE nothing else records it: no compose ran, so the row's own
+  # provenance stays absent.
+  [[ -z "$(compose_status)" ]] || {
+    echo "a dry run composed: $(cat "${ENVELOPE_LOG}" 2>&1)" >&2
+    return 1
+  }
+}
+
+# ── AC15 — an absent helper is a DIFFERENT reason on the same exit ────────────────────────────
+
+@test "AC15: a missing helper records its own reason, not the dry-run one" {
+  make_stage_stubs 0
+  # no make_helper — the HOME-anchored path stays empty, which is the condition under test.
+  run_driver --apply-only
+  [[ "$(recorded_provenance)" == "skipped:helper_missing" ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC16 — an unapplied migration records the reason AND the missing labels ───────────────────
+
+@test "AC16: an enum-absent skip records the reason and names the missing labels" {
+  make_stage_stubs 0
+  make_helper 0 "composed:ok"
+  make_psql_stub legacy # the NEW label alone is missing — the sharp case for naming it
+  chmod 644 "${WORK}/real/autoagent/daemon-apply.sh"
+  run_driver --apply-only
+  # the labels travel WITH the value: "enum absent" without the label names no migration.
+  [[ "$(recorded_provenance)" == "skipped:enum_absent:apply_unavailable" ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  [[ -z "$(compose_status)" ]] || return 1
+}
+
+# ── AC17 — a DECLINED compose is recorded as declined, never as the token that was sent ───────
+
+@test "AC17: a declined compose records the DB-reported decline, not the sent token" {
+  make_stage_stubs 0 # a clean apply, so the token this driver sends is 'ok'
+  make_helper 0 "declined:partial"
+  run_driver --apply-only
+  local sent recorded
+  sent="$(compose_status)"
+  recorded="$(recorded_provenance)"
+  # the sent token and the recorded value are ASSERTED APART: deriving the record from the request
+  # would make it true by construction and blind to exactly this arm.
+  [[ "${sent}" == "ok" && "${recorded}" == "declined:partial" ]] || {
+    echo "sent=${sent} recorded=${recorded} — output: ${output}" >&2
+    return 1
+  }
+  [[ "${recorded}" != "composed:${sent}" ]] || return 1
+}
+
+# ── AC18 — a composed compose records the composed value ──────────────────────────────────────
+
+@test "AC18: a successful compose records the composed value the DB reported" {
+  make_stage_stubs 16
+  make_helper 0 "composed:apply_failed"
+  run_driver --apply-only
+  [[ "$(recorded_provenance)" == "composed:apply_failed" ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+}
+
+# ── AC19 — a trailer-less compose is UNKNOWN, never assumed composed ──────────────────────────
+
+@test "AC19: a compose that reported no provenance records unreported, not the sent token" {
+  make_stage_stubs 0
+  make_helper 0 # a DB predating the provenance column: composes, reports no trailer
+  run_driver --apply-only
+  local recorded
+  recorded="$(recorded_provenance)"
+  [[ "${recorded}" == "unreported:no_trailer" ]] || {
+    echo "recorded=${recorded} — output: ${output}" >&2
+    return 1
+  }
+  # negative polarity, and the whole point: the driver DID send 'ok' and must not record it.
+  [[ "$(compose_status)" == "ok" && "${recorded}" != "composed:ok" ]] || return 1
+}
+
+# ── AC20 — a failed helper records the failure, not an outcome ────────────────────────────────
+
+@test "AC20: a helper failure records unreported with its rc and still degrades the cycle" {
+  make_stage_stubs 0
+  make_helper 4 "composed:ok" # a trailer on a FAILING run must not be read as an outcome
+  run_driver --apply-only
+  [[ "$(recorded_provenance)" == "unreported:helper_rc_4" ]] || {
+    echo "driver output: ${output}" >&2
+    return 1
+  }
+  # AC5's contract is untouched: the cycle degrades rather than crashing.
+  [[ "${status}" -ne 0 ]] || return 1
+}
+
+# ── AC21 — a decline is recorded and then LEFT ALONE ──────────────────────────────────────────
+
+@test "AC21: a declined compose triggers no follow-up write that would overwrite the kept status" {
+  make_stage_stubs 0
+  make_helper 0 "declined:error"
+  make_push_helper
+  run_driver --apply-only
+  local order
+  order="$(python3 - "${ENVELOPE_LOG}" <<'PY'
+import json, sys
+print(",".join(json.loads(l)["op"] for l in open(sys.argv[1]) if l.strip()))
+PY
+)"
+  # the compose is still the LAST daemon_runs write: recording a decline must not tempt the driver
+  # into a corrective write, which is the one thing that WOULD erase the generation verdict.
+  [[ "${order}" == "write_daemon_run,compose_daemon_run_apply_status" ]] || {
+    echo "envelope order: ${order}" >&2
+    return 1
+  }
+  [[ "$(recorded_provenance)" == "declined:error" ]] || return 1
+}
+
+# ── AC22 — provenance lands on no FILE in the report directory ────────────────────────────────
+
+@test "AC22: recording provenance writes no new file into the report directory" {
+  make_stage_stubs 0
+  make_helper 0 "composed:ok"
+  local reports="${WORK}/daemon-reports"
+  mkdir -p -- "${reports}"
+  OUT_JSON="${reports}/2026-08-03.json"
+  printf '%s\n' '{"patches": []}' >"${OUT_JSON}"
+  printf '%s\n' '{"ts":"2026-08-03T00:00:00Z","status":"skip"}' \
+    >"${reports}/autoagent-applied-2026-08-03.jsonl"
+  local before after
+  before="$(cd -- "${reports}" && ls | sort | tr '\n' ' ')"
+  run_driver --apply-only
+  after="$(cd -- "${reports}" && ls | sort | tr '\n' ' ')"
+  # the adopted channel is a row field; a file here would sit in the same directory the doctor's
+  # abort classifier globs, which is how a transparency fix becomes a masking defect.
+  [[ "${before}" == "${after}" ]] || {
+    echo "report dir changed: [${before}] -> [${after}]" >&2
+    return 1
+  }
+  [[ "$(recorded_provenance)" == "composed:ok" ]] || return 1
+}
+
+# ── AC23 — provenance recording does not mask a real abort ────────────────────────────────────
+
+@test "AC23: the doctor still fails on an unsuperseded abort after a provenance-recording cycle" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "glass-atrium entrypoint not found: ${GA}/glass-atrium"
+  make_stage_stubs 0
+  make_helper 0 "composed:ok"
+  local target data reports today
+  target="${WORK}/doctor-target"
+  data="${WORK}/doctor-data"
+  reports="${data}/data/daemon-reports"
+  mkdir -p -- "${target}/bin" "${reports}"
+  printf '#!/usr/bin/env bash\nprintf OK\n' >"${target}/bin/claude"
+  chmod +x "${target}/bin/claude"
+  today="$(date -u +%Y-%m-%d)"
+  # one in-window abort and NO later post-gate row — the state §14 exists to fail on.
+  printf '{"ts":"%sT00:00:00Z","status":"abort","reason":"green-suite gate red"}\n' "${today}" \
+    >"${reports}/autoagent-applied-${today}.jsonl"
+  OUT_JSON="${reports}/${today}.json"
+  printf '%s\n' '{"patches": []}' >"${OUT_JSON}"
+  run_driver --apply-only
+  [[ "$(recorded_provenance)" == "composed:ok" ]] || {
+    echo "the cycle recorded no provenance — output: ${output}" >&2
+    return 1
+  }
+  # behavioural, not structural: whatever channel provenance moves to later, an unsuperseded abort
+  # must keep failing. A structural "no file was written" assertion alone would not survive that move.
+  GA_TARGET_HOME="${target}" GA_DATA_ROOT="${data}" DOCTOR_AUTH_REPORTS_DIR="${reports}" \
+    GA_GENERATE_MANIFEST="${target}/no-such-manifest-gen" GA_AUTH_CLAUDE_BIN="${target}/bin/claude" \
+    run "${GA}/glass-atrium" doctor
+  [[ "${output}" == *"FAIL : autoagent apply aborted"* ]] || {
+    echo "doctor output: ${output}" >&2
+    return 1
+  }
+  [[ "${status}" -ne 0 ]] || return 1
+}
