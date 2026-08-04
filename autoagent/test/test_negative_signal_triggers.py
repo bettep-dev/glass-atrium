@@ -111,6 +111,10 @@ class TestNegativeSignalPredicate(unittest.TestCase):
             _row(grader_verdict="verified_fail"),
             _row(review_flag=True),
             _row(revision_count=2),
+            # read_outcomes_since hands the integer column; the lesson-routing call site
+            # hands the frontmatter string. Both are the same user-correction signal.
+            _row(evaluative_signal=-1),
+            _row(evaluative_signal="-1"),
         ):
             self.assertTrue(pgdw.is_negative_signal_outcome(row), row)
 
@@ -121,6 +125,8 @@ class TestNegativeSignalPredicate(unittest.TestCase):
             _row(grader_verdict="verified_pass"),
             _row(grader_verdict="unverified"),
             _row(revision_count=1),
+            _row(evaluative_signal=0),
+            _row(evaluative_signal=1),
         ):
             self.assertFalse(pgdw.is_negative_signal_outcome(row), row)
 

@@ -27,24 +27,28 @@ except ImportError as exc:
     )
     raise  # the importing aggregator catches this and falls back to file-only mode
 
-# Role → Allowed task_types allowlist (the SINGLE off-role authority) is owned by
-# the sibling write-side module — import it so the negative-signal predicate reuses
-# the SAME role SoT track-outcome.sh::role_task_type_allowed and _norm_task_type
-# key on. NO divergent role list is defined here. Sibling import (same hooks/ dir,
-# already on sys.path for every consumer). Fallback: an unimportable sibling leaves
-# every row treated as on-role (review_flag=true keeps counting) — fail-OPEN, never
-# silently under-counts a genuine code-row signal.
-try:
-    from _pg_outcome_dualwrite import _role_task_type_allowed
-except Exception as _role_import_exc:  # noqa: BLE001 — degrade loudly, never crash
-    sys.stderr.write(
-        '{"hook":"_pg_learning_dualwrite","op":"import_role_allowlist",'
-        '"error_kind":"%s","fallback":"all_rows_on_role"}\n'
-        % type(_role_import_exc).__name__
-    )
-
-    def _role_task_type_allowed(agent, task_type):  # type: ignore[misc]
-        return True
+# Negative-signal predicate + its role allowlist live in the stdlib-only sibling so
+# the aggregator can import them on the psycopg-absent path this module dies on;
+# re-exported here because every existing consumer (daemon_cycle, the trigger and
+# review-flag suites) imports them by name from this module. Unguarded: the sibling
+# has no runtime-environment dependency, so a failure there is a packaging fault,
+# not a degradable condition.
+from _outcome_signal import (  # noqa: F401 — re-export surface, see above
+    negative_signal_hits,
+    is_negative_signal_outcome,
+    _is_structural_row,
+    _is_synthesized_measurement_gap,
+    _is_visibility_flag_row,
+    NEGATIVE_SIGNAL_NAMES,
+    NEGATIVE_SIGNAL_RESULTS,
+    NEGATIVE_REVISION_MIN,
+    NEGATIVE_EVALUATIVE_SIGNAL,
+    GRADER_VERDICT_FAIL,
+    HARD_TEST_BAR_TASK_TYPES,
+    ATTRIBUTION_SYNTHESIZED,
+    ATTRIBUTION_BUDGET_TRUNCATION,
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -775,169 +779,6 @@ def read_pending_learning_patterns() -> list[dict]:
             % type(exc).__name__
         )
         return []
-
-
-# ---------------------------------------------------------------------------
-# Negative-signal trigger predicate (AP-3) — the SINGLE definition both learning
-# consumers key on: learning-aggregator.py pattern emit (patterns 1/5) AND
-# daemon_cycle.py staleness recompute import it from here, so the emit condition
-# and its live-window recompute cannot drift apart (drift = live patterns
-# mis-skipped as stale). Co-located with read_outcomes_since because the
-# predicate is defined over exactly the row dict that function returns.
-# ---------------------------------------------------------------------------
-
-NEGATIVE_SIGNAL_RESULTS = frozenset({"fail", "blocked", "done_with_concerns"})
-# Provenance marker track-outcome.sh stamps on a [COMPLETION]-absent + tool_use≥1
-# turn (the SubagentStop synthesis path). A synthesized row's result is itself
-# synthesized, so its result polarity is NOT an agent-emitted signal.
-ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
-# Sibling synthesized-provenance marker track-outcome.sh stamps when a subagent is
-# hard-killed at its tool_use/turn budget ceiling BEFORE emitting [COMPLETION]. A
-# budget-kill IS an agent-relevant negative (the truncated subagent's own
-# instructions should improve), so — unlike the pure measurement gap above — it is
-# DELIBERATELY left on the CLUSTERABLE side of _is_synthesized_measurement_gap.
-# Accepted-scope REACHABILITY limit: pattern-1 clustering needs 3+ same-agent
-# negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
-# pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
-ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
-# Third synthesized-provenance sibling track-outcome.sh stamps when a schema-mode
-# subagent's TERMINAL StructuredOutput was successfully consumed: result=done +
-# confidence=low + metric_pass=false, writer-unverified. 'done' is not in
-# NEGATIVE_SIGNAL_RESULTS, so the row's RESULT contributes nothing — but
-# track-outcome.sh now sets review_flag on it for degraded-row visibility, and that
-# OR-term is excluded by _is_visibility_flag_row so the count stays neutral.
-# Polarity handling (NEUTRAL, never a SUCCESS exemplar) lives in daemon_cycle's
-# partition, which keys on this token.
-ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
-# Per-row floor mirroring the core-learning-log.md "revision_count 2+" process-
-# improvement bar — 1 rework request is normal iteration, 2+ marks a correction.
-NEGATIVE_REVISION_MIN = 2
-GRADER_VERDICT_FAIL = "verified_fail"
-# Hard-bar task_type set — EXACTLY {bug-fix, feature}, the SAME 2-element SoT as
-# track-outcome.sh::task_type_has_hard_test_bar and lib/code-based-grader.sh. The
-# no-test-bar set is the COMPLEMENT (NOT a re-listed 7-element list) so no new
-# task_type list exists to drift — membership is derived as "not bug-fix and not
-# feature", mirroring the grader's check structure.
-HARD_TEST_BAR_TASK_TYPES = frozenset({"bug-fix", "feature"})
-# Dead-signal universe — the aggregator's detector iterates this fixed tuple so
-# a metric that NEVER fires still gets reported (a hit-derived dict would omit it).
-NEGATIVE_SIGNAL_NAMES = (
-    "result=fail",
-    "result=blocked",
-    "result=done_with_concerns",
-    "grader_verdict=verified_fail",
-    "review_flag=true",
-    "revision_count>=2",
-)
-
-
-def _is_structural_row(row: dict) -> bool:
-    """True when the row is a no-test-bar task_type OR an off-role write — i.e.
-    a metric_pass=false / review_flag=true on it is definitionally expected, not a
-    real failure signal. Mirrors the track-outcome.sh D1 emit-side definition:
-        STRUCTURAL == (task_type_has_hard_test_bar == 0) OR (off-role)
-    Off-role reuses the imported role SoT (_role_task_type_allowed); the hard-bar
-    set is the 2-element {bug-fix, feature} SoT (complement = no-test-bar). NO new
-    task_type list is introduced. Tolerates missing keys (synthetic rows)."""
-    task_type = (row.get("task_type") or "").strip()
-    no_test_bar = task_type not in HARD_TEST_BAR_TASK_TYPES
-    off_role = not _role_task_type_allowed(row.get("agent"), task_type)
-    return no_test_bar or off_role
-
-
-def _is_synthesized_measurement_gap(row: dict) -> bool:
-    """True when the row is a SubagentStop-synthesized done_with_concerns — i.e. the
-    agent finished but emitted no [COMPLETION] block, so track-outcome.sh synthesized
-    the outcome with attribution_source=completion-synthesized. Such a row is a
-    MEASUREMENT GAP, not an agent failure: its done_with_concerns result is the
-    synthesis DEFAULT, not an agent-emitted signal, so it must contribute ZERO
-    negative hits. Scoped to done_with_concerns ONLY — a synthesized fail/blocked
-    (should not occur from this path) is left to normal evaluation. Tolerates
-    missing keys (synthetic test rows).
-
-    budget-truncation shares the synthesized provenance but is a real negative, not
-    a measurement gap — the explicit guard keeps it clusterable and holds that
-    invariant even if the completion-synthesized match is ever broadened.
-
-    structuredoutput-derived (result=done, writer-unverified) is the third sibling
-    provenance: its result contributes no OR-term, but its review_flag now does —
-    that term is excluded by _is_visibility_flag_row, not here, because the row is
-    not a done_with_concerns measurement gap. Its SUCCESS-side exclusion (NEUTRAL
-    polarity) lives in daemon_cycle._is_success_outcome."""
-    if (row.get("attribution_source") or "") == ATTRIBUTION_BUDGET_TRUNCATION:
-        return False
-    return (
-        (row.get("attribution_source") or "") == ATTRIBUTION_SYNTHESIZED
-        and (row.get("result") or "") == "done_with_concerns"
-    )
-
-
-def _is_visibility_flag_row(row: dict) -> bool:
-    """True when the row's review_flag was set purely for degraded-row VISIBILITY by
-    track-outcome.sh (writer-absent provenance), not as a writer-side ambiguity signal —
-    so that OR-term must not count. Scoped to structuredoutput-derived alone: the sibling
-    completion-synthesized provenance pairs with done_with_concerns, which
-    _is_synthesized_measurement_gap already short-circuits to zero hits. The two flag-side
-    literals are the SAME allowlist track-outcome.sh sets the flag on; budget-truncation and
-    truncated_completion are never flagged, so no exclusion exists for them here."""
-    src = row.get("attribution_source") or ""
-    return src == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
-
-
-def negative_signal_hits(row: dict) -> tuple[str, ...]:
-    """Names (subset of NEGATIVE_SIGNAL_NAMES) of the OR-terms this outcome trips.
-
-    A row with ANY hit counts ONCE toward the per-agent trigger (the caller
-    keys on truthiness, never on len() — one bad outcome must not be
-    double-counted); the per-name breakdown feeds the dead-signal detector.
-    Tolerates missing keys (synthetic test rows carry only 'result').
-
-    Synthesized-measurement-gap carve-out (lockstep with the SubagentStop synthesis
-    default flip needs_context → done_with_concerns): a completion-synthesized
-    done_with_concerns row is a measurement gap, not an agent failure — it produces
-    ZERO negative hits. Scoped to that exact provenance+result pair, so a REAL agent
-    emitting done_with_concerns still counts.
-
-    D2 structural carve-out (lockstep with track-outcome.sh D1 emit-side): on a
-    structural row (no-test-bar task_type OR off-role) a review_flag=true is the
-    polar-mismatch artifact D1 already stopped emitting for fresh rows — it is NOT
-    a real failure signal, so it does NOT count as a standalone negative hit here.
-    The carve-out is review_flag-SPECIFIC: result=fail / grader_verdict=verified_fail
-    / revision_count>=2 on a structural row are GENUINE failures and still count.
-    A genuine code row (dev-* on-role bug-fix/feature) keeps review_flag=true as a
-    real overconfidence signal (real-signal guard).
-
-    Visibility carve-out (lockstep with the track-outcome.sh degraded-row widening):
-    on a writer-absent provenance the review_flag is a legibility marker, not a
-    writer-side signal, so it does NOT count — see _is_visibility_flag_row. Every
-    other OR-term on such a row (result=fail, verified_fail, revision_count>=2) is a
-    genuine failure and still counts."""
-    if _is_synthesized_measurement_gap(row):
-        return ()
-    hits: list[str] = []
-    result = row.get("result") or ""
-    if result in NEGATIVE_SIGNAL_RESULTS:
-        hits.append("result=%s" % result)
-    if (row.get("grader_verdict") or "") == GRADER_VERDICT_FAIL:
-        hits.append("grader_verdict=verified_fail")
-    if (
-        bool(row.get("review_flag"))
-        and not _is_structural_row(row)
-        and not _is_visibility_flag_row(row)
-    ):
-        hits.append("review_flag=true")
-    try:
-        revision = int(row.get("revision_count") or 0)
-    except (TypeError, ValueError):
-        revision = 0
-    if revision >= NEGATIVE_REVISION_MIN:
-        hits.append("revision_count>=2")
-    return tuple(hits)
-
-
-def is_negative_signal_outcome(row: dict) -> bool:
-    """True when the row counts toward the per-agent negative-signal trigger."""
-    return bool(negative_signal_hits(row))
 
 
 def _learning_window_where(

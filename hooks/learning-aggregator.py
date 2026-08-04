@@ -23,6 +23,14 @@ _HOOKS_DIR = str(Path(__file__).resolve().parent)
 if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 import ga_paths  # noqa: E402 — sys.path insert immediately above
+# Negative-signal rules are stdlib-only and imported OUTSIDE the PG guard below: the
+# lesson-bucket routing needs the predicate even when psycopg is absent, and routing it
+# through the guarded helper is what previously forced a second, drifting copy here.
+from _outcome_signal import (  # noqa: E402 — sys.path insert above
+    is_negative_signal_outcome as _is_negative_signal_outcome,
+    negative_signal_hits as _negative_signal_hits,
+    NEGATIVE_SIGNAL_NAMES as _NEGATIVE_SIGNAL_NAMES,
+)
 
 try:
     import yaml
@@ -41,8 +49,6 @@ try:
         read_learning_log_signatures as _pg_read_learning_log_signatures,
         read_outcomes_since as _pg_read_outcomes_since,
         insert_audit_queue_rows as _pg_insert_audit_queue_rows,
-        negative_signal_hits as _negative_signal_hits,
-        NEGATIVE_SIGNAL_NAMES as _NEGATIVE_SIGNAL_NAMES,
     )
     HAS_PG_DUALWRITE = True
 except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -115,7 +121,7 @@ NOT_PATCHABLE_AGENTS = frozenset({"전체", "ALL", "all", ""})
 # Pattern-5 floors — ≥50% of an agent's outcomes carrying a negative signal over ≥3 samples.
 # Load-bearing mirror of daemon_cycle.py STALE_MIN_SAMPLE / STALE_FAILURE_RATE_FLOOR: the
 # staleness recompute uses the same floors, or a live pattern gets mis-skipped as stale.
-# (The OR-term predicate itself is shared via _pg_learning_dualwrite.negative_signal_hits.)
+# (The OR-term predicate itself is shared via _outcome_signal.negative_signal_hits.)
 RATE_MIN_SAMPLE = 3
 RATE_FAILURE_FLOOR = 0.5
 
@@ -796,10 +802,6 @@ CTM_PROVISIONAL_GRACE_DAYS = 14
 # one of slack — the minimum that can still promote — held deliberately independent of the cap so
 # a later cap resize does not silently re-open the displacement.
 CTM_PROVISIONAL_HEADROOM = 2
-# Provenance whose review_flag is a degraded-row VISIBILITY marker rather than a writer signal.
-# Literal (not imported) because this mirror must keep working when psycopg is absent; the value
-# is the _pg_learning_dualwrite.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED token track-outcome.sh stamps.
-_VISIBILITY_FLAG_ATTRIBUTION = "structuredoutput-derived"
 
 # R8 test-path evidence — the SAME basename shapes _cbg_files_test_evidence
 # (hooks/lib/code-based-grader.sh) promotes on, kept as its glob patterns so the two lists stay
@@ -888,31 +890,6 @@ def _lesson_score(record: dict) -> int:
     return _CONFIDENCE_SCORE.get(conf, 3)
 
 
-def _record_is_negative(record: dict) -> bool:
-    """DB-independent negative-signal check (mirrors the _negative_signal_hits OR-terms) so
-    classify_lesson_bucket unit-tests without the PG helper: fail/blocked/done_with_concerns,
-    revision_count>=2, evaluative_signal=-1, or review_flag=true → EPM-bound.
-
-    Visibility carve-out: track-outcome.sh sets review_flag on a schema-derived row purely so a
-    writer-unverified row is legible, so that flag alone must not route a healthy row into
-    failure memory. Scoped to the review_flag term — any other negative term on such a row still
-    routes to EPM. The mirror's pre-existing divergence from the shared predicate (no
-    measurement-gap and no structural carve-out) is untouched here."""
-    if str(record.get("result", "")).strip() in ("fail", "blocked", "done_with_concerns"):
-        return True
-    try:
-        if int(record.get("revision_count", 0) or 0) >= 2:
-            return True
-    except (TypeError, ValueError):
-        pass
-    if str(record.get("evaluative_signal", "")).strip() == "-1":
-        return True
-    if str(record.get("attribution_source", "")).strip() == _VISIBILITY_FLAG_ATTRIBUTION:
-        return False
-    rf = record.get("review_flag")
-    return rf is True or str(rf).strip().lower() == "true"
-
-
 def _is_code_task_type(record: dict) -> bool:
     """True when the row's task_type is a code arm (bug-fix/feature/refactor) — the only arms the
     T19 grader-verdict polarity governs. Non-code arms keep the self-report confidence gate."""
@@ -980,7 +957,12 @@ def _admission_score(record: dict) -> int:
 def classify_lesson_bucket(record: dict) -> str | None:
     """Route one outcome's lesson to "ctm" (success) / "epm" (failure) / None (skip).
 
-    Negative signal (incl. verified_fail carrying review_flag) → EPM. Otherwise a clean
+    Negative signal (the shared OR-term predicate, incl. verified_fail carrying
+    review_flag) → EPM. Its carve-outs bind here too: a synthesized measurement gap and a
+    structural row's D1-suppressed high+false review_flag are not agent failures, so neither
+    routes a lesson into failure memory. A structural low+true or ABSENT-metric_pass
+    review_flag is OUTSIDE that carve-out — D1 still emits it, so it still routes to EPM.
+    Otherwise a clean
     done + metric_pass row admits to CTM by task_type family (disjoint domains):
     - CODE task_types (T19): ALWAYS admit — the grader verdict sets the SCORE via
       _admission_score (verified_pass → injectable floor; else provisional sub-floor 3,
@@ -991,7 +973,7 @@ def classify_lesson_bucket(record: dict) -> str | None:
       corroboration); low/unknown never admit; a synthetic verified_fail (no review_flag) is
       not admitted. The verified_fail gate lives in THIS branch so it never pre-empts the
       code T19 path (a production verified_fail always carries review_flag → EPM above)."""
-    if _record_is_negative(record):
+    if _is_negative_signal_outcome(record):
         return "epm"
     mp = record.get("metric_pass")
     mp_true = mp is True or str(mp).strip().lower() == "true"
@@ -1471,8 +1453,8 @@ def main(registry_path: str | None = None) -> None:
 
         agent_total[agent] += 1
         # negative-signal OR-terms (fail/blocked/done_with_concerns/verified_fail/
-        # review_flag/revision≥2) — one row counts ONCE toward the agent trigger
-        # however many terms it trips; per-term counts feed the dead-signal WARN.
+        # review_flag/revision≥2/evaluative_signal=-1) — one row counts ONCE toward the
+        # agent trigger however many terms it trips; per-term counts feed the dead-signal WARN.
         hits = _negative_signal_hits(data)
         for hit in hits:
             signal_counts[hit] += 1

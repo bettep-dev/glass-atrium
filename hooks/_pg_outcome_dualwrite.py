@@ -53,6 +53,12 @@ import json
 import sys
 import time
 
+# Role → Allowed task_types allowlist (the SINGLE off-role authority, shared with the
+# negative-signal predicate). Imported ABOVE the psycopg guard below on purpose: the
+# rules are stdlib-only, so keeping them out of this module lets a driver-less consumer
+# read them without tripping the module-scope sys.exit() that guard performs.
+from _outcome_signal import _role_task_type_allowed
+
 # Named exit codes — loud-fail observability. A non-zero code is a VISIBLE
 # process-level failure signal, NOT a hard error: track-outcome.sh runs the helper
 # under `| python3 helper || true`, so the stop hook never crashes regardless of the
@@ -189,24 +195,6 @@ _AGENT_ROLE_DEFAULT_TASK_TYPE = {
     "glass-atrium-meta-prompt-engineer": "doc",
 }
 
-# Role → Allowed task_types allowlist (LAYER-3 mis-classification guard). SINGLE SoT alignment
-# with the core-outcome-record.md Role → Allowed task_types table and the track-outcome.sh
-# role_task_type_allowed mirror. A 9-set-valid task_type is still OFF-ROLE when outside its
-# agent's allowlist (e.g. intel-planner emitting "bug-fix") — _norm_task_type reclassifies such
-# a value to the role default so the grader never runs a code check on a non-code deliverable.
-# A role absent from this map (dev-* / unknown) has no constraining allowlist → any 9-set value
-# is accepted (the DEV allowlist is broad). Keys prefix-match the lowercased agent name.
-_AGENT_ROLE_ALLOWED_TASK_TYPES = {
-    "glass-atrium-qa-code-reviewer": {"review"},
-    "glass-atrium-qa-debugger": {"diagnosis"},
-    "glass-atrium-sec-guard": {"review", "diagnosis"},
-    "glass-atrium-intel-reporter": {"doc"},
-    "glass-atrium-intel-planner": {"plan", "doc"},
-    "glass-atrium-wiki-curator": {"doc"},
-    "glass-atrium-design-designer": {"doc", "review"},
-    "glass-atrium-meta-prompt-engineer": {"doc", "cleanup", "refactor"},
-}
-
 _RESULT_VALID = {"done", "done_with_concerns", "blocked", "needs_context", "fail"}
 _CONFIDENCE_VALID = {"high", "medium", "low"}
 
@@ -254,20 +242,6 @@ def _role_default_task_type(agent):
         if name == role_prefix or name.startswith(role_prefix):
             return default_type
     return None
-
-
-def _role_task_type_allowed(agent, task_type):
-    """Is `task_type` within `agent`'s Role → Allowed allowlist? An agent role absent
-    from _AGENT_ROLE_ALLOWED_TASK_TYPES (dev-* / unknown / unidentifiable) has no
-    constraining allowlist → returns True (any 9-set value accepted). Matches the
-    agent name by prefix so a versioned/suffixed id resolves."""
-    name = (agent or "").strip().lower()
-    if not name:
-        return True
-    for role_prefix, allowed in _AGENT_ROLE_ALLOWED_TASK_TYPES.items():
-        if name == role_prefix or name.startswith(role_prefix):
-            return task_type in allowed
-    return True
 
 
 def _norm_result(v):

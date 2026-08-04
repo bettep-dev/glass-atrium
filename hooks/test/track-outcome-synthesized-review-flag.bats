@@ -271,7 +271,7 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# neutrality — the aggregator's database-independent mirror
+# neutrality — the aggregator's lesson-routing call site
 # ---------------------------------------------------------------------------
 
 @test "flagged schema-derived row stays out of the aggregator failure bucket" {
@@ -292,12 +292,12 @@ def row(**kw):
     return base
 
 schema_derived = row(attribution_source="structuredoutput-derived", review_flag=True)
-assert agg._record_is_negative(schema_derived) is False, schema_derived
+assert agg._is_negative_signal_outcome(schema_derived) is False, schema_derived
 assert agg.classify_lesson_bucket(schema_derived) != "epm"
 
 # Narrowness pin: a genuine writer-flagged row still routes to failure memory.
 genuine = row(attribution_source="hook-input", review_flag=True)
-assert agg._record_is_negative(genuine) is True, genuine
+assert agg._is_negative_signal_outcome(genuine) is True, genuine
 assert agg.classify_lesson_bucket(genuine) == "epm"
 PY
   [ "${status}" -eq 0 ]

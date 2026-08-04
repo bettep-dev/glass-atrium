@@ -68,6 +68,8 @@ def _outcome_row(
     task_type: str = "bug-fix",
     attribution_source: str | None = None,
     grader_verdict: str | None = None,
+    confidence: str | None = None,
+    metric_pass: bool | str | None = None,
 ) -> dict:
     # task_type defaults to a hard-test-bar code type so review_flag stays a
     # REAL negative under the shared predicate's structural carve-out.
@@ -83,6 +85,13 @@ def _outcome_row(
         row["attribution_source"] = attribution_source
     if grader_verdict is not None:
         row["grader_verdict"] = grader_verdict
+    # Set only when supplied: the structural review_flag carve-out keys on the
+    # polar PAIR (high + literal false), so an ABSENT metric_pass must stay absent
+    # rather than acquire a default that would silently satisfy the gate.
+    if confidence is not None:
+        row["confidence"] = confidence
+    if metric_pass is not None:
+        row["metric_pass"] = metric_pass
     return row
 
 
@@ -158,14 +167,32 @@ class TestSoftNegativeComposite(unittest.TestCase):
             )
         )
 
-    def test_when_review_flag_on_structural_row_then_not_negative(self) -> None:
-        # Structural carve-out: review_flag on a no-test-bar task_type is the
-        # polar-mismatch artifact, not a real failure signal.
+    def test_when_review_flag_on_structural_polar_mismatch_then_not_negative(self) -> None:
+        # Structural carve-out: review_flag on a no-test-bar task_type carrying the
+        # high+false polar pair is the definitionally-expected artifact, not a failure.
         self.assertFalse(
             dc._is_soft_negative_outcome(
-                _outcome_row(0, review_flag=True, task_type="doc")
+                _outcome_row(
+                    0,
+                    review_flag=True,
+                    task_type="doc",
+                    confidence="high",
+                    metric_pass=False,
+                )
             )
         )
+
+    def test_when_review_flag_on_structural_underconfidence_then_negative(self) -> None:
+        # The carve-out is BRANCH-scoped, not shape-scoped: track-outcome.sh still
+        # flags low+true and ABSENT metric_pass on a structural row, so the regression
+        # watch must keep seeing both.
+        for over in ({"confidence": "low", "metric_pass": True}, {}):
+            with self.subTest(over=over):
+                self.assertTrue(
+                    dc._is_soft_negative_outcome(
+                        _outcome_row(0, review_flag=True, task_type="doc", **over)
+                    )
+                )
 
     def test_when_window_empty_then_rate_is_beta_prior_mean(self) -> None:
         self.assertAlmostEqual(dc._smoothed_soft_negative_rate([]), 0.5)
