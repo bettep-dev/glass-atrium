@@ -8906,6 +8906,192 @@ def alert_attribution_confound(*, now: datetime | None = None) -> None:
         )
 
 
+# -- Per-channel weekly done_with_concerns share watch ----------------------
+#
+# The emitter-criterion incident stepped both writer channels' weekly DWC share
+# within one deploy day on an unchanged workload, and nothing in the loop could
+# see it: the post-apply watch is keyed per applied proposal / per agent, so a
+# contract-text change affecting EVERY writer at once falls between its windows.
+# This watch is channel-keyed instead — the same grain as the tracking query in
+# the remediation plan.
+#
+# DETECTION-ONLY, and deliberately on its OWN eval_result token: the post-apply
+# token is consumed by the regression gate, so reusing it would silently turn a
+# channel observation into a proposal-application block.
+
+DWC_SHARE_ALARM_EVAL_RESULT = "dwc-share-regression"  # VARCHAR(32) verdict
+# Writer-emitted provenance only — synthesized channels are DWC by construction.
+DWC_SHARE_WRITER_CHANNELS = ("structuredoutput-completion", "hook-input")
+DWC_SHARE_TRAILING_WEEKS = 4
+DWC_SHARE_RELATIVE_MULTIPLE = 2.0
+DWC_SHARE_ABSOLUTE_FLOOR = 0.25
+# Per-week denominator floor, playing the role
+# POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS plays in the sibling watch: a
+# 1-row channel-week is a rate artifact, not a regression.
+DWC_SHARE_MIN_WEEK_OBSERVATIONS = 5
+# Trailing mean below which the doubling term is meaningless — 2x a near-zero
+# baseline fires on noise, so only the absolute term applies down there.
+DWC_SHARE_RELATIVE_MIN_BASELINE = 0.03
+
+
+class DwcShareAlarm(NamedTuple):
+    """One writer channel's weekly done_with_concerns share crossing a trigger."""
+
+    channel: str
+    week_start: datetime  # ISO-Monday bucket — the dedup key
+    share: float
+    baseline: float  # trailing-window mean, 0.0 when no week met the floor
+    total: int
+    dwc: int
+    trigger: str  # "relative", "absolute", or "relative+absolute"
+
+
+def _week_start(moment: datetime) -> datetime:
+    """ISO-Monday midnight bucket, matching the tracking query's date_trunc('week')."""
+    midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=midnight.weekday())
+
+
+def find_dwc_share_alarms(
+    rows: list[dict] | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[DwcShareAlarm, ...]:
+    """Writer channels whose current-week DWC share broke out of its own trend.
+
+    Args:
+        rows: outcome row dicts (attribution_source, record_ts, result), the
+            shape _pg_read_outcomes_since returns.
+        now: instant inside the week under test (injected by tests).
+
+    Trigger: current-week share >= DWC_SHARE_RELATIVE_MULTIPLE x the trailing
+    4-week mean, OR >= DWC_SHARE_ABSOLUTE_FLOOR. Both terms are denominator-
+    guarded — a week below DWC_SHARE_MIN_WEEK_OBSERVATIONS is excluded from the
+    current test and from the baseline, and the relative term needs a baseline
+    of at least DWC_SHARE_RELATIVE_MIN_BASELINE. A naive record_ts borrows the
+    reference tzinfo; a row without one cannot be bucketed and is skipped.
+    """
+    if not rows:
+        return ()
+
+    reference = now or datetime.now(timezone.utc)
+    current_week = _week_start(reference)
+    totals: dict[tuple[str, datetime], int] = {}
+    concerned: dict[tuple[str, datetime], int] = {}
+    for row in rows:
+        channel = (row.get("attribution_source") or "").strip()
+        if channel not in DWC_SHARE_WRITER_CHANNELS:
+            continue
+        record_ts = row.get("record_ts")
+        if not isinstance(record_ts, datetime):
+            continue
+        if record_ts.tzinfo is None and reference.tzinfo is not None:
+            record_ts = record_ts.replace(tzinfo=reference.tzinfo)
+        key = (channel, _week_start(record_ts))
+        totals[key] = totals.get(key, 0) + 1
+        if (row.get("result") or "") == "done_with_concerns":
+            concerned[key] = concerned.get(key, 0) + 1
+
+    found: list[DwcShareAlarm] = []
+    for channel in DWC_SHARE_WRITER_CHANNELS:
+        total = totals.get((channel, current_week), 0)
+        if total < DWC_SHARE_MIN_WEEK_OBSERVATIONS:
+            continue
+        dwc = concerned.get((channel, current_week), 0)
+        share = dwc / total
+        trailing: list[float] = []
+        for weeks_back in range(1, DWC_SHARE_TRAILING_WEEKS + 1):
+            past = (channel, current_week - timedelta(weeks=weeks_back))
+            past_total = totals.get(past, 0)
+            if past_total < DWC_SHARE_MIN_WEEK_OBSERVATIONS:
+                continue
+            trailing.append(concerned.get(past, 0) / past_total)
+        baseline = sum(trailing) / len(trailing) if trailing else 0.0
+        fired = [
+            name
+            for name, hit in (
+                (
+                    "relative",
+                    baseline >= DWC_SHARE_RELATIVE_MIN_BASELINE
+                    and share >= baseline * DWC_SHARE_RELATIVE_MULTIPLE,
+                ),
+                ("absolute", share >= DWC_SHARE_ABSOLUTE_FLOOR),
+            )
+            if hit
+        ]
+        if not fired:
+            continue
+        found.append(
+            DwcShareAlarm(
+                channel,
+                current_week,
+                share,
+                baseline,
+                total,
+                dwc,
+                "+".join(fired),
+            )
+        )
+    return tuple(found)
+
+
+def alert_dwc_share_regression(*, now: datetime | None = None) -> None:
+    """Emit one loop event per writer channel whose weekly DWC share broke out.
+
+    The event table has no channel column, so the channel rides `agent` as
+    `channel:<provenance>` — a NON-agent use of that column the monitor surface
+    will render as written.
+
+    Denominator caveat: _pg_read_outcomes_since excludes attribution failures and
+    poisoned-window rows inside the PG helper, so this share is NOT expected to
+    equal the raw core.outcomes tracking query's percentage. It is a relative /
+    absolute breakout watch, not a reproduction of that band.
+    """
+    if not HAS_PG_LOOP_WRITE or not HAS_PG_OUTCOME_READ:
+        return
+
+    reference = now or datetime.now(timezone.utc)
+    # Trailing window + the partial current week, plus one bucket of slack.
+    span_days = (DWC_SHARE_TRAILING_WEEKS + 2) * 7
+    try:
+        rows = _pg_read_outcomes_since(reference.timestamp() - span_days * 86400)
+    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: DWC-share watch SKIPPED — outcome read failed "
+            f"({type(exc).__name__}: {str(exc)[:160]}); this is NOT 'the share is "
+            "flat', and no event was emitted\n"
+        )
+        return
+
+    for alarm in find_dwc_share_alarms(rows, now=reference):
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: done_with_concerns share regression — channel="
+            f"{alarm.channel} week={alarm.week_start.date()} "
+            f"share={alarm.share:.1%} ({alarm.dwc}/{alarm.total}) vs trailing "
+            f"{DWC_SHARE_TRAILING_WEEKS}-week mean {alarm.baseline:.1%} "
+            f"(trigger={alarm.trigger}; thresholds "
+            f"{DWC_SHARE_RELATIVE_MULTIPLE:g}x mean OR "
+            f"{DWC_SHARE_ABSOLUTE_FLOOR:.0%} absolute); the emitter's result "
+            "criterion or its contract text is the first place to look; "
+            "DETECTION-ONLY — no gate, no transition, no status mutation\n"
+        )
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    # Week-bucket key → the (event_ts, agent, eval_result) UPSERT
+                    # lands every re-detection of the same week on ONE row.
+                    "event_ts": alarm.week_start.isoformat(),
+                    "agent": f"channel:{alarm.channel}"[:64],  # varchar(64) guard
+                    "eval_result": DWC_SHARE_ALARM_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                },
+            }
+        )
+
+
 # -- Per-agent grouping -----------------------------------------------------
 
 
@@ -9591,6 +9777,16 @@ def run_cycle(
             sys.stderr.write(
                 "[daemon-cycle] WARN: alert_attribution_confound raised — "
                 f"signature lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+        # Third sibling, channel-keyed rather than proposal-keyed: a contract-text
+        # change moves every writer at once, which the per-proposal windows above
+        # cannot see.
+        try:
+            alert_dwc_share_regression()
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
+            sys.stderr.write(
+                "[daemon-cycle] WARN: alert_dwc_share_regression raised — "
+                f"watch lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
         try:
             emit_loop_events(report)
