@@ -64,6 +64,11 @@ def _role_task_type_allowed(agent, task_type):
 # row routed to failure memory by one consumer and not the other). Defined over the
 # row dict _pg_learning_dualwrite.read_outcomes_since returns.
 
+# done_with_concerns stays negative by PAIRED CONTRACT with the Result-selection
+# criterion in core-outcome-record.md: that criterion admits the result only for the
+# agent's OWN incomplete/unverified/follow-up-needed deliverable, so membership here
+# matches the emitted meaning. Polarity is NOT conditioned on metric_pass or any other
+# writer self-report. Either side moves → both move in the same meaning-unit commit.
 NEGATIVE_SIGNAL_RESULTS = frozenset({"fail", "blocked", "done_with_concerns"})
 # Provenance marker track-outcome.sh stamps on a [COMPLETION]-absent + tool_use≥1
 # turn (the SubagentStop synthesis path). A synthesized row's result is itself
