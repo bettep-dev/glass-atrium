@@ -2050,9 +2050,10 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
             <PlainHeader label="Agent" minWidth={110}/>
             <PlainHeader label="task_type"/>
             <PlainHeader label="result"/>
-            <PlainHeader label="conf" align="center"/>
-            <PlainHeader label="metric*" align="center"/>
-            <PlainHeader label="Check" align="center"/>
+            {/* 고정 폭 3열 — 셀 내부 슬롯 폭과 짝을 이뤄야 열이 행마다 흔들리지 않는다 (남는 폭은 summary 가 흡수). */}
+            <PlainHeader label="conf" align="center" width={88}/>
+            <PlainHeader label="metric*" align="center" width={64}/>
+            <PlainHeader label="Check" align="center" width={52}/>
             <SortableHeader label="rev" sortKey="revision_count" currentSort={sort} onSortChange={onSortChange} align="right" width={50} descOnly/>
             <PlainHeader label="summary"/>
             <PlainHeader label="cid" width={110}/>
@@ -2114,21 +2115,27 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
 //   null(작성자 누락) = 빈 칩 + '—' (수치 fabrication 회피). 색≠의미 단독: 세그먼트 수가 위계를 전달.
 const CONFIDENCE_LEVEL = { high: 3, medium: 2, low: 1 };
 
+// 셀 안의 고정 슬롯 폭 — 셀마다 내용 폭이 달라지면 열이 세로로 정렬되지 않는다 (행마다 들쭉날쭉).
+//   슬롯 폭이 고정이면 막대/라벨/글리프가 행을 가로질러 각자의 수직선을 이룬다.
+const CONF_BAR_SLOT   = 19;   // 5px 세그먼트 3 + 2px 간격 2
+const CONF_LABEL_SLOT = 44;   // 최장 라벨 'medium' (fs-micro mono)
+const METRIC_MARK_SLOT  = 14;
+const METRIC_SCORE_SLOT = 22;
+
 function ConfidenceChipO({ confidence }) {
   const level = CONFIDENCE_LEVEL[confidence] || 0;
   const label = confidence == null ? '—' : confidence;
+  const title = level === 0 ? 'confidence not reported' : `confidence: ${label}`;
 
-  if (level === 0) {
-    return <span className="fs-meta font-mono text-faint" title="confidence not reported">—</span>;
-  }
   return (
     <span
-      className="inline-flex items-center gap-1 align-middle"
+      className="inline-flex items-center gap-1 align-middle whitespace-nowrap"
       role="img"
       aria-label={`confidence ${label} (${level} of 3)`}
-      title={`confidence: ${label}`}>
-      <span className="inline-flex gap-0.5" aria-hidden="true">
-        {[0, 1, 2].map((i) => (
+      title={title}>
+      {/* level 0 은 세그먼트를 아예 비운다 — 빈 막대 3개는 '측정된 0'으로 읽혀 fabrication 이 된다. */}
+      <span className="inline-flex gap-0.5 shrink-0" style={{ width: CONF_BAR_SLOT }} aria-hidden="true">
+        {level > 0 && [0, 1, 2].map((i) => (
           <span
             key={i}
             className="inline-block rounded-sm"
@@ -2139,22 +2146,26 @@ function ConfidenceChipO({ confidence }) {
             }}/>
         ))}
       </span>
-      <span className="fs-micro font-mono text-dim">{label}</span>
+      <span
+        className={`fs-micro font-mono text-left shrink-0 ${level === 0 ? 'text-faint' : 'text-dim'}`}
+        style={{ width: CONF_LABEL_SLOT }}>
+        {label}
+      </span>
     </span>
   );
 }
 
 // metric_pass = writer self-report (측정 진실 아님) → 측정 컬럼(grader_verdict)과 분리.
-//   품질 실패 오독 차단: minimal check(✓)/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
-//   true=✓ muted · false/null=– muted (self-report false 도 응급 신호 아님).
+//   품질 실패 오독 차단: minimal check(✓)/x/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
+//   true=✓ · false=✕ (기호로만 구분, 톤은 동일 muted — self-report false 도 응급 신호 아님) · null=– faint.
 function MetricPassMarkO({ metricPass }) {
-  const isPass = metricPass === true;
-  const iconName = isPass ? 'check' : 'minus';
+  const isReported = metricPass === true || metricPass === false;
+  const iconName = metricPass === true ? 'check' : metricPass === false ? 'x' : 'minus';
   const label  = metricPass === true ? 'pass (self-reported)' : metricPass === false ? 'fail (self-reported)' : 'not reported';
   return (
     <span
-      className="fs-meta font-mono inline-flex items-center align-middle"
-      style={{ color: isPass ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
+      className="fs-meta font-mono inline-flex items-center justify-center align-middle shrink-0"
+      style={{ width: METRIC_MARK_SLOT, color: isReported ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
       role="img"
       aria-label={`self-check ${label}`}>
       <GlyphO name={iconName}/>
@@ -2162,19 +2173,35 @@ function MetricPassMarkO({ metricPass }) {
   );
 }
 
-// qa_score (cov/ins/instr/clar 각 1-5) → 5 중립 dot (채워진 dot 수 = 평균 점수). QA 행 전용 OPTIONAL.
-//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → 미렌더 (슬롭 회피, no fabricated dots).
-function parseQaScoreAvgO(qaScore) {
+// qa_score (cov/ins/instr/clar 각 1-5) → 합계(4-20) + 평균. QA 행 전용 OPTIONAL.
+//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → null (슬롭 회피, no fabricated score).
+function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
   const nums = qaScore.match(/\d+(\.\d+)?/g);
   if (!nums || nums.length === 0) return null;
   const sum = nums.reduce((acc, n) => acc + Number(n), 0);
-  return sum / nums.length;
+  return { sum, avg: sum / nums.length };
 }
 
+// 테이블 metric 컬럼의 점수 슬롯 — 합계를 숫자로 노출 (dot 은 4개 항목 분해를 못 실어 detail 패널에만 남긴다).
+//   미보고 행도 '—' 로 같은 폭을 차지해야 열이 세로로 정렬된다.
+function QaScoreValueO({ qaScore }) {
+  const score = parseQaScoreO(qaScore);
+  return (
+    <span
+      className={`fs-micro font-mono text-right shrink-0 ${score ? 'text-dim' : 'text-faint'}`}
+      style={{ width: METRIC_SCORE_SLOT }}
+      title={score ? `QA score ${score.sum}/20 — ${qaScore}` : 'QA score not reported'}>
+      {score ? score.sum : '—'}
+    </span>
+  );
+}
+
+// detail 패널 전용 — 5 중립 dot (채워진 dot 수 = 평균 점수). 테이블은 폭 정렬 때문에 숫자 슬롯을 쓴다.
 function QaScoreDotsO({ qaScore }) {
-  const avg = parseQaScoreAvgO(qaScore);
-  if (avg == null) return null;
+  const score = parseQaScoreO(qaScore);
+  if (score == null) return null;
+  const avg = score.avg;
   const filled = Math.round(Math.min(Math.max(avg, 0), 5));
   return (
     <span
@@ -2224,6 +2251,14 @@ function ResultTableRow({ row, onRowClick, closure }) {
   const summary  = truncateO(row.summary || '', 60);
   const cidShort = truncateO(row.cid || '', 12);
   const grader   = graderVerdictMetaO(row.grader_verdict);
+  // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
+  const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
+    row.grader_verdict === 'unverified'
+      ? ' — no test artifact to grade for this task type.'
+      : row.grader_verdict == null
+      ? ' — recorded before the grader existed, not a failure.'
+      : ''
+  }`;
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
   // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
   const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
@@ -2254,8 +2289,8 @@ function ResultTableRow({ row, onRowClick, closure }) {
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
         {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
+        <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-0.5" style={{ color: resultColor, fontWeight: 500 }}>
             <GlyphO name={resultMeta.icon}/>
             {row.result}
             {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
@@ -2285,23 +2320,21 @@ function ResultTableRow({ row, onRowClick, closure }) {
       </td>
       <td
         className="text-center font-mono px-2 py-1.5 border-b border-line">
-        <span className="inline-flex items-center gap-1.5 justify-center">
+        <span className="inline-flex items-center gap-1.5 justify-center whitespace-nowrap">
           <MetricPassMarkO metricPass={row.metric_pass}/>
-          <QaScoreDotsO qaScore={row.qa_score}/>
+          <QaScoreValueO qaScore={row.qa_score}/>
         </span>
       </td>
       <td
         className="text-center px-2 py-1.5 border-b border-line"
-        title={`Automatic check (grader_verdict): ${grader.label}${
-          row.grader_verdict === 'unverified'
-            ? ' — no test artifact to grade for this task type.'
-            : row.grader_verdict == null
-            ? ' — recorded before the grader existed, not a failure.'
-            : ''
-        }`}>
-        <span className="inline-flex items-center gap-1 justify-center" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
-          <GlyphO name={grader.icon}/>
-          {grader.label}
+        title={graderTitle}>
+        {/* 아이콘 단독 — 상태별 모양(✓/○/✕/–)이 다르므로 색+모양 듀얼인코딩은 유지되고, 전문은 title + 행 aria-label 이 운반. */}
+        <span
+          className="inline-flex items-center justify-center"
+          style={{ color: `rgb(var(${grader.colorVar}))` }}
+          role="img"
+          aria-label={graderTitle}>
+          <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
       <td className="text-right px-2 py-1.5 border-b border-line">
@@ -2451,7 +2484,7 @@ function DetailMetadata({ row, detail }) {
       {metricType != null && metricType !== '' && (
         <MetaField label="Check type" value={String(metricType)}/>
       )}
-      {parseQaScoreAvgO(row?.qa_score) != null && (
+      {parseQaScoreO(row?.qa_score) != null && (
         <div>
           <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
           <div className="text-ink inline-flex items-center gap-2">

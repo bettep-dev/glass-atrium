@@ -42,6 +42,7 @@ interface OutcomesHelpers {
   buildLiteralOmissionBreakdownO: (
     breakdown: unknown,
   ) => { budget: number; truncated: number; missing: number } | null;
+  parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
 }
 interface AgentsHelpers {
   isNonActionableAgentAg: (agentId: string, visualSet?: Set<string>) => boolean;
@@ -283,4 +284,22 @@ test("isNonActionableAgentAg (agents.jsx mirror): same verdicts as the outcomes 
   }
   assert.strictEqual(agents.isNonActionableAgentAg("subagent_stop_missing"), true);
   assert.strictEqual(agents.isNonActionableAgentAg("unknown"), true);
+});
+
+// --- parseQaScoreO: the metric column renders the SUM, so the sum is now user-visible ---
+
+test("parseQaScoreO: canonical qa_score yields the 4-20 sum alongside the 1-5 average", () => {
+  const parsed = sameRealm(outcomes.parseQaScoreO("cov=5,ins=4,instr=4,clar=4"));
+  assert.deepStrictEqual(parsed, { sum: 17, avg: 4.25 });
+});
+
+test("parseQaScoreO: the scale bounds round-trip (4 = all ones, 20 = all fives)", () => {
+  assert.strictEqual(outcomes.parseQaScoreO("cov=1,ins=1,instr=1,clar=1")?.sum, 4);
+  assert.strictEqual(outcomes.parseQaScoreO("cov=5,ins=5,instr=5,clar=5")?.sum, 20);
+});
+
+test("parseQaScoreO: unreported / malformed input stays null (no fabricated score)", () => {
+  for (const input of [null, undefined, "", "   ", "cov=,ins=", 17]) {
+    assert.strictEqual(outcomes.parseQaScoreO(input), null, `input ${JSON.stringify(input)} must not fabricate`);
+  }
 });
