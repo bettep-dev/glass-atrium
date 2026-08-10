@@ -149,10 +149,33 @@ const KEYWORD_DEBOUNCE_MS = 300;
 //   ok/warn/crit/info 는 동명 토큰, needs_context(neutral tone) 만 화면 관례상 accent 강조 (4-KPI 밖 세그먼트).
 const RESULT_COLOR_VAR = { ok: '--ok', warn: '--warn', crit: '--crit', info: '--info', neutral: '--accent' };
 
-// result enum → 화면 표시 색 토큰 var. RESULT_META.tone 경유 → 단일 출처 보장 (no local result→color map).
-function resultColorVarO(result) {
-  const tone = window.UI.RESULT_META[result]?.tone;
-  return RESULT_COLOR_VAR[tone] || '--dim';
+// result enum → 화면 표시 색 토큰 var. resolveResultMeta(ui.jsx) 경유 → 단일 출처 보장 (no local result→color map).
+// closedAt 지정 시 종결 행은 --dim 으로 탈강조 — neutral tone 의 화면 관례색(--accent)은 강조라 부적합.
+function resultColorVarO(result, closedAt) {
+  const meta = window.UI.resolveResultMeta(result, closedAt);
+  if (meta.closed) return '--dim';
+  return RESULT_COLOR_VAR[meta.tone] || '--dim';
+}
+
+// DWC 종결 토글의 optimistic 상태 (clauded-docs doc-status-toggle 선례 미러 — pending Set + override Map).
+// 순수 전이 함수로 분리해 pending 생명주기를 단위 테스트 가능하게 유지한다.
+//   begin  → pending 진입 (중복 클릭 차단은 호출부 가드)
+//   settle → 성공/실패 모두 pending 해제 · closedAt 있을 때만 override 기록 (실패 시 amber 유지)
+const CLOSURE_STATE_EMPTY = { pendingIds: new Set(), closedOverrides: new Map() };
+
+function buildClosureState(state, action) {
+  const pendingIds = new Set(state.pendingIds);
+  const closedOverrides = new Map(state.closedOverrides);
+  if (action.type === 'begin') {
+    pendingIds.add(action.id);
+    return { pendingIds, closedOverrides };
+  }
+  if (action.type === 'settle') {
+    pendingIds.delete(action.id);
+    if (action.closedAt) closedOverrides.set(action.id, action.closedAt);
+    return { pendingIds, closedOverrides };
+  }
+  return state;
 }
 
 // colorVar(--ok/--warn/--crit/--info) → canonical Badge tone 이름. 비-tone(--dim/--faint/--accent) → 'neutral'.
@@ -411,6 +434,25 @@ function ScreenOutcomes({ onNav }) {
   // T7 (O2) — forensic 'show all' 토글: include_all 파라미터로 서버 registry 게이트 해제.
   const [includeAll, setIncludeAll] = useStateO(false);
 
+  // DWC 종결 토글 상태 — 서버 응답 전 즉시 반영(optimistic) + in-flight 중복 PATCH 차단.
+  const [closureState, setClosureState] = useStateO(CLOSURE_STATE_EMPTY);
+
+  const markClosedO = useCallbackO(async (id) => {
+    if (closureState.pendingIds.has(id)) return;
+    setClosureState((prev) => buildClosureState(prev, { type: 'begin', id }));
+    let closedAt = null;
+    try {
+      const res = await fetch(`/api/outcomes/${id}/close`, { method: 'PATCH', headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const body = await res.json();
+        closedAt = body && body.closed_at ? body.closed_at : null;
+      }
+    } catch (_e) {
+      // 네트워크 실패 → override 미기록 = 행이 amber 로 남는다 (거짓 종결 표시 차단).
+    }
+    setClosureState((prev) => buildClosureState(prev, { type: 'settle', id, closedAt }));
+  }, [closureState.pendingIds]);
+
   const filterAbortRef = useRefO(null);
   const detailAbortRef = useRefO(null);
 
@@ -651,6 +693,7 @@ function ScreenOutcomes({ onNav }) {
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
           onRetry={triggerRefresh}
+          closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
@@ -1843,7 +1886,7 @@ function ChipGroup({ options, value, onChange, ariaLabel }) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -1875,6 +1918,7 @@ function ResultTableCard({
           onResetFilter={onResetFilter}
           onRowClick={onRowClick}
           onRetry={onRetry}
+          closure={closure}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -1936,7 +1980,7 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry }) {
+function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure }) {
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
@@ -1950,7 +1994,7 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick}/>;
+  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}/>;
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -1994,7 +2038,7 @@ function PlainHeader({ label, align = 'left', minWidth, width }) {
   );
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick }) {
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
   // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   return (
@@ -2016,7 +2060,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick}/>
+            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
           ))}
         </tbody>
       </table>
@@ -2171,7 +2215,7 @@ function RevisionCountCellO({ revisionCount }) {
   );
 }
 
-function ResultTableRow({ row, onRowClick }) {
+function ResultTableRow({ row, onRowClick, closure }) {
   const isFail   = row.result === 'fail';
   const isReview = !isFail && row.review_flag === true;
   const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
@@ -2181,8 +2225,12 @@ function ResultTableRow({ row, onRowClick }) {
   const cidShort = truncateO(row.cid || '', 12);
   const grader   = graderVerdictMetaO(row.grader_verdict);
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
-  const resultMeta  = window.UI.RESULT_META[row.result] || { icon: 'info', label: row.result };
-  const resultColor = `rgb(var(${resultColorVarO(row.result)}))`;
+  // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
+  const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
+  const resultMeta  = window.UI.resolveResultMeta(row.result, closedAt);
+  const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
+  const isClosing   = closure?.pendingIds.has(row.id) === true;
+  const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
 
   return (
     <tr
@@ -2208,7 +2256,23 @@ function ResultTableRow({ row, onRowClick }) {
         <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
           <GlyphO name={resultMeta.icon}/>
           {row.result}
+          {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
+          {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
         </span>
+        {canClose && (
+          <button
+            className="btn sm ml-1"
+            aria-busy={isClosing}
+            aria-label={`Mark outcome ${row.id} closed`}
+            title="Mark the open caveats on this row closed"
+            onClick={(e) => {
+              // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
+              e.stopPropagation();
+              if (!isClosing) closure.onMarkClosed(row.id);
+            }}>
+            {isClosing ? 'Closing…' : 'Mark closed'}
+          </button>
+        )}
       </td>
       <td className="text-center px-2 py-1.5 border-b border-line">
         <ConfidenceChipO confidence={row.confidence}/>

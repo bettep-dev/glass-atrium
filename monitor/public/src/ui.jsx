@@ -725,6 +725,20 @@ const RESULT_META = {
   needs_context:      { tone: 'neutral', glyph: 'ℹ', icon: 'info',  label: 'Needs info'        },
 };
 
+// 종결(closed) 표시 메타 — RESULT_META 키는 5-value result enum SoT 이므로 6번째 키를 더하지 않는다.
+// closed 는 result 와 직교하는 별도 차원(closed_at 유무)이라 sibling 상수로 둔다.
+// tone=neutral(탈강조) + 캐논 셋(A7) 글리프 ✓ + 텍스트 라벨 → 색 단독 인코딩 회피.
+const CLOSED_META = { tone: 'neutral', glyph: '✓', icon: 'check', label: 'Closed' };
+
+// result + closed_at → 표시 메타 (RESULT_META 소비부 단일 진입점).
+// amber = '지금 열려 있음' 이므로 done_with_concerns + closed_at 만 종결 표시로 접는다 —
+// 다른 result 는 closed_at 과 무관하게 RESULT_META 그대로 (taxonomy 불변).
+function resolveResultMeta(result, closedAt) {
+  const base = RESULT_META[result] || { tone: 'neutral', glyph: 'ℹ', icon: 'info', label: result };
+  if (result === 'done_with_concerns' && closedAt) return { ...CLOSED_META, closed: true };
+  return { ...base, closed: false };
+}
+
 // 비율 표본 임계 (A5) — n < 30 이면 muted/italic + '(n=N)' 표기 대상.
 const LOW_N_MIN = 30;
 
@@ -788,6 +802,6 @@ window.UI = {
   formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatBytes,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
-  RESULT_META, LOW_N_MIN, formatPctWithDenominator,
+  RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
   TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER,
 };
