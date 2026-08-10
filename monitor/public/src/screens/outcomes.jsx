@@ -2253,26 +2253,32 @@ function ResultTableRow({ row, onRowClick, closure }) {
       </td>
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
-        <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
-          <GlyphO name={resultMeta.icon}/>
-          {row.result}
-          {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
-          {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
+        {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
+            <GlyphO name={resultMeta.icon}/>
+            {row.result}
+            {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
+            {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
+          </span>
+          {canClose && (
+            // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
+            // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
+            <button
+              className="btn ghost sm icon shrink-0 -my-1"
+              aria-busy={isClosing}
+              aria-label={`Mark outcome ${row.id} closed`}
+              title={isClosing ? 'Closing…' : 'Mark closed'}
+              style={isClosing ? { opacity: 0.65 } : undefined}
+              onClick={(e) => {
+                // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
+                e.stopPropagation();
+                if (!isClosing) closure.onMarkClosed(row.id);
+              }}>
+              <GlyphO name="circle-check" size={14}/>
+            </button>
+          )}
         </span>
-        {canClose && (
-          <button
-            className="btn sm ml-1"
-            aria-busy={isClosing}
-            aria-label={`Mark outcome ${row.id} closed`}
-            title="Mark the open caveats on this row closed"
-            onClick={(e) => {
-              // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
-              e.stopPropagation();
-              if (!isClosing) closure.onMarkClosed(row.id);
-            }}>
-            {isClosing ? 'Closing…' : 'Mark closed'}
-          </button>
-        )}
       </td>
       <td className="text-center px-2 py-1.5 border-b border-line">
         <ConfidenceChipO confidence={row.confidence}/>
