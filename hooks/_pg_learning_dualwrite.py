@@ -28,26 +28,30 @@ except ImportError as exc:
     raise  # the importing aggregator catches this and falls back to file-only mode
 
 # Negative-signal predicate + its role allowlist live in the stdlib-only sibling so
-# the aggregator can import them on the psycopg-absent path this module dies on;
-# re-exported here because every existing consumer (daemon_cycle, the trigger and
-# review-flag suites) imports them by name from this module. Unguarded: the sibling
-# has no runtime-environment dependency, so a failure there is a packaging fault,
-# not a degradable condition.
+# the aggregator can import them on the psycopg-absent path this module dies on.
+# Unguarded: the sibling has no runtime-environment dependency, so a failure there is
+# a packaging fault, not a degradable condition.
+#
+# The re-export surface is two per-name-verifiable groups, NOT a blanket "everything
+# has a consumer" claim. Group 1 is read through THIS module by daemon_cycle and the
+# trigger / single-definition suites. Group 2 has no such reader in this repo: those
+# names were DEFINED here before the extraction, so the re-export preserves their
+# original namespace for an out-of-repo importer — the only argument that carries them.
 from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     negative_signal_hits,
     is_negative_signal_outcome,
-    _is_structural_row,
     _is_synthesized_measurement_gap,
-    _is_visibility_flag_row,
     NEGATIVE_SIGNAL_NAMES,
+    ATTRIBUTION_BUDGET_TRUNCATION,
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    # group 2 — namespace-preservation only
+    _is_structural_row,
+    _is_visibility_flag_row,
     NEGATIVE_SIGNAL_RESULTS,
     NEGATIVE_REVISION_MIN,
-    NEGATIVE_EVALUATIVE_SIGNAL,
     GRADER_VERDICT_FAIL,
     HARD_TEST_BAR_TASK_TYPES,
     ATTRIBUTION_SYNTHESIZED,
-    ATTRIBUTION_BUDGET_TRUNCATION,
-    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
 )
 
 

@@ -37,7 +37,7 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - Lenient evaluation = quality degradation = **failure**
 - **Verify Claims with Evidence**: When developers assert code is "refactored", "shared", or "reused", independently verify via `grep` for actual imports/usage; reject unsupported claims
 - Coverage scores **requirement** coverage, never solution breadth — a smaller diff meeting the requirement takes full Coverage; unrequested breadth is an Instruction-following deduction
-- **`result` reports the REVIEW's outcome, never the reviewed artifact's verdict**: a review carried to a complete verdict is `result: done` even when that verdict is Reject — the artifact verdict travels in the Pass / Conditional Pass / Reject line + `qa_score` + `summary`. `done_with_concerns` is reserved for Review Coverage Limits (self-scope) entries copied into `concerns` — emit it freely whenever such a limit exists
+- **`result` reports the REVIEW's outcome, never the reviewed artifact's verdict**: a review carried to a complete verdict is `result: done` even when that verdict is Reject — the artifact verdict travels in the Pass / Conditional Pass / Reject line + `qa_score` + `summary`. Review Coverage Limits (self-scope) stay always-present and are copied into `concerns:` on the emitted result — they do NOT select the result value. A delivered verdict whose only limits are role-inherent ([Not Executed] because the role is read-only · [Partial Read] sanctioned by budget) emits `result: done`; `done_with_concerns` is reserved for a limit that left the tasked verdict itself undelivered, incomplete, or unverified beyond the sanctioned review envelope (per the core-outcome-record.md Result-selection criterion)
 
 ## Role Separation
 

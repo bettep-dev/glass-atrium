@@ -79,6 +79,16 @@ for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
         sys.path.insert(0, str(_hooks_dir))
 import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 
+# Negative-signal SoT. UNGUARDED unlike the _pg_learning_dualwrite import below:
+# _outcome_signal is stdlib-only by contract (zero import statements), so it has no
+# psycopg SystemExit path and writes no stderr — the silent bare-CLI-import contract
+# holds without a try/except, and the predicate stays defined on the psycopg-absent path.
+from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    is_negative_signal_outcome,
+    _is_synthesized_measurement_gap as _shared_is_synthesized_measurement_gap,
+)
+
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
 # GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
 # resolve after the .claude→.glass-atrium data migration.
@@ -3282,38 +3292,11 @@ def _render_signals_block(patterns: list[Pattern]) -> str:
 # -- generation outcome polarity partition ----------------------------------
 #
 # Negative-signal definition is the IMPORTED shared SoT
-# (_pg_learning_dualwrite.is_negative_signal_outcome) whenever the helper is
-# loadable (HAS_PG_OUTCOME_READ — same gate as every other _pg_is_* call site).
-# When psycopg is absent the whole helper module fails to import, so the call
-# would be unbound; the fallback below mirrors the helper's Outcome-expressible
-# OR-terms (result ∈ NEGATIVE_SIGNAL_RESULTS · revision_count>=2). The
-# grader_verdict / review_flag terms are NOT carried by Outcome, so even the
-# imported helper sees them absent — the fallback is a strict subset, not a
-# divergent definition. Keep in sync with _pg_learning_dualwrite (drift fails
-# OPEN: a missed failure lands in NEUTRAL, never silently in SUCCESS).
-_FALLBACK_NEGATIVE_RESULTS = frozenset({"fail", "blocked", "done_with_concerns"})
-_FALLBACK_NEGATIVE_REVISION_MIN = 2
-# SubagentStop synthesis provenance — a completion-synthesized done_with_concerns
-# row is a measurement gap (agent finished, emitted no [COMPLETION]), NOT an agent
-# failure, so it is carved out of FAILURE polarity. Mirrors the imported SoT's
-# _is_synthesized_measurement_gap; named locally so the FALLBACK branch (psycopg
-# absent) carves it out too, not only the imported-helper branch.
-_ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
-# Budget-truncation shares the synthesized-provenance lineage (subagent hard-killed
-# at its tool_use/turn budget ceiling BEFORE emitting [COMPLETION]) but is a REAL
-# agent-relevant negative — the truncated subagent's own instructions should improve
-# — so it is DELIBERATELY kept on the CLUSTERABLE side, never carved out.
-# Accepted-scope REACHABILITY limit: pattern-1 clustering needs 3+ same-agent
-# negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
-# pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
-_ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
-# Third synthesized-provenance sibling: a schema-mode run whose TERMINAL
-# StructuredOutput was successfully consumed. Its result=done proves the run
-# FINISHED (direct evidence of non-truncation) but the deliverable is
-# schema-validated + writer-unverified and lesson-less — such a row must never
-# stand as a "clean first-try done" SUCCESS exemplar, nor as a failure →
-# NEUTRAL polarity, mirroring the measurement-gap treatment.
-_ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
+# (_outcome_signal.is_negative_signal_outcome), unconditionally — the module is
+# stdlib-only, so the predicate stays bound on the psycopg-absent path and no
+# hand-mirrored copy exists to drift from it. The grader_verdict / review_flag
+# OR-terms are NOT carried by Outcome, so the shared predicate sees them absent
+# over this row shape — a strict subset of its definition, never a divergent one.
 
 
 def _is_synthesized_measurement_gap(o: Outcome) -> bool:
@@ -3323,20 +3306,18 @@ def _is_synthesized_measurement_gap(o: Outcome) -> bool:
     writer-unverified). Scoped to those exact provenance+result pairs so a real
     agent's done_with_concerns still counts.
 
-    budget-truncation is a sibling synthesized-provenance attribution but a real
-    negative, not a measurement gap — the explicit guard keeps it clusterable and
-    holds that invariant even if the synthesized matches are broadened."""
-    if o.attribution_source == _ATTRIBUTION_BUDGET_TRUNCATION:
-        return False
+    The structuredoutput-derived arm is checked HERE rather than delegated: the shared
+    predicate deliberately omits it (its docstring hands that success-side exclusion to
+    daemon_cycle), and without it such a row carrying revision_count>=2 would flip
+    NEUTRAL → FAILURE. Its attribution is disjoint from the shared arms, so checking it
+    first is order-safe; every other arm — including the budget-truncation
+    keep-clusterable guard — is the shared SoT's."""
     if (
-        o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
+        o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
         and o.result == "done"
     ):
         return True
-    return (
-        o.attribution_source == _ATTRIBUTION_SYNTHESIZED
-        and o.result == "done_with_concerns"
-    )
+    return _shared_is_synthesized_measurement_gap(_outcome_signal_row(o))
 
 
 def _outcome_signal_row(o: Outcome) -> dict[str, object]:
@@ -3354,9 +3335,6 @@ def _outcome_signal_row(o: Outcome) -> dict[str, object]:
 def _is_failure_outcome(o: Outcome) -> bool:
     """FAILURE polarity: shared negative-signal predicate OR evaluative_signal==-1.
 
-    Prefers the imported SoT predicate; falls back to its Outcome-expressible
-    subset when the helper module is unloadable (psycopg absent).
-
     Synthesized-measurement-gap carve-out runs FIRST: a completion-synthesized
     done_with_concerns row is never FAILURE polarity (it has no agent-emitted
     evaluative_signal either, so the -1 short-circuit below never fires for it).
@@ -3365,12 +3343,7 @@ def _is_failure_outcome(o: Outcome) -> bool:
         return False
     if o.evaluative_signal == -1:
         return True
-    if HAS_PG_OUTCOME_READ:
-        return bool(_pg_is_negative_signal_outcome(_outcome_signal_row(o)))
-    return (
-        o.result in _FALLBACK_NEGATIVE_RESULTS
-        or o.revision_count >= _FALLBACK_NEGATIVE_REVISION_MIN
-    )
+    return bool(is_negative_signal_outcome(_outcome_signal_row(o)))
 
 
 def _is_success_outcome(o: Outcome) -> bool:
@@ -3378,7 +3351,7 @@ def _is_success_outcome(o: Outcome) -> bool:
 
     structuredoutput-derived carve-out: that row's done is synthesis-assigned
     (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
-    if o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
+    if o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
         return False
     return (
         o.result == "done"
@@ -8906,6 +8879,192 @@ def alert_attribution_confound(*, now: datetime | None = None) -> None:
         )
 
 
+# -- Per-channel weekly done_with_concerns share watch ----------------------
+#
+# The emitter-criterion incident stepped both writer channels' weekly DWC share
+# within one deploy day on an unchanged workload, and nothing in the loop could
+# see it: the post-apply watch is keyed per applied proposal / per agent, so a
+# contract-text change affecting EVERY writer at once falls between its windows.
+# This watch is channel-keyed instead — the same grain as the tracking query in
+# the remediation plan.
+#
+# DETECTION-ONLY, and deliberately on its OWN eval_result token: the post-apply
+# token is consumed by the regression gate, so reusing it would silently turn a
+# channel observation into a proposal-application block.
+
+DWC_SHARE_ALARM_EVAL_RESULT = "dwc-share-regression"  # VARCHAR(32) verdict
+# Writer-emitted provenance only — synthesized channels are DWC by construction.
+DWC_SHARE_WRITER_CHANNELS = ("structuredoutput-completion", "hook-input")
+DWC_SHARE_TRAILING_WEEKS = 4
+DWC_SHARE_RELATIVE_MULTIPLE = 2.0
+DWC_SHARE_ABSOLUTE_FLOOR = 0.25
+# Per-week denominator floor, playing the role
+# POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS plays in the sibling watch: a
+# 1-row channel-week is a rate artifact, not a regression.
+DWC_SHARE_MIN_WEEK_OBSERVATIONS = 5
+# Trailing mean below which the doubling term is meaningless — 2x a near-zero
+# baseline fires on noise, so only the absolute term applies down there.
+DWC_SHARE_RELATIVE_MIN_BASELINE = 0.03
+
+
+class DwcShareAlarm(NamedTuple):
+    """One writer channel's weekly done_with_concerns share crossing a trigger."""
+
+    channel: str
+    week_start: datetime  # ISO-Monday bucket — the dedup key
+    share: float
+    baseline: float  # trailing-window mean, 0.0 when no week met the floor
+    total: int
+    dwc: int
+    trigger: str  # "relative", "absolute", or "relative+absolute"
+
+
+def _week_start(moment: datetime) -> datetime:
+    """ISO-Monday midnight bucket, matching the tracking query's date_trunc('week')."""
+    midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=midnight.weekday())
+
+
+def find_dwc_share_alarms(
+    rows: list[dict] | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[DwcShareAlarm, ...]:
+    """Writer channels whose current-week DWC share broke out of its own trend.
+
+    Args:
+        rows: outcome row dicts (attribution_source, record_ts, result), the
+            shape _pg_read_outcomes_since returns.
+        now: instant inside the week under test (injected by tests).
+
+    Trigger: current-week share >= DWC_SHARE_RELATIVE_MULTIPLE x the trailing
+    4-week mean, OR >= DWC_SHARE_ABSOLUTE_FLOOR. Both terms are denominator-
+    guarded — a week below DWC_SHARE_MIN_WEEK_OBSERVATIONS is excluded from the
+    current test and from the baseline, and the relative term needs a baseline
+    of at least DWC_SHARE_RELATIVE_MIN_BASELINE. A naive record_ts borrows the
+    reference tzinfo; a row without one cannot be bucketed and is skipped.
+    """
+    if not rows:
+        return ()
+
+    reference = now or datetime.now(timezone.utc)
+    current_week = _week_start(reference)
+    totals: dict[tuple[str, datetime], int] = {}
+    concerned: dict[tuple[str, datetime], int] = {}
+    for row in rows:
+        channel = (row.get("attribution_source") or "").strip()
+        if channel not in DWC_SHARE_WRITER_CHANNELS:
+            continue
+        record_ts = row.get("record_ts")
+        if not isinstance(record_ts, datetime):
+            continue
+        if record_ts.tzinfo is None and reference.tzinfo is not None:
+            record_ts = record_ts.replace(tzinfo=reference.tzinfo)
+        key = (channel, _week_start(record_ts))
+        totals[key] = totals.get(key, 0) + 1
+        if (row.get("result") or "") == "done_with_concerns":
+            concerned[key] = concerned.get(key, 0) + 1
+
+    found: list[DwcShareAlarm] = []
+    for channel in DWC_SHARE_WRITER_CHANNELS:
+        total = totals.get((channel, current_week), 0)
+        if total < DWC_SHARE_MIN_WEEK_OBSERVATIONS:
+            continue
+        dwc = concerned.get((channel, current_week), 0)
+        share = dwc / total
+        trailing: list[float] = []
+        for weeks_back in range(1, DWC_SHARE_TRAILING_WEEKS + 1):
+            past = (channel, current_week - timedelta(weeks=weeks_back))
+            past_total = totals.get(past, 0)
+            if past_total < DWC_SHARE_MIN_WEEK_OBSERVATIONS:
+                continue
+            trailing.append(concerned.get(past, 0) / past_total)
+        baseline = sum(trailing) / len(trailing) if trailing else 0.0
+        fired = [
+            name
+            for name, hit in (
+                (
+                    "relative",
+                    baseline >= DWC_SHARE_RELATIVE_MIN_BASELINE
+                    and share >= baseline * DWC_SHARE_RELATIVE_MULTIPLE,
+                ),
+                ("absolute", share >= DWC_SHARE_ABSOLUTE_FLOOR),
+            )
+            if hit
+        ]
+        if not fired:
+            continue
+        found.append(
+            DwcShareAlarm(
+                channel,
+                current_week,
+                share,
+                baseline,
+                total,
+                dwc,
+                "+".join(fired),
+            )
+        )
+    return tuple(found)
+
+
+def alert_dwc_share_regression(*, now: datetime | None = None) -> None:
+    """Emit one loop event per writer channel whose weekly DWC share broke out.
+
+    The event table has no channel column, so the channel rides `agent` as
+    `channel:<provenance>` — a NON-agent use of that column the monitor surface
+    will render as written.
+
+    Denominator caveat: _pg_read_outcomes_since excludes attribution failures and
+    poisoned-window rows inside the PG helper, so this share is NOT expected to
+    equal the raw core.outcomes tracking query's percentage. It is a relative /
+    absolute breakout watch, not a reproduction of that band.
+    """
+    if not HAS_PG_LOOP_WRITE or not HAS_PG_OUTCOME_READ:
+        return
+
+    reference = now or datetime.now(timezone.utc)
+    # Trailing window + the partial current week, plus one bucket of slack.
+    span_days = (DWC_SHARE_TRAILING_WEEKS + 2) * 7
+    try:
+        rows = _pg_read_outcomes_since(reference.timestamp() - span_days * 86400)
+    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: DWC-share watch SKIPPED — outcome read failed "
+            f"({type(exc).__name__}: {str(exc)[:160]}); this is NOT 'the share is "
+            "flat', and no event was emitted\n"
+        )
+        return
+
+    for alarm in find_dwc_share_alarms(rows, now=reference):
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: done_with_concerns share regression — channel="
+            f"{alarm.channel} week={alarm.week_start.date()} "
+            f"share={alarm.share:.1%} ({alarm.dwc}/{alarm.total}) vs trailing "
+            f"{DWC_SHARE_TRAILING_WEEKS}-week mean {alarm.baseline:.1%} "
+            f"(trigger={alarm.trigger}; thresholds "
+            f"{DWC_SHARE_RELATIVE_MULTIPLE:g}x mean OR "
+            f"{DWC_SHARE_ABSOLUTE_FLOOR:.0%} absolute); the emitter's result "
+            "criterion or its contract text is the first place to look; "
+            "DETECTION-ONLY — no gate, no transition, no status mutation\n"
+        )
+        _invoke_pg_helper(
+            {
+                "op": "write_autoagent_loop_event",
+                "args": {
+                    # Week-bucket key → the (event_ts, agent, eval_result) UPSERT
+                    # lands every re-detection of the same week on ONE row.
+                    "event_ts": alarm.week_start.isoformat(),
+                    "agent": f"channel:{alarm.channel}"[:64],  # varchar(64) guard
+                    "eval_result": DWC_SHARE_ALARM_EVAL_RESULT,
+                    "changes_added": 0,
+                    "changes_removed": 0,
+                    "rice": None,
+                },
+            }
+        )
+
+
 # -- Per-agent grouping -----------------------------------------------------
 
 
@@ -9591,6 +9750,16 @@ def run_cycle(
             sys.stderr.write(
                 "[daemon-cycle] WARN: alert_attribution_confound raised — "
                 f"signature lost: {type(exc).__name__}: {str(exc)[:160]}\n"
+            )
+        # Third sibling, channel-keyed rather than proposal-keyed: a contract-text
+        # change moves every writer at once, which the per-proposal windows above
+        # cannot see.
+        try:
+            alert_dwc_share_regression()
+        except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip
+            sys.stderr.write(
+                "[daemon-cycle] WARN: alert_dwc_share_regression raised — "
+                f"watch lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
         try:
             emit_loop_events(report)
