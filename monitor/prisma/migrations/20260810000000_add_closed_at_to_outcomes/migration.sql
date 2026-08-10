@@ -1,0 +1,22 @@
+-- Add core.outcomes.closed_at — the open-vs-closed dimension behind the outcomes
+-- amber badge. A done_with_concerns row is a HEALTHY signal (delivered work + open
+-- items), yet the table rendered its warn badge forever, so a resolved handoff read
+-- as a standing error. The row shape carried no closure axis at all; this column is
+-- that axis, set exactly once by the operator/orchestrator close action.
+--
+-- NULLable with NO default and NO backfill, deliberately: every pre-existing row must
+-- read as OPEN (the amber baseline is preserved unchanged), and closure is a post-hoc
+-- judgment no migration can infer. This matches the table's established NULL-tolerant
+-- idiom for grader_verdict / downgrade_origin.
+--
+-- No index, no CHECK, no NOT NULL this cycle: aggregate routes exclude the column
+-- entirely, so no predicate needs support, and the post-deploy verifier in
+-- scripts/oss-db-setup.sh asserts exact named-constraint / named-partial-index counts.
+--
+-- Lock posture: ADD COLUMN nullable with no default is catalog-only on PG 11+ (no table
+-- rewrite), so ACCESS EXCLUSIVE is held for microseconds.
+--
+-- Reversal: ALTER TABLE "core"."outcomes" DROP COLUMN "closed_at";
+-- IF NOT EXISTS keeps a re-run, and a future pre-release re-squash into the init
+-- CREATE TABLE, a no-op (migrate deploy checksum-verifies applied migrations).
+ALTER TABLE "core"."outcomes" ADD COLUMN IF NOT EXISTS "closed_at" TIMESTAMPTZ(6);

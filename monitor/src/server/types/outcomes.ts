@@ -89,6 +89,8 @@ export interface OutcomeSearchRow {
   attribution_source: string | null;
   // QA-review score string (shape cov=N,ins=N,instr=N,clar=N). NULL for non-QA rows — FE renders no dots.
   qa_score: string | null;
+  // NULL = 열린 행 (legacy 행 포함) → done_with_concerns amber 유지. 비-NULL = 종결 시각.
+  closed_at: string | null;
 }
 
 export interface OutcomeSearchResponse {
@@ -128,7 +130,19 @@ export interface OutcomeDetailResponse {
   qa_score: string | null;
   // Full markdown body (no truncation) — null when DB column is NULL.
   body_md: string | null;
+  // NULL = 열린 행 (legacy 행 포함) → done_with_concerns amber 유지. 비-NULL = 종결 시각.
+  closed_at: string | null;
   inserted_at: string;
+}
+
+// PATCH /api/outcomes/:id/close
+
+// Idempotent close response — `closed` is true on the first close AND on every repeat,
+// `closed_at` always echoes the STORED timestamp (a repeat never re-stamps it).
+export interface OutcomeCloseResponse {
+  id: number;
+  closed: true;
+  closed_at: string;
 }
 
 // /api/outcomes/cross-analysis
@@ -391,4 +405,7 @@ export type OutcomesErrorBody =
   // DB-rejected client input (SQLSTATE class 22/23) — db-failure.ts taxonomy split.
   | { error: "invalid_input"; reason: string }
   | { error: "invalid_param"; param: string; allowed?: ReadonlyArray<string | number> }
+  // Close-route only — the row exists but carries a non-done_with_concerns result,
+  // and closure is defined solely for the open-items bucket.
+  | { error: "invalid_result"; id: number; result: OutcomeResultLiteral }
   | { error: "not_found"; id: number };

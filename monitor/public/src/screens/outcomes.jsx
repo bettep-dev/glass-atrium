@@ -149,10 +149,33 @@ const KEYWORD_DEBOUNCE_MS = 300;
 //   ok/warn/crit/info 는 동명 토큰, needs_context(neutral tone) 만 화면 관례상 accent 강조 (4-KPI 밖 세그먼트).
 const RESULT_COLOR_VAR = { ok: '--ok', warn: '--warn', crit: '--crit', info: '--info', neutral: '--accent' };
 
-// result enum → 화면 표시 색 토큰 var. RESULT_META.tone 경유 → 단일 출처 보장 (no local result→color map).
-function resultColorVarO(result) {
-  const tone = window.UI.RESULT_META[result]?.tone;
-  return RESULT_COLOR_VAR[tone] || '--dim';
+// result enum → 화면 표시 색 토큰 var. resolveResultMeta(ui.jsx) 경유 → 단일 출처 보장 (no local result→color map).
+// closedAt 지정 시 종결 행은 --dim 으로 탈강조 — neutral tone 의 화면 관례색(--accent)은 강조라 부적합.
+function resultColorVarO(result, closedAt) {
+  const meta = window.UI.resolveResultMeta(result, closedAt);
+  if (meta.closed) return '--dim';
+  return RESULT_COLOR_VAR[meta.tone] || '--dim';
+}
+
+// DWC 종결 토글의 optimistic 상태 (clauded-docs doc-status-toggle 선례 미러 — pending Set + override Map).
+// 순수 전이 함수로 분리해 pending 생명주기를 단위 테스트 가능하게 유지한다.
+//   begin  → pending 진입 (중복 클릭 차단은 호출부 가드)
+//   settle → 성공/실패 모두 pending 해제 · closedAt 있을 때만 override 기록 (실패 시 amber 유지)
+const CLOSURE_STATE_EMPTY = { pendingIds: new Set(), closedOverrides: new Map() };
+
+function buildClosureState(state, action) {
+  const pendingIds = new Set(state.pendingIds);
+  const closedOverrides = new Map(state.closedOverrides);
+  if (action.type === 'begin') {
+    pendingIds.add(action.id);
+    return { pendingIds, closedOverrides };
+  }
+  if (action.type === 'settle') {
+    pendingIds.delete(action.id);
+    if (action.closedAt) closedOverrides.set(action.id, action.closedAt);
+    return { pendingIds, closedOverrides };
+  }
+  return state;
 }
 
 // colorVar(--ok/--warn/--crit/--info) → canonical Badge tone 이름. 비-tone(--dim/--faint/--accent) → 'neutral'.
@@ -411,6 +434,25 @@ function ScreenOutcomes({ onNav }) {
   // T7 (O2) — forensic 'show all' 토글: include_all 파라미터로 서버 registry 게이트 해제.
   const [includeAll, setIncludeAll] = useStateO(false);
 
+  // DWC 종결 토글 상태 — 서버 응답 전 즉시 반영(optimistic) + in-flight 중복 PATCH 차단.
+  const [closureState, setClosureState] = useStateO(CLOSURE_STATE_EMPTY);
+
+  const markClosedO = useCallbackO(async (id) => {
+    if (closureState.pendingIds.has(id)) return;
+    setClosureState((prev) => buildClosureState(prev, { type: 'begin', id }));
+    let closedAt = null;
+    try {
+      const res = await fetch(`/api/outcomes/${id}/close`, { method: 'PATCH', headers: { Accept: 'application/json' } });
+      if (res.ok) {
+        const body = await res.json();
+        closedAt = body && body.closed_at ? body.closed_at : null;
+      }
+    } catch (_e) {
+      // 네트워크 실패 → override 미기록 = 행이 amber 로 남는다 (거짓 종결 표시 차단).
+    }
+    setClosureState((prev) => buildClosureState(prev, { type: 'settle', id, closedAt }));
+  }, [closureState.pendingIds]);
+
   const filterAbortRef = useRefO(null);
   const detailAbortRef = useRefO(null);
 
@@ -651,6 +693,7 @@ function ScreenOutcomes({ onNav }) {
           onResetFilter={resetFilter}
           onRowClick={setDetailRow}
           onRetry={triggerRefresh}
+          closure={{ pendingIds: closureState.pendingIds, closedOverrides: closureState.closedOverrides, onMarkClosed: markClosedO }}
         />
       </div>
 
@@ -1843,7 +1886,7 @@ function ChipGroup({ options, value, onChange, ariaLabel }) {
 
 function ResultTableCard({
   state, rows, totalMatched, page, limit, sort, filter,
-  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry,
+  onPageChange, onSortChange, onResetFilter, onRowClick, onRetry, closure,
 }) {
   const { CardHead, Pill } = window.UI;
 
@@ -1875,6 +1918,7 @@ function ResultTableCard({
           onResetFilter={onResetFilter}
           onRowClick={onRowClick}
           onRetry={onRetry}
+          closure={closure}
         />
       </div>
       {state.status === 'ready' && totalMatched > 0 && (
@@ -1936,7 +1980,7 @@ function ActiveFilterChips({ filter }) {
   );
 }
 
-function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry }) {
+function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, closure }) {
   if (state.status === 'loading') {
     return <ChartSkeletonO height={400} aria-label="Loading results"/>;
   }
@@ -1950,7 +1994,7 @@ function ResultTableBody({ state, rows, totalMatched, filter, sort, onSortChange
     return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
   }
 
-  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick}/>;
+  return <ResultTable rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}/>;
 }
 
 // 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
@@ -1994,7 +2038,7 @@ function PlainHeader({ label, align = 'left', minWidth, width }) {
   );
 }
 
-function ResultTable({ rows, sort, onSortChange, onRowClick }) {
+function ResultTable({ rows, sort, onSortChange, onRowClick, closure }) {
   // flex: 1 + min-h: 0 → table 이 card-body 높이 fill, sticky header 유지하며 body scroll.
   // mono 는 timestamp/id/숫자 컬럼만 — 산문(agent/task_type/result/summary)은 sans (W3-T7 density).
   return (
@@ -2006,9 +2050,10 @@ function ResultTable({ rows, sort, onSortChange, onRowClick }) {
             <PlainHeader label="Agent" minWidth={110}/>
             <PlainHeader label="task_type"/>
             <PlainHeader label="result"/>
-            <PlainHeader label="conf" align="center"/>
-            <PlainHeader label="metric*" align="center"/>
-            <PlainHeader label="Check" align="center"/>
+            {/* 고정 폭 3열 — 셀 내부 슬롯 폭과 짝을 이뤄야 열이 행마다 흔들리지 않는다 (남는 폭은 summary 가 흡수). */}
+            <PlainHeader label="conf" align="center" width={88}/>
+            <PlainHeader label="metric*" align="center" width={64}/>
+            <PlainHeader label="Check" align="center" width={52}/>
             <SortableHeader label="rev" sortKey="revision_count" currentSort={sort} onSortChange={onSortChange} align="right" width={50} descOnly/>
             <PlainHeader label="summary"/>
             <PlainHeader label="cid" width={110}/>
@@ -2016,7 +2061,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick}/>
+            <ResultTableRow key={row.id} row={row} onRowClick={onRowClick} closure={closure}/>
           ))}
         </tbody>
       </table>
@@ -2070,21 +2115,28 @@ function SortableHeader({ label, sortKey, currentSort, onSortChange, align, widt
 //   null(작성자 누락) = 빈 칩 + '—' (수치 fabrication 회피). 색≠의미 단독: 세그먼트 수가 위계를 전달.
 const CONFIDENCE_LEVEL = { high: 3, medium: 2, low: 1 };
 
+// 셀 안의 고정 슬롯 폭 — 셀마다 내용 폭이 달라지면 열이 세로로 정렬되지 않는다 (행마다 들쭉날쭉).
+//   슬롯 폭이 고정이면 막대/라벨/글리프가 행을 가로질러 각자의 수직선을 이룬다.
+const CONF_BAR_SLOT   = 19;   // 5px 세그먼트 3 + 2px 간격 2
+const CONF_LABEL_SLOT = 44;   // 최장 라벨 'medium' (fs-micro mono)
+const METRIC_MARK_SLOT  = 14;
+const METRIC_SCORE_SLOT = 22;
+const SUMMARY_FLAG_SLOT = 18;
+
 function ConfidenceChipO({ confidence }) {
   const level = CONFIDENCE_LEVEL[confidence] || 0;
   const label = confidence == null ? '—' : confidence;
+  const title = level === 0 ? 'confidence not reported' : `confidence: ${label}`;
 
-  if (level === 0) {
-    return <span className="fs-meta font-mono text-faint" title="confidence not reported">—</span>;
-  }
   return (
     <span
-      className="inline-flex items-center gap-1 align-middle"
+      className="inline-flex items-center gap-1 align-middle whitespace-nowrap"
       role="img"
       aria-label={`confidence ${label} (${level} of 3)`}
-      title={`confidence: ${label}`}>
-      <span className="inline-flex gap-0.5" aria-hidden="true">
-        {[0, 1, 2].map((i) => (
+      title={title}>
+      {/* level 0 은 세그먼트를 아예 비운다 — 빈 막대 3개는 '측정된 0'으로 읽혀 fabrication 이 된다. */}
+      <span className="inline-flex gap-0.5 shrink-0" style={{ width: CONF_BAR_SLOT }} aria-hidden="true">
+        {level > 0 && [0, 1, 2].map((i) => (
           <span
             key={i}
             className="inline-block rounded-sm"
@@ -2095,22 +2147,26 @@ function ConfidenceChipO({ confidence }) {
             }}/>
         ))}
       </span>
-      <span className="fs-micro font-mono text-dim">{label}</span>
+      <span
+        className={`fs-micro font-mono text-left shrink-0 ${level === 0 ? 'text-faint' : 'text-dim'}`}
+        style={{ width: CONF_LABEL_SLOT }}>
+        {label}
+      </span>
     </span>
   );
 }
 
 // metric_pass = writer self-report (측정 진실 아님) → 측정 컬럼(grader_verdict)과 분리.
-//   품질 실패 오독 차단: minimal check(✓)/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
-//   true=✓ muted · false/null=– muted (self-report false 도 응급 신호 아님).
+//   품질 실패 오독 차단: minimal check(✓)/x/dash(–) muted 기호만 — crit(빨강) 절대 금지 (실 측정 신호는 Check 컬럼).
+//   true=✓ · false=✕ (기호로만 구분, 톤은 동일 muted — self-report false 도 응급 신호 아님) · null=– faint.
 function MetricPassMarkO({ metricPass }) {
-  const isPass = metricPass === true;
-  const iconName = isPass ? 'check' : 'minus';
+  const isReported = metricPass === true || metricPass === false;
+  const iconName = metricPass === true ? 'check' : metricPass === false ? 'x' : 'minus';
   const label  = metricPass === true ? 'pass (self-reported)' : metricPass === false ? 'fail (self-reported)' : 'not reported';
   return (
     <span
-      className="fs-meta font-mono inline-flex items-center align-middle"
-      style={{ color: isPass ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
+      className="fs-meta font-mono inline-flex items-center justify-center align-middle shrink-0"
+      style={{ width: METRIC_MARK_SLOT, color: isReported ? 'rgb(var(--dim))' : 'rgb(var(--faint))' }}
       role="img"
       aria-label={`self-check ${label}`}>
       <GlyphO name={iconName}/>
@@ -2118,19 +2174,35 @@ function MetricPassMarkO({ metricPass }) {
   );
 }
 
-// qa_score (cov/ins/instr/clar 각 1-5) → 5 중립 dot (채워진 dot 수 = 평균 점수). QA 행 전용 OPTIONAL.
-//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → 미렌더 (슬롭 회피, no fabricated dots).
-function parseQaScoreAvgO(qaScore) {
+// qa_score (cov/ins/instr/clar 각 1-5) → 합계(4-20) + 평균. QA 행 전용 OPTIONAL.
+//   데이터 미존재(현 search/detail SELECT 에 qa_score 컬럼 없음) → null (슬롭 회피, no fabricated score).
+function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
   const nums = qaScore.match(/\d+(\.\d+)?/g);
   if (!nums || nums.length === 0) return null;
   const sum = nums.reduce((acc, n) => acc + Number(n), 0);
-  return sum / nums.length;
+  return { sum, avg: sum / nums.length };
 }
 
+// 테이블 metric 컬럼의 점수 슬롯 — 합계를 숫자로 노출 (dot 은 4개 항목 분해를 못 실어 detail 패널에만 남긴다).
+//   미보고 행도 '—' 로 같은 폭을 차지해야 열이 세로로 정렬된다.
+function QaScoreValueO({ qaScore }) {
+  const score = parseQaScoreO(qaScore);
+  return (
+    <span
+      className={`fs-micro font-mono text-right shrink-0 ${score ? 'text-dim' : 'text-faint'}`}
+      style={{ width: METRIC_SCORE_SLOT }}
+      title={score ? `QA score ${score.sum}/20 — ${qaScore}` : 'QA score not reported'}>
+      {score ? score.sum : '—'}
+    </span>
+  );
+}
+
+// detail 패널 전용 — 5 중립 dot (채워진 dot 수 = 평균 점수). 테이블은 폭 정렬 때문에 숫자 슬롯을 쓴다.
 function QaScoreDotsO({ qaScore }) {
-  const avg = parseQaScoreAvgO(qaScore);
-  if (avg == null) return null;
+  const score = parseQaScoreO(qaScore);
+  if (score == null) return null;
+  const avg = score.avg;
   const filled = Math.round(Math.min(Math.max(avg, 0), 5));
   return (
     <span
@@ -2171,7 +2243,7 @@ function RevisionCountCellO({ revisionCount }) {
   );
 }
 
-function ResultTableRow({ row, onRowClick }) {
+function ResultTableRow({ row, onRowClick, closure }) {
   const isFail   = row.result === 'fail';
   const isReview = !isFail && row.review_flag === true;
   const rowClass = `outcome-row cursor-pointer ${isFail ? 'is-fail' : ''} ${isReview ? 'is-review' : ''}`;
@@ -2180,9 +2252,21 @@ function ResultTableRow({ row, onRowClick }) {
   const summary  = truncateO(row.summary || '', 60);
   const cidShort = truncateO(row.cid || '', 12);
   const grader   = graderVerdictMetaO(row.grader_verdict);
+  // Check 셀은 아이콘 단독이라 이 문장이 유일한 텍스트 채널 — title 과 셀 aria-label 이 함께 소비한다.
+  const graderTitle = `Automatic check (grader_verdict): ${grader.label}${
+    row.grader_verdict === 'unverified'
+      ? ' — no test artifact to grade for this task type.'
+      : row.grader_verdict == null
+      ? ' — recorded before the grader existed, not a failure.'
+      : ''
+  }`;
   // result tone/icon/label = RESULT_META SoT (T-OUT-1 — 로컬 result→color map 제거, 색맹 안전 듀얼인코딩).
-  const resultMeta  = window.UI.RESULT_META[row.result] || { icon: 'info', label: row.result };
-  const resultColor = `rgb(var(${resultColorVarO(row.result)}))`;
+  // closedAt = optimistic override 우선 → 서버 응답 도착 전에도 즉시 종결 표시.
+  const closedAt    = closure?.closedOverrides.get(row.id) ?? row.closed_at ?? null;
+  const resultMeta  = window.UI.resolveResultMeta(row.result, closedAt);
+  const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
+  const isClosing   = closure?.pendingIds.has(row.id) === true;
+  const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
 
   return (
     <tr
@@ -2205,9 +2289,31 @@ function ResultTableRow({ row, onRowClick }) {
       </td>
       <td className="text-left text-dim px-2 py-1.5 border-b border-line">{row.task_type}</td>
       <td className="text-left px-2 py-1.5 border-b border-line" title={resultMeta.label}>
-        <span className="inline-flex items-center gap-1" style={{ color: resultColor, fontWeight: 500 }}>
-          <GlyphO name={resultMeta.icon}/>
-          {row.result}
+        {/* 배지+종결 어포던스를 한 nowrap 컨테이너로 — 셀 안에서 줄바꿈되면 행 높이가 형제 행의 2배로 부푼다. */}
+        <span className="inline-flex items-center gap-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-0.5" style={{ color: resultColor, fontWeight: 500 }}>
+            <GlyphO name={resultMeta.icon}/>
+            {row.result}
+            {/* 텍스트 라벨 = 듀얼인코딩의 두 번째 채널 — 회색 tone 단독으로 종결을 encode 하지 않는다. */}
+            {resultMeta.closed && <span className="fs-micro text-dim">{resultMeta.label}</span>}
+          </span>
+          {canClose && (
+            // -my-1 = 24px 타깃을 유지한 채 행 높이 기여만 상쇄 (셀 패딩 안으로 겹침) → 형제 행과 높이 동일.
+            // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
+            <button
+              className="btn ghost sm icon shrink-0 -my-1"
+              aria-busy={isClosing}
+              aria-label={`Mark outcome ${row.id} closed`}
+              title={isClosing ? 'Closing…' : 'Mark closed'}
+              style={isClosing ? { opacity: 0.65 } : undefined}
+              onClick={(e) => {
+                // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
+                e.stopPropagation();
+                if (!isClosing) closure.onMarkClosed(row.id);
+              }}>
+              <GlyphO name="circle-check" size={14}/>
+            </button>
+          )}
         </span>
       </td>
       <td className="text-center px-2 py-1.5 border-b border-line">
@@ -2215,32 +2321,28 @@ function ResultTableRow({ row, onRowClick }) {
       </td>
       <td
         className="text-center font-mono px-2 py-1.5 border-b border-line">
-        <span className="inline-flex items-center gap-1.5 justify-center">
+        <span className="inline-flex items-center gap-1.5 justify-center whitespace-nowrap">
           <MetricPassMarkO metricPass={row.metric_pass}/>
-          <QaScoreDotsO qaScore={row.qa_score}/>
+          <QaScoreValueO qaScore={row.qa_score}/>
         </span>
       </td>
       <td
         className="text-center px-2 py-1.5 border-b border-line"
-        title={`Automatic check (grader_verdict): ${grader.label}${
-          row.grader_verdict === 'unverified'
-            ? ' — no test artifact to grade for this task type.'
-            : row.grader_verdict == null
-            ? ' — recorded before the grader existed, not a failure.'
-            : ''
-        }`}>
-        <span className="inline-flex items-center gap-1 justify-center" style={{ color: `rgb(var(${grader.colorVar}))`, fontWeight: 500 }}>
-          <GlyphO name={grader.icon}/>
-          {grader.label}
+        title={graderTitle}>
+        {/* 아이콘 단독 — 상태별 모양(✓/○/✕/–)이 다르므로 색+모양 듀얼인코딩은 유지되고, 전문은 title + 행 aria-label 이 운반. */}
+        <span
+          className="inline-flex items-center justify-center"
+          style={{ color: `rgb(var(${grader.colorVar}))` }}
+          role="img"
+          aria-label={graderTitle}>
+          <GlyphO name={grader.icon} size={14}/>
         </span>
       </td>
       <td className="text-right px-2 py-1.5 border-b border-line">
         <RevisionCountCellO revisionCount={row.revision_count}/>
       </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
-        <PoisonedBadgeO row={row}/>
-        {isReview && <ReviewReasonBadgeO row={row}/>}
-        <AttributionSourceBadgeO row={row}/>
+        <SummaryFlagSlotO row={row}/>
         {summary}
       </td>
       <td className="text-left text-faint font-mono px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 110 }} title={row.cid || ''}>
@@ -2250,35 +2352,41 @@ function ResultTableRow({ row, onRowClick }) {
   );
 }
 
-// review_flag 사유 inline 배지 — warn 색 + ⚠ 기호 dual-encoding, summary 셀 prefix.
-// 분류는 window.UI.reviewFlagReasons SoT (improvement KPI 세그먼트와 공용, F12).
-function ReviewReasonBadgeO({ row }) {
-  const reasons = window.UI.reviewFlagReasons(row);
-  if (reasons.length === 0) return null;
-  const text = reasons.map((r) => r.label).join('·');
-  const title = `Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`;
-  const { Badge } = window.UI;
-  return (
-    <Badge role="status" tone="warn" icon title={title} className="mr-1.5">{text}</Badge>
-  );
+// 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
+//   사유 텍스트 배지는 conf·metric·Check 컬럼과 중복 파생 → 테이블에선 tone 만, 전문은 title 이 운반 (사유별 배지는 detail 패널).
+//   분류는 window.UI.reviewFlagReasons SoT (improvement KPI 세그먼트와 공용, F12) — 여기서 재구현 금지.
+//   경고급(review 사유·격리)이 정보급(budget-kill)을 이긴다 — 조치 필요 신호가 참고 신호에 가려지면 안 된다.
+function buildSummaryFlagO(row) {
+  const reasons = row?.review_flag === true ? window.UI.reviewFlagReasons(row) : [];
+  const isQuarantined = row?.poisoned_window === true;
+  const isBudgetKill = row?.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION;
+
+  const notes = [];
+  if (reasons.length > 0) notes.push(`Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`);
+  if (isQuarantined) notes.push('Quarantined row — excluded from analysis stats.');
+  if (isBudgetKill) notes.push('attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block.');
+
+  if (notes.length === 0) return null;
+  return { tone: reasons.length > 0 || isQuarantined ? 'warn' : 'info', title: notes.join(' · ') };
 }
 
-// poisoned_window 행 배지 — 분석 집계 제외 행 표식 (탐색기에는 그대로 노출 · 'Quarantined: N excluded' 칩과 정합).
-function PoisonedBadgeO({ row }) {
-  if (!row || row.poisoned_window !== true) return null;
-  const { Badge } = window.UI;
-  return (
-    <Badge role="status" tone="warn" icon title="Quarantined row — excluded from analysis stats." className="mr-1.5">Quarantined</Badge>
-  );
-}
+// 플래그 유무와 무관하게 같은 폭을 점유 — 그래야 요약 텍스트가 모든 행에서 같은 x 에서 시작한다.
+function SummaryFlagSlotO({ row }) {
+  const flag = buildSummaryFlagO(row);
+  const slotStyle = { width: SUMMARY_FLAG_SLOT };
 
-// attribution_source == 'budget-truncation' 행 표식 — 예산 상한 초과로 completion 미방출된 subagent (info-tone, 에러 아님).
-//   그 외 source 는 미렌더 — raw source 전량 노출 = 테이블 clutter · 관심 신호(budget-kill)만 표면화.
-function AttributionSourceBadgeO({ row }) {
-  if (!row || row.attribution_source !== ATTRIBUTION_SOURCE_BUDGET_TRUNCATION) return null;
-  const { Badge } = window.UI;
+  if (flag == null) {
+    return <span className="inline-block shrink-0 align-middle mr-1" style={slotStyle} aria-hidden="true"/>;
+  }
   return (
-    <Badge role="status" tone="info" icon title="attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block." className="mr-1.5">budget-kill</Badge>
+    <span
+      className={`inline-flex items-center justify-center shrink-0 align-middle mr-1 text-${flag.tone}`}
+      style={slotStyle}
+      role="img"
+      aria-label={flag.title}
+      title={flag.title}>
+      <GlyphO name={flag.tone} size={13}/>
+    </span>
   );
 }
 
@@ -2381,7 +2489,7 @@ function DetailMetadata({ row, detail }) {
       {metricType != null && metricType !== '' && (
         <MetaField label="Check type" value={String(metricType)}/>
       )}
-      {parseQaScoreAvgO(row?.qa_score) != null && (
+      {parseQaScoreO(row?.qa_score) != null && (
         <div>
           <div className="fs-micro text-faint uppercase tracking-wider">QA score</div>
           <div className="text-ink inline-flex items-center gap-2">

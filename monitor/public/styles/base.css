@@ -137,6 +137,13 @@
 	padding: 4px 9px;
 	font-size: 11.5px;
 }
+/* 라벨 없는 아이콘 전용 버튼 — 정사각 24px 로 WCAG 2.2 §2.5.8 최소 타깃 확보 (.sm 뒤 = 패딩 override 순서 의존). */
+.btn.icon {
+	padding: 0;
+	width: 24px;
+	height: 24px;
+	justify-content: center;
+}
 .btn:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;

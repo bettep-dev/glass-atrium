@@ -369,6 +369,10 @@ model Outcome {
   // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
   // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.
   poisonedWindow    Boolean       @default(false) @map("poisoned_window")
+  // NULL = 아직 열린(open) 행 — done_with_concerns amber 배지가 "현재 열림"을 뜻하도록
+  // 하는 유일한 상태 축. 운영자/오케스트레이터의 사후 종결 액션(PATCH /:id/close)만
+  // 기록하며 writer emit 계약과 무관. 집계 쿼리는 이 컬럼을 소비하지 않음.
+  closedAt          DateTime?     @map("closed_at") @db.Timestamptz(6)
   insertedAt        DateTime      @default(now()) @map("inserted_at") @db.Timestamptz(6)
 
   correctionSignals CorrectionSignal[]

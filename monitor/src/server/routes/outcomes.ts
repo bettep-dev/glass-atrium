@@ -1,4 +1,4 @@
-// Outcomes API — Outcome explorer 상세 화면용 read-only 엔드포인트 (Prisma 7 driver-adapter, raw SQL 은 $queryRaw template-tag 만).
+// Outcomes API — Outcome explorer 상세 화면용 조회 엔드포인트 + 종결 표시 mutation 하나(PATCH /:id/close) (Prisma 7 driver-adapter, raw SQL 은 $queryRaw template-tag 만 · 단일 테이블, join 없음).
 // WHERE 는 활성 필터별 Prisma.Sql fragment 수집 → Prisma.join — 문자열 연결 없이 모든 사용자값이 파라미터 바인딩 경계 통과 (SQL injection 차단).
 // 성능 주의: agent/task_type/review_flag 없는 `q` 키워드 /search 는 seq scan (summary/lesson full-text 인덱스 없음) — 4K행 규모 허용, >50K 시 pg_trgm/GIN 권장.
 
@@ -34,6 +34,7 @@ import type {
   OutcomeCrossAnalysisByResult,
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
+  OutcomeCloseResponse,
   OutcomeCrossAnalysisResponse,
   OutcomeDetailResponse,
   OutcomeDowngradeBreakdown,
@@ -60,6 +61,11 @@ const ALLOWED_DAYS_NUMERIC: ReadonlySet<number> = new Set<number>([7, 30, 90]);
 
 // 9-type canonical set — shared TASK_TYPES SoT (task-types.ts · rules/core-outcome-record.md 미러). The 4 non-code types (review/diagnosis/doc/cleanup) MUST be members or the defensive flatMap guard in handleSearch / handleDetail / handleCrossAnalysis silently drops those rows off the registered surface.
 const ALLOWED_TASK_TYPES: ReadonlySet<OutcomeTaskType> = new Set<OutcomeTaskType>(TASK_TYPES);
+
+// 종결 표시가 정의된 유일한 result — 열린 항목(open items)을 뜻하는 버킷이기 때문.
+const CLOSABLE_RESULT: OutcomeResultLiteral = "done_with_concerns";
+
+const CLOSE_ROUTE = "/api/outcomes/:id/close";
 
 const ALLOWED_RESULTS: ReadonlySet<OutcomeResultLiteral> = new Set<OutcomeResultLiteral>([
   "done",
@@ -220,6 +226,8 @@ interface OutcomeSearchDbRow {
   attribution_source: string | null;
   // Raw qa_score text (shape cov=N,ins=N,instr=N,clar=N); NULL for non-QA rows.
   qa_score: string | null;
+  // NULL = 열린 행 (legacy 포함).
+  closed_at: Date | null;
 }
 
 interface OutcomeDetailDbRow {
@@ -247,7 +255,22 @@ interface OutcomeDetailDbRow {
   // Raw qa_score text (shape cov=N,ins=N,instr=N,clar=N); NULL for non-QA rows.
   qa_score: string | null;
   body_md: string | null;
+  // NULL = 열린 행 (legacy 포함).
+  closed_at: Date | null;
   inserted_at: Date;
+}
+
+// RETURNING 행 — 방금 stamp 한 값이므로 closed_at 은 non-null.
+interface OutcomeClosedDbRow {
+  id: bigint;
+  closed_at: Date;
+}
+
+// UPDATE 가 0행일 때 세 원인(미존재 / 비-DWC / 이미 종결)을 가르는 분류 read.
+interface OutcomeCloseProbeDbRow {
+  id: bigint;
+  result: string;
+  closed_at: Date | null;
 }
 
 interface CountRow {
@@ -393,6 +416,7 @@ export async function registerOutcomesRoutes(app: FastifyInstance): Promise<void
   app.get("/api/outcomes/heatmap", handleHeatmap);
   app.get("/api/outcomes/attribution-daily", handleAttributionDaily);
   app.get("/api/outcomes/:id", handleDetail);
+  app.patch("/api/outcomes/:id/close", handleClose);
 }
 
 // GET /api/outcomes/search
@@ -463,7 +487,8 @@ async function handleSearch(
           (body_md IS NOT NULL)          AS has_body_md,
           poisoned_window,
           attribution_source,
-          qa_score
+          qa_score,
+          closed_at
         FROM core.outcomes
         ${whereClause}
         ${sortFragment}
@@ -515,6 +540,7 @@ async function handleSearch(
           poisoned_window: row.poisoned_window,
           attribution_source: row.attribution_source,
           qa_score: row.qa_score,
+          closed_at: row.closed_at === null ? null : row.closed_at.toISOString(),
         },
       ];
     });
@@ -582,6 +608,7 @@ async function handleDetail(
         review_flag,
         qa_score,
         body_md,
+        closed_at,
         inserted_at
       FROM core.outcomes
       WHERE id = ${idBigint}
@@ -637,10 +664,89 @@ async function handleDetail(
       review_flag: row.review_flag,
       qa_score: row.qa_score,
       body_md: row.body_md,
+      closed_at: row.closed_at === null ? null : row.closed_at.toISOString(),
       inserted_at: row.inserted_at.toISOString(),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/outcomes/:id", error);
+  }
+}
+
+// PATCH /api/outcomes/:id/close
+// 본문 없는 mutation — 경로 id 외 사용자 입력이 없어 추가 allowlist 대상이 없다.
+async function handleClose(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply,
+): Promise<OutcomeCloseResponse | OutcomesErrorBody> {
+  const start = Date.now();
+  const idNumeric = parseIdParam(request.params.id);
+  if (idNumeric === null) {
+    return reply.code(400).send(invalidParam("id"));
+  }
+  const idBigint = BigInt(idNumeric);
+
+  const prisma = getPrisma();
+  try {
+    // RETURNING 사용 이유: bare UPDATE 의 affected-count 0 은 미존재/비-DWC/이미-종결을
+    // 구분하지 못한다. 1행이면 최초 종결 확정, 0행이면 아래 분류 read 로 원인 판별.
+    const closedRows = await prisma.$queryRaw<OutcomeClosedDbRow[]>`
+      UPDATE core.outcomes
+      SET closed_at = now()
+      WHERE id = ${idBigint}
+        AND result::text = ${CLOSABLE_RESULT}
+        AND closed_at IS NULL
+      RETURNING id, closed_at
+    `;
+
+    const stamped = closedRows[0];
+    if (stamped !== undefined) {
+      request.log.info(
+        { route: CLOSE_ROUTE, id: idNumeric, repeat: false, durationMs: Date.now() - start },
+        "outcome closed",
+      );
+      return {
+        id: bigintToNumber(stamped.id),
+        closed: true,
+        closed_at: stamped.closed_at.toISOString(),
+      };
+    }
+
+    const probeRows = await prisma.$queryRaw<OutcomeCloseProbeDbRow[]>`
+      SELECT id, result::text AS result, closed_at
+      FROM core.outcomes
+      WHERE id = ${idBigint}
+      LIMIT 1
+    `;
+    const probe = probeRows[0];
+    if (probe === undefined) {
+      reply.code(404);
+      return { error: "not_found", id: idNumeric };
+    }
+    if (probe.result !== CLOSABLE_RESULT) {
+      // 등록 표면 밖의 enum text 는 방어적으로 예외 (조회 핸들러와 동일 규약).
+      if (!ALLOWED_RESULTS.has(probe.result as OutcomeResultLiteral)) {
+        throw new Error(`outcome ${idNumeric} has unrecognized result value`);
+      }
+      reply.code(400);
+      return { error: "invalid_result", id: idNumeric, result: probe.result as OutcomeResultLiteral };
+    }
+    if (probe.closed_at === null) {
+      // DWC + 미종결인데 UPDATE 가 못 잡았다 = 동시 세션이 방금 종결시킨 뒤 다시 지운 경우뿐.
+      throw new Error(`outcome ${idNumeric} close did not converge`);
+    }
+
+    // 재호출 — 저장된 timestamp 를 그대로 반향, 재-stamp 없음 (멱등).
+    request.log.info(
+      { route: CLOSE_ROUTE, id: idNumeric, repeat: true, durationMs: Date.now() - start },
+      "outcome already closed",
+    );
+    return {
+      id: bigintToNumber(probe.id),
+      closed: true,
+      closed_at: probe.closed_at.toISOString(),
+    };
+  } catch (error) {
+    return failWithDb(request, reply, CLOSE_ROUTE, error);
   }
 }
 
