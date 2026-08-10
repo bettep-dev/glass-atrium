@@ -125,6 +125,9 @@ load_fns() {
   extract_fn strip_csi || return 1
   extract_fn sanitize_setup_token || return 1
   extract_fn headless_auth_selftest || return 1
+  # the provisioning gates call the headless_auth_ok predicate (rc 0 OR the quota rc 3), not the
+  # self-test directly — the eval'd set must carry it or the gate calls resolve to nothing.
+  extract_fn headless_auth_ok || return 1
   extract_fn _provision_render_selftest || return 1
   extract_fn _provision_tty_gate_ok || return 1
   extract_fn _read_pasted_token || return 1

@@ -425,7 +425,9 @@ ga_claude_auth_env_lib() { printf '%s\n' "${GA_DIR}/scripts/lib/claude-auth-env.
 # authenticate") so a non-zero-masking CLI that still 401s is caught. Output is otherwise DISCARDED
 # (never logged) — it could echo the rejected credential. The probe is BOUNDED by run_with_timeout
 # (GA_AUTH_SELFTEST_TIMEOUT_SECS, default 30s) so a hung CLI on this menu hot path cannot stall the
-# install — a timeout (exit 124) is treated as a self-test failure. Returns 2 when the lib is absent. CLAUDE bin +
+# install — a timeout (exit 124) is treated as a self-test failure. Returns 2 when the lib is absent, and 3
+# when the probe body carries a Claude Max quota signature — a quota response proves the credential was
+# ACCEPTED, so it is tested BEFORE the rc/AUTH_FAIL_RE fold and never renders the credential advisory. CLAUDE bin +
 # lib resolution honour test-stub overrides (GA_AUTH_CLAUDE_BIN / GA_AUTH_ENV_LIB) so the bats suite can
 # drive both the pass and the 401 path without a real credential or `claude` — mirroring WIKI_COMPILE_CLAUDE_BIN.
 headless_auth_selftest() {
@@ -473,6 +475,28 @@ headless_auth_selftest() {
     run_with_timeout "${GA_AUTH_SELFTEST_TIMEOUT_SECS:-30}" env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_bin}" -p --output-format text --model "${haiku_model}" "reply with OK" </dev/null 2>&1
   )" || probe_rc=$?
 
+  # QUOTA PRECEDENCE — tested BEFORE the rc/AUTH_FAIL_RE fold because a session-limit response proves the
+  # credential AUTHENTICATED and then hit a usage wall: folding it into the 401 branch misdirects the
+  # operator into re-provisioning a token that already works. Signature set mirrors the step-5.5
+  # alternation in scripts/wiki-daily-compile.sh; kept FUNCTION-LOCAL (the two consumers match different
+  # surfaces, and a file-scope constant would break the bats extract_fn harness under `set -u`), with a
+  # TZ-agnostic last alternative so this lib takes no atrium_load_timezone dependency. A bounded-probe
+  # timeout (rc 124) carrying a quota body is a quota event; a BARE rc 124 has no body to match, so a
+  # network hang still falls through to the credential branch rather than being mislabelled quota.
+  local quota_re='Limit reached|Usage ⚠|out of extra usage|/rate-limit-options|resets [^)]*\('
+  if printf '%s' "${probe_out}" | grep -qE "${quota_re}"; then
+    local reset_at
+    # `|| true` swallows the no-match exit 1 so pipefail cannot fire the file-scope ERR trap; an
+    # unparenthesised body simply yields an advisory without the reset time.
+    reset_at="$(printf '%s' "${probe_out}" | { grep -oE -m1 'resets [^)]*\)' || true; })"
+    if [[ -n "${reset_at}" ]]; then
+      echo "headless self-test: quota window active — ${reset_at}; not a credential failure" >&2
+    else
+      echo "headless self-test: quota window active — not a credential failure" >&2
+    fi
+    return 3
+  fi
+
   # SELF-TEST FAILURE = a non-zero probe exit (a non-zero `claude -p` OR a run_with_timeout expiry,
   # exit 124) OR a rc-0-masking 401/credential signature in the body (the CLI can exit 0 while
   # reporting an API error in-band; matches the daemon_cycle.py _HAIKU_AUTH_PATTERNS set). Consolidated
@@ -510,6 +534,17 @@ headless_auth_selftest() {
     return 1
   fi
   return 0
+}
+
+# headless_auth_ok — the PROVISIONING-GATE predicate: is the rendered credential accepted? True for rc 0
+# (probe answered) AND rc 3 (quota window — the credential authenticated, then hit a usage wall). Every
+# provisioning gate calls THIS instead of headless_auth_selftest directly, so a quota window can never
+# route the operator into re-issuing a working token. The doctor keeps calling the self-test directly —
+# it branches per rc to render the distinct advisories.
+headless_auth_ok() {
+  local rc=0
+  headless_auth_selftest || rc=$?
+  [[ "${rc}" -eq 0 || "${rc}" -eq 3 ]]
 }
 
 # sanitize_setup_token — extract the bare OAuth value from `claude setup-token`'s TTY-wrapped output
@@ -574,7 +609,7 @@ _provision_render_selftest() {
   fi
   # POST-RENDER self-test: confirm the rendered credential actually authenticates a keychain-bypassing
   # `claude -p`. A green result is the gate's success signal.
-  if headless_auth_selftest; then
+  if headless_auth_ok; then
     return 0
   fi
   return 1
@@ -701,7 +736,7 @@ preflight_provision_headless_token() {
   preflight_line "$(c "${C_INFO}" "── headless launchd auth (CLAUDE_CODE_OAUTH_TOKEN) ──")"
 
   # IDEMPOTENT FAST-PATH: present secrets file + passing self-test = daemons already authenticate headlessly.
-  if [[ -f "${secrets_file}" ]] && headless_auth_selftest; then
+  if [[ -f "${secrets_file}" ]] && headless_auth_ok; then
     preflight_line "$(c "${C_OK}" "[ok]") headless auth already provisioned + self-test passes — skipping."
     return 0
   fi
@@ -906,6 +941,9 @@ doctor_headless_auth_advisory() {
   case "${selftest_rc}" in
     0) log "  ok   : headless 'claude -p' self-test passes (keychain-bypassing)" ;;
     2) log "  warn : headless self-test skipped — claude-auth-env lib absent (deploy gap)" ;;
+    # quota window: the credential AUTHENTICATED and hit a usage wall — no credential repair applies,
+    # so advise=1 stays unset (that flag drives the token-provisioning guidance).
+    3) log "  warn : headless 'claude -p' self-test hit a quota window (credential accepted) — retry after the reset" ;;
     *)
       log "  warn : headless 'claude -p' self-test FAILED (401/credential) — run the install auth step / 'claude setup-token'"
       advise=1

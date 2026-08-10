@@ -96,7 +96,7 @@ dispatch_action() {
 
 # token_already_provisioned — BUG C skip-probe: detect the already-provisioned state WITHOUT
 # any TTY interaction or alt-screen drop. Mirrors preflight_provision_headless_token's IDEMPOTENT
-# FAST-PATH gate BYTE-FOR-BYTE (`-f secrets_file` AND a passing headless_auth_selftest) so the two
+# FAST-PATH gate BYTE-FOR-BYTE (`-f secrets_file` AND a passing headless_auth_ok) so the two
 # cannot drift. `-f` is a pure file test; headless_auth_selftest runs a one-shot `claude -p` probe
 # in a SUBSHELL (no prompt/paste) — neither needs a cooked TTY; its lib-absent stderr is suppressed
 # (nothing must scribble the alt-screen frame). SECURITY: reads no token value — the probe only
@@ -104,7 +104,7 @@ dispatch_action() {
 token_already_provisioned() {
   local secrets_file
   secrets_file="${GA_ROOT:-${HOME}/.glass-atrium}/secrets/claude-auth.env"
-  [[ -f "${secrets_file}" ]] && headless_auth_selftest 2>/dev/null
+  [[ -f "${secrets_file}" ]] && headless_auth_ok 2>/dev/null
 }
 
 dispatch_action_token_panel() {
