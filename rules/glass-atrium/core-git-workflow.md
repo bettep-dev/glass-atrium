@@ -59,6 +59,9 @@ Applies to all agents.
 - **`.html` primary deliverables**: storage model (single HTML in monitor-internal root, no MD companion) per `scope-report.md` / `scope-planning.md` Output Format Routing Emission contract. Git-only PR conclusions:
   - **PR semantic diff target** = the plan MD body + monitor code changes.
   - **Monitor-internal root** (`$CLAUDED_DOCS_HTML_ROOT`) git-excluded via the repo-root `.gitignore` `monitor/data/*` entry (folded from the former `monitor/.gitignore` per its comment) — outside PR review scope.
+- **Merge authorization**: the orchestrator MAY execute `gh pr ready <n>` + `gh pr merge <n> --merge` for a cycle's PRs ONCE the user has EXPLICITLY approved merging that cycle. Approval is per-cycle and per-PR-set — never standing; silence or a past cycle's approval does NOT carry over.
+  - **Preconditions**: ALL CI checks green (a failed check = absolute stop) · no `--admin` / branch-protection bypass of any kind · merge-commit method (`--merge`) unless the user asks otherwise.
+  - Direct push to main stays FORBIDDEN (see Branches) and force-push rules are unchanged.
 
 ## Dangerous Commands
 
