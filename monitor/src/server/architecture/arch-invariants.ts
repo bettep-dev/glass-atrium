@@ -41,7 +41,7 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 	scopedScope: 9,
 	scopedShared: 8,
 	skills: 15,
-	uniqueHookBasename: 54,
+	uniqueHookBasename: 55,
 	hooks: {
 		// dedupe 후 정본 목표치 — 라이브 27 은 settings.json 중복 매처 바인딩 신호이므로 배지 diff 를 따라 올리지 말 것.
 		PreToolUse: 26,

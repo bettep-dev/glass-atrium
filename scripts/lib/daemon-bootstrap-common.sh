@@ -34,9 +34,24 @@
 #                            [ports].{autoagent,wiki}_fakechat, defaults
 #                            8787 autoagent / 8788 wiki)
 #   SCRIPT_DIR             — wrapper's own dir (resolves daemon-inject-entry.sh)
-#   WRITE_QUOTA_MARKER     — true → write /tmp/<role>-quota-marker-<date> on
-#                            inject rc=2 (autoagent); false → diagnostic only (wiki)
+#   WRITE_QUOTA_MARKER     — true → a downstream consumer reads the marker
+#                            (autoagent: daemon-daily-restart's post-bootstrap
+#                            check); false → the marker is diagnostic (wiki).
+#                            The marker itself is written for BOTH roles; the
+#                            flag selects the consumer wording only.
 # Then call: daemon_bootstrap_main "$@"
+#
+# Exit-code contract (per-script, never a shared table):
+#   0 — success / sanctioned no-op (adopted session, supervisor-lock yield)
+#   1 — invalid mode, missing binary, unusable config (loud precondition fail)
+#   2 — quota wall (return mode): inject rc=2, or a cold-start bind failure with
+#       today-dated quota evidence for this role
+#   3 — respawn signal (supervise mode): session missing, or the fakechat port
+#       unresponsive past DAEMON_MONITOR_FAIL_THRESHOLD consecutive probes
+#   4 — cold-start bind failure with NO quota evidence (return mode): the inject
+#       is deferred and the caller's transient-retry budget should engage. A
+#       clean 0 here would lie to daemon-daily-restart.sh, and under launchd
+#       KeepAlive{SuccessfulExit=false} it suppresses the respawn entirely.
 
 # Shared symlink pid-lock helpers (restart-window + supervisor locks). Resolved
 # relative to this lib (not SCRIPT_DIR) so the wrapper contract stays unchanged.
@@ -127,6 +142,22 @@ readonly DAEMON_MONITOR_FAIL_THRESHOLD
 : "${RESTART_LOCK_POLL_SEC:=5}"
 readonly RESTART_LOCK_WAIT_SEC
 readonly RESTART_LOCK_POLL_SEC
+
+# Quota-marker directory seam. The writer here and the consumer in
+# daemon-daily-restart.sh MUST resolve the same dir — the cross-file invariant is
+# documented at that consumer. /tmp is the production value; tests redirect it so
+# a fixture can never make the live 05:30 restart record status='quota_exceeded'.
+: "${DAEMON_QUOTA_MARKER_DIR:=/tmp}"
+readonly DAEMON_QUOTA_MARKER_DIR
+
+# Pre-recreate quota backoff (supervise only). A cold start that cannot bind
+# during a Claude session-limit window would otherwise lap every ~5 min
+# (30s warmup + ~55s probe budget + 3 monitor intervals + ThrottleInterval),
+# i.e. ~150 respawns across a multi-hour wall. One long wait per lap replaces
+# that heat without touching the plists' 30s ThrottleInterval, so a genuine
+# crash still recovers at full speed.
+: "${GA_DAEMON_QUOTA_BACKOFF_SEC:=1800}"
+readonly GA_DAEMON_QUOTA_BACKOFF_SEC
 
 log() {
   # ISO 8601 UTC for cross-correlation with launchd / health-check logs.
@@ -248,6 +279,74 @@ daemon_bootstrap_wait_http_ready() {
   done
 }
 
+# Today-dated quota-marker path for THIS role, published as a global (a
+# command-substitution capture would swallow log lines, same reason as http_ready).
+# Local date (not UTC) matches the daily-restart launchd schedule and its consumer.
+quota_marker_path=""
+daemon_bootstrap_set_quota_marker_path() {
+  local today
+  today="$(date +%Y-%m-%d)"
+  quota_marker_path="${DAEMON_QUOTA_MARKER_DIR}/${ROLE}-quota-marker-${today}"
+}
+
+# Both roles write the marker now: a wiki-side session-limit window suppresses the
+# fakechat child exactly as an autoagent one does, and the pre-recreate backoff
+# reads the marker of whichever role it runs as. WRITE_QUOTA_MARKER selects the
+# wording only — autoagent's marker additionally feeds daemon-daily-restart's
+# status='quota_exceeded' UPSERT (alert suppression).
+daemon_bootstrap_write_quota_marker() {
+  daemon_bootstrap_set_quota_marker_path
+  if [[ "${WRITE_QUOTA_MARKER}" == "true" ]]; then
+    log "writing quota marker ${quota_marker_path} (consumed by daemon-daily-restart)"
+  else
+    log "writing quota marker ${quota_marker_path} (diagnostic + backoff input)"
+  fi
+  : >"${quota_marker_path}" || log "WARN: failed to create quota marker ${quota_marker_path} (non-fatal)"
+}
+
+# Quota detection straight from the REPL pane. The inject-rc signal does not exist
+# on the cold-start bind-failure path (the inject has not run yet), so the pane
+# scrollback is the only evidence available there. Alternation mirrors
+# detect_quota_in_pane in daemon-daily-restart.sh; the reset-time alternative is
+# TZ-agnostic here because this lib carries no atrium_load_timezone dependency.
+daemon_bootstrap_detect_pane_quota() {
+  local quota_re='Limit reached|Usage ⚠ Limit|Exceeded USD budget|out of extra usage|/rate-limit-options|resets [^)]*\('
+  local pane_dump
+  # GA-ABSORB[handled@grep-on-empty-pane_dump]: a missing session degrades to an empty dump, reported as no-quota by the grep below
+  pane_dump="$(tmux capture-pane -t "${SESSION}" -p -S -100 2>/dev/null || true)"
+  grep -qE "${quota_re}" <<<"${pane_dump}"
+}
+
+# Pre-recreate quota backoff (supervise only, at most once per process). Returns 0
+# when it waited — the caller MUST then re-enter the adopt / restart-lock check,
+# since the 05:30 daily-restart can create a session during the wait and reclaiming
+# its port would kill that fresh bun. Returns 1 when no wait applied. Return mode
+# never waits: daemon-daily-restart's 600s BOOTSTRAP_TIMEOUT_SEC backstop would
+# SIGTERM it into the rc-124 anomaly path.
+# Set by the cold-start bind-failure fall-through; consumed once by the monitor
+# loop's probe-success arm (the port bound late → run the skipped inject).
+inject_deferred=false
+quota_backoff_done=false
+daemon_bootstrap_quota_backoff() {
+  if [[ "${quota_backoff_done}" == "true" ]]; then
+    return 1
+  fi
+  daemon_bootstrap_set_quota_marker_path
+  if [[ ! -f "${quota_marker_path}" ]]; then
+    return 1
+  fi
+  if [[ ! "${GA_DAEMON_QUOTA_BACKOFF_SEC}" =~ ^[0-9]+$ ]]; then
+    log "FATAL: GA_DAEMON_QUOTA_BACKOFF_SEC must be a non-negative integer (got '${GA_DAEMON_QUOTA_BACKOFF_SEC}')"
+    exit 1
+  fi
+  quota_backoff_done=true
+  # Logged BEFORE the sleep so the wait is observable without paying it.
+  log "quota marker ${quota_marker_path} present — waiting ${GA_DAEMON_QUOTA_BACKOFF_SEC}s before recreate (quota-aware backoff)"
+  sleep "${GA_DAEMON_QUOTA_BACKOFF_SEC}"
+  log "quota backoff elapsed — re-checking the restart window before recreate"
+  return 0
+}
+
 # Step 5: invoke the entry injection and classify its rc. Captures the inject exit
 # code (0=ok / 2=quota wall / other=fail) into the global inject_exit so the step-6
 # mode gate forwards it as the bootstrap rc in return mode. set -e is suppressed
@@ -266,19 +365,8 @@ daemon_bootstrap_inject() {
       log "entry injection succeeded"
       ;;
     2)
-      if [[ "${WRITE_QUOTA_MARKER}" == "true" ]]; then
-        # Quota wall — write a today-dated marker consumed by
-        # daemon-daily-restart.sh post-bootstrap. Marker presence triggers
-        # status='quota_exceeded' UPSERT into core.daemon_runs (alert
-        # suppression). Date YYYY-MM-DD matches the consumer; local date matches
-        # the daily-restart launchd schedule (user-local time).
-        local quota_marker
-        quota_marker="/tmp/${ROLE}-quota-marker-$(date +%Y-%m-%d)"
-        log "WARN: inject failed due to quota wall (exit 2) — writing quota marker ${quota_marker}"
-        : >"${quota_marker}" || log "WARN: failed to create quota marker (non-fatal)"
-      else
-        log "WARN: inject failed due to quota wall (exit 2); session is alive, /loop will retry next tick"
-      fi
+      log "WARN: inject failed due to quota wall (exit 2); session is alive, /loop will retry next tick"
+      daemon_bootstrap_write_quota_marker
       ;;
     *)
       log "WARN: entry injection failed (exit ${inject_exit}); session is alive, manual re-inject possible"
@@ -370,6 +458,14 @@ daemon_bootstrap_monitor_loop() {
     # GA-ABSORB[benign]: rc is the probe answer; -fsS already reports real errors
     if curl -fsS -m "${MONITOR_PROBE_TIMEOUT_SEC}" -o /dev/null "${probe_url}" 2>/dev/null; then
       fail_count=0
+      # Deferred inject (cold-start bind-failure fall-through): the port bound
+      # late, so run the skipped inject ONCE here. Without it the session stays
+      # alive-but-uninjected — a silent no-work daemon until the 05:30 restart.
+      if [[ "${inject_deferred}" == "true" ]]; then
+        inject_deferred=false
+        log "fakechat port ${FAKECHAT_PORT_DEFAULT} answered after the cold-start defer — running the deferred inject"
+        daemon_bootstrap_inject
+      fi
       continue
     fi
 
@@ -447,6 +543,13 @@ daemon_bootstrap_main() {
         daemon_bootstrap_monitor_loop
       fi
       if [[ "${restart_lock_outcome}" != "session" ]]; then
+        # Quota-aware backoff sits AFTER the restart-lock wait and re-enters it on
+        # wake: sleeping before the wait would open a 30-min TOCTOU across the
+        # adopt check, and falling straight through on wake would reclaim the port
+        # of a session the 05:30 daily-restart created during the sleep.
+        if daemon_bootstrap_quota_backoff; then
+          continue
+        fi
         break
       fi
       log "session '${SESSION}' vanished while the restart lock is held — re-entering restart-window wait"
@@ -479,17 +582,38 @@ daemon_bootstrap_main() {
   log "waiting ${COLD_START_WAIT_SEC}s for claude REPL + fakechat HTTP server to initialize"
   sleep "${COLD_START_WAIT_SEC}"
 
-  # Cold-start defer: when fakechat never binds within the budget, SKIP the
-  # inject and exit 0 — calling inject on a known-unready port is a guaranteed
-  # FATAL (its first action re-probes the same port). The session stays alive but
-  # uninjected: KeepAlive{SuccessfulExit=false} does NOT respawn on a clean exit 0,
-  # so recovery is the 05:30 daily-restart, which kills the session → the
-  # idempotency guard above no longer matches → a fresh create + inject. exit 0
-  # does not trip the ERR trap, so this path stays log-clean.
+  # Cold-start bind failure. The inject is still SKIPPED (calling it on a known-
+  # unready port is a guaranteed FATAL — its first action re-probes that port),
+  # but the failure is no longer absorbed into exit 0: under
+  # KeepAlive{SuccessfulExit=false} a clean exit means "do not respawn", which
+  # turned one transient session-limit window into a ~14h outage with the 05:30
+  # daily-restart as the only recovery. Mode split instead —
+  #   supervise: fall through to the self-health loop (session alive, inject
+  #     deferred until the port answers; else the loop's 3-fail kill + exit 3
+  #     yields the proven bounded launchd respawn, no new exit semantics)
+  #   return: report a named non-zero rc so the daily-restart caller sees it
   daemon_bootstrap_wait_http_ready
   if [[ "${http_ready}" != "true" ]]; then
-    log "WARN: fakechat never bound within cold-start budget — deferring inject; recovery via the 05:30 daily-restart (no FATAL)"
-    exit 0
+    # GA-CONVERTED: the silent exit-0 defer is now a mode split (supervise falls through, return exits 2/4)
+    log "WARN: fakechat never bound within cold-start budget — inject deferred"
+    # Quota evidence must come from the pane here: the inject never ran, so its
+    # rc-2 signal (the only other quota source) does not exist on this path.
+    if daemon_bootstrap_detect_pane_quota; then
+      log "WARN: quota signature present in the '${SESSION}' pane — session-limit window, not a crash"
+      daemon_bootstrap_write_quota_marker
+    fi
+    if [[ "${bootstrap_mode}" == "return" ]]; then
+      daemon_bootstrap_set_quota_marker_path
+      if [[ -f "${quota_marker_path}" ]]; then
+        log "return mode — cold-start bind failure with today-dated quota evidence (${quota_marker_path}) — exit 2 (quota wall)"
+        exit 2
+      fi
+      log "FATAL: return mode — cold-start bind failure with no quota evidence — exit 4 (deferred inject, retryable transient)"
+      exit 4
+    fi
+    inject_deferred=true
+    log "supervise mode — entering the self-health loop with the inject deferred (no exit 0: launchd would never respawn)"
+    daemon_bootstrap_monitor_loop
   fi
 
   daemon_bootstrap_inject

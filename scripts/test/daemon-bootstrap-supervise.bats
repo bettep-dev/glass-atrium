@@ -385,6 +385,33 @@ wait_for_log() {
   kill -0 "${pid}"
 }
 
+# Quota marker on inject rc=2 — written for BOTH roles. A wiki-side session-limit
+# window suppresses the fakechat child exactly as an autoagent one does, and the
+# pre-recreate backoff reads the marker of whichever role it runs as; the
+# WRITE_QUOTA_MARKER flag now selects the log wording only. DAEMON_QUOTA_MARKER_DIR
+# keeps the fixture out of /tmp so the live 05:30 restart can never consume it.
+
+@test "inject quota wall (rc=2): today-dated marker written for BOTH roles" {
+  local quota_dir="${TMPROOT}/quota" today role s
+  mkdir -p "${quota_dir}"
+  today="$(date +%Y-%m-%d)"
+  for role in wiki autoagent; do
+    rm -f -- "${SESSION_MARKER}"
+    if [[ "${role}" == "wiki" ]]; then
+      s="$(sandbox_copy "${REAL_WIKI_BOOTSTRAP}")"
+    else
+      s="$(sandbox_copy "${REAL_AUTOAGENT_BOOTSTRAP}")"
+    fi
+    run env PATH="${STUB_BIN}:${PATH}" DAEMON_LOCK_DIR="${LOCK_DIR}" \
+      ATRIUM_CONFIG_TOML="${TMPROOT}/config.toml" \
+      DAEMON_QUOTA_MARKER_DIR="${quota_dir}" \
+      COLD_START_WAIT_SEC=0 INJECT_STUB_RC=2 bash "${s}" return
+    [[ "${status}" -eq 2 ]] || return 1
+    [[ "${output}" == *"writing quota marker ${quota_dir}/${role}-quota-marker-${today}"* ]] || return 1
+    [[ -f "${quota_dir}/${role}-quota-marker-${today}" ]] || return 1
+  done
+}
+
 @test "model injection (shared fix): wiki --channels also carries --model fallback" {
   local s pid
   s="$(sandbox_copy "${REAL_WIKI_BOOTSTRAP}")"
