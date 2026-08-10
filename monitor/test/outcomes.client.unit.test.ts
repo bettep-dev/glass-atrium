@@ -43,6 +43,8 @@ interface OutcomesHelpers {
     breakdown: unknown,
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
+  buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
+  window: { UI: Record<string, unknown> };
 }
 interface AgentsHelpers {
   isNonActionableAgentAg: (agentId: string, visualSet?: Set<string>) => boolean;
@@ -302,4 +304,31 @@ test("parseQaScoreO: unreported / malformed input stays null (no fabricated scor
   for (const input of [null, undefined, "", "   ", "cov=,ins=", 17]) {
     assert.strictEqual(outcomes.parseQaScoreO(input), null, `input ${JSON.stringify(input)} must not fabricate`);
   }
+});
+
+// --- buildSummaryFlagO: the summary cell folds three badges into one tone ---
+
+test("buildSummaryFlagO: a clean row reserves the slot without a flag", () => {
+  assert.strictEqual(outcomes.buildSummaryFlagO({ review_flag: false }), null);
+  assert.strictEqual(outcomes.buildSummaryFlagO(null), null);
+});
+
+test("buildSummaryFlagO: budget-truncation alone is informational, not a warning", () => {
+  const flag = outcomes.buildSummaryFlagO({ attribution_source: "budget-truncation" });
+  assert.strictEqual(flag?.tone, "info");
+  assert.match(flag?.title ?? "", /budget ceiling/);
+});
+
+test("buildSummaryFlagO: a warn-class flag outranks the informational one, and both sentences survive", () => {
+  const flag = outcomes.buildSummaryFlagO({ poisoned_window: true, attribution_source: "budget-truncation" });
+  assert.strictEqual(flag?.tone, "warn");
+  assert.match(flag?.title ?? "", /Quarantined row/);
+  assert.match(flag?.title ?? "", /budget ceiling/);
+});
+
+test("buildSummaryFlagO: review reasons come from the shared SoT and land in the tooltip", () => {
+  outcomes.window.UI.reviewFlagReasons = () => [{ key: "other", label: "Other", title: "Flagged for another reason" }];
+  const flag = outcomes.buildSummaryFlagO({ review_flag: true });
+  assert.strictEqual(flag?.tone, "warn");
+  assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
 });

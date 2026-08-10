@@ -2121,6 +2121,7 @@ const CONF_BAR_SLOT   = 19;   // 5px 세그먼트 3 + 2px 간격 2
 const CONF_LABEL_SLOT = 44;   // 최장 라벨 'medium' (fs-micro mono)
 const METRIC_MARK_SLOT  = 14;
 const METRIC_SCORE_SLOT = 22;
+const SUMMARY_FLAG_SLOT = 18;
 
 function ConfidenceChipO({ confidence }) {
   const level = CONFIDENCE_LEVEL[confidence] || 0;
@@ -2341,9 +2342,7 @@ function ResultTableRow({ row, onRowClick, closure }) {
         <RevisionCountCellO revisionCount={row.revision_count}/>
       </td>
       <td className="text-left text-ink px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 380 }} title={row.summary || ''}>
-        <PoisonedBadgeO row={row}/>
-        {isReview && <ReviewReasonBadgeO row={row}/>}
-        <AttributionSourceBadgeO row={row}/>
+        <SummaryFlagSlotO row={row}/>
         {summary}
       </td>
       <td className="text-left text-faint font-mono px-2 py-1.5 border-b border-line truncate" style={{ maxWidth: 110 }} title={row.cid || ''}>
@@ -2353,35 +2352,41 @@ function ResultTableRow({ row, onRowClick, closure }) {
   );
 }
 
-// review_flag 사유 inline 배지 — warn 색 + ⚠ 기호 dual-encoding, summary 셀 prefix.
-// 분류는 window.UI.reviewFlagReasons SoT (improvement KPI 세그먼트와 공용, F12).
-function ReviewReasonBadgeO({ row }) {
-  const reasons = window.UI.reviewFlagReasons(row);
-  if (reasons.length === 0) return null;
-  const text = reasons.map((r) => r.label).join('·');
-  const title = `Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`;
-  const { Badge } = window.UI;
-  return (
-    <Badge role="status" tone="warn" icon title={title} className="mr-1.5">{text}</Badge>
-  );
+// 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
+//   사유 텍스트 배지는 conf·metric·Check 컬럼과 중복 파생 → 테이블에선 tone 만, 전문은 title 이 운반 (사유별 배지는 detail 패널).
+//   분류는 window.UI.reviewFlagReasons SoT (improvement KPI 세그먼트와 공용, F12) — 여기서 재구현 금지.
+//   경고급(review 사유·격리)이 정보급(budget-kill)을 이긴다 — 조치 필요 신호가 참고 신호에 가려지면 안 된다.
+function buildSummaryFlagO(row) {
+  const reasons = row?.review_flag === true ? window.UI.reviewFlagReasons(row) : [];
+  const isQuarantined = row?.poisoned_window === true;
+  const isBudgetKill = row?.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION;
+
+  const notes = [];
+  if (reasons.length > 0) notes.push(`Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`);
+  if (isQuarantined) notes.push('Quarantined row — excluded from analysis stats.');
+  if (isBudgetKill) notes.push('attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block.');
+
+  if (notes.length === 0) return null;
+  return { tone: reasons.length > 0 || isQuarantined ? 'warn' : 'info', title: notes.join(' · ') };
 }
 
-// poisoned_window 행 배지 — 분석 집계 제외 행 표식 (탐색기에는 그대로 노출 · 'Quarantined: N excluded' 칩과 정합).
-function PoisonedBadgeO({ row }) {
-  if (!row || row.poisoned_window !== true) return null;
-  const { Badge } = window.UI;
-  return (
-    <Badge role="status" tone="warn" icon title="Quarantined row — excluded from analysis stats." className="mr-1.5">Quarantined</Badge>
-  );
-}
+// 플래그 유무와 무관하게 같은 폭을 점유 — 그래야 요약 텍스트가 모든 행에서 같은 x 에서 시작한다.
+function SummaryFlagSlotO({ row }) {
+  const flag = buildSummaryFlagO(row);
+  const slotStyle = { width: SUMMARY_FLAG_SLOT };
 
-// attribution_source == 'budget-truncation' 행 표식 — 예산 상한 초과로 completion 미방출된 subagent (info-tone, 에러 아님).
-//   그 외 source 는 미렌더 — raw source 전량 노출 = 테이블 clutter · 관심 신호(budget-kill)만 표면화.
-function AttributionSourceBadgeO({ row }) {
-  if (!row || row.attribution_source !== ATTRIBUTION_SOURCE_BUDGET_TRUNCATION) return null;
-  const { Badge } = window.UI;
+  if (flag == null) {
+    return <span className="inline-block shrink-0 align-middle mr-1" style={slotStyle} aria-hidden="true"/>;
+  }
   return (
-    <Badge role="status" tone="info" icon title="attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block." className="mr-1.5">budget-kill</Badge>
+    <span
+      className={`inline-flex items-center justify-center shrink-0 align-middle mr-1 text-${flag.tone}`}
+      style={slotStyle}
+      role="img"
+      aria-label={flag.title}
+      title={flag.title}>
+      <GlyphO name={flag.tone} size={13}/>
+    </span>
   );
 }
 
