@@ -610,7 +610,10 @@ fi
 # autoagent role only (wiki's marker scheme is decoupled). Marker is removed
 # immediately after consumption — idempotent across same-date invocations.
 if [[ "${ROLE}" == "autoagent" ]]; then
-  QUOTA_MARKER="/tmp/autoagent-quota-marker-$(date +%Y-%m-%d)"
+  # DAEMON_QUOTA_MARKER_DIR: the SAME seam the writer honors in
+  # scripts/lib/daemon-bootstrap-common.sh — both sides MUST resolve one dir, and
+  # tests redirect it so a fixture can never mark the live restart quota_exceeded.
+  QUOTA_MARKER="${DAEMON_QUOTA_MARKER_DIR:-/tmp}/autoagent-quota-marker-$(date +%Y-%m-%d)"
   if [[ -f "${QUOTA_MARKER}" ]]; then
     log "quota wall marker detected post-bootstrap (${QUOTA_MARKER}) — recording status='quota_exceeded' for daemon_name=autoagent, skipping healthcheck"
     pg_write_autoagent_run "quota_exceeded" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "auto-marked by daily-restart: inject quota wall (bootstrap exit 2 propagated)"
