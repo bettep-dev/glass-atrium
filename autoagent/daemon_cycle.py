@@ -79,6 +79,16 @@ for _hooks_dir in (_PG_HOOKS_DIR, _REPO_HOOKS_DIR):
         sys.path.insert(0, str(_hooks_dir))
 import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 
+# Negative-signal SoT. UNGUARDED unlike the _pg_learning_dualwrite import below:
+# _outcome_signal is stdlib-only by contract (zero import statements), so it has no
+# psycopg SystemExit path and writes no stderr — the silent bare-CLI-import contract
+# holds without a try/except, and the predicate stays defined on the psycopg-absent path.
+from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
+    ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+    is_negative_signal_outcome,
+    _is_synthesized_measurement_gap as _shared_is_synthesized_measurement_gap,
+)
+
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
 # GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
 # resolve after the .claude→.glass-atrium data migration.
@@ -3282,38 +3292,11 @@ def _render_signals_block(patterns: list[Pattern]) -> str:
 # -- generation outcome polarity partition ----------------------------------
 #
 # Negative-signal definition is the IMPORTED shared SoT
-# (_pg_learning_dualwrite.is_negative_signal_outcome) whenever the helper is
-# loadable (HAS_PG_OUTCOME_READ — same gate as every other _pg_is_* call site).
-# When psycopg is absent the whole helper module fails to import, so the call
-# would be unbound; the fallback below mirrors the helper's Outcome-expressible
-# OR-terms (result ∈ NEGATIVE_SIGNAL_RESULTS · revision_count>=2). The
-# grader_verdict / review_flag terms are NOT carried by Outcome, so even the
-# imported helper sees them absent — the fallback is a strict subset, not a
-# divergent definition. Keep in sync with _pg_learning_dualwrite (drift fails
-# OPEN: a missed failure lands in NEUTRAL, never silently in SUCCESS).
-_FALLBACK_NEGATIVE_RESULTS = frozenset({"fail", "blocked", "done_with_concerns"})
-_FALLBACK_NEGATIVE_REVISION_MIN = 2
-# SubagentStop synthesis provenance — a completion-synthesized done_with_concerns
-# row is a measurement gap (agent finished, emitted no [COMPLETION]), NOT an agent
-# failure, so it is carved out of FAILURE polarity. Mirrors the imported SoT's
-# _is_synthesized_measurement_gap; named locally so the FALLBACK branch (psycopg
-# absent) carves it out too, not only the imported-helper branch.
-_ATTRIBUTION_SYNTHESIZED = "completion-synthesized"
-# Budget-truncation shares the synthesized-provenance lineage (subagent hard-killed
-# at its tool_use/turn budget ceiling BEFORE emitting [COMPLETION]) but is a REAL
-# agent-relevant negative — the truncated subagent's own instructions should improve
-# — so it is DELIBERATELY kept on the CLUSTERABLE side, never carved out.
-# Accepted-scope REACHABILITY limit: pattern-1 clustering needs 3+ same-agent
-# negatives within ONE daily watermark batch, so 1-2 truncations/day never form a
-# pattern (cross-batch accumulation is a deferred follow-on, out of scope here).
-_ATTRIBUTION_BUDGET_TRUNCATION = "budget-truncation"
-# Third synthesized-provenance sibling: a schema-mode run whose TERMINAL
-# StructuredOutput was successfully consumed. Its result=done proves the run
-# FINISHED (direct evidence of non-truncation) but the deliverable is
-# schema-validated + writer-unverified and lesson-less — such a row must never
-# stand as a "clean first-try done" SUCCESS exemplar, nor as a failure →
-# NEUTRAL polarity, mirroring the measurement-gap treatment.
-_ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED = "structuredoutput-derived"
+# (_outcome_signal.is_negative_signal_outcome), unconditionally — the module is
+# stdlib-only, so the predicate stays bound on the psycopg-absent path and no
+# hand-mirrored copy exists to drift from it. The grader_verdict / review_flag
+# OR-terms are NOT carried by Outcome, so the shared predicate sees them absent
+# over this row shape — a strict subset of its definition, never a divergent one.
 
 
 def _is_synthesized_measurement_gap(o: Outcome) -> bool:
@@ -3323,20 +3306,18 @@ def _is_synthesized_measurement_gap(o: Outcome) -> bool:
     writer-unverified). Scoped to those exact provenance+result pairs so a real
     agent's done_with_concerns still counts.
 
-    budget-truncation is a sibling synthesized-provenance attribution but a real
-    negative, not a measurement gap — the explicit guard keeps it clusterable and
-    holds that invariant even if the synthesized matches are broadened."""
-    if o.attribution_source == _ATTRIBUTION_BUDGET_TRUNCATION:
-        return False
+    The structuredoutput-derived arm is checked HERE rather than delegated: the shared
+    predicate deliberately omits it (its docstring hands that success-side exclusion to
+    daemon_cycle), and without it such a row carrying revision_count>=2 would flip
+    NEUTRAL → FAILURE. Its attribution is disjoint from the shared arms, so checking it
+    first is order-safe; every other arm — including the budget-truncation
+    keep-clusterable guard — is the shared SoT's."""
     if (
-        o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
+        o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED
         and o.result == "done"
     ):
         return True
-    return (
-        o.attribution_source == _ATTRIBUTION_SYNTHESIZED
-        and o.result == "done_with_concerns"
-    )
+    return _shared_is_synthesized_measurement_gap(_outcome_signal_row(o))
 
 
 def _outcome_signal_row(o: Outcome) -> dict[str, object]:
@@ -3354,9 +3335,6 @@ def _outcome_signal_row(o: Outcome) -> dict[str, object]:
 def _is_failure_outcome(o: Outcome) -> bool:
     """FAILURE polarity: shared negative-signal predicate OR evaluative_signal==-1.
 
-    Prefers the imported SoT predicate; falls back to its Outcome-expressible
-    subset when the helper module is unloadable (psycopg absent).
-
     Synthesized-measurement-gap carve-out runs FIRST: a completion-synthesized
     done_with_concerns row is never FAILURE polarity (it has no agent-emitted
     evaluative_signal either, so the -1 short-circuit below never fires for it).
@@ -3365,12 +3343,7 @@ def _is_failure_outcome(o: Outcome) -> bool:
         return False
     if o.evaluative_signal == -1:
         return True
-    if HAS_PG_OUTCOME_READ:
-        return bool(_pg_is_negative_signal_outcome(_outcome_signal_row(o)))
-    return (
-        o.result in _FALLBACK_NEGATIVE_RESULTS
-        or o.revision_count >= _FALLBACK_NEGATIVE_REVISION_MIN
-    )
+    return bool(is_negative_signal_outcome(_outcome_signal_row(o)))
 
 
 def _is_success_outcome(o: Outcome) -> bool:
@@ -3378,7 +3351,7 @@ def _is_success_outcome(o: Outcome) -> bool:
 
     structuredoutput-derived carve-out: that row's done is synthesis-assigned
     (writer-unverified, lesson-less) → NEUTRAL, never a SUCCESS exemplar."""
-    if o.attribution_source == _ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
+    if o.attribution_source == ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED:
         return False
     return (
         o.result == "done"
