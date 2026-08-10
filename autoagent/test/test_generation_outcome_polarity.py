@@ -10,8 +10,8 @@ reads failure vs success as distinct prompt signal. Covered here:
   (d) _render_generation_outcomes_block emits distinct FAILURE vs SUCCESS sections.
 
 The FAILURE predicate reuses the imported negative-signal SoT
-(_pg_learning_dualwrite.is_negative_signal_outcome) when the helper is loadable,
-falling back to its Outcome-expressible subset when psycopg is absent.
+(_outcome_signal.is_negative_signal_outcome) unconditionally — that module is
+stdlib-only, so it stays bound on the psycopg-absent path.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_generation_outcome_polarity.py -v
@@ -42,6 +42,10 @@ if str(_AUTOAGENT_DIR) not in sys.path:
 # suppress; daemon_cycle still imports with its fallback predicates.
 with contextlib.suppress(Exception):
     import _pg_learning_dualwrite  # noqa: F401 — sys.modules pre-bind only
+
+# Same pre-bind contract, unsuppressed: the shared signal SoT is stdlib-only, so a
+# failure here is a real breakage rather than a psycopg-absent degradation.
+import _outcome_signal
 
 try:
     import daemon_cycle as dc
@@ -262,7 +266,10 @@ class TestSynthesizedMeasurementGapCarveOut(unittest.TestCase):
         self.assertTrue(dc._is_failure_outcome(o))
 
     def test_when_budget_truncation_constant_then_literal(self) -> None:
-        self.assertEqual(dc._ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation")
+        # daemon_cycle delegates this arm, so the token is pinned at its owning SoT.
+        self.assertEqual(
+            _outcome_signal.ATTRIBUTION_BUDGET_TRUNCATION, "budget-truncation"
+        )
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
@@ -319,8 +326,9 @@ class TestStructuredOutputDerivedNeutral(unittest.TestCase):
         self.assertTrue(dc._is_failure_outcome(o))
 
     def test_when_structuredoutput_constant_then_literal(self) -> None:
-        self.assertEqual(
-            dc._ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED, "structuredoutput-derived"
+        self.assertIs(
+            dc.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
+            _outcome_signal.ATTRIBUTION_STRUCTUREDOUTPUT_DERIVED,
         )
 
 

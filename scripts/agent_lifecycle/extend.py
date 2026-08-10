@@ -83,9 +83,11 @@ def run_extend(paths: StorePaths, req: ExtendRequest) -> str:
     new_section = ""
     if req.append_section_file is not None:
         section = Path(req.append_section_file)
-        new_section = _gated_section_text(section)
+        # cheap stat before the gated read — a missing target refuses without
+        # paying for a section read whose result is discarded.
         if not md_path.exists():
             raise ExtendRefused(f"agents/{req.name}.md not found — cannot append")
+        new_section = _gated_section_text(section)
 
     before_domains = list(agents[req.name].get("domains") or [])
     applied: list[str] = []

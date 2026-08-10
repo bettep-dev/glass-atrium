@@ -116,7 +116,7 @@ NEGATIVE_SIGNAL_NAMES = (
     "grader_verdict=verified_fail",
     "review_flag=true",
     "revision_count>=2",
-    "evaluative_signal=-1",
+    "evaluative_signal=%d" % NEGATIVE_EVALUATIVE_SIGNAL,
 )
 
 
@@ -137,18 +137,21 @@ def _is_structural_row(row: dict) -> bool:
     return no_test_bar or off_role
 
 
-def _metric_pass_literal(row: dict) -> str:
-    """metric_pass as the emit-side literal: "true" / "false" / "" when ABSENT.
+def _flag_literal(value) -> str:
+    """A tri-state flag value as its emit-side literal: "true" / "false" / "" when ABSENT.
 
     The absent case must stay distinct from "false" — track-outcome.sh routes the two
     through DIFFERENT review_flag branches and D1 gates only the false one. A bool
-    column and a frontmatter string both reach this predicate, hence the widening."""
-    raw = row.get("metric_pass")
-    if isinstance(raw, bool):
-        return "true" if raw else "false"
-    if raw is None:
+    column and a frontmatter string both reach the predicates below, hence the widening;
+    bool identity is tested FIRST so an int can never pass as a literal (and so the
+    boolean column the DB actually yields skips the string path)."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
         return ""
-    return str(raw).strip().lower()
+    return str(value).strip().lower()
 
 
 def _is_structural_polar_mismatch(row: dict) -> bool:
@@ -160,10 +163,13 @@ def _is_structural_polar_mismatch(row: dict) -> bool:
     structural rows, so a carve-out keyed on _is_structural_row alone is a SUPERSET of
     what D1 suppresses and silently drops those two live signals out of both memory
     buckets."""
+    # Cheap conjuncts first: all three are pure and total (every access is
+    # row.get(...) or ""), so the order is verdict-identical and skips the
+    # frozenset-plus-prefix-loop structural test on the common non-mismatch row.
     return (
-        _is_structural_row(row)
-        and str(row.get("confidence") or "").strip().lower() == "high"
-        and _metric_pass_literal(row) == "false"
+        str(row.get("confidence") or "").strip().lower() == "high"
+        and _flag_literal(row.get("metric_pass")) == "false"
+        and _is_structural_row(row)
     )
 
 
@@ -214,30 +220,12 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
     double-counted); the per-name breakdown feeds the dead-signal detector.
     Tolerates missing keys (synthetic test rows carry only 'result').
 
-    Synthesized-measurement-gap carve-out (lockstep with the SubagentStop synthesis
-    default flip needs_context → done_with_concerns): a completion-synthesized
-    done_with_concerns row is a measurement gap, not an agent failure — it produces
-    ZERO negative hits. Scoped to that exact provenance+result pair, so a REAL agent
-    emitting done_with_concerns still counts.
-
-    D2 structural carve-out (lockstep with track-outcome.sh D1 emit-side): D1 gates
-    exactly ONE branch — a structural row (no-test-bar task_type OR off-role) carrying
-    confidence=high + metric_pass=false, where the mismatch is definitionally expected
-    rather than overconfidence. That review_flag is the artifact D1 already stopped
-    emitting for fresh rows, so it does NOT count as a standalone negative hit here.
-    The carve-out is scoped to that same branch: a structural low+true (underconfidence)
-    or ABSENT-metric_pass row is STILL flagged by D1 on fresh rows, and its review_flag
-    still counts — see _is_structural_polar_mismatch. It is also review_flag-SPECIFIC:
-    result=fail / grader_verdict=verified_fail / revision_count>=2 on a structural row
-    are GENUINE failures and still count. A genuine code row (dev-* on-role
-    bug-fix/feature) keeps review_flag=true as a real overconfidence signal
-    (real-signal guard).
-
-    Visibility carve-out (lockstep with the track-outcome.sh degraded-row widening):
-    on a writer-absent provenance the review_flag is a legibility marker, not a
-    writer-side signal, so it does NOT count — see _is_visibility_flag_row. Every
-    other OR-term on such a row (result=fail, verified_fail, revision_count>=2) is a
-    genuine failure and still counts.
+    Three carve-outs suppress a term here, each argued in full at the predicate that
+    implements it: the synthesized measurement gap zeroes EVERY hit
+    (_is_synthesized_measurement_gap), while the D2 structural and degraded-row
+    visibility carve-outs each suppress the review_flag term ALONE
+    (_is_structural_polar_mismatch · _is_visibility_flag_row) — every other OR-term on
+    such a row is a genuine failure and still counts.
 
     evaluative_signal carries NO carve-out: a user correction is agent-emitted by
     definition, so it counts on every provenance that reaches this point."""
@@ -250,11 +238,9 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
     if (row.get("grader_verdict") or "") == GRADER_VERDICT_FAIL:
         hits.append("grader_verdict=verified_fail")
     # Parsed by value, not truthiness: read_outcomes_since yields the boolean column
-    # while a string-carrying row would make the literal "false" trip a bare bool() —
-    # the same widening _metric_pass_literal applies, bool-first so an int cannot pass.
-    review_flag = row.get("review_flag")
+    # while a string-carrying row would make the literal "false" trip a bare bool().
     if (
-        (review_flag is True or str(review_flag).strip().lower() == "true")
+        _flag_literal(row.get("review_flag")) == "true"
         and not _is_structural_polar_mismatch(row)
         and not _is_visibility_flag_row(row)
     ):
@@ -269,7 +255,7 @@ def negative_signal_hits(row: dict) -> tuple[str, ...]:
     # while the aggregator's record dicts carry the frontmatter string, and an
     # int-only or str-only test silently drops one call site's signal.
     if str(row.get("evaluative_signal") or "").strip() == str(NEGATIVE_EVALUATIVE_SIGNAL):
-        hits.append("evaluative_signal=-1")
+        hits.append("evaluative_signal=%d" % NEGATIVE_EVALUATIVE_SIGNAL)
     return tuple(hits)
 
 
