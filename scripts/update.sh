@@ -326,8 +326,8 @@ update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
   [[ "${verdict}" == 'take-release' ]] || return 0
   local before after delta dest
-  before="$(update_editable_region_lines "${local_file}")" || return 0
-  after="$(update_editable_region_lines "${candidate}")" || return 0
+  before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
+  after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
   delta=$((before - after))
   [[ "${delta}" -gt 0 ]] || return 0
   update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
