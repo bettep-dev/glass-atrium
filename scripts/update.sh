@@ -324,12 +324,12 @@ update_editable_region_lines() {
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
-  [[ "${verdict}" == 'take-release' ]] || return 0
+  [[ "${verdict}" == 'take-release' ]] || return 0 # GA-ABSORB[benign]: a non-take-release verdict is not the deletion shape — the tripwire has no advisory to emit and the gate is unaffected.
   local before after delta dest
   before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
   after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
   delta=$((before - after))
-  [[ "${delta}" -gt 0 ]] || return 0
+  [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
   update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
   dest="$(dirname -- "$(update_agents_bak_base "${root}")")/update-declines"
   if mkdir -p -- "${dest}" \

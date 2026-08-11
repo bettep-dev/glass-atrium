@@ -2687,7 +2687,7 @@ OUTCOME_CLOSE_MAX=10
 close_same_cid_dwc() {
   local cid="$1" port base rc=0 body ids id attempted=0
   if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-    printf '[outcome-close] miss cid=%s id=- rc=0 stage=deps\n' "${cid}" >&2
+    printf '[outcome-close] miss cid=%s id=- rc=- stage=deps\n' "${cid}" >&2
     return 0
   fi
   # The port resolver lives in lib/hook-utils.sh (the top-of-file source is the SIBLING
@@ -2700,7 +2700,7 @@ close_same_cid_dwc() {
     . "${BASH_SOURCE%/*}/lib/hook-utils.sh"
   fi
   if ! declare -F hook_monitor_port >/dev/null 2>&1; then
-    printf '[outcome-close] miss cid=%s id=- rc=0 stage=resolver\n' "${cid}" >&2
+    printf '[outcome-close] miss cid=%s id=- rc=- stage=resolver\n' "${cid}" >&2
     return 0
   fi
   # GA-ABSORB[handled@stage=port]: the resolver's own stderr is redundant with the loud
@@ -2736,7 +2736,7 @@ close_same_cid_dwc() {
   while IFS= read -r id; do
     [ -n "${id}" ] || continue
     if [ "${attempted}" -ge "${OUTCOME_CLOSE_MAX}" ]; then
-      printf '[outcome-close] miss cid=%s id=%s rc=0 stage=cap\n' "${cid}" "${id}" >&2
+      printf '[outcome-close] miss cid=%s id=%s rc=- stage=cap\n' "${cid}" "${id}" >&2
       break
     fi
     attempted=$((attempted + 1))
