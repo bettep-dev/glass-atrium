@@ -302,6 +302,46 @@ update_record_conflict_decline() {
   fi
 }
 
+# Count the lines living INSIDE EDITABLE regions of $1 (markers excluded). The plan line
+# carries no per-region resolution list and no line delta, so the shape is measured here
+# rather than by widening the merge lib's contract.
+update_editable_region_lines() {
+  awk '
+    /<!-- EDITABLE:BEGIN -->/ { inside = 1; next }
+    /<!-- EDITABLE:END -->/   { inside = 0; next }
+    inside                    { n++ }
+    END                       { print n + 0 }
+  ' "$1"
+}
+
+# Deletion-shape tripwire. The base-anchor contamination of 2026-08-10 trimmed 83
+# daemon-evolved lines by making base==local, which resolves EVERY vendor-differing region
+# take-release — a clean no-conflict candidate that sails through the gate. The shape is
+# therefore all-take-release WITH a net-negative EDITABLE-region line delta. ADVISORY only:
+# the candidate is still queued and the confirm gate is untouched, but the operator gets a
+# loud per-file warning plus a durable record beside the conflict-decline ledger (same
+# derivation, so both post-mortem artifacts sit together).
+# $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
+update_check_deletion_shape() {
+  local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
+  [[ "${verdict}" == 'take-release' ]] || return 0
+  local before after delta dest
+  before="$(update_editable_region_lines "${local_file}")" || return 0
+  after="$(update_editable_region_lines "${candidate}")" || return 0
+  delta=$((before - after))
+  [[ "${delta}" -gt 0 ]] || return 0
+  update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
+  dest="$(dirname -- "$(update_agents_bak_base "${root}")")/update-declines"
+  if mkdir -p -- "${dest}" \
+    && printf '%s\t%s\t%s\tdeleted_lines=%s\tadvisory=gate-unchanged\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${verdict}" "${rel}" "${delta}" \
+      >>"${dest}/deletion-shape-warnings.log"; then
+    update_log "  deletion-shape warning recorded → ${dest}/deletion-shape-warnings.log"
+  else
+    update_log "WARN: could not persist the deletion-shape warning for ${rel} (${dest}) — this warning is stderr-only"
+  fi
+}
+
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
 # EXIT INT TERM so the pause flag clears and the daemon resumes on any exit path —
 # the trap-guarded quiesce/restore the T10 contract requires.
@@ -1045,6 +1085,8 @@ update_merge_agent_editable_regions() {
     # the ORIGINAL local body the verify anchors on is the persistent agents-bak
     # before-image git_txn_apply captures pre-apply — the SINGLE authoritative
     # copy (P2-T2), derived per-file by the commit callback.
+    update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
+
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
       "${file}" "${base%.md}" >>"${records_file}"
@@ -1146,7 +1188,7 @@ update_base_store_dir() {
 # the base and silently swallow it forever. With no ledger (a direct caller that ran
 # no merge) the prior blanket advance is preserved so a legacy caller is unchanged.
 update_capture_base_content() {
-  local new_dir="$1" store file base count=0 kept=0
+  local new_dir="$1" store file base count=0 kept=0 kept_names=""
   local ledger="${_update_agent_outcomes_file}"
   store="$(update_base_store_dir)"
   mkdir -p -- "${store}"
@@ -1170,6 +1212,9 @@ update_capture_base_content() {
     # land → keep its prior base entry (do not advance).
     if [[ "${ledger_active}" -eq 1 && "${ledger_lines}" != *$'\n'"${base}"$'\n'* ]]; then
       kept=$((kept + 1))
+      # Name the kept basenames in the summary: a merge-claimed-path exclusion (the charter
+      # file) is kept EVERY run, so an unlabeled "N kept" reads as an unexplained anomaly.
+      kept_names="${kept_names:+${kept_names}, }${base}"
       continue
     fi
     # finding #9 part 4: before overwriting a PRIOR base entry, snapshot it beside
@@ -1194,7 +1239,7 @@ update_capture_base_content() {
       update_log "WARN: base-content capture failed for ${base} (next update falls back to gated 2-way for it)"
     fi
   done
-  update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base → ${store}"
+  update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base${kept_names:+ (${kept_names})} → ${store}"
   # One-shot ledger: reset so a later capture in the same process never reads a
   # stale set (the workdir teardown removes the file itself).
   _update_agent_outcomes_file=""
