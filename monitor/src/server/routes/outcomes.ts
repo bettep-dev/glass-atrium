@@ -288,6 +288,8 @@ interface ByResultDbRow {
   count: bigint;
   // FILTER sub-count of `count` — reconstructed (harness-synthesized) rows only.
   reconstructed_count: bigint;
+  // FILTER sub-count of `count` — already-closed rows (the only closure-aware aggregate).
+  closed_count: bigint;
 }
 
 interface ByAgentDbRow {
@@ -824,7 +826,10 @@ async function handleCrossAnalysis(
             COUNT(*)::bigint AS count,
             (COUNT(*) FILTER (
               WHERE ${buildReconstructedRowFilter()}
-            ))::bigint       AS reconstructed_count
+            ))::bigint       AS reconstructed_count,
+            (COUNT(*) FILTER (
+              WHERE closed_at IS NOT NULL
+            ))::bigint       AS closed_count
           FROM core.outcomes
           ${analyticsWhere}
           GROUP BY result
@@ -955,6 +960,7 @@ async function handleCrossAnalysis(
           result: row.result as OutcomeResultLiteral,
           count: bigintToNumber(row.count),
           reconstructed_count: bigintToNumber(row.reconstructed_count),
+          closed_count: bigintToNumber(row.closed_count),
         },
       ];
     });

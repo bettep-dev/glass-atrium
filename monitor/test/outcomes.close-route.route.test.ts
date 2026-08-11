@@ -8,8 +8,9 @@
 //         stored timestamp (idempotent, never re-stamped).
 //   (AC5) Non-done_with_concerns target → 400 invalid_result, unknown id → 404, and
 //         neither writes anything.
-//   (AC6) Closing a row leaves /cross-analysis response values identical (closure is
-//         excluded from every aggregate).
+//   (AC6) Closing a row moves EXACTLY ONE cross-analysis field — by_result.closed_count
+//         for the closed row's result. Every count, every reconstructed_count and every
+//         other aggregate stay closure-blind.
 //
 // DB: real Postgres — seed summary carries SUITE_MARKER → ?q 한정 조회, cleanup 은 cid LIKE.
 // 라이브 1000+ done_with_concerns 행은 절대 건드리지 않는다 (seed 행만 종결/삭제).
@@ -213,18 +214,50 @@ test("close rejects an unknown id with 404 and a malformed id with 400", async (
   assert.deepStrictEqual(malformed.json(), { error: "invalid_param", param: "id" });
 });
 
-// (AC6) 집계 불변 — 종결은 어떤 aggregate 에도 반영되지 않는다.
+// (AC6) 집계 불변 — 종결이 움직이는 필드는 by_result.closed_count 단 하나.
 
-test("/cross-analysis values are identical before and after a close", async () => {
+test("a close moves only by_result.closed_count; every other aggregate value is identical", async () => {
   const before = await fetchSeedCrossAnalysis();
   const res = await close(seedId(SEED_OPEN_CONTROL));
   assert.strictEqual(res.statusCode, 200, "control row close must succeed");
   const after = await fetchSeedCrossAnalysis();
 
   assert.deepStrictEqual(
-    after.by_result,
-    before.by_result,
-    "by_result counts unchanged — closure excluded from aggregates",
+    after.by_result.map((row) => row.result),
+    before.by_result.map((row) => row.result),
+    "by_result grouping/order unchanged",
   );
+  for (const [index, afterRow] of after.by_result.entries()) {
+    const beforeRow = before.by_result[index];
+    assert.ok(beforeRow, `by_result row ${index} present before the close`);
+    assert.strictEqual(afterRow.count, beforeRow.count, `${afterRow.result} count unchanged`);
+    assert.strictEqual(
+      afterRow.reconstructed_count,
+      beforeRow.reconstructed_count,
+      `${afterRow.result} reconstructed_count unchanged`,
+    );
+    const expectedClosed =
+      afterRow.result === "done_with_concerns" ? beforeRow.closed_count + 1 : beforeRow.closed_count;
+    assert.strictEqual(
+      afterRow.closed_count,
+      expectedClosed,
+      `${afterRow.result} closed_count reflects the close`,
+    );
+    assert.ok(
+      afterRow.closed_count >= 0 && afterRow.closed_count <= afterRow.count,
+      `${afterRow.result} keeps 0 <= closed_count <= count`,
+    );
+  }
+
   assert.deepStrictEqual(after.cells, before.cells, "confidence × metric_pass cells unchanged");
+  assert.deepStrictEqual(
+    after.by_agent_top_10,
+    before.by_agent_top_10,
+    "by_agent_top_10 stays closure-blind",
+  );
+  assert.deepStrictEqual(
+    after.by_agent_result,
+    before.by_agent_result,
+    "by_agent_result stays closure-blind",
+  );
 });
