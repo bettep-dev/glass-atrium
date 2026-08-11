@@ -89,7 +89,12 @@ trip() {
   oc "drops 2 EDITABLE-region line(s)" "${output}" || return 1
   oc "deletion-shape-warnings.log" "${output}" || return 1
   [ -f "${LEDGER_DIR}/deletion-shape-warnings.log" ] || return 1
-  oc "deleted_lines=2" "$(cat "${LEDGER_DIR}/deletion-shape-warnings.log")" || return 1
+  local record
+  record="$(cat "${LEDGER_DIR}/deletion-shape-warnings.log")"
+  oc "agents/alpha.md" "${record}" || return 1
+  oc "deleted_lines=2" "${record}" || return 1
+  # Timestamp, path, delta — the constant verdict and advisory columns are not stored.
+  [ "$(printf '%s' "${record}" | awk -F'\t' '{print NF}')" -eq 3 ] || return 1
   # BESIDE the conflict-decline ledger, never inside it.
   [ ! -e "${LEDGER_DIR}/conflict-declines.log" ] || return 1
 }

@@ -277,21 +277,29 @@ update_preserve_snapshot() {
   fi
 }
 
+# Both run ledgers live BESIDE the agents-bak rollback store — one derivation, so every
+# post-mortem artifact of a run resolves into the same directory.
+# $1 = install root.
+update_declines_dir() {
+  local base parent
+  base="$(update_agents_bak_base "$1")"
+  parent="$(dirname -- "${base}")"
+  printf '%s\n' "${parent}/update-declines"
+}
+
 # Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
 # (the tripwire working), so it gets no named failure code — but announcing it through
 # a single stderr line means an operator not watching the deploy scroll by has no later
 # way to learn that a body was declined and the local copy kept. The record is durable
-# in the install area, BESIDE the agents-bak rollback store and the preserved failed
-# snapshots above (same parent derivation, so all three post-mortem artifacts sit
-# together), and append-only so a re-run adds rather than replaces. Best-effort with a
-# loud WARN: a decline must never abort the rest of the deploy.
+# in the install area, beside the agents-bak rollback store and the preserved failed
+# snapshots above, and append-only so a re-run adds rather than replaces. Best-effort with
+# a loud WARN: a decline must never abort the rest of the deploy.
 # $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
 # The root is passed rather than re-derived: the merge caller already holds the install
 # root it is merging into, and the backup dir it computes must resolve to the same base.
 update_record_conflict_decline() {
-  local root="$1" rel="$2" verdict="$3" base dest
-  base="$(update_agents_bak_base "${root}")"
-  dest="$(dirname -- "${base}")/update-declines"
+  local root="$1" rel="$2" verdict="$3" dest
+  dest="$(update_declines_dir "${root}")"
   if mkdir -p -- "${dest}" \
     && printf '%s\t%s\t%s\tlocal-body-kept\trepair=live-body-edit+base-store-sync\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${verdict}" "${rel}" \
@@ -314,13 +322,12 @@ update_editable_region_lines() {
   ' "$1"
 }
 
-# Deletion-shape tripwire. The base-anchor contamination of 2026-08-10 trimmed 83
-# daemon-evolved lines by making base==local, which resolves EVERY vendor-differing region
-# take-release — a clean no-conflict candidate that sails through the gate. The shape is
-# therefore all-take-release WITH a net-negative EDITABLE-region line delta. ADVISORY only:
-# the candidate is still queued and the confirm gate is untouched, but the operator gets a
-# loud per-file warning plus a durable record beside the conflict-decline ledger (same
-# derivation, so both post-mortem artifacts sit together).
+# Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
+# vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
+# that carries no conflict and sails through the gate. That shape is all-take-release WITH a
+# net-negative EDITABLE-region line delta. ADVISORY only: the candidate is still queued and
+# the confirm gate is untouched, but the operator gets a loud per-file warning plus a durable
+# record beside the conflict-decline ledger.
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
@@ -331,10 +338,12 @@ update_check_deletion_shape() {
   delta=$((before - after))
   [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
   update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
-  dest="$(dirname -- "$(update_agents_bak_base "${root}")")/update-declines"
+  dest="$(update_declines_dir "${root}")"
+  # Three columns only: the verdict is take-release for every row this guard can reach and
+  # the advisory-only nature is invariant, so neither is worth a stored column.
   if mkdir -p -- "${dest}" \
-    && printf '%s\t%s\t%s\tdeleted_lines=%s\tadvisory=gate-unchanged\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${verdict}" "${rel}" "${delta}" \
+    && printf '%s\t%s\tdeleted_lines=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rel}" "${delta}" \
       >>"${dest}/deletion-shape-warnings.log"; then
     update_log "  deletion-shape warning recorded → ${dest}/deletion-shape-warnings.log"
   else
