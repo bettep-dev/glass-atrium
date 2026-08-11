@@ -1,4 +1,4 @@
-// Outcomes API — Outcome explorer 상세 화면용 조회 엔드포인트 + 종결 표시 mutation 하나(PATCH /:id/close) (Prisma 7 driver-adapter, raw SQL 은 $queryRaw template-tag 만 · 단일 테이블, join 없음).
+// Outcomes API — Outcome explorer 상세 화면용 조회 엔드포인트 + 종결 표시 mutation 둘(PATCH /:id/close 단건 · PATCH /close-by-cid 집합) (Prisma 7 driver-adapter, raw SQL 은 $queryRaw template-tag 만 · 단일 테이블, join 없음).
 // WHERE 는 활성 필터별 Prisma.Sql fragment 수집 → Prisma.join — 문자열 연결 없이 모든 사용자값이 파라미터 바인딩 경계 통과 (SQL injection 차단).
 // 성능 주의: agent/task_type/review_flag 없는 `q` 키워드 /search 는 seq scan (summary/lesson full-text 인덱스 없음) — 4K행 규모 허용, >50K 시 pg_trgm/GIN 권장.
 
@@ -34,6 +34,7 @@ import type {
   OutcomeCrossAnalysisByResult,
   OutcomeCrossAnalysisCell,
   OutcomeCrossAnalysisFilterEcho,
+  OutcomeCloseByCidResponse,
   OutcomeCloseResponse,
   OutcomeCrossAnalysisResponse,
   OutcomeDetailResponse,
@@ -66,6 +67,7 @@ const ALLOWED_TASK_TYPES: ReadonlySet<OutcomeTaskType> = new Set<OutcomeTaskType
 const CLOSABLE_RESULT: OutcomeResultLiteral = "done_with_concerns";
 
 const CLOSE_ROUTE = "/api/outcomes/:id/close";
+const CLOSE_BY_CID_ROUTE = "/api/outcomes/close-by-cid";
 
 const ALLOWED_RESULTS: ReadonlySet<OutcomeResultLiteral> = new Set<OutcomeResultLiteral>([
   "done",
@@ -288,6 +290,8 @@ interface ByResultDbRow {
   count: bigint;
   // FILTER sub-count of `count` — reconstructed (harness-synthesized) rows only.
   reconstructed_count: bigint;
+  // FILTER sub-count of `count` — already-closed rows (the only closure-aware aggregate).
+  closed_count: bigint;
 }
 
 interface ByAgentDbRow {
@@ -364,6 +368,9 @@ interface SearchQuerystring {
   // Exact-match filter on the raw attribution_source column (e.g.
   // attribution_source=budget-truncation). /search-only per contract.
   attribution_source?: string;
+  // Exact-match filter on the delegation correlation id (cid=<id>). /search-only
+  // per contract — the recorder hook's same-cid close consumer reads through it.
+  cid?: string;
   // O2 forensic toggle — truthy lifts the default registry-membership gate on
   // /search so de-registered / sentinel / noise agents reappear (T7 / AC-2).
   include_all?: string;
@@ -403,6 +410,9 @@ interface ParsedFilters {
   // /cross-analysis never supplies the key, so it stays null there (behavior
   // unchanged for that endpoint).
   attribution_source: string | null;
+  // Exact-match filter on cid; null = no filter. /search-only — /cross-analysis
+  // never supplies the key, so it stays null there (behavior unchanged).
+  cid: string | null;
 }
 
 // registration
@@ -415,6 +425,7 @@ export async function registerOutcomesRoutes(app: FastifyInstance): Promise<void
   app.get("/api/outcomes/cross-analysis", handleCrossAnalysis);
   app.get("/api/outcomes/heatmap", handleHeatmap);
   app.get("/api/outcomes/attribution-daily", handleAttributionDaily);
+  app.patch("/api/outcomes/close-by-cid", handleCloseByCid);
   app.get("/api/outcomes/:id", handleDetail);
   app.patch("/api/outcomes/:id/close", handleClose);
 }
@@ -750,6 +761,43 @@ async function handleClose(
   }
 }
 
+// PATCH /api/outcomes/close-by-cid?cid=<cid>
+// :id/close 의 집합 연산 형제 — 같은 cid 의 열린 DWC 행 전체를 UPDATE 한 번으로 종결한다
+// (소비자 쪽 search + per-id 루프 제거). 멱등: 재호출은 아무 행도 잡지 못해 빈 목록을 돌려준다.
+// 미존재 cid 도 404 가 아니라 빈 목록 — 집합 연산에 "대상 없음"은 정상 결과다.
+async function handleCloseByCid(
+  request: FastifyRequest<{ Querystring: { cid?: string } }>,
+  reply: FastifyReply,
+): Promise<OutcomeCloseByCidResponse | OutcomesErrorBody> {
+  const start = Date.now();
+  const cid = typeof request.query.cid === "string" ? request.query.cid.trim() : "";
+  if (cid === "") {
+    return reply.code(400).send(invalidParam("cid"));
+  }
+
+  const prisma = getPrisma();
+  try {
+    // RETURNING 으로 이번 호출이 실제 stamp 한 id 만 회수 — 이미 종결된 행은 WHERE 에서 탈락하므로
+    // 목록이 곧 "이번에 닫힌 것"의 정확한 집합이다.
+    const closedRows = await prisma.$queryRaw<{ id: bigint }[]>`
+      UPDATE core.outcomes
+      SET closed_at = now()
+      WHERE cid = ${cid}
+        AND result::text = ${CLOSABLE_RESULT}
+        AND closed_at IS NULL
+      RETURNING id
+    `;
+    const closedIds = closedRows.map((row) => bigintToNumber(row.id));
+    request.log.info(
+      { route: CLOSE_BY_CID_ROUTE, cid, closed: closedIds.length, durationMs: Date.now() - start },
+      "outcomes closed by cid",
+    );
+    return { cid, closed_ids: closedIds };
+  } catch (error) {
+    return failWithDb(request, reply, CLOSE_BY_CID_ROUTE, error);
+  }
+}
+
 // GET /api/outcomes/cross-analysis
 async function handleCrossAnalysis(
   request: FastifyRequest<{ Querystring: CrossAnalysisQuerystring }>,
@@ -824,7 +872,10 @@ async function handleCrossAnalysis(
             COUNT(*)::bigint AS count,
             (COUNT(*) FILTER (
               WHERE ${buildReconstructedRowFilter()}
-            ))::bigint       AS reconstructed_count
+            ))::bigint       AS reconstructed_count,
+            (COUNT(*) FILTER (
+              WHERE closed_at IS NOT NULL
+            ))::bigint       AS closed_count
           FROM core.outcomes
           ${analyticsWhere}
           GROUP BY result
@@ -955,6 +1006,7 @@ async function handleCrossAnalysis(
           result: row.result as OutcomeResultLiteral,
           count: bigintToNumber(row.count),
           reconstructed_count: bigintToNumber(row.reconstructed_count),
+          closed_count: bigintToNumber(row.closed_count),
         },
       ];
     });
@@ -1754,6 +1806,13 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
       ? attributionSourceRaw
       : null;
 
+  // cid: exact-match equality filter, /search-only. The same `in` guard as
+  // attribution_source keeps /cross-analysis (whose querystring lacks the key)
+  // at null. Bound as a parameter in buildWhereClause — no allowlist: a cid is
+  // free-form delegation text, so any non-empty string is a legal exact match.
+  const cidRaw = "cid" in query ? query.cid : undefined;
+  const cid = typeof cidRaw === "string" && cidRaw.length > 0 ? cidRaw : null;
+
   const filters: ParsedFilters = {
     days,
     agent,
@@ -1764,6 +1823,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
     review_flag: reviewFlag,
     q,
     attribution_source: attributionSource,
+    cid,
   };
 
   return { filters, error: null };
@@ -1835,6 +1895,12 @@ function buildWhereClause(
   // is text). null = no filter (the /cross-analysis path always lands here).
   if (filters.attribution_source !== null) {
     fragments.push(Prisma.sql`attribution_source = ${filters.attribution_source}`);
+  }
+
+  // Exact-match cid equality — parameter-bound (no cast: column is text).
+  // null = no filter (the /cross-analysis path always lands here).
+  if (filters.cid !== null) {
+    fragments.push(Prisma.sql`cid = ${filters.cid}`);
   }
 
   // T7 (O2) — caller-opt-in registry gate. Fires ONLY when a caller supplies a
@@ -1951,6 +2017,7 @@ function toSearchFilterEcho(
     review_flag: filters.review_flag,
     q: filters.q,
     attribution_source: filters.attribution_source,
+    cid: filters.cid,
     sort,
     limit,
     offset,
@@ -1983,6 +2050,7 @@ function emptyFilters(): ParsedFilters {
     review_flag: null,
     q: null,
     attribution_source: null,
+    cid: null,
   };
 }
 

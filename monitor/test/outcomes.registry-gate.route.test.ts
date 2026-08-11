@@ -312,6 +312,61 @@ test("attribution_source=truncated_completion narrows /search to matching rows",
   );
 });
 
+// ── cid exact-match filter — the read surface the recorder hook's same-cid close
+// consumer depends on. Without it /search silently ignores `cid=` and degrades to
+// a newest-N window, so a candidate outside that window is missed silently.
+test("cid=<seeded> narrows /search to the single matching row", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const target = `${SUITE_MARKER}-0`;
+  const res = await app.inject({
+    method: "GET",
+    url: `/api/outcomes/search?days=all&cid=${encodeURIComponent(target)}`,
+  });
+  assert.strictEqual(res.statusCode, 200, "must be 200");
+  const body = res.json() as OutcomeSearchResponse;
+  assert.strictEqual(body.rows.length, 1, "exact-match cid returns exactly the one seeded row");
+  assert.strictEqual(body.total, 1, "total matches the filtered count");
+  assert.strictEqual(body.rows[0]!.cid, target, "the returned row carries the requested cid");
+  assert.strictEqual(body.rows[0]!.agent, CANONICAL_AGENT, "cid-0 belongs to the canonical agent");
+  assert.strictEqual(body.filter.cid, target, "filter echo carries the applied cid");
+});
+
+// The consumer sends include_all=1 precisely because a de-registered agent's row is
+// invisible to the default registry-scoped view — a missed close it could not report.
+test("cid + include_all=1 re-admits a de-registered agent's row the default view hides", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  // Seed index 3 is the first noise agent (DE_REGISTERED) — see seedOutcomes.
+  const target = `${SUITE_MARKER}-${CANONICAL_ROWS}`;
+  const gated = await app.inject({
+    method: "GET",
+    url: `/api/outcomes/search?days=all&cid=${encodeURIComponent(target)}`,
+  });
+  assert.strictEqual(gated.statusCode, 200, "gated request must be 200");
+  assert.strictEqual((gated.json() as OutcomeSearchResponse).rows.length, 0, "registry gate hides the row by default");
+
+  const res = await app.inject({
+    method: "GET",
+    url: `/api/outcomes/search?days=all&include_all=1&cid=${encodeURIComponent(target)}`,
+  });
+  assert.strictEqual(res.statusCode, 200, "forensic request must be 200");
+  const body = res.json() as OutcomeSearchResponse;
+  assert.strictEqual(body.rows.length, 1, "include_all=1 re-admits the de-registered row");
+  assert.strictEqual(body.rows[0]!.agent, DE_REGISTERED, "the re-admitted row is the de-registered agent's");
+});
+
+// Absent cid leaves the filter unapplied — /cross-analysis never supplies the key.
+test("cid absent → filter echo null and the population is unchanged", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const res = await app.inject({
+    method: "GET",
+    url: `/api/outcomes/search?days=all&q=${encodeURIComponent(SUITE_MARKER)}`,
+  });
+  assert.strictEqual(res.statusCode, 200, "must be 200");
+  const body = res.json() as OutcomeSearchResponse;
+  assert.strictEqual(body.filter.cid, null, "absent cid echoes as null");
+  assert.strictEqual(body.rows.length, CANONICAL_ROWS, "gated default population unchanged by the new filter");
+});
+
 test("attribution_source=budget-truncation binds as a parameter and returns 0 rows (intended production value)", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   // The literal production value is CHECK-rejected on INSERT, so no such row can

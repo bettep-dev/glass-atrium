@@ -56,6 +56,8 @@ export interface OutcomeSearchFilterEcho {
   q: string | null;
   // Exact-match attribution_source filter; null when no filter applied.
   attribution_source: string | null;
+  // Exact-match cid filter; null when no filter applied.
+  cid: string | null;
   sort: OutcomeSortToken;
   limit: number;
   offset: number;
@@ -145,6 +147,15 @@ export interface OutcomeCloseResponse {
   closed_at: string;
 }
 
+// PATCH /api/outcomes/close-by-cid?cid=<cid>
+
+// Set-operation close response — `closed_ids` lists the rows this call stamped, so an
+// idempotent repeat (or a cid with nothing open) returns an empty array, never an error.
+export interface OutcomeCloseByCidResponse {
+  cid: string;
+  closed_ids: number[];
+}
+
 // /api/outcomes/cross-analysis
 
 // Filter echo for cross-analysis — same axes as /search minus pagination/sort.
@@ -174,10 +185,15 @@ export interface OutcomeCrossAnalysisCell {
 // isolates harness recovery artifacts (downgrade_origin='synthesized' OR attribution_source
 // IN (completion-synthesized, budget-truncation, structuredoutput-derived)). Invariants:
 // 0 <= reconstructed_count <= count; writer-emitted = count - reconstructed_count.
+// `closed_count` is the ONE closure-aware aggregate field — every other cross-analysis
+// aggregate stays closure-blind, so the norm warning can key on open DWC without
+// changing any other consumer. Invariants: 0 <= closed_count <= count; open =
+// count - closed_count (in practice non-zero only for done_with_concerns).
 export interface OutcomeCrossAnalysisByResult {
   result: OutcomeResultLiteral;
   count: number;
   reconstructed_count: number;
+  closed_count: number;
 }
 
 // Per-agent aggregate with the reconstructed sub-count split out. `count` = ALL

@@ -249,7 +249,7 @@ capture_install_baseline() {
 # installed target symlinks. Only agents/*.md carry EDITABLE regions (predicate mirrors
 # spine_is_excluded_path). ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
 capture_base_agent_store() {
-  local store rel src dst base copied=0 missing=0
+  local store rel src dst base copied=0 missing=0 refused=0
   store="$(spine_baseline_dir)/base-agents"
   if ! mkdir -p -- "${store}"; then
     log "  warn : base-content store dir uncreatable (${store}) — next update falls back to the gated-2-way merge"
@@ -271,6 +271,22 @@ capture_base_agent_store() {
     # basename-keyed store: editable_merge.load_base_text reads <store>/<basename>.
     base="$(basename -- "${rel}")"
     dst="${store}/${base}"
+    # FIRST-SEED ONLY. Post-first-install ${GA_ROOT}/agents is the daemon-edited LIVE
+    # surface, so re-seeding an EXISTING differing entry sets base:=live — which makes
+    # every vendor-differing region resolve take-release and silently trims live-only
+    # lines as "vendor deletions". The updater (update_capture_base_content) is the sole
+    # owner of base advances. Byte-identical → the copy is a no-op, so it stays silent.
+    # `cmp` in an `if`/`&&` condition by design: a differing file is a NORMAL outcome
+    # (rc 1), and a bare cmp under a caller's set -e would abort the install.
+    if [[ -f "${dst}" ]] && ! cmp -s -- "${src}" "${dst}"; then
+      if [[ "${GA_BASE_STORE_RESEED:-}" == "1" ]]; then
+        log "  warn : base-content re-seed FORCED for ${base} (GA_BASE_STORE_RESEED=1) — overwriting an existing differing base entry"
+      else
+        refused=$((refused + 1))
+        log "  warn : base-content overwrite REFUSED for ${base} — an existing base entry differs and the live surface must never re-seed base (the updater owns base advances); re-seed deliberately with GA_BASE_STORE_RESEED=1"
+        continue
+      fi
+    fi
     # cp in an `if` masks set -e by design (a single copy miss is advisory, not a
     # fatal — it degrades that ONE region to the gated-2-way fallback).
     if cp -p -- "${src}" "${dst}"; then
@@ -280,10 +296,12 @@ capture_base_agent_store() {
       missing=$((missing + 1))
     fi
   done < <(read_manifest_files)
+  # The refused count is named in BOTH branches: a refusal with missing==0 would otherwise
+  # be invisible in the summary, leaving scanned-vs-copied silently divergent.
   if [[ "${missing}" -gt 0 ]]; then
-    log "baseline: base-content store seeded (${copied} agent bodies -> ${store}; ${missing} source(s) missing/uncopyable — those regions degrade to the gated-2-way merge)"
+    log "baseline: base-content store seeded (${copied} agent bodies -> ${store}; ${missing} source(s) missing/uncopyable — those regions degrade to the gated-2-way merge; ${refused} existing entries refused)"
   else
-    log "baseline: base-content store seeded (${copied} agent bodies -> ${store})"
+    log "baseline: base-content store seeded (${copied} agent bodies -> ${store}; ${refused} existing entries refused)"
   fi
 }
 

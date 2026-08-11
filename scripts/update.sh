@@ -277,21 +277,29 @@ update_preserve_snapshot() {
   fi
 }
 
+# Both run ledgers live BESIDE the agents-bak rollback store — one derivation, so every
+# post-mortem artifact of a run resolves into the same directory.
+# $1 = install root.
+update_declines_dir() {
+  local base parent
+  base="$(update_agents_bak_base "$1")"
+  parent="$(dirname -- "${base}")"
+  printf '%s\n' "${parent}/update-declines"
+}
+
 # Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
 # (the tripwire working), so it gets no named failure code — but announcing it through
 # a single stderr line means an operator not watching the deploy scroll by has no later
 # way to learn that a body was declined and the local copy kept. The record is durable
-# in the install area, BESIDE the agents-bak rollback store and the preserved failed
-# snapshots above (same parent derivation, so all three post-mortem artifacts sit
-# together), and append-only so a re-run adds rather than replaces. Best-effort with a
-# loud WARN: a decline must never abort the rest of the deploy.
+# in the install area, beside the agents-bak rollback store and the preserved failed
+# snapshots above, and append-only so a re-run adds rather than replaces. Best-effort with
+# a loud WARN: a decline must never abort the rest of the deploy.
 # $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
 # The root is passed rather than re-derived: the merge caller already holds the install
 # root it is merging into, and the backup dir it computes must resolve to the same base.
 update_record_conflict_decline() {
-  local root="$1" rel="$2" verdict="$3" base dest
-  base="$(update_agents_bak_base "${root}")"
-  dest="$(dirname -- "${base}")/update-declines"
+  local root="$1" rel="$2" verdict="$3" dest
+  dest="$(update_declines_dir "${root}")"
   if mkdir -p -- "${dest}" \
     && printf '%s\t%s\t%s\tlocal-body-kept\trepair=live-body-edit+base-store-sync\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${verdict}" "${rel}" \
@@ -299,6 +307,47 @@ update_record_conflict_decline() {
     update_log "  decline recorded → ${dest}/conflict-declines.log"
   else
     update_log "WARN: could not persist the conflict decline for ${rel} (${dest}) — this decline is stderr-only"
+  fi
+}
+
+# Count the lines living INSIDE EDITABLE regions of $1 (markers excluded). The plan line
+# carries no per-region resolution list and no line delta, so the shape is measured here
+# rather than by widening the merge lib's contract.
+update_editable_region_lines() {
+  awk '
+    /<!-- EDITABLE:BEGIN -->/ { inside = 1; next }
+    /<!-- EDITABLE:END -->/   { inside = 0; next }
+    inside                    { n++ }
+    END                       { print n + 0 }
+  ' "$1"
+}
+
+# Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
+# vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
+# that carries no conflict and sails through the gate. That shape is all-take-release WITH a
+# net-negative EDITABLE-region line delta. ADVISORY only: the candidate is still queued and
+# the confirm gate is untouched, but the operator gets a loud per-file warning plus a durable
+# record beside the conflict-decline ledger.
+# $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
+update_check_deletion_shape() {
+  local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
+  [[ "${verdict}" == 'take-release' ]] || return 0 # GA-ABSORB[benign]: a non-take-release verdict is not the deletion shape — the tripwire has no advisory to emit and the gate is unaffected.
+  local before after delta dest
+  before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
+  after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
+  delta=$((before - after))
+  [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
+  update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
+  dest="$(update_declines_dir "${root}")"
+  # Three columns only: the verdict is take-release for every row this guard can reach and
+  # the advisory-only nature is invariant, so neither is worth a stored column.
+  if mkdir -p -- "${dest}" \
+    && printf '%s\t%s\tdeleted_lines=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rel}" "${delta}" \
+      >>"${dest}/deletion-shape-warnings.log"; then
+    update_log "  deletion-shape warning recorded → ${dest}/deletion-shape-warnings.log"
+  else
+    update_log "WARN: could not persist the deletion-shape warning for ${rel} (${dest}) — this warning is stderr-only"
   fi
 }
 
@@ -1045,6 +1094,8 @@ update_merge_agent_editable_regions() {
     # the ORIGINAL local body the verify anchors on is the persistent agents-bak
     # before-image git_txn_apply captures pre-apply — the SINGLE authoritative
     # copy (P2-T2), derived per-file by the commit callback.
+    update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
+
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
       "${file}" "${base%.md}" >>"${records_file}"
@@ -1146,7 +1197,7 @@ update_base_store_dir() {
 # the base and silently swallow it forever. With no ledger (a direct caller that ran
 # no merge) the prior blanket advance is preserved so a legacy caller is unchanged.
 update_capture_base_content() {
-  local new_dir="$1" store file base count=0 kept=0
+  local new_dir="$1" store file base count=0 kept=0 kept_names=""
   local ledger="${_update_agent_outcomes_file}"
   store="$(update_base_store_dir)"
   mkdir -p -- "${store}"
@@ -1170,6 +1221,9 @@ update_capture_base_content() {
     # land → keep its prior base entry (do not advance).
     if [[ "${ledger_active}" -eq 1 && "${ledger_lines}" != *$'\n'"${base}"$'\n'* ]]; then
       kept=$((kept + 1))
+      # Name the kept basenames in the summary: a merge-claimed-path exclusion (the charter
+      # file) is kept EVERY run, so an unlabeled "N kept" reads as an unexplained anomaly.
+      kept_names="${kept_names:+${kept_names}, }${base}"
       continue
     fi
     # finding #9 part 4: before overwriting a PRIOR base entry, snapshot it beside
@@ -1194,7 +1248,7 @@ update_capture_base_content() {
       update_log "WARN: base-content capture failed for ${base} (next update falls back to gated 2-way for it)"
     fi
   done
-  update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base → ${store}"
+  update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base${kept_names:+ (${kept_names})} → ${store}"
   # One-shot ledger: reset so a later capture in the same process never reads a
   # stale set (the workdir teardown removes the file itself).
   _update_agent_outcomes_file=""

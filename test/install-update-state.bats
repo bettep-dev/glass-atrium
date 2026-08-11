@@ -140,7 +140,7 @@ file_hash() {
   [[ "$(cat "${STATE}/base-agents/dev-z.md")" == "AGENT BODY nested v1" ]]
 }
 
-@test "T24: re-capturing after the agent body changes re-seeds the store (hash changes)" {
+@test "T24: re-capturing over a differing existing entry is REFUSED (live surface never re-seeds base)" {
   printf 'V1 body\n' >"${GA_SANDBOX}/agents/dev-x.md"
   write_manifest "agents/dev-x.md"
 
@@ -149,15 +149,31 @@ file_hash() {
   local h1
   h1="$(file_hash "${STATE}/base-agents/dev-x.md")"
 
-  # a later install/apply lands a NEW base@install body; the store must re-seed.
+  # post-first-install the source is the daemon-edited LIVE surface: re-seeding here
+  # would set base:=live and turn live-only lines into vendor deletions.
   printf 'V2 CHANGED body\n' >"${GA_SANDBOX}/agents/dev-x.md"
   run_engine capture_install_baseline
   [[ "${status}" -eq 0 ]]
   local h2
   h2="$(file_hash "${STATE}/base-agents/dev-x.md")"
 
-  [[ "${h1}" != "${h2}" ]] # hash changed → no stale base anchor
-  [[ "$(cat "${STATE}/base-agents/dev-x.md")" == "V2 CHANGED body" ]]
+  [[ "${h1}" == "${h2}" ]] && [[ "$(cat "${STATE}/base-agents/dev-x.md")" == "V1 body" ]]
+  [[ "${output}" == *"REFUSED"* ]] && [[ "${output}" == *"1 existing entries refused"* ]]
+}
+
+@test "T24: GA_BASE_STORE_RESEED=1 forces the re-seed and says so" {
+  printf 'V1 body\n' >"${GA_SANDBOX}/agents/dev-x.md"
+  write_manifest "agents/dev-x.md"
+
+  run_engine capture_install_baseline
+  [[ "${status}" -eq 0 ]]
+
+  printf 'V2 CHANGED body\n' >"${GA_SANDBOX}/agents/dev-x.md"
+  export GA_BASE_STORE_RESEED=1
+  run_engine capture_install_baseline
+  [[ "${status}" -eq 0 ]]
+
+  [[ "$(cat "${STATE}/base-agents/dev-x.md")" == "V2 CHANGED body" ]] && [[ "${output}" == *"FORCED"* ]]
 }
 
 @test "T24: dry-run skips base@install capture entirely (no baseline, no store)" {

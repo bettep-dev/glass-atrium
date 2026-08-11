@@ -2674,4 +2674,76 @@ if [ -x "${PG_HELPER}" ]; then
 fi
 # PHASE3-OUTCOME-DUALWRITE-END
 
+# Same-cid DWC auto-close consumer. A `done` row carrying the same non-null cid as an
+# earlier OPEN done_with_concerns row means that concern was resolved by this run, so the
+# DWC row is closed through the idempotent close ROUTE — the sole sanctioned closure
+# mutation path (never a direct column write). Sits AFTER the dualwrite and BEFORE the
+# unconditional zero exit: the record is already durable, and every step is rc-captured
+# so a close failure can neither trip `set -Eeuo pipefail` nor move the hook exit code.
+# Missed closes are recoverable: the route is idempotent and every miss prints the
+# greppable `[outcome-close] miss` token naming the cid + stage.
+_close_miss() {
+  printf '[outcome-close] miss cid=%s id=- rc=%s stage=%s\n' "$1" "$2" "$3" >&2
+}
+
+close_same_cid_dwc() {
+  local cid="$1" port base rc=0 body ids id
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    _close_miss "${cid}" "-" "deps"
+    return 0
+  fi
+  # The port resolver lives in lib/hook-utils.sh (the top-of-file source is the SIBLING
+  # hooks/hook-utils.sh, a different file). Source it guarded — a missing lib must skip the
+  # close, never crash a fail-open hook. Hardcoding 16145 is forbidden: the single literal
+  # lives in scripts/lib/atrium-config.sh.
+  if ! declare -F hook_monitor_port >/dev/null 2>&1 \
+    && [ -r "${BASH_SOURCE%/*}/lib/hook-utils.sh" ]; then
+    # shellcheck source=lib/hook-utils.sh
+    . "${BASH_SOURCE%/*}/lib/hook-utils.sh"
+  fi
+  if ! declare -F hook_monitor_port >/dev/null 2>&1; then
+    _close_miss "${cid}" "-" "resolver"
+    return 0
+  fi
+  # GA-ABSORB[handled@stage=port]: the resolver's own stderr is redundant with the loud
+  # miss line below; its rc IS captured and branched on.
+  port="$(hook_monitor_port 2>/dev/null)" || rc=$?
+  if [ "${rc}" -ne 0 ] || [ -z "${port}" ]; then
+    _close_miss "${cid}" "${rc}" "port"
+    return 0
+  fi
+  base="http://127.0.0.1:${port}"
+  # One set-close call: the route matches the OPEN done_with_concerns rows on this cid
+  # server-side and returns exactly the ids it stamped, so client-side re-filtering, a
+  # per-id loop and a fan-out cap all become unreachable states. A repeat matches zero
+  # rows (empty list), never a re-stamp.
+  rc=0
+  body="$(curl -sS -f -X PATCH -G --connect-timeout 1 --max-time 3 \
+    --data-urlencode "cid=${cid}" \
+    "${base}/api/outcomes/close-by-cid" 2>/dev/null)" || rc=$? # GA-ABSORB[handled@stage=close]: curl's stderr is redundant with the loud miss line; rc is captured and branched on.
+  if [ "${rc}" -ne 0 ]; then
+    _close_miss "${cid}" "${rc}" "close"
+    return 0
+  fi
+  rc=0
+  ids="$(printf '%s' "${body}" | jq -r '.closed_ids[]?' 2>/dev/null)" || rc=$? # GA-ABSORB[handled@stage=parse]: jq's stderr is redundant with the loud miss line; rc is captured and branched on.
+  if [ "${rc}" -ne 0 ]; then
+    _close_miss "${cid}" "${rc}" "parse"
+    return 0
+  fi
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    printf '[outcome-close] closed cid=%s id=%s\n' "${cid}" "${id}" >&2
+  done <<EOF
+${ids}
+EOF
+  return 0
+}
+
+if [ "${RESULT:-}" = "done" ] && [ -n "${CID:-}" ]; then
+  # `|| :` suspends errexit only — the consumer fail-opens on every stage internally, so
+  # there is no non-zero rc left to branch on.
+  close_same_cid_dwc "${CID}" || :
+fi
+
 exit 0
