@@ -4,24 +4,19 @@
 // (count - closed_count), so an all-closed DWC population must stop warning
 // while the total count and the fail/blocked thresholds stay closure-blind.
 //
-// Harness mirrors dashboard.client.unit.test.ts: the shipped source is
-// esbuild-transformed and evaluated in a node:vm sandbox, so the helpers under
-// test are the real ones (no drift-prone copy). No DB / no network.
+// Sandbox harness (esbuild + node:vm over the real shipped dashboard.jsx): client-sandbox.ts.
 //
 // Runner: npx tsx --test test/dashboard.dwc-closure.client.unit.test.ts
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import esbuild from "esbuild";
+
+import { buildScreenSandbox, LOW_N_MIN } from "./client-sandbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
-
-// LOW_N_MIN mirrors ui.jsx (30) — the rollup skips samples below it.
-const LOW_N_MIN = 30;
 
 interface ByResultRow {
   result: string;
@@ -38,55 +33,7 @@ interface DashHelpers {
   computeWorstRollup: (args: { outcomesState: unknown }) => string | null;
 }
 
-async function loadDash(): Promise<DashHelpers> {
-  const built = await esbuild.build({
-    entryPoints: [DASH_SRC],
-    bundle: false,
-    write: false,
-    loader: { ".jsx": "jsx" },
-    jsx: "transform",
-    jsxFactory: "React.createElement",
-    jsxFragment: "React.Fragment",
-    target: "es2022",
-    // No import/export → top-level fn decls become vm-context-global properties.
-    format: "esm",
-  });
-
-  const reactStub = new Proxy(
-    {
-      createElement: () => ({}),
-      Fragment: "frag",
-      useState: () => [undefined, () => {}],
-      useEffect: () => {},
-      useRef: () => ({ current: null }),
-      useMemo: (fn: () => unknown) => fn(),
-      useCallback: (fn: unknown) => fn,
-    },
-    { get: (t: Record<string, unknown>, p: string) => (p in t ? t[p] : () => ({})) },
-  );
-  const uiStub = {
-    formatUsd: () => "",
-    formatUsdCompact: () => "",
-    formatInt: (n: number) => String(n),
-    formatTokenCompact: () => "",
-    formatPctWithDenominator: (n: number, d: number) => `${((n / d) * 100).toFixed(1)}% (${n}/${d})`,
-    LOW_N_MIN,
-  };
-  const ctx: Record<string, unknown> = {
-    window: { UI: uiStub },
-    React: reactStub,
-    document: { documentElement: {} },
-    Intl,
-    console,
-    fetch: () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) }),
-  };
-  ctx.globalThis = ctx;
-  vm.createContext(ctx);
-  vm.runInContext(built.outputFiles[0].text, ctx);
-  return ctx as unknown as DashHelpers;
-}
-
-const helpers = await loadDash();
+const helpers = await buildScreenSandbox<DashHelpers>(DASH_SRC);
 
 function buildMap(rows: ByResultRow[]): Map<string, ByResultRow> {
   return new Map(rows.map((r) => [r.result, r]));

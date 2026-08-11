@@ -694,7 +694,7 @@ function OutcomeDistributionBody({ state, onRetry }) {
     .map((key) => {
       const meta = window.UI.RESULT_META[key];
       const row = byResultMap.get(key);
-      const count = Number(row?.count) || 0;
+      const count = getCount(row);
       const open = getOpenCount(row);
       return {
         key,
@@ -1160,11 +1160,15 @@ function sumTokens(point) {
     + (Number(point.cache_creation_tokens) || 0);
 }
 
+// by_result row → 총 건수. row 부재(응답 누락 키)·비수치 모두 0.
+function getCount(row) {
+  return Number(row?.count) || 0;
+}
+
 // by_result row → 미종결 건수. closed_count 부재(구 응답)는 0 종결 · 계약 어긋난 초과 종결도 음수 금지.
 function getOpenCount(row) {
-  const count = Number(row?.count) || 0;
   const closed = Number(row?.closed_count) || 0;
-  return Math.max(0, count - closed);
+  return Math.max(0, getCount(row) - closed);
 }
 
 // Outcome 분포 EMPTY 인사이트 박스 — 우려동반 / 실패차단 임계 hint. 비율은 'N.N% (x/y)' 분모 공개 (A5).
@@ -1175,7 +1179,7 @@ function computeOutcomeHint(byResultMap, total) {
   if (openConcernCount / total >= 0.1) {
     return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcernCount, total)} — above the 7-day norm, worth a look.` };
   }
-  const breakageCount = (Number(byResultMap.get('fail')?.count) || 0) + (Number(byResultMap.get('blocked')?.count) || 0);
+  const breakageCount = getCount(byResultMap.get('fail')) + getCount(byResultMap.get('blocked'));
   if (breakageCount / total >= 0.05) {
     return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakageCount, total)}.` };
   }
@@ -1222,7 +1226,7 @@ function computeWorstRollup({ outcomesState }) {
     const total = Number(outcomesState.data.total) || 0;
     const byResult = new Map((outcomesState.data.by_result || []).map((r) => [r.result, r]));
     if (total >= window.UI.LOW_N_MIN) {
-      const breakage = (Number(byResult.get('fail')?.count) || 0) + (Number(byResult.get('blocked')?.count) || 0);
+      const breakage = getCount(byResult.get('fail')) + getCount(byResult.get('blocked'));
       const openConcerns = getOpenCount(byResult.get('done_with_concerns'));
       if (breakage / total >= 0.05) tone = worstTone(tone, 'crit');
       else if (openConcerns / total >= 0.1) tone = worstTone(tone, 'warn');
