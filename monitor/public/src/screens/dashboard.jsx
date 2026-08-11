@@ -688,16 +688,23 @@ function OutcomeDistributionBody({ state, onRetry }) {
   }
 
   // OUTCOME_RESULT_ORDER 순서 매핑 — 응답 누락 키는 count=0 (시각/범례 생략).
-  const byResultMap = new Map((state.data.by_result || []).map((r) => [r.result, r.count]));
+  // 맵 값 = row 전체 — closed_count 는 by_result 에만 존재하는 유일한 종결 인지 필드.
+  const byResultMap = new Map((state.data.by_result || []).map((r) => [r.result, r]));
   const buckets = OUTCOME_RESULT_ORDER
     .map((key) => {
       const meta = window.UI.RESULT_META[key];
-      const count = byResultMap.get(key) || 0;
+      const row = byResultMap.get(key);
+      const count = Number(row?.count) || 0;
+      const open = getOpenCount(row);
       return {
         key,
         label: meta.label,
         colorVar: outcomeColorVar(meta),
         count,
+        // 종결 개념은 DWC 전용 — 나머지 result 는 슬롯을 비워 범례 1줄 유지.
+        split: key === 'done_with_concerns'
+          ? `${formatInt(open)} open / ${formatInt(count - open)} closed`
+          : null,
         pct: total > 0 ? count / total : 0,
       };
     })
@@ -726,6 +733,7 @@ function OutcomeDistributionBody({ state, onRetry }) {
               className="w-2.5 h-2.5 rounded-sm"
               style={{ background: `rgb(var(${b.colorVar}))` }}/>
             <span className="flex-1 truncate" title={b.label}>{b.label}</span>
+            {b.split && <span className="font-mono text-dim shrink-0">{b.split}</span>}
             {/* 분모 공개 'N.N% (x/y)' — bare % 금지 (A5). */}
             <span className="font-mono text-dim">{window.UI.formatPctWithDenominator(b.count, total)}</span>
           </div>
@@ -1152,14 +1160,22 @@ function sumTokens(point) {
     + (Number(point.cache_creation_tokens) || 0);
 }
 
+// by_result row → 미종결 건수. closed_count 부재(구 응답)는 0 종결 · 계약 어긋난 초과 종결도 음수 금지.
+function getOpenCount(row) {
+  const count = Number(row?.count) || 0;
+  const closed = Number(row?.closed_count) || 0;
+  return Math.max(0, count - closed);
+}
+
 // Outcome 분포 EMPTY 인사이트 박스 — 우려동반 / 실패차단 임계 hint. 비율은 'N.N% (x/y)' 분모 공개 (A5).
+// 우려동반 분자는 '지금 열려 있는' 건수 — 종결된 DWC 는 조치 대상이 아니므로 경보에서 제외.
 function computeOutcomeHint(byResultMap, total) {
   if (total <= 0) return null;
-  const concernCount = byResultMap.get('done_with_concerns') || 0;
-  if (concernCount / total >= 0.1) {
-    return { tone: 'warn', text: `Done-with-caveats rate ${window.UI.formatPctWithDenominator(concernCount, total)} — above the 7-day norm, worth a look.` };
+  const openConcernCount = getOpenCount(byResultMap.get('done_with_concerns'));
+  if (openConcernCount / total >= 0.1) {
+    return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcernCount, total)} — above the 7-day norm, worth a look.` };
   }
-  const breakageCount = (byResultMap.get('fail') || 0) + (byResultMap.get('blocked') || 0);
+  const breakageCount = (Number(byResultMap.get('fail')?.count) || 0) + (Number(byResultMap.get('blocked')?.count) || 0);
   if (breakageCount / total >= 0.05) {
     return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakageCount, total)}.` };
   }
@@ -1204,12 +1220,12 @@ function computeWorstRollup({ outcomesState }) {
   if (outcomesState.status === 'ready') {
     anyReady = true;
     const total = Number(outcomesState.data.total) || 0;
-    const byResult = new Map((outcomesState.data.by_result || []).map((r) => [r.result, r.count]));
+    const byResult = new Map((outcomesState.data.by_result || []).map((r) => [r.result, r]));
     if (total >= window.UI.LOW_N_MIN) {
-      const breakage = (byResult.get('fail') || 0) + (byResult.get('blocked') || 0);
-      const concerns = byResult.get('done_with_concerns') || 0;
+      const breakage = (Number(byResult.get('fail')?.count) || 0) + (Number(byResult.get('blocked')?.count) || 0);
+      const openConcerns = getOpenCount(byResult.get('done_with_concerns'));
       if (breakage / total >= 0.05) tone = worstTone(tone, 'crit');
-      else if (concerns / total >= 0.1) tone = worstTone(tone, 'warn');
+      else if (openConcerns / total >= 0.1) tone = worstTone(tone, 'warn');
     }
   }
 
