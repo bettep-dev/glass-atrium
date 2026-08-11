@@ -2674,4 +2674,92 @@ if [ -x "${PG_HELPER}" ]; then
 fi
 # PHASE3-OUTCOME-DUALWRITE-END
 
+# Same-cid DWC auto-close consumer. A `done` row carrying the same non-null cid as an
+# earlier OPEN done_with_concerns row means that concern was resolved by this run, so the
+# DWC row is closed through the idempotent close ROUTE — the sole sanctioned closure
+# mutation path (never a direct column write). Sits AFTER the dualwrite and BEFORE the
+# unconditional zero exit: the record is already durable, and every step is rc-captured
+# so a close failure can neither trip `set -Eeuo pipefail` nor move the hook exit code.
+# Missed closes are recoverable: the route is idempotent and every miss prints the
+# greppable `[outcome-close] miss` token naming the cid + id.
+OUTCOME_CLOSE_MAX=10
+
+close_same_cid_dwc() {
+  local cid="$1" port base rc=0 body ids id attempted=0
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    printf '[outcome-close] miss cid=%s id=- rc=0 stage=deps\n' "${cid}" >&2
+    return 0
+  fi
+  # The port resolver lives in lib/hook-utils.sh (the top-of-file source is the SIBLING
+  # hooks/hook-utils.sh, a different file). Source it guarded — a missing lib must skip the
+  # close, never crash a fail-open hook. Hardcoding 16145 is forbidden: the single literal
+  # lives in scripts/lib/atrium-config.sh.
+  if ! declare -F hook_monitor_port >/dev/null 2>&1 \
+    && [ -r "${BASH_SOURCE%/*}/lib/hook-utils.sh" ]; then
+    # shellcheck source=lib/hook-utils.sh
+    . "${BASH_SOURCE%/*}/lib/hook-utils.sh"
+  fi
+  if ! declare -F hook_monitor_port >/dev/null 2>&1; then
+    printf '[outcome-close] miss cid=%s id=- rc=0 stage=resolver\n' "${cid}" >&2
+    return 0
+  fi
+  # GA-ABSORB[handled@stage=port]: the resolver's own stderr is redundant with the loud
+  # miss line below; its rc IS captured and branched on.
+  port="$(hook_monitor_port 2>/dev/null)" || rc=$?
+  if [ "${rc}" -ne 0 ] || [ -z "${port}" ]; then
+    printf '[outcome-close] miss cid=%s id=- rc=%s stage=port\n' "${cid}" "${rc}" >&2
+    return 0
+  fi
+  base="http://127.0.0.1:${port}"
+  rc=0
+  body="$(curl -sS -f -G --connect-timeout 1 --max-time 3 \
+    --data-urlencode "cid=${cid}" \
+    --data-urlencode "result=done_with_concerns" \
+    --data-urlencode "days=all" \
+    --data-urlencode "include_all=1" \
+    --data-urlencode "limit=20" \
+    "${base}/api/outcomes/search" 2>/dev/null)" || rc=$? # GA-ABSORB[handled@stage=search]: curl's stderr is redundant with the loud miss line; rc is captured and branched on.
+  if [ "${rc}" -ne 0 ]; then
+    printf '[outcome-close] miss cid=%s id=- rc=%s stage=search\n' "${cid}" "${rc}" >&2
+    return 0
+  fi
+  # Re-filter client-side on BOTH cid and open-ness: a monitor that ignores an unknown
+  # cid param would otherwise hand back unrelated rows, and there is no closure filter.
+  rc=0
+  ids="$(printf '%s' "${body}" | jq -r --arg c "${cid}" \
+    '.rows[]? | select(.cid == $c and .closed_at == null) | .id' 2>/dev/null)" || rc=$? # GA-ABSORB[handled@stage=parse]: jq's stderr is redundant with the loud miss line; rc is captured and branched on.
+  if [ "${rc}" -ne 0 ]; then
+    printf '[outcome-close] miss cid=%s id=- rc=%s stage=parse\n' "${cid}" "${rc}" >&2
+    return 0
+  fi
+  [ -n "${ids}" ] || return 0
+  while IFS= read -r id; do
+    [ -n "${id}" ] || continue
+    if [ "${attempted}" -ge "${OUTCOME_CLOSE_MAX}" ]; then
+      printf '[outcome-close] miss cid=%s id=%s rc=0 stage=cap\n' "${cid}" "${id}" >&2
+      break
+    fi
+    attempted=$((attempted + 1))
+    rc=0
+    curl -sS -f -o /dev/null --connect-timeout 1 --max-time 3 \
+      -X PATCH "${base}/api/outcomes/${id}/close" 2>/dev/null || rc=$? # GA-ABSORB[handled@stage=close]: curl's stderr is redundant with the loud per-id line; rc is captured and branched on.
+    if [ "${rc}" -ne 0 ]; then
+      printf '[outcome-close] miss cid=%s id=%s rc=%s stage=close\n' "${cid}" "${id}" "${rc}" >&2
+    else
+      printf '[outcome-close] closed cid=%s id=%s\n' "${cid}" "${id}" >&2
+    fi
+  done <<EOF
+${ids}
+EOF
+  return 0
+}
+
+if [ "${RESULT:-}" = "done" ] && [ -n "${CID:-}" ]; then
+  _close_rc=0
+  close_same_cid_dwc "${CID}" || _close_rc=$?
+  if [ "${_close_rc}" -ne 0 ]; then
+    printf '[outcome-close] miss cid=%s id=- rc=%s stage=consumer\n' "${CID}" "${_close_rc}" >&2
+  fi
+fi
+
 exit 0
