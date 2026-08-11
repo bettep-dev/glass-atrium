@@ -366,6 +366,9 @@ interface SearchQuerystring {
   // Exact-match filter on the raw attribution_source column (e.g.
   // attribution_source=budget-truncation). /search-only per contract.
   attribution_source?: string;
+  // Exact-match filter on the delegation correlation id (cid=<id>). /search-only
+  // per contract — the recorder hook's same-cid close consumer reads through it.
+  cid?: string;
   // O2 forensic toggle — truthy lifts the default registry-membership gate on
   // /search so de-registered / sentinel / noise agents reappear (T7 / AC-2).
   include_all?: string;
@@ -405,6 +408,9 @@ interface ParsedFilters {
   // /cross-analysis never supplies the key, so it stays null there (behavior
   // unchanged for that endpoint).
   attribution_source: string | null;
+  // Exact-match filter on cid; null = no filter. /search-only — /cross-analysis
+  // never supplies the key, so it stays null there (behavior unchanged).
+  cid: string | null;
 }
 
 // registration
@@ -1760,6 +1766,13 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
       ? attributionSourceRaw
       : null;
 
+  // cid: exact-match equality filter, /search-only. The same `in` guard as
+  // attribution_source keeps /cross-analysis (whose querystring lacks the key)
+  // at null. Bound as a parameter in buildWhereClause — no allowlist: a cid is
+  // free-form delegation text, so any non-empty string is a legal exact match.
+  const cidRaw = "cid" in query ? query.cid : undefined;
+  const cid = typeof cidRaw === "string" && cidRaw.length > 0 ? cidRaw : null;
+
   const filters: ParsedFilters = {
     days,
     agent,
@@ -1770,6 +1783,7 @@ function parseFilters(query: SearchQuerystring | CrossAnalysisQuerystring): Filt
     review_flag: reviewFlag,
     q,
     attribution_source: attributionSource,
+    cid,
   };
 
   return { filters, error: null };
@@ -1841,6 +1855,12 @@ function buildWhereClause(
   // is text). null = no filter (the /cross-analysis path always lands here).
   if (filters.attribution_source !== null) {
     fragments.push(Prisma.sql`attribution_source = ${filters.attribution_source}`);
+  }
+
+  // Exact-match cid equality — parameter-bound (no cast: column is text).
+  // null = no filter (the /cross-analysis path always lands here).
+  if (filters.cid !== null) {
+    fragments.push(Prisma.sql`cid = ${filters.cid}`);
   }
 
   // T7 (O2) — caller-opt-in registry gate. Fires ONLY when a caller supplies a
@@ -1957,6 +1977,7 @@ function toSearchFilterEcho(
     review_flag: filters.review_flag,
     q: filters.q,
     attribution_source: filters.attribution_source,
+    cid: filters.cid,
     sort,
     limit,
     offset,
@@ -1989,6 +2010,7 @@ function emptyFilters(): ParsedFilters {
     review_flag: null,
     q: null,
     attribution_source: null,
+    cid: null,
   };
 }
 

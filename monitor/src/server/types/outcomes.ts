@@ -56,6 +56,8 @@ export interface OutcomeSearchFilterEcho {
   q: string | null;
   // Exact-match attribution_source filter; null when no filter applied.
   attribution_source: string | null;
+  // Exact-match cid filter; null when no filter applied.
+  cid: string | null;
   sort: OutcomeSortToken;
   limit: number;
   offset: number;
