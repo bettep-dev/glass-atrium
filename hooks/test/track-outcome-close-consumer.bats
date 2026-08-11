@@ -3,16 +3,15 @@
 # in track-outcome.sh AFTER the outcome dualwrite and BEFORE the unconditional zero exit.
 #
 # Contracts pinned:
-#   T1 gate       — result=done + non-empty cid → the search route is queried for that cid
-#                   and every OPEN done_with_concerns row is closed via
-#                   `PATCH /api/outcomes/:id/close` (the sole closure-mutation path).
+#   T1 gate       — result=done + non-empty cid → ONE `PATCH /api/outcomes/close-by-cid?cid=…`
+#                   set-close call (the sole closure-mutation path) and every id the route
+#                   reports in `closed_ids` gets a greppable `[outcome-close] closed` line.
 #   T2 inert      — result=done_with_concerns (non-done) → zero HTTP calls.
 #   T3 inert      — result=done with NO cid → zero HTTP calls.
 #   T4 isolation  — monitor DOWN (real curl at a closed port) → hook still exits 0 and prints
 #                   the greppable `[outcome-close] miss` recovery token naming the cid.
-#   T5 filtering  — an already-closed row (closed_at set) and a foreign-cid row are BOTH
-#                   skipped client-side, so a monitor ignoring an unknown cid param can never
-#                   cause a wrong close.
+#   T5 idempotence— a cid with nothing open (repeat close → empty `closed_ids`) still makes
+#                   exactly one call and prints no closed line.
 #
 # Hermetic: HOME is repointed to a temp dir, PG is fail-opened via PGHOST, and every case but
 # T4 replaces `curl` with a PATH-prepended shim that logs its argv — the live monitor is never
@@ -39,13 +38,12 @@ setup() {
   PAYLOAD_FILE="${CC_TMP}/payload.json"
   mkdir -p "${SANDBOX_HOME}/.glass-atrium/logs" "${STUB_BIN}"
 
-  # curl shim: records every invocation and answers the search route from SEARCH_BODY.
+  # curl shim: records every invocation and answers the set-close route from CLOSE_BODY.
   cat >"${STUB_BIN}/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${CURL_LOG}"
 case "$*" in
-  */api/outcomes/search*) printf '%s' "${SEARCH_BODY:-}" ;;
-  */close*) exit "${CLOSE_RC:-0}" ;;
+  *close-by-cid*) printf '%s' "${CLOSE_BODY:-}" ;;
 esac
 exit 0
 STUB
@@ -100,33 +98,34 @@ run_hook() {
     CLAUDE_GATE_INFLIGHT="" \
     ATRIUM_MONITOR_PORT="${2}" \
     CURL_LOG="${CURL_LOG}" \
-    SEARCH_BODY="${SEARCH_BODY:-}" \
+    CLOSE_BODY="${CLOSE_BODY:-}" \
     PATH="${3:+${3}:}${PATH}" \
     bash -c 'bash "$1" < "$2" 2>&1' _ "${HOOK_SH}" "${PAYLOAD_FILE}"
 }
 
-@test "T1 done + cid closes the same-cid open DWC row through the close route" {
-  SEARCH_BODY='{"rows":[{"id":4242,"cid":"cid-alpha","closed_at":null}],"total":1}'
+@test "T1 done + cid closes the same-cid open DWC rows through the set-close route" {
+  CLOSE_BODY='{"cid":"cid-alpha","closed_ids":[4242,4243]}'
   run_hook "$(completion_block 'done' cid-alpha)" 16145 "${STUB_BIN}"
   [ "${status}" -eq 0 ] || return 1
   local calls
   calls="$(cat "${CURL_LOG}")"
-  oc "/api/outcomes/search" "${calls}" || return 1
-  oc "cid=cid-alpha" "${calls}" || return 1
+  [ "$(wc -l <"${CURL_LOG}")" -eq 1 ] || { printf 'expected ONE curl call, got:\n%s\n' "${calls}" >&2; return 1; }
   oc "PATCH" "${calls}" || return 1
-  oc "/api/outcomes/4242/close" "${calls}" || return 1
+  oc "/api/outcomes/close-by-cid" "${calls}" || return 1
+  oc "cid=cid-alpha" "${calls}" || return 1
   oc "[outcome-close] closed cid=cid-alpha id=4242" "${output}" || return 1
+  oc "[outcome-close] closed cid=cid-alpha id=4243" "${output}" || return 1
 }
 
 @test "T2 a non-done result leaves the consumer inert (zero HTTP calls)" {
-  SEARCH_BODY='{"rows":[{"id":4242,"cid":"cid-alpha","closed_at":null}],"total":1}'
+  CLOSE_BODY='{"cid":"cid-alpha","closed_ids":[4242]}'
   run_hook "$(completion_block done_with_concerns cid-alpha)" 16145 "${STUB_BIN}"
   [ "${status}" -eq 0 ] || return 1
   [ ! -s "${CURL_LOG}" ] || { printf 'expected NO curl calls, got:\n%s\n' "$(cat "${CURL_LOG}")" >&2; return 1; }
 }
 
 @test "T3 done with an empty cid leaves the consumer inert (zero HTTP calls)" {
-  SEARCH_BODY='{"rows":[{"id":4242,"cid":"cid-alpha","closed_at":null}],"total":1}'
+  CLOSE_BODY='{"cid":"cid-alpha","closed_ids":[4242]}'
   run_hook "$(completion_block 'done' '')" 16145 "${STUB_BIN}"
   [ "${status}" -eq 0 ] || return 1
   [ ! -s "${CURL_LOG}" ] || { printf 'expected NO curl calls, got:\n%s\n' "$(cat "${CURL_LOG}")" >&2; return 1; }
@@ -134,7 +133,7 @@ run_hook() {
 
 @test "T4 monitor DOWN keeps the hook exit code at zero and prints the recovery token" {
   # Real curl against a closed port — connection refused, never a stopped live monitor.
-  SEARCH_BODY=""
+  CLOSE_BODY=""
   run_hook "$(completion_block 'done' cid-down)" 1 ""
   [ "${status}" -eq 0 ] || return 1
   oc "[outcome-close] miss cid=cid-down" "${output}" || return 1
@@ -142,13 +141,10 @@ run_hook() {
   oc '"result":"done"' "${output}" || return 1
 }
 
-@test "T5 already-closed and foreign-cid rows are filtered client-side" {
-  SEARCH_BODY='{"rows":[{"id":11,"cid":"cid-alpha","closed_at":"2026-08-01T00:00:00.000Z"},{"id":22,"cid":"cid-other","closed_at":null}],"total":2}'
+@test "T5 a cid with nothing open makes one call and prints no closed line" {
+  CLOSE_BODY='{"cid":"cid-alpha","closed_ids":[]}'
   run_hook "$(completion_block 'done' cid-alpha)" 16145 "${STUB_BIN}"
   [ "${status}" -eq 0 ] || return 1
-  local calls
-  calls="$(cat "${CURL_LOG}")"
-  oc "/api/outcomes/search" "${calls}" || return 1
-  no "/api/outcomes/11/close" "${calls}" || return 1
-  no "/api/outcomes/22/close" "${calls}" || return 1
+  [ "$(wc -l <"${CURL_LOG}")" -eq 1 ] || { printf 'expected ONE curl call, got:\n%s\n' "$(cat "${CURL_LOG}")" >&2; return 1; }
+  no "[outcome-close] closed" "${output}" || return 1
 }

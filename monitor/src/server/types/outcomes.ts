@@ -147,6 +147,15 @@ export interface OutcomeCloseResponse {
   closed_at: string;
 }
 
+// PATCH /api/outcomes/close-by-cid?cid=<cid>
+
+// Set-operation close response — `closed_ids` lists the rows this call stamped, so an
+// idempotent repeat (or a cid with nothing open) returns an empty array, never an error.
+export interface OutcomeCloseByCidResponse {
+  cid: string;
+  closed_ids: number[];
+}
+
 // /api/outcomes/cross-analysis
 
 // Filter echo for cross-analysis — same axes as /search minus pagination/sort.
