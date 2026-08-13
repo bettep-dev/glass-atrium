@@ -567,7 +567,7 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
 **After implementation, before document completion — plan↔implementation coverage reconciliation (MANDATORY)**:
 - A mechanical check that EVERY plan task-ID maps to implemented work (each task's declared target file actually changed) → report N/N. This gate is DISTINCT from the correctness gates (Quality Gates verify the work that WAS built; this gate verifies NOTHING planned was silently dropped — an independent-entry task with no dependency can otherwise slip).
 - On any miss → re-delegate the dropped task BEFORE transitioning `doc_status → done` (never close with a coverage gap).
-- Full lifecycle chaining: `orchestrator-role.md` → `## Document-Driven Workflow` step 4 (SoT). Cross-ref: `memory/MEMORY.md` plan-coverage-reconciliation.
+- Full lifecycle chaining: `orchestrator-role.md` → `## Document-Driven Workflow` step 4 (SoT).
 
 **Revision request protocol**:
 - Agents may request revisions on their own judgment without orchestrator intervention
