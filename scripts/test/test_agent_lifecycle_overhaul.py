@@ -21,6 +21,7 @@ import pytest
 from agent_lifecycle.atomic import load_json
 from agent_lifecycle.delete import authorize_delete
 from agent_lifecycle.paths import NON_DEV_BLOCK_LIST, StorePaths
+from agent_lifecycle.readers import ReaderError, registry_domains
 from agent_lifecycle.registry_ops import add_entry, build_entry
 
 
@@ -147,3 +148,70 @@ def test_when_add_then_extend_on_fixture_root_then_round_trip_holds(
     )
     row = load_json(paths.registry)["agents"]["glass-atrium-dev-fixture"]
     assert row["domains"] == ["fixtures", "probes"]
+
+
+# --- T111 (clauded-docs/1466): malformed registry domains fail loud at the gate ---
+
+
+def _gate(paths: StorePaths, domains: list[str]):
+    """Run the create gate — the entry point a malformed registry now HALTs at."""
+    from agent_lifecycle.add import AddRequest, evaluate_add_gate
+
+    return evaluate_add_gate(
+        paths,
+        AddRequest(
+            name="glass-atrium-dev-probe",
+            scope="DEV",
+            origin="user",
+            domains=domains,
+            q1_verdict="pass",
+            q2_verdict="pass",
+        ),
+    )
+
+
+def test_when_domains_field_not_a_list_then_gate_raises_reader_error(
+    tmp_path: Path,
+) -> None:
+    paths = _write_registry(tmp_path, {"glass-atrium-dev-front": {"domains": "react"}})
+    with pytest.raises(ReaderError, match=r"glass-atrium-dev-front.*non-list.*str"):
+        _gate(paths, ["react"])
+
+
+def test_when_registry_entry_not_a_dict_then_gate_raises_reader_error(
+    tmp_path: Path,
+) -> None:
+    paths = _write_registry(tmp_path, {"glass-atrium-dev-front": ["react"]})
+    with pytest.raises(ReaderError, match=r"glass-atrium-dev-front.*expected dict"):
+        _gate(paths, ["react"])
+
+
+def test_when_registry_well_formed_then_gate_verdict_unchanged(tmp_path: Path) -> None:
+    """Well-formed rows still pass, including an entry with no `domains` key."""
+    paths = _write_registry(
+        tmp_path,
+        {
+            "glass-atrium-dev-front": {"domains": ["react", "css"], "origin": "shipped"},
+            "glass-atrium-dev-db": {"origin": "shipped"},
+        },
+    )
+    assert registry_domains(paths) == {
+        "glass-atrium-dev-front": ["react", "css"],
+        "glass-atrium-dev-db": [],
+    }
+
+    verdict = _gate(paths, ["prisma", "sqlite"])
+    assert verdict.allowed is True
+    assert verdict.q3_conflicts == []
+
+
+def test_when_registry_malformed_then_orphan_mode6_reports_instead_of_raising(
+    tmp_path: Path,
+) -> None:
+    """The scan stays per-stage loud: one bad entry is a finding, not an abort."""
+    from agent_lifecycle.orphan_scan import _check_domains_overlap
+
+    paths = _write_registry(tmp_path, {"glass-atrium-dev-front": {"domains": "react"}})
+    findings = _check_domains_overlap(paths)
+    assert [f.mode for f in findings] == ["domains-overlap"]
+    assert "non-list" in findings[0].detail
