@@ -218,10 +218,10 @@ def _run_add_locked(
     note = ""
     if is_dev:
         note = (
-            " NOTE: inject-scope-rules.sh INJECT_AGENTS/STYLEREF_AGENTS/"
-            "MINIMALISM_AGENTS/NAMING_AGENTS/BUDGET_DEV_AGENTS arrays still need "
-            "this NAME — run skill glass-atrium-ops-reconcile-inject (orphan-scan "
-            "will report this)."
+            " NOTE: inject-scope-rules.sh INJECT_AGENTS/MINIMALISM_AGENTS/"
+            "NAMING_AGENTS/BUDGET_DEV_AGENTS and lib/styleref-roster.sh "
+            "STYLEREF_AGENTS still need this NAME — run skill "
+            "glass-atrium-ops-reconcile-inject (orphan-scan will report this)."
         )
     return f"added {req.name} ({req.scope}/{req.origin}); {len(tx.written_labels())} steps committed.{note}"
 

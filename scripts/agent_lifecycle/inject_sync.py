@@ -85,6 +85,18 @@ _ARRAY_RES = {
 }
 
 
+# The one tracked array declared OUTSIDE the inject hook: STYLEREF_AGENTS lives in the
+# declaration-only roster lib the hook and the style-ref flag predicate both source, so the
+# reconcile writer routes its edits there instead. The array regexes are line-anchored, so the
+# two files are parsed as one concatenated surface and edited per owner.
+_ROSTER_LIB_ARRAYS: frozenset[str] = frozenset({"STYLEREF_AGENTS"})
+
+
+def _combined_text(texts: dict[Path, str]) -> str:
+    """The parse surface: every declaration file joined on a newline."""
+    return "\n".join(texts.values())
+
+
 class InjectSyncError(RuntimeError):
     """An array could not be located, or a post-edit round-trip check failed.
 
@@ -300,11 +312,16 @@ def apply(paths: StorePaths) -> SyncResult:
     Raises ReaderError (roster/parse) or InjectSyncError (transaction) on failure.
     """
     hook = paths.inject_scope_rules
-    original = hook.read_text(encoding="utf-8")
+    lib = paths.styleref_roster
+    originals = {
+        hook: hook.read_text(encoding="utf-8"),
+        lib: lib.read_text(encoding="utf-8"),
+    }
     roster = set(parse_scope_dev_roster(paths))
 
-    inserts = plan_inserts(original, roster)
-    removes = plan_removes(original, roster)
+    combined = _combined_text(originals)
+    inserts = plan_inserts(combined, roster)
+    removes = plan_removes(combined, roster)
     if not any(inserts.values()) and not any(removes.values()):
         return SyncResult(
             inserted={k: [] for k in inserts},
@@ -312,50 +329,72 @@ def apply(paths: StorePaths) -> SyncResult:
             backup_path=None,
         )
 
-    backup = hook.with_suffix(hook.suffix + ".bak")
-    backup.write_text(original, encoding="utf-8")
+    def _owner(array_name: str) -> Path:
+        return lib if array_name in _ROSTER_LIB_ARRAYS else hook
 
+    targets = [
+        path
+        for path in (hook, lib)
+        if any(
+            names and _owner(array_name) == path
+            for plan in (inserts, removes)
+            for array_name, names in plan.items()
+        )
+    ]
+
+    backups: dict[Path, Path] = {}
+    for path in targets:
+        backup = path.with_suffix(path.suffix + ".bak")
+        backup.write_text(originals[path], encoding="utf-8")
+        backups[path] = backup
+
+    texts = dict(originals)
     try:
-        new_text = original
         for array_name, names in inserts.items():
+            owner = _owner(array_name)
             for name in names:
-                new_text = insert_name_in_array(new_text, array_name, name)
+                texts[owner] = insert_name_in_array(texts[owner], array_name, name)
         for array_name, names in removes.items():
+            owner = _owner(array_name)
             for name in names:
-                new_text = remove_name_in_array(new_text, array_name, name)
+                texts[owner] = remove_name_in_array(texts[owner], array_name, name)
 
-        def _revalidate(tmp_path: Path) -> None:
-            written = tmp_path.read_text(encoding="utf-8")
-            # round-trip: inserted names PRESENT, removed names ABSENT (AC7).
-            written_members = _actual_membership(written)
-            for array_name, names in inserts.items():
-                missing = set(names) - written_members[array_name]
-                if missing:
-                    raise InjectSyncError(
-                        f"post-write round-trip: {array_name} still missing "
-                        f"{sorted(missing)}"
-                    )
-            for array_name, names in removes.items():
-                lingering = set(names) & written_members[array_name]
-                if lingering:
-                    raise InjectSyncError(
-                        f"post-write round-trip: {array_name} still carries "
-                        f"removed name(s) {sorted(lingering)}"
-                    )
+        for path in targets:
+            _atomic_replace(path, texts[path])
 
-        _atomic_replace(hook, new_text, before_replace=_revalidate)
+        # round-trip: inserted names PRESENT, removed names ABSENT (AC7), re-read from
+        # disk across BOTH declaration files.
+        written_members = _actual_membership(
+            _combined_text({path: path.read_text(encoding="utf-8") for path in (hook, lib)})
+        )
+        for array_name, names in inserts.items():
+            missing = set(names) - written_members[array_name]
+            if missing:
+                raise InjectSyncError(
+                    f"post-write round-trip: {array_name} still missing "
+                    f"{sorted(missing)}"
+                )
+        for array_name, names in removes.items():
+            lingering = set(names) & written_members[array_name]
+            if lingering:
+                raise InjectSyncError(
+                    f"post-write round-trip: {array_name} still carries "
+                    f"removed name(s) {sorted(lingering)}"
+                )
     except (InjectSyncError, ReaderError, OSError) as exc:
-        # restore the live file from the backup we just took, then re-raise.
+        # restore every touched file from the text we read before the edit, then re-raise.
         try:
-            hook.write_text(original, encoding="utf-8")
+            for path in targets:
+                path.write_text(originals[path], encoding="utf-8")
         except OSError as restore_exc:
+            preserved = ", ".join(str(b) for b in backups.values())
             raise InjectRollbackFailedError(
                 f"sync failed AND rollback failed: {restore_exc} "
-                f"(backup preserved at {backup})"
+                f"(backup preserved at {preserved})"
             ) from exc
         raise InjectSyncError(f"sync rolled back from .bak: {exc}") from exc
 
-    return SyncResult(inserted=inserts, removed=removes, backup_path=backup)
+    return SyncResult(inserted=inserts, removed=removes, backup_path=backups[targets[0]])
 
 
 __all__ = [
