@@ -931,7 +931,7 @@
     "hooks/test/test_lesson_store_integrity.py": "df09413887df03b5b34b54f5e7a731a204a9416d7848d998225a26b96424c6a6",
     "hooks/test/test_negative_signal_single_definition.py": "fc33898ba7485d9db62dd9e0312bff453290e38dff8b18bc983d131e51b18f93",
     "hooks/test/test_outcome_dualwrite_learning_enum.py": "e4ce6ed4f5c4052be7855cb02b5827cf73aca3ce628ed06f61ce4d0bb20130b1",
-    "hooks/test/test_outcome_dualwrite_registry_guard.py": "00c5a9e25622ae8837ccf3a43f778af4d42b0a6f8439352e19fff5532d066787",
+    "hooks/test/test_outcome_dualwrite_registry_guard.py": "2b7704ec20b4592f75f70d0b3cb410457cd1391318e1eee01dfecc1ffe9366fd",
     "hooks/test/test_signature_residue_normalization.py": "e3e6d31ed1e329df74cbe4ed17d390eb7c8db27a6896517f7f5b1f6016e9975b",
     "hooks/test/test_style_ref_match_toolfilter.py": "eebbf7b2408568171357b33d2eae344aced4451d67af626a3eb54734e9566219",
     "hooks/test/track-outcome-agent-identity.bats": "9eb6351c51ccd496fa2aa3e69437b03369c44fc1bceddb097026025f5ed23734",

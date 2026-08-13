@@ -34,7 +34,16 @@ from pathlib import Path
 _HOOKS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HOOKS_ROOT))
 
-import _pg_outcome_dualwrite as dw  # noqa: E402
+# The module hard-exits (module-level sys.exit) when psycopg is absent, so SystemExit
+# must be caught alongside ImportError — this suite asserts over the assembled envelope
+# dict, no DB, so a driver-less runner skips rather than failing discovery.
+try:
+    import _pg_outcome_dualwrite as dw  # noqa: E402 — sys.path insert immediately above
+
+    _IMPORT_ERROR: BaseException | None = None
+except (SystemExit, Exception) as exc:  # noqa: BLE001 — psycopg absent → skip, not error
+    dw = None  # type: ignore[assignment]
+    _IMPORT_ERROR = exc
 
 _REGISTERED = "glass-atrium-dev-shell"
 _EPHEMERAL = "ashell-impl-opus-980cfc838657ba29"
@@ -54,6 +63,7 @@ def _outcome(agent, **kw):
     return base
 
 
+@unittest.skipIf(dw is None, f"import failed: {_IMPORT_ERROR}")
 class RegistryGuardTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
