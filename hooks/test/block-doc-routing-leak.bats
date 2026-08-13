@@ -192,3 +192,38 @@ run_hook() {
     return 1
   }
 }
+
+# ── Kill switch + suite hermeticity (T100) ───────────────────────────────────────────────
+
+@test "K0 setup_suite discovery sentinel is exported" {
+  # Guards the two pins below: without the setup file the kill switch could arrive ambiently.
+  [[ "${GA_BATS_SUITE_SETUP:-}" == "1" ]]
+}
+
+@test "K1 kill switch SET → bypass before any verdict is written (exit 0)" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"/Users/nobody/reports/leak.md\"}}" \
+    DOC_ROUTING_LEAK_OFF=1
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -s "${FIRED_LOG}" ]] || return 1
+}
+
+@test "K2 kill switch UNSET → the same input blocks (exit 2)" {
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"/Users/nobody/reports/leak.md\"}}"
+  [[ "${status}" -eq 2 ]] || return 1
+  grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
+
+@test "K3 an ambient kill-switch export cannot green this suite (hermeticity proof)" {
+  # run_hook forwards the suite environment, so an ambient DOC_ROUTING_LEAK_OFF would reach
+  # the hook and silently pass K2. setup_suite clears it; the genuine violation still blocks.
+  command -v jq >/dev/null 2>&1 || skip "jq required for sidecar recovery"
+  [[ -z "${DOC_ROUTING_LEAK_OFF:-}" ]] || return 1
+  seed_sidecar_transcript "reporter1" "glass-atrium-intel-reporter"
+  run_hook "{\"tool_name\":\"Write\",\"agent_id\":\"reporter1\",\"transcript_path\":\"${SANDBOX}/tx/transcript.jsonl\",\"tool_input\":{\"file_path\":\"/Users/nobody/reports/leak.md\"}}"
+  [[ "${status}" -eq 2 ]] || return 1
+  grep -q 'verdict=block' "${FIRED_LOG}" || return 1
+}
