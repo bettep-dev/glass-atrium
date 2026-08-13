@@ -25,16 +25,22 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #   history from the subagent's OWN transcript). Both are OPTIONAL — an unwired ('')
 #   scan preserves the pure files-evidence path (backward-compatible; the direct unit test).
 #
-# Outputs (stdout, single token — 3-state per core-outcome-record.md T1):
+# Outputs (stdout, one token — 3-state per core-outcome-record.md T1):
 #   verified_pass — metric_pass=true claim corroborated by block-resident evidence.
 #   unverified    — no verification applicable (infra / non-success / non-code / metric_pass≠true /
 #                   off-surface / absent signal — the DEFAULT for every code type).
-#   verified_fail — narrow LLM09 zero-evidence guard ONLY: result=done + metric_pass=true + ZERO
-#                   deliverable evidence of ANY kind. Off-surface-heading absence is NOT this case.
+#   verified_fail — two emitters, each marked at its site with a VERIFIED_FAIL_EMITTER comment:
+#                   (1) the narrow LLM09 zero-evidence guard — result=done + metric_pass=true +
+#                   ZERO deliverable evidence of ANY kind; (2) a TOTAL transcript-authorship
+#                   contradiction — every claimed path-shaped entry absent from a non-empty
+#                   write-history. A PARTIAL mismatch (>=1 matched) withholds → unverified.
+#                   Off-surface-heading absence is neither case.
 #
-# Input-surface invariant (core-outcome-record.md grader_verdict guide): the grader reads ONLY
-#   block-resident text + files: paths — NEVER the off-surface deliverable (plan/research doc,
-#   diff/test files). So plan/research/refactor default to unverified by task_type alone, and the
+# Input-surface invariant (core-outcome-record.md grader_verdict guide): the grader reads
+#   block-resident text + files: paths + the emitting session's OWN Write/Edit history (authorship
+#   corroboration for paths the block already declares) — NEVER the off-surface deliverable
+#   (plan/research doc, diff/test files). So plan/research/refactor default to unverified by
+#   task_type alone, and the
 #   per-type marker regexes that keyed on off-surface artifacts are REMOVED (structurally
 #   guaranteed false-fails). Every retained check gates on a STRUCTURED field; prose never signals.
 #
@@ -84,8 +90,9 @@ code_based_grader_check() {
   local body="${GRADER_BODY_TEXT:-}"
   local files="${GRADER_FILES_FIELD:-}"
 
-  # 5) narrow LLM09 zero-evidence guard — the SINGLE verified_fail path (all task_types):
-  # result=done + metric_pass=true + ZERO evidence of ANY kind. Off-surface-heading absence is NOT this.
+  # 5) narrow LLM09 zero-evidence guard (all task_types): result=done + metric_pass=true + ZERO
+  # evidence of ANY kind. Off-surface-heading absence is NOT this.
+  # VERIFIED_FAIL_EMITTER: LLM09 zero-evidence guard.
   if _cbg_zero_evidence "${body}" "${files}"; then
     printf 'verified_fail\n'
     return 0
@@ -272,12 +279,15 @@ _cbg_path_matches_writes() {
 #                  test), OR a glob / no-path-shaped files field (indeterminate per Step 1).
 #                  The caller falls back to the files-evidence verdict (held Steps 1-3).
 #   verified     — every claimed path-shaped entry matched the write-history.
-#   contradicted — >=1 claimed path-shaped entry demonstrably ABSENT from a NON-EMPTY
-#                  write-history (AC 264). The ONLY transcript-cross-check verified_fail.
-#   withhold     — unverifiable transcript (main-session / unreadable / missing lib) OR an
-#                  EMPTY write-history (AC 265). Withhold promotion → unverified, NEVER a
-#                  verified_fail: an empty history cannot DEMONSTRATE absence (Write/Edit is
-#                  blind to Bash-authored writes), so absence rests at unverified (W2 spirit).
+#   contradicted — TOTAL authorship mismatch: >=1 claimed path-shaped entry ABSENT from a
+#                  NON-EMPTY write-history AND ZERO matched (AC 264, the fabrication signal).
+#   withhold     — unverifiable transcript (main-session / unreadable / missing lib), an
+#                  EMPTY write-history (AC 265), OR a PARTIAL mismatch (>=1 unmatched WITH >=1
+#                  matched — a tool-generated sibling such as a manifest / migration / snapshot
+#                  never flips an otherwise-authored row). Withhold promotion → unverified,
+#                  NEVER a verified_fail: neither an empty history nor a partial mismatch can
+#                  DEMONSTRATE absence (Write/Edit is blind to Bash-authored writes), so absence
+#                  rests at unverified (W2 spirit).
 # Parse delegated to _cbg_classify_entry (comma-split stays local; trim / glob-detect / ~-expand /
 # path-shape live in the shared classifier) so gradeability stays consistent between grounding and
 # cross-check.
@@ -295,7 +305,7 @@ _cbg_write_crosscheck() {
     printf 'withhold\n'
     return 0
   fi
-  local rest="${files}" entry saw_path_shaped="" any_unmatched="" glob_seen=""
+  local rest="${files}" entry saw_path_shaped="" any_unmatched="" any_matched="" glob_seen=""
   local _cbg_entry _cbg_is_glob _cbg_is_path
   while [[ -n "${rest}" ]]; do
     if [[ "${rest}" == *,* ]]; then
@@ -311,9 +321,15 @@ _cbg_write_crosscheck() {
       glob_seen=1
       break
     fi
+    # non-path-shaped prose entries are counted as NEITHER matched nor unmatched — prose is
+    # never evidence of authorship, so it can neither trigger nor rescue a contradiction.
     if [[ -n "${_cbg_is_path}" ]]; then
       saw_path_shaped=1
-      _cbg_path_matches_writes "${_cbg_entry}" "${writes}" || any_unmatched=1
+      if _cbg_path_matches_writes "${_cbg_entry}" "${writes}"; then
+        any_matched=1
+      else
+        any_unmatched=1
+      fi
     fi
   done
   # glob present OR no path-shaped entry → indeterminate → na (Step 1 → unverified).
@@ -326,10 +342,14 @@ _cbg_write_crosscheck() {
     printf 'withhold\n'
     return 0
   fi
-  if [[ -n "${any_unmatched}" ]]; then
-    printf 'contradicted\n'
-  else
+  if [[ -z "${any_unmatched}" ]]; then
     printf 'verified\n'
+  elif [[ -n "${any_matched}" ]]; then
+    # PARTIAL mismatch: the row carries corroborated authorship, so the unmatched sibling is a
+    # collector blind spot (generated artifact / Bash-authored write), not demonstrated absence.
+    printf 'withhold\n'
+  else
+    printf 'contradicted\n'
   fi
 }
 
@@ -340,6 +360,7 @@ _cbg_write_crosscheck() {
 _cbg_gated_verdict() {
   local promote="${1}" files="${2}"
   case "$(_cbg_write_crosscheck "${files}")" in
+    # VERIFIED_FAIL_EMITTER: total transcript-authorship contradiction.
     contradicted) printf 'verified_fail\n' ;;
     withhold) printf 'unverified\n' ;;
     *)

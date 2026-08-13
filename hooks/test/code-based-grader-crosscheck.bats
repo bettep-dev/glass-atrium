@@ -7,9 +7,12 @@
 #
 # PINNED (plan ACs 264-265 + the W2 safety invariant):
 #   * AC 264 — all claimed path-shaped entries matched a NON-EMPTY write-history →
-#     verified (promotion allowed); >=1 unmatched → contradicted → verified_fail. This is
-#     the ONLY transcript-cross-check verified_fail path (the first-ever activation of the
-#     control — see plan ADR-6; live baseline is 0 verified_fail in 2081 rows).
+#     verified (promotion allowed); a TOTAL mismatch (>=1 unmatched AND zero matched) →
+#     contradicted → verified_fail (the fabrication signal). A PARTIAL mismatch (>=1
+#     unmatched WITH >=1 matched) → withhold → unverified: a tool-generated sibling
+#     (manifest / migration / snapshot) never flips an otherwise-authored row.
+#     Companion emitter: the LLM09 zero-evidence guard — both sites carry a
+#     VERIFIED_FAIL_EMITTER marker in the grader source (2 emitters total).
 #   * AC 265 — an unverifiable transcript (scan=unverifiable) → promotion withheld →
 #     unverified, for code task_types.
 #   * W2 SAFETY — an EMPTY write-history → withhold (never verified_fail): Write/Edit is
@@ -67,7 +70,7 @@ grade_cc() {
     ' _ "${REAL_LIB}"
 }
 
-# --- AC 264: contradiction → verified_fail (the transcript-cross-check verified_fail) ---
+# --- AC 264: total contradiction → verified_fail (the transcript-cross-check verified_fail) ---
 
 @test "feature verifiable + claimed path absent from a non-empty write-history → verified_fail" {
   grade_cc feature true "done" hook-input "new endpoint" "${EXIST_TEST}" \
@@ -171,4 +174,61 @@ grade_cc() {
     unverifiable ""
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "unverified" ]] || { echo "unverifiable must withhold the body-phrasing promotion, got: ${output}" >&2; return 1; }
+}
+
+# --- AC-1.1: PARTIAL mismatch (>=1 matched) → withhold → unverified, never verified_fail ---
+
+@test "feature verifiable + authored test matched + generated manifest.json unmatched → unverified (partial)" {
+  grade_cc feature true "done" hook-input "new endpoint" \
+    "${EXIST_TEST},${SANDBOX}/generated-manifest.json" \
+    verifiable "${EXIST_TEST}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != "verified_fail" ]] || { echo "a tool-generated sibling must NOT flip an authored row (AC-1.1)" >&2; return 1; }
+  [[ "${output}" == "unverified" ]] || { echo "partial mismatch must withhold → unverified, got: ${output}" >&2; return 1; }
+}
+
+@test "bug-fix verifiable + authored test matched + migration.sql unmatched → unverified (partial)" {
+  grade_cc bug-fix true "done" hook-input "test passes" \
+    "${EXIST_TEST},${SANDBOX}/20260813000000_add_column/migration.sql" \
+    verifiable "${EXIST_TEST}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "unverified" ]] || { echo "partial mismatch must withhold → unverified, got: ${output}" >&2; return 1; }
+}
+
+# --- AC-1.3 (preservation): a TOTAL mismatch across MULTIPLE entries still contradicts ---
+
+@test "feature verifiable + every claimed path absent from a non-empty write-history → verified_fail" {
+  grade_cc feature true "done" hook-input "new endpoint" \
+    "${EXIST_TEST},${SANDBOX}/other.test.ts" \
+    verifiable "/repo/src/unrelated.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_fail" ]] || { echo "zero matched entries must stay contradicted → verified_fail, got: ${output}" >&2; return 1; }
+}
+
+# --- AC-1.6 (preservation): a prose entry is neither matched nor unmatched ---
+
+@test "feature verifiable + one unmatched path + one prose entry → verified_fail (prose is not authorship)" {
+  grade_cc feature true "done" hook-input "new endpoint" \
+    "${EXIST_TEST},deliverable is a clauded-doc" \
+    verifiable "/repo/src/unrelated.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_fail" ]] || { echo "a prose entry must not rescue a total mismatch, got: ${output}" >&2; return 1; }
+}
+
+# --- AC-1.2: the grader source declares BOTH verified_fail emitters, no sole-path claim ---
+
+@test "grader source carries exactly 2 VERIFIED_FAIL_EMITTER markers" {
+  local markers
+  markers="$(grep -c 'VERIFIED_FAIL_EMITTER:' "${REAL_LIB}" || true)"
+  if [[ -z "${markers}" ]]; then markers=0; fi
+  [[ "${markers}" -eq 2 ]] || { echo "expected 2 emitter markers in ${REAL_LIB}, got: ${markers}" >&2; return 1; }
+}
+
+@test "grader Outputs header stanza carries 0 sole-path claims" {
+  local stanza claims
+  stanza="$(sed -n '/^# Outputs (stdout/,/^# Input-surface invariant/p' "${REAL_LIB}")"
+  [[ -n "${stanza}" ]] || { echo "Outputs header stanza not found in ${REAL_LIB}" >&2; return 1; }
+  claims="$(printf '%s\n' "${stanza}" | grep -ciE '(^|[^[:alnum:]_])(only|sole|single)([^[:alnum:]_]|$)' || true)"
+  if [[ -z "${claims}" ]]; then claims=0; fi
+  [[ "${claims}" -eq 0 ]] || { echo "sole-path vocabulary still present in the Outputs stanza: ${claims} line(s)" >&2; return 1; }
 }
