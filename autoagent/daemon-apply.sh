@@ -1717,6 +1717,48 @@ short_label() {
     printf '%s' "${label}" | tr '\n' ' ' | cut -c1-40
 }
 
+# get_body_hash — sha256 of the target agent body as it landed, or EMPTY.
+# Record-only sample, so the contract is fail-open: an absent hasher, a read
+# error, or anything but a whole 64-hex digest yields empty + a loud stderr
+# line. A truncated digest is worse than none — it reads as a real sample and
+# compares unequal against every other apply of the same body.
+get_body_hash() {
+    local file="$1" raw=''
+    if [[ ! -r "${file}" ]]; then
+        printf '[daemon-apply] WARN provenance body_hash unreadable target=%s\n' "${file}" >&2
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        raw="$(shasum -a 256 -- "${file}" 2>/dev/null)" || raw='' # GA-ABSORB[handled@the 64-hex guard below]: hasher stderr is noise; its status is captured and the digest shape is validated
+    elif command -v sha256sum >/dev/null 2>&1; then
+        raw="$(sha256sum -- "${file}" 2>/dev/null)" || raw='' # GA-ABSORB[handled@the 64-hex guard below]: same capture-and-validate path as the shasum arm
+    fi
+    raw="${raw%% *}"
+    if [[ ! "${raw}" =~ ^[0-9a-f]{64}$ ]]; then
+        printf '[daemon-apply] WARN provenance body_hash failed target=%s\n' "${file}" >&2
+        return 0
+    fi
+    printf '%s' "${raw}"
+}
+
+# get_model_id — the daemon's cheap-model id from the shared config helper, or
+# EMPTY. The lib is sourced lazily and fail-open: unlike the apply-lock lib
+# (absent → FATAL, it guards concurrency), this value gates nothing, so a
+# missing lib must never fail an apply.
+get_model_id() {
+    local lib="${ATRIUM_CONFIG_LIB:-${SCRIPT_DIR}/../scripts/lib/atrium-config.sh}"
+    if [[ ! -r "${lib}" ]]; then
+        printf '[daemon-apply] WARN provenance model_id unresolved lib_missing=%s\n' "${lib}" >&2
+        return 0
+    fi
+    # shellcheck source=../scripts/lib/atrium-config.sh
+    if ! . "${lib}"; then
+        printf '[daemon-apply] WARN provenance model_id unresolved lib_source_failed=%s\n' "${lib}" >&2
+        return 0
+    fi
+    atrium_resolve_haiku_model
+}
+
 # update_db_status — transition core.autoagent_proposals.status
 # pending/snoozed → 'applied' (+ reviewed_at = now()) for the
 # (pattern_label, target_file, cycle_date) tuple of the just-committed patch.
@@ -1796,13 +1838,27 @@ update_db_status() {
     # `id::text = :'pid'` (string compare) avoids a ::bigint cast on the empty
     # report-path id; an empty :'pid' short-circuits to "no id filter" (the
     # report path keeps its (label,target,cycle) behavior).
+    # Apply-time provenance, record-only: WHAT body landed and WHICH model the
+    # daemon ran, sampled at the status flip. No gate, no branch, no consumer —
+    # a point sample makes two applies comparable, it says nothing about the
+    # window between them, so it is not a regression guard.
+    # Bound as two more psql variables, never interpolated into the quoted
+    # heredoc: the preprocessor substitution is the injection-free path the four
+    # existing bindings already use.
+    local body_hash model_id
+    body_hash="$(get_body_hash "${target}")"
+    model_id="$(get_model_id)"
+
     if psql_out="$(
         psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq \
             -v "lbl=${label}" -v "tgt=${target}" -v "cd=${cycle}" -v "pid=${proposal_id}" \
+            -v "bh=${body_hash}" -v "mid=${model_id}" \
             2>"${psql_err}" <<'PSQL'
 UPDATE core.autoagent_proposals
-SET status      = 'applied'::core."ProposalStatus",
-    reviewed_at = now()
+SET status              = 'applied'::core."ProposalStatus",
+    reviewed_at         = now(),
+    applied_body_sha256 = nullif(:'bh', ''),
+    applied_model_id    = nullif(:'mid', '')
 WHERE pattern_label = :'lbl'
   AND target_file   = :'tgt'
   AND status        IN ('pending'::core."ProposalStatus", 'snoozed'::core."ProposalStatus")
