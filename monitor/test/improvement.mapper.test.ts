@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import {
   buildStyleRefSummary,
-  buildWriteCrosscheckSummary,
+  buildGraderCrosscheckSummary,
   foldConfidenceDistribution,
   foldTierBreakdownRow,
   rowToProposalSummary,
@@ -363,11 +363,11 @@ test("buildStyleRefSummary: empty rows → all-zero counts + null rates", () => 
   assert.strictEqual(out.overall_emission_rate, null);
 });
 
-// buildWriteCrosscheckSummary — grader write-crosscheck state distribution fold.
+// buildGraderCrosscheckSummary — grader grader write/edit cross-check state distribution fold.
 
-test("buildWriteCrosscheckSummary: empty rows → empty buckets + zero counts (column absent)", () => {
+test("buildGraderCrosscheckSummary: empty rows → empty buckets + zero counts (column absent)", () => {
   // Pre-migration degradation path: the isolated query rejects, the route folds [].
-  const out = buildWriteCrosscheckSummary([], 30);
+  const out = buildGraderCrosscheckSummary([], 30);
 
   assert.strictEqual(out.window_days, 30, "window_days echoes the passed param");
   assert.deepStrictEqual(out.buckets, [], "empty buckets array");
@@ -376,7 +376,7 @@ test("buildWriteCrosscheckSummary: empty rows → empty buckets + zero counts (c
   assert.strictEqual(out.not_applicable_count, 0);
 });
 
-test("buildWriteCrosscheckSummary: withheld is separated from not-applicable", () => {
+test("buildGraderCrosscheckSummary: withheld is separated from not-applicable", () => {
   // The single distinction the state column exists for — review_flag_reasons collapses
   // both branches into the same unverified verdict with no reason token.
   const rows = [
@@ -385,7 +385,7 @@ test("buildWriteCrosscheckSummary: withheld is separated from not-applicable", (
     { state: "verified", row_count: 11n },
     { state: "withhold", row_count: 3n },
   ];
-  const out = buildWriteCrosscheckSummary(rows, 7);
+  const out = buildGraderCrosscheckSummary(rows, 7);
 
   assert.strictEqual(out.withheld_count, 3);
   assert.strictEqual(out.not_applicable_count, 7);
@@ -393,14 +393,14 @@ test("buildWriteCrosscheckSummary: withheld is separated from not-applicable", (
   assert.strictEqual(out.buckets.length, 4);
 });
 
-test("buildWriteCrosscheckSummary: unrecorded rows stay outside every recorded count", () => {
+test("buildGraderCrosscheckSummary: unrecorded rows stay outside every recorded count", () => {
   // Rows written before the column existed are unrecoverable (no session/transcript key
   // on an outcome row), so they must not read as a recorded not-applicable.
   const rows = [
     { state: "unrecorded", row_count: 278n },
     { state: "withhold", row_count: 1n },
   ];
-  const out = buildWriteCrosscheckSummary(rows, 30);
+  const out = buildGraderCrosscheckSummary(rows, 30);
 
   assert.strictEqual(out.recorded_total, 1, "unrecorded excluded from the recorded total");
   assert.strictEqual(out.not_applicable_count, 0, "absence of a state is not a state");

@@ -49,8 +49,8 @@ import type {
   ImprovementStatsResponse,
   ImprovementStyleRefAgentRow,
   ImprovementStyleRefSummary,
-  ImprovementWriteCrosscheckBucket,
-  ImprovementWriteCrosscheckSummary,
+  ImprovementGraderCrosscheckBucket,
+  ImprovementGraderCrosscheckSummary,
   ImprovementTier,
   ImprovementTierBreakdown,
   ImprovementTierDistribution,
@@ -201,19 +201,19 @@ interface LifetimeCountRow {
   rejected_all_time: bigint;
 }
 
-// Synthetic bucket key for outcome rows whose write_crosscheck is NULL. Distinct
+// Synthetic bucket key for outcome rows whose grader_crosscheck is NULL. Distinct
 // from every recorder state token (na | verified | contradicted | withhold) so an
 // unwritten row can never be read as a recorded not-applicable.
-const WRITE_CROSSCHECK_UNRECORDED = "unrecorded";
+const GRADER_CROSSCHECK_UNRECORDED = "unrecorded";
 
 // Recorder token for the withheld branch — the subset review_flag_reasons does not encode.
-const WRITE_CROSSCHECK_WITHHOLD = "withhold";
+const GRADER_CROSSCHECK_WITHHOLD = "withhold";
 
 // Recorder token for cross-check inapplicable.
-const WRITE_CROSSCHECK_NA = "na";
+const GRADER_CROSSCHECK_NA = "na";
 
-// write_crosscheck distribution row — feeds buildWriteCrosscheckSummary.
-interface WriteCrosscheckDbRow {
+// grader_crosscheck distribution row — feeds buildGraderCrosscheckSummary.
+interface GraderCrosscheckDbRow {
   state: string;
   row_count: bigint;
 }
@@ -540,7 +540,7 @@ async function handleImprovement(
     // still a genuine DB-down 503 (allSettled never rejects — catch reserved for real infra).
     // foldTierBreakdownRow([]) zero-init keeps tier_breakdown_30d a non-null object so the FE
     // renders its no-data indicator instead of crashing on null.
-    const [tierBreakdownResult, confidenceDistResult, writeCrosscheckResult] = await Promise.allSettled([
+    const [tierBreakdownResult, confidenceDistResult, graderCrosscheckResult] = await Promise.allSettled([
       // 3-Tier baseline cohort split — fixed 30d window (TIER_BREAKDOWN_WINDOW_DAYS, independent
       // of the `windowDays` user filter). 3 COUNT() FILTER aggregates in one SELECT, folded by
       // foldTierBreakdownRow. Scoped to the positive registry allowlist (agent IN
@@ -575,20 +575,20 @@ async function handleImprovement(
         GROUP BY COALESCE(promotion_tier, 'unassigned')
         ORDER BY COALESCE(promotion_tier, 'unassigned')
       `,
-      // write_crosscheck distribution — the NAMED consumer of the grader cross-check
+      // grader_crosscheck distribution — the NAMED consumer of the grader cross-check
       // state. Grouped over the same outcome window as outcome_summary; NULL folds to
       // the 'unrecorded' key so a not-yet-written row is never counted as a state.
       // The column is written only on rows that pass the recorder scan gate, so no
       // task_type/result predicate is repeated here — the column's own NULL-ness is
       // the gate. Cast to text keeps the query independent of whether the column
       // lands as an enum or a plain text token.
-      prisma.$queryRaw<WriteCrosscheckDbRow[]>`
+      prisma.$queryRaw<GraderCrosscheckDbRow[]>`
         SELECT
-          COALESCE(write_crosscheck::text, ${WRITE_CROSSCHECK_UNRECORDED}) AS state,
+          COALESCE(grader_crosscheck::text, ${GRADER_CROSSCHECK_UNRECORDED}) AS state,
           COUNT(*)::bigint AS row_count
         FROM core.outcomes
         ${outcomeWhere}
-        GROUP BY COALESCE(write_crosscheck::text, ${WRITE_CROSSCHECK_UNRECORDED})
+        GROUP BY COALESCE(grader_crosscheck::text, ${GRADER_CROSSCHECK_UNRECORDED})
         ORDER BY 1
       `,
     ]);
@@ -621,15 +621,15 @@ async function handleImprovement(
     }
 
     // Same isolated-fold contract. A rejection here is the expected state until the
-    // write_crosscheck column exists — degrade to empty buckets, never a 503.
-    let writeCrosscheckRows: WriteCrosscheckDbRow[];
-    if (writeCrosscheckResult.status === "fulfilled") {
-      writeCrosscheckRows = writeCrosscheckResult.value;
+    // grader_crosscheck column exists — degrade to empty buckets, never a 503.
+    let graderCrosscheckRows: GraderCrosscheckDbRow[];
+    if (graderCrosscheckResult.status === "fulfilled") {
+      graderCrosscheckRows = graderCrosscheckResult.value;
     } else {
-      writeCrosscheckRows = [];
+      graderCrosscheckRows = [];
       request.log.warn(
-        { err: writeCrosscheckResult.reason, route: "/api/improvement" },
-        "write_crosscheck query failed — degrading to empty buckets (optional metric)",
+        { err: graderCrosscheckResult.reason, route: "/api/improvement" },
+        "grader_crosscheck query failed — degrading to empty buckets (optional metric)",
       );
     }
 
@@ -707,8 +707,8 @@ async function handleImprovement(
       style_ref_summary: styleRefSummary,
       tier_breakdown_30d: tierBreakdown,
       confidence_distribution: confidenceDistribution,
-      write_crosscheck_summary: buildWriteCrosscheckSummary(
-        writeCrosscheckRows,
+      grader_crosscheck_summary: buildGraderCrosscheckSummary(
+        graderCrosscheckRows,
         windowDays,
       ),
     };
@@ -1898,7 +1898,7 @@ export function foldConfidenceDistribution(
   };
 }
 
-// The named consumer of the grader write-crosscheck state: folds the grouped counts
+// The named consumer of the grader grader write/edit cross-check state: folds the grouped counts
 // into the API summary and pulls out the two buckets the state exists to separate.
 //
 // Non-duplication against review_flag_reasons (the reason this consumer reads a
@@ -1918,11 +1918,11 @@ export function foldConfidenceDistribution(
 //     a superset, not a measurement of this subset.
 //   - The three withhold entry conditions (unverifiable transcript, empty write
 //     history, partial claim mismatch) share one token and stay indistinguishable here.
-export function buildWriteCrosscheckSummary(
-  rows: WriteCrosscheckDbRow[],
+export function buildGraderCrosscheckSummary(
+  rows: GraderCrosscheckDbRow[],
   windowDays: number,
-): ImprovementWriteCrosscheckSummary {
-  const buckets: ImprovementWriteCrosscheckBucket[] = rows.map((row) => ({
+): ImprovementGraderCrosscheckSummary {
+  const buckets: ImprovementGraderCrosscheckBucket[] = rows.map((row) => ({
     state: row.state,
     row_count: bigintToNumber(row.row_count),
   }));
@@ -1931,10 +1931,10 @@ export function buildWriteCrosscheckSummary(
   let withheldCount = 0;
   let notApplicableCount = 0;
   for (const bucket of buckets) {
-    if (bucket.state === WRITE_CROSSCHECK_UNRECORDED) continue;
+    if (bucket.state === GRADER_CROSSCHECK_UNRECORDED) continue;
     recordedTotal += bucket.row_count;
-    if (bucket.state === WRITE_CROSSCHECK_WITHHOLD) withheldCount = bucket.row_count;
-    if (bucket.state === WRITE_CROSSCHECK_NA) notApplicableCount = bucket.row_count;
+    if (bucket.state === GRADER_CROSSCHECK_WITHHOLD) withheldCount = bucket.row_count;
+    if (bucket.state === GRADER_CROSSCHECK_NA) notApplicableCount = bucket.row_count;
   }
 
   return {

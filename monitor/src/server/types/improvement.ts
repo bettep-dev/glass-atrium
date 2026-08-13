@@ -189,15 +189,15 @@ export interface ImprovementStyleRefSummary {
   overall_fake_rate: number | null;
 }
 
-// One recorded grader write-crosscheck state and how many outcome rows carry it.
-export interface ImprovementWriteCrosscheckBucket {
+// One recorded grader grader write/edit cross-check state and how many outcome rows carry it.
+export interface ImprovementGraderCrosscheckBucket {
   // Recorder state token: na | verified | contradicted | withhold · plus the
   // synthetic 'unrecorded' key for rows whose column is NULL.
   state: string;
   row_count: number;
 }
 
-// Distribution of the grader write-crosscheck state across the outcome window.
+// Distribution of the grader grader write/edit cross-check state across the outcome window.
 //
 // Why this is NOT a duplicate of review_flag_reasons: that column stamps a reason
 // only on rows the recorder actually flagged, and its grader-contradiction token
@@ -215,10 +215,10 @@ export interface ImprovementWriteCrosscheckBucket {
 //   - The three withhold entry conditions (unverifiable transcript, empty write
 //     history, partial claim mismatch) collapse into one token — this summary cannot
 //     tell them apart.
-export interface ImprovementWriteCrosscheckSummary {
+export interface ImprovementGraderCrosscheckSummary {
   window_days: number;
   // One bucket per observed state, including 'unrecorded'; sorted by state.
-  buckets: ImprovementWriteCrosscheckBucket[];
+  buckets: ImprovementGraderCrosscheckBucket[];
   // Rows carrying a real state token (excludes 'unrecorded').
   recorded_total: number;
   // The subset review_flag_reasons cannot encode.
@@ -301,10 +301,10 @@ export interface ImprovementResponse {
   // — touches late-added NULL-heavy columns, so a column gap degrades to empty buckets, not a
   // 503. Always present (empty buckets during the forward-looking NULL phase).
   confidence_distribution: ImprovementConfidenceDistribution;
-  // Grader write-crosscheck state distribution. Isolated SELECT (Promise.allSettled)
+  // Grader grader write/edit cross-check state distribution. Isolated SELECT (Promise.allSettled)
   // like the other late-added columns, so a not-yet-migrated column degrades to
   // empty buckets rather than a 503. Always present.
-  write_crosscheck_summary: ImprovementWriteCrosscheckSummary;
+  grader_crosscheck_summary: ImprovementGraderCrosscheckSummary;
 }
 
 // /api/improvement/stats (UI cards)
