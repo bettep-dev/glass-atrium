@@ -582,13 +582,16 @@ async function handleImprovement(
       // task_type/result predicate is repeated here — the column's own NULL-ness is
       // the gate. Cast to text keeps the query independent of whether the column
       // lands as an enum or a plain text token.
+      // GROUP BY 1 (ordinal), not a repeated COALESCE: the fold token is a bind
+      // parameter, so a second textual copy arrives as a DISTINCT placeholder and PG
+      // no longer matches it to the select expression → 42803 at runtime.
       prisma.$queryRaw<GraderCrosscheckDbRow[]>`
         SELECT
           COALESCE(grader_crosscheck::text, ${GRADER_CROSSCHECK_UNRECORDED}) AS state,
           COUNT(*)::bigint AS row_count
         FROM core.outcomes
         ${outcomeWhere}
-        GROUP BY COALESCE(grader_crosscheck::text, ${GRADER_CROSSCHECK_UNRECORDED})
+        GROUP BY 1
         ORDER BY 1
       `,
     ]);
