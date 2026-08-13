@@ -1898,26 +1898,10 @@ export function foldConfidenceDistribution(
   };
 }
 
-// The named consumer of the grader grader write/edit cross-check state: folds the grouped counts
+// The named consumer of the grader write/edit cross-check state: folds the grouped counts
 // into the API summary and pulls out the two buckets the state exists to separate.
-//
-// Non-duplication against review_flag_reasons (the reason this consumer reads a
-// different column instead of that one): review_flag_reasons stamps a token only on
-// rows the recorder flagged, and its grader-contradiction token fires on the
-// verified_fail verdict. Both the withhold branch and the na branch promote to the
-// same unverified verdict and emit no reason token, so no value of
-// review_flag_reasons — present, empty, or absent — separates a withheld row from a
-// not-applicable one. This fold is the only surface that does.
-//
-// What it cannot do, so the counts are not over-read:
-//   - It cannot reconstruct the state for a row written before the column existed.
-//     Those land in the 'unrecorded' bucket and stay there: an outcome row carries no
-//     session or transcript key, so the state is not recomputable from persisted rows.
-//   - withheld_count is therefore a floor over recorded rows, never a historical total,
-//     and a historical estimate drawn from the unverified verdict is an upper bound on
-//     a superset, not a measurement of this subset.
-//   - The three withhold entry conditions (unverifiable transcript, empty write
-//     history, partial claim mismatch) share one token and stay indistinguishable here.
+// Non-duplication against review_flag_reasons + what these counts cannot distinguish are
+// documented once on the returned contract, ImprovementGraderCrosscheckSummary.
 export function buildGraderCrosscheckSummary(
   rows: GraderCrosscheckDbRow[],
   windowDays: number,

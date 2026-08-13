@@ -363,7 +363,7 @@ test("buildStyleRefSummary: empty rows → all-zero counts + null rates", () => 
   assert.strictEqual(out.overall_emission_rate, null);
 });
 
-// buildGraderCrosscheckSummary — grader grader write/edit cross-check state distribution fold.
+// buildGraderCrosscheckSummary — grader write/edit cross-check state distribution fold.
 
 test("buildGraderCrosscheckSummary: empty rows → empty buckets + zero counts (column absent)", () => {
   // Pre-migration degradation path: the isolated query rejects, the route folds [].

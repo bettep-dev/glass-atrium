@@ -48,10 +48,7 @@ style_ref_compute_review_flag() {
     return 0
   fi
 
-  case "${STYLEREF_AGENTS}" in
-    *" ${AGENT_TYPE:-} "*) ;;
-    *) return 0 ;;
-  esac
+  attribution_in_set "${AGENT_TYPE:-}" "${STYLEREF_AGENTS}" || return 0
 
   REVIEW_FLAG="true"
   review_flag_add_reason "probe-omission"

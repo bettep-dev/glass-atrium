@@ -691,21 +691,26 @@ pg_write_run "ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "role=${ROLE} session=${SESSI
 # rate is measurable from this log) and never propagated, because a drifted
 # roster must not turn a healthy restart into a failure.
 report_lifecycle_drift() {
-  local out rc=0 names
+  local out rc=0 findings finding
   out="$(PYTHONPATH="${SCRIPT_DIR}" python3 -m agent_lifecycle orphan-scan \
     --mode inject-list-mismatch --mode gate-roster-mismatch 2>&1)" || rc=$? # GA-ABSORB[handled@verdict-unknown-branch]: scan rc is captured and logged as verdict=unknown, never dropped
   if [[ "${rc}" -ne 0 ]]; then
     log "lifecycle-drift: verdict=unknown (orphan-scan rc=${rc}) — ${out}"
     return 0
   fi
-  names="$(printf '%s\n' "${out}" \
-    | awk '/^ *\[(inject-list|gate-roster)-mismatch\]/ { sub(/:$/, "", $2); print $2 }' \
-    | sort -u | tr '\n' ' ')"
-  if [[ -z "${names// /}" ]]; then
+  # Findings are relayed verbatim: the renderer's fields are the offending AGENT name plus a
+  # detail carrying the array, so re-deriving one field both mislabels it and couples this log
+  # to the render format.
+  findings="$(printf '%s\n' "${out}" \
+    | awk '/^ *\[(inject-list|gate-roster)-mismatch\]/ { sub(/^ +/, ""); print }' | head -20)"
+  if [[ -z "${findings}" ]]; then
     log "lifecycle-drift: verdict=clean"
     return 0
   fi
-  log "lifecycle-drift: verdict=drift arrays=${names% }"
+  log "lifecycle-drift: verdict=drift"
+  while IFS= read -r finding; do
+    log "lifecycle-drift: ${finding}"
+  done <<<"${findings}"
   log "lifecycle-drift: recover with: cd ${SCRIPT_DIR} && python3 -m agent_lifecycle sync-inject && python3 -m agent_lifecycle sync-gate-roster"
 }
 

@@ -189,7 +189,7 @@ export interface ImprovementStyleRefSummary {
   overall_fake_rate: number | null;
 }
 
-// One recorded grader grader write/edit cross-check state and how many outcome rows carry it.
+// One recorded grader write/edit cross-check state and how many outcome rows carry it.
 export interface ImprovementGraderCrosscheckBucket {
   // Recorder state token: na | verified | contradicted | withhold · plus the
   // synthetic 'unrecorded' key for rows whose column is NULL.
@@ -197,7 +197,7 @@ export interface ImprovementGraderCrosscheckBucket {
   row_count: number;
 }
 
-// Distribution of the grader grader write/edit cross-check state across the outcome window.
+// Distribution of the grader write/edit cross-check state across the outcome window.
 //
 // Why this is NOT a duplicate of review_flag_reasons: that column stamps a reason
 // only on rows the recorder actually flagged, and its grader-contradiction token

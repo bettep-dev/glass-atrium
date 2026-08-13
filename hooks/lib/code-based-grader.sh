@@ -310,7 +310,7 @@ _cbg_classify_write_crosscheck() {
     printf 'withhold\n'
     return 0
   fi
-  local rest="${files}" entry saw_path_shaped="" any_unmatched="" any_matched="" glob_seen=""
+  local rest="${files}" entry any_unmatched="" any_matched="" glob_seen=""
   local _cbg_entry _cbg_is_glob _cbg_is_path
   while [[ -n "${rest}" ]]; do
     if [[ "${rest}" == *,* ]]; then
@@ -329,7 +329,6 @@ _cbg_classify_write_crosscheck() {
     # non-path-shaped prose entries are counted as NEITHER matched nor unmatched — prose is
     # never evidence of authorship, so it can neither trigger nor rescue a contradiction.
     if [[ -n "${_cbg_is_path}" ]]; then
-      saw_path_shaped=1
       if _cbg_path_matches_writes "${_cbg_entry}" "${writes}"; then
         any_matched=1
       else
@@ -338,7 +337,8 @@ _cbg_classify_write_crosscheck() {
     fi
   done
   # glob present OR no path-shaped entry → indeterminate → na (Step 1 → unverified).
-  if [[ -n "${glob_seen}" ]] || [[ -z "${saw_path_shaped}" ]]; then
+  # No path-shaped entry ⇔ neither match flag set — both are written in the one path-shaped branch.
+  if [[ -n "${glob_seen}" ]] || [[ -z "${any_matched}${any_unmatched}" ]]; then
     printf 'na\n'
     return 0
   fi

@@ -487,22 +487,24 @@ make_drift_env() {
 
 @test "report_lifecycle_drift: clean scan records verdict=clean" {
   extract_fn report_lifecycle_drift "${WORK}/drift.sh"
-  make_drift_env "orphan-scan: clean (0 findings)" 0
+  make_drift_env "orphan-scan: clean (20 agents, 0 violations)." 0
   # shellcheck source=/dev/null
   source "${WORK}/drift.sh"
   report_lifecycle_drift
   grep -qF 'lifecycle-drift: verdict=clean' "${LOG_FILE}"
 }
 
-@test "report_lifecycle_drift: mismatches record the array names and the recovery command" {
+@test "report_lifecycle_drift: mismatches record each finding verbatim and the recovery command" {
   extract_fn report_lifecycle_drift "${WORK}/drift.sh"
-  make_drift_env "orphan-scan: 2 finding(s)
-  [inject-list-mismatch] INJECT_AGENTS: missing glass-atrium-dev-x
-  [gate-roster-mismatch] DEV_SET: stale entry" 0
+  make_drift_env "orphan-scan: 2 violation(s) (registry SoT = 20 agents):
+  [inject-list-mismatch] glass-atrium-dev-x: missing from INJECT_AGENTS
+  [gate-roster-mismatch] glass-atrium-dev-y: DEV_SET name not in DEV roster" 0
   # shellcheck source=/dev/null
   source "${WORK}/drift.sh"
   report_lifecycle_drift
-  grep -qF 'lifecycle-drift: verdict=drift arrays=DEV_SET INJECT_AGENTS' "${LOG_FILE}"
+  grep -qF 'lifecycle-drift: verdict=drift' "${LOG_FILE}"
+  grep -qF 'lifecycle-drift: [inject-list-mismatch] glass-atrium-dev-x: missing from INJECT_AGENTS' "${LOG_FILE}"
+  grep -qF 'lifecycle-drift: [gate-roster-mismatch] glass-atrium-dev-y: DEV_SET name not in DEV roster' "${LOG_FILE}"
   grep -qF 'python3 -m agent_lifecycle sync-inject' "${LOG_FILE}"
   grep -qF 'python3 -m agent_lifecycle sync-gate-roster' "${LOG_FILE}"
 }
