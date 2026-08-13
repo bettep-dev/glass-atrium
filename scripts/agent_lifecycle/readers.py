@@ -95,13 +95,33 @@ def load_registry_agents(paths: StorePaths) -> dict[str, dict]:
 def registry_domains(paths: StorePaths) -> dict[str, list[str]]:
     """Return name -> domains-token-list for every registry agent.
 
-    Entries with a non-list `domains` field are normalized to an empty list so
-    the overlap predicate never sees a malformed shape.
+    A malformed shape fails LOUD through ReaderError rather than coercing to an
+    empty list: a clean-but-wrong empty list lets the 50% overlap gate pass on
+    data it never actually compared. Both coercion paths (a non-dict entry, a
+    non-list `domains`) raise, naming the agent and the type actually found.
+    An ABSENT `domains` key stays a legitimate empty list — only a present
+    field of the wrong type is malformed.
+
+    The ADD create-gate consumer propagates to the CLI boundary, which maps
+    ReaderError to HALT — a create must not proceed on uncompared data. The
+    orphan-scan consumer instead catches it into a mode-6 Finding, so one
+    malformed entry surfaces as a report line rather than aborting the whole
+    scan and turning its advisory caller into a cycle-killer.
     """
     out: dict[str, list[str]] = {}
     for name, entry in load_registry_agents(paths).items():
-        domains = entry.get("domains") if isinstance(entry, dict) else None
-        out[name] = list(domains) if isinstance(domains, list) else []
+        if not isinstance(entry, dict):
+            raise ReaderError(
+                f"{paths.registry}: agent `{name}` entry is "
+                f"{type(entry).__name__}, expected dict"
+            )
+        domains = entry.get("domains", [])
+        if not isinstance(domains, list):
+            raise ReaderError(
+                f"{paths.registry}: agent `{name}` has a non-list `domains` "
+                f"field ({type(domains).__name__})"
+            )
+        out[name] = list(domains)
     return out
 
 

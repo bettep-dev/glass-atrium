@@ -350,8 +350,22 @@ def _check_domains_overlap(paths: StorePaths) -> list[Finding]:
 
     Reuses scan_existing_pairs -> the SAME overlap_ratio + OVERLAP_THRESHOLD the
     R1-Q3 ADD gate calls (one owner, two call sites — AC4 asserts no divergence).
+
+    A malformed registry entry is reported as a mode-6 finding, not raised: the
+    ADD gate must HALT on it, but a scan that aborts would take every other mode
+    down with it and would make the advisory launchd caller cycle-killing.
     """
-    flagged = scan_existing_pairs(registry_domains(paths))
+    try:
+        domains = registry_domains(paths)
+    except (ReaderError, OSError) as exc:
+        return [
+            Finding(
+                "domains-overlap",
+                "agent-registry.json",
+                f"could not read domains: {exc}",
+            )
+        ]
+    flagged = scan_existing_pairs(domains)
     return [
         Finding(
             "domains-overlap",

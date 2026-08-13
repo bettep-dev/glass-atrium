@@ -1,0 +1,25 @@
+-- Add core.autoagent_proposals apply-time provenance: the sha256 of the target agent body as it
+-- landed, and the daemon model id resolved at that moment. Both are written by the apply script's
+-- status transition, inside the same UPDATE that flips the row to 'applied', so the sample belongs
+-- to the apply it describes rather than to a later read that could race it.
+--
+-- RECORD-ONLY, stated as a constraint rather than a note: no query gates on either column, no
+-- consumer reads them, and the apply path has no branch on their value. A point sample establishes
+-- comparability BETWEEN two applies of the same body; it says nothing about the window between
+-- them, so neither column is a regression guard and must not be described as one.
+--
+-- NULLable with NO default, deliberately, for two distinct absences that must both read as ABSENT:
+-- rows written before this column existed, and a fail-open apply whose hasher or config lib could
+-- not resolve. The writer binds an empty string through nullif() in exactly that case, so a partial
+-- or truncated hash is never persisted — the column carries the whole digest or nothing.
+--
+-- VarChar(64) is exact for a hex sha256 and bounds the model id without constraining its vocabulary
+-- (the resolved ids are family aliases and dated pins, all far shorter).
+--
+-- Reversal:
+--   ALTER TABLE "core"."autoagent_proposals" DROP COLUMN "applied_body_sha256";
+--   ALTER TABLE "core"."autoagent_proposals" DROP COLUMN "applied_model_id";
+-- IF NOT EXISTS keeps a re-run, and a future pre-release re-squash into the init CREATE TABLE, a
+-- no-op (migrate deploy checksum-verifies applied migrations).
+ALTER TABLE "core"."autoagent_proposals" ADD COLUMN IF NOT EXISTS "applied_body_sha256" VARCHAR(64);
+ALTER TABLE "core"."autoagent_proposals" ADD COLUMN IF NOT EXISTS "applied_model_id" VARCHAR(64);

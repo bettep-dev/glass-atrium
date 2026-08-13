@@ -516,6 +516,13 @@ model AutoagentProposal {
   auditLogId      BigInt?                @map("audit_log_id")
   sourceFile      String                 @map("source_file")
   sourceFileMtime BigInt                 @map("source_file_mtime")
+
+  // Apply-time provenance sample, written by the apply script at the status
+  // flip. Record-only: nothing reads or gates on either value. Nullable with no
+  // default so every pre-existing row and every fail-open apply (unresolvable
+  // hasher or config lib) reads as ABSENT rather than as a recorded sample.
+  appliedBodySha256 String? @map("applied_body_sha256") @db.VarChar(64)
+  appliedModelId    String? @map("applied_model_id") @db.VarChar(64)
   indexedAt       DateTime               @default(now()) @map("indexed_at") @db.Timestamptz(6)
 
   // Phase 3 (2026-05-02 ADR R2 step 1) — pre-verify 4-axis verdict snapshot.
