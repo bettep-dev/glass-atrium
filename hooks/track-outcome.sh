@@ -1686,6 +1686,9 @@ fi
 GRADER_VERDICT="unverified"
 GRADER_FILES_FIELD=""
 DOWNGRADE_ORIGIN=""
+# Four-value transcript cross-check state. Empty (→ NULL) on every row the cross-check never
+# reached, so NULL reads as "not attempted" and stays distinct from the 'na' inapplicable token.
+GRADER_CROSSCHECK=""
 
 # task_type / result keyword inference fallback.
 # The Korean glob patterns in guess_task_type are language tokenizers over the transcript text.
@@ -2248,11 +2251,28 @@ if [[ "${HAS_STRUCTURED}" = "true" ]]; then
     else
       GRADER_BODY_TEXT="${MSG_HEAD} ${MSG_TAIL}"
     fi
-    export GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
+    # Spool for the cross-check state: the grader runs two command substitutions deep, so the
+    # token it already computed can only come back through a file. mktemp failure → unwired
+    # grader, NULL column, verdict unaffected.
+    GRADER_CROSSCHECK_STATE_FILE="$(mktemp -t grader-crosscheck.XXXXXX 2>/dev/null || true)"
+    export GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS \
+      GRADER_CROSSCHECK_STATE_FILE
     # shellcheck source=lib/code-based-grader.sh
     source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
     GRADER_VERDICT="$(code_based_grader_check)"
-    unset GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS
+    if [[ -n "${GRADER_CROSSCHECK_STATE_FILE}" ]]; then
+      # GA-ABSORB[benign]: an absent spool means the cross-check arm never ran → NULL column.
+      GRADER_CROSSCHECK="$(cat "${GRADER_CROSSCHECK_STATE_FILE}" 2>/dev/null || true)"
+      rm -f "${GRADER_CROSSCHECK_STATE_FILE}"
+    fi
+    # Closed-set guard, same shape as the GRADER_WRITE_SCAN whitelist: the column is a PG enum,
+    # so an off-vocabulary token would fail the whole outcome write rather than one field.
+    case "${GRADER_CROSSCHECK}" in
+      na | verified | contradicted | withhold) ;;
+      *) GRADER_CROSSCHECK="" ;;
+    esac
+    unset GRADER_BODY_TEXT GRADER_FILES_FIELD GRADER_WRITE_SCAN GRADER_WRITE_PATHS \
+      GRADER_CROSSCHECK_STATE_FILE
   fi
 fi
 
@@ -2682,6 +2702,7 @@ if [ -x "${PG_HELPER}" ]; then
     --arg style_ref_verified "${STYLE_REF_VERIFIED:-}" \
     --arg grader_verdict "${GRADER_VERDICT:-}" \
     --arg downgrade_origin "${DOWNGRADE_ORIGIN:-}" \
+    --arg grader_crosscheck "${GRADER_CROSSCHECK:-}" \
     --arg files_modified "${FILES:-}" \
     --arg sig_event_ts "${TIMESTAMP}" \
     --arg sig_task_type "${TASK_TYPE}" \
@@ -2704,7 +2725,8 @@ if [ -x "${PG_HELPER}" ]; then
         style_ref: (if $style_ref == "" then null else $style_ref end),
         style_ref_verified: (if $style_ref_verified == "" then null else ($style_ref_verified == "true") end),
         grader_verdict: (if $grader_verdict == "" then null else $grader_verdict end),
-        downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end)
+        downgrade_origin: (if $downgrade_origin == "" then null else $downgrade_origin end),
+        grader_crosscheck: (if $grader_crosscheck == "" then null else $grader_crosscheck end)
       },
       signals: (
         if $sig_emit == "1" then [{

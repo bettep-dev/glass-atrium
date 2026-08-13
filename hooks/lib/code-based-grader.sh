@@ -291,7 +291,12 @@ _cbg_path_matches_writes() {
 # Parse delegated to _cbg_classify_entry (comma-split stays local; trim / glob-detect / ~-expand /
 # path-shape live in the shared classifier) so gradeability stays consistent between grounding and
 # cross-check.
-_cbg_write_crosscheck() {
+#
+# Split in two: the classifier below decides the token, and the _cbg_write_crosscheck wrapper
+# records it. The verdict collapse in _cbg_gated_verdict is lossy — na and verified both fall to
+# the files-evidence arm, and withhold flattens into unverified — so the withheld-versus-inapplicable
+# distinction has no other carrier downstream.
+_cbg_classify_write_crosscheck() {
   local files="${1:-}"
   local scan="${GRADER_WRITE_SCAN:-}"
   local writes="${GRADER_WRITE_PATHS:-}"
@@ -305,7 +310,7 @@ _cbg_write_crosscheck() {
     printf 'withhold\n'
     return 0
   fi
-  local rest="${files}" entry saw_path_shaped="" any_unmatched="" any_matched="" glob_seen=""
+  local rest="${files}" entry any_unmatched="" any_matched="" glob_seen=""
   local _cbg_entry _cbg_is_glob _cbg_is_path
   while [[ -n "${rest}" ]]; do
     if [[ "${rest}" == *,* ]]; then
@@ -324,7 +329,6 @@ _cbg_write_crosscheck() {
     # non-path-shaped prose entries are counted as NEITHER matched nor unmatched — prose is
     # never evidence of authorship, so it can neither trigger nor rescue a contradiction.
     if [[ -n "${_cbg_is_path}" ]]; then
-      saw_path_shaped=1
       if _cbg_path_matches_writes "${_cbg_entry}" "${writes}"; then
         any_matched=1
       else
@@ -333,7 +337,8 @@ _cbg_write_crosscheck() {
     fi
   done
   # glob present OR no path-shaped entry → indeterminate → na (Step 1 → unverified).
-  if [[ -n "${glob_seen}" ]] || [[ -z "${saw_path_shaped}" ]]; then
+  # No path-shaped entry ⇔ neither match flag set — both are written in the one path-shaped branch.
+  if [[ -n "${glob_seen}" ]] || [[ -z "${any_matched}${any_unmatched}" ]]; then
     printf 'na\n'
     return 0
   fi
@@ -351,6 +356,20 @@ _cbg_write_crosscheck() {
   else
     printf 'contradicted\n'
   fi
+}
+
+# Records the classified token to GRADER_CROSSCHECK_STATE_FILE when the caller wires one, then
+# emits it unchanged. The file is the only channel out: the verdict is read back through two levels
+# of command substitution, so a variable set here never reaches the recorder. Unwired (direct unit
+# test, main-session path) → record nothing, behaviour identical to before.
+_cbg_write_crosscheck() {
+  local state
+  state="$(_cbg_classify_write_crosscheck "$@")"
+  if [[ -n "${GRADER_CROSSCHECK_STATE_FILE:-}" ]]; then
+    # GA-ABSORB[benign]: telemetry side-channel — an unwritable spool must never fail the verdict.
+    printf '%s\n' "${state}" >"${GRADER_CROSSCHECK_STATE_FILE}" 2>/dev/null || true
+  fi
+  printf '%s\n' "${state}"
 }
 
 # _cbg_gated_verdict — the Step 4-5 cross-check routing shared by the bug-fix + feature arms. Each

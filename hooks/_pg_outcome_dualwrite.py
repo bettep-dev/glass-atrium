@@ -380,6 +380,10 @@ def _build_outcome_row(outcome):
         # flagged row names its own trigger instead of being re-derived at read time.
         # Absent → empty array (legacy shape), never NULL.
         "review_flag_reasons": _norm_text_array(outcome.get("review_flag_reasons")),
+        # grader_crosscheck — the four-value transcript cross-check state the grader
+        # collapses into grader_verdict. Carries the withheld-versus-inapplicable split
+        # that the verdict and the reason vocabulary both lose. NULL = never attempted.
+        "grader_crosscheck": _norm_text_or_null(outcome.get("grader_crosscheck")),
     }
     # Membership guard at the single write seam: DETECT, never drop or rewrite. The agent value
     # is part of the ON CONFLICT key, so rewriting it would convert the upsert into a duplicate
@@ -416,7 +420,8 @@ INSERT INTO core.outcomes (
     files_modified, correlation_id, cid, summary, review_flag, body_md,
     attribution_source, style_ref, style_ref_verified,
     grader_verdict, downgrade_origin,
-    review_flag_reasons
+    review_flag_reasons,
+    grader_crosscheck
 ) VALUES (
     %(record_ts)s, %(agent)s, %(task_type)s::core."TaskType",
     %(result)s::core."OutcomeResult",
@@ -428,7 +433,8 @@ INSERT INTO core.outcomes (
     %(attribution_source)s, %(style_ref)s, %(style_ref_verified)s,
     %(grader_verdict)s::core."GraderVerdict",
     %(downgrade_origin)s::core."DowngradeOrigin",
-    %(review_flag_reasons)s
+    %(review_flag_reasons)s,
+    %(grader_crosscheck)s::core."GraderCrosscheck"
 )
 ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     result = EXCLUDED.result,
@@ -452,7 +458,8 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     style_ref_verified = EXCLUDED.style_ref_verified,
     grader_verdict = EXCLUDED.grader_verdict,
     downgrade_origin = EXCLUDED.downgrade_origin,
-    review_flag_reasons = EXCLUDED.review_flag_reasons
+    review_flag_reasons = EXCLUDED.review_flag_reasons,
+    grader_crosscheck = EXCLUDED.grader_crosscheck
 RETURNING id
 """
 
@@ -481,57 +488,81 @@ def _strip_review_flag_reasons(sql):
     until its migration lands in a given DB the column is absent, and naming it in the INSERT
     would raise UndefinedColumn on EVERY outcome write (a total recorder outage, not a degraded
     row). Each fragment strips the carrier together with its preceding separator so the
-    statement stays well-formed. Static strings only — no user data, no injection surface."""
+    statement stays well-formed. Each fragment is anchored on the preceding comma, so the strip
+    holds wherever the carrier sits in the list. Static strings only — no user data, no
+    injection surface."""
+    # Longest first: the bare column-list fragment is a prefix of the assignment fragment, so the
+    # reverse order would shear the assignment in half.
     fragments = (
-        ("    grader_verdict, downgrade_origin,\n    review_flag_reasons\n",
-         "    grader_verdict, downgrade_origin\n"),
-        ('    %(downgrade_origin)s::core."DowngradeOrigin",\n    %(review_flag_reasons)s\n',
-         '    %(downgrade_origin)s::core."DowngradeOrigin"\n'),
-        ("    downgrade_origin = EXCLUDED.downgrade_origin,\n"
-         "    review_flag_reasons = EXCLUDED.review_flag_reasons\n",
-         "    downgrade_origin = EXCLUDED.downgrade_origin\n"),
+        ",\n    review_flag_reasons = EXCLUDED.review_flag_reasons",
+        ",\n    %(review_flag_reasons)s",
+        ",\n    review_flag_reasons",
     )
-    for old, new in fragments:
-        sql = sql.replace(old, new)
+    for old in fragments:
+        sql = sql.replace(old, "")
     return sql
 
 
-_OUTCOMES_INSERT_SQL_NO_REASONS = _strip_review_flag_reasons(_OUTCOMES_INSERT_SQL)
-_OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS = _strip_review_flag_reasons(_OUTCOMES_INSERT_SQL_NO_QA)
-for _variant in (_OUTCOMES_INSERT_SQL_NO_REASONS, _OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS):
-    assert "review_flag_reasons" not in _variant, \
-        "legacy INSERT derivation failed to strip review_flag_reasons"
+def _strip_grader_crosscheck(sql):
+    """Same expand-phase shim for the grader_crosscheck state column, comma-anchored so it
+    composes with the review_flag_reasons strip in either order."""
+    fragments = (
+        ",\n    grader_crosscheck = EXCLUDED.grader_crosscheck",
+        ',\n    %(grader_crosscheck)s::core."GraderCrosscheck"',
+        ",\n    grader_crosscheck",
+    )
+    for old in fragments:
+        sql = sql.replace(old, "")
+    return sql
 
-_INSERT_SQL_BY_SCHEMA = {
-    (True, True): _OUTCOMES_INSERT_SQL,
-    (True, False): _OUTCOMES_INSERT_SQL_NO_REASONS,
-    (False, True): _OUTCOMES_INSERT_SQL_NO_QA,
-    (False, False): _OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS,
-}
+
+# One variant per (qa_score, review_flag_reasons, grader_crosscheck) presence triple, each
+# DERIVED from the single hand-maintained primary above so no variant drifts.
+_INSERT_SQL_BY_SCHEMA = {}
+for _qa_present, _qa_sql in (
+        (True, _OUTCOMES_INSERT_SQL), (False, _OUTCOMES_INSERT_SQL_NO_QA)):
+    for _reasons_present in (True, False):
+        _sql = _qa_sql if _reasons_present else _strip_review_flag_reasons(_qa_sql)
+        for _cc_present in (True, False):
+            _INSERT_SQL_BY_SCHEMA[(_qa_present, _reasons_present, _cc_present)] = (
+                _sql if _cc_present else _strip_grader_crosscheck(_sql))
+for (_qa_present, _reasons_present, _cc_present), _variant in _INSERT_SQL_BY_SCHEMA.items():
+    assert _reasons_present or "review_flag_reasons" not in _variant, \
+        "legacy INSERT derivation failed to strip review_flag_reasons"
+    assert _cc_present or "grader_crosscheck" not in _variant, \
+        "legacy INSERT derivation failed to strip grader_crosscheck"
 
 # Per-process cache: None = unprobed, bool = column present/absent. The hook spawns one
 # helper process per outcome, so this is probed at most once per outcome write.
 _qa_score_col_present = None
 _review_flag_reasons_col_present = None
+_grader_crosscheck_col_present = None
+
+_ADDITIVE_OUTCOME_COLS = ("qa_score", "review_flag_reasons", "grader_crosscheck")
 
 
 def _outcomes_insert_sql(cur):
-    """Outcomes INSERT SQL matching the LIVE schema — one variant per (qa_score,
-    review_flag_reasons) presence pair, so a pre-migration DB keeps writing. The two
-    column probes share one cached catalog lookup, run inside the caller's open
+    """Outcomes INSERT SQL matching the LIVE schema, so a pre-migration DB keeps writing.
+    The three column probes share one cached catalog lookup, run inside the caller's open
     transaction (read-only, no lock)."""
     global _qa_score_col_present, _review_flag_reasons_col_present
-    if _qa_score_col_present is None or _review_flag_reasons_col_present is None:
+    global _grader_crosscheck_col_present
+    if (_qa_score_col_present is None or _review_flag_reasons_col_present is None
+            or _grader_crosscheck_col_present is None):
         cur.execute(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema = 'core' AND table_name = 'outcomes' "
-            "AND column_name IN ('qa_score', 'review_flag_reasons')"
+            "AND column_name = ANY(%(cols)s)",
+            {"cols": list(_ADDITIVE_OUTCOME_COLS)},
         )
         present = set(row[0] for row in cur.fetchall())
         _qa_score_col_present = "qa_score" in present
         _review_flag_reasons_col_present = "review_flag_reasons" in present
-    return _INSERT_SQL_BY_SCHEMA[
-        (_qa_score_col_present, _review_flag_reasons_col_present)]
+        _grader_crosscheck_col_present = "grader_crosscheck" in present
+    return _INSERT_SQL_BY_SCHEMA[(
+        _qa_score_col_present,
+        _review_flag_reasons_col_present,
+        _grader_crosscheck_col_present)]
 
 
 _SIGNALS_INSERT_SQL = """
