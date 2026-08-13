@@ -88,3 +88,40 @@ setup() {
     return 1
   }
 }
+
+# ── verified_fail emitter-count invariant (grader source ↔ canonical guide) ──────────────
+#
+# WHY: the guide row and the grader source are two halves of ONE contract, and the divergence
+# this pins went unseen for 52 rows. Both sides carry a structural sentinel instead of prose:
+# the source marks each emitter site with a dedicated comment line, the guide enumerates the
+# same marker names in its grader_verdict row. Counting sentinels — never free prose — keeps a
+# wording edit from breaking the check while a NEW unmarked emitter still trips it.
+
+GRADER_SRC="${REPO_ROOT}/hooks/lib/code-based-grader.sh"
+GRADER_GUIDE="${REPO_ROOT}/rules/glass-atrium/core-outcome-record.md"
+EMITTER_MARKER="VERIFIED_FAIL_EMITTER:"
+EMITTER_EXPECTED=2
+
+@test "EMITTER grader source and guide declare the same verified_fail emitter count" {
+  [[ -f "${GRADER_SRC}" ]] || skip "grader source not found: ${GRADER_SRC}"
+  [[ -f "${GRADER_GUIDE}" ]] || skip "grader guide not found: ${GRADER_GUIDE}"
+
+  # Source side: one anchored comment line per emitter site. Guide side: the enumerated marker
+  # list lives inside a single table row, so occurrences are counted, not lines.
+  local src_count guide_count
+  src_count="$(grep -c "^[[:space:]]*# ${EMITTER_MARKER}" "${GRADER_SRC}" || true)"
+  [[ -n "${src_count}" ]] || src_count=0
+  guide_count="$(grep -o "${EMITTER_MARKER}" "${GRADER_GUIDE}" | wc -l | tr -d ' ')"
+  [[ -n "${guide_count}" ]] || guide_count=0
+
+  [[ "${src_count}" -eq "${guide_count}" ]] || {
+    printf 'emitter-count drift: %s declares %s, %s enumerates %s\n' \
+      "${GRADER_SRC}" "${src_count}" "${GRADER_GUIDE}" "${guide_count}" >&2
+    return 1
+  }
+  [[ "${src_count}" -eq "${EMITTER_EXPECTED}" ]] || {
+    printf 'expected %s verified_fail emitters, both sides carry %s\n' \
+      "${EMITTER_EXPECTED}" "${src_count}" >&2
+    return 1
+  }
+}
