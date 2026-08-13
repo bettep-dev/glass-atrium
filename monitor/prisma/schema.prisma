@@ -334,6 +334,11 @@ model Outcome {
   attributionSource String?       @map("attribution_source")
   summary           String
   reviewFlag        Boolean       @default(false) @map("review_flag")
+  // review_flag_reasons — reason tokens stamped by the recorder setter that raised the
+  // flag, so the screen renders the recorded cause instead of re-deriving it against a
+  // stale taxonomy. Empty array = legacy row (pre-carrier), rendered as unclassified;
+  // never NULL. Vocabulary SoT: hooks/lib/review-flag-reasons.sh.
+  reviewFlagReasons String[]      @default([]) @map("review_flag_reasons") @db.Text
   bodyMd            String?       @map("body_md")
   // Cycle 3.3.a (2026-05-20): plan AC-B4 backing data — DEV-agent Project Convention
   // Probe telemetry. Path-or-'greenfield' literal emitted by outcome-record.sh L1098/
