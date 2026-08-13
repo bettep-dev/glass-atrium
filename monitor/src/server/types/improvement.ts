@@ -301,7 +301,7 @@ export interface ImprovementResponse {
   // — touches late-added NULL-heavy columns, so a column gap degrades to empty buckets, not a
   // 503. Always present (empty buckets during the forward-looking NULL phase).
   confidence_distribution: ImprovementConfidenceDistribution;
-  // Grader grader write/edit cross-check state distribution. Isolated SELECT (Promise.allSettled)
+  // Grader write/edit cross-check state distribution. Isolated SELECT (Promise.allSettled)
   // like the other late-added columns, so a not-yet-migrated column degrades to
   // empty buckets rather than a 503. Always present.
   grader_crosscheck_summary: ImprovementGraderCrosscheckSummary;
