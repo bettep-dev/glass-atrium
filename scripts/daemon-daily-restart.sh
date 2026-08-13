@@ -691,7 +691,9 @@ pg_write_run "ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "role=${ROLE} session=${SESSI
 # rate is measurable from this log) and never propagated, because a drifted
 # roster must not turn a healthy restart into a failure.
 report_lifecycle_drift() {
-  local out rc=0 findings finding
+  # relay_max is a function-local literal (not a top-level readonly): the bats harness
+  # extracts this function standalone, so it must not depend on outer scope.
+  local out rc=0 findings finding relayed=0 total=0 relay_max=20
   out="$(PYTHONPATH="${SCRIPT_DIR}" python3 -m agent_lifecycle orphan-scan \
     --mode inject-list-mismatch --mode gate-roster-mismatch 2>&1)" || rc=$? # GA-ABSORB[handled@verdict-unknown-branch]: scan rc is captured and logged as verdict=unknown, never dropped
   if [[ "${rc}" -ne 0 ]]; then
@@ -701,16 +703,28 @@ report_lifecycle_drift() {
   # Findings are relayed verbatim: the renderer's fields are the offending AGENT name plus a
   # detail carrying the array, so re-deriving one field both mislabels it and couples this log
   # to the render format.
+  # No `head` in the pipeline: an early-closing reader would SIGPIPE awk, and under
+  # pipefail + the inherited ERR trap that non-zero status would kill the run AFTER the
+  # success row was written — a healthy restart reported to launchd as a failure. The
+  # relay ceiling is applied loop-side instead, with a marker so a truncated enumeration
+  # never reads as complete.
   findings="$(printf '%s\n' "${out}" \
-    | awk '/^ *\[(inject-list|gate-roster)-mismatch\]/ { sub(/^ +/, ""); print }' | head -20)"
+    | awk '/^ *\[(inject-list|gate-roster)-mismatch\]/ { sub(/^ +/, ""); print }')"
   if [[ -z "${findings}" ]]; then
     log "lifecycle-drift: verdict=clean"
     return 0
   fi
   log "lifecycle-drift: verdict=drift"
   while IFS= read -r finding; do
-    log "lifecycle-drift: ${finding}"
+    total=$((total + 1))
+    if ((relayed < relay_max)); then
+      log "lifecycle-drift: ${finding}"
+      relayed=$((relayed + 1))
+    fi
   done <<<"${findings}"
+  if ((total > relayed)); then
+    log "lifecycle-drift: relayed ${relayed} of ${total} findings (truncated)"
+  fi
   log "lifecycle-drift: recover with: cd ${SCRIPT_DIR} && python3 -m agent_lifecycle sync-inject && python3 -m agent_lifecycle sync-gate-roster"
 }
 

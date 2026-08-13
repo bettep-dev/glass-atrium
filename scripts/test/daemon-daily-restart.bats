@@ -509,6 +509,44 @@ make_drift_env() {
   grep -qF 'python3 -m agent_lifecycle sync-gate-roster' "${LOG_FILE}"
 }
 
+@test "report_lifecycle_drift: an over-ceiling finding set relays 20, marks truncation, and survives pipefail" {
+  extract_fn report_lifecycle_drift "${WORK}/drift.sh"
+  # 4000 findings: past the 64KB pipe buffer, which is what makes a truncating
+  # reader SIGPIPE the writer — a smaller set finishes writing before the reader
+  # closes and never reproduces.
+  mkdir -p "${WORK}/bin"
+  cat >"${WORK}/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+printf 'orphan-scan: 4000 violation(s) (registry SoT = 4000 agents):\n'
+i=1
+while [ "${i}" -le 4000 ]; do
+  printf '  [inject-list-mismatch] glass-atrium-dev-%s: missing from INJECT_AGENTS padding-padding-padding\n' "${i}"
+  i=$((i + 1))
+done
+STUB
+  chmod +x "${WORK}/bin/python3"
+  PATH="${WORK}/bin:${PATH}"
+  export PATH
+  export SCRIPT_DIR="${WORK}"
+  export LOG_FILE="${WORK}/run.log"
+  # Run under the production strict mode + ERR trap: a reader closing the pipeline
+  # early SIGPIPEs awk, and pipefail then aborts the whole run.
+  cat >"${WORK}/runner.sh" <<'RUNNER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+trap 'printf "ERR_TRAP line %s\n" "${LINENO}" >>"${LOG_FILE}"' ERR
+log() { printf '%s\n' "$*" >>"${LOG_FILE}"; }
+RUNNER
+  cat "${WORK}/drift.sh" >>"${WORK}/runner.sh"
+  printf 'report_lifecycle_drift\n' >>"${WORK}/runner.sh"
+  run bash "${WORK}/runner.sh"
+  [ "${status}" -eq 0 ]
+  ! grep -qF 'ERR_TRAP' "${LOG_FILE}"
+  [ "$(grep -cF 'lifecycle-drift: [inject-list-mismatch]' "${LOG_FILE}")" -eq 20 ]
+  grep -qF 'lifecycle-drift: relayed 20 of 4000 findings (truncated)' "${LOG_FILE}"
+}
+
 @test "report_lifecycle_drift: scan failure records verdict=unknown and stays advisory" {
   extract_fn report_lifecycle_drift "${WORK}/drift.sh"
   make_drift_env "HALT: orphan-scan could not read a store" 4
