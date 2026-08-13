@@ -686,4 +686,32 @@ log "daily restart completed successfully (session=${SESSION} fully recovered)"
 # Record success row in core.daemon_runs.
 pg_write_run "ok" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "role=${ROLE} session=${SESSION}"
 
+# 9. Lifecycle drift advisory — the two roster mismatch modes of the existing
+# orphan-scan entry point. Advisory only: the verdict is logged (so the drift
+# rate is measurable from this log) and never propagated, because a drifted
+# roster must not turn a healthy restart into a failure.
+report_lifecycle_drift() {
+  local out rc=0 names
+  out="$(PYTHONPATH="${SCRIPT_DIR}" python3 -m agent_lifecycle orphan-scan \
+    --mode inject-list-mismatch --mode gate-roster-mismatch 2>&1)" || rc=$? # GA-ABSORB[handled@verdict-unknown-branch]: scan rc is captured and logged as verdict=unknown, never dropped
+  if [[ "${rc}" -ne 0 ]]; then
+    log "lifecycle-drift: verdict=unknown (orphan-scan rc=${rc}) — ${out}"
+    return 0
+  fi
+  names="$(printf '%s\n' "${out}" \
+    | awk '/^ *\[(inject-list|gate-roster)-mismatch\]/ { sub(/:$/, "", $2); print $2 }' \
+    | sort -u | tr '\n' ' ')"
+  if [[ -z "${names// /}" ]]; then
+    log "lifecycle-drift: verdict=clean"
+    return 0
+  fi
+  log "lifecycle-drift: verdict=drift arrays=${names% }"
+  log "lifecycle-drift: recover with: cd ${SCRIPT_DIR} && python3 -m agent_lifecycle sync-inject && python3 -m agent_lifecycle sync-gate-roster"
+}
+
+# Role-gated so the advisory runs once per day, not once per restarted daemon.
+if [[ "${ROLE}" == "autoagent" ]]; then
+  report_lifecycle_drift
+fi
+
 exit 0

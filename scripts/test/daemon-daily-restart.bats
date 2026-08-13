@@ -463,3 +463,56 @@ STUB
   grep -qF 'TZ=America/New_York' "${DATE_CALLS}"
   run ! grep -qF 'TZ=auto' "${DATE_CALLS}"
 }
+
+# report_lifecycle_drift — advisory orphan-scan verdict recorded in the run log
+
+# Stub `python3` on PATH so the advisory never runs the real scan, plus the two
+# globals the extracted function reads (log sink + recovery-command prefix).
+make_drift_env() {
+  local out="$1" rc="$2"
+  mkdir -p "${WORK}/bin"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'cat <<%s\n%s\n%s\n' "'EOF'" "${out}" "EOF"
+    printf 'exit %s\n' "${rc}"
+  } >"${WORK}/bin/python3"
+  chmod +x "${WORK}/bin/python3"
+  PATH="${WORK}/bin:${PATH}"
+  export PATH
+  export SCRIPT_DIR="${WORK}"
+  export LOG_FILE="${WORK}/run.log"
+  # The real `log` lives outside the extracted shim.
+  log() { printf '%s\n' "$*" >>"${LOG_FILE}"; }
+}
+
+@test "report_lifecycle_drift: clean scan records verdict=clean" {
+  extract_fn report_lifecycle_drift "${WORK}/drift.sh"
+  make_drift_env "orphan-scan: clean (0 findings)" 0
+  # shellcheck source=/dev/null
+  source "${WORK}/drift.sh"
+  report_lifecycle_drift
+  grep -qF 'lifecycle-drift: verdict=clean' "${LOG_FILE}"
+}
+
+@test "report_lifecycle_drift: mismatches record the array names and the recovery command" {
+  extract_fn report_lifecycle_drift "${WORK}/drift.sh"
+  make_drift_env "orphan-scan: 2 finding(s)
+  [inject-list-mismatch] INJECT_AGENTS: missing glass-atrium-dev-x
+  [gate-roster-mismatch] DEV_SET: stale entry" 0
+  # shellcheck source=/dev/null
+  source "${WORK}/drift.sh"
+  report_lifecycle_drift
+  grep -qF 'lifecycle-drift: verdict=drift arrays=DEV_SET INJECT_AGENTS' "${LOG_FILE}"
+  grep -qF 'python3 -m agent_lifecycle sync-inject' "${LOG_FILE}"
+  grep -qF 'python3 -m agent_lifecycle sync-gate-roster' "${LOG_FILE}"
+}
+
+@test "report_lifecycle_drift: scan failure records verdict=unknown and stays advisory" {
+  extract_fn report_lifecycle_drift "${WORK}/drift.sh"
+  make_drift_env "HALT: orphan-scan could not read a store" 4
+  # shellcheck source=/dev/null
+  source "${WORK}/drift.sh"
+  run report_lifecycle_drift
+  [ "${status}" -eq 0 ]
+  grep -qF 'lifecycle-drift: verdict=unknown (orphan-scan rc=4)' "${LOG_FILE}"
+}
