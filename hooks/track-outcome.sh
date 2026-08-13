@@ -2309,17 +2309,13 @@ fi
 # _outcome_signal.negative_signal_hits, the ONE predicate every learning consumer reads.
 # One assignment site, TWO tokens: the operator clustering the carrier exists for is defeated when
 # two distinct provenances collapse into one label.
-case "${ATTRIBUTION_SOURCE}" in
-  structuredoutput-derived)
-    REVIEW_FLAG="true"
-    review_flag_add_reason "degraded-attribution-derived"
-    ;;
-  completion-synthesized)
-    REVIEW_FLAG="true"
-    review_flag_add_reason "degraded-attribution-synthesized"
-    ;;
-  *) ;;
-esac
+if attribution_in_set "${ATTRIBUTION_SOURCE}" "${DEGRADED_ATTRIBUTION_SOURCES}"; then
+  REVIEW_FLAG="true"
+  case "${ATTRIBUTION_SOURCE}" in
+    structuredoutput-derived) review_flag_add_reason "degraded-attribution-derived" ;;
+    *) review_flag_add_reason "degraded-attribution-synthesized" ;;
+  esac
+fi
 
 # Code-Based grader verdict is ADVISORY only. metric_pass is the WRITER self-report and is NEVER
 # force-overwritten — a grader/writer disagreement is surfaced via review_flag + the separate

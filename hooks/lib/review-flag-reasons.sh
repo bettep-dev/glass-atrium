@@ -20,6 +20,31 @@ readonly _REVIEW_FLAG_REASONS_LOADED=1
 #   REVIEW_FLAG_REASON_TOKENS is read by the source-er — an intended export of this file.
 readonly REVIEW_FLAG_REASON_TOKENS='overconfidence underconfidence empty-metric degraded-attribution-derived degraded-attribution-synthesized grader-contradiction correction-gap non-registry-agent-at-write probe-omission unregistered-agent-probe-exempt'
 
+# The attribution channels a WRITER emitted a complete [COMPLETION] block on — the ONLY rows a
+# writer-side omission may be held against. Space-padded, one declaration for every consumer.
+# The synthesis and truncation channels have no complete writer emission to hold responsible and
+# the instrumentation channels have no writer at all, so both stay out by contract.
+# shellcheck disable=SC2034
+#   WRITER_ATTRIBUTION_SOURCES is read by the source-er — an intended export of this file.
+readonly WRITER_ATTRIBUTION_SOURCES=' hook-input cron-derived structuredoutput-completion '
+
+# The complement this file owns: channels whose row exists WITHOUT a writer emission, so the row
+# reads healthy (confidence=low + metric_pass=false) while nothing was self-reported. Membership
+# is declared here; the per-channel provenance token is stamped at the recorder trigger.
+# shellcheck disable=SC2034
+#   DEGRADED_ATTRIBUTION_SOURCES is read by the source-er — an intended export of this file.
+readonly DEGRADED_ATTRIBUTION_SOURCES=' structuredoutput-derived completion-synthesized '
+
+# Membership in a space-padded channel set. Padding blocks a name-fragment match.
+attribution_in_set() {
+  local value="${1:-}" set_literal="${2:-}"
+  [[ -n "${value}" ]] || return 1
+  case "${set_literal}" in
+    *" ${value} "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Caller-scope: reads/writes REVIEW_FLAG_REASONS (comma-joined, deduplicated — the dual-write seam
 # splits it into the text[] carrier column).
 review_flag_add_reason() {
