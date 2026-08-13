@@ -2353,8 +2353,8 @@ function ResultTableRow({ row, onRowClick, closure }) {
 }
 
 // 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
-//   사유 텍스트 배지는 conf·metric·Check 컬럼과 중복 파생 → 테이블에선 tone 만, 전문은 title 이 운반 (사유별 배지는 detail 패널).
-//   분류는 window.UI.reviewFlagReasons SoT (improvement KPI 세그먼트와 공용, F12) — 여기서 재구현 금지.
+//   1행 1줄·고정폭 슬롯 규율 유지 → 테이블에선 글리프 하나만, 사유 전문은 title 이 운반 (사유별 배지는 detail 패널).
+//   분류는 window.UI.reviewFlagReasons SoT (기록된 사유 토큰 → 라벨, improvement KPI 세그먼트와 공용, F12) — 여기서 재파생 금지.
 //   경고급(review 사유·격리)이 정보급(budget-kill)을 이긴다 — 조치 필요 신호가 참고 신호에 가려지면 안 된다.
 function buildSummaryFlagO(row) {
   const reasons = row?.review_flag === true ? window.UI.reviewFlagReasons(row) : [];
@@ -2475,8 +2475,9 @@ function DetailMetadata({ row, detail }) {
         <div className="fs-micro text-faint uppercase tracking-wider">Flagged for review</div>
         <div className="text-ink inline-flex items-center gap-1.5 flex-wrap">
           {reviewFlagLabel(row?.review_flag)}
-          {row?.review_flag === true && window.UI.reviewFlagReasons(row).map((r) => (
-            <Badge key={r.key} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
+          {/* 미상 사유는 여러 토큰이 같은 버킷 키로 접히므로 index 를 섞어 React key 충돌을 막는다. */}
+          {row?.review_flag === true && window.UI.reviewFlagReasons(row).map((r, i) => (
+            <Badge key={`${r.key}#${i}`} role="status" tone="warn" icon title={r.title}>{r.label}</Badge>
           ))}
         </div>
       </div>

@@ -77,6 +77,10 @@ export interface OutcomeSearchRow {
   downgrade_origin: OutcomeDowngradeOrigin | null;
   revision_count: number;
   review_flag: boolean;
+  // Reason tokens stamped by the recorder setter that raised the flag, projected verbatim
+  // (never re-derived at read time). Empty = legacy row recorded before the carrier existed.
+  // Widened to string so a token from a newer recorder renders as unknown instead of dropping.
+  review_flag_reasons: string[];
   summary: string;
   // Truncated to 200 chars in route layer; null when DB column is NULL.
   lesson: string | null;
@@ -128,6 +132,8 @@ export interface OutcomeDetailResponse {
   correlation_id: string | null;
   cid: string | null;
   review_flag: boolean;
+  // Same carrier as the search row — see OutcomeSearchRow.review_flag_reasons.
+  review_flag_reasons: string[];
   // QA-review score string (shape cov=N,ins=N,instr=N,clar=N). NULL for non-QA rows — FE renders no dots.
   qa_score: string | null;
   // Full markdown body (no truncation) — null when DB column is NULL.

@@ -22,10 +22,10 @@ Reconcile the five tracked `inject-scope-rules.sh` bash arrays with the live DEV
 
 ## The gap this closes
 
-`~/.glass-atrium/hooks/inject-scope-rules.sh` holds six readonly roster arrays that drive scope-rule injection at SubagentStart — five CLI-tracked plus one manual-curated:
+Six readonly roster arrays drive scope-rule injection at SubagentStart — five CLI-tracked plus one manual-curated. Five live in `~/.glass-atrium/hooks/inject-scope-rules.sh`; STYLEREF_AGENTS lives in `~/.glass-atrium/hooks/lib/styleref-roster.sh`, the declaration-only lib the hook and the style_ref flag predicate both source, and the CLI writes it there:
 
 - **INJECT_AGENTS** — DEV (12) + QA (2): receives the comment-logging core block.
-- **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block.
+- **STYLEREF_AGENTS** — DEV (12): receives the STYLE-REF block. Declared in `hooks/lib/styleref-roster.sh` (sourced by the hook), NOT in the hook itself.
 - **MINIMALISM_AGENTS** — DEV (12): receives the MINIMALISM block.
 - **NAMING_AGENTS** — DEV minus glass-atrium-dev-swift (11) + glass-atrium-qa-code-reviewer (1) = 12: receives the naming delta-core block. Roster is deliberately narrower than the others — excludes glass-atrium-dev-swift AND glass-atrium-qa-debugger. This array is auto-reconciled by the CLI alongside the other four tracked arrays.
 - **BUDGET_DEV_AGENTS** — DEV minus the four daemon-carrier agents {glass-atrium-dev-nestjs, glass-atrium-dev-python, glass-atrium-dev-react, glass-atrium-dev-shell} = 9: receives the BUDGET-DEV sizing block (source `scoped/shared-turn-budget.md`). The carriers keep daemon-evolved in-body budget bullets (the daemon rewrites agent BODIES, never hook sources) — injecting on top would double-deliver. Tracked 5th array: reconciled via the predicate dev_roster − `_BUDGET_DAEMON_CARRIERS` (the carrier constant changes ONLY by manual governance, like NAMING's exclusions).

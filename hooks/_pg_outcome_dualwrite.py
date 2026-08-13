@@ -50,6 +50,7 @@
 # fixed exit 0).
 
 import json
+import os
 import sys
 import time
 
@@ -313,10 +314,27 @@ def _norm_varchar(v, maxlen):
 # Core write — single transaction, multi-row INSERT + optional UPSERT
 # ---------------------------------------------------------------------------
 
+def _registry_agents():
+    """The registry's agents object, or None when it cannot be read.
+
+    Membership is a key lookup under that object, never the file root. Fail-OPEN by
+    contract: an absent, unreadable or malformed registry yields None, and every caller
+    treats None as "skip validation" — a registry outage never drops or rewrites a row.
+    """
+    path = os.environ.get("CLAUDE_AGENT_REGISTRY_FILE") or os.path.expanduser(
+        "~/.glass-atrium/agent-registry.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            agents = json.load(f).get("agents")
+    except (OSError, IOError, ValueError):
+        return None
+    return agents if isinstance(agents, dict) else None
+
+
 def _build_outcome_row(outcome):
     """Apply normalization. Returns dict ready for named-param INSERT."""
     agent = _norm_varchar(outcome.get("agent", ""), 64) or "unknown"
-    return {
+    row = {
         "record_ts": outcome.get("timestamp") or outcome.get("record_ts"),
         "agent": agent,
         # Pass agent so an unrecognized task_type from a non-code agent resolves to
@@ -358,7 +376,21 @@ def _build_outcome_row(outcome):
         # ::enum cast; absent keys pass cleanly as NULL.
         "grader_verdict": _norm_text_or_null(outcome.get("grader_verdict")),
         "downgrade_origin": _norm_text_or_null(outcome.get("downgrade_origin")),
+        # review_flag_reasons — text[] carrier stamped at the recorder setter sites, so a
+        # flagged row names its own trigger instead of being re-derived at read time.
+        # Absent → empty array (legacy shape), never NULL.
+        "review_flag_reasons": _norm_text_array(outcome.get("review_flag_reasons")),
     }
+    # Membership guard at the single write seam: DETECT, never drop or rewrite. The agent value
+    # is part of the ON CONFLICT key, so rewriting it would convert the upsert into a duplicate
+    # row — the guard only RAISES the advisory flag and stamps its reason token.
+    agents = _registry_agents()
+    if agents is not None and row["agent"] not in agents:
+        row["review_flag"] = True
+        if "non-registry-agent-at-write" not in row["review_flag_reasons"]:
+            row["review_flag_reasons"] = row["review_flag_reasons"] + [
+                "non-registry-agent-at-write"]
+    return row
 
 
 def _build_signal_row(signal, outcome_id):
@@ -383,7 +415,8 @@ INSERT INTO core.outcomes (
     revision_count, evaluative_signal, directive_hint, lesson, concerns, qa_score,
     files_modified, correlation_id, cid, summary, review_flag, body_md,
     attribution_source, style_ref, style_ref_verified,
-    grader_verdict, downgrade_origin
+    grader_verdict, downgrade_origin,
+    review_flag_reasons
 ) VALUES (
     %(record_ts)s, %(agent)s, %(task_type)s::core."TaskType",
     %(result)s::core."OutcomeResult",
@@ -394,7 +427,8 @@ INSERT INTO core.outcomes (
     %(review_flag)s, %(body_md)s,
     %(attribution_source)s, %(style_ref)s, %(style_ref_verified)s,
     %(grader_verdict)s::core."GraderVerdict",
-    %(downgrade_origin)s::core."DowngradeOrigin"
+    %(downgrade_origin)s::core."DowngradeOrigin",
+    %(review_flag_reasons)s
 )
 ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     result = EXCLUDED.result,
@@ -417,7 +451,8 @@ ON CONFLICT (record_ts, agent, task_type) DO UPDATE SET
     style_ref = EXCLUDED.style_ref,
     style_ref_verified = EXCLUDED.style_ref_verified,
     grader_verdict = EXCLUDED.grader_verdict,
-    downgrade_origin = EXCLUDED.downgrade_origin
+    downgrade_origin = EXCLUDED.downgrade_origin,
+    review_flag_reasons = EXCLUDED.review_flag_reasons
 RETURNING id
 """
 
@@ -440,25 +475,63 @@ _OUTCOMES_INSERT_SQL_NO_QA = (
 assert "qa_score" not in _OUTCOMES_INSERT_SQL_NO_QA, \
     "legacy INSERT derivation failed to strip qa_score"
 
+
+def _strip_review_flag_reasons(sql):
+    """Same expand-phase shim as the qa_score variant, for the review_flag_reasons carrier:
+    until its migration lands in a given DB the column is absent, and naming it in the INSERT
+    would raise UndefinedColumn on EVERY outcome write (a total recorder outage, not a degraded
+    row). Each fragment strips the carrier together with its preceding separator so the
+    statement stays well-formed. Static strings only — no user data, no injection surface."""
+    fragments = (
+        ("    grader_verdict, downgrade_origin,\n    review_flag_reasons\n",
+         "    grader_verdict, downgrade_origin\n"),
+        ('    %(downgrade_origin)s::core."DowngradeOrigin",\n    %(review_flag_reasons)s\n',
+         '    %(downgrade_origin)s::core."DowngradeOrigin"\n'),
+        ("    downgrade_origin = EXCLUDED.downgrade_origin,\n"
+         "    review_flag_reasons = EXCLUDED.review_flag_reasons\n",
+         "    downgrade_origin = EXCLUDED.downgrade_origin\n"),
+    )
+    for old, new in fragments:
+        sql = sql.replace(old, new)
+    return sql
+
+
+_OUTCOMES_INSERT_SQL_NO_REASONS = _strip_review_flag_reasons(_OUTCOMES_INSERT_SQL)
+_OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS = _strip_review_flag_reasons(_OUTCOMES_INSERT_SQL_NO_QA)
+for _variant in (_OUTCOMES_INSERT_SQL_NO_REASONS, _OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS):
+    assert "review_flag_reasons" not in _variant, \
+        "legacy INSERT derivation failed to strip review_flag_reasons"
+
+_INSERT_SQL_BY_SCHEMA = {
+    (True, True): _OUTCOMES_INSERT_SQL,
+    (True, False): _OUTCOMES_INSERT_SQL_NO_REASONS,
+    (False, True): _OUTCOMES_INSERT_SQL_NO_QA,
+    (False, False): _OUTCOMES_INSERT_SQL_NO_QA_NO_REASONS,
+}
+
 # Per-process cache: None = unprobed, bool = column present/absent. The hook spawns one
 # helper process per outcome, so this is probed at most once per outcome write.
 _qa_score_col_present = None
+_review_flag_reasons_col_present = None
 
 
 def _outcomes_insert_sql(cur):
-    """Outcomes INSERT SQL matching the LIVE schema: the qa_score variant when the
-    column exists, else the pre-migration legacy form. The column probe is cached
-    per process and runs inside the caller's open transaction (read-only catalog
-    lookup, no lock)."""
-    global _qa_score_col_present
-    if _qa_score_col_present is None:
+    """Outcomes INSERT SQL matching the LIVE schema — one variant per (qa_score,
+    review_flag_reasons) presence pair, so a pre-migration DB keeps writing. The two
+    column probes share one cached catalog lookup, run inside the caller's open
+    transaction (read-only, no lock)."""
+    global _qa_score_col_present, _review_flag_reasons_col_present
+    if _qa_score_col_present is None or _review_flag_reasons_col_present is None:
         cur.execute(
-            "SELECT 1 FROM information_schema.columns "
+            "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema = 'core' AND table_name = 'outcomes' "
-            "AND column_name = 'qa_score'"
+            "AND column_name IN ('qa_score', 'review_flag_reasons')"
         )
-        _qa_score_col_present = cur.fetchone() is not None
-    return _OUTCOMES_INSERT_SQL if _qa_score_col_present else _OUTCOMES_INSERT_SQL_NO_QA
+        present = set(row[0] for row in cur.fetchall())
+        _qa_score_col_present = "qa_score" in present
+        _review_flag_reasons_col_present = "review_flag_reasons" in present
+    return _INSERT_SQL_BY_SCHEMA[
+        (_qa_score_col_present, _review_flag_reasons_col_present)]
 
 
 _SIGNALS_INSERT_SQL = """

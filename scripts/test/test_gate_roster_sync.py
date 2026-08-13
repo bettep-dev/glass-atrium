@@ -569,13 +569,14 @@ def test_rollback_failed_raises_and_cli_returns_exit_6(
     assert code == EXIT_ROLLBACK_FAILED
 
 
+def _array_line(var: str, names: list[str]) -> str:
+    return f'readonly {var}=" {" ".join(names)} "'
+
+
 def _inject_hook_text(budget_dev: list[str]) -> str:
-    """A minimal inject-scope-rules.sh: all 5 tracked arrays in-sync for the
-    13-name roster except a caller-driven BUDGET_DEV_AGENTS membership."""
-
-    def line(var: str, names: list[str]) -> str:
-        return f'readonly {var}=" {" ".join(names)} "'
-
+    """A minimal inject-scope-rules.sh: the 4 hook-resident tracked arrays in-sync
+    for the 13-name roster except a caller-driven BUDGET_DEV_AGENTS membership.
+    STYLEREF_AGENTS lives in the roster lib (_styleref_roster_text)."""
     qa = ["glass-atrium-qa-code-reviewer", "glass-atrium-qa-debugger"]
     naming = [n for n in _DEV_ROSTER if n != "glass-atrium-dev-swift"] + [
         "glass-atrium-qa-code-reviewer"
@@ -584,14 +585,21 @@ def _inject_hook_text(budget_dev: list[str]) -> str:
         "\n".join(
             [
                 "#!/usr/bin/env bash",
-                line("INJECT_AGENTS", _DEV_ROSTER + qa),
-                line("STYLEREF_AGENTS", _DEV_ROSTER),
-                line("MINIMALISM_AGENTS", _DEV_ROSTER),
-                line("NAMING_AGENTS", naming),
-                line("BUDGET_DEV_AGENTS", budget_dev),
+                _array_line("INJECT_AGENTS", _DEV_ROSTER + qa),
+                _array_line("MINIMALISM_AGENTS", _DEV_ROSTER),
+                _array_line("NAMING_AGENTS", naming),
+                _array_line("BUDGET_DEV_AGENTS", budget_dev),
             ]
         )
         + "\n"
+    )
+
+
+def _styleref_roster_text() -> str:
+    """The declaration-only roster lib holding the 5th tracked array."""
+    return (
+        "#!/usr/bin/env bash\n"
+        f"{_array_line('STYLEREF_AGENTS', _DEV_ROSTER)}\n"
     )
 
 
@@ -600,7 +608,7 @@ def test_parse_inject_text_returns_five_tuple_in_documented_order() -> None:
     expected_budget = [
         n for n in _DEV_ROSTER if n not in inject_sync._BUDGET_DAEMON_CARRIERS
     ]
-    text = _inject_hook_text(expected_budget)
+    text = _inject_hook_text(expected_budget) + _styleref_roster_text()
 
     inject, styleref, minimalism, naming, budget_dev = parse_inject_text(text)
 
@@ -617,7 +625,7 @@ def test_parse_inject_text_returns_five_tuple_in_documented_order() -> None:
 
 def test_parse_inject_text_loud_fails_without_budget_dev_array() -> None:
     """A hook missing the 5th tracked array raises ReaderError (loud, not a 4-tuple)."""
-    text = _inject_hook_text(["glass-atrium-dev-front"])
+    text = _inject_hook_text(["glass-atrium-dev-front"]) + _styleref_roster_text()
     without_budget = (
         "\n".join(
             ln for ln in text.splitlines() if "BUDGET_DEV_AGENTS" not in ln
@@ -648,6 +656,8 @@ def test_orphan_scan_budget_dev_lint_uses_shared_carrier_predicate(
         "glass-atrium-dev-shell"
     ]
     paths.inject_scope_rules.write_text(_inject_hook_text(drifted), encoding="utf-8")
+    paths.styleref_roster.parent.mkdir(parents=True, exist_ok=True)
+    paths.styleref_roster.write_text(_styleref_roster_text(), encoding="utf-8")
 
     report = run_scan(paths, ["inject-list-mismatch"])
     findings = report.by_mode("inject-list-mismatch")

@@ -457,10 +457,37 @@ else:
             return (None, 'io_error')
         except (ValueError, json.JSONDecodeError):
             return (None, 'parse_error')
-        recovered = meta.get('agentType', '')
+        # Teammate-class spawns carry the EPHEMERAL instance name in agentType and the REGISTERED
+        # type in customAgentType → prefer the registered key. A normal subagent sidecar carries
+        # customAgentType with a null VALUE (the key is present), so the guard is the
+        # isinstance/non-empty test, never a key-presence test.
+        recovered = meta.get('customAgentType', '')
+        if not isinstance(recovered, str) or not recovered:
+            recovered = meta.get('agentType', '')
         if not isinstance(recovered, str) or not recovered:
             return (None, 'missing_field')
         return (recovered, '')
+
+    _registry_cache = {}
+
+    def _registry_resolvable(name):
+        # Membership is a key lookup under the registry's agents object, never its root.
+        # Fail-OPEN: an absent/unreadable/malformed registry resolves True (validation skipped),
+        # so a registry outage never re-attributes, drops or degrades a row.
+        if 'agents' not in _registry_cache:
+            import os as _os
+            _path = _os.environ.get('CLAUDE_AGENT_REGISTRY_FILE') or _os.path.expanduser(
+                '~/.glass-atrium/agent-registry.json')
+            try:
+                with open(_path, 'r', encoding='utf-8') as _rf:
+                    _agents = json.load(_rf).get('agents')
+            except (OSError, IOError, ValueError):
+                _agents = None
+            _registry_cache['agents'] = _agents if isinstance(_agents, dict) else None
+        agents = _registry_cache['agents']
+        if agents is None:
+            return True
+        return bool(name) and name in agents
 
     def recover_agent_type_from_sidecar(transcript_val, session_val, agent_id_val):
         import os as _os
@@ -502,16 +529,28 @@ else:
 
     raw_type = d.get('agent_type', '')
     raw_id = d.get('agent_id', '')
-    if not raw_type and raw_id:
+    # Recovery trigger covers BOTH gaps: an absent envelope type AND a present-but-unregistered one
+    # (the teammate-class ephemeral instance name). Gated on the absent case alone, a teammate
+    # envelope never reached recovery and recorded its ephemeral name verbatim.
+    if raw_id and (not raw_type or not _registry_resolvable(raw_type)):
         _recovered = recover_agent_type_from_sidecar(
             d.get('transcript_path', ''),
             d.get('session_id', ''),
             raw_id,
         )
+        if _recovered and not _registry_resolvable(_recovered):
+            # One unregistered name is never rewritten into another.
+            diag(f'sidecar recovery discarded (not registry-resolvable): {_recovered}')
+            _recovered = ''
         if _recovered:
             agent_type = _recovered
             agent_id = raw_id
             diag(f'agent_type recovered from sidecar: {_recovered}')
+        elif raw_type:
+            # Failed recovery on a real, if unregistered, identity → keep the envelope value.
+            # The degraded-attribution label belongs to an ABSENT type only.
+            agent_type = raw_type
+            agent_id = raw_id
         else:
             agent_type = 'subagent_stop_missing'
             agent_id = raw_id
@@ -2228,6 +2267,12 @@ fi
 # high AND metric_pass=false), never the structural predicate alone: _outcome_signal
 # ._is_structural_polar_mismatch. Keyed on the structural predicate alone it would discard those two
 # live signals from both lesson buckets.
+# Each setter below stamps a concrete reason token into REVIEW_FLAG_REASONS, so a flagged row names
+# its own trigger instead of being re-derived against a stale taxonomy at read time. The vocabulary
+# is declared once in lib/review-flag-reasons.sh; the carrier is cleared by the final guard.
+# shellcheck source=lib/review-flag-reasons.sh
+source "${BASH_SOURCE%/*}/lib/review-flag-reasons.sh"
+REVIEW_FLAG_REASONS=""
 REVIEW_FLAG="false"
 if [[ "${CONFIDENCE}" = "high" ]] && [[ "${METRIC_PASS}" = "false" ]]; then
   if [[ "$(task_type_has_hard_test_bar "${TASK_TYPE}")" == "0" ]] || [[ "${WAS_OFF_ROLE:-false}" == "true" ]]; then
@@ -2237,9 +2282,11 @@ if [[ "${CONFIDENCE}" = "high" ]] && [[ "${METRIC_PASS}" = "false" ]]; then
   else
     # Genuine code row (dev-* on-role bug-fix/feature): high+false is a real overconfidence signal.
     REVIEW_FLAG="true"
+    review_flag_add_reason "overconfidence"
   fi
 elif [[ "${CONFIDENCE}" = "low" ]] && [[ "${METRIC_PASS}" = "true" ]]; then
   REVIEW_FLAG="true"
+  review_flag_add_reason "underconfidence"
 elif [[ -z "${METRIC_PASS}" ]]; then
   case "${ATTRIBUTION_SOURCE}" in
     subagent-stop-missing | agent-id-missing | completion-missing)
@@ -2249,6 +2296,7 @@ elif [[ -z "${METRIC_PASS}" ]]; then
     *)
       # writer-side / cron-side legitimate signal: EMPTY metric_pass = ambiguity signal → flag.
       REVIEW_FLAG="true"
+      review_flag_add_reason "empty-metric"
       ;;
   esac
 fi
@@ -2259,10 +2307,15 @@ fi
 # truncated_completion are real negatives already, and sweeping them in amplifies the very truncation
 # family under remediation. Negative-signal neutrality is carried by the paired exclusions in
 # _outcome_signal.negative_signal_hits, the ONE predicate every learning consumer reads.
-case "${ATTRIBUTION_SOURCE}" in
-  structuredoutput-derived | completion-synthesized) REVIEW_FLAG="true" ;;
-  *) ;;
-esac
+# One assignment site, TWO tokens: the operator clustering the carrier exists for is defeated when
+# two distinct provenances collapse into one label.
+if attribution_in_set "${ATTRIBUTION_SOURCE}" "${DEGRADED_ATTRIBUTION_SOURCES}"; then
+  REVIEW_FLAG="true"
+  case "${ATTRIBUTION_SOURCE}" in
+    structuredoutput-derived) review_flag_add_reason "degraded-attribution-derived" ;;
+    *) review_flag_add_reason "degraded-attribution-synthesized" ;;
+  esac
+fi
 
 # Code-Based grader verdict is ADVISORY only. metric_pass is the WRITER self-report and is NEVER
 # force-overwritten — a grader/writer disagreement is surfaced via review_flag + the separate
@@ -2271,6 +2324,7 @@ esac
 # verified_pass / unverified → no review_flag effect (preserve the polar-mismatch / EMPTY branches).
 if [[ "${GRADER_VERDICT}" = "verified_fail" ]]; then
   REVIEW_FLAG="true"
+  review_flag_add_reason "grader-contradiction"
   emit_error "DATA-100" "info" \
     "Code-Based grader: writer claim metric_pass=true contradicted by deterministic check — review_flag set (metric_pass NOT overwritten; grader is advisory)" \
     "Code-Based grader: writer claim metric_pass=true contradicted by deterministic check — review_flag set (metric_pass NOT overwritten; grader is advisory)" \
@@ -2286,6 +2340,7 @@ fi
 # SIG_EMIT / core.correction_signals dualwrite, EVALUATIVE_SIGNAL and DIRECTIVE_HINT are untouched.
 if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
   REVIEW_FLAG="true"
+  review_flag_add_reason "correction-gap"
   printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
     "${AGENT_TYPE}" >&2
 fi
@@ -2310,6 +2365,10 @@ fi
 # sourcing lib/style-ref-consts.sh.
 source "${BASH_SOURCE%/*}/lib/style-ref-consts.sh"
 style_ref_compute_review_flag
+
+# Carrier-emptiness invariant — a FINAL guard after every setter (the style-ref predicate is the
+# last one), never setter ordering: the polar-mismatch block re-initialises the flag mid-sequence.
+review_flag_finalize_reasons
 
 # Final summary
 SUMMARY="${S_SUMMARY:-$MSG_HEAD}"
@@ -2616,6 +2675,7 @@ if [ -x "${PG_HELPER}" ]; then
     --arg cid "${CID:-}" \
     --arg summary "${SUMMARY}" \
     --arg review_flag "${REVIEW_FLAG}" \
+    --arg review_flag_reasons "${REVIEW_FLAG_REASONS:-}" \
     --arg body_md "${BODY_MD}" \
     --arg attribution_source "${ATTRIBUTION_SOURCE:-}" \
     --arg style_ref "${STYLE_REF:-}" \
@@ -2637,7 +2697,8 @@ if [ -x "${PG_HELPER}" ]; then
         directive_hint: $directive_hint, lesson: $lesson, concerns: $concerns,
         qa_score: (if $qa_score == "" then null else $qa_score end),
         correlation_id: $correlation_id, cid: $cid, summary: $summary,
-        review_flag: $review_flag, body_md: $body_md,
+        review_flag: $review_flag, review_flag_reasons: $review_flag_reasons,
+        body_md: $body_md,
         files_modified: $files_modified,
         attribution_source: (if $attribution_source == "" then null else $attribution_source end),
         style_ref: (if $style_ref == "" then null else $style_ref end),

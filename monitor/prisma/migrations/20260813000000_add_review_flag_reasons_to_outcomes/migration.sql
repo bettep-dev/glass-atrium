@@ -1,0 +1,21 @@
+-- Add core.outcomes.review_flag_reasons — the reason carrier stamped at each review-flag
+-- setter site. Reason derivation previously ran at READ time in the browser against a
+-- taxonomy that named four of the real triggers, so the majority of flagged rows rendered
+-- a catch-all. The setter knows its own trigger; the carrier records it.
+--
+-- Shape mirrors the existing concerns column on the same table: TEXT[], NOT NULL, empty-array
+-- default. Legacy is the EMPTY ARRAY, never NULL, so an unclassified legacy row stays
+-- distinguishable from an unknown recorded token.
+--
+-- NO backfill of historical rows, deliberately: re-labelling recorded history is a database
+-- mutation requiring an explicit user decision, which this cycle surfaces rather than takes.
+--
+-- No index: no route predicates on the carrier — it is a projected display field only.
+--
+-- Lock posture: ADD COLUMN with a constant default is catalog-only on PG 11+ (no table
+-- rewrite), so ACCESS EXCLUSIVE is held for microseconds.
+--
+-- Reversal: ALTER TABLE "core"."outcomes" DROP COLUMN "review_flag_reasons";
+-- IF NOT EXISTS keeps a re-run, and a future pre-release re-squash into the init
+-- CREATE TABLE, a no-op (migrate deploy checksum-verifies applied migrations).
+ALTER TABLE "core"."outcomes" ADD COLUMN IF NOT EXISTS "review_flag_reasons" TEXT[] NOT NULL DEFAULT '{}';

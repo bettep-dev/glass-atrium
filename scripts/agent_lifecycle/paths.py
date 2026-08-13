@@ -114,6 +114,12 @@ class StorePaths:
         return self.ga_root / "hooks" / "inject-scope-rules.sh"
 
     @property
+    def styleref_roster(self) -> Path:
+        # Declaration-only lib holding STYLEREF_AGENTS — the one tracked array that does NOT
+        # live in the inject hook (both the hook and the flag predicate source it).
+        return self.ga_root / "hooks" / "lib" / "styleref-roster.sh"
+
+    @property
     def enforce_verification_gate(self) -> Path:
         # PreToolUse(Agent) gate — carries the unpadded DEV_SET="..." bash literal.
         return self.ga_root / "hooks" / "enforce-verification-gate.sh"

@@ -139,10 +139,19 @@ def parse_inject_arrays(
     (narrower roster, EXCLUDES qa-debugger), BUDGET_DEV_AGENTS = DEV − the
     daemon-carrier exclusions. Returns all five as ordered name lists, in that
     order. Raises ReaderError when any array is absent.
+
+    Four arrays live in the inject hook; STYLEREF_AGENTS lives in the
+    declaration-only roster lib the hook sources. Both texts are parsed as one
+    surface — the array regexes are line-anchored, so concatenation is safe.
     """
     return parse_inject_text(
-        paths.inject_scope_rules.read_text(encoding="utf-8"),
-        source=str(paths.inject_scope_rules),
+        "\n".join(
+            (
+                paths.inject_scope_rules.read_text(encoding="utf-8"),
+                paths.styleref_roster.read_text(encoding="utf-8"),
+            )
+        ),
+        source=f"{paths.inject_scope_rules} + {paths.styleref_roster}",
     )
 
 

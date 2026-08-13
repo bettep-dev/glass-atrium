@@ -217,6 +217,8 @@ interface OutcomeSearchDbRow {
   downgrade_origin: string | null;
   revision_count: number;
   review_flag: boolean;
+  // TEXT[] NOT NULL DEFAULT '{}' — legacy rows read as the empty array, never null.
+  review_flag_reasons: string[];
   summary: string;
   lesson: string | null;
   concerns: string[];
@@ -254,6 +256,8 @@ interface OutcomeDetailDbRow {
   cid: string | null;
   summary: string;
   review_flag: boolean;
+  // TEXT[] NOT NULL DEFAULT '{}' — legacy rows read as the empty array, never null.
+  review_flag_reasons: string[];
   // Raw qa_score text (shape cov=N,ins=N,instr=N,clar=N); NULL for non-QA rows.
   qa_score: string | null;
   body_md: string | null;
@@ -490,6 +494,7 @@ async function handleSearch(
           downgrade_origin::text         AS downgrade_origin,
           revision_count,
           review_flag,
+          review_flag_reasons,
           summary,
           lesson,
           concerns,
@@ -542,6 +547,7 @@ async function handleSearch(
           downgrade_origin: normalizeDowngradeOrigin(row.downgrade_origin),
           revision_count: row.revision_count,
           review_flag: row.review_flag,
+          review_flag_reasons: row.review_flag_reasons,
           summary: row.summary,
           lesson: truncateLesson(row.lesson),
           concerns: row.concerns.slice(0, CONCERNS_PREVIEW_LIMIT),
@@ -617,6 +623,7 @@ async function handleDetail(
         cid,
         summary,
         review_flag,
+        review_flag_reasons,
         qa_score,
         body_md,
         closed_at,
@@ -673,6 +680,7 @@ async function handleDetail(
       correlation_id: row.correlation_id,
       cid: row.cid,
       review_flag: row.review_flag,
+      review_flag_reasons: row.review_flag_reasons,
       qa_score: row.qa_score,
       body_md: row.body_md,
       closed_at: row.closed_at === null ? null : row.closed_at.toISOString(),

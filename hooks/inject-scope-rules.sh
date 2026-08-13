@@ -151,8 +151,11 @@ readonly WIKI_UNTRUSTED_MARKER_END='<!-- AGENT-INJECT:WIKI-UNTRUSTED:END -->'
 # Space-padded to block partial matches. Update when DEV/QA agents are added.
 readonly INJECT_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-qa-code-reviewer glass-atrium-qa-debugger glass-atrium-dev-swift "
 
-# style_ref scope-match — DEV ONLY (style_ref is DEV-scoped; QA excluded). Space-padded.
-readonly STYLEREF_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "
+# style_ref scope-match — DEV ONLY. Declared in lib/styleref-roster.sh, not here: the flag
+# predicate holds only agents that RECEIVED this block responsible, so both readers source one
+# declaration. A plain source, no registry read or JSON parse on the spawn path.
+# shellcheck source=lib/styleref-roster.sh
+source "${BASH_SOURCE%/*}/lib/styleref-roster.sh"
 
 # minimalism scope-match — DEV ONLY (minimalism reflex is DEV-scoped; QA excluded). Space-padded.
 readonly MINIMALISM_AGENTS=" glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift "

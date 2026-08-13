@@ -765,33 +765,50 @@ const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral:
 // 불투명 --elev fill 유지(§7.5 row blur 금지) — 스크롤 시 헤더가 본문 위에 떠도 가려지지 않음.
 const STICKY_TH_STYLE = { position: 'sticky', top: 0, background: 'rgb(var(--elev))', zIndex: 1 };
 
-// review_flag 사유 분류 SoT (F12) — core-outcome-record.md Mismatch Review Trigger 미러.
-// outcomes 행 배지 + improvement KPI 세그먼트 공용 → 두 화면이 동일 사유 버킷 강제.
-// search row 표시 필드만 사용하는 순수 함수 — 행 외 신호(style_ref 누락 등)는 'other' 폴백.
-// 반환 순서 = 우선순위 — [0]이 세그먼트 partition 기준 (한 행이 복수 사유 보유 가능).
+// review_flag 사유 라벨 SoT (F12) — recorder 가 행에 기록한 어휘(hooks/lib/review-flag-reasons.sh
+// REVIEW_FLAG_REASON_TOKENS)의 상위집합. 읽기 시점 재파생은 금지 — 레지스트리 미등록·귀속 채널 등
+// 행 밖 신호는 브라우저가 판단할 수 없어 예외 없이 catch-all 로 뭉개진다.
+const REVIEW_FLAG_REASON_META = {
+  'overconfidence': { label: 'Overconfident', title: 'Said sure, but the check failed' },
+  'underconfidence': { label: 'Underconfident', title: 'Doubted itself, but the check passed' },
+  'empty-metric': { label: 'No self-check', title: 'No self-check reported' },
+  'degraded-attribution-derived': { label: 'Derived record', title: 'Record derived from a structured output — the writer emitted no completion block' },
+  'degraded-attribution-synthesized': { label: 'Synthesized record', title: 'Record synthesized from the transcript — the writer emitted no completion block' },
+  'grader-contradiction': { label: 'Check mismatch', title: 'Claimed success, but the automatic check disagreed' },
+  'correction-gap': { label: 'Correction gap', title: 'A user correction was signalled without the distilled directive' },
+  'non-registry-agent-at-write': { label: 'Unknown agent', title: 'The recorded agent name was absent from the registry when the row was written' },
+  'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
+  'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
+};
+
+// carrier 가 빈 구행(사유 기록 이전) — 사유를 지어내지 않고 명시적 미분류 상태로 렌더.
+const REVIEW_FLAG_REASON_UNCLASSIFIED = { key: 'unclassified', label: 'Unclassified', title: 'Flagged before reasons were recorded — open the row' };
+
+// 세그먼트/배지 표시 순서 = 기록 어휘 순서. 미분류·미상 버킷은 항상 말미.
+const REVIEW_FLAG_REASON_ORDER = [...Object.keys(REVIEW_FLAG_REASON_META), 'unclassified', 'unknown'];
+
+// 반환 순서 = ORDER 고정 — [0]이 세그먼트 partition 기준이라 recorder append 순서에 흔들리면 안 된다.
 function reviewFlagReasons(row) {
   if (!row || row.review_flag !== true) return [];
+
+  const carrier = Array.isArray(row.review_flag_reasons) ? row.review_flag_reasons : [];
+  const codes = carrier.filter((code) => typeof code === 'string' && code !== '');
+  if (codes.length === 0) return [{ ...REVIEW_FLAG_REASON_UNCLASSIFIED }];
+
+  const seen = new Set();
   const reasons = [];
-  if (row.confidence === 'high' && row.metric_pass === false) {
-    reasons.push({ key: 'overconfident', label: 'Overconfident', title: 'Said sure, but the check failed' });
+  for (const code of codes) {
+    const meta = REVIEW_FLAG_REASON_META[code];
+    const dedupKey = meta ? code : `unknown/${code}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    reasons.push(meta
+      ? { key: code, label: meta.label, title: meta.title }
+      : { key: 'unknown', label: 'Unknown reason', title: `Reason not recognized by this build: ${code}` });
   }
-  if (row.confidence === 'low' && row.metric_pass === true) {
-    reasons.push({ key: 'underconfident', label: 'Underconfident', title: 'Doubted itself, but the check passed' });
-  }
-  if (row.metric_pass === null || row.metric_pass === undefined) {
-    reasons.push({ key: 'empty', label: 'No self-check', title: "No self-check reported" });
-  }
-  if (row.metric_pass === true && row.grader_verdict === 'verified_fail') {
-    reasons.push({ key: 'grader_mismatch', label: 'Check mismatch', title: 'Claimed success, but the auto-check disagreed' });
-  }
-  if (reasons.length === 0) {
-    reasons.push({ key: 'other', label: 'Other', title: 'Flagged for another reason — open the row' });
-  }
+  reasons.sort((a, b) => REVIEW_FLAG_REASON_ORDER.indexOf(a.key) - REVIEW_FLAG_REASON_ORDER.indexOf(b.key));
   return reasons;
 }
-
-// 세그먼트/배지 버킷 표시 순서 — reviewFlagReasons 의 push 순서(우선순위) 미러 (F12).
-const REVIEW_FLAG_REASON_ORDER = ['overconfident', 'underconfident', 'empty', 'grader_mismatch', 'other'];
 
 window.UI = {
   Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentBadge, KPI, DetailSurface, Modal, Tabs, CardHead, PageHeader,
@@ -803,5 +820,5 @@ window.UI = {
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER,
+  TONE_GLYPH, TONE_ICON, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
 };

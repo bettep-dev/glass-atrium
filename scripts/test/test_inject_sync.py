@@ -136,11 +136,20 @@ def _write_fixture(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         f"{_array_line('INJECT_AGENTS', inject)}\n"
-        f"{_array_line('STYLEREF_AGENTS', styleref)}\n"
         f"{_array_line('MINIMALISM_AGENTS', minimalism)}\n"
         f"{_array_line('NAMING_AGENTS', naming)}\n"
         f"{_array_line('BUDGET_DEV_AGENTS', budget_dev)}\n"
         f"{_array_line('BUDGET_ANALYSIS_AGENTS', _BUDGET_ANALYSIS)}\n",
+        encoding="utf-8",
+    )
+
+    # STYLEREF_AGENTS is the one tracked array declared outside the hook — the
+    # declaration-only roster lib the hook and the flag predicate both source.
+    roster_lib = root / "hooks" / "lib" / "styleref-roster.sh"
+    roster_lib.parent.mkdir(parents=True, exist_ok=True)
+    roster_lib.write_text(
+        "#!/usr/bin/env bash\n"
+        f"{_array_line('STYLEREF_AGENTS', styleref)}\n",
         encoding="utf-8",
     )
 
@@ -160,9 +169,16 @@ def _write_fixture(
 
 
 def _members(hook: Path, var: str) -> list[str]:
-    """Re-parse the live hook file and return the named array's token members."""
+    """Re-parse the live declaration files and return the array's token members.
+
+    Four arrays live in the hook, STYLEREF_AGENTS in the sibling roster lib; the
+    parse surface is both texts, matching what the reconcile reads.
+    """
+    roster_lib = hook.parent / "lib" / "styleref-roster.sh"
     inject, styleref, minimalism, naming, budget_dev = inject_sync.parse_inject_text(
         hook.read_text(encoding="utf-8")
+        + "\n"
+        + roster_lib.read_text(encoding="utf-8")
     )
     return {
         "INJECT_AGENTS": inject,
@@ -413,7 +429,11 @@ def test_plan_removes_flags_stale_array_names(tmp_path: Path) -> None:
         budget_dev=_budget_dev_expected(_DEV_ROSTER) + ["glass-atrium-dev-gone"],
         roster=_DEV_ROSTER,  # glass-atrium-dev-gone NOT in the roster -> stale in all 5 arrays
     )
-    text = paths.inject_scope_rules.read_text(encoding="utf-8")
+    text = (
+        paths.inject_scope_rules.read_text(encoding="utf-8")
+        + "\n"
+        + paths.styleref_roster.read_text(encoding="utf-8")
+    )
 
     removes = inject_sync.plan_removes(text, set(_DEV_ROSTER))
 
