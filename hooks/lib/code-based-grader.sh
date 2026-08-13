@@ -291,7 +291,12 @@ _cbg_path_matches_writes() {
 # Parse delegated to _cbg_classify_entry (comma-split stays local; trim / glob-detect / ~-expand /
 # path-shape live in the shared classifier) so gradeability stays consistent between grounding and
 # cross-check.
-_cbg_write_crosscheck() {
+#
+# Split in two: the classifier below decides the token, and the _cbg_write_crosscheck wrapper
+# records it. The verdict collapse in _cbg_gated_verdict is lossy — na and verified both fall to
+# the files-evidence arm, and withhold flattens into unverified — so the withheld-versus-inapplicable
+# distinction has no other carrier downstream.
+_cbg_classify_write_crosscheck() {
   local files="${1:-}"
   local scan="${GRADER_WRITE_SCAN:-}"
   local writes="${GRADER_WRITE_PATHS:-}"
@@ -351,6 +356,20 @@ _cbg_write_crosscheck() {
   else
     printf 'contradicted\n'
   fi
+}
+
+# Records the classified token to GRADER_CROSSCHECK_STATE_FILE when the caller wires one, then
+# emits it unchanged. The file is the only channel out: the verdict is read back through two levels
+# of command substitution, so a variable set here never reaches the recorder. Unwired (direct unit
+# test, main-session path) → record nothing, behaviour identical to before.
+_cbg_write_crosscheck() {
+  local state
+  state="$(_cbg_classify_write_crosscheck "$@")"
+  if [[ -n "${GRADER_CROSSCHECK_STATE_FILE:-}" ]]; then
+    # GA-ABSORB[benign]: telemetry side-channel — an unwritable spool must never fail the verdict.
+    printf '%s\n' "${state}" >"${GRADER_CROSSCHECK_STATE_FILE}" 2>/dev/null || true
+  fi
+  printf '%s\n' "${state}"
 }
 
 # _cbg_gated_verdict — the Step 4-5 cross-check routing shared by the bug-fix + feature arms. Each

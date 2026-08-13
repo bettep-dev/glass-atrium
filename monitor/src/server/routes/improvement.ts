@@ -49,6 +49,8 @@ import type {
   ImprovementStatsResponse,
   ImprovementStyleRefAgentRow,
   ImprovementStyleRefSummary,
+  ImprovementWriteCrosscheckBucket,
+  ImprovementWriteCrosscheckSummary,
   ImprovementTier,
   ImprovementTierBreakdown,
   ImprovementTierDistribution,
@@ -197,6 +199,23 @@ interface CycleCountRow {
 interface LifetimeCountRow {
   applied_all_time: bigint;
   rejected_all_time: bigint;
+}
+
+// Synthetic bucket key for outcome rows whose write_crosscheck is NULL. Distinct
+// from every recorder state token (na | verified | contradicted | withhold) so an
+// unwritten row can never be read as a recorded not-applicable.
+const WRITE_CROSSCHECK_UNRECORDED = "unrecorded";
+
+// Recorder token for the withheld branch — the subset review_flag_reasons does not encode.
+const WRITE_CROSSCHECK_WITHHOLD = "withhold";
+
+// Recorder token for cross-check inapplicable.
+const WRITE_CROSSCHECK_NA = "na";
+
+// write_crosscheck distribution row — feeds buildWriteCrosscheckSummary.
+interface WriteCrosscheckDbRow {
+  state: string;
+  row_count: bigint;
 }
 
 // Per-agent style_ref aggregation row shape — feeds rowToStyleRefAgentSummary.
@@ -521,7 +540,7 @@ async function handleImprovement(
     // still a genuine DB-down 503 (allSettled never rejects — catch reserved for real infra).
     // foldTierBreakdownRow([]) zero-init keeps tier_breakdown_30d a non-null object so the FE
     // renders its no-data indicator instead of crashing on null.
-    const [tierBreakdownResult, confidenceDistResult] = await Promise.allSettled([
+    const [tierBreakdownResult, confidenceDistResult, writeCrosscheckResult] = await Promise.allSettled([
       // 3-Tier baseline cohort split — fixed 30d window (TIER_BREAKDOWN_WINDOW_DAYS, independent
       // of the `windowDays` user filter). 3 COUNT() FILTER aggregates in one SELECT, folded by
       // foldTierBreakdownRow. Scoped to the positive registry allowlist (agent IN
@@ -556,6 +575,22 @@ async function handleImprovement(
         GROUP BY COALESCE(promotion_tier, 'unassigned')
         ORDER BY COALESCE(promotion_tier, 'unassigned')
       `,
+      // write_crosscheck distribution — the NAMED consumer of the grader cross-check
+      // state. Grouped over the same outcome window as outcome_summary; NULL folds to
+      // the 'unrecorded' key so a not-yet-written row is never counted as a state.
+      // The column is written only on rows that pass the recorder scan gate, so no
+      // task_type/result predicate is repeated here — the column's own NULL-ness is
+      // the gate. Cast to text keeps the query independent of whether the column
+      // lands as an enum or a plain text token.
+      prisma.$queryRaw<WriteCrosscheckDbRow[]>`
+        SELECT
+          COALESCE(write_crosscheck::text, ${WRITE_CROSSCHECK_UNRECORDED}) AS state,
+          COUNT(*)::bigint AS row_count
+        FROM core.outcomes
+        ${outcomeWhere}
+        GROUP BY COALESCE(write_crosscheck::text, ${WRITE_CROSSCHECK_UNRECORDED})
+        ORDER BY 1
+      `,
     ]);
 
     // Isolated fold: fulfilled → real rows; rejected (column absent / query
@@ -582,6 +617,19 @@ async function handleImprovement(
       request.log.warn(
         { err: confidenceDistResult.reason, route: "/api/improvement" },
         "confidence_distribution query failed — degrading to empty buckets (optional metric)",
+      );
+    }
+
+    // Same isolated-fold contract. A rejection here is the expected state until the
+    // write_crosscheck column exists — degrade to empty buckets, never a 503.
+    let writeCrosscheckRows: WriteCrosscheckDbRow[];
+    if (writeCrosscheckResult.status === "fulfilled") {
+      writeCrosscheckRows = writeCrosscheckResult.value;
+    } else {
+      writeCrosscheckRows = [];
+      request.log.warn(
+        { err: writeCrosscheckResult.reason, route: "/api/improvement" },
+        "write_crosscheck query failed — degrading to empty buckets (optional metric)",
       );
     }
 
@@ -659,6 +707,10 @@ async function handleImprovement(
       style_ref_summary: styleRefSummary,
       tier_breakdown_30d: tierBreakdown,
       confidence_distribution: confidenceDistribution,
+      write_crosscheck_summary: buildWriteCrosscheckSummary(
+        writeCrosscheckRows,
+        windowDays,
+      ),
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/improvement", error);
@@ -1843,6 +1895,54 @@ export function foldConfidenceDistribution(
     buckets,
     overall_confidence_observed_avg:
       weightedCount === 0 ? null : roundRate(weightedSum / weightedCount),
+  };
+}
+
+// The named consumer of the grader write-crosscheck state: folds the grouped counts
+// into the API summary and pulls out the two buckets the state exists to separate.
+//
+// Non-duplication against review_flag_reasons (the reason this consumer reads a
+// different column instead of that one): review_flag_reasons stamps a token only on
+// rows the recorder flagged, and its grader-contradiction token fires on the
+// verified_fail verdict. Both the withhold branch and the na branch promote to the
+// same unverified verdict and emit no reason token, so no value of
+// review_flag_reasons — present, empty, or absent — separates a withheld row from a
+// not-applicable one. This fold is the only surface that does.
+//
+// What it cannot do, so the counts are not over-read:
+//   - It cannot reconstruct the state for a row written before the column existed.
+//     Those land in the 'unrecorded' bucket and stay there: an outcome row carries no
+//     session or transcript key, so the state is not recomputable from persisted rows.
+//   - withheld_count is therefore a floor over recorded rows, never a historical total,
+//     and a historical estimate drawn from the unverified verdict is an upper bound on
+//     a superset, not a measurement of this subset.
+//   - The three withhold entry conditions (unverifiable transcript, empty write
+//     history, partial claim mismatch) share one token and stay indistinguishable here.
+export function buildWriteCrosscheckSummary(
+  rows: WriteCrosscheckDbRow[],
+  windowDays: number,
+): ImprovementWriteCrosscheckSummary {
+  const buckets: ImprovementWriteCrosscheckBucket[] = rows.map((row) => ({
+    state: row.state,
+    row_count: bigintToNumber(row.row_count),
+  }));
+
+  let recordedTotal = 0;
+  let withheldCount = 0;
+  let notApplicableCount = 0;
+  for (const bucket of buckets) {
+    if (bucket.state === WRITE_CROSSCHECK_UNRECORDED) continue;
+    recordedTotal += bucket.row_count;
+    if (bucket.state === WRITE_CROSSCHECK_WITHHOLD) withheldCount = bucket.row_count;
+    if (bucket.state === WRITE_CROSSCHECK_NA) notApplicableCount = bucket.row_count;
+  }
+
+  return {
+    window_days: windowDays,
+    buckets,
+    recorded_total: recordedTotal,
+    withheld_count: withheldCount,
+    not_applicable_count: notApplicableCount,
   };
 }
 

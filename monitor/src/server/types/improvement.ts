@@ -189,6 +189,44 @@ export interface ImprovementStyleRefSummary {
   overall_fake_rate: number | null;
 }
 
+// One recorded grader write-crosscheck state and how many outcome rows carry it.
+export interface ImprovementWriteCrosscheckBucket {
+  // Recorder state token: na | verified | contradicted | withhold · plus the
+  // synthetic 'unrecorded' key for rows whose column is NULL.
+  state: string;
+  row_count: number;
+}
+
+// Distribution of the grader write-crosscheck state across the outcome window.
+//
+// Why this is NOT a duplicate of review_flag_reasons: that column stamps a reason
+// only on rows the recorder actually flagged, and its grader-contradiction token
+// fires on the verified_fail verdict alone. The withhold and na branches both
+// promote to the SAME unverified verdict and carry no distinguishing reason token,
+// so the withheld-versus-not-applicable split is unreadable from review_flag_reasons
+// by construction. This summary reads the state column, which is the only surface
+// that separates them.
+//
+// Distinguishing limits, stated so the numbers are not over-read:
+//   - `unrecorded` is not a state — it is the absence of one. Rows written before
+//     the column existed cannot be recomputed: an outcome row carries no session or
+//     transcript key, so the state is unrecoverable, never zero.
+//   - `withheld_count` is a floor over recorded rows only, never a total over history.
+//   - The three withhold entry conditions (unverifiable transcript, empty write
+//     history, partial claim mismatch) collapse into one token — this summary cannot
+//     tell them apart.
+export interface ImprovementWriteCrosscheckSummary {
+  window_days: number;
+  // One bucket per observed state, including 'unrecorded'; sorted by state.
+  buckets: ImprovementWriteCrosscheckBucket[];
+  // Rows carrying a real state token (excludes 'unrecorded').
+  recorded_total: number;
+  // The subset review_flag_reasons cannot encode.
+  withheld_count: number;
+  // Cross-check inapplicable (unwired, glob, or no path-shaped files entry).
+  not_applicable_count: number;
+}
+
 // Per-proposal compact summary (UI card row). snake_case matches project convention.
 export interface ImprovementProposalRow {
   id: number;
@@ -263,6 +301,10 @@ export interface ImprovementResponse {
   // — touches late-added NULL-heavy columns, so a column gap degrades to empty buckets, not a
   // 503. Always present (empty buckets during the forward-looking NULL phase).
   confidence_distribution: ImprovementConfidenceDistribution;
+  // Grader write-crosscheck state distribution. Isolated SELECT (Promise.allSettled)
+  // like the other late-added columns, so a not-yet-migrated column degrades to
+  // empty buckets rather than a 503. Always present.
+  write_crosscheck_summary: ImprovementWriteCrosscheckSummary;
 }
 
 // /api/improvement/stats (UI cards)

@@ -92,6 +92,19 @@ enum GraderVerdict {
   @@schema("core")
 }
 
+/// Transcript Write/Edit cross-check state emitted by hooks/lib/code-based-grader.sh
+/// (_cbg_classify_write_crosscheck). `withhold` covers the three non-demonstrable branches —
+/// unverifiable transcript, empty write history, partial mismatch — which `na` (inapplicable)
+/// does not, and which the grader_verdict collapse discards.
+enum GraderCrosscheck {
+  na
+  verified
+  contradicted
+  withhold
+
+  @@schema("core")
+}
+
 /// Provenance of how a graded outcome arose, recorded alongside grader_verdict.
 /// SoT = rules/core-outcome-record.md Field Input Guide → downgrade_origin.
 enum DowngradeOrigin {
@@ -370,6 +383,11 @@ model Outcome {
   // VALIDATE deferred to post-verify gated on a zero-out-of-set audit (migration SQL).
   graderVerdict     GraderVerdict?   @map("grader_verdict")
   downgradeOrigin   DowngradeOrigin? @map("downgrade_origin")
+  // Four-value transcript cross-check state, recorded on the same grader pass that computes it.
+  // grader_verdict collapses it (na and verified both fall through, withhold flattens into
+  // unverified), so the withheld-versus-inapplicable split has no other carrier — review_flag_reasons
+  // encodes the contradiction verdict only. NULL = cross-check never attempted, distinct from `na`.
+  graderCrosscheck  GraderCrosscheck? @map("grader_crosscheck")
   // TRUE = 오염 윈도우 격리 행 (2026-05-24 .. 2026-06-06 18:04 KST · metric_pass=false ·
   // grader_verdict NULL) — 학습 파이프라인 소비자가 제외해야 할 quarantine 플래그.
   // raw-SQL 런북(maintenance/poisoned-window-quarantine)만 set — writer/grader 미기입.

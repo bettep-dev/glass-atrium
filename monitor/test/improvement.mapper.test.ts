@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 
 import {
   buildStyleRefSummary,
+  buildWriteCrosscheckSummary,
   foldConfidenceDistribution,
   foldTierBreakdownRow,
   rowToProposalSummary,
@@ -360,4 +361,49 @@ test("buildStyleRefSummary: empty rows → all-zero counts + null rates", () => 
   assert.strictEqual(out.overall_greenfield_count, 0);
   assert.strictEqual(out.overall_fake_rate, null);
   assert.strictEqual(out.overall_emission_rate, null);
+});
+
+// buildWriteCrosscheckSummary — grader write-crosscheck state distribution fold.
+
+test("buildWriteCrosscheckSummary: empty rows → empty buckets + zero counts (column absent)", () => {
+  // Pre-migration degradation path: the isolated query rejects, the route folds [].
+  const out = buildWriteCrosscheckSummary([], 30);
+
+  assert.strictEqual(out.window_days, 30, "window_days echoes the passed param");
+  assert.deepStrictEqual(out.buckets, [], "empty buckets array");
+  assert.strictEqual(out.recorded_total, 0);
+  assert.strictEqual(out.withheld_count, 0);
+  assert.strictEqual(out.not_applicable_count, 0);
+});
+
+test("buildWriteCrosscheckSummary: withheld is separated from not-applicable", () => {
+  // The single distinction the state column exists for — review_flag_reasons collapses
+  // both branches into the same unverified verdict with no reason token.
+  const rows = [
+    { state: "contradicted", row_count: 2n },
+    { state: "na", row_count: 7n },
+    { state: "verified", row_count: 11n },
+    { state: "withhold", row_count: 3n },
+  ];
+  const out = buildWriteCrosscheckSummary(rows, 7);
+
+  assert.strictEqual(out.withheld_count, 3);
+  assert.strictEqual(out.not_applicable_count, 7);
+  assert.strictEqual(out.recorded_total, 23, "sum over recorded state tokens");
+  assert.strictEqual(out.buckets.length, 4);
+});
+
+test("buildWriteCrosscheckSummary: unrecorded rows stay outside every recorded count", () => {
+  // Rows written before the column existed are unrecoverable (no session/transcript key
+  // on an outcome row), so they must not read as a recorded not-applicable.
+  const rows = [
+    { state: "unrecorded", row_count: 278n },
+    { state: "withhold", row_count: 1n },
+  ];
+  const out = buildWriteCrosscheckSummary(rows, 30);
+
+  assert.strictEqual(out.recorded_total, 1, "unrecorded excluded from the recorded total");
+  assert.strictEqual(out.not_applicable_count, 0, "absence of a state is not a state");
+  assert.strictEqual(out.withheld_count, 1, "floor over recorded rows, not a historical total");
+  assert.strictEqual(out.buckets.length, 2, "the unrecorded bucket still surfaces");
 });
