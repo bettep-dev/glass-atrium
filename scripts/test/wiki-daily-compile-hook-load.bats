@@ -28,8 +28,9 @@ setup() {
   [[ -f "${ENVELOPE_LIB}" ]] || skip "wiki-envelope.sh not found: ${ENVELOPE_LIB}"
   WORK="$(mktemp -d -t wiki-hookload-bats.XXXXXX)"
   export GA_DATA_ROOT="${WORK}/ga-data"
-  # Per-test TMPDIR: it is both the pinned run-dir parent (AC2 — user-owned, no world-writable
-  # ancestor) and the observation window for the teardown assertion.
+  # The run dir is minted under the GA data root, never under TMPDIR (AC2), so the run root is
+  # the observation window for both the teardown assertion and the hostile-TMPDIR row.
+  RUN_ROOT="${GA_DATA_ROOT}/data/wiki-compile-runs"
   export TMPDIR="${WORK}/tmp"
   mkdir -p "${TMPDIR}"
 }
@@ -79,9 +80,14 @@ SH
 
   STUB_ARGV_DUMP="${SANDBOX}/claude-argv.txt"
   export STUB_ARGV_DUMP
+  # The stub's own cwd IS the run dir the model would resolve project/local settings against, and
+  # it only exists while the run is live — recording it here is the only way to assert on it.
+  STUB_CWD_DUMP="${SANDBOX}/claude-cwd.txt"
+  export STUB_CWD_DUMP
   cat >"${SANDBOX}/claude-stub" <<'SH'
 #!/bin/sh
 printf '%s\n' "$@" >"${STUB_ARGV_DUMP}"
+pwd >"${STUB_CWD_DUMP}"
 nonce=$(printf '%s\n' "$@" | sed -n 's/^envelope-nonce: \([0-9a-f]\{32\}\)$/\1/p' | head -1)
 if [ -z "${nonce}" ]; then
   echo "STUB: prompt carries no envelope-nonce line" >&2
@@ -183,7 +189,7 @@ log_body() {
   grep -q '^acquire wiki-compile$' "${LOCK_TRACE}"
   grep -q '^release wiki-compile$' "${LOCK_TRACE}"
   # A leaked run dir means the run-dir cleanup replaced the lock trap instead of joining it.
-  run find "${TMPDIR}" -maxdepth 1 -name 'wiki-compile-run.*'
+  run find "${RUN_ROOT}" -maxdepth 1 -name 'wiki-compile-run.*'
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   # Structural guard on the same pin: exactly ONE trap installation exists, so a future cleanup
@@ -207,15 +213,58 @@ log_body() {
   [ "$output" -eq 0 ]
 }
 
-@test "AC2 the run cwd is a private mktemp dir under the default TMPDIR, never the shared one" {
+@test "AC2 the run cwd is a private mktemp dir under the script-owned run root, never the shared one" {
   run grep -c 'cd /tmp' "${WIKI_SCRIPT}"
   [ "$output" -eq 0 ]
-  grep -q 'mktemp -d -t wiki-compile-run\.XXXXXX' "${WIKI_SCRIPT}"
+  grep -q 'mktemp -d "\${WIKI_RUN_ROOT}/wiki-compile-run\.XXXXXX"' "${WIKI_SCRIPT}"
   grep -q 'chmod 700 "\$RUN_DIR"' "${WIKI_SCRIPT}"
   grep -q 'cd -- "\$RUN_DIR"' "${WIKI_SCRIPT}"
-  # mktemp -t resolves against the default TMPDIR; an explicit shared-dir parent would undo it.
-  run grep -c 'mktemp -d -p /tmp' "${WIKI_SCRIPT}"
+  # Every -t / -p form takes its parent from the environment or from a shared dir; the owned root
+  # is what makes the ancestor property structural rather than re-asserted per invocation.
+  run grep -c -- 'mktemp -d -t' "${WIKI_SCRIPT}"
   [ "$output" -eq 0 ]
+  run grep -c -- 'mktemp -d -p' "${WIKI_SCRIPT}"
+  [ "$output" -eq 0 ]
+}
+
+@test "AC2 a world-writable non-sticky TMPDIR cannot become the run-dir parent" {
+  make_sandbox
+  seed_raw alpha.md
+  # The launchd/cron shape the guard has to survive: TMPDIR naming an attacker-writable dir that
+  # is NOT sticky, so a sticky-bit test would wave it through.
+  local hostile="${WORK}/hostile-tmp"
+  mkdir -p "${hostile}"
+  chmod 0777 "${hostile}"
+  export TMPDIR="${hostile}"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ]
+
+  # Structural, not asserted: the cwd the model actually got is under the owned root, so the
+  # hostile dir was never on the project/local resolution path at all.
+  local model_cwd
+  model_cwd="$(cat "${STUB_CWD_DUMP}")"
+  [[ "${model_cwd}" == "${RUN_ROOT}/wiki-compile-run."* ]] || return 1
+  [[ "${model_cwd}" != "${hostile}/"* ]] || return 1
+  run find "${hostile}" -maxdepth 1 -name 'wiki-compile-run.*'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -f "${NOTES_DIR}/alpha.md" ]
+}
+
+@test "AC2 an other-writable run root is refused with exit 7 before any spend" {
+  make_sandbox
+  seed_raw alpha.md
+  # Pre-create the owned root world-writable: the belt-and-braces walk must catch the component
+  # even though the script would otherwise chmod it back to 700.
+  mkdir -p "${RUN_ROOT}"
+  chmod 0777 "${GA_DATA_ROOT}/data"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 7 ]
+  [ "$(notes_file_count)" -eq 0 ]
+  [[ "$output" == *"run dir ancestor is world-writable"* ]]
+  [ ! -f "${STUB_ARGV_DUMP}" ]
 }
 
 @test "AC7 the prompt carries the untrusted-data clause, the nonce line and the envelope grammar" {

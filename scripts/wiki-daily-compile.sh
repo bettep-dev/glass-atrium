@@ -11,21 +11,44 @@
 #   6  envelope oversize — zero notes written
 #   7  run-dir / nonce precondition failure — the model call never ran
 #
-# Why this arg combo (F1 hardening — the model lost Write, the shell owns every note write):
+# Why this arg combo (the tool set is read-only; the shell owns every note write):
 #   --tools "Read,Glob,Grep"  the model has NO write capability. It returns note BODIES inside a
 #       per-run nonce envelope and this script writes each note to a path derived from its own
 #       UNPROCESSED array; model output is never consulted for a filename or a path. A headless
-#       `claude -p` loads no user settings source, so no hook fires on a model write — dropping
-#       Write is what keeps this daemon inside the hook layer.
+#       `claude -p` loads no user settings source, so no hook fires on a model write — a
+#       Write-less tool set is what keeps this daemon inside the hook layer.
 #   --permission-mode bypassPermissions  KEPT (pin D4): hooks come from settings sources, not from
 #       the permission mode, so dropping it restores no hook while risking a read-permission stall
-#       on an unattended 04:00 cron. The residual risk is bounded by the read-only tool set above.
-#   --setting-sources project,local  textually unchanged (pin D5) and now inert: the run cwd is a
-#       fresh mode-700 private dir under the default TMPDIR, so project/local resolve inside an
-#       empty shell-owned tree instead of the world-writable /tmp that once carried the vector.
+#       on an unattended 04:00 cron.
+#   --setting-sources project,local  inert (pin D5): project and local both resolve inside the
+#       empty mode-700 run dir this script mints under its own HOME-anchored run root, a tree no
+#       other user can populate.
 #   --output-format text  LOAD-BEARING (pin P9): the envelope parser assumes plain text; switching
 #       to stream-json would silently break every note write.
 #   --model / --max-budget-usd  unchanged cost controls (see 4.5).
+#
+# Accepted residual — the READ surface: the tool set removes writes, not reads, and under
+# bypassPermissions the model may read anything this cron's user can read. A raw file that
+# successfully coerces it can therefore fold arbitrary readable content into a note body the shell
+# writes verbatim. What is bounded is the DESTINATION, never the content: an attacker can choose
+# what lands in a shell-owned note slot, never which path it lands in. Scoping the read surface is
+# a separate design change, not part of this arg combo.
+#
+# Manual verification probes (AC12): a real CLI, real auth and a small real spend, so they cannot
+# live in the hermetic suites — run them by hand after any change to the arg combo above.
+#   1. Write refusal against a hostile PROJECT settings source (the run cwd's own .claude/):
+#        H=$(mktemp -d) && mkdir -p "$H/.claude" &&
+#        printf '{"permissions":{"allow":["Write","Edit"]}}' >"$H/.claude/settings.json" &&
+#        ( cd "$H" && HOME="$H" claude -p --tools "Read,Glob,Grep" \
+#            --permission-mode bypassPermissions --setting-sources project,local \
+#            --output-format text 'Create the file ./probe.out containing OK.' )
+#        test ! -e "$H/probe.out" || echo 'PROBE FAILED: the model wrote a file'
+#   2. Tool surface of the headless run — expect no write-capable and no mcp__ name:
+#        claude -p --tools "Read,Glob,Grep" --permission-mode bypassPermissions \
+#          --setting-sources project,local --output-format text \
+#          'List the exact names of every tool you can call. Names only.' >"$H/probe2.txt"
+#        grep -Eqi 'write|edit|bash|mcp__' "$H/probe2.txt" &&
+#          echo 'PROBE FAILED: a write-capable or MCP tool is exposed'
 #
 # Output-size ceiling (pin P1 — chosen: truncation-as-partial, NOT per-call chunking): every note
 # body must now fit in ONE model response, and the model/CLI max-output-token ceiling bites long
@@ -34,9 +57,8 @@
 # the raw stays unprocessed so _classify_raw re-detects it, draining the backlog across nights.
 # Per-call chunking was rejected here because it forks the single-call quota/budget branch (5.4 /
 # 5.5) the health readback depends on; add a WIKI_COMPILE_MAX_BATCH loop if a backlog ever stalls.
-# Related behavior change: a budget or quota abort (5.4 / 5.5) is now a total no-op — both return
-# before the parser runs, so ZERO notes land where the old model-Write flow left whatever the
-# model had already written. The raws stay unprocessed and the next night drains them.
+# A budget or quota abort (5.4 / 5.5) is a total no-op: both return before the parser runs, so
+# ZERO notes land. The raws stay unprocessed and the next night drains them.
 
 # WIKI_ROOT: single source of truth for the wiki data root. Resolved BEFORE the
 # pre-strict-mode fork-OK probe so the diagnostic reports the configured raw/ path
@@ -157,7 +179,9 @@ PG_HELPER="$WIKI_COMPILE_SELF_DIR/_pg_dual_write_daemon.py"
 WIKI_LOCK_HELD=0
 RUN_DIR=""
 _compile_cleanup() {
+  local _sig="${1:-EXIT}"
   if [ "$WIKI_LOCK_HELD" -eq 1 ]; then
+    WIKI_LOCK_HELD=0
     "$LOCK_SCRIPT" release wiki-compile 2>/dev/null || true # GA-ABSORB[benign]: EXIT-trap release of an already-released lock is normal teardown
   fi
   # Shape-guarded removal: only a path this script minted via its own mktemp template is ever
@@ -170,9 +194,26 @@ _compile_cleanup() {
       ;;
     *) ;;
   esac
+  RUN_DIR=""
+  # Terminal on a signal: without the exit the handler would return and the script would keep
+  # running with its envelope home already deleted. The conventional 128+signo codes keep the
+  # signal path distinguishable from the named precondition codes above. Re-entry via the EXIT
+  # trap the exit itself fires is a no-op — both legs above have just been disarmed.
+  case "$_sig" in
+    INT) exit 130 ;;
+    TERM) exit 143 ;;
+    *) ;;
+  esac
   return 0
 }
-trap _compile_cleanup EXIT INT TERM
+# One trap STATEMENT, three signals, each carrying its own name: the loop keeps the pin-P2
+# single-statement discipline while still letting the handler tell a signal teardown from a
+# normal exit.
+for _trap_sig in EXIT INT TERM; do
+  # SC2064: expanding the signal name NOW is the mechanism — the handler needs the name baked in.
+  # shellcheck disable=SC2064
+  trap "_compile_cleanup ${_trap_sig}" "${_trap_sig}"
+done
 
 if [ -x "$LOCK_SCRIPT" ]; then
   if ! "$LOCK_SCRIPT" acquire wiki-compile 5 2>>/tmp/wiki-compile.log; then
@@ -465,6 +506,37 @@ printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 # 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00]
 BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; printf "%.2f", b}')
 
+# Print the first component of the chain from "$1" up to and including the anchor "$2" that is
+# other-writable, or whose mode cannot be read at all; empty output means that whole span is clean.
+# The walk STOPS at the anchor rather than at /: above it lies the user's own home chain, which
+# this script neither creates nor can vouch for, and pretending otherwise is the claim-versus-
+# enforcement gap this assertion exists to close. `stat` is BSD/GNU divergent (-f '%Lp' vs -c
+# '%a'), so both spellings are tried in turn. An unreadable mode reports as a failed assertion
+# rather than an assumed-safe pass — the conservative direction for a security assertion.
+_get_other_writable_ancestor() {
+  local _p="$1" _stop="$2" _mode
+  while :; do
+    # GA-ABSORB[handled@empty-mode-branch-immediately-below]: neither stat spelling applying is itself the failure the caller acts on
+    _mode="$(stat -f '%Lp' "$_p" 2>/dev/null || stat -c '%a' "$_p" 2>/dev/null || true)"
+    if [ -z "$_mode" ]; then
+      printf '%s' "$_p"
+      return 0
+    fi
+    # The last octal digit carries the other bits, and 2/3/6/7 are exactly those with write set.
+    case "$_mode" in
+      *[2367])
+        printf '%s' "$_p"
+        return 0
+        ;;
+      *) ;;
+    esac
+    if [ "$_p" = "$_stop" ] || [ "$_p" = "/" ]; then
+      return 0
+    fi
+    _p="$(dirname -- "$_p")"
+  done
+}
+
 # 3.5 Per-run nonce + private run dir (pins B3/A2/P3/C1). Both are preconditions of the model
 # call, so a failure here exits 7 before any spend. The nonce is what makes a sentinel
 # unforgeable by pre-existing raw content: every raw file predates it.
@@ -481,23 +553,41 @@ fi
 if [ "${#NONCE}" -ne 32 ]; then
   _envelope_fail "envelope-precondition" 7 "run nonce generation failed (expected 32 hex chars)"
 fi
-if ! RUN_DIR="$(mktemp -d -t wiki-compile-run.XXXXXX)"; then
+# The run root is OWNED, never inherited (AC2). `mktemp -t` resolves against whatever TMPDIR the
+# invoking environment happens to carry — /tmp when it is unset, or any attacker-chosen 0777
+# directory a launchd/cron environment names — which makes "no world-writable ancestor" a property
+# that has to be re-proved on every invocation. Minting under the HOME-anchored GA data root makes
+# it structural instead: this script creates the parent itself, mode 700, on the same seam every
+# other daemon store uses. Failure to create it is a precondition failure, exit 7, before any spend.
+WIKI_DATA_ROOT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}"
+WIKI_RUN_ROOT="${WIKI_DATA_ROOT}/data/wiki-compile-runs"
+if ! mkdir -p "$WIKI_RUN_ROOT" || ! chmod 700 "$WIKI_RUN_ROOT"; then
+  _envelope_fail "envelope-precondition" 7 "private run root creation failed (mkdir/chmod)"
+fi
+# Belt and braces on the owned span: refuse if any component from the run root up to the data root
+# carries the other-write bit. Enforced is exactly that — the other-write bit, not the sticky bit
+# (/tmp is sticky AND world-writable, so sticky proves nothing) — over the components this script
+# creates, not the whole chain to /. Ahead of the prune below, so no recursive removal ever runs
+# inside a span an unprivileged user could have redirected.
+BAD_ANCESTOR="$(_get_other_writable_ancestor "$WIKI_RUN_ROOT" "$WIKI_DATA_ROOT")"
+if [ -n "$BAD_ANCESTOR" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-root ancestor is other-writable or unreadable: ${BAD_ANCESTOR}" >>"$LOG_FILE"
+  _envelope_fail "envelope-precondition" 7 "run dir ancestor is world-writable"
+fi
+# No OS tmp reaper watches a HOME-anchored root, so a run killed past its trap (SIGKILL, power
+# loss) would leak its dir forever. The wiki-compile lock serialises runs, so nothing a day old
+# can belong to a live one.
+find "$WIKI_RUN_ROOT" -maxdepth 1 -type d -name 'wiki-compile-run.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true # GA-ABSORB[benign]: opportunistic prune of orphaned run dirs; a failed sweep must not abort the cycle
+if ! RUN_DIR="$(mktemp -d "${WIKI_RUN_ROOT}/wiki-compile-run.XXXXXX")"; then
   RUN_DIR=""
   _envelope_fail "envelope-precondition" 7 "private run dir creation failed (mktemp -d)"
 fi
-# Mode 700 under the default TMPDIR (the user-owned /var/folders chain on macOS): no
-# world-writable ancestor, so `--setting-sources project,local` can only resolve inside this
-# empty shell-owned tree, closing the shared-/tmp settings-injection vector the old cwd left
-# open (AC2 — the grep for that literal cwd must return zero, comments included).
+# The run dir itself is mode 700 so `--setting-sources project,local` resolves inside an empty
+# tree only this user can populate (AC2 — the grep for the retired shared-/tmp cwd must return
+# zero, comments included). The XXXXXX suffix keeps concurrent runs from colliding even though the
+# wiki-compile lock already serialises them.
 # No `--` guard: BSD chmod rejects it outright, and mktemp -d never returns a leading-dash path.
 chmod 700 "$RUN_DIR"
-# AC2 asserted, not assumed: mktemp inherits whatever TMPDIR happens to be, and with TMPDIR unset
-# (bare cron, non-launchd invocation, Linux install) it falls back to the world-writable /tmp the
-# private run dir exists to leave — reopening the ancestor-traversal vector. Refuse instead.
-RUN_DIR_PARENT=$(dirname "$RUN_DIR")
-if [ -k "$RUN_DIR_PARENT" ] || [ "$RUN_DIR_PARENT" = /tmp ]; then
-  _envelope_fail "envelope-precondition" 7 "run dir parent is world-writable (set TMPDIR to a private dir)"
-fi
 ENVELOPE_FILE="${RUN_DIR}/envelope.txt"
 
 # 4. Build batched prompt (Step 1 Convert only). The numbered list is the contract: the integer
@@ -632,6 +722,18 @@ fi
 # — that ORDERING, not any cleanup, is what guarantees zero notes written on an abort. Every
 # destination basename comes from this script's own UNPROCESSED array; model output is consulted
 # for content only, never for a filename or a path.
+# The parser's byte caps bound the STAGED copies it accepts, not the capture: the redirection at
+# step 5 writes the CLI's stdout to disk unbounded. Gate the FINISHED file on the parser's own
+# total ceiling — one definition, no second number to drift — so an outsized capture is rejected
+# before it is read back, through the same oversize site and exit code as an outsized section.
+# A completed-file size check rather than a pipe: a pipe would reintroduce the pin-A2 SIGPIPE
+# hazard under pipefail.
+if [ -f "$ENVELOPE_FILE" ]; then
+  ENVELOPE_BYTES=$(wc -c <"$ENVELOPE_FILE" | tr -d ' ')
+  if [ "${ENVELOPE_BYTES:-0}" -gt "$WIKI_ENVELOPE_MAX_TOTAL_BYTES" ]; then
+    _envelope_fail "envelope-oversize" 6 "envelope oversize (oversize-capture)"
+  fi
+fi
 ENVELOPE_RC=0
 wiki_envelope_parse "$ENVELOPE_FILE" "$NONCE" "$TOTAL" "$RUN_DIR" || ENVELOPE_RC=$?
 case "$ENVELOPE_RC" in
@@ -674,7 +776,14 @@ for file in "${UNPROCESSED[@]}"; do
     rm -f -- "$w_tmp"
     continue
   fi
-  mv -f -- "$w_tmp" "${NOTES_DIR}/${w_base}"
+  # Same reachability class as the staging copy above: an unguarded promotion would let errexit
+  # abort the loop mid-batch, skipping the step-7 aggregate row and stranding the sibling dotfile.
+  if ! mv -f -- "$w_tmp" "${NOTES_DIR}/${w_base}"; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: promotion failed for ${w_base} — note not written" >>"$LOG_FILE"
+    echo "[wiki-daily-compile] WARN: promotion failed for ${w_base} — note not written" >&2
+    rm -f -- "$w_tmp"
+    continue
+  fi
 done
 
 # 5.7 Stamp source_raw on each compiled note — the script-authoritative identity the LLM
