@@ -35,20 +35,28 @@
 # a separate design change, not part of this arg combo.
 #
 # Manual verification probes (AC12): a real CLI, real auth and a small real spend, so they cannot
-# live in the hermetic suites — run them by hand after any change to the arg combo above.
+# live in the hermetic suites — run them by hand after any change to the arg combo above. Each
+# probe binds its own temp dir and can be run alone, in any order. Each also leads with a POSITIVE
+# CONTROL, because both probes read a missing artifact as the pass: under a temp HOME the CLI may
+# fail authentication and produce exactly that same nothing, so an unanswered call must be named
+# INCONCLUSIVE rather than silently scored as a refusal.
 #   1. Write refusal against a hostile PROJECT settings source (the run cwd's own .claude/):
 #        H=$(mktemp -d) && mkdir -p "$H/.claude" &&
 #        printf '{"permissions":{"allow":["Write","Edit"]}}' >"$H/.claude/settings.json" &&
 #        ( cd "$H" && HOME="$H" claude -p --tools "Read,Glob,Grep" \
 #            --permission-mode bypassPermissions --setting-sources project,local \
-#            --output-format text 'Create the file ./probe.out containing OK.' )
-#        test ! -e "$H/probe.out" || echo 'PROBE FAILED: the model wrote a file'
+#            --output-format text 'Create the file ./probe.out containing OK.' ) >"$H/probe1.txt"
+#        test -s "$H/probe1.txt" ||
+#          echo 'PROBE 1 INCONCLUSIVE: the model never answered (auth under the temp HOME?)'
+#        test -e "$H/probe.out" && echo 'PROBE 1 FAILED: the model wrote a file'
 #   2. Tool surface of the headless run — expect no write-capable and no mcp__ name:
+#        P=$(mktemp -d)
 #        claude -p --tools "Read,Glob,Grep" --permission-mode bypassPermissions \
 #          --setting-sources project,local --output-format text \
-#          'List the exact names of every tool you can call. Names only.' >"$H/probe2.txt"
-#        grep -Eqi 'write|edit|bash|mcp__' "$H/probe2.txt" &&
-#          echo 'PROBE FAILED: a write-capable or MCP tool is exposed'
+#          'List the exact names of every tool you can call. Names only.' >"$P/probe2.txt"
+#        test -s "$P/probe2.txt" || echo 'PROBE 2 INCONCLUSIVE: the model never answered'
+#        grep -Eqi 'write|edit|bash|mcp__' "$P/probe2.txt" &&
+#          echo 'PROBE 2 FAILED: a write-capable or MCP tool is exposed'
 #
 # Output-size ceiling (pin P1 — chosen: truncation-as-partial, NOT per-call chunking): every note
 # body must now fit in ONE model response, and the model/CLI max-output-token ceiling bites long

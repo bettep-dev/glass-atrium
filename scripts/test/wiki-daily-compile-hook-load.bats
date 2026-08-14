@@ -399,4 +399,10 @@ log_body() {
 
 @test "AC10 the compile-script header records why the headless arg combo is safe" {
   grep -qi 'why this arg combo' "${WIKI_SCRIPT}"
+  # Element anchors, not just the heading: a comment sweep that keeps the heading while dropping
+  # a clause leaves the rationale hollow, and the AC12 procedure had no anchor at all.
+  grep -qF -- '--output-format text  LOAD-BEARING (pin P9)' "${WIKI_SCRIPT}"
+  grep -qF -- '--permission-mode bypassPermissions  KEPT (pin D4)' "${WIKI_SCRIPT}"
+  grep -qF -- 'truncation-as-partial, NOT per-call chunking' "${WIKI_SCRIPT}"
+  grep -qF -- 'a write-capable or MCP tool is exposed' "${WIKI_SCRIPT}"
 }
