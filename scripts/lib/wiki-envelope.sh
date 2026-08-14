@@ -56,13 +56,17 @@
 #
 # shellcheck disable=SC2034  # the WIKI_ENVELOPE_* globals are the output contract, read by the sourcing script
 
+# Above the re-source guard, not below it: the caller reads WIKI_ENVELOPE_MAX_TOTAL_BYTES to gate
+# its own captured file, so an inherited WIKI_ENVELOPE_LIB_LOADED would otherwise skip the
+# defaults and abort that caller under `set -u`. The `:=` form is idempotent, so running these on
+# a re-source costs nothing and overrides no caller-set value.
+: "${WIKI_ENVELOPE_MAX_NOTE_BYTES:=524288}"
+: "${WIKI_ENVELOPE_MAX_TOTAL_BYTES:=8388608}"
+
 if [[ -n "${WIKI_ENVELOPE_LIB_LOADED:-}" ]]; then
   return 0
 fi
 WIKI_ENVELOPE_LIB_LOADED=1
-
-: "${WIKI_ENVELOPE_MAX_NOTE_BYTES:=524288}"
-: "${WIKI_ENVELOPE_MAX_TOTAL_BYTES:=8388608}"
 
 wiki_envelope_reset() {
   WIKI_ENVELOPE_VIOLATION=""
