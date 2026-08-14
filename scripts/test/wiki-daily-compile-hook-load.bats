@@ -287,6 +287,30 @@ log_body() {
   [ ! -f "${STUB_ARGV_DUMP}" ]
 }
 
+@test "AC2 a symlinked run root is refused with exit 7 before any mode-changing write" {
+  make_sandbox
+  seed_raw alpha.md
+  # mkdir -p is satisfied by a path that already exists as a symlink to a directory, and this
+  # target is mode 700, so the -L walk reads it clean while every component above it is the
+  # LINK's lexical parent rather than the target's real one. Only the pre-chmod symlink refusal
+  # catches this shape; the walk alone waves it through.
+  local target="${WORK}/run-root-target"
+  mkdir -p "${target}"
+  chmod 700 "${target}"
+  mkdir -p "${GA_DATA_ROOT}/data"
+  ln -s "${target}" "${RUN_ROOT}"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 7 ]
+  [ "$(notes_file_count)" -eq 0 ]
+  # The symlink refusal specifically — the world-writable walk firing instead would mean the row
+  # passes for a reason the fix does not own.
+  [[ "$output" == *"run root is a symlink"* ]]
+  [[ "$output" != *"run dir ancestor is world-writable"* ]]
+  # Same no-spend proxy as the row above: the trap removes the run dir either way.
+  [ ! -f "${STUB_ARGV_DUMP}" ]
+}
+
 # The walk as a unit. An end-to-end row can only reach its SECOND step: the script chmods the run
 # root to 700 immediately before calling the walk, so no fixture can leave the FIRST component
 # other-writable at call time. Extracting the function is what pins step 1 and the -L dereference.

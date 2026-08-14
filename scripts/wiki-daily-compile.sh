@@ -570,13 +570,30 @@ fi
 # The run root is script-created at mode 700 on the standard GA data seam (AC2), NOT inherited
 # from TMPDIR: `mktemp -t` resolves against whatever TMPDIR the invoking environment carries —
 # /tmp when unset, or any attacker-chosen 0777 directory a launchd/cron environment names. The
-# seam itself stays GA_DATA_ROOT-overridable, so the property is structural only on the default
-# path; when the root IS overridden, the ancestor walk below is what re-proves it. Failure to
-# create the root is a precondition failure, exit 7, before any spend.
+# seam stays GA_DATA_ROOT-overridable, and an override RELOCATES the walk's anchor along with
+# it: the assertion below covers only the span from the run root up to whatever root is named,
+# and re-proves nothing above that anchor — under `GA_DATA_ROOT=/tmp/ga` the anchor becomes
+# /tmp/ga and /tmp itself is never inspected. The chain above the named root is the operator's
+# to vouch for; the variable is read from the launchd environment, which an attacker able to
+# set it already controls. Failure to create the root is a precondition failure, exit 7, before
+# any spend.
 WIKI_DATA_ROOT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}"
 WIKI_RUN_ROOT="${WIKI_DATA_ROOT}/data/wiki-compile-runs"
-if ! mkdir -p "$WIKI_RUN_ROOT" || ! chmod 700 "$WIKI_RUN_ROOT"; then
-  _envelope_fail "envelope-precondition" 7 "private run root creation failed (mkdir/chmod)"
+if ! mkdir -p "$WIKI_RUN_ROOT"; then
+  _envelope_fail "envelope-precondition" 7 "private run root creation failed (mkdir)"
+fi
+# `mkdir -p` succeeds when the path already exists as a symlink to a directory. Both the chmod
+# below and the walk's `stat -L` would then read the link TARGET, while the walk composes the
+# rest of the chain lexically with dirname and so inspects this path's nominal parents instead
+# of the target's real ones — the very parents mktemp and the later cd put the process under.
+# Refusing here, AHEAD of the chmod, is what keeps that chmod from laundering a foreign
+# directory's mode before the assertion gets to read it.
+if [ -L "$WIKI_RUN_ROOT" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run root is a symlink, refusing: ${WIKI_RUN_ROOT}" >>"$LOG_FILE"
+  _envelope_fail "envelope-precondition" 7 "run root is a symlink"
+fi
+if ! chmod 700 "$WIKI_RUN_ROOT"; then
+  _envelope_fail "envelope-precondition" 7 "private run root creation failed (chmod)"
 fi
 # Belt and braces on the owned span: refuse if any component from the run root up to the data root
 # carries the other-write bit. Enforced is exactly that — the other-write bit, not the sticky bit
