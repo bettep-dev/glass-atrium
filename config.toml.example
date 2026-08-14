@@ -61,10 +61,10 @@ node_bin = "/opt/homebrew/bin/node"
 # claude` → /opt/homebrew/bin → /usr/local/bin when the key is absent or the
 # configured path is not executable
 claude_bin = "/opt/homebrew/bin/claude"
-# log + backup roots stay under the target home (logs/ + backups/ are outside
-# the relocate allowlist), never folded under monitor/
+# log root stays under the target home, the backup root under the GA data root
+# (lib/ga-db.sh) — both outside the relocate allowlist, never folded under monitor/
 log_root = "${HOME}/.claude/logs"
-backup_dir = "${HOME}/.claude/backups/postgres"
+backup_dir = "${HOME}/.glass-atrium/backups/postgres"
 
 [budget]
 # Per-call USD ceilings passed VERBATIM to `claude -p --max-budget-usd <value>`.
