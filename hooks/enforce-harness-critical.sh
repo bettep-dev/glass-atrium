@@ -155,9 +155,11 @@ hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
 # `.claude/Settings.json` onto the protected file while a case-SENSITIVE gate
 # discards the block.
 # MONOTONE-WIDENING BY CONSTRUCTION, not by inspection: for a fixed pattern every
-# string matching case-sensitively still matches, and none of this file's 7 `case`
+# string matching case-sensitively still matches, and none of this file's 8 `case`
 # sites is an allowlist-shaped early exit-0-on-match → the option can only ever
-# block MORE.
+# block MORE. block_wording's per-class site is the 8th and selects TEXT only: every
+# arm including `*)` returns into the caller's terminal `exit 2`, so a folded class
+# name can change wording but never a verdict.
 # Shell-GLOBAL, so two further enumerations complete that argument — record them
 # here, or the next hook-utils.sh edit silently invalidates it:
 #   (a) hook-utils.sh patterns reachable from here — hook_normalize_path's
@@ -1243,6 +1245,72 @@ def scan_dd(argv, armed):
     return "", armed
 
 
+# Verbs whose LAST non-flag operand is the write target, so an earlier operand is a
+# READ source. tee/truncate/chmod/sed(-i) are excluded because every file operand is
+# a target; ln because operand roles are order- and flag-dependent (`ln -s TARGET
+# LINK`, the one-operand form, `-t DIR`); dd because scan_dd is already position-
+# precise. Per-verb NO-OPERAND short-cluster allowlists: every operand-taking or
+# destination-naming flag (-t/--target-directory, install -m/-o/-g/-d/-t, rsync
+# -e/-f/-T/-B/-M/--files-from=/--link-dest=) either names a WRITE destination or
+# consumes the following token, and both break the last-operand-is-target model. `d`
+# is omitted from the install cluster on purpose: `install -d` makes every operand a
+# directory to CREATE. Any long form (a token opening `--`) fails these patterns and
+# so resolves to bash-mutation.
+SOURCE_POS_FLAG_RE = {
+    "cp": re.compile(r"^-[afinpRrvLHPX]+$"),
+    "mv": re.compile(r"^-[finv]+$"),
+    "install": re.compile(r"^-[pbvc]+$"),
+    "rsync": re.compile(r"^-[avzrltpogHAXnPu]+$"),
+}
+# Unexpanded expansion / glob / brace / remote spec — a token carrying one of these
+# could expand onto a protected target, so its role is undecidable.
+UNRESOLVABLE_CHARS = "$`*?[{:"
+
+
+def is_source_position(name, argv):
+    """True when the segment-wide protected match is explained ENTIRELY by a protected
+    path in SOURCE position. Evaluated ONLY where the segment ALREADY blocks, and both
+    outcomes return a block reason — this is a pure RE-LABELLING that can create
+    neither a new block nor a new pass. TOTAL by construction: an unlisted verb, an
+    unlisted flag, an unresolvable token, a protected destination, an unexplained
+    match, a protected leftover, and any exception all resolve False → bash-mutation,
+    never a pass."""
+    try:
+        flag_re = SOURCE_POS_FLAG_RE.get(name)
+        if flag_re is None:
+            return False
+        ops = []
+        for tok in argv[1:]:
+            val = tok[1]
+            if any(ch in val for ch in UNRESOLVABLE_CHARS):
+                return False
+            if val.startswith("-"):
+                if not flag_re.match(val):
+                    return False
+                continue
+            ops.append(val)
+        # An implicit or absent destination leaves nothing to compare against.
+        if len(ops) < 2:
+            return False
+        dest = ops[-1]
+        if is_protected(dest) or is_protected(normalize_path(dest)):
+            return False
+        sources = ops[:-1]
+        # Soundness: if no individual source operand explains the segment-wide match,
+        # the match came from text the token model does not account for.
+        if not any(is_protected(t) or is_protected(normalize_path(t)) for t in sources):
+            return False
+        for tok in argv[1:]:
+            val = tok[1]
+            if val in sources:
+                continue
+            if is_protected(val) or is_protected(normalize_path(val)):
+                return False
+        return True
+    except Exception:  # noqa: BLE001 — total by contract; ambiguity is bash-mutation
+        return False
+
+
 def scan_segment(seg, depth, armed):
     """(block reason, armed after this segment) for ONE separator-free segment."""
     toks = tokenize(seg)
@@ -1275,6 +1343,8 @@ def scan_segment(seg, depth, armed):
         if name == "dd":
             return scan_dd(argv, armed)
         if is_protected(seg[argv[0][4]:]):
+            if is_source_position(name, argv):
+                return "bash-source-position", armed
             return "bash-mutation", armed
         if armed and is_relative(trailing_arg(argv)):
             return "bash-cwd-relative-write", armed
@@ -1321,9 +1391,11 @@ def scan_command(text, depth, armed):
 
 
 def detect_bash(tool_input):
-    """Redirect / copy verb whose target is a protected path (bash-mutation),
-    an interpreter code-string write (bash-interp-write), or a relative write
-    made from a protected cwd (bash-cwd-relative-write)."""
+    """Redirect / copy verb whose target is a protected path (bash-mutation), the
+    same match explained entirely by a protected path in SOURCE position
+    (bash-source-position — still a block, re-labelled so the payload can name the
+    read re-spelling), an interpreter code-string write (bash-interp-write), or a
+    relative write made from a protected cwd (bash-cwd-relative-write)."""
     PROT_CD_SEEN[0] = False
     return scan_command(tool_input.get("command", ""), 0, False)
 
@@ -1423,15 +1495,86 @@ block_context() {
   printf '{"class":"%s","target":"%s"}' "${e_class}" "${e_target}"
 }
 
+# Per-class wording for the block payload. ONE hardcoded pair used to serve every
+# class, so a source-position READ was reported as a "write" and offered three
+# deployment remedies that cannot take a backup, while `update.sh` cannot land a
+# settings.json change at all (it is user-owned + sensitive-partitioned out of the
+# deterministic apply set).
+# The frontmatter-repair sentence names a PARSE failure, so it belongs to exactly the
+# two frontmatter-parse classes and is forbidden elsewhere — the identity-key classes
+# block a guarded-key write, not a parse failure.
+# `case` rather than an associative array: stock macOS bash 3.2 has none. The `*)`
+# arm is MANDATORY — an unknown future class must still emit a usable pair, and every
+# arm leaves the caller's terminal `exit 2` intact.
+# Args: $1=class · sets BLOCK_MSG / BLOCK_SUG for the single caller below (two return
+# values, and a command substitution per emit is the alternative).
+block_wording() {
+  local class="${1}"
+  BLOCK_MSG="Harness-critical write blocked (${class})"
+  case "${class}" in
+    live-settings)
+      BLOCK_SUG="Live settings.json is user-owned and protected agent_id-independent: edit it outside the tool layer with a non-tool-layer editor, then relaunch. The deterministic apply spine partitions this file out, so no release path can land the change for you. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    live-hooks-dir)
+      BLOCK_SUG="Live hook files are protected agent_id-independent: change them in the SOURCE repository and ship the change through the installer / update.sh release path, never a direct tool-layer write. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    scheduled-exec-dir)
+      BLOCK_SUG="This scheduled-execution surface (autoagent / scripts / skills) runs unattended, so it is protected agent_id-independent: change it in the SOURCE repository and ship it through the installer / update.sh release path. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    new-agent-creation)
+      BLOCK_SUG="Agent creation runs through the lifecycle CLI: \`python3 -m agent_lifecycle add\` writes the body, the registry entry and the symlink farm as one gated transaction, where a direct file write leaves an agent that loads no scope rules. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    identity-frontmatter-write)
+      BLOCK_SUG="This write replaces the agent frontmatter identity keys {name, tools, scope}, which the lifecycle CLI owns — run the change through \`python3 -m agent_lifecycle\` instead. The model: pin is outside the guarded set and edits freely. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    identity-frontmatter-edit)
+      BLOCK_SUG="This edit moves a guarded agent identity key {name, tools, scope}; only \`python3 -m agent_lifecycle\` may move one. Body text below the fence edits freely, as does the unguarded model: pin. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    frontmatter-fence-edit)
+      BLOCK_SUG="This edit alters the agent frontmatter fence itself, which would carry the guarded identity keys {name, tools, scope} out of the guard's reach. Leave the fence intact and edit the body, or run the change through \`python3 -m agent_lifecycle\`. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    unterminated-frontmatter)
+      BLOCK_SUG="The agent frontmatter has no closing fence, so the identity guard cannot answer the identity question and fails closed. Unparseable agent frontmatter blocks the tool layer only — repair it in the SOURCE repository with a non-tool-layer editor and ship it through the release path."
+      ;;
+    frontmatter-unparseable)
+      BLOCK_SUG="A guarded frontmatter key carries a value outside the parse contract, so the identity guard fails closed rather than guess. Unparseable agent frontmatter blocks the tool layer only — repair it in the SOURCE repository with a non-tool-layer editor and ship it through the release path."
+      ;;
+    edit-create-shape)
+      BLOCK_SUG="An empty old_string is the CREATE spelling, and on an existing guarded agent file that reads as a whole-file overwrite this pair-wise guard cannot model, so it fails closed. Re-spell the change as a targeted edit with a non-empty old_string. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    unreadable-edit-payload)
+      BLOCK_SUG="The edit payload carries no readable old_string/new_string pair, so the identity guard cannot tell whether a guarded key moves and fails closed. Re-issue the edit with both strings present as plain text. An approved tool-layer change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    bash-mutation)
+      BLOCK_SUG="A mutation verb in this command names a protected harness path as its target. Ship the change through the sanctioned path for that surface — the installer / update.sh release path, or \`python3 -m agent_lifecycle\` for agent files — or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change."
+      ;;
+    bash-interp-write)
+      BLOCK_SUG="An interpreter code string in argument position (-c / -e / --eval) writes to a protected harness path; the code string is re-scanned by this same gate, so nesting the write one interpreter deeper does not pass it. Ship the change through the installer / update.sh release path, or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change."
+      ;;
+    bash-cwd-relative-write)
+      BLOCK_SUG="An earlier \`cd\` into a protected harness directory armed this command, so its RELATIVE write target resolves inside the protected surface. Re-spell the target as an absolute path outside the protected roots, or ship the change through the installer / update.sh release path. An approved change needs Claude Code launched with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    bash-source-position)
+      BLOCK_MSG="Harness-critical command blocked (bash-source-position): a protected path sits in SOURCE position"
+      BLOCK_SUG="The copy verbs match the whole argument run, so reading a protected path blocks like writing one — an intentional over-block, not a bug. Re-spell the operation as a read and it passes: the Read tool, \`cat <protected> > <dest>\`, or \`dd if=<protected> of=<dest>\` (dd is inspected on its of= operand only). If it must run as written, launch Claude Code with HARNESS_PROTECTION_APPROVE=1."
+      ;;
+    classifier-failure)
+      BLOCK_MSG="Harness-critical gate unavailable (classifier-failure) — failing closed"
+      BLOCK_SUG="The envelope classifier could not run, so the gate cannot tell a protected write from a harmless one and fails closed by design rather than pass unread input. Restore a working python3 on PATH and re-run the command. The block covers only envelopes naming a protected root, not all tool use."
+      ;;
+    *)
+      BLOCK_SUG="This surface is protected agent_id-independent. Ship the change through the sanctioned path for that surface, or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change."
+      ;;
+  esac
+}
+
 # Emit the block payload + exit 2.
 # Args: $1=code $2=class $3=target (path or command) $4=raw_target (optional).
 block_critical() {
   local code="${1}" class="${2}" target="${3}" raw="${4:-}" ctx
   ctx="$(block_context "${class}" "${target}" "${raw}")"
-  emit_error "${code}" "block" \
-    "Harness-critical write blocked (${class})" \
-    "This surface is protected agent_id-independent. Use the sanctioned path (installer / update.sh / agent_lifecycle CLI), or launch Claude Code with HARNESS_PROTECTION_APPROVE=1 for an approved change. Unparseable agent frontmatter blocks the tool layer only — repair it in the SOURCE repository with a non-tool-layer editor and ship it through the release path" \
-    "${ctx}"
+  block_wording "${class}"
+  emit_error "${code}" "block" "${BLOCK_MSG}" "${BLOCK_SUG}" "${ctx}"
   exit 2
 }
 
