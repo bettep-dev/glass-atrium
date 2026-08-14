@@ -227,7 +227,7 @@ dispatch_action_uninstall_panel() {
   local status=0
   # PRE-gate: the "remove" typed confirm in cooked mode. _confirm_pregate handles the
   # rmcup/smcup + stty toggle.
-  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, DROPS the glass_atrium + shadow DBs (pre-drop pg_dump backup kept in ~/.claude/backups/postgres), and deletes monitor/node_modules."; then
+  if ! _confirm_pregate "remove" "Uninstall: removes GA symlinks/hooks, DROPS the glass_atrium + shadow DBs (pre-drop pg_dump backup kept in ~/.glass-atrium/backups/postgres), and deletes monitor/node_modules."; then
     # Cancelled: a brief done line, then back to nav.
     status_line 0 "Uninstall cancelled" 0 0
     IFS= read -rsn1 _ <"${TTY}" || true
