@@ -23,6 +23,11 @@
 #     (substring / basename), so a legitimate row is NEVER a false contradiction.
 #   * BACKWARD-COMPAT — an unwired ('' scan, the direct grader unit test) preserves the
 #     pure files-evidence verdict (held Steps 1-3 stay byte-identical).
+#   * ARTIFACT CARVE-OUT — a recognized tool-generated artifact (basename manifest.json, or a
+#     path under the live install root $HOME/.glass-atrium/) counts as NEITHER matched nor
+#     unmatched; an artifact-only field routes to withhold → unverified, never na (which would
+#     let the files-evidence arm promote a live-install .bats claim) and never contradicted.
+#     The envelope below holds because no other fixture carries that exact basename or prefix.
 #
 # Run via: bats hooks/test/code-based-grader-crosscheck.bats
 # Hermetic: existing files created under a per-test sandbox; absolute paths keep resolution
@@ -46,6 +51,8 @@ teardown() {
 # Drive code_based_grader_check with the six base inputs plus the two Step 4-5 inputs.
 # Args: $1 TASK_TYPE $2 METRIC_PASS $3 RESULT $4 ATTRIBUTION $5 BODY $6 FILES
 #       $7 GRADER_WRITE_SCAN $8 GRADER_WRITE_PATHS (newline-separated)
+#       $9 HOME override (optional — empty leaves the real $HOME; the live-install-root artifact
+#          shape keys on HOME, so a sandbox HOME keeps those rows hermetic).
 grade_cc() {
   run env \
     GR_TASK_TYPE="${1:-}" \
@@ -56,7 +63,9 @@ grade_cc() {
     GR_FILES="${6:-}" \
     GR_SCAN="${7:-}" \
     GR_WRITES="${8:-}" \
+    GR_HOME="${9:-}" \
     bash -c '
+      [[ -n "${GR_HOME}" ]] && export HOME="${GR_HOME}"
       source "$1"
       TASK_TYPE="${GR_TASK_TYPE}"
       METRIC_PASS="${GR_METRIC_PASS}"
@@ -213,6 +222,61 @@ grade_cc() {
     verifiable "/repo/src/unrelated.ts"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "${output}" == "verified_fail" ]] || { echo "a prose entry must not rescue a total mismatch, got: ${output}" >&2; return 1; }
+}
+
+# --- ARTIFACT CARVE-OUT: recognized tool-generated artifacts are authorship-neutral ---
+
+@test "feature verifiable + manifest.json is the only claimed path → unverified (artifact-only withhold)" {
+  grade_cc feature true "done" hook-input "regenerated the release manifest" \
+    "${SANDBOX}/dist/manifest.json" \
+    verifiable "/repo/src/unrelated.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != "verified_fail" ]] || { echo "a regenerated manifest claim must not be a fabrication signal" >&2; return 1; }
+  [[ "${output}" == "unverified" ]] || { echo "artifact-only must withhold → unverified, got: ${output}" >&2; return 1; }
+}
+
+@test "feature verifiable + live-install-root paths incl. an EXISTING .bats → unverified (no na promotion)" {
+  mkdir -p "${SANDBOX}/.glass-atrium/hooks/test"
+  printf '%s\n' '@test "x" { true; }' >"${SANDBOX}/.glass-atrium/hooks/test/y.bats"
+  grade_cc feature true "done" hook-input "updater-seam live install" \
+    "${SANDBOX}/.glass-atrium/hooks/x.sh,${SANDBOX}/.glass-atrium/hooks/test/y.bats" \
+    verifiable "/repo/src/unrelated.ts" "${SANDBOX}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != "verified_pass" ]] || { echo "an existing live-install .bats must NOT promote on zero authorship evidence" >&2; return 1; }
+  [[ "${output}" == "unverified" ]] || { echo "live-root artifact-only must withhold → unverified, got: ${output}" >&2; return 1; }
+}
+
+@test "feature verifiable + manifest.json alongside a MATCHED authored test → verified_pass" {
+  grade_cc feature true "done" hook-input "new endpoint" \
+    "${SANDBOX}/dist/manifest.json,${EXIST_TEST}" \
+    verifiable "${EXIST_TEST}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_pass" ]] || { echo "an artifact must not block an otherwise-verified row, got: ${output}" >&2; return 1; }
+}
+
+@test "feature verifiable + manifest.json alongside an UNMATCHED real path → verified_fail (signal preserved)" {
+  grade_cc feature true "done" hook-input "new endpoint" \
+    "${SANDBOX}/dist/manifest.json,${EXIST_TEST}" \
+    verifiable "/repo/src/unrelated.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "verified_fail" ]] || { echo "a real-path total mismatch must still contradict, got: ${output}" >&2; return 1; }
+}
+
+@test "feature verifiable + prose-only field stays na after the artifact flag joins the guard" {
+  grade_cc feature true "done" hook-input "new endpoint" "none (deliverable is a clauded-doc)" \
+    verifiable "/repo/src/unrelated.ts"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "unverified" ]] || { echo "prose-only must stay indeterminate → unverified, got: ${output}" >&2; return 1; }
+}
+
+@test "feature verifiable + tilde-form live-install path → unverified (recognition reads the expanded entry)" {
+  mkdir -p "${SANDBOX}/.glass-atrium/hooks/test"
+  printf '%s\n' '@test "x" { true; }' >"${SANDBOX}/.glass-atrium/hooks/test/y.bats"
+  grade_cc feature true "done" hook-input "updater-seam live install" \
+    '~/.glass-atrium/hooks/test/y.bats' \
+    verifiable "/repo/src/unrelated.ts" "${SANDBOX}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == "unverified" ]] || { echo "recognition must run AFTER ~ expansion (live rows carry the ~ form), got: ${output}" >&2; return 1; }
 }
 
 # --- AC-1.2: the grader source declares BOTH verified_fail emitters, no sole-path claim ---
