@@ -150,12 +150,19 @@ scope_drift_write_cache() {
 INPUT=$(cat 2>/dev/null) || exit 0
 FILE_PATH=$(echo "${INPUT}" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 
+# Branch-root grammar, single-sited in lib/ — the config-dir predicate below covers every
+# `~/.claude-*` profile branch. This hook is fail-OPEN by design (a false SCOPE-070 is forbidden),
+# so an unreadable lib passes silently instead of degrading the short-circuit.
+# shellcheck source=lib/claude-config-dirs.sh
+source "${BASH_SOURCE%/*}/lib/claude-config-dirs.sh" || exit 0
+
 # System file paths always allowed — highest-priority short-circuit (silent, no advisory noise).
 # Absent file_path → do NOT short-circuit (empty path is not a system path).
+# Intended predicate call (exit status IS the answer, no set -e reliance) → SC2310 disabled.
+# shellcheck disable=SC2310
 if [[ -n "${FILE_PATH}" ]] \
   && { [[ "${FILE_PATH}" == */memory/* ]] \
-    || [[ "${FILE_PATH}" == */.claude/* ]] \
-    || [[ "${FILE_PATH}" == */.claude-work/* ]]; }; then
+    || claude_config_is_branch_path "${FILE_PATH}"; }; then
   exit 0
 fi
 

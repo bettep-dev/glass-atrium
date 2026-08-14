@@ -2,7 +2,7 @@
 # enforce-foreground-harness.sh — PreToolUse(Agent) gate enforcing
 # Harness Path Protection Rule 2 (orchestrator-role.md).
 #
-# Blocks sub-agent delegations targeting ~/.claude/, ~/.claude-work/, or ~/.claude-personal/ with
+# Blocks sub-agent delegations targeting ~/.claude/ or any ~/.claude-* profile branch config dir with
 # run_in_background=true. The user MUST inspect harness/memory writes in real time — background spawns
 # hide diffs and silently break future sessions; this hook is the deterministic runtime gateway an
 # LLM-side self-check cannot guarantee. Trigger: matcher "Agent" (registered in ~/.claude/settings.json).
@@ -70,6 +70,17 @@ if [[ -z "${prompt}" ]]; then
   exit 0
 fi
 
+# Branch-root grammar, single-sited in lib/. Sourced HERE — after the foreground and empty-prompt
+# early exits — so a missing lib fails CLOSED on background calls only (a security gate must never
+# degrade silently) while the common foreground path never pays the source cost.
+config_dirs_lib="${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
+# shellcheck source=lib/claude-config-dirs.sh
+if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
+  printf '[enforce-foreground-harness] lib/claude-config-dirs.sh unreadable; blocking (fail-closed)\n' >&2
+  printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 gate degraded: lib/claude-config-dirs.sh is unreadable, so harness paths cannot be classified. Set run_in_background=false (or omit) and repair the hook install."}'
+  exit 2
+fi
+
 # Resolve the installing user's home at runtime → both the harness regex and the
 # prefix-strip loop (below) match `${HOME}/.claude.../` in addition to `~/`.
 # Dual-form coverage: a prompt may write the harness path in absolute-home form,
@@ -82,8 +93,8 @@ if [[ -n "${home_dir}" ]]; then
   home_re="$(printf '%s' "${home_dir}" | sed -e 's/[][\\.^$*+?(){}|/]/\\&/g')"
 fi
 
-# Scan the prompt for harness path occurrences — each match is a path token from one of the four
-# roots up to the next whitespace / quote / backtick / closing paren-or-bracket (so we can resolve
+# Scan the prompt for harness path occurrences — each match is a path token from any `.claude*`
+# config root up to the next whitespace / quote / backtick / closing paren-or-bracket (so we can resolve
 # its basename). grep -oE prints one match per line; sort -u dedupes. `|| true` absorbs grep's
 # exit-1 no-match so pipefail does not trip the ERR trap when there are no harness paths.
 #
@@ -105,9 +116,9 @@ fi
 # fully obscure the path (variable indirection, base64, a `cd` to a deeper dir
 # then `../.claude/...`) remain out of a static text scan's reach; this is one
 # enforcement layer among several, not a complete sandbox.
-harness_re='(~/\.claude(-work|-personal)?/|(^|[[:space:]"'"'"'`(<>])\.claude(-work|-personal)?/)'
+harness_re="(~/${CLAUDE_CONFIG_ROOT_RE}|(^|[[:space:]\"'\`(<>])${CLAUDE_CONFIG_ROOT_RE})"
 if [[ -n "${home_re}" ]]; then
-  harness_re="(~/\.claude(-work|-personal)?/|${home_re}/\.claude(-work|-personal)?/|(^|[[:space:]\"'\`(<>])\.claude(-work|-personal)?/)"
+  harness_re="(~/${CLAUDE_CONFIG_ROOT_RE}|${home_re}/${CLAUDE_CONFIG_ROOT_RE}|(^|[[:space:]\"'\`(<>])${CLAUDE_CONFIG_ROOT_RE})"
 fi
 matches=""
 matches="$(printf '%s' "${prompt}" \
@@ -135,20 +146,10 @@ while IFS= read -r path; do
   path="${path#(}"
   path="${path#<}"
   path="${path#>}"
-  # Strip leading root prefix. The pattern MUST be quoted — unquoted `~/...` in `${var#pattern}`
-  # triggers tilde expansion so the literal `~/` prefix never matches, leaving the path unstripped.
-  remainder="${path#"~/.claude/"}"
-  remainder="${remainder#"~/.claude-work/"}"
-  remainder="${remainder#"~/.claude-personal/"}"
-  # Absolute-home form — strip the runtime-resolved $HOME prefix (quoted so the
-  # literal value is matched, not glob-expanded). Empty $HOME → these are no-ops.
-  remainder="${remainder#"${home_dir}/.claude/"}"
-  remainder="${remainder#"${home_dir}/.claude-work/"}"
-  remainder="${remainder#"${home_dir}/.claude-personal/"}"
-  # CWD-relative form — strip the bare `.claude.../` root (no `~`/`$HOME` prefix).
-  remainder="${remainder#".claude/"}"
-  remainder="${remainder#".claude-work/"}"
-  remainder="${remainder#".claude-personal/"}"
+  # Strip the leading root prefix in any of its three forms (tilde / absolute-home / bare). The
+  # helper shares ONE root grammar with the scan regex above, so a root the scan admits can never
+  # be one the strip fails to reduce — the drift that left profile branches unrecognized.
+  remainder="$(claude_config_strip_branch_root "${path}" "${home_dir}")"
   # First segment after the root.
   first_segment="${remainder%%/*}"
   case "${first_segment}" in
@@ -177,5 +178,5 @@ if [[ "${all_exempt}" == "true" ]]; then
 fi
 
 # Non-exempt harness path with run_in_background=true → BLOCK (JSON decision on stdout, exit 2).
-printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 violation: foreground MANDATORY for ~/.claude/, ~/.claude-work/, ~/.claude-personal/ writes. Set run_in_background=false (or omit). Source: rules/orchestrator-role.md."}'
+printf '%s\n' '{"decision":"block","reason":"Harness Path Protection Rule 2 violation: foreground MANDATORY for ~/.claude/ and every ~/.claude-* profile branch config dir. Set run_in_background=false (or omit). Source: rules/orchestrator-role.md."}'
 exit 2
