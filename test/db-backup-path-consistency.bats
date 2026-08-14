@@ -6,7 +6,13 @@
 # user is deciding whether data is recoverable.
 #
 # Run via: bats test/db-backup-path-consistency.bats
-# Requires: bats (brew install bats-core), bash 3.2+
+# Requires: bats (brew install bats-core), git, bash 3.2+
+#
+# TRACKED-CONTENT SCAN: this file ships to the live install, where the scan root
+# is not a git checkout but does hold user-owned config and monitor documents
+# that legitimately quote the legacy path. A filesystem-wide scan there fails for
+# the wrong reason and reds the apply gate, so the guard scopes itself to
+# git-tracked files and goes inert off a checkout root.
 #
 # SELF-TRIP HAZARD: this file is inside the scanned tree, so the stale needle is
 # assembled at runtime from two fragments and never appears literally here.
@@ -14,16 +20,23 @@
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 # The 3 legacy-path strings in test/oss-db-setup.bats are NEGATIVE assertions
 # (the legacy dir must NOT be created) — correcting them would invert the test.
-# The `./` prefix is optional because some grep builds strip it from -r output.
-NEGATIVE_ASSERTION_FILE="^\(\./\)\?test/oss-db-setup\.bats:"
+NEGATIVE_ASSERTION_FILE="test/oss-db-setup.bats"
 
-@test "no stale legacy backup path remains outside the negative assertions" {
+# `-ef` (same inode) rather than string equality: a symlinked checkout resolves
+# to a different spelling of the same root.
+is_repo_root() {
+  local top
+  top="$(git -C "${GA}" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ -n "${top}" ]] || return 1
+  [[ "${top}" -ef "${GA}" ]]
+}
+
+@test "no stale legacy backup path remains in tracked files" {
   local needle hits
+  is_repo_root || skip "scan root is not a git checkout root: ${GA}"
   needle=".claude/backups/""postgres"
-  cd -- "${GA}"
-  hits="$(grep -rn -- "${needle}" . \
-    --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=worktrees \
-    | grep -v "${NEGATIVE_ASSERTION_FILE}" || true)"
+  hits="$(git -C "${GA}" grep -nIF --full-name -e "${needle}" \
+    -- '.' ":(exclude)${NEGATIVE_ASSERTION_FILE}" || true)"
   [[ -z "${hits}" ]] || { printf 'stale backup path sites:\n%s\n' "${hits}" >&2; return 1; }
 }
 
