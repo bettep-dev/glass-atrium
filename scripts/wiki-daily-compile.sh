@@ -518,14 +518,20 @@ BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; 
 # other-writable, or whose mode cannot be read at all; empty output means that whole span is clean.
 # The walk STOPS at the anchor rather than at /: above it lies the user's own home chain, which
 # this script neither creates nor can vouch for, and pretending otherwise is the claim-versus-
-# enforcement gap this assertion exists to close. `stat` is BSD/GNU divergent (-f '%Lp' vs -c
-# '%a'), so both spellings are tried in turn. An unreadable mode reports as a failed assertion
-# rather than an assumed-safe pass — the conservative direction for a security assertion.
+# enforcement gap this assertion exists to close. Components ABOVE the anchor are NOT inspected:
+# an other-writable $HOME or / is outside this assertion's reach, by design and not by oversight.
+# `stat` is BSD/GNU divergent (-f '%Lp' vs -c '%a'), so both spellings are tried in turn, BSD
+# first because BSD stat rejects -c outright. `-L` is load-bearing on both: the chain is composed
+# lexically with dirname, so without it a symlinked component reports the LINK's own mode (0755
+# for a symlink) instead of the target's, and a link into a 0777 tree would read clean. A dangling
+# component cannot reach this walk — mkdir -p above would already have failed on it. An unreadable
+# mode reports as a failed assertion rather than an assumed-safe pass — the conservative direction
+# for a security assertion.
 _get_other_writable_ancestor() {
   local _p="$1" _stop="$2" _mode
   while :; do
     # GA-ABSORB[handled@empty-mode-branch-immediately-below]: neither stat spelling applying is itself the failure the caller acts on
-    _mode="$(stat -f '%Lp' "$_p" 2>/dev/null || stat -c '%a' "$_p" 2>/dev/null || true)"
+    _mode="$(stat -L -f '%Lp' "$_p" 2>/dev/null || stat -L -c '%a' "$_p" 2>/dev/null || true)"
     if [ -z "$_mode" ]; then
       printf '%s' "$_p"
       return 0
@@ -561,12 +567,12 @@ fi
 if [ "${#NONCE}" -ne 32 ]; then
   _envelope_fail "envelope-precondition" 7 "run nonce generation failed (expected 32 hex chars)"
 fi
-# The run root is OWNED, never inherited (AC2). `mktemp -t` resolves against whatever TMPDIR the
-# invoking environment happens to carry — /tmp when it is unset, or any attacker-chosen 0777
-# directory a launchd/cron environment names — which makes "no world-writable ancestor" a property
-# that has to be re-proved on every invocation. Minting under the HOME-anchored GA data root makes
-# it structural instead: this script creates the parent itself, mode 700, on the same seam every
-# other daemon store uses. Failure to create it is a precondition failure, exit 7, before any spend.
+# The run root is script-created at mode 700 on the standard GA data seam (AC2), NOT inherited
+# from TMPDIR: `mktemp -t` resolves against whatever TMPDIR the invoking environment carries —
+# /tmp when unset, or any attacker-chosen 0777 directory a launchd/cron environment names. The
+# seam itself stays GA_DATA_ROOT-overridable, so the property is structural only on the default
+# path; when the root IS overridden, the ancestor walk below is what re-proves it. Failure to
+# create the root is a precondition failure, exit 7, before any spend.
 WIKI_DATA_ROOT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}"
 WIKI_RUN_ROOT="${WIKI_DATA_ROOT}/data/wiki-compile-runs"
 if ! mkdir -p "$WIKI_RUN_ROOT" || ! chmod 700 "$WIKI_RUN_ROOT"; then
@@ -584,14 +590,19 @@ if [ -n "$BAD_ANCESTOR" ]; then
 fi
 # No OS tmp reaper watches a HOME-anchored root, so a run killed past its trap (SIGKILL, power
 # loss) would leak its dir forever. The wiki-compile lock serialises runs, so nothing a day old
-# can belong to a live one.
-find "$WIKI_RUN_ROOT" -maxdepth 1 -type d -name 'wiki-compile-run.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true # GA-ABSORB[benign]: opportunistic prune of orphaned run dirs; a failed sweep must not abort the cycle
+# can belong to a live one. Opportunistic: this is the ONLY reaper of that surface and it sits
+# past the unprocessed-count early exit, so a run of quiet nights sweeps nothing. A persistently
+# failing sweep is therefore silent growth — hence the warning rather than a bare `|| true`.
+# GA-ABSORB[handled@prune-warning-line-immediately-below]: the sweep's stderr is per-entry noise; its status is warned to the log
+if ! find "$WIKI_RUN_ROOT" -maxdepth 1 -type d -name 'wiki-compile-run.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] orphan run-dir prune failed under ${WIKI_RUN_ROOT} (non-fatal)" >>"$LOG_FILE"
+fi
 if ! RUN_DIR="$(mktemp -d "${WIKI_RUN_ROOT}/wiki-compile-run.XXXXXX")"; then
   RUN_DIR=""
   _envelope_fail "envelope-precondition" 7 "private run dir creation failed (mktemp -d)"
 fi
 # The run dir itself is mode 700 so `--setting-sources project,local` resolves inside an empty
-# tree only this user can populate (AC2 — the grep for the retired shared-/tmp cwd must return
+# tree only this user can populate (AC2 — the grep for a shared-/tmp cwd must return
 # zero, comments included). The XXXXXX suffix keeps concurrent runs from colliding even though the
 # wiki-compile lock already serialises them.
 # No `--` guard: BSD chmod rejects it outright, and mktemp -d never returns a leading-dash path.
