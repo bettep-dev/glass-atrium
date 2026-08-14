@@ -1294,7 +1294,7 @@
     "scripts/wiki-daemon-cycle.sh": "6be69affd12f401bd87ac20fa9664cbaaa9ffc35e20e0b97e2e95acf181abcff",
     "scripts/wiki-daemon-entry-prompt.md": "35e21ea115d26d33efcb9cc79999ab90235965de643c5f89189994ee5a6f48ff",
     "scripts/wiki-daemon-healthcheck.sh": "668f33b73c7b1ea7027dc918e601bb8ca38dbdfa1400a2209537e63ea0fcc02d",
-    "scripts/wiki-daily-compile.sh": "dd969272850bc30d7c9de44be97923128d4b2d2f600ba8f7a0e24d1d484b3be9",
+    "scripts/wiki-daily-compile.sh": "a9750185a4563077f74f4b5f374821b1139798e4a4e6eb35fcb1c7b498c1d242",
     "scripts/wiki-deadlinks.sh": "843e375f60f21e99f70a849a4319257ba7552190b28fa5d70f30226217ddafb8",
     "scripts/wiki-dedup.sh": "010aafd82706aa6d7ead76819f3a3a3551291c2724516fc1b6997261fd361b71",
     "scripts/wiki-init-db.sh": "113e055102c906aa2c405de15efcc6228e7ced543edd6db10bd54a9393a3eecf",

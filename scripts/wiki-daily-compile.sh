@@ -219,8 +219,12 @@ _compile_cleanup() {
   RUN_DIR=""
   # Terminal on a signal: without the exit the handler would return and the script would keep
   # running with its envelope home already deleted. The conventional 128+signo codes keep the
-  # signal path distinguishable from the named precondition codes above. Re-entry via the EXIT
-  # trap the exit itself fires is a no-op — both legs above have just been disarmed.
+  # signal path distinguishable from the named precondition codes above, and on bash 3.2 both
+  # legs deliver them (INT 130, TERM 143) whenever the trap is armed. Arming is not universal:
+  # SIGINT reaches a background job of a non-interactive shell already ignored, and a signal
+  # ignored on entry cannot be trapped, so that one shape exits 0 without entering the handler
+  # at all — a property of the invocation rather than of this leg. Re-entry via the EXIT trap
+  # the exit itself fires is a no-op — both legs above have just been disarmed.
   case "$_sig" in
     INT) exit 130 ;;
     TERM) exit 143 ;;
