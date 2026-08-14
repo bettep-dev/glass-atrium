@@ -9,6 +9,14 @@
 # (AC4), and a hostile or oversize envelope aborts with its named code having written nothing
 # (AC3/AC5). The single-trap teardown (pin P2) is pinned behaviorally: the lock release and the
 # run-dir removal must BOTH still fire, which a second `trap ... EXIT` would silently break.
+# The AC2 rows come as a set of four and only mean anything together: two symlink shapes that must
+# be refused, one relocation that must NOT be, and the walk as a unit. A row that only refuses is
+# satisfiable by a script that refuses everything.
+#
+# Every `[[ ]]` assertion here carries `|| return 1`, and that suffix is load-bearing rather than
+# decorative: a bare `[[ ]]` that fails mid-test does NOT fail the test under bats' errexit
+# handling (a `[ ]` in the same position does), so a message assertion written without it is inert
+# and reports a pass it never checked.
 #
 # Hermetic: the script and its libs are copied into a mktemp sandbox with a stubbed PG helper,
 # a stubbed sync script, a stubbed lock helper and a stubbed CLI on the existing
@@ -151,6 +159,12 @@ log_body() {
   cat "${WIKI_LOG_DIR}"/wiki-compile-*.log
 }
 
+# Permission bits of a path, both stat spellings tried in turn exactly as the script does it —
+# BSD stat rejects -c outright, GNU stat rejects -f.
+path_mode() {
+  stat -L -f '%Lp' "$1" 2>/dev/null || stat -L -c '%a' "$1"
+}
+
 # ---------------------------------------------------------------------------
 # AC6 — golden envelope: the shell writes every note, stamps it, and syncs
 # ---------------------------------------------------------------------------
@@ -213,6 +227,15 @@ log_body() {
   [ "$output" -eq 0 ]
 }
 
+@test "AC1 the invocation confines MCP discovery with --strict-mcp-config" {
+  # --tools is an allowlist for built-in tools only and bounds no MCP tool. MCP servers are
+  # discovered by an upward walk from the run cwd, and AC2 anchors that cwd under $HOME, so every
+  # .mcp.json above it registers its tool set unless this flag confines the search. The flag on
+  # the invocation line itself, not the header paragraph that also names it.
+  run grep -c -- '^  --strict-mcp-config \\$' "${WIKI_SCRIPT}"
+  [ "$output" -eq 1 ]
+}
+
 @test "AC2 the run cwd is a private mktemp dir under the script-owned run root, never the shared one" {
   run grep -c 'cd /tmp' "${WIKI_SCRIPT}"
   [ "$output" -eq 0 ]
@@ -263,7 +286,7 @@ log_body() {
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 7 ]
   [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"run dir ancestor is world-writable"* ]]
+  [[ "$output" == *"run dir ancestor is world-writable"* ]] || return 1
   [ ! -f "${STUB_ARGV_DUMP}" ]
 }
 
@@ -281,34 +304,76 @@ log_body() {
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 7 ]
   [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"run dir ancestor is world-writable"* ]]
+  [[ "$output" == *"run dir ancestor is world-writable"* ]] || return 1
   # The argv dump is the no-spend proxy: the trap removes the run dir on every path, so a
   # find-based assertion over the run root would pass vacuously.
   [ ! -f "${STUB_ARGV_DUMP}" ]
 }
 
-@test "AC2 a symlinked run root is refused with exit 7 before any mode-changing write" {
+@test "AC2 a symlinked run root landing in a 0777 tree is refused before any mode-changing write" {
   make_sandbox
   seed_raw alpha.md
-  # mkdir -p is satisfied by a path that already exists as a symlink to a directory, and this
-  # target is mode 700, so the -L walk reads it clean while every component above it is the
-  # LINK's lexical parent rather than the target's real one. Only the pre-chmod symlink refusal
-  # catches this shape; the walk alone waves it through.
-  local target="${WORK}/run-root-target"
-  mkdir -p "${target}"
-  chmod 700 "${target}"
+  # mkdir -p is satisfied by a path that already exists as a symlink to a directory, so this run
+  # root's real parents are the target's and not the ones dirname composes from the link. Physical
+  # resolution is what puts the real ones in front of the walk. The victim mode is the second
+  # assertion and pins the ordering: a chmod ahead of the walk would launder a foreign directory
+  # to 0700 before anything got to read its true mode.
+  local hostile="${WORK}/pub"
+  mkdir -p "${hostile}/victim"
+  chmod 0755 "${hostile}/victim"
+  chmod 0777 "${hostile}"
   mkdir -p "${GA_DATA_ROOT}/data"
-  ln -s "${target}" "${RUN_ROOT}"
+  ln -s "${hostile}/victim" "${RUN_ROOT}"
 
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 7 ]
   [ "$(notes_file_count)" -eq 0 ]
-  # The symlink refusal specifically — the world-writable walk firing instead would mean the row
-  # passes for a reason the fix does not own.
-  [[ "$output" == *"run root is a symlink"* ]]
-  [[ "$output" != *"run dir ancestor is world-writable"* ]]
-  # Same no-spend proxy as the row above: the trap removes the run dir either way.
+  [[ "$output" == *"run dir ancestor is world-writable"* ]] || return 1
+  [ "$(path_mode "${hostile}/victim")" = "755" ]
+  # The argv dump is the no-spend proxy: the trap removes the run dir on every path, so a
+  # find-based assertion over the run root would pass vacuously.
   [ ! -f "${STUB_ARGV_DUMP}" ]
+}
+
+@test "AC2 a symlinked data-root component whose target sits inside a 0777 tree is refused" {
+  make_sandbox
+  seed_raw alpha.md
+  # The shape a link pointed AT a 0777 directory cannot catch: every component the walk is handed
+  # dereferences to 0700, and the run root is a real directory, so a lexically composed chain and a
+  # shape test on the run root both read clean while mkdir, mktemp and cd all land under the 0777
+  # grandparent. Only resolving the span physically brings that grandparent into the chain.
+  local pub="${WORK}/pub"
+  mkdir -p "${pub}/store"
+  chmod 0700 "${pub}/store"
+  chmod 0777 "${pub}"
+  mkdir -p "${GA_DATA_ROOT}"
+  ln -s "${pub}/store" "${GA_DATA_ROOT}/data"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 7 ]
+  [ "$(notes_file_count)" -eq 0 ]
+  [[ "$output" == *"run dir ancestor is world-writable"* ]] || return 1
+  [ ! -f "${STUB_ARGV_DUMP}" ]
+}
+
+@test "AC2 a relocated run root whose real chain is clean still compiles" {
+  make_sandbox
+  seed_raw alpha.md
+  # The strict direction, and the counterpart to the two refusals above: a link is judged by its
+  # target's real parents, so relocating this tree stays an operator's prerogative instead of a
+  # permanent nightly exit 7. A shape test on the run root cannot tell this case from those two.
+  local relocated="${GA_DATA_ROOT}/relocated-runs"
+  mkdir -p "${relocated}"
+  chmod 700 "${relocated}"
+  mkdir -p "${GA_DATA_ROOT}/data"
+  ln -s "${relocated}" "${RUN_ROOT}"
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 0 ]
+  [ -f "${NOTES_DIR}/alpha.md" ]
+  local model_cwd
+  model_cwd="$(cat "${STUB_CWD_DUMP}")"
+  [[ "${model_cwd}" == "${RUN_ROOT}/wiki-compile-run."* ]] || return 1
 }
 
 # The walk as a unit. An end-to-end row can only reach its SECOND step: the script chmods the run
@@ -417,7 +482,7 @@ load_ancestor_walk() {
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 5 ]
   [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"envelope structural violation (duplicate-idx)"* ]]
+  [[ "$output" == *"envelope structural violation (duplicate-idx)"* ]] || return 1
   log_body | grep -q '\[wiki-envelope-structural\]'
   grep -q '"status":"error"' "${PG_RECORD}"
   [ ! -f "${SYNC_MARKER}" ]
@@ -456,7 +521,7 @@ load_ancestor_walk() {
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 5 ]
   [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"envelope structural violation (idx-out-of-range)"* ]]
+  [[ "$output" == *"envelope structural violation (idx-out-of-range)"* ]] || return 1
 }
 
 @test "AC5 an oversize note body aborts with exit 6 and zero writes" {
@@ -473,7 +538,7 @@ load_ancestor_walk() {
   run bash "${SANDBOX}/wiki-daily-compile.sh"
   [ "$status" -eq 6 ]
   [ "$(notes_file_count)" -eq 0 ]
-  [[ "$output" == *"envelope oversize (oversize-note)"* ]]
+  [[ "$output" == *"envelope oversize (oversize-note)"* ]] || return 1
   log_body | grep -q '\[wiki-envelope-oversize\]'
   grep -q '"status":"error"' "${PG_RECORD}"
 }

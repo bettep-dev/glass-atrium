@@ -22,7 +22,15 @@
 #       on an unattended 04:00 cron.
 #   --setting-sources project,local  inert (pin D5): project and local both resolve inside the
 #       empty mode-700 run dir this script mints under its own HOME-anchored run root, a tree no
-#       other user can populate.
+#       other user can populate. That reasoning covers SETTINGS only — it does not extend to MCP,
+#       which is discovered by a different walk in the opposite direction (see below).
+#   --strict-mcp-config  LOAD-BEARING: the --tools list is an allowlist for BUILT-IN tools only and
+#       does not bound MCP tools at all. MCP servers are discovered by walking UPWARD from the run
+#       cwd, so a .mcp.json at any level above it registers its whole tool set — and AC2 anchors
+#       the run root under $HOME by design, which places every run inside that upward walk. This
+#       flag confines MCP to what --mcp-config names, and nothing names anything, so the surface
+#       is empty. What is claimed is the size of the REGISTERED surface, measured by probe 2
+#       below; whether an exposed server could have acted was not measured and is not claimed.
 #   --output-format text  LOAD-BEARING (pin P9): the envelope parser assumes plain text; switching
 #       to stream-json would silently break every note write.
 #   --model / --max-budget-usd  unchanged cost controls (see 4.5).
@@ -49,14 +57,20 @@
 #        test -s "$H/probe1.txt" ||
 #          echo 'PROBE 1 INCONCLUSIVE: the model never answered (auth under the temp HOME?)'
 #        test -e "$H/probe.out" && echo 'PROBE 1 FAILED: the model wrote a file'
-#   2. Tool surface of the headless run — expect no write-capable and no mcp__ name:
-#        P=$(mktemp -d)
-#        claude -p --tools "Read,Glob,Grep" --permission-mode bypassPermissions \
-#          --setting-sources project,local --output-format text \
-#          'List the exact names of every tool you can call. Names only.' >"$P/probe2.txt"
+#   2. Tool surface of the headless run — expect no write-capable and no mcp__ name. The cwd is
+#      part of this probe, not incidental: MCP discovery walks UPWARD, so a probe run from outside
+#      $HOME reaches no .mcp.json and reports an empty surface no matter how the flags are set.
+#      Run it from a $HOME descendant, the shape AC2 gives the real run dir.
+#        P=$(mktemp -d "$HOME/.wiki-probe.XXXXXX")
+#        ( cd "$P" && claude -p --tools "Read,Glob,Grep" --permission-mode bypassPermissions \
+#            --setting-sources project,local --strict-mcp-config --output-format text \
+#            'List the exact names of every tool you can call. Names only.' ) >"$P/probe2.txt"
 #        test -s "$P/probe2.txt" || echo 'PROBE 2 INCONCLUSIVE: the model never answered'
 #        grep -Eqi 'write|edit|bash|mcp__' "$P/probe2.txt" &&
 #          echo 'PROBE 2 FAILED: a write-capable or MCP tool is exposed'
+#      Re-running that command with --strict-mcp-config removed is the control that keeps probe 2
+#      honest: from the same cwd it must list mcp__ names, proving the empty surface comes from the
+#      flag rather than from a cwd that never reached a .mcp.json.
 #
 # Output-size ceiling (pin P1 — chosen: truncation-as-partial, NOT per-call chunking): every note
 # body must now fit in ONE model response, and the model/CLI max-output-token ceiling bites long
@@ -523,7 +537,9 @@ BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; 
 # `stat` is BSD/GNU divergent (-f '%Lp' vs -c '%a'), so both spellings are tried in turn, BSD
 # first because BSD stat rejects -c outright. `-L` is load-bearing on both: the chain is composed
 # lexically with dirname, so without it a symlinked component reports the LINK's own mode (0755
-# for a symlink) instead of the target's, and a link into a 0777 tree would read clean. A dangling
+# for a symlink) instead of the target's, and a link into a 0777 tree would read clean. That is a
+# property of this function for any caller; the production caller hands it endpoints it has already
+# resolved physically, which leaves no link in the chain for the deref to matter on. A dangling
 # component cannot reach this walk — mkdir -p above would already have failed on it. An unreadable
 # mode reports as a failed assertion rather than an assumed-safe pass — the conservative direction
 # for a security assertion.
@@ -582,28 +598,42 @@ WIKI_RUN_ROOT="${WIKI_DATA_ROOT}/data/wiki-compile-runs"
 if ! mkdir -p "$WIKI_RUN_ROOT"; then
   _envelope_fail "envelope-precondition" 7 "private run root creation failed (mkdir)"
 fi
-# `mkdir -p` succeeds when the path already exists as a symlink to a directory. Both the chmod
-# below and the walk's `stat -L` would then read the link TARGET, while the walk composes the
-# rest of the chain lexically with dirname and so inspects this path's nominal parents instead
-# of the target's real ones — the very parents mktemp and the later cd put the process under.
-# Refusing here, AHEAD of the chmod, is what keeps that chmod from laundering a foreign
-# directory's mode before the assertion gets to read it.
-if [ -L "$WIKI_RUN_ROOT" ]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run root is a symlink, refusing: ${WIKI_RUN_ROOT}" >>"$LOG_FILE"
-  _envelope_fail "envelope-precondition" 7 "run root is a symlink"
+# `mkdir -p` succeeds when the path already exists as a symlink to a directory, at this component
+# or at any component above it. The walk's `stat -L` dereferences whatever path it is handed, but
+# the chain is composed lexically with dirname, so a lexically-composed walk is handed the LINK's
+# nominal parents and never the target's real ones — and the target's real parents are exactly the
+# ones mktemp and the later cd put the process under. Resolving both endpoints physically first is
+# what makes the walk's subject the same directory the process ends up in, at any depth and for any
+# shape of link, in place of a shape test that can only ever cover the one component it names.
+# A relocated run root is then judged on its real chain rather than refused for being a link, so an
+# operator may legitimately move this tree to another volume. A path that will not resolve is a
+# path this run cannot vouch for: exit 7, before any spend.
+WIKI_RUN_ROOT_REAL="$(cd -P -- "$WIKI_RUN_ROOT" && pwd -P)" || WIKI_RUN_ROOT_REAL=""
+WIKI_DATA_ROOT_REAL="$(cd -P -- "$WIKI_DATA_ROOT" && pwd -P)" || WIKI_DATA_ROOT_REAL=""
+if [ -z "$WIKI_RUN_ROOT_REAL" ] || [ -z "$WIKI_DATA_ROOT_REAL" ]; then
+  _envelope_fail "envelope-precondition" 7 "run root physical resolution failed"
 fi
-if ! chmod 700 "$WIKI_RUN_ROOT"; then
-  _envelope_fail "envelope-precondition" 7 "private run root creation failed (chmod)"
-fi
-# Belt and braces on the owned span: refuse if any component from the run root up to the data root
-# carries the other-write bit. Enforced is exactly that — the other-write bit, not the sticky bit
-# (/tmp is sticky AND world-writable, so sticky proves nothing) — over the components this script
-# creates, not the whole chain to /. Ahead of the prune below, so no recursive removal ever runs
-# inside a span an unprivileged user could have redirected.
-BAD_ANCESTOR="$(_get_other_writable_ancestor "$WIKI_RUN_ROOT" "$WIKI_DATA_ROOT")"
+# Belt and braces on the owned span: refuse if any component from the resolved run root up to the
+# resolved data root carries the other-write bit. Enforced is exactly that — the other-write bit,
+# not the sticky bit (/tmp is sticky AND world-writable, so sticky proves nothing) — over the
+# resolved components this script creates, not the whole chain to /. When a link has moved the run
+# root off the anchor's own subtree the resolved chain never meets the resolved anchor and the walk
+# runs to / instead, which is strictly more inspection on the existing / stop. Ahead of the prune
+# below, so no recursive removal ever runs inside a span an unprivileged user could have redirected.
+BAD_ANCESTOR="$(_get_other_writable_ancestor "$WIKI_RUN_ROOT_REAL" "$WIKI_DATA_ROOT_REAL")"
 if [ -n "$BAD_ANCESTOR" ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] run-root ancestor is other-writable or unreadable: ${BAD_ANCESTOR}" >>"$LOG_FILE"
   _envelope_fail "envelope-precondition" 7 "run dir ancestor is world-writable"
+fi
+# The only mode-changing call in this section, and it sits behind the assertion: a chmod that ran
+# first would launder the run root's real mode into a clean-looking 700 before the walk could read
+# it. The consequence to hold in mind when reading the assertion above is that the walk sees this
+# directory at its CREATION mode — under the launchd umask 022 that is 0755, clean; a umask that
+# creates it other-writable is refused here rather than silently normalized, which is the direction
+# a security assertion should fail in. The chmod follows the run root's links, so the directory it
+# lands on is the one the walk just inspected, absent a swap racing the two.
+if ! chmod 700 "$WIKI_RUN_ROOT"; then
+  _envelope_fail "envelope-precondition" 7 "private run root creation failed (chmod)"
 fi
 # No OS tmp reaper watches a HOME-anchored root, so a run killed past its trap (SIGKILL, power
 # loss) would leak its dir forever. The wiki-compile lock serialises runs, so nothing a day old
@@ -685,6 +715,7 @@ cd -- "$RUN_DIR"
   --model "$HAIKU_MODEL" \
   --system-prompt "$SYSTEM_PROMPT_CONTENT" \
   --setting-sources project,local \
+  --strict-mcp-config \
   --tools "Read,Glob,Grep" \
   --permission-mode bypassPermissions \
   --max-budget-usd "$BUDGET" \
