@@ -1359,7 +1359,7 @@
     "test/comment-audit/suite-hermeticity.bats": "6a9a4a1c7d12e041f0eb4133fc322e97865a7043fe82c9e574667a8173a8409f",
     "test/continuous-index.bats": "98afc528437a49ba21976c23b02ea4b814929197e5eb2af63b082eadf141e7d6",
     "test/data-root-seam-wiki-audit.bats": "6732afe71df47f145c0c33952fdc525cbd0076c8ae68e1489463f581214a18a9",
-    "test/db-backup-path-consistency.bats": "14c333526cab5c616eee3e6d29459bb9d782e2552c41958da11e2236edeb8c6f",
+    "test/db-backup-path-consistency.bats": "5479842c283c372ff87529a3bf4315f2ac8824bbc3be98454f4cd98274b39652",
     "test/deps-preflight-exec-harness.sh": "2a0cd1ecc8a5060c83e236e22f50b09149edf5723fe72d7fa4938596e84a872c",
     "test/deps-preflight-noninteractive.bats": "5cdbcfe89f594d371b9cc20bdabb14b2402e0a86dc814c09c7280f6e152036ff",
     "test/doctor-apply-abort-rows.bats": "23c2bbfc590500702dc5e3906728e312615a311ae28e780823c7fe5463500461",
