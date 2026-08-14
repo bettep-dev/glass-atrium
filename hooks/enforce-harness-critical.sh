@@ -4,8 +4,11 @@
 # protection floor, NOT a per-agent tool-grant check (core-security.md LLM06 boundary).
 #
 # Write|Edit|MultiEdit arm (deterministic):
-#   (a) live harness settings — ~/.claude/settings.json + ~/.claude/settings.local.json
-#   (b) LIVE hook dirs — ~/.glass-atrium/hooks/ (primary) + ~/.claude/hooks/ (legacy)
+#   (a) live harness settings — settings.json + settings.local.json of ~/.claude/ and
+#       of every ~/.claude-*/ profile branch (a branch settings file carries that
+#       profile's own hook wiring, so it is the same enforcement surface)
+#   (b) LIVE hook dirs — ~/.glass-atrium/hooks/ (primary) + hooks/ of ~/.claude/ and of
+#       every ~/.claude-*/ profile branch (legacy)
 #   (c) agents/*.md frontmatter IDENTITY keys {name, tools, scope} — `model:` EXCLUDED
 #       (monitor/operator writer); body edits PASS. An Edit blocks when its old_string
 #       overlaps the on-disk frontmatter block AND either alters the fence-line count
@@ -251,10 +254,18 @@ class FrontmatterUnparseable(Exception):
 # for that, and the two command-text sites carry it as a documented residual.
 SEP = r"/(?:\.?/)*"
 
+# Config root: `.claude` plus every `.claude-<branch>` profile dir, the dialect-native
+# counterpart of lib/claude-config-dirs.sh's ERE fragment — the heredoc delimiter stays
+# QUOTED, so the two grammars are declared independently and pinned equal by the
+# shared-probe parity row in enforce-harness-critical-branch.bats. The suffix opens with an
+# alnum (a bare `.claude-` is not a root, `.claudex` cannot match) and its class excludes
+# `/`, so it can never over-reach past the root segment.
+CLAUDE_ROOT = r"\.claude(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?"
+
 PROT_RE = re.compile(
     "|".join((
-        r"\.claude" + SEP + r"settings(?:\.local)?\.json",
-        r"\.claude" + SEP + r"hooks" + SEP,
+        CLAUDE_ROOT + SEP + r"settings(?:\.local)?\.json",
+        CLAUDE_ROOT + SEP + r"hooks" + SEP,
         r"\.glass-atrium" + SEP + r"hooks" + SEP,
         r"\.claude" + SEP + r"agents" + SEP,
         r"\.glass-atrium" + SEP + r"agents" + SEP,
@@ -271,8 +282,11 @@ PROT_RE = re.compile(
 # would arm on nothing. The trailing negative lookahead keeps a longer sibling
 # name (.glass-atrium/autoagent-backup) OUT. The leading dot is what keeps the
 # git repo tree (.../git/glass-atrium/hooks/) from arming.
+# The hooks and agents alternatives are SPLIT rather than sharing one group: hooks/ of every
+# profile branch is protected, agents/ stays rooted at the literal `.claude` this cycle.
 PROT_DIR_RE = re.compile(
-    r"(?:\.claude" + SEP + r"(?:hooks|agents)"
+    r"(?:" + CLAUDE_ROOT + SEP + r"hooks"
+    + r"|\.claude" + SEP + r"agents"
     + r"|\.glass-atrium" + SEP + r"(?:hooks|agents|autoagent|scripts|skills))"
     + r"(?![\w.\-])",
     re.IGNORECASE,
@@ -1614,6 +1628,15 @@ if [[ "${PY_STATUS}" != "0" ]]; then
   block_critical "HAR-003" "classifier-failure" "${CLASSIFIER_DETAIL}"
 fi
 
+# Branch-root grammar, single-sited in lib/. Sourced after every helper definition and before the
+# first use; an unreadable lib cannot classify harness paths, so it blocks through the existing
+# HAR-003 degradation class rather than passing the write.
+config_dirs_lib="${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
+# shellcheck source=lib/claude-config-dirs.sh
+if [[ ! -r "${config_dirs_lib}" ]] || ! source "${config_dirs_lib}"; then
+  block_critical "HAR-003" "classifier-failure" "lib/claude-config-dirs.sh unreadable"
+fi
+
 write_edit_arm() {
   local norm raw
   [[ -z "${TARGET}" ]] && exit 0
@@ -1629,11 +1652,21 @@ write_edit_arm() {
   # shellcheck disable=SC2292
   [ "${RAW_TARGET}" != "${norm}" ] && raw="${RAW_TARGET}"
 
+  # Predicates rather than case globs on the `.claude` roots: they carry the branch grammar for
+  # every profile dir, and being `[[ ]]`-based they inherit the shell-global nocasematch the
+  # literal globs folded under.
+  # Intended predicate calls (exit status IS the answer, no set -e reliance) → SC2310 disabled.
+  # shellcheck disable=SC2310
+  if claude_config_is_settings_path "${norm}"; then
+    block_critical "HAR-001" "live-settings" "${norm}" "${raw}"
+  fi
+  # shellcheck disable=SC2310
+  if claude_config_is_hooks_dir_path "${norm}"; then
+    block_critical "HAR-001" "live-hooks-dir" "${norm}" "${raw}"
+  fi
+
   case "${norm}" in
-    "${CLAUDE_DIR}/settings.json" | "${CLAUDE_DIR}/settings.local.json")
-      block_critical "HAR-001" "live-settings" "${norm}" "${raw}"
-      ;;
-    "${GA_DIR}/hooks/"* | "${CLAUDE_DIR}/hooks/"*)
+    "${GA_DIR}/hooks/"*)
       block_critical "HAR-001" "live-hooks-dir" "${norm}" "${raw}"
       ;;
     "${GA_DIR}/autoagent/"* | "${GA_DIR}/scripts/"* | "${GA_DIR}/skills/"*)
