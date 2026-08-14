@@ -185,9 +185,11 @@ jobs:
   # the matching language job's `if:`. IMPORTANT push-event safety: on a first
   # push / force-push / brand-new branch the before-SHA can be all-zeros, which
   # would make the filter skip EVERY language job while ci-pass (always()) still
-  # turns green with zero real testing. `predicate-quantifier: every` +
-  # explicit all-true fallback on a missing base prevents that false-green: when
-  # paths-filter cannot diff a base, we force every stack to run.
+  # turns green with zero real testing. The fail-safe is the action's own
+  # missing-base behavior: when paths-filter cannot diff a base it reports every
+  # filter as changed, so every stack runs. There is deliberately no
+  # `predicate-quantifier:` key — `every` ANDs a filter's patterns together,
+  # which would make these positive-only lists never match (a real false-green).
   # ---------------------------------------------------------------------------
   detect-changes:
     name: detect changed stacks
@@ -222,6 +224,11 @@ jobs:
               - 'autoagent/test/**'
               - '**/*.sh'
               - '**/*.bats'
+              - 'rules/**'
+              - 'agents/**'
+              - 'scoped/**'
+              - 'skills/**'
+              - '**/*.md'
             python:
               - 'autoagent/**'
               - '**/*.py'
