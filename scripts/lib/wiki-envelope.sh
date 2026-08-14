@@ -17,17 +17,31 @@
 #
 #   wiki_envelope_parse <envelope_file> <nonce> <total> <run_dir>
 #     0 → accepted; benign misses reported in WIKI_ENVELOPE_MISSING_IDX
-#     5 → structural violation (hostile-or-confused signal)
+#     5 → structural violation (hostile-or-confused signal) or a failed staging
+#         write, which is fail-closed to the same abort: the caller invokes this
+#         parser as `... || rc=$?`, which suppresses errexit inside the function,
+#         so an unguarded write would truncate a body and still return 0 — the
+#         caller would then promote and stamp the truncated note, and the raw
+#         never gets recompiled.
 #     6 → oversize
 #
 #   Outputs (globals, reset on every call):
 #     WIKI_ENVELOPE_VIOLATION       violation kind, empty on success
 #     WIKI_ENVELOPE_CAPTURED_IDX    space-separated idx list, capture order
 #     WIKI_ENVELOPE_CAPTURED_COUNT  count of fully validated sections
-#     WIKI_ENVELOPE_MISSING_IDX     space-separated 1..total not captured
+#     WIKI_ENVELOPE_MISSING_IDX     space-separated 1..total not captured — a
+#                                   log/diagnostic convenience, not the only
+#                                   source: a caller walking its own input array
+#                                   may equally re-derive the miss set from the
+#                                   absence of <run_dir>/body.<idx>, which is the
+#                                   same fact one file-existence test away
 #     WIKI_ENVELOPE_DONE_SEEN       1 when the DONE terminator was present
 #     WIKI_ENVELOPE_DROPPED_IDX     idx of an unterminated tail dropped at EOF
-#     WIKI_ENVELOPE_CHATTER_BYTES   bytes of outside-section text (log signal)
+#     WIKI_ENVELOPE_CHATTER_BYTES   bytes of outside-section text (log signal);
+#                                   deliberately uncapped — a cap here would
+#                                   change the envelope contract, and chatter is
+#                                   bounded from outside by the CLI output
+#                                   ceiling and the caller's captured-file gate
 #   Bodies land at <run_dir>/body.<idx> — the caller's sole read surface.
 #
 # A violation kind never interpolates model-controlled text: idx/count fields are
@@ -159,7 +173,13 @@ wiki_envelope_parse() {
         fi
         open_idx="${idx}"
         note_bytes=0
-        : >"${run_dir}/part.${idx}"
+        # Staging IO is fail-closed to a structural abort: a silently short body
+        # is promoted, stamped and counted processed forever, so aborting the run
+        # (raw stays unprocessed, retried next night) is the recoverable side.
+        if ! : >"${run_dir}/part.${idx}"; then
+          WIKI_ENVELOPE_VIOLATION="stage-write-failed"
+          return 5
+        fi
         ;;
       "${end_pfx}"*-----)
         if [[ "${WIKI_ENVELOPE_DONE_SEEN}" -eq 1 ]]; then
@@ -177,7 +197,10 @@ wiki_envelope_parse() {
           WIKI_ENVELOPE_VIOLATION="end-idx-mismatch"
           return 5
         fi
-        mv -f -- "${run_dir}/part.${idx}" "${run_dir}/body.${idx}"
+        if ! mv -f -- "${run_dir}/part.${idx}" "${run_dir}/body.${idx}"; then
+          WIKI_ENVELOPE_VIOLATION="stage-close-failed"
+          return 5
+        fi
         captured[idx]=1
         WIKI_ENVELOPE_CAPTURED_IDX="${WIKI_ENVELOPE_CAPTURED_IDX}${WIKI_ENVELOPE_CAPTURED_IDX:+ }${idx}"
         WIKI_ENVELOPE_CAPTURED_COUNT=$((WIKI_ENVELOPE_CAPTURED_COUNT + 1))
@@ -236,7 +259,10 @@ wiki_envelope_parse() {
             WIKI_ENVELOPE_VIOLATION="oversize-total"
             return 6
           fi
-          printf '%s\n' "${line}" >>"${run_dir}/part.${open_idx}"
+          if ! printf '%s\n' "${line}" >>"${run_dir}/part.${open_idx}"; then
+            WIKI_ENVELOPE_VIOLATION="stage-write-failed"
+            return 5
+          fi
         else
           WIKI_ENVELOPE_CHATTER_BYTES=$((WIKI_ENVELOPE_CHATTER_BYTES + ${#line} + 1))
         fi

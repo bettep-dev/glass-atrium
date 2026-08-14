@@ -307,6 +307,41 @@ body of one" ]
   [ "${output}" = "reloaded-ok" ]
 }
 
+# The staging guards, from the caller's angle: `... || rc=$?` suppresses errexit
+# inside the parser, so an unguarded staging write would leave a short body AND a
+# rc of 0 — the caller promotes it, stamps source_raw, and the raw is never
+# recompiled. Both rows assert the abort instead of the silent truncation.
+@test "a run dir that cannot be written aborts 5 instead of staging a short body" {
+  [ "$(id -u)" -ne 0 ] || skip "root bypasses the mode bits this row depends on"
+  golden_two
+  chmod 500 "${RUN_DIR}"
+  parse 2
+  chmod 700 "${RUN_DIR}"
+  [ "${status}" -eq 5 ]
+  [[ "${output}" == *"violation=stage-write-failed"* ]]
+  [[ "${output}" == *"count=0"* ]]
+  assert_no_bodies
+}
+
+@test "a section close that cannot land aborts 5 instead of reporting a capture" {
+  [ "$(id -u)" -ne 0 ] || skip "root bypasses the mode bits this row depends on"
+  begin_line "${NONCE}" 1
+  emit 'body of one'
+  end_line "${NONCE}" 1
+  done_line "${NONCE}" 1
+  # A pre-created part file plus a non-writable run dir fails the rename ALONE:
+  # writing an existing file needs no directory write permission, so the body
+  # stages normally and only the close breaks.
+  : >"${RUN_DIR}/part.1"
+  chmod 500 "${RUN_DIR}"
+  parse 1
+  chmod 700 "${RUN_DIR}"
+  [ "${status}" -eq 5 ]
+  [[ "${output}" == *"violation=stage-close-failed"* ]]
+  [[ "${output}" == *"count=0"* ]]
+  [ ! -f "${RUN_DIR}/body.1" ]
+}
+
 @test "precondition failures return 5 without touching the run dir" {
   golden_two
   run env LIB="${LIB}" ENVELOPE="${ENVELOPE}" RUN_DIR="${RUN_DIR}" bash -c '
