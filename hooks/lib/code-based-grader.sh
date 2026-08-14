@@ -32,8 +32,11 @@ readonly _CODE_BASED_GRADER_LOADED=1
 #   verified_fail — two emitters, each marked at its site with a VERIFIED_FAIL_EMITTER comment:
 #                   (1) the narrow LLM09 zero-evidence guard — result=done + metric_pass=true +
 #                   ZERO deliverable evidence of ANY kind; (2) a TOTAL transcript-authorship
-#                   contradiction — every claimed path-shaped entry absent from a non-empty
-#                   write-history. A PARTIAL mismatch (>=1 matched) withholds → unverified.
+#                   contradiction — every claimed path-shaped entry, excluding recognized
+#                   tool-generated artifacts (basename manifest.json / live-install-root paths,
+#                   which count as neither corroborating nor contradicting), absent from a
+#                   NON-EMPTY write-history. A PARTIAL mismatch (>=1 matched) withholds →
+#                   unverified, as does a field carrying nothing but recognized artifacts.
 #                   Off-surface-heading absence is neither case.
 #
 # Input-surface invariant (core-outcome-record.md grader_verdict guide): the grader reads
@@ -269,6 +272,21 @@ _cbg_path_matches_writes() {
   return 1
 }
 
+# _cbg_path_is_tool_artifact — true when the claimed path ($1) is a recognized tool-generated
+# artifact: a CLOSED two-shape set — basename exactly manifest.json (any directory), or a path
+# under the live install root ($HOME/.glass-atrium/). Both shapes are produced by a script or the
+# sanctioned updater seam rather than by an authoring tool call, so the Write/Edit collector is
+# structurally blind to them and their absence from the history proves nothing. The set stays
+# closed (no glob, no allowlist file): an open growth path would erode the contradiction signal
+# invisibly. $1 arrives ~-expanded and glob-free from the caller. Bash 3.2 safe.
+_cbg_path_is_tool_artifact() {
+  local p="${1:-}"
+  if [[ -z "${p}" ]]; then return 1; fi
+  if [[ "${p##*/}" == "manifest.json" ]]; then return 0; fi
+  if [[ -n "${HOME:-}" && "${p}" == "${HOME}/.glass-atrium/"* ]]; then return 0; fi
+  return 1
+}
+
 # _cbg_write_crosscheck — Step 4-5 transcript Write/Edit cross-check (plan T2, ADR-6).
 # Reads the files field ($1) plus two caller-scope inputs set by track-outcome.sh from
 # the subagent's OWN transcript via style_ref_match.py::collect_write_paths:
@@ -282,9 +300,11 @@ _cbg_path_matches_writes() {
 #   contradicted — TOTAL authorship mismatch: >=1 claimed path-shaped entry ABSENT from a
 #                  NON-EMPTY write-history AND ZERO matched (AC 264, the fabrication signal).
 #   withhold     — unverifiable transcript (main-session / unreadable / missing lib), an
-#                  EMPTY write-history (AC 265), OR a PARTIAL mismatch (>=1 unmatched WITH >=1
+#                  EMPTY write-history (AC 265), a PARTIAL mismatch (>=1 unmatched WITH >=1
 #                  matched — a tool-generated sibling such as a manifest / migration / snapshot
-#                  never flips an otherwise-authored row). Withhold promotion → unverified,
+#                  never flips an otherwise-authored row), OR an ARTIFACT-ONLY field (every
+#                  path-shaped entry recognized by _cbg_path_is_tool_artifact, so no entry can
+#                  corroborate or contradict authorship). Withhold promotion → unverified,
 #                  NEVER a verified_fail: neither an empty history nor a partial mismatch can
 #                  DEMONSTRATE absence (Write/Edit is blind to Bash-authored writes), so absence
 #                  rests at unverified (W2 spirit).
@@ -310,7 +330,7 @@ _cbg_classify_write_crosscheck() {
     printf 'withhold\n'
     return 0
   fi
-  local rest="${files}" entry any_unmatched="" any_matched="" glob_seen=""
+  local rest="${files}" entry any_unmatched="" any_matched="" glob_seen="" artifact_seen=""
   local _cbg_entry _cbg_is_glob _cbg_is_path
   while [[ -n "${rest}" ]]; do
     if [[ "${rest}" == *,* ]]; then
@@ -329,7 +349,12 @@ _cbg_classify_write_crosscheck() {
     # non-path-shaped prose entries are counted as NEITHER matched nor unmatched — prose is
     # never evidence of authorship, so it can neither trigger nor rescue a contradiction.
     if [[ -n "${_cbg_is_path}" ]]; then
-      if _cbg_path_matches_writes "${_cbg_entry}" "${writes}"; then
+      # a recognized tool-generated artifact is counted as NEITHER matched nor unmatched (the prose
+      # precedent) — the collector cannot see such a write, so it neither triggers nor rescues a
+      # contradiction; the flag survives the loop to route an artifact-only field below.
+      if _cbg_path_is_tool_artifact "${_cbg_entry}"; then
+        artifact_seen=1
+      elif _cbg_path_matches_writes "${_cbg_entry}" "${writes}"; then
         any_matched=1
       else
         any_unmatched=1
@@ -337,13 +362,21 @@ _cbg_classify_write_crosscheck() {
     fi
   done
   # glob present OR no path-shaped entry → indeterminate → na (Step 1 → unverified).
-  # No path-shaped entry ⇔ neither match flag set — both are written in the one path-shaped branch.
-  if [[ -n "${glob_seen}" ]] || [[ -z "${any_matched}${any_unmatched}" ]]; then
+  # No path-shaped entry ⇔ none of the three flags set — all are written in the one path-shaped
+  # branch, so an artifact-only field must NOT reach this na exit (it is routed to withhold below).
+  if [[ -n "${glob_seen}" ]] || [[ -z "${any_matched}${any_unmatched}${artifact_seen}" ]]; then
     printf 'na\n'
     return 0
   fi
   # empty write-history → cannot demonstrate absence → withhold (never verified_fail).
   if [[ -z "${writes//[[:space:]]/}" ]]; then
+    printf 'withhold\n'
+    return 0
+  fi
+  # artifact-only field: nothing left to corroborate OR contradict → withhold. Ordered ABOVE the
+  # matched-only arm, whose predicate is also true here — na or verified would let the
+  # files-evidence arm promote an existing live-install test path on zero authorship evidence.
+  if [[ -z "${any_matched}${any_unmatched}" ]]; then
     printf 'withhold\n'
     return 0
   fi
