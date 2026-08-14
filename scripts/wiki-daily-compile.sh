@@ -34,6 +34,9 @@
 # the raw stays unprocessed so _classify_raw re-detects it, draining the backlog across nights.
 # Per-call chunking was rejected here because it forks the single-call quota/budget branch (5.4 /
 # 5.5) the health readback depends on; add a WIKI_COMPILE_MAX_BATCH loop if a backlog ever stalls.
+# Related behavior change: a budget or quota abort (5.4 / 5.5) is now a total no-op — both return
+# before the parser runs, so ZERO notes land where the old model-Write flow left whatever the
+# model had already written. The raws stay unprocessed and the next night drains them.
 
 # WIKI_ROOT: single source of truth for the wiki data root. Resolved BEFORE the
 # pre-strict-mode fork-OK probe so the diagnostic reports the configured raw/ path
@@ -362,6 +365,23 @@ pg_write_report() {
     || drop_pg_report "$site" "$?" # GA-CONVERTED: reporting failure surfaced to stderr + pg-report-drops sink
 }
 
+# Bounded copy of what the model actually returned into LOG_FILE. The envelope now lands in
+# RUN_DIR, which _compile_cleanup destroys on EXIT, so an abort or a short capture would otherwise
+# leave the operator loud "it failed" lines with zero bytes of evidence — an undiagnosable night
+# that simply repeats (pins P3/C1/C2, Precondition Loud-Fail). Bounded to 4000 bytes so a runaway
+# response cannot flood the log; `head -c FILE` is not a pipe, so the pin-A2 SIGPIPE hazard
+# does not apply.
+_log_envelope_excerpt() {
+  if [ -n "${ENVELOPE_FILE:-}" ] && [ -f "$ENVELOPE_FILE" ]; then
+    {
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] envelope excerpt (first 4000 bytes):"
+      head -c 4000 -- "$ENVELOPE_FILE"
+      echo
+    } >>"$LOG_FILE"
+  fi
+  return 0
+}
+
 # Abort on an envelope-side precondition or violation, emitting ALL THREE loud channels (pin C2):
 # stderr naming the violation kind, a timestamped LOG_FILE line, and a PG error row carrying a
 # distinct site tag with compiled_count=0. Args: site tag, exit code, violation kind.
@@ -371,6 +391,7 @@ _envelope_fail() {
   local site="$1" code="$2" kind="$3"
   echo "[wiki-daily-compile] FATAL: ${kind} — zero notes written, aborting cycle" >&2
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [wiki-${site}] ${kind} — recording status='error', zero notes written, aborting cycle" >>"$LOG_FILE"
+  _log_envelope_excerpt
   if [ -x "$PG_HELPER" ]; then
     local envelope
     envelope=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"error","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile aborted: %s"}}' \
@@ -447,12 +468,15 @@ BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; 
 # 3.5 Per-run nonce + private run dir (pins B3/A2/P3/C1). Both are preconditions of the model
 # call, so a failure here exits 7 before any spend. The nonce is what makes a sentinel
 # unforgeable by pre-existing raw content: every raw file predates it.
+# `|| NONCE=""` on both generators is what makes the assert below reachable: a bare assignment is
+# a simple command, so errexit would kill the script AT the assignment on a generator failure
+# (openssl entropy/FIPS, dd read error propagated by pipefail) and exit 7 would never be named.
 if command -v openssl >/dev/null 2>&1; then
-  NONCE="$(openssl rand -hex 16)"
+  NONCE="$(openssl rand -hex 16)" || NONCE=""
 else
   # `tr -dc … | head -c 32` is FORBIDDEN here (pin A2): head closes the pipe and pipefail turns
   # the SIGPIPE into a 141 abort. dd reads a fixed 16 bytes instead, so nothing closes early.
-  NONCE="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" # GA-ABSORB[handled@nonce-length-assert-below]: dd's byte-count line is stderr noise; a short read is caught by the 32-char assert
+  NONCE="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')" || NONCE="" # GA-ABSORB[handled@nonce-length-assert-below]: dd's byte-count line is stderr noise; a short read is caught by the 32-char assert
 fi
 if [ "${#NONCE}" -ne 32 ]; then
   _envelope_fail "envelope-precondition" 7 "run nonce generation failed (expected 32 hex chars)"
@@ -467,6 +491,13 @@ fi
 # open (AC2 — the grep for that literal cwd must return zero, comments included).
 # No `--` guard: BSD chmod rejects it outright, and mktemp -d never returns a leading-dash path.
 chmod 700 "$RUN_DIR"
+# AC2 asserted, not assumed: mktemp inherits whatever TMPDIR happens to be, and with TMPDIR unset
+# (bare cron, non-launchd invocation, Linux install) it falls back to the world-writable /tmp the
+# private run dir exists to leave — reopening the ancestor-traversal vector. Refuse instead.
+RUN_DIR_PARENT=$(dirname "$RUN_DIR")
+if [ -k "$RUN_DIR_PARENT" ] || [ "$RUN_DIR_PARENT" = /tmp ]; then
+  _envelope_fail "envelope-precondition" 7 "run dir parent is world-writable (set TMPDIR to a private dir)"
+fi
 ENVELOPE_FILE="${RUN_DIR}/envelope.txt"
 
 # 4. Build batched prompt (Step 1 Convert only). The numbered list is the contract: the integer
@@ -506,7 +537,8 @@ finish with exactly one terminator line:
 -----GA-WIKI-ENVELOPE-DONE nonce=${NONCE} count=<M>-----
 where <M> is the number of pairs you emitted. Text outside a pair is ignored.
 
-Files to process (index. absolute path):
+Files to process (index. absolute path). Read each listed path with the Read tool before you
+compile it — never summarize a file from its path alone:
 ${FILE_LIST}"
 
 # 4.5 Cost ceiling: the per-call --max-budget-usd (Step 5, clamped [0.50, 5.00]) bounds
@@ -608,6 +640,11 @@ case "$ENVELOPE_RC" in
   *) _envelope_fail "envelope-structural" 5 "envelope structural violation (${WIKI_ENVELOPE_VIOLATION:-unknown})" ;;
 esac
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] envelope accepted sections=${WIKI_ENVELOPE_CAPTURED_COUNT}/${TOTAL} done_seen=${WIKI_ENVELOPE_DONE_SEEN} dropped_tail=${WIKI_ENVELOPE_DROPPED_IDX:-none} chatter_bytes=${WIKI_ENVELOPE_CHATTER_BYTES}" >>"$LOG_FILE"
+# A short capture is the one exit-0 path where the model's own output is the only diagnosis of
+# WHY it fell short (fenced, indented or paraphrased sentinels) — keep it before cleanup wipes it.
+if [ "$WIKI_ENVELOPE_CAPTURED_COUNT" -lt "$TOTAL" ]; then
+  _log_envelope_excerpt
+fi
 
 mkdir -p "$NOTES_DIR"
 w_idx=0
@@ -629,7 +666,14 @@ for file in "${UNPROCESSED[@]}"; do
     echo "[wiki-daily-compile] WARN: mktemp failed for ${w_base} — note not written" >&2
     continue
   fi
-  cat -- "$w_body" >"$w_tmp"
+  # Same reachability class as the nonce assert: an unguarded copy would let errexit abort the
+  # whole loop on a full disk, skipping the step-7 PG row and leaving the sibling dotfile behind.
+  if ! cat -- "$w_body" >"$w_tmp"; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: staging copy failed for ${w_base} — note not written" >>"$LOG_FILE"
+    echo "[wiki-daily-compile] WARN: staging copy failed for ${w_base} — note not written" >&2
+    rm -f -- "$w_tmp"
+    continue
+  fi
   mv -f -- "$w_tmp" "${NOTES_DIR}/${w_base}"
 done
 

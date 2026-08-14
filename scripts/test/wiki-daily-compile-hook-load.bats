@@ -255,6 +255,8 @@ log_body() {
   [ -f "${NOTES_DIR}/${present}" ]
   [ ! -f "${NOTES_DIR}/${missing}" ]
   log_body | grep -q "no compiled note returned for idx=2 basename=${missing}"
+  # A short capture is an exit-0 run, so the excerpt is the only record of WHY the model fell short.
+  log_body | grep -q 'envelope excerpt (first 4000 bytes):'
   grep -q '"status":"partial"' "${PG_RECORD}"
   grep -q '"compiled_count":1' "${PG_RECORD}"
 }
@@ -283,6 +285,27 @@ log_body() {
   log_body | grep -q '\[wiki-envelope-structural\]'
   grep -q '"status":"error"' "${PG_RECORD}"
   [ ! -f "${SYNC_MARKER}" ]
+}
+
+@test "an aborting envelope is excerpted into the log before cleanup destroys the run dir" {
+  make_sandbox
+  seed_raw alpha.md
+  seed_raw beta.md
+  write_template \
+    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=1-----' \
+    'first body' \
+    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=1-----' \
+    '-----GA-WIKI-NOTE-BEGIN nonce=@NONCE@ idx=1-----' \
+    'override attempt' \
+    '-----GA-WIKI-NOTE-END nonce=@NONCE@ idx=1-----' \
+    '-----GA-WIKI-ENVELOPE-DONE nonce=@NONCE@ count=2-----'
+
+  run bash "${SANDBOX}/wiki-daily-compile.sh"
+  [ "$status" -eq 5 ]
+  # The abort is loud AND diagnosable: what the model actually returned survives in the log even
+  # though _compile_cleanup has already removed the run dir that held it.
+  log_body | grep -q 'envelope excerpt (first 4000 bytes):'
+  log_body | grep -q 'override attempt'
 }
 
 @test "AC3 an out-of-range idx aborts with exit 5 and zero files under NOTES_DIR" {
@@ -317,4 +340,14 @@ log_body() {
   [[ "$output" == *"envelope oversize (oversize-note)"* ]]
   log_body | grep -q '\[wiki-envelope-oversize\]'
   grep -q '"status":"error"' "${PG_RECORD}"
+}
+
+# ---------------------------------------------------------------------------
+# AC10 — the arg-combo rationale anchor (the eval-side half lives in
+# autoagent/test/autoagents-eval-arg-combo.bats; case-insensitive because the
+# two headers differ in capitalisation)
+# ---------------------------------------------------------------------------
+
+@test "AC10 the compile-script header records why the headless arg combo is safe" {
+  grep -qi 'why this arg combo' "${WIKI_SCRIPT}"
 }
