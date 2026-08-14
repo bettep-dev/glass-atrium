@@ -76,9 +76,9 @@ The opposite model, the **Handoff Pattern** (agents transferring control directl
 
 In Glass Atrium the orchestrator holds the full context alone and keeps control at every delegation boundary.
 
-Each sub-task is routed by capability rather than keyword (no keyword or alias matching), so it is always clear exactly who is doing what. Each agent returns a structured completion record, and the orchestrator verifies that intent and result line up. A failed subagent is handled by the Failure Recovery Loop (retry → fallback → debugger escalation), while spawn depth, concurrency caps, and per-agent budgets are all enforced so that no delegation can run away. Independent, non-overlapping sub-tasks run in parallel by default, without your having to ask for it.
+Each sub-task is routed by capability rather than keyword (no keyword or alias matching), so it is always clear exactly who is doing what. Each agent returns a structured completion record, and the orchestrator verifies that intent and result line up. A failed subagent is handled by the Failure Recovery Loop (retry → fallback → debugger escalation). Per-agent turn budgets are applied by the harness as a hard cap at spawn time, and concurrency caps are enforced by the workflow engine at runtime. Spawn depth is bounded structurally rather than by a policy number: no agent's frontmatter grants a re-spawn tool (Agent/Task/Workflow), and that tool list is frozen at spawn. Independent, non-overlapping sub-tasks run in parallel by default, without your having to ask for it.
 
-This control is **mechanical, not merely procedural** — it does not stop at writing rules into a prompt and hoping they hold.
+The mechanical layer of this control is real code — the PreToolUse hook pipeline, the harness-critical write block in `enforce-harness-critical.sh`, and the spawn-time tool freeze. The rest is an honor-system layer — delegation retry/fallback/escalation, and the `MAX_DEPTH=2` policy number with its depth counting. The rule files say so themselves.
 
 Lifecycle hooks intercept every tool call, the monitor observes every event, and outcome records keep every delegation traceable and auditable. Hook-backed enforcement, full observability, and a closed learning loop — that combination is exactly what sets this apart from an uncontrolled handoff system.
 
@@ -89,7 +89,7 @@ A single request moves through the system like this:
 1. **You ask the orchestrator** (the main session) for something — fix a bug, plan a feature, write a report.
 2. **The orchestrator investigates and decomposes** the request, then consults the capability registry to assemble a team of specialist agents and an execution order.
 3. **It delegates each sub-task** — every delegation clears the **PreToolUse hooks** (dangerous-command blocking, secret scanning, scope-drift flagging, plan-verification gate) *before* the action actually runs.
-4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**, and within enforced spawn, turn, and tool budgets. Rather than being cut off abruptly when a budget runs out, a long task records its progress and pauses in a resumable state.
+4. **The specialist agent does the work** — within its own scope rules, injected by the **SubagentStart hook**, and within enforced turn and tool budgets. Rather than being cut off abruptly when a budget runs out, a long task records its progress and pauses in a resumable state.
 5. **Outcomes are recorded.** Each agent emits a `[COMPLETION]` block, and the **PostToolUse hook** captures it as an Outcome Record.
 6. **The orchestrator synthesizes** — folding the verified results into one answer, or running the recovery loop when something fails.
 7. **Everything is observable.** Every cost, outcome, and agent event streams into PostgreSQL and the Atrium Monitor in real time.
@@ -141,7 +141,7 @@ When the interactive menu opens, choose **Install** — once it finishes, the de
 
 ### Uninstall
 
-Choose **Uninstall** from the menu. It removes the installed symlinks and drops the GA database to cleanly detach the Atrium from your existing Claude system, leaving your own files untouched and no residue behind. Note that **the database is backed up before it is deleted** (the dump is kept in `~/.claude/backups/postgres/`), and a reinstall creates a fresh one. The backup is not restored automatically — if you need the old data, restore it yourself with `pg_restore`.
+Choose **Uninstall** from the menu. It removes the installed symlinks and drops the GA database to cleanly detach the Atrium from your existing Claude system, leaving your own files untouched and no residue behind. Note that **the database is backed up before it is deleted** (the dump is kept in `~/.glass-atrium/backups/postgres/`), and a reinstall creates a fresh one. The backup is not restored automatically — if you need the old data, restore it yourself with `pg_restore`.
 
 ### How to write Atrium Monitor documents
 
