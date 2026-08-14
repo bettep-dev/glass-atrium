@@ -8,6 +8,14 @@
 # Exit codes (autoagents-eval.sh-scoped; daemon-apply.sh owns a different 4/5):
 #   0 = PASS or nothing to eval · 1 = FAIL (eval verdict, preflight, or claude run)
 #   4 = claude binary not found · 5 = git status failed on the default-mode scan
+#
+# why this arg combo (the headless `claude -p` eval invocation further below) — plan pin E1:
+#   --tools "Read,Glob,Grep" → Write-less by design: a read-only eval needs no write tool
+#   cwd "$AGENTS_DIR" → an OWNED dir, never /tmp: --setting-sources project,local resolves against cwd
+#   a world-writable cwd would let any local user plant .claude settings into the run — vector absent here
+#   --permission-mode bypassPermissions → accepted: it unloads the hook layer
+#   residual risk stays bounded by the Write-less read-only tool set above
+#   headless cron has no user to answer a permission prompt, so a prompt-stall is the worse failure
 
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
