@@ -12,10 +12,22 @@
 # shellcheck disable=SC2310,SC2312
 # glass-atrium-update — the user-triggered Glass Atrium updater (plan E3 / design
 # C, task T09). This is the ADAPTER that ORCHESTRATES the already-built E3 spine
-# libs; it is deliberately NOT a new merge engine and it NEVER writes
-# core.autoagent_proposals (that surface belongs to the autoagent self-improvement
-# loop, a different system). The binary subcommand `glass-atrium update` (T08)
-# dispatches here.
+# libs; it is deliberately NOT a new merge engine. The binary subcommand
+# `glass-atrium update` (T08) dispatches here.
+#
+# core.autoagent_proposals boundary — NARROWED, it previously read "never writes
+# it". That table belongs to the autoagent self-improvement loop, so the updater
+# reaches it through exactly ONE channel: update_emit_resolved_records, via the
+# write_autoagent_proposal envelope piped to scripts/_pg_dual_write_daemon.py,
+# always carrying pattern_label=editable-region-resolved-release and a structurally
+# apply-INELIGIBLE row (terminal status, a haiku_status that no LIKE ok% gate
+# matches, approval_tier=auto). Raw SQL against that table is FORBIDDEN from every
+# path. The write runs in EVERY entry mode, interactive included: the row is the
+# ONLY trace that daemon-authored content was discarded, and interactive is the mode
+# a human actually runs — gating it headless-only would route the accountability
+# record to the mode least likely to produce it. Pinned by the boundary test in
+# scripts/test/glass-atrium-update.bats, which asserts the CHANNELS (no raw SQL, one
+# emitter, one envelope op, one helper pipe) rather than SQL syntax.
 #
 # What it does, in order (each step builds on the previous):
 #   1. WRITER-SERIALIZATION (T10): create the cooperative pause flag so the
@@ -30,6 +42,9 @@
 #   5. DETERMINISTIC NON-AGENT SYNC (T13): snapshot + swap + rollback via the
 #      apply-spine (spine_commit_staged). Agent EDITABLE-region merge is EXCLUDED
 #      here and left as a documented CALL SEAM for E4 (T17-T19).
+#   5a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
+#      conflicting EDITABLE gaps took the release side (the boundary note above) —
+#      emitted from the merge step in every entry mode, best-effort.
 #   5b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
 #      files the prior-vendor baseline shipped but this release DROPPED (provenance
 #      -clean only; a user-edited drop is PRESERVED) to Trash, previewed through the
@@ -96,13 +111,17 @@
 # or the manifest carries no .version to derive the bundle name — nothing was
 # applied).
 #
-# DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
-# the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
-# only, not core.update_job). update_job rows are written via psql reusing the
+# core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
+# update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
+# the resolved-gap accountability row (boundary note at the top) is written in EVERY
+# mode, so an interactive run does reach Postgres whenever a body's conflicting gaps
+# resolved to the release side. update_job rows are written via psql reusing the
 # daemon-apply.sh idiom; single-active is the migration's partial UNIQUE INDEX
 # (update_job_single_active_uniq WHERE status='in-progress'). Seams (all default to
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
-# ATRIUM_UPDATE_DB=off (disable tracking) · ATRIUM_UPDATE_JOB_ID (adopt a row the
+# ATRIUM_UPDATE_DB=off (disable update_job tracking only — the resolved-gap record
+# rides its own ATRIUM_UPDATE_PG_HELPER seam, not psql) ·
+# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
 # (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
@@ -287,6 +306,177 @@ update_declines_dir() {
   printf '%s\n' "${parent}/update-declines"
 }
 
+# Compose the write_autoagent_proposal envelope for one resolved body. Values
+# arrive through the environment (never argv interpolation) so no rationale or
+# diff text can reach a shell or JSON quoting seam. Reads GA_REC_* + the diff
+# file; prints one JSON line.
+_UPDATE_PROPOSAL_PY='
+import json, os, pathlib
+
+DIFF_CAP = 20000
+EXCERPT_CAP = 120
+
+def env(key, default=""):
+    return os.environ.get(key, default)
+
+diff_path = env("GA_REC_DIFF")
+diff_text = ""
+if diff_path and pathlib.Path(diff_path).is_file():
+    diff_text = pathlib.Path(diff_path).read_text(encoding="utf-8", errors="replace")
+if len(diff_text) > DIFF_CAP:
+    diff_text = diff_text[:DIFF_CAP] + "\n[truncated]\n"
+
+# Two excerpts bound the rationale; the full text stays in proposed_diff. The
+# sidecar the resolver writes holds ONLY lines a conflicting gap discarded, so
+# the excerpt is daemon-authored text and nothing else. Without it (an older
+# resolver, an unreadable file) the excerpt falls back to the diff, where a
+# removed line may equally be vendor prose the release restructured — hence the
+# weaker wording on that path.
+excerpts, attribution = [], "Dropped daemon-authored excerpt"
+dropped_path = env("GA_REC_DROPPED_TEXT")
+source_lines = []
+if dropped_path and pathlib.Path(dropped_path).is_file():
+    source_lines = pathlib.Path(dropped_path).read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines()
+else:
+    attribution = "Excerpt of lines the candidate drops"
+    source_lines = [
+        line[1:]
+        for line in diff_text.splitlines()
+        if line.startswith("-") and not line.startswith("---")
+    ]
+for line in source_lines:
+    body = line.strip()
+    if body:
+        excerpts.append(body[:EXCERPT_CAP])
+    if len(excerpts) == 2:
+        break
+
+landed = env("GA_REC_LANDED") == "1"
+rationale = (
+    "conflicting-gap resolution took the release side "
+    "(deterministic policy, no model call and no operator judgment): "
+    "{hunks} gap(s) in EDITABLE region(s) {regions}; "
+    "dropped {dropped} daemon-authored line(s), added {added} release line(s); "
+    "verdict=merge-resolved-release, outcome={outcome}."
+).format(
+    hunks=env("GA_REC_HUNKS", "0"),
+    regions=env("GA_REC_REGIONS", "none"),
+    dropped=env("GA_REC_DROPPED", "0"),
+    added=env("GA_REC_ADDED", "0"),
+    outcome="applied" if landed else "not applied (declined or rolled back)",
+)
+if excerpts:
+    rationale += f" {attribution}: " + " | ".join(repr(e) for e in excerpts)
+
+source = env("GA_REC_SOURCE")
+try:
+    mtime = int(pathlib.Path(source).stat().st_mtime)
+except OSError:
+    mtime = 0
+
+print(json.dumps({
+    "op": "write_autoagent_proposal",
+    "args": {
+        "cycle_date": env("GA_REC_CYCLE_DATE"),
+        "pattern_label": "editable-region-resolved-release",
+        "target_file": env("GA_REC_TARGET"),
+        "target_agent": env("GA_REC_AGENT"),
+        # The dispatcher coerces an UNKNOWN classification label to
+        # (reject, auto) — "apply" is not a label it knows, so the landed row
+        # must carry the daemon body label that maps to the apply enum.
+        "classification": "body-auto" if landed else "reject",
+        "rationale": rationale,
+        # No model runs on this path (the improvement-verify gate was removed
+        # from it deliberately), so no ok*/skipped:* token the daemon composes
+        # is true here. A skipped: form is also what keeps the row out of every
+        # apply-eligibility gate, which reads a LIKE ok% prefix.
+        "haiku_status": "skipped:no-model-call",
+        # The legacy llm tier folds into the safety bucket in both the tier
+        # count fold and the query builder, so an llm-tiered row would inflate
+        # the operator awaiting-decision count for a row awaiting nothing.
+        "approval_tier": "auto",
+        "status": "applied" if landed else "rejected",
+        "proposed_diff": diff_text,
+        # No cost guard runs on the updater path — there is no model spend to
+        # guard. "ok" is the non-warning state of the same VARCHAR(16) vocabulary.
+        "cost_guard_state": "ok",
+        "source_file": source,
+        "source_file_mtime": mtime,
+    },
+}))
+'
+
+# Record ONE self-improvement-history row per body whose conflicting gaps
+# resolved to the release side. This is the only trace that daemon-authored
+# content was discarded: the path takes the release side with no model call and
+# no per-file operator judgment, so the recorded row IS the accountability
+# surface the human reviews afterwards.
+#
+# This is the SINGLE sanctioned exception to the file-header core.autoagent_proposals
+# boundary, and it is deliberately NOT headless-gated: the caller chain (merge →
+# update_finalize_merge_and_anchors → update_run) carries no mode test, so an
+# interactive `glass-atrium update` records too.
+#
+# Equally deliberate: the emit does not read the confirm gate's verdict. A decline
+# offered the discard and refused it, which is itself the accountability event, so a
+# declined run still records — as status=rejected, since the outcome ledger below
+# supplies the landed split.
+#
+# Best-effort with a loud warning, following the conflict-decline precedent — a
+# database write failure must NEVER abort a deploy.
+# $1 = install root · $2 = resolved-record TSV (base, target, release, hunks,
+# dropped, added, regions, diff path) · $3 = per-run outcome ledger path, read for
+# the landed/not-landed split. The ledger travels as a PARAMETER rather than through
+# the file-scope global so the landed verdict is a function of the arguments alone.
+update_emit_resolved_records() {
+  local root="$1" tsv="$2" ledger="$3"
+  [[ -s "${tsv}" ]] || return 0
+  local helper landed base target release hunks dropped added regions diff_file dropped_text
+  local ledger_lines="" cycle_date
+  helper="${ATRIUM_UPDATE_PG_HELPER:-${root}/scripts/_pg_dual_write_daemon.py}"
+  if [[ ! -f "${helper}" ]]; then
+    update_log "WARN: resolved-gap recording skipped — no dual-write helper at ${helper}; the discard is stderr-only"
+    return 0
+  fi
+  # Both are run-level constants, so they are resolved ONCE: loading the ledger or
+  # forking `date` per TSV row costs O(rows) subprocesses, and a per-row date would
+  # additionally split one run's rows across two days on a midnight crossing.
+  # Each carries its own failure edge because errexit is active down the whole merge
+  # chain: an unreadable ledger or a failed fork here would abort AFTER the merge
+  # landed and BEFORE update_capture_base_content, stranding the merge at the old
+  # base — so the read rides an if-condition and the fork an or-fallback, and both
+  # degrade to the empty default (every row records as not-landed) instead.
+  if [[ -n "${ledger}" && -f "${ledger}" ]] && ledger_lines="$(<"${ledger}")"; then
+    ledger_lines=$'\n'"${ledger_lines}"$'\n'
+  fi
+  cycle_date="$(date +%Y-%m-%d)" || cycle_date=""
+  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text; do
+    [[ -n "${base}" ]] || continue
+    # Landed == the commit callback appended this basename to the per-run outcome
+    # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a
+    # declined gate writes no entries at all, and a row that falsely read applied
+    # would claim daemon content was discarded when none was. That default is the
+    # OPPOSITE of update_capture_base_content's blanket advance, which is why the
+    # shared matcher below carries no default of its own.
+    landed=0
+    if update_agent_outcome_landed "${base}" "${ledger_lines}"; then
+      landed=1
+    fi
+    if GA_REC_CYCLE_DATE="${cycle_date}" GA_REC_TARGET="${target}" \
+      GA_REC_AGENT="${base%.md}" GA_REC_SOURCE="${release}" \
+      GA_REC_HUNKS="${hunks}" GA_REC_DROPPED="${dropped}" GA_REC_ADDED="${added}" \
+      GA_REC_REGIONS="${regions}" GA_REC_DIFF="${diff_file}" GA_REC_LANDED="${landed}" \
+      GA_REC_DROPPED_TEXT="${dropped_text}" \
+      python3 -c "${_UPDATE_PROPOSAL_PY}" | python3 "${helper}" >/dev/null 2>&1; then
+      update_log "  resolved-gap discard recorded → core.autoagent_proposals (${target}, landed=${landed})"
+    else
+      update_log "WARN: could not record the resolved-gap discard for ${target} — this discard is stderr-only (deploy continues)"
+    fi
+  done <"${tsv}"
+}
+
 # Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
 # (the tripwire working), so it gets no named failure code — but announcing it through
 # a single stderr line means an operator not watching the deploy scroll by has no later
@@ -325,22 +515,29 @@ update_editable_region_lines() {
 # Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
 # vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
 # that carries no conflict and sails through the gate. That shape is all-take-release WITH a
-# net-negative EDITABLE-region line delta. ADVISORY only: the candidate is still queued and
+# net-negative EDITABLE-region line delta. merge-resolved-release is deletion-capable for the
+# same reason by a different route — a conflicting gap drops its local lines for the release
+# side — so it is covered here rather than left outside the one guard built for deletion.
+# ADVISORY only: the candidate is still queued and
 # the confirm gate is untouched, but the operator gets a loud per-file warning plus a durable
 # record beside the conflict-decline ledger.
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
-  [[ "${verdict}" == 'take-release' ]] || return 0 # GA-ABSORB[benign]: a non-take-release verdict is not the deletion shape — the tripwire has no advisory to emit and the gate is unaffected.
+  case "${verdict}" in
+    'take-release' | 'merge-resolved-release') ;;
+    *) return 0 ;; # GA-ABSORB[benign]: any other verdict is not a deletion-capable shape — the tripwire has no advisory to emit and the gate is unaffected.
+  esac
   local before after delta dest
   before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
   after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
   delta=$((before - after))
   [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
-  update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
+  update_log "WARN: deletion-shape tripwire — ${rel} resolves ${verdict} and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
   dest="$(update_declines_dir "${root}")"
-  # Three columns only: the verdict is take-release for every row this guard can reach and
-  # the advisory-only nature is invariant, so neither is worth a stored column.
+  # Three columns only: the row shape predates the second covered verdict and stays
+  # unchanged, since the file and the line delta are what an operator inspects — the
+  # verdict is recoverable from the same run's log and the advisory-only nature is invariant.
   if mkdir -p -- "${dest}" \
     && printf '%s\t%s\tdeleted_lines=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rel}" "${delta}" \
@@ -349,6 +546,21 @@ update_check_deletion_shape() {
   else
     update_log "WARN: could not persist the deletion-shape warning for ${rel} (${dest}) — this warning is stderr-only"
   fi
+}
+
+# Live-only frontmatter advisory. The candidate's frontmatter comes verbatim from the
+# release skeleton and only the merge lib's narrow allowlist is re-attached, so a live
+# key that is neither allowlisted nor release-carried is dropped by design. That is the
+# intended policy — inverting it would retain keys the vendor removed on purpose — but
+# the drop must be ANNOUNCED, so the next unallowlisted key surfaces at the confirm gate
+# rather than after the fact. ADVISORY only: exactly one line, never a blocked merge.
+# $1 = repo-relative path, $2 = the editable_merge plan line.
+update_warn_dropped_frontmatter() {
+  local rel="$1" keys
+  keys="$(update_plan_field fm_unallowlisted "$2")"
+  # `none` = nothing to announce; empty = a plan line that carries no such field at all.
+  [[ -n "${keys}" && "${keys}" != 'none' ]] || return 0 # GA-ABSORB[benign]: no dropped key (or a plan line without the field) leaves the advisory with nothing to say; the merge is unaffected either way.
+  update_log "WARN: live-only frontmatter — ${rel} carries frontmatter key(s) the release does not and the merge allowlist does not preserve: ${keys}; the merged body DROPS them, so port the value into the release body or add the key to the allowlist (advisory — the candidate is still offered)"
 }
 
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
@@ -812,9 +1024,15 @@ update_filter_clean_path() {
 #   * REFUSED (sensitive path/diff, plan rc 3)  -> skipped, reported (never written)
 #   * structural-change (region-count mismatch) -> routed to the agent_lifecycle
 #                                                  ceremony (NOT auto-applied)
-#   * merge-conflict / gated-2way-present-both  -> marker-bearing REPORT, never
+#   * gated-2way-present-both                   -> marker-bearing REPORT, never
 #                                                  landable -> local body kept, decline
 #                                                  recorded, repaired by hand (below)
+#   * merge-conflict                            -> the same decline, now reachable
+#                                                  only with the gap-policy kill switch
+#                                                  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
+#   * merge-resolved-release (changed)          -> conflicting gaps took the release
+#                                                  side, marker-free -> collected ->
+#                                                  gate -> txn, same as merge-clean
 #   * keep-local / no-op (changed=False)         -> no write
 #   * keep-local|take-release|merge-clean (changed) -> collected -> gate -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
@@ -842,10 +1060,16 @@ update_realpath() {
 }
 
 # Extract a `key=value` token's value from an editable_merge plan line (values
-# are space-free, so up-to-next-space is exact). Args: $1 = key · $2 = plan line.
+# are space-free, so up-to-next-space is exact). An ABSENT key yields empty: the
+# strip below is a no-op on a line without the token, which would otherwise
+# return the line's whole first field as if it were the value. Args: $1 = key ·
+# $2 = plan line.
 update_plan_field() {
-  local rest="${2#*"$1"=}"
-  printf '%s\n' "${rest%% *}"
+  local rest
+  if [[ "$2" == *"$1="* ]]; then
+    rest="${2#*"$1"=}"
+    printf '%s\n' "${rest%% *}"
+  fi
 }
 
 # Python verify shell-out (SC2259-safe: a plain assigned string constant, NOT a
@@ -931,6 +1155,17 @@ update_agent_outcome_advance() {
   printf '%s\n' "$1" >>"${_update_agent_outcomes_file}"
 }
 
+# Whole-line membership test for ONE basename against the ledger, mirroring
+# `grep -qxF` through the newline anchors the caller wrapped the text in. Takes the
+# PRE-LOADED text rather than a path so a per-row call costs no fork and no re-read,
+# and answers only "is it listed" — the two readers disagree on what an ABSENT
+# ledger means (the capture side advances everything, the emit side records nothing
+# as landed), so that default stays with each caller.
+# $1 = basename · $2 = newline-wrapped ledger text.
+update_agent_outcome_landed() {
+  [[ "$2" == *$'\n'"$1"$'\n'* ]]
+}
+
 # The committing callback the foreground gate invokes ONLY on explicit confirm.
 # Iterates the collected candidate records (TSV: logical, real, candidate,
 # release, agent) and drives each through git_txn_apply. Each file is an
@@ -1002,9 +1237,9 @@ _update_agent_commit_callback() {
 update_merge_agent_editable_regions() {
   local new_dir="$1" manifest="$2" root="$3"
   : "${manifest:?manifest}"
-  local merge_dir records_file gate_records=""
+  local merge_dir records_file resolved_file gate_records=""
   local file base local_file candidate plan_err plan_line plan_rc
-  local verdict changed n_candidates=0 rc=0
+  local verdict reason changed n_candidates=0 rc=0
   local backup_base cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
@@ -1013,6 +1248,8 @@ update_merge_agent_editable_regions() {
   merge_dir="$(mktemp -d -t glass-atrium-agent-merge.XXXXXX)"
   records_file="${merge_dir}/records.tsv"
   : >"${records_file}"
+  resolved_file="${merge_dir}/resolved.tsv"
+  : >"${resolved_file}"
 
   # Fresh per-run base-content outcome ledger (finding #9). It must OUTLIVE
   # merge_dir (rm'd below, before update_capture_base_content reads the ledger), so
@@ -1053,6 +1290,7 @@ update_merge_agent_editable_regions() {
     plan_line="$(python3 "${_update_merge_lib_dir}/editable_merge.py" plan \
       --target "agents/${base}" --local "${local_file}" --release "${file}" \
       --out "${candidate}" --agent "${base%.md}" \
+      --diff-out "${merge_dir}/${base}.resolved.diff" \
       --state-dir "${_update_state_dir}" 2>"${plan_err}")" || plan_rc=$?
 
     if [[ "${plan_rc}" -eq 3 ]]; then
@@ -1077,8 +1315,20 @@ update_merge_agent_editable_regions() {
     # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
     # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
     # watching, which leaves an operator no later way to learn a body was declined.
-    if [[ "${verdict}" == 'merge-conflict' || "${verdict}" == 'gated-2way-present-both' ]]; then
-      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
+    # The two decline through the SAME ledger for DIFFERENT reasons, so the reason
+    # clause varies per verdict while the repair instruction is shared: the two-way
+    # case has no base anchor and therefore no side any policy could prefer, which is
+    # why it declines unconditionally and the gap-policy kill switch never reaches it.
+    # merge-conflict is reachable only WITH that switch set — the resolver emits
+    # merge-resolved-release otherwise — so that verdict IS today's path, and
+    # restoring it is what the switch buys.
+    case "${verdict}" in
+      gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
+      merge-conflict) reason='a conflict-marker candidate NEVER lands' ;;
+      *) reason='' ;; # per-file reset — a leaked reason would decline a mergeable body
+    esac
+    if [[ -n "${reason}" ]]; then
+      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — ${reason}; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
       update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
       continue
     fi
@@ -1095,6 +1345,33 @@ update_merge_agent_editable_regions() {
     # before-image git_txn_apply captures pre-apply — the SINGLE authoritative
     # copy (P2-T2), derived per-file by the commit callback.
     update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
+    update_warn_dropped_frontmatter "agents/${base}" "${plan_line}"
+
+    # Queue the self-improvement-history row for a body whose conflicting gaps
+    # took the release side. The live-to-candidate diff comes from `plan
+    # --diff-out`: the merge lib already computed it (it is the text the sensitive
+    # scan and the Haiku gate ran against), so re-deriving it here with a second
+    # diff implementation would record a diff the merge never saw. Capturing it at
+    # plan time also predates the transaction below, which overwrites the live
+    # body — after the gate the dropped daemon lines exist nowhere else. The row
+    # itself is emitted only once the outcome is known (post-gate), so it can
+    # record what actually landed rather than what was offered.
+    #
+    # Field 2 (target_file) stays REPO-RELATIVE on purpose. The daemon writes the
+    # ABSOLUTE mirror path and its back-off reader selects on target_file equality,
+    # so the two namespaces being disjoint is what keeps an updater row out of that
+    # read. "Normalizing" this to an absolute path would silently feed the daemon's
+    # back-off state.
+    if [[ "${verdict}" == 'merge-resolved-release' ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${base}" "agents/${base}" "${file}" \
+        "$(update_plan_field resolved_hunks "${plan_line}")" \
+        "$(update_plan_field resolved_dropped_lines "${plan_line}")" \
+        "$(update_plan_field resolved_added_lines "${plan_line}")" \
+        "$(update_plan_field resolved_regions "${plan_line}")" \
+        "${merge_dir}/${base}.resolved.diff" \
+        "${candidate}.dropped" >>"${resolved_file}"
+    fi
 
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
@@ -1141,6 +1418,8 @@ update_merge_agent_editable_regions() {
     2) update_log "agent EDITABLE-region merge: no changes to confirm" ;;
     *) update_log "WARN: agent EDITABLE-region merge had rolled-back or unapplied file(s) — see the per-file outcome above" ;;
   esac
+  # Before merge_dir (and the captured diffs inside it) is torn down.
+  update_emit_resolved_records "${root}" "${resolved_file}" "${_update_agent_outcomes_file}"
   rm -rf -- "${merge_dir}"
   return 0
 }
@@ -1202,13 +1481,11 @@ update_capture_base_content() {
   store="$(update_base_store_dir)"
   mkdir -p -- "${store}"
   # Load the per-run merge ledger ONCE (bash `$(<file)` — zero forks) into a
-  # newline-wrapped string, then test membership per file with a fork-free `[[ ==
-  # pattern ]]` whole-line scan (the newline anchors mirror `grep -qxF`). Replaces
-  # the prior per-file grep fork (O(files) subprocesses), matching the diff's own
-  # fork-free hoist pattern (spine_find_removed_files). `declare -A` is NOT usable —
-  # stock macOS bash 3.2 has no associative arrays. ledger_active gates the lookup:
-  # with no active ledger (a direct/legacy caller that ran no merge) the prior
-  # blanket advance is preserved.
+  # newline-wrapped string, then test membership per file through the shared
+  # fork-free matcher. `declare -A` is NOT usable — stock macOS bash 3.2 has no
+  # associative arrays. ledger_active gates the lookup HERE rather than inside the
+  # matcher: with no active ledger (a direct/legacy caller that ran no merge) the
+  # prior blanket advance is preserved, the OPPOSITE of the emit side's default.
   local ledger_active=0 ledger_lines=""
   if [[ -n "${ledger}" && -f "${ledger}" ]]; then
     ledger_active=1
@@ -1219,7 +1496,7 @@ update_capture_base_content() {
     base="${file##*/}"
     # An active ledger that does NOT list this basename → the file's merge did not
     # land → keep its prior base entry (do not advance).
-    if [[ "${ledger_active}" -eq 1 && "${ledger_lines}" != *$'\n'"${base}"$'\n'* ]]; then
+    if [[ "${ledger_active}" -eq 1 ]] && ! update_agent_outcome_landed "${base}" "${ledger_lines}"; then
       kept=$((kept + 1))
       # Name the kept basenames in the summary: a merge-claimed-path exclusion (the charter
       # file) is kept EVERY run, so an unlabeled "N kept" reads as an unexplained anomaly.
@@ -1430,8 +1707,10 @@ update_wire_hooks_post_apply() {
 # P3 — headless update_job DB tracking (psql; daemon-apply.sh idiom)
 # ---------------------------------------------------------------------------
 #
-# HEADLESS-ONLY: every function below no-ops unless _update_headless=1, so the
-# interactive/CLI path keeps the E3 no-DB boundary (it never touches Postgres).
+# HEADLESS-ONLY: every function in THIS section no-ops unless _update_headless=1, so
+# the interactive/CLI path opens no update_job row. Scoped to this section — NOT a
+# whole-script claim: update_emit_resolved_records writes core.autoagent_proposals in
+# every mode (see the boundary note at the top of the file).
 # Single-active-job is the migration's partial UNIQUE INDEX
 # (update_job_single_active_uniq WHERE status='in-progress'); a 2nd concurrent
 # INSERT trips its unique violation, which update_job_begin catches → exit 8.
@@ -2512,6 +2791,9 @@ update_sweep_removed_files() {
 #     the merge's own ledger/backup globals, so it has no sweep dependency.
 #   * the sweep keys off the STILL-OLD baseline, so it MUST precede
 #     update_capture_baseline advancing the hash anchor.
+# The merge step also emits the resolved-gap core.autoagent_proposals record, so this
+# shared path — not the headless-only update_job section — is why an INTERACTIVE run
+# reaches Postgres (boundary note at the top of the file).
 # finding #9 (anchors advance for landed agent merges even on an agent-only /
 # sensitive-only update) + finding #14 (a drop-only release still sweeps). Args: $1
 # = new-release tree · $2 = manifest · $3 = install root · $4 = prior-vendor

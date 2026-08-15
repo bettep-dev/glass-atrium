@@ -19,7 +19,8 @@ Covered behaviors (T21 — consolidated, full base-content path):
   * verify() re-scan defends against post-write on-disk sensitive tampering;
   * structural region-count mismatch -> ceremony route, hard-fail apply/verify;
   * thin CLI `plan` -> verdict line + base-content-store integration + refusal exit;
-  * three_way_merge pure-function gap behavior (one-sided / identical collapse).
+  * three_way_merge_hunks pure-function gap behavior (one-sided / identical
+    collapse / divergent conflict).
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_editable_merge.py -v
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -134,7 +136,9 @@ class ThreeAnchorResolverTest(unittest.TestCase):
         local = _doc(top="# A", region="LOCAL rewrite", bottom="z")
         release = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-        res = em.resolve_file("dev-android.md", local, release, base)
+        res = em.resolve_file(
+            "dev-android.md", local, release, base, resolve_conflicting_gaps=False
+        )
 
         self.assertEqual(res.regions[0].verdict, em.MERGE_CONFLICT)
         self.assertTrue(res.regions[0].had_conflict)
@@ -244,6 +248,152 @@ class LiveOnlyFrontmatterPinTest(unittest.TestCase):
         res = em.resolve_file("dev-x.md", body, body, body)
 
         self.assertEqual(res.candidate_text, body)
+
+    def test_live_only_effort_pin_survives_a_release_without_one(self) -> None:
+        # P0-1 AC1, and the regression this phase exists for: an `effort:` tier the
+        # release does not carry was dropped on the first successful merge, exactly
+        # as `model:` was before it joined the allowlist.
+        release = self._body(self._FM, "base goal", "vendor rules v2")
+        local = self._body(f"{self._FM}effort: xhigh\n", "learned", "old")
+
+        res = em.resolve_file("qa-debugger.md", local, release, release)
+
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertIn("vendor rules v2", res.candidate_text)
+
+    def test_live_effort_pin_wins_over_a_release_carried_one(self) -> None:
+        # P0-1 AC3 — NOT vacuous the way the `model:` twin is: the release really
+        # does ship `effort:` for some agents, so live-wins is exercised in the wild.
+        release = self._body(f"{self._FM}effort: high\n", "base goal", "v2")
+        local = self._body(f"{self._FM}effort: xhigh\n", "learned", "old")
+
+        res = em.resolve_file("qa-debugger.md", local, release, release)
+
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertNotIn("effort: high", res.candidate_text)
+
+    def test_both_allowlisted_pins_survive_together(self) -> None:
+        release = self._body(self._FM, "base goal", "v2")
+        local = self._body(f"{self._FM}model: claude-opus-5\neffort: xhigh\n", "l", "o")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertIn("model: claude-opus-5\n", res.candidate_text)
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class UnallowlistedFrontmatterAdvisoryTest(unittest.TestCase):
+    """P0-1 AC2 — name the live-only keys the merge drops, never block on them."""
+
+    _FM = "name: dev-x\ntools: Read, Write\n"
+
+    def _body(self, frontmatter: str) -> str:
+        return _doc(top=f"---\n{frontmatter}---\n\n# X\n", region="r", bottom="b")
+
+    def _candidate(self, local: str, release: str, base: str | None = None) -> str:
+        """The body the merge would WRITE — the artifact the advisory reads."""
+        return em.resolve_file("dev-x.md", local, release, base).candidate_text
+
+    def test_live_only_unallowlisted_key_is_named(self) -> None:
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}maxTurns: 40\n")
+
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            ["maxTurns"],
+        )
+
+    def test_allowlisted_and_release_carried_keys_are_not_named(self) -> None:
+        release = self._body(f"{self._FM}maxTurns: 12\n")
+        local = self._body(f"{self._FM}maxTurns: 40\nmodel: m\neffort: xhigh\n")
+
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            [],
+        )
+
+    def test_multiple_dropped_keys_keep_local_order(self) -> None:
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}zeta: 1\nalpha: 2\n")
+
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            ["zeta", "alpha"],
+        )
+
+    def test_absent_frontmatter_names_nothing(self) -> None:
+        # fail-open, mirroring _keep_local_frontmatter: no block, no divergence.
+        plain = _doc(top="# plain", region="r", bottom="b")
+
+        self.assertEqual(em.dropped_local_frontmatter_keys(plain, plain), [])
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(plain, self._body(self._FM)), []
+        )
+
+    def test_advisory_does_not_change_the_candidate(self) -> None:
+        # The advisory REPORTS the drop; it must not resurrect the key.
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}maxTurns: 40\n")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertNotIn("maxTurns: 40", res.candidate_text)
+
+    def test_base_aware_key_a_release_lacks_is_named_when_equal_to_base(self) -> None:
+        # The carry pass leaves a base-aware key UNCHANGED since install to the
+        # release, so a release that ships no such key drops it outright. Derived
+        # from the release skeleton the key read as carried and the drop went
+        # unannounced; read off the candidate the merge writes, it is named.
+        base = self._body(f"{self._FM}effort: high\n")
+        local = base
+        release = self._body(self._FM)
+
+        candidate = self._candidate(local, release, base)
+
+        self.assertNotIn("effort:", candidate)
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, candidate), ["effort"]
+        )
+
+    def _plan_line(self, local: str, release: str) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            (d / "local.md").write_text(local, encoding="utf-8")
+            (d / "release.md").write_text(release, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target", "agents/dev-x.md",
+                        "--local", str(d / "local.md"),
+                        "--release", str(d / "release.md"),
+                        "--base", str(d / "local.md"),
+                        "--out", str(d / "candidate.md"),
+                        "--state-dir", str(d / "state"),
+                    ]
+                )
+            self.assertEqual(rc, em.EXIT_OK)
+            return buf.getvalue()
+
+    def test_plan_line_always_carries_the_field(self) -> None:
+        # ALWAYS present: the updater's up-to-next-space extractor returns a
+        # neighbouring field's value, not an empty string, for an absent token.
+        body = self._body(f"{self._FM}model: m\n")
+
+        line = self._plan_line(body, self._body(self._FM))
+
+        self.assertIn("fm_unallowlisted=none ", line)
+
+    def test_plan_line_names_the_dropped_key(self) -> None:
+        line = self._plan_line(
+            self._body(f"{self._FM}maxTurns: 40\n"), self._body(self._FM)
+        )
+
+        self.assertIn("fm_unallowlisted=maxTurns ", line)
+        # space-free single token: the shell extractor reads up to the next space.
+        self.assertIn(" out=", line)
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
@@ -525,7 +675,12 @@ class ConflictCandidateTest(unittest.TestCase):
         stub = _StubVerify(passed=True)
 
         cand = em.build_merge_candidate(
-            "dev-android.md", local, release, base_text=base, verify_fn=stub
+            "dev-android.md",
+            local,
+            release,
+            base_text=base,
+            verify_fn=stub,
+            resolve_conflicting_gaps=False,
         )
         self.assertEqual(cand.resolution.verdict, em.MERGE_CONFLICT)
         self.assertTrue(cand.resolution.has_conflict)
@@ -551,6 +706,7 @@ class ConflictCandidateTest(unittest.TestCase):
             release,
             base_text=base,
             verify_fn=_StubVerify(True),
+            resolve_conflicting_gaps=False,
         )
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dev-android.md"
@@ -665,7 +821,9 @@ class RerunIdempotencyTest(unittest.TestCase):
         base = _doc(top="# dev-react", region="same-old", bottom="old rules")
         local = _doc(top="# dev-react", region="LOCAL rewrite", bottom="old rules")
         release = _doc(top="# dev-react", region="VENDOR rewrite", bottom="NEW rules")
-        first = em.resolve_file("dev-react.md", local, release, base)
+        first = em.resolve_file(
+            "dev-react.md", local, release, base, resolve_conflicting_gaps=False
+        )
         self.assertEqual(first.verdict, em.MERGE_CONFLICT)
 
         # Simulate the pre-fix landed state (markers in the live body), then re-run
@@ -676,6 +834,7 @@ class RerunIdempotencyTest(unittest.TestCase):
             release,
             base_text=base,
             verify_fn=_StubVerify(True),
+            resolve_conflicting_gaps=False,
         )
         self.assertTrue(rerun.resolution.has_conflict)
         self.assertGreaterEqual(
@@ -787,30 +946,32 @@ class StructuralApplyVerifyTest(unittest.TestCase):
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ThreeWayMergePureFunctionTest(unittest.TestCase):
-    """T21 — the net-new diff3 primitive: one-sided gaps and identical-change collapse."""
+    """T21 — ``three_way_merge_hunks``: one-sided gaps, identical collapse, conflict."""
 
     def test_only_one_side_changed_gap_taken_without_conflict(self) -> None:
         base = ["a\n", "b\n", "c\n"]
         local = ["a\n", "LOCAL\n", "b\n", "c\n"]  # local inserted a line
         release = ["a\n", "b\n", "c\n"]  # release untouched
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertFalse(conflict)
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertEqual(hunks, [])
         self.assertEqual(merged, local)
 
     def test_both_sides_identical_change_collapses_to_one(self) -> None:
         base = ["a\n", "b\n"]
         local = ["a\n", "SAME\n", "b\n"]
         release = ["a\n", "SAME\n", "b\n"]
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertFalse(conflict)
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertEqual(hunks, [])
         self.assertEqual(merged.count("SAME\n"), 1)  # not duplicated
 
     def test_divergent_change_emits_conflict_markers(self) -> None:
         base = ["x\n"]
         local = ["LOCAL\n"]
         release = ["RELEASE\n"]
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertTrue(conflict)
+        # resolve_release stays OFF (the default) — the marker assertions below
+        # only hold on the reporting path.
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertTrue(hunks)
         joined = "".join(merged)
         self.assertIn("LOCAL", joined)
         self.assertIn("RELEASE", joined)
@@ -878,6 +1039,427 @@ class CliPlanTest(unittest.TestCase):
                 )
             self.assertEqual(rc, em.EXIT_REFUSED)
             self.assertFalse(Path(out_p).exists())  # refused -> no candidate written
+
+
+def _fm_doc(front: str, region: str) -> str:
+    """Agent body with a byte-0 frontmatter block and one EDITABLE region."""
+    return (
+        "---\n"
+        + front
+        + "---\n\n# title\n\n<!-- EDITABLE:BEGIN -->\n"
+        + region
+        + "\n<!-- EDITABLE:END -->\n"
+    )
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class GapPolicyTest(unittest.TestCase):
+    """Deterministic conflicting-gap resolution: the release side, marker-free."""
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+
+    def _resolve(self, *, resolve_gaps: bool | None = None) -> em.FileResolution:
+        """The class fixtures under one policy setting; None leaves it env-driven."""
+        return em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            self._BASE,
+            resolve_conflicting_gaps=resolve_gaps,
+        )
+
+    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
+        res = self._resolve(resolve_gaps=True)
+
+        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertFalse(res.has_conflict)
+        self.assertFalse(res.regions[0].had_conflict)
+        self.assertFalse(em.has_conflict_markers(res.candidate_text))
+        self.assertIn("VENDOR rewrite", res.candidate_text)
+        self.assertNotIn("LOCAL rewrite", res.candidate_text)
+
+    def test_when_policy_on_then_region_carries_its_hunks_forward(self) -> None:
+        res = self._resolve(resolve_gaps=True)
+
+        (hunk,) = res.regions[0].hunks
+        self.assertEqual(hunk.base, ("same-old\n",))
+        self.assertEqual(hunk.local, ("LOCAL rewrite\n",))
+        self.assertEqual(hunk.release, ("VENDOR rewrite\n",))
+
+    def test_when_rederived_from_same_anchors_then_candidate_is_byte_identical(self) -> None:
+        first = self._resolve(resolve_gaps=True)
+        second = self._resolve(resolve_gaps=True)
+
+        self.assertEqual(first.candidate_text, second.candidate_text)
+        self.assertEqual(first.verdict, second.verdict)
+
+    def test_when_policy_off_then_output_matches_the_reporting_default(self) -> None:
+        res = self._resolve(resolve_gaps=False)
+
+        self.assertEqual(res.verdict, em.MERGE_CONFLICT)
+        self.assertTrue(res.has_conflict)
+        self.assertTrue(em.has_conflict_markers(res.candidate_text))
+        self.assertIn("LOCAL rewrite", res.candidate_text)
+
+    def test_when_kill_switch_set_then_the_default_reverts_to_reporting(self) -> None:
+        prior = os.environ.get(em._RESOLVE_GAPS_ENV)
+        try:
+            os.environ[em._RESOLVE_GAPS_ENV] = "0"
+            off = self._resolve()
+            os.environ.pop(em._RESOLVE_GAPS_ENV)
+            on = self._resolve()
+        finally:
+            if prior is None:
+                os.environ.pop(em._RESOLVE_GAPS_ENV, None)
+            else:
+                os.environ[em._RESOLVE_GAPS_ENV] = prior
+
+        self.assertEqual(off.verdict, em.MERGE_CONFLICT)
+        self.assertEqual(on.verdict, em.MERGE_RESOLVED_RELEASE)
+
+    def test_when_policy_on_then_candidate_applies_and_verifies_without_the_gate(self) -> None:
+        # The stub FAILS and counts its calls: a resolved gap is deterministic, so
+        # the landing must not consult the model at all. Verifying green against a
+        # verifier that would refuse is what proves the gate is out of the path —
+        # a passing stub would leave "never called" and "called and agreed"
+        # indistinguishable, which is the whole property the policy rests on.
+        stub = _StubVerify(passed=False)
+        cand = em.build_merge_candidate(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            base_text=self._BASE,
+            verify_fn=stub,
+            resolve_conflicting_gaps=True,
+        )
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertFalse(cand.resolution.needs_llm)  # deterministic — no model gate
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "dev-android.md"
+            target.write_text(self._LOCAL, encoding="utf-8")
+            self.assertEqual(cand.apply(str(target)), em.APPLY_OK)
+            self.assertEqual(cand.verify(str(target)), 0)
+            self.assertEqual(stub.calls, 0)  # the gate was never reached
+            self.assertFalse(
+                em.has_conflict_markers(target.read_text(encoding="utf-8"))
+            )
+
+    def test_when_gap_is_non_conflicting_then_no_hunk_and_release_lands(self) -> None:
+        base, local, release = ["A\n"], ["A\n"], ["R\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(hunks, [])
+        self.assertEqual(merged, ["R\n"])
+
+    def test_when_region_has_many_conflicting_gaps_then_one_hunk_each_in_order(self) -> None:
+        base = ["A\n", "s\n", "B\n"]
+        local = ["LA\n", "s\n", "LB\n"]
+        release = ["RA\n", "s\n", "RB\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(merged, ["RA\n", "s\n", "RB\n"])
+        self.assertEqual([h.local for h in hunks], [("LA\n",), ("LB\n",)])
+        self.assertEqual([h.out_index for h in hunks], [0, 2])
+
+    def test_when_gap_is_clean_beside_a_conflicting_one_then_it_is_untouched(self) -> None:
+        base = ["A\n", "s\n", "B\n"]
+        local = ["LOCAL1\n", "s\n", "B\n"]
+        release = ["REL1\n", "s\n", "B-REL\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(len(hunks), 1)
+        self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResolvedGapStatsTest(unittest.TestCase):
+    """The shape the recording caller reads back from a resolved file.
+
+    The row it writes is the only trace that daemon-authored content was
+    discarded, so the counts it reports have to come from the resolution rather
+    than from a re-derivation the caller could get wrong.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL one\nLOCAL two", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+
+    def _resolve(self, release: str) -> em.FileResolution:
+        """The class fixtures with the policy ON; the release side is the variable."""
+        return em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            release,
+            self._BASE,
+            resolve_conflicting_gaps=True,
+        )
+
+    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
+        res = self._resolve(self._RELEASE)
+
+        stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 1)
+        self.assertEqual(stats["dropped_lines"], 2)
+        self.assertEqual(stats["added_lines"], 1)
+        self.assertEqual(stats["regions"], "0")
+
+    def test_when_no_gap_resolved_then_stats_are_zero_and_regions_none(self) -> None:
+        res = self._resolve(self._LOCAL)
+
+        stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 0)
+        self.assertEqual(stats["dropped_lines"], 0)
+        self.assertEqual(stats["added_lines"], 0)
+        # No resolved region, no index list — the updater's extractor reads an
+        # empty value as empty now that it guards on the key being present.
+        self.assertEqual(stats["regions"], "")
+
+    def test_when_plan_runs_then_the_line_carries_every_stat_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
+            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "base.md").write_text(self._BASE, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target",
+                        "agents/dev-android.md",
+                        "--local",
+                        str(root / "local.md"),
+                        "--release",
+                        str(root / "release.md"),
+                        "--base",
+                        str(root / "base.md"),
+                        "--out",
+                        str(root / "cand.md"),
+                        "--agent",
+                        "dev-android",
+                    ]
+                )
+
+            # The sidecar carries the discarded local lines and NOTHING else —
+            # the recording caller's excerpt would otherwise quote vendor prose
+            # the release restructured and attribute it to the daemon.
+            dropped_text = (root / "cand.md.dropped").read_text(encoding="utf-8")
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertEqual(dropped_text, "LOCAL one\nLOCAL two\n")
+        line = buf.getvalue()
+        self.assertIn(f"verdict={em.MERGE_RESOLVED_RELEASE} ", line)
+        self.assertIn("resolved_hunks=1 ", line)
+        self.assertIn("resolved_dropped_lines=2 ", line)
+        self.assertIn("resolved_added_lines=1 ", line)
+        self.assertIn("resolved_regions=0 ", line)
+
+    def test_when_diff_out_given_then_it_holds_the_libs_own_diff(self) -> None:
+        # The recording caller reads THIS file rather than shelling out to
+        # `diff -u`: one diff implementation in the loop, and the text is the one
+        # the candidate was validated against.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
+            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "base.md").write_text(self._BASE, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target",
+                        "agents/dev-android.md",
+                        "--local",
+                        str(root / "local.md"),
+                        "--release",
+                        str(root / "release.md"),
+                        "--base",
+                        str(root / "base.md"),
+                        "--out",
+                        str(root / "cand.md"),
+                        "--diff-out",
+                        str(root / "cand.diff"),
+                        "--agent",
+                        "dev-android",
+                    ]
+                )
+            written = (root / "cand.diff").read_text(encoding="utf-8")
+
+        expected = em.build_merge_candidate(
+            "agents/dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            base_text=self._BASE,
+            skip_pre_verify=True,
+        ).diff
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertEqual(written, expected)
+        self.assertIn("--- a/agents/dev-android.md", written)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class BaseAwareFrontmatterTest(unittest.TestCase):
+    """`effort` is release-shipped, so live-wins is conditional on base divergence."""
+
+    def _resolve(self, base_front: str, local_front: str, release_front: str) -> str:
+        return em.resolve_file(
+            "glass-atrium-qa-debugger.md",
+            _fm_doc(local_front, "kept"),
+            _fm_doc(release_front, "kept"),
+            _fm_doc(base_front, "kept"),
+        ).candidate_text
+
+    def test_when_live_effort_differs_from_base_then_the_pin_is_kept(self) -> None:
+        out = self._resolve(
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: xhigh\n",
+            "name: qa\neffort: high\n",
+        )
+
+        self.assertIn("effort: xhigh\n", out)
+        self.assertNotIn("effort: high\n", out)
+
+    def test_when_live_effort_equals_base_then_the_release_value_lands(self) -> None:
+        out = self._resolve(
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: max\n",
+        )
+
+        self.assertIn("effort: max\n", out)
+        self.assertNotIn("effort: high\n", out)
+
+    def test_when_base_is_absent_then_effort_falls_back_to_live_wins(self) -> None:
+        out = em.resolve_file(
+            "glass-atrium-qa-debugger.md",
+            _fm_doc("name: qa\neffort: xhigh\n", "kept"),
+            _fm_doc("name: qa\neffort: high\n", "kept"),
+        ).candidate_text
+
+        self.assertIn("effort: xhigh\n", out)
+
+    def test_when_model_is_live_only_then_it_is_kept_unconditionally(self) -> None:
+        out = self._resolve("name: qa\n", "name: qa\nmodel: opus\n", "name: qa\n")
+
+        self.assertIn("model: opus\n", out)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
+    """The union behavior NEITHER phase has alone: a live pin on a LANDING conflict.
+
+    Before the gap policy a conflicting file never reached apply, so the
+    frontmatter carry was dead code on exactly the bodies that needed it — the six
+    stuck agents conflicted every release and were declined. The gap policy is what
+    makes that carry reachable, so the two are only correct together and the
+    assertion that matters is a pin surviving all the way onto disk.
+    """
+
+    _TOOLS = "name: glass-atrium-dev-python\ntools: Read, Write\n"
+
+    def _body(self, frontmatter: str, region: str) -> str:
+        return _doc(
+            top=f"---\n{frontmatter}---\n\n# Agent",
+            region=region,
+            bottom="tail",
+        )
+
+    def _anchors(self, *, release_effort: str | None) -> tuple[str, str, str]:
+        """base / local / release, conflicting in the region, pinned locally."""
+        release_fm = self._TOOLS + (
+            f"effort: {release_effort}\n" if release_effort else ""
+        )
+        return (
+            self._body(f"{self._TOOLS}effort: high\n", "shared baseline rule"),
+            self._body(
+                f"{self._TOOLS}model: claude-opus-5\neffort: xhigh\n",
+                "LOCAL daemon-learned rule",
+            ),
+            self._body(release_fm, "VENDOR revised rule"),
+        )
+
+    def test_both_pins_survive_a_resolved_release_landing_on_disk(self) -> None:
+        base, local, release = self._anchors(release_effort="max")
+        stub = _StubVerify(passed=True)
+
+        cand = em.build_merge_candidate(
+            "dev-python.md",
+            local,
+            release,
+            base_text=base,
+            agent="dev-python",
+            verify_fn=stub,
+        )
+
+        # Phase 1 half: the conflicting region resolves marker-free, so it LANDS.
+        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertFalse(cand.resolution.has_conflict)
+        self.assertTrue(cand.resolution.is_changed)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "dev-python.md"
+            self.assertEqual(cand.apply(str(path)), em.APPLY_OK)
+            self.assertEqual(cand.verify(str(path)), 0)
+            landed = path.read_text(encoding="utf-8")
+
+        # Phase 0 half: read back from DISK, not from the in-memory candidate — the
+        # carry is only proven once it survives the write the gap policy unlocked.
+        self.assertIn("model: claude-opus-5\n", landed)  # live-only, live-wins
+        self.assertIn("effort: xhigh\n", landed)  # base-aware pin, differs from base
+        self.assertNotIn("effort: max\n", landed)  # the release value loses to the pin
+        self.assertIn("VENDOR revised rule", landed)  # the gap took the release side
+        self.assertNotIn("LOCAL daemon-learned rule", landed)
+
+    def test_a_release_without_effort_still_lands_the_pin_unnamed(self) -> None:
+        # The advisory must consult BOTH allowlists: effort is absent from the
+        # release here, yet re-attaches by the base-aware live-wins fallback, so
+        # naming it would report a drop that did not happen.
+        base, local, release = self._anchors(release_effort=None)
+
+        res = em.resolve_file("dev-python.md", local, release, base)
+
+        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertIn("model: claude-opus-5\n", res.candidate_text)
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, res.candidate_text), []
+        )
+
+    def test_without_the_gap_policy_the_pin_path_is_unreachable(self) -> None:
+        # The control the union rests on: with the kill switch set, this same file
+        # is a marker-bearing report that apply refuses, so no pin can survive
+        # because nothing is written at all.
+        base, local, release = self._anchors(release_effort="max")
+
+        cand = em.build_merge_candidate(
+            "dev-python.md",
+            local,
+            release,
+            base_text=base,
+            agent="dev-python",
+            verify_fn=_StubVerify(passed=True),
+            resolve_conflicting_gaps=False,
+        )
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_CONFLICT)
+        self.assertTrue(cand.resolution.has_conflict)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "dev-python.md"
+            self.assertEqual(cand.apply(str(path)), em.APPLY_MALFORMED)
+            self.assertFalse(path.exists())  # zero bytes written
 
 
 if __name__ == "__main__":
