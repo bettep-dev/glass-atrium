@@ -18,6 +18,7 @@ import {
   loadCanonicalAgentKeys,
 } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
+import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { respondDbFailure } from "../db-failure.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
@@ -2063,6 +2064,13 @@ async function handleDeleteAgent(
   if (validation.kind === "error") {
     return reply.code(400).send(validation.body);
   }
+
+  // The audited route key carries no numeric target_id (:name), so the agent identity
+  // reaches monitor.audit_log only through the curated carrier.
+  (request as FastifyRequest & AuditChangeCarrier).auditChange = {
+    agent: validation.name,
+    mode: validation.kind,
+  };
 
   if (validation.kind === "preview") {
     return runDeletePreview(request, reply, validation.name, start);

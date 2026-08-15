@@ -16,9 +16,7 @@ import Fastify, {
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
-import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
-import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
-import { registerModelConfigRoutes } from "../src/server/routes/model-config.js";
+import { registerRoutes } from "../src/server/routes/index.js";
 
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
 const SUITE_MARKER = `audit-test-${randomUUID()}`;
@@ -231,17 +229,29 @@ test("audit INSERT failure does NOT propagate to the handler (response still suc
 //   '/api/clauded-docs/html-export'        — multi-doc HTML export (read/serialize, no DB mutation).
 //   '/api/clauded-docs/search'             — POST-bodied search query (read-only; registered as GET
 //                                            today, listed defensively in case it ever moves to POST).
+//   '/api/outcomes/:id/close'              — outcome bookkeeping written per agent run by
+//   '/api/outcomes/close-by-cid'             hooks/track-outcome.sh; the outcome row itself already
+//                                            carries the full record, and per-run volume would swamp
+//                                            the operator-action audit trail.
+//   '/api/telemetry/activation'            — append-only skill/agent activation ingest, one row per
+//                                            spawn; same volume argument, and the telemetry table is
+//                                            its own immutable record.
 const NON_AUDITED_MUTATIONS: ReadonlySet<string> = new Set([
   "/api/clauded-docs/html-export",
   "/api/clauded-docs/search",
+  "/api/outcomes/:id/close",
+  "/api/outcomes/close-by-cid",
+  "/api/telemetry/activation",
 ]);
 
 const MUTATING_METHOD_SET: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
- * Build a throwaway app, register the real mutation-bearing routers, and collect every
- * registered route via the onRoute hook (Fastify route introspection) — never re-hardcode
- * the route list. Returns the set of mutating-route keys (method-agnostic union of url patterns).
+ * Build a throwaway app, register the production route barrel, and collect every registered
+ * route via the onRoute hook (Fastify route introspection) — never re-hardcode the route list.
+ * The barrel (not a hand-picked router subset) is the registration source: a router the barrel
+ * gains is covered here automatically, so no mutating route can be invisible to the guard.
+ * Returns the set of mutating-route keys (method-agnostic union of url patterns).
  */
 async function collectRegisteredMutatingRoutes(): Promise<Set<string>> {
   const introspectApp = Fastify({ logger: false });
@@ -254,9 +264,7 @@ async function collectRegisteredMutatingRoutes(): Promise<Set<string>> {
     }
   });
   try {
-    await registerClaudedDocsRoutes(introspectApp);
-    await registerImprovementRoutes(introspectApp);
-    await registerModelConfigRoutes(introspectApp);
+    await registerRoutes(introspectApp);
     await introspectApp.ready();
   } finally {
     try {

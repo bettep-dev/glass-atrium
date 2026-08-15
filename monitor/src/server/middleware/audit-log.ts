@@ -16,7 +16,9 @@ const ACTION_KIND_MAX = 64;
 
 // Covered mutation routes → resource label (route key = Fastify routeOptions.url, :id/:rootId preserved).
 // Hand-maintained superset: a new mutation route unregistered here goes silently un-audited.
-// The coverage-drift guard test fails when a registered mutating route is missing from this map.
+// The coverage-drift guard test introspects the production route barrel, so it fails when a
+// registered mutating route is in neither this map nor the test's NON_AUDITED_MUTATIONS allowlist
+// — the allowlist is the sanctioned way to declare a mutation route deliberately un-audited.
 export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/clauded-docs", "clauded-docs"],
   ["/api/clauded-docs/:id", "clauded-docs"],
@@ -28,6 +30,11 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/improvement/:id/reject", "improvement"],
   ["/api/improvement/:id/restore", "improvement"],
   ["/api/model-config", "model-config"],
+  // Registry mutation — the agent roster is the exact class the audit log exists for.
+  // target_id stays null (:name is not numeric); the handler attaches the name via AuditChangeCarrier.
+  ["/api/agents/:name", "agents"],
+  // Self-update control plane — applies a release to the live install (irreversible, host-wide).
+  ["/api/dashboard/update", "self-update"],
 ]);
 
 // Single-writer enrichment seam: a covered handler may attach a curated old→new diff — never the raw request body (PII/secret guard).
