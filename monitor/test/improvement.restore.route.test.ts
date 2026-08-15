@@ -34,6 +34,8 @@ let dbReady = false;
 let appliedId = 0;
 let appliedCycleId = "";
 let pendingId = 0;
+// Updater-written release record (scripts/update.sh): status='applied' but no before-image.
+let updaterWrittenId = 0;
 
 // Stub argv sink — the update.sh stub writes "$*" here so the wiring test can
 // assert the exact --restore-agents <cycle-id> argv the route passed.
@@ -100,6 +102,25 @@ before(async () => {
       RETURNING id::text AS id
     `;
     pendingId = Number(pending[0]!.id);
+
+    // Updater-written row — the exact shape scripts/update.sh emits for an editable-region
+    // gap resolved by a release: status='applied' with no agents-bak snapshot behind it.
+    const updaterWritten = await prisma.$queryRaw<Array<{ id: string }>>`
+      INSERT INTO core.autoagent_proposals
+        (cycle_date, pattern_label, target_file, target_agent, classification,
+         approval_tier, status, source_file, source_file_mtime)
+      VALUES
+        (CURRENT_DATE,
+         'editable-region-resolved-release',
+         ${`/__test__/${SUITE_MARKER}-updater.md`},
+         ${`${SUITE_MARKER}-agent`},
+         'apply'::core."ProposalClassification",
+         'auto'::core."ApprovalTier",
+         'applied'::core."ProposalStatus",
+         '/__test__/source.md', 0)
+      RETURNING id::text AS id
+    `;
+    updaterWrittenId = Number(updaterWritten[0]!.id);
     dbReady = true;
   } catch (error) {
     dbReady = false;
@@ -114,6 +135,11 @@ after(async () => {
       const prisma = getPrisma();
       await prisma.$executeRaw`
         DELETE FROM core.autoagent_proposals WHERE pattern_label LIKE ${`%${SUITE_MARKER}%`}
+      `;
+      // The updater-shaped seed carries the production pattern_label — scrub it by its
+      // marker-tagged target_file so no live row is ever touched.
+      await prisma.$executeRaw`
+        DELETE FROM core.autoagent_proposals WHERE target_file LIKE ${`%${SUITE_MARKER}%`}
       `;
     } catch (error) {
       console.error("[impr-restore cleanup] DB scrub failed:", error);
@@ -183,6 +209,27 @@ test("POST restore: pending proposal → 409 { status:'not_restorable' } (no exe
   assert.strictEqual(body.status, "not_restorable");
   assert.strictEqual(body.id, pendingId);
   assert.ok(!existsSync(argvFile), "update.sh must NOT be invoked for a non-applied proposal");
+});
+
+// An updater-written release record is status='applied' but has no before-image, so the
+// status gate alone lets it through to a doomed exec. The pattern gate must reject it at
+// the API — a CLI caller sees the same 409 the UI would, not a misleading affordance.
+test("POST restore: updater-written applied row → 409 { status:'not_restorable' } (no exec)", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  rmSync(argvFile, { force: true });
+  process.env.ATRIUM_UPDATE_SCRIPT = writeStub("restore-should-not-run-updater.sh", 0);
+
+  const res = await app.inject({
+    method: "POST",
+    url: `/api/improvement/${updaterWrittenId}/restore`,
+  });
+
+  assert.strictEqual(res.statusCode, 409);
+  const body = res.json() as { status: string; id: number; reason: string };
+  assert.strictEqual(body.status, "not_restorable");
+  assert.strictEqual(body.id, updaterWrittenId);
+  assert.match(body.reason, /updater-written release record/);
+  assert.ok(!existsSync(argvFile), "update.sh must NOT be invoked for an updater-written row");
 });
 
 // Unknown proposal id → 404 not_found (0 rows), no exec.

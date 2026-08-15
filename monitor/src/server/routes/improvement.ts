@@ -1443,7 +1443,15 @@ type RestoreErrorBody =
 interface ProposalRestoreRow {
   status: string;
   cycle_id: string;
+  pattern_label: string;
 }
+
+// Proposal rows written by scripts/update.sh (editable-region gap accounting), not by
+// daemon-apply.sh. They land status='applied' to report the release outcome, but no
+// agents-bak before-image was ever captured for them — restore can only ever fail.
+const UPDATER_WRITTEN_PATTERN_LABELS: ReadonlySet<string> = new Set([
+  "editable-region-resolved-release",
+]);
 
 // Recovery net for the approve SECURITY note: undo an applied proposal by restoring the
 // agents-bak/<cycle_date>_p<id> before-image. Only an 'applied' proposal has a snapshot, so
@@ -1469,7 +1477,8 @@ async function handleRestore(
   try {
     rows = await prisma.$queryRaw<ProposalRestoreRow[]>`
       SELECT status::text AS status,
-             to_char(cycle_date, 'YYYY-MM-DD') || '_p' || id::text AS cycle_id
+             to_char(cycle_date, 'YYYY-MM-DD') || '_p' || id::text AS cycle_id,
+             pattern_label
       FROM core.autoagent_proposals
       WHERE id = ${BigInt(id)}
     `;
@@ -1496,6 +1505,19 @@ async function handleRestore(
       status: "not_restorable",
       id,
       reason: `proposal status '${row.status}' has no agents-bak before-image (only 'applied' is restorable)`,
+    };
+  }
+
+  if (UPDATER_WRITTEN_PATTERN_LABELS.has(row.pattern_label)) {
+    request.log.warn(
+      { ...logBase, patternLabel: row.pattern_label },
+      "restore no-op (updater-written row — no before-image was ever captured)",
+    );
+    reply.code(409);
+    return {
+      status: "not_restorable",
+      id,
+      reason: `proposal pattern '${row.pattern_label}' is an updater-written release record, not a daemon-applied patch — no agents-bak before-image exists`,
     };
   }
 
