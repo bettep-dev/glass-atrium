@@ -12,10 +12,22 @@
 # shellcheck disable=SC2310,SC2312
 # glass-atrium-update — the user-triggered Glass Atrium updater (plan E3 / design
 # C, task T09). This is the ADAPTER that ORCHESTRATES the already-built E3 spine
-# libs; it is deliberately NOT a new merge engine and it NEVER writes
-# core.autoagent_proposals (that surface belongs to the autoagent self-improvement
-# loop, a different system). The binary subcommand `glass-atrium update` (T08)
-# dispatches here.
+# libs; it is deliberately NOT a new merge engine. The binary subcommand
+# `glass-atrium update` (T08) dispatches here.
+#
+# core.autoagent_proposals boundary — NARROWED, it previously read "never writes
+# it". That table belongs to the autoagent self-improvement loop, so the updater
+# reaches it through exactly ONE channel: update_emit_resolved_records, via the
+# write_autoagent_proposal envelope piped to scripts/_pg_dual_write_daemon.py,
+# always carrying pattern_label=editable-region-resolved-release and a structurally
+# apply-INELIGIBLE row (terminal status, a haiku_status that no LIKE ok% gate
+# matches, approval_tier=auto). Raw SQL against that table is FORBIDDEN from every
+# path. The write runs in EVERY entry mode, interactive included: the row is the
+# ONLY trace that daemon-authored content was discarded, and interactive is the mode
+# a human actually runs — gating it headless-only would route the accountability
+# record to the mode least likely to produce it. Pinned by the boundary test in
+# scripts/test/glass-atrium-update.bats, which asserts the CHANNELS (no raw SQL, one
+# emitter, one envelope op, one helper pipe) rather than SQL syntax.
 #
 # What it does, in order (each step builds on the previous):
 #   1. WRITER-SERIALIZATION (T10): create the cooperative pause flag so the
@@ -30,6 +42,9 @@
 #   5. DETERMINISTIC NON-AGENT SYNC (T13): snapshot + swap + rollback via the
 #      apply-spine (spine_commit_staged). Agent EDITABLE-region merge is EXCLUDED
 #      here and left as a documented CALL SEAM for E4 (T17-T19).
+#   5a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
+#      conflicting EDITABLE gaps took the release side (the boundary note above) —
+#      emitted from the merge step in every entry mode, best-effort.
 #   5b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
 #      files the prior-vendor baseline shipped but this release DROPPED (provenance
 #      -clean only; a user-edited drop is PRESERVED) to Trash, previewed through the
@@ -96,13 +111,17 @@
 # or the manifest carries no .version to derive the bundle name — nothing was
 # applied).
 #
-# DB tracking is HEADLESS-ONLY — the interactive/CLI path performs NO DB write, so
-# the E3 no-DB boundary holds there (the boundary now forbids core.autoagent_proposals
-# only, not core.update_job). update_job rows are written via psql reusing the
+# core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
+# update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
+# the resolved-gap accountability row (boundary note at the top) is written in EVERY
+# mode, so an interactive run does reach Postgres whenever a body's conflicting gaps
+# resolved to the release side. update_job rows are written via psql reusing the
 # daemon-apply.sh idiom; single-active is the migration's partial UNIQUE INDEX
 # (update_job_single_active_uniq WHERE status='in-progress'). Seams (all default to
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
-# ATRIUM_UPDATE_DB=off (disable tracking) · ATRIUM_UPDATE_JOB_ID (adopt a row the
+# ATRIUM_UPDATE_DB=off (disable update_job tracking only — the resolved-gap record
+# rides its own ATRIUM_UPDATE_PG_HELPER seam, not psql) ·
+# ATRIUM_UPDATE_PG_HELPER (resolved-gap dual-write CLI) · ATRIUM_UPDATE_JOB_ID (adopt a row the
 # web route pre-created instead of INSERTing) · ATRIUM_UPDATE_NPM (npm) ·
 # ATRIUM_UPDATE_LAUNCHCTL (launchctl) · ATRIUM_UPDATE_LAUNCH_AGENTS_DIR
 # (~/Library/LaunchAgents) · ATRIUM_UPDATE_RENDERED_LAUNCHD_DIR
@@ -394,6 +413,16 @@ print(json.dumps({
 # content was discarded: the path takes the release side with no model call and
 # no per-file operator judgment, so the recorded row IS the accountability
 # surface the human reviews afterwards.
+#
+# This is the SINGLE sanctioned exception to the file-header core.autoagent_proposals
+# boundary, and it is deliberately NOT headless-gated: the caller chain (merge →
+# update_finalize_merge_and_anchors → update_run) carries no mode test, so an
+# interactive `glass-atrium update` records too.
+#
+# Equally deliberate: the emit does not read the confirm gate's verdict. A decline
+# offered the discard and refused it, which is itself the accountability event, so a
+# declined run still records — as status=rejected, since the outcome ledger below
+# supplies the landed split.
 #
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
@@ -1327,6 +1356,12 @@ update_merge_agent_editable_regions() {
     # body — after the gate the dropped daemon lines exist nowhere else. The row
     # itself is emitted only once the outcome is known (post-gate), so it can
     # record what actually landed rather than what was offered.
+    #
+    # Field 2 (target_file) stays REPO-RELATIVE on purpose. The daemon writes the
+    # ABSOLUTE mirror path and its back-off reader selects on target_file equality,
+    # so the two namespaces being disjoint is what keeps an updater row out of that
+    # read. "Normalizing" this to an absolute path would silently feed the daemon's
+    # back-off state.
     if [[ "${verdict}" == 'merge-resolved-release' ]]; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${base}" "agents/${base}" "${file}" \
@@ -1672,8 +1707,10 @@ update_wire_hooks_post_apply() {
 # P3 — headless update_job DB tracking (psql; daemon-apply.sh idiom)
 # ---------------------------------------------------------------------------
 #
-# HEADLESS-ONLY: every function below no-ops unless _update_headless=1, so the
-# interactive/CLI path keeps the E3 no-DB boundary (it never touches Postgres).
+# HEADLESS-ONLY: every function in THIS section no-ops unless _update_headless=1, so
+# the interactive/CLI path opens no update_job row. Scoped to this section — NOT a
+# whole-script claim: update_emit_resolved_records writes core.autoagent_proposals in
+# every mode (see the boundary note at the top of the file).
 # Single-active-job is the migration's partial UNIQUE INDEX
 # (update_job_single_active_uniq WHERE status='in-progress'); a 2nd concurrent
 # INSERT trips its unique violation, which update_job_begin catches → exit 8.
@@ -2754,6 +2791,9 @@ update_sweep_removed_files() {
 #     the merge's own ledger/backup globals, so it has no sweep dependency.
 #   * the sweep keys off the STILL-OLD baseline, so it MUST precede
 #     update_capture_baseline advancing the hash anchor.
+# The merge step also emits the resolved-gap core.autoagent_proposals record, so this
+# shared path — not the headless-only update_job section — is why an INTERACTIVE run
+# reaches Postgres (boundary note at the top of the file).
 # finding #9 (anchors advance for landed agent merges even on an agent-only /
 # sensitive-only update) + finding #14 (a drop-only release still sweeps). Args: $1
 # = new-release tree · $2 = manifest · $3 = install root · $4 = prior-vendor

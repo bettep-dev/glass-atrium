@@ -8,7 +8,8 @@
 # acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
 # run via the ATRIUM_UPDATE_SRC_DIR seam (verify → confirm → deterministic non-agent
 # sync → baseline; decline writes nothing); boundary asserts — NOT a merge engine
-# (agent md excluded), NEVER writes core.autoagent_proposals.
+# (agent md excluded), and core.autoagent_proposals reachable through the single
+# sanctioned resolved-gap envelope channel only (no raw SQL, one emitter, one pipe).
 # git is deliberately NOT required — the flow is git-free end to end, proving it runs
 # on a git-less no-.git consumer host.
 # Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
@@ -739,25 +740,132 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [[ ! -f "${INSTALL}/agents/dev-new.md" ]]                  # agent md still E4-excluded
 }
 
-@test "boundary: the skill NEVER writes core.autoagent_proposals (only core.update_job)" {
-  # P3 gave the headless path a DB surface: core.update_job status tracking. That
-  # is the ONLY table the adapter may touch — core.autoagent_proposals belongs to
-  # the autoagent self-improvement loop and MUST stay off-limits. Assert (a) no SQL
-  # statement (INSERT/UPDATE/DELETE/SELECT ... FROM) targets autoagent_proposals —
-  # a bare prose mention of the table name in a header comment is allowed — and (b)
-  # every DML statement targets core.update_job (the single allowed write surface).
-  run grep -nE '(INTO|UPDATE|FROM|TABLE)[[:space:]]+(core\.)?autoagent_proposals' "${SKILL}"
-  [ "$status" -ne 0 ] # grep finds nothing → exit 1
-  [[ -z "${output}" ]]
-  # Every INSERT INTO / UPDATE ... SET / DELETE FROM must name core.update_job.
-  run grep -nE 'INSERT[[:space:]]+INTO[[:space:]]+(core\.)?[a-z_]+|DELETE[[:space:]]+FROM[[:space:]]+(core\.)?[a-z_]+' "${SKILL}"
-  local line
+@test "boundary: the only core.autoagent_proposals write is the sanctioned resolved-gap envelope" {
+  # The boundary MOVED. It used to read "never writes that table"; the updater now
+  # records one apply-INELIGIBLE accountability row per body whose conflicting
+  # EDITABLE gaps took the release side, in every entry mode. What is pinned here is
+  # the CHANNEL SET, not SQL syntax: the predecessor grepped for a SQL keyword next
+  # to the table name and therefore could never see this write, which leaves as a
+  # JSON envelope piped to _pg_dual_write_daemon.py.
+  #
+  # Fixtures/helpers used below (seed_base_store, run_update, write_mock_psql) are
+  # defined further down the file — bats defines every top-level function before the
+  # first test runs.
+
+  # Leg 1 — no raw SQL. Anchored on the table NAME alone, so it does not depend on a
+  # preceding keyword: every mention must be prose (a # comment) or a log string,
+  # which a raw statement would not be.
+  run grep -n 'autoagent_proposals' "${SKILL}"
+  [ "$status" -eq 0 ] # the boundary note names it; zero hits means the note moved
+  local line text
   while IFS= read -r line; do
-    [[ -z "${line}" ]] && continue
-    [[ "${line}" == *"core.update_job"* ]] || {
+    [[ -n "${line}" ]] || continue
+    text="${line#*:}"
+    if [[ ! "${text}" =~ ^[[:space:]]*# ]] && [[ "${text}" != *update_log* ]]; then
+      echo "core.autoagent_proposals named outside a comment/log line: ${line}"
+      return 1
+    fi
+  done <<<"${output}"
+
+  # Leg 2 — one envelope op, one emitter, one helper pipe. A SECOND write site added
+  # anywhere trips this while emitting no SQL at all.
+  local op_line py_line emit_line
+  op_line="$(grep -n 'write_autoagent_proposal' "${SKILL}" | grep -vE ':[[:space:]]*#' | cut -d: -f1)"
+  py_line="$(grep -n "^_UPDATE_PROPOSAL_PY='" "${SKILL}" | cut -d: -f1)"
+  emit_line="$(grep -n '^update_emit_resolved_records() {' "${SKILL}" | cut -d: -f1)"
+  [ "$(printf '%s\n' "${op_line}" | grep -c .)" -eq 1 ]
+  [ "${op_line}" -gt "${py_line}" ]  # the op literal sits INSIDE the envelope composer
+  [ "${op_line}" -lt "${emit_line}" ]
+  # Non-comment occurrences only: the header seam list names the env var in prose.
+  [ "$(grep -n 'ATRIUM_UPDATE_PG_HELPER' "${SKILL}" | grep -cvE ':[[:space:]]*#')" -eq 1 ]
+  [ "$(grep -cF 'python3 "${helper}"' "${SKILL}")" -eq 1 ]
+
+  # Leg 3 — observe the write channels on a real INTERACTIVE run. All three anchors
+  # of the EDITABLE region differ, so the resolver takes the release side and the
+  # emitter fires; the dual-write CLI is replaced by a spy that records what it was
+  # piped. This is the leg a source grep structurally cannot supply.
+  local gap_base gap_local gap_release
+  gap_base='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+base goal
+<!-- EDITABLE:END -->
+## Rules
+vendor rules'
+  gap_local='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+local learned goal
+<!-- EDITABLE:END -->
+## Rules
+vendor rules'
+  gap_release='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+release rewritten goal
+<!-- EDITABLE:END -->
+## Rules
+vendor rules'
+  seed_file "${INSTALL}" "agents/dev-a.md" "${gap_local}"
+  seed_base_store "dev-a.md" "${gap_base}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${gap_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+  cat >"${WORK}/spy-helper.py" <<'PY'
+import os, sys
+with open(os.environ["ENVELOPE_LOG"], "a", encoding="utf-8") as fh:
+    fh.write(sys.stdin.read())
+PY
+  write_mock_psql "${WORK}/psql"
+  export ENVELOPE_LOG="${WORK}/envelopes.jsonl"
+  export ATRIUM_UPDATE_PG_HELPER="${WORK}/spy-helper.py"
+  export ATRIUM_UPDATE_PSQL="${WORK}/psql"
+  export PSQL_LOG="${WORK}/psql.log"
+
+  run_update y
+  [ "$status" -eq 0 ]
+  # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does NOT fail
+  # a bats test, so it would assert nothing here.
+  if [[ "$output" != *"resolved-gap discard recorded"* ]]; then
+    echo "the run recorded no resolved-gap discard: ${output}"
+    return 1
+  fi
+
+  # Every observed envelope carries the sanctioned shape, including the properties
+  # the apply-ineligibility argument rests on (no LIKE ok% match; a repo-relative
+  # target_file, disjoint from the daemon's absolute-path namespace).
+  run python3 - "${ENVELOPE_LOG}" <<'PY'
+import json, sys
+
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+assert rows, "no envelope observed on the helper channel"
+for r in rows:
+    assert r["op"] == "write_autoagent_proposal", r["op"]
+    a = r["args"]
+    assert a["pattern_label"] == "editable-region-resolved-release", a["pattern_label"]
+    assert a["approval_tier"] == "auto", a["approval_tier"]
+    assert a["status"] in ("applied", "rejected"), a["status"]
+    assert not a["haiku_status"].startswith("ok"), a["haiku_status"]
+    assert not a["target_file"].startswith("/"), a["target_file"]
+print(len(rows))
+PY
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  # The psql channel stayed shut on the interactive path, so no raw statement named
+  # the table at runtime either.
+  [ ! -s "${PSQL_LOG}" ]
+
+  # Leg 4 — every DML statement in the file targets core.update_job. Extended to the
+  # `UPDATE <table>` form the predecessor's own comment claimed but its grep omitted;
+  # line-anchored so the WARN strings that merely contain the word are not scanned.
+  run grep -nE '^[[:space:]]*(INSERT[[:space:]]+INTO|DELETE[[:space:]]+FROM|UPDATE)[[:space:]]+(core\.)?[a-z_]+' "${SKILL}"
+  [ "$status" -eq 0 ]
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    if [[ "${line}" != *"core.update_job"* ]]; then
       echo "unexpected DML target: ${line}"
       return 1
-    }
+    fi
   done <<<"${output}"
 }
 

@@ -173,10 +173,20 @@ db_available() {
   run envelope_field cost_guard_state
   [ -n "$output" ]
 
-  # A LIKE 'ok%' apply-eligibility gate must never match this row.
+  # A LIKE 'ok%' apply-eligibility gate must never match this row — the whole
+  # apply-ineligibility safety case rests on this one literal, so it is asserted
+  # through an explicit `return 1`: a bare mid-body `[[ ]]` does NOT fail a bats
+  # test (only its LAST command and the simple-command forms gate), which is what
+  # made the earlier form of this pin pass with haiku_status="ok".
   run envelope_field haiku_status
-  [[ "$output" != ok* ]]
-  [[ "$output" == skipped:* ]]
+  if [[ "$output" == ok* ]]; then
+    echo "haiku_status satisfies a LIKE 'ok%' apply-eligibility gate: ${output}"
+    return 1
+  fi
+  if [[ "$output" != skipped:* ]]; then
+    echo "haiku_status must be a skipped: form: ${output}"
+    return 1
+  fi
 
   # body-auto is the label the dispatcher maps to the apply enum; a bare "apply"
   # is unknown to it and coerces to reject.
@@ -310,6 +320,9 @@ db_available() {
        FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-resolved-release'
         AND target_file = 'agents/${target}'")"
+  # This runs against the PRODUCTION database, and pattern_label is the one real rows
+  # carry — the pid-unique target is the ONLY thing separating this cleanup from live
+  # accountability records. Never widen the predicate to the label alone.
   psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
     "DELETE FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-resolved-release'
@@ -335,6 +348,7 @@ db_available() {
     "SELECT count(*) FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-resolved-release'
         AND target_file = 'agents/${target}'")"
+  # Same production-database caveat as T2: the pid-unique target is the whole guard.
   psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
     "DELETE FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-resolved-release'
