@@ -55,6 +55,8 @@ setup() {
   # Injection drop log + spawn counter → Bats tmpdir (never the real ~/.claude/logs).
   export INJECT_SCOPE_RULES_DROP_LOG="${BATS_TEST_TMPDIR}/inject-drop.log"
   export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
+  # C03: the positive-injection manifest sink writes on EVERY spawn — sandbox it likewise.
+  export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 }
 
 # ---- raw-write fixtures (frontmatter + optional envelope) --------------------------------------
@@ -91,6 +93,7 @@ inject_ctx() {
     INJECT_SCOPE_RULES_AGENTS_DIR="${AGENTS_DIR}" \
     INJECT_SCOPE_RULES_DROP_LOG="${INJECT_SCOPE_RULES_DROP_LOG}" \
     INJECT_SCOPE_RULES_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER}" \
+    INJECT_SCOPE_RULES_MANIFEST_LOG="${INJECT_SCOPE_RULES_MANIFEST_LOG}" \
     INJECT_SCOPE_RULES_LESSONS_SRC=/nonexistent \
     bash "${INJECT_HOOK}" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""'
 }

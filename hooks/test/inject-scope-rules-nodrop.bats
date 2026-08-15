@@ -92,6 +92,10 @@ setup() {
   # T7: the drop-rate denominator counter defaults under ~/.claude/logs and writes on EVERY spawn —
   # sandbox it into the Bats tmpdir (exported → inherited through each run helper's `env`).
   export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
+
+  # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
+  # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 }
 
 # Drive the hook with a SubagentStart envelope for $1, assembling from the REAL repo sources with the

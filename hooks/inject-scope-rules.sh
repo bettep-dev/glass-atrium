@@ -40,6 +40,12 @@
 # extraction) → exit 0 + 1 stderr diagnostic, injecting whatever IS available (a
 # missing block must NOT suppress the others).
 #
+# C03 — observability: the drop sink records only what was SHED, so "did this agent actually see that
+# rule at that spawn" was an assumption. One bounded MANIFEST line per injection-attempted spawn now
+# records what WAS injected (agent id/type · ordered kept labels with their source paths · assembled
+# bytes · an optional digest · the runtime-derived lesson ids+scores), into its OWN capped sink so the
+# drop-rate numerator's rotation is untouched. `--manifest-coverage` is its required reader.
+#
 # T8 — membership vs. delivery (roster disclaimer): this hook injects a FIXED set of extracted
 # AGENT-INJECT MARKER blocks (comment-logging · style_ref · minimalism · naming · budget-dev ·
 # budget-analysis · wiki-untrusted) against the HARDCODED rosters below (INJECT_AGENTS, STYLEREF_AGENTS,
@@ -241,6 +247,22 @@ readonly INJECT_DROP_LOG_MAX_BYTES=1048576 # 1 MiB soft cap → truncate-on-exce
 # counter reads as 0 (first run), NOT as missing data.
 readonly INJECT_SPAWN_COUNTER="${INJECT_SCOPE_RULES_SPAWN_COUNTER:-${HOOK_LOG_DIR}/inject-scope-rules.spawns.count}"
 
+# C03 positive-injection manifest — one bounded line per injection-attempted spawn recording what WAS
+# injected (the drop sink records only what was NOT). A SEPARATE sink with its OWN cap, never the drop
+# log: that log is soft-rotated by truncate-on-exceed while the spawn counter feeding the drop-rate
+# DENOMINATOR is monotonic and never resets, so ~1 manifest line per spawn would accelerate the
+# truncation and silently shrink the drop numerator against an un-reset denominator — corrupting an
+# existing signal. Env-overridable for the Bats sandbox (a sink without its constant cannot be
+# isolated per test). Cap is 4x the drop sink's: a drop is rare, a manifest line is per-spawn.
+readonly INJECT_MANIFEST_LOG="${INJECT_SCOPE_RULES_MANIFEST_LOG:-${HOOK_LOG_DIR}/inject-scope-rules.manifest.log}"
+readonly INJECT_MANIFEST_LOG_MAX_BYTES=4194304 # 4 MiB soft cap → truncate-on-exceed
+
+# Manifest digest tool — empty (default) probes shasum then sha256sum; a non-empty override names the
+# tool exactly. OPTIONAL BY CONTRACT: an absent tool degrades to a manifest line with NO digest field,
+# never an unguarded call that would trip the fail-open ERR trap. The Bats sandbox points this at an
+# absent command to exercise that degradation without PATH surgery.
+readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
+
 # Budget-meter maxTurns floor — below this the meter is SKIPPED. An 80% working ceiling of a <=3
 # maxTurns budget (glass-atrium-sec-guard's maxTurns:3 → ceiling 2) is a self-contradictory "stop
 # after 2 of 3 turns" advisory for the verdict-only agent GLOBAL_RULES already EXEMPTS from the
@@ -270,13 +292,66 @@ aggregate_drop_rate() {
   printf 'inject-scope-rules drop-rate: drops=%s injection_attempted=%s drop_rate=%s\n' "${drops}" "${attempts}" "${rate}"
 }
 
-# Operator/doctor aggregation-query mode — dispatched BEFORE reading the SubagentStart envelope so
-# `inject-scope-rules.sh --drop-rate` never blocks on hook_read_input's cat. The hook path is invoked
-# with NO args, so ${1:-} is empty and this is skipped there.
-if [[ "${1:-}" == "--drop-rate" ]]; then
-  aggregate_drop_rate
-  exit 0
-fi
+# C03 reader — the manifest's required co-deliverable: per-agent block coverage over the manifest sink
+# ("did this agent actually see that block at that spawn"). Read-only, jq-free (awk only), sibling to
+# aggregate_drop_rate. An absent sink reports records=0, NOT missing data. Parses by FIELD NAME, so the
+# optional digest field never shifts a position; `blocks=` is line-final, so a source path containing
+# spaces cannot truncate it. Per-agent label order is the fixed assembly order (deterministic output).
+aggregate_manifest_coverage() {
+  if [[ ! -f "${INJECT_MANIFEST_LOG}" ]]; then
+    printf 'inject-scope-rules manifest-coverage: records=0 agents=0\n'
+    return 0
+  fi
+  awk '
+    / MANIFEST / {
+      total++
+      agent = "unknown"
+      if (match($0, / agent=[^ ]+/)) { agent = substr($0, RSTART + 7, RLENGTH - 7) }
+      if (!(agent in spawns)) { agents[++nagents] = agent }
+      spawns[agent]++
+      bi = index($0, " blocks=")
+      if (bi > 0) {
+        n = split(substr($0, bi + 8), parts, ";")
+        for (j = 1; j <= n; j++) {
+          lbl = parts[j]
+          ci = index(lbl, ":")
+          if (ci > 0) { lbl = substr(lbl, 1, ci - 1) }
+          if (lbl != "") { kept[agent SUBSEP lbl]++ }
+        }
+      }
+    }
+    END {
+      printf "inject-scope-rules manifest-coverage: records=%d agents=%d\n", total, nagents
+      nl = split("emit meter wiki-untrusted comment styleref minimalism naming budget-dev budget-analysis lesson", labels, " ")
+      for (i = 1; i <= nagents; i++) {
+        a = agents[i]
+        line = ""
+        for (j = 1; j <= nl; j++) {
+          key = a SUBSEP labels[j]
+          if (key in kept) { line = line (line == "" ? "" : ",") labels[j] ":" kept[key] }
+        }
+        printf "inject-scope-rules manifest-coverage: agent=%s spawns=%d blocks=%s\n", a, spawns[a], (line == "" ? "-" : line)
+      }
+    }
+  ' "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+  return 0
+}
+
+# Operator/doctor aggregation-query modes — dispatched BEFORE reading the SubagentStart envelope so
+# `inject-scope-rules.sh --drop-rate` / `--manifest-coverage` never blocks on hook_read_input's cat.
+# The hook path is invoked with NO args, so ${1:-} is empty and this is skipped there — which is also
+# why NO manifest line is ever emitted in either introspection mode (free by construction).
+case "${1:-}" in
+  --drop-rate)
+    aggregate_drop_rate
+    exit 0
+    ;;
+  --manifest-coverage)
+    aggregate_manifest_coverage
+    exit 0
+    ;;
+  *) : ;; # hook path (no args) — fall through to the envelope read
+esac
 
 INPUT="$(hook_read_input)"
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -431,24 +506,40 @@ truncate_bytes_utf8_safe() {
 # task_type NOTE: the SubagentStart envelope carries ONLY agent_type — task_type is not known
 # until the agent acts — so matching is agent-keyed and each line carries its task_type tag as
 # metadata (the AD-3 "agent + task_type match" collapses to agent-key + per-line task_type tag).
-# stdout: the lesson block text (may be empty).
+#
+# C03 stdout CONTRACT (two-part, split by the caller): line 1 = the manifest metadata
+# "<source_capped 0|1> <id@score CSV>", lines 2..N = the lesson block text. The metadata rides the
+# SAME jq pass that produced the injected lines rather than a second read of the store: the store
+# MUTATES, so a re-query could disagree with what was actually injected, and a manifest that can
+# disagree with the injection it describes is worse than no manifest. Empty output (no store, no
+# match) carries neither part. The lesson store has no id column, so the identifier falls back to a
+# slug of the lesson text — the same (agent, task_type, text) identity the aggregator dedups on.
 build_lesson_block() {
   [[ -f "${LESSON_SRC_FILE}" ]] || return 0
-  local ctm epm body=""
-  ctm="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" --argjson min "${LESSON_MIN_SCORE}" '
+  local ctm epm ctm_out epm_out ctm_ids epm_ids ids body="" capped=0
+  ctm_out="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" --argjson min "${LESSON_MIN_SCORE}" '
     (.ctm // [])
     | map(select(.agent == $a and (.tombstoned != true) and ((.score // 0) >= $min)))
     | sort_by(-(.score // 0), -(.frequency // 0))
-    | .[:$k][]
-    | "- [\(.task_type // "any")] \(.text)"
+    | .[:$k]
+    | (map("ctm:\(.task_type // "any")/\(.id // ((.text // "") | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:20]))@\(.score // 0)") | join(",")),
+      (map("- [\(.task_type // "any")] \(.text)") | join("\n"))
   ' "${LESSON_SRC_FILE}" 2>/dev/null || true)"
-  epm="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" '
+  epm_out="$(jq -r --arg a "${AGENT_TYPE}" --argjson k "${LESSON_TOP_K}" '
     (.epm // [])
     | map(select(.agent == $a and (.tombstoned != true)))
     | sort_by(-(.frequency // 0), -(.score // 0))
-    | .[:$k][]
-    | "- AVOID [\(.task_type // "any")] \(.text)"
+    | .[:$k]
+    | (map("epm:\(.task_type // "any")/\(.id // ((.text // "") | ascii_downcase | gsub("[^a-z0-9]+"; "-") | .[0:20]))@\(.score // 0)") | join(",")),
+      (map("- AVOID [\(.task_type // "any")] \(.text)") | join("\n"))
   ' "${LESSON_SRC_FILE}" 2>/dev/null || true)"
+
+  # Line 1 of each jq output is the id CSV; the remainder is the display text (byte-identical to the
+  # pre-C03 per-record output, so the assembled block size is unchanged).
+  ctm_ids="$(printf '%s\n' "${ctm_out}" | head -1)"
+  ctm="$(printf '%s\n' "${ctm_out}" | tail -n +2)"
+  epm_ids="$(printf '%s\n' "${epm_out}" | head -1)"
+  epm="$(printf '%s\n' "${epm_out}" | tail -n +2)"
 
   [[ -z "${ctm}" && -z "${epm}" ]] && return 0
 
@@ -469,8 +560,15 @@ build_lesson_block() {
   body_bytes="$(byte_len "${body}")"
   if [[ "${body_bytes}" -gt "${LESSON_MAX_BYTES}" ]]; then
     body="$(truncate_bytes_utf8_safe "${body}" "${LESSON_MAX_BYTES}")"
+    # C03: a source-cap cut drops the tail of the listed ids, so the manifest must say so rather than
+    # over-claim. The caller ORs this with the ceiling-pressure truncation into one manifest field.
+    capped=1
   fi
-  printf '%s' "${body}"
+  ids="${ctm_ids}"
+  if [[ -n "${epm_ids}" ]]; then
+    ids="${ids:+${ids},}${epm_ids}"
+  fi
+  printf '%s %s\n%s' "${capped}" "${ids}" "${body}"
 }
 
 # Append a persisted drop-marker line. Fail-open: EVERY statement is guarded (|| true / || return 0
@@ -589,6 +687,118 @@ increment_spawn_attempts() {
   return 0
 }
 
+# C03: digest of the assembled context, OPTIONAL BY CONTRACT. The tool is PROBED behind a conditional
+# and its output captured with an unconditional-success fallback; absence returns empty and the caller
+# omits the field. An unguarded call to a missing tool would trip the ERR trap — precisely the fail-open
+# violation this hook's discipline exists to prevent. Args: $1=assembled context · stdout: hex or empty.
+manifest_digest() {
+  local ctx="${1}" cmd="${INJECT_MANIFEST_DIGEST_CMD}" out=""
+  if [[ -z "${cmd}" ]]; then
+    if command -v shasum >/dev/null 2>&1; then
+      cmd="shasum"
+    elif command -v sha256sum >/dev/null 2>&1; then
+      cmd="sha256sum"
+    else
+      return 0
+    fi
+  fi
+  command -v "${cmd}" >/dev/null 2>&1 || return 0
+  case "${cmd##*/}" in
+    shasum) out="$(printf '%s' "${ctx}" | "${cmd}" -a 256 2>/dev/null | awk '{ print $1 }' || true)" ;;
+    *) out="$(printf '%s' "${ctx}" | "${cmd}" 2>/dev/null | awk '{ print $1 }' || true)" ;;
+  esac
+  printf '%s' "${out}"
+}
+
+# C03: the Read-resolvable source a kept block came from. Delegates the six rule-doc blocks to
+# marker_source_path (one declaration, so a manifest path can never drift from the extraction source)
+# and adds the two the drop marker never needs: emit/meter are printf'd in THIS file, and the lesson
+# block's source IS the runtime store (the drop marker withholds that path because a shed lesson
+# recovers via re-spawn, but a manifest describing what WAS injected should name where it came from).
+# Args: $1=block label · stdout: source path.
+manifest_block_source() {
+  case "${1}" in
+    emit | meter) printf '%s' "${BASH_SOURCE[0]}" ;;
+    lesson) printf '%s' "${LESSON_SRC_FILE}" ;;
+    *) marker_source_path "${1}" ;;
+  esac
+}
+
+# C03: did this block survive into the emitted context? Mirrors assemble_ctx's per-block condition
+# exactly (keep-flag AND non-empty), so the manifest can never name a block the child did not receive.
+# Args: $1=block label · returns: 0 when kept, 1 otherwise.
+manifest_block_kept() {
+  case "${1}" in
+    emit) [[ -n "${EMIT_BLOCK}" ]] ;;
+    meter) [[ -n "${METER_BLOCK}" ]] ;;
+    wiki-untrusted) [[ "${keep_wiki_untrusted}" -eq 1 && -n "${WIKI_UNTRUSTED_BLOCK}" ]] ;;
+    comment) [[ "${keep_comment}" -eq 1 && -n "${COMMENT_BLOCK}" ]] ;;
+    styleref) [[ "${keep_styleref}" -eq 1 && -n "${STYLEREF_BLOCK}" ]] ;;
+    minimalism) [[ "${keep_minimalism}" -eq 1 && -n "${MINIMALISM_BLOCK}" ]] ;;
+    naming) [[ "${keep_naming}" -eq 1 && -n "${NAMING_BLOCK}" ]] ;;
+    budget-dev) [[ "${keep_budget_dev}" -eq 1 && -n "${BUDGET_DEV_BLOCK}" ]] ;;
+    budget-analysis) [[ "${keep_budget_analysis}" -eq 1 && -n "${BUDGET_ANALYSIS_BLOCK}" ]] ;;
+    lesson) [[ "${keep_lesson}" -eq 1 && -n "${LESSON_BLOCK}" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# C03: the ordered "label:source_path" list of kept blocks, semicolon-joined. Order is the assembly
+# display order, so the record reads as the child saw it. stdout: the joined list (may be empty).
+build_manifest_blocks() {
+  local out="" label src
+  for label in emit meter wiki-untrusted comment styleref minimalism naming budget-dev budget-analysis lesson; do
+    # Pure predicate → the if-condition disabling set -e (SC2310) is intended, as in the drop loop.
+    # shellcheck disable=SC2310
+    if manifest_block_kept "${label}"; then
+      src="$(manifest_block_source "${label}")"
+      if [[ -z "${out}" ]]; then
+        out="${label}:${src}"
+      else
+        out="${out};${label}:${src}"
+      fi
+    fi
+  done
+  printf '%s' "${out}"
+}
+
+# C03: append the one-line positive-injection manifest. Fail-open on EVERY statement (identical idiom
+# to append_drop_log — a logging glitch must never trip the ERR trap into a spawn-suppressing exit) and
+# bounded by its OWN cap. `blocks=` is LAST so a source path containing spaces cannot truncate the
+# preceding fields; agent_id / agent_type come from the external envelope, so both are reduced to a
+# path-safe key before they reach the record (LLM01 — and it keeps every other field space-free).
+# Args: $1=assembled context $2=assembled byte size.
+append_manifest_log() {
+  local ctx="${1}" ctx_size="${2}" log_dir="${INJECT_MANIFEST_LOG%/*}"
+  local sz="" ts="" raw_id="" agent_id="" safe_type="" digest="" digest_field="" lesson_field="" blocks=""
+  mkdir -p "${log_dir}" 2>/dev/null || return 0
+  if [[ -f "${INJECT_MANIFEST_LOG}" ]]; then
+    sz="$(wc -c <"${INJECT_MANIFEST_LOG}" 2>/dev/null | tr -cd '0-9' || true)"
+    if [[ -n "${sz}" && "${sz}" -gt "${INJECT_MANIFEST_LOG_MAX_BYTES}" ]]; then
+      rm -f "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+    fi
+  fi
+  # Each helper is internally guarded and always exits 0 (the codebase idiom for an in-hook call — a
+  # `|| true` here would only add an SC2310 set -e suppression that buys nothing).
+  raw_id="$(hook_get_field "${INPUT}" "agent_id")"
+  agent_id="$(hook_path_safe_key "${raw_id}")"
+  [[ -z "${agent_id}" ]] && agent_id="unknown"
+  safe_type="$(hook_path_safe_key "${AGENT_TYPE}")"
+  [[ -z "${safe_type}" ]] && safe_type="unknown"
+  digest="$(manifest_digest "${ctx}")"
+  [[ -n "${digest}" ]] && digest_field=" digest=${digest}"
+  # shellcheck disable=SC2310 # pure predicate in a condition — set -e suppression intended
+  if [[ -n "${LESSON_IDS}" ]] && manifest_block_kept "lesson"; then
+    lesson_field=" lessons=${LESSON_IDS} lesson_truncated=${LESSON_TRUNCATED}"
+  fi
+  blocks="$(build_manifest_blocks)"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  printf '%s [inject-scope-rules] MANIFEST agent_id=%s agent=%s ctx_bytes=%s%s%s blocks=%s\n' \
+    "${ts}" "${agent_id}" "${safe_type}" "${ctx_size}" "${digest_field}" "${lesson_field}" "${blocks}" \
+    >>"${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+  return 0
+}
+
 # Join two context fragments with a blank-line delimiter, tolerating an empty left side (so the
 # first present block seeds the context without a leading blank line).
 # Args: $1=existing ctx $2=block to append · stdout: joined text (no trailing newline).
@@ -674,7 +884,16 @@ WIKI_UNTRUSTED_BLOCK="$(extract_scope_block "${WIKI_UNTRUSTED_AGENTS}" "${WIKI_U
 # AD-3 lesson-recall block — universal (any agent_type), self-skipping on no store / no match
 # (a no-match spawn is unchanged). NOT a roster gate: build_lesson_block returns empty unless
 # THIS agent has matching lessons.
-LESSON_BLOCK="$(build_lesson_block)"
+LESSON_RAW="$(build_lesson_block)"
+LESSON_BLOCK=""
+LESSON_IDS=""
+LESSON_TRUNCATED=0
+if [[ -n "${LESSON_RAW}" ]]; then
+  LESSON_META="$(printf '%s\n' "${LESSON_RAW}" | head -1)"
+  LESSON_BLOCK="$(printf '%s\n' "${LESSON_RAW}" | tail -n +2)"
+  LESSON_TRUNCATED="${LESSON_META%% *}"
+  LESSON_IDS="${LESSON_META#* }"
+fi
 
 # Emit-format block — ALL subagents (universal, ALWAYS-ON), assembled FIRST. Unconditional:
 # independent of SUBAGENT_BUDGET_METER_OFF + read_max_turns (the two coupling holes that would
@@ -749,6 +968,9 @@ for drop_block in wiki-untrusted lesson budget-analysis budget-dev naming styler
       # (the reassembly below overwrites it, and truncate overwrites LESSON_BLOCK in place).
       append_drop_log "lesson" "${ctx_bytes}" "PARTIAL" "${lesson_residual}"
       LESSON_BLOCK="$(truncate_bytes_utf8_safe "${LESSON_BLOCK}" "${lesson_residual}")"
+      # C03: the manifest lists the SELECTED lesson ids, whose tail this cut may have removed — the
+      # flag keeps the record from over-claiming what the child actually received.
+      LESSON_TRUNCATED=1
       keep_lesson=1
       CTX="$(assemble_ctx "${keep_comment}" "${keep_styleref}" "${keep_minimalism}" "${keep_naming}" "${keep_budget_dev}" "${keep_budget_analysis}" "${keep_lesson}" "${keep_wiki_untrusted}")"
       ctx_bytes="$(byte_len "${CTX}")"
@@ -829,6 +1051,14 @@ fi
 # Injection is attempted (non-empty CTX proceeding to emit) → advance the drop-rate denominator. Placed
 # AFTER the empty-CTX skip so a no-inject spawn does not count. Fail-open (never alters CTX / the exit).
 increment_spawn_attempts
+
+# C03: one positive-injection manifest line per injection-attempted spawn — sited HERE, strictly after
+# assembly finalization (including the post-loop marker append) and beside the spawn counter, so the
+# manifest count tracks the drop-rate denominator exactly and NOTHING inside the byte-budgeted assembly
+# is touched. The byte size is recomputed from the FINAL context: the marker append after the drop loop
+# leaves the loop's ctx_bytes stale. Fail-open (never alters CTX / the exit).
+manifest_ctx_bytes="$(byte_len "${CTX}")"
+append_manifest_log "${CTX}" "${manifest_ctx_bytes}"
 
 # Assemble JSON — jq --arg escapes the combined context. additionalContext = the child injection point.
 OUTPUT_JSON=""
