@@ -325,22 +325,29 @@ update_editable_region_lines() {
 # Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
 # vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
 # that carries no conflict and sails through the gate. That shape is all-take-release WITH a
-# net-negative EDITABLE-region line delta. ADVISORY only: the candidate is still queued and
+# net-negative EDITABLE-region line delta. merge-resolved-release is deletion-capable for the
+# same reason by a different route — a conflicting gap drops its local lines for the release
+# side — so it is covered here rather than left outside the one guard built for deletion.
+# ADVISORY only: the candidate is still queued and
 # the confirm gate is untouched, but the operator gets a loud per-file warning plus a durable
 # record beside the conflict-decline ledger.
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
-  [[ "${verdict}" == 'take-release' ]] || return 0 # GA-ABSORB[benign]: a non-take-release verdict is not the deletion shape — the tripwire has no advisory to emit and the gate is unaffected.
+  case "${verdict}" in
+    'take-release' | 'merge-resolved-release') ;;
+    *) return 0 ;; # GA-ABSORB[benign]: any other verdict is not a deletion-capable shape — the tripwire has no advisory to emit and the gate is unaffected.
+  esac
   local before after delta dest
   before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
   after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
   delta=$((before - after))
   [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
-  update_log "WARN: deletion-shape tripwire — ${rel} resolves ALL regions take-release and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
+  update_log "WARN: deletion-shape tripwire — ${rel} resolves ${verdict} and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
   dest="$(update_declines_dir "${root}")"
-  # Three columns only: the verdict is take-release for every row this guard can reach and
-  # the advisory-only nature is invariant, so neither is worth a stored column.
+  # Three columns only: the row shape predates the second covered verdict and stays
+  # unchanged, since the file and the line delta are what an operator inspects — the
+  # verdict is recoverable from the same run's log and the advisory-only nature is invariant.
   if mkdir -p -- "${dest}" \
     && printf '%s\t%s\tdeleted_lines=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rel}" "${delta}" \
@@ -812,9 +819,15 @@ update_filter_clean_path() {
 #   * REFUSED (sensitive path/diff, plan rc 3)  -> skipped, reported (never written)
 #   * structural-change (region-count mismatch) -> routed to the agent_lifecycle
 #                                                  ceremony (NOT auto-applied)
-#   * merge-conflict / gated-2way-present-both  -> marker-bearing REPORT, never
+#   * gated-2way-present-both                   -> marker-bearing REPORT, never
 #                                                  landable -> local body kept, decline
 #                                                  recorded, repaired by hand (below)
+#   * merge-conflict                            -> the same decline, now reachable
+#                                                  only with the gap-policy kill switch
+#                                                  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
+#   * merge-resolved-release (changed)          -> conflicting gaps took the release
+#                                                  side, marker-free -> collected ->
+#                                                  gate -> txn, same as merge-clean
 #   * keep-local / no-op (changed=False)         -> no write
 #   * keep-local|take-release|merge-clean (changed) -> collected -> gate -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
@@ -1077,7 +1090,18 @@ update_merge_agent_editable_regions() {
     # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
     # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
     # watching, which leaves an operator no later way to learn a body was declined.
-    if [[ "${verdict}" == 'merge-conflict' || "${verdict}" == 'gated-2way-present-both' ]]; then
+    # The two decline through the SAME ledger for DIFFERENT reasons, so they split
+    # rather than share a condition: the two-way case has no base anchor and therefore
+    # no side any policy could prefer, which is why it declines unconditionally and the
+    # gap-policy kill switch never reaches it. merge-conflict is reachable only WITH
+    # that switch set — the resolver emits merge-resolved-release otherwise — so the
+    # second branch IS today's path, and restoring it is what the switch buys.
+    if [[ "${verdict}" == 'gated-2way-present-both' ]]; then
+      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — no base anchor, so neither side can be preferred; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
+      update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
+      continue
+    fi
+    if [[ "${verdict}" == 'merge-conflict' ]]; then
       update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
       update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
       continue

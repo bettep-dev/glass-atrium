@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,6 +96,7 @@ KEEP_LOCAL = "keep-local"  # release region == base -> local kept verbatim
 TAKE_RELEASE = "take-release"  # local region == base -> vendor region taken
 MERGE_CLEAN = "merge-clean"  # both changed, diff3 merged without conflict
 MERGE_CONFLICT = "merge-conflict"  # both changed with an overlapping conflict
+MERGE_RESOLVED_RELEASE = "merge-resolved-release"  # conflicting gap took the release side
 GATED_2WAY = "gated-2way-present-both"  # base content unavailable, sides differ
 STRUCTURAL = "structural-change"  # region-count mismatch -> manual ceremony
 REFUSED = "sensitive-refused"  # target path / diff matched a sensitive pattern
@@ -103,7 +105,9 @@ NO_OP = "no-op"  # candidate identical to current local file
 # Verdicts that REQUIRE the Haiku improvement-verify gate (an ambiguous,
 # net-new-merged region). KEEP_LOCAL / TAKE_RELEASE / NO_OP are deterministic and
 # make NO LLM call (T18 AC: "only-local or only-vendor changes make NO LLM call").
-_LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
+_LLM_REQUIRED = frozenset(
+    {MERGE_CLEAN, MERGE_CONFLICT, MERGE_RESOLVED_RELEASE, GATED_2WAY}
+)
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
 # never writable to a live agent file (see the module header's tripwire section).
@@ -125,6 +129,28 @@ APPLY_MALFORMED = 2
 # protects those and explicitly excludes model). Tuple, not set → the append
 # order below is deterministic across runs.
 _LOCAL_ONLY_FRONTMATTER_KEYS = ("model",)
+
+# Frontmatter keys the release DOES ship, so live-wins cannot be unconditional: a
+# release bump would be reverted on every install. The live line is carried only
+# when it DIFFERS from base@install — that difference is what distinguishes an
+# operator pin from a stale copy of a value the vendor has since moved. With no
+# base anchor the difference is unknowable, so the key falls back to live-wins
+# rather than dropping a pin it cannot adjudicate.
+_BASE_AWARE_FRONTMATTER_KEYS = ("effort",)
+
+# Kill switch for the conflicting-gap policy (rollout default: ON). Reading it
+# HERE rather than in the updater is what keeps `plan` and the verify shell-out's
+# re-derivation on the same policy — they are separate processes reconstructing the
+# candidate from the same anchors, so a switch held on only one side would resolve at
+# plan time and re-conflict at verify time, failing every transaction into a restore.
+_RESOLVE_GAPS_ENV = "ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"
+_RESOLVE_GAPS_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _resolve_gaps_default() -> bool:
+    """Whether the conflicting-gap policy is enabled for this process."""
+    return os.environ.get(_RESOLVE_GAPS_ENV, "").strip().lower() not in _RESOLVE_GAPS_OFF
+
 
 # Conflict markers for an overlapping both-changed region (diff3 / git style).
 _C_LOCAL = "<<<<<<< LOCAL (learned)\n"
@@ -157,6 +183,7 @@ class RegionResolution:
     content: list[str]  # resolved region content lines (kept endings)
     had_conflict: bool = False
     reason: str = ""
+    hunks: tuple[ConflictHunk, ...] = ()  # conflicting gaps, document order
 
 
 @dataclass
@@ -262,23 +289,55 @@ def _find_sync_regions(
     return sync
 
 
-def three_way_merge(
-    base: list[str], local: list[str], release: list[str]
-) -> tuple[list[str], bool]:
-    """diff3-style line merge of one region. Returns (merged_lines, had_conflict).
+@dataclass(frozen=True)
+class ConflictHunk:
+    """One gap both sides changed DIFFERENTLY, with its three anchor texts.
+
+    ``out_index`` is where the gap's emitted content begins in the merged output,
+    which differs by policy: the marker block's opening line under the reporting
+    default, the first release line under the resolve-release policy. The three
+    anchors are tuples so the record is immutable alongside its sibling
+    ``RegionResolution`` — a caller reasoning about a resolution's hunks can never
+    mutate the merge's own view of them.
+    """
+
+    out_index: int
+    base: tuple[str, ...]
+    local: tuple[str, ...]
+    release: tuple[str, ...]
+
+
+def three_way_merge_hunks(
+    base: list[str],
+    local: list[str],
+    release: list[str],
+    *,
+    resolve_release: bool = False,
+) -> tuple[list[str], list[ConflictHunk]]:
+    """diff3-style line merge of one region. Returns (merged_lines, hunks).
 
     A gap changed by only one side is taken from that side; a gap both sides
-    changed identically collapses to one copy; a gap both sides changed
-    DIFFERENTLY emits git-style conflict markers and sets ``had_conflict`` — the
-    candidate is then report-only: ``apply`` refuses it pre-write
-    (APPLY_MALFORMED, zero bytes) and ``verify``'s on-disk marker scan fails the
-    transaction into the before-image restore, so the caller routes the file to
-    the manual ceremony instead of landing it.
+    changed identically collapses to one copy. A gap both sides changed
+    DIFFERENTLY is recorded as a ``ConflictHunk`` either way, and its emitted
+    content is what ``resolve_release`` selects:
+
+      * False (the reporting default) — git-style conflict markers, so the
+        candidate is report-only: ``apply`` refuses it pre-write
+        (APPLY_MALFORMED, zero bytes) and ``verify``'s on-disk marker scan fails
+        the transaction into the before-image restore.
+      * True — the RELEASE gap verbatim, so the candidate is marker-free by
+        construction and lands through the normal queue. The release body is the
+        reviewed content; the local side of a conflicting gap is unreviewed
+        daemon output, which the corpus adjudication found wrong far more often
+        than right. Non-conflicting gaps keep their existing rule untouched, so
+        daemon content outside a conflict survives byte-for-byte.
+
+    Hunks are returned in document order — one per conflicting gap.
     """
     sync = _find_sync_regions(base, local, release)
     iz = ia = ib = 0
     out: list[str] = []
-    had_conflict = False
+    hunks: list[ConflictHunk] = []
     for z_start, z_end, a_off, a_end, b_off, b_end in sync:
         base_gap = base[iz:z_start]
         local_gap = local[ia:a_off]
@@ -293,20 +352,43 @@ def three_way_merge(
         elif local_gap == rel_gap:
             out.extend(local_gap)  # both changed identically
         else:
-            had_conflict = True
-            out.append(_C_LOCAL)
-            out.extend(local_gap)
-            out.append(_C_BASE)
-            out.extend(base_gap)
-            out.append(_C_REL)
-            out.extend(rel_gap)
-            out.append(_C_END)
+            hunks.append(
+                ConflictHunk(
+                    out_index=len(out),
+                    base=tuple(base_gap),
+                    local=tuple(local_gap),
+                    release=tuple(rel_gap),
+                )
+            )
+            if resolve_release:
+                out.extend(rel_gap)
+            else:
+                out.append(_C_LOCAL)
+                out.extend(local_gap)
+                out.append(_C_BASE)
+                out.extend(base_gap)
+                out.append(_C_REL)
+                out.extend(rel_gap)
+                out.append(_C_END)
 
         # the synchronized (all-agree) block
         if z_end > z_start:
             out.extend(base[z_start:z_end])
         iz, ia, ib = z_end, a_end, b_end
-    return out, had_conflict
+    return out, hunks
+
+
+def three_way_merge(
+    base: list[str], local: list[str], release: list[str]
+) -> tuple[list[str], bool]:
+    """Reporting-default merge of one region. Returns (merged_lines, had_conflict).
+
+    The marker-emitting arity the module shipped before the gap policy existed,
+    retained so callers wanting only "did this conflict" need not reason about
+    hunk records.
+    """
+    merged, hunks = three_way_merge_hunks(base, local, release)
+    return merged, bool(hunks)
 
 
 # -- Per-region three-anchor resolution (T17 / T18 candidate) ----------------
@@ -317,8 +399,16 @@ def _resolve_region(
     base: list[str] | None,
     local: list[str],
     release: list[str],
+    *,
+    resolve_release: bool = False,
 ) -> RegionResolution:
-    """Classify one region against the three anchors and resolve its content."""
+    """Classify one region against the three anchors and resolve its content.
+
+    ``resolve_release`` selects what a gap both sides changed differently emits —
+    see ``three_way_merge_hunks``. It defaults OFF so the library keeps its
+    reporting behavior for a caller that names no policy; the production entry
+    points read ``_resolve_gaps_default`` instead.
+    """
     if base is None:
         # FALLBACK: gated 2-way present-both (base content unavailable).
         if local == release:
@@ -350,14 +440,25 @@ def _resolve_region(
         )
 
     # Both changed differently -> net-new 3-way merge candidate (Haiku-gated).
-    merged, conflict = three_way_merge(base, local, release)
-    verdict = MERGE_CONFLICT if conflict else MERGE_CLEAN
+    merged, hunks = three_way_merge_hunks(
+        base, local, release, resolve_release=resolve_release
+    )
+    if not hunks:
+        verdict, conflict = MERGE_CLEAN, False
+    elif resolve_release:
+        # Every emitted line is verbatim from an anchor and no marker was written,
+        # so the region's conflict flag CLEARS: the apply refusal and the on-disk
+        # rescan then pass on their own terms rather than by exemption.
+        verdict, conflict = MERGE_RESOLVED_RELEASE, False
+    else:
+        verdict, conflict = MERGE_CONFLICT, True
     return RegionResolution(
         index,
         verdict,
         merged,
         had_conflict=conflict,
         reason="both changed; net-new diff3 candidate",
+        hunks=tuple(hunks),
     )
 
 
@@ -395,16 +496,33 @@ def _frontmatter_span(lines: list[str]) -> tuple[int, int] | None:
     return None
 
 
-def _keep_local_frontmatter(candidate_text: str, local_text: str) -> str:
+def _find_frontmatter_line(
+    lines: list[str], span: tuple[int, int], prefix: str
+) -> str | None:
+    """First line inside ``span`` starting with ``prefix``, or None."""
+    begin, close = span
+    return next((line for line in lines[begin:close] if line.startswith(prefix)), None)
+
+
+def _keep_local_frontmatter(
+    candidate_text: str, local_text: str, base_text: str | None = None
+) -> str:
     """Carry the LIVE-only frontmatter keys of ``local_text`` into the candidate.
 
     Runs at candidate-assembly time (upstream of the diff, the sensitive re-scan,
     the Haiku gate and the no-op comparison) so every downstream channel sees one
     pin-stable file — never a post-merge re-write.
 
-    Precedence is LIVE-WINS unconditionally: an operator pin is a local-only
-    override, so a release-carried value for the same key is non-authoritative.
-    Each allowlisted key present locally REPLACES its candidate line, or is
+    Two key sets with different precedence. ``_LOCAL_ONLY_FRONTMATTER_KEYS`` is
+    LIVE-WINS unconditionally: the release ships none of them, so a live value can
+    only be an operator pin. ``_BASE_AWARE_FRONTMATTER_KEYS`` names keys the release
+    DOES ship, where unconditional live-wins would revert every vendor bump — the
+    live line is carried only when it differs from base@install, and a live value
+    equal to base is left to the release. With no base anchor that comparison is
+    impossible, so those keys fall back to live-wins rather than dropping a pin
+    they cannot adjudicate.
+
+    Each carried key REPLACES its candidate line, or is
     APPENDED as the block's last line when the candidate lacks it (a fixed
     position keeps re-runs byte-stable). The local line is copied VERBATIM
     (spacing / trailing comment preserved). Either side lacking a frontmatter
@@ -416,20 +534,18 @@ def _keep_local_frontmatter(candidate_text: str, local_text: str) -> str:
     if local_span is None or _frontmatter_span(out) is None:
         return candidate_text
 
-    local_begin, local_close = local_span
-    for key in _LOCAL_ONLY_FRONTMATTER_KEYS:
+    base_lines = _split_lines(base_text) if base_text is not None else None
+    base_span = _frontmatter_span(base_lines) if base_lines is not None else None
+    for key in (*_LOCAL_ONLY_FRONTMATTER_KEYS, *_BASE_AWARE_FRONTMATTER_KEYS):
         prefix = f"{key}:"
-        local_line = next(
-            (
-                line
-                for line in local_lines[local_begin:local_close]
-                if line.startswith(prefix)
-            ),
-            None,
-        )
+        local_line = _find_frontmatter_line(local_lines, local_span, prefix)
         # absent locally -> nothing to keep; a release-carried value lands normally.
         if local_line is None:
             continue
+        if key in _BASE_AWARE_FRONTMATTER_KEYS and base_span is not None:
+            # unchanged since install -> not an operator pin; the release value lands.
+            if _find_frontmatter_line(base_lines, base_span, prefix) == local_line:
+                continue
         # re-read the span each pass — a prior append shifted the closing fence.
         span = _frontmatter_span(out)
         if span is None:
@@ -448,6 +564,8 @@ def resolve_file(
     local_text: str,
     release_text: str,
     base_text: str | None = None,
+    *,
+    resolve_conflicting_gaps: bool | None = None,
 ) -> FileResolution:
     """T17 three-anchor resolver — pure, makes NO LLM call.
 
@@ -483,6 +601,11 @@ def resolve_file(
             ),
         )
 
+    resolve_gaps = (
+        _resolve_gaps_default()
+        if resolve_conflicting_gaps is None
+        else resolve_conflicting_gaps
+    )
     resolutions: list[RegionResolution] = []
     for idx, ((_, _, local_c), (_, _, release_c)) in enumerate(
         zip(local_regions, release_regions, strict=True)
@@ -490,14 +613,28 @@ def resolve_file(
         base_c: list[str] | None = None
         if base_regions is not None and idx < len(base_regions):
             base_c = base_regions[idx][2]
-        resolutions.append(_resolve_region(idx, base_c, local_c, release_c))
+        resolutions.append(
+            _resolve_region(
+                idx, base_c, local_c, release_c, resolve_release=resolve_gaps
+            )
+        )
 
     candidate = _assemble(release_lines, release_regions, resolutions)
-    candidate = _keep_local_frontmatter(candidate, local_text)
+    candidate = _keep_local_frontmatter(candidate, local_text, base_text)
     needs_llm = any(r.verdict in _LLM_REQUIRED for r in resolutions)
 
     # Overall verdict = the worst-case region verdict (severity order).
-    severity = [MERGE_CONFLICT, GATED_2WAY, MERGE_CLEAN, TAKE_RELEASE, KEEP_LOCAL]
+    # MERGE_RESOLVED_RELEASE sits ahead of MERGE_CLEAN so a file carrying one
+    # resolved region and several clean ones still reports the resolved verdict —
+    # the routing, deletion advisory and recording paths all key on seeing it.
+    severity = [
+        MERGE_CONFLICT,
+        GATED_2WAY,
+        MERGE_RESOLVED_RELEASE,
+        MERGE_CLEAN,
+        TAKE_RELEASE,
+        KEEP_LOCAL,
+    ]
     present = {r.verdict for r in resolutions}
     overall = next((level for level in severity if level in present), KEEP_LOCAL)
     if candidate == local_text and not needs_llm:
@@ -670,6 +807,7 @@ def build_merge_candidate(
     agent: str | None = None,
     verify_fn: VerifyFn | None = None,
     skip_pre_verify: bool = False,
+    resolve_conflicting_gaps: bool | None = None,
 ) -> MergeCandidate:
     """T18 entry — produce the candidate + its apply/verify callbacks.
 
@@ -679,7 +817,13 @@ def build_merge_candidate(
     git_txn transaction rolls back. ``verify_fn`` defaults to the daemon's
     ``run_pre_verify`` (injectable for tests).
     """
-    resolution = resolve_file(target_file, local_text, release_text, base_text)
+    resolution = resolve_file(
+        target_file,
+        local_text,
+        release_text,
+        base_text,
+        resolve_conflicting_gaps=resolve_conflicting_gaps,
+    )
     diff = _unified_diff(local_text, resolution.candidate_text, target_file)
 
     sensitive_hit = dc.match_sensitive_path(target_file)

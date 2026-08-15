@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -134,7 +135,9 @@ class ThreeAnchorResolverTest(unittest.TestCase):
         local = _doc(top="# A", region="LOCAL rewrite", bottom="z")
         release = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-        res = em.resolve_file("dev-android.md", local, release, base)
+        res = em.resolve_file(
+            "dev-android.md", local, release, base, resolve_conflicting_gaps=False
+        )
 
         self.assertEqual(res.regions[0].verdict, em.MERGE_CONFLICT)
         self.assertTrue(res.regions[0].had_conflict)
@@ -525,7 +528,12 @@ class ConflictCandidateTest(unittest.TestCase):
         stub = _StubVerify(passed=True)
 
         cand = em.build_merge_candidate(
-            "dev-android.md", local, release, base_text=base, verify_fn=stub
+            "dev-android.md",
+            local,
+            release,
+            base_text=base,
+            verify_fn=stub,
+            resolve_conflicting_gaps=False,
         )
         self.assertEqual(cand.resolution.verdict, em.MERGE_CONFLICT)
         self.assertTrue(cand.resolution.has_conflict)
@@ -551,6 +559,7 @@ class ConflictCandidateTest(unittest.TestCase):
             release,
             base_text=base,
             verify_fn=_StubVerify(True),
+            resolve_conflicting_gaps=False,
         )
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dev-android.md"
@@ -665,7 +674,9 @@ class RerunIdempotencyTest(unittest.TestCase):
         base = _doc(top="# dev-react", region="same-old", bottom="old rules")
         local = _doc(top="# dev-react", region="LOCAL rewrite", bottom="old rules")
         release = _doc(top="# dev-react", region="VENDOR rewrite", bottom="NEW rules")
-        first = em.resolve_file("dev-react.md", local, release, base)
+        first = em.resolve_file(
+            "dev-react.md", local, release, base, resolve_conflicting_gaps=False
+        )
         self.assertEqual(first.verdict, em.MERGE_CONFLICT)
 
         # Simulate the pre-fix landed state (markers in the live body), then re-run
@@ -676,6 +687,7 @@ class RerunIdempotencyTest(unittest.TestCase):
             release,
             base_text=base,
             verify_fn=_StubVerify(True),
+            resolve_conflicting_gaps=False,
         )
         self.assertTrue(rerun.resolution.has_conflict)
         self.assertGreaterEqual(
@@ -878,6 +890,205 @@ class CliPlanTest(unittest.TestCase):
                 )
             self.assertEqual(rc, em.EXIT_REFUSED)
             self.assertFalse(Path(out_p).exists())  # refused -> no candidate written
+
+
+def _fm_doc(front: str, region: str) -> str:
+    """Agent body with a byte-0 frontmatter block and one EDITABLE region."""
+    return (
+        "---\n"
+        + front
+        + "---\n\n# title\n\n<!-- EDITABLE:BEGIN -->\n"
+        + region
+        + "\n<!-- EDITABLE:END -->\n"
+    )
+
+
+class GapPolicyTest(unittest.TestCase):
+    """Deterministic conflicting-gap resolution: the release side, marker-free."""
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+
+    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
+        res = em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            self._BASE,
+            resolve_conflicting_gaps=True,
+        )
+
+        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertFalse(res.has_conflict)
+        self.assertFalse(res.regions[0].had_conflict)
+        self.assertFalse(em.has_conflict_markers(res.candidate_text))
+        self.assertIn("VENDOR rewrite", res.candidate_text)
+        self.assertNotIn("LOCAL rewrite", res.candidate_text)
+
+    def test_when_policy_on_then_region_carries_its_hunks_forward(self) -> None:
+        res = em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            self._BASE,
+            resolve_conflicting_gaps=True,
+        )
+
+        (hunk,) = res.regions[0].hunks
+        self.assertEqual(hunk.base, ("same-old\n",))
+        self.assertEqual(hunk.local, ("LOCAL rewrite\n",))
+        self.assertEqual(hunk.release, ("VENDOR rewrite\n",))
+
+    def test_when_rederived_from_same_anchors_then_candidate_is_byte_identical(self) -> None:
+        kwargs = {"resolve_conflicting_gaps": True}
+        first = em.resolve_file(
+            "dev-android.md", self._LOCAL, self._RELEASE, self._BASE, **kwargs
+        )
+        second = em.resolve_file(
+            "dev-android.md", self._LOCAL, self._RELEASE, self._BASE, **kwargs
+        )
+
+        self.assertEqual(first.candidate_text, second.candidate_text)
+        self.assertEqual(first.verdict, second.verdict)
+
+    def test_when_policy_off_then_output_matches_the_reporting_default(self) -> None:
+        res = em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            self._BASE,
+            resolve_conflicting_gaps=False,
+        )
+
+        self.assertEqual(res.verdict, em.MERGE_CONFLICT)
+        self.assertTrue(res.has_conflict)
+        self.assertTrue(em.has_conflict_markers(res.candidate_text))
+        self.assertIn("LOCAL rewrite", res.candidate_text)
+
+    def test_when_kill_switch_set_then_the_default_reverts_to_reporting(self) -> None:
+        prior = os.environ.get(em._RESOLVE_GAPS_ENV)
+        try:
+            os.environ[em._RESOLVE_GAPS_ENV] = "0"
+            off = em.resolve_file(
+                "dev-android.md", self._LOCAL, self._RELEASE, self._BASE
+            )
+            os.environ.pop(em._RESOLVE_GAPS_ENV)
+            on = em.resolve_file(
+                "dev-android.md", self._LOCAL, self._RELEASE, self._BASE
+            )
+        finally:
+            if prior is None:
+                os.environ.pop(em._RESOLVE_GAPS_ENV, None)
+            else:
+                os.environ[em._RESOLVE_GAPS_ENV] = prior
+
+        self.assertEqual(off.verdict, em.MERGE_CONFLICT)
+        self.assertEqual(on.verdict, em.MERGE_RESOLVED_RELEASE)
+
+    def test_when_policy_on_then_candidate_applies_and_verifies_through_the_gate(self) -> None:
+        stub = _StubVerify(passed=True)
+        cand = em.build_merge_candidate(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            base_text=self._BASE,
+            verify_fn=stub,
+            resolve_conflicting_gaps=True,
+        )
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertTrue(cand.resolution.needs_llm)  # joined the model-gated set
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "dev-android.md"
+            target.write_text(self._LOCAL, encoding="utf-8")
+            self.assertEqual(cand.apply(str(target)), em.APPLY_OK)
+            self.assertEqual(cand.verify(str(target)), 0)
+            self.assertFalse(
+                em.has_conflict_markers(target.read_text(encoding="utf-8"))
+            )
+
+    def test_when_gap_is_non_conflicting_then_no_hunk_and_lines_match_legacy(self) -> None:
+        base, local, release = ["A\n"], ["A\n"], ["R\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(hunks, [])
+        self.assertEqual(merged, ["R\n"])
+        self.assertEqual(em.three_way_merge(base, local, release), (["R\n"], False))
+
+    def test_when_region_has_many_conflicting_gaps_then_one_hunk_each_in_order(self) -> None:
+        base = ["A\n", "s\n", "B\n"]
+        local = ["LA\n", "s\n", "LB\n"]
+        release = ["RA\n", "s\n", "RB\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(merged, ["RA\n", "s\n", "RB\n"])
+        self.assertEqual([h.local for h in hunks], [("LA\n",), ("LB\n",)])
+        self.assertEqual([h.out_index for h in hunks], [0, 2])
+
+    def test_when_gap_is_clean_beside_a_conflicting_one_then_it_is_untouched(self) -> None:
+        base = ["A\n", "s\n", "B\n"]
+        local = ["LOCAL1\n", "s\n", "B\n"]
+        release = ["REL1\n", "s\n", "B-REL\n"]
+
+        merged, hunks = em.three_way_merge_hunks(
+            base, local, release, resolve_release=True
+        )
+
+        self.assertEqual(len(hunks), 1)
+        self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
+
+
+class BaseAwareFrontmatterTest(unittest.TestCase):
+    """`effort` is release-shipped, so live-wins is conditional on base divergence."""
+
+    def _resolve(self, base_front: str, local_front: str, release_front: str) -> str:
+        return em.resolve_file(
+            "glass-atrium-qa-debugger.md",
+            _fm_doc(local_front, "kept"),
+            _fm_doc(release_front, "kept"),
+            _fm_doc(base_front, "kept"),
+        ).candidate_text
+
+    def test_when_live_effort_differs_from_base_then_the_pin_is_kept(self) -> None:
+        out = self._resolve(
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: xhigh\n",
+            "name: qa\neffort: high\n",
+        )
+
+        self.assertIn("effort: xhigh\n", out)
+        self.assertNotIn("effort: high\n", out)
+
+    def test_when_live_effort_equals_base_then_the_release_value_lands(self) -> None:
+        out = self._resolve(
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: high\n",
+            "name: qa\neffort: max\n",
+        )
+
+        self.assertIn("effort: max\n", out)
+        self.assertNotIn("effort: high\n", out)
+
+    def test_when_base_is_absent_then_effort_falls_back_to_live_wins(self) -> None:
+        out = em.resolve_file(
+            "glass-atrium-qa-debugger.md",
+            _fm_doc("name: qa\neffort: xhigh\n", "kept"),
+            _fm_doc("name: qa\neffort: high\n", "kept"),
+        ).candidate_text
+
+        self.assertIn("effort: xhigh\n", out)
+
+    def test_when_model_is_live_only_then_it_is_kept_unconditionally(self) -> None:
+        out = self._resolve("name: qa\n", "name: qa\nmodel: opus\n", "name: qa\n")
+
+        self.assertIn("model: opus\n", out)
 
 
 if __name__ == "__main__":
