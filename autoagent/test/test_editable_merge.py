@@ -1212,5 +1212,107 @@ class BaseAwareFrontmatterTest(unittest.TestCase):
         self.assertIn("model: opus\n", out)
 
 
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
+    """The union behavior NEITHER phase has alone: a live pin on a LANDING conflict.
+
+    Before the gap policy a conflicting file never reached apply, so the
+    frontmatter carry was dead code on exactly the bodies that needed it — the six
+    stuck agents conflicted every release and were declined. The gap policy is what
+    makes that carry reachable, so the two are only correct together and the
+    assertion that matters is a pin surviving all the way onto disk.
+    """
+
+    _TOOLS = "name: glass-atrium-dev-python\ntools: Read, Write\n"
+
+    def _body(self, frontmatter: str, region: str) -> str:
+        return _doc(
+            top=f"---\n{frontmatter}---\n\n# Agent",
+            region=region,
+            bottom="tail",
+        )
+
+    def _anchors(self, *, release_effort: str | None) -> tuple[str, str, str]:
+        """base / local / release, conflicting in the region, pinned locally."""
+        release_fm = self._TOOLS + (
+            f"effort: {release_effort}\n" if release_effort else ""
+        )
+        return (
+            self._body(f"{self._TOOLS}effort: high\n", "shared baseline rule"),
+            self._body(
+                f"{self._TOOLS}model: claude-opus-5\neffort: xhigh\n",
+                "LOCAL daemon-learned rule",
+            ),
+            self._body(release_fm, "VENDOR revised rule"),
+        )
+
+    def test_both_pins_survive_a_resolved_release_landing_on_disk(self) -> None:
+        base, local, release = self._anchors(release_effort="max")
+        stub = _StubVerify(passed=True)
+
+        cand = em.build_merge_candidate(
+            "dev-python.md",
+            local,
+            release,
+            base_text=base,
+            agent="dev-python",
+            verify_fn=stub,
+        )
+
+        # Phase 1 half: the conflicting region resolves marker-free, so it LANDS.
+        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertFalse(cand.resolution.has_conflict)
+        self.assertTrue(cand.resolution.is_changed)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "dev-python.md"
+            self.assertEqual(cand.apply(str(path)), em.APPLY_OK)
+            self.assertEqual(cand.verify(str(path)), 0)
+            landed = path.read_text(encoding="utf-8")
+
+        # Phase 0 half: read back from DISK, not from the in-memory candidate — the
+        # carry is only proven once it survives the write the gap policy unlocked.
+        self.assertIn("model: claude-opus-5\n", landed)  # live-only, live-wins
+        self.assertIn("effort: xhigh\n", landed)  # base-aware pin, differs from base
+        self.assertNotIn("effort: max\n", landed)  # the release value loses to the pin
+        self.assertIn("VENDOR revised rule", landed)  # the gap took the release side
+        self.assertNotIn("LOCAL daemon-learned rule", landed)
+
+    def test_a_release_without_effort_still_lands_the_pin_unnamed(self) -> None:
+        # The advisory must consult BOTH allowlists: effort is absent from the
+        # release here, yet re-attaches by the base-aware live-wins fallback, so
+        # naming it would report a drop that did not happen.
+        base, local, release = self._anchors(release_effort=None)
+
+        res = em.resolve_file("dev-python.md", local, release, base)
+
+        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertIn("model: claude-opus-5\n", res.candidate_text)
+        self.assertEqual(em.unallowlisted_local_frontmatter_keys(local, release), [])
+
+    def test_without_the_gap_policy_the_pin_path_is_unreachable(self) -> None:
+        # The control the union rests on: with the kill switch set, this same file
+        # is a marker-bearing report that apply refuses, so no pin can survive
+        # because nothing is written at all.
+        base, local, release = self._anchors(release_effort="max")
+
+        cand = em.build_merge_candidate(
+            "dev-python.md",
+            local,
+            release,
+            base_text=base,
+            agent="dev-python",
+            verify_fn=_StubVerify(passed=True),
+            resolve_conflicting_gaps=False,
+        )
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_CONFLICT)
+        self.assertTrue(cand.resolution.has_conflict)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "dev-python.md"
+            self.assertEqual(cand.apply(str(path)), em.APPLY_MALFORMED)
+            self.assertFalse(path.exists())  # zero bytes written
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
