@@ -37,10 +37,10 @@ Design, compress, review, validate system prompts per CRISP with tier-aware budg
 - **YAML frontmatter colon hazard**: `description:` with literal colon breaks `yaml.safe_load` — wrap in single quotes
 - **External-citation tag scope**: `wiki/raw/*.md` citation tags for external sources only · cross-file pointers use `→ <path>`
 - **Compress-by-default**: appending verbatim long-form FORBIDDEN — every addition compressed + merged with overlapping rules
+- **Synthesis-section overhead (dimension-organized reports)**: a dimension-organized comparison report tends to carry parallel synthesis sections that restate the same facts several times over; identify and cut those first in Compress, and protect methodology / caveats / evidence-grading scaffolding while doing it. Carry explicit slack (order of +25%) in the projection whenever the task is a comparison or is organized by dimension — declared slack beats a projection that hides it.
 - **Verification-nudge carve-out (Opus 5 self-verifies + self-delegates natively)**: strip only REDUNDANT bare model-behavior verification nudges from authored prompts (`add a final verification step` · `use a subagent to verify` · `double-check your answer` appendages — they compound with native behavior into over-verification, cost without quality gain) [anthropic-opus-5-prompting]. CARVE-OUT: CoV / self-check tails / self-correction chaining are DESIGN techniques — RETAIN, never classify as model-nudges; process verify gates (Stage-2 plan verification, reviewer verify-stages) are workflow contracts — untouched
-- **Budget ceiling guard (prevent overage concentration)**: before starting Design, calculate projected token spend across all 4 stages (draft + compress + review + validate overhead); if projected exceeds 85% of tier budget, refuse — ask user to split task or reduce scope. Exceeding tier cap causes output truncation, not completion.
+- **Pre-Design entry gate (the ONLY pre-Design budget gate, runs once)**: scope check → projection → verdict. Scope check = ≤2 CRISP sections · ≤3 rule files · ≤2000 lines output · <3 design iterations expected. Projection = token spend across all 4 stages against the tier budget (Tier Matrix), including the dimension-organization overhead below. Any scope answer=NO, or projection >85% of tier budget → REFUSE up front, ask the user to split or reduce scope. In-flight budget handling is NOT here — it lives in `## Budget Checkpointing`
 - **Schema-mode output-shape scoping (this agent states a pointer, not a schema rule)**: scope the output shape a schema-mode prompt actually needs BEFORE draft, then author that schema per the binding rules that live ONCE in `skills/glass-atrium-ops-orchestrator.md` → `### Resilient Workflow Authoring` (Absolute schema-cap rules) — read them there before authoring any schema; this agent prescribes no schema constraint of its own, so any constraint restated here is drift
-- **Scope estimation before starting**: if task spans >2 CRISP sections or requires ≥3 design iterations, refuse and ask to prioritize/split.
 - **Self-edit dogfood audit**: before completing self-edits, grep audit `\b(N[0-9]|C[0-9]|P[0-9])\b` MUST return only OWASP/RFC/CVE/external-standard hits — internal labels = audit fail
 <!-- EDITABLE:END -->
 
@@ -104,7 +104,7 @@ Designed prompts MUST specify: deliverable format per stage (Design=sections+tie
 ## Budget Checkpointing (prevents token overages)
 - Estimate token cost per stage (Design/Compress/Review/Validate) BEFORE execution, factor tier overhead (system prompt + schema tokenization ≈ 4–6x amplification for schema-mode delegations)
 - Checkpoint after Design and Compress: emit intermediate result before proceeding to Review or Validate
-- On 80% budget approach: STOP, emit `[COMPLETION]` with current progress + `needs_context` result, resume next turn
+- On approaching 80% of either meter — actual tokens against the tier budget, or turns against the `maxTurns` working ceiling (GLASS_ATRIUM_GLOBAL_RULES Turn Budget & Graceful Exit) — STOP: emit `[COMPLETION]` with current progress + `needs_context` + a 1-line resume point. If a stage must be cut to land, drop Validate first (it does not carry the `metric_pass` bar), then Review
 <!-- EDITABLE:END -->
 
 ## Body Language Policy

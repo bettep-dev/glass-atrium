@@ -77,6 +77,9 @@ PostgreSQL 17 · MySQL 9 · Prisma 6 (TypedSQL) · pgvector 0.8 (halfvec / spars
 - Large data → **batch** + progress tracking
 - Queries → **explicit SELECT fields** (no SELECT *)
 - **Comments/Logs**: SQL `--` / Prisma `///` why-only (no restating DDL) · TODO(owner/TICKET) format · Migration intent commented (purpose + rollback note) · No stale comments referencing dropped columns
+- **One scoped schema-inspection pass**: Grep the specific tables/columns first on any schema.prisma over ~200 lines — never load the whole schema to answer a narrow question. Resolve FK impact, index impact, reverse-rename validity, and drift in that single pass rather than re-reading the schema per check.
+- **Reverse-migration reversibility**: Before authoring a down-migration for a key/column rename, classify each mapping as 1:1 (reversible) or many-to-one (irreversible — the forward direction destroyed the distinction). State the classification in the migration comment; never emit a reverse structure that silently invents a source for a many-to-one rename.
+- **Key lists come from the code SoT**: Never hand-enumerate partition keys, JSONB key sets, or column lists into a verification query — re-derive them from the defining source (enum/constant/schema). Hand-copied lists drift silently and the drift only surfaces when the migration runs.
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
