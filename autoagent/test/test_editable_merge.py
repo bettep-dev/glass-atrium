@@ -1172,6 +1172,86 @@ class GapPolicyTest(unittest.TestCase):
         self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
 
 
+class ResolvedGapStatsTest(unittest.TestCase):
+    """The shape the recording caller reads back from a resolved file.
+
+    The row it writes is the only trace that daemon-authored content was
+    discarded, so the counts it reports have to come from the resolution rather
+    than from a re-derivation the caller could get wrong.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL one\nLOCAL two", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+
+    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
+        res = em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            self._BASE,
+            resolve_conflicting_gaps=True,
+        )
+
+        stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 1)
+        self.assertEqual(stats["dropped_lines"], 2)
+        self.assertEqual(stats["added_lines"], 1)
+        self.assertEqual(stats["regions"], "0")
+
+    def test_when_no_gap_resolved_then_stats_are_zero_and_regions_none(self) -> None:
+        res = em.resolve_file(
+            "dev-android.md",
+            self._LOCAL,
+            self._LOCAL,
+            self._BASE,
+            resolve_conflicting_gaps=True,
+        )
+
+        stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 0)
+        self.assertEqual(stats["dropped_lines"], 0)
+        self.assertEqual(stats["added_lines"], 0)
+        # The literal keeps the field a parseable token on the plan line: the
+        # updater's up-to-next-space extractor yields garbage, not "", for an
+        # absent key.
+        self.assertEqual(stats["regions"], "none")
+
+    def test_when_plan_runs_then_the_line_carries_every_stat_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
+            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "base.md").write_text(self._BASE, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target",
+                        "agents/dev-android.md",
+                        "--local",
+                        str(root / "local.md"),
+                        "--release",
+                        str(root / "release.md"),
+                        "--base",
+                        str(root / "base.md"),
+                        "--out",
+                        str(root / "cand.md"),
+                        "--agent",
+                        "dev-android",
+                    ]
+                )
+
+        self.assertEqual(rc, em.EXIT_OK)
+        line = buf.getvalue()
+        self.assertIn(f"verdict={em.MERGE_RESOLVED_RELEASE} ", line)
+        self.assertIn("resolved_hunks=1 ", line)
+        self.assertIn("resolved_dropped_lines=2 ", line)
+        self.assertIn("resolved_added_lines=1 ", line)
+        self.assertIn("resolved_regions=0 ", line)
+
+
 class BaseAwareFrontmatterTest(unittest.TestCase):
     """`effort` is release-shipped, so live-wins is conditional on base divergence."""
 

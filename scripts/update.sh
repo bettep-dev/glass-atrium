@@ -297,6 +297,134 @@ update_declines_dir() {
 # $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
 # The root is passed rather than re-derived: the merge caller already holds the install
 # root it is merging into, and the backup dir it computes must resolve to the same base.
+# Compose the write_autoagent_proposal envelope for one resolved body. Values
+# arrive through the environment (never argv interpolation) so no rationale or
+# diff text can reach a shell or JSON quoting seam. Reads GA_REC_* + the diff
+# file; prints one JSON line.
+_UPDATE_PROPOSAL_PY='
+import json, os, pathlib
+
+DIFF_CAP = 20000
+EXCERPT_CAP = 120
+
+def env(key, default=""):
+    return os.environ.get(key, default)
+
+diff_path = env("GA_REC_DIFF")
+diff_text = ""
+if diff_path and pathlib.Path(diff_path).is_file():
+    diff_text = pathlib.Path(diff_path).read_text(encoding="utf-8", errors="replace")
+if len(diff_text) > DIFF_CAP:
+    diff_text = diff_text[:DIFF_CAP] + "\n[truncated]\n"
+
+# The dropped daemon lines are the "-" side of the live-to-candidate diff. Two
+# excerpts bound the rationale; the full text stays in proposed_diff.
+excerpts = []
+for line in diff_text.splitlines():
+    if line.startswith("-") and not line.startswith("---"):
+        body = line[1:].strip()
+        if body:
+            excerpts.append(body[:EXCERPT_CAP])
+    if len(excerpts) == 2:
+        break
+
+landed = env("GA_REC_LANDED") == "1"
+rationale = (
+    "conflicting-gap resolution took the release side "
+    "(deterministic policy, no model call and no operator judgment): "
+    "{hunks} gap(s) in EDITABLE region(s) {regions}; "
+    "dropped {dropped} daemon-authored line(s), added {added} release line(s); "
+    "verdict=merge-resolved-release, outcome={outcome}."
+).format(
+    hunks=env("GA_REC_HUNKS", "0"),
+    regions=env("GA_REC_REGIONS", "none"),
+    dropped=env("GA_REC_DROPPED", "0"),
+    added=env("GA_REC_ADDED", "0"),
+    outcome="applied" if landed else "not applied (declined or rolled back)",
+)
+if excerpts:
+    rationale += " Dropped excerpt: " + " | ".join(repr(e) for e in excerpts)
+
+source = env("GA_REC_SOURCE")
+try:
+    mtime = int(pathlib.Path(source).stat().st_mtime)
+except OSError:
+    mtime = 0
+
+print(json.dumps({
+    "op": "write_autoagent_proposal",
+    "args": {
+        "cycle_date": env("GA_REC_CYCLE_DATE"),
+        "pattern_label": "editable-region-resolved-release",
+        "target_file": env("GA_REC_TARGET"),
+        "target_agent": env("GA_REC_AGENT"),
+        # The dispatcher coerces an UNKNOWN classification label to
+        # (reject, auto) — "apply" is not a label it knows, so the landed row
+        # must carry the daemon body label that maps to the apply enum.
+        "classification": "body-auto" if landed else "reject",
+        "rationale": rationale,
+        # No model runs on this path (the improvement-verify gate was removed
+        # from it deliberately), so no ok*/skipped:* token the daemon composes
+        # is true here. A skipped: form is also what keeps the row out of every
+        # apply-eligibility gate, which reads a LIKE ok% prefix.
+        "haiku_status": "skipped:no-model-call",
+        # The legacy llm tier folds into the safety bucket in both the tier
+        # count fold and the query builder, so an llm-tiered row would inflate
+        # the operator awaiting-decision count for a row awaiting nothing.
+        "approval_tier": "auto",
+        "status": "applied" if landed else "rejected",
+        "proposed_diff": diff_text,
+        # No cost guard runs on the updater path — there is no model spend to
+        # guard. "ok" is the non-warning state of the same VARCHAR(16) vocabulary.
+        "cost_guard_state": "ok",
+        "source_file": source,
+        "source_file_mtime": mtime,
+    },
+}))
+'
+
+# Record ONE self-improvement-history row per body whose conflicting gaps
+# resolved to the release side. This is the only trace that daemon-authored
+# content was discarded: the path takes the release side with no model call and
+# no per-file operator judgment, so the recorded row IS the accountability
+# surface the human reviews afterwards.
+#
+# Best-effort with a loud warning, following the conflict-decline precedent — a
+# database write failure must NEVER abort a deploy.
+# $1 = install root · $2 = resolved-record TSV (base, target, release, hunks,
+# dropped, added, regions, diff path) · read against the outcome ledger for the
+# landed/not-landed split.
+update_emit_resolved_records() {
+  local root="$1" tsv="$2"
+  [[ -s "${tsv}" ]] || return 0
+  local helper landed base target release hunks dropped added regions diff_file
+  helper="${ATRIUM_UPDATE_PG_HELPER:-${root}/scripts/_pg_dual_write_daemon.py}"
+  if [[ ! -f "${helper}" ]]; then
+    update_log "WARN: resolved-gap recording skipped — no dual-write helper at ${helper}; the discard is stderr-only"
+    return 0
+  fi
+  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file; do
+    [[ -n "${base}" ]] || continue
+    # Landed == the commit callback appended this basename to the per-run outcome
+    # ledger on GIT_TXN_OK. A declined gate writes no entries at all, so every
+    # resolved file then records as not-applied — no daemon content was dropped.
+    landed=0
+    if [[ -n "${_update_agent_outcomes_file}" && -f "${_update_agent_outcomes_file}" ]] \
+      && grep -Fxq -- "${base}" "${_update_agent_outcomes_file}"; then
+      landed=1
+    fi
+    if GA_REC_CYCLE_DATE="$(date +%Y-%m-%d)" GA_REC_TARGET="${target}" \
+      GA_REC_AGENT="${base%.md}" GA_REC_SOURCE="${release}" \
+      GA_REC_HUNKS="${hunks}" GA_REC_DROPPED="${dropped}" GA_REC_ADDED="${added}" \
+      GA_REC_REGIONS="${regions}" GA_REC_DIFF="${diff_file}" GA_REC_LANDED="${landed}" \
+      python3 -c "${_UPDATE_PROPOSAL_PY}" | python3 "${helper}" >/dev/null 2>&1; then
+      update_log "  resolved-gap discard recorded → core.autoagent_proposals (${target}, landed=${landed})"
+    else
+      update_log "WARN: could not record the resolved-gap discard for ${target} — this discard is stderr-only (deploy continues)"
+    fi
+  done <"${tsv}"
+}
+
 update_record_conflict_decline() {
   local root="$1" rel="$2" verdict="$3" dest
   dest="$(update_declines_dir "${root}")"
@@ -1031,7 +1159,7 @@ _update_agent_commit_callback() {
 update_merge_agent_editable_regions() {
   local new_dir="$1" manifest="$2" root="$3"
   : "${manifest:?manifest}"
-  local merge_dir records_file gate_records=""
+  local merge_dir records_file resolved_file gate_records=""
   local file base local_file candidate plan_err plan_line plan_rc
   local verdict changed n_candidates=0 rc=0
   local backup_base cycle_date version
@@ -1042,6 +1170,8 @@ update_merge_agent_editable_regions() {
   merge_dir="$(mktemp -d -t glass-atrium-agent-merge.XXXXXX)"
   records_file="${merge_dir}/records.tsv"
   : >"${records_file}"
+  resolved_file="${merge_dir}/resolved.tsv"
+  : >"${resolved_file}"
 
   # Fresh per-run base-content outcome ledger (finding #9). It must OUTLIVE
   # merge_dir (rm'd below, before update_capture_base_content reads the ledger), so
@@ -1137,6 +1267,23 @@ update_merge_agent_editable_regions() {
     update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
     update_warn_dropped_frontmatter "agents/${base}" "${plan_line}"
 
+    # Queue the self-improvement-history row for a body whose conflicting gaps
+    # took the release side. The live-to-candidate diff is captured HERE because
+    # the live body is overwritten by the transaction below — after the gate the
+    # dropped daemon lines exist nowhere else. The row itself is emitted only
+    # once the outcome is known (post-gate), so it can record what actually
+    # landed rather than what was offered.
+    if [[ "${verdict}" == 'merge-resolved-release' ]]; then
+      diff -u -- "${local_file}" "${candidate}" >"${merge_dir}/${base}.resolved.diff" 2>/dev/null || true # GA-ABSORB[benign]: diff exits 1 for "files differ", which is the normal case here — the diff text is the payload and its absence only shortens the record.
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${base}" "agents/${base}" "${file}" \
+        "$(update_plan_field resolved_hunks "${plan_line}")" \
+        "$(update_plan_field resolved_dropped_lines "${plan_line}")" \
+        "$(update_plan_field resolved_added_lines "${plan_line}")" \
+        "$(update_plan_field resolved_regions "${plan_line}")" \
+        "${merge_dir}/${base}.resolved.diff" >>"${resolved_file}"
+    fi
+
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
       "${file}" "${base%.md}" >>"${records_file}"
@@ -1182,6 +1329,8 @@ update_merge_agent_editable_regions() {
     2) update_log "agent EDITABLE-region merge: no changes to confirm" ;;
     *) update_log "WARN: agent EDITABLE-region merge had rolled-back or unapplied file(s) — see the per-file outcome above" ;;
   esac
+  # Before merge_dir (and the captured diffs inside it) is torn down.
+  update_emit_resolved_records "${root}" "${resolved_file}"
   rm -rf -- "${merge_dir}"
   return 0
 }

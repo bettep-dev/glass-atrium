@@ -491,6 +491,36 @@ def _resolve_region(
     )
 
 
+def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
+    """Shape of the conflicting gaps this file resolved to the release side.
+
+    The recording caller needs to say WHAT was discarded without pasting whole
+    regions, and the hunks are the only place the dropped local text still
+    exists once the resolution has replaced it. Counts only — the excerpt comes
+    from the live-to-candidate diff the caller already composes.
+
+    ``regions`` is a comma-joined index list (space-free, so it survives the
+    updater's up-to-next-space plan-line extractor) or the literal ``none``.
+    """
+    hunks = [
+        h
+        for r in resolution.regions
+        if r.verdict == MERGE_RESOLVED_RELEASE
+        for h in r.hunks
+    ]
+    indices = [
+        str(r.index)
+        for r in resolution.regions
+        if r.verdict == MERGE_RESOLVED_RELEASE and r.hunks
+    ]
+    return {
+        "hunks": len(hunks),
+        "dropped_lines": sum(len(h.local) for h in hunks),
+        "added_lines": sum(len(h.release) for h in hunks),
+        "regions": ",".join(indices) if indices else "none",
+    }
+
+
 def _assemble(
     release_lines: list[str],
     release_regions: list[tuple[int, int, list[str]]],
@@ -949,11 +979,16 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     # present (the updater's up-to-next-space extractor returns garbage, not an
     # empty string, for an absent key).
     dropped = unallowlisted_local_frontmatter_keys(local_text, release_text)
+    gaps = resolved_gap_stats(cand.resolution)
     sys.stdout.write(
         f"verdict={cand.resolution.verdict} needs_llm={cand.resolution.needs_llm} "
         f"base_available={cand.resolution.base_available} "
         f"changed={cand.resolution.is_changed} "
         f"fm_unallowlisted={','.join(dropped) if dropped else 'none'} "
+        f"resolved_hunks={gaps['hunks']} "
+        f"resolved_dropped_lines={gaps['dropped_lines']} "
+        f"resolved_added_lines={gaps['added_lines']} "
+        f"resolved_regions={gaps['regions']} "
         f"out={args.out}\n"
     )
     return EXIT_OK
