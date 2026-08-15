@@ -34,6 +34,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   DATA_DIR="${BATS_TEST_TMPDIR}/data"
   mkdir -p "${DATA_DIR}/session-spawns"
+  # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
+  SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
 }
 
 # Drive the hook with an Agent envelope wrapping $1 (subagent_type) + $2 (prompt text).
@@ -112,6 +114,66 @@ assert_marker_present() {
     echo "expected marker to contain line [${1}]" >&2
     return 1
   }
+}
+
+# --- Block firing-trace harness (DSH-D06) ---
+# Same envelope as run_hook plus an explicit VGATE_FIRED_LOG so each case owns its sink.
+# $1=subagent_type $2=prompt $3=sink path (default ${SINK}) $4=line cap (default: hook default)
+run_hook_trace() {
+  run bash -c '
+    stype="$1"; prompt="$2"; hook="$3"; data="$4"; sink="$5"; cap="${6:-1000}"
+    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" \
+      '\''{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" VGATE_FIRED_LOG="${sink}" \
+      VGATE_FIRED_LOG_CAP="${cap}" bash "${hook}"
+  ' _ "${1}" "${2}" "${HOOK_SH}" "${DATA_DIR}" "${3:-${SINK}}" "${4:-}"
+}
+
+# PostToolUse (or explicit-event) variant with the sink override — the post-tool surface must append
+# NOTHING to a sink whose whole meaning is "never started".
+run_hook_event_trace() {
+  run bash -c '
+    event="$1"; stype="$2"; prompt="$3"; hook="$4"; data="$5"; sink="$6"
+    payload="$(jq -n --arg e "${event}" --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" \
+      '\''{hook_event_name:$e,tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" VGATE_FIRED_LOG="${sink}" bash "${hook}"
+  ' _ "${1}" "${2}" "${3}" "${HOOK_SH}" "${DATA_DIR}" "${SINK}"
+}
+
+count_sink() {
+  local path="${1:-${SINK}}" n
+  [[ -f "${path}" ]] || {
+    printf '0'
+    return 0
+  }
+  n="$(grep -c '' "${path}" 2>/dev/null || true)"
+  [[ -z "${n}" ]] && n=0
+  printf '%s' "${n}"
+}
+
+# $1 = expected delta, $2 = count captured before the run.
+assert_sink_delta() {
+  local after
+  after="$(count_sink)"
+  [[ $((after - ${2})) -eq "${1}" ]] || {
+    echo "expected sink delta ${1}, got $((after - ${2})) (before=${2} after=${after})" >&2
+    return 1
+  }
+}
+
+assert_sink_tag() {
+  grep -q "verdict=${1}\$" "${SINK}" 2>/dev/null || {
+    echo "expected sink to carry verdict=${1}; sink contents: $(cat "${SINK}" 2>/dev/null)" >&2
+    return 1
+  }
+}
+
+# An unwritable sink: the parent path component is a REGULAR FILE, so mkdir -p can never succeed.
+# Chosen over chmod because it is deterministic even when the suite runs as root.
+make_unwritable_sink() {
+  local blocker="${BATS_TEST_TMPDIR}/blocker"
+  : >"${blocker}"
+  printf '%s' "${blocker}/fired.log"
 }
 
 # (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2)
@@ -311,4 +373,225 @@ assert_marker_present() {
   assert_status 2
   assert_contains "VGATE-REVIEWER-001"
   assert_marker_absent "glass-atrium-dev-react"
+}
+
+# (g) DSH-D06 — BLOCK FIRING TRACE (durable, observability-only) + its reader.
+# The gate's ERR trap exits ZERO, so the load-bearing property under test is not "a line is written"
+# but "a broken sink can never convert a BLOCK into a PASS". Every block path therefore carries BOTH
+# a delta-exactly-1 case and an unwritable-sink exit-2 case.
+
+@test "D06 writer: entry-miss BLOCK appends exactly 1 line tagged block-entry" {
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
+  assert_status 2
+  assert_contains "VGATE-ENTRY-001"
+  assert_sink_delta 1 "${before}"
+  assert_sink_tag "block-entry"
+}
+
+@test "D06 writer: reviewer-miss BLOCK appends exactly 1 line tagged block-reviewer" {
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_sink_delta 1 "${before}"
+  assert_sink_tag "block-reviewer"
+}
+
+@test "D06 writer: size-est-miss BLOCK appends exactly 1 line tagged block-sizeest" {
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-dev-python" "implement per plan clauded-docs/1234"
+  assert_status 2
+  assert_contains "VGATE-SIZE-001"
+  assert_sink_delta 1 "${before}"
+  assert_sink_tag "block-sizeest"
+}
+
+@test "D06 writer: the trace line carries the spawn's subagent_type" {
+  run_hook_trace "glass-atrium-dev-android" "implement the settings screen [SIZE-EST] bundles=1 tool_uses~=12 — ui"
+  assert_status 2
+  grep -q "subagent_type=glass-atrium-dev-android" "${SINK}" 2>/dev/null || {
+    echo "expected the trace line to name the subagent_type; sink: $(cat "${SINK}" 2>/dev/null)" >&2
+    return 1
+  }
+}
+
+# Negative cases — a sink that fires on a pass is worse than no sink.
+
+@test "D06 negative: passing DEV spawn (simple-task token) appends NOTHING (delta 0)" {
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  assert_status 0
+  assert_empty
+  assert_sink_delta 0 "${before}"
+}
+
+@test "D06 negative: passing plan-ref DEV spawn with reviewer present appends NOTHING (delta 0)" {
+  seed_reviewer
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  assert_status 0
+  assert_sink_delta 0 "${before}"
+}
+
+@test "D06 negative: non-DEV spawn appends NOTHING (delta 0)" {
+  before="$(count_sink)"
+  run_hook_trace "glass-atrium-intel-planner" "draft a plan for the auth refactor"
+  assert_status 0
+  assert_sink_delta 0 "${before}"
+}
+
+@test "D06 negative: nested sub-worker advisory (exit 0) appends NOTHING (delta 0)" {
+  before="$(count_sink)"
+  run bash -c '
+    stype="$1"; prompt="$2"; hook="$3"; data="$4"; sink="$5"
+    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-test-001" --arg aid "agent-nested-001" \
+      '"'"'{tool_name:"Agent",session_id:$sid,agent_id:$aid,tool_input:{subagent_type:$t,prompt:$p}}'"'"')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" VGATE_FIRED_LOG="${sink}" bash "${hook}"
+  ' _ "glass-atrium-dev-react" "implement per plan clauded-docs/1234" "${HOOK_SH}" "${DATA_DIR}" "${SINK}"
+  assert_status 0
+  assert_contains "no qa-code-reviewer recorded"
+  assert_sink_delta 0 "${before}"
+}
+
+# REGISTER ONCE, TRACE ONCE — the PostToolUse surface records EXECUTED spawns by design; a line there
+# would record a started spawn in a sink whose whole meaning is "never started".
+
+@test "D06 register-once: PostToolUse stamp appends NOTHING to the block sink (delta 0)" {
+  before="$(count_sink)"
+  run_hook_event_trace "PostToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
+  assert_status 0
+  assert_marker_present "glass-atrium-qa-code-reviewer"
+  assert_sink_delta 0 "${before}"
+}
+
+@test "D06 register-once: PostToolUse DEV spawn appends NOTHING to the block sink (delta 0)" {
+  before="$(count_sink)"
+  run_hook_event_trace "PostToolUse" "glass-atrium-dev-nestjs" "implement the auth refactor"
+  assert_status 0
+  assert_sink_delta 0 "${before}"
+}
+
+# BLOCK PRESERVATION — the sharpest hazard: this gate's ERR trap exits 0, so a trace-write failure
+# reaching the gate's exit status would silently convert a BLOCK into a PASS. One case per block path.
+
+@test "D06 block-preservation: unwritable sink, entry-miss path still exits 2" {
+  bad_sink="$(make_unwritable_sink)"
+  run_hook_trace "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc" "${bad_sink}"
+  assert_status 2
+  assert_contains "VGATE-ENTRY-001"
+  assert_contains "entry-miss"
+}
+
+@test "D06 block-preservation: unwritable sink, reviewer-miss path still exits 2" {
+  bad_sink="$(make_unwritable_sink)"
+  run_hook_trace "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl" "${bad_sink}"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_contains "reviewer-miss"
+}
+
+@test "D06 block-preservation: unwritable sink, size-est-miss path still exits 2" {
+  bad_sink="$(make_unwritable_sink)"
+  run_hook_trace "glass-atrium-dev-python" "implement per plan clauded-docs/1234" "${bad_sink}"
+  assert_status 2
+  assert_contains "VGATE-SIZE-001"
+  assert_contains "size-est-miss"
+}
+
+@test "D06 block-preservation: sink dir exists but is read-only → block still exits 2" {
+  ro_dir="${BATS_TEST_TMPDIR}/rodir"
+  mkdir -p "${ro_dir}"
+  chmod 0555 "${ro_dir}"
+  [[ ! -w "${ro_dir}" ]] || skip "running with write access to a 0555 dir (root?)"
+  run_hook_trace "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc" "${ro_dir}/fired.log"
+  chmod 0755 "${ro_dir}"
+  assert_status 2
+  assert_contains "entry-miss"
+}
+
+@test "D06 block-preservation: sink path is a DIRECTORY (append impossible) → block still exits 2" {
+  dir_sink="${BATS_TEST_TMPDIR}/sink-as-dir"
+  mkdir -p "${dir_sink}"
+  run_hook_trace "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl" "${dir_sink}"
+  assert_status 2
+  assert_contains "reviewer-miss"
+}
+
+# LINE CAP — the prune bounds the sink; it is observability-only, so it may never alter a verdict.
+
+@test "D06 prune: sink over the line cap is bounded at or below the cap" {
+  for i in $(seq 1 12); do
+    printf '2026-01-01T00:00:0%sZ\ttool_name=Agent\tsubagent_type=seed\tverdict=block-entry\n' "0" >>"${SINK}"
+  done
+  run_hook_trace "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc" "${SINK}" 5
+  assert_status 2
+  after="$(count_sink)"
+  [[ "${after}" -le 5 ]] || {
+    echo "expected sink bounded at or below cap 5, got ${after}" >&2
+    return 1
+  }
+}
+
+# READER — operator aggregation mode, dispatched BEFORE the stdin drain.
+
+@test "D06 reader: --block-counts over a fixture sink reports counts by verdict tag" {
+  {
+    printf 'ts\ttool_name=Agent\tsubagent_type=a\tverdict=block-entry\n'
+    printf 'ts\ttool_name=Agent\tsubagent_type=b\tverdict=block-entry\n'
+    printf 'ts\ttool_name=Agent\tsubagent_type=c\tverdict=block-reviewer\n'
+    printf 'ts\ttool_name=Agent\tsubagent_type=d\tverdict=block-sizeest\n'
+    printf 'ts\ttool_name=Agent\tsubagent_type=e\tverdict=block-sizeest\n'
+    printf 'ts\ttool_name=Agent\tsubagent_type=f\tverdict=block-sizeest\n'
+  } >"${SINK}"
+  run bash -c 'VGATE_FIRED_LOG="$2" bash "$1" --block-counts' _ "${HOOK_SH}" "${SINK}"
+  assert_status 0
+  assert_contains "total=6"
+  assert_contains "block-entry=2"
+  assert_contains "block-reviewer=1"
+  assert_contains "block-sizeest=3"
+}
+
+@test "D06 reader: absent sink reads as zeros, not missing data" {
+  run bash -c 'VGATE_FIRED_LOG="$2" bash "$1" --block-counts' _ "${HOOK_SH}" "${BATS_TEST_TMPDIR}/nope.log"
+  assert_status 0
+  assert_contains "total=0"
+  assert_contains "block-entry=0"
+  assert_contains "block-reviewer=0"
+  assert_contains "block-sizeest=0"
+}
+
+@test "D06 reader: reports without draining stdin (no operator hang)" {
+  fifo="${BATS_TEST_TMPDIR}/stdin.fifo"
+  mkfifo "${fifo}"
+  # Holds the FIFO open for 5s without ever writing: a reader that drained stdin would block on it.
+  sleep 5 >"${fifo}" &
+  writer_pid=$!
+  start="${SECONDS}"
+  run bash -c 'VGATE_FIRED_LOG="$2" bash "$1" --block-counts <"$3"' _ "${HOOK_SH}" "${SINK}" "${fifo}"
+  elapsed=$((SECONDS - start))
+  kill "${writer_pid}" 2>/dev/null || true
+  assert_status 0
+  assert_contains "block-counts:"
+  [[ "${elapsed}" -lt 4 ]] || {
+    echo "reader blocked on stdin for ${elapsed}s (expected immediate report)" >&2
+    return 1
+  }
+}
+
+@test "D06 reader: read-only — invoking it appends nothing to the sink" {
+  printf 'ts\ttool_name=Agent\tsubagent_type=a\tverdict=block-entry\n' >"${SINK}"
+  before="$(count_sink)"
+  run bash -c 'VGATE_FIRED_LOG="$2" bash "$1" --block-counts' _ "${HOOK_SH}" "${SINK}"
+  assert_status 0
+  assert_sink_delta 0 "${before}"
+}
+
+@test "D06 default sink: with no VGATE_FIRED_LOG override the trace lands under the data root" {
+  run_hook "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
+  assert_status 2
+  grep -q 'verdict=block-entry$' "${DATA_DIR}/verification-gate-fired.log" 2>/dev/null || {
+    echo "expected the default sink at ${DATA_DIR}/verification-gate-fired.log to carry the block" >&2
+    return 1
+  }
 }

@@ -39,6 +39,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   DATA_DIR="${BATS_TEST_TMPDIR}/data"
   mkdir -p "${DATA_DIR}/session-spawns"
+  # DSH-D06 block firing-trace sink, isolated per test via the hook's VGATE_FIRED_LOG override.
+  SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
 }
 
 # Drive the hook with an Agent envelope wrapping $1 (subagent_type) + $2 (prompt).
@@ -79,6 +81,17 @@ assert_empty() {
     echo "expected empty output, got: ${output}" >&2
     return 1
   }
+}
+
+# DSH-D06 variant: same envelope with the block firing-trace sink pinned to $2 (default ${SINK}).
+run_hook_sink() {
+  run bash -c '
+    stype="$1"; prompt="$2"; hook="$3"; data="$4"; sink="$5"
+    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-t6-001" \
+      '\''{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
+    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" VGATE_FIRED_LOG="${sink}" "${hook}"
+  ' _ "${1}" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl" \
+    "${HOOK_SH}" "${DATA_DIR}" "${2:-${SINK}}"
 }
 
 # --- FAIL-AT-HEAD: reviewer-miss on a plan-ref DEV spawn now BLOCKS (exit 2) ---
@@ -157,4 +170,37 @@ assert_empty() {
     echo "hook header does not record the nested-spawns-remain-ungated limitation" >&2
     return 1
   }
+}
+
+# --- DSH-D06: the reviewer-miss block leaves a durable trace, and never trades the block for it ---
+
+@test "D06: reviewer-miss BLOCK appends exactly one block-reviewer trace line" {
+  run_hook_sink "glass-atrium-dev-react"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  lines_written="$(grep -c 'verdict=block-reviewer$' "${SINK}" 2>/dev/null || true)"
+  [[ "${lines_written}" == "1" ]] || {
+    echo "expected exactly 1 block-reviewer trace line, got [${lines_written}]; sink: $(cat "${SINK}" 2>/dev/null)" >&2
+    return 1
+  }
+}
+
+@test "D06: reviewer-present pass appends NO trace line (delta 0)" {
+  seed_reviewer
+  run_hook_sink "glass-atrium-dev-python"
+  assert_status 0
+  [[ ! -s "${SINK}" ]] || {
+    echo "expected an empty sink on the pass path, got: $(cat "${SINK}" 2>/dev/null)" >&2
+    return 1
+  }
+}
+
+@test "D06 block-preservation: an unwritable sink must NOT convert the reviewer-miss block into a pass" {
+  # The gate's ERR trap exits ZERO, so an unisolated trace append would fail-open here.
+  blocker="${BATS_TEST_TMPDIR}/blocker"
+  : >"${blocker}"
+  run_hook_sink "glass-atrium-dev-nestjs" "${blocker}/fired.log"
+  assert_status 2
+  assert_contains "VGATE-REVIEWER-001"
+  assert_contains "reviewer-miss"
 }
