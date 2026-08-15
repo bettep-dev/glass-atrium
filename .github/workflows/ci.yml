@@ -28,6 +28,9 @@
 #   Stage 2  language jobs (gated on fast-gate + per-stack `detect-changes` filter):
 #            test-bash · test-python · test-python-pytest · test-monitor (the
 #            sole Postgres+chromium job)
+#            + test-install-macos — the ONLY macos-latest job. Gated on the
+#            fast-gate ALONE (no `detect-changes` filter, no `if:`), so it runs
+#            on every PR; see its own comment for why.
 #   Stage 3  test-e2e (advisory / PR-optional, continue-on-error)
 #   Stage 4  ci-pass — the SINGLE required status check; aggregates the gate.
 
@@ -178,6 +181,8 @@ jobs:
   # STAGE 2 — language jobs. Gated on the fast-gate passing AND on a per-stack
   # `detect-changes` path filter so an unrelated diff skips the irrelevant
   # stacks. A skipped job counts as OK at ci-pass (see stage 4).
+  # ONE deliberate exception: test-install-macos (end of this stage) carries no
+  # path filter and runs on every PR — its rationale is stated at the job.
   # ===========================================================================
 
   # ---------------------------------------------------------------------------
@@ -714,6 +719,216 @@ jobs:
         working-directory: monitor
         run: npm test
 
+  # ---------------------------------------------------------------------------
+  # macOS install path. install.sh is macOS-ONLY by hard gate (preflight kills a
+  # non-Darwin `uname -s` with EXIT_NOT_MACOS), so every ubuntu job above is
+  # structurally blind to it: this is the only place the installer is exercised
+  # at all. It builds the release bundle FROM THE PR TREE, installs through the
+  # documented local seam (GA_INSTALL_SRC_BUNDLE + GA_INSTALL_SRC_MANIFEST —
+  # both set skips the network entirely) into a runner-temp sandbox, and asserts
+  # preflight + the S2 staging SHA-256 verification actually ran.
+  #
+  # NO path filter and NO `if:` — deliberate. Two reasons: (a) it shares zero
+  # edit surface with the `detect-changes` filters block, so it cannot be
+  # weakened by an unrelated edit there; (b) most manifest members are markdown
+  # (rules/, agents/, scoped/), so a docs-only PR still changes the installed
+  # surface. Public-repo macOS minutes are unbilled, so always-run is cheap.
+  #
+  # MANIFEST-FRESHNESS COUPLING (a deliberate policy choice, not a side effect):
+  # `publish-release.sh build` runs verify_manifest (generate-manifest.sh
+  # --check, a whole-set file/hash/mode comparison), and no other CI check
+  # catches a stale manifest today. Under always-run this job therefore becomes
+  # the FIRST enforcement point for manifest freshness — any PR touching a
+  # manifest-scope path stays red until manifest.json is regenerated. The
+  # rejected alternative was regenerating the manifest inside the job, which
+  # would have kept the install proof but dropped the freshness gate.
+  #
+  # NOT a launchd/TCC test and NOT a live-harness test: GA_NO_RUN keeps the
+  # launcher unstarted, and "hook placement" here means landing under GA_DIR —
+  # never binding into a real ~/.claude (asserted below as live non-contact).
+  # ---------------------------------------------------------------------------
+  test-install-macos:
+    name: "test: macOS install path (local bundle seam)"
+    runs-on: macos-latest
+    # 20, not 10: the 700+-entry manifest --check plus the same-sized staging
+    # verification are thousands of shasum forks, and macOS shasum is perl-based.
+    # A cold runner has thin margin at 10; a flaky-timeout hunt costs more.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    needs: [gate-lint, gate-typecheck, gate-doctor]
+    steps:
+      # Default git checkout is REQUIRED (not just convenient): the manifest
+      # freshness check shells out to git and exits 3 outside a work tree, so a
+      # tarball / no-git checkout would break the build step.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Loud-fail on runner-image drift instead of dying deep inside the builder.
+      # brew is the sanctioned fallback for jq ONLY — the rest ship with macOS,
+      # so an absent one means a broken image, not a gap this job should paper over.
+      - name: Assert runner tool prerequisites
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq absent from the runner image — installing via brew" >&2
+            brew install jq
+          fi
+          missing=""
+          for tool in jq tar curl shasum git; do
+            if ! command -v "${tool}" >/dev/null 2>&1; then
+              missing="${missing} ${tool}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "FATAL: required tool(s) absent on the runner:${missing}" >&2
+            exit 1
+          fi
+
+      # Positive log evidence that the stock-bash-3.2 contract was really
+      # exercised. The contract surface is the explicit `/bin/bash install.sh`
+      # call below — publish-release.sh / generate-manifest.sh run under `env
+      # bash` from PATH by their shebang, which is fine and is NOT that surface.
+      - name: Show /bin/bash version (bash 3.2 contract evidence)
+        run: /bin/bash --version
+
+      # Single source of truth for every sandbox path. `runner.temp` is an
+      # Actions EXPRESSION, so it is bound to an env var and dereferenced as a
+      # plain shell var — never spliced into the run: text (the repo-wide
+      # injection-avoidance shape). A job-level `env:` cannot carry it (the
+      # runner context is step-scoped) and `env:` does not expand shell vars, so
+      # the values are exported through $GITHUB_ENV for the later steps.
+      - name: Resolve sandbox paths and record the live-tree baseline
+        env:
+          RUNNER_TMP: ${{ runner.temp }}
+        run: |
+          {
+            echo "GA_RELEASE_OUT=${RUNNER_TMP}/release"
+            echo "GA_DIR=${RUNNER_TMP}/ga"
+            echo "INSTALL_LOG=${RUNNER_TMP}/install.log"
+          } >> "${GITHUB_ENV}"
+          # Live non-contact oracle: whatever this is now, it must be identical
+          # after the install (the installer creates no facade without consent).
+          if [[ -e "${HOME}/.claude" ]]; then
+            echo "LIVE_CLAUDE_BEFORE=present" >> "${GITHUB_ENV}"
+          else
+            echo "LIVE_CLAUDE_BEFORE=absent" >> "${GITHUB_ENV}"
+          fi
+
+      # The real bundle+manifest builder. NOT the repo-root build-glass-atrium.sh
+      # (a one-shot ~/.claude → ~/.glass-atrium migration copier that requires an
+      # existing $HOME/.claude and produces neither tar nor manifest — it FATALs
+      # on a runner). `build` needs no network and no gh; gh is publish-only.
+      - name: Build the release bundle from the PR tree
+        run: bash scripts/publish-release.sh build --out "${GA_RELEASE_OUT}"
+
+      # Assert the asset exists BEFORE installing, at the name the builder
+      # composes from manifest .version — so a builder rename surfaces here as a
+      # named failure instead of a confusing extraction error two steps later.
+      - name: Assert the built bundle exists before installing
+        run: |
+          version="$(jq -r '.version' "${GA_RELEASE_OUT}/manifest.json")"
+          if [[ -z "${version}" || "${version}" == "null" ]]; then
+            echo "FATAL: the staged manifest carries no .version" >&2
+            exit 1
+          fi
+          bundle="${GA_RELEASE_OUT}/glass-atrium-bundle-${version}.tar.gz"
+          if [[ ! -f "${bundle}" ]]; then
+            echo "FATAL: expected bundle absent: ${bundle}" >&2
+            ls -la "${GA_RELEASE_OUT}" >&2
+            exit 1
+          fi
+          echo "BUNDLE_PATH=${bundle}" >> "${GITHUB_ENV}"
+
+      # `/bin/bash install.sh`, NOT `./install.sh`: the shebang routes through
+      # `env bash` (PATH bash, 5.x on a GitHub macOS image), which would not pin
+      # the 3.2 contract. The log is REDIRECTED, never piped through tee — a pipe
+      # would hide install.sh's exit code behind the pipeline status.
+      - name: Install into the sandbox via the local bundle seam
+        env:
+          # Both seam vars are required: install.sh skips the network only when
+          # BOTH are set. GA_DIR / INSTALL_LOG come from the resolve step above.
+          # The launcher-only launchd-skip override is deliberately NOT set:
+          # install.sh never reads it, so setting it would be cargo cult.
+          GA_INSTALL_SRC_BUNDLE: ${{ env.BUNDLE_PATH }}
+          GA_INSTALL_SRC_MANIFEST: ${{ env.GA_RELEASE_OUT }}/manifest.json
+          GA_NO_RUN: "1"
+        run: |
+          rc=0
+          /bin/bash install.sh > "${INSTALL_LOG}" 2>&1 || rc=$?
+          if [[ "${rc}" -ne 0 ]]; then
+            echo "FATAL: install.sh exited ${rc} — full log follows" >&2
+            cat "${INSTALL_LOG}" >&2
+            exit "${rc}"
+          fi
+          cat "${INSTALL_LOG}"
+
+      # Every assertion is hard-fail; they are collected so one run names ALL
+      # the broken invariants instead of only the first.
+      - name: Assert install outcome
+        run: |
+          rc=0
+          fail() {
+            echo "FATAL: $*" >&2
+            rc=1
+          }
+
+          # S2 staging verification actually ran (the per-file SHA-256 gate).
+          if ! grep -qF 'Verifying per-file SHA-256' "${INSTALL_LOG}"; then
+            fail "install log carries no 'Verifying per-file SHA-256' anchor — S2 staging verification did not run"
+          fi
+          # The GA_NO_RUN branch was taken (launcher not started, exit 0).
+          if ! grep -qF 'Install complete (GA_NO_RUN set)' "${INSTALL_LOG}"; then
+            fail "install log carries no 'Install complete (GA_NO_RUN set)' anchor"
+          fi
+
+          # Placement completeness: every manifest member landed under GA_DIR.
+          missing=0
+          while IFS= read -r rel; do
+            if [[ ! -e "${GA_DIR}/${rel}" ]]; then
+              missing=$((missing + 1))
+              if [[ "${missing}" -le 10 ]]; then
+                echo "  missing manifest member: ${rel}" >&2
+              fi
+            fi
+          done < <(jq -r '.files[]' "${GA_RELEASE_OUT}/manifest.json")
+          if [[ "${missing}" -ne 0 ]]; then
+            fail "${missing} manifest member(s) absent under GA_DIR (first 10 listed above)"
+          fi
+
+          # Hook placement = landing under GA_DIR, NOT binding into a live ~/.claude.
+          if [[ ! -d "${GA_DIR}/hooks" ]]; then
+            fail "${GA_DIR}/hooks does not exist"
+          else
+            hook_files="$(find "${GA_DIR}/hooks" -type f | wc -l | tr -d ' ')"
+            if [[ "${hook_files}" -eq 0 ]]; then
+              fail "${GA_DIR}/hooks is empty"
+            fi
+          fi
+
+          # Mode enforcement evidence. install.sh's handoff already asserts this
+          # before the GA_NO_RUN branch, so it is redundant — kept as explicit
+          # evidence in the log, and it is not load-bearing.
+          if [[ ! -x "${GA_DIR}/glass-atrium" ]]; then
+            fail "${GA_DIR}/glass-atrium is not executable (manifest.modes enforcement)"
+          fi
+
+          # Live non-contact: the sandbox install must create nothing at ~/.claude.
+          if [[ -e "${HOME}/.claude" ]]; then
+            live_after=present
+          else
+            live_after=absent
+          fi
+          if [[ "${live_after}" != "${LIVE_CLAUDE_BEFORE}" ]]; then
+            fail "live ~/.claude changed state: ${LIVE_CLAUDE_BEFORE} -> ${live_after}"
+          fi
+          # Supporting (non-gating) evidence for the consent gate staying shut.
+          if grep -qF 'No consented deployment' "${INSTALL_LOG}"; then
+            echo "note: mirror farm skipped — 'No consented deployment' anchor present"
+          fi
+
+          exit "${rc}"
+
   # ===========================================================================
   # STAGE 3 — E2E. Advisory / PR-optional: job-level continue-on-error so a slow
   # e2e flake surfaces as its own non-blocking check and NEVER gates ci-pass
@@ -827,6 +1042,7 @@ jobs:
       - test-python
       - test-python-pytest
       - test-monitor
+      - test-install-macos
     steps:
       # SECURITY (audited-safe — expression-injection avoidance): the `${{ }}`
       # results are bound to ENV VARS (HAS_FAILURE / HAS_CANCELLED) and the run:
