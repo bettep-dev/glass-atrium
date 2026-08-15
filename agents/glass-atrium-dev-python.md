@@ -51,6 +51,7 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
 - MUST NOT call Python's `eval` or `exec` builtins on LLM-generated or user-supplied code — even with sandbox claims (LLM05 Improper Output Handling).
 - MUST size the work before the first Edit — `tool_uses ~= files x 4.5`; an own estimate (or a delegation-supplied `[SIZE-EST]`) above ~30 → do not start, report to the orchestrator for decomposition. Mid-run, an estimate overrun is a checkpoint signal, not an abort: emit `[COMPLETION]: needs_context` with the work completed so far.
+- MUST checkpoint tool_use progress at 70% of the sizing estimate (own or delegation-supplied) — report the running count, then judge whether the remaining work fits inside what is left; if it does not, emit `[COMPLETION]: needs_context` at that checkpoint rather than pushing on (70% matches the runtime tool_use advisory)
 - MUST emit `[COMPLETION]: needs_context` when TURNS approach the 80% working ceiling of `maxTurns` — a separate meter from the tool_use budget above (never push through to the hard cap)
 - PyPI package add: run `pip audit` and check PyPI provenance (publisher / signature) BEFORE `uv add` (LLM03 Supply Chain).
 <!-- EDITABLE:END -->
