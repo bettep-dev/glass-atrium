@@ -8,15 +8,13 @@
 #   * the end-to-end second run (no markers, no content change);
 #   * the capture ORDERING that keeps the base advancing even when the (fatal)
 #     vendor sweep dies right after a landed merge;
-#   * a conflicting region with the gap-policy kill switch OFF: it declines
-#     durably and never lands markers.
-#
-# The default-policy counterpart — the same input resolving to the release side
-# and LANDING — is deliberately NOT pinned here. merge-resolved-release sits in
-# editable_merge._LLM_REQUIRED, so the in-transaction verify gates the candidate
-# on a live Haiku call (MergeCandidate._haiku_pass) whose result is not
-# reproducible; run_pre_verify is fail-safe, so an unreachable model rolls the
-# landed body back to local. A test over that path is a coin flip, not a pin.
+#   * a conflicting region, both ways round the gap-policy kill switch: with the
+#     switch OFF it declines durably and never lands markers; with the switch at
+#     its default it resolves to the release side and lands, declining nothing —
+#     and lands with the Haiku gate UNREACHABLE, which is the property the policy
+#     was chosen for (merge-resolved-release is deliberately out of
+#     editable_merge._LLM_REQUIRED, so no model stands between a resolved gap and
+#     the disk; an outage or an exhausted quota cannot drop it back to declining).
 #
 # Split out of glass-atrium-update.bats rather than appended to it: CI runs one
 # GNU parallel job per *.bats file under a 240s per-file timeout, and that file
@@ -29,8 +27,8 @@
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
 # ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected into it; the
 # download is bypassed via ATRIUM_UPDATE_SRC_DIR, the confirm injected via
-# ATRIUM_UPDATE_CONFIRM_ANSWER and the Haiku pre-verify gate stubbed via
-# AUTOAGENT_CLAUDE_BIN, so /dev/tty, gh and the claude CLI are never touched.
+# ATRIUM_UPDATE_CONFIRM_ANSWER and AUTOAGENT_CLAUDE_BIN pointed at a path that is
+# never created, so /dev/tty, gh and the claude CLI are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -48,24 +46,16 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # reports / pause / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
-  seed_pre_verify_stub
 }
 
-# A resolved conflicting gap is LLM-required (MERGE_RESOLVED_RELEASE sits in
-# editable_merge._LLM_REQUIRED), so its landing runs the daemon's Haiku
-# improvement-verify gate — and CLAUDE_BIN defaults to the literal `claude`,
-# which on a developer box is the operator's REAL billed CLI. Unstubbed, the
-# landing assertion would ride a live model verdict: billed per suite run,
-# networked, and green or red by the weather. The stub emits the strict grid
-# run_pre_verify parses (4 axes + the explicit VERDICT the dual gate demands),
-# so the gate PASSES deterministically and the test measures the resolver.
-seed_pre_verify_stub() {
-  cat >"${WORK}/pre-verify-pass.sh" <<'STUB'
-#!/usr/bin/env bash
-printf 'C1: PASS\nC2: PASS\nC3: PASS\nC4: PASS\nVERDICT: verified\nRATIONALE: hermetic stub\n'
-STUB
-  chmod +x "${WORK}/pre-verify-pass.sh"
-}
+# No gate stub exists, deliberately. run_update points AUTOAGENT_CLAUDE_BIN at a
+# path under the sandbox that is never created, so the Haiku improvement-verify
+# gate is not slow or erroring but ABSENT — run_pre_verify takes its
+# FileNotFoundError branch and conservative-fails. A stub would make the
+# unreachability incidental; a missing binary makes it real, and it is the same
+# condition CI and any offline deploy run under. It also keeps the suite
+# hermetic: CLAUDE_BIN defaults to the literal `claude`, so an unpinned run would
+# reach the operator's REAL billed CLI and go green or red by the weather.
 
 teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
@@ -142,7 +132,7 @@ run_update() {
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
     ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${ATRIUM_UPDATE_MERGE_RESOLVE_GAPS:-}" \
-    AUTOAGENT_CLAUDE_BIN="${WORK}/pre-verify-pass.sh" \
+    AUTOAGENT_CLAUDE_BIN="${WORK}/no-such-claude" \
     bash "${SKILL}"
 }
 
@@ -262,4 +252,66 @@ NEW vendor rules'
   [[ "${entry}" == *"merge-conflict"* ]] || return 1
   [[ "${entry}" == *"agents/dev-a.md"* ]] || return 1
   [[ "${entry}" == *"local-body-kept"* ]] || return 1
+}
+
+@test "with the gap policy ON the same conflicting body LANDS the release side with the Haiku gate unreachable" {
+  # The shell-side pin on the property the policy was chosen for. The input that
+  # declines above is the shape the stuck agents present every release; under the
+  # DEFAULT policy the resolver emits merge-resolved-release, the candidate joins
+  # the normal records queue, clears the confirm gate and lands.
+  #
+  # It lands with the gate ABSENT. run_update points AUTOAGENT_CLAUDE_BIN at a
+  # path that does not exist, which is what CI and an offline deploy look like to
+  # fail-safe run_pre_verify. Were merge-resolved-release still LLM-required, that
+  # refusal would roll the body back and this test would red — so this is the
+  # assertion standing between the deterministic policy and a silent regression to
+  # the mediator's availability profile, where the feature lands NOTHING on a host
+  # that cannot reach the model while reporting success at plan time.
+  local conflict_local='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+LOCAL rewrite
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+  local conflict_release='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+VENDOR rewrite
+<!-- EDITABLE:END -->
+## Rules
+NEW vendor rules'
+  seed_file "${INSTALL}" "agents/dev-a.md" "${conflict_local}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" != *"CONFLICT (merge-conflict)"* ]] || return 1
+
+  local landed
+  landed="$(cat "${INSTALL}/agents/dev-a.md")"
+  # The tripwire never had to fire: resolution replaces markers, it does not emit them.
+  [[ "${landed}" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
+  [[ "${landed}" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
+  # The conflicting region took the release side, and the vendor structure came with it.
+  [[ "${landed}" == *"VENDOR rewrite"* ]] || return 1
+  [[ "${landed}" == *"NEW vendor rules"* ]] || return 1
+  [[ "${landed}" != *"LOCAL rewrite"* ]] || return 1
+
+  # The gate was never CONSULTED, not merely overruled. run_pre_verify resolves a
+  # verifier model before it shells out, and that resolution is the only source of
+  # a [daemon-cycle] line in this run — its absence is the positive fingerprint
+  # that no model was invoked, separating "no model in the path" from "a model
+  # that happened to agree". Only the former survives an outage.
+  [[ "$output" != *"[daemon-cycle]"* ]] || return 1
+
+  # The base advanced to the landed body — the anchor that keeps the next same-release
+  # run a no-op instead of re-diffing against a stale base.
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${conflict_release}" ]] || return 1
+
+  # Nothing declined, so no durable record should exist. Asserting absence of the FILE
+  # (not an empty one) keeps "no declines" distinguishable from "never recorded".
+  [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
 }

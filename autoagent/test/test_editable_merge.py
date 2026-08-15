@@ -1107,8 +1107,13 @@ class GapPolicyTest(unittest.TestCase):
         self.assertEqual(off.verdict, em.MERGE_CONFLICT)
         self.assertEqual(on.verdict, em.MERGE_RESOLVED_RELEASE)
 
-    def test_when_policy_on_then_candidate_applies_and_verifies_through_the_gate(self) -> None:
-        stub = _StubVerify(passed=True)
+    def test_when_policy_on_then_candidate_applies_and_verifies_without_the_gate(self) -> None:
+        # The stub FAILS and counts its calls: a resolved gap is deterministic, so
+        # the landing must not consult the model at all. Verifying green against a
+        # verifier that would refuse is what proves the gate is out of the path —
+        # a passing stub would leave "never called" and "called and agreed"
+        # indistinguishable, which is the whole property the policy rests on.
+        stub = _StubVerify(passed=False)
         cand = em.build_merge_candidate(
             "dev-android.md",
             self._LOCAL,
@@ -1119,12 +1124,13 @@ class GapPolicyTest(unittest.TestCase):
         )
 
         self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
-        self.assertTrue(cand.resolution.needs_llm)  # joined the model-gated set
+        self.assertFalse(cand.resolution.needs_llm)  # deterministic — no model gate
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "dev-android.md"
             target.write_text(self._LOCAL, encoding="utf-8")
             self.assertEqual(cand.apply(str(target)), em.APPLY_OK)
             self.assertEqual(cand.verify(str(target)), 0)
+            self.assertEqual(stub.calls, 0)  # the gate was never reached
             self.assertFalse(
                 em.has_conflict_markers(target.read_text(encoding="utf-8"))
             )

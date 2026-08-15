@@ -106,9 +106,26 @@ NO_OP = "no-op"  # candidate identical to current local file
 # Verdicts that REQUIRE the Haiku improvement-verify gate (an ambiguous,
 # net-new-merged region). KEEP_LOCAL / TAKE_RELEASE / NO_OP are deterministic and
 # make NO LLM call (T18 AC: "only-local or only-vendor changes make NO LLM call").
-_LLM_REQUIRED = frozenset(
-    {MERGE_CLEAN, MERGE_CONFLICT, MERGE_RESOLVED_RELEASE, GATED_2WAY}
-)
+#
+# MERGE_RESOLVED_RELEASE is deliberately OUT. The gap policy was chosen over an
+# LLM mediator BECAUSE it is deterministic — it improves on the status quo under
+# every outcome, where the mediator only does under some. Gating it on a live
+# model would inherit the mediator's availability profile without its judgment:
+# run_pre_verify is fail-safe, so a Haiku outage or an exhausted quota (observed
+# here, not hypothetical) would roll every resolved gap back to declining — the
+# exact behavior the policy exists to replace. The property that justified the
+# choice only holds if the landing does not depend on a model being reachable.
+#
+# The cost is real, accepted, and NOT backstopped by the confirm gate:
+# gate_confirm_changes resolves ATRIUM_UPDATE_CONFIRM_ANSWER BEFORE /dev/tty, so
+# on the unattended path — every deploy on this host today — the confirm is an
+# automatic yes and no human reads the diff. Unlike TAKE_RELEASE, which fires
+# when the daemon never touched the region, a resolved gap DISCARDS
+# daemon-authored content. That discard therefore happens with no automatic
+# screening and, as of this commit, no record. Removing the screening is the
+# deliberate half; the record that replaces it lands next on this branch. Until
+# it does, the discard is UNREVIEWED — not reviewed-by-human.
+_LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
 # never writable to a live agent file (see the module header's tripwire section).
