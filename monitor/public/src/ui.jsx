@@ -776,6 +776,7 @@ const REVIEW_FLAG_REASON_META = {
   'degraded-attribution-synthesized': { label: 'Synthesized record', title: 'Record synthesized from the transcript — the writer emitted no completion block' },
   'grader-contradiction': { label: 'Check mismatch', title: 'Claimed success, but the automatic check disagreed' },
   'correction-gap': { label: 'Correction gap', title: 'A user correction was signalled without the distilled directive' },
+  'correction-disagreement': { label: 'Correction mismatch', title: 'The agent reported a user correction the transcript detector did not corroborate' },
   'non-registry-agent-at-write': { label: 'Unknown agent', title: 'The recorded agent name was absent from the registry when the row was written' },
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
