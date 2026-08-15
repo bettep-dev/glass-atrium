@@ -317,14 +317,30 @@ if diff_path and pathlib.Path(diff_path).is_file():
 if len(diff_text) > DIFF_CAP:
     diff_text = diff_text[:DIFF_CAP] + "\n[truncated]\n"
 
-# The dropped daemon lines are the "-" side of the live-to-candidate diff. Two
-# excerpts bound the rationale; the full text stays in proposed_diff.
-excerpts = []
-for line in diff_text.splitlines():
-    if line.startswith("-") and not line.startswith("---"):
-        body = line[1:].strip()
-        if body:
-            excerpts.append(body[:EXCERPT_CAP])
+# Two excerpts bound the rationale; the full text stays in proposed_diff. The
+# sidecar the resolver writes holds ONLY lines a conflicting gap discarded, so
+# the excerpt is daemon-authored text and nothing else. Without it (an older
+# resolver, an unreadable file) the excerpt falls back to the diff, where a
+# removed line may equally be vendor prose the release restructured — hence the
+# weaker wording on that path.
+excerpts, attribution = [], "Dropped daemon-authored excerpt"
+dropped_path = env("GA_REC_DROPPED_TEXT")
+source_lines = []
+if dropped_path and pathlib.Path(dropped_path).is_file():
+    source_lines = pathlib.Path(dropped_path).read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines()
+else:
+    attribution = "Excerpt of lines the candidate drops"
+    source_lines = [
+        line[1:]
+        for line in diff_text.splitlines()
+        if line.startswith("-") and not line.startswith("---")
+    ]
+for line in source_lines:
+    body = line.strip()
+    if body:
+        excerpts.append(body[:EXCERPT_CAP])
     if len(excerpts) == 2:
         break
 
@@ -343,7 +359,7 @@ rationale = (
     outcome="applied" if landed else "not applied (declined or rolled back)",
 )
 if excerpts:
-    rationale += " Dropped excerpt: " + " | ".join(repr(e) for e in excerpts)
+    rationale += f" {attribution}: " + " | ".join(repr(e) for e in excerpts)
 
 source = env("GA_REC_SOURCE")
 try:
@@ -397,13 +413,13 @@ print(json.dumps({
 update_emit_resolved_records() {
   local root="$1" tsv="$2"
   [[ -s "${tsv}" ]] || return 0
-  local helper landed base target release hunks dropped added regions diff_file
+  local helper landed base target release hunks dropped added regions diff_file dropped_text
   helper="${ATRIUM_UPDATE_PG_HELPER:-${root}/scripts/_pg_dual_write_daemon.py}"
   if [[ ! -f "${helper}" ]]; then
     update_log "WARN: resolved-gap recording skipped — no dual-write helper at ${helper}; the discard is stderr-only"
     return 0
   fi
-  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file; do
+  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text; do
     [[ -n "${base}" ]] || continue
     # Landed == the commit callback appended this basename to the per-run outcome
     # ledger on GIT_TXN_OK. A declined gate writes no entries at all, so every
@@ -417,6 +433,7 @@ update_emit_resolved_records() {
       GA_REC_AGENT="${base%.md}" GA_REC_SOURCE="${release}" \
       GA_REC_HUNKS="${hunks}" GA_REC_DROPPED="${dropped}" GA_REC_ADDED="${added}" \
       GA_REC_REGIONS="${regions}" GA_REC_DIFF="${diff_file}" GA_REC_LANDED="${landed}" \
+      GA_REC_DROPPED_TEXT="${dropped_text}" \
       python3 -c "${_UPDATE_PROPOSAL_PY}" | python3 "${helper}" >/dev/null 2>&1; then
       update_log "  resolved-gap discard recorded → core.autoagent_proposals (${target}, landed=${landed})"
     else
@@ -496,9 +513,8 @@ update_check_deletion_shape() {
 update_warn_dropped_frontmatter() {
   local rel="$1" keys
   keys="$(update_plan_field fm_unallowlisted "$2")"
-  # `none` = nothing to announce. A value carrying `=` means the token was absent and the
-  # up-to-next-space extractor returned a neighbouring field — stay silent over guessing.
-  [[ -n "${keys}" && "${keys}" != 'none' && "${keys}" != *=* ]] || return 0 # GA-ABSORB[benign]: no dropped key (or an older plan line without the field) leaves the advisory with nothing to say; the merge is unaffected either way.
+  # `none` = nothing to announce; empty = a plan line that carries no such field at all.
+  [[ -n "${keys}" && "${keys}" != 'none' ]] || return 0 # GA-ABSORB[benign]: no dropped key (or a plan line without the field) leaves the advisory with nothing to say; the merge is unaffected either way.
   update_log "WARN: live-only frontmatter — ${rel} carries frontmatter key(s) the release does not and the merge allowlist does not preserve: ${keys}; the merged body DROPS them, so port the value into the release body or add the key to the allowlist (advisory — the candidate is still offered)"
 }
 
@@ -999,10 +1015,16 @@ update_realpath() {
 }
 
 # Extract a `key=value` token's value from an editable_merge plan line (values
-# are space-free, so up-to-next-space is exact). Args: $1 = key · $2 = plan line.
+# are space-free, so up-to-next-space is exact). An ABSENT key yields empty: the
+# strip below is a no-op on a line without the token, which would otherwise
+# return the line's whole first field as if it were the value. Args: $1 = key ·
+# $2 = plan line.
 update_plan_field() {
-  local rest="${2#*"$1"=}"
-  printf '%s\n' "${rest%% *}"
+  local rest
+  if [[ "$2" == *"$1="* ]]; then
+    rest="${2#*"$1"=}"
+    printf '%s\n' "${rest%% *}"
+  fi
 }
 
 # Python verify shell-out (SC2259-safe: a plain assigned string constant, NOT a
@@ -1212,6 +1234,7 @@ update_merge_agent_editable_regions() {
     plan_line="$(python3 "${_update_merge_lib_dir}/editable_merge.py" plan \
       --target "agents/${base}" --local "${local_file}" --release "${file}" \
       --out "${candidate}" --agent "${base%.md}" \
+      --diff-out "${merge_dir}/${base}.resolved.diff" \
       --state-dir "${_update_state_dir}" 2>"${plan_err}")" || plan_rc=$?
 
     if [[ "${plan_rc}" -eq 3 ]]; then
@@ -1268,20 +1291,23 @@ update_merge_agent_editable_regions() {
     update_warn_dropped_frontmatter "agents/${base}" "${plan_line}"
 
     # Queue the self-improvement-history row for a body whose conflicting gaps
-    # took the release side. The live-to-candidate diff is captured HERE because
-    # the live body is overwritten by the transaction below — after the gate the
-    # dropped daemon lines exist nowhere else. The row itself is emitted only
-    # once the outcome is known (post-gate), so it can record what actually
-    # landed rather than what was offered.
+    # took the release side. The live-to-candidate diff comes from `plan
+    # --diff-out`: the merge lib already computed it (it is the text the sensitive
+    # scan and the Haiku gate ran against), so re-deriving it here with a second
+    # diff implementation would record a diff the merge never saw. Capturing it at
+    # plan time also predates the transaction below, which overwrites the live
+    # body — after the gate the dropped daemon lines exist nowhere else. The row
+    # itself is emitted only once the outcome is known (post-gate), so it can
+    # record what actually landed rather than what was offered.
     if [[ "${verdict}" == 'merge-resolved-release' ]]; then
-      diff -u -- "${local_file}" "${candidate}" >"${merge_dir}/${base}.resolved.diff" 2>/dev/null || true # GA-ABSORB[benign]: diff exits 1 for "files differ", which is the normal case here — the diff text is the payload and its absence only shortens the record.
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${base}" "agents/${base}" "${file}" \
         "$(update_plan_field resolved_hunks "${plan_line}")" \
         "$(update_plan_field resolved_dropped_lines "${plan_line}")" \
         "$(update_plan_field resolved_added_lines "${plan_line}")" \
         "$(update_plan_field resolved_regions "${plan_line}")" \
-        "${merge_dir}/${base}.resolved.diff" >>"${resolved_file}"
+        "${merge_dir}/${base}.resolved.diff" \
+        "${candidate}.dropped" >>"${resolved_file}"
     fi
 
     printf '%s\t%s\t%s\t%s\t%s\n' \

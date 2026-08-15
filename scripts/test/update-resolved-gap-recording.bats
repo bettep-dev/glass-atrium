@@ -59,6 +59,14 @@ setup() {
 +- MUST size the work before the first Edit
 DIFF
 
+  # The resolver's sidecar: ONLY the lines a conflicting gap discarded, which is
+  # what makes the excerpt daemon-authored rather than whatever the diff removed.
+  DROPPED_TEXT="${WORK}/agent.candidate.dropped"
+  cat >"${DROPPED_TEXT}" <<'DROPPED'
+- MUST checkpoint tool_use progress at 70% of the estimate
+- MUST NOT retry a denied Edit
+DROPPED
+
   RELEASE="${WORK}/release-body.md"
   printf 'release body\n' >"${RELEASE}"
 
@@ -95,11 +103,13 @@ teardown() {
   return 0
 }
 
-# One resolved-file row: base, target, release, hunks, dropped, added, regions, diff.
+# One resolved-file row: base, target, release, hunks, dropped, added, regions,
+# diff, dropped-text sidecar. $2 overrides the sidecar path (an absent one
+# exercises the diff fallback).
 write_tsv() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${1:-ga-rec-probe.md}" "agents/${1:-ga-rec-probe.md}" "${RELEASE}" \
-    2 2 1 "0,3" "${DIFF_FILE}" >"${TSV}"
+    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" >"${TSV}"
 }
 
 run_driver() {
@@ -173,9 +183,25 @@ db_available() {
   [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]]
   [[ "$rationale" == *"added 1 release line(s)"* ]]
   [[ "$rationale" == *"no model call"* ]]
+  # The excerpt comes from the resolver's dropped-line sidecar, so it is
+  # daemon-authored text and is attributed as such.
+  [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]]
   [[ "$rationale" == *"checkpoint tool_use progress"* ]]
   # Bounded: an excerpt, never the whole region.
   [ "${#rationale}" -lt 800 ]
+}
+
+@test "T8 without the resolver sidecar the excerpt falls back to the diff and says so" {
+  # An older resolver (or an unreadable sidecar) still records — but a removed
+  # diff line may be vendor prose the release restructured, so the rationale must
+  # NOT claim the excerpt is daemon-authored.
+  write_tsv ga-rec-probe.md "${WORK}/absent.dropped"
+  run run_driver
+  [ "$status" -eq 0 ]
+  rationale="$(envelope_field rationale)"
+  [[ "$rationale" == *"Excerpt of lines the candidate drops"* ]]
+  [[ "$rationale" != *"Dropped daemon-authored excerpt"* ]]
+  [[ "$rationale" == *"2 gap(s)"* ]]
 }
 
 @test "T6 a file that did not land records reject / rejected" {

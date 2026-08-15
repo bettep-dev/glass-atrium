@@ -122,9 +122,14 @@ NO_OP = "no-op"  # candidate identical to current local file
 # automatic yes and no human reads the diff. Unlike TAKE_RELEASE, which fires
 # when the daemon never touched the region, a resolved gap DISCARDS
 # daemon-authored content. That discard therefore happens with no automatic
-# screening and, as of this commit, no record. Removing the screening is the
-# deliberate half; the record that replaces it lands next on this branch. Until
-# it does, the discard is UNREVIEWED — not reviewed-by-human.
+# screening. Removing the screening was the deliberate half; the record that
+# replaces it is the other, and it now exists — every resolved file writes one
+# self-improvement-history row (``resolved_gap_stats`` here supplies its counts,
+# the sidecar beside the candidate its dropped text, and
+# ``update_emit_resolved_records`` in the updater writes it). So the discard is
+# reviewed AFTER the fact, from the recorded row, rather than screened before
+# it — which is the accountability the confirm gate does not provide on an
+# unattended deploy.
 _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
@@ -150,7 +155,7 @@ APPLY_MALFORMED = 2
 # {name, tools, scope} stay vendor-owned (hooks/enforce-harness-critical.sh
 # protects those and explicitly excludes model). A live-only key outside BOTH
 # tuples is still dropped ON PURPOSE — inverting the default would retain a key
-# the vendor removed deliberately — so unallowlisted_local_frontmatter_keys()
+# the vendor removed deliberately — so dropped_local_frontmatter_keys()
 # names it at the confirm gate rather than letting it vanish unannounced. Tuple,
 # not set → the append order below is deterministic across runs.
 _LOCAL_ONLY_FRONTMATTER_KEYS = ("model",)
@@ -500,7 +505,7 @@ def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
     from the live-to-candidate diff the caller already composes.
 
     ``regions`` is a comma-joined index list (space-free, so it survives the
-    updater's up-to-next-space plan-line extractor) or the literal ``none``.
+    updater's up-to-next-space plan-line extractor), empty when no gap resolved.
     """
     hunks = [
         h
@@ -517,7 +522,7 @@ def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
         "hunks": len(hunks),
         "dropped_lines": sum(len(h.local) for h in hunks),
         "added_lines": sum(len(h.release) for h in hunks),
-        "regions": ",".join(indices) if indices else "none",
+        "regions": ",".join(indices),
     }
 
 
@@ -637,27 +642,25 @@ def _frontmatter_keys(text: str) -> list[str]:
     return keys
 
 
-def unallowlisted_local_frontmatter_keys(
-    local_text: str, release_text: str
+def dropped_local_frontmatter_keys(
+    local_text: str, candidate_text: str
 ) -> list[str]:
-    """Live-only frontmatter keys this merge WILL drop, in local order.
+    """Live frontmatter keys the ASSEMBLED candidate does not carry, in local order.
 
-    A key qualifies when it is present locally, absent from the release, and
-    carried by NEITHER allowlist — nothing in the release skeleton carries it and
-    nothing re-attaches it, so the merge silently loses it. Both tuples are
-    consulted because a base-aware key absent from the release re-attaches by the
-    live-wins fallback, and naming it here would report a drop that never happens.
+    Read off the real artifact — the body this merge will write — so the advisory
+    reports what the carry pass actually did rather than re-deriving its policy.
+    A key present locally and absent from the candidate is dropped whatever the
+    route: no release line, no allowlist carry, or a base-aware key the carry pass
+    left to the release. Re-deriving from the release skeleton instead states the
+    policy a second time, and the two have already disagreed — a base-aware key
+    equal to base and absent from the release IS dropped by the carry pass, yet a
+    set-membership check reads it as carried and names nothing.
 
     ADVISORY ONLY. The caller warns and proceeds: a live-only key is a benign
     divergence, and aborting the merge on one would block on a non-problem.
     """
-    release_keys = set(_frontmatter_keys(release_text))
-    carried = {*_LOCAL_ONLY_FRONTMATTER_KEYS, *_BASE_AWARE_FRONTMATTER_KEYS}
-    return [
-        key
-        for key in _frontmatter_keys(local_text)
-        if key not in release_keys and key not in carried
-    ]
+    carried = set(_frontmatter_keys(candidate_text))
+    return [key for key in _frontmatter_keys(local_text) if key not in carried]
 
 
 def resolve_file(
@@ -974,12 +977,36 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         )
         return EXIT_REFUSED
     Path(args.out).write_text(cand.resolution.candidate_text, encoding="utf-8")
+    if args.diff_out:
+        # The SAME live-to-candidate diff the candidate was validated against (the
+        # sensitive scan and the Haiku gate read this text). Handing it to the
+        # recording caller keeps one diff implementation in the loop: a caller
+        # re-deriving it with `diff -u` would record text this merge never saw.
+        Path(args.diff_out).write_text(cand.diff, encoding="utf-8")
     # Key names are regex-constrained to be space-free, so the comma-joined value
-    # stays a single plan-line token; the literal `none` keeps the field ALWAYS
-    # present (the updater's up-to-next-space extractor returns garbage, not an
-    # empty string, for an absent key).
-    dropped = unallowlisted_local_frontmatter_keys(local_text, release_text)
+    # stays a single plan-line token; the literal `none` says "nothing dropped"
+    # explicitly rather than as an empty one.
+    dropped = dropped_local_frontmatter_keys(
+        local_text, cand.resolution.candidate_text
+    )
     gaps = resolved_gap_stats(cand.resolution)
+    # The dropped local lines exist nowhere else once the resolution has replaced
+    # them, and they cannot ride the plan line (free text, and the updater's
+    # extractor reads up to the next space). A sidecar beside the candidate keeps
+    # the recording caller's excerpt to text a gap actually discarded — a
+    # diff-derived excerpt would also quote vendor lines the release restructured,
+    # which the record would then misattribute to the daemon.
+    if gaps["hunks"]:
+        Path(f"{args.out}.dropped").write_text(
+            "".join(
+                line
+                for region in cand.resolution.regions
+                if region.verdict == MERGE_RESOLVED_RELEASE
+                for hunk in region.hunks
+                for line in hunk.local
+            ),
+            encoding="utf-8",
+        )
     sys.stdout.write(
         f"verdict={cand.resolution.verdict} needs_llm={cand.resolution.needs_llm} "
         f"base_available={cand.resolution.base_available} "
@@ -1006,6 +1033,9 @@ def main(argv: list[str]) -> int:
     p_plan.add_argument("--release", required=True, help="incoming release file")
     p_plan.add_argument("--base", help="explicit base@install file (else base store)")
     p_plan.add_argument("--out", required=True, help="candidate output path")
+    p_plan.add_argument(
+        "--diff-out", help="write the live-to-candidate unified diff to this path"
+    )
     p_plan.add_argument("--agent", help="agent name (default: target stem)")
     p_plan.add_argument("--state-dir", help="update state dir override")
     args = parser.parse_args(argv)

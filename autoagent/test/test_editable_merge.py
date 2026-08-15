@@ -290,35 +290,44 @@ class UnallowlistedFrontmatterAdvisoryTest(unittest.TestCase):
     def _body(self, frontmatter: str) -> str:
         return _doc(top=f"---\n{frontmatter}---\n\n# X\n", region="r", bottom="b")
 
+    def _candidate(self, local: str, release: str, base: str | None = None) -> str:
+        """The body the merge would WRITE — the artifact the advisory reads."""
+        return em.resolve_file("dev-x.md", local, release, base).candidate_text
+
     def test_live_only_unallowlisted_key_is_named(self) -> None:
         release = self._body(self._FM)
         local = self._body(f"{self._FM}maxTurns: 40\n")
 
         self.assertEqual(
-            em.unallowlisted_local_frontmatter_keys(local, release), ["maxTurns"]
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            ["maxTurns"],
         )
 
     def test_allowlisted_and_release_carried_keys_are_not_named(self) -> None:
         release = self._body(f"{self._FM}maxTurns: 12\n")
         local = self._body(f"{self._FM}maxTurns: 40\nmodel: m\neffort: xhigh\n")
 
-        self.assertEqual(em.unallowlisted_local_frontmatter_keys(local, release), [])
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            [],
+        )
 
     def test_multiple_dropped_keys_keep_local_order(self) -> None:
         release = self._body(self._FM)
         local = self._body(f"{self._FM}zeta: 1\nalpha: 2\n")
 
         self.assertEqual(
-            em.unallowlisted_local_frontmatter_keys(local, release), ["zeta", "alpha"]
+            em.dropped_local_frontmatter_keys(local, self._candidate(local, release)),
+            ["zeta", "alpha"],
         )
 
     def test_absent_frontmatter_names_nothing(self) -> None:
         # fail-open, mirroring _keep_local_frontmatter: no block, no divergence.
         plain = _doc(top="# plain", region="r", bottom="b")
 
-        self.assertEqual(em.unallowlisted_local_frontmatter_keys(plain, plain), [])
+        self.assertEqual(em.dropped_local_frontmatter_keys(plain, plain), [])
         self.assertEqual(
-            em.unallowlisted_local_frontmatter_keys(plain, self._body(self._FM)), []
+            em.dropped_local_frontmatter_keys(plain, self._body(self._FM)), []
         )
 
     def test_advisory_does_not_change_the_candidate(self) -> None:
@@ -329,6 +338,22 @@ class UnallowlistedFrontmatterAdvisoryTest(unittest.TestCase):
         res = em.resolve_file("dev-x.md", local, release, release)
 
         self.assertNotIn("maxTurns: 40", res.candidate_text)
+
+    def test_base_aware_key_a_release_lacks_is_named_when_equal_to_base(self) -> None:
+        # The carry pass leaves a base-aware key UNCHANGED since install to the
+        # release, so a release that ships no such key drops it outright. Derived
+        # from the release skeleton the key read as carried and the drop went
+        # unannounced; read off the candidate the merge writes, it is named.
+        base = self._body(f"{self._FM}effort: high\n")
+        local = base
+        release = self._body(self._FM)
+
+        candidate = self._candidate(local, release, base)
+
+        self.assertNotIn("effort:", candidate)
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, candidate), ["effort"]
+        )
 
     def _plan_line(self, local: str, release: str) -> str:
         with tempfile.TemporaryDirectory() as raw:
@@ -1212,10 +1237,9 @@ class ResolvedGapStatsTest(unittest.TestCase):
         self.assertEqual(stats["hunks"], 0)
         self.assertEqual(stats["dropped_lines"], 0)
         self.assertEqual(stats["added_lines"], 0)
-        # The literal keeps the field a parseable token on the plan line: the
-        # updater's up-to-next-space extractor yields garbage, not "", for an
-        # absent key.
-        self.assertEqual(stats["regions"], "none")
+        # No resolved region, no index list — the updater's extractor reads an
+        # empty value as empty now that it guards on the key being present.
+        self.assertEqual(stats["regions"], "")
 
     def test_when_plan_runs_then_the_line_carries_every_stat_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1243,13 +1267,63 @@ class ResolvedGapStatsTest(unittest.TestCase):
                     ]
                 )
 
+            # The sidecar carries the discarded local lines and NOTHING else —
+            # the recording caller's excerpt would otherwise quote vendor prose
+            # the release restructured and attribute it to the daemon.
+            dropped_text = (root / "cand.md.dropped").read_text(encoding="utf-8")
+
         self.assertEqual(rc, em.EXIT_OK)
+        self.assertEqual(dropped_text, "LOCAL one\nLOCAL two\n")
         line = buf.getvalue()
         self.assertIn(f"verdict={em.MERGE_RESOLVED_RELEASE} ", line)
         self.assertIn("resolved_hunks=1 ", line)
         self.assertIn("resolved_dropped_lines=2 ", line)
         self.assertIn("resolved_added_lines=1 ", line)
         self.assertIn("resolved_regions=0 ", line)
+
+    def test_when_diff_out_given_then_it_holds_the_libs_own_diff(self) -> None:
+        # The recording caller reads THIS file rather than shelling out to
+        # `diff -u`: one diff implementation in the loop, and the text is the one
+        # the candidate was validated against.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
+            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "base.md").write_text(self._BASE, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target",
+                        "agents/dev-android.md",
+                        "--local",
+                        str(root / "local.md"),
+                        "--release",
+                        str(root / "release.md"),
+                        "--base",
+                        str(root / "base.md"),
+                        "--out",
+                        str(root / "cand.md"),
+                        "--diff-out",
+                        str(root / "cand.diff"),
+                        "--agent",
+                        "dev-android",
+                    ]
+                )
+            written = (root / "cand.diff").read_text(encoding="utf-8")
+
+        expected = em.build_merge_candidate(
+            "agents/dev-android.md",
+            self._LOCAL,
+            self._RELEASE,
+            base_text=self._BASE,
+            skip_pre_verify=True,
+        ).diff
+
+        self.assertEqual(rc, em.EXIT_OK)
+        self.assertEqual(written, expected)
+        self.assertIn("--- a/agents/dev-android.md", written)
 
 
 class BaseAwareFrontmatterTest(unittest.TestCase):
@@ -1374,7 +1448,9 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
         self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
         self.assertIn("effort: xhigh\n", res.candidate_text)
         self.assertIn("model: claude-opus-5\n", res.candidate_text)
-        self.assertEqual(em.unallowlisted_local_frontmatter_keys(local, release), [])
+        self.assertEqual(
+            em.dropped_local_frontmatter_keys(local, res.candidate_text), []
+        )
 
     def test_without_the_gap_policy_the_pin_path_is_unreachable(self) -> None:
         # The control the union rests on: with the kill switch set, this same file
