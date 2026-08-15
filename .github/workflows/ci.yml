@@ -841,9 +841,11 @@ jobs:
           echo "BUNDLE_PATH=${bundle}" >> "${GITHUB_ENV}"
 
       # `/bin/bash install.sh`, NOT `./install.sh`: the shebang routes through
-      # `env bash` (PATH bash, 5.x on a GitHub macOS image), which would not pin
-      # the 3.2 contract. The log is REDIRECTED, never piped through tee — a pipe
-      # would hide install.sh's exit code behind the pipeline status.
+      # `env bash`, i.e. whichever bash PATH happens to resolve to on the
+      # runner, so it would not pin the 3.2 contract. The explicit interpreter
+      # does, and the version step above is its evidence. The log is REDIRECTED,
+      # never piped through tee — a pipe would hide install.sh's exit code
+      # behind the pipeline status.
       - name: Install into the sandbox via the local bundle seam
         env:
           # Both seam vars are required: install.sh skips the network only when
