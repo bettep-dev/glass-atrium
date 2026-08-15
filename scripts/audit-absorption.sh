@@ -29,6 +29,13 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# The flag set, the four exit codes and the summary-then-exit tail are shared with
+# scripts/audit-test-smells.sh; only the detection logic below is this auditor's own.
+# shellcheck source=lib/audit-cli.sh
+source "${SCRIPT_DIR}/lib/audit-cli.sh"
+# scope_blocking=1 — this auditor was promoted, so a bare scope run fails on findings.
+audit_cli_init 'audit-absorption.sh' 'paths' 1 14
+
 # Explicit list, never a glob: the scope is a judgment about unattended execution (which surfaces
 # fossilize a lost first failure), not a directory shape, so drift must be loud rather than silent.
 SCOPE_FILES=(
@@ -71,31 +78,6 @@ annotated=0
 converted=0
 unannotated=0
 quality_reject=0
-QUIET=0
-ADVISORY=0
-STRICT=0
-
-usage() {
-  printf '%s\n' \
-    'Usage: audit-absorption.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]' \
-    '' \
-    '  --path <file>  audit the given file instead of the scope list (repeatable)' \
-    '  --root <dir>   repo root used to resolve scope-relative paths' \
-    '  --quiet        print the summary line only' \
-    '  --advisory     report findings without failing (exit 0 even with findings)' \
-    '  --strict       apply the blocking exit semantics to a --path run too' \
-    '  -h, --help     this message' \
-    '' \
-    'Exit: 0 no blocking findings · 1 findings on a blocking run · 2 usage error · 3 IO/scope error'
-}
-
-report() {
-  local kind="${1}" location="${2}" detail="${3}"
-  if ((QUIET == 1)); then
-    return 0
-  fi
-  printf '%-14s %s: %s\n' "${kind}" "${location}" "${detail}"
-}
 
 # Presence check for one file: no classification, no proposed edit — only "did a human annotate".
 audit_file() {
@@ -103,22 +85,20 @@ audit_file() {
   local re_site="${RE_SITE_BASE}"
   local line="" tok_line="" note="" label="" reason="" where="" trimmed="" code=""
   local count=0 idx=0 tok_idx=-1 walk=0
-  local -a lines=()
 
   case "${abs}" in
     */lib/*.sh) re_site="${RE_SITE_BASE}|${RE_SITE_EXIT}" ;;
     *) ;;
   esac
 
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    lines[count]="${line}"
-    count=$((count + 1))
-  done <"${abs}"
+  # The slurp result lands in a fixed global pair — bash 3.2 has no nameref to write a local array.
+  audit_cli_slurp "${abs}"
+  count="${AUDIT_CLI_LINE_COUNT}"
 
   # Pass 1 — converted markers are counted from their own occurrences, not from site adjacency: a
   # conversion replaces the absorbing idiom, so its marker line carries no pattern hit to attach to.
   for ((idx = 0; idx < count; idx++)); do
-    line="${lines[idx]:-}"
+    line="${AUDIT_CLI_LINES[idx]:-}"
     if [[ "${line}" != *GA-CONVERTED* ]]; then
       continue
     fi
@@ -129,7 +109,7 @@ audit_file() {
     if [[ -z "${note//[[:space:]]/}" ]]; then
       quality_reject=$((quality_reject + 1))
       trimmed="${line#"${line%%[![:space:]]*}"}"
-      report QUALITY_REJECT "${rel}:$((idx + 1))" "empty-reason ${trimmed}"
+      audit_cli_report QUALITY_REJECT "${rel}:$((idx + 1))" "empty-reason ${trimmed}"
     else
       converted=$((converted + 1))
     fi
@@ -137,7 +117,7 @@ audit_file() {
 
   # Pass 2 — one physical line is one site regardless of how many alternatives matched it.
   for ((idx = 0; idx < count; idx++)); do
-    line="${lines[idx]:-}"
+    line="${AUDIT_CLI_LINES[idx]:-}"
     if [[ "${line}" =~ ${RE_COMMENT} ]]; then
       continue
     fi
@@ -148,16 +128,16 @@ audit_file() {
     tok_idx=-1
     if [[ "${line}" == *GA-ABSORB* || "${line}" == *GA-CONVERTED* ]]; then
       tok_idx="${idx}"
-    elif ((idx > 0)) && [[ "${lines[idx - 1]:-}" == *GA-ABSORB* || "${lines[idx - 1]:-}" == *GA-CONVERTED* ]]; then
+    elif ((idx > 0)) && [[ "${AUDIT_CLI_LINES[idx - 1]:-}" == *GA-ABSORB* || "${AUDIT_CLI_LINES[idx - 1]:-}" == *GA-CONVERTED* ]]; then
       tok_idx=$((idx - 1))
-    elif ((idx > 1)) && [[ "${line}" == *\\ && "${lines[idx - 1]:-}" == *\\ ]]; then
+    elif ((idx > 1)) && [[ "${line}" == *\\ && "${AUDIT_CLI_LINES[idx - 1]:-}" == *\\ ]]; then
       # Both the site and its predecessor are `\`-continued, so a trailing comment is illegal on
       # either — walk back to the first line of the continued statement and accept the token there.
       walk=$((idx - 1))
-      while ((walk > 0)) && [[ "${lines[walk]:-}" == *\\ ]]; do
+      while ((walk > 0)) && [[ "${AUDIT_CLI_LINES[walk]:-}" == *\\ ]]; do
         walk=$((walk - 1))
       done
-      if [[ "${lines[walk]:-}" == *GA-ABSORB* || "${lines[walk]:-}" == *GA-CONVERTED* ]]; then
+      if [[ "${AUDIT_CLI_LINES[walk]:-}" == *GA-ABSORB* || "${AUDIT_CLI_LINES[walk]:-}" == *GA-CONVERTED* ]]; then
         tok_idx="${walk}"
       fi
     fi
@@ -165,17 +145,17 @@ audit_file() {
     trimmed="${line#"${line%%[![:space:]]*}"}"
     if ((tok_idx < 0)); then
       unannotated=$((unannotated + 1))
-      report UNANNOTATED "${rel}:$((idx + 1))" "${trimmed}"
+      audit_cli_report UNANNOTATED "${rel}:$((idx + 1))" "${trimmed}"
       continue
     fi
 
-    tok_line="${lines[tok_idx]:-}"
+    tok_line="${AUDIT_CLI_LINES[tok_idx]:-}"
     if [[ "${tok_line}" != *GA-ABSORB* ]]; then
       continue # accepted by a GA-CONVERTED marker, already counted in pass 1
     fi
     if ! [[ "${tok_line}" =~ ${RE_ABSORB} ]]; then
       quality_reject=$((quality_reject + 1))
-      report QUALITY_REJECT "${rel}:$((idx + 1))" "bad-label ${trimmed}"
+      audit_cli_report QUALITY_REJECT "${rel}:$((idx + 1))" "bad-label ${trimmed}"
       continue
     fi
 
@@ -201,7 +181,7 @@ audit_file() {
 
     if [[ -n "${code}" ]]; then
       quality_reject=$((quality_reject + 1))
-      report QUALITY_REJECT "${rel}:$((idx + 1))" "${code} ${trimmed}"
+      audit_cli_report QUALITY_REJECT "${rel}:$((idx + 1))" "${code} ${trimmed}"
     else
       annotated=$((annotated + 1))
     fi
@@ -209,79 +189,13 @@ audit_file() {
 }
 
 main() {
-  local root_override="" root_dir="" rel="" abs="" target=""
-  local blocking=0
-  local -a paths=()
+  local rel="" abs="" fail_msg=""
 
-  while (($# > 0)); do
-    case "${1}" in
-      --path)
-        if [[ -z "${2:-}" ]]; then
-          printf 'ERROR: --path requires a file argument\n' >&2
-          exit 2
-        fi
-        paths+=("${2}")
-        shift 2
-        ;;
-      --root)
-        if [[ -z "${2:-}" ]]; then
-          printf 'ERROR: --root requires a directory argument\n' >&2
-          exit 2
-        fi
-        root_override="${2}"
-        shift 2
-        ;;
-      --quiet)
-        QUIET=1
-        shift
-        ;;
-      --advisory)
-        ADVISORY=1
-        shift
-        ;;
-      --strict)
-        STRICT=1
-        shift
-        ;;
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      *)
-        printf 'ERROR: unknown argument: %s\n' "${1}" >&2
-        usage >&2
-        exit 2
-        ;;
-    esac
-  done
-
-  if ((ADVISORY == 1 && STRICT == 1)); then
-    printf 'ERROR: --advisory and --strict are mutually exclusive\n' >&2
-    exit 2
-  fi
-
-  if [[ -n "${root_override}" ]]; then
-    if [[ ! -d "${root_override}" ]]; then
-      printf 'ERROR: --root directory not found: %s\n' "${root_override}" >&2
-      exit 3
-    fi
-    root_dir="${root_override}"
-  else
-    root_dir="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-  fi
-
-  if ((ADVISORY == 0)) && { ((${#paths[@]} == 0)) || ((STRICT == 1)); }; then
-    blocking=1
-  fi
+  audit_cli_parse_args "$@"
+  audit_cli_resolve_root "${SCRIPT_DIR}/.."
 
   if ((${#paths[@]} > 0)); then
-    for target in "${paths[@]}"; do
-      if [[ ! -f "${target}" || ! -r "${target}" ]]; then
-        printf 'ERROR: --path target missing or unreadable: %s\n' "${target}" >&2
-        exit 3
-      fi
-      audit_file "${target}" "${target}"
-    done
+    audit_cli_walk_paths
   else
     for rel in "${SCOPE_FILES[@]}"; do
       abs="${root_dir}/${rel}"
@@ -296,13 +210,9 @@ main() {
   printf 'annotated=%d converted=%d unannotated=%d quality_reject=%d\n' \
     "${annotated}" "${converted}" "${unannotated}" "${quality_reject}"
 
-  # The findings are already printed above — this branch only decides the exit status, so an
-  # advisory run loses no information relative to a blocking one.
-  if ((blocking == 1)) && ((unannotated + quality_reject > 0)); then
-    printf 'FAIL: %d unannotated site(s) and %d grammar reject(s) in the audited surface\n' \
-      "${unannotated}" "${quality_reject}" >&2
-    exit 1
-  fi
+  printf -v fail_msg 'FAIL: %d unannotated site(s) and %d grammar reject(s) in the audited surface' \
+    "${unannotated}" "${quality_reject}"
+  audit_cli_finish "${blocking}" "$((unannotated + quality_reject))" "${fail_msg}"
 }
 
 main "$@"

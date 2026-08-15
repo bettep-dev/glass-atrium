@@ -16,7 +16,7 @@
 # "coverage complete, auditor false-positive rate zero across the scope, and the conversion set
 # landed." A day-one blocking gate is forbidden.
 #
-# Exit codes (ported from scripts/audit-absorption.sh):
+# Exit codes (shared with scripts/audit-absorption.sh via scripts/lib/audit-cli.sh):
 #   0 = audit completed with no blocking findings (or an advisory run)
 #   1 = blocking run reporting findings
 #   2 = usage error
@@ -58,6 +58,15 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 
+# The flag set, the four exit codes and the summary-then-exit tail are shared with
+# scripts/audit-absorption.sh; only the detection logic below is this auditor's own.
+# shellcheck source=lib/audit-cli.sh
+source "${SCRIPT_DIR}/lib/audit-cli.sh"
+# scope_blocking=0 — this auditor is UNPROMOTED, so even a scope run stays advisory. Flipping this
+# argument promotes it to blocking; that is a governance decision gated on the condition named in
+# the header, never a cleanup edit.
+audit_cli_init 'audit-test-smells.sh' 'directories' 0 16
+
 # Explicit list, never a glob: the audited surface is a judgment about which corpora hold Bats
 # suites, so a new corpus must be added here loudly rather than picked up silently.
 SCOPE_DIRS=(
@@ -80,33 +89,8 @@ readonly RE_COMPARE='(^|[^[:alnum:]_])\[\[?[[:space:]]+([^][:space:]]+)[[:space:
 no_result_check=0
 tautology=0
 tests_scanned=0
-QUIET=0
-ADVISORY=0
-STRICT=0
 LINE_CODE=""
 LINE_TEXT=""
-
-usage() {
-  printf '%s\n' \
-    'Usage: audit-test-smells.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]' \
-    '' \
-    '  --path <file>  audit the given file instead of the scope list (repeatable)' \
-    '  --root <dir>   repo root used to resolve scope-relative directories' \
-    '  --quiet        print the summary line only' \
-    '  --advisory     report findings without failing (the default on every surface)' \
-    '  --strict       apply blocking exit semantics to this run' \
-    '  -h, --help     this message' \
-    '' \
-    'Exit: 0 no blocking findings · 1 findings on a strict run · 2 usage error · 3 IO/scope error'
-}
-
-report() {
-  local kind="${1}" location="${2}" detail="${3}"
-  if ((QUIET == 1)); then
-    return 0
-  fi
-  printf '%-16s %s: %s\n' "${kind}" "${location}" "${detail}"
-}
 
 # Splits one physical line into two views. LINE_CODE blanks quoted spans so a `run` inside a string
 # is not a call; LINE_TEXT keeps them so a `$status` inside a string is still an inspection. Both
@@ -172,15 +156,14 @@ audit_file() {
   local count=0 idx=0 pos=0
   local in_heredoc=0 heredoc_delim=""
   local in_test=0 test_name="" test_line=0 last_run=-1 last_run_line=0 inspected=0
-  local -a raw=() body_text=() body_code=()
+  local -a body_text=() body_code=()
 
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    raw[count]="${line}"
-    count=$((count + 1))
-  done <"${abs}"
+  # The slurp result lands in a fixed global pair — bash 3.2 has no nameref to write a local array.
+  audit_cli_slurp "${abs}"
+  count="${AUDIT_CLI_LINE_COUNT}"
 
   for ((idx = 0; idx < count; idx++)); do
-    line="${raw[idx]:-}"
+    line="${AUDIT_CLI_LINES[idx]:-}"
 
     # A heredoc body is data, not code: it feeds neither signal, and a column-0 `}` inside one must
     # not be mistaken for the end of the enclosing test body.
@@ -223,7 +206,7 @@ audit_file() {
         done
         if ((inspected == 0)); then
           no_result_check=$((no_result_check + 1))
-          report NO_RESULT_CHECK "${rel}:${last_run_line}" "@test ${test_name} — run result never inspected"
+          audit_cli_report NO_RESULT_CHECK "${rel}:${last_run_line}" "@test ${test_name} — run result never inspected"
         fi
       fi
     else
@@ -243,7 +226,7 @@ audit_file() {
       if [[ "${trimmed}" == '['* ]] && [[ "${text}" =~ ${RE_COMPARE} ]] && [[ "${BASH_REMATCH[2]}" == "${BASH_REMATCH[4]}" ]]; then
         tautology=$((tautology + 1))
         detail="${text#"${text%%[![:space:]]*}"}"
-        report TAUTOLOGY "${rel}:$((idx + 1))" "@test ${test_name} — ${detail}"
+        audit_cli_report TAUTOLOGY "${rel}:$((idx + 1))" "@test ${test_name} — ${detail}"
       fi
     fi
 
@@ -257,77 +240,19 @@ audit_file() {
   done
 
   if ((in_test == 1)); then
-    report UNTERMINATED "${rel}:${test_line}" "@test ${test_name} — body never closed at column 0"
+    audit_cli_report UNTERMINATED "${rel}:${test_line}" "@test ${test_name} — body never closed at column 0"
   fi
 }
 
 main() {
-  local root_dir="" target="" rel="" abs="" dir=""
-  local blocking=0
-  local -a paths=() found=()
+  local target="" rel="" abs="" dir="" fail_msg=""
+  local -a found=()
 
-  while (($# > 0)); do
-    case "${1}" in
-      --path)
-        if (($# < 2)); then
-          printf 'ERROR: --path requires a value\n' >&2
-          exit 2
-        fi
-        paths+=("${2}")
-        shift 2
-        ;;
-      --root)
-        if (($# < 2)); then
-          printf 'ERROR: --root requires a value\n' >&2
-          exit 2
-        fi
-        root_dir="${2}"
-        shift 2
-        ;;
-      --quiet)
-        QUIET=1
-        shift
-        ;;
-      --advisory)
-        ADVISORY=1
-        shift
-        ;;
-      --strict)
-        STRICT=1
-        shift
-        ;;
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      *)
-        printf 'ERROR: unknown argument: %s\n' "${1}" >&2
-        usage >&2
-        exit 2
-        ;;
-    esac
-  done
-
-  if ((ADVISORY == 1)) && ((STRICT == 1)); then
-    printf 'ERROR: --advisory and --strict are mutually exclusive\n' >&2
-    exit 2
-  fi
-  if ((ADVISORY == 0)) && ((STRICT == 1)); then
-    blocking=1
-  fi
-
-  if [[ -z "${root_dir}" ]]; then
-    root_dir="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-  fi
+  audit_cli_parse_args "$@"
+  audit_cli_resolve_root "${SCRIPT_DIR}/.."
 
   if ((${#paths[@]} > 0)); then
-    for target in "${paths[@]}"; do
-      if [[ ! -f "${target}" || ! -r "${target}" ]]; then
-        printf 'ERROR: --path target missing or unreadable: %s\n' "${target}" >&2
-        exit 3
-      fi
-      audit_file "${target}" "${target}"
-    done
+    audit_cli_walk_paths
   else
     for dir in "${SCOPE_DIRS[@]}"; do
       abs="${root_dir}/${dir}"
@@ -350,13 +275,9 @@ main() {
   printf 'no_result_check=%d tautology=%d tests_scanned=%d\n' \
     "${no_result_check}" "${tautology}" "${tests_scanned}"
 
-  # The findings are already printed above — this branch only decides the exit status, so an
-  # advisory run loses no information relative to a blocking one.
-  if ((blocking == 1)) && ((no_result_check + tautology > 0)); then
-    printf 'FAIL: %d uninspected run result(s) and %d tautological assertion(s) in the audited surface\n' \
-      "${no_result_check}" "${tautology}" >&2
-    exit 1
-  fi
+  printf -v fail_msg 'FAIL: %d uninspected run result(s) and %d tautological assertion(s) in the audited surface' \
+    "${no_result_check}" "${tautology}"
+  audit_cli_finish "${blocking}" "$((no_result_check + tautology))" "${fail_msg}"
 }
 
 main "$@"
