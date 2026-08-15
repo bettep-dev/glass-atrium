@@ -354,13 +354,27 @@ for line in source_lines:
         break
 
 landed = env("GA_REC_LANDED") == "1"
+# The gap resolution itself is deterministic, but the FILE it lands in may carry
+# a second, both-changed region whose verdict does require the Haiku
+# improvement-verify gate. needs_llm is that file-level fact, taken from the plan
+# line rather than re-derived: on a mixed file a model DID run and an outage
+# would have rolled the landing back, so the flat "no model call" claim would
+# tell an auditor the landing was deterministic when it was model-gated.
+model_gated = env("GA_REC_NEEDS_LLM") == "True"
+screening = (
+    "the other region(s) of this file required the improvement-verify gate, "
+    "which ran and passed"
+    if model_gated
+    else "no model call and no operator judgment"
+)
 rationale = (
     "conflicting-gap resolution took the release side "
-    "(deterministic policy, no model call and no operator judgment): "
+    "(deterministic policy, {screening}): "
     "{hunks} gap(s) in EDITABLE region(s) {regions}; "
     "dropped {dropped} daemon-authored line(s), added {added} release line(s); "
     "verdict=merge-resolved-release, outcome={outcome}."
 ).format(
+    screening=screening,
     hunks=env("GA_REC_HUNKS", "0"),
     regions=env("GA_REC_REGIONS", "none"),
     dropped=env("GA_REC_DROPPED", "0"),
@@ -388,11 +402,15 @@ print(json.dumps({
         # must carry the daemon body label that maps to the apply enum.
         "classification": "body-auto" if landed else "reject",
         "rationale": rationale,
-        # No model runs on this path (the improvement-verify gate was removed
-        # from it deliberately), so no ok*/skipped:* token the daemon composes
-        # is true here. A skipped: form is also what keeps the row out of every
-        # apply-eligibility gate, which reads a LIKE ok% prefix.
-        "haiku_status": "skipped:no-model-call",
+        # The gap resolution runs no model, so no ok*/skipped:* token the daemon
+        # composes is true for a wholly-resolved file. A mixed file is the other
+        # case: its clean region DID run the improvement-verify gate, so
+        # skipped:no-model-call would be a false provenance claim. Neither token
+        # carries the ok prefix — an updater row must never satisfy the apply
+        # -eligibility gate, which reads a LIKE ok% prefix.
+        "haiku_status": (
+            "verified:improvement-gate" if model_gated else "skipped:no-model-call"
+        ),
         # The legacy llm tier folds into the safety bucket in both the tier
         # count fold and the query builder, so an llm-tiered row would inflate
         # the operator awaiting-decision count for a row awaiting nothing.
@@ -410,9 +428,11 @@ print(json.dumps({
 
 # Record ONE self-improvement-history row per body whose conflicting gaps
 # resolved to the release side. This is the only trace that daemon-authored
-# content was discarded: the path takes the release side with no model call and
-# no per-file operator judgment, so the recorded row IS the accountability
-# surface the human reviews afterwards.
+# content was discarded: the path takes the release side with no per-file operator
+# judgment, so the recorded row IS the accountability surface the human reviews
+# afterwards. The gap resolution itself calls no model — but a file whose OTHER
+# regions are both-changed still runs the improvement-verify gate, so the row's
+# provenance fields follow the plan line's needs_llm rather than the verdict.
 #
 # This is the SINGLE sanctioned exception to the file-header core.autoagent_proposals
 # boundary, and it is deliberately NOT headless-gated: the caller chain (merge →
@@ -427,13 +447,14 @@ print(json.dumps({
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
 # $1 = install root · $2 = resolved-record TSV (base, target, release, hunks,
-# dropped, added, regions, diff path) · $3 = per-run outcome ledger path, read for
+# dropped, added, regions, diff path, dropped-text sidecar, needs_llm) · $3 =
+# per-run outcome ledger path, read for
 # the landed/not-landed split. The ledger travels as a PARAMETER rather than through
 # the file-scope global so the landed verdict is a function of the arguments alone.
 update_emit_resolved_records() {
   local root="$1" tsv="$2" ledger="$3"
   [[ -s "${tsv}" ]] || return 0
-  local helper landed base target release hunks dropped added regions diff_file dropped_text
+  local helper landed base target release hunks dropped added regions diff_file dropped_text needs_llm
   local ledger_lines="" cycle_date
   helper="${ATRIUM_UPDATE_PG_HELPER:-${root}/scripts/_pg_dual_write_daemon.py}"
   if [[ ! -f "${helper}" ]]; then
@@ -452,7 +473,10 @@ update_emit_resolved_records() {
     ledger_lines=$'\n'"${ledger_lines}"$'\n'
   fi
   cycle_date="$(date +%Y-%m-%d)" || cycle_date=""
-  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text; do
+  # needs_llm rides LAST because tab is IFS whitespace: an empty field collapses
+  # and shifts every later column, and this one is the only always-non-empty
+  # addition available (the merge lib prints True/False on every plan line).
+  while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text needs_llm; do
     [[ -n "${base}" ]] || continue
     # Landed == the commit callback appended this basename to the per-run outcome
     # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a
@@ -468,7 +492,7 @@ update_emit_resolved_records() {
       GA_REC_AGENT="${base%.md}" GA_REC_SOURCE="${release}" \
       GA_REC_HUNKS="${hunks}" GA_REC_DROPPED="${dropped}" GA_REC_ADDED="${added}" \
       GA_REC_REGIONS="${regions}" GA_REC_DIFF="${diff_file}" GA_REC_LANDED="${landed}" \
-      GA_REC_DROPPED_TEXT="${dropped_text}" \
+      GA_REC_DROPPED_TEXT="${dropped_text}" GA_REC_NEEDS_LLM="${needs_llm}" \
       python3 -c "${_UPDATE_PROPOSAL_PY}" | python3 "${helper}" >/dev/null 2>&1; then
       update_log "  resolved-gap discard recorded → core.autoagent_proposals (${target}, landed=${landed})"
     else
@@ -1363,14 +1387,15 @@ update_merge_agent_editable_regions() {
     # read. "Normalizing" this to an absolute path would silently feed the daemon's
     # back-off state.
     if [[ "${verdict}" == 'merge-resolved-release' ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${base}" "agents/${base}" "${file}" \
         "$(update_plan_field resolved_hunks "${plan_line}")" \
         "$(update_plan_field resolved_dropped_lines "${plan_line}")" \
         "$(update_plan_field resolved_added_lines "${plan_line}")" \
         "$(update_plan_field resolved_regions "${plan_line}")" \
         "${merge_dir}/${base}.resolved.diff" \
-        "${candidate}.dropped" >>"${resolved_file}"
+        "${candidate}.dropped" \
+        "$(update_plan_field needs_llm "${plan_line}")" >>"${resolved_file}"
     fi
 
     printf '%s\t%s\t%s\t%s\t%s\n' \

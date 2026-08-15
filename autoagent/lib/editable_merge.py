@@ -116,6 +116,11 @@ NO_OP = "no-op"  # candidate identical to current local file
 # exact behavior the policy exists to replace. The property that justified the
 # choice only holds if the landing does not depend on a model being reachable.
 #
+# That independence is per-REGION, not per-file: a file carrying one resolved gap
+# beside a both-changed region still reports needs_llm=True and IS model-gated as
+# a whole. The recorded provenance therefore keys on needs_llm, never on this
+# verdict — see update_emit_resolved_records.
+#
 # The cost is real, accepted, and NOT backstopped by the confirm gate:
 # gate_confirm_changes resolves ATRIUM_UPDATE_CONFIRM_ANSWER BEFORE /dev/tty, so
 # on the unattended path — every deploy on this host today — the confirm is an
