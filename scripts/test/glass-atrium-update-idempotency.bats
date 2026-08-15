@@ -8,7 +8,15 @@
 #   * the end-to-end second run (no markers, no content change);
 #   * the capture ORDERING that keeps the base advancing even when the (fatal)
 #     vendor sweep dies right after a landed merge;
-#   * a conflict verdict routing to the ceremony instead of landing markers.
+#   * a conflicting region with the gap-policy kill switch OFF: it declines
+#     durably and never lands markers.
+#
+# The default-policy counterpart — the same input resolving to the release side
+# and LANDING — is deliberately NOT pinned here. merge-resolved-release sits in
+# editable_merge._LLM_REQUIRED, so the in-transaction verify gates the candidate
+# on a live Haiku call (MergeCandidate._haiku_pass) whose result is not
+# reproducible; run_pre_verify is fail-safe, so an unreachable model rolls the
+# landed body back to local. A test over that path is a coin flip, not a pin.
 #
 # Split out of glass-atrium-update.bats rather than appended to it: CI runs one
 # GNU parallel job per *.bats file under a 240s per-file timeout, and that file
@@ -20,8 +28,9 @@
 #
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
 # ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected into it; the
-# download is bypassed via ATRIUM_UPDATE_SRC_DIR and the confirm injected via
-# ATRIUM_UPDATE_CONFIRM_ANSWER, so /dev/tty and gh are never touched.
+# download is bypassed via ATRIUM_UPDATE_SRC_DIR, the confirm injected via
+# ATRIUM_UPDATE_CONFIRM_ANSWER and the Haiku pre-verify gate stubbed via
+# AUTOAGENT_CLAUDE_BIN, so /dev/tty, gh and the claude CLI are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -39,6 +48,23 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # reports / pause / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  seed_pre_verify_stub
+}
+
+# A resolved conflicting gap is LLM-required (MERGE_RESOLVED_RELEASE sits in
+# editable_merge._LLM_REQUIRED), so its landing runs the daemon's Haiku
+# improvement-verify gate — and CLAUDE_BIN defaults to the literal `claude`,
+# which on a developer box is the operator's REAL billed CLI. Unstubbed, the
+# landing assertion would ride a live model verdict: billed per suite run,
+# networked, and green or red by the weather. The stub emits the strict grid
+# run_pre_verify parses (4 axes + the explicit VERDICT the dual gate demands),
+# so the gate PASSES deterministically and the test measures the resolver.
+seed_pre_verify_stub() {
+  cat >"${WORK}/pre-verify-pass.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'C1: PASS\nC2: PASS\nC3: PASS\nC4: PASS\nVERDICT: verified\nRATIONALE: hermetic stub\n'
+STUB
+  chmod +x "${WORK}/pre-verify-pass.sh"
 }
 
 teardown() {
@@ -115,6 +141,8 @@ run_update() {
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
+    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${ATRIUM_UPDATE_MERGE_RESOLVE_GAPS:-}" \
+    AUTOAGENT_CLAUDE_BIN="${WORK}/pre-verify-pass.sh" \
     bash "${SKILL}"
 }
 
@@ -178,7 +206,14 @@ run_update() {
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
 }
 
-@test "a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {
+@test "with the gap policy OFF a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {
+  # The kill switch is what this test now buys: under the default policy this same
+  # input resolves to the release side and lands (the sibling test below), so the
+  # decline path is reachable only with the switch set. It still has to WORK when
+  # it is — a rollback of the gap policy must land on a decline that behaves, and
+  # an untested switch is a rollback nobody can take.
+  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
+  export ATRIUM_UPDATE_MERGE_RESOLVE_GAPS
   # Overlapping both-changed region: the merged candidate carries conflict markers,
   # which in a live agent body is corruption. It must be reported + skipped, with
   # the local body byte-identical and its base entry left at the prior anchor.

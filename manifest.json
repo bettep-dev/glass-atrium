@@ -1270,7 +1270,7 @@
     "scripts/test/glass-atrium-dispatch.bats": "9999a2285cfcc954bf6361938d0abf3c31cc6efb11e2303a1cee53ad71ce2ecf",
     "scripts/test/glass-atrium-install.bats": "c00dbd3963b405d0e052b566c676616795517ba37ba5dba63edc673bcb0f03f6",
     "scripts/test/glass-atrium-update-e2e.bats": "5fa14c6efb03ebd9a2eb92868475141e5a2699e24a4e0eceed7dc3c722d96b7f",
-    "scripts/test/glass-atrium-update-idempotency.bats": "4b08c927de51d9cb5bbe27fe96ca30009bacd9db667139e7107a07b8203713f5",
+    "scripts/test/glass-atrium-update-idempotency.bats": "8de53593b6551a935a556566449dd88cc0b04d83669d616a21b89ea49cc32a18",
     "scripts/test/glass-atrium-update.bats": "3048a83da3b08b6c5f765129e8457a29a1a238a47d91640f81ddf672f3eb6d93",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
     "scripts/test/manifest-mode-integrity.bats": "8d1daa0e5f8f08c0656209c8f28f67c71fc724e8c8739eaafe3512f6c2e7eacd",
