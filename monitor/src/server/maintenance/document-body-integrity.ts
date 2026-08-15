@@ -133,16 +133,22 @@ function buildAuditResult(
   checked: number,
   issues: DocumentBodyIssue[],
 ): DocumentBodyAuditResult {
-  const ordered = [...issues].sort((a, b) => b.id - a.id);
-  const countOf = (condition: DocumentBodyCondition): number =>
-    ordered.filter((issue) => issue.condition === condition).length;
+  // Sorted in place: the caller builds `issues` locally and never reads it after this call,
+  // so the defensive copy bought nothing. One tally pass replaces three filter passes — free on
+  // a healthy (0-issue) corpus, and the saving lands exactly when many rows diverge.
+  issues.sort((a, b) => b.id - a.id);
+  // Record keyed by the union: adding a condition breaks this initializer at compile time.
+  const counts: Record<DocumentBodyCondition, number> = { mismatch: 0, missing: 0, unreadable: 0 };
+  for (const issue of issues) {
+    counts[issue.condition] += 1;
+  }
   return {
     checked,
-    intact: checked - ordered.length,
-    mismatch: countOf("mismatch"),
-    missing: countOf("missing"),
-    unreadable: countOf("unreadable"),
-    issues: ordered.slice(0, ISSUE_SAMPLE_LIMIT),
-    truncated: ordered.length > ISSUE_SAMPLE_LIMIT,
+    intact: checked - issues.length,
+    mismatch: counts.mismatch,
+    missing: counts.missing,
+    unreadable: counts.unreadable,
+    issues: issues.slice(0, ISSUE_SAMPLE_LIMIT),
+    truncated: issues.length > ISSUE_SAMPLE_LIMIT,
   };
 }

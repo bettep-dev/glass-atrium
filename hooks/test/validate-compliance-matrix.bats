@@ -11,13 +11,16 @@
 #          NOTHING — the positive-shape predicate drops them by construction.
 #     AC4  an unparseable structure (either side) emits an advisory note and
 #          exits 0 — the load-bearing FAIL-OPEN contract, tested on the legend
-#          side, the registry side, and a malformed-JSON registry.
+#          side, the registry side, and a malformed-JSON registry. An ABSENT
+#          matrix names the file as absent rather than as merely unreadable.
 #     AC5  registry and legend in agreement → exit 0 with no report.
 #     AC6  a CONFIRMED Layer B fault survives a clean Layer C at ALL THREE exit
 #          points (merge, never assign), and a Layer C mismatch survives a clean
 #          Layer B.
 #     AC7  the two pre-existing layers behave unchanged: Layer A's OK / drift
-#          banners, Layer B's B1 detection and its own fail-open note.
+#          banners, Layer B's B1 detection and its own fail-open note. An absent
+#          matrix short-circuits ahead of both enforcement layers, so the guard
+#          emits BOTH layers' advisories itself — still exit 0.
 #
 #   Isolation follows the corpus convention: per-test tmpdir fixtures driven
 #   through the hook's own env-overridable constants (COMPLIANCE_MATRIX_FILE /
@@ -95,6 +98,16 @@ run_hook() {
     COMPLIANCE_RULES_DIR="${RULES_DIR}" \
     COMPLIANCE_SCOPED_DIR="${SCOPED_DIR}" \
     "${HOOK_SH}" "$@" </dev/null 2>&1
+}
+
+# STDERR-only variant. The fail-open advisories are a stderr-channel contract, so
+# the cases that pin them capture stderr alone (2>&1 first, then stdout to null).
+run_hook_stderr() {
+  COMPLIANCE_MATRIX_FILE="${MATRIX}" \
+    COMPLIANCE_REGISTRY_FILE="${REGISTRY}" \
+    COMPLIANCE_RULES_DIR="${RULES_DIR}" \
+    COMPLIANCE_SCOPED_DIR="${SCOPED_DIR}" \
+    "${HOOK_SH}" "$@" </dev/null 2>&1 1>/dev/null
 }
 
 # ── AC1 / AC2 — mismatch is named, exit 2 ──────────────────────────────────────
@@ -223,6 +236,20 @@ EOF
   }
   [[ "${output}" == *"registry roster unparseable"* ]] || {
     echo "advisory note missing: ${output}"
+    return 1
+  }
+}
+
+@test "AC4 an absent matrix in --roster-check is named absent, not merely unreadable" {
+  MATRIX="${BATS_TEST_TMPDIR}/absent-matrix.md"
+
+  run run_hook --roster-check
+  [[ "${status}" -eq 0 ]] || {
+    echo "fail-open broken: exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"[compliance-matrix-roster] fail-open: matrix file absent"* ]] || {
+    echo "absence advisory missing: ${output}"
     return 1
   }
 }
@@ -392,6 +419,50 @@ break_layer_b() {
   }
   [[ "${output}" == *"matrix file unreadable"* ]] || {
     echo "guard note missing: ${output}"
+    return 1
+  }
+}
+
+@test "AC7 an absent matrix emits BOTH enforcement layers' advisories on stderr" {
+  # The guard short-circuits ahead of Layer B and Layer C, so neither reaches its
+  # own fail-open note — the operator signal exists only if the guard speaks for
+  # both. Exit stays 0: this pins the ADVISORY, never a new blocking path.
+  MATRIX="${BATS_TEST_TMPDIR}/absent-matrix.md"
+
+  run run_hook_stderr
+  [[ "${status}" -eq 0 ]] || {
+    echo "fail-open broken: exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"[compliance-matrix-consistency] fail-open: matrix file absent"* ]] || {
+    echo "Layer B absence advisory missing from stderr: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"[compliance-matrix-roster] fail-open: matrix file absent"* ]] || {
+    echo "Layer C absence advisory missing from stderr: ${output}"
+    return 1
+  }
+}
+
+@test "AC7 a present-but-unreadable matrix is named unreadable, not absent" {
+  # The two are different operator situations (vanished file vs permission
+  # fault); the advisory distinguishes them.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    skip "running as root: any file mode is readable"
+  fi
+  chmod 000 "${MATRIX}"
+
+  run run_hook_stderr
+  [[ "${status}" -eq 0 ]] || {
+    echo "fail-open broken: exit ${status}: ${output}"
+    return 1
+  }
+  [[ "${output}" == *"matrix file unreadable"* ]] || {
+    echo "unreadable advisory missing: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"matrix file absent"* ]] || {
+    echo "a present file was reported absent: ${output}"
     return 1
   }
 }

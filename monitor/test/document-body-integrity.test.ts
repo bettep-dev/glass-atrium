@@ -14,7 +14,11 @@ import { join } from "node:path";
 import Fastify from "fastify";
 
 import { sanitizeHtmlBody } from "../src/server/clauded-docs/sanitize.js";
-import { registerHealthDetailRoutes } from "../src/server/routes/health-detail.js";
+import {
+  MAX_DOC_INTEGRITY_LIMIT,
+  registerHealthDetailRoutes,
+  resolveDocIntegrityLimit,
+} from "../src/server/routes/health-detail.js";
 import { sha256Hex } from "../src/server/clauded-docs/storage.js";
 import {
   auditBodyRows,
@@ -154,4 +158,22 @@ test("route: 범위 밖 limit 은 DB 접근 전에 400 invalid_param", async () 
   assert.strictEqual(res.statusCode, 400);
   assert.deepStrictEqual(res.json(), { error: "invalid_param", param: "limit" });
   await app.close();
+});
+
+// limit 기본값 반전 고정 — 무제한 전량 스윕이 다시 기본이 되는 회귀를 막는다.
+test("route: limit 미지정/빈 값은 newest-N 로 제한 (전량 스윕 아님)", () => {
+  assert.strictEqual(resolveDocIntegrityLimit(undefined), MAX_DOC_INTEGRITY_LIMIT);
+  assert.strictEqual(resolveDocIntegrityLimit(""), MAX_DOC_INTEGRITY_LIMIT);
+});
+
+test("route: 전량 스윕(null)은 limit=all 로만 옵트인", () => {
+  assert.strictEqual(resolveDocIntegrityLimit("all"), null);
+});
+
+test("route: 명시 숫자 limit 은 기존 클램프 동작 그대로", () => {
+  assert.strictEqual(resolveDocIntegrityLimit("25"), 25);
+  assert.strictEqual(resolveDocIntegrityLimit(String(MAX_DOC_INTEGRITY_LIMIT)), MAX_DOC_INTEGRITY_LIMIT);
+  assert.strictEqual(resolveDocIntegrityLimit(String(MAX_DOC_INTEGRITY_LIMIT + 1)), "invalid");
+  assert.strictEqual(resolveDocIntegrityLimit("0"), "invalid");
+  assert.strictEqual(resolveDocIntegrityLimit("abc"), "invalid");
 });

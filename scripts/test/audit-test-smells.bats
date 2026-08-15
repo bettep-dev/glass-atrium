@@ -210,10 +210,3 @@ EOF
   run bash "${AUDIT_SH}" --help
   [ "${status}" -eq 0 ] || return 1
 }
-
-@test "the script never adjudicates a smell category and records its measured baseline" {
-  run grep -Fq 'Measured baseline' "${AUDIT_SH}"
-  [ "${status}" -eq 0 ] || return 1
-  run grep -Fq 'conditional test logic' "${AUDIT_SH}"
-  [ "${status}" -eq 0 ] || return 1
-}

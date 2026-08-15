@@ -43,14 +43,17 @@ setup() {
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
 }
 
-# Drive the hook with an Agent envelope wrapping $1 (subagent_type) + $2 (prompt).
+# The ONE Agent-envelope builder ($1=subagent_type $2=prompt). jq -n --arg escapes both fields, so
+# arbitrary quotes and newlines in a prompt are safe. Both wrappers here feed it to the hook and
+# differ only in the env prefix.
+mk_payload() {
+  jq -n --arg t "${1}" --arg p "${2}" --arg sid "sess-t6-001" \
+    '{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'
+}
+
 run_hook() {
-  run bash -c '
-    stype="$1"; prompt="$2"; hook="$3"; data="$4"
-    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-t6-001" \
-      '\''{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
-    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" "${hook}"
-  ' _ "${1}" "${2}" "${HOOK_SH}" "${DATA_DIR}"
+  run bash -c 'printf "%s" "$1" | HOOK_DATA_DIR="$2" "$3"' \
+    _ "$(mk_payload "${1}" "${2}")" "${DATA_DIR}" "${HOOK_SH}"
 }
 
 # Pre-seed a qa-code-reviewer line into the session marker so reviewer_present=true.
@@ -83,15 +86,12 @@ assert_empty() {
   }
 }
 
-# DSH-D06 variant: same envelope with the block firing-trace sink pinned to $2 (default ${SINK}).
+# DSH-D06 variant: the standard plan-ref prompt with the block firing-trace sink pinned to $2
+# (default ${SINK}).
 run_hook_sink() {
-  run bash -c '
-    stype="$1"; prompt="$2"; hook="$3"; data="$4"; sink="$5"
-    payload="$(jq -n --arg t "${stype}" --arg p "${prompt}" --arg sid "sess-t6-001" \
-      '\''{tool_name:"Agent",session_id:$sid,tool_input:{subagent_type:$t,prompt:$p}}'\'')"
-    printf "%s" "${payload}" | HOOK_DATA_DIR="${data}" VGATE_FIRED_LOG="${sink}" "${hook}"
-  ' _ "${1}" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl" \
-    "${HOOK_SH}" "${DATA_DIR}" "${2:-${SINK}}"
+  run bash -c 'printf "%s" "$1" | HOOK_DATA_DIR="$2" VGATE_FIRED_LOG="$4" "$3"' \
+    _ "$(mk_payload "${1}" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl")" \
+    "${DATA_DIR}" "${HOOK_SH}" "${2:-${SINK}}"
 }
 
 # --- FAIL-AT-HEAD: reviewer-miss on a plan-ref DEV spawn now BLOCKS (exit 2) ---

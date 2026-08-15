@@ -65,6 +65,7 @@ Applies to all DEV agents.
 
 - **Writing or modifying code without tests is FORBIDDEN** — no exceptions
 - **Red → Green → Refactor**: (1) write a failing test (2) write minimal code to pass (3) refactor. Violating this order is FORBIDDEN
+- **Deliberate-break confirmation** — the ONE bounded exception to that order: a test written after its implementation is admissible when the implementation was deliberately broken, the test OBSERVED to fail against the break, and the break reverted. The observed failure is what the Red step buys, so producing it late produces equivalent evidence; skipping it leaves an unproven test and the delete-and-rewrite rule below applies unchanged. How that evidence is reported is not restated here — SoT is `core-outcome-record.md` → Field Input Guide → `metric_pass`
 - Bug fixes → a failing test MUST be written, executed, and confirmed BEFORE modifying code
 
 ## Rationalization Rejection (Testing)

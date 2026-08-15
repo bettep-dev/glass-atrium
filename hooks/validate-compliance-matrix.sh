@@ -40,6 +40,9 @@
 #   this contract: an EMPTY roster extraction (either side), an unreadable registry
 #   or an absent jq is advisory + exit 0 — never "every registered agent is
 #   missing", which is what keeps the fail-open contract meaningful.
+#   An ABSENT/unreadable matrix file short-circuits before either enforcement
+#   layer runs, so the guard emits BOTH layers' advisories on its behalf: fail-open
+#   is silent about nothing, or an operator never learns validation stopped.
 #
 # Trigger (REGISTERED — settings.json SessionStart array): fires once per session
 #   start. SessionStart has no block channel; exit 2 here is an audit-grade signal
@@ -109,6 +112,18 @@ readonly FOOTNOTE_MARKERS=$'\xe2\x80\xa0\n\xe2\x80\xa1\n\xc2\xa7\n\xc2\xb6'
 # side too, so a future non-agent registry key cannot enter the comparison.
 readonly AGENT_NAME_RE='^glass-atrium-[a-z0-9-]+$'
 
+# Which fail-open situation the matrix path is in. A VANISHED file (never
+# installed, deleted, wrong path) and a present-but-unreadable one (permission
+# or type fault) are different operator situations, so every fail-open advisory
+# names which of the two it hit rather than collapsing both into "unreadable".
+matrix_input_state() {
+  if [[ -e "${MATRIX_FILE}" ]]; then
+    printf 'unreadable'
+  else
+    printf 'absent'
+  fi
+}
+
 # Registered agent names — the `agents` object's keys. Always exits 0: an absent
 # jq, an unreadable file or a zero-match filter yields an EMPTY roster, which the
 # caller treats as unparseable (fail open), never as "all agents are missing".
@@ -141,9 +156,11 @@ legend_agent_names() {
 
 run_layer_c() {
   # Fail-OPEN input guards.
+  local matrix_state
   if [[ ! -r "${MATRIX_FILE}" ]]; then
-    printf '[compliance-matrix-roster] fail-open: matrix unreadable (%s) — advisory only\n' \
-      "${MATRIX_FILE}" >&2
+    matrix_state="$(matrix_input_state)"
+    printf '[compliance-matrix-roster] fail-open: matrix file %s (%s) — advisory only\n' \
+      "${matrix_state}" "${MATRIX_FILE}" >&2
     return 0
   fi
   if [[ ! -r "${REGISTRY_FILE}" ]]; then
@@ -210,8 +227,17 @@ if [[ ! -t 0 ]]; then
 fi
 
 # Guards (fail-open: missing inputs never fail the session).
+# This short-circuit runs BEFORE Layer B and Layer C, so neither reaches its own
+# fail-open note — speak for both here in the same voice. A vanished matrix means
+# the two ENFORCEMENT layers stopped validating; nothing blocks (exit stays 0),
+# but that must not be silent on an unwatched SessionStart surface.
 if [[ ! -r "${MATRIX_FILE}" ]]; then
+  matrix_state="$(matrix_input_state)"
   printf '[compliance-matrix-drift] skipped: matrix file unreadable (%s)\n' "${MATRIX_FILE}"
+  printf '[compliance-matrix-consistency] fail-open: matrix file %s (%s) — advisory only\n' \
+    "${matrix_state}" "${MATRIX_FILE}" >&2
+  printf '[compliance-matrix-roster] fail-open: matrix file %s (%s) — advisory only\n' \
+    "${matrix_state}" "${MATRIX_FILE}" >&2
   exit 0
 fi
 
