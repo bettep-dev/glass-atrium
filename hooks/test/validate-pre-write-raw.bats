@@ -198,6 +198,50 @@ conforming_doc() {
   [[ -z "${output}" ]] || { echo "expected silence on non-raw path: ${output}" >&2; return 1; }
 }
 
+# =================== S1 — physical containment of the trigger (inbound directions) ==============
+# The two literal trigger arms spell one path apiece: a write reaching the same store by a dot-dot
+# traversal or through a symlink pointing INTO raw/ matched neither and landed envelope-less. Both
+# directions are pinned here — the guard's own suite previously could not fail for them.
+
+@test "S1: dot-dot traversal into raw/ is triggered → envelope-less write blocked (SCOPE-006)" {
+  mkdir -p "${WIKI_ROOT}/raw" "${WIKI_ROOT}/notes"
+  run bash "${RAW_HOOK}" <<<"$(write_payload_at "${WIKI_ROOT}/notes/../raw/b.md" "$(raw_doc 'no envelope')")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-006"* ]] || { echo "expected SCOPE-006: ${output}" >&2; return 1; }
+}
+
+# Inbound link: containment brings the write into scope, and V8 (whose remaining role is the
+# misconfiguration signal) is what refuses it — pre-fix this path exited 0 before V8 ever ran.
+@test "S1: symlink from outside pointing INTO raw/ is triggered → blocked (SCOPE-008)" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  ln -s "${WIKI_ROOT}/raw" "${BATS_TEST_TMPDIR}/link-in"
+  run bash "${RAW_HOOK}" <<<"$(write_payload_at "${BATS_TEST_TMPDIR}/link-in/c.md" "$(raw_doc 'no envelope')")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-008"* ]] || { echo "expected SCOPE-008: ${output}" >&2; return 1; }
+}
+
+# Symmetry pin: the store root is canonicalized too. A /tmp-rooted store (macOS /tmp → /private/tmp)
+# would false-negative every physical comparison if only the destination side were resolved.
+@test "S1: /tmp-rooted store still triggers through the inbound link (both sides canonicalized)" {
+  local root
+  root="$(mktemp -d /tmp/rawstore.XXXXXX)"
+  mkdir -p "${root}/wiki/raw"
+  ln -s "${root}/wiki/raw" "${root}/link-in"
+  WIKI_ROOT="${root}/wiki" run bash "${RAW_HOOK}" \
+    <<<"$(write_payload_at "${root}/link-in/c.md" "$(raw_doc 'no envelope')")"
+  rm -rf "${root}"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-008"* ]] || { echo "expected SCOPE-008: ${output}" >&2; return 1; }
+}
+
+# Containment is a trigger widening, not a blanket block: a conforming labelled write to a real
+# path inside the store still lands, dot-dot spelling included.
+@test "S1: labelled write via dot-dot traversal → permitted, exit 0" {
+  mkdir -p "${WIKI_ROOT}/raw" "${WIKI_ROOT}/notes"
+  run bash "${RAW_HOOK}" <<<"$(write_payload_at "${WIKI_ROOT}/notes/../raw/ok.md" "$(conforming_doc)")"
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0, got ${status}: ${output}" >&2; return 1; }
+}
+
 # The block names the correction path, and the context carries both inspected arms.
 @test "V8: SCOPE-008 block names the real-path correction and reports the parent in context" {
   mkdir -p "${WIKI_ROOT}/raw"

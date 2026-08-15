@@ -25,7 +25,8 @@
 # check→write window is never closed and no atomicity is claimed.
 # Residual limit: only the destination and its immediate parent are tested — a symlinked HIGHER
 # ancestor (the wiki root, say) stays undetected; this is a state assertion, not a path-resolution
-# pass.
+# pass. Since the trigger itself now resolves physically (see canon_path), V8's remaining value is
+# the MISCONFIGURATION signal, not the redirect defence — containment closes the redirect.
 # Effective reach is Write-only: the unconditional V7 Edit block precedes it, so the guard can fire
 # only on Write — the sole sanctioned raw-landing path. Expect no Edit coverage from it.
 set -Eeuo pipefail
@@ -47,14 +48,55 @@ esac
 FILE_PATH=$(printf "%s" "${INPUT}" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
 [[ -z "${FILE_PATH}" ]] && exit 0
 
+# Physical path of ${1}, which need not exist yet: canonicalize the deepest EXISTING ancestor with
+# the shell's own physical-mode builtins and re-append the not-yet-created tail. BSD realpath fails
+# on a missing leaf and readlink -f is absent on macOS, so `cd -P` + `pwd -P` is the only portable
+# form here — it resolves `..` and symlinks in one span rather than per component.
+# Residual: a `..` inside the missing tail stays textual, which can only over-match the containment
+# test below (fail-safe direction — an extra trigger, never a skipped one).
+canon_path() {
+  local p="${1}" base rest="" dir up phys
+  base="${p##*/}"
+  dir="${p%/*}"
+  [[ "${dir}" == "${p}" ]] && dir="."
+  while [[ ! -d "${dir}" ]]; do
+    rest="${dir##*/}${rest:+/}${rest}"
+    up="${dir%/*}"
+    [[ "${up}" == "${dir}" ]] && up="/"
+    dir="${up}"
+  done
+  phys=$(cd -P "${dir}" 2>/dev/null && pwd -P) || return 1
+  printf '%s' "${phys%/}/${rest:+${rest}/}${base}"
+}
+
 # Trigger: a write into the wiki raw/ store — WIKI_ROOT-derived path (env-overridable
 # for tests) plus the literal glass-atrium store as a belt-and-suspenders default.
+# Third arm (S1): PHYSICAL containment. The two literal arms spell one path apiece, so a write that
+# reaches the same store by a dot-dot traversal or through a symlink pointing INTO raw/ matched
+# neither and landed envelope-less — the V6 "every landed raw file is labelled" invariant broken by
+# spelling alone. Both sides are canonicalized: the store root too, or the macOS /tmp → /private/tmp
+# link makes every tmp-rooted store false-negative. The arms are a UNION, never a replacement — a
+# store whose own raw/ is a symlink canonicalizes out of the physical arm and must stay covered.
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 WIKI_RAW_DIR="${WIKI_ROOT}/raw"
 case "${FILE_PATH}" in
   "${WIKI_RAW_DIR}"/*.md) ;;
   */.glass-atrium/wiki/raw/*.md) ;;
-  *) exit 0 ;;
+  *)
+    # Canonicalization is deferred to this arm — the literal arms above never consume it, so the
+    # non-matching majority of writes pays no subshell in this synchronous PreToolUse hook.
+    # The `||` fallback to the literal path is the intended set -e disabling (SC2310): an
+    # unresolvable span must leave the two literal arms in charge, never abort the gate.
+    # shellcheck disable=SC2310
+    PHYS_FILE=$(canon_path "${FILE_PATH}" || printf '%s' "${FILE_PATH}")
+    # shellcheck disable=SC2310
+    PHYS_RAW_DIR=$(canon_path "${WIKI_RAW_DIR}" || printf '%s' "${WIKI_RAW_DIR}")
+    case "${PHYS_FILE}" in
+      "${PHYS_RAW_DIR}"/*.md) ;;
+      */.glass-atrium/wiki/raw/*.md) ;;
+      *) exit 0 ;;
+    esac
+    ;;
 esac
 
 # V7: the raw store is IMMUTABLE after save (1 URL = 1 immutable file — header + core-wiki-reference.md).
