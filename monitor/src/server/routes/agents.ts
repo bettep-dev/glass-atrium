@@ -315,9 +315,12 @@ export async function registerAgentsRoutes(app: FastifyInstance): Promise<void> 
   app.get("/api/agents/latency", handleLatency);
   app.get("/api/agents/failure-reasons", handleFailureReasons);
   app.get("/api/agents/budget-overages", handleBudgetOverages);
-  // Writable DEV-agent DELETE — preview(--dry-run)/commit(--confirm) two-step,
-  // gated by the 127.0.0.1 local-only human-in-the-loop model. The CLI's
-  // `run_delete` is the single owner of the registry-mutation lock.
+  // Writable DEV-agent DELETE — preview(--dry-run)/commit(--confirm) two-step.
+  // What actually constrains a caller: the loopback-only bind in main.ts, the global
+  // onRequest gate in request-guards.ts (a mutation carrying a cross-origin Sec-Fetch
+  // signal or a non-loopback Origin is rejected), and the content-type restriction in the
+  // same module. None of them identifies a human — a local non-browser client still reaches
+  // this handler. The CLI's `run_delete` is the single owner of the registry-mutation lock.
   app.delete("/api/agents/:name", handleDeleteAgent);
 }
 
