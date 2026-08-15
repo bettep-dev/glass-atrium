@@ -18,7 +18,11 @@ import type { FastifyInstance } from "fastify";
 
 import { isLoopbackHost } from "./host-guard.js";
 
-const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/**
+ * The methods the gate judges. Exported because the audit hook must observe exactly the set
+ * judged here — two private copies would be free to drift apart.
+ */
+export const MUTATION_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // same-origin = the monitor UI itself · none = address-bar / bookmark entry.
 const ALLOWED_FETCH_SITES = new Set(["same-origin", "none"]);
@@ -62,7 +66,7 @@ export function registerRequestGuards(app: FastifyInstance): void {
   // The 415 comes from Fastify's own parser lookup, so surface it here rather than letting a
   // rejected request pass unlogged. Body is never logged.
   app.addHook("onError", async (request, _reply, error) => {
-    if ((error as { statusCode?: number }).statusCode !== HTTP_UNSUPPORTED_MEDIA_TYPE) {
+    if (error.statusCode !== HTTP_UNSUPPORTED_MEDIA_TYPE) {
       return;
     }
     request.log.warn(

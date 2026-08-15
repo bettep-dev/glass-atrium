@@ -8,6 +8,7 @@
 //   - gate leg · header-absence pass-through (curl + agent paths) and GET exemption
 //   - parser leg · text/plain with a body → 415 (the one row a gate 403 cannot mask)
 //   - body-limit leg · over-limit JSON → 413
+//   - production attachment · main.ts calls registerRequestGuards before registerRoutes
 //
 // Test infra:
 //   - No DB: the guards are route-agnostic, so two echo routes stand in for the 17 real
@@ -17,10 +18,16 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { BODY_LIMIT_BYTES, registerRequestGuards } from "../src/server/request-guards.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MAIN_SRC = resolve(__dirname, "../src/server/main.ts");
 
 const EVIL_ORIGIN = "https://evil.example";
 const LOOPBACK_ORIGIN = "http://127.0.0.1:16145";
@@ -174,4 +181,23 @@ test("bodyLimit: JSON body over the stated limit → 413", async () => {
   const oversized = `{"pad":"${"x".repeat(BODY_LIMIT_BYTES)}"}`;
   const status = await postMutation({ "content-type": "application/json" }, oversized);
   assert.strictEqual(status, 413);
+});
+
+// main.ts self-executes main() on import, so no test can import it and exercise buildApp —
+// which leaves the single production attachment of the guards covered by nothing. Every test
+// above would stay green with that one line deleted while all 17 mutation routes went
+// unguarded. Anchor it on the source text instead (same shape as ui.review-flag-reasons.unit).
+// Order is asserted too, not just presence: the body-limit leg rides an onRoute hook, which
+// only sees routes registered after it.
+test("attachment: main.ts registers the guards before the routes", () => {
+  const src = readFileSync(MAIN_SRC, "utf8");
+  const guardsAt = src.search(/registerRequestGuards\(\s*app\s*\)/);
+  const routesAt = src.search(/registerRoutes\(\s*app\s*\)/);
+
+  assert.notStrictEqual(guardsAt, -1, "main.ts must call registerRequestGuards(app)");
+  assert.notStrictEqual(routesAt, -1, "main.ts must call registerRoutes(app)");
+  assert.ok(
+    guardsAt < routesAt,
+    `registerRequestGuards(app) must precede registerRoutes(app) (got ${guardsAt} vs ${routesAt})`,
+  );
 });

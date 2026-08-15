@@ -5,6 +5,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getPrisma } from "../db.js";
+// Shared with the request gate — this hook must observe exactly the set the gate judges.
+import { MUTATION_METHODS } from "../request-guards.js";
 
 // Single audit actor — the monitor web server is the sole write-action origin.
 const AUDIT_ACTOR = "monitor-web";
@@ -42,8 +44,6 @@ const METHOD_VERB: Readonly<Record<string, string>> = {
   PATCH: "update",
   DELETE: "delete",
 };
-
-const MUTATING_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 interface AuditSnapshot {
   actionKind: string;
@@ -145,7 +145,7 @@ export function registerAuditLogHook(app: FastifyInstance): void {
   app.addHook("onResponse", async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const method = request.method.toUpperCase();
-      if (!MUTATING_METHODS.has(method)) {
+      if (!MUTATION_METHODS.has(method)) {
         return;
       }
       const routeKey = extractRouteKey(request);
