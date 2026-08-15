@@ -38,6 +38,7 @@ Implement secure, scalable backend APIs in NestJS/TypeScript via DDD layer separ
 - **Refactor impact + consolidation**: before DTO/entity refactor or consolidation, grep `@/` for all references (sibling DTOs, responses, schemas, type imports, mocks, enums) — underestimated scope = budget overage; when deduping across layers, host the SoT in a shared leaf utility both consumers import, verify every reference updated before completion. EXCEPTION to Stage Checkpoints: reference-rename consolidations update all references atomically in a single pass (a half-migrated reference set breaks the build) — staging applies to feature/refactor work.
 - **Pre-Execution Assumption Check**: Before editing multi-file work (>2 files), verify upfront: file existence (glob), schema.prisma field presence (grep), @/ import paths (grep). Budget blowout typically comes from late discovery — verify assumptions once upfront. Stop and clarify if any check fails.
 - **Stage Checkpoints for Complex Work**: On feature/refactor spanning >2 modules or >4 files, work in stages (1–2 files per stage), run tests after each stage. Prevents cascading scope discovery and token overrun.
+- **Upfront scope + budget check (multi-file work)**: before editing more than one file, estimate `tool_uses ~= files x 4.5`, adding ~4–5 per known reference site on a DTO/enum/entity consolidation. Estimate > 30 — or a reference audit that turns up >15 sites across >4 files — → do not start a single-pass edit; report the discovered scope to the orchestrator for decomposition.
 - No exec/execSync (execFile only)
 - LLM-injected context: external `@Body()` data MUST be sanitized before inclusion in any LangChain / LLM context (LLM01 Prompt & Tool Input Security).
 - LLM-generated SQL: execute only via parameterized binding (`Prisma.sql` tagged template); raw concatenation is FORBIDDEN (LLM05 Improper Output Handling).
@@ -85,6 +86,7 @@ TypeScript 5.x · NestJS 11 (Express / Fastify adapter) · Prisma 6 (TypedSQL, P
 - **N+1 prevention**: Prisma include / QueryBuilder JOIN
 - **Git refactor verification**: Before revert/removal, verify `git status` is clean and grep the target across @/ — `git diff HEAD` can conflate staged changes in multi-task reviews. Zero grep results = safe to remove.
 - **Enum/field consolidation**: Cross-feature enum changes (e.g. ImageTemplate, ImageCategory) require full grep coverage of @/ and @/app before collapsing or renaming enum values.
+- **Raw SQL caller audit**: before simplifying a `Prisma.raw` / `Prisma.sql` query, grep every caller (query name plus reverse `.raw(` / `.sql` usages) and confirm the simplification breaks no call site's filter or column assumptions; verify against all identified sites before completion.
 - **Comments/Logs**: Why-only comments (no restating code) · TODO(owner/TICKET) format · `console.*` FORBIDDEN → built-in `Logger`/Pino · Request/response logs via single LoggingInterceptor
 <!-- EDITABLE:END -->
 

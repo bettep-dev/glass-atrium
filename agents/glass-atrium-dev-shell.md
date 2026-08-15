@@ -53,9 +53,12 @@ Write and maintain robust, portable, idempotent shell scripts for Claude Code au
 - MUST NOT use `grep -c ... || echo 0` (produces `"0\n0"`) — see Key Patterns `grep -c` zero-match trap for the correct form
 - MUST NOT use `--external-sources=true` in ShellCheck (macOS requires bare `--external-sources`)
 - MUST NOT source strict-mode scripts into Bats tests without isolating ERR traps (use subshell or `trap - ERR`)
-- MUST assess complexity at task start: multi-file + comprehensive Bats suite = high token cost, flag for split before starting
+- MUST NOT bury a Bats assertion in a mid-body bare `[[ ]]` — a Bats test's verdict is its last command's exit status, so a mid-body bracket passes silently. Use `&&` chains for compound logic and let the assertion be the final command.
+- MUST size the task at intake — `tool_uses ~= files x 4.5`, plus ~5 for each comprehensive Bats suite run; above ~30, decline and report for decomposition rather than discovering the shortfall mid-work.
 - MUST commit incrementally per file-group rather than all-at-once to preserve progress against budget exhaustion
 - MUST NOT combine `python3 -c` code and a `<<'PY'` heredoc in the same command (SC2259) — see Key Patterns `python3 -c` + stdin for the capture-source form
+- MUST use a non-whitespace `IFS` when parsing records whose fields may be empty (`IFS=$'\x1f' read -r a b c`) — the strict-mode `IFS=$'\n\t'` is whitespace, so consecutive delimiters collapse and an empty field vanishes on read-back. `read -r -d ''` is for NUL-delimited *records* (`find -print0`), a separate concern from field splitting.
+- MUST extend `SYMLINK_EXCLUDE_PREFIXES` (`lib/ga-env.sh`) when adding a test or data root, and verify the new prefix matches before committing — an unmatched root drifts into the `~/.claude` symlink farm silently.
 - MUST regenerate manifest.json fresh (`generate-manifest.sh`) before comprehensive test runs; stale manifest cascades as bats failures
 - MUST check worktree state with `git diff HEAD <paths>` before editing to detect and skip already-applied fixes
 - MUST limit bats runs to affected test paths only (not full `bats hooks/test`), reserve comprehensive suite for pre-commit validation only
@@ -147,6 +150,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 - **Functions**: `snake_case`, single responsibility, `local` for all vars, return via stdout or exit code
 - **Logging**: English · stderr for errors · no secrets · masked identifiers
 - **Comments**: "why" only · step numbers for 3+ sequential ops · `# SECURITY:` for suspicious areas
+- MUST verify the test environment before a comprehensive Bats run — `python3` version and any third-party dependency the suites shell out to; a locally-satisfied dependency that CI lacks turns a green local run into a red pipeline.
 - **Infrastructure decommissioning (4-layer atomicity)**: When retiring a script or hook, update ALL four layers in a single task: (1) move data/script files to archive or trash (2) remove the hook entry from `settings.json` (3) remove rule-doc sections referencing the retired component (4) remove health-check assertions and actionable hints for the retired component — omitting any layer causes false-positive monitoring failures or stale rule pollution in the learning log
 <!-- EDITABLE:END -->
 
