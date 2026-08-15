@@ -1810,13 +1810,26 @@ if [[ "$(role_task_type_allowed "${TASK_TYPE}")" == "0" ]]; then
   fi
 fi
 
-# Regex correction-signal fallback (capture-only). Fires ONLY when the agent emitted no correction
-# field (AGENT_PROVIDED_CORRECTION==0) — the agent value always wins. The regex captures a candidate;
-# the aggregation-layer write-gate does the real filtering (over-capture permitted). On match →
-# directive_hint + revision_count + evaluative_signal=-1; find_prior_revision_count is stubbed to 0 (no project-safe prior lookup in DB-only mode), so this fallback records a single correction (new_count=1). T9_CORRECTION_DETECTION=false disables the pipeline.
+# Transcript correction detector. The SCAN is gated on the feature flag alone, so it runs as an
+# always-on cross-check; the agent-emitted-nothing condition gates only the fallback CAPTURE further
+# down. That split keeps T9_STAGE1 / T9_NEW_COUNT meaning strictly "the fallback capture applied" for
+# their three consumers (the capture branch, the SIG_EMIT gate, the SIG_DELTA numeric delta) — reusing
+# them for the always-run scan would let the detector's prior+1 count override the agent-emitted
+# revision_count in the correction-signal sink, the one overwrite this cross-check must never do.
+# The agent's emitted fields stay authoritative; the always-run verdict feeds only the disagreement
+# review-flag reason. T9_CORRECTION_DETECTION=false disables the whole pipeline.
+#
+# Cost: the bounded transcript tail read (T9_TAIL_WINDOW_BYTES, 64 KiB default) now runs on every
+# recorded stop rather than only in the no-emit window. SubagentStop has no block channel, so this is
+# latency only — never a behavioral risk.
 T9_CORRECTION_DETECTION="${T9_CORRECTION_DETECTION:-true}"
+# Always-run verdict: 1 = matched, 0 = evaluated with no match, EMPTY = no verdict (flag off,
+# transcript absent/unreadable, or the scan skipped before the regex ran). Empty is NOT a negative
+# verdict — only a real 0 enters the disagreement comparison, so a skipped scan cannot manufacture a
+# flag on an agent whose transcript was simply unavailable.
+T9_DETECTOR_VERDICT=""
 
-if [ "${T9_CORRECTION_DETECTION}" = "true" ] && [ "${AGENT_PROVIDED_CORRECTION}" -eq 0 ]; then
+if [ "${T9_CORRECTION_DETECTION}" = "true" ]; then
   T9_TRANSCRIPT_PATH=$(printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('transcript_path',''))" 2>/dev/null || true)
 
   if [ -n "${T9_TRANSCRIPT_PATH}" ] && [ -r "${T9_TRANSCRIPT_PATH}" ]; then
@@ -2055,6 +2068,9 @@ matched_eng = bool(ENG_RE.search(last_user_text))
 
 if not (matched_kor or matched_eng):
     out('stage1_matched', '0')
+    # detector_verdict is emitted ONLY where the regex actually ran, so the two early skips above
+    # (no user message / message too old) leave it absent = "no verdict" rather than a negative.
+    out('detector_verdict', '0')
     out('skip_reason', 'no_keyword_match')
     sys.exit(0)
 
@@ -2065,6 +2081,7 @@ prior_count = find_prior_revision_count(TASK_TYPE_ENV)
 new_count = prior_count + 1
 
 out('stage1_matched', '1')
+out('detector_verdict', '1')
 out('matched_kor', '1' if matched_kor else '0')
 out('matched_eng', '1' if matched_eng else '0')
 out('last_user_text', truncated_msg)
@@ -2079,28 +2096,40 @@ PYEOF
       printf '%s\n' "$T9_RESULT" | sed -n "s/^@@${1}@@//p" | head -1
     }
 
-    T9_STAGE1=$(t9_extract stage1_matched)
+    T9_DETECTOR_VERDICT=$(t9_extract detector_verdict)
+    case "${T9_DETECTOR_VERDICT}" in
+      0 | 1) ;;
+      *) T9_DETECTOR_VERDICT="" ;;
+    esac
 
-    if [ "${T9_STAGE1}" = "1" ]; then
-      # NOTE: last_user_text is intentionally NOT consumed — directive_hint stays empty on this
-      # fallback (see the capture block below). Raw user text must never reach directive_hint.
-      T9_NEW_COUNT=$(t9_extract new_revision_count)
-      # Integer check
-      case "${T9_NEW_COUNT}" in
-        '' | *[!0-9]*) T9_NEW_COUNT=1 ;;
-      esac
+    # Fallback CAPTURE arm — the agent's own correction fields always win, so the capture runs only
+    # when the agent emitted none. T9_STAGE1 / T9_NEW_COUNT stay UNSET off this arm (their consumers
+    # read `${T9_STAGE1:-0}` / `${T9_NEW_COUNT:-…}`), which is what keeps the always-run scan out of
+    # the correction-signal write path.
+    if [ "${AGENT_PROVIDED_CORRECTION}" -eq 0 ]; then
+      T9_STAGE1=$(t9_extract stage1_matched)
 
-      # Stage 1 match = CANDIDATE captured → record revision_count + evaluative_signal=-1 (records
-      # THAT a correction occurred). directive_hint stays EMPTY on this regex fallback: the only value
-      # here is the raw user message, and writing it would violate the English-only directive_hint
-      # invariant (core-outcome-record.md) + leak Korean transcript/PII. A distilled hint can only come from the agent's own [COMPLETION] emit.
-      T9_FINAL_DETECTED="1"
-      REVISION_COUNT="${T9_NEW_COUNT}"
-      EVALUATIVE_SIGNAL="-1"
-      DIRECTIVE_HINT=""
+      if [ "${T9_STAGE1}" = "1" ]; then
+        # NOTE: last_user_text is intentionally NOT consumed — directive_hint stays empty on this
+        # fallback (see the capture block below). Raw user text must never reach directive_hint.
+        T9_NEW_COUNT=$(t9_extract new_revision_count)
+        # Integer check
+        case "${T9_NEW_COUNT}" in
+          '' | *[!0-9]*) T9_NEW_COUNT=1 ;;
+        esac
 
-      # PG core.correction_signals is the sole sink — populated via the
-      # PHASE3-OUTCOME-DUALWRITE block below (signals[] in the jq envelope).
+        # Stage 1 match = CANDIDATE captured → record revision_count + evaluative_signal=-1 (records
+        # THAT a correction occurred). directive_hint stays EMPTY on this regex fallback: the only value
+        # here is the raw user message, and writing it would violate the English-only directive_hint
+        # invariant (core-outcome-record.md) + leak Korean transcript/PII. A distilled hint can only come from the agent's own [COMPLETION] emit.
+        T9_FINAL_DETECTED="1"
+        REVISION_COUNT="${T9_NEW_COUNT}"
+        EVALUATIVE_SIGNAL="-1"
+        DIRECTIVE_HINT=""
+
+        # PG core.correction_signals is the sole sink — populated via the
+        # PHASE3-OUTCOME-DUALWRITE block below (signals[] in the jq envelope).
+      fi
     fi
   fi
 fi
@@ -2362,6 +2391,22 @@ if [[ "${CORRECTION_HINT_GAP}" -eq 1 ]]; then
   REVIEW_FLAG="true"
   review_flag_add_reason "correction-gap"
   printf '[outcome-record] correction-gap: evaluative_signal=-1 with empty directive_hint (lesson-less correction), agent=%s\n' \
+    "${AGENT_TYPE}" >&2
+fi
+
+# Correction-disagreement flag — sibling of the gap flag above, same READ-ONLY posture. The
+# always-run transcript detector reached a verdict that contradicts the agent's own emitted
+# correction claim. Two guards keep this narrow: it fires only when the agent ACTUALLY emitted a
+# correction field (on the no-emit path there is no claim to disagree with, and the fallback capture
+# already covers that case), and only on a real detector verdict (empty = the scan never evaluated).
+# ADVISORY — it raises review_flag and touches no writer field, the same posture as grader_verdict.
+# Precision limit: the detector reads the LAST human utterance only, so an agent honestly reporting a
+# correction from an earlier turn reads as a disagreement here. Treat the reason as review volume to
+# be measured, not as a measurement of agent honesty.
+if [[ "${AGENT_PROVIDED_CORRECTION}" -eq 1 ]] && [[ "${T9_DETECTOR_VERDICT:-}" = "0" ]]; then
+  REVIEW_FLAG="true"
+  review_flag_add_reason "correction-disagreement"
+  printf '[outcome-record] correction-disagreement: agent-emitted correction not corroborated by the transcript detector, agent=%s\n' \
     "${AGENT_TYPE}" >&2
 fi
 
