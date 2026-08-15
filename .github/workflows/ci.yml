@@ -840,60 +840,6 @@ jobs:
           fi
           echo "BUNDLE_PATH=${bundle}" >> "${GITHUB_ENV}"
 
-      # ======================================================================
-      # TEMPORARY — T3 RED PROBE. REVERTED IMMEDIATELY AFTER ONE CI RUN.
-      # Proves this job's failure actually reddens ci-pass instead of inferring
-      # it from the `needs` wiring. The shape is deliberate and two simpler
-      # probes were rejected on evidence:
-      #   - corrupting/truncating the bundle tar dies at install.sh's extraction
-      #     gate (EXIT_EXTRACT_FAILED) BEFORE the S2 staging check ever runs;
-      #   - a stale/poisoned manifest reddens gate-doctor first, which SKIPS
-      #     this job — and a skipped upstream is OK to ci-pass's contains()
-      #     check, so that run would prove nothing about THIS job.
-      # So: the tar stays well-formed and manifest.json is carried UNMODIFIED,
-      # while exactly one byte of one manifest member is overwritten. Extraction
-      # then succeeds and the per-file SHA-256 comparison inside
-      # spine_stage_and_verify fails AFTER the 'Verifying per-file SHA-256'
-      # anchor has already been printed.
-      # ======================================================================
-      - name: TEMPORARY T3 red probe - repack the bundle with one corrupted byte
-        run: |
-          scratch="${GA_RELEASE_OUT}/probe-tree"
-          mkdir -p "${scratch}"
-          tar -xzf "${BUNDLE_PATH}" -C "${scratch}"
-
-          # A rules/*.md member: never sourced or executed by the installer, so
-          # the flip can only surface as a hash mismatch.
-          target="$(jq -r '[.files[] | select(startswith("rules/") and endswith(".md"))][0]' "${GA_RELEASE_OUT}/manifest.json")"
-          if [[ -z "${target}" || "${target}" == "null" || ! -f "${scratch}/${target}" ]]; then
-            echo "FATAL: probe found no corruptible manifest member" >&2
-            exit 1
-          fi
-
-          # Overwrite byte 0 in place (printf + tail -c +2, not dd: BSD dd's
-          # status= support is not something to bet a probe on). `cat >` keeps
-          # the inode and mode, so only the content changes.
-          before="$(shasum -a 256 "${scratch}/${target}" | awk '{print $1}')"
-          tmpf="${GA_RELEASE_OUT}/probe-byte.tmp"
-          { printf 'X'; tail -c +2 "${scratch}/${target}"; } > "${tmpf}"
-          cat "${tmpf}" > "${scratch}/${target}"
-          after="$(shasum -a 256 "${scratch}/${target}" | awk '{print $1}')"
-          if [[ "${before}" == "${after}" ]]; then
-            echo "FATAL: probe byte overwrite did not change the hash of ${target}" >&2
-            exit 1
-          fi
-          echo "probe: corrupted one byte of ${target}"
-          echo "  manifest-side hash : ${before}"
-          echo "  repacked-side hash : ${after}"
-
-          # Repack with the SAME shape publish-release.sh uses (-C root -T
-          # filelist), so only the one byte differs from the built bundle.
-          filelist="${GA_RELEASE_OUT}/probe-filelist.txt"
-          jq -r '.files[]' "${GA_RELEASE_OUT}/manifest.json" > "${filelist}"
-          repacked="${GA_RELEASE_OUT}/probe-bundle.tar.gz"
-          tar -czf "${repacked}" -C "${scratch}" -T "${filelist}"
-          echo "BUNDLE_PATH=${repacked}" >> "${GITHUB_ENV}"
-
       # `/bin/bash install.sh`, NOT `./install.sh`: the shebang routes through
       # `env bash`, i.e. whichever bash PATH happens to resolve to on the
       # runner, so it would not pin the 3.2 contract. The explicit interpreter
