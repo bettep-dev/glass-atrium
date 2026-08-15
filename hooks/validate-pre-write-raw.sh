@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse(Write|Edit) — raw-ingestion gate: 6-part validation on wiki/raw/*.md save
 # (1 URL = 1 immutable file) + V7 immutability (any Edit on a raw file is blocked
-# unconditionally), blocking on violation. No bypass.
+# unconditionally) + V8 destination-state guard (symlinked destination or parent directory),
+# blocking on violation. No bypass.
 #
 # V6 (plan H2 · R5 · LLM01) is the load-bearing addition: it REQUIRES a body-resident
 # provenance envelope on every raw/ write. The gain is MECHANICAL and self-suppression-proof
@@ -17,6 +18,16 @@
 # envelope-wrapped payload is still a payload. The mechanical property is the invariant that every
 # landed raw file carries the label; the read-side interpretation (inject-scope-rules.sh
 # WIKI-UNTRUSTED clause + advisory-raw-store-read.sh) is adherence-layer defense-in-depth.
+#
+# V8 destination-state guard — scope stated honestly, in the same register as the V6 limit above.
+# It ASSERTS DESTINATION STATE AT CHECK TIME (the destination, or its parent directory, already IS
+# a symlink → block); it is NOT a race control. Check and write are separate processes, so the
+# check→write window is never closed and no atomicity is claimed.
+# Residual limit: only the destination and its immediate parent are tested — a symlinked HIGHER
+# ancestor (the wiki root, say) stays undetected; this is a state assertion, not a path-resolution
+# pass.
+# Effective reach is Write-only: the unconditional V7 Edit block precedes it, so the guard can fire
+# only on Write — the sole sanctioned raw-landing path. Expect no Edit coverage from it.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -54,6 +65,19 @@ if [[ "${TOOL_NAME}" = "Edit" ]]; then
     "Raw store is immutable — Edit forbidden" \
     "Delete the raw file and re-save the corrected full content via Write (V1-V6 re-validated)" \
     "{\"file\":\"${FILE_PATH}\"}"
+  exit 2
+fi
+
+# V8: destination-state guard — a raw destination that already IS a symlink, or that sits directly
+# under a symlinked parent directory, is a misconfiguration or a planted redirect, so the write is
+# refused before it lands. Predicate is symlink-ness ONLY, never existence: a not-yet-created
+# destination under a real parent is false on both arms and falls through to the content checks.
+PARENT_DIR="${FILE_PATH%/*}"
+if [[ -L "${FILE_PATH}" ]] || [[ -L "${PARENT_DIR}" ]]; then
+  emit_error "SCOPE-008" "block" \
+    "Raw destination state rejected — destination or its parent directory is a symbolic link" \
+    "Write to a real path inside the raw store: remove the link and re-save, or correct the store layout" \
+    "{\"file\":\"${FILE_PATH}\",\"parent\":\"${PARENT_DIR}\"}"
   exit 2
 fi
 
