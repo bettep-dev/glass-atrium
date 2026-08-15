@@ -532,14 +532,54 @@ printf '  - %s\n' "${UNPROCESSED[@]}" >>"$LOG_FILE"
 # 3. Dynamic budget: $0.10/file, clamped [0.50, 5.00]
 BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; printf "%.2f", b}')
 
+# The two `stat` dialects COLLIDE on -f rather than merely differing: BSD -f introduces the format
+# string, GNU -f is --file-system, which does not reject a BSD-shaped call but answers it with a
+# filesystem status block on stdout for every operand it can resolve. A try-BSD-then-fall-back-to-GNU
+# chain is therefore not a clean fallback on GNU — it emits that block AND the mode, so the result is
+# no longer a bare mode, and a path whose mode cannot be read can still yield non-empty output. That
+# last part is the fail-open direction for every caller that reads empty as a failed assertion. The
+# dialect is resolved once and only the resolved spelling is ever run against a real path.
+_STAT_MODE_DIALECT=""
+_resolve_stat_dialect() {
+  # -c is the discriminator because refusal is one-directional: BSD stat rejects -c outright, while
+  # GNU stat accepts -f. Probing the BSD spelling first would have to tell a mode from a filesystem
+  # block, which is the ambiguity this helper exists to remove. `/` resolves on both platforms.
+  if stat -L -c '%a' / >/dev/null 2>&1; then
+    _STAT_MODE_DIALECT="gnu"
+  elif stat -L -f '%Lp' / >/dev/null 2>&1; then
+    _STAT_MODE_DIALECT="bsd"
+  else
+    _STAT_MODE_DIALECT="none"
+  fi
+}
+
+# Octal permission bits of "$1", or empty when they cannot be read. Empty is the only failure signal
+# callers get, so a result that is not a bare octal string is reported as unreadable rather than
+# passed on — the conservative direction for the security assertion built on it.
+_read_path_mode() {
+  local _out
+  if [ -z "$_STAT_MODE_DIALECT" ]; then
+    _resolve_stat_dialect
+  fi
+  case "$_STAT_MODE_DIALECT" in
+    gnu) _out="$(stat -L -c '%a' "$1" 2>/dev/null || true)" ;; # GA-ABSORB[handled@non-octal-guard-below]: an unreadable path is reported to the caller as empty output, not as a status
+    bsd) _out="$(stat -L -f '%Lp' "$1" 2>/dev/null || true)" ;; # GA-ABSORB[handled@non-octal-guard-below]: an unreadable path is reported to the caller as empty output, not as a status
+    *) _out="" ;;
+  esac
+  case "$_out" in
+    '' | *[!0-7]*) return 0 ;;
+  esac
+  printf '%s' "$_out"
+}
+
 # Print the first component of the chain from "$1" up to and including the anchor "$2" that is
 # other-writable, or whose mode cannot be read at all; empty output means that whole span is clean.
 # The walk STOPS at the anchor rather than at /: above it lies the user's own home chain, which
 # this script neither creates nor can vouch for, and pretending otherwise is the claim-versus-
 # enforcement gap this assertion exists to close. Components ABOVE the anchor are NOT inspected:
 # an other-writable $HOME or / is outside this assertion's reach, by design and not by oversight.
-# `stat` is BSD/GNU divergent (-f '%Lp' vs -c '%a'), so both spellings are tried in turn, BSD
-# first because BSD stat rejects -c outright. `-L` is load-bearing on both: the chain is composed
+# Modes come from `_read_path_mode`, which resolves the BSD/GNU stat dialect once and answers empty
+# when a mode cannot be read. `-L` is load-bearing on both dialects: the chain is composed
 # lexically with dirname, so without it a symlinked component reports the LINK's own mode (0755
 # for a symlink) instead of the target's, and a link into a 0777 tree would read clean. That is a
 # property of this function for any caller; the production caller hands it endpoints it has already
@@ -550,8 +590,7 @@ BUDGET=$(awk -v n="$TOTAL" 'BEGIN{b=n*0.10; if(b<0.50)b=0.50; if(b>5.00)b=5.00; 
 _get_other_writable_ancestor() {
   local _p="$1" _stop="$2" _mode
   while :; do
-    # GA-ABSORB[handled@empty-mode-branch-immediately-below]: neither stat spelling applying is itself the failure the caller acts on
-    _mode="$(stat -L -f '%Lp' "$_p" 2>/dev/null || stat -L -c '%a' "$_p" 2>/dev/null || true)"
+    _mode="$(_read_path_mode "$_p")"
     if [ -z "$_mode" ]; then
       printf '%s' "$_p"
       return 0

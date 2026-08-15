@@ -159,10 +159,15 @@ log_body() {
   cat "${WIKI_LOG_DIR}"/wiki-compile-*.log
 }
 
-# Permission bits of a path, both stat spellings tried in turn exactly as the script does it —
-# BSD stat rejects -c outright, GNU stat rejects -f.
+# Permission bits of a path. The dialect is discriminated the way the script does it, by -c: GNU
+# stat does not reject -f, it reads it as --file-system and answers with a filesystem status block
+# on stdout, so a spelling tried in turn cannot be told apart from a mode by its exit status alone.
 path_mode() {
-  stat -L -f '%Lp' "$1" 2>/dev/null || stat -L -c '%a' "$1"
+  if stat -L -c '%a' / >/dev/null 2>&1; then
+    stat -L -c '%a' "$1"
+  else
+    stat -L -f '%Lp' "$1"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -335,6 +340,33 @@ path_mode() {
   [ ! -f "${STUB_ARGV_DUMP}" ]
 }
 
+@test "AC2 the script's own mode reader answers a bare octal mode, or empty when it cannot read one" {
+  make_sandbox
+  # The reader is lifted out of the real script rather than restated here, so the assertions below
+  # bind the production text. The two greps are the extraction's own guard: a drifted anchor would
+  # otherwise yield an empty file and every assertion after it would pass against nothing.
+  local reader="${WORK}/mode-reader.sh"
+  awk '/^_STAT_MODE_DIALECT=/ { f = 1 } f { print } f && /^\}/ { n++; if (n == 2) exit }' \
+    "${WIKI_SCRIPT}" >"${reader}"
+  grep -q '^_resolve_stat_dialect() {$' "${reader}"
+  grep -q '^_read_path_mode() {$' "${reader}"
+
+  mkdir -p "${WORK}/mode-probe"
+  chmod 0751 "${WORK}/mode-probe"
+  run bash -c "set -Eeuo pipefail; . '${reader}'; _read_path_mode '${WORK}/mode-probe'"
+  [ "$status" -eq 0 ]
+  # Whole-string, not a suffix or a substring: GNU's --file-system block is PREPENDED and the mode
+  # appended after it, so an equality test on the trailing digits passes on the polluted form and
+  # only a match anchored at both ends distinguishes a bare mode from a mode with a block in front.
+  [[ "$output" =~ ^[0-7]+$ ]] && [ "$output" = "751" ]
+
+  # Empty is the sole failure signal the ancestor walk acts on, so an unresolvable path must produce
+  # it — a non-empty result here would carry the walk past its conservative branch.
+  run bash -c "set -Eeuo pipefail; . '${reader}'; _read_path_mode '${WORK}/no-such-component'"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "AC2 a symlinked data-root component whose target sits inside a 0777 tree is refused" {
   make_sandbox
   seed_raw alpha.md
@@ -379,14 +411,19 @@ path_mode() {
 # The walk as a unit. An end-to-end row can only reach its SECOND step: the script chmods the run
 # root to 700 immediately before calling the walk, so no fixture can leave the FIRST component
 # other-writable at call time. Extracting the function is what pins step 1 and the -L dereference.
+# The span starts at the stat-dialect state rather than at the walk because the walk reads modes
+# through `_read_path_mode`; a shim without it loses every mode read to command-not-found, which the
+# walk correctly reports as unreadable and which would make these rows pass for the wrong reason.
 load_ancestor_walk() {
   local shim="${WORK}/ancestor-walk.sh"
   awk '
-    /^_get_other_writable_ancestor\(\) \{/ { capture = 1 }
+    /^_STAT_MODE_DIALECT=/ { capture = 1 }
     capture { print }
-    capture && /^\}$/ { exit }
+    /^_get_other_writable_ancestor\(\) \{/ { in_walk = 1 }
+    in_walk && /^\}$/ { exit }
   ' "${WIKI_SCRIPT}" >"${shim}"
   [[ -s "${shim}" ]] || skip "ancestor-walk extraction yielded an empty shim"
+  grep -q '^_read_path_mode() {$' "${shim}" || skip "ancestor-walk shim is missing the mode reader"
   # shellcheck source=/dev/null
   source "${shim}"
 }
