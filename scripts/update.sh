@@ -358,6 +358,22 @@ update_check_deletion_shape() {
   fi
 }
 
+# Live-only frontmatter advisory. The candidate's frontmatter comes verbatim from the
+# release skeleton and only the merge lib's narrow allowlist is re-attached, so a live
+# key that is neither allowlisted nor release-carried is dropped by design. That is the
+# intended policy — inverting it would retain keys the vendor removed on purpose — but
+# the drop must be ANNOUNCED, so the next unallowlisted key surfaces at the confirm gate
+# rather than after the fact. ADVISORY only: exactly one line, never a blocked merge.
+# $1 = repo-relative path, $2 = the editable_merge plan line.
+update_warn_dropped_frontmatter() {
+  local rel="$1" keys
+  keys="$(update_plan_field fm_unallowlisted "$2")"
+  # `none` = nothing to announce. A value carrying `=` means the token was absent and the
+  # up-to-next-space extractor returned a neighbouring field — stay silent over guessing.
+  [[ -n "${keys}" && "${keys}" != 'none' && "${keys}" != *=* ]] || return 0 # GA-ABSORB[benign]: no dropped key (or an older plan line without the field) leaves the advisory with nothing to say; the merge is unaffected either way.
+  update_log "WARN: live-only frontmatter — ${rel} carries frontmatter key(s) the release does not and the merge allowlist does not preserve: ${keys}; the merged body DROPS them, so port the value into the release body or add the key to the allowlist (advisory — the candidate is still offered)"
+}
+
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
 # EXIT INT TERM so the pause flag clears and the daemon resumes on any exit path —
 # the trap-guarded quiesce/restore the T10 contract requires.
@@ -1119,6 +1135,7 @@ update_merge_agent_editable_regions() {
     # before-image git_txn_apply captures pre-apply — the SINGLE authoritative
     # copy (P2-T2), derived per-file by the commit callback.
     update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
+    update_warn_dropped_frontmatter "agents/${base}" "${plan_line}"
 
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \

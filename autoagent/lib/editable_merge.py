@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -119,16 +120,27 @@ APPLY_OK = 0
 APPLY_NOOP = 3
 APPLY_MALFORMED = 2
 
-# Frontmatter keys the LIVE install owns EXCLUSIVELY — a sanctioned operator
-# override that is never ported to git (orchestrator-role.md Cost-Tier Selection:
-# a live `model:` pin is "local-only config, NEVER ported to git"). The release
-# ships zero of them, and the candidate's frontmatter comes verbatim from the
-# release skeleton, so without this allowlist every merge silently strips the pin.
+# Frontmatter keys the LIVE install may own as an operator override — never
+# ported to git (orchestrator-role.md Cost-Tier Selection: a live `model:` pin is
+# "local-only config, NEVER ported to git"). The candidate's frontmatter comes
+# verbatim from the release skeleton, so without this allowlist every merge
+# silently strips such a pin.
+# This tuple is the UNCONDITIONAL live-wins half: the release ships none of these
+# keys, so a live value can only be an operator pin. A key the release DOES ship
+# belongs in _BASE_AWARE_FRONTMATTER_KEYS below instead — `effort` is exactly that
+# case, so it lives there rather than here.
 # NARROW by design — NOT "preserve all live-only keys": the identity keys
 # {name, tools, scope} stay vendor-owned (hooks/enforce-harness-critical.sh
-# protects those and explicitly excludes model). Tuple, not set → the append
-# order below is deterministic across runs.
+# protects those and explicitly excludes model). A live-only key outside BOTH
+# tuples is still dropped ON PURPOSE — inverting the default would retain a key
+# the vendor removed deliberately — so unallowlisted_local_frontmatter_keys()
+# names it at the confirm gate rather than letting it vanish unannounced. Tuple,
+# not set → the append order below is deterministic across runs.
 _LOCAL_ONLY_FRONTMATTER_KEYS = ("model",)
+
+# A top-level frontmatter key line, anchored at column 0 so an indented list item
+# or continuation line belongs to its parent key rather than counting as one.
+_FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):")
 
 # Frontmatter keys the release DOES ship, so live-wins cannot be unconditional: a
 # release bump would be reverted on every install. The live line is carried only
@@ -559,6 +571,48 @@ def _keep_local_frontmatter(
     return "".join(out)
 
 
+def _frontmatter_keys(text: str) -> list[str]:
+    """Ordered, de-duplicated top-level keys of a byte-0 frontmatter block.
+
+    No frontmatter block -> empty list (the same fail-open posture as
+    ``_keep_local_frontmatter``: absence is never treated as a divergence).
+    """
+    lines = _split_lines(text)
+    span = _frontmatter_span(lines)
+    if span is None:
+        return []
+    begin, close = span
+    keys: list[str] = []
+    for line in lines[begin:close]:
+        match = _FRONTMATTER_KEY_RE.match(line)
+        if match is not None and match.group(1) not in keys:
+            keys.append(match.group(1))
+    return keys
+
+
+def unallowlisted_local_frontmatter_keys(
+    local_text: str, release_text: str
+) -> list[str]:
+    """Live-only frontmatter keys this merge WILL drop, in local order.
+
+    A key qualifies when it is present locally, absent from the release, and
+    carried by NEITHER allowlist — nothing in the release skeleton carries it and
+    nothing re-attaches it, so the merge silently loses it. Both tuples are
+    consulted because a base-aware key absent from the release re-attaches by the
+    live-wins fallback, and naming it here would report a drop that never happens.
+
+    ADVISORY ONLY. The caller warns and proceeds: a live-only key is a benign
+    divergence, and aborting the merge on one would block on a non-problem.
+    """
+    release_keys = set(_frontmatter_keys(release_text))
+    carried = {*_LOCAL_ONLY_FRONTMATTER_KEYS, *_BASE_AWARE_FRONTMATTER_KEYS}
+    return [
+        key
+        for key in _frontmatter_keys(local_text)
+        if key not in release_keys and key not in carried
+    ]
+
+
 def resolve_file(
     target_file: str,
     local_text: str,
@@ -857,10 +911,12 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     base_text = (
         _read(args.base) if args.base else load_base_text(args.target, args.state_dir)
     )
+    local_text = _read(args.local)
+    release_text = _read(args.release)
     cand = build_merge_candidate(
         args.target,
-        _read(args.local),
-        _read(args.release),
+        local_text,
+        release_text,
         base_text=base_text,
         agent=args.agent,
         skip_pre_verify=True,  # planning is structural only; verify runs in the txn
@@ -871,10 +927,17 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         )
         return EXIT_REFUSED
     Path(args.out).write_text(cand.resolution.candidate_text, encoding="utf-8")
+    # Key names are regex-constrained to be space-free, so the comma-joined value
+    # stays a single plan-line token; the literal `none` keeps the field ALWAYS
+    # present (the updater's up-to-next-space extractor returns garbage, not an
+    # empty string, for an absent key).
+    dropped = unallowlisted_local_frontmatter_keys(local_text, release_text)
     sys.stdout.write(
         f"verdict={cand.resolution.verdict} needs_llm={cand.resolution.needs_llm} "
         f"base_available={cand.resolution.base_available} "
-        f"changed={cand.resolution.is_changed} out={args.out}\n"
+        f"changed={cand.resolution.is_changed} "
+        f"fm_unallowlisted={','.join(dropped) if dropped else 'none'} "
+        f"out={args.out}\n"
     )
     return EXIT_OK
 

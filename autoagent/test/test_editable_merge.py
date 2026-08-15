@@ -248,6 +248,127 @@ class LiveOnlyFrontmatterPinTest(unittest.TestCase):
 
         self.assertEqual(res.candidate_text, body)
 
+    def test_live_only_effort_pin_survives_a_release_without_one(self) -> None:
+        # P0-1 AC1, and the regression this phase exists for: an `effort:` tier the
+        # release does not carry was dropped on the first successful merge, exactly
+        # as `model:` was before it joined the allowlist.
+        release = self._body(self._FM, "base goal", "vendor rules v2")
+        local = self._body(f"{self._FM}effort: xhigh\n", "learned", "old")
+
+        res = em.resolve_file("qa-debugger.md", local, release, release)
+
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertIn("vendor rules v2", res.candidate_text)
+
+    def test_live_effort_pin_wins_over_a_release_carried_one(self) -> None:
+        # P0-1 AC3 — NOT vacuous the way the `model:` twin is: the release really
+        # does ship `effort:` for some agents, so live-wins is exercised in the wild.
+        release = self._body(f"{self._FM}effort: high\n", "base goal", "v2")
+        local = self._body(f"{self._FM}effort: xhigh\n", "learned", "old")
+
+        res = em.resolve_file("qa-debugger.md", local, release, release)
+
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+        self.assertNotIn("effort: high", res.candidate_text)
+
+    def test_both_allowlisted_pins_survive_together(self) -> None:
+        release = self._body(self._FM, "base goal", "v2")
+        local = self._body(f"{self._FM}model: claude-opus-5\neffort: xhigh\n", "l", "o")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertIn("model: claude-opus-5\n", res.candidate_text)
+        self.assertIn("effort: xhigh\n", res.candidate_text)
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class UnallowlistedFrontmatterAdvisoryTest(unittest.TestCase):
+    """P0-1 AC2 — name the live-only keys the merge drops, never block on them."""
+
+    _FM = "name: dev-x\ntools: Read, Write\n"
+
+    def _body(self, frontmatter: str) -> str:
+        return _doc(top=f"---\n{frontmatter}---\n\n# X\n", region="r", bottom="b")
+
+    def test_live_only_unallowlisted_key_is_named(self) -> None:
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}maxTurns: 40\n")
+
+        self.assertEqual(
+            em.unallowlisted_local_frontmatter_keys(local, release), ["maxTurns"]
+        )
+
+    def test_allowlisted_and_release_carried_keys_are_not_named(self) -> None:
+        release = self._body(f"{self._FM}maxTurns: 12\n")
+        local = self._body(f"{self._FM}maxTurns: 40\nmodel: m\neffort: xhigh\n")
+
+        self.assertEqual(em.unallowlisted_local_frontmatter_keys(local, release), [])
+
+    def test_multiple_dropped_keys_keep_local_order(self) -> None:
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}zeta: 1\nalpha: 2\n")
+
+        self.assertEqual(
+            em.unallowlisted_local_frontmatter_keys(local, release), ["zeta", "alpha"]
+        )
+
+    def test_absent_frontmatter_names_nothing(self) -> None:
+        # fail-open, mirroring _keep_local_frontmatter: no block, no divergence.
+        plain = _doc(top="# plain", region="r", bottom="b")
+
+        self.assertEqual(em.unallowlisted_local_frontmatter_keys(plain, plain), [])
+        self.assertEqual(
+            em.unallowlisted_local_frontmatter_keys(plain, self._body(self._FM)), []
+        )
+
+    def test_advisory_does_not_change_the_candidate(self) -> None:
+        # The advisory REPORTS the drop; it must not resurrect the key.
+        release = self._body(self._FM)
+        local = self._body(f"{self._FM}maxTurns: 40\n")
+
+        res = em.resolve_file("dev-x.md", local, release, release)
+
+        self.assertNotIn("maxTurns: 40", res.candidate_text)
+
+    def _plan_line(self, local: str, release: str) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            d = Path(raw)
+            (d / "local.md").write_text(local, encoding="utf-8")
+            (d / "release.md").write_text(release, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = em.main(
+                    [
+                        "plan",
+                        "--target", "agents/dev-x.md",
+                        "--local", str(d / "local.md"),
+                        "--release", str(d / "release.md"),
+                        "--base", str(d / "local.md"),
+                        "--out", str(d / "candidate.md"),
+                        "--state-dir", str(d / "state"),
+                    ]
+                )
+            self.assertEqual(rc, em.EXIT_OK)
+            return buf.getvalue()
+
+    def test_plan_line_always_carries_the_field(self) -> None:
+        # ALWAYS present: the updater's up-to-next-space extractor returns a
+        # neighbouring field's value, not an empty string, for an absent token.
+        body = self._body(f"{self._FM}model: m\n")
+
+        line = self._plan_line(body, self._body(self._FM))
+
+        self.assertIn("fm_unallowlisted=none ", line)
+
+    def test_plan_line_names_the_dropped_key(self) -> None:
+        line = self._plan_line(
+            self._body(f"{self._FM}maxTurns: 40\n"), self._body(self._FM)
+        )
+
+        self.assertIn("fm_unallowlisted=maxTurns ", line)
+        # space-free single token: the shell extractor reads up to the next space.
+        self.assertIn(" out=", line)
+
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class BaseUnavailableFallbackTest(unittest.TestCase):
