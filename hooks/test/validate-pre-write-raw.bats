@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# validate-pre-write-raw.bats — V7 raw-store immutability: Edit coverage of the raw-ingestion gate.
+# validate-pre-write-raw.bats — raw-ingestion gate: V7 immutability (Edit coverage) and the V8
+# destination-state guard (symlinked destination or parent directory).
 #
 # P1-3 (clauded-docs/299): the gate was Write-only — an Edit on an existing wiki/raw/*.md bypassed
 # the V6 envelope check entirely (it could strip the UNTRUSTED-SOURCE envelope post-save). Chosen
@@ -47,6 +48,19 @@ edit_payload() {
 raw_write_payload() {
   jq -nc --arg fp "${WIKI_ROOT}/raw/page.md" --arg c "${1}" \
     '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}'
+}
+
+# A Write-tool envelope for an explicit destination. Args: $1=file_path $2=content.
+write_payload_at() {
+  jq -nc --arg fp "${1}" --arg c "${2}" \
+    '{tool_name:"Write", tool_input:{file_path:$fp, content:$c}}'
+}
+
+# A fully conforming raw document (3-field frontmatter + body envelope) — V1-V6 all green, so any
+# block observed on it is attributable to the destination-state guard alone.
+conforming_doc() {
+  raw_doc "$(printf '%s\n' '<!-- UNTRUSTED-SOURCE -->' 'Preserved source content.' \
+    '<!-- /UNTRUSTED-SOURCE -->')"
 }
 
 # ================================ V7 — Edit on the raw store =====================================
@@ -115,6 +129,84 @@ raw_write_payload() {
   run bash "${RAW_HOOK}" <<<"$(raw_write_payload "${content}")"
   [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
   [[ "${output}" == *"SCOPE-006"* ]] || { echo "expected SCOPE-006 block: ${output}" >&2; return 1; }
+}
+
+# ========================== V8 — destination-state guard (SCOPE-008) ============================
+#
+# The guard asserts destination state at check time; it is not a race control, and it resolves no
+# ancestor above the immediate parent. The cases below pin exactly that reach — both blocking arms,
+# the fall-through arms that keep the existing corpus green, and the V7-precedes-V8 ordering.
+
+# AC 1: a destination that already IS a symlink blocks — content is fully conforming, so the block
+# can only come from the destination-state guard.
+@test "V8: Write onto a symlinked destination → blocked, exit 2 (SCOPE-008)" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${WIKI_ROOT}/raw/page.md"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-008"* ]] || { echo "expected SCOPE-008 block: ${output}" >&2; return 1; }
+}
+
+# AC 2: a symlinked PARENT directory blocks on the same code — the destination itself does not
+# exist, so only the parent arm can fire.
+@test "V8: Write under a symlinked parent directory → blocked, exit 2 (SCOPE-008)" {
+  mkdir -p "${WIKI_ROOT}" "${BATS_TEST_TMPDIR}/real-store"
+  ln -s "${BATS_TEST_TMPDIR}/real-store" "${WIKI_ROOT}/raw"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-008"* ]] || { echo "expected SCOPE-008 block: ${output}" >&2; return 1; }
+}
+
+# AC 3a: a plain regular-file destination under real directories falls through to the content
+# checks — the predicate is symlink-ness, never existence.
+@test "V8: Write onto an existing regular file under real dirs → permitted, exit 0" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  : >"${WIKI_ROOT}/raw/page.md"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0 (permit), got ${status}: ${output}" >&2; return 1; }
+  [[ -z "${output}" ]] || { echo "expected no violation output on permit: ${output}" >&2; return 1; }
+}
+
+# AC 3b: a non-existent destination under a real parent still reaches V6 — the guard neither
+# short-circuits the content checks nor substitutes for them.
+@test "V8: non-existent destination under real dirs still reaches V6 (SCOPE-006, not SCOPE-008)" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(raw_doc 'No envelope here.')")"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-006"* ]] || { echo "expected SCOPE-006: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-008"* ]] || { echo "guard must not fire on a real parent: ${output}" >&2; return 1; }
+}
+
+# Reach pin: V7 precedes V8, so an Edit onto a symlinked destination reports immutability — the
+# guard is Write-only in practice, exactly as the hook header states.
+@test "V8: Edit onto a symlinked raw destination → SCOPE-007 (V7 precedes the guard)" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${WIKI_ROOT}/raw/page.md"
+  run bash "${RAW_HOOK}" <<<"$(edit_payload "${WIKI_ROOT}/raw/page.md" 'a' 'b')"
+  [[ "${status}" -eq 2 ]] || { echo "expected exit 2, got ${status}: ${output}" >&2; return 1; }
+  [[ "${output}" == *"SCOPE-007"* ]] || { echo "expected SCOPE-007: ${output}" >&2; return 1; }
+  [[ "${output}" != *"SCOPE-008"* ]] || { echo "V7 must win the ordering: ${output}" >&2; return 1; }
+}
+
+# Trigger scope unchanged: a symlinked destination OUTSIDE the raw store is none of the gate's
+# business.
+@test "V8: symlinked destination outside raw/ → exit 0, silent" {
+  mkdir -p "${BATS_TEST_TMPDIR}/notes"
+  ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${BATS_TEST_TMPDIR}/notes/x.md"
+  run bash "${RAW_HOOK}" <<<"$(write_payload_at "${BATS_TEST_TMPDIR}/notes/x.md" 'anything')"
+  [[ "${status}" -eq 0 ]] || { echo "expected exit 0, got ${status}: ${output}" >&2; return 1; }
+  [[ -z "${output}" ]] || { echo "expected silence on non-raw path: ${output}" >&2; return 1; }
+}
+
+# The block names the correction path, and the context carries both inspected arms.
+@test "V8: SCOPE-008 block names the real-path correction and reports the parent in context" {
+  mkdir -p "${WIKI_ROOT}/raw"
+  ln -s "${BATS_TEST_TMPDIR}/elsewhere.md" "${WIKI_ROOT}/raw/page.md"
+  run bash "${RAW_HOOK}" <<<"$(raw_write_payload "$(conforming_doc)")"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"symbolic link"* ]] || { echo "message must name the state: ${output}" >&2; return 1; }
+  [[ "${output}" == *"real path"* ]] || { echo "suggestion must name the correction: ${output}" >&2; return 1; }
+  [[ "${output}" == *"${WIKI_ROOT}/raw"* ]] || { echo "context must carry the parent: ${output}" >&2; return 1; }
 }
 
 # Tool gate: a non-Write/Edit tool on a raw path stays out of scope.

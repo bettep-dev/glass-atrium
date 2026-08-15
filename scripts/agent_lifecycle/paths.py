@@ -110,6 +110,14 @@ class StorePaths:
         return self.ga_root / "rules" / "glass-atrium" / "core-compliance-matrix.md"
 
     @property
+    def compliance_validator(self) -> Path:
+        # SessionStart matrix audit; `--roster-check` runs its registry ↔ Scope
+        # Legend layer alone. The ONE definition of that predicate — the reconcile
+        # step shells out to it rather than re-implementing it in python, because
+        # a second copy would drift from the shell original.
+        return self.ga_root / "hooks" / "validate-compliance-matrix.sh"
+
+    @property
     def inject_scope_rules(self) -> Path:
         return self.ga_root / "hooks" / "inject-scope-rules.sh"
 

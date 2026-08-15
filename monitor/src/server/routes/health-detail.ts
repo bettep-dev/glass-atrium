@@ -15,6 +15,10 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import {
+  auditDocumentBodies,
+  type DocumentBodyAuditResult,
+} from "../maintenance/document-body-integrity.js";
+import {
   nextOccurrenceUtc,
   DAEMON_CRON_SCHEDULE,
   STALE_MULTIPLIER,
@@ -62,6 +66,8 @@ const ALLOWED_HOOK_FAILURE_DAYS: ReadonlySet<number> = new Set([7, 14, 30, 90]);
 const DEFAULT_HOOK_FAILURE_DAYS = 30;
 const DEFAULT_HOOK_FAILURE_LIMIT = 50;
 const MAX_HOOK_FAILURE_LIMIT = 200;
+// document-integrity: `limit` is the newest-N cheap variant; absent = full-corpus sweep.
+const MAX_DOC_INTEGRITY_LIMIT = 1000;
 
 // Mirrors PG core.hook_failures.error_kind enum — narrow PG text → union, drift→null
 // (forces explicit type extension). Local copy per nodejs-dev "Module independence".
@@ -139,6 +145,7 @@ export async function registerHealthDetailRoutes(app: FastifyInstance): Promise<
   // Read-only drilldowns into two orphan tables.
   app.get("/api/health/daemon-payload", handleDaemonPayload);
   app.get("/api/health/hook-failures", handleHookFailures);
+  app.get("/api/health/document-integrity", handleDocumentIntegrity);
 }
 
 // 1. /api/health/daemons
@@ -576,6 +583,56 @@ async function handleHookFailures(
   } catch (error) {
     return failWithDb(request, reply, "/api/health/hook-failures", error);
   }
+}
+
+// 6. /api/health/document-integrity
+
+export interface HealthDocumentIntegrityResponse extends DocumentBodyAuditResult {
+  // Echoes the newest-N request bound (null = full-corpus sweep).
+  limit: number | null;
+  computed_at: string;
+  timezone: string;
+}
+
+// Advisory probe: reports rows whose on-disk body diverges from its persisted digest.
+// Blocks nothing — a divergent row still reads and still repairs through the lock flow.
+async function handleDocumentIntegrity(
+  request: FastifyRequest<{ Querystring: { limit?: string } }>,
+  reply: FastifyReply,
+): Promise<HealthDocumentIntegrityResponse | HealthDetailErrorBody> {
+  const start = Date.now();
+  const rawLimit = request.query.limit;
+  const bounded = rawLimit !== undefined && rawLimit !== "";
+  const limit = bounded
+    ? parseLimitParam(rawLimit, MAX_DOC_INTEGRITY_LIMIT, MAX_DOC_INTEGRITY_LIMIT)
+    : null;
+  if (bounded && limit === null) {
+    return reply.code(400).send(invalidParam("limit"));
+  }
+  try {
+    const result = await auditDocumentBodies(limit);
+    logDocumentIntegrity(request, result, limit, Date.now() - start);
+    return { ...result, limit, computed_at: new Date().toISOString(), timezone: "UTC" };
+  } catch (error) {
+    return failWithDb(request, reply, "/api/health/document-integrity", error);
+  }
+}
+
+function logDocumentIntegrity(
+  request: FastifyRequest,
+  result: DocumentBodyAuditResult,
+  limit: number | null,
+  durationMs: number,
+): void {
+  const fields = { route: "/api/health/document-integrity", limit, durationMs, ...result };
+  if (result.issues.length > 0) {
+    request.log.error(
+      fields,
+      "document-integrity audit FAILED — stored body diverges from its persisted digest (partial write / out-of-band edit?)",
+    );
+    return;
+  }
+  request.log.info(fields, "health query complete");
 }
 
 // shared helpers (mirror dashboard.ts/autoagent.ts patterns)

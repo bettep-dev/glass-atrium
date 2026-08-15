@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# validate-compliance-matrix.sh — Two-layer audit of core-compliance-matrix.md.
+# validate-compliance-matrix.sh — Three-layer audit of core-compliance-matrix.md.
 #
 # Layer A (advisory, exit 0): filename-set drift between the matrix's declared
 #   rule files and the actual ~/.claude/rules/ (+ ~/.glass-atrium/
@@ -17,23 +17,50 @@
 #     B3. Every Compliance Matrix column header is a legal Scope Legend scope
 #         (a row claiming a non-legend scope column is DETECTED).
 #
+# Layer C (enforcement, exit 2 on a CONFIRMED mismatch): REGISTRY ↔ SCOPE LEGEND
+#   ROSTER reconciliation — the agent-name set in agent-registry.json against the
+#   agent names listed in the Scope Legend table, reporting registered-but-unlisted
+#   and listed-but-unregistered names. Adding an agent auto-writes the registry but
+#   NOT the Scope Legend row (scope-dev.md states this drift in prose); this layer
+#   detects that half. The Compliance Matrix table is deliberately NOT the compared
+#   set — its rows are RULE FILES, so reconciling against it would compare a
+#   rule-file set to an agent set. Layer A already covers rule-filename drift.
+#
+#   Roster extraction is a POSITIVE SHAPE predicate, never a blocklist: only
+#   comma-separated tokens matching ^glass-atrium-[a-z0-9-]+$ are taken from the
+#   legend's agent column, so the non-agent literals ("All agents", "Global agent /
+#   coordinator") and the archived struck-through row's free prose are non-matches
+#   by construction — a blocklist would have to chase every rewording.
+#
 # Fail-OPEN contract (the load-bearing safety property):
 #   When the matrix TABLE STRUCTURE cannot be parsed (missing section anchors,
 #   absent header row, zero data rows) Layer B emits an advisory STDERR note and
 #   exits 0. Format drift MUST NOT exit-2 false-block a session — only a
-#   CONFIRMED inconsistency in a parseable matrix warrants exit 2.
+#   CONFIRMED inconsistency in a parseable matrix warrants exit 2. Layer C inherits
+#   this contract: an EMPTY roster extraction (either side), an unreadable registry
+#   or an absent jq is advisory + exit 0 — never "every registered agent is
+#   missing", which is what keeps the fail-open contract meaningful.
 #
 # Trigger (REGISTERED — settings.json SessionStart array): fires once per session
 #   start. SessionStart has no block channel; exit 2 here is an audit-grade signal
 #   (logs + Bats + manual/CI), not a session abort.
 #
-# Testability: COMPLIANCE_MATRIX_FILE (Layer B) + COMPLIANCE_RULES_DIR /
-#   COMPLIANCE_SCOPED_DIR (Layer A) are env-overridable so the Bats suite drives
-#   controlled fixtures without touching the live matrix.
+# Roster-check argument mode: `validate-compliance-matrix.sh --roster-check` runs
+#   Layer C ALONE and exits on its status — the single predicate definition the
+#   agent-lifecycle post-commit assertion invokes as a subprocess and branches on.
+#   A python re-implementation is rejected: a second copy recreates exactly the
+#   drift this layer exists to close. Dispatched BEFORE the stdin drain so an
+#   operator/subprocess invocation never blocks on an unattached stdin.
+#
+# Testability: COMPLIANCE_MATRIX_FILE (Layer B/C) + COMPLIANCE_RULES_DIR /
+#   COMPLIANCE_SCOPED_DIR (Layer A) + COMPLIANCE_REGISTRY_FILE (Layer C) are
+#   env-overridable so the Bats suite drives controlled fixtures without touching
+#   the live matrix.
 #
 # Exit codes:
 #   0 = no inconsistency (or fail-open: unparseable matrix / missing inputs)
-#   2 = CONFIRMED matrix-internal inconsistency (Layer B)
+#   2 = CONFIRMED matrix-internal inconsistency (Layer B) or roster mismatch
+#       (Layer C) — the two statuses MERGE, so a clean layer never clears the other
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -54,6 +81,11 @@ readonly RULES_DIR="${COMPLIANCE_RULES_DIR:-${HOME}/.claude/rules/glass-atrium}"
 # actual-present set; otherwise every relocated file would falsely show as
 # declared-missing each session.
 readonly SCOPED_DIR="${COMPLIANCE_SCOPED_DIR:-${HOME}/.glass-atrium/scoped}"
+# Agent registry (Layer C roster source). DEFAULT-ROOT TRAP: the registry lives at
+# the GLASS-ATRIUM root, so this constant follows SCOPED_DIR's template — NOT
+# MATRIX_FILE's ~/.claude/rules default. A sibling copy-pasted from MATRIX_FILE
+# would point at a path that never exists and silently fail open forever.
+readonly REGISTRY_FILE="${COMPLIANCE_REGISTRY_FILE:-${HOME}/.glass-atrium/agent-registry.json}"
 
 # Files that physically live in rules/ but are not loadable rules themselves.
 # core-compliance-matrix.md is the governance manifest (this script reads it as
@@ -67,6 +99,109 @@ readonly EXEMPT_FILES="core-compliance-matrix.md"
 # here. NOTE: multibyte glyph classes ([†‡§¶]) are unreliable in grep -E under
 # a UTF-8 locale, so B2 matches each marker as a fixed string (grep -F).
 readonly FOOTNOTE_MARKERS=$'\xe2\x80\xa0\n\xe2\x80\xa1\n\xc2\xa7\n\xc2\xb6'
+
+# Layer C — REGISTRY ↔ SCOPE LEGEND ROSTER RECONCILIATION.
+# Defined ahead of the stdin drain so the --roster-check argument mode can be
+# dispatched before any input read (the injection hook's proven ordering).
+
+# The one agent-name shape both sides are filtered through: the literal project
+# prefix + lowercase/digit/hyphen, anchored at both ends. Applied to the registry
+# side too, so a future non-agent registry key cannot enter the comparison.
+readonly AGENT_NAME_RE='^glass-atrium-[a-z0-9-]+$'
+
+# Registered agent names — the `agents` object's keys. Always exits 0: an absent
+# jq, an unreadable file or a zero-match filter yields an EMPTY roster, which the
+# caller treats as unparseable (fail open), never as "all agents are missing".
+registry_agent_names() {
+  jq -r '.agents | keys[]?' "${REGISTRY_FILE}" 2>/dev/null \
+    | grep -E "${AGENT_NAME_RE}" \
+    | sort -u || true
+}
+
+# Agent names listed in the Scope Legend table's agent column (column 2 of the
+# table = index 3 of the pipe split). Each cell is comma-split and every token is
+# shape-filtered, so non-agent prose in any row is dropped rather than reported.
+legend_agent_names() {
+  awk -v shape="${AGENT_NAME_RE}" '
+    /^## Scope Legend[ \t]*$/ { in_sec = 1; next }
+    in_sec && /^## / { in_sec = 0 }
+    in_sec && /^\|/ {
+      if ($0 ~ /^\|[ \t]*-+/) next
+      n = split($0, c, "|")
+      if (n < 4) next
+      m = split(c[3], names, ",")
+      for (i = 1; i <= m; i++) {
+        tok = names[i]
+        gsub(/^[ \t]+|[ \t]+$/, "", tok)
+        if (tok ~ shape) print tok
+      }
+    }
+  ' "${MATRIX_FILE}" 2>/dev/null | sort -u || true
+}
+
+run_layer_c() {
+  # Fail-OPEN input guards.
+  if [[ ! -r "${MATRIX_FILE}" ]]; then
+    printf '[compliance-matrix-roster] fail-open: matrix unreadable (%s) — advisory only\n' \
+      "${MATRIX_FILE}" >&2
+    return 0
+  fi
+  if [[ ! -r "${REGISTRY_FILE}" ]]; then
+    printf '[compliance-matrix-roster] fail-open: registry unreadable (%s) — advisory only\n' \
+      "${REGISTRY_FILE}" >&2
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    printf '[compliance-matrix-roster] fail-open: jq not on PATH — advisory only\n' >&2
+    return 0
+  fi
+
+  local registered listed
+  registered="$(registry_agent_names)"
+  listed="$(legend_agent_names)"
+
+  # An empty extraction on either side is a STRUCTURAL surprise (malformed JSON,
+  # a renamed section anchor, a reshaped table), not a roster of zero agents.
+  if [[ -z "${registered}" ]]; then
+    printf '[compliance-matrix-roster] fail-open: registry roster unparseable — advisory only\n' >&2
+    return 0
+  fi
+  if [[ -z "${listed}" ]]; then
+    printf '[compliance-matrix-roster] fail-open: Scope Legend roster unparseable — advisory only\n' >&2
+    return 0
+  fi
+
+  local unlisted unregistered findings=""
+  unlisted="$(comm -23 <(printf '%s\n' "${registered}") <(printf '%s\n' "${listed}"))"
+  unregistered="$(comm -13 <(printf '%s\n' "${registered}") <(printf '%s\n' "${listed}"))"
+
+  local name
+  while IFS= read -r name; do
+    [[ -z "${name}" ]] && continue
+    findings+="registered-but-unlisted: ${name} (add a Scope Legend row)"$'\n'
+  done <<<"${unlisted}"
+  while IFS= read -r name; do
+    [[ -z "${name}" ]] && continue
+    findings+="listed-but-unregistered: ${name} (stale Scope Legend entry)"$'\n'
+  done <<<"${unregistered}"
+
+  if [[ -n "${findings}" ]]; then
+    printf '[compliance-matrix-roster] CONFIRMED roster mismatch:\n' >&2
+    printf '%s' "${findings}" | sed '/^$/d; s/^/  - /' >&2
+    return 2
+  fi
+  return 0
+}
+
+# Roster-check argument mode — Layer C alone, the single predicate definition the
+# lifecycle post-commit assertion invokes as a subprocess. Dispatched BEFORE the
+# stdin drain below so an operator invocation never blocks waiting on input.
+if [[ "${1:-}" == "--roster-check" ]]; then
+  roster_only_rc=0
+  # shellcheck disable=SC2310  # -e suppression is deliberate: exit 2 is a value to propagate
+  run_layer_c || roster_only_rc=$?
+  exit "${roster_only_rc}"
+fi
 
 # SessionStart hooks may receive JSON on stdin. Drain it so an upstream writer
 # never blocks; the payload itself is unused by this advisory check.
@@ -276,10 +411,28 @@ else
   layer_b_rc=$?
 fi
 
+# Layer C — roster reconciliation, run in the same audit pass.
+layer_c_rc=0
+# shellcheck disable=SC2310
+if run_layer_c; then
+  layer_c_rc=0
+else
+  layer_c_rc=$?
+fi
+
+# MERGE, never assign: a CONFIRMED Layer B fault must survive a clean Layer C
+# (assigning the new status into the propagated variable would clobber it), and a
+# Layer C mismatch must survive a clean Layer B. audit_rc is the one value the
+# three exit points below propagate.
+audit_rc="${layer_b_rc}"
+if [[ "${audit_rc}" -eq 0 ]]; then
+  audit_rc="${layer_c_rc}"
+fi
+
 # Layer A — FILENAME-SET DRIFT (advisory; exit 0).
 if [[ ! -d "${RULES_DIR}" ]]; then
   printf '[compliance-matrix-drift] skipped: rules dir missing (%s)\n' "${RULES_DIR}"
-  exit "${layer_b_rc}"
+  exit "${audit_rc}"
 fi
 
 # Extract declared rule filenames from the Compliance Matrix table.
@@ -350,7 +503,7 @@ format_list() {
 
 if [[ -z "${declared_missing}" && -z "${undeclared_present}" ]]; then
   printf '[compliance-matrix-drift] OK\n'
-  exit "${layer_b_rc}"
+  exit "${audit_rc}"
 fi
 
 # Capture formatted output into named vars so SC2312 (return-value masking)
@@ -360,4 +513,4 @@ present_fmt="$(format_list "${undeclared_present}")"
 printf '[compliance-matrix-drift] declared-missing: %s | undeclared-present: %s\n' \
   "${missing_fmt}" "${present_fmt}"
 
-exit "${layer_b_rc}"
+exit "${audit_rc}"

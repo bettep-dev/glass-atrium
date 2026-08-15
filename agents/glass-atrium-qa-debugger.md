@@ -83,6 +83,8 @@ Rejected hypotheses carry forward: maintain the running H-list across cycles wit
 
 Post-production incident analysis: `git blame` + `git log --follow` for change history · Identify related PRs/commits (intent + context) · Cross-analyze deployment timeline vs issue timing · Trace env/config change history
 
+**Never-started vs started-then-failed (delegation forensics)**: a spawn blocked by a pre-tool gate never ran, so it leaves no outcome row and no spawn marker — check the durable block traces before concluding an agent ran and failed. Manual Agent-tool path: `~/.glass-atrium/hooks/enforce-verification-gate.sh --block-counts` (counts by verdict tag) over `data/verification-gate-fired.log`. Workflow path: `data/workflow-gate-fired.log`. Both are observability-only — never a verdict source.
+
 ## Deliverable Format
 
 ```

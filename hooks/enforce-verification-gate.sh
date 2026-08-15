@@ -26,6 +26,32 @@
 #   and [SIZE-EST] blocks fire on orchestrator origin only (the hook_is_subagent guard), so a nested
 #   sub-worker origin is never false-blocked.
 #
+# BLOCK FIRING TRACE (durable, observability-only): every block path appends ONE verdict-tagged line
+#   to ${GA_DATA_ROOT:-~/.glass-atrium}/data/verification-gate-fired.log (env override VGATE_FIRED_LOG,
+#   line cap VGATE_FIRED_LOG_CAP, default 1000). Closes the asymmetry with the workflow path, whose gate
+#   already records every firing: the manual path's emit_error output is ephemeral to the turn and the
+#   session-spawns marker records EXECUTED spawns by design, so a spawn blocked before it started left
+#   no durable trace at all. Verdict tags: block-sizeest · block-reviewer · block-entry (one per block
+#   surface). Read it back with `enforce-verification-gate.sh --block-counts`.
+#   NOT an outcome row: the outcome `result` enum is a closed five-value set that cannot express a
+#   never-started spawn, and a row for an agent that never ran pollutes a table whose every consumer
+#   assumes a real run.
+#   FAIL-SAFE ISOLATION IS LOAD-BEARING, NOT STYLISTIC: this hook's ERR trap exits ZERO (fail-open), so
+#   any statement added to a block path that trips it converts a BLOCK into a PASS. emit_gate_trace
+#   therefore runs its whole body in a parenthesized subshell with stderr suppressed and the enclosing
+#   statement made unconditionally successful, every step carrying its own exit-zero fallback. With
+#   errtrace set the trap IS inherited into that subshell — but its exit-zero then terminates only the
+#   subshell, which the enclosing `|| true` absorbs, so the isolation holds even against a trap fire (an
+#   inline append cannot claim that). The trace is emitted AFTER emit_error and immediately before
+#   exit 2, so a trace failure can never preempt the operator-facing error.
+#   PRUNE RACE (accepted, not designed around): the line-cap prune reads with tail into a temp file then
+#   renames, so lines appended between the read and the rename are lost. The same race exists in the
+#   proven workflow-gate pattern; this sink is observability-only and is never read for a verdict.
+#   REGISTER ONCE, TRACE ONCE: the hook is registered on BOTH PreToolUse and PostToolUse (DF-5 below).
+#   The trace belongs to the PreToolUse block paths ONLY — the PostToolUse surface records executed
+#   spawns by design, and a line fired there would record a STARTED spawn in a sink whose whole meaning
+#   is "never started".
+#
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
 #   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (orchestrator-role.md).
 # Session state: agent_events has no session_id column + async PG write → no synchronous lookup, so
@@ -53,6 +79,21 @@ readonly DEFAULT_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
 data_dir="${HOOK_DATA_DIR:-${DEFAULT_DATA_DIR}}"
 spawn_dir="${data_dir}/session-spawns"
 
+# Block firing-trace sink — direct sibling of enforce-workflow-verify-stage.sh's WORKFLOW_GATE_FIRED_LOG.
+# Its own env override exists so a Bats case can isolate the sink per test (an unwritable-sink case
+# cannot be written without it); the default resolves under the same data root as the spawn marker.
+VGATE_FIRED_LOG="${VGATE_FIRED_LOG:-${data_dir}/verification-gate-fired.log}"
+
+# Firing-trace line cap. One line per block with no rotation, so a long-lived install would grow the
+# sink unboundedly (no SessionStart reaper sweeps it). Observability-only — no line carries decision
+# signal — so bounding to the most-recent N lines is verdict-safe by construction.
+readonly DEFAULT_TRACE_LINE_CAP=1000
+trace_line_cap="${VGATE_FIRED_LOG_CAP:-${DEFAULT_TRACE_LINE_CAP}}"
+# Non-integer / zero override → default (fail-safe: a bad cap must never disable trace pruning).
+if [[ ! "${trace_line_cap}" =~ ^[1-9][0-9]*$ ]]; then
+  trace_line_cap="${DEFAULT_TRACE_LINE_CAP}"
+fi
+
 # shellcheck source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
@@ -74,6 +115,86 @@ fi
 # bash 3.2 (no declare -A). AUTO-SYNCED from the scope-dev.md DEV roster by agent_lifecycle (the
 # add/delete transaction + `python -m agent_lifecycle sync-gate-roster`) — do NOT hand-edit.
 readonly DEV_SET="glass-atrium-dev-front glass-atrium-dev-react glass-atrium-dev-angular glass-atrium-dev-gsap glass-atrium-dev-android glass-atrium-dev-nestjs glass-atrium-dev-node glass-atrium-dev-python glass-atrium-dev-db glass-atrium-dev-rag glass-atrium-dev-animator glass-atrium-dev-shell glass-atrium-dev-swift"
+
+# emit_gate_trace VERDICT SUBAGENT_TYPE — append one block firing-trace line, FAIL-SAFE.
+# The block verdict is ALWAYS decided and emitted before this runs. Every failure mode (unwritable
+# dir, mkdir refusal, printf error, a fired ERR trap) is contained by the subshell + unconditional
+# success below, so this can NEVER alter the hook's exit code — see the header's load-bearing-isolation
+# note: a leaked non-zero here would fail-open the gate and convert a BLOCK into a PASS.
+# SECURITY: subagent_type is external payload → allowlist-transform before writing it to the sink, so
+# an embedded TAB/newline cannot forge a trace line (core-security.md Input Validation).
+# `verdict=` is the LAST field so a reader can anchor an exact tag match at end-of-line.
+emit_gate_trace() {
+  local verdict="${1}" stype="${2:-}"
+  (
+    local log_dir ts safe_type
+    log_dir="$(dirname -- "${VGATE_FIRED_LOG}")"
+    mkdir -p -- "${log_dir}" 2>/dev/null || exit 0
+    ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || ts="unknown"
+    safe_type="$(printf '%s' "${stype}" | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
+    printf '%s\ttool_name=%s\tsubagent_type=%s\tverdict=%s\n' \
+      "${ts}" "Agent" "${safe_type:-unknown}" "${verdict}" \
+      >>"${VGATE_FIRED_LOG}" 2>/dev/null || exit 0
+    # Fail-safe prune — most-recent retention, atomic sibling-temp swap. Any error leaves the sink
+    # as-is (a prune must never break the log it bounds). Empty-pattern grep -c counts lines without
+    # the `|| echo 0` "0\n0" trap.
+    local line_count
+    line_count="$(grep -c '' "${VGATE_FIRED_LOG}" 2>/dev/null || true)"
+    [[ -z "${line_count}" ]] && line_count=0
+    [[ "${line_count}" =~ ^[0-9]+$ ]] || exit 0
+    ((line_count <= trace_line_cap)) && exit 0
+    local tmp_path
+    tmp_path="$(mktemp "${VGATE_FIRED_LOG}.prune.XXXXXX" 2>/dev/null)" || exit 0
+    if tail -n "${trace_line_cap}" "${VGATE_FIRED_LOG}" >"${tmp_path}" 2>/dev/null; then
+      mv -f "${tmp_path}" "${VGATE_FIRED_LOG}" 2>/dev/null || rm -f "${tmp_path}" 2>/dev/null || true
+    else
+      rm -f "${tmp_path}" 2>/dev/null || true
+    fi
+  ) 2>/dev/null || true
+}
+
+# block_and_exit CODE REASON FIX CONTEXT_JSON TRACE_TAG — the single terminal block path shared by all
+# three block surfaces (VGATE-SIZE-001 / VGATE-REVIEWER-001 / VGATE-ENTRY-001). Extracted so the trace
+# append exists exactly ONCE: three inline appends would triple the surface on which the fail-open trap
+# hazard above can be reintroduced. Order is fixed — structured error first, trace second, exit 2 last.
+block_and_exit() {
+  local code="${1}" reason="${2}" fix="${3}" ctx="${4}" trace_tag="${5}"
+  emit_error "${code}" "block" "${reason}" "${fix}" "${ctx}"
+  emit_gate_trace "${trace_tag}" "${subagent_type:-}"
+  exit 2
+}
+
+# Named aggregation query over the block sink — reports never-started block counts by verdict tag.
+# Read-only: never writes, never touches a verdict. Absent sink reads as 0 (a first run is 0 blocks),
+# NOT missing data. jq-free (grep only), so it works even where the gate path would fail-open on
+# absent jq. Mirrors inject-scope-rules.sh --drop-rate.
+aggregate_block_counts() {
+  local total=0 tag count
+  if [[ -f "${VGATE_FIRED_LOG}" ]]; then
+    # grep -c prints "0" AND exits 1 on zero matches — capture with `|| true`, never `|| echo 0`
+    # (the latter yields "0\n0"); the empty-guard then covers a read error.
+    total="$(grep -c 'verdict=' "${VGATE_FIRED_LOG}" 2>/dev/null || true)"
+    [[ -z "${total}" ]] && total=0
+  fi
+  printf 'enforce-verification-gate block-counts: total=%s' "${total}"
+  for tag in block-sizeest block-reviewer block-entry; do
+    count=0
+    if [[ -f "${VGATE_FIRED_LOG}" ]]; then
+      count="$(grep -c "verdict=${tag}\$" "${VGATE_FIRED_LOG}" 2>/dev/null || true)"
+      [[ -z "${count}" ]] && count=0
+    fi
+    printf ' %s=%s' "${tag}" "${count}"
+  done
+  printf '\n'
+}
+
+# Operator aggregation-query mode — dispatched BEFORE the stdin drain below so
+# `enforce-verification-gate.sh --block-counts` never blocks waiting on standard input. The hook path
+# is invoked with NO args, so ${1:-} is empty and this is skipped there.
+if [[ "${1:-}" == "--block-counts" ]]; then
+  aggregate_block_counts
+  exit 0
+fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
 input=""
@@ -284,9 +405,8 @@ fi
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — every DEV spawn MUST declare its delegation-size estimate (orchestrator-role.md ### Spawn Budget)."
   size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. Under-estimating is the DANGEROUS error — round UP on a borderline count."
-  emit_error "VGATE-SIZE-001" "block" "${size_reason}" "${size_fix}" \
-    "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}"
-  exit 2
+  block_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
+    "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
 
 # Entry-decision branch — three mutually exclusive paths:
@@ -314,9 +434,8 @@ if references_plan "${prompt_full}"; then
   reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (orchestrator-role.md Stage-2 gate)."
   if [[ "${orchestrator_origin}" == true ]]; then
     reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then passes. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
-    emit_error "VGATE-REVIEWER-001" "block" "${reviewer_reason}" "${reviewer_fix}" \
-      "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}"
-    exit 2
+    block_and_exit "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
+      "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}" "block-reviewer"
   fi
   # Nested sub-worker origin → informational advisory only (never a false-block).
   printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
@@ -337,6 +456,5 @@ fi
 # governs the hook's OWN errors → an internal failure never reaches this block.
 entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
 entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scope-dev.md Sprint Contract Gate -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: this entry token is ONE of TWO required per DEV spawn — you must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001)."
-emit_error "VGATE-ENTRY-001" "block" "${entry_reason}" "${entry_fix}" \
-  "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}"
-exit 2
+block_and_exit "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
+  "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
