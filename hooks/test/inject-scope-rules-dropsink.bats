@@ -34,6 +34,10 @@ setup() {
   DROPLOG="${BATS_TEST_TMPDIR}/drop.log"
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
 
+  # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
+  # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
   # A comment fixture that injects one small block well under the 9984 ceiling → no drop.
   COMMENT_FIT="${BATS_TEST_TMPDIR}/comment-fit.md"
   printf '%s\n' \

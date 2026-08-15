@@ -57,6 +57,10 @@ setup() {
   export INJECT_SCOPE_RULES_SPAWN_COUNTER="${BATS_TEST_TMPDIR}/inject-spawns.count"
   export INJECT_SCOPE_RULES_DROP_LOG="${BATS_TEST_TMPDIR}/inject-drop.log"
 
+  # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
+  # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
+
   # Hermetic NAMING source fixture — the hook's default naming source is the HOME-anchored real
   # SKILL.md (${HOME}/.claude/skills/...), absent in a CI checkout → the naming block would be
   # empty and the positive-injection assertions would falsely fail. Build a self-contained fixture

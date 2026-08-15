@@ -49,6 +49,10 @@ setup() {
   COUNTER="${BATS_TEST_TMPDIR}/spawns.count"
   COMMENT="${BATS_TEST_TMPDIR}/comment.md"
   LESSONS="${BATS_TEST_TMPDIR}/lessons.json"
+
+  # C03: the positive-injection manifest sink writes on EVERY spawn and defaults under the live
+  # ~/.glass-atrium/logs — sandbox it too (exported → inherited through each run helper's `env`).
+  export INJECT_SCOPE_RULES_MANIFEST_LOG="${BATS_TEST_TMPDIR}/inject-manifest.log"
 }
 
 # Write a comment fixture whose EXTRACTED block is exactly $1 bytes (a single line of x's, no header
