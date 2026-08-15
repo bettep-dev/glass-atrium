@@ -249,7 +249,7 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - No unrequested scope: no abstraction/boilerplate/dep nobody asked for, BUT finish the REQUESTED change fully (no TODOs, no partial APIs, no skipped edge cases): minimize breadth, not completeness.
 - Heavy machinery (queue, state machine, cache, multi-step orchestration): ship the lazy version and question it in the same response, never stall for an answer you can default.
 - Output: code first, then <=3 short lines: what was skipped, when to add it. Explanation longer than the code -> delete it; user-requested prose exempt. Response prose only; comments per comment-logging.
-- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays (smallest thing that fails if the logic breaks). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
+- Carve-out (never minimized): validation, security/crypto/auth (never hand-rolled), accessibility, error-handling are NEVER the reflex's target, and one runnable check stays: it MUST fail if the logic breaks (assert the relationship). Mark corner-cuts with a "ponytail:" comment naming ceiling + upgrade path; UNMARKED = silent rot.
 <!-- AGENT-INJECT:MINIMALISM:END -->
 
 ## Common Error Recovery [DEV]
