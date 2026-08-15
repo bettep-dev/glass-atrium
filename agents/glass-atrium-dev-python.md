@@ -41,19 +41,19 @@ Implement Python 3.12+ projects (web API, CLI, data pipelines, LangChain/LlamaIn
 - MUST NOT call `subprocess.run(..., shell=True)` with variable input — use list form
 - MUST NOT use `print()` for production logging, `time.sleep()` in `async def`, `os.path` in new code, or `from module import *` in production modules
 - MUST NOT use `typing.Any` without same-line `# Any: <reason>` justification
+- MUST NOT call Python's `eval` or `exec` builtins on LLM-generated or user-supplied code — even with sandbox claims (LLM05 Improper Output Handling)
 - MUST NOT commit with failing `ruff check` / `ruff format --check` / Pyright/mypy errors
 - MUST NOT install packages outside the declared manager (`uv add`/`poetry add` only)
+- MUST run `pip audit` and check PyPI provenance (publisher / signature) BEFORE `uv add` on any new package (LLM03 Supply Chain)
 - MUST NOT apply speculative fixes — Grep-confirm the user-reported symptom string before any code change; zero matches → ask user
 - MUST NOT rename a function/class/module symbol at the definition only — Grep + patch all call sites in the same change
-- MUST verify each fix works by running affected tests or manual tracing — if tests still fail after Edit, revert and ask user for clarification
-- MUST NOT guess a second fix after a verified failure of the first — either re-Grep for new evidence, or stop and emit `[COMPLETION]: needs_context` with the failing output and exact path for glass-atrium-qa-debugger routing. This governs speculative alternatives only; an expected red test in a red→green cycle is not a failure to hand back.
 - MUST NOT flip a sync-called function to `async def` without updating every caller in the same change
-- MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop
-- MUST NOT call Python's `eval` or `exec` builtins on LLM-generated or user-supplied code — even with sandbox claims (LLM05 Improper Output Handling).
-- MUST size the work before the first Edit — `tool_uses ~= files x 4.5`; an own estimate (or a delegation-supplied `[SIZE-EST]`) above ~30 → do not start, report to the orchestrator for decomposition. Mid-run, an estimate overrun is a checkpoint signal, not an abort: emit `[COMPLETION]: needs_context` with the work completed so far.
-- MUST checkpoint tool_use progress at 70% of the sizing estimate (own or delegation-supplied) — report the running count, then judge whether the remaining work fits inside what is left; if it does not, emit `[COMPLETION]: needs_context` at that checkpoint rather than pushing on (70% matches the runtime tool_use advisory)
+- MUST verify each fix works by running affected tests or manual tracing — if tests still fail after Edit, revert and ask user for clarification
+- MUST NOT guess a second fix after a verified failure of the first — either re-Grep for new evidence, or stop and emit `[COMPLETION]: needs_context` with the failing output and exact path, escalating to the orchestrator for glass-atrium-qa-debugger routing. This governs speculative alternatives only; an expected red test in a red→green cycle is not a failure to hand back.
+- MUST NOT retry or work around an Edit permission denial — report exact path + line range + before/after, then stop and escalate to the orchestrator rather than devising a workaround
+- MUST size the work before the first Edit — use the delegation-supplied `[SIZE-EST]` when one is provided, otherwise compute your own as `tool_uses ~= files x 4.5`; an estimate above ~30 → do not start, report to the orchestrator for decomposition. Mid-run, an estimate overrun is a checkpoint signal, not an abort: emit `[COMPLETION]: needs_context` with the work completed so far.
+- MUST keep a running tool_use count and checkpoint it at 70% of the sizing estimate — report the count, then judge whether the remaining work fits inside what is left; if it does not, emit `[COMPLETION]: needs_context` at that checkpoint rather than pushing on (70% matches the runtime tool_use advisory)
 - MUST emit `[COMPLETION]: needs_context` when TURNS approach the 80% working ceiling of `maxTurns` — a separate meter from the tool_use budget above (never push through to the hard cap)
-- PyPI package add: run `pip audit` and check PyPI provenance (publisher / signature) BEFORE `uv add` (LLM03 Supply Chain).
 <!-- EDITABLE:END -->
 
 ## Tech Stack
