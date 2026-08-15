@@ -270,6 +270,14 @@ readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
 # meaningful (ceiling >= 3, a real gap) and leaves the sec-guard spawn context meter-free.
 readonly METER_MIN_MAX_TURNS=4
 
+# C03: the manifest block roster, in assembly display order — single-sourced because the writer
+# (build_manifest_blocks) and the reader (aggregate_manifest_coverage) previously each spelled it
+# out. Nothing pinned the two copies equal, so an added block updated the writer while the reader
+# silently under-reported it: an operator asking "did this agent see block X" got a false negative
+# from the tool built to answer exactly that. manifest_block_kept's case still enumerates the same
+# labels (a case cannot be derived from a list); the suite pins it equal to this roster.
+readonly MANIFEST_BLOCK_LABELS="emit meter wiki-untrusted comment styleref minimalism naming budget-dev budget-analysis lesson"
+
 # Named aggregation query over the drop sink — reports the block-drop count (numerator, from the drop
 # sink) against spawns-with-injection-attempted (denominator, from the spawn counter) plus the drop
 # rate. Read-only: never writes, never touches injected content. Absent sink OR absent counter reads
@@ -322,7 +330,7 @@ aggregate_manifest_coverage() {
     }
     END {
       printf "inject-scope-rules manifest-coverage: records=%d agents=%d\n", total, nagents
-      nl = split("emit meter wiki-untrusted comment styleref minimalism naming budget-dev budget-analysis lesson", labels, " ")
+      nl = split(roster, labels, " ")
       for (i = 1; i <= nagents; i++) {
         a = agents[i]
         line = ""
@@ -333,7 +341,7 @@ aggregate_manifest_coverage() {
         printf "inject-scope-rules manifest-coverage: agent=%s spawns=%d blocks=%s\n", a, spawns[a], (line == "" ? "-" : line)
       }
     }
-  ' "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
+  ' roster="${MANIFEST_BLOCK_LABELS}" "${INJECT_MANIFEST_LOG}" 2>/dev/null || true
   return 0
 }
 
@@ -747,7 +755,10 @@ manifest_block_kept() {
 # display order, so the record reads as the child saw it. stdout: the joined list (may be empty).
 build_manifest_blocks() {
   local out="" label src
-  for label in emit meter wiki-untrusted comment styleref minimalism naming budget-dev budget-analysis lesson; do
+  local labels
+  # Strict-mode IFS is $'\n\t', so the space-separated roster needs an explicit split.
+  IFS=' ' read -r -a labels <<<"${MANIFEST_BLOCK_LABELS}"
+  for label in "${labels[@]}"; do
     # Pure predicate → the if-condition disabling set -e (SC2310) is intended, as in the drop loop.
     # shellcheck disable=SC2310
     if manifest_block_kept "${label}"; then

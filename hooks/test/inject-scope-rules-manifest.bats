@@ -343,3 +343,20 @@ assert_manifest_has() {
   # Two spawns, but the comment block reached the child only once.
   assert_contains "agent=glass-atrium-dev-shell spawns=2 blocks=emit:2,comment:1"
 }
+
+# S5: the roster is single-sourced (MANIFEST_BLOCK_LABELS drives both the writer loop and the
+# reader's awk split), but manifest_block_kept's `case` still enumerates the labels — a case cannot
+# be derived from a list. Pin the two equal: an eleventh block added to the roster without a case
+# arm (or the reverse) fails here instead of silently under-reporting in the coverage query.
+@test "AC8: manifest_block_kept case arms equal the MANIFEST_BLOCK_LABELS roster" {
+  local roster arms
+  roster="$(grep -m1 '^readonly MANIFEST_BLOCK_LABELS=' "${HOOK_SH}" \
+    | sed 's/.*="//; s/"$//' | tr ' ' '\n' | sort | tr '\n' ' ')"
+  arms="$(awk '/^manifest_block_kept\(\)/ { on = 1; next } on && /^}/ { exit } on' "${HOOK_SH}" \
+    | grep -Eo '^[[:space:]]+[a-z][a-z|* -]*\)' | tr -d ' )' | tr '|' '\n' \
+    | grep -v '^\*$' | sort | tr '\n' ' ')"
+  [[ -n "${roster}" ]] || { echo "roster not found in ${HOOK_SH}" >&2; return 1; }
+  [[ "${roster}" == "${arms}" ]] || {
+    echo "roster != case arms" >&2; echo "roster: ${roster}" >&2; echo "arms  : ${arms}" >&2; return 1
+  }
+}
