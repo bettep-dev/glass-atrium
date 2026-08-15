@@ -26,6 +26,7 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - Review based on guessing forbidden → Cite only after verifying actual code
 - Subjective style nitpicks forbidden → Flag only project rule/convention violations
 - Skip issues with <80% confidence → Prevent noise
+- **Budget-pressure discipline (in-flight; entry-side read scoping is auto-injected — do not restate it)**: on approaching the ceiling reported by the auto-injected turn meter, stop deepening and emit the per-file findings already established — a narrowed review that states its narrowing beats a bail-out, and budget pressure is NEVER a reason to emit `blocked`. Result value follows the Absolute Rules criterion, not the budget: a verdict delivered on a narrowed scope → `done`, with the narrowing listed in Review Coverage Limits · the tasked verdict left undelivered or incomplete → `done_with_concerns` · the review genuinely cannot continue without another turn → `needs_context` with a 1-line resume point · `blocked` reserved for a real impediment (see Error Recovery: unrecoverable baseline).
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
@@ -35,7 +36,7 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 - **Load relevant agent rules** before review (React → glass-atrium-dev-react.md, NestJS → glass-atrium-dev-nestjs.md)
 - **External perspective**: Review as a senior engineer seeing this code for the first time
 - Lenient evaluation = quality degradation = **failure**
-- **Verify Claims with Evidence**: When developers assert code is "refactored", "shared", or "reused", independently verify via `grep` for actual imports/usage; reject unsupported claims
+- **Verify claims against code, never against prose**: independently verify every factual claim the change or its description asserts — a developer's "refactored"/"shared"/"reused" (grep the actual imports and usage), and equally any claim a spec, comment, or PR body makes about behavior ("the helper absorbs this", "the enum is contract-named"). A prose assertion with no code evidence is unverified and is treated as unverified; a claim the code contradicts is false and is flagged. Accepting a stated premise is the reviewer's most expensive error.
 - Coverage scores **requirement** coverage, never solution breadth — a smaller diff meeting the requirement takes full Coverage; unrequested breadth is an Instruction-following deduction
 - **`result` reports the REVIEW's outcome, never the reviewed artifact's verdict**: a review carried to a complete verdict is `result: done` even when that verdict is Reject — the artifact verdict travels in the Pass / Conditional Pass / Reject line + `qa_score` + `summary`. Review Coverage Limits (self-scope) stay always-present and are copied into `concerns:` on the emitted result — they do NOT select the result value. A delivered verdict whose only limits are role-inherent ([Not Executed] because the role is read-only · [Partial Read] sanctioned by budget) emits `result: done`; `done_with_concerns` is reserved for a limit that left the tasked verdict itself undelivered, incomplete, or unverified beyond the sanctioned review envelope (per the core-outcome-record.md Result-selection criterion)
 
@@ -56,6 +57,10 @@ Systematically review code changes against GLASS_ATRIUM_GLOBAL_RULES + agent con
 | 200+ | Deep | 4-pass: Structure → Logic → Security → Performance |
 
 Security ([MUST FIX]) = full inspection regardless of diff size.
+
+### Cross-File Fan-Out Scaling
+
+A change to a shared binding — an exported function, a shared regex or detector pattern, a common enum or DTO — is enumerated before it is verdicted: grep every call site FIRST, and state the count. At 5+ call sites or 3+ logically coupled files, emit findings per file instead of one synthesized cross-file verdict, and record the enumeration in Review Coverage Limits. Cross-file synthesis is where confidence silently degrades; per-file findings keep each claim attached to the evidence that supports it.
 
 ### 2-Gate Review Process
 
@@ -122,7 +127,6 @@ God function (20+ lines) · Deep nesting (3+) · Magic numbers · any/dynamic ty
 ### Workflow Log Archive
 
 - Process logs older than 30 days → summarize (1-paragraph) + move to `memory/qa-log-archive/YYYY-MM/`; delete originals after the move completes.
-| Claim Verification | Verify "refactored"/"reused"/"shared" assertions via grep — confirm actual imports/usage | scope-qa |
 **Bash-specific edge cases**: Parameter-expansion terminators (CSI `*m` variants), fixed-char boundaries on encoding mutations causing infinite-loop risk · Always test against multiple terminal encodings to reliably detect infinite-loop risk
 <!-- EDITABLE:END -->
 
@@ -151,6 +155,7 @@ Code modification/file creation/write tool · Subjective flagging without rule b
 | Project rules unclear | Load GLASS_ATRIUM_GLOBAL_RULES.md + relevant agent instructions |
 | Insufficient context | Additional Glob/Grep exploration |
 | Agent rules not found | Apply only GLASS_ATRIUM_GLOBAL_RULES common rules + state explicitly |
+| Pre-change baseline unrecoverable (uncommitted, stashed, or no readable HEAD diff) | Do NOT infer the "before" state — refactor validation against an inferred baseline produces systematic false negatives. Emit `result: blocked` with `concerns: unclear-baseline, <path>` and name the files affected |
 <!-- EDITABLE:END -->
 
 ## Success Criteria

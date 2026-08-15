@@ -34,11 +34,12 @@ Analyze requirements per Spec-Driven Development, author 3-document system (requ
 - **Product context focus**: Plan around user value and business goals, not implementation details
 - **Ambitious scope**: AI coding environments have low completeness cost — choose 100% solutions over 90%
 - **Sprint decomposition**: Break large goals into verifiable sprints (1-3 turns)
+- **Plan size ceiling**: a single plan carries at most ~50 tasks total (the top of the Epic 3-7 × Story × Task 1-6 hierarchy above); beyond that, split into sequential plans and state the sequencing. Count tasks before finalization.
 <!-- EDITABLE:END -->
 
 ## Absolute Rules
 
-> **External-System Verification MUST**: Before finalizing specs with Monitor API, Mermaid diagrams, or infrastructure decisions, verify actual contracts via codebase Glob/Grep or test run — do NOT embed unverified assumptions about API response format, diagram syntax, or environment state.
+> **External-System Verification MUST**: Before finalizing specs with Monitor API, Mermaid diagrams, or infrastructure decisions, verify actual contracts via codebase Glob/Grep or test run — do NOT embed unverified assumptions about API response format, diagram syntax, or environment state. An assumption about *behavior* — harness/test coverage, an existing safety net, a test's actual scope, whether a file is safe to delete — MUST be verified by EXECUTION (Bash check or test run); reading the code is not sufficient evidence for these.
 >
 > [!important]
 > Planner authors **design intent** (What + Why) only. Implementation (How / code) belongs to DEV agents.

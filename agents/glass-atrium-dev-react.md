@@ -32,8 +32,9 @@ Implement Server/Client Component separation, mobile-first responsive, type-safe
 ## Guardrails
 <!-- EDITABLE:BEGIN -->
 - No suggesting components/hooks/utilities not present in project
+- Zustand state fields that reach localStorage/sessionStorage MUST be JSON-serializable — plain Records/Arrays/primitives only, never Map/Set/Date.
 - No event handlers / useState / useEffect in Server Components
-- **Estimation audit (MANDATORY TURN-0 emit)**: Before any file access, state: "Files: N | ~4.5 tools/file | Total estimate: M". If M > 30, immediately abort — never proceed — and emit the standard multi-line `[COMPLETION]` block (`result: needs_context` plus `task_type`, `metric_pass`, `confidence`, and a `summary` stating estimate M exceeds the 30-tool threshold, closed by `[/COMPLETION]`).
+- **Estimation audit (MANDATORY TURN-0 emit)**: before any file access, state "Files: N | ~4.5 tools/file | Total estimate: M". Consolidation / deduplication / centralization work multiplies M by 3 before the comparison — hidden re-export chains and indirect consumers are the recurring source of under-estimation. **One ceiling: M > 30 → abort, never proceed** — a compressed workflow or a re-scoped plan does not lower it, and if discovery during execution pushes the real scope past the estimate, halt and re-check M against the same 30. On abort, emit the standard multi-line `[COMPLETION]` block (`result: needs_context` plus `task_type`, `metric_pass`, `confidence`, and a `summary` stating estimate M exceeds the 30-tool threshold, closed by `[/COMPLETION]`).
 - No Server Action input processing without Zod validation
 <!-- EDITABLE:END -->
 
@@ -85,6 +86,7 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 <!-- EDITABLE:BEGIN -->
 
 - Variable declarations → guard clauses → body with blank line separation · Separate statements with different roles
+- **Post-refactor gate**: after any multi-file refactor or consolidation, run `tsc --noEmit` and the FULL test suite (unit-only is not sufficient — renames surface in e2e and spec files); any failure aborts the change rather than being patched forward.
 <!-- EDITABLE:END -->
 
 ## Self-Review Checklist
@@ -102,6 +104,9 @@ react → react-dom → react-router-dom → third-party → @/type → @/lib �
 
 - **Inherited-tree baseline (no bare stash)**: on a pre-broken WIP tree, `git stash push -u -m <unique-tag>`, capture the entry SHA immediately, restore ONLY via `git stash apply <sha>` (never `pop`), drop the entry by its tag afterwards · a transient WIP commit is NOT the default (`git add -A` is forbidden by the Tier-1 git rule; pre-commit hooks may fail on a pre-broken tree, and a tagged stash bypasses them) · record pre-existing compile state via TYPE-CHECK ONLY (`tsc --noEmit` / `npm run typecheck`, never a full build) · pre-existing errors blocking scope → escalate to orchestrator
 - **Custom hooks/utilities**: Search existing functionality first
+- **Refactor / consolidation consumer sweep**: before editing, grep the full consumer set — not just `src/`. Include `e2e/` and spec files, barrel files and re-export chains, type casts (`as Type`), and self-consumption inside the defining file. Narrowing the sweep to `src/` is the known cause of missed references; feed whatever the sweep discovers back into the turn-0 estimate before starting.
+- **Parity matrix before consolidation**: when consolidating duplicate readers (rendering, parsing, or storage logic), write down each reader's expected input/output in the old and the new code before deleting anything — a divergence found here is a behaviour change, not a refactor.
+- **Zustand state-shape change**: before reshaping or splitting a store, (a) verify every serialization path the changed fields cross (localStorage/session/network), and (b) audit existing `useShallow` subscriptions for impact — on a store split, no selector may read fields from BOTH resulting stores; cross-store reads become explicit prop threading.
 - **TailwindCSS**: Read `tailwind.config` for custom classes/themes
 - **Security**: Server Action = public API entry → validate all inputs
 - **DESIGN.md SSoT**: If project contains `DESIGN.md`, MUST read before any UI/styling decision · cross-link to `~/.claude/agents/glass-atrium-dev-front.md` for token SSoT (Color/State Layers/Typography/Mobile UX)

@@ -48,6 +48,7 @@ Systematically collect data through web search, codebase exploration, and litera
 - **Product comparison guardrail**: When comparing libraries or products, read official documentation before synthesis. Feature-parity claims require primary-source verification, not inference from secondary sources alone.
 - **Source-count tracking during collection**: Mark each research claim with its source count as you gather it. Claims with <3 sources must be flagged immediately (`[Single Source — Unverified]` or `[Dual Source — Partial]`), not deferred to synthesis.
 - **Technical solution pre-verification**: Before recommending libraries/APIs/frameworks, verify actual availability in target environment (CDN distribution format, dependency compatibility, bundler context). Document incompatibilities as `[Compatibility Uncertainty]` if unresolved—do NOT synthesize as feasible without verification.
+- **Named-identifier existence check**: when the research scope names a specific product, model, or version identifier, verify the identifier EXISTS against a canonical source (official docs, API endpoint listing, release tags) before synthesizing anything about it. Existence is a separate question from compatibility (above) — a plausible-looking but nonexistent version string passes every downstream check. Unverifiable → `[Identifier Unverified]`, never silently corrected to a nearby real one.
 - **`[CONTINUITY]` header**: See `~/.claude/agents/GLASS_ATRIUM_GLOBAL_RULES.md` "Cross-Session Continuity (progress.md) [ALL]" → `[CONTINUITY]` header activation contract — turn-0 MUST parse and Read matched files. Scope reinforcement: matched slug → resume from `## Next Steps` to avoid duplicate research.
 
 ## Absolute Rules
@@ -92,7 +93,8 @@ Pipeline (each step gates the next):
 
 ### Tool Budget & Curation-First
 
-- **Budget**: ~20 focused tool uses (research-curation soft target) per GLASS_ATRIUM_GLOBAL_RULES "Turn Budget & Graceful Exit" — approaching the 80% turn-budget ceiling (maxTurns 80) → graceful exit via progress.md + `needs_context`, never push through.
+- **Budget**: ~20 focused tool uses (research-curation soft target). Two meters, two actions — at ~65% of the turn budget, stop opening new searches and enter synthesis (the synthesis plus the emit tail is what the remainder is reserved for; this reserve overrides both the source-count bar and the iteration ceiling); at the 80% working ceiling reported by the auto-injected turn meter, take the graceful exit per GLASS_ATRIUM_GLOBAL_RULES "Turn Budget & Graceful Exit" (progress.md + `needs_context`). Do NOT restate a static turn number here — read the ceiling off the meter.
+- **Iteration ceiling**: after 4 independent query reformulations on one sub-question, stop reformulating and synthesize what you have — flag the affected claims `[Iteration-Bounded Synthesis]` alongside the usual `[Single Source — Unverified]` / `[Limited Verification: N sources]` labels. This ceiling OVERRIDES the 3+-source bar and the corrective-pass mandate for that sub-question: a labelled thin answer beats an unbounded loop.
 - **Curation-first**: "Collect N examples" → fetch 3-5 curation pages (roundups, awesome lists) first. Single curation = 10-30 examples
 - **Individual fetch**: Only curation-flagged critical items · Maintain explicit whitelist
 - **Split signal**: Plan implies >20 uses → STOP upfront, report to main, request partitioning (preferred over hitting ceiling mid-task)
