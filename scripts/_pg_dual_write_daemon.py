@@ -546,9 +546,17 @@ def write_autoagent_proposal(
             -- same (cycle_date, pattern_label, target_file) after the apply stage
             -- set 'applied'/'approved'/'rejected' must preserve that state,
             -- else verified+committed proposals revert to pending.
+            --
+            -- The preservation is scoped to a NON-terminal incoming status, which
+            -- is exactly the re-push RC1 addresses. An incoming TERMINAL status is
+            -- an authoritative outcome, not a stale bake: the updater keys one
+            -- accountability row per body per day, so a same-day decline-then-accept
+            -- would otherwise leave 'rejected' on content that landed.
             status = CASE
                        WHEN core.autoagent_proposals.status
                             IN ('applied', 'approved', 'rejected')
+                            AND EXCLUDED.status
+                                NOT IN ('applied', 'approved', 'rejected')
                        THEN core.autoagent_proposals.status
                        ELSE EXCLUDED.status
                      END,

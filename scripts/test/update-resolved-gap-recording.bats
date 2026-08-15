@@ -19,7 +19,9 @@
 #   T2 landed    — the row is OBSERVED present in core.autoagent_proposals after the
 #                  real dual-write CLI runs. An emit-level assertion passes even when
 #                  the CLI rejects the envelope, so the landed row is the assertion.
-#   T3 upsert    — the same file resolved twice on one day yields ONE row.
+#   T3 upsert    — the same file resolved repeatedly on one day yields ONE row whose
+#                  status tracks the LAST outcome, in BOTH directions (a same-day
+#                  decline-then-accept must not leave rejected on landed content).
 #   T4 outage    — a non-zero CLI exit produces one warning and returns 0 (a database
 #                  write failure must never abort a deploy).
 #   T5 no helper — an absent dual-write helper warns and returns 0.
@@ -30,6 +32,9 @@
 #   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
 #                  cycle date: the date is forked once per run, so a midnight
 #                  crossing can never split one run's rows across two days.
+#   T11 gated    — a file whose OTHER region needed the Haiku improvement-verify gate
+#                  records that gate, never skipped:no-model-call, and stays outside
+#                  every LIKE 'ok%' apply-eligibility gate.
 #   T10 no ledger — an empty or absent ledger PATH records rejected and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
 #
@@ -121,12 +126,13 @@ teardown() {
 }
 
 # One resolved-file row: base, target, release, hunks, dropped, added, regions,
-# diff, dropped-text sidecar. $2 overrides the sidecar path (an absent one
-# exercises the diff fallback).
+# diff, dropped-text sidecar, needs_llm. $2 overrides the sidecar path (an absent
+# one exercises the diff fallback); $3 overrides the file-level needs_llm, whose
+# default False is the wholly-resolved file every other test describes.
 write_tsv() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${1:-ga-rec-probe.md}" "agents/${1:-ga-rec-probe.md}" "${RELEASE}" \
-    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" >"${TSV}"
+    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" "${3:-False}" >"${TSV}"
 }
 
 run_driver() {
@@ -222,6 +228,30 @@ db_available() {
   [ "${#rationale}" -lt 800 ]
 }
 
+@test "T11 a model-gated file records the gate that ran, never no-model-call" {
+  # A file with one resolved region AND one both-changed region reports the
+  # resolved verdict with needs_llm=True: the Haiku improvement-verify gate ran
+  # and a Haiku outage would have rolled the landing back. A row reading
+  # skipped:no-model-call tells an auditor that landing was deterministic.
+  write_tsv ga-rec-probe.md "${DROPPED_TEXT}" True
+  printf 'ga-rec-probe.md\n' >"${LEDGER}"
+  run run_driver
+  [ "$status" -eq 0 ]
+
+  run envelope_field haiku_status
+  [ "$output" = "verified:improvement-gate" ]
+  # Apply-ineligibility is unconditional: neither provenance token may satisfy a
+  # LIKE 'ok%' gate.
+  [[ "$output" != ok* ]]
+
+  rationale="$(envelope_field rationale)"
+  [[ "$rationale" != *"no model call"* ]]
+  [[ "$rationale" == *"improvement-verify gate"* ]]
+  # The deterministic half of the claim is unchanged — only the screening clause moves.
+  [[ "$rationale" == *"took the release side"* ]]
+  [[ "$rationale" == *"2 gap(s)"* ]]
+}
+
 @test "T8 without the resolver sidecar the excerpt falls back to the diff and says so" {
   # An older resolver (or an unreadable sidecar) still records — but a removed
   # diff line may be vendor prose the release restructured, so the rationale must
@@ -258,9 +288,9 @@ db_available() {
   : >"${TSV}"
   local name
   for name in ga-rec-first.md ga-rec-second.md; do
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${name}" "agents/${name}" "${RELEASE}" 2 2 1 "0,3" \
-      "${DIFF_FILE}" "${DROPPED_TEXT}" >>"${TSV}"
+      "${DIFF_FILE}" "${DROPPED_TEXT}" False >>"${TSV}"
   done
   printf 'ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
 
@@ -331,18 +361,40 @@ db_available() {
   [ "${row}" = "auto|applied|skipped:no-model-call|ok" ]
 }
 
-@test "T3 the same file resolved twice on one day lands ONE row" {
+@test "T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome" {
   db_available || skip "postgres unavailable"
   [[ -f "${PG_HELPER}" ]] || skip "dual-write helper missing"
   python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
 
   target="ga-rec-upsert-$$.md"
   write_tsv "${target}"
-  printf '%s\n' "${target}" >"${LEDGER}"
+
+  # Both re-runs carry a DIFFERENT ledger state, so the row's status has to
+  # transition: upserting twice from one state pins the row count alone and can
+  # never observe a preserved-terminal clobber. The row is one per body per day,
+  # so a same-day decline-then-accept is a legitimate operator sequence — and the
+  # accept must not keep reading rejected on content that landed.
+  status_now() {
+    psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
+      "SELECT status FROM core.autoagent_proposals
+        WHERE pattern_label = 'editable-region-resolved-release'
+          AND target_file = 'agents/${target}'"
+  }
+
+  : >"${LEDGER}" # declined at the confirm gate → nothing landed
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
+  first="$(status_now)"
+
+  printf '%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
+  second="$(status_now)"
+
+  : >"${LEDGER}" # and a later same-day decline: the reverse direction
+  ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
+  [ "$status" -eq 0 ]
+  third="$(status_now)"
 
   count="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT count(*) FROM core.autoagent_proposals
@@ -355,4 +407,7 @@ db_available() {
         AND target_file = 'agents/${target}'" >/dev/null
 
   [ "${count}" = "1" ]
+  [ "${first}" = "rejected" ]
+  [ "${second}" = "applied" ]
+  [ "${third}" = "rejected" ]
 }

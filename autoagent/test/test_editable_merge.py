@@ -1215,7 +1215,44 @@ class ResolvedGapStatsTest(unittest.TestCase):
         self.assertEqual(stats["added_lines"], 1)
         self.assertEqual(stats["regions"], "0")
 
-    def test_when_no_gap_resolved_then_stats_are_zero_and_regions_none(self) -> None:
+    def test_when_a_clean_region_accompanies_a_resolved_gap_then_needs_llm_is_true(
+        self,
+    ) -> None:
+        """The mixed file: the resolved verdict does NOT imply a model-free landing.
+
+        Every other resolved-gap fixture is single-region, so needs_llm is False
+        throughout and the recorded row's "no model call" claim reads as
+        universally true. A production body carries several EDITABLE regions: one
+        resolved gap beside one both-changed region reports the resolved verdict
+        while the Haiku improvement-verify gate DOES run, and a Haiku outage rolls
+        the landing back. The updater keys its provenance fields on this flag.
+        """
+        two_region = (
+            "# T\n<!-- EDITABLE:BEGIN -->\n{r0}\n<!-- EDITABLE:END -->\n"
+            "mid\n<!-- EDITABLE:BEGIN -->\n{r1}\n<!-- EDITABLE:END -->\ntail\n"
+        )
+        # Region 0: both sides changed, non-overlapping -> merge-clean (LLM-required).
+        # Region 1: both sides changed the SAME lines -> the conflicting gap.
+        base = two_region.format(r0="a1\na2\na3\na4\na5\na6\na7\na8", r1="same-old")
+        local = two_region.format(
+            r0="LOCAL\na2\na3\na4\na5\na6\na7\na8", r1="LOCAL one\nLOCAL two"
+        )
+        release = two_region.format(
+            r0="a1\na2\na3\na4\na5\na6\na7\nVENDOR", r1="VENDOR rewrite"
+        )
+
+        res = em.resolve_file(
+            "dev-android.md", local, release, base, resolve_conflicting_gaps=True
+        )
+
+        self.assertEqual(
+            [r.verdict for r in res.regions],
+            [em.MERGE_CLEAN, em.MERGE_RESOLVED_RELEASE],
+        )
+        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertTrue(res.needs_llm)
+
+    def test_when_no_gap_resolved_then_stats_are_zero_and_regions_empty(self) -> None:
         res = self._resolve(self._LOCAL)
 
         stats = em.resolved_gap_stats(res)

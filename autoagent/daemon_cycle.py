@@ -1604,7 +1604,9 @@ class PatchResult:
     rationale: str
     proposed_diff: str
     outcomes_sampled: int
-    haiku_status: str  # 'ok' | 'skipped:<reason>' | 'error:<short>'
+    # 'ok' | 'skipped:<reason>' | 'error:<short>'; updater-origin rows add
+    # 'verified:<gate>' for a gate that ran without a model call.
+    haiku_status: str
     # Accurate '+' line count from the FULL (pre-truncation) diff. proposed_diff
     # is capped at 4000 chars, so re-deriving the count from it under-reports any
     # patch whose diff exceeds the cap → carry the proposal's count instead. Default
