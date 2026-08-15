@@ -16,6 +16,7 @@ import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
+import { registerRequestGuards } from "./request-guards.js";
 
 // Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
@@ -42,6 +43,8 @@ const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 
 async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
+
+  registerRequestGuards(app);
 
   await app.register(fastifyStatic, {
     root: PUBLIC_ROOT,
