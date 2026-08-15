@@ -124,7 +124,9 @@ run_hook_sink() {
 
 @test "reviewer-present plan-ref DEV spawn → exit 0 (compliant reviewer-first composition)" {
   seed_reviewer
-  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  # Carries a [PLAN-SUBSET] attestation so the C3-H nudge (a separate advisory surface, covered by
+  # enforce-verification-gate-plan-subset.bats) does not break this file's no-output contract.
+  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
   assert_status 0
   assert_empty
 }

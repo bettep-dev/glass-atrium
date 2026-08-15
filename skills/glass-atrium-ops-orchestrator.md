@@ -104,7 +104,7 @@ Not met → delegate to a single specialist agent (Router = sub-agent delegation
 - **Sub-agent**: Focused tasks where only results are needed (cost-efficient)
 - **Agent team**: When discussion/collaboration/cross-file modification required (higher cost)
 - Team size bounded by the Workflow engine's runtime self-cap (core-derived, per-machine) — no fixed-number default, no "exceeding → user approval" trigger (canonical: orchestrator-role.md `### Team Size`) · 5-6 self-contained tasks per agent `[default, adjustable]`
-- **File ownership separation required**: Concurrent modification of same file forbidden → worktree isolation / ownership matrix
+- **File ownership separation required, and it is the floor rather than the ceiling**: concurrent modification of the same file is forbidden → ownership matrix. For concurrent INDEX MUTATORS this is necessary but NOT sufficient — the shared index and whole-tree regeneration both defeat file disjointness, so the worktree is the isolation unit (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)). An ownership matrix is not an alternative to worktree isolation for index mutators; it is what you do *inside* one worktree with one of them.
 
 #### Worktree Isolation [ORCHESTRATOR]
 
@@ -298,9 +298,9 @@ async function robustAgent(agentType, opts) {
 }
 
 // fan-out usage: one agent's null can never crash the join.
-// [OWNERSHIP] each parallel track owns a DISJOINT file/resource set (no shared-file write) — e.g.
-//   trackA: monitor/src/** · trackB: hooks/** — existence-only (disjointness is the author's
-//   attestation; the engine does not verify it). Every skeleton parallel block carries this line.
+// [OWNERSHIP] each parallel track owns a DISJOINT file/resource set (no shared-file write) AND names its isolation unit — e.g.
+//   trackA: monitor/src/** worktree: <path|isolated> · trackB: hooks/** worktree: <path|isolated> — existence-only (disjointness
+//   and the worktree claim are the author's attestation; the engine does not verify either). Every skeleton parallel block carries this line.
 // GATE NOTE: robustAgent's FIRST arg is INVISIBLE to enforce-workflow-verify-stage (it scans agent()
 //   first-args + agentType: fields, NOT a wrapper's first arg) — so a DECLARED type must ALSO appear
 //   as an opts `agentType:` string literal (keep BOTH literals identical), else the gate reads it
@@ -327,7 +327,7 @@ The `robustAgent` resilience layer above hardens the OUTPUT side (a non-emit no 
 
 ```js
 // [SIZE-EST] reads~=8 fields=2 effort=medium scope=allowlist — bounded per-track analysis spawn
-// [OWNERSHIP] trackA: hooks/** · trackB: monitor/src/** — disjoint read sets, existence-only
+// [OWNERSHIP] trackA: hooks/** worktree: <path|isolated> · trackB: monitor/src/** worktree: <path|isolated> — disjoint read sets, existence-only
 // per-track read allowlists — explicit + disjoint (one object per [OWNERSHIP] track), NEVER a repo sweep
 const READ_TRACKS = [
   { allowlist: ['hooks/enforce-workflow-verify-stage.sh', 'hooks/test/'], goal: 'trackA: audit the gate hook + its bats coverage' },
@@ -588,7 +588,7 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 | Large-scale refactoring (directory splitting) | Agent Teams + worktree |
 | Sequential dependent pipeline | Sub-agent |
 | Single file/module modification | Single sub-agent |
-| Concurrent modification of same file | Sub-agent (sequential) |
+| Concurrent modification of same file, or two index mutators in one worktree | Sub-agent (sequential) |
 
 **Operational rules**:
 - Team size: 2-3 members for the pure Agent Teams pattern; overall delegation team size follows the Team Size rule (no fixed-number gate — the Workflow engine's runtime self-cap, core-derived per-machine, bounds concurrency; a VERY large fan-out just needs reasoning in `reason` about synthesis value + total-session token cost) defined in orchestrator-role.md `### Team Size`. The 2-3 member cap is specific to the pure Agent Teams pattern, not a global limit.
@@ -708,7 +708,7 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 
 - Orchestrator session contains `Edit` or `Write` tool calls for non-exception files
 - Sub-agent invoked without all delegation elements (Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius)
-- Multiple agents modifying the same file without worktree isolation
+- Two index-mutating agents in one worktree, regardless of file overlap (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a))
 - Pipeline stage started before prior stage's acceptance criteria are verified
 - A VERY large fan-out (well beyond a normal team) composed without reasoning in `reason` about synthesis value + total-session token cost (no fixed-number gate — the engine's runtime self-cap bounds concurrency)
 - `background: true` + `isolation: worktree` used together (Issue #33045)
@@ -738,7 +738,7 @@ Apply Agent Teams only to parallelizable independent tasks. Sequential dependent
 ## Verification
 
 - [ ] **Delegation completeness**: Every sub-agent invocation includes all required elements — Goal, Target files, Constraints, Completion criteria, Resource Budget, Ripple radius (spot-check 2-3 recent delegations)
-- [ ] **File ownership**: No two agents in the same Wave/Team modify the same file (check ownership matrix or worktree isolation)
+- [ ] **File ownership**: No two agents in the same Wave/Team mutate the index in one worktree (canonical: `orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a)); within a worktree, ownership matrix
 - [ ] **Pipeline acceptance**: Each stage transition has documented acceptance criteria verification
 - [ ] **Outcome Record**: Every completed task has an Outcome Record with the minimum required fields (agent, task_type, result)
 - [ ] **Domain-keyword hints (recommended, NOT routing keys)**: Delegation prompts include the target agent's recommended domain keywords as prompt content (self-anchoring aid); routing itself stays capability-based

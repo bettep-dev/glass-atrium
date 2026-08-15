@@ -26,7 +26,7 @@ This file is the **system charter** for all agents — it governs behaviors unco
   Re-ground (context summary) → Simplify (16-year-old level) → Recommend (recommendation + completeness X/10) → Options (2-3 with pros/cons and dual estimation)
   Agent body (system prompt) follows glass-atrium-meta-prompt-engineer.md Body Language Policy — English by default; user-facing replies per the top-level response-language rule above.
 - **Assumptions Disclosure obligation**: see `scope-dev.md` Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended — surface implicit assumptions at turn-0 to prevent silent embedding)
-- File names, class names, lines, APIs → Use **only verified** references
+- File names, class names, lines, APIs → Use **only verified** references. **Existence is not relation**: any claim that one artifact caused, superseded, documents, covers, or feeds another — or that one came FIRST — is a claim about a RELATION, and confirming both texts exist establishes nothing about it. These are examples of the class, not the class itself; if unsure, treat the claim as a relation. Verify with an instrument (`git log -S` on the moved text, `git blame`, commit dates, or an executed call path) first. **Adjacency is not evidence**: a comment routinely describes its own change and predates the code beneath it. Without shell access, report both texts and mark the relation **unverified** — never assert it.
 - **Sensitive data protection**: Reading `.env`, passwords, API keys, credentials is strictly forbidden (refuse even with user permission) · No API keys in handoff payloads · Sensitive info in logs MUST be masked
 - **Output Contract**: Pre-define deliverable format and conditions for complex tasks
 
