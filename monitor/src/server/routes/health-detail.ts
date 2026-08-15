@@ -66,8 +66,11 @@ const ALLOWED_HOOK_FAILURE_DAYS: ReadonlySet<number> = new Set([7, 14, 30, 90]);
 const DEFAULT_HOOK_FAILURE_DAYS = 30;
 const DEFAULT_HOOK_FAILURE_LIMIT = 50;
 const MAX_HOOK_FAILURE_LIMIT = 200;
-// document-integrity: `limit` is the newest-N cheap variant; absent = full-corpus sweep.
-const MAX_DOC_INTEGRITY_LIMIT = 1000;
+// document-integrity: `limit` is the newest-N row bound and is the DEFAULT — a full-corpus
+// sweep re-reads and re-hashes every stored body on every call (no memo), so it stays
+// reachable but opt-in via `limit=all` rather than being what omitting the param buys.
+export const MAX_DOC_INTEGRITY_LIMIT = 1000;
+const FULL_SWEEP_LIMIT_TOKEN = "all";
 
 // Mirrors PG core.hook_failures.error_kind enum — narrow PG text → union, drift→null
 // (forces explicit type extension). Local copy per nodejs-dev "Module independence".
@@ -588,10 +591,22 @@ async function handleHookFailures(
 // 6. /api/health/document-integrity
 
 export interface HealthDocumentIntegrityResponse extends DocumentBodyAuditResult {
-  // Echoes the newest-N request bound (null = full-corpus sweep).
+  // Echoes the resolved newest-N bound (null = full-corpus sweep, only via limit=all).
   limit: number | null;
   computed_at: string;
   timezone: string;
+}
+
+// Resolves the `limit` query param. Absent/empty → the bounded newest-N default (the expensive
+// path is never what an omitted param buys) · "all" → null, the opt-in full-corpus sweep ·
+// otherwise the existing [1, MAX] integer clamp, out of range → "invalid" → 400.
+// Exported for unit test (parse seam) — runtime callers stay in-module.
+export function resolveDocIntegrityLimit(raw: string | undefined): number | null | "invalid" {
+  if (raw === FULL_SWEEP_LIMIT_TOKEN) {
+    return null;
+  }
+  const parsed = parseLimitParam(raw, MAX_DOC_INTEGRITY_LIMIT, MAX_DOC_INTEGRITY_LIMIT);
+  return parsed === null ? "invalid" : parsed;
 }
 
 // Advisory probe: reports rows whose on-disk body diverges from its persisted digest.
@@ -601,12 +616,8 @@ async function handleDocumentIntegrity(
   reply: FastifyReply,
 ): Promise<HealthDocumentIntegrityResponse | HealthDetailErrorBody> {
   const start = Date.now();
-  const rawLimit = request.query.limit;
-  const bounded = rawLimit !== undefined && rawLimit !== "";
-  const limit = bounded
-    ? parseLimitParam(rawLimit, MAX_DOC_INTEGRITY_LIMIT, MAX_DOC_INTEGRITY_LIMIT)
-    : null;
-  if (bounded && limit === null) {
+  const limit = resolveDocIntegrityLimit(request.query.limit);
+  if (limit === "invalid") {
     return reply.code(400).send(invalidParam("limit"));
   }
   try {
