@@ -12,9 +12,9 @@
 # Surface: ADVISORY by default — findings still exit 0 on every surface, including the scope-list
 # run. Only `--strict` applies blocking exit semantics; `--advisory` reports without failing
 # anywhere. The findings print identically in every mode. Promotion to blocking (and to CI wiring)
-# follows the in-house precedent set by scripts/audit-absorption.sh and requires, verbatim:
-# "coverage complete, auditor false-positive rate zero across the scope, and the conversion set
-# landed." A day-one blocking gate is forbidden.
+# follows the in-house precedent set by scripts/audit-absorption.sh, and the promotion condition it
+# must meet is stated ONCE, in rules/glass-atrium/shared-self-improve-hygiene.md → Auditor. Read it
+# there; a copy here is the drift this repo names. A day-one blocking gate is forbidden.
 #
 # Exit codes (shared with scripts/audit-absorption.sh via scripts/lib/audit-cli.sh):
 #   0 = audit completed with no blocking findings (or an advisory run)
@@ -22,26 +22,31 @@
 #   2 = usage error
 #   3 = IO/scope error (a scope directory or --path file is missing or unreadable)
 #
-# Measured baseline (two-stage — a measured baseline, not a target band; the retired 10-20 range was
-# an artefact of an under-inclusive vocabulary). Stage 1: the first advisory run on the DRAFT
-# vocabulary — the literal wording carrying neither the `run -N` / `--separate-stderr` exemptions nor
-# the custom `assert_*` helper vocabulary — reported 11 signal-(a) findings over 2059 test bodies.
-# Stage 2: every one of the 11 was hand-adjudicated (6 `assert_status`/`assert_empty` helper calls, 3
-# `run -0` call-site status assertions, 1 further helper call — 10 false positives; the survivor
-# discards the captured result and asserts on a spooled file instead), and after correcting the
-# vocabulary to the named exemptions below the count is 1 — still non-zero, which is the acceptance
-# criterion. Heredoc awareness is a correctness and false-positive requirement, NOT the source of the
-# non-zero baseline: the same corrected vocabulary reports 4 signal-(a) findings with the extractor
-# blinded to heredocs and 1 with it, and the genuine finding is present in both scans. Signal (b)
-# measures 0 on the current corpus; that is the EXPECTED result, not a defect — the empirical burden
-# is carried by signal (a), and (b) is kept in a portable form for other corpora.
+# Measured baseline — a measured quantity, never a target band, and deliberately NOT quoted here:
+# a hand-copied census re-drifts on the next edit exactly as a hand-copied file count does (the
+# lesson is already written down in rules/glass-atrium/shared-self-improve-hygiene.md). Read the
+# current numbers from an actual `scripts/audit-test-smells.sh --quiet` run over the scope list.
+# What is stable is the METHOD and its acceptance criterion, both of which outlive any count:
+#   - The baseline was established in two stages. Stage 1 ran the DRAFT vocabulary — the literal
+#     wording carrying neither the `run -N` / `--separate-stderr` exemptions nor the custom
+#     `assert_*` helper vocabulary. Stage 2 hand-adjudicated every stage-1 finding; the large
+#     majority were false positives of that under-inclusive vocabulary, which is what produced the
+#     named exemptions below.
+#   - The acceptance criterion is a NON-ZERO signal-(a) count on the corrected vocabulary: an
+#     auditor that reports nothing has demonstrated nothing.
+#   - Heredoc awareness is a correctness and false-positive requirement, NOT the source of the
+#     non-zero baseline — blinding the extractor to heredocs raises the count rather than creating
+#     it, and the genuine finding is present in both scans.
+#   - Signal (b) measures 0 on the current corpus. That is the EXPECTED result, not a defect: the
+#     empirical burden is carried by signal (a), and (b) is kept in a portable form for other
+#     corpora.
 #
-# Named exemptions for signal (a), each measured on this corpus: the self-asserting `run !` form
-# (17); the `run -N` forms that assert status at the call site (`run -0` 16, `run -1` 4, `run -19`
-# 1); `run --separate-stderr` (13, whose bodies inspect `$stderr`); a `run` token inside a quoted
-# string or a comment; and a call to any `assert_*` helper (`assert_status`, `assert_output`,
-# `assert_contains`, `assert_ctx_contains`, `assert_no_drop` and siblings, defined by 14 bats files
-# themselves) — those consume status and output internally, so the call IS the inspection.
+# Named exemptions for signal (a): the self-asserting `run !` form; the `run -N` forms that assert
+# status at the call site; `run --separate-stderr` (whose bodies inspect `$stderr`); a `run` token
+# inside a quoted string or a comment; and a call to any `assert_*` helper (`assert_status`,
+# `assert_output`, `assert_contains`, `assert_ctx_contains`, `assert_no_drop` and siblings, defined
+# by the bats files themselves) — those consume status and output internally, so the call IS the
+# inspection.
 #
 # Deliberately NOT a signal: conditional test logic. An `if`/`while`/`try` inside a test body is the
 # smell only when the assertion sits on one branch, and a loop whose body asserts on EVERY element is
