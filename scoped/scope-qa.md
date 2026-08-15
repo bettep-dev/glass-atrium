@@ -60,9 +60,10 @@ When reviewing HTML primary deliverables (user-requested HTML per `scope-report.
 ## Regression Risk Estimation [QA]
 
 On every code review, tag the change with a regression-risk label:
-- **High** — core business logic changed AND no test added; OR removed an existing test
+- **High** — core business logic changed AND no test added; OR removed an existing test; OR the added test cannot fail (see `shared-testing.md` → Meaningless-Test Prohibitions) — a test that cannot fail counts as NO test added.
 - **Med** — non-core change covered by existing tests
 - **Low** — config / docs / non-executable artifact only
+- When applying this label, state in one line the relationship the added test asserts. Unable to state it → treat it as no test added.
 
 High-risk reviews MUST list the affected test paths in the review output, so the orchestrator can route the next-step verification correctly.
 
