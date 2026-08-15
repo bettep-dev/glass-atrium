@@ -27,6 +27,11 @@
 #                  rejected (nothing was discarded, so the row must not read applied).
 #   T7 rationale — the rationale carries the hunk count, the dropped/added line
 #                  counts and a bounded excerpt of the dropped daemon lines.
+#   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
+#                  cycle date: the date is forked once per run, so a midnight
+#                  crossing can never split one run's rows across two days.
+#   T10 no ledger — an empty or absent ledger PATH records rejected and still
+#                  returns 0 (an unreadable ledger must not abort the deploy).
 #
 # T2/T3 need Postgres and skip without it; every other test is hermetic (update.sh is
 # SOURCED, the CLI is stubbed, all paths stay in a temp dir).
@@ -85,15 +90,27 @@ set -Eeuo pipefail
 # shellcheck disable=SC1090
 source "${UPDATE_SH}"
 update_log() { printf '%s\n' "$*"; }
-_update_agent_outcomes_file="${LEDGER}"
-update_emit_resolved_records "${ROOT}" "${TSV}"
+# Tick-counting date shim, opt-in so the Postgres tests keep the real date their
+# DATE column stores. The tick lives on DISK because `date` runs inside a command
+# substitution: a shell-variable counter is lost with the subshell and would return
+# the same value every call, making the once-per-run assertion pass either way.
+if [[ -n "${DATE_TICKS:-}" ]]; then
+  date() {
+    printf 'x\n' >>"${DATE_TICKS}"
+    printf '2026-01-%02d\n' "$(wc -l <"${DATE_TICKS}" | tr -d ' ')"
+  }
+fi
+update_emit_resolved_records "${ROOT}" "${TSV}" "${LEDGER}"
 DRV
   chmod +x "${DRIVER}"
 
-  # Stub CLI: captures the envelope, exits with STUB_RC (default 0).
+  # Stub CLI: APPENDS one envelope line per row (JSONL) — the emitter runs it once
+  # per TSV row, so a write-mode capture would keep only the last envelope and a
+  # multi-row assertion would silently read row N alone. Exits with STUB_RC.
   cat >"${WORK}/stub-helper.py" <<'PY'
 import os, sys
-open(os.environ["CAPTURE"], "w", encoding="utf-8").write(sys.stdin.read())
+with open(os.environ["CAPTURE"], "a", encoding="utf-8") as fh:
+    fh.write(sys.stdin.read())
 sys.exit(int(os.environ.get("STUB_RC", "0")))
 PY
 }
@@ -114,16 +131,20 @@ write_tsv() {
 
 run_driver() {
   UPDATE_SH="${UPDATE_SH}" ROOT="${ROOT}" TSV="${TSV}" LEDGER="${LEDGER}" \
-    CAPTURE="${CAPTURE}" STUB_RC="${STUB_RC:-0}" \
+    CAPTURE="${CAPTURE}" STUB_RC="${STUB_RC:-0}" DATE_TICKS="${DATE_TICKS:-}" \
     ATRIUM_UPDATE_PG_HELPER="${ATRIUM_UPDATE_PG_HELPER:-${WORK}/stub-helper.py}" \
     bash "${DRIVER}"
 }
 
+# $1 = envelope arg name · $2 = 1-based row, defaulting to the LAST captured
+# envelope (the only one a single-row run produces).
 envelope_field() {
   python3 -c '
 import json, sys
-print(json.load(open(sys.argv[1]))["args"][sys.argv[2]])
-' "${CAPTURE}" "$1"
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+idx = int(sys.argv[3])
+print(rows[idx - 1 if idx else -1]["args"][sys.argv[2]])
+' "${CAPTURE}" "$1" "${2:-0}"
 }
 
 db_available() {
@@ -146,7 +167,7 @@ db_available() {
 
   # The legacy llm tier folds into the safety bucket in both the tier-count fold
   # and the query builder, inflating the awaiting-decision count.
-  refute_equals_llm="$(envelope_field approval_tier)"
+  refute_equals_llm="$output"
   [ "${refute_equals_llm}" != "llm" ]
 
   run envelope_field cost_guard_state
@@ -218,6 +239,43 @@ db_available() {
 
   rationale="$(envelope_field rationale)"
   [[ "$rationale" == *"not applied"* ]]
+}
+
+@test "T9 a multi-row run splits landed per row and stamps both with ONE cycle date" {
+  # The landed split is a characterization pin — the pre-hoist per-row ledger read
+  # produced the same split. The shared date is the discriminating one: a per-row
+  # `date` fork splits one run's rows across two days on a midnight crossing.
+  : >"${TSV}"
+  local name
+  for name in ga-rec-first.md ga-rec-second.md; do
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${name}" "agents/${name}" "${RELEASE}" 2 2 1 "0,3" \
+      "${DIFF_FILE}" "${DROPPED_TEXT}" >>"${TSV}"
+  done
+  printf 'ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
+
+  DATE_TICKS="${WORK}/date.ticks" run run_driver
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(agents/ga-rec-first.md, landed=1)"* ]]
+  [[ "$output" == *"(agents/ga-rec-second.md, landed=0)"* ]]
+
+  [ "$(envelope_field cycle_date 1)" = "$(envelope_field cycle_date 2)" ]
+  # One tick == one fork for the whole run, whatever the row count.
+  [ "$(wc -l <"${WORK}/date.ticks" | tr -d ' ')" -eq 1 ]
+}
+
+@test "T10 an empty or absent ledger path records rejected and still returns 0" {
+  # The guard's not-taken branch. Neither shape may abort: the emitter runs after
+  # the merge landed and before the base-content capture, so an abort here strands
+  # the merge at the old base.
+  write_tsv
+  LEDGER="" run run_driver
+  [ "$status" -eq 0 ]
+  [ "$(envelope_field status)" = "rejected" ]
+
+  LEDGER="${WORK}/never-written.ledger" run run_driver
+  [ "$status" -eq 0 ]
+  [ "$(envelope_field status)" = "rejected" ]
 }
 
 @test "T4 a non-zero CLI exit warns once and continues the update" {

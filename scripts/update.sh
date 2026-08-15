@@ -287,16 +287,6 @@ update_declines_dir() {
   printf '%s\n' "${parent}/update-declines"
 }
 
-# Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
-# (the tripwire working), so it gets no named failure code — but announcing it through
-# a single stderr line means an operator not watching the deploy scroll by has no later
-# way to learn that a body was declined and the local copy kept. The record is durable
-# in the install area, beside the agents-bak rollback store and the preserved failed
-# snapshots above, and append-only so a re-run adds rather than replaces. Best-effort with
-# a loud WARN: a decline must never abort the rest of the deploy.
-# $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
-# The root is passed rather than re-derived: the merge caller already holds the install
-# root it is merging into, and the backup dir it computes must resolve to the same base.
 # Compose the write_autoagent_proposal envelope for one resolved body. Values
 # arrive through the environment (never argv interpolation) so no rationale or
 # diff text can reach a shell or JSON quoting seam. Reads GA_REC_* + the diff
@@ -408,28 +398,44 @@ print(json.dumps({
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
 # $1 = install root · $2 = resolved-record TSV (base, target, release, hunks,
-# dropped, added, regions, diff path) · read against the outcome ledger for the
-# landed/not-landed split.
+# dropped, added, regions, diff path) · $3 = per-run outcome ledger path, read for
+# the landed/not-landed split. The ledger travels as a PARAMETER rather than through
+# the file-scope global so the landed verdict is a function of the arguments alone.
 update_emit_resolved_records() {
-  local root="$1" tsv="$2"
+  local root="$1" tsv="$2" ledger="$3"
   [[ -s "${tsv}" ]] || return 0
   local helper landed base target release hunks dropped added regions diff_file dropped_text
+  local ledger_lines="" cycle_date
   helper="${ATRIUM_UPDATE_PG_HELPER:-${root}/scripts/_pg_dual_write_daemon.py}"
   if [[ ! -f "${helper}" ]]; then
     update_log "WARN: resolved-gap recording skipped — no dual-write helper at ${helper}; the discard is stderr-only"
     return 0
   fi
+  # Both are run-level constants, so they are resolved ONCE: loading the ledger or
+  # forking `date` per TSV row costs O(rows) subprocesses, and a per-row date would
+  # additionally split one run's rows across two days on a midnight crossing.
+  # Each carries its own failure edge because errexit is active down the whole merge
+  # chain: an unreadable ledger or a failed fork here would abort AFTER the merge
+  # landed and BEFORE update_capture_base_content, stranding the merge at the old
+  # base — so the read rides an if-condition and the fork an or-fallback, and both
+  # degrade to the empty default (every row records as not-landed) instead.
+  if [[ -n "${ledger}" && -f "${ledger}" ]] && ledger_lines="$(<"${ledger}")"; then
+    ledger_lines=$'\n'"${ledger_lines}"$'\n'
+  fi
+  cycle_date="$(date +%Y-%m-%d)" || cycle_date=""
   while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text; do
     [[ -n "${base}" ]] || continue
     # Landed == the commit callback appended this basename to the per-run outcome
-    # ledger on GIT_TXN_OK. A declined gate writes no entries at all, so every
-    # resolved file then records as not-applied — no daemon content was dropped.
+    # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a
+    # declined gate writes no entries at all, and a row that falsely read applied
+    # would claim daemon content was discarded when none was. That default is the
+    # OPPOSITE of update_capture_base_content's blanket advance, which is why the
+    # shared matcher below carries no default of its own.
     landed=0
-    if [[ -n "${_update_agent_outcomes_file}" && -f "${_update_agent_outcomes_file}" ]] \
-      && grep -Fxq -- "${base}" "${_update_agent_outcomes_file}"; then
+    if update_agent_outcome_landed "${base}" "${ledger_lines}"; then
       landed=1
     fi
-    if GA_REC_CYCLE_DATE="$(date +%Y-%m-%d)" GA_REC_TARGET="${target}" \
+    if GA_REC_CYCLE_DATE="${cycle_date}" GA_REC_TARGET="${target}" \
       GA_REC_AGENT="${base%.md}" GA_REC_SOURCE="${release}" \
       GA_REC_HUNKS="${hunks}" GA_REC_DROPPED="${dropped}" GA_REC_ADDED="${added}" \
       GA_REC_REGIONS="${regions}" GA_REC_DIFF="${diff_file}" GA_REC_LANDED="${landed}" \
@@ -442,6 +448,16 @@ update_emit_resolved_records() {
   done <"${tsv}"
 }
 
+# Persist ONE entry per conflict-declined agent body. A decline is a CORRECT outcome
+# (the tripwire working), so it gets no named failure code — but announcing it through
+# a single stderr line means an operator not watching the deploy scroll by has no later
+# way to learn that a body was declined and the local copy kept. The record is durable
+# in the install area, beside the agents-bak rollback store and the preserved failed
+# snapshots above, and append-only so a re-run adds rather than replaces. Best-effort with
+# a loud WARN: a decline must never abort the rest of the deploy.
+# $1 = install root, $2 = repo-relative path of the declined body, $3 = resolver verdict.
+# The root is passed rather than re-derived: the merge caller already holds the install
+# root it is merging into, and the backup dir it computes must resolve to the same base.
 update_record_conflict_decline() {
   local root="$1" rel="$2" verdict="$3" dest
   dest="$(update_declines_dir "${root}")"
@@ -1110,6 +1126,17 @@ update_agent_outcome_advance() {
   printf '%s\n' "$1" >>"${_update_agent_outcomes_file}"
 }
 
+# Whole-line membership test for ONE basename against the ledger, mirroring
+# `grep -qxF` through the newline anchors the caller wrapped the text in. Takes the
+# PRE-LOADED text rather than a path so a per-row call costs no fork and no re-read,
+# and answers only "is it listed" — the two readers disagree on what an ABSENT
+# ledger means (the capture side advances everything, the emit side records nothing
+# as landed), so that default stays with each caller.
+# $1 = basename · $2 = newline-wrapped ledger text.
+update_agent_outcome_landed() {
+  [[ "$2" == *$'\n'"$1"$'\n'* ]]
+}
+
 # The committing callback the foreground gate invokes ONLY on explicit confirm.
 # Iterates the collected candidate records (TSV: logical, real, candidate,
 # release, agent) and drives each through git_txn_apply. Each file is an
@@ -1183,7 +1210,7 @@ update_merge_agent_editable_regions() {
   : "${manifest:?manifest}"
   local merge_dir records_file resolved_file gate_records=""
   local file base local_file candidate plan_err plan_line plan_rc
-  local verdict changed n_candidates=0 rc=0
+  local verdict reason changed n_candidates=0 rc=0
   local backup_base cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
@@ -1259,19 +1286,20 @@ update_merge_agent_editable_regions() {
     # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
     # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
     # watching, which leaves an operator no later way to learn a body was declined.
-    # The two decline through the SAME ledger for DIFFERENT reasons, so they split
-    # rather than share a condition: the two-way case has no base anchor and therefore
-    # no side any policy could prefer, which is why it declines unconditionally and the
-    # gap-policy kill switch never reaches it. merge-conflict is reachable only WITH
-    # that switch set — the resolver emits merge-resolved-release otherwise — so the
-    # second branch IS today's path, and restoring it is what the switch buys.
-    if [[ "${verdict}" == 'gated-2way-present-both' ]]; then
-      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — no base anchor, so neither side can be preferred; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
-      update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
-      continue
-    fi
-    if [[ "${verdict}" == 'merge-conflict' ]]; then
-      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — a conflict-marker candidate NEVER lands; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
+    # The two decline through the SAME ledger for DIFFERENT reasons, so the reason
+    # clause varies per verdict while the repair instruction is shared: the two-way
+    # case has no base anchor and therefore no side any policy could prefer, which is
+    # why it declines unconditionally and the gap-policy kill switch never reaches it.
+    # merge-conflict is reachable only WITH that switch set — the resolver emits
+    # merge-resolved-release otherwise — so that verdict IS today's path, and
+    # restoring it is what the switch buys.
+    case "${verdict}" in
+      gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
+      merge-conflict) reason='a conflict-marker candidate NEVER lands' ;;
+      *) reason='' ;; # per-file reset — a leaked reason would decline a mergeable body
+    esac
+    if [[ -n "${reason}" ]]; then
+      update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — ${reason}; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
       update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
       continue
     fi
@@ -1356,7 +1384,7 @@ update_merge_agent_editable_regions() {
     *) update_log "WARN: agent EDITABLE-region merge had rolled-back or unapplied file(s) — see the per-file outcome above" ;;
   esac
   # Before merge_dir (and the captured diffs inside it) is torn down.
-  update_emit_resolved_records "${root}" "${resolved_file}"
+  update_emit_resolved_records "${root}" "${resolved_file}" "${_update_agent_outcomes_file}"
   rm -rf -- "${merge_dir}"
   return 0
 }
@@ -1418,13 +1446,11 @@ update_capture_base_content() {
   store="$(update_base_store_dir)"
   mkdir -p -- "${store}"
   # Load the per-run merge ledger ONCE (bash `$(<file)` — zero forks) into a
-  # newline-wrapped string, then test membership per file with a fork-free `[[ ==
-  # pattern ]]` whole-line scan (the newline anchors mirror `grep -qxF`). Replaces
-  # the prior per-file grep fork (O(files) subprocesses), matching the diff's own
-  # fork-free hoist pattern (spine_find_removed_files). `declare -A` is NOT usable —
-  # stock macOS bash 3.2 has no associative arrays. ledger_active gates the lookup:
-  # with no active ledger (a direct/legacy caller that ran no merge) the prior
-  # blanket advance is preserved.
+  # newline-wrapped string, then test membership per file through the shared
+  # fork-free matcher. `declare -A` is NOT usable — stock macOS bash 3.2 has no
+  # associative arrays. ledger_active gates the lookup HERE rather than inside the
+  # matcher: with no active ledger (a direct/legacy caller that ran no merge) the
+  # prior blanket advance is preserved, the OPPOSITE of the emit side's default.
   local ledger_active=0 ledger_lines=""
   if [[ -n "${ledger}" && -f "${ledger}" ]]; then
     ledger_active=1
@@ -1435,7 +1461,7 @@ update_capture_base_content() {
     base="${file##*/}"
     # An active ledger that does NOT list this basename → the file's merge did not
     # land → keep its prior base entry (do not advance).
-    if [[ "${ledger_active}" -eq 1 && "${ledger_lines}" != *$'\n'"${base}"$'\n'* ]]; then
+    if [[ "${ledger_active}" -eq 1 ]] && ! update_agent_outcome_landed "${base}" "${ledger_lines}"; then
       kept=$((kept + 1))
       # Name the kept basenames in the summary: a merge-claimed-path exclusion (the charter
       # file) is kept EVERY run, so an unlabeled "N kept" reads as an unexplained anomaly.

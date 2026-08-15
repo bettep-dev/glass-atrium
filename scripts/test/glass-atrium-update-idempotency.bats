@@ -8,6 +8,8 @@
 #   * the end-to-end second run (no markers, no content change);
 #   * the capture ORDERING that keeps the base advancing even when the (fatal)
 #     vendor sweep dies right after a landed merge;
+#   * a declined body followed by a mergeable one: the decline reason is per-file
+#     state, and a leaked one declines a body that had no conflict at all;
 #   * a conflicting region, both ways round the gap-policy kill switch: with the
 #     switch OFF it declines durably and never lands markers; with the switch at
 #     its default it resolves to the release side and lands, declining nothing —
@@ -121,6 +123,10 @@ base goal
 ## Rules
 NEW vendor rules'
 
+# $1 = confirm answer · $2 = gap-policy kill switch (empty = the default policy).
+# The switch is passed EXPLICITLY rather than forwarded from the ambient environment:
+# a `${VAR:-}` forward reads as a hermeticity pin while actually letting an operator's
+# exported value decide which policy the run under test exercises.
 run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -131,7 +137,7 @@ run_update() {
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
-    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${ATRIUM_UPDATE_MERGE_RESOLVE_GAPS:-}" \
+    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${2-}" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/no-such-claude" \
     bash "${SKILL}"
 }
@@ -202,8 +208,6 @@ run_update() {
   # decline path is reachable only with the switch set. It still has to WORK when
   # it is — a rollback of the gap policy must land on a decline that behaves, and
   # an untested switch is a rollback nobody can take.
-  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
-  export ATRIUM_UPDATE_MERGE_RESOLVE_GAPS
   # Overlapping both-changed region: the merged candidate carries conflict markers,
   # which in a live agent body is corruption. It must be reported + skipped, with
   # the local body byte-identical and its base entry left at the prior anchor.
@@ -229,7 +233,7 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update y 0
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
@@ -314,4 +318,53 @@ NEW vendor rules'
   # Nothing declined, so no durable record should exist. Asserting absence of the FILE
   # (not an empty one) keeps "no declines" distinguishable from "never recorded".
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
+}
+
+@test "a declined body does not leak its conflict reason onto the NEXT mergeable body" {
+  # The decline reason is per-file state read at the top of the loop's gate. Without
+  # a per-file reset the second file inherits the first file's reason and is declined
+  # as a conflict it never had — a silent one, since its own verdict is mergeable and
+  # nothing else in the run reports a problem.
+  #
+  # dev-a declines through the two-way gate: seeding no base entry leaves the resolver
+  # no anchor, so it prefers neither side under the DEFAULT policy and the kill switch
+  # stays out of the picture. dev-b sorts after it and merges cleanly.
+  local twoway_local='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+LOCAL rewrite
+<!-- EDITABLE:END -->
+## Rules
+old vendor rules'
+  local twoway_release='# dev-a
+## Goal
+<!-- EDITABLE:BEGIN -->
+VENDOR rewrite
+<!-- EDITABLE:END -->
+## Rules
+NEW vendor rules'
+  seed_file "${INSTALL}" "agents/dev-a.md" "${twoway_local}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${twoway_release}"
+  seed_file "${INSTALL}" "agents/dev-b.md" "${GOAL_LOCAL//dev-a/dev-b}"
+  seed_base_store "dev-b.md" "${GOAL_BASE//dev-a/dev-b}"
+  seed_file "${NEWSRC}" "agents/dev-b.md" "${GOAL_RELEASE//dev-a/dev-b}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "agents/dev-b.md"
+
+  run_update y
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"CONFLICT (gated-2way-present-both) in agents/dev-a.md"* ]] || return 1
+
+  # dev-b is named by NO conflict line, and it LANDED: kept its learned region and
+  # took the new vendor structure.
+  local conflict_lines merged_b
+  conflict_lines="$(printf '%s\n' "$output" | grep 'CONFLICT (' || true)"
+  [[ "${conflict_lines}" != *"dev-b"* ]] || return 1
+  merged_b="$(cat "${INSTALL}/agents/dev-b.md")"
+  [[ "${merged_b}" == *"local learned goal"* ]] || return 1
+  [[ "${merged_b}" == *"NEW vendor rules"* ]] || return 1
+
+  # One decline recorded, dev-a's — a leaked reason persists a second entry.
+  local declines="${INSTALL}/update-declines/conflict-declines.log"
+  [[ "$(wc -l <"${declines}" | tr -d ' ')" == "1" ]] || return 1
+  [[ "$(cat "${declines}")" == *"agents/dev-a.md"* ]] || return 1
 }

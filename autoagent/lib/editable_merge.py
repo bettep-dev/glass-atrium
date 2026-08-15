@@ -134,6 +134,9 @@ _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
 # never writable to a live agent file (see the module header's tripwire section).
+#
+# MERGE_RESOLVED_RELEASE is deliberately OUT: it is marker-FREE by construction
+# (every emitted line is verbatim from an anchor), so it keeps its write path.
 _MARKER_VERDICTS = frozenset({MERGE_CONFLICT, GATED_2WAY})
 
 # git_txn_apply apply-callback contract (mirrors daemon-apply.sh apply_diff):
@@ -412,19 +415,6 @@ def three_way_merge_hunks(
     return out, hunks
 
 
-def three_way_merge(
-    base: list[str], local: list[str], release: list[str]
-) -> tuple[list[str], bool]:
-    """Reporting-default merge of one region. Returns (merged_lines, had_conflict).
-
-    The marker-emitting arity the module shipped before the gap policy existed,
-    retained so callers wanting only "did this conflict" need not reason about
-    hunk records.
-    """
-    merged, hunks = three_way_merge_hunks(base, local, release)
-    return merged, bool(hunks)
-
-
 # -- Per-region three-anchor resolution (T17 / T18 candidate) ----------------
 
 
@@ -478,19 +468,21 @@ def _resolve_region(
         base, local, release, resolve_release=resolve_release
     )
     if not hunks:
-        verdict, conflict = MERGE_CLEAN, False
+        verdict = MERGE_CLEAN
     elif resolve_release:
-        # Every emitted line is verbatim from an anchor and no marker was written,
-        # so the region's conflict flag CLEARS: the apply refusal and the on-disk
-        # rescan then pass on their own terms rather than by exemption.
-        verdict, conflict = MERGE_RESOLVED_RELEASE, False
+        verdict = MERGE_RESOLVED_RELEASE
     else:
-        verdict, conflict = MERGE_CONFLICT, True
+        verdict = MERGE_CONFLICT
+    # had_conflict is derived from _MARKER_VERDICTS membership rather than set per
+    # branch, so a verdict later added to that set carries this site with it.
+    # A resolved gap therefore CLEARS the flag: every emitted line is verbatim from
+    # an anchor and no marker was written, so the apply refusal and the on-disk
+    # rescan pass on their own terms rather than by exemption.
     return RegionResolution(
         index,
         verdict,
         merged,
-        had_conflict=conflict,
+        had_conflict=verdict in _MARKER_VERDICTS,
         reason="both changed; net-new diff3 candidate",
         hunks=tuple(hunks),
     )
@@ -507,17 +499,13 @@ def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
     ``regions`` is a comma-joined index list (space-free, so it survives the
     updater's up-to-next-space plan-line extractor), empty when no gap resolved.
     """
-    hunks = [
-        h
-        for r in resolution.regions
-        if r.verdict == MERGE_RESOLVED_RELEASE
-        for h in r.hunks
-    ]
-    indices = [
-        str(r.index)
+    resolved = [
+        r
         for r in resolution.regions
         if r.verdict == MERGE_RESOLVED_RELEASE and r.hunks
     ]
+    hunks = [h for r in resolved for h in r.hunks]
+    indices = [str(r.index) for r in resolved]
     return {
         "hunks": len(hunks),
         "dropped_lines": sum(len(h.local) for h in hunks),

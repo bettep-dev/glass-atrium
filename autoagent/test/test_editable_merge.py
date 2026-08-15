@@ -19,7 +19,8 @@ Covered behaviors (T21 — consolidated, full base-content path):
   * verify() re-scan defends against post-write on-disk sensitive tampering;
   * structural region-count mismatch -> ceremony route, hard-fail apply/verify;
   * thin CLI `plan` -> verdict line + base-content-store integration + refusal exit;
-  * three_way_merge pure-function gap behavior (one-sided / identical collapse).
+  * three_way_merge_hunks pure-function gap behavior (one-sided / identical
+    collapse / divergent conflict).
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_editable_merge.py -v
@@ -945,30 +946,32 @@ class StructuralApplyVerifyTest(unittest.TestCase):
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ThreeWayMergePureFunctionTest(unittest.TestCase):
-    """T21 — the net-new diff3 primitive: one-sided gaps and identical-change collapse."""
+    """T21 — ``three_way_merge_hunks``: one-sided gaps, identical collapse, conflict."""
 
     def test_only_one_side_changed_gap_taken_without_conflict(self) -> None:
         base = ["a\n", "b\n", "c\n"]
         local = ["a\n", "LOCAL\n", "b\n", "c\n"]  # local inserted a line
         release = ["a\n", "b\n", "c\n"]  # release untouched
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertFalse(conflict)
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertEqual(hunks, [])
         self.assertEqual(merged, local)
 
     def test_both_sides_identical_change_collapses_to_one(self) -> None:
         base = ["a\n", "b\n"]
         local = ["a\n", "SAME\n", "b\n"]
         release = ["a\n", "SAME\n", "b\n"]
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertFalse(conflict)
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertEqual(hunks, [])
         self.assertEqual(merged.count("SAME\n"), 1)  # not duplicated
 
     def test_divergent_change_emits_conflict_markers(self) -> None:
         base = ["x\n"]
         local = ["LOCAL\n"]
         release = ["RELEASE\n"]
-        merged, conflict = em.three_way_merge(base, local, release)
-        self.assertTrue(conflict)
+        # resolve_release stays OFF (the default) — the marker assertions below
+        # only hold on the reporting path.
+        merged, hunks = em.three_way_merge_hunks(base, local, release)
+        self.assertTrue(hunks)
         joined = "".join(merged)
         self.assertIn("LOCAL", joined)
         self.assertIn("RELEASE", joined)
@@ -1049,6 +1052,7 @@ def _fm_doc(front: str, region: str) -> str:
     )
 
 
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class GapPolicyTest(unittest.TestCase):
     """Deterministic conflicting-gap resolution: the release side, marker-free."""
 
@@ -1056,14 +1060,18 @@ class GapPolicyTest(unittest.TestCase):
     _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
     _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
-        res = em.resolve_file(
+    def _resolve(self, *, resolve_gaps: bool | None = None) -> em.FileResolution:
+        """The class fixtures under one policy setting; None leaves it env-driven."""
+        return em.resolve_file(
             "dev-android.md",
             self._LOCAL,
             self._RELEASE,
             self._BASE,
-            resolve_conflicting_gaps=True,
+            resolve_conflicting_gaps=resolve_gaps,
         )
+
+    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
+        res = self._resolve(resolve_gaps=True)
 
         self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
         self.assertFalse(res.has_conflict)
@@ -1073,13 +1081,7 @@ class GapPolicyTest(unittest.TestCase):
         self.assertNotIn("LOCAL rewrite", res.candidate_text)
 
     def test_when_policy_on_then_region_carries_its_hunks_forward(self) -> None:
-        res = em.resolve_file(
-            "dev-android.md",
-            self._LOCAL,
-            self._RELEASE,
-            self._BASE,
-            resolve_conflicting_gaps=True,
-        )
+        res = self._resolve(resolve_gaps=True)
 
         (hunk,) = res.regions[0].hunks
         self.assertEqual(hunk.base, ("same-old\n",))
@@ -1087,25 +1089,14 @@ class GapPolicyTest(unittest.TestCase):
         self.assertEqual(hunk.release, ("VENDOR rewrite\n",))
 
     def test_when_rederived_from_same_anchors_then_candidate_is_byte_identical(self) -> None:
-        kwargs = {"resolve_conflicting_gaps": True}
-        first = em.resolve_file(
-            "dev-android.md", self._LOCAL, self._RELEASE, self._BASE, **kwargs
-        )
-        second = em.resolve_file(
-            "dev-android.md", self._LOCAL, self._RELEASE, self._BASE, **kwargs
-        )
+        first = self._resolve(resolve_gaps=True)
+        second = self._resolve(resolve_gaps=True)
 
         self.assertEqual(first.candidate_text, second.candidate_text)
         self.assertEqual(first.verdict, second.verdict)
 
     def test_when_policy_off_then_output_matches_the_reporting_default(self) -> None:
-        res = em.resolve_file(
-            "dev-android.md",
-            self._LOCAL,
-            self._RELEASE,
-            self._BASE,
-            resolve_conflicting_gaps=False,
-        )
+        res = self._resolve(resolve_gaps=False)
 
         self.assertEqual(res.verdict, em.MERGE_CONFLICT)
         self.assertTrue(res.has_conflict)
@@ -1116,13 +1107,9 @@ class GapPolicyTest(unittest.TestCase):
         prior = os.environ.get(em._RESOLVE_GAPS_ENV)
         try:
             os.environ[em._RESOLVE_GAPS_ENV] = "0"
-            off = em.resolve_file(
-                "dev-android.md", self._LOCAL, self._RELEASE, self._BASE
-            )
+            off = self._resolve()
             os.environ.pop(em._RESOLVE_GAPS_ENV)
-            on = em.resolve_file(
-                "dev-android.md", self._LOCAL, self._RELEASE, self._BASE
-            )
+            on = self._resolve()
         finally:
             if prior is None:
                 os.environ.pop(em._RESOLVE_GAPS_ENV, None)
@@ -1160,7 +1147,7 @@ class GapPolicyTest(unittest.TestCase):
                 em.has_conflict_markers(target.read_text(encoding="utf-8"))
             )
 
-    def test_when_gap_is_non_conflicting_then_no_hunk_and_lines_match_legacy(self) -> None:
+    def test_when_gap_is_non_conflicting_then_no_hunk_and_release_lands(self) -> None:
         base, local, release = ["A\n"], ["A\n"], ["R\n"]
 
         merged, hunks = em.three_way_merge_hunks(
@@ -1169,7 +1156,6 @@ class GapPolicyTest(unittest.TestCase):
 
         self.assertEqual(hunks, [])
         self.assertEqual(merged, ["R\n"])
-        self.assertEqual(em.three_way_merge(base, local, release), (["R\n"], False))
 
     def test_when_region_has_many_conflicting_gaps_then_one_hunk_each_in_order(self) -> None:
         base = ["A\n", "s\n", "B\n"]
@@ -1197,6 +1183,7 @@ class GapPolicyTest(unittest.TestCase):
         self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
 
 
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ResolvedGapStatsTest(unittest.TestCase):
     """The shape the recording caller reads back from a resolved file.
 
@@ -1209,14 +1196,18 @@ class ResolvedGapStatsTest(unittest.TestCase):
     _LOCAL = _doc(top="# A", region="LOCAL one\nLOCAL two", bottom="z")
     _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
-        res = em.resolve_file(
+    def _resolve(self, release: str) -> em.FileResolution:
+        """The class fixtures with the policy ON; the release side is the variable."""
+        return em.resolve_file(
             "dev-android.md",
             self._LOCAL,
-            self._RELEASE,
+            release,
             self._BASE,
             resolve_conflicting_gaps=True,
         )
+
+    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
+        res = self._resolve(self._RELEASE)
 
         stats = em.resolved_gap_stats(res)
         self.assertEqual(stats["hunks"], 1)
@@ -1225,13 +1216,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
         self.assertEqual(stats["regions"], "0")
 
     def test_when_no_gap_resolved_then_stats_are_zero_and_regions_none(self) -> None:
-        res = em.resolve_file(
-            "dev-android.md",
-            self._LOCAL,
-            self._LOCAL,
-            self._BASE,
-            resolve_conflicting_gaps=True,
-        )
+        res = self._resolve(self._LOCAL)
 
         stats = em.resolved_gap_stats(res)
         self.assertEqual(stats["hunks"], 0)
@@ -1326,6 +1311,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
         self.assertIn("--- a/agents/dev-android.md", written)
 
 
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class BaseAwareFrontmatterTest(unittest.TestCase):
     """`effort` is release-shipped, so live-wins is conditional on base divergence."""
 
