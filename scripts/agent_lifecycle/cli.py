@@ -66,7 +66,7 @@ from .scaffold import (
 )
 from .secret_scan import SecretDetected
 from .stanza import StanzaError
-from .subproc import StepError
+from .subproc import StepError, run_roster_check
 from .transaction import RollbackFailedError, TransactionError
 from .validation import ValidationError, read_gated_text, validate_name
 
@@ -306,7 +306,8 @@ def _handle_sync_inject(args: argparse.Namespace) -> int:
     delegates the transactional write to inject_sync.apply (`.bak` backup +
     atomic replace + round-trip re-parse + rollback-on-failure). Maps a clean
     rollback to EXIT_TX_FAILED and a failed rollback to EXIT_ROLLBACK_FAILED;
-    success (including a no-op clean tree) is EXIT_OK.
+    success (including a no-op clean tree) is EXIT_OK. On success it also runs the
+    non-blocking registry ↔ Scope Legend roster assertion (_assert_matrix_roster).
     """
     paths = _resolve_paths(args)
 
@@ -330,7 +331,39 @@ def _handle_sync_inject(args: argparse.Namespace) -> int:
         return EXIT_TX_FAILED
 
     print(result.render())
+    _assert_matrix_roster(paths)
     return EXIT_OK
+
+
+def _assert_matrix_roster(paths: StorePaths) -> None:
+    """Post-commit doc assertion: registry ↔ core-compliance-matrix Scope Legend.
+
+    The reconcile step is the one lifecycle plane the LIVE write path crosses, and
+    adding an agent writes the registry but never the Scope Legend row — so this is
+    where that drift is observable. The predicate is NOT re-implemented here: the
+    validator hook's `--roster-check` mode is invoked as a subprocess and branched
+    on by exit status (one definition, two consumers).
+
+    Deliberately NON-BLOCKING (a warning, not an exit-code change): the missing
+    Scope Legend row is a manual governance doc update by design, and a fresh add
+    ALWAYS lacks it, so gating the reconcile here would fail every add right after
+    its transaction already committed — stranding a completed commit behind a
+    documentation edit. The signal is the value; the block is not.
+    """
+    check = run_roster_check(
+        paths.compliance_validator,
+        matrix=paths.compliance_matrix,
+        registry=paths.registry,
+    )
+    if not check.ran or check.returncode == EXIT_OK:
+        return
+    print(
+        "WARNING: agent roster drift — core-compliance-matrix.md Scope Legend "
+        "does not match agent-registry.json (doc update required):",
+        file=sys.stderr,
+    )
+    if check.report:
+        print(check.report, file=sys.stderr)
 
 
 def _handle_sync_gate_roster(args: argparse.Namespace) -> int:

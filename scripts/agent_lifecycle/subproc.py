@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import subprocess  # noqa: S404 — list-form only, shell=False, no interpolated input
 from pathlib import Path
+from typing import NamedTuple
 
 from .paths import default_ga_root
 
@@ -180,6 +181,57 @@ def swap_symlinks(ga_entry: Path, ga_root: Path) -> None:
     raises StepError -> the chain rolls back.
     """
     _run([str(ga_entry), "agents-only"], cwd=ga_root, env=sandbox_env(ga_root))
+
+
+class RosterCheck(NamedTuple):
+    """Outcome of the compliance-matrix roster predicate: exit status + its report.
+
+    `returncode` follows the validator's own contract — 0 clean or FAILED OPEN,
+    2 confirmed mismatch. `ran` is False when the validator is absent or could
+    not be launched, so a caller never reads a silent skip as a clean roster.
+    """
+
+    returncode: int
+    report: str
+    ran: bool
+
+
+def run_roster_check(
+    validator: Path, *, matrix: Path, registry: Path
+) -> RosterCheck:
+    """Invoke `validate-compliance-matrix.sh --roster-check` and return its verdict.
+
+    The single predicate definition lives in that shell hook (a python copy would
+    drift from it), so this is a subprocess call the caller branches on by exit
+    status. Deliberately does NOT reuse `_run`: a non-zero exit here is the
+    verdict being reported, not a failed step to roll back on.
+
+    The matrix + registry inputs are pinned through the validator's own
+    env-overridable constants, so a `--ga-root <copy>` run reads the copy's
+    documents and never the live ones. An absent or unlaunchable validator
+    returns ran=False (fail-open — a doc-consistency audit never breaks a
+    reconcile).
+    """
+    if not validator.is_file():
+        return RosterCheck(returncode=0, report="", ran=False)
+    argv = [str(validator), "--roster-check"]
+    try:
+        proc = subprocess.run(  # noqa: S603 — argv list, shell=False, no interpolated input
+            argv,
+            env={
+                **os.environ,
+                "COMPLIANCE_MATRIX_FILE": str(matrix),
+                "COMPLIANCE_REGISTRY_FILE": str(registry),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        return RosterCheck(returncode=0, report=f"could not launch: {exc}", ran=False)
+    report = (proc.stderr + proc.stdout).strip()
+    return RosterCheck(returncode=proc.returncode, report=report, ran=True)
 
 
 def farm_symlink_path(ga_root: Path, name: str) -> Path:

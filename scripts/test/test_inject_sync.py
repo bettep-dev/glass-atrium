@@ -35,6 +35,7 @@ CID: 2026-06-18T_skill-reconcile-impl_e3c7
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -815,3 +816,101 @@ def test_run_delete_auto_wires_gate_roster_sync(
         assert target not in occ, (
             f"deleted name still in gate-audit.sh SQL IN-list: {occ}"
         )
+
+
+# ── D03 second placement — the reconcile step's registry ↔ Scope Legend assertion ──
+#
+# The predicate itself lives in hooks/validate-compliance-matrix.sh (--roster-check),
+# tested in hooks/test/validate-compliance-matrix.bats. These cases pin the LIFECYCLE
+# half: sync-inject invokes it as a subprocess, branches on its exit status, and stays
+# non-blocking (a doc-row is a manual governance update; gating here would strand an
+# already-committed transaction).
+
+_VALIDATOR_SRC = _SCRIPTS_ROOT.parent / "hooks" / "validate-compliance-matrix.sh"
+
+# The roster layer fails OPEN without jq, so a jq-less runner would prove nothing.
+_NEEDS_JQ = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not on PATH")
+
+
+def _install_matrix_fixture(paths: StorePaths, legend_agents: list[str]) -> None:
+    """Copy the real validator into the temp root + write a matrix it can parse."""
+    dst = paths.compliance_validator
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(_VALIDATOR_SRC.read_text(encoding="utf-8"), encoding="utf-8")
+    dst.chmod(0o755)
+
+    matrix = paths.compliance_matrix
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_text(
+        "# Rule-to-Agent Compliance Matrix\n\n"
+        "## Scope Legend\n\n"
+        "| Scope | Agents |\n"
+        "|-------|--------|\n"
+        "| ALL | All agents |\n"
+        f"| DEV | {', '.join(legend_agents)} |\n",
+        encoding="utf-8",
+    )
+
+
+def _sync_inject(paths: StorePaths) -> int:
+    return cli_main(["--ga-root", str(paths.ga_root), "sync-inject"])
+
+
+def _clean_fixture(tmp_path: Path) -> StorePaths:
+    """An already-in-sync array fixture: the reconcile is a no-op, so only the
+    post-commit roster assertion can produce output."""
+    return _write_fixture(
+        tmp_path,
+        inject=_DEV_ROSTER + _QA_NAMES,
+        styleref=_DEV_ROSTER,
+        minimalism=_DEV_ROSTER,
+        naming=_DEV_ROSTER + [_NAMING_QA_NAME],
+        roster=_DEV_ROSTER,
+    )
+
+
+@_NEEDS_JQ
+def test_sync_inject_warns_on_scope_legend_roster_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A registered agent missing from the Scope Legend is NAMED; the exit stays OK."""
+    paths = _clean_fixture(tmp_path)
+    # Legend lists every roster name but the last one -> registered-but-unlisted.
+    _install_matrix_fixture(paths, _DEV_ROSTER[:-1])
+    missing = _DEV_ROSTER[-1]
+
+    code = _sync_inject(paths)
+    err = capsys.readouterr().err
+
+    assert code == EXIT_OK, "the doc assertion must not gate the reconcile"
+    assert "roster drift" in err, err
+    assert missing in err, err
+
+
+@_NEEDS_JQ
+def test_sync_inject_quiet_when_roster_agrees(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Registry and Scope Legend in agreement -> no warning at all."""
+    paths = _clean_fixture(tmp_path)
+    _install_matrix_fixture(paths, _DEV_ROSTER)
+
+    code = _sync_inject(paths)
+    err = capsys.readouterr().err
+
+    assert code == EXIT_OK
+    assert "roster drift" not in err, err
+
+
+def test_sync_inject_skips_roster_assertion_when_validator_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No validator in the tree -> the assertion is a silent no-op (fail-open)."""
+    paths = _clean_fixture(tmp_path)
+    assert not paths.compliance_validator.exists()
+
+    code = _sync_inject(paths)
+    err = capsys.readouterr().err
+
+    assert code == EXIT_OK
+    assert "roster drift" not in err, err
