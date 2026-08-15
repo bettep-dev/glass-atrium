@@ -1192,13 +1192,17 @@ const APPLY_EXIT_ALREADY_APPLIED = 12;
 const APPLY_EXIT_REGEN_INVALID = 13;
 const APPLY_EXIT_REGEN_UNRECOVERABLE = 14;
 
-// SECURITY (LLM06 — Excessive Agency / human-in-the-loop): approve mutates agent .md
-// files via daemon-apply.sh (high-impact). Guarded because: (1) gated behind an explicit
-// 127.0.0.1 monitor button-click (the click IS the human-in-the-loop decision); (2)
-// recoverable — daemon-apply is git-free, so it first captures a per-proposal before-image
+// SECURITY (LLM06 — Excessive Agency): approve mutates agent .md files via daemon-apply.sh
+// (high-impact). What actually constrains a caller: (1) the loopback-only bind in main.ts;
+// (2) the global onRequest gate in request-guards.ts, which rejects a mutation carrying a
+// cross-origin Sec-Fetch signal or a non-loopback Origin; (3) the content-type restriction in
+// the same module, which costs a cross-origin POST its CORS simple-request status. None of
+// these identifies a human — a local non-browser client still reaches this handler, so treat
+// the request as authenticated by machine locality, not by a person's decision.
+// (4) Recoverable — daemon-apply is git-free, so it first captures a per-proposal before-image
 // under agents-bak/<cycle_date>_p<id>, restored via POST :id/restore within the 14-day
 // window. The DB holds only the forward proposedDiff, so agents-bak is the SOLE recovery
-// anchor (no VCS rollback). Bypasses auto-tier + pre_verify because the user approved.
+// anchor (no VCS rollback). Bypasses auto-tier + pre_verify because the request was approved.
 // `id` is validated positive-int and the script path is a fixed home-dir constant — no
 // request-derived shell input.
 async function handleApprove(
