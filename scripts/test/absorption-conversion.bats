@@ -25,6 +25,7 @@ RESTART_SCRIPT="${GA}/scripts/daemon-daily-restart.sh"
 WIKI_SCRIPT="${GA}/scripts/wiki-daily-compile.sh"
 CONFIG_LIB="${GA}/scripts/lib/atrium-config.sh"
 SINK_LIB="${GA}/scripts/lib/pg-report-drop.sh"
+ENVELOPE_LIB="${GA}/scripts/lib/wiki-envelope.sh"
 REAL_PG_HELPER="${GA}/scripts/_pg_dual_write_daemon.py"
 
 setup() {
@@ -251,6 +252,9 @@ make_wiki_sandbox() {
   cp "${WIKI_SCRIPT}" "${SANDBOX}/wiki-daily-compile.sh"
   cp "${CONFIG_LIB}" "${SANDBOX}/lib/atrium-config.sh"
   cp "${SINK_LIB}" "${SANDBOX}/lib/pg-report-drop.sh"
+  # The compile script sources the envelope parser unconditionally at load time, so the sandbox
+  # needs it even for fixtures that abort long before the model call (pin F2).
+  cp "${ENVELOPE_LIB}" "${SANDBOX}/lib/wiki-envelope.sh"
   PG_REPORT_RECORD="${SANDBOX}/pg-report.jsonl"
   if [[ "${pg_posture}" == "healthy" ]]; then
     make_healthy_pg_helper "${SANDBOX}/_pg_dual_write_daemon.py"
