@@ -36,6 +36,7 @@ import type {
   ImprovementErrorBody,
   ImprovementFilterEcho,
   ImprovementJoinMeta,
+  ImprovementApplyCapState,
   ImprovementLearningLogResponse,
   ImprovementLearningLogRow,
   ImprovementLearningLogStatusBucket,
@@ -45,6 +46,8 @@ import type {
   ImprovementMutationErrorBody,
   ImprovementOutcomeSummary,
   ImprovementProposalRow,
+  ImprovementProseOnlyAddAgentRow,
+  ImprovementProseOnlyAddSummary,
   ImprovementResponse,
   ImprovementStatsResponse,
   ImprovementStyleRefAgentRow,
@@ -276,6 +279,41 @@ interface LearningLogStatusDbRow {
   count: bigint;
 }
 
+// Opening literal of daemon_cycle.py APPLY_CAP_REASON_TEMPLATE, stamped onto
+// last_transition_reason by drop_apply_capped_patterns. It is the only marker that
+// separates a repeat-apply cap from any other terminal 'rejected' transition, so the
+// count keys on it rather than on status alone.
+const APPLY_CAP_REASON_PREFIX = "repeat-apply cap:";
+
+// Operator recovery text. Mirrors the daemon's own reason template so the screen
+// states the same remedy the terminalized row carries.
+const APPLY_CAP_REARM_HINT =
+  "The repeat-apply cap is terminal and never self re-arms. Re-arm a parked pattern " +
+  "by setting its core.learning_log status back to 'identified' — the underlying " +
+  "signal is still open and needs a human design decision, not another patch.";
+
+interface ApplyCapDbRow {
+  capped_patterns: bigint;
+  capped_agents: bigint;
+}
+
+// Per-target-agent prose-only-add count row.
+interface ProseOnlyAddAgentDbRow {
+  target_agent: string | null;
+  count: bigint;
+}
+
+// pre_verify_axes passenger key written by daemon_cycle.py PROSE_ONLY_ADD_AXIS_KEY.
+const PROSE_ONLY_ADD_AXIS_KEY = "prose_only_add";
+
+// Stated on the payload rather than left to the reader: the verdict is derived from
+// the stored diff, which the daemon caps, so a longer patch whose removals fall past
+// the cut classifies prose-only-add. Every count built on it is a floor.
+const PROSE_ONLY_ADD_TRUNCATION_CAVEAT =
+  "Floor, not a total — the verdict is derived from the stored diff, which is " +
+  "truncated before classification, so a longer patch whose removals fall past the " +
+  "cut is still classified prose-only-add.";
+
 interface LoopEventDbRow {
   id: bigint;
   event_ts: Date;
@@ -398,6 +436,7 @@ async function handleImprovement(
       outcomeAggRows,
       linkedAgentRows,
       styleRefAgentRows,
+      proseOnlyAddRows,
     ] = await Promise.all([
       // tier_distribution — UNFILTERED by `tier` param so the FE chip badges
       // stay stable when the user toggles a tier filter. `agent` + window apply.
@@ -529,6 +568,23 @@ async function handleImprovement(
         ${styleRefWhere}
         GROUP BY agent
         ORDER BY agent
+      `,
+      // prose-only-add rolling count, per target agent, over the same user window.
+      // Three predicates, each doing distinct work:
+      //   1. proposalWhere        — window + registry + agent drill-down (tier omitted:
+      //                             the verdict is tier-independent).
+      //   2. provenance filter    — drops updater-written release rows.
+      //   3. `->> = 'true'`       — counts a TRUE verdict only. An absent key reads NULL
+      //                             and a false verdict reads 'false'; neither counts,
+      //                             which is what keeps absence distinct from false.
+      prisma.$queryRaw<ProseOnlyAddAgentDbRow[]>`
+        SELECT target_agent, COUNT(*)::bigint AS count
+        FROM core.autoagent_proposals
+        ${buildProposalWhere(windowDays, null, agent, canonicalKeys)}
+        ${buildDaemonProvenanceFilter()}
+          AND pre_verify_axes->>${PROSE_ONLY_ADD_AXIS_KEY} = 'true'
+        GROUP BY target_agent
+        ORDER BY target_agent
       `,
     ]);
 
@@ -683,6 +739,8 @@ async function handleImprovement(
 
     const confidenceDistribution = foldConfidenceDistribution(confidenceDistRows, windowDays);
 
+    const proseOnlyAddSummary = buildProseOnlyAddSummary(proseOnlyAddRows, windowDays);
+
     request.log.info(
       {
         route: "/api/improvement",
@@ -714,6 +772,7 @@ async function handleImprovement(
         graderCrosscheckRows,
         windowDays,
       ),
+      prose_only_add_summary: proseOnlyAddSummary,
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/improvement", error);
@@ -925,7 +984,7 @@ async function handleLearningLog(
     // AND-prefixed form to it.
     const agentAndFilter = buildAgentMembershipFilter(canonicalKeys);
 
-    const [totalRows, statusRows, patternRows] = await Promise.all([
+    const [totalRows, statusRows, patternRows, applyCapRows] = await Promise.all([
       prisma.$queryRaw<BigintRow[]>`
         SELECT COUNT(*)::bigint AS total FROM core.learning_log ${agentWhere}
       `,
@@ -946,13 +1005,36 @@ async function handleLearningLog(
         ORDER BY discovered_date DESC NULLS LAST, last_updated DESC, id DESC
         LIMIT ${limit}
       `,
+      // Parked-loop state. Deliberately NOT windowed like the pattern list: a cap
+      // stamped weeks ago is still parking the loop today, so a recency window would
+      // report the loop as running the moment the terminalizations aged out.
+      // Registry-gated like its siblings so the count agrees with the rest of the card.
+      prisma.$queryRaw<ApplyCapDbRow[]>`
+        SELECT COUNT(*)::bigint AS capped_patterns,
+               COUNT(DISTINCT agent)::bigint AS capped_agents
+        FROM core.learning_log
+        WHERE status = 'rejected'::core."LearningStatus"
+          AND last_transition_reason LIKE ${`${APPLY_CAP_REASON_PREFIX}%`}
+          ${agentAndFilter}
+      `,
     ]);
+
+    const applyCapRow = applyCapRows[0];
+    const cappedPatterns =
+      applyCapRow === undefined ? 0 : bigintToNumber(applyCapRow.capped_patterns);
+    const applyCapState: ImprovementApplyCapState = {
+      capped_patterns: cappedPatterns,
+      capped_agents:
+        applyCapRow === undefined ? 0 : bigintToNumber(applyCapRow.capped_agents),
+      rearm_hint: cappedPatterns > 0 ? APPLY_CAP_REARM_HINT : null,
+    };
 
     const totalRow = totalRows[0];
     const patterns = patternRows.map(rowToLearningLogSummary);
     const payload: ImprovementLearningLogResponse = {
       fetched_at: new Date().toISOString(),
       total_patterns: totalRow === undefined ? 0 : bigintToNumber(totalRow.total),
+      apply_cap_state: applyCapState,
       returned: patterns.length,
       status_distribution: statusRows.map(rowToLearningLogStatusBucket),
       patterns,
@@ -1452,6 +1534,20 @@ interface ProposalRestoreRow {
 const UPDATER_WRITTEN_PATTERN_LABELS: ReadonlySet<string> = new Set([
   "editable-region-resolved-release",
 ]);
+
+// Row-provenance predicate for every aggregate over core.autoagent_proposals that is
+// meant to describe DAEMON activity. Updater-written rows land one per resolved file
+// per update day, so an aggregate without this filter moves on a release day with no
+// daemon cycle at all. The obligation is unconditional: the emitting plan is barred
+// from ever adding the filter on its side, so it can only live here.
+// Fail-open on an empty label set (never emit `NOT IN ()`).
+function buildDaemonProvenanceFilter(): Prisma.Sql {
+  const labels = [...UPDATER_WRITTEN_PATTERN_LABELS];
+  if (labels.length === 0) {
+    return Prisma.empty;
+  }
+  return Prisma.sql`AND pattern_label NOT IN (${Prisma.join(labels)})`;
+}
 
 // Recovery net for the approve SECURITY note: undo an applied proposal by restoring the
 // agents-bak/<cycle_date>_p<id> before-image. Only an 'applied' proposal has a snapshot, so
@@ -1970,6 +2066,32 @@ export function buildGraderCrosscheckSummary(
 //   - overall_*    null     → no eligible rows ANYWHERE in window (typical
 //                              during v1.0 OPTIONAL phase before style_ref columns
 //                              are populated)
+// NULL target_agent rows are dropped rather than folded into an "unknown" bucket: the
+// count is defined per agent, and an unattributable row answers no per-agent question.
+// Reachable only on the fail-open empty-registry path, where the membership gate is
+// skipped.
+export function buildProseOnlyAddSummary(
+  rows: ProseOnlyAddAgentDbRow[],
+  windowDays: number,
+): ImprovementProseOnlyAddSummary {
+  const agents: ImprovementProseOnlyAddAgentRow[] = [];
+  let total = 0;
+  for (const row of rows) {
+    if (row.target_agent === null) {
+      continue;
+    }
+    const count = bigintToNumber(row.count);
+    agents.push({ agent: row.target_agent, count });
+    total += count;
+  }
+  return {
+    window_days: windowDays,
+    agents,
+    total,
+    truncation_caveat: PROSE_ONLY_ADD_TRUNCATION_CAVEAT,
+  };
+}
+
 export function buildStyleRefSummary(
   rows: StyleRefAgentDbRow[],
 ): ImprovementStyleRefSummary {

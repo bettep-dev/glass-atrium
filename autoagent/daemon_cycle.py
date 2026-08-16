@@ -732,6 +732,19 @@ DEFAULT_RULES_DIR = HOME / ".claude" / "rules" / "glass-atrium"
 COMPLIANCE_MATRIX_FILE = DEFAULT_RULES_DIR / "core-compliance-matrix.md"
 GLOBAL_RULES_FILE = HOME / ".claude" / "agents" / "GLASS_ATRIUM_GLOBAL_RULES.md"
 
+# The compliance axis key set — exactly these four. Any other key in a
+# pre_verify_axes payload is a non-compliance passenger (see
+# PROSE_ONLY_ADD_AXIS_KEY) and MUST NOT reach the failed-axis renderer, which
+# feeds its output back to the generator as "axes you failed".
+COMPLIANCE_AXIS_KEYS = ("C1", "C2", "C3", "C4")
+
+# Non-compliance passenger sharing the pre_verify_axes payload: the per-proposal
+# prose-only-add verdict (detection-only, never a gate). Absent ≠ false — the key
+# is written only when a diff existed to classify, so a reader treats absence as
+# UNCLASSIFIED. The verdict inherits the classifier's DIFF_EXCERPT_CHAR_CAP
+# truncation sensitivity: removals past the cut read as prose-only-add.
+PROSE_ONLY_ADD_AXIS_KEY = "prose_only_add"
+
 # Truncation caps for verifier prompt (token budget protection).
 RULE_EXCERPT_CHAR_CAP = 6000
 TARGET_AGENT_EXCERPT_CHAR_CAP = 6000
@@ -1517,6 +1530,11 @@ class PatchProposal:
     touched_frontmatter: bool   # classification hint
     estimated_added_lines: int  # for body-auto threshold
     raw_response: str           # full Haiku stdout (truncated for storage)
+    # '-' line count from the FULL (pre-truncation) diff, symmetric with
+    # estimated_added_lines: proposed_diff is capped at 4000 chars, so a count
+    # re-derived from it under-reports exactly the large patches the subtraction
+    # ratchet is measured by.
+    estimated_removed_lines: int = 0
     # Parse-path indicator (observability honesty):
     #   'strict'  — both RATIONALE/DIFF markers parsed via canonical regex
     #   'fuzzy'   — recovered via case-insensitive / unanchored fallback regex
@@ -1612,12 +1630,21 @@ class PatchResult:
     # patch whose diff exceeds the cap → carry the proposal's count instead. Default
     # 0 keeps historical rows / partial constructions backward-compatible.
     estimated_added_lines: int = 0
+    # Symmetric '-' count, same full-diff provenance as estimated_added_lines.
+    estimated_removed_lines: int = 0
     error: str = ""
     # Pre-verify outcome — None when not run (patch was reject/frontmatter-dryrun,
     # or pre-verify itself was skipped).
     pre_verify_passed: bool | None = None
     pre_verify_status: str = ""  # mirrors PreVerifyResult.status
     pre_verify_rationale: str = ""
+    # The four compliance axes (C1-C4) when pre-verify ran, PLUS the
+    # PROSE_ONLY_ADD_AXIS_KEY passenger when the proposal carried a diff. The
+    # passenger is a detection verdict, not a compliance axis — the four-axis
+    # contract is unchanged for every C* key, and the failed-axis renderer is
+    # constrained to COMPLIANCE_AXIS_KEYS so the passenger never renders as a
+    # failed axis. Composed by _compose_pre_verify_axes (both paths, including
+    # the no-pre-verify one).
     pre_verify_axes: dict[str, bool] = field(default_factory=dict)
     pre_verify_latency_ms: int = 0
     # Routing hints consumed by _pg_push_autoagent_cycle.py — empty string
@@ -2267,7 +2294,10 @@ Propose a SMALL, targeted patch (≤ 5 added lines) to the BODY (after the YAML
 frontmatter, i.e. after the second '---') that addresses the observed failure
 pattern. The patch should add a concrete guardrail, work-rule, or pre-execution
 check that prevents recurrence. DO NOT touch the frontmatter (name/description/
-tools/skills/scope). DO NOT rewrite existing rules — only ADD.
+tools/skills/scope). Where the file ALREADY carries a rule addressing this
+signal, you MAY propose a diff that REPLACES that one rule in place (remove its
+lines and add the superseding lines in the same hunk); where it does not, the
+diff MUST be a pure ADD. Never rewrite unrelated rules.
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
 following exact headers (no ```diff fences, no ``` of any kind, no surrounding
@@ -2323,7 +2353,10 @@ contain MULTIPLE hunks (one per distinct location/signal) — author them ALL in
 SINGLE unified diff computed against the file shown above, so every hunk applies
 atomically via one `git apply`. Each hunk adds a concrete guardrail, work-rule,
 or pre-execution check that prevents recurrence. DO NOT touch the frontmatter
-(name/description/tools/skills/scope). DO NOT rewrite existing rules — only ADD.
+(name/description/tools/skills/scope). Where the file ALREADY carries a rule
+addressing a signal, you MAY propose a diff that REPLACES that one rule in place
+(remove its lines and add the superseding lines in the same hunk); where it does
+not, that hunk MUST be a pure ADD. Never rewrite unrelated rules.
 Keep the TOTAL added lines small (≤ 5 across all hunks).
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
@@ -2827,8 +2860,8 @@ def generate_patch_proposal(
             parse_mode="skipped",
         )
 
-    # Load agent file (truncate to ~6KB to keep prompt small).
-    agent_text = target_file.read_text(encoding="utf-8")[:6000]
+    # Whole body: a head slice hides the editable regions the model must edit into.
+    agent_text = target_file.read_text(encoding="utf-8")
 
     outcomes_block = _render_outcomes_block(outcomes) or "(no recent outcomes sampled)"
     base_prompt = _PROMPT_TEMPLATE.format(
@@ -2905,7 +2938,8 @@ def generate_consolidated_proposal(
             parse_mode="skipped",
         )
 
-    agent_text = target_file.read_text(encoding="utf-8")[:6000]
+    # Whole body: a head slice hides the editable regions the model must edit into.
+    agent_text = target_file.read_text(encoding="utf-8")
     signals_block = _render_signals_block(patterns)
     outcomes_block = _render_generation_outcomes_block(outcomes)
 
@@ -3235,6 +3269,7 @@ def _run_haiku_with_retry(
             proposed_diff=retry_proposal.proposed_diff,
             touched_frontmatter=retry_proposal.touched_frontmatter,
             estimated_added_lines=retry_proposal.estimated_added_lines,
+            estimated_removed_lines=retry_proposal.estimated_removed_lines,
             raw_response=retry_proposal.raw_response,
             parse_mode="retried",
             escalated_timeout=bool(timeout_attempts),
@@ -4833,22 +4868,30 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
         proposed_diff=diff[:4000],
         touched_frontmatter=touches,
         estimated_added_lines=added,
+        estimated_removed_lines=_count_removed_lines(diff),
         raw_response=raw[:4000],
         parse_mode=parse_mode,
     )
 
 
-def _count_added_lines(diff: str) -> int:
-    """Count '+' lines (excluding diff header lines like '+++ b/file')."""
+def _count_marker_lines(diff: str, marker: str) -> int:
+    """Count lines starting with `marker`, skipping the `marker * 3` file header."""
     if not diff:
         return 0
-    n = 0
-    for line in diff.splitlines():
-        if line.startswith("+++"):
-            continue
-        if line.startswith("+"):
-            n += 1
-    return n
+    header = marker * 3
+    return sum(
+        1
+        for line in diff.splitlines()
+        if line.startswith(marker) and not line.startswith(header)
+    )
+
+
+def _count_added_lines(diff: str) -> int:
+    return _count_marker_lines(diff, "+")
+
+
+def _count_removed_lines(diff: str) -> int:
+    return _count_marker_lines(diff, "-")
 
 
 def _diff_touches_frontmatter(diff: str) -> bool:
@@ -5091,6 +5134,27 @@ def classify_prose_only_add(
     if record and is_prose_only_add:
         _record_signal(signal, store_file)
     return signal
+
+
+def _compose_pre_verify_axes(
+    axes: dict[str, bool] | None,
+    prose_only_add: bool | None,
+) -> dict[str, bool]:
+    """Build the persisted ``pre_verify_axes`` payload for one proposal row.
+
+    Carries the prose-only-add verdict on BOTH paths — including the one where
+    pre-verify did not run (``axes`` None/empty), which is why the verdict is a
+    parameter here rather than an injection into the pre-verify result: a row
+    that skipped pre-verify still has a classified diff and must not vanish from
+    the rolling count.
+
+    ``prose_only_add`` None (no diff → nothing classified) writes NO key, so a
+    reader can tell unclassified from a negative verdict.
+    """
+    payload: dict[str, bool] = dict(axes) if axes else {}
+    if prose_only_add is not None:
+        payload[PROSE_ONLY_ADD_AXIS_KEY] = bool(prose_only_add)
+    return payload
 
 
 # Hook files live under hooks/ and end in .sh/.py/.bats — a patch touching one is
@@ -5741,7 +5805,8 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
       - changes_added: sum of patches[].estimated_added_lines for the same key.
         That count is taken from the FULL pre-truncation diff (proposed_diff is
         capped at 4000 chars, so re-deriving from it under-reports any larger patch).
-      - changes_removed: 0 — the Haiku prompt enforces 'only ADD'.
+      - changes_removed: sum of patches[].estimated_removed_lines for the same key,
+        taken from the same FULL pre-truncation diff as changes_added.
       - rice: None — the daemon does not compute RICE.
 
     Empty patches[] (patterns_processed=0) → empty list.
@@ -5749,21 +5814,23 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
     if not report.patches:
         return []
 
-    # Accumulator for the (agent, eval_result) key within one cycle —
-    # value = sum of changes_added.
-    bucket: dict[tuple[str, str], int] = defaultdict(int)
+    # Per-(agent, eval_result) accumulators within one cycle.
+    added_by_key: dict[tuple[str, str], int] = defaultdict(int)
+    removed_by_key: dict[tuple[str, str], int] = defaultdict(int)
     for patch in report.patches:
         agent = (patch.pattern_agent or "").strip()
         if not agent:
             continue  # pre-empt a helper NOT NULL violation
         eval_result = _coerce_eval_result(patch)[:EVAL_RESULT_MAX_LEN]
-        # Use the accurate count carried from the full (pre-truncation) diff;
-        # _count_added_lines(proposed_diff) would under-report >4000-char patches.
-        added = max(0, int(patch.estimated_added_lines))
-        bucket[(agent, eval_result)] += added
+        # Use the accurate counts carried from the full (pre-truncation) diff;
+        # re-deriving from proposed_diff would under-report >4000-char patches.
+        key = (agent, eval_result)
+        added_by_key[key] += max(0, int(patch.estimated_added_lines))
+        removed_by_key[key] += max(0, int(patch.estimated_removed_lines))
 
     envelopes: list[dict[str, object]] = []
-    for (agent, eval_result), changes_added in bucket.items():
+    for (agent, eval_result), changes_added in added_by_key.items():
+        changes_removed = removed_by_key[(agent, eval_result)]
         envelopes.append(
             {
                 "op": "write_autoagent_loop_event",
@@ -5772,7 +5839,7 @@ def _aggregate_loop_events(report: CycleReport) -> list[dict[str, object]]:
                     "agent": agent,
                     "eval_result": eval_result,
                     "changes_added": int(changes_added),
-                    "changes_removed": 0,  # Haiku additive-only
+                    "changes_removed": int(changes_removed),
                     "rice": None,  # daemon does not compute RICE
                 },
             }
@@ -8068,7 +8135,13 @@ def _render_pre_verify_failures_block(
 
     lines: list[str] = []
     for axes, rationale in rows:
-        failed_axes = sorted(k for k, v in axes.items() if v is False)
+        # Constrained to the four compliance axes: the payload also carries the
+        # prose-only-add passenger, and a false verdict there is NOT a failed
+        # compliance axis — rendering it would tell the generator it failed an
+        # axis that does not exist.
+        failed_axes = sorted(
+            k for k, v in axes.items() if v is False and k in COMPLIANCE_AXIS_KEYS
+        )
         axes_text = ", ".join(failed_axes) if failed_axes else "unspecified-axis"
         rationale_text = " ".join((rationale or "").split()) or "(no rationale recorded)"
         lines.append(f"- failed axes [{axes_text}]: {rationale_text}")
@@ -9614,16 +9687,24 @@ def run_cycle(
         # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
         # patch; it only emits a warning signal. Fully wrapped + skipped under
         # skip_loop_emit (no-PG-write / unit-test mode) like the other emits.
-        if not skip_loop_emit and proposal.proposed_diff:
+        # The verdict is also PERSISTED on the proposal row, so it is computed
+        # under skip_loop_emit too — only the JSONL emit is suppressed there.
+        prose_only_add: bool | None = None
+        if proposal.proposed_diff:
             try:
-                classify_prose_only_add(
-                    proposal.proposed_diff, target_file=str(proposal.target_file)
+                prose_only_add = bool(
+                    classify_prose_only_add(
+                        proposal.proposed_diff,
+                        target_file=str(proposal.target_file),
+                        record=not skip_loop_emit,
+                    )["warning"]
                 )
             except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
                 sys.stderr.write(
                     "[daemon-cycle] WARN: classify_prose_only_add raised — patch "
                     f"classification lost: {type(exc).__name__}: {str(exc)[:160]}\n"
                 )
+        if not skip_loop_emit and proposal.proposed_diff:
             # Deterministic reference-resolution guard — WARNS on an added line
             # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the
             # C1-C4 LLM verifier does no on-disk existence check). Detection-only.
@@ -9659,6 +9740,7 @@ def run_cycle(
                 # Accurate count from the FULL diff (proposed_diff is truncated
                 # to 4000 chars → cannot be re-derived without under-reporting).
                 estimated_added_lines=proposal.estimated_added_lines,
+                estimated_removed_lines=proposal.estimated_removed_lines,
                 # error drives the cycle 'partial' status (_pg_push_autoagent_cycle.py
                 # saw_error). A chronic-timeout back-off is an INTENTIONAL bounded
                 # skip, NOT a cycle error — leave error empty so a backed-off
@@ -9674,7 +9756,9 @@ def run_cycle(
                 pre_verify_passed=verify.passed if verify is not None else None,
                 pre_verify_status=verify.status if verify is not None else "",
                 pre_verify_rationale=verify.rationale if verify is not None else "",
-                pre_verify_axes=dict(verify.axes) if verify is not None else {},
+                pre_verify_axes=_compose_pre_verify_axes(
+                    verify.axes if verify is not None else None, prose_only_add
+                ),
                 pre_verify_latency_ms=verify.latency_ms if verify is not None else 0,
                 approval_tier=approval_tier,
                 status=status_value,
