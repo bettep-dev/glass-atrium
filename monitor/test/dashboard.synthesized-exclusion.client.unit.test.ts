@@ -37,6 +37,7 @@ interface Hint {
 interface DashHelpers {
   getWriterTotal: (data: CrossAnalysisData | undefined) => number;
   getWriterOpenCount: (row: ByResultRow | undefined) => number;
+  buildPopulationDisclosure: (total: number, writerTotal: number) => string | null;
   computeOutcomeHint: (byResultMap: Map<string, ByResultRow>, writerTotal: number) => Hint | null;
   computeWorstRollup: (args: { outcomesState: unknown }) => string | null;
 }
@@ -65,6 +66,21 @@ test("getWriterOpenCount falls back to the closure-only open count on a legacy r
   const legacy = { result: "done_with_concerns", count: 10, closed_count: 4 };
   assert.strictEqual(helpers.getWriterOpenCount(legacy), 6);
   assert.strictEqual(helpers.getWriterOpenCount(undefined), 0);
+});
+
+// --- the split between the two populations is disclosed on the card ---
+
+test("the card discloses both denominators once the two populations diverge", () => {
+  const line = helpers.buildPopulationDisclosure(100, 60);
+  assert.ok(line, "a divergent card must not read as a single population");
+  // 막대가 읽는 전수와 임계·rollup 이 읽는 writer 모집단이 둘 다 문면에 있어야 한다.
+  assert.match(line ?? "", /100/, "the all-rows denominator the bar reads");
+  assert.match(line ?? "", /60/, "the writer-emitted denominator the quality signal reads");
+});
+
+test("no disclosure when one population is in play", () => {
+  assert.strictEqual(helpers.buildPopulationDisclosure(100, 100), null);
+  assert.strictEqual(helpers.buildPopulationDisclosure(0, 0), null);
 });
 
 // --- numerator + denominator exclusion ---

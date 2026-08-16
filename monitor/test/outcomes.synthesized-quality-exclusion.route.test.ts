@@ -32,11 +32,20 @@ const SUITE_MARKER = `synthesized-quality-test-${randomUUID()}`;
 const SYNTHESIZED_ORIGIN = "synthesized";
 let app: FastifyInstance;
 
-// Seed 설계 — 합성 3채널 + writer 대조군. 합성행은 모두 downgrade_origin 을 실어
-// 라이브 모집단(881/881)과 동형: 판별식이 attribution 이 아닌 provenance 로 잠긴다.
-//   done_with_concerns: writer 1 + 합성 1 (completion-synthesized)
-//   done              : writer 1 + 합성 1 (structuredoutput-derived — 문서화된 예외)
-//   blocked           : 합성 1 — rate-limit 절단 합성 분기(라이브 1행 실재), writer 0
+// Seed 설계 — 합성 3채널 + writer 대조군. 모든 합성행이 downgrade_origin 을 싣는 이유는
+// buildReconstructedRowFilter() 가 기대는 전제를 그대로 재현하기 위해서다:
+// downgrade_origin='synthesized' 와 합성 채널 집합(attribution-sources.ts 의
+// RECONSTRUCTED_ATTRIBUTION_SOURCES)이 양방향으로 일치한다 — 즉 판별식이 attribution 이
+// 아닌 provenance 로 잠긴다. 라이브에서 이 전제가 아직 유지되는지는 두 반대 방향 질의로
+// 재도출한다(건수 census 아님 — 양쪽 모두 0행이라는 부재 확인):
+//   (i)  attribution_source ∈ 채널집합 AND downgrade_origin IS DISTINCT FROM 'synthesized'
+//   (ii) downgrade_origin = 'synthesized' AND attribution_source NOT IN 채널집합
+// (i) 이 0 → provenance 가 필요조건, (ii) 가 0 → 충분조건. 어느 한쪽이라도 행이 나오면
+// buildReconstructedRowFilter() 의 OR 두 팔이 갈라진 것이므로 이 seed 의 전제가 깨진다.
+//   done_with_concerns: writer + 합성(completion-synthesized)
+//   done              : writer + 합성(structuredoutput-derived — 문서화된 예외)
+//   blocked           : 합성 단독(writer 대조군 없음) — track-outcome.sh 의
+//                       rate-limit/timeout/quota 키워드 분기가 고르는 result
 interface SeedRow {
   result: "done" | "done_with_concerns" | "blocked";
   attribution_source: string;
