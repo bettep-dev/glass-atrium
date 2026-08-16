@@ -1404,28 +1404,41 @@ function ChannelLivenessBody({ state, onRetry }) {
   return (
     <div>
       <div className="flex flex-col gap-1.5">
-        {ordered.map((channel) => <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>)}
+        {ordered.map((channel) => (
+          <ChannelLivenessRow
+            key={channel.attribution_source}
+            channel={channel}
+            days={days}
+            recencyDays={threshold?.eligibility_recency_days}/>
+        ))}
       </div>
       {threshold ? (
         <div className="fs-micro text-faint font-mono mt-3 leading-relaxed">
           Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
-          has recorded nothing for {threshold.silence_hours}h.
+          within the last {threshold.eligibility_recency_days}d has recorded nothing
+          for {threshold.silence_hours}h.
         </div>
       ) : null}
     </div>
   );
 }
 
-function ChannelLivenessRow({ channel, days }) {
+function ChannelLivenessRow({ channel, days, recencyDays }) {
   const meta = channelLivenessMetaO(channel);
   const silentHours = Math.floor(Number(channel.silent_hours) || 0);
+  // 자격을 결정하는 값은 최근 창의 peak 이다. 창 전체 peak 만 보이면 "버스트 171/day" 채널이
+  // 'Below floor' 로 뜨는 이유를 읽을 수 없으므로, 판정에 쓰인 수치를 앞에 둔다.
+  const recentPeak = formatIntO(channel.recent_peak_daily_count);
+  const windowPeak = formatIntO(channel.peak_daily_count);
   return (
     <div className="flex items-center gap-2 fs-micro font-mono">
       <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
       <span style={{ color: `rgb(var(${meta.colorVar}))` }} className="w-[6.5rem] flex-shrink-0">{meta.label}</span>
       <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
       <span className="text-dim tabular-nums">
-        peak {formatIntO(channel.peak_daily_count)}/day{days ? ` over ${days}d` : ''} · quiet {formatIntO(silentHours)}h
+        {recentPeak}/day{recencyDays ? ` last ${recencyDays}d` : ''}
+        {' · '}{windowPeak}/day peak{days ? ` over ${days}d` : ''}
+        {' · '}quiet {formatIntO(silentHours)}h
       </span>
     </div>
   );

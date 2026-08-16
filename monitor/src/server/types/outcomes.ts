@@ -443,6 +443,10 @@ export type ChannelLivenessWindowDays = 7 | 30 | 90;
 export interface ChannelLivenessThresholds {
   // A channel qualifies once its peak daily volume EXCEEDS this floor (strict >).
   eligibility_daily_floor: number;
+  // …and only while that volume is CURRENT: the floor must be cleared on a day
+  // within this many days of now. Silence is news about a channel that is still in
+  // use, not about one that wound down.
+  eligibility_recency_days: number;
   // An eligible channel alerts once its silence EXCEEDS this many hours (strict >).
   silence_hours: number;
 }
@@ -453,6 +457,10 @@ export interface ChannelLivenessChannel {
   attribution_source: string;
   // Highest single-day row count inside the window (UTC day buckets).
   peak_daily_count: number;
+  // The same peak restricted to the recency window — the value `eligible` reads.
+  // Reported alongside the window-wide peak so a channel that qualified only on an
+  // older burst is legible as such rather than looking like a threshold bug.
+  recent_peak_daily_count: number;
   last_record_ts: string;
   silent_hours: number;
   eligible: boolean;

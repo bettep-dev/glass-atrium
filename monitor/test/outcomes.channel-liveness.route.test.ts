@@ -12,7 +12,16 @@
 //   (c) eligibility alone does not alert — a high-volume channel with a fresh row
 //       stays absent;
 //   (d) the doctor's second surface reads its verdict from this response instead of
-//       restating either threshold — asserted against the doctor source itself.
+//       restating either threshold — asserted against the doctor source itself;
+//   (e) an ordinary idle gap does NOT alert — the false-positive side of the bound,
+//       which (a)-(c) never exercised: (b) tests the eligibility floor and (c) tests
+//       a channel that is not silent at all, so nothing failed when the bound sat
+//       below this machine's routine overnight quiet;
+//   (f) a channel whose qualifying volume has gone stale does NOT alert — silence is
+//       only news while the channel is current, and a burst that ended days ago is a
+//       channel that wound down, not one that broke;
+//   (g) the recency window outlasts the silence bound, so a long outage cannot
+//       disqualify itself from the eligibility it needs in order to alert.
 //
 // Membership and absence only, both keyed on seeded channel names, so the live
 // channels sharing the window neither satisfy nor break an assertion.
@@ -44,6 +53,12 @@ const SILENT_CHANNEL = "cron-derived";
 const QUIET_CHANNEL = "conversation-only";
 // Above the floor with a fresh row — pins that eligibility alone does not alert.
 const LIVE_CHANNEL = "agent-id-missing";
+// Above the floor, currently busy, silent only for an ordinary idle stretch — the
+// false-positive control for the silence bound itself.
+const IDLE_CHANNEL = "completion-missing";
+// Above the floor on a day that has since fallen out of the recency window — a
+// channel that wound down rather than broke.
+const STALE_CHANNEL = "truncated_completion";
 
 interface ChannelSeed {
   source: string;
@@ -57,6 +72,10 @@ const SEEDS: readonly ChannelSeed[] = [
   { source: SILENT_CHANNEL, rows: 150, agedHours: 30 },
   { source: QUIET_CHANNEL, rows: 5, agedHours: 30 },
   { source: LIVE_CHANNEL, rows: 150, agedHours: 30 },
+  // Recent enough to stay eligible, quiet for less than the bound.
+  { source: IDLE_CHANNEL, rows: 150, agedHours: 12 },
+  // Qualifying volume, but on a day now outside the recency window.
+  { source: STALE_CHANNEL, rows: 150, agedHours: 96 },
 ] as const;
 // The live channel gets one extra recent row on top of its aged burst.
 const LIVE_CHANNEL_FRESH_MINUTES = 1;
@@ -186,6 +205,76 @@ test("/channel-liveness omits an eligible channel that is still recording", asyn
   );
 });
 
+// (e) the false-positive side of the bound — an ordinary idle gap is not an outage.
+//
+// This is the control the first three lacked. (b) exercises the eligibility floor and
+// (c) exercises a channel that is not silent at all, so a bound set below this
+// machine's routine overnight quiet satisfied every one of them while firing on 20 of
+// 21 threshold-crossing gaps in live data.
+
+test("/channel-liveness omits an eligible channel whose silence is an ordinary idle gap", async () => {
+  const body = await fetchLiveness();
+  const seed = SEEDS.find((s) => s.source === IDLE_CHANNEL);
+  assert.ok(seed, "the idle-channel seed is present");
+  const channel = body.channels.find((c) => c.attribution_source === IDLE_CHANNEL);
+  assert.ok(channel, `${IDLE_CHANNEL} is present in the window`);
+
+  assert.ok(
+    channel.peak_daily_count > body.thresholds.eligibility_daily_floor,
+    "the seed clears the eligibility floor, so only the bound can keep it quiet",
+  );
+  assert.ok(
+    seed.agedHours < body.thresholds.silence_hours,
+    "the bound sits above an ordinary idle stretch — a routine quiet night is not an outage",
+  );
+  assert.ok(
+    !body.alerting.includes(IDLE_CHANNEL),
+    `${IDLE_CHANNEL} is absent from the alerting set — routine idleness must not fire`,
+  );
+});
+
+// (f) staleness — silence is only news while the channel is current.
+
+test("/channel-liveness omits a channel whose qualifying volume has gone stale", async () => {
+  const body = await fetchLiveness();
+  const seed = SEEDS.find((s) => s.source === STALE_CHANNEL);
+  assert.ok(seed, "the stale-channel seed is present");
+  const channel = body.channels.find((c) => c.attribution_source === STALE_CHANNEL);
+  assert.ok(channel, `${STALE_CHANNEL} is present in the window`);
+
+  assert.ok(
+    channel.peak_daily_count > body.thresholds.eligibility_daily_floor,
+    "the burst cleared the floor, so peak-over-the-window alone would qualify it",
+  );
+  assert.ok(
+    seed.agedHours > body.thresholds.silence_hours,
+    "and it has been silent well past the bound",
+  );
+  assert.ok(
+    seed.agedHours > body.thresholds.eligibility_recency_days * 24,
+    "but its qualifying day has fallen out of the recency window",
+  );
+  assert.ok(
+    !body.alerting.includes(STALE_CHANNEL),
+    `${STALE_CHANNEL} is absent from the alerting set — a channel that wound down is not one that broke`,
+  );
+});
+
+// (g) the two thresholds are coupled: recency must outlast the bound.
+
+test("the eligibility recency window outlasts the silence bound", async () => {
+  const body = await fetchLiveness();
+
+  // An outage suppresses the very rows that keep its channel eligible. If the recency
+  // window closed first, the alert would switch itself off partway through the outage
+  // it exists to report — the same self-muting failure as a threshold derived from the
+  // channel's own recent maximum gap.
+  assert.ok(
+    body.thresholds.eligibility_recency_days * 24 > body.thresholds.silence_hours,
+    "the recency window strictly outlasts the silence bound, so an outage cannot mute its own alert",
+  );
+});
+
 // (d) one threshold definition, not two agreeing literals.
 
 test("the doctor surface reads the route's verdict instead of restating its thresholds", async () => {
@@ -202,13 +291,23 @@ test("the doctor surface reads the route's verdict instead of restating its thre
   const section = doctorSource.slice(sectionStart, sectionEnd);
 
   assert.match(section, /channel-liveness/, "the doctor reads the channel-liveness route");
+
+  // Scan what the doctor SAYS, not the whole section: a restated threshold can only
+  // reach an operator through a log message or the jq program that builds one, while
+  // the section's other numbers are shell noise (`--connect-timeout 2`, `2>/dev/null`)
+  // that a bare section-wide scan cannot tell apart from a single-digit threshold.
+  const logLines = section.split("\n").filter((line) => /^\s*log\s/.test(line)).join("\n");
+  const jqPrograms = [...section.matchAll(/jq -[a-z]*r '([\s\S]*?)'/g)].map((m) => m[1]).join("\n");
+  const operatorFacing = `${logLines}\n${jqPrograms}`;
+
   for (const literal of [
     String(body.thresholds.eligibility_daily_floor),
     String(body.thresholds.silence_hours),
+    String(body.thresholds.eligibility_recency_days),
   ]) {
     assert.ok(
-      !new RegExp(`\\b${literal}\\b`).test(section),
-      `the doctor section carries no ${literal} literal — the threshold has one definition`,
+      !new RegExp(`\\b${literal}\\b`).test(operatorFacing),
+      `the doctor states no ${literal} literal — the threshold has one definition`,
     );
   }
   assert.match(
