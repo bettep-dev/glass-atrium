@@ -1940,7 +1940,12 @@ function ParkedLoopBannerI({ applyCap }) {
 						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
 						{agents === 1 ? "agent" : "agents"}
 					</div>
-					<div className="card-sub fs-meta mt-1">{applyCap.rearm_hint}</div>
+					{/* is-wrap 필수 — .card-sub 기본값은 nowrap+ellipsis 1줄 클램프다. 이 경고는
+					    500자대이고, 잘린 앞부분이 하필 되돌리기를 권하는 문장처럼 읽힌다.
+					    title 툴팁만으로는 부족하다: 하지 말라는 경고를 hover 뒤에 둘 수 없다. */}
+					<div className="card-sub is-wrap fs-meta mt-1">
+						{applyCap.rearm_hint}
+					</div>
 				</div>
 			</div>
 		</div>
