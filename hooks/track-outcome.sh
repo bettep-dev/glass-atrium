@@ -2211,6 +2211,9 @@ else
   # successful deliverable). All other deliverable-producing turns → done_with_concerns (delivered but
   # unverified — work done, no [COMPLETION] block); needs_context is reserved for a genuine "agent asked
   # the user a question" — an analysis-only synthesized turn IS a delivered result, not a question.
+  # NOT A QUALITY SIGNAL: every RESULT below is recorder-chosen, with no writer claim behind it — a
+  # consumer reading it as quality is reading a constant. downgrade_origin='synthesized' is the
+  # discriminator; monitor aggregates key on it (attribution_source alone splits one channel off).
   # WHY done_with_concerns not needs_review: OutcomeResult enum = {done, done_with_concerns, blocked,
   # needs_context, fail}; needs_review is absent → _pg_outcome_dualwrite._norm_result silent-maps it to
   # done (re-introducing the overconfident done synthesis blocks), whereas done_with_concerns is enum-valid + means "delivered but unverified" → passes the PG INSERT.

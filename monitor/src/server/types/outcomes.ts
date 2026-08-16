@@ -195,11 +195,18 @@ export interface OutcomeCrossAnalysisCell {
 // aggregate stays closure-blind, so the norm warning can key on open DWC without
 // changing any other consumer. Invariants: 0 <= closed_count <= count; open =
 // count - closed_count (in practice non-zero only for done_with_concerns).
+// `writer_open_count` is the quality-signal numerator: writer-emitted AND unclosed. A
+// synthesized row's `result` is recorder-chosen (track-outcome.sh picks it without a
+// writer claim), so it carries no quality information and leaves the signal entirely —
+// a combined FILTER rather than count - reconstructed_count - closed_count, which
+// double-subtracts a synthesized row an operator has closed.
+// Invariant: 0 <= writer_open_count <= count - reconstructed_count.
 export interface OutcomeCrossAnalysisByResult {
   result: OutcomeResultLiteral;
   count: number;
   reconstructed_count: number;
   closed_count: number;
+  writer_open_count: number;
 }
 
 // Per-agent aggregate with the reconstructed sub-count split out. `count` = ALL
@@ -274,6 +281,11 @@ export interface OutcomeCrossAnalysisResponse {
   filter: OutcomeCrossAnalysisFilterEcho;
   // Matching rows AFTER poisoned_window exclusion — the aggregate population.
   total: number;
+  // Harness-synthesized rows inside `total` (same discriminator as
+  // OutcomeCrossAnalysisByResult.reconstructed_count) — the quality-signal denominator
+  // is total - reconstructed_total. Reported rather than pre-subtracted so `total`
+  // keeps its ALL-rows meaning for the distribution display.
+  reconstructed_total: number;
   // poisoned_window=TRUE rows excluded from every aggregate above — feeds the
   // on-screen '오염 제외 N건' disclosure chip.
   excluded_poisoned_count: number;
