@@ -836,6 +836,34 @@ def _scope_file_for_agent(agent: str) -> Path | None:
     return candidate
 
 
+# Named signal for an unresolvable C4 target file, carried on BOTH channels for
+# the same reason C3 carries one.
+TARGET_UNRESOLVED_SIGNAL = "TARGET-FILE-UNRESOLVED"
+
+
+def _get_target_path(target_file: str) -> Path | None:
+    """Resolve the C4 target agent file, independent of process cwd.
+
+    The updater hands a repo-relative ``agents/<name>.md``. Resolved against cwd
+    that yields two wrong outcomes: the not-available placeholder from an
+    unrelated cwd, and — worse — the RELEASE copy whenever cwd happens to be a
+    repo root, which renders a plausible excerpt of a file that is not the live
+    target. A relative path therefore anchors on the ga_paths base root, the
+    same seam C3 resolves through, and a miss is loud rather than neutral.
+    """
+    candidate = Path(target_file)
+    if not candidate.is_absolute():
+        candidate = ga_paths.get_base_root() / candidate
+    if not candidate.is_file():
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {TARGET_UNRESOLVED_SIGNAL} — {target_file!r} resolved "
+            f"to {candidate}, which is not a readable file; C4 has no target body to "
+            "judge against\n"
+        )
+        return None
+    return candidate
+
+
 # -- Promotion ladder config ------------------------------------------------
 #
 # Confidence-weighted learning loop — a Beta-Binomial posterior gate atop the
@@ -2564,6 +2592,34 @@ def redact_secrets(text: str) -> str:
     for pat in _SECRET_PATTERNS:
         scrubbed = pat.sub(_SECRET_PLACEHOLDER, scrubbed)
     return scrubbed
+
+
+def flatten_log_field(value: object, *, default: str = "") -> str:
+    """Collapse one interpolated value into a single line of a log record.
+
+    Security (LLM05 Improper Output Handling): the pre-verify status, axis keys
+    and rationale are LLM-authored — the rationale is parsed with ``re.DOTALL``
+    and is routinely multi-line — yet they are interpolated into one-line stderr
+    records an operator reads as update-log entries. An embedded line terminator
+    ends the record early and starts a fresh one that reads as a genuine entry,
+    so a rejection can forge an acceptance. Treat every interpolated field as
+    untrusted DATA, not as text being formatted.
+
+    ``str.split()`` with no argument splits on every ``str.isspace()`` character,
+    so one definition covers \\n, \\r, \\t, U+0085 NEL, U+2028 LINE SEPARATOR and
+    U+2029 — the set a log file, a terminal, an editor and a JS-based viewer may
+    each break on. Content is preserved in full (whitespace runs collapse to a
+    single space); nothing is truncated or dropped, so a multi-line rationale
+    arrives as ONE legible record instead of several forgeable ones.
+
+    Bounded, pure, no side effects. Scope limit, stated so it is not assumed
+    wider: this guarantees one record per event. It does NOT address field
+    confusion WITHIN a record — a rationale may still contain the text
+    ``status=`` — which is tolerable while these records are read by humans and
+    parsed by nothing.
+    """
+    text = " ".join(str(value or "").split())
+    return text or default
 
 
 # Transient-infra detection patterns. A non-zero CLI exit (or a timeout) whose
@@ -5617,7 +5673,20 @@ def _build_pre_verify_prompt(
     same prompt text. Truncations are deterministic (slice from char 0 with a
     fixed cap), so retries against the same diff hit identical bytes.
     """
-    target_path = Path(patch.target_file)
+    target_path = _get_target_path(patch.target_file)
+    if target_path is None:
+        # Same reasoning as the C3 slot: an excerpt-missing note reads to the
+        # verifier as an axis it inspected and cleared.
+        target_file_name = f"{TARGET_UNRESOLVED_SIGNAL} ({patch.target_file})"
+        target_agent_excerpt = (
+            f"{TARGET_UNRESOLVED_SIGNAL}: no target agent file resolved for "
+            f"{patch.target_file}. C4 cannot be judged from this prompt — answer "
+            "C4: FAIL."
+        )
+    else:
+        target_file_name = str(target_path)
+        target_agent_excerpt = _read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP)
+
     scope_path = _scope_file_for_agent(pattern.agent)
     if scope_path is None:
         # Directing the verdict is the point: told only that the excerpt is
@@ -5634,7 +5703,7 @@ def _build_pre_verify_prompt(
 
     return _PRE_VERIFY_PROMPT_TEMPLATE.format(
         target_agent=pattern.agent,
-        target_file=str(target_path),
+        target_file=target_file_name,
         pattern_label=_neutralize_field(pattern.label),
         diff=patch.proposed_diff[:DIFF_EXCERPT_CHAR_CAP],
         patch_rationale=patch.rationale[:400],
@@ -5642,7 +5711,7 @@ def _build_pre_verify_prompt(
         global_rules_excerpt=_read_truncated(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
-        target_agent_excerpt=_read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP),
+        target_agent_excerpt=target_agent_excerpt,
     )
 
 
@@ -7181,7 +7250,15 @@ def _classify_single_regen(
         action="invalid",
         preverify_passed=False,
         preverify_axes=dict(verdict.axes) if verdict.axes else None,
-        reason=f"re-derived diff FAILED pre-verify: {verdict.status} — {verdict.rationale[:200]}",
+        # The second sink of the same LLM-authored rationale: `reason` reaches an
+        # operator through a one-line stderr record in run_single_regen (the
+        # to_payload JSON path escapes for itself). Flatten BEFORE the 200-char
+        # slice so the budget buys content rather than whitespace.
+        reason=(
+            f"re-derived diff FAILED pre-verify: "
+            f"{flatten_log_field(verdict.status, default='(unreported)')} — "
+            f"{flatten_log_field(verdict.rationale, default='(none reported)')[:200]}"
+        ),
     )
 
 
@@ -8248,7 +8325,9 @@ def _render_pre_verify_failures_block(
             k for k, v in axes.items() if v is False and k in COMPLIANCE_AXIS_KEYS
         )
         axes_text = ", ".join(failed_axes) if failed_axes else "unspecified-axis"
-        rationale_text = " ".join((rationale or "").split()) or "(no rationale recorded)"
+        # Converged on the shared sanitizer: this site already flattened by hand,
+        # and a second definition is how one sink drifts out of step with another.
+        rationale_text = flatten_log_field(rationale, default="(no rationale recorded)")
         lines.append(f"- failed axes [{axes_text}]: {rationale_text}")
 
     block = "\n".join(lines)
