@@ -89,8 +89,11 @@ last_advisory() {
   local line nf
   line="$(tail -n 1 "${TRACE_LOG}")"
   nf="$(printf '%s' "${line}" | awk -F'\t' '{print NF}')"
-  [[ "${nf}" -eq 5 ]] || {
-    echo "expected 5 TAB fields, found ${nf}: ${line}" >&2
+  # At LEAST five: the contract is that the advisory field sits at position 5 and positions 1-4 keep
+  # their meaning, not that the line never grows — later measurement fields append after it under the
+  # same append-only contract, and pinning an exact width would forbid the very thing it permits.
+  [[ "${nf}" -ge 5 ]] || {
+    echo "expected at least 5 TAB fields, found ${nf}: ${line}" >&2
     return 1
   }
   printf '%s' "${line}" | awk -F'\t' '
