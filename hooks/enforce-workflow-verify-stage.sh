@@ -104,21 +104,38 @@
 #
 # FIRING INSTRUMENTATION (passive probe): on EVERY invocation reaching the Workflow decision point, a
 # one-line trace is appended to ${HOME}/.glass-atrium/data/workflow-gate-fired.log (timestamp · tool_name ·
-# verdict · script-length · advisory). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
+# verdict · script-length · advisory · dev · impl_slots). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
 # block-norev · block-noverifydev · block-declspawn · block-undecl · block-computed · block-order ·
 # block-upstream · block-docroute · block-entry · block-sizeest; python3-absent / helper-error
 # fallbacks emit bare "pass". How to check: `cat ~/.glass-atrium/data/workflow-gate-fired.log`. The trace is
 # fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
 #
-# ADVISORY FIELD (presence-only, LAST field — backward compatible): `advisory=` records WHICH advisories
+# ADVISORY FIELD (presence-only, positioned after the original four fields — append-only, backward
+# compatible): `advisory=` records WHICH advisories
 # fired on that invocation and, for the schema-cap advisory, WHICH of its three scoped rules matched
 # (`advisory=schema-cap:R1`); several tags join with a comma; none fired → `advisory=none`. This exists so
 # the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
 # window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
 # window could be constructed. It records only that a firing happened, NEVER whether it was correct:
 # adjudication stays human, and this field neither promotes the advisory nor touches a verdict or exit
-# code. The field is APPENDED LAST so a reader keyed on the existing four positions is unaffected
+# code. The field is APPENDED after those four so a reader keyed on the existing positions is unaffected
 # (hooks/compliance_telemetry.py parse_gate_log splits on TAB and reads `verdict=` by key).
+#
+# MEASUREMENT FIELDS (`dev=`, `impl_slots=`, appended AFTER `advisory=` — same append-only contract):
+# `dev=yes|no` records whether any Tier-A dev literal was present, so a firing-log denominator can
+# exclude the non-DEV scripts that return PASS before any attestation machinery runs — without it the
+# recorded rate is computed over a population a third of which never touches the surface being rated.
+# `impl_slots=N` records the implementation-slot count defined at impl_slot_count(): a total function
+# over BOTH terminal PASS branches, counting static spawn positions of declared literal impl types
+# (minus the greedy-earliest verify slot per verify-dev type) plus one slot per declared computed
+# type. Both fields are OBSERVABILITY ONLY — no verdict, exit code or advisory text reads them.
+# Two cardinality advisory tags ride the existing `advisory=` field and likewise decide nothing:
+# `size-map` (the [SIZE-EST] occurrence count differs from the slot count, either direction) and
+# `entry-cardinality` (an [ENTRY-CLASS] simple-task classification alongside 4+ implementation slots).
+# HONESTY: only the COUNT is mechanical. Which sizing entry corresponds to which call site is
+# author-assigned and unverifiable — the same honor-system trust class as declaration role
+# truthfulness above — and the count is blind to a loop fan-out, which spawns N runtime instances from
+# ONE static position and so reads as one slot.
 #
 # Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
 #   missing-declaration (block-nodecl) · malformed-declaration (block-grammar) · the five
@@ -167,6 +184,15 @@ fi
 # printers such as pass-noscript) records as `none`.
 advisory_trace=""
 
+# dev_flag / impl_slots — the two instrumentation-only trace fields appended after `advisory=`. Both
+# carry a safe default so every pre-helper exit path (pass-noscript, python3 absent, helper crash)
+# still emits a well-formed line. They decide NOTHING: no verdict, no exit code, no advisory text
+# reads them — the DEV flag exists so the firing log's denominator can exclude non-DEV scripts (which
+# never reach the attestation surface), and the slot count is the measured quantity a later decision
+# is meant to rest on.
+dev_flag="no"
+impl_slots=0
+
 # add_advisory TAG — append one advisory tag to the accumulator. Never fails (the trace must never be
 # able to alter a verdict).
 add_advisory() {
@@ -193,8 +219,9 @@ emit_trace() {
     log_dir="$(dirname -- "${WORKFLOW_GATE_FIRED_LOG}")"
     mkdir -p -- "${log_dir}" 2>/dev/null || exit 0
     ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || ts="unknown"
-    printf '%s\ttool_name=%s\tverdict=%s\tscript_len=%s\tadvisory=%s\n' \
+    printf '%s\ttool_name=%s\tverdict=%s\tscript_len=%s\tadvisory=%s\tdev=%s\timpl_slots=%s\n' \
       "${ts}" "Workflow" "${verdict}" "${script_len}" "${advisory_trace:-none}" \
+      "${dev_flag:-no}" "${impl_slots:-0}" \
       >>"${WORKFLOW_GATE_FIRED_LOG}" 2>/dev/null || exit 0
     # Fail-safe prune — bound the trace log to trace_line_cap lines (most-recent retention). The
     # log is observability-only, so this can NEVER alter a verdict; any error here is swallowed
@@ -1129,6 +1156,52 @@ ANALYSIS_SIZE_FLAG = "ANALYSIS_SIZE_SILENT"
 # line by emit(). Default SILENT so a fail-open exit never fires a spurious nudge.
 SCHEMA_CAP_FLAG = "SCHEMA_CAP_SILENT"
 
+# DEV_FLAG / IMPL_SLOTS — instrumentation-only, printed as the SIXTH and SEVENTH helper output lines.
+# Defaults are the non-DEV / zero-slot reading so every early emit path (docroute, the non-DEV PASS,
+# the declaration blocks that exit before a declaration exists) still carries a well-formed value.
+DEV_FLAG = "DEV_NO"
+IMPL_SLOTS = 0
+
+# SIZE_MAP_FLAG / ENTRY_CARD_FLAG — the two cardinality ADVISORIES, printed as the EIGHTH and NINTH
+# output lines. Both are trace-only: no stderr nudge, no verdict, no exit code. They are computed at
+# the two terminal PASS points ONLY, where the declaration has been parsed and the slot count exists;
+# every earlier emit leaves them SILENT rather than reporting a count nobody computed.
+SIZE_MAP_FLAG = "SIZE_MAP_SILENT"
+ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
+
+
+def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
+    # Implementation-slot count — a TOTAL function over BOTH dispatch branches, deliberately: the
+    # upstream verify form terminates at its own PASS with no verify types bound, so a definition
+    # scoped to the in-script branch would raise there and the fail-open handler would convert the
+    # raise into a silent pass. Verify slots are the earliest Tier-B position of each declared
+    # verify-dev type (empty by construction under upstream); implementation slots are every other
+    # position of a declared literal impl type, plus exactly ONE slot per declared computed type.
+    # ZERO-POSITION CARVE-OUT: a computed type has no discoverable spawn position (the ordering check
+    # already skips it for that reason), so it contributes one slot and no ordinal — asserting more
+    # would be a number the gate cannot check.
+    # SCOPE LIMIT (honest, no static fix available): the count sees STATIC spawn positions only. A
+    # loop fan-out spawning N runtime instances from one token is one position and one slot, and that
+    # is the shape most likely to be under-sized.
+    try:
+        pos_by_type = {}
+        for (p, t) in dev_spawns:
+            pos_by_type.setdefault(t, []).append(p)
+        for t in pos_by_type:
+            pos_by_type[t].sort()
+        verify_slots = set()
+        for t in verify_types:
+            if pos_by_type.get(t):
+                verify_slots.add(pos_by_type[t][0])
+        n = 0
+        for t in impl_types:
+            for p in pos_by_type.get(t, []):
+                if p not in verify_slots:
+                    n += 1
+        return n + len(set(computed_types))
+    except Exception:
+        return 0
+
 
 def emit(verdict, entry_marker):
     print(verdict)
@@ -1136,6 +1209,10 @@ def emit(verdict, entry_marker):
     print(RESIL_FLAG)
     print(ANALYSIS_SIZE_FLAG)
     print(SCHEMA_CAP_FLAG)
+    print(DEV_FLAG)
+    print("IMPL_SLOTS=" + str(IMPL_SLOTS))
+    print(SIZE_MAP_FLAG)
+    print(ENTRY_CARD_FLAG)
     sys.exit(0)
 
 
@@ -1166,6 +1243,9 @@ try:
     rev_re_present = re.compile(r"['\"]" + REVIEWER_LITERAL + r"['\"]")
     tier_a_dev_types = set(m.group(1) for m in dev_re_present.finditer(antigaming_src))
     dev_present = bool(tier_a_dev_types)
+    # Instrumentation: set BEFORE the first emit that can follow (docroute / the non-DEV PASS) so the
+    # DEV flag is correct on every recorded firing, which is the whole point of the denominator fix.
+    DEV_FLAG = "DEV_YES" if dev_present else "DEV_NO"
 
     # TIER B — spawn-position (agent-call first-arg OR agentType field value). The code-side operand
     # of the declaration consistency check. Captures (position, agent-type). bash-3.2 $(...)-scan
@@ -1204,6 +1284,21 @@ try:
 
     def pass_or_size():
         return "BLOCK_SIZEEST" if size_est_missing else "PASS"
+
+    # Sizing-entry channel = the EXISTING raw-scanned [SIZE-EST] literal, counted for the first time.
+    # One occurrence is one sizing entry, which is the standing "a token at EVERY DEV spawn" rule read
+    # as a cardinality. No new key, no grammar change — KNOWN_KEYS stays closed.
+    size_est_count = attestation_src.count(SIZE_EST_LITERAL)
+
+    def wave_a_signals(verify_types, impl_types, computed_types):
+        # Returns the (slot count, size-map flag, entry-cardinality flag) triple for a terminal PASS
+        # point. HONESTY: only the COUNT is mechanical. Which sizing entry belongs to which call site
+        # is author-assigned and unverifiable — the same trust class as role truthfulness in the
+        # declaration itself. Both flags are advisory: nothing below reads them for a verdict.
+        n = impl_slot_count(dev_spawns, verify_types, impl_types, computed_types)
+        size_map = "SIZE_MAP_ADVISE" if size_est_count != n else "SIZE_MAP_SILENT"
+        entry_card = "ENTRY_CARD_ADVISE" if (entry_literal_found and n >= 4) else "ENTRY_CARD_SILENT"
+        return (n, size_map, entry_card)
 
     # SECOND detection pass (doc-routing leak) — independent, runs first.
     if detect_docroute_leak(antigaming_src, attestation_src):
@@ -1289,6 +1384,10 @@ try:
         # (b-prime) Tier-A coverage — closes the config-array fan-out behind an honest upstream facade.
         check_tier_a_coverage()
         # ordering waived under upstream (verify happened upstream).
+        # Terminal PASS point 1 — the upstream branch. Verify types are empty by construction here,
+        # which is exactly what makes the slot definition total rather than branch-specific.
+        IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
+            declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
         emit(pass_or_size(), entry_marker)
 
     # IN-SCRIPT verify form. NOREV already guaranteed above.
@@ -1343,6 +1442,9 @@ try:
     if impl_positions and rev_starts:
         if not (min(rev_starts) < min(impl_positions)):
             emit("BLOCK_ORDER", entry_marker)
+    # Terminal PASS point 2 — the in-script branch.
+    IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
+        declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
     emit(pass_or_size(), entry_marker)
 except SystemExit:
     raise
@@ -1368,10 +1470,10 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT'
   fi
 
-  # Parse the five lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # Parse the nine helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
   # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
@@ -1379,12 +1481,18 @@ PY
   resil_flag="RESIL_SILENT"
   analysis_size_flag="ANALYSIS_SIZE_SILENT"
   schema_cap_flag="SCHEMA_CAP_SILENT"
+  local dev_flag_raw="DEV_NO" impl_slots_raw="IMPL_SLOTS=0"
+  local size_map_flag="SIZE_MAP_SILENT" entry_card_flag="ENTRY_CARD_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
     IFS= read -r resil_flag
     IFS= read -r analysis_size_flag
     IFS= read -r schema_cap_flag
+    IFS= read -r dev_flag_raw
+    IFS= read -r impl_slots_raw
+    IFS= read -r size_map_flag
+    IFS= read -r entry_card_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
@@ -1400,6 +1508,17 @@ PY
   if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
     schema_cap_flag="SCHEMA_CAP_SILENT"
   fi
+
+  # INSTRUMENTATION FIELDS (never a verdict input) — normalize to the safe reading on any stray or
+  # short helper output, mirroring the flag normalization above. A non-integer slot count records as
+  # 0 rather than poisoning the field with unparsed text.
+  if [[ "${dev_flag_raw}" == "DEV_YES" ]]; then
+    dev_flag="yes"
+  else
+    dev_flag="no"
+  fi
+  impl_slots="${impl_slots_raw#IMPL_SLOTS=}"
+  [[ "${impl_slots}" =~ ^[0-9]+$ ]] || impl_slots=0
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
@@ -1426,6 +1545,20 @@ PY
     # Trace tag carries the matched rule when the helper supplied one (`SCHEMA_CAP_ADVISE:R1`); a bare
     # flag records as plain `schema-cap` rather than inventing a rule it never reported.
     add_advisory "schema-cap${schema_cap_flag#SCHEMA_CAP_ADVISE}"
+  fi
+
+  # CARDINALITY ADVISORIES (trace-only — no stderr nudge, deliberately). These record a measurement;
+  # they do NOT nudge, do not name a fix, and NOTHING below reads them. Placed with the other advisory
+  # emitters so the tag is set before any trace emit or block_and_exit, and after the flags are read.
+  # size-map fires when the [SIZE-EST] occurrence count differs from the implementation-slot count in
+  # EITHER direction; entry-cardinality fires when an [ENTRY-CLASS] simple-task classification
+  # co-occurs with 4 or more implementation slots. Whether either is worth acting on is unknown —
+  # which is why this wave only counts.
+  if [[ "${size_map_flag}" == "SIZE_MAP_ADVISE" ]]; then
+    add_advisory "size-map"
+  fi
+  if [[ "${entry_card_flag}" == "ENTRY_CARD_ADVISE" ]]; then
+    add_advisory "entry-cardinality"
   fi
 
   # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
