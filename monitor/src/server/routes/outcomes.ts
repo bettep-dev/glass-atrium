@@ -283,6 +283,13 @@ interface CountRow {
   total: bigint;
 }
 
+// Analytics-population count row — carries the synthesized sub-count so the quality
+// denominator (total - reconstructed_total) needs no extra round trip.
+interface AnalyticsCountRow {
+  total: bigint;
+  reconstructed_total: bigint;
+}
+
 interface CrossCellDbRow {
   confidence: string | null;
   metric_pass: boolean | null;
@@ -296,6 +303,8 @@ interface ByResultDbRow {
   reconstructed_count: bigint;
   // FILTER sub-count of `count` — already-closed rows (the only closure-aware aggregate).
   closed_count: bigint;
+  // FILTER sub-count of `count` — writer-emitted AND unclosed (the quality numerator).
+  writer_open_count: bigint;
 }
 
 interface ByAgentDbRow {
@@ -883,7 +892,13 @@ async function handleCrossAnalysis(
             ))::bigint       AS reconstructed_count,
             (COUNT(*) FILTER (
               WHERE closed_at IS NOT NULL
-            ))::bigint       AS closed_count
+            ))::bigint       AS closed_count,
+            -- COALESCE: the discriminator is NULL (not FALSE) when both provenance
+            -- columns are NULL, and NOT NULL would silently drop a legacy writer row.
+            (COUNT(*) FILTER (
+              WHERE NOT COALESCE(${buildReconstructedRowFilter()}, FALSE)
+                AND closed_at IS NULL
+            ))::bigint       AS writer_open_count
           FROM core.outcomes
           ${analyticsWhere}
           GROUP BY result
@@ -953,8 +968,12 @@ async function handleCrossAnalysis(
           ${analyticsWhere}
           GROUP BY task_type, grader_verdict
         `,
-        prisma.$queryRaw<CountRow[]>`
-          SELECT COUNT(*)::bigint AS total
+        prisma.$queryRaw<AnalyticsCountRow[]>`
+          SELECT
+            COUNT(*)::bigint AS total,
+            (COUNT(*) FILTER (
+              WHERE ${buildReconstructedRowFilter()}
+            ))::bigint       AS reconstructed_total
           FROM core.outcomes
           ${analyticsWhere}
         `,
@@ -971,6 +990,7 @@ async function handleCrossAnalysis(
       throw new Error("count query returned no row");
     }
     const total = bigintToNumber(totalRow.total);
+    const reconstructedTotal = bigintToNumber(totalRow.reconstructed_total);
     const excludedPoisonedCount = bigintToNumber(baseTotalRow.total) - total;
 
     const graderBreakdown = buildGraderBreakdown(graderRows);
@@ -1015,6 +1035,7 @@ async function handleCrossAnalysis(
           count: bigintToNumber(row.count),
           reconstructed_count: bigintToNumber(row.reconstructed_count),
           closed_count: bigintToNumber(row.closed_count),
+          writer_open_count: bigintToNumber(row.writer_open_count),
         },
       ];
     });
@@ -1054,6 +1075,7 @@ async function handleCrossAnalysis(
     return {
       filter: filterEcho,
       total,
+      reconstructed_total: reconstructedTotal,
       excluded_poisoned_count: excludedPoisonedCount,
       cells,
       by_result: byResult,

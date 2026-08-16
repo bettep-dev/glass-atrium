@@ -710,7 +710,15 @@ function OutcomeDistributionBody({ state, onRetry }) {
     })
     .filter((b) => b.count > 0);
 
-  const emptyHint = computeOutcomeHint(byResultMap, total);
+  // 이 카드 한 장이 서로 다른 두 모집단을 동시에 읽는다 — 의도된 설계이며 통일 금지:
+  //   분포 막대·범례 = total(전수). '무슨 기록이 남았는가' 의 census 라 합성행을 빼면
+  //     기록 자체가 화면에서 사라져 분포가 거짓이 된다.
+  //   임계 hint·severity rollup = writer 발신 모집단. 합성행의 result 는 recorder 가 고른
+  //     값이라 품질 정보가 없어, 분모에 남기면 기록 누락이 품질 저하로 읽힌다.
+  // 두 분모가 갈리는 사실 자체는 아래 disclosure 줄로 화면에 고지한다.
+  const writerTotal = getWriterTotal(state.data);
+  const populationDisclosure = buildPopulationDisclosure(total, writerTotal);
+  const emptyHint = computeOutcomeHint(byResultMap, writerTotal);
 
   return (
     <div>
@@ -739,6 +747,13 @@ function OutcomeDistributionBody({ state, onRetry }) {
           </div>
         ))}
       </div>
+      {populationDisclosure && (
+        <div
+          className="mt-3 fs-micro font-mono text-dim"
+          title="Harness-reconstructed records (recovery artifacts, not writer-emitted). The recorder chose their result with no writer claim behind it, so they stay in the distribution but leave the quality signal.">
+          {populationDisclosure}
+        </div>
+      )}
       {emptyHint && (
         <div className="mt-4 p-3 bg-sunken rounded-md fs-body text-dim">
           <span className={`text-${emptyHint.tone} font-medium`}>{emptyHint.text}</span>
@@ -1171,17 +1186,51 @@ function getOpenCount(row) {
   return Math.max(0, getCount(row) - closed);
 }
 
+// 품질 신호 모집단 — 합성행 제외. 합성행의 result 는 recorder 가 고른 값이라 품질 정보가 없다.
+// reconstructed_total 부재(구 응답) → 종전 total 유지(하위호환).
+//
+// 이중 모집단 계약(여기가 그 seam) — 이 값은 임계 hint · severity rollup 전용이고, 분포
+// 막대·범례는 total(전수)을 쓴다. 불일치는 버그가 아니라 계약이므로 어느 한쪽으로 통일하지
+// 말 것: 막대를 writer 기준으로 바꾸면 합성 기록이 화면에서 사라지고, hint 를 전수로
+// 되돌리면 기록 누락이 품질 저하로 읽힌다. 화면 고지는 buildPopulationDisclosure().
+function getWriterTotal(data) {
+  const total = Number(data?.total) || 0;
+  const reconstructed = Number(data?.reconstructed_total) || 0;
+  return Math.max(0, total - reconstructed);
+}
+
+// 두 모집단이 갈릴 때만 화면에 고지 — 분모가 하나뿐이면(합성행 0) null 이라 카드가 조용하다.
+// 두 수를 모두 적는다: 막대가 읽는 전수와 임계·rollup 이 읽는 writer 모집단.
+function buildPopulationDisclosure(total, writerTotal) {
+  const reconstructed = Math.max(0, total - writerTotal);
+  if (reconstructed <= 0) return null;
+  return `Bar shows all ${formatInt(total)} · quality signal reads ${formatInt(writerTotal)} writer-emitted (${formatInt(reconstructed)} harness-reconstructed)`;
+}
+
+// by_result row → writer 발신 미종결 건수(품질 분자). writer_open_count 부재(구 응답) → 종전 미종결 건수.
+function getWriterOpenCount(row) {
+  const writerOpen = Number(row?.writer_open_count);
+  return Number.isFinite(writerOpen) ? Math.max(0, writerOpen) : getOpenCount(row);
+}
+
+// by_result row → writer 발신 건수(종결 무관 — 실패/차단 임계는 종결에 반응하지 않는 계약 유지).
+function getWriterCount(row) {
+  const reconstructed = Number(row?.reconstructed_count) || 0;
+  return Math.max(0, getCount(row) - reconstructed);
+}
+
 // Outcome 분포 EMPTY 인사이트 박스 — 우려동반 / 실패차단 임계 hint. 비율은 'N.N% (x/y)' 분모 공개 (A5).
 // 우려동반 분자는 '지금 열려 있는' 건수 — 종결된 DWC 는 조치 대상이 아니므로 경보에서 제외.
-function computeOutcomeHint(byResultMap, total) {
-  if (total <= 0) return null;
-  const openConcernCount = getOpenCount(byResultMap.get('done_with_concerns'));
-  if (openConcernCount / total >= 0.1) {
-    return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcernCount, total)} — above the 7-day norm, worth a look.` };
+// 분자·분모 모두 writer 발신 모집단 — 기록 누락(합성)이 품질 저하로 읽히던 왜곡을 제거한다.
+function computeOutcomeHint(byResultMap, writerTotal) {
+  if (writerTotal <= 0) return null;
+  const openConcernCount = getWriterOpenCount(byResultMap.get('done_with_concerns'));
+  if (openConcernCount / writerTotal >= 0.1) {
+    return { tone: 'warn', text: `Open done-with-caveats rate ${window.UI.formatPctWithDenominator(openConcernCount, writerTotal)} — above the 7-day norm, worth a look.` };
   }
-  const breakageCount = getCount(byResultMap.get('fail')) + getCount(byResultMap.get('blocked'));
-  if (breakageCount / total >= 0.05) {
-    return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakageCount, total)}.` };
+  const breakageCount = getWriterCount(byResultMap.get('fail')) + getWriterCount(byResultMap.get('blocked'));
+  if (breakageCount / writerTotal >= 0.05) {
+    return { tone: 'crit', text: `Failure rate ${window.UI.formatPctWithDenominator(breakageCount, writerTotal)}.` };
   }
   return null;
 }
@@ -1223,13 +1272,15 @@ function computeWorstRollup({ outcomesState }) {
 
   if (outcomesState.status === 'ready') {
     anyReady = true;
-    const total = Number(outcomesState.data.total) || 0;
+    // 표본 크기도 품질 모집단 기준 — 합성행은 severity 판정에 참여하지 않는다.
+    // 분포 카드의 전수 분모와 여기 분모가 다른 것은 계약(getWriterTotal 주석 참조).
+    const writerTotal = getWriterTotal(outcomesState.data);
     const byResult = new Map((outcomesState.data.by_result || []).map((r) => [r.result, r]));
-    if (total >= window.UI.LOW_N_MIN) {
-      const breakage = getCount(byResult.get('fail')) + getCount(byResult.get('blocked'));
-      const openConcerns = getOpenCount(byResult.get('done_with_concerns'));
-      if (breakage / total >= 0.05) tone = worstTone(tone, 'crit');
-      else if (openConcerns / total >= 0.1) tone = worstTone(tone, 'warn');
+    if (writerTotal >= window.UI.LOW_N_MIN) {
+      const breakage = getWriterCount(byResult.get('fail')) + getWriterCount(byResult.get('blocked'));
+      const openConcerns = getWriterOpenCount(byResult.get('done_with_concerns'));
+      if (breakage / writerTotal >= 0.05) tone = worstTone(tone, 'crit');
+      else if (openConcerns / writerTotal >= 0.1) tone = worstTone(tone, 'warn');
     }
   }
 
