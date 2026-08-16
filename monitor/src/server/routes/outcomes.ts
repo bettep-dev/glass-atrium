@@ -27,6 +27,9 @@ import type {
   AttributionDailyResponse,
   AttributionDailyWindowDays,
   BudgetTruncationAgentCount,
+  ChannelLivenessChannel,
+  ChannelLivenessResponse,
+  ChannelLivenessWindowDays,
   LiteralOmissionBreakdown,
   OutcomeConfidenceLiteral,
   OutcomeCrossAnalysisByAgent,
@@ -115,6 +118,20 @@ const ALLOWED_HEATMAP_RESULTS: ReadonlySet<OutcomeHeatmapResultFilter> = new Set
 // membership but excludes /search's 'all' sentinel — a daily-series card needs
 // a bounded window. Out-of-set → 400. Blocks arbitrary INTERVAL injection.
 const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
+
+// /channel-liveness: recording-channel watchdog thresholds — the SINGLE definition,
+// echoed to every consumer in the response so the dashboard card and doctor §16 read
+// a verdict rather than re-deriving one. Calibrated on one incident (a channel
+// carrying most recorded outcomes fell to zero for ~29h unnoticed): the eligibility
+// floor keeps a low-traffic channel's silence from being news, and the silence bound
+// is short enough to catch an outage inside the day it starts. Untuned against a
+// false-positive population — expect revision.
+const CHANNEL_ELIGIBILITY_DAILY_FLOOR = 100;
+const CHANNEL_SILENCE_HOURS = 6;
+// 7d default (not /attribution-daily's 30d): the eligibility floor reads a PEAK daily
+// volume, so a wide window keeps qualifying a channel on a burst weeks in the past.
+const CHANNEL_LIVENESS_DAYS_DEFAULT = 7;
+const MS_PER_HOUR = 3_600_000;
 
 // ±window (minutes) for matching a `subagent-stop-missing` outcome to a backing
 // core.agent_events 'SubagentStop'. The outcome's record_ts (record write time)
@@ -355,6 +372,14 @@ interface HeatmapDbRow {
   cell_count: bigint;
 }
 
+// /channel-liveness row shape: one row per attribution_source in the window,
+// carrying its peak single-day volume and its most recent record.
+interface ChannelLivenessDbRow {
+  attribution_source: string;
+  peak_daily_count: bigint;
+  last_record_ts: Date;
+}
+
 // /attribution-daily row shape: one (day, attribution_source) group. `day` is
 // emitted as 'YYYY-MM-DD' text via to_char(date_trunc(...)) so no client-side
 // date math is needed. value-set-agnostic — the pivot happens in the handler.
@@ -438,6 +463,7 @@ export async function registerOutcomesRoutes(app: FastifyInstance): Promise<void
   app.get("/api/outcomes/cross-analysis", handleCrossAnalysis);
   app.get("/api/outcomes/heatmap", handleHeatmap);
   app.get("/api/outcomes/attribution-daily", handleAttributionDaily);
+  app.get("/api/outcomes/channel-liveness", handleChannelLiveness);
   app.patch("/api/outcomes/close-by-cid", handleCloseByCid);
   app.get("/api/outcomes/:id", handleDetail);
   app.patch("/api/outcomes/:id/close", handleClose);
@@ -1425,6 +1451,117 @@ function parseAttributionDailyDaysParam(raw: string | undefined): AttributionDai
     return null;
   }
   return parsed as AttributionDailyWindowDays;
+}
+
+// GET /api/outcomes/channel-liveness?days={7|30|90, default 7} — recording-channel
+// watchdog. A channel that carried most recorded outcomes once fell to zero for ~29h
+// with nothing watching; this is the aggregate that would have named it.
+//
+// Deliberately NOT registry-scoped, unlike its /attribution-daily sibling: the
+// subject is the RECORDING channel, not agent quality, so gating on the agent
+// roster would let a channel read alive (or silent) for a reason having nothing to
+// do with the recorder.
+async function handleChannelLiveness(
+  request: FastifyRequest<{ Querystring: { days?: string } }>,
+  reply: FastifyReply,
+): Promise<ChannelLivenessResponse | OutcomesErrorBody> {
+  const start = Date.now();
+
+  const days = parseChannelLivenessDaysParam(request.query.days);
+  if (days === null) {
+    return reply.code(400).send({
+      error: "invalid_param",
+      param: "days",
+      allowed: Array.from(ALLOWED_DAYS_NUMERIC),
+    } satisfies OutcomesErrorBody);
+  }
+
+  const prisma = getPrisma();
+  try {
+    // Two-level aggregate in one scan: day buckets first, then the per-channel peak
+    // over them. Measured plan (EXPLAIN ANALYZE, 7d / 1097 rows): Index Scan using
+    // outcomes_ts_idx on the record_ts predicate, then two HashAggregates — 1.4 ms.
+    // attribution_source is NOT indexed (no such index exists on core.outcomes); it
+    // rides as a Filter on the time-bounded scan, which is why the window predicate
+    // is what has to stay index-covered here.
+    //
+    // date_trunc('day', …) buckets in the PG session timezone, pinned to UTC in
+    // db.ts — same convention as the /attribution-daily series.
+    const rows = await prisma.$queryRaw<ChannelLivenessDbRow[]>`
+      WITH daily AS (
+        SELECT
+          attribution_source              AS source,
+          date_trunc('day', record_ts)    AS day,
+          COUNT(*)::bigint                AS cnt,
+          MAX(record_ts)                  AS last_ts
+        FROM core.outcomes
+        WHERE attribution_source IS NOT NULL
+          AND record_ts > NOW() - (${days}::int * INTERVAL '1 day')
+        GROUP BY 1, 2
+      )
+      SELECT
+        source        AS attribution_source,
+        MAX(cnt)      AS peak_daily_count,
+        MAX(last_ts)  AS last_record_ts
+      FROM daily
+      GROUP BY source
+      ORDER BY source ASC
+    `;
+
+    const now = Date.now();
+    const channels: ChannelLivenessChannel[] = rows.map((row) => {
+      const peakDailyCount = bigintToNumber(row.peak_daily_count);
+      const silentHours = (now - row.last_record_ts.getTime()) / MS_PER_HOUR;
+      const eligible = peakDailyCount > CHANNEL_ELIGIBILITY_DAILY_FLOOR;
+      return {
+        attribution_source: row.attribution_source,
+        peak_daily_count: peakDailyCount,
+        last_record_ts: row.last_record_ts.toISOString(),
+        silent_hours: silentHours,
+        eligible,
+        alerting: eligible && silentHours > CHANNEL_SILENCE_HOURS,
+      };
+    });
+    const alerting = channels.filter((c) => c.alerting).map((c) => c.attribution_source);
+
+    request.log.info(
+      {
+        route: "/api/outcomes/channel-liveness",
+        days,
+        channelCount: channels.length,
+        alerting,
+        durationMs: Date.now() - start,
+      },
+      "outcomes query complete",
+    );
+
+    return {
+      fetched_at: new Date().toISOString(),
+      days,
+      thresholds: {
+        eligibility_daily_floor: CHANNEL_ELIGIBILITY_DAILY_FLOOR,
+        silence_hours: CHANNEL_SILENCE_HOURS,
+      },
+      channels,
+      alerting,
+    };
+  } catch (error) {
+    return failWithDb(request, reply, "/api/outcomes/channel-liveness", error);
+  }
+}
+
+function parseChannelLivenessDaysParam(raw: string | undefined): ChannelLivenessWindowDays | null {
+  if (raw === undefined || raw === "") {
+    return CHANNEL_LIVENESS_DAYS_DEFAULT as ChannelLivenessWindowDays;
+  }
+  if (!/^-?\d+$/.test(raw)) {
+    return null;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || !ALLOWED_DAYS_NUMERIC.has(parsed)) {
+    return null;
+  }
+  return parsed as ChannelLivenessWindowDays;
 }
 
 // Per-category running totals over the window.

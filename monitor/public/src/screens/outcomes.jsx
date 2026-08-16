@@ -215,6 +215,20 @@ const ATTRIBUTION_OMISSION_BANDS = [
 // attribution_loss 노트 컨텍스트 (정적 문구 — 건수·비율은 window_summary 에서 라이브 산출).
 const ATTRIBUTION_LOSS_CONTEXT = 'remaining';
 
+// Channel liveness 표시 메타 — 3-상태 듀얼인코딩(기호+텍스트, 색 단독 의존 금지).
+// 판정(alerting/eligible)은 서버가 내리고 카드는 그 값만 읽는다 → 임계값이 프런트에 재등장하지 않음.
+const CHANNEL_LIVENESS_META = {
+  alerting: { label: 'Silent',      symbol: '✕', icon: 'x',     colorVar: '--crit' },
+  live:     { label: 'Recording',   symbol: '✓', icon: 'check', colorVar: '--ok'   },
+  low:      { label: 'Below floor', symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+};
+
+// 채널 1건 → 표시 메타. eligible 하지 않은 채널의 침묵은 뉴스가 아니므로 'low' 로 내린다.
+function channelLivenessMetaO(channel) {
+  if (channel.alerting) return CHANNEL_LIVENESS_META.alerting;
+  return channel.eligible ? CHANNEL_LIVENESS_META.live : CHANNEL_LIVENESS_META.low;
+}
+
 // window_summary.attribution_loss_rate × total_attributed → '{count} (~{rate}%) {context}' 라이브 노트.
 // rate null(분모 0) → 컨텍스트만 표기 (수치 fabrication 회피).
 function buildAttributionLossNoteO(lossRate, totalAttributed) {
@@ -419,6 +433,10 @@ function ScreenOutcomes({ onNav }) {
   // Attribution Health — /api/outcomes/attribution-daily (analyticsPeriod 와 동일 window).
   const [attributionState, setAttributionState] = useStateO({ status: 'loading', data: null, error: null });
 
+  // Channel liveness — /api/outcomes/channel-liveness. analyticsPeriod 에 연동하지 않는다:
+  // eligibility 는 peak-daily 를 읽으므로 창을 넓히면 수 주 전 버스트로 계속 자격이 유지된다.
+  const [channelLivenessState, setChannelLivenessState] = useStateO({ status: 'loading', data: null, error: null });
+
   // Loop-events raw 로그 — Learning 에서 이관(operational data). period 무관 all-time → refreshTick 만 의존.
   const [loopEventsState, setLoopEventsState] = useStateO({ status: 'loading', data: null, error: null });
 
@@ -556,6 +574,19 @@ function ScreenOutcomes({ onNav }) {
     return () => ctrl.abort();
   }, [analyticsPeriod, refreshTick]);
 
+  // Channel liveness fetch — days 파라미터 미전달 → 라우트 기본 창을 그대로 사용(카드가 창 폭을
+  // 재선언하지 않도록). 표시 라벨은 응답의 days 에서 파생.
+  useEffectO(() => {
+    const ctrl = new AbortController();
+    setChannelLivenessState({ status: 'loading', data: null, error: null });
+
+    fetchJsonO('/api/outcomes/channel-liveness', ctrl.signal)
+      .then((data) => setChannelLivenessState({ status: 'ready', data, error: null }))
+      .catch((err) => handleErrorO(err, setChannelLivenessState));
+
+    return () => ctrl.abort();
+  }, [refreshTick]);
+
   // Loop-events raw 로그 fetch — period 무관(all-time stream). AbortController 분리 → 부분 실패 격리.
   useEffectO(() => {
     const ctrl = new AbortController();
@@ -654,6 +685,7 @@ function ScreenOutcomes({ onNav }) {
         analyticsState={analyticsState}
         heatmapState={heatmapState}
         attributionState={attributionState}
+        channelLivenessState={channelLivenessState}
         heatmapFilter={heatmapFilter}
         period={analyticsPeriod}
         onChangeHeatmapFilter={setHeatmapFilter}
@@ -733,7 +765,7 @@ function AnalyticsPeriodSeg({ value, onChange }) {
   );
 }
 
-function AnalyticsSection({ analyticsState, heatmapState, attributionState, heatmapFilter, period, onChangeHeatmapFilter, onRetry }) {
+function AnalyticsSection({ analyticsState, heatmapState, attributionState, channelLivenessState, heatmapFilter, period, onChangeHeatmapFilter, onRetry }) {
   // Heatmap + AgentStackedBar 좌우 2열 — heat-cell aspect-ratio:1 로 폭 축소 시 높이 자동 정렬.
   // 데스크탑 viewport 만 운영 (127.0.0.1:16145) → md breakpoint 분기 불필요.
   // AttributionHealthCard — 2열 grid 아래 full-width (일별 30-bar 그리드 가독성).
@@ -751,6 +783,7 @@ function AnalyticsSection({ analyticsState, heatmapState, attributionState, heat
         <AgentStackedBarCard state={analyticsState} onRetry={onRetry}/>
       </div>
       <AttributionHealthCard state={attributionState} period={period} onRetry={onRetry}/>
+      <ChannelLivenessCard state={channelLivenessState} onRetry={onRetry}/>
       <GraderBreakdownCard state={analyticsState} period={period} onRetry={onRetry}/>
       <CrosstabCard state={analyticsState} period={period} onRetry={onRetry}/>
     </div>
@@ -1309,6 +1342,91 @@ function AttributionLegend() {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+// ----- Channel liveness (기록 채널 감시) --------------------------------------
+// /api/outcomes/channel-liveness — 기록 채널이 조용해진 것을 사람이 알아채기 전에 지목한다.
+// 대부분의 outcome 을 실어 나르던 채널이 0 으로 떨어진 채 하루 넘게 방치됐고, 그 공백이
+// 대시보드에서는 품질 저하처럼 읽혔다. 판정(eligible/alerting)과 임계값은 전부 서버 응답에서
+// 오며 카드는 어떤 수치도 재계산하지 않는다 — doctor §16 과 같은 정의 하나를 공유하기 위함.
+
+function ChannelLivenessCard({ state, onRetry }) {
+  const { CardHead, Badge } = window.UI;
+
+  const alerting = state.status === 'ready' ? (state.data?.alerting || []) : [];
+  const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
+  const days = state.status === 'ready' ? state.data?.days : null;
+
+  return (
+    <div className="card mb-4">
+      <CardHead
+        title="Recording channels"
+        sub=""
+        right={
+          <Badge
+            role="status"
+            tone={toneFromColorVarO(meta.colorVar)}
+            icon
+            title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
+            {alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording'}
+            {days ? ` · ${days}d` : ''}
+          </Badge>
+        }
+      />
+      <div className="card-body">
+        <ChannelLivenessBody state={state} onRetry={onRetry}/>
+      </div>
+    </div>
+  );
+}
+
+function ChannelLivenessBody({ state, onRetry }) {
+  if (state.status === 'loading') {
+    return <ChartSkeletonO height={120} aria-label="Loading recording channels"/>;
+  }
+  if (state.status === 'error') {
+    return <ErrorBannerO title="Couldn't load recording channels" detail={state.error} onRetry={onRetry}/>;
+  }
+
+  const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
+  const threshold = state.data?.thresholds || null;
+  const days      = state.data?.days;
+
+  if (channels.length === 0) {
+    return <EmptyStateO message="No recording channel wrote in this window."/>;
+  }
+
+  // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
+  const ordered = [...channels].sort((a, b) => Number(b.alerting) - Number(a.alerting));
+
+  return (
+    <div>
+      <div className="flex flex-col gap-1.5">
+        {ordered.map((channel) => <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>)}
+      </div>
+      {threshold ? (
+        <div className="fs-micro text-faint font-mono mt-3 leading-relaxed">
+          Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
+          has recorded nothing for {threshold.silence_hours}h.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChannelLivenessRow({ channel, days }) {
+  const meta = channelLivenessMetaO(channel);
+  const silentHours = Math.floor(Number(channel.silent_hours) || 0);
+  return (
+    <div className="flex items-center gap-2 fs-micro font-mono">
+      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
+      <span style={{ color: `rgb(var(${meta.colorVar}))` }} className="w-[6.5rem] flex-shrink-0">{meta.label}</span>
+      <span className="text-ink flex-shrink-0">{channel.attribution_source}</span>
+      <span className="text-dim tabular-nums">
+        peak {formatIntO(channel.peak_daily_count)}/day{days ? ` over ${days}d` : ''} · quiet {formatIntO(silentHours)}h
+      </span>
     </div>
   );
 }

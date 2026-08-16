@@ -431,6 +431,45 @@ export interface AttributionDailyResponse {
   window_summary: AttributionDailySummary;
 }
 
+// channel liveness (recording-channel watchdog)
+
+// Shares /attribution-daily's {7,30,90} membership gate.
+export type ChannelLivenessWindowDays = 7 | 30 | 90;
+
+// Echo of the server-side thresholds the verdict was computed with. The second
+// surface (doctor §16) reads its verdict from `alerting` and these values rather
+// than re-deriving either, so the threshold has one definition, not two agreeing
+// literals.
+export interface ChannelLivenessThresholds {
+  // A channel qualifies once its peak daily volume EXCEEDS this floor (strict >).
+  eligibility_daily_floor: number;
+  // An eligible channel alerts once its silence EXCEEDS this many hours (strict >).
+  silence_hours: number;
+}
+
+// One attribution_source observed in the window. `alerting` is the server's
+// verdict — eligible AND silent past the threshold — so no consumer re-computes it.
+export interface ChannelLivenessChannel {
+  attribution_source: string;
+  // Highest single-day row count inside the window (UTC day buckets).
+  peak_daily_count: number;
+  last_record_ts: string;
+  silent_hours: number;
+  eligible: boolean;
+  alerting: boolean;
+}
+
+export interface ChannelLivenessResponse {
+  fetched_at: string;
+  days: ChannelLivenessWindowDays;
+  thresholds: ChannelLivenessThresholds;
+  // Every channel present in the window, ascending by name.
+  channels: ChannelLivenessChannel[];
+  // Names of the alerting subset — the membership surface both the card and the
+  // doctor read.
+  alerting: string[];
+}
+
 // error envelope
 
 export type OutcomesErrorBody =
