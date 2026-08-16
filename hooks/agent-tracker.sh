@@ -3,7 +3,10 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# shellcheck source-path=SCRIPTDIR source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/worktree-lock.sh
+source "${BASH_SOURCE%/*}/lib/worktree-lock.sh"
 
 INPUT=$(hook_read_input)
 [[ "${INPUT}" == "{}" ]] && exit 0
@@ -101,6 +104,19 @@ if [[ -n "${marker_key}" ]]; then
           "live-child marker delete failed — a stale marker will over-report until its TTL expires" \
           "Remove ${live_child_dir}/${marker_key} manually" \
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
+      fi
+      # Release arm of the per-worktree writer lock (lib/worktree-lock.sh; the acquire arm is
+      # advisory-worktree-writer-lock.sh). Keyed on the RAW agent_id, which is the holder record —
+      # never marker_key, whose sanitizer is lossy and would miss the lock it means to free.
+      # Pure bash + one rm per match: this hook's 2-python3-per-fire budget is pinned by
+      # agent-tracker.bats, which is also why the lock's TTL is evaluated at acquire, not here.
+      # SC2310: the release is a predicate whose rc 1 IS the loud-warn branch — set -e disable intended.
+      # shellcheck disable=SC2310
+      if ! worktree_lock_release_by_holder "${AGENT_ID}"; then
+        emit_error "DATA-076" "warn" \
+          "worktree writer-lock release failed — the stale lock will over-warn until its TTL expires" \
+          "Remove the holder-matching lock dir under ${WORKTREE_LOCK_ROOT} manually" \
+          "{\"event\":\"${HOOK_EVENT}\",\"agent_key\":\"${marker_key}\"}"
       fi
       ;;
     *) ;; # main-session events (Stop/PreCompact/SessionStart) hold no live-child marker
