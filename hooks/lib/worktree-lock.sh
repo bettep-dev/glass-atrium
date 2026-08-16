@@ -103,17 +103,33 @@ worktree_lock_holder_id() {
   worktree_lock_holder_id_out="${id}"
 }
 
-# Transform an absolute path into ONE path-safe directory segment. `_`->`__` then `/`->`_` is
-# injective (a lone `_` in the output can only have come from a `/`), so two distinct worktree roots
-# can never share a lock dir — a lossy transform would cross-warn between unrelated trees. Pure
-# parameter expansion: this runs on every Write/Edit, so it must not fork (no `tr`). The output holds
-# no `/`, so no traversal is expressible; `.`/`..` are rejected anyway as defense in depth.
+# Transform an absolute path into ONE path-safe directory segment. Two distinct worktree roots must
+# never share a lock dir: a collision cross-warns between unrelated trees, which is exactly the false
+# positive this advisory's promotion gate is keyed on.
+#
+# ENCODING — `_`->`__` then `/`->`_s`. Every `_` in the output opens a TWO-character token whose
+# second character alone decides the source: `__` came from a literal `_`, `_s` from a `/`. A
+# left-to-right decode is therefore total and unambiguous, so the transform is injective.
+# THE PREVIOUS SCHEME WAS NOT: `_`->`__` then `/`->`_` let the separator share the escape's alphabet,
+# so `_a___b` decoded two ways — `/a_/b` and `/a/_b` mapped onto one lock dir (executed). The rule
+# the miss came from: a doubled escape and a separator drawn from the same alphabet are never
+# injective; the separator token must be distinguishable at its SECOND character.
+# Pure parameter expansion — this runs on every Write/Edit, so it must not fork (no `tr`), and the
+# new scheme costs the same two substitutions as the old one. The output holds no `/`, so no
+# traversal is expressible; `.`/`..` are rejected anyway as defense in depth.
+#
+# Locks written under the OLD scheme are not migrated and are never looked up again (no reader
+# derives an old-form key), so they are orphan dirs rather than stale locks: they hold nothing, warn
+# nobody, and gate nothing. TTL reclaim is lookup-driven and so will NOT collect them — they are
+# inert until the store is cleared by hand. That is the accepted cost of the re-encoding; the
+# alternative (a migration pass) would have to walk and decode a store whose old keys are, by the
+# very defect being fixed, not uniquely decodable.
 # Args: $1=absolute path · result: worktree_lock_key_out · rc 1 = unusable key.
 worktree_lock_key() {
   local p="${1}"
   worktree_lock_key_out=""
   p="${p//_/__}"
-  p="${p//\//_}"
+  p="${p//\//_s}"
   case "${p}" in
     '' | '.' | '..') return 1 ;;
     *) ;;
