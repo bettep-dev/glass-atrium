@@ -217,7 +217,7 @@ fire_stop() {
     return 1
   }
   [[ ! -d "$(lock_dir_for "${WT}")" ]] || {
-    echo "the id-less holder's lock survived its own Stop — TTL-only regression" >&2
+    echo "the id-less holder's lock survived an id-less SubagentStop — TTL-only regression" >&2
     return 1
   }
 }

@@ -37,10 +37,14 @@
 #     a repo-rooted ancestor onto ONE lock, so on a machine whose $HOME is itself a git repo the
 #     whole home directory would contend as a single worktree (not the case here — measured: no
 #     ~/.git).
-#   * The "orchestrator" singleton is released only by an id-less SubagentStop. The main session
-#     fires Stop, and agent-tracker.sh is wired on SubagentStart/SubagentStop only, so a lock the
-#     main session itself takes has NO release arm and is TTL-only. Closing that needs a Stop-wired
-#     release, which is a separate decision, not an oversight in this file.
+#   * "orchestrator" is not one actor, it is every id-less caller folded together, and that cuts
+#     BOTH ways. The main session fires Stop, not SubagentStop, so it never releases its own lock —
+#     but ANY other actor's id-less SubagentStop matches the fold and releases it early. A lock main
+#     still needs can therefore vanish, after which a second writer enters silently and NO
+#     LOCK-ADV-001 fires though two writers are really present. That false negative is the accepted
+#     side of a deliberate trade (worktree-lock.sh, Collision note case 2): not folding would make
+#     every id-less lock unreleasable and warn every later writer for 6 h, and this hook's promotion
+#     gate is keyed on zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
 #
 # WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
 # EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm and the advisory
@@ -136,6 +140,12 @@ TARGET="$(hook_normalize_path "${FILE_PATH}")"
 # the opposite of the alignment this comment claims — and would have hidden concurrent writes to
 # agents/memory/ and rules/memory/, which are real shared surfaces, behind a rule written for a
 # checkpoint file. The "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
+#
+# DRIFT HAZARD (deferred, not overlooked): "verbatim" is maintained BY HAND. These seven arms have no
+# shared source with enforce-delegation.sh's copy and no test compares the two lists, so an eighth
+# protected dir added there and not here leaves this hook exempting it with NOTHING failing.
+# hook_is_session_state_path() in hook-utils.sh would close it; deferred because it rewrites a
+# security-relevant gate's predicate. The same warning sits at the gate, where the edit would start.
 case "/${TARGET}/" in
   */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \
     */autoagent/memory/* | */monitor/memory/* | */scripts/memory/*) ;;
@@ -190,8 +200,9 @@ printf '%s\n' \
   "    - Which lock a path resolves to is decided TEXTUALLY, never by resolving the filesystem: a" \
   "      symlinked spelling and a real path take two independent verdicts, and every tree under a" \
   "      repo-rooted ancestor collapses onto one lock." \
-  "    - A lock held by \"orchestrator\" is released only by an id-less SubagentStop; the main" \
-  "      session fires Stop, which is not a release arm, so its own lock is TTL-only." \
+  "    - \"orchestrator\" is every id-less caller folded into one identity: the main session never" \
+  "      releases its own lock (it fires Stop, not SubagentStop), yet ANY other actor's id-less" \
+  "      SubagentStop releases it early — after which a real second writer draws no warning." \
   >&2
 
 exit 0

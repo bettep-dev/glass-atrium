@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SC2034: worktree_lock_state / _other / _root_out / _dir_out / _holder_id_out are RESULT globals
-# consumed by the
-# sourcing hooks (advisory-worktree-writer-lock.sh acquire arm + agent-tracker.sh release arm), not
-# by this lib — the same structural false positive apply-lock.sh documents for apply_lock_acquired.
+# consumed by the sourcing hooks (advisory-worktree-writer-lock.sh acquire arm + agent-tracker.sh
+# release arm), not by this lib — the same structural false positive apply-lock.sh documents for
+# apply_lock_acquired.
 # The waiver names EXACTLY the externally-read globals and no more: the previous blanket list also
 # covered two globals with no reader anywhere, which is precisely how they survived. _key_out and
 # _holder_out are deliberately ABSENT — both are read inside this file, so they need no waiver, and
@@ -73,9 +73,22 @@ worktree_lock_holder_id_out=""
 # `unknown` sentinel by the time the release arm runs. Folding both onto the DEFINED singleton
 # `orchestrator` is what makes an id-less acquire releasable — mapping only the empty form leaves the
 # release arm looking up `unknown` against a lock stamped `orchestrator`.
-# Collision note: a real agent_id spelled literally `unknown` would alias onto the singleton. That is
-# pre-existing (the tracker already collapses the absent field to that word) and not worth a second
-# sentinel — agent ids are `a<uuid>`-shaped.
+# Collision note, TWO cases — the second is the reachable one and the reason this note exists:
+#   (1) UNLIKELY: a real agent_id spelled literally `unknown` aliases onto the singleton. Pre-existing
+#       (the tracker already collapses the absent field to that word) and not worth a second sentinel
+#       — agent ids are `a<uuid>`-shaped.
+#   (2) REACHABLE, BY CONSTRUCTION: `orchestrator` is not one actor's identity, it is every id-less
+#       caller folded together, and the main session fires Stop rather than SubagentStop. So EVERY
+#       early release of an `orchestrator` lock necessarily comes from a DIFFERENT actor's id-less
+#       SubagentStop. Concretely: main acquires worktree W as `orchestrator`; subagent X fires an
+#       id-less SubagentStop; the fold matches, the lock is removed while main is still writing;
+#       agent Y then enters W cleanly and NO LOCK-ADV-001 fires though two writers are really there.
+#       That is a FALSE NEGATIVE — the advisory goes silent on a real collision.
+#       DELIBERATE, NOT AN OVERSIGHT: the alternative (do not fold `unknown`) makes an id-less
+#       acquire unreleasable, so every such lock sits until the 6 h TTL and warns every later writer
+#       — a systematic FALSE POSITIVE. This hook's promotion gate is keyed on zero false positives,
+#       so a rare false negative is the cheaper failure and the fold stays. Do not "fix" this by
+#       unfolding; closing it properly needs a Stop-wired release arm for the main session.
 # Whitespace folds because the holder record is read back one LINE at a time and the tracker splits
 # its log tuple on TAB, so either character would store one spelling and look up another.
 # Args: $1=raw agent_id (may be empty) · result: worktree_lock_holder_id_out (never empty).

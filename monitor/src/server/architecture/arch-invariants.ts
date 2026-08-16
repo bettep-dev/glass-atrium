@@ -41,6 +41,10 @@ export const ARCH_INVARIANTS: ArchInvariants = {
 	scopedScope: 9,
 	scopedShared: 8,
 	skills: 15,
+	// KNOWN RESIDUE (2026-08-16), 의도적 미수정: repo 는 이미 56 (PR #158 이
+	// advisory-worktree-writer-lock.sh 를 추가), 라이브는 아직 55. 이 필드는 hooks.PreToolUse 와 달리
+	// repo 결합이 아니라 LIVE 결합이며 관례가 "라이브 카운트에 맞춰 sync" 이므로, 릴리스 전에 올리면
+	// 없던 drift 를 만든다. 릴리스로 새 훅이 라이브에 안착한 뒤 56 으로 sync 할 것.
 	uniqueHookBasename: 55,
 	hooks: {
 		// dedupe 후 정본 목표치 = EXPECTED_HOOK_BINDINGS(lib/ga-env.sh) 의 PreToolUse leaf 수 (test/hook-bindings-complete.bats 가 동치를 강제).
