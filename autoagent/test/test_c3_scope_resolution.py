@@ -9,7 +9,11 @@ against the live scoped store, and every miss is loud. Covered here:
       AND inside the prompt, instead of the neutral not-available placeholder;
   (c) an agent with no map entry is loud on the same named signal;
   (d) for a mapped agent the assembled prompt header names the resolved file,
-      asserted by absence of the unknown-scope literal.
+      asserted by absence of the unknown-scope literal;
+  (e) the map's agent roster and the shipped ``agents/`` roster agree in BOTH
+      directions, so an agent added to the farm without a map entry — the gap
+      that left glass-atrium-dev-swift judging C3 against nothing — is red here
+      rather than silent at daemon runtime.
 
 The scoped store is pointed at the repo's own ``scoped/`` via ``GA_DATA_ROOT``
 (the ga_paths seam both python and shell consumers share), so the suite asserts
@@ -106,6 +110,25 @@ class ScopeFileResolutionTest(unittest.TestCase):
         for agent, path in resolved.items():
             self.assertEqual(path.name, dc._AGENT_SCOPE_MAP[agent])
             self.assertTrue(path.is_file(), f"{path} is not a readable file")
+
+    def test_when_agent_shipped_then_it_has_a_map_entry(self):
+        # Roster derived from the shipped agent files, never restated here: a
+        # hand-copied list drifts the moment the farm grows, which is the very
+        # drift this asserts against.
+        shipped = {
+            p.stem for p in (_REPO_ROOT / "agents").glob("glass-atrium-*.md")
+        }
+        self.assertTrue(shipped, "no shipped agent files found to derive from")
+        self.assertEqual(
+            sorted(shipped - set(dc._AGENT_SCOPE_MAP)),
+            [],
+            "shipped agents with no agent→scope map entry (C3 judges nothing)",
+        )
+        self.assertEqual(
+            sorted(set(dc._AGENT_SCOPE_MAP) - shipped),
+            [],
+            "map entries naming an agent that is not shipped",
+        )
 
     def test_when_store_present_then_resolution_leaves_stderr_silent(self):
         captured = io.StringIO()
