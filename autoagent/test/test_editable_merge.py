@@ -64,8 +64,18 @@ def _doc(*, top: str, region: str, bottom: str) -> str:
 class _StubVerify:
     """Injectable stand-in for daemon_cycle.run_pre_verify — records calls."""
 
-    def __init__(self, passed: bool) -> None:
+    def __init__(
+        self,
+        passed: bool,
+        *,
+        status: str = "ok",
+        axes: dict[str, bool] | None = None,
+        rationale: str = "",
+    ) -> None:
         self.passed = passed
+        self.status = status
+        self.axes = axes if axes is not None else {}
+        self.rationale = rationale
         self.calls = 0
 
     def __call__(self, patch, pattern, *, skip_pre_verify=False):  # noqa: ANN001
@@ -73,6 +83,9 @@ class _StubVerify:
 
         class _R:
             passed = self.passed
+            status = self.status
+            axes = self.axes
+            rationale = self.rationale
 
         return _R()
 
@@ -467,6 +480,59 @@ class MergeCandidateGateTest(unittest.TestCase):
             p = Path(d) / "dev-python.md"
             cand.apply(str(p))
             self.assertEqual(cand.verify(str(p)), 1)
+
+    def test_haiku_reject_reports_status_axes_and_rationale(self) -> None:
+        # The rejection the updater sees is an exit code; without this line the
+        # reason the result already carries never reaches the update log.
+        base = _doc(top="# A", region="b1\nb2", bottom="z")
+        local = _doc(top="# A", region="LOCAL\nb1\nb2", bottom="z")
+        release = _doc(top="# A", region="b1\nb2\nVENDOR", bottom="z")
+        stub = _StubVerify(
+            passed=False,
+            status="ok",
+            axes={"C1": True, "C2": True, "C3": False, "C4": False},
+            rationale="patch contradicts an existing guardrail",
+        )
+        cand = em.build_merge_candidate(
+            "dev-python.md", local, release, base_text=base, verify_fn=stub
+        )
+
+        captured = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-python.md"
+            cand.apply(str(p))
+            with contextlib.redirect_stderr(captured):
+                self.assertEqual(cand.verify(str(p)), 1)
+        line = captured.getvalue()
+
+        self.assertIn("status=ok", line)
+        self.assertIn(stub.rationale, line)
+        # Named membership over the axes the result carries — the failed keys are
+        # present, the passed ones are not.
+        failed = [key for key, ok in stub.axes.items() if not ok]
+        passed = [key for key, ok in stub.axes.items() if ok]
+        axis_field = line.split("failed_axes=[", 1)[1].split("]", 1)[0]
+        for key in failed:
+            self.assertIn(key, axis_field)
+        for key in passed:
+            self.assertNotIn(key, axis_field)
+
+    def test_haiku_pass_emits_no_failure_line(self) -> None:
+        base = _doc(top="# A", region="b1\nb2", bottom="z")
+        local = _doc(top="# A", region="LOCAL\nb1\nb2", bottom="z")
+        release = _doc(top="# A", region="b1\nb2\nVENDOR", bottom="z")
+        stub = _StubVerify(passed=True, axes={"C1": True, "C2": True, "C3": True, "C4": True})
+        cand = em.build_merge_candidate(
+            "dev-python.md", local, release, base_text=base, verify_fn=stub
+        )
+
+        captured = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-python.md"
+            cand.apply(str(p))
+            with contextlib.redirect_stderr(captured):
+                self.assertEqual(cand.verify(str(p)), 0)
+        self.assertNotIn("pre-verify REJECTED", captured.getvalue())
 
     def test_keep_local_makes_no_llm_call(self) -> None:
         base = _doc(top="# A", region="keep", bottom="z")

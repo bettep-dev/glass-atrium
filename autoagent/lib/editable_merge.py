@@ -892,7 +892,20 @@ class MergeCandidate:
         result = self.verify_fn(  # type: ignore[call-arg]
             patch, pattern, skip_pre_verify=self.skip_pre_verify
         )
-        return bool(getattr(result, "passed", False))
+        if bool(getattr(result, "passed", False)):
+            return True
+        # The reason exists on the result and died at this boolean: the updater
+        # reduces the return to an exit code, so a rejection reached the log as a
+        # bare rollback. stderr already flows into the update log — no plumbing.
+        axes = getattr(result, "axes", None) or {}
+        failed = ", ".join(sorted(key for key, ok in axes.items() if not ok))
+        sys.stderr.write(
+            f"editable_merge: pre-verify REJECTED — {self.target_file} "
+            f"status={getattr(result, 'status', '') or '(unreported)'} "
+            f"failed_axes=[{failed or '(none reported)'}] "
+            f"rationale={getattr(result, 'rationale', '') or '(none reported)'}\n"
+        )
+        return False
 
 
 def build_merge_candidate(
