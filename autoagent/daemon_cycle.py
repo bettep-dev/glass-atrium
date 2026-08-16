@@ -184,6 +184,7 @@ try:
         from _pg_dual_write_daemon import (
             _connect as _pg_connect,
             write_autoagent_loop_event as _pg_write_loop_event,
+            write_autoagent_corpus_audit as _pg_write_corpus_audit,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -5007,6 +5008,71 @@ def _record_signal(signal: dict[str, object], store_file: Path | None = None) ->
     return _compliance_telemetry.append_signal(signal, store_file)
 
 
+# --- Detection-only sink degradation channel --------------------------------
+
+# Named channel for a detection-only measurement lost to a sink outage. The
+# cycle MUST continue when the sink is down, so a skip has to leave a
+# retrievable trace somewhere other than the cycle's exit status.
+_SINK_DEGRADATIONS: list[dict[str, str]] = []
+
+
+def get_sink_degradations() -> list[dict[str, str]]:
+    """Degradations recorded so far — one entry per lost detection measurement."""
+    return list(_SINK_DEGRADATIONS)
+
+
+def clear_sink_degradations() -> None:
+    _SINK_DEGRADATIONS.clear()
+
+
+def record_sink_degradation(family: str, error: BaseException) -> None:
+    """Record one lost detection-only measurement + emit its named warning.
+
+    Named warning + named channel together are what separate this from silent
+    absorption: the operator sees the line, and a later reader can enumerate
+    exactly which measurements the outage cost.
+    """
+    detail = f"{type(error).__name__}: {str(error)[:160]}"
+    _SINK_DEGRADATIONS.append({"family": family, "error": detail})
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: sink unavailable — {family} measurement not "
+        f"persisted: {detail}\n"
+    )
+
+
+def emit_corpus_audit(signal: dict[str, object], cycle_date: str) -> bool:
+    """UPSERT one corpus-size audit signal into core.autoagent_corpus_audits.
+
+    Returns True when the row was written. A sink outage returns False after
+    recording the degradation — never raises into the cycle.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        record_sink_degradation(
+            "corpus_size_audit", RuntimeError("PG helper import unavailable")
+        )
+        return False
+    try:
+        _pg_write_corpus_audit(
+            cycle_date=cycle_date,
+            word_count=signal["word_count"],
+            token_estimate=signal["token_estimate"],
+            file_count=signal["file_count"],
+            trend_alert=signal["trend_alert"],
+            trend_delta=signal["trend_delta"],
+            absolute_alert=signal["absolute_alert"],
+            seeded_threshold=signal["seeded_threshold"],
+            compliance_rate=signal["compliance_rate"],
+            override_rate=signal["override_rate"],
+            gate_pass_count=signal["gate_pass_count"],
+            gate_trip_count=signal["gate_trip_count"],
+            gate_total_count=signal["gate_total_count"],
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
+        record_sink_degradation("corpus_size_audit", exc)
+        return False
+
+
 def audit_corpus_size(
     *,
     rules_dir: Path = DEFAULT_RULES_DIR,
@@ -5014,8 +5080,6 @@ def audit_corpus_size(
     prev_word_count: int | None = None,
     absolute_threshold: int | None = None,
     gate_log_file: Path | None = None,
-    store_file: Path | None = None,
-    record: bool = True,
 ) -> dict[str, object]:
     """Corpus-size trend audit (DETECTION-ONLY — NEVER blocks).
 
@@ -5037,7 +5101,8 @@ def audit_corpus_size(
     override dimension has no durable store, so ``override_rate`` is always
     ``None``.
 
-    Returns the signal dict (also appended to the store when ``record``).
+    Returns the signal dict. Persistence is the caller's step (``emit_corpus_audit``
+    → core.autoagent_corpus_audits); this function is pure measurement.
     """
     telemetry = compute_corpus_telemetry(rules_dir, global_rules_file)
     current_words = telemetry["word_count"]
@@ -5087,8 +5152,6 @@ def audit_corpus_size(
         "gate_trip_count": compliance["gate_trip_count"],
         "gate_total_count": compliance["gate_total_count"],
     }
-    if record:
-        _record_signal(signal, store_file)
     return signal
 
 
@@ -5096,19 +5159,18 @@ def classify_prose_only_add(
     diff: str,
     *,
     target_file: str = "",
-    store_file: Path | None = None,
-    record: bool = True,
 ) -> dict[str, object]:
     """Prose-only-ADD patch classifier (DETECTION-ONLY — NEVER rejects).
 
-    Emits a ``prose-only-add`` WARNING into the signal store when a proposed
+    Emits a ``prose-only-add`` WARNING verdict when a proposed
     patch is added-lines>0 AND removed-lines==0 AND touches NO hook file (plan
     T4). It returns the verdict but NEVER rejects the patch — a converted-from-
     fail-closed warning, because false-blocking the learning loop is the worse
     failure (plan Risk note on T4).
 
     A patch that REMOVES lines (a conversion / subtraction) OR touches a hook
-    file does NOT warn.
+    file does NOT warn. The verdict is persisted on the proposal row by the
+    caller; this function is pure classification.
     """
     _context, added, removed = _split_fragment_lines(diff or "")
     # The hook check can only flip the verdict in the added-only case, so skip its
@@ -5131,8 +5193,6 @@ def classify_prose_only_add(
         "touches_hook_file": touches_hook,
         "target_file": target_file,
     }
-    if record and is_prose_only_add:
-        _record_signal(signal, store_file)
     return signal
 
 
@@ -9339,12 +9399,19 @@ def run_cycle(
     # (no-PG-write / unit-test mode) like the other observation emits below.
     if not skip_loop_emit:
         try:
-            audit_corpus_size(rules_dir=DEFAULT_RULES_DIR, global_rules_file=GLOBAL_RULES_FILE)
+            corpus_signal = audit_corpus_size(
+                rules_dir=DEFAULT_RULES_DIR, global_rules_file=GLOBAL_RULES_FILE
+            )
         except Exception as exc:  # noqa: BLE001 — telemetry must never break the cycle
             sys.stderr.write(
                 "[daemon-cycle] WARN: audit_corpus_size raised — corpus telemetry "
                 f"lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
+        else:
+            # Sink status is BRANCHED on, not absorbed: a False routes the loss
+            # through record_sink_degradation (named WARN + named channel) and the
+            # cycle continues.
+            emit_corpus_audit(corpus_signal, report.cycle_date)
 
     seen_targets: set[str] = set()
     # AD-10 Solution History accumulator — one SolutionAttempt per generation
@@ -9685,10 +9752,7 @@ def run_cycle(
 
         # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
         # diff (added>0, removed==0, no hook file touched). It NEVER rejects the
-        # patch; it only emits a warning signal. Fully wrapped + skipped under
-        # skip_loop_emit (no-PG-write / unit-test mode) like the other emits.
-        # The verdict is also PERSISTED on the proposal row, so it is computed
-        # under skip_loop_emit too — only the JSONL emit is suppressed there.
+        # patch; it only produces a warning verdict, PERSISTED on the proposal row.
         prose_only_add: bool | None = None
         if proposal.proposed_diff:
             try:
@@ -9696,14 +9760,12 @@ def run_cycle(
                     classify_prose_only_add(
                         proposal.proposed_diff,
                         target_file=str(proposal.target_file),
-                        record=not skip_loop_emit,
                     )["warning"]
                 )
-            except Exception as exc:  # noqa: BLE001 — detection must never break the cycle
-                sys.stderr.write(
-                    "[daemon-cycle] WARN: classify_prose_only_add raised — patch "
-                    f"classification lost: {type(exc).__name__}: {str(exc)[:160]}\n"
-                )
+            except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
+                # Same named-channel treatment as the corpus-audit emit: the lost
+                # measurement is enumerable afterwards, and the cycle continues.
+                record_sink_degradation("patch_classification", exc)
         if not skip_loop_emit and proposal.proposed_diff:
             # Deterministic reference-resolution guard — WARNS on an added line
             # that cites an unresolved ~/.claude/*.md or rules/*.md pointer (the

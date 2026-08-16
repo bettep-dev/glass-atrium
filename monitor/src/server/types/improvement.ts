@@ -465,6 +465,42 @@ export interface ImprovementLoopEventsResponse {
   events: ImprovementLoopEventRow[];
 }
 
+// GET /api/improvement/corpus-audits — per-cycle corpus-growth series
+// (core.autoagent_corpus_audits). Newest cycle first.
+//
+// Field semantics (mirror schema.prisma model AutoagentCorpusAudit):
+//   - cycle_date       : YYYY-MM-DD calendar day, the UPSERT key (one reading per cycle).
+//   - trend_delta      : null when the emitter had no prior baseline — not a measured 0.
+//   - compliance_rate  : null = insufficient data; a 0.0 would read as total failure.
+//   - override_rate    : always null today; carried so the row stays 1:1 with the signal.
+export interface ImprovementCorpusAuditRow {
+  id: number;
+  cycle_date: string; // YYYY-MM-DD (rendered in SQL — a DATE has no timezone)
+  word_count: number;
+  token_estimate: number;
+  file_count: number;
+  seeded_threshold: number;
+  gate_pass_count: number;
+  gate_trip_count: number;
+  gate_total_count: number;
+  trend_delta: number | null;
+  trend_alert: boolean;
+  absolute_alert: boolean;
+  compliance_rate: number | null;
+  override_rate: number | null;
+  indexed_at: string; // ISO8601 UTC
+}
+
+export interface ImprovementCorpusAuditsResponse {
+  fetched_at: string; // ISO8601 UTC
+  total_audits: number; // unfiltered table-wide count
+  returned: number; // recent rows returned (≤ limit)
+  // Newest cycle_date present in the table; null if empty.
+  latest_cycle_date: string | null; // YYYY-MM-DD
+  // Recent readings (bounded by limit, ORDER BY cycle_date DESC).
+  audits: ImprovementCorpusAuditRow[];
+}
+
 // GET /api/improvement/correction-signals — detection-quality view over the
 // orphaned core.correction_signals table. Surfaces the stage1-vs-stage2
 // detection agreement + revision_count delta that sit behind the aggregated

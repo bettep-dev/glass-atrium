@@ -11,6 +11,8 @@
 #                                       key (cycle_date, pattern_label, target_file)
 #       - write_autoagent_loop_event -> core.autoagent_loop_events UPSERT
 #                                       key (event_ts, agent, eval_result)
+#       - write_autoagent_corpus_audit -> core.autoagent_corpus_audits UPSERT
+#                                       key (cycle_date)
 #
 # Retry/error/elapsed_ms convention:
 #   * 1 retry with 100ms backoff before giving up (fail-loud-and-skip).
@@ -41,6 +43,7 @@
 #   {"op": "write_daemon_run_payload",   "args": {"daemon_name": "wiki", "run_date": "...", "payload": {...}}}
 #   {"op": "write_autoagent_proposal",   "args": {"cycle_date": "...", "pattern_label": "...", "target_file": "...", ...}}
 #   {"op": "write_autoagent_loop_event", "args": {"event_ts": "...", "agent": "...", "eval_result": "...", ...}}
+#   {"op": "write_autoagent_corpus_audit", "args": {"cycle_date": "...", "word_count": 0, "token_estimate": 0, ...}}
 #
 # Stdout on success: elapsed_ms (single integer line). compose_daemon_run_apply_status
 #   appends ONE trailer line — "provenance=composed:<token>" or "provenance=declined:<prior
@@ -659,6 +662,77 @@ def write_autoagent_loop_event(
     return (time.monotonic_ns() - start_ns) // 1_000_000
 
 
+def write_autoagent_corpus_audit(
+    cycle_date,
+    word_count,
+    token_estimate,
+    file_count,
+    trend_alert,
+    trend_delta,
+    absolute_alert,
+    seeded_threshold,
+    compliance_rate,
+    override_rate,
+    gate_pass_count,
+    gate_trip_count,
+    gate_total_count,
+):
+    """UPSERT core.autoagent_corpus_audits on cycle_date.
+
+    Returns elapsed_ms. One corpus-size audit per cycle, so cycle_date is the
+    natural idempotency key: a same-day re-run UPDATEs the reading in place
+    rather than growing the table. trend_delta / compliance_rate / override_rate
+    are passed through unchanged — a None means insufficient data and MUST stay
+    NULL, never a fabricated 0.
+    """
+    start_ns = time.monotonic_ns()
+    sql = """
+        INSERT INTO core.autoagent_corpus_audits
+            (cycle_date, word_count, token_estimate, file_count,
+             trend_alert, trend_delta, absolute_alert, seeded_threshold,
+             compliance_rate, override_rate,
+             gate_pass_count, gate_trip_count, gate_total_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (cycle_date) DO UPDATE SET
+            word_count = EXCLUDED.word_count,
+            token_estimate = EXCLUDED.token_estimate,
+            file_count = EXCLUDED.file_count,
+            trend_alert = EXCLUDED.trend_alert,
+            trend_delta = EXCLUDED.trend_delta,
+            absolute_alert = EXCLUDED.absolute_alert,
+            seeded_threshold = EXCLUDED.seeded_threshold,
+            compliance_rate = EXCLUDED.compliance_rate,
+            override_rate = EXCLUDED.override_rate,
+            gate_pass_count = EXCLUDED.gate_pass_count,
+            gate_trip_count = EXCLUDED.gate_trip_count,
+            gate_total_count = EXCLUDED.gate_total_count
+        RETURNING id
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    cycle_date,
+                    word_count,
+                    token_estimate,
+                    file_count,
+                    trend_alert,
+                    trend_delta,
+                    absolute_alert,
+                    seeded_threshold,
+                    compliance_rate,
+                    override_rate,
+                    gate_pass_count,
+                    gate_trip_count,
+                    gate_total_count,
+                ),
+            )
+            cur.fetchone()
+        conn.commit()
+    return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
 # --- Failure observability -------------------------------------------------
 
 def _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry_attempted):
@@ -691,6 +765,10 @@ OP_TABLE = {
     "write_daemon_run_payload": (write_daemon_run_payload, "core.daemon_run_payload"),
     "write_autoagent_proposal": (write_autoagent_proposal, "core.autoagent_proposals"),
     "write_autoagent_loop_event": (write_autoagent_loop_event, "core.autoagent_loop_events"),
+    "write_autoagent_corpus_audit": (
+        write_autoagent_corpus_audit,
+        "core.autoagent_corpus_audits",
+    ),
 }
 
 
