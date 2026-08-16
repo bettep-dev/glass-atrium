@@ -495,6 +495,10 @@ run_verdict_and_dispatch() {
   # Verdict helper. Reads DEV_SET (arg 1) + the script (stdin). Prints exactly a verdict token + marker.
   # Any internal exception → the helper itself prints PASS (belt-and-suspenders fail-open), and the bash
   # side ALSO treats a non-enumerated / errored helper as PASS.
+  # EDITING THE PYTHON BELOW — keep apostrophes PAIRED, in comments as much as in code. The heredoc is
+  # nested inside this "$( … )" substitution, through which bash still tracks quote state, so a single
+  # unpaired apostrophe shifts that state and fails the parse at EOF, hundreds of lines from the cause.
+  # bash -n is the only check that catches it; run it after ANY edit in here, comment-only edits included.
   local verdict_py
   verdict_py="$(
     cat <<'PY'
