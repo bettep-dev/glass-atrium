@@ -1897,9 +1897,12 @@ function ConfidenceLaneTableI({ buckets }) {
 //   - per-agent verified rate (Gaming-the-Judge cross-verify pass rate)
 //   - 전체 rollup → MANDATORY 격상 조건 충족 indicator
 //
-// 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없으므로 사람이 풀기 전까지
-// 루프가 멈춘 채로 남는다. K=0 이면 렌더 자체를 하지 않는다(운영 상태가 아닐 때 경고를 띄우면
-// 배너가 무시된다). 복구 문구는 payload 의 rearm_hint — 화면 상수로 두면 K=0 에서도 존재하게 된다.
+// 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없고, learning_log status 를
+// 되돌리는 방식으로도 풀리지 않는다(다음 사이클에 재정지 + park 이력 유실). apply evidence 를
+// 정리하는 실제 re-arm 이 들어오기 전까지 루프는 멈춘 채로 남는다. K=0 이면 렌더 자체를 하지
+// 않는다(운영 상태가 아닐 때 경고를 띄우면 배너가 무시된다). 문구는 payload 의 rearm_hint —
+// 복구 안내가 아니라 그 복구가 듣지 않는다는 경고다. 화면 상수로 두면 K=0 에서도 존재하게
+// 되므로 payload 에서 받는다.
 function ParkedLoopBannerI({ applyCap }) {
 	if (!applyCap) return null;
 	const capped = Number(applyCap.capped_patterns ?? 0);

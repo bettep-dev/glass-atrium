@@ -8,10 +8,16 @@
 // reset row re-parks on the next run and its original park timestamp and reason are
 // overwritten. Following the advice destroyed provenance and re-armed nothing.
 //
-// Each assertion below pins one claim of the corrected text and goes red against the
-// superseded one. The rejected alternative — a banner that presents the parked state as
-// intended behaviour with nothing to do — is guarded explicitly, because it would read as
-// correct while removing the pressure that gets the cap fixed.
+// Each assertion below pins one claim of the corrected text, and five of the six go red
+// against the superseded one (measured: 1 pass / 5 fail). The first is deliberately not
+// one of them — it pins that the reset is addressed by name, which both texts do, the
+// superseded one by recommending it and the corrected one by warning against it. It
+// therefore guards a different regression: a rewrite that drops the reset from the banner
+// entirely, leaving an operator who reaches for it with nothing to read.
+//
+// The rejected alternative — a banner that presents the parked state as intended
+// behaviour with nothing to do — is guarded explicitly, because it would read as correct
+// while removing the pressure that gets the cap fixed.
 //
 // No DB dependency — the constant is asserted directly.
 // Runner: npx tsx --test test/improvement.rearm-hint.unit.test.ts
