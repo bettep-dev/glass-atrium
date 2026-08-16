@@ -1159,6 +1159,64 @@ def get_schema_cap_rule(stripped):
         return ""
 
 
+# Reserved completion-channel property — the literal the recorder keys on, mirroring the constant of the
+# same value in track-outcome.sh. That literal IS the channel, so the token half keys on it, never on a
+# paraphrase.
+SO_COMPLETION_FIELD = "completion_block"
+# Site match: the BARE WORD, not a colon test.
+# Rejected alternative → a colon test loses the object-shorthand form, which the authoring exemplar uses.
+# Documented FALSE NEGATIVE → a QUOTED key is blanked by the mask and never matches.
+SCHEMA_SITE_RE = re.compile(r"(?<![A-Za-z0-9_$])schema(?![A-Za-z0-9_$])")
+# Value exclusion, KEY POSITION ONLY: an undefined or null value DISABLES schema mode → not a site.
+# Scope limit → an occurrence in any other position stays a site (the named false positives below).
+SCHEMA_DISABLED_RE = re.compile(r"\s*:\s*(?:undefined|null)(?![A-Za-z0-9_$])")
+
+
+def completion_block_advisory_needed(stripped):
+    # ADVISORY-ONLY (never a verdict, never exit 2): True when a schema-mode site exists anywhere in the
+    # script AND the reserved completion-channel property is absent.
+    # Consequence of that shape → the recorder falls to derived synthesis and the writer signal is lost.
+    # FAIL-OPEN → no site, token present, or any parse uncertainty returns False (silent).
+    #
+    # TWO OPERANDS OF OPPOSITE POLARITY — the asymmetry is the design, not an inconsistency:
+    #   site half  = block-ENABLING → over-detection would FALSE-BLOCK → precision → the MASKED,
+    #                value-excluded operand, so a prose mention inside a string cannot mint a site.
+    #   token half = block-SUPPRESSING → over-detection merely fails open → recall → the UNMASKED,
+    #                comment-stripped text, because masking would blank a quoted property name.
+    # Both residuals therefore point fail-open.
+    #
+    # SCRIPT-WIDE SCOPE, deliberately not span-scoped: the mandated authoring idiom routes every
+    # schema-mode spawn through the resilience wrapper, so the schema never appears inside a direct
+    # spawn-call span and a span-scoped scan would see only the text-mode fallback line.
+    # Price → precision: a schema declared for some other purpose is a site.
+    # Bound on that price → the token half must ALSO be absent before anything fires.
+    #
+    # NAMED FALSE POSITIVES (measured, so they are documented rather than latent), all one-line
+    # remediable by declaring the property inline or setting the rollback marker:
+    #   a guard reading the property off an options object → still a site.
+    #   an assignment binding the word to undefined or null → still a site (the exclusion is key-only).
+    #   a schema bound in another module → invisible to the scan, so site visible + token absent.
+    #
+    # VERDICT ISOLATION: a top-level function with its OWN terminal except → False. Inlined at module
+    # scope the scan would sit inside the module-level handler whose recovery path emits PASS, so an
+    # index or pattern failure would silently convert a real BLOCK into a fail-open pass.
+    try:
+        if SO_COMPLETION_FIELD in stripped:
+            return False
+        # A masked site implies the same substring in the unmasked text, so this early-out is exact.
+        if "schema" not in stripped:
+            return False
+        smask = _string_mask(stripped)
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        for m in SCHEMA_SITE_RE.finditer(struct):
+            if SCHEMA_DISABLED_RE.match(struct, m.end()):
+                continue
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
 # SILENT so a fail-open exit (an exception before the scan) never fires a spurious advisory.
 RESIL_FLAG = "RESIL_SILENT"
