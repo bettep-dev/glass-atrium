@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# SC2034: worktree_lock_state / _other / _age / _released / _key_out / _root_out / _dir_out /
-# _holder_out are RESULT globals consumed by the sourcing hooks (advisory-worktree-writer-lock.sh
-# acquire arm + agent-tracker.sh release arm), not by this lib — the same structural false positive
-# apply-lock.sh documents for apply_lock_acquired.
+# SC2034: worktree_lock_state / _other / _root_out / _dir_out / _holder_id_out are RESULT globals
+# consumed by the
+# sourcing hooks (advisory-worktree-writer-lock.sh acquire arm + agent-tracker.sh release arm), not
+# by this lib — the same structural false positive apply-lock.sh documents for apply_lock_acquired.
+# The waiver names EXACTLY the externally-read globals and no more: the previous blanket list also
+# covered two globals with no reader anywhere, which is precisely how they survived. _key_out and
+# _holder_out are deliberately ABSENT — both are read inside this file, so they need no waiver, and
+# a name that stops being read must surface as a finding rather than sit inside the waiver.
 # shellcheck disable=SC2034
 #
 # worktree-lock.sh — per-worktree writer lock, shared by the PreToolUse acquire arm
@@ -58,8 +62,33 @@ worktree_lock_dir_out=""
 worktree_lock_holder_out=""
 worktree_lock_state=""
 worktree_lock_other=""
-worktree_lock_age=""
-worktree_lock_released=0
+worktree_lock_holder_id_out=""
+
+# Canonicalize a RAW envelope agent_id into the holder identity. BOTH arms MUST route through this:
+# ownership is decided by string EQUALITY, so a holder stored under one spelling and looked up under
+# another is never released and over-warns every other writer until the TTL.
+#
+# TWO spellings of "no agent_id" exist and both mean the main session: the PreToolUse envelope simply
+# omits the field (empty here), while agent-tracker.sh's parse pass has already substituted its own
+# `unknown` sentinel by the time the release arm runs. Folding both onto the DEFINED singleton
+# `orchestrator` is what makes an id-less acquire releasable — mapping only the empty form leaves the
+# release arm looking up `unknown` against a lock stamped `orchestrator`.
+# Collision note: a real agent_id spelled literally `unknown` would alias onto the singleton. That is
+# pre-existing (the tracker already collapses the absent field to that word) and not worth a second
+# sentinel — agent ids are `a<uuid>`-shaped.
+# Whitespace folds because the holder record is read back one LINE at a time and the tracker splits
+# its log tuple on TAB, so either character would store one spelling and look up another.
+# Args: $1=raw agent_id (may be empty) · result: worktree_lock_holder_id_out (never empty).
+worktree_lock_holder_id() {
+  local id="${1:-}"
+  id="${id//$'\n'/ }"
+  id="${id//$'\t'/ }"
+  case "${id}" in
+    '' | unknown) id="orchestrator" ;;
+    *) ;;
+  esac
+  worktree_lock_holder_id_out="${id}"
+}
 
 # Transform an absolute path into ONE path-safe directory segment. `_`->`__` then `/`->`_` is
 # injective (a lone `_` in the output can only have come from a `/`), so two distinct worktree roots
@@ -155,7 +184,7 @@ _worktree_lock_load_applylock() {
 # win. rc 0 = the stale dir is gone and the caller may mkdir fresh.
 # Args: $1=lock dir.
 _worktree_lock_reclaim() {
-  local lock_dir="${1}" age ttl
+  local lock_dir="${1}" ttl age
   _worktree_lock_load_applylock || return 1
   ttl="${WORKTREE_LOCK_TTL_SECS:-${WORKTREE_LOCK_TTL_DEFAULT}}"
   case "${ttl}" in
@@ -166,7 +195,6 @@ _worktree_lock_reclaim() {
   # both gates on ONE number. Process-local: this hook never acquires the shared apply lock itself.
   ATRIUM_APPLY_LOCK_TTL_SECS="${ttl}"
   age="$(apply_lock_age_secs "${lock_dir}")" || return 1
-  worktree_lock_age="${age}"
   [[ "${age}" -gt "${ttl}" ]] || return 1
   _apply_lock_reclaim "${lock_dir}" || return 1
 }
@@ -180,16 +208,26 @@ worktree_lock_acquire() {
   local lock_dir="${1}" holder="${2}"
   worktree_lock_state="error"
   worktree_lock_other=""
-  worktree_lock_age=""
 
-  mkdir -p -- "${lock_dir%/*}" 2>/dev/null || return 0 # GA-ABSORB[handled@worktree_lock_acquire-error-state]: an unwritable store leaves state=error and the caller stays silent
+  # Both mkdirs are skipped once the lock exists, which is the STEADY state: an agent writing
+  # repeatedly into its own worktree hits this on every write after the first, and there the pair
+  # was two guaranteed fork+execs per Write — the second one existing only to fail. Same reason this
+  # file already refuses a `tr` fork (worktree_lock_key) and a second python3 (the lazy apply-lock
+  # load): the acquire arm sits on the Write/Edit hot path.
+  # The TOCTOU is benign in BOTH directions: a dir appearing inside the window makes the inner mkdir
+  # fail into the contended path below, which is exactly today's behaviour, and a dir vanishing
+  # inside the window sends us to the contended path with an unreadable holder — also today's
+  # behaviour (the empty other-holder never matches, so the reclaim chain decides it).
+  if [[ ! -d "${lock_dir}" ]]; then
+    mkdir -p -- "${lock_dir%/*}" 2>/dev/null || return 0 # GA-ABSORB[handled@worktree_lock_acquire-error-state]: an unwritable store leaves state=error and the caller stays silent
 
-  # Fast path — uncontended (mkdir is atomic on POSIX).
-  if mkdir -- "${lock_dir}" 2>/dev/null; then # GA-ABSORB[benign]: mkdir rc1 IS the contended verdict, decided below
-    if _worktree_lock_stamp "${lock_dir}" "${holder}"; then
-      worktree_lock_state="acquired"
+    # Fast path — uncontended (mkdir is atomic on POSIX).
+    if mkdir -- "${lock_dir}" 2>/dev/null; then # GA-ABSORB[benign]: mkdir rc1 IS the contended verdict, decided below
+      if _worktree_lock_stamp "${lock_dir}" "${holder}"; then
+        worktree_lock_state="acquired"
+      fi
+      return 0
     fi
-    return 0
   fi
 
   # Contended. SAME-holder equality is the FIRST branch on purpose: an agent writing repeatedly into
@@ -215,11 +253,11 @@ worktree_lock_acquire() {
 # Release every lock held by one agent — the SubagentStop arm. Pure bash plus one `rm` per actual
 # match: agent-tracker.bats pins that hook to exactly 2 python3 subprocesses per fire, so nothing
 # here may reach for the interpreter (which is also why the TTL is checked at ACQUIRE, not here).
-# Args: $1=holder id · result: worktree_lock_released (count) · rc 1 = a removal failed (caller
-# reports it loudly; a stale lock would otherwise over-warn silently until its TTL).
+# Args: $1=holder id · rc 1 = a removal failed (caller reports it loudly; a stale lock would
+# otherwise over-warn silently until its TTL). Deliberately reports NO released count: the only
+# caller branches on rc alone, and the previous count global was read by nothing anywhere.
 worktree_lock_release_by_holder() {
   local holder="${1}" lock_dir rc=0
-  worktree_lock_released=0
   [[ -n "${holder}" ]] || return 0             # GA-ABSORB[benign]: no holder id = nothing this agent can own
   [[ -d "${WORKTREE_LOCK_ROOT}" ]] || return 0 # GA-ABSORB[benign]: no lock store yet = nothing to release
   for lock_dir in "${WORKTREE_LOCK_ROOT}"/*/.apply-lock; do
@@ -232,8 +270,7 @@ worktree_lock_release_by_holder() {
       */.apply-lock) ;;
       *) continue ;;
     esac
-    if rm -rf -- "${lock_dir}" 2>/dev/null; then # GA-ABSORB[handled@rc-1-return-below]: a removal failure sets rc 1 for the caller's loud warn
-      worktree_lock_released=$((worktree_lock_released + 1))
+    if rm -rf -- "${lock_dir}" 2>/dev/null; then    # GA-ABSORB[handled@rc-1-return-below]: a removal failure sets rc 1 for the caller's loud warn
       rmdir -- "${lock_dir%/*}" 2>/dev/null || true # GA-ABSORB[benign]: prune the now-empty key dir; a non-empty one legitimately stays
     else
       rc=1

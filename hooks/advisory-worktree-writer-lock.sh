@@ -28,6 +28,24 @@
 #   * ~5.6% of workflow agents / ~2.9% of manual agents never fire SubagentStop (measured on this
 #     machine's sidecar corpus joined to core.agent_events), so the TTL is the sole release path for
 #     that tail.
+#   * WHICH lock a path resolves to is decided TEXTUALLY. hook_normalize_path never touches the
+#     filesystem, so two spellings of one file take two independent verdicts: on this machine
+#     ~/.claude/agents/*.md are symlinks into ~/.glass-atrium/agents/, which HAS a .git while
+#     ~/.claude does not — a write through the symlink finds no repo and takes no lock at all, while
+#     the same file by its real path locks the agents repo (a genuine concurrent-write surface: the
+#     lifecycle CLI and the updater both write it). The same textual walk collapses every tree under
+#     a repo-rooted ancestor onto ONE lock, so on a machine whose $HOME is itself a git repo the
+#     whole home directory would contend as a single worktree (not the case here — measured: no
+#     ~/.git).
+#   * The "orchestrator" singleton is released only by an id-less SubagentStop. The main session
+#     fires Stop, and agent-tracker.sh is wired on SubagentStart/SubagentStop only, so a lock the
+#     main session itself takes has NO release arm and is TTL-only. Closing that needs a Stop-wired
+#     release, which is a separate decision, not an oversight in this file.
+#
+# NOT WIRED as of this commit: no EXPECTED_HOOK_BINDINGS row (lib/ga-env.sh) names this hook, so the
+# acquire arm fires nowhere and the advisory measurement window its promotion gate depends on cannot
+# accumulate. The release arm IS live (agent-tracker.sh). Re-check before relying on either
+# statement: `grep advisory-worktree-writer-lock lib/ga-env.sh`.
 #
 # Fail-open on EVERYTHING else: absent python3, unwritable lock store, unparseable envelope, missing
 # apply-lock primitive → exit 0 silently. Worst case is a missing or spurious advisory line.
@@ -35,7 +53,8 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Instant kill switch — the other disable is removing the single PreToolUse entry.
+# Instant kill switch — the other disable is dropping this hook's EXPECTED_HOOK_BINDINGS row
+# (lib/ga-env.sh) and re-running wire_hooks. No such row exists yet; see NOT WIRED above.
 [[ -n "${WORKTREE_WRITER_LOCK_OFF:-}" ]] && exit 0
 
 # fail-open ERR trap — never interfere with the tool call.
@@ -103,7 +122,16 @@ TARGET="$(hook_normalize_path "${FILE_PATH}")"
 # sharing a worktree (core-git-workflow.md), so locking it would warn on exactly the prescribed
 # behaviour. The three basenames are the harness-write exemption enforce-delegation.sh already
 # carries; keeping the two exemption sets aligned avoids contradicting a sanctioned write.
-case "${TARGET}" in
+#
+# The seven-arm carve-out is enforce-delegation.sh's, mirrored VERBATIM (its step 3) rather than
+# approximated: a "memory" segment nested directly under a protected harness dir is not a
+# session-state root, which is why that gate BLOCKS those forms. Exempting them here would have been
+# the opposite of the alignment this comment claims — and would have hidden concurrent writes to
+# agents/memory/ and rules/memory/, which are real shared surfaces, behind a rule written for a
+# checkpoint file. The "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
+case "/${TARGET}/" in
+  */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \
+    */autoagent/memory/* | */monitor/memory/* | */scripts/memory/*) ;;
   */memory/*) exit 0 ;;
   *) ;;
 esac
@@ -122,8 +150,10 @@ WORKTREE_ROOT="${worktree_lock_root_out}"
 worktree_lock_dir_for "${WORKTREE_ROOT}" || exit 0
 LOCK_DIR="${worktree_lock_dir_out}"
 
-HOLDER="${AGENT_ID//$'\n'/ }" # a newline would truncate the single-line holder record on read-back
-[[ -n "${HOLDER}" ]] || HOLDER="orchestrator"
+# Both arms canonicalize through the lib so an id-less acquire here and an id-less release in
+# agent-tracker.sh land on the SAME identity — see worktree_lock_holder_id.
+worktree_lock_holder_id "${AGENT_ID}"
+HOLDER="${worktree_lock_holder_id_out}"
 
 worktree_lock_acquire "${LOCK_DIR}" "${HOLDER}"
 [[ "${worktree_lock_state}" == "contended" ]] || exit 0
@@ -150,6 +180,11 @@ printf '%s\n' \
   "      worktree still warns, and past it a live holder's lock can be reclaimed." \
   "    - ~5.6% of workflow agents and ~2.9% of manual agents never fire SubagentStop, so the" \
   "      release arm misses that tail and the TTL is its only release path." \
+  "    - Which lock a path resolves to is decided TEXTUALLY, never by resolving the filesystem: a" \
+  "      symlinked spelling and a real path take two independent verdicts, and every tree under a" \
+  "      repo-rooted ancestor collapses onto one lock." \
+  "    - A lock held by \"orchestrator\" is released only by an id-less SubagentStop; the main" \
+  "      session fires Stop, which is not a release arm, so its own lock is TTL-only." \
   >&2
 
 exit 0

@@ -61,11 +61,13 @@ fire_raw() {
     _ "${1}" "${GA_DATA}" "${HOOK_SH}"
 }
 
-# $1=agent_id — SubagentStop through the real tracker (its PG write is tolerated non-blocking).
+# $1=agent_id (empty → an envelope with NO agent_id at all) — SubagentStop through the real tracker
+# (its PG write is tolerated non-blocking).
 fire_stop() {
   local payload
   payload="$(jq -n --arg a "${1}" \
-    '{hook_event_name:"SubagentStop", agent_id:$a, agent_type:"glass-atrium-dev-shell"}')"
+    '{hook_event_name:"SubagentStop", agent_type:"glass-atrium-dev-shell"}
+     + (if $a == "" then {} else {agent_id:$a} end)')"
   run bash -c 'printf "%s" "$1" | GA_DATA_ROOT="$2" bash "$3" 2>&1' \
     _ "${payload}" "${GA_DATA}" "${TRACKER_SH}"
 }
@@ -175,6 +177,47 @@ fire_stop() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ ! -d "${LOCK_ROOT}" ]] || {
     echo "the prescribed shared-worktree checkpoint path was locked" >&2
+    return 1
+  }
+}
+
+# The exemption's comment claims alignment with enforce-delegation.sh, which deliberately does NOT
+# exempt a "memory" segment nested under a protected harness dir. A bare */memory/* here would have
+# exempted all seven and silently contradicted that gate.
+@test "a memory/ segment nested under a harness dir is NOT exempt (enforce-delegation parity)" {
+  local sub
+  for sub in agents rules hooks skills autoagent monitor scripts; do
+    rm -rf "${LOCK_ROOT}"
+    mkdir -p "${WT}/${sub}/memory"
+    fire_write "${WT}/${sub}/memory/note.md" "agent-A"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${sub}/memory write must not block (status ${status})" >&2
+      return 1
+    }
+    [[ "$(holder_of "${WT}")" == "agent-A" ]] || {
+      echo "${sub}/memory was exempted — it must take the lock like any harness write" >&2
+      return 1
+    }
+  done
+}
+
+# The two arms compute the holder id independently unless both route through the lib helper: the
+# acquire arm stamps an absent agent_id as "orchestrator" while the tracker's own parse had already
+# substituted "unknown", so the release looked up a holder that was never stored and the lock sat
+# until its 6h TTL, over-warning every other writer in that worktree.
+@test "an id-less SubagentStop releases the id-less holder rather than leaving it to the TTL" {
+  fire_write "${WT}/src/a.txt" ""
+  [[ "$(holder_of "${WT}")" == "orchestrator" ]] || {
+    echo "id-less acquire did not stamp the singleton: $(holder_of "${WT}")" >&2
+    return 1
+  }
+  fire_stop ""
+  [[ "${status}" -eq 0 ]] || {
+    echo "the tracker must stay non-blocking: ${output}" >&2
+    return 1
+  }
+  [[ ! -d "$(lock_dir_for "${WT}")" ]] || {
+    echo "the id-less holder's lock survived its own Stop — TTL-only regression" >&2
     return 1
   }
 }
