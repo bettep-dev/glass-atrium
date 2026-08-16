@@ -571,6 +571,8 @@ const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { pr
 #   the agentType spawn form                ->  ADVISE   (the roster reads both spawn positions)
 #   text-mode fallback (schema: undefined)  ->  ADVISE   (an absent VALUE is not a site; the accepted
 #                                                         over-nudge, since the deliverable may be prose)
+#   a QUOTED "schema" key                   ->  ADVISE   (second over-nudge: the mask hides a real site,
+#                                                         so this contradicts the size advisory's line)
 #   any real schema in the script           ->  silent
 #   a DEV literal present                   ->  silent   (its verify-stage is deliberately text-mode)
 #   only a dev_set member spawns            ->  silent   (roster is non-DEV BY EXCLUSION)
@@ -594,6 +596,10 @@ rows = [
     ("analysis-spawn-no-schema", ANALYSIS, False, True),
     ("agentType-spawn-form", "await agent('x', { agentType: 'glass-atrium-intel-planner' });", False, True),
     ("text-mode-fallback-value", "await agent('glass-atrium-intel-reporter', { schema: undefined });", False, True),
+    # QUOTED KEY: a genuine site the masked site half cannot see, so this value fires on a spawn that
+    # DOES carry a schema — the inverted polarity of the documented quoted-key false negative, pinned
+    # here so the residual is a recorded observation rather than a surprise.
+    ("quoted-key-json-schema", "await agent('glass-atrium-intel-researcher', { \"schema\": { \"notes\": 'string' } });", False, True),
     ("real-schema-silences", ANALYSIS + " const S = { schema: { findings: 'string' } };", False, False),
     ("dev-present-silences", ANALYSIS + " agent('glass-atrium-dev-nestjs', { goal: 'build' });", True, False),
     ("dev-only-spawn-silences", "await agent('glass-atrium-dev-shell', { goal: 'build' });", False, False),

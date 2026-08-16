@@ -639,6 +639,12 @@ class MergeCandidateGateTest(unittest.TestCase):
         self.assertEqual(flatten(None), "")
         self.assertEqual(flatten("", default="(none)"), "(none)")
         self.assertEqual(flatten("   \n  ", default="(none)"), "(none)")
+        # Falsy non-None values are CONTENT, not an absent field: a `or ""` default
+        # test collapsed 0 and False to the empty string, contradicting the
+        # preserve-everything contract on the one axis a reader cannot recover.
+        self.assertEqual(flatten(0), "0")
+        self.assertEqual(flatten(False), "False")
+        self.assertEqual(flatten(0, default="(none)"), "0")
         # Non-whitespace content is never altered or truncated.
         self.assertEqual(flatten("keeps — em dash, [brackets] and status=x"),
                          "keeps — em dash, [brackets] and status=x")

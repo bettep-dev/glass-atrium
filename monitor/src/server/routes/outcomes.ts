@@ -161,6 +161,18 @@ const CHANNEL_ELIGIBILITY_DAILY_FLOOR = 100;
 // outage suppresses the very rows that keep its channel eligible, so a recency window
 // that closed first would switch the alert off partway through the outage it exists to
 // report. Measured — at 1 day the incident stops alerting at every bound above 12h.
+//
+// DELAYED, NOT PREVENTED — the residual this ordering buys time against rather than
+// closing, stated so the alert is not read as latching: the recency window is measured
+// in whole UTC days, so once the last qualifying day falls behind
+// date_trunc('day', NOW() - 2 days) the channel goes ineligible and the alert clears
+// while the outage continues. Replayed against this SQL, a 30h silence alerts and an
+// 80h silence does not; the crossing lands anywhere in ~48-72h depending on the hour
+// of day the query runs. Downstream the muted channel renders as "Below floor" (info)
+// and doctor §16 reports none alerting, so a long outage reads as a wound-down channel.
+// This is a DIFFERENT case from the accepted cost above, which covers a channel RUNNING
+// below the floor. Latching alerting for a once-eligible channel would close it, at the
+// cost of a channel that legitimately wound down alerting forever.
 const CHANNEL_ELIGIBILITY_RECENCY_DAYS = 2;
 const CHANNEL_SILENCE_HOURS = 24;
 // 7d default (not /attribution-daily's 30d). The recency gate above, not the window

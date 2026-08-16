@@ -119,7 +119,7 @@ JSON
 # with dormant-binding warnings, so `run` (which records exit in $status) tolerates
 # a §1-5 FAIL too — we assert on stdout lines, not the exit code.
 run_doctor_sandbox() {
-  GA_TARGET_HOME="${TARGET}" run "${REAL_GA}" doctor
+  GA_TARGET_HOME="${TARGET}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
 }
 
 # --- executability of WIRED hooks (§6 second dormant class) -------------------
@@ -154,6 +154,7 @@ make_ga_sandbox() {
 # bypasses the executable bit, which is the very defect class these rows exist to catch.
 run_doctor_ga_sandbox() {
   GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${GA_SANDBOX}/manifest.json" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     run "${GA_SANDBOX}/glass-atrium" doctor
 }
 

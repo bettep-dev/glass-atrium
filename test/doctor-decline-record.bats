@@ -63,6 +63,7 @@ teardown() {
 # line that did not feed the aggregate would be a surface with no consequence).
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" run "${REAL_GA}" doctor
 }
 

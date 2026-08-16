@@ -77,6 +77,7 @@ teardown() {
 # are on the §14 verdict LINE (its `FAIL :` prefix is exactly what feeds the aggregate), not $status.
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${REAL_GA}" doctor
 }
 

@@ -142,6 +142,7 @@ seed_fixture() {
 # IFS=$'\n\t' literal inside the single-quoted bash -c body.
 run_doctor_strict_ifs() {
   run env PATH="${STUB_BIN}:${PATH}" GA_STUB_HASH="${FIXED_HASH}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     GA_LIB_DIR="${GA_LIB_DIR}" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
     bash -c '
       set -Eeuo pipefail
