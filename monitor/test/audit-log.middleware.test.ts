@@ -14,6 +14,7 @@ import Fastify, {
   type RouteOptions,
 } from "fastify";
 
+import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
@@ -21,6 +22,17 @@ import { registerRoutes } from "../src/server/routes/index.js";
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
 const SUITE_MARKER = `audit-test-${randomUUID()}`;
 let app: FastifyInstance;
+
+// Target ids this suite writes — shared by the tests and the after() scrub so a new test id
+// cannot be added without also being cleaned up.
+const SUITE_TARGET_IDS: readonly number[] = [424242, 525252, 626262, 727272, 828282, 929292];
+
+// Controllable-status echo: the request body's `status` drives the response code so result_code
+// mapping can be asserted per route.
+const echoStatusStub = async (req: FastifyRequest, reply: FastifyReply) => {
+  const body = req.body as { status?: number } | undefined;
+  return reply.code(body?.status ?? 200).send({ ok: true });
+};
 
 /**
  * Build an app with the audit hook + stub handlers mirroring the real covered route keys.
@@ -35,14 +47,14 @@ function buildAppWithCoveredRoutes(): FastifyInstance {
     reply.header("x-suite", SUITE_MARKER);
     return reply.code(200).send({ ok: true });
   });
-  instance.put("/api/clauded-docs/:id", async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { status?: number } | undefined;
-    return reply.code(body?.status ?? 200).send({ ok: true });
-  });
+  instance.put("/api/clauded-docs/:id", echoStatusStub);
   instance.post("/api/clauded-docs", async (_req, reply) => reply.code(201).send({ id: 1 }));
   instance.post("/api/improvement/:id/approve", async (_req, reply) =>
     reply.code(200).send({ ok: true }),
   );
+  // Decision stub with a controllable status — a real approve/reject executes the apply script
+  // and mutates live agent files, so the decision path is exercised only through this stub.
+  instance.post("/api/improvement/:id/reject", echoStatusStub);
   instance.get("/api/clauded-docs/:id", async (_req, reply) => reply.code(200).send({ ok: true }));
   // Uncovered mutating route — must NOT be audited.
   instance.post("/api/never-audited", async (_req, reply) => reply.code(200).send({ ok: true }));
@@ -77,13 +89,19 @@ async function findAuditRow(
   return null;
 }
 
-/** Count audit rows for an action_kind within the recent window (used for negative assertions). */
-async function countAuditRows(actionKind: string): Promise<number> {
+/**
+ * Count audit rows in the recent window for one action_kind, optionally scoped to a target id.
+ * Target scoping is the cardinality probe for a single decision: a success and a failure decision
+ * share the same action_kind, so an action_kind-only count cannot distinguish them.
+ */
+async function countAuditRows(actionKind: string, targetId: number | null = null): Promise<number> {
   const prisma = getPrisma();
   const rows = await prisma.$queryRaw<{ count: bigint }[]>`
     SELECT COUNT(*)::bigint AS count
     FROM monitor.audit_log
     WHERE action_kind = ${actionKind}
+      AND actor = 'monitor-web'
+      AND (${targetId}::bigint IS NULL OR target_id = ${targetId}::bigint)
       AND event_ts >= NOW() - INTERVAL '2 minutes'
   `;
   return Number(rows[0].count);
@@ -107,7 +125,7 @@ after(async () => {
       DELETE FROM monitor.audit_log
       WHERE actor = 'monitor-web'
         AND target_table IN ('clauded-docs', 'clauded-docs-group', 'improvement')
-        AND target_id IN (424242, 525252, 626262)
+        AND target_id IN (${Prisma.join(SUITE_TARGET_IDS)})
         AND event_ts >= NOW() - INTERVAL '10 minutes'
     `;
   } catch (error) {
@@ -139,6 +157,60 @@ test("POST /approve covered route → action_kind=improvement.approve (literal v
   assert.strictEqual(row.action_kind, "improvement.approve");
   assert.strictEqual(row.result_code, "success");
   assert.strictEqual(row.target_table, "improvement");
+  assert.strictEqual(
+    await countAuditRows("improvement.approve", 525252),
+    1,
+    "exactly one audit row per approve decision (single-writer invariant)",
+  );
+});
+
+test("POST /reject covered route → exactly one audit row: improvement.reject / success", async () => {
+  const res = await app.inject({ method: "POST", url: "/api/improvement/727272/reject" });
+  assert.strictEqual(res.statusCode, 200);
+
+  const row = await findAuditRow("improvement.reject", 727272);
+  assert.ok(row, "audit_log row written for /reject");
+  assert.strictEqual(row.action_kind, "improvement.reject");
+  assert.strictEqual(row.result_code, "success");
+  assert.strictEqual(row.actor, "monitor-web");
+  assert.strictEqual(row.target_table, "improvement");
+  assert.strictEqual(Number(row.target_id), 727272);
+  assert.strictEqual(
+    await countAuditRows("improvement.reject", 727272),
+    1,
+    "exactly one audit row per reject decision (single-writer invariant)",
+  );
+});
+
+test("failing decision → audit row carries the failing result code, not success", async () => {
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/improvement/828282/reject",
+    payload: { status: 409 },
+  });
+  assert.strictEqual(res.statusCode, 409);
+
+  const row = await findAuditRow("improvement.reject", 828282);
+  assert.ok(row, "audit_log row written for the failing decision");
+  assert.strictEqual(row.result_code, "blocked");
+  assert.strictEqual(
+    await countAuditRows("improvement.reject", 828282),
+    1,
+    "a failing decision also writes exactly one row",
+  );
+});
+
+test("failing decision with a 5xx → result_code=error", async () => {
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/improvement/929292/reject",
+    payload: { status: 500 },
+  });
+  assert.strictEqual(res.statusCode, 500);
+
+  const row = await findAuditRow("improvement.reject", 929292);
+  assert.ok(row, "audit_log row written for the 5xx decision");
+  assert.strictEqual(row.result_code, "error");
 });
 
 test("PUT covered route returning 400 → result_code=blocked", async () => {
