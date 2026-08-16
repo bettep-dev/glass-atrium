@@ -133,7 +133,14 @@ run_doctor_sandbox() {
   [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-daemon"* ]] || return 1
   # advisory: the drift feeds the warn summary, never a hard FAIL banner.
   [[ "${output}" == *"stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy"* ]] || return 1
-  [[ "${output}" == *"launchd-drift + "*"data-sep-leftover warning(s)"* ]] || return 1
+  # The rollup enumerates every warn category in section order. Anchored on two terms and the
+  # ordering between them — NOT on whichever term sits last, which is what broke when a new
+  # category was appended after data-sep-leftover.
+  [[ "${output}" == *"warning(s):"*"launchd-drift + "*"data-sep-leftover"* ]] || return 1
+  # §16 contributes TWO terms, never one: a silent channel and a blind reader are different
+  # findings, and folding them would report a silent channel for a run in which none is silent.
+  [[ "${output}" == *"channel-silent"* ]] || return 1
+  [[ "${output}" == *"channel-blind"* ]] || return 1
   [[ "${output}" != *"== doctor: FAIL =="* ]] || return 1
 }
 

@@ -27,6 +27,9 @@ import type {
   AttributionDailyResponse,
   AttributionDailyWindowDays,
   BudgetTruncationAgentCount,
+  ChannelLivenessChannel,
+  ChannelLivenessResponse,
+  ChannelLivenessWindowDays,
   LiteralOmissionBreakdown,
   OutcomeConfidenceLiteral,
   OutcomeCrossAnalysisByAgent,
@@ -115,6 +118,57 @@ const ALLOWED_HEATMAP_RESULTS: ReadonlySet<OutcomeHeatmapResultFilter> = new Set
 // membership but excludes /search's 'all' sentinel — a daily-series card needs
 // a bounded window. Out-of-set → 400. Blocks arbitrary INTERVAL injection.
 const ATTRIBUTION_DAILY_DAYS_DEFAULT = 30;
+
+// /channel-liveness: recording-channel watchdog thresholds — the SINGLE definition,
+// echoed to every consumer in the response so the dashboard card and doctor §16 read
+// a verdict rather than re-deriving one.
+//
+// Calibrated against the false-positive population, not against the incident alone.
+// Replaying the rule hourly over 31 days of this machine's own outcomes (749
+// evaluations, the window containing the ~29.8h outage that motivated the watchdog):
+//
+//   peak-over-window eligibility + 6h bound   43 alerting spans, 1 real →   2.3%, alerting 31.0% of wall-clock
+//   recency-gated eligibility  + 24h bound     1 alerting span,  1 real → 100.0%, alerting  0.8% of wall-clock
+//
+// Two findings drove the shape, and neither is visible from the incident:
+//
+//   1. The bound alone cannot separate them. Routine whole-day idleness reached 25.7h
+//      while the outage reached 29.8h, so the flat band that catches one and not the
+//      other is under 4h wide and a single longer day off closes it; at 30h the
+//      outage itself stops alerting. Deriving the bound from each channel's own
+//      recent maximum gap scores well and is disqualified for a worse reason — the
+//      outage enters its own history and lifts the bar (measured: 19.6h → 37.2h for
+//      the 7 days after it), so the instrument mutes itself exactly once it fires.
+//   2. The false positives were not long silences but channels that had STOPPED BEING
+//      USED. Peak-over-the-window asks "was this channel busy at some point in 7
+//      days", which stays true for a week after a channel legitimately winds down —
+//      completion-synthesized bursts to 171/day and then goes quiet for days by
+//      design. Gating the floor on RECENT volume asks the question that makes silence
+//      news: is the channel busy NOW and yet silent?
+//
+// With the eligibility question fixed, the bound is insensitive across 18-28h (all
+// score 1/1 over the same replay), so 24h is chosen for a reason outside the sample:
+// a silence of a full day has covered every hour of the clock, so it can never be
+// explained away by when the machine happens to be idle.
+//
+// Accepted cost, stated rather than hidden: coverage is intermittent. While a channel
+// is itself running below the floor, its silence is not watched at all — on a quiet
+// week structuredoutput-completion drops to a recent peak in the 80s and stops being
+// eligible. That is the floor's original premise (a channel not carrying volume is not
+// news) made CURRENT instead of week-stale, and it is the price of the precision above.
+const CHANNEL_ELIGIBILITY_DAILY_FLOOR = 100;
+// COUPLED to the bound below, and strictly greater than it (pinned by a test): an
+// outage suppresses the very rows that keep its channel eligible, so a recency window
+// that closed first would switch the alert off partway through the outage it exists to
+// report. Measured — at 1 day the incident stops alerting at every bound above 12h.
+const CHANNEL_ELIGIBILITY_RECENCY_DAYS = 2;
+const CHANNEL_SILENCE_HOURS = 24;
+// 7d default (not /attribution-daily's 30d). The recency gate above, not the window
+// width, is now what stops an old burst from qualifying a channel — so what the window
+// still decides is the DISPLAYED peak each channel is read against, and 7d keeps that
+// comparison recent enough to mean something.
+const CHANNEL_LIVENESS_DAYS_DEFAULT = 7;
+const MS_PER_HOUR = 3_600_000;
 
 // ±window (minutes) for matching a `subagent-stop-missing` outcome to a backing
 // core.agent_events 'SubagentStop'. The outcome's record_ts (record write time)
@@ -355,6 +409,17 @@ interface HeatmapDbRow {
   cell_count: bigint;
 }
 
+// /channel-liveness row shape: one row per attribution_source in the window,
+// carrying its peak single-day volume and its most recent record.
+interface ChannelLivenessDbRow {
+  attribution_source: string;
+  peak_daily_count: bigint;
+  // NULL when no day inside the recency window carried a row for this channel — the
+  // aggregate has nothing to take a MAX over, which is itself the "wound down" state.
+  recent_peak_daily_count: bigint | null;
+  last_record_ts: Date;
+}
+
 // /attribution-daily row shape: one (day, attribution_source) group. `day` is
 // emitted as 'YYYY-MM-DD' text via to_char(date_trunc(...)) so no client-side
 // date math is needed. value-set-agnostic — the pivot happens in the handler.
@@ -438,6 +503,7 @@ export async function registerOutcomesRoutes(app: FastifyInstance): Promise<void
   app.get("/api/outcomes/cross-analysis", handleCrossAnalysis);
   app.get("/api/outcomes/heatmap", handleHeatmap);
   app.get("/api/outcomes/attribution-daily", handleAttributionDaily);
+  app.get("/api/outcomes/channel-liveness", handleChannelLiveness);
   app.patch("/api/outcomes/close-by-cid", handleCloseByCid);
   app.get("/api/outcomes/:id", handleDetail);
   app.patch("/api/outcomes/:id/close", handleClose);
@@ -1425,6 +1491,132 @@ function parseAttributionDailyDaysParam(raw: string | undefined): AttributionDai
     return null;
   }
   return parsed as AttributionDailyWindowDays;
+}
+
+// GET /api/outcomes/channel-liveness?days={7|30|90, default 7} — recording-channel
+// watchdog. A channel that carried most recorded outcomes once fell to zero for ~29h
+// with nothing watching; this is the aggregate that would have named it.
+//
+// Deliberately NOT registry-scoped, unlike its /attribution-daily sibling: the
+// subject is the RECORDING channel, not agent quality, so gating on the agent
+// roster would let a channel read alive (or silent) for a reason having nothing to
+// do with the recorder.
+async function handleChannelLiveness(
+  request: FastifyRequest<{ Querystring: { days?: string } }>,
+  reply: FastifyReply,
+): Promise<ChannelLivenessResponse | OutcomesErrorBody> {
+  const start = Date.now();
+
+  const days = parseChannelLivenessDaysParam(request.query.days);
+  if (days === null) {
+    return reply.code(400).send({
+      error: "invalid_param",
+      param: "days",
+      allowed: Array.from(ALLOWED_DAYS_NUMERIC),
+    } satisfies OutcomesErrorBody);
+  }
+
+  const prisma = getPrisma();
+  try {
+    // Two-level aggregate in one scan: day buckets first, then the per-channel peaks
+    // over them — the window-wide peak for display and, from the same buckets, the
+    // peak restricted to the recency window, which is the one eligibility reads. The
+    // FILTER costs no extra scan.
+    //
+    // Measured plan (EXPLAIN ANALYZE, 7d, 2026-08-17, 1102 rows scanned): Index Scan
+    // using outcomes_ts_idx on the record_ts predicate, then two HashAggregates —
+    // 1.4 ms warm. Row count and timing are point-in-time and move with the table and
+    // the cache, so read them as a date-stamped observation, not a current figure. The
+    // STRUCTURAL claim is the durable one: attribution_source is NOT indexed (no such
+    // index exists on core.outcomes), so it rides as a Filter on the time-bounded
+    // scan, which is why the window predicate is what has to stay index-covered here.
+    //
+    // date_trunc('day', …) buckets in the PG session timezone, pinned to UTC in
+    // db.ts — same convention as the /attribution-daily series.
+    const rows = await prisma.$queryRaw<ChannelLivenessDbRow[]>`
+      WITH daily AS (
+        SELECT
+          attribution_source              AS source,
+          date_trunc('day', record_ts)    AS day,
+          COUNT(*)::bigint                AS cnt,
+          MAX(record_ts)                  AS last_ts
+        FROM core.outcomes
+        WHERE attribution_source IS NOT NULL
+          AND record_ts > NOW() - (${days}::int * INTERVAL '1 day')
+        GROUP BY 1, 2
+      )
+      SELECT
+        source        AS attribution_source,
+        MAX(cnt)      AS peak_daily_count,
+        MAX(cnt) FILTER (
+          WHERE day >= date_trunc('day', NOW() - (${CHANNEL_ELIGIBILITY_RECENCY_DAYS}::int * INTERVAL '1 day'))
+        )             AS recent_peak_daily_count,
+        MAX(last_ts)  AS last_record_ts
+      FROM daily
+      GROUP BY source
+      ORDER BY source ASC
+    `;
+
+    const now = Date.now();
+    const channels: ChannelLivenessChannel[] = rows.map((row) => {
+      const peakDailyCount = bigintToNumber(row.peak_daily_count);
+      // NULL = no day in the recency window carried a row, which reads as zero recent
+      // volume — the channel wound down, so its silence is not news.
+      const recentPeakDailyCount =
+        row.recent_peak_daily_count === null ? 0 : bigintToNumber(row.recent_peak_daily_count);
+      const silentHours = (now - row.last_record_ts.getTime()) / MS_PER_HOUR;
+      const eligible = recentPeakDailyCount > CHANNEL_ELIGIBILITY_DAILY_FLOOR;
+      return {
+        attribution_source: row.attribution_source,
+        peak_daily_count: peakDailyCount,
+        recent_peak_daily_count: recentPeakDailyCount,
+        last_record_ts: row.last_record_ts.toISOString(),
+        silent_hours: silentHours,
+        eligible,
+        alerting: eligible && silentHours > CHANNEL_SILENCE_HOURS,
+      };
+    });
+    const alerting = channels.filter((c) => c.alerting).map((c) => c.attribution_source);
+
+    request.log.info(
+      {
+        route: "/api/outcomes/channel-liveness",
+        days,
+        channelCount: channels.length,
+        alerting,
+        durationMs: Date.now() - start,
+      },
+      "outcomes query complete",
+    );
+
+    return {
+      fetched_at: new Date().toISOString(),
+      days,
+      thresholds: {
+        eligibility_daily_floor: CHANNEL_ELIGIBILITY_DAILY_FLOOR,
+        eligibility_recency_days: CHANNEL_ELIGIBILITY_RECENCY_DAYS,
+        silence_hours: CHANNEL_SILENCE_HOURS,
+      },
+      channels,
+      alerting,
+    };
+  } catch (error) {
+    return failWithDb(request, reply, "/api/outcomes/channel-liveness", error);
+  }
+}
+
+function parseChannelLivenessDaysParam(raw: string | undefined): ChannelLivenessWindowDays | null {
+  if (raw === undefined || raw === "") {
+    return CHANNEL_LIVENESS_DAYS_DEFAULT as ChannelLivenessWindowDays;
+  }
+  if (!/^-?\d+$/.test(raw)) {
+    return null;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || !ALLOWED_DAYS_NUMERIC.has(parsed)) {
+    return null;
+  }
+  return parsed as ChannelLivenessWindowDays;
 }
 
 // Per-category running totals over the window.

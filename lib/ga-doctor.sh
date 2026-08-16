@@ -702,12 +702,71 @@ run_doctor() {
   fi
   [[ "${decline_fail}" -eq 0 ]] || fail=1
 
+  # 16. recording-channel liveness — the SECOND surface for the monitor's channel watchdog. The
+  #     channel that carried most recorded outcomes once fell to zero and stayed there for over a
+  #     day; nothing watched, so the resulting gap read as a quality regression on the dashboard.
+  #     The verdict is NOT recomputed here: this section reads `alerting` off
+  #     /api/outcomes/channel-liveness and reports the names, so the eligibility floor and the
+  #     silence bound have exactly one definition (the route's) rather than two literals that agree
+  #     until one is tuned. WARN, never FAIL: the remedy is an investigation of the recorder, and a
+  #     quiet channel must not abort an install through the preflight alias.
+  #     TWO counters, deliberately not one: `channel_silent` counts channels the route named, while
+  #     `channel_blind` counts the distinct condition of this surface being unable to read a verdict
+  #     at all. Folding the second into the first would report "1 channel-silent" for a run in which
+  #     zero channels are silent and the reader is broken.
+  local channel_silent=0 channel_blind=0
+  local liveness_port="" liveness_raw="" liveness_code="" liveness_json="" liveness_alerting="" liveness_line=""
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    log "  note : curl or jq absent — recording-channel liveness not read (advisory)"
+  elif ! liveness_port="$(atrium_monitor_port 2>/dev/null)"; then
+    log "  note : monitor port unresolvable — recording-channel liveness not read (advisory)"
+  # No --fail: it collapses every non-2xx into curl's generic failure exit, and the two cases need
+  # different reports. A transport failure means the monitor is not answering; a non-2xx means it IS
+  # answering and this route is not there — which is a partial deploy, exactly the state a doctor
+  # exists to name rather than to disguise as a monitor being down. The status rides on its own
+  # trailing line so a body that fails to parse cannot swallow it.
+  elif ! liveness_raw="$(curl -s --connect-timeout 2 --max-time 5 -w '\n%{http_code}' \
+      "http://127.0.0.1:${liveness_port}/api/outcomes/channel-liveness" 2>/dev/null)"; then
+    log "  note : monitor not answering on :${liveness_port} — recording-channel liveness not read (advisory)"
+  elif liveness_code="${liveness_raw##*$'\n'}"; liveness_json="${liveness_raw%$'\n'*}";
+       [[ "${liveness_code}" != 2[0-9][0-9] ]]; then
+    log "  warn : monitor answered HTTP ${liveness_code} for /api/outcomes/channel-liveness on :${liveness_port} — the monitor is up but does not carry this route, so the watchdog's second surface is blind"
+    log "         remedy: the deployed monitor predates the route — rebuild and restart it (a stale build, not a silent channel)"
+    channel_blind=1
+  elif ! liveness_alerting="$(printf '%s' "${liveness_json}" | jq -er '.alerting | join(" ")' 2>/dev/null)"; then
+    # jq rc != 0 = no readable `alerting` member: the route's shape moved under this reader, which
+    # is itself the watchdog going blind — surface it rather than reading the miss as "none".
+    log "  warn : /api/outcomes/channel-liveness carries no readable alerting set — the watchdog's second surface is blind"
+    channel_blind=1
+  elif [[ -z "${liveness_alerting}" ]]; then
+    log "  ok   : no recording channel has gone silent (monitor watchdog reports none alerting)"
+  else
+    # One line per named channel, every number lifted from the SAME response.
+    # shellcheck disable=SC2312
+    while IFS= read -r liveness_line; do
+      [[ -n "${liveness_line}" ]] || continue
+      log "  warn : recording channel silent — ${liveness_line}"
+      channel_silent=$((channel_silent + 1))
+    done < <(printf '%s' "${liveness_json}" | jq -r '
+        .thresholds as $t
+        | .days as $d
+        | .channels[]
+        | select(.alerting)
+        | "\(.attribution_source): peak \(.peak_daily_count) rows/day over \($d)d, nothing recorded for \(.silent_hours | floor)h (alerts past \($t.silence_hours)h once a channel exceeds \($t.eligibility_daily_floor)/day)"
+      ' 2>/dev/null)
+    log "         remedy: the recorder stopped writing through the named channel — check the hook path that feeds it (hooks/track-outcome.sh) before reading the resulting gap as a quality change"
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale))
+    local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
-      log "== doctor: PASS (with ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover warning(s) — see above) =="
+      # `warning(s)` leads the breakdown rather than trailing it. Trailing, it was glued to whichever
+      # term happened to be last, so every downstream glob written against that term broke the next
+      # time a category was appended (adding channel-silent did exactly that to
+      # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind — see above) =="
     fi
     return 0
   fi
