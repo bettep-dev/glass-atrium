@@ -108,3 +108,59 @@ scripts/build.sh' \
 @test "backtick-wrapped paths and a pipe-terminated field keep their existing shapes" {
   assert_entries '[SCOPE] files=`hooks/a.sh` | deliverable=fix' 'hooks/a.sh'
 }
+
+# --- opening-`files=` anchoring -------------------------------------------------------------
+# The bind used to be greedy and unanchored, so the LAST `files=` in the line won. Both shapes
+# below replaced the declared list wholesale, which turned the declared path into a FALSE excess.
+
+@test "a later files= inside another field cannot rebind the file list" {
+  local lit='[SCOPE] files=hooks/a.sh · deliverable=fix · out=legacy files=none'
+  assert_entries "${lit}" 'hooks/a.sh' \
+    && assert_declared 'hooks/a.sh' "${lit}" \
+    && refute_declared 'hooks/zzz.sh' "${lit}"
+}
+
+@test "a mid-word files= match cannot rebind the file list" {
+  local lit='[SCOPE] files=hooks/a.sh profiles=data · out=none'
+  assert_declared 'hooks/a.sh' "${lit}" \
+    && refute_declared 'hooks/zzz.sh' "${lit}"
+}
+
+@test "a bare files= at the start of the line still binds" {
+  assert_entries 'files=hooks/a.sh · out=none' 'hooks/a.sh'
+}
+
+@test "a line with no files= field at all yields no entries" {
+  assert_entries '[SCOPE] deliverable=fix · out=none' ''
+}
+
+# --- `=`-bearing declared paths -------------------------------------------------------------
+# The sibling-field drop is keyed on the grammar's OWN three field names. Dropping every
+# `=`-bearing token also dropped a genuine declared path, and an edit to it then read as excess.
+
+@test "a declared path containing = survives alongside its siblings" {
+  local lit='[SCOPE] files=docs/a=b.md, hooks/x.sh · deliverable=fix · out=none'
+  assert_entries "${lit}" 'docs/a=b.md
+hooks/x.sh' \
+    && assert_declared 'docs/a=b.md' "${lit}" \
+    && assert_declared 'hooks/x.sh' "${lit}" \
+    && refute_declared 'hooks/zzz.sh' "${lit}"
+}
+
+@test "the grammar's own field names are still dropped in the separator-less form" {
+  assert_entries '[SCOPE] files=hooks/a.sh deliverable=bug-fix out=none' 'hooks/a.sh'
+}
+
+# The drop vocabulary is matched case-insensitively because the opening bind accepts `[Ff]iles=`.
+# A narrower drop set let an uppercase field spelling through as an unknown key, which stopped the
+# bare-word drop firing and leaked the swallowed field's prose into the allow-list — the plan-3631
+# §7 leak the second refusal exists to close.
+@test "an uppercase field spelling leaks no prose into the allow-list" {
+  local lit='[SCOPE] files=hooks/a.sh OUT=none legacy'
+  refute_declared 'monitor/legacy/x.ts' "${lit}" \
+    && assert_declared 'hooks/a.sh' "${lit}"
+}
+
+@test "every field name drops in either case" {
+  assert_entries '[SCOPE] Files=hooks/a.sh DELIVERABLE=bug-fix Out=none' 'hooks/a.sh'
+}

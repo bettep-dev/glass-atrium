@@ -63,13 +63,28 @@ scope_task_type_is_code() {
 # separator, a `|` separator or end of line; empty output on any other shape (fail-open — the
 # callers skip the comparison entirely rather than compare against a mis-parsed list).
 #
+# The opening `files=` is bound to the FIRST occurrence that STARTS a field — at the start of the
+# line, or preceded by whitespace or `·`. An unanchored, greedy bind (`s/.*files=//`) rebound to a
+# LATER occurrence and replaced the declared list wholesale: `out=legacy files=none` re-read the
+# list as `none`, and the mid-word `profiles=data` re-read it as `data`. Either way the declared
+# path stopped matching and the caller fired a FALSE excess — the one outcome this parser's
+# leniency exists to rule out.
+#
 # Entries split on commas AND whitespace, because the separator-less form
 # (`files=a.sh deliverable=fix out=none`) used to parse as ONE entry whose basename was `out=none`:
 # the correctly-declared path then missed and the caller fired a FALSE excess — an advisory
 # accusing compliant work, the worst outcome available to it. Two refusals keep that mis-parse from
 # becoming an accusation again, at different granularity because they mean different things:
-#   - an `=`-bearing TOKEN ⇒ a sibling field swallowed by a missing separator ⇒ that token alone is
-#     dropped, since a path here never carries `=`;
+#   - an `=`-bearing TOKEN whose KEY (the text before its first `=`) is one of the grammar's own
+#     three field names — matched case-insensitively, exactly as the opening bind above accepts
+#     `[Ff]iles=`; a drop vocabulary narrower than the bind would let the two halves of this parser
+#     disagree about what a field name IS, and `OUT=none legacy` would leak `legacy` into the list
+#     ⇒ a sibling field swallowed by a missing separator ⇒ that token alone is
+#     dropped. The vocabulary is CLOSED rather than shape-based on purpose: dropping every
+#     `=`-bearing token also dropped a genuine declared path (`docs/a=b.md`), and an edit to it
+#     then read as excess — a false accusation, the one cost this parser refuses. An unknown key
+#     is therefore kept as a path; if it really was a field, the lenient matcher merely swallows
+#     something, which is silence — the direction this module is allowed to fail in;
 #   - a token carrying neither `/` nor `.` AFTER such a token ⇒ prose from that same swallowed field
 #     ⇒ dropped too. Dropping the `=` token alone left the rest of its prose in the list, where the
 #     lenient matcher below swallowed any path containing it: plan 3631 §7's literal
@@ -83,8 +98,24 @@ scope_task_type_is_code() {
 # that happens to carry a dot still matches loosely — both cost SILENCE, never a false accusation.
 # Args: $1=[SCOPE] line. Prints the list (possibly empty), always returns 0.
 scope_decl_files() {
-  local line="${1:-}" field entry kept="" seen_field_token=0
-  field="$(sed -n 's/.*[Ff]iles=\([^·|]*\).*/\1/p' <<<"${line}")"
+  local line="${1:-}" field entry key kept="" seen_field_token=0
+  local scan="${line}" pre rest first=1 found=0
+  # Leftmost `files=` that starts a field. `%%pat*` leaves the prefix before the FIRST occurrence
+  # and `#*pat` the text after it, so the pair walks occurrences left to right.
+  while [[ "${scan}" == *[Ff]iles=* ]]; do
+    pre="${scan%%[Ff]iles=*}"
+    rest="${scan#*[Ff]iles=}"
+    if [[ "${pre}" == *[[:space:]] ]] || [[ "${pre}" == *"·" ]] \
+      || { [[ -z "${pre}" ]] && [[ "${first}" -eq 1 ]]; }; then
+      found=1
+      break
+    fi
+    first=0
+    scan="${rest}"
+  done
+  [[ "${found}" -eq 1 ]] || return 0
+  field="${rest%%·*}"
+  field="${field%%|*}"
   field="${field//\`/}"
   [[ -z "${field}" ]] && return 0
   # Commas and tabs collapse into the space delimiter, so one expansion splits every accepted form.
@@ -92,11 +123,19 @@ scope_decl_files() {
   field="${field//$'\t'/ }"
   while IFS= read -r entry; do
     [[ -n "${entry}" ]] || continue
+    if [[ "${entry}" == *=* ]]; then
+      key="${entry%%=*}"
+      # Only the grammar's OWN three keys mark a swallowed sibling field. Anything else carrying
+      # an `=` is treated as a declared path and kept.
+      case "${key}" in
+        [Ff][Ii][Ll][Ee][Ss] | [Dd][Ee][Ll][Ii][Vv][Ee][Rr][Aa][Bb][Ll][Ee] | [Oo][Uu][Tt])
+          seen_field_token=1
+          continue
+          ;;
+        *) ;;
+      esac
+    fi
     case "${entry}" in
-      *=*)
-        seen_field_token=1
-        continue
-        ;;
       *'<'* | *'>'*) return 0 ;;
       *) ;;
     esac
