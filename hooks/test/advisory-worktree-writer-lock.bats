@@ -37,7 +37,7 @@ setup() {
 # the key transform or the layout has to be made in both places on purpose.
 lock_dir_for() {
   local key="${1//_/__}"
-  key="${key//\//_}"
+  key="${key//\//_s}"
   printf '%s\n' "${LOCK_ROOT}/${key}/.apply-lock"
 }
 
@@ -252,4 +252,28 @@ fire_stop() {
     echo "another agent's lock was released" >&2
     return 1
   }
+}
+
+# Injectivity of the key transform, end to end. The two roots below collide under the OLD
+# `_`->`__` + `/`->`_` scheme (both encoded to a shared `_a___b` tail), which put two unrelated
+# worktrees in one lock dir and cross-warned between them — a FALSE POSITIVE, the one failure the
+# promotion gate cannot absorb. Asserted through the hook rather than against the transform so the
+# row pins the observable behaviour, not the encoding of the day.
+@test "distinct worktrees whose paths collided under the old key stay separate" {
+  local wt_a="${BATS_TEST_TMPDIR}/a_/b" wt_b="${BATS_TEST_TMPDIR}/a/_b"
+  mkdir -p "${wt_a}/src" "${wt_b}/src"
+  printf 'gitdir: /nonexistent/.git/worktrees/a\n' >"${wt_a}/.git"
+  printf 'gitdir: /nonexistent/.git/worktrees/b\n' >"${wt_b}/.git"
+
+  fire_write "${wt_a}/src/f.txt" "agent-A"
+  [[ "${output}" != *'LOCK-ADV-001'* ]] || return 1
+  fire_write "${wt_b}/src/f.txt" "agent-B"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *'LOCK-ADV-001'* ]] || {
+    echo "cross-warn between unrelated worktrees (key collision): ${output}" >&2
+    return 1
+  }
+  [[ "$(lock_dir_for "${wt_a}")" != "$(lock_dir_for "${wt_b}")" ]] || return 1
+  [[ "$(holder_of "${wt_a}")" == "agent-A" ]] || return 1
+  [[ "$(holder_of "${wt_b}")" == "agent-B" ]]
 }
