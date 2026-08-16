@@ -780,6 +780,7 @@ const REVIEW_FLAG_REASON_META = {
   'non-registry-agent-at-write': { label: 'Unknown agent', title: 'The recorded agent name was absent from the registry when the row was written' },
   'probe-omission': { label: 'No convention probe', title: 'Code change recorded with no convention reference' },
   'unregistered-agent-probe-exempt': { label: 'Probe-exempt agent', title: 'The recorded agent never received the convention-probe instruction' },
+  'scope-excess': { label: 'Outside declared scope', title: 'An edited path fell outside the file list the delegation declared' },
 };
 
 // carrier 가 빈 구행(사유 기록 이전) — 사유를 지어내지 않고 명시적 미분류 상태로 렌더.

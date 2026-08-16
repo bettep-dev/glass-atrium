@@ -19,6 +19,10 @@
 #      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
 #      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan/token-bearing spawns
 #      clear THIS branch (but still face surface 2).
+#   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
+#      prompt carries no [SCOPE] declaration. Advisory-first deliberately: a prompt scan cannot tell a
+#      declaration from a mention of one, so promotion to exit 2 waits on accumulated false-positive
+#      data plus an explicit user decision. Emitted on the PASS paths only, after every verdict above.
 #
 # Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
 #   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
@@ -304,6 +308,22 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
+# [SCOPE] delegation-scope declaration — the orchestrator's record of the delegation's literal file
+# and deliverable scope. Anchored bracketed literal, PRESENCE only: whether the declaration matches
+# the user's instruction is honor-system, the same ceiling as its sibling tokens.
+has_scope_token() { has_token "${1}" '[SCOPE]'; }
+
+# Surface 4 emitter. Called from the PASS paths only so a fault in this newest check can never turn
+# one of the blocks above into a pass.
+warn_scope_missing() {
+  # SC2310: has_scope_token is a pure predicate — set -e disable under `if` intended.
+  # shellcheck disable=SC2310
+  if [[ "${orchestrator_origin}" == true ]] && ! has_scope_token "${prompt_full}"; then
+    printf '[enforce-verification-gate] DEV spawn of %s carries no [SCOPE] declaration. Record it in the canonical middot-separated grammar — [SCOPE] files=path/one, path/two · deliverable=<type> · out=none — so the delegation'"'"'s literal scope is fixed in text before the work starts (grammar SoT: orchestrator-role.md → Context Handoff Size). Advisory only — presence is checked here, fidelity to the user instruction is not.\n' \
+      "${subagent_type}" >&2
+  fi
+}
+
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
 # it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
@@ -438,6 +458,7 @@ if references_plan "${prompt_full}"; then
   fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
+    warn_scope_missing
     exit 0
   fi
   # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
@@ -462,6 +483,7 @@ fi
 
 # shellcheck disable=SC2310
 if has_simple_task_token "${prompt_full}"; then
+  warn_scope_missing
   exit 0
 fi
 

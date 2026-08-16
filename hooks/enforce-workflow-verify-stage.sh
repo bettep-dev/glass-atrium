@@ -62,6 +62,12 @@
 # its own internal except -> False, so a scan failure can never reach the module-level handler (which
 # emits PASS) and silently convert a real BLOCK into a fail-open pass.
 #
+# FOURTH ADVISORY PASS (scope declaration, PRESENCE-ONLY, advisory — NEVER exit 2): flags a DEV
+# workflow carrying no [SCOPE] declaration. Decided in bash off the raw script (the helper's fixed
+# output-line contract is untouched) and emitted on the PASS arm only, so it can mask no verdict.
+# Advisory-first is a ceiling, not a stage: a raw scan cannot separate a declaration from a mention of
+# one, so promotion needs accumulated false-positive data plus an explicit user decision.
+#
 # PROMOTION CONDITION (verbatim — this header is the referenced SoT; the authoring guidance points here
 # rather than restating it):
 #   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
@@ -322,6 +328,16 @@ print_analysis_size_advisory() {
 # promotion on a message rewrite).
 print_schema_cap_advisory() {
   printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (measured real blocks run 285/284/1224 chars against caps of 600/900/1200, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header." >&2
+  return 0
+}
+
+# print_scope_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). Decided in
+# bash off the raw script text rather than in the verdict helper, so the helper's fixed output-line
+# contract is untouched. Advisory-first is deliberate and not a staging step: a raw scan cannot tell a
+# declaration from a mention of one, so promotion to exit 2 waits on false-positive data plus an
+# explicit user decision.
+print_scope_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -1699,6 +1715,12 @@ EOF
       )"
       ;;
     *)
+      # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
+      # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
+      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF '[SCOPE]'; then
+        print_scope_advisory
+        add_advisory "scope"
+      fi
       emit_trace "pass" "${script_len}"
       exit 0
       ;;

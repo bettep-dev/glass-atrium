@@ -219,7 +219,7 @@ completion_block() {
 @test "every W2-B token is stamped by the recorder and declared in the shared registry" {
   local token
   for token in overconfidence underconfidence empty-metric degraded-attribution-derived \
-    degraded-attribution-synthesized grader-contradiction correction-gap; do
+    degraded-attribution-synthesized grader-contradiction correction-gap scope-excess; do
     grep -qF "review_flag_add_reason \"${token}\"" "${HOOK_SH}" || return 1
     grep -qF "${token}" "${REASONS_LIB}" || return 1
   done

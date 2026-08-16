@@ -41,6 +41,9 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # DSH-D06 block firing-trace sink, isolated per test via the hook's VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
+  # Canonical ` · ` [SCOPE] grammar — carried by the regression guards that assert EMPTY output, so
+  # the pass-path scope advisory (owned by enforce-verification-gate-scope.bats) has nothing to say.
+  SCOPE_DECL="[SCOPE] files=hooks/a.sh · deliverable=fix · out=none"
 }
 
 # The ONE Agent-envelope builder ($1=subagent_type $2=prompt). jq -n --arg escapes both fields, so
@@ -124,15 +127,16 @@ run_hook_sink() {
 
 @test "reviewer-present plan-ref DEV spawn → exit 0 (compliant reviewer-first composition)" {
   seed_reviewer
-  # Carries a [PLAN-SUBSET] attestation so the C3-H nudge (a separate advisory surface, covered by
-  # enforce-verification-gate-plan-subset.bats) does not break this file's no-output contract.
-  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
+  # Carries a [PLAN-SUBSET] attestation and a [SCOPE] declaration so the two pass-path nudges
+  # (separate advisory surfaces, covered by enforce-verification-gate-plan-subset.bats and
+  # enforce-verification-gate-scope.bats) do not break this file's no-output contract.
+  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }
 
 @test "simple-task-token DEV spawn → exit 0 (entry-class escape hatch, no reviewer needed)" {
-  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }

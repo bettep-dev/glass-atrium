@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 # PreToolUse(Edit|Write) — Scope Drift Detection
-# Compares the plan's target-file list vs the actual edit target.
-# Warns when a file outside the list is edited (exit 0, non-blocking).
+# Compares two allowed-path sources — the plan's target-file list and the delegation's `[SCOPE]
+# files=` declaration — against the actual edit target, and warns when the file matches NEITHER
+# (exit 0, non-blocking).
+#
+# ADVISORY, never a block: the shared predicate matches on partial paths and basenames, so a
+# false SCOPE-070 is structurally possible; promoting this to exit 2 would punish correct work
+# on a predicate that cannot carry it. Promotion needs accumulated false-positive data and an
+# explicit user decision, not a coverage milestone.
+#
+# Coverage limit of the `[SCOPE]` source: the declaration is read from the SUBAGENT transcript's
+# record 0, so it covers subagent edits only. A main-session edit carries no agent_id, the
+# delegation prompt is unreachable, and the leg fails open.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -19,35 +29,10 @@ monitor_port="$(hook_monitor_port || true)"
 MONITOR_URL="${SCOPE_DRIFT_MONITOR_URL:-http://127.0.0.1:${monitor_port}/api/clauded-docs}"
 CURL_TIMEOUT="${SCOPE_DRIFT_CURL_TIMEOUT:-2}"
 
-# Match file_path against the target-file list (newline-separated): full/partial path OR basename.
-# Strips markdown list prefixes (- * N.), backticks, whitespace. Shared by both parsers below.
-# Args: $1=file_path  $2=allowed_files. Returns: 0 = match, 1 = no match.
-match_file_against_allowed() {
-  local file_path="${1}" allowed_files="${2}"
-  local file_basename line clean clean_basename
-  file_basename="$(basename "${file_path}")"
-
-  while IFS= read -r line; do
-    [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
-
-    clean="$(echo "${line}" | sed -e 's/^[[:space:]]*[-*][[:space:]]*//' -e 's/^[[:space:]]*[0-9]*\.[[:space:]]*//')"
-    clean="$(echo "${clean}" | tr -d '`')"
-    clean="$(echo "${clean}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-
-    [[ -z "${clean}" ]] && continue
-
-    if [[ "${file_path}" == *"${clean}"* ]]; then
-      return 0
-    fi
-
-    clean_basename="$(basename "${clean}")"
-    if [[ "${file_basename}" == "${clean_basename}" ]]; then
-      return 0
-    fi
-  done <<<"${allowed_files}"
-
-  return 1
-}
+# The comparison predicate + the `[SCOPE]` declaration parsers live in lib/ so this hook and the
+# recorder's scope-excess leg share ONE definition.
+# shellcheck source=lib/scope-match.sh
+source "${BASH_SOURCE%/*}/lib/scope-match.sh"
 
 # Extract path-like tokens from the `<section id="target-files">` slice → newline list.
 # Relies on the T1 flat-leaf contract (slices to the first </section>). sed-only (no awk).
@@ -91,10 +76,8 @@ check_drift_and_emit() {
   if ! match_file_against_allowed "${file_path}" "${allowed_files}"; then
     emit_error "SCOPE-070" "advisory" \
       "Scope drift: file not in plan target list" \
-      "Scope drift: file not in plan target list" \
-      "Update plan target files or confirm modification is intentional" \
       "Update plan target files or confirm the modification is intentional" \
-      "{\"file\":\"${file_path}\",\"plan_id\":${plan_id}}"
+      "{\"file\":\"${file_path}\",\"source\":\"plan-doc\",\"plan_id\":${plan_id}}"
   fi
 }
 
@@ -164,6 +147,70 @@ if [[ -n "${FILE_PATH}" ]] \
   && { [[ "${FILE_PATH}" == */memory/* ]] \
     || claude_config_is_branch_path "${FILE_PATH}"; }; then
   exit 0
+fi
+
+# Second allowed-path source — the delegation's `[SCOPE] files=` declaration, read from record 0
+# of the spawning subagent's own transcript. Covers the everyday delegation that has no plan doc
+# at all. A match here is authoritative (union semantics: either source may allow the edit); a
+# non-match emits its own advisory and lets the plan-doc leg below reach its own verdict.
+# Resolution is cached per agent_id in the existing per-session cache shape (same helpers, same
+# TTL and bypass env) — the sentinel below caches the far more common "no declaration" answer
+# too, so an undeclared delegation re-parses no transcript on later edits.
+SCOPE_DECL_NONE_SENTINEL='./no-scope-declaration'
+scope_decl_resolve() {
+  local agent_id session_id safe_key cache_file tpath decl_line files
+  agent_id="$(echo "${INPUT}" | jq -r '.agent_id // ""' 2>/dev/null || true)"
+  session_id="$(echo "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)"
+  [[ -n "${agent_id}" ]] && [[ -n "${session_id}" ]] || return 0
+
+  safe_key="$(hook_path_safe_key "${agent_id}")"
+  cache_file=""
+  if [[ -n "${safe_key}" ]]; then
+    cache_file="${SCOPE_DRIFT_CACHE_DIR:-${HOOK_LOG_DIR}/scope-drift-plancache}/scope-decl-${safe_key}.cache"
+  fi
+  # shellcheck disable=SC2310
+  #   Predicate call — the exit status IS the answer (cache hit vs re-resolve).
+  if [[ -n "${cache_file}" ]] && [[ -z "${SCOPE_DRIFT_CACHE_BYPASS:-}" ]] \
+    && scope_drift_read_cache "${cache_file}"; then
+    printf '%s' "${CACHED_ALLOWED_FILES}"
+    return 0
+  fi
+
+  tpath=""
+  for tpath in "${HOME}/.claude/projects/"*"/${session_id}/subagents/agent-${agent_id}.jsonl" \
+    "${HOME}/.claude/projects/"*"/${session_id}/subagents/workflows/wf_"*"/agent-${agent_id}.jsonl"; do
+    [[ -f "${tpath}" ]] && break
+    tpath=""
+  done
+
+  files=""
+  if [[ -n "${tpath}" ]]; then
+    decl_line="$(scope_decl_from_record0 "${tpath}")"
+    [[ -n "${decl_line}" ]] && files="$(scope_decl_files "${decl_line}")"
+  fi
+  [[ -z "${files}" ]] && files="${SCOPE_DECL_NONE_SENTINEL}"
+
+  if [[ -n "${cache_file}" ]]; then
+    # shellcheck disable=SC2310
+    #   Best-effort cache write — a failure only forces a re-resolve on the next edit.
+    scope_drift_write_cache "${cache_file}" "0" "${files}" || true
+  fi
+  printf '%s' "${files}"
+}
+
+if [[ -n "${FILE_PATH}" ]]; then
+  SCOPE_DECL_FILES="$(scope_decl_resolve)"
+  if [[ -n "${SCOPE_DECL_FILES}" ]] && [[ "${SCOPE_DECL_FILES}" != "${SCOPE_DECL_NONE_SENTINEL}" ]]; then
+    # shellcheck disable=SC2310
+    #   Predicate call — the exit status IS the answer (declared vs undeclared path).
+    if match_file_against_allowed "${FILE_PATH}" "${SCOPE_DECL_FILES}"; then
+      exit 0
+    fi
+    emit_error "SCOPE-070" "advisory" \
+      "Scope drift: file not in the delegation [SCOPE] files= declaration" \
+      "Widen the delegation [SCOPE] declaration or confirm the modification is intentional" \
+      "{\"file\":\"${FILE_PATH}\",\"source\":\"scope-decl\"}"
+  fi
 fi
 
 # PLAN_FILE unset → auto-restore per-file scope binding via the monitor API: pick the in-progress
@@ -270,10 +317,8 @@ ALLOWED_FILES=$(echo "${PLAN_CONTENT}" | sed -E -n "/${HEADING_RE}/,/^## /{ /${H
 if ! match_file_against_allowed "${FILE_PATH}" "${ALLOWED_FILES}"; then
   emit_error "SCOPE-070" "advisory" \
     "Scope drift: file not in plan target list" \
-    "Scope drift: file not in plan target list" \
-    "Update plan target files or confirm modification is intentional" \
     "Update plan target files or confirm the modification is intentional" \
-    "{\"file\":\"${FILE_PATH}\"}"
+    "{\"file\":\"${FILE_PATH}\",\"source\":\"plan-doc\"}"
 fi
 
 exit 0
