@@ -432,6 +432,20 @@ function ScreenImprovement({ onNav }) {
 		};
 	}, [listState]);
 
+	// 정지(parked) 루프 상태 — capped_patterns>0 일 때만 배너. K=0 은 배너 자체가 없어야 하므로
+	// 상수 문자열이 아니라 payload 의 rearm_hint 로 렌더한다.
+	const applyCapState = useMI(() => {
+		if (learningLogState.status !== "ready" || !learningLogState.data)
+			return null;
+		return learningLogState.data.apply_cap_state || null;
+	}, [learningLogState]);
+
+	// prose-only-add per-agent rolling count — null-safe (verdict 없는 구간에선 빈 배열).
+	const proseOnlyAdd = useMI(() => {
+		if (listState.status !== "ready" || !listState.data) return null;
+		return listState.data.prose_only_add_summary || null;
+	}, [listState]);
+
 	// style_ref telemetry 추출 — null-safe (OPTIONAL 단계에서는 모든 row 가 NULL 일 수 있음).
 	const styleRef = useMI(() => {
 		if (listState.status !== "ready" || !listState.data) return null;
@@ -581,6 +595,7 @@ function ScreenImprovement({ onNav }) {
           제안 허용/거절 행위 빈도가 KPI 조회보다 훨씬 높음 → 칸반 우선.
           .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
 			<div className="space-sections flex-1 min-h-0">
+				<ParkedLoopBannerI applyCap={applyCapState} />
 				<div className="flex-1 min-h-0">
 					<KanbanCardI
 						state={listState}
@@ -611,6 +626,7 @@ function ScreenImprovement({ onNav }) {
 				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
 				<CorrectionSignalsCardI state={correctionState} />
 				<StyleRefCardI state={listState} styleRef={styleRef} />
+				<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
 				<AttributionPointerCardI state={attributionState} onNav={onNav} />
 				<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
 				<ConfidenceDistCardI
@@ -1881,6 +1897,87 @@ function ConfidenceLaneTableI({ buckets }) {
 //   - per-agent verified rate (Gaming-the-Judge cross-verify pass rate)
 //   - 전체 rollup → MANDATORY 격상 조건 충족 indicator
 //
+// 정지(parked) 루프 배너 — repeat-apply cap 은 자가 re-arm 이 없으므로 사람이 풀기 전까지
+// 루프가 멈춘 채로 남는다. K=0 이면 렌더 자체를 하지 않는다(운영 상태가 아닐 때 경고를 띄우면
+// 배너가 무시된다). 복구 문구는 payload 의 rearm_hint — 화면 상수로 두면 K=0 에서도 존재하게 된다.
+function ParkedLoopBannerI({ applyCap }) {
+	if (!applyCap) return null;
+	const capped = Number(applyCap.capped_patterns ?? 0);
+	if (capped <= 0) return null;
+	const agents = Number(applyCap.capped_agents ?? 0);
+	return (
+		<div className="card" role="status" data-testid="parked-loop-banner">
+			<div className="flex items-start gap-2 p-3">
+				<SymI s="⚠" className="text-warn" size={14} />
+				<div className="min-w-0">
+					<div className="fs-meta font-mono text-warn">
+						Loop parked — {formatIntI(capped)} capped{" "}
+						{capped === 1 ? "pattern" : "patterns"} across {formatIntI(agents)}{" "}
+						{agents === 1 ? "agent" : "agents"}
+					</div>
+					<div className="card-sub fs-meta mt-1">{applyCap.rearm_hint}</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+// prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
+// "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
+function ProseOnlyAddCardI({ state, summary }) {
+	const { CardHead } = window.UI;
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !summary) return null;
+	const rows = Array.isArray(summary.agents) ? summary.agents : [];
+	const total = Number(summary.total ?? 0);
+	return (
+		<div className="card">
+			<CardHead
+				title={`Add-only patches (${formatIntI(Number(summary.window_days ?? 0))} days)`}
+			/>
+			{rows.length === 0 ? (
+				<div className="px-3 pb-3">
+					<div className="placeholder">
+						No add-only patches in this window
+					</div>
+				</div>
+			) : (
+				<div className="px-3 pb-3">
+					<table className="w-full fs-meta font-mono">
+						<thead>
+							<tr className="text-faint uppercase tracking-wider">
+								<th className="text-left py-1.5 pl-1.5">Agent</th>
+								<th className="text-right py-1.5 pr-1.5">Add-only</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map((r) => (
+								<tr key={r.agent} className="border-t border-line/50">
+									<td className="text-left py-1.5 pl-1.5 text-ink">
+										{r.agent}
+									</td>
+									<td className="text-right py-1.5 pr-1.5 text-ink">
+										{formatIntI(Number(r.count ?? 0))}
+									</td>
+								</tr>
+							))}
+							<tr className="border-t border-line">
+								<td className="text-left py-1.5 pl-1.5 text-dim">Total</td>
+								<td className="text-right py-1.5 pr-1.5 text-ink">
+									{formatIntI(total)}
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			)}
+			<div className="px-3 pb-3 card-sub fs-micro">
+				{summary.truncation_caveat}
+			</div>
+		</div>
+	);
+}
+
 // OPTIONAL 단계 — 모든 row NULL 가능:
 //   - 전체 NULL 시 "데이터 누적 중" 안내 → NaN%/0/0 렌더 차단
 //   - per-agent rate null 시 "—" 표시 (denominator = 0)

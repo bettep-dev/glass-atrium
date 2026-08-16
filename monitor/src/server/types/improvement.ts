@@ -227,6 +227,30 @@ export interface ImprovementGraderCrosscheckSummary {
   not_applicable_count: number;
 }
 
+// One target agent's prose-only-add verdict count inside the window.
+export interface ImprovementProseOnlyAddAgentRow {
+  agent: string;
+  count: number;
+}
+
+// Per-target-agent rolling count of proposals the daemon classified prose-only-add
+// (the `prose_only_add` passenger key inside pre_verify_axes).
+//
+// Two exclusions are load-bearing and neither is incidental:
+//   - Updater-written release rows (UPDATER_WRITTEN_PATTERN_LABELS) are merge-resolution
+//     records, not daemon proposals — counting them moves the number on an update day
+//     with no daemon cycle at all.
+//   - A row whose verdict is false or absent contributes nothing; absence is not false.
+export interface ImprovementProseOnlyAddSummary {
+  window_days: number;
+  // Sorted by agent; agents with a zero count are absent rather than zero-filled.
+  agents: ImprovementProseOnlyAddAgentRow[];
+  total: number;
+  // The verdict inherits the classifier's truncated input, so the count is a floor.
+  // Surfaced as text rather than left for the reader to know.
+  truncation_caveat: string;
+}
+
 // Per-proposal compact summary (UI card row). snake_case matches project convention.
 export interface ImprovementProposalRow {
   id: number;
@@ -305,6 +329,9 @@ export interface ImprovementResponse {
   // like the other late-added columns, so a not-yet-migrated column degrades to
   // empty buckets rather than a 503. Always present.
   grader_crosscheck_summary: ImprovementGraderCrosscheckSummary;
+  // Per-target-agent prose-only-add rolling count over the same window.
+  // Always present; empty `agents` array when no row carries a true verdict.
+  prose_only_add_summary: ImprovementProseOnlyAddSummary;
 }
 
 // /api/improvement/stats (UI cards)
@@ -372,9 +399,27 @@ export interface ImprovementLearningLogStatusBucket {
   count: number;
 }
 
+// Repeat-apply cap state — patterns the daemon terminalized after N applied patches
+// failed to abate their signal. The cap has no self re-arm by design, so a capped
+// pattern stays parked until a human resets its status; nothing surfaced that fact
+// outside the daemon log before this field existed.
+//
+// `capped_patterns` counts capped patterns, NOT every pattern row — a count over the
+// whole table reports a parked loop as parked regardless of whether it is.
+export interface ImprovementApplyCapState {
+  capped_patterns: number;
+  // Distinct agents holding at least one capped pattern.
+  capped_agents: number;
+  // Operator recovery text; null when nothing is capped, so the banner cannot be
+  // rendered from a constant.
+  rearm_hint: string | null;
+}
+
 export interface ImprovementLearningLogResponse {
   fetched_at: string; // ISO8601 UTC
   total_patterns: number; // unfiltered table-wide count
+  // Parked-loop state across the registry-scoped table (window-independent).
+  apply_cap_state: ImprovementApplyCapState;
   returned: number; // recent rows returned (≤ limit)
   // Status × approval_tier distribution across the whole table (skim card).
   status_distribution: ImprovementLearningLogStatusBucket[];
