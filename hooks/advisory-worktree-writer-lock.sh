@@ -42,10 +42,16 @@
 #     main session itself takes has NO release arm and is TTL-only. Closing that needs a Stop-wired
 #     release, which is a separate decision, not an oversight in this file.
 #
-# NOT WIRED as of this commit: no EXPECTED_HOOK_BINDINGS row (lib/ga-env.sh) names this hook, so the
-# acquire arm fires nowhere and the advisory measurement window its promotion gate depends on cannot
-# accumulate. The release arm IS live (agent-tracker.sh). Re-check before relying on either
-# statement: `grep advisory-worktree-writer-lock lib/ga-env.sh`.
+# WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
+# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm and the advisory
+# measurement window its promotion gate depends on can accumulate. The release arm was already live
+# (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is written by
+# wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION START — so
+# the first data point comes from a fresh session after the next release lands, not from this commit.
+# MultiEdit is deliberately NOT in the matcher: it has zero registrations on the recorded host
+# (test/hook-matcher-shape-invariant.bats), so binding it would add a dead token — that file's
+# one-token legacy allowlist exists precisely to stop the set widening. Re-check before relying on
+# any of this: `grep advisory-worktree-writer-lock lib/ga-env.sh`.
 #
 # Fail-open on EVERYTHING else: absent python3, unwritable lock store, unparseable envelope, missing
 # apply-lock primitive → exit 0 silently. Worst case is a missing or spurious advisory line.
@@ -54,7 +60,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # Instant kill switch — the other disable is dropping this hook's EXPECTED_HOOK_BINDINGS row
-# (lib/ga-env.sh) and re-running wire_hooks. No such row exists yet; see NOT WIRED above.
+# (lib/ga-env.sh) and re-running wire_hooks, which needs an install run plus a session restart to
+# take effect; this env var needs neither. See WIRED above.
 [[ -n "${WORKTREE_WRITER_LOCK_OFF:-}" ]] && exit 0
 
 # fail-open ERR trap — never interfere with the tool call.

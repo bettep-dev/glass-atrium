@@ -191,6 +191,7 @@ ga_init_env() {
     "PreToolUse	advisory-spawn-budget.sh	Agent"
     "PreToolUse	advisory-spawn-cost.sh	Agent"
     "PreToolUse	advisory-subagent-budget.sh	"
+    "PreToolUse	advisory-worktree-writer-lock.sh	Write|Edit"
     "PreToolUse	block-dangerous-commands.sh	Bash"
     "PreToolUse	block-doc-routing-leak.sh	Write"
     "PreToolUse	block-md-creation.sh	Write"
