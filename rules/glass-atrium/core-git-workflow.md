@@ -9,6 +9,7 @@ Applies to all agents.
 - `--no-verify` / `--no-gpg-sign` are **STRICTLY FORBIDDEN** in normal flow
   - Agent execution context without configured signing key → configure SSH/GPG key OR set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)
 - Stage only changed files via `git add` — `git add .` / `git add -A` are FORBIDDEN
+- Where a delegation places you in a worktree alongside other concurrent tracks, index mutation is permitted only to the stated INDEX OWNER; where such a delegation states no contract, treat that worktree as SHARED — checkpoint to `memory/progress-*.md` and ask rather than committing (`orchestrator-role.md` → Spawn Budget → Automatic Parallelization (a) defines the index-mutation class and the contract).
 
 ### Subject Line
 

@@ -271,7 +271,7 @@ mint_bad_sink() {
 
 @test "dev spawn with plan-ref (SIZE-EST present) AND reviewer present → silent, exit 0, no output" {
   seed_reviewer
-  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
   assert_status 0
   assert_empty
 }
@@ -394,7 +394,7 @@ mint_bad_sink() {
 @test "DF-5: PostToolUse-stamped reviewer → later PreToolUse DEV plan-ref spawn passes silently" {
   run_hook_event "PostToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
   assert_status 0
-  run_hook_event "PreToolUse" "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
+  run_hook_event "PreToolUse" "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
   assert_status 0
   assert_empty
 }
@@ -447,7 +447,7 @@ mint_bad_sink() {
   local -a table=(
     'glass-atrium-dev-shell|fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial|'
     'glass-atrium-intel-planner|draft a plan for the auth refactor|'
-    'glass-atrium-dev-python|implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl|seed-reviewer'
+    'glass-atrium-dev-python|implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a|seed-reviewer'
   )
   local row stype prompt seed
   for row in "${table[@]}"; do

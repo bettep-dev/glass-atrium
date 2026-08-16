@@ -279,25 +279,30 @@ references_plan() {
     | grep -qE 'clauded-docs/[0-9]+|[A-Za-z0-9_./-]*plan[A-Za-z0-9_-]*\.html|documents/[A-Za-z0-9_./-]+\.html|(^|[^A-Za-z0-9_])plan-[0-9]+([^A-Za-z0-9]|$)|(^|[^A-Za-z0-9_])[0-9]+-plan([^A-Za-z0-9]|$)' 2>/dev/null
 }
 
+# Shared attestation-token predicate: fixed-string (grep -qF) presence of an anchored bracketed
+# literal in the delegation prompt. One definition so a new token cannot drift from its siblings.
+has_token() {
+  local text="${1}" literal="${2}"
+  [[ -z "${text}" ]] && return 1
+  printf '%s' "${text}" | grep -qF "${literal}" 2>/dev/null
+}
+
 # Entry-classification token — the orchestrator's conscious "this DEV task is simple/exempt"
 # signal. Anchored bracketed literal (grep -qF, not a bare 'simple' substring) to avoid the
 # FP-storm a loose match would cause — mirrors references_plan()'s structured-match discipline.
-has_simple_task_token() {
-  local text="${1}"
-  [[ -z "${text}" ]] && return 1
-  printf '%s' "${text}" | grep -qF '[ENTRY-CLASS] simple-task' 2>/dev/null
-}
+has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
 # EVERY DEV spawn (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, orchestrator-role.md
 # ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
 # structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
-has_size_est_token() {
-  local text="${1}"
-  [[ -z "${text}" ]] && return 1
-  printf '%s' "${text}" | grep -qF '[SIZE-EST]' 2>/dev/null
-}
+has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
+
+# [PLAN-SUBSET] attestation token — the orchestrator's record that a plan-derived delegation had its
+# predecessor edges classified before spawning (orchestrator-role.md ### Phase Notes, plan edge
+# discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
+has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
@@ -418,6 +423,19 @@ fi
 # intended (same posture as is_dev_agent above).
 # shellcheck disable=SC2310
 if references_plan "${prompt_full}"; then
+  # 3b. C3-H — [PLAN-SUBSET] presence NUDGE (stderr advisory, exit 0, NEVER a block). A plan-derived
+  # delegation classifies its included tasks' declared predecessors before spawning; the token records
+  # that the check ran. Deliberately NOT a fifth exit-2 gate: the token is conditional on the delegation
+  # being a strict SUBSET of the plan, so its absence is often correct — a block would false-fire on
+  # every whole-plan delegation. HONEST BACKING: presence-checkable only; whether the classification
+  # beneath the token is true is never verifiable here, and the edge-ordering obligation itself lives in
+  # guardrail (c), which no token gates.
+  # SC2310: has_plan_subset_token is a pure predicate — set -e disable under `if` intended.
+  # shellcheck disable=SC2310
+  if [[ "${orchestrator_origin}" == true ]] && ! has_plan_subset_token "${prompt_full}"; then
+    printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
+      "${subagent_type}" >&2
+  fi
   # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
   if [[ "${reviewer_present}" == true ]]; then
     exit 0

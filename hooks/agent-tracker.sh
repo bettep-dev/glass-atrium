@@ -11,8 +11,9 @@ INPUT=$(hook_read_input)
 TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%S%z)
 
 # ONE interpreter pass parses the lifecycle fields, applies the agent_type
-# disambiguation, and prints two lines: a TAB-joined "<event>\t<agent_type>" log
-# tuple (consumed by emit_error below) then the core.agent_events envelope handed
+# disambiguation, and prints two lines: a TAB-joined
+# "<event>\t<agent_type>\t<agent_id>" log tuple (consumed by emit_error and the
+# live-child marker below) then the core.agent_events envelope handed
 # straight to _pg_dual_write.py's single-row path. Replaces the prior 4x
 # hook_get_field field-extract spawns + a redundant envelope-building wrapper
 # interpreter (5 python3 per fire -> 2). A parse failure loud-fails to stderr and
@@ -58,17 +59,53 @@ envelope = {
 # values; strip stray tab/newline so the parameter-expansion split stays aligned).
 log_event = hook_event.replace("\t", " ").replace("\n", " ")
 log_type = agent_type.replace("\t", " ").replace("\n", " ")
-sys.stdout.write(log_event + "\t" + log_type + "\n")
+log_aid = agent_id.replace("\t", " ").replace("\n", " ")
+sys.stdout.write(log_event + "\t" + log_type + "\t" + log_aid + "\n")
 # Line 2: the single-row envelope handed straight to the writer below.
 sys.stdout.write(json.dumps(envelope) + "\n")
 ' <<<"${INPUT}") || exit 0
 
 # Split the parse-pass output with pure parameter expansion (set -e safe, no
-# subprocess): line 1 = "<event>\t<agent_type>" log tuple, line 2 = the PG envelope.
+# subprocess): line 1 = "<event>\t<agent_type>\t<agent_id>" log tuple, line 2 = the
+# PG envelope.
 LOG_TUPLE="${PARSED%%$'\n'*}"
 ENVELOPE="${PARSED#*$'\n'}"
-HOOK_EVENT="${LOG_TUPLE%%$'\t'*}"
-AGENT_TYPE="${LOG_TUPLE#*$'\t'}"
+IFS=$'\t' read -r HOOK_EVENT AGENT_TYPE AGENT_ID <<<"${LOG_TUPLE}"
+
+# --- C1-H/C2-H live-child marker (ADVISORY OBSERVABILITY ONLY) -----------------
+# One empty file per live subagent: created on SubagentStart, removed on SubagentStop.
+# enforce-commit-guard.sh reads the directory to note that a child MAY still be
+# running when the orchestrator commits.
+# HONEST BACKING: this marker does NOT enforce the worktree-isolation rule and must
+# never be described as doing so. SubagentStart's hook observe surface is agent_type
+# and agent_id ONLY (shared-hook-capability-contract.md), so the writer structurally
+# cannot record WHERE its child runs — the marker answers "is a child live", never
+# "is a child live in THIS worktree", and it therefore false-positives on exactly the
+# correctly-isolated configuration the rule encourages. Pure bash by design: the
+# hook's 2-python3-per-fire perf invariant is pinned by agent-tracker.bats.
+live_child_dir="${HOOK_DATA_DIR}/live-children"
+marker_key="$(hook_path_safe_key "${AGENT_ID}")"
+if [[ -n "${marker_key}" ]]; then
+  case "${HOOK_EVENT}" in
+    SubagentStart)
+      if ! { mkdir -p "${live_child_dir}" 2>/dev/null && : >"${live_child_dir}/${marker_key}"; }; then
+        emit_error "DATA-074" "warn" \
+          "live-child marker write failed — the commit-time live-child advisory will under-report" \
+          "Check permissions/free space on ${live_child_dir}" \
+          "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
+      fi
+      ;;
+    SubagentStop)
+      if [[ -e "${live_child_dir}/${marker_key}" ]] && ! rm -f "${live_child_dir}/${marker_key}" 2>/dev/null; then
+        emit_error "DATA-075" "warn" \
+          "live-child marker delete failed — a stale marker will over-report until its TTL expires" \
+          "Remove ${live_child_dir}/${marker_key} manually" \
+          "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
+      fi
+      ;;
+    *) ;; # main-session events (Stop/PreCompact/SessionStart) hold no live-child marker
+  esac
+fi
 
 emit_error "DATA-073" "info" \
   "Agent lifecycle event recorded" \

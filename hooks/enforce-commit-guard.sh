@@ -57,4 +57,46 @@ for rule in "${RULES[@]}"; do
   fi
 done
 
+# --- C1-H/C2-H live-child commit advisory (ADVISORY ONLY — never exit 2) -------
+# Fires when the MAIN session (no agent_id) runs `git commit` while at least one
+# live-child marker written by agent-tracker.sh is fresh.
+# HONEST BACKING: this is honor-system guidance made visible, NOT enforcement of the
+# worktree-isolation rule or of the completion-signal rule. Two limitations, stated
+# here because they are the whole shape of the signal: (1) the marker carries NO
+# worktree — SubagentStart's observe surface is agent_type/agent_id only — so a
+# genuinely worktree-isolated concurrent agent raises this note even though it is the
+# CORRECT configuration; (2) it observes the commit half only, and the ultracode
+# spawn path fires no PreToolUse(Agent) at all, so coverage there is zero.
+readonly LIVE_CHILD_TTL_MIN=360
+live_child_dir="${HOOK_DATA_DIR}/live-children"
+
+# A truncated/killed subagent never fires SubagentStop, so its marker is never
+# removed. Sweep anything older than the TTL before counting — best-effort, and a
+# sweep failure only makes the note noisier, never wrong in the blocking direction.
+sweep_stale_markers() {
+  find "${live_child_dir}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -exec rm -f {} + 2>/dev/null || true
+}
+
+count_live_children() {
+  local n
+  n="$(find "${live_child_dir}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null | grep -c '' || true)"
+  [[ "${n}" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "${n}"
+}
+
+# SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
+# shellcheck disable=SC2310
+if [[ -d "${live_child_dir}" ]] \
+  && printf '%s' "${COMMAND}" | grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
+  && ! hook_is_subagent "${INPUT}"; then
+  sweep_stale_markers
+  live_count="$(count_live_children)"
+  if [[ "${live_count}" -gt 0 ]]; then
+    emit_error "GIT-ADV-001" "warn" \
+      "Committing from the main session while ${live_count} delegated child agent(s) appear to be still live — the orchestrator does not commit another agent's work, and a commit taken before an agent's completion is established can capture a half-written tree." \
+      "Establish completion from each child's terminal record first, and let the agent that authored the work commit it. ADVISORY ONLY: this note cannot tell worktrees apart (the marker carries no worktree), so a correctly worktree-isolated concurrent agent raises it too — it observes, it does not enforce." \
+      "{\"live_children\":${live_count}}"
+  fi
+fi
+
 exit 0
