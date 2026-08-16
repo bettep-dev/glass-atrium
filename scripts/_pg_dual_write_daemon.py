@@ -684,6 +684,10 @@ def write_autoagent_corpus_audit(
     rather than growing the table. trend_delta / compliance_rate / override_rate
     are passed through unchanged — a None means insufficient data and MUST stay
     NULL, never a fabricated 0.
+
+    indexed_at is refreshed on conflict, matching write_autoagent_proposal: a
+    row carrying the second write's values must not carry the first write's
+    timestamp, or /api/improvement/corpus-audits reads the reading as stale.
     """
     start_ns = time.monotonic_ns()
     sql = """
@@ -691,8 +695,10 @@ def write_autoagent_corpus_audit(
             (cycle_date, word_count, token_estimate, file_count,
              trend_alert, trend_delta, absolute_alert, seeded_threshold,
              compliance_rate, override_rate,
-             gate_pass_count, gate_trip_count, gate_total_count)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             gate_pass_count, gate_trip_count, gate_total_count,
+             indexed_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                CURRENT_TIMESTAMP)
         ON CONFLICT (cycle_date) DO UPDATE SET
             word_count = EXCLUDED.word_count,
             token_estimate = EXCLUDED.token_estimate,
@@ -705,7 +711,8 @@ def write_autoagent_corpus_audit(
             override_rate = EXCLUDED.override_rate,
             gate_pass_count = EXCLUDED.gate_pass_count,
             gate_trip_count = EXCLUDED.gate_trip_count,
-            gate_total_count = EXCLUDED.gate_total_count
+            gate_total_count = EXCLUDED.gate_total_count,
+            indexed_at = EXCLUDED.indexed_at
         RETURNING id
     """
     with _connect() as conn:
