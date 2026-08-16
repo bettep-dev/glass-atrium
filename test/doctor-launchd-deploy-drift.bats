@@ -100,7 +100,7 @@ deploy_all() {
 run_doctor_sandbox() {
   run env HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
-    GA_GENERATE_MANIFEST="${GEN_STUB}" \
+    GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
@@ -178,7 +178,7 @@ run_doctor_sandbox_mktemp_empty() {
 
   run env PATH="${stub_dir}:${PATH}" HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
-    GA_GENERATE_MANIFEST="${GEN_STUB}" \
+    GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"

@@ -151,8 +151,12 @@ deploy_farmed_links() {
 }
 
 # Run the REAL run_doctor against the sandbox in a fresh strict-mode subprocess.
+# GA_DATA_ROOT is sandboxed so §14 reads no live daemon-report row, and the monitor port is
+# pinned dead so §16 curls nothing on this machine — both sections otherwise resolve from
+# ambient state and turn the sandbox's verdict into a property of the host.
 run_doctor_sandbox() {
   run env GA_LIB_DIR="${GA_LIB_DIR}" GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${MANIFEST}" \
+    GA_DATA_ROOT="${GA_SANDBOX}/data" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
@@ -257,4 +261,21 @@ run_doctor_sandbox() {
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"FAIL : manifest source missing: hooks/hook-a.sh"* ]]
   [[ "${output}" == *"== doctor: FAIL =="* ]]
+}
+
+# === 5. §16 recording-channel liveness is machine-independent ================
+
+# §16 shells curl at a resolved monitor port. Left unpinned, the port resolves from
+# whatever the ambient machine supplies (a repo monitor/.env, an exported override, the
+# resolver's terminal default), so ONE sandbox produced three different §16 verdicts —
+# "not answering", "HTTP 400 … channel-blind", "none alerting" — with no sandbox change.
+# The helper pins a dead port, so this asserts the pin beats an ambient override.
+@test "§16 reads the pinned dead port, not an ambient ATRIUM_MONITOR_PORT" {
+  seed_full_fixture
+  deploy_farmed_links
+
+  ATRIUM_MONITOR_PORT=16145 run_doctor_sandbox
+
+  [[ "${output}" == *"monitor not answering on :${GA_DOCTOR_DEAD_PORT}"* ]]
+  [[ "${output}" != *"on :16145"* ]]
 }

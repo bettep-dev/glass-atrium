@@ -813,9 +813,12 @@ def _get_scoped_dir() -> Path:
 def _scope_file_for_agent(agent: str) -> Path | None:
     """Return the scope-*.md path for the target agent, or None if unresolved.
 
-    Both miss kinds — agent absent from the map, and mapped file absent from
-    disk — are loud, because a blind C3 axis is indistinguishable from a
-    verified one at every downstream surface.
+    Both miss kinds — agent absent from the map, and mapped path not a readable
+    file — are loud, because a blind C3 axis is indistinguishable from a
+    verified one at every downstream surface. The readability half uses the same
+    ``is_file`` test as the C4 sibling ``_get_target_path``: an ``exists`` test
+    admits a directory, whose read error reaches C3 as a neutral excerpt with no
+    verdict attached — the exact blind axis this signal exists to eliminate.
     """
     relative = _AGENT_SCOPE_MAP.get(agent)
     if not relative:
@@ -827,7 +830,7 @@ def _scope_file_for_agent(agent: str) -> Path | None:
 
     scoped_dir = _get_scoped_dir()
     candidate = scoped_dir / relative
-    if not candidate.exists():
+    if not candidate.is_file():
         sys.stderr.write(
             f"[daemon-cycle] WARN: {SCOPE_UNRESOLVED_SIGNAL} — {relative} absent from "
             f"{scoped_dir} (agent {agent!r}); C3 has no scope file to judge against\n"
@@ -2618,7 +2621,9 @@ def flatten_log_field(value: object, *, default: str = "") -> str:
     ``status=`` — which is tolerable while these records are read by humans and
     parsed by nothing.
     """
-    text = " ".join(str(value or "").split())
+    # `value or ""` would fold a falsy non-None value (0, False) into the default,
+    # dropping content the docstring above promises to preserve.
+    text = " ".join(("" if value is None else str(value)).split())
     return text or default
 
 

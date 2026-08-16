@@ -150,6 +150,20 @@ class ScopeFileResolutionTest(unittest.TestCase):
         self.assertNotIn(_PLACEHOLDER, c3_block)
         self.assertIn("C3: FAIL", c3_block)
 
+    def test_when_scope_path_is_a_directory_then_named_signal_is_loud(self):
+        # A directory satisfies exists() but not a read: the resolver returned it, the
+        # excerpt became "(read error: Is a directory)" and C3 carried no verdict — the
+        # neutral blind axis the signal exists to eliminate, reached by a second route.
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "scoped" / "scope-dev.md").mkdir(parents=True)
+            with _base_root(Path(root)):
+                prompt, stderr = _get_prompt("glass-atrium-dev-python")
+
+        self.assertIn(dc.SCOPE_UNRESOLVED_SIGNAL, stderr)
+        self.assertIn(dc.SCOPE_UNRESOLVED_SIGNAL, prompt)
+        c3_block = prompt.split("[C3 ", 1)[1].split("[C4 ", 1)[0]
+        self.assertIn("C3: FAIL", c3_block)
+
     def test_when_agent_unmapped_then_named_signal_is_loud(self):
         with _base_root(_REPO_ROOT):
             prompt, stderr = _get_prompt("glass-atrium-not-an-agent")

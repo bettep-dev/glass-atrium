@@ -30,6 +30,12 @@ ga_bats_hermetic_env() {
   # per-corpus sentinel assertion fail loudly instead of silently unpinning this baseline.
   export GA_BATS_SUITE_SETUP=1
 
+  # Port a sandboxed run may curl without reaching anything: privileged, never bound by a
+  # user process, so the connect is refused immediately. Suites that shell a port-resolving
+  # section pass this as ATRIUM_MONITOR_PORT — pinning the variable HERE instead would break
+  # the suites whose subject IS the resolver reading monitor/.env.
+  export GA_DOCTOR_DEAD_PORT=1
+
   local switch
   for switch in "${GA_BATS_KILLSWITCHES[@]}"; do
     unset "${switch}"

@@ -82,7 +82,8 @@ teardown() {
 # `run` records the exit in $status; run_doctor returns 1 on any §1-12 FAIL, so we assert
 # on the merged output lines (log() → stderr, captured by bats `run`), never $status.
 run_doctor_seam() {
-  GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" run "${REAL_GA}" doctor
+  GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
 }
 
 # Drive the REAL producer's SubagentStart injection path so the shed rows under test are
