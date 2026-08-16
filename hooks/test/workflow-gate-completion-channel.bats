@@ -16,11 +16,17 @@
 #   shorthand with further keys           ->  ADVISE
 #   text-mode fallback undefined value    ->  silent    (value exclusion; the recommended form)
 #   a null value                          ->  silent
+#   a void 0 / void(0) / void x value     ->  silent    (value exclusion, admitted by operator shape)
+#   a merely FALSY value (0)              ->  ADVISE    (not an absent-value denotation; the boundary)
+#   an identifier merely STARTING void    ->  ADVISE    (voidness — the trailing lookahead holds)
 #   prose: word followed by a colon       ->  silent    (masked anchor operand)
 #   prose: word alone                     ->  silent
 #   word only inside a line comment       ->  silent
-#   RESIDUAL guard off an options object  ->  ADVISE    (named false positive, key-position exclusion)
-#   RESIDUAL assignment to undefined      ->  ADVISE    (named false positive, same cause)
+#   RESIDUAL guard off an options object  ->  ADVISE    (published false positive, key-position only)
+#   RESIDUAL member write (opts.schema=S) ->  ADVISE    (published; excluding it would blank a REAL site)
+#   RESIDUAL assignment to undefined      ->  ADVISE    (published false positive, same cause)
+#   RESIDUAL import / destructure / param ->  ADVISE    (published; excluding them is inert, the USE fires)
+#   RESIDUAL word in a regex literal      ->  ADVISE    (published; a lexical-class limit of the mask)
 #   token declared as a schema member     ->  silent
 #   token as prose in a goal string       ->  silent    (unmasked token half → recall)
 #   token ONLY inside a comment           ->  ADVISE    (comment-stripped token half)
@@ -46,7 +52,6 @@ log('plan-ref: clauded-docs/7440')
 log('[SCOPE] files=hooks/a.sh')
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
 agent('glass-atrium-dev-nestjs',{goal:'implement'})"
-  SIZE_EST="log('[SIZE-EST] bundles=1 tool_uses~=10 — small.')"
   SCHEMA_SITE="const S = { findings: 'string' };
 const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
   GATE_DEFS="${BATS_TEST_TMPDIR}/gate_defs.py"
@@ -130,6 +135,36 @@ check() {
   }
 }
 
+# VALUE EXCLUSION BY SHAPE, both edges. The excluded set is the CLOSED set of absent-value denotations
+# the language provides, so `void` is admitted as an OPERATOR (every operand yields undefined) rather
+# than as the one spelling seen in the wild. The guard rows are the other edge and matter more than the
+# admissions: a merely falsy value is NOT absence, and an identifier that merely starts with `void`
+# must not be swallowed by the alternation.
+@test "completion-channel(absent values): the void operator excludes, falsy and near-miss names do not" {
+  local fails=""
+  check silent "void-zero" \
+    "await agent('x', { ...opts, agentType, schema: void 0 });" || fails="${fails} void-zero"
+  check silent "void-paren" \
+    "await agent('x', { ...opts, schema: void(0) });" || fails="${fails} void-paren"
+  check silent "void-operand-identifier" \
+    "await agent('x', { schema: void x });" || fails="${fails} void-operand-identifier"
+  check silent "void-spaced-colon" \
+    "await agent('x', { schema : void 0 });" || fails="${fails} void-spaced-colon"
+  # Boundary: falsy is not absent. Excluding these would trade a named FP for an unnamed FN.
+  check ADVISE "falsy-zero" \
+    "await agent('x', { schema: 0 });" || fails="${fails} falsy-zero"
+  # Boundary: the trailing lookahead. `voidness` is an identifier, not the operator.
+  check ADVISE "void-prefixed-identifier" \
+    "const voidness = S; await agent('x', { schema: voidness });" ||
+    fails="${fails} void-prefixed-identifier"
+  check ADVISE "null-prefixed-identifier" \
+    "await agent('x', { schema: nullish });" || fails="${fails} null-prefixed-identifier"
+  [[ -z "${fails}" ]] || {
+    echo "absent-value rows failed:${fails}" >&2
+    return 1
+  }
+}
+
 @test "completion-channel(sites): key, shorthand and non-site shapes classify as observed" {
   local fails=""
   check ADVISE "bare-key" \
@@ -152,16 +187,54 @@ agent('x', { goal: 'g' });" || fails="${fails} word-in-comment"
   }
 }
 
-# The two false positives are DOCUMENTED, so they are pinned rather than left to be rediscovered at
-# promotion. A row flipping to silent means the key-position exclusion widened and the design changed.
-@test "completion-channel(residuals): non-key-position occurrences stay sites" {
+# The published false positives are pinned rather than left to be rediscovered at promotion, because
+# this list is what a promotion decision adjudicates against. A row flipping to silent means an
+# exclusion widened and the design changed. Each row was decided by RUNNING its candidate exclusion:
+#   member access  → the exclusion is UNSOUND (see the paired row below).
+#   bind forms     → the exclusion is INERT (see the paired use rows below).
+#   regex literal  → a lexical-class limit of the shared string mask, not a value one.
+@test "completion-channel(residuals): every published false-positive shape stays a site" {
   local fails=""
   check ADVISE "guard-off-options" \
     "if (opts.schema) { run(); }" || fails="${fails} guard-off-options"
   check ADVISE "assignment-to-undefined" \
     "const schema = undefined;" || fails="${fails} assignment-to-undefined"
+  check ADVISE "import-binding" \
+    "import { schema } from './x';" || fails="${fails} import-binding"
+  check ADVISE "destructuring-bind" \
+    "const { schema } = opts;" || fails="${fails} destructuring-bind"
+  check ADVISE "function-param" \
+    "function build(schema) { return schema; }" || fails="${fails} function-param"
+  check ADVISE "arrow-param" \
+    "const build = (schema) => schema;" || fails="${fails} arrow-param"
+  check ADVISE "regex-literal" \
+    "const re = /schema/; run(re);" || fails="${fails} regex-literal"
   [[ -z "${fails}" ]] || {
     echo "residual rows failed:${fails}" >&2
+    return 1
+  }
+}
+
+# WHY THOSE RESIDUALS ARE NOT EXCLUDED — the rows that make the published reasons falsifiable rather
+# than assertions. A member-access exclusion would blank the first row here, which is a REAL schema-mode
+# configuration; the bind exclusions would be inert, because the USE of what they bind is itself a site.
+@test "completion-channel(residuals): the reasons for keeping them are themselves pinned" {
+  local fails=""
+  # UNSOUND: the only occurrence is dot-preceded, yet this genuinely configures schema mode.
+  check ADVISE "member-write-is-a-real-site" \
+    "opts.schema = S;
+await agent('x', opts);" || fails="${fails} member-write-is-a-real-site"
+  # INERT: each bind is used at a spawn, and the use fires on its own.
+  check ADVISE "import-then-use" \
+    "import { schema } from './x';
+await agent('x', { ...opts, schema });" || fails="${fails} import-then-use"
+  check ADVISE "destructure-then-use" \
+    "const { schema } = opts;
+await agent('x', { schema });" || fails="${fails} destructure-then-use"
+  check ADVISE "param-then-use" \
+    "function mk(schema) { return agent('x', { schema }); }" || fails="${fails} param-then-use"
+  [[ -z "${fails}" ]] || {
+    echo "residual-reason rows failed:${fails}" >&2
     return 1
   }
 }
@@ -322,6 +395,44 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
     echo "nudged despite the declared property -- ${output}" >&2
+    return 1
+  }
+}
+
+# The DEV TERMINAL PASS arm — the fourth quadrant of the precedence split, and the one the other rows
+# cannot reach: the rows above exercise non-DEV PASS and DEV BLOCK, so without this one nothing pins
+# that the tag survives the arm where the gate returns 0 for a DEV script. The [SIZE-EST] token is
+# inlined rather than kept as a fixture: this is its only use, and clearing the size gate is the whole
+# reason the script reaches the terminal PASS at all.
+@test "completion-channel(precedence): a DEV script passing at the terminal emit still nudges and tags" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "${DECL_TEAM}
+log('[SIZE-EST] bundles=1 tool_uses~=10 — small.')
+${SCHEMA_SITE}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "the DEV script must PASS here, got ${status} -- ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "no nudge on the DEV PASS arm -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" == *"completion-channel:property-absent"* ]] || {
+    echo "value not traced on the DEV PASS arm: $(last_advisory)" >&2
+    return 1
+  }
+  # Counterfactual: same script, property declared → same PASS, no nudge, no tag.
+  run_hook_exec "${DECL_TEAM}
+log('[SIZE-EST] bundles=1 tool_uses~=10 — small.')
+const S = { completion_block: 'string' };
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
+    echo "nudged despite the declared property on the PASS arm -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" != *"completion-channel"* ]] || {
+    echo "tagged despite the declared property on the PASS arm: $(last_advisory)" >&2
     return 1
   }
 }

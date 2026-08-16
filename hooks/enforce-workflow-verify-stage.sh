@@ -76,8 +76,8 @@
 # non-emission = the two synthesis arms). A schema omitting the reserved property therefore drops the
 # writer signal SILENTLY → the recorder falls to derived synthesis and no lesson is recorded.
 # PREDICATE (completion_block_advisory_needed, verdict-isolated with its own except -> False):
-#   site half  → comment-stripped + string-MASKED operand, bare-word match, key-position
-#                undefined/null value EXCLUDED, scanned SCRIPT-WIDE.
+#   site half  → comment-stripped + string-MASKED operand, bare-word match, key-position ABSENT value
+#                EXCLUDED (undefined / null / void <any operand>), scanned SCRIPT-WIDE.
 #   token half → the UNMASKED comment-stripped text.
 #   Opposite operands on purpose: site detection is block-ENABLING (over-detection would false-block →
 #   precision), token detection is block-SUPPRESSING (over-detection merely fails open → recall).
@@ -92,9 +92,15 @@
 # ADDENDUM-ALLOWLIST MEMBERSHIP (decided here, not deferred): EXCLUDED. This is an advisory VALUE on
 # the multiplexed flag line and never reaches block_and_exit's tag argument, so an entry would be
 # inert; a promotion to a block cause decides membership at that time.
-# KNOWN FALSE POSITIVES (named, not latent — each remediable by declaring the property inline): a
-# schema bound in ANOTHER module (invisible to the scan → site visible, token absent); a guard reading
-# the property off an options object; an assignment binding the word to undefined or null.
+# KNOWN FALSE POSITIVES — the FULL measured list, not a sample, because this text is what a promotion
+# decision reads (each remediable by declaring the property inline): a schema bound in ANOTHER module
+# (invisible to the scan → site visible, token absent); ANY member read or write of the property
+# (opts.schema); an assignment binding the bare word to undefined or null (the exclusion is key-position
+# only); an import, a destructuring bind, or a parameter named schema; and the bare word inside a REGEX
+# LITERAL. Every one was measured against its candidate exclusion before being left in: the member form
+# is the one case where excluding it would blank a REAL site, the bind forms are cases where excluding
+# them is inert because the bind's USE is itself a site, and the regex-literal form is a lexical-class
+# problem whose fix belongs in the shared _string_mask. Per-shape verdicts sit at the predicate.
 # KNOWN FALSE NEGATIVE: a QUOTED schema key, blanked by the mask — fail-open, the safe direction.
 # WHERE THE CLAIM STOPS: this raises the floor from "channel structurally ABSENT" to "channel
 # structurally PRESENT" and no further. It does NOT reach whether the prompt instructs the fill
@@ -402,7 +408,7 @@ print_completion_channel_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel, non-blocking): this workflow script carries a schema-mode site but never mentions the reserved completion-channel property, so a StructuredOutput payload has nowhere to carry the [COMPLETION] block. A schema-mode emit is engine-guaranteed while the text channel is honor-system — measured non-emission on the text channel runs 16-25% depending on the window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a schema omitting the property drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run records no lesson. ONE-EDIT FIX — add this property to the schema you already declare:
   completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
-and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. KNOWN FALSE POSITIVES, published so a firing is adjudicable rather than mysterious: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); a guard reading the property off an options object, and an assignment binding the word to undefined or null, are both still read as sites because the value exclusion covers the key position only. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
+and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
 EOF
   return 0
 }
@@ -1233,9 +1239,17 @@ SO_COMPLETION_FIELD = "completion_block"
 # Rejected alternative → a colon test loses the object-shorthand form, which the authoring exemplar uses.
 # Documented FALSE NEGATIVE → a QUOTED key is blanked by the mask and never matches.
 SCHEMA_SITE_RE = re.compile(r"(?<![A-Za-z0-9_$])schema(?![A-Za-z0-9_$])")
-# Value exclusion, KEY POSITION ONLY: an undefined or null value DISABLES schema mode → not a site.
-# Scope limit → an occurrence in any other position stays a site (the named false positives below).
-SCHEMA_DISABLED_RE = re.compile(r"\s*:\s*(?:undefined|null)(?![A-Za-z0-9_$])")
+# Value exclusion, KEY POSITION ONLY: a value denoting ABSENCE disables schema mode → not a site.
+# Admitted by SHAPE rather than by the spellings in use today: the alternation is the CLOSED set of
+# surface forms the language gives for the absent value — the `undefined` global, the `null` literal,
+# and the `void` operator, whose result is `undefined` for EVERY operand, so no operand is enumerated
+# (`void 0`, `void(0)`, `void x` all exclude alike). `void` is a reserved word, so the form is never an
+# identifier; the shared trailing lookahead keeps `voidness` / `nullish` / `undefinedish` as sites.
+# BOUNDARY, stated rather than left implicit: merely FALSY values (0, '', false, NaN) are NOT excluded.
+# They are not absent-value denotations, no authoring idiom disables a schema with one, and admitting
+# them would trade a named false positive for an unnamed false negative.
+# Scope limit → an occurrence in any other position stays a site (the published residuals below).
+SCHEMA_DISABLED_RE = re.compile(r"\s*:\s*(?:undefined|null|void)(?![A-Za-z0-9_$])")
 
 
 def completion_block_advisory_needed(stripped):
@@ -1257,11 +1271,25 @@ def completion_block_advisory_needed(stripped):
     # Price → precision: a schema declared for some other purpose is a site.
     # Bound on that price → the token half must ALSO be absent before anything fires.
     #
-    # NAMED FALSE POSITIVES (measured, so they are documented rather than latent), all one-line
-    # remediable by declaring the property inline or setting the rollback marker:
-    #   a guard reading the property off an options object → still a site.
-    #   an assignment binding the word to undefined or null → still a site (the exclusion is key-only).
-    #   a schema bound in another module → invisible to the scan, so site visible + token absent.
+    # PUBLISHED RESIDUALS — every non-spawn shape MEASURED to classify as a site, listed so a firing is
+    # adjudicable rather than mysterious, and each one-line remediable by declaring the property inline.
+    # The per-shape verdict below is why each stays a site rather than joining the exclusion; each was
+    # decided by running the candidate exclusion, not by reasoning about it:
+    #   a schema bound in ANOTHER module → invisible to the scan (site visible, token absent). No
+    #     exclusion is even available: the evidence is outside the file.
+    #   a member read or write of the property (opts.schema) → a dot-preceded exclusion is UNSOUND, the
+    #     only measured case where one would blank a REAL site: `opts.schema = S; agent(t, opts)` is a
+    #     genuine schema-mode configuration whose sole occurrence is dot-preceded.
+    #   an assignment binding the bare word to undefined or null → the exclusion is key-position only,
+    #     and widening it to `=` would blank `const schema = S` feeding a shorthand spawn.
+    #   an import, a destructuring bind, or a parameter named schema → excluding these is measurably
+    #     INERT: the binding is used at a spawn, and that use is itself a site, so the verdict is
+    #     unchanged for every script that uses what it binds. The exclusion would silence only a bind
+    #     with no use, which is dead code — bought at the price of one more place a real site is lost.
+    #     The parameter form is additionally PARTIAL: a `function`-anchored pattern misses arrow params.
+    #   the bare word inside a REGEX LITERAL (/schema/) → a lexical-class problem, not a value one.
+    #     Deciding regex-literal from division needs a parse, and the fix would belong in _string_mask,
+    #     which three other passes share — blast radius far outside this advisory.
     #
     # VERDICT ISOLATION: a top-level function with its OWN terminal except → False. Inlined at module
     # scope the scan would sit inside the module-level handler whose recovery path emits PASS, so an
