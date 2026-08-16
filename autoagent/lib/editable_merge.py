@@ -19,6 +19,9 @@ Reuse (NOT re-implemented here — imported from the daemon):
     ``com.glass-atrium.*.plist`` / irreversible-command diffs).
   * ``daemon_cycle.run_pre_verify`` (+ ``PatchProposal`` / ``Pattern``) — the
     Haiku improvement-verify dry-run that gates a both-changed merge candidate.
+  * ``daemon_cycle.flatten_log_field`` — the single line-record sanitizer applied
+    to every field of the pre-verify rejection line (LLM-authored text reaching
+    an operator-facing log; see its docstring for the forging window).
 
 ==============================================================================
 KEY DESIGN DECISION (flagged per task) — base@install region CONTENT provenance
@@ -897,13 +900,29 @@ class MergeCandidate:
         # The reason exists on the result and died at this boolean: the updater
         # reduces the return to an exit code, so a rejection reached the log as a
         # bare rollback. stderr already flows into the update log — no plumbing.
+        #
+        # Every interpolated field goes through dc.flatten_log_field, not just the
+        # LLM-authored rationale: they all arrive off a duck-typed result via
+        # getattr, so the closed-set guarantee for `status` and for the C[1-4] axis
+        # keys lives in daemon_cycle's parser rather than at this boundary. Guarding
+        # one field and trusting its neighbours leaves the next author to guess
+        # which were checked.
         axes = getattr(result, "axes", None) or {}
-        failed = ", ".join(sorted(key for key, ok in axes.items() if not ok))
+        failed = ", ".join(
+            sorted(dc.flatten_log_field(key) for key, ok in axes.items() if not ok)
+        )
+        target = dc.flatten_log_field(self.target_file, default="(unnamed)")
+        status = dc.flatten_log_field(
+            getattr(result, "status", ""), default="(unreported)"
+        )
+        rationale = dc.flatten_log_field(
+            getattr(result, "rationale", ""), default="(none reported)"
+        )
         sys.stderr.write(
-            f"editable_merge: pre-verify REJECTED — {self.target_file} "
-            f"status={getattr(result, 'status', '') or '(unreported)'} "
+            f"editable_merge: pre-verify REJECTED — {target} "
+            f"status={status} "
             f"failed_axes=[{failed or '(none reported)'}] "
-            f"rationale={getattr(result, 'rationale', '') or '(none reported)'}\n"
+            f"rationale={rationale}\n"
         )
         return False
 

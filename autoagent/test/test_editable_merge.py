@@ -534,6 +534,115 @@ class MergeCandidateGateTest(unittest.TestCase):
                 self.assertEqual(cand.verify(str(p)), 0)
         self.assertNotIn("pre-verify REJECTED", captured.getvalue())
 
+    def _reject_line(self, stub: "_StubVerify") -> str:
+        base = _doc(top="# A", region="b1\nb2", bottom="z")
+        local = _doc(top="# A", region="LOCAL\nb1\nb2", bottom="z")
+        release = _doc(top="# A", region="b1\nb2\nVENDOR", bottom="z")
+        cand = em.build_merge_candidate(
+            "dev-python.md", local, release, base_text=base, verify_fn=stub
+        )
+        captured = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "dev-python.md"
+            cand.apply(str(p))
+            with contextlib.redirect_stderr(captured):
+                self.assertEqual(cand.verify(str(p)), 1)
+        return captured.getvalue()
+
+    def test_reject_line_is_one_record_when_rationale_carries_terminators(self) -> None:
+        # The rationale is LLM-authored and reaches an operator-facing log where
+        # structure carries meaning: a line terminator inside it ends the record
+        # and starts a fresh one that reads as a genuine update-log entry. Before
+        # the flatten this emitted 2+ records, the second an ACCEPTED forgery.
+        forged = "editable_merge: pre-verify ACCEPTED - agents/dev-shell.md status=ok"
+        for label, terminator in (
+            ("newline", "\n"),
+            ("carriage-return", "\r"),
+            ("crlf", "\r\n"),
+            ("u2028-line-separator", "\u2028"),
+            ("u0085-next-line", "\u0085"),
+        ):
+            with self.subTest(terminator=label):
+                line = self._reject_line(
+                    _StubVerify(
+                        passed=False,
+                        status="ok",
+                        axes={"C3": False},
+                        rationale=f"real reason{terminator}{forged}",
+                    )
+                )
+                # splitlines() breaks on the WIDER set a viewer/editor/JS reader
+                # may honour, so it is the strict assertion; the trailing \n the
+                # writer itself appends is the sole record terminator.
+                self.assertEqual(len(line.splitlines()), 1)
+                self.assertEqual(len([x for x in line.split("\n") if x]), 1)
+                self.assertTrue(line.endswith("\n"))
+                # Contained, not dropped: the text is still reported, inert.
+                self.assertIn("real reason", line)
+                self.assertIn(forged, line)
+
+    def test_reject_line_keeps_a_multiline_rationale_whole_and_legible(self) -> None:
+        # Containment must not cost the reason its content — the point of the
+        # line is that a rejection is diagnosable without re-running the call.
+        rationale = (
+            "C3 fails: the patch adds a rule that contradicts an\n"
+            "existing guardrail.\n"
+            "\n"
+            "C4 fails: the target already carries an equivalent clause."
+        )
+        line = self._reject_line(
+            _StubVerify(
+                passed=False,
+                status="ok",
+                axes={"C1": True, "C3": False, "C4": False},
+                rationale=rationale,
+            )
+        )
+        self.assertEqual(len(line.splitlines()), 1)
+        for sentence in (
+            "C3 fails: the patch adds a rule that contradicts an existing guardrail.",
+            "C4 fails: the target already carries an equivalent clause.",
+        ):
+            self.assertIn(sentence, line)
+        # Field order stays scannable for a human reading the update log.
+        self.assertLess(line.index("status="), line.index("failed_axes=["))
+        self.assertLess(line.index("failed_axes=["), line.index("rationale="))
+
+    def test_reject_line_flattens_status_and_axis_keys_too(self) -> None:
+        # status and the C[1-4] axis keys are code-authored today, but they reach
+        # this line off a duck-typed result via getattr — the closed-set guarantee
+        # lives in daemon_cycle's parser, not at this boundary. Pinned so a future
+        # verify_fn cannot reopen the window through a neighbouring field.
+        line = self._reject_line(
+            _StubVerify(
+                passed=False,
+                status="ok\nforged via status",
+                axes={"C3\nforged via axis key": False},
+                rationale="short",
+            )
+        )
+        self.assertEqual(len(line.splitlines()), 1)
+        self.assertIn("forged via status", line)
+        self.assertIn("forged via axis key", line)
+
+    def test_flatten_log_field_covers_every_python_whitespace_terminator(self) -> None:
+        # Unit-level pin for the shared sanitizer. It is defined in daemon_cycle
+        # (beside redact_secrets, its peer boundary scrubber) and tested here,
+        # beside the consumer whose forging window motivated it.
+        flatten = em.dc.flatten_log_field
+        for terminator in ("\n", "\r", "\r\n", "\v", "\f", "\u2028", "\u2029", "\u0085"):
+            with self.subTest(terminator=repr(terminator)):
+                out = flatten(f"a{terminator}b")
+                self.assertEqual(out, "a b")
+        self.assertEqual(flatten("  a \n\n  b  "), "a b")
+        self.assertEqual(flatten(""), "")
+        self.assertEqual(flatten(None), "")
+        self.assertEqual(flatten("", default="(none)"), "(none)")
+        self.assertEqual(flatten("   \n  ", default="(none)"), "(none)")
+        # Non-whitespace content is never altered or truncated.
+        self.assertEqual(flatten("keeps — em dash, [brackets] and status=x"),
+                         "keeps — em dash, [brackets] and status=x")
+
     def test_keep_local_makes_no_llm_call(self) -> None:
         base = _doc(top="# A", region="keep", bottom="z")
         local = _doc(top="# A", region="keep EDITED", bottom="z")
