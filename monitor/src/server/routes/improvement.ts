@@ -31,6 +31,8 @@ import type {
   CorrectionSignalRow,
   ImprovementConfidenceDistribution,
   ImprovementConfidenceTierBucket,
+  ImprovementCorpusAuditRow,
+  ImprovementCorpusAuditsResponse,
   ImprovementCorrectionSignalsResponse,
   ImprovementCtmEpmBuckets,
   ImprovementErrorBody,
@@ -343,6 +345,32 @@ interface LoopEventAggDbRow {
   latest_event_ts: Date | null;
 }
 
+// cycle_date / latest_cycle_date arrive pre-rendered as text: a DATE carries no
+// timezone, so letting the driver hand back a local-midnight Date would shift the
+// day across the UTC boundary on any non-UTC host.
+interface CorpusAuditDbRow {
+  id: bigint;
+  cycle_date: string;
+  word_count: number;
+  token_estimate: number;
+  file_count: number;
+  seeded_threshold: number;
+  gate_pass_count: number;
+  gate_trip_count: number;
+  gate_total_count: number;
+  trend_delta: number | null;
+  trend_alert: boolean;
+  absolute_alert: boolean;
+  compliance_rate: number | null;
+  override_rate: number | null;
+  indexed_at: Date;
+}
+
+interface CorpusAuditAggDbRow {
+  total: bigint;
+  latest_cycle_date: string | null;
+}
+
 export async function registerImprovementRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/improvement", handleImprovement);
   app.get("/api/improvement/stats", handleImprovementStats);
@@ -350,6 +378,7 @@ export async function registerImprovementRoutes(app: FastifyInstance): Promise<v
   // autoagent_loop_events) populated by hooks/daemons.
   app.get("/api/improvement/learning-log", handleLearningLog);
   app.get("/api/improvement/loop-events", handleLoopEvents);
+  app.get("/api/improvement/corpus-audits", handleCorpusAudits);
   app.get("/api/improvement/correction-signals", handleCorrectionSignals);
   // Interactive approval writers. approve shells to daemon-apply.sh (high-impact; an
   // unwanted apply is recoverable via the agents-bak before-image restore below). reject
@@ -1129,6 +1158,67 @@ async function handleLoopEvents(
     return payload;
   } catch (error) {
     return failWithDb(request, reply, "/api/improvement/loop-events", error);
+  }
+}
+
+// GET /api/improvement/corpus-audits
+
+// Surfaces core.autoagent_corpus_audits — the per-cycle corpus-growth series.
+// Recent readings (cycle_date DESC) + table-wide count + newest cycle_date. No
+// registry gate: the table has no agent column, each row measures the corpus whole.
+async function handleCorpusAudits(
+  request: FastifyRequest<{ Querystring: OrphanQuerystring }>,
+  reply: FastifyReply,
+): Promise<ImprovementCorpusAuditsResponse | ImprovementErrorBody> {
+  const start = Date.now();
+
+  const limit = parseOrphanLimit(request.query.limit);
+  if (limit === null) {
+    return reply.code(400).send(invalidParam("limit"));
+  }
+
+  const prisma = getPrisma();
+  try {
+    const [aggRows, auditRows] = await Promise.all([
+      prisma.$queryRaw<CorpusAuditAggDbRow[]>`
+        SELECT COUNT(*)::bigint AS total,
+               to_char(MAX(cycle_date), 'YYYY-MM-DD') AS latest_cycle_date
+        FROM core.autoagent_corpus_audits
+      `,
+      // compliance_rate / override_rate are REAL and stay nullable end to end —
+      // a null is insufficient data, never a measured zero.
+      prisma.$queryRaw<CorpusAuditDbRow[]>`
+        SELECT id,
+               to_char(cycle_date, 'YYYY-MM-DD') AS cycle_date,
+               word_count, token_estimate, file_count, seeded_threshold,
+               gate_pass_count, gate_trip_count, gate_total_count,
+               trend_delta, trend_alert, absolute_alert,
+               compliance_rate::float8 AS compliance_rate,
+               override_rate::float8 AS override_rate,
+               indexed_at
+        FROM core.autoagent_corpus_audits
+        ORDER BY cycle_date DESC
+        LIMIT ${limit}
+      `,
+    ]);
+
+    const aggRow = aggRows[0];
+    const audits = auditRows.map(rowToCorpusAudit);
+    const payload: ImprovementCorpusAuditsResponse = {
+      fetched_at: new Date().toISOString(),
+      total_audits: aggRow === undefined ? 0 : bigintToNumber(aggRow.total),
+      returned: audits.length,
+      latest_cycle_date: aggRow === undefined ? null : aggRow.latest_cycle_date,
+      audits,
+    };
+
+    request.log.info(
+      { route: "/api/improvement/corpus-audits", durationMs: Date.now() - start },
+      "improvement corpus-audits query complete",
+    );
+    return payload;
+  } catch (error) {
+    return failWithDb(request, reply, "/api/improvement/corpus-audits", error);
   }
 }
 
@@ -2235,6 +2325,26 @@ function rowToLoopEventSummary(row: LoopEventDbRow): ImprovementLoopEventRow {
     eval_result: row.eval_result,
     changes_added: row.changes_added,
     changes_removed: row.changes_removed,
+  };
+}
+
+function rowToCorpusAudit(row: CorpusAuditDbRow): ImprovementCorpusAuditRow {
+  return {
+    id: bigintToNumber(row.id),
+    cycle_date: row.cycle_date,
+    word_count: row.word_count,
+    token_estimate: row.token_estimate,
+    file_count: row.file_count,
+    seeded_threshold: row.seeded_threshold,
+    gate_pass_count: row.gate_pass_count,
+    gate_trip_count: row.gate_trip_count,
+    gate_total_count: row.gate_total_count,
+    trend_delta: row.trend_delta,
+    trend_alert: row.trend_alert,
+    absolute_alert: row.absolute_alert,
+    compliance_rate: row.compliance_rate,
+    override_rate: row.override_rate,
+    indexed_at: row.indexed_at.toISOString(),
   };
 }
 

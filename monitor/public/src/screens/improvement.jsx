@@ -25,6 +25,8 @@ const LOOP_EVENTS_URL = "/api/improvement/loop-events?limit=200";
 // correction_signals AGGREGATE — stage1-vs-stage2 검출 일치 + revision_count delta.
 // 집계 필드만 소비(list 는 미렌더) → 최소 limit.
 const CORRECTION_SIGNALS_URL = "/api/improvement/correction-signals?limit=1";
+// corpus-audits — cycle_date UPSERT 라 사이클당 1행. 최신 판독 + 스파크만 소비 → 60사이클 창.
+const CORPUS_AUDITS_URL = "/api/improvement/corpus-audits?limit=60";
 // verified = 적용/검증 성공(CTM 인접) · reject 계열 = 반려/실패(EPM 인접) → 추세 2-시리즈 분류.
 const TREND_REJECT_RESULTS = new Set([
 	"reject",
@@ -190,6 +192,12 @@ function ScreenImprovement({ onNav }) {
 		data: null,
 		error: null,
 	});
+	// corpus-audit fetch-state — 부분 실패 격리 (실패 시 성장 카드만 생략).
+	const [corpusAuditState, setCorpusAuditState] = useSI({
+		status: "loading",
+		data: null,
+		error: null,
+	});
 	const [drawerRow, setDrawerRow] = useSI(null);
 	const [toast, setToast] = useSI(null);
 	// 허용/거절 in-flight 카드 id (scalar — 카드 액션은 직렬 1건 · Set 불필요).
@@ -203,6 +211,7 @@ function ScreenImprovement({ onNav }) {
 	const reviewReasonAbortRef = useRI(null);
 	const loopEventsAbortRef = useRI(null);
 	const correctionAbortRef = useRI(null);
+	const corpusAuditAbortRef = useRI(null);
 	const toastTimerRef = useRI(null);
 
 	const triggerRefresh = useCI(() => setRefreshTick((t) => t + 1), []);
@@ -399,6 +408,18 @@ function ScreenImprovement({ onNav }) {
 		setCorrectionState({ status: "loading", data: null, error: null });
 
 		fetchOrphanI(CORRECTION_SIGNALS_URL, ctrl.signal, setCorrectionState);
+
+		return () => ctrl.abort();
+	}, [refreshTick]);
+
+	// corpus-audits fetch — orphan helper 재사용 (미배포 테이블/5xx → error state · 카드 숨김).
+	useEI(() => {
+		const ctrl = new AbortController();
+		corpusAuditAbortRef.current?.abort();
+		corpusAuditAbortRef.current = ctrl;
+		setCorpusAuditState({ status: "loading", data: null, error: null });
+
+		fetchOrphanI(CORPUS_AUDITS_URL, ctrl.signal, setCorpusAuditState);
 
 		return () => ctrl.abort();
 	}, [refreshTick]);
@@ -624,6 +645,7 @@ function ScreenImprovement({ onNav }) {
 					onRetry={triggerRefresh}
 				/>
 				<TrendCardI state={loopEventsState} aggregate={loopAggregate} />
+				<CorpusGrowthCardI state={corpusAuditState} />
 				<CorrectionSignalsCardI state={correctionState} />
 				<StyleRefCardI state={listState} styleRef={styleRef} />
 				<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
@@ -3270,6 +3292,131 @@ function TrendSparkI({ verified, reject }) {
 				vectorEffect="non-scaling-stroke"
 			/>
 		</svg>
+	);
+}
+
+// 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
+// null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
+function CorpusGrowthCardI({ state }) {
+	const { CardHead, Sparkline } = window.UI;
+	const title = "Corpus growth (per-cycle audit)";
+
+	if (state.status === "error") return null;
+	if (state.status === "loading" || !state.data) {
+		return (
+			<div className="card">
+				<CardHead title={title} />
+				<div className="p-3">
+					<div
+						className="i-anim-skel"
+						style={{
+							height: 60,
+							borderRadius: 8,
+							background: "rgb(var(--sunken))",
+							opacity: 0.7,
+						}}
+					/>
+				</div>
+			</div>
+		);
+	}
+
+	const rows = Array.isArray(state.data.audits) ? state.data.audits : [];
+	const latest = rows[0];
+	if (!latest) {
+		return (
+			<div className="card" data-testid="corpus-growth-card">
+				<CardHead title={title} />
+				<div className="px-3 pb-3">
+					<div className="placeholder">
+						No corpus readings yet — appears once a daemon cycle writes one.
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	// 응답은 cycle_date DESC → 스파크는 시간순으로 뒤집는다.
+	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
+	const delta = latest.trend_delta;
+	const hasDelta = typeof delta === "number";
+	// 색 단독 인코딩 금지 — ▲/▼/= 기호가 1차 신호, tone 은 보조.
+	const deltaSymbol = !hasDelta ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
+	const deltaTone =
+		!hasDelta || delta === 0
+			? "text-faint"
+			: delta > 0
+				? "text-warn"
+				: "text-ok";
+	const deltaLabel = hasDelta
+		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
+		: "no baseline yet";
+	const compliance = formatRateI(latest.compliance_rate);
+	const override = formatRateI(latest.override_rate);
+	const alerts = [
+		latest.trend_alert ? "trend" : null,
+		latest.absolute_alert ? "absolute" : null,
+	].filter(Boolean);
+
+	return (
+		<div className="card" data-testid="corpus-growth-card">
+			<CardHead
+				title={title}
+				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} readings · latest ${latest.cycle_date}`}
+			/>
+			<div className="px-3 pb-3 space-y-2">
+				<div className="flex items-center gap-3 flex-wrap">
+					<span className="fs-display font-mono text-ink">
+						{formatIntI(Number(latest.word_count ?? 0))}
+					</span>
+					<span className="fs-meta text-faint">words</span>
+					<span className={`fs-meta font-mono ${deltaTone}`}>
+						{deltaSymbol} {deltaLabel}
+					</span>
+					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
+					{wordSeries.length > 1 && (
+						<span className="ml-auto" aria-hidden="true">
+							<Sparkline
+								data={wordSeries}
+								w={90}
+								h={26}
+								color="rgb(var(--accent))"
+							/>
+						</span>
+					)}
+				</div>
+				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
+					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
+					<span>
+						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
+					</span>
+					{alerts.length > 0 && (
+						<span className="text-warn">⚠ {alerts.join(" + ")} alert</span>
+					)}
+				</div>
+				<div className="flex items-center gap-4 fs-micro font-mono text-faint flex-wrap">
+					<span>
+						gate{" "}
+						<span className="text-ok">
+							{formatIntI(Number(latest.gate_pass_count ?? 0))}
+						</span>{" "}
+						pass ·{" "}
+						<span className="text-warn">
+							{formatIntI(Number(latest.gate_trip_count ?? 0))}
+						</span>{" "}
+						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
+					</span>
+					<span>compliance {compliance}</span>
+					<span>override {override}</span>
+				</div>
+				{(latest.compliance_rate === null || latest.override_rate === null) && (
+					<div className="card-sub fs-micro">
+						— = insufficient data, never a measured zero.
+					</div>
+				)}
+			</div>
+		</div>
 	);
 }
 
