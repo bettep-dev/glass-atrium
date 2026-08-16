@@ -1266,6 +1266,48 @@ if _cc_files and _cc_metric == 'true' and _cc_result in ('done', 'done_with_conc
     _write_scan, _write_paths = _compute_write_crosscheck(d)
 else:
     _write_scan, _write_paths = '', []
+# Record-0 pinned `[SCOPE]` declaration — the parent-authored delegation prompt. Pinned to the
+# FIRST transcript record on purpose: a whole-transcript scan would let the child emit a wider
+# declaration of its own and nullify a check whose whole value is sitting outside its control.
+# Two or more declarations inside record 0 → the first wins (deterministic, never merged).
+# Extraction only: the comparison itself stays on the bash side against the shared lib predicate.
+# Fail-open on every anomaly — an empty value skips the comparison entirely.
+def _read_scope_decl(payload_d):
+    import os as _os
+    import json as _json
+    tpath = _resolve_subagent_transcript(payload_d)
+    if not tpath or not _os.path.isfile(tpath):
+        return ''
+    try:
+        with open(tpath, 'r', encoding='utf-8', errors='replace') as _fh:
+            first_line = _fh.readline()
+        record = _json.loads(first_line)
+    except (OSError, IOError, ValueError):
+        return ''
+    if not isinstance(record, dict):
+        return ''
+    content = (record.get('message') or {}).get('content', '')
+    if isinstance(content, list):
+        content = '\n'.join(
+            part.get('text', '') for part in content if isinstance(part, dict)
+        )
+    if not isinstance(content, str):
+        return ''
+    for line in content.splitlines():
+        if '[SCOPE]' in line:
+            return line.strip()
+    return ''
+
+# Gated for the SAME reason the sibling scan above is: this is a SECOND open of the same transcript,
+# and the single-open perf invariant (track-outcome-transcript-parse-once) holds only if it is
+# skipped where the comparison has nothing to compare. The bash leg's candidate set is the write
+# history (gated above, so non-empty only when files: is) plus, on a code task_type, the files:
+# field — and a synthesized row takes its files: from synth_files. Neither present ⇒ no candidate
+# can exist ⇒ reading the declaration would buy one transcript open and no signal.
+if _cc_files or synth_files:
+    out('scope_decl', _read_scope_decl(d))
+else:
+    out('scope_decl', '')
 out('grader_write_scan', _write_scan)
 for _wp in _write_paths:
     out('grader_write_path', _wp)
@@ -1359,6 +1401,9 @@ case "${GRADER_WRITE_SCAN}" in
   *) GRADER_WRITE_SCAN="" ;;
 esac
 GRADER_WRITE_PATHS=$(printf '%s\n' "$PARSED" | sed -n 's/^@@grader_write_path@@//p')
+# Same write history, snapshotted for the scope-excess leg further down: the grader block unsets
+# the exported original once it has run, so reading it there would be an unbound-variable abort.
+SCOPE_WRITE_PATHS="${GRADER_WRITE_PATHS}"
 # confidence_observed: daemon-computed posterior float 0.0-1.0. Passive recognition only —
 # valid → keep · invalid → warn+skip (no block) · absent → no-op.
 CONFIDENCE_OBSERVED=$(extract_field c_confidence_observed)
@@ -2408,6 +2453,55 @@ if [[ "${AGENT_PROVIDED_CORRECTION}" -eq 1 ]] && [[ "${T9_DETECTOR_VERDICT:-}" =
   review_flag_add_reason "correction-disagreement"
   printf '[outcome-record] correction-disagreement: agent-emitted correction not corroborated by the transcript detector, agent=%s\n' \
     "${AGENT_TYPE}" >&2
+fi
+
+# scope-excess — authored paths outside the delegation's record-0 `[SCOPE] files=` declaration.
+# MECHANICAL computation, ADVISORY result: it raises review_flag and touches no writer field.
+# Detects Write/Edit-AUTHORED excess only — a Bash-authored write (sed -i, redirection, git mv, a
+# generator script) and the sanctioned updater seam are invisible to the collector, so this
+# under-detects by construction. Never describe it as detecting scope excess in general.
+# Second blind spot, same direction: the write history is only collected for a row with a non-empty
+# files: field, metric_pass=true and result done|done_with_concerns — an excess row outside that
+# shape is compared on files: alone.
+# A delegation with no declaration skips the comparison entirely (fail-open, older delegations).
+SCOPE_DECL=$(extract_field scope_decl)
+SCOPE_EXCESS_FOUND=0
+if [[ -n "${SCOPE_DECL}" ]]; then
+  # shellcheck source=lib/scope-match.sh
+  source "${BASH_SOURCE%/*}/lib/scope-match.sh"
+  # shellcheck source=lib/code-based-grader.sh
+  #   Sourced for _cbg_path_is_tool_artifact — the single artifact-shape SoT, never a second copy.
+  source "${BASH_SOURCE%/*}/lib/code-based-grader.sh"
+  SCOPE_ALLOWED="$(scope_decl_files "${SCOPE_DECL}")"
+
+  # The files: leg runs on code task_types only: a review/plan/doc row routinely lists the paths it
+  # READ, which are not authored excess. Non-code rows are compared on the write history alone.
+  SCOPE_CANDIDATES="${SCOPE_WRITE_PATHS}"
+  # shellcheck disable=SC2310
+  #   Predicate call in an if-condition — the exit status IS the answer.
+  if scope_task_type_is_code "${TASK_TYPE}"; then
+    SCOPE_CANDIDATES="${SCOPE_CANDIDATES}
+$(printf '%s' "${FILES}" | tr ',' '\n')"
+  fi
+
+  if [[ -n "${SCOPE_ALLOWED}" ]]; then
+    while IFS= read -r _scope_path; do
+      _scope_path="$(printf '%s' "${_scope_path}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      [[ -n "${_scope_path}" ]] || continue
+      # shellcheck disable=SC2310
+      #   Four exemption predicates, each called for its exit status.
+      match_file_against_allowed "${_scope_path}" "${SCOPE_ALLOWED}" && continue
+      _cbg_path_is_tool_artifact "${_scope_path}" && continue
+      scope_path_is_test_sibling "${_scope_path}" "${SCOPE_ALLOWED}" && continue
+      scope_concerns_exempts_path "${_scope_path}" "${CONCERNS}" && continue
+      SCOPE_EXCESS_FOUND=1
+      break
+    done <<<"${SCOPE_CANDIDATES}"
+  fi
+fi
+if [[ "${SCOPE_EXCESS_FOUND}" -eq 1 ]]; then
+  REVIEW_FLAG="true"
+  review_flag_add_reason "scope-excess"
 fi
 
 # DOWNGRADE_ORIGIN provenance — recorded alongside grader_verdict (NOT a metric_pass mutation).

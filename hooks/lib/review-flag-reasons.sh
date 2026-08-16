@@ -18,7 +18,7 @@ readonly _REVIEW_FLAG_REASONS_LOADED=1
 # from the shell setters, the bats pins and the monitor consistency assertion alike.
 # shellcheck disable=SC2034
 #   REVIEW_FLAG_REASON_TOKENS is read by the source-er — an intended export of this file.
-readonly REVIEW_FLAG_REASON_TOKENS='overconfidence underconfidence empty-metric degraded-attribution-derived degraded-attribution-synthesized grader-contradiction correction-gap correction-disagreement non-registry-agent-at-write probe-omission unregistered-agent-probe-exempt'
+readonly REVIEW_FLAG_REASON_TOKENS='overconfidence underconfidence empty-metric degraded-attribution-derived degraded-attribution-synthesized grader-contradiction correction-gap correction-disagreement non-registry-agent-at-write probe-omission unregistered-agent-probe-exempt scope-excess'
 
 # The attribution channels a WRITER emitted a complete [COMPLETION] block on — the ONLY rows a
 # writer-side omission may be held against. Space-padded, one declaration for every consumer.

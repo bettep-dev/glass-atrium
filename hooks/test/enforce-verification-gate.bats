@@ -11,6 +11,11 @@
 #     3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — DEV spawn with NEITHER a
 #        plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The token is
 #        the escape hatch.
+#     4) scope-miss ADVISORY (stderr, exit 0) — an orchestrator-origin DEV spawn carrying no [SCOPE]
+#        declaration, emitted on the PASS paths. Owned by enforce-verification-gate-scope.bats; here
+#        it only means that a case asserting EMPTY output must declare a [SCOPE] line, exactly as the
+#        [PLAN-SUBSET] nudge made those cases carry a [PLAN-SUBSET] token. "A pass is silent" is the
+#        contract those cases hold — silence for a spawn that is compliant on EVERY surface.
 #   Non-DEV / plan-bearing / token-bearing spawns exit 0 (zero false-block for the entry-miss branch).
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
 #
@@ -36,6 +41,9 @@ setup() {
   mkdir -p "${DATA_DIR}/session-spawns"
   # Block firing-trace sink, isolated per test via the hook's own VGATE_FIRED_LOG override.
   SINK="${BATS_TEST_TMPDIR}/verification-gate-fired.log"
+  # Surface 4 is an advisory on the PASS paths (see header), so every prompt whose case asserts an
+  # EMPTY output carries this declaration. Canonical ` · ` grammar — a fixture is read as an example.
+  SCOPE_DECL="[SCOPE] files=hooks/a.sh · deliverable=fix · out=none"
 }
 
 # The ONE Agent-envelope builder. $1=subagent_type $2=prompt; $3=agent_id and $4=hook_event_name
@@ -271,7 +279,7 @@ mint_bad_sink() {
 
 @test "dev spawn with plan-ref (SIZE-EST present) AND reviewer present → silent, exit 0, no output" {
   seed_reviewer
-  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
+  run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }
@@ -279,7 +287,7 @@ mint_bad_sink() {
 # (c) ALLOW: dev-* spawn with [ENTRY-CLASS] simple-task token → exit 0 (escape hatch)
 
 @test "dev spawn with [ENTRY-CLASS] simple-task token (SIZE-EST present) → silent, exit 0, no output" {
-  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo (sizable-floor: none) [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }
@@ -318,7 +326,7 @@ mint_bad_sink() {
 }
 
 @test "orchestrator DEV with [SIZE-EST] token + simple-task token → size gate satisfied, exit 0" {
-  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial"
+  run_hook "glass-atrium-dev-shell" "fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }
@@ -394,7 +402,7 @@ mint_bad_sink() {
 @test "DF-5: PostToolUse-stamped reviewer → later PreToolUse DEV plan-ref spawn passes silently" {
   run_hook_event "PostToolUse" "glass-atrium-qa-code-reviewer" "review plan clauded-docs/5555"
   assert_status 0
-  run_hook_event "PreToolUse" "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a"
+  run_hook_event "PreToolUse" "glass-atrium-dev-python" "implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a ${SCOPE_DECL}"
   assert_status 0
   assert_empty
 }
@@ -445,9 +453,9 @@ mint_bad_sink() {
 @test "D06 negative: a spawn the gate passes appends NOTHING to the sink" {
   # Each row is a different reason the gate passes; column 3 seeds a reviewer first when set.
   local -a table=(
-    'glass-atrium-dev-shell|fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial|'
+    "glass-atrium-dev-shell|fix a typo [ENTRY-CLASS] simple-task: single-char typo [SIZE-EST] bundles=1 tool_uses~=3 — trivial ${SCOPE_DECL}|"
     'glass-atrium-intel-planner|draft a plan for the auth refactor|'
-    'glass-atrium-dev-python|implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a|seed-reviewer'
+    "glass-atrium-dev-python|implement per plan clauded-docs/9999 [SIZE-EST] bundles=1 tool_uses~=15 — impl [PLAN-SUBSET] included=T1 landed=none excluded=none order=n/a ${SCOPE_DECL}|seed-reviewer"
   )
   local row stype prompt seed
   for row in "${table[@]}"; do
