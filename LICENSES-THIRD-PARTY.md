@@ -25,7 +25,7 @@ artifact and this verdict must be re-evaluated.
 - **Manifests audited**: `monitor/package.json` (versions pinned by the tracked
   `monitor/package-lock.json`), `autoagent/package.json` (lockfile untracked — versions
   read from the installed tree), and Python third-party imports enumerated across all
-  115 tracked `*.py` files plus the tracked root `requirements.txt` and the CI-only
+  117 tracked `*.py` files plus the tracked root `requirements.txt` and the CI-only
   `requirements-dev.txt` (no `pyproject.toml` exists in the repo).
 - **License sources**: installed `node_modules/*/package.json` `license` fields; bundled
   LICENSE texts where the field is absent; npm registry metadata (`npm view`) for unmet
@@ -123,20 +123,23 @@ Import sites (tracked files):
   `hooks/cost-summary.py`, `hooks/learning-aggregator.py`,
   `scripts/_pg_archive_rotate.py`,
   `scripts/_pg_dual_write_daemon.py`, `scripts/agent_lifecycle/db_utils.py`,
-  `scripts/autoagent-status-backfill.py` — plus 9 test files: 7 under
+  `scripts/autoagent-status-backfill.py` — plus 8 test files: 7 under
   `autoagent/test/` (`test_all_reject_alert_e2e.py`,
   `test_corpus_audit_pg_sink.py`, `test_negative_signal_triggers.py`,
   `test_observation_count_decouple.py`, `test_pattern_lifecycle_gates.py`,
-  `test_pg_pattern_intake.py`, `test_poisoned_window_exclusion.py`),
-  `scripts/test/test_pg_dual_write_compose_apply_status.py`, and
+  `test_pg_pattern_intake.py`, `test_poisoned_window_exclusion.py`), and
   `hooks/test/test_learning_pattern_discharge.py`, which imports the real
-  driver when installed and falls back to a stub when it is absent
+  driver when installed and falls back to a stub when it is absent.
+  `scripts/test/test_pg_dual_write_compose_apply_status.py` is deliberately NOT
+  a site, though its name suggests otherwise: it writes its own `psycopg`
+  stand-in package into a tmp dir and injects it via `PYTHONPATH`, so the real
+  driver is never imported (recorded here so a later recount does not re-add it)
 - `psycopg2` — 1 production file: `hooks/_pg-write.py`
 - `yaml` (PyYAML) — 1 production file: `hooks/learning-aggregator.py`
 - autoagent production Python (`daemon_cycle.py`, `lib/confidence.py`,
   `lib/project_key.py`) is **stdlib-only**.
 
-All other imports across the 115 tracked `*.py` files are Python standard library or
+All other imports across the 117 tracked `*.py` files are Python standard library or
 repo-local modules — with two exceptions, both outside the distributed runtime surface.
 The first is **test-only**: `pytest` (MIT), imported by the `scripts/test` pytest suites
 and pinned in the CI-only `requirements-dev.txt`, which the end-user bootstrap never
