@@ -1196,7 +1196,7 @@
     "monitor/src/server/routes/improvement.ts": "e81f9d547e509fc60a27d6cdf29d588c74054033c17921486a6715e535ef850d",
     "monitor/src/server/routes/index.ts": "61b07c7a25603a69c49ec6dc8100377058eabd307048b4ac8cd8ef2b6261fcc0",
     "monitor/src/server/routes/model-config.ts": "87642dbf800fe809cdeb7b664e279bf85bb6b04badd5c1f9e84198a3b6d7d7e3",
-    "monitor/src/server/routes/outcomes.ts": "204c484499e9d313cb4146a1bdc3db6d531a1b53ece4d53f86e9e80edaf209ba",
+    "monitor/src/server/routes/outcomes.ts": "f7b253eb66663cfd3feb32e552d459d3b571386ee8788d6b6d4cfaebd0e8df49",
     "monitor/src/server/routes/telemetry.ts": "dc44bfae1d5b6a5e2ae538ed8a39d2ea79233757b05f0546eef34b47c871b77a",
     "monitor/src/server/routes/wiki.ts": "0d598e6e4ae06c0f17bb9dbbd83219fd272c2bab56b0c25375d841c4cc10fbdb",
     "monitor/src/server/schedule-next-fire.ts": "e34b4efc9134113cf27b657094e721221acf0a7f4962ede7055bd531f23dfc16",

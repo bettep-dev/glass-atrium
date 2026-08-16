@@ -26,9 +26,12 @@
 // Membership and absence only, both keyed on seeded channel names, so the live
 // channels sharing the window neither satisfy nor break an assertion.
 //
-// Seeds use attribution_source values with ZERO rows in the live table
-// (verified against core.outcomes), so a real recording cannot perturb a verdict.
-// DB: real Postgres — cleanup is by cid LIKE.
+// Seed isolation is a LOCK, not a naming choice: attribution_source is a closed CHECK
+// vocabulary and the route aggregates the whole table by it, so every channel name this
+// suite can legally seed is also seeded by outcomes.attribution-daily — whose canonical
+// batch lands rows a few hours old, which is exactly a fresh row on the channel (a)
+// needs to be silent. Both suites hold test/lib/outcomes-write-mutex for their whole
+// run, so they never overlap. DB: real Postgres — cleanup is by cid LIKE.
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
@@ -41,6 +44,7 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { acquireOutcomesWriteLock, releaseOutcomesWriteLock } from "./lib/outcomes-write-mutex.js";
 import { registerOutcomesRoutes } from "../src/server/routes/outcomes.js";
 import type { ChannelLivenessResponse } from "../src/server/types/outcomes.js";
 
@@ -83,6 +87,7 @@ const LIVE_CHANNEL_FRESH_MINUTES = 1;
 let app: FastifyInstance;
 
 before(async () => {
+  await acquireOutcomesWriteLock();
   app = Fastify({ logger: false });
   await registerOutcomesRoutes(app);
   await app.ready();
@@ -103,6 +108,7 @@ after(async () => {
   } catch (error) {
     console.error("[channel-liveness cleanup] DB scrub failed:", error);
   }
+  await releaseOutcomesWriteLock();
   await disconnectPrisma();
 });
 
