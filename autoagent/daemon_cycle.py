@@ -793,13 +793,46 @@ _AGENT_SCOPE_MAP: dict[str, str] = {
 }
 
 
+# Named signal for an unresolvable C3 scope file, carried on BOTH the stderr
+# channel and the prompt body. A neutral "(file not available)" excerpt reads to
+# the verifier as an axis it inspected and cleared, so the miss needs a name the
+# log side and the verifier can each key on (Precondition Loud-Fail).
+SCOPE_UNRESOLVED_SIGNAL = "SCOPE-FILE-UNRESOLVED"
+
+
+def _get_scoped_dir() -> Path:
+    """Resolve the live scope-*.md store (``<base>/scoped``).
+
+    Distinct from DEFAULT_RULES_DIR, which carries the core-* and orchestrator
+    rules only — no scope-*.md is reachable there.
+    """
+    return ga_paths.get_base_root() / "scoped"
+
+
 def _scope_file_for_agent(agent: str) -> Path | None:
-    """Return the scope-*.md path for the target agent, or None if unknown."""
+    """Return the scope-*.md path for the target agent, or None if unresolved.
+
+    Both miss kinds — agent absent from the map, and mapped file absent from
+    disk — are loud, because a blind C3 axis is indistinguishable from a
+    verified one at every downstream surface.
+    """
     relative = _AGENT_SCOPE_MAP.get(agent)
     if not relative:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {SCOPE_UNRESOLVED_SIGNAL} — agent {agent!r} has no "
+            "agent→scope map entry; C3 has no scope file to judge against\n"
+        )
         return None
-    candidate = DEFAULT_RULES_DIR / relative
-    return candidate if candidate.exists() else None
+
+    scoped_dir = _get_scoped_dir()
+    candidate = scoped_dir / relative
+    if not candidate.exists():
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {SCOPE_UNRESOLVED_SIGNAL} — {relative} absent from "
+            f"{scoped_dir} (agent {agent!r}); C3 has no scope file to judge against\n"
+        )
+        return None
+    return candidate
 
 
 # -- Promotion ladder config ------------------------------------------------
@@ -5585,7 +5618,18 @@ def _build_pre_verify_prompt(
     """
     target_path = Path(patch.target_file)
     scope_path = _scope_file_for_agent(pattern.agent)
-    scope_file_name = scope_path.name if scope_path else "scope-(unknown).md"
+    if scope_path is None:
+        # Directing the verdict is the point: told only that the excerpt is
+        # missing, a verifier reports "no violation found" and PASSes an axis it
+        # never read.
+        scope_file_name = f"{SCOPE_UNRESOLVED_SIGNAL} ({pattern.agent})"
+        scope_excerpt = (
+            f"{SCOPE_UNRESOLVED_SIGNAL}: no scope file resolved for {pattern.agent}. "
+            "C3 cannot be judged from this prompt — answer C3: FAIL."
+        )
+    else:
+        scope_file_name = scope_path.name
+        scope_excerpt = _read_truncated(scope_path, RULE_EXCERPT_CHAR_CAP)
 
     return _PRE_VERIFY_PROMPT_TEMPLATE.format(
         target_agent=pattern.agent,
@@ -5596,7 +5640,7 @@ def _build_pre_verify_prompt(
         compliance_matrix_excerpt=_read_truncated(COMPLIANCE_MATRIX_FILE, RULE_EXCERPT_CHAR_CAP),
         global_rules_excerpt=_read_truncated(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),
         scope_file_name=scope_file_name,
-        scope_excerpt=_read_truncated(scope_path, RULE_EXCERPT_CHAR_CAP),
+        scope_excerpt=scope_excerpt,
         target_agent_excerpt=_read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP),
     )
 
