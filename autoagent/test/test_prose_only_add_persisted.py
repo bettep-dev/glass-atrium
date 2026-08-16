@@ -39,7 +39,7 @@ def _verdict(diff: str, target_file: str) -> bool | None:
     if not diff:
         return None
     return bool(
-        dc.classify_prose_only_add(diff, target_file=target_file, record=False)["warning"]
+        dc.classify_prose_only_add(diff, target_file=target_file)["warning"]
     )
 
 
