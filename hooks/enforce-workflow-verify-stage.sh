@@ -1313,6 +1313,14 @@ SO_COMPLETION_FIELD = "completion_block"
 # Site match: the BARE WORD, not a colon test.
 # Rejected alternative → a colon test loses the object-shorthand form, which the authoring exemplar uses.
 # Documented FALSE NEGATIVE → a QUOTED key is blanked by the mask and never matches.
+# The same blind spot INVERTS for the schema-ABSENT consumer, whose value fires when NO site is found:
+# a JSON-style spawn — agent('x', { "schema": {...} }) — is a genuine site this test cannot see, so
+# that consumer emits a false POSITIVE on it. Worse, the analysis-size advisory gates on an UNMASKED
+# 'schema' substring rather than on this test, so the quoted-key shape co-emits the two lines at
+# opposite polarity in one run ("spawns a schema-mode agent" beside "declares NO schema-mode site").
+# Both are advisory, so the cost is contradictory stderr, never a wrong exit code. NOT tightened here:
+# a pre-mask quoted-key test would match the same text inside an ordinary prose string literal, trading
+# this contradiction for the false-BLOCK direction the mask exists to keep closed.
 SCHEMA_SITE_RE = re.compile(r"(?<![A-Za-z0-9_$])schema(?![A-Za-z0-9_$])")
 # Value exclusion, KEY POSITION ONLY: a value denoting ABSENCE disables schema mode → not a site.
 # Admitted by SHAPE rather than by the spellings in use today: the alternation is the CLOSED set of
@@ -1488,11 +1496,18 @@ def completion_schema_absent_advisory_needed(stripped, dev_present, dev_set):
     # is itself off the DEV roster — so admitting DEV scripts would fire on nearly every copy-verbatim
     # skeleton, which is a false-positive floor breach rather than a nudge.
     #
-    # ACCEPTED OVER-NUDGE (the whole residual, stated rather than tuned away): an analysis spawn whose
+    # ACCEPTED OVER-NUDGE, first of TWO residuals (this one is not the whole set — see the second
+    # below, which the earlier wording wrongly excluded): an analysis spawn whose
     # deliverable is GENUINELY prose has no schema to declare and fires anyway. Structuredness is not
     # statically decidable, so any suppression heuristic added here could only re-open the
     # false-NEGATIVE direction this value exists to cover. One ignorable stderr line is its full cost,
     # which is exactly why blocking this shape is a stated NON-GOAL.
+    #
+    # SECOND OVER-NUDGE — a STRUCTURED schema this value cannot see: a JSON-style spawn whose key is
+    # quoted — agent('x', { "schema": {...} }) — is masked away by the borrowed site half, so this line
+    # fires on a spawn that DOES carry a schema. Because the analysis-size advisory gates on an unmasked
+    # substring instead, the same script emits both lines at opposite polarity. Inherited from the site
+    # half and documented at SCHEMA_SITE_RE rather than patched here, for the reason recorded there.
     # VERDICT ISOLATION: a top-level function with its OWN terminal except -> False, for the reason
     # recorded at the sibling predicates.
     try:
