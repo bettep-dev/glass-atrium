@@ -68,12 +68,59 @@
 # Advisory-first is a ceiling, not a stage: a raw scan cannot separate a declaration from a mention of
 # one, so promotion needs accumulated false-positive data plus an explicit user decision.
 #
+# FIFTH ADVISORY PASS (completion channel, advisory — NEVER exit 2): flags a script declaring a
+# schema-mode spawn while the reserved completion-channel property is absent from that script.
+# WHY → a schema-mode StructuredOutput emit is engine-guaranteed while the text channel is
+# honor-system, and measured non-emission on the text channel runs 16-25% depending on the window
+# (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms;
+# non-emission = the two synthesis arms). A schema omitting the reserved property therefore drops the
+# writer signal SILENTLY → the recorder falls to derived synthesis and no lesson is recorded.
+# PREDICATE (completion_block_advisory_needed, verdict-isolated with its own except -> False):
+#   site half  → comment-stripped + string-MASKED operand, bare-word match, key-position
+#                undefined/null value EXCLUDED, scanned SCRIPT-WIDE.
+#   token half → the UNMASKED comment-stripped text.
+#   Opposite operands on purpose: site detection is block-ENABLING (over-detection would false-block →
+#   precision), token detection is block-SUPPRESSING (over-detection merely fails open → recall).
+#   Script-wide rather than span-scoped: the mandated idiom routes schema-mode spawns through the
+#   resilience wrapper, so a span-scoped scan would see only the text-mode fallback line.
+# PRECEDENCE SPLIT (the chosen position, split on the DEV predicate — no single position serves both):
+#   non-DEV → decided immediately BEFORE the non-DEV early PASS, the only position reaching the
+#             non-DEV analysis fan-outs (docroute still pre-empts it).
+#   DEV     → folded into the TERMINAL emit, so every attestation gate keeps precedence and no
+#             message-asserting fixture moves. Consequence, stated rather than implied: a DEV script
+#             blocked earlier carries NO completion-channel tag — the block is the louder signal.
+# ADDENDUM-ALLOWLIST MEMBERSHIP (decided here, not deferred): EXCLUDED. This is an advisory VALUE on
+# the multiplexed flag line and never reaches block_and_exit's tag argument, so an entry would be
+# inert; a promotion to a block cause decides membership at that time.
+# KNOWN FALSE POSITIVES (named, not latent — each remediable by declaring the property inline): a
+# schema bound in ANOTHER module (invisible to the scan → site visible, token absent); a guard reading
+# the property off an options object; an assignment binding the word to undefined or null.
+# KNOWN FALSE NEGATIVE: a QUOTED schema key, blanked by the mask — fail-open, the safe direction.
+# WHERE THE CLAIM STOPS: this raises the floor from "channel structurally ABSENT" to "channel
+# structurally PRESENT" and no further. It does NOT reach whether the prompt instructs the fill
+# (unfilled → empty string → the same lost signal), whether a filled block parses, a second bare site
+# behind a compliant one, or a schema dropped ENTIRELY (that shape yields no site at all and is
+# deliberately out of blocking reach — forcing schema everywhere would trade the non-emit failure class
+# for the crash-on-non-emit class). Above that floor everything stays honor-system.
+#
+# MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
+# decision and the two later nudges that join it share ONE flag line carrying a value suffix
+# (COMPLETION_ADVISE:<value>), so the output-arity seam is paid ONCE and a later decision adds a value
+# plus a message case arm, never a line. The shell-side normalizer admits the suffix by SHAPE, never by
+# enumerating today's values: a value falling through an enumeration would collapse to SILENT, so its
+# advisory would stop printing AND stop being traced with no error anywhere — the identical trap
+# recorded for the schema-cap `:R<n>` suffix.
+#
 # PROMOTION CONDITION (verbatim — this header is the referenced SoT; the authoring guidance points here
 # rather than restating it):
 #   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
 #   positives across a full rolling firing-log window, the copy-verbatim skeletons in
 #   skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit
 #   remediation in the advisory text for each of the three scoped rules.
+#   Promotion of the completion-channel advisory to blocking requires, verbatim: zero adjudicated false
+#   positives across a full rolling firing-log window; every copy-verbatim declaration-bearing skeleton
+#   in skills/glass-atrium-ops-orchestrator.md passing unmodified; and the remediation round-trip green
+#   with a paired negative control.
 #
 # HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
 # enforcement. It verifies the declaration is PRESENT and CONSISTENT with the code's spawns; it does
@@ -118,8 +165,10 @@
 #
 # ADVISORY FIELD (presence-only, positioned after the original four fields — append-only, backward
 # compatible): `advisory=` records WHICH advisories
-# fired on that invocation and, for the schema-cap advisory, WHICH of its three scoped rules matched
-# (`advisory=schema-cap:R1`); several tags join with a comma; none fired → `advisory=none`. This exists so
+# fired on that invocation and, for the two suffixed advisories, WHICH value matched — the schema-cap
+# rule (`advisory=schema-cap:R1`) and the multiplexed completion-channel value
+# (`advisory=completion-channel:property-absent`); several tags join with a comma; none fired →
+# `advisory=none`. This exists so
 # the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
 # window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
 # window could be constructed. It records only that a firing happened, NEVER whether it was correct:
@@ -338,6 +387,23 @@ print_schema_cap_advisory() {
 # explicit user decision.
 print_scope_advisory() {
   printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
+  return 0
+}
+
+# print_completion_channel_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit
+# code). The DECISION fires inside the verdict helper (completion_block_advisory_needed) and arrives as
+# the COMPLETION_ADVISE:property-absent value on the multiplexed TENTH output line.
+# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input, and
+# this text is the one destined to become a block reason if the advisory is ever promoted.
+# Message content is fixed by the promotion condition rather than by taste → the one-edit remediation,
+# the published false-positive list and the honest scope boundary all ship from day one, because
+# building them at promotion time would block promotion on a message rewrite.
+print_completion_channel_advisory() {
+  cat <<'EOF' >&2
+[enforce-workflow-verify-stage] ADVISORY (completion channel, non-blocking): this workflow script carries a schema-mode site but never mentions the reserved completion-channel property, so a StructuredOutput payload has nowhere to carry the [COMPLETION] block. A schema-mode emit is engine-guaranteed while the text channel is honor-system — measured non-emission on the text channel runs 16-25% depending on the window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a schema omitting the property drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run records no lesson. ONE-EDIT FIX — add this property to the schema you already declare:
+  completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
+and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. KNOWN FALSE POSITIVES, published so a firing is adjudicable rather than mysterious: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); a guard reading the property off an options object, and an assignment binding the word to undefined or null, are both still read as sites because the value exclusion covers the key position only. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
+EOF
   return 0
 }
 
@@ -1243,6 +1309,16 @@ IMPL_SLOTS = 0
 SIZE_MAP_FLAG = "SIZE_MAP_SILENT"
 ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 
+# COMPLETION_FLAG — the MULTIPLEXED completion-channel advisory, printed as the TENTH output line.
+# Value-suffixed (COMPLETION_ADVISE:<value>) so the later per-site-gap and schema-absent nudges add a
+# VALUE rather than a line → the output-arity seam across emit() / the fail-open literal / the read
+# group is paid exactly once.
+# Default SILENT so a fail-open exit never fires a spurious nudge.
+COMPLETION_FLAG = "COMPLETION_SILENT"
+# The one value defined today. A later value is a new literal here plus a message case arm on the
+# shell side; the shell normalizer admits the suffix by SHAPE, so no seam edit follows.
+COMPLETION_PROPERTY_ABSENT = "COMPLETION_ADVISE:property-absent"
+
 
 def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
     # Implementation-slot count — a TOTAL function over BOTH dispatch branches, deliberately: the
@@ -1287,6 +1363,7 @@ def emit(verdict, entry_marker):
     print("IMPL_SLOTS=" + str(IMPL_SLOTS))
     print(SIZE_MAP_FLAG)
     print(ENTRY_CARD_FLAG)
+    print(COMPLETION_FLAG)
     sys.exit(0)
 
 
@@ -1308,6 +1385,12 @@ try:
     schema_cap_rule = get_schema_cap_rule(antigaming_src)
     if schema_cap_rule:
         SCHEMA_CAP_FLAG = "SCHEMA_CAP_ADVISE:" + schema_cap_rule
+
+    # Completion-channel decision — computed ONCE here.
+    # The ASSIGNMENT is deliberately SPLIT on the DEV predicate (PRECEDENCE SPLIT, this file header).
+    # Why no single position serves both halves → reaching a non-DEV analysis fan-out needs a position
+    # before the non-DEV early PASS, and that same position would pre-empt every DEV attestation gate.
+    completion_gap = completion_block_advisory_needed(antigaming_src)
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
 
@@ -1380,6 +1463,10 @@ try:
 
     # No DEV literal anywhere (Tier A) → simple workflow → Stage-2 exempt.
     if not dev_present:
+        # NON-DEV half of the split: the last position before the early PASS, so the analysis fan-outs
+        # this advisory exists for are reached at all. docroute above keeps precedence deliberately.
+        if completion_gap:
+            COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
         emit("PASS", entry_marker)
 
     # DEV workflow → a declaration is REQUIRED. Distinguish ABSENT (nodecl) from a MALFORMED /
@@ -1462,6 +1549,10 @@ try:
         # which is exactly what makes the slot definition total rather than branch-specific.
         IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
             declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
+        # DEV half of the split: folded into the terminal emit, so every attestation gate above keeps
+        # precedence and a DEV script blocked earlier carries no completion-channel tag.
+        if completion_gap:
+            COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
         emit(pass_or_size(), entry_marker)
 
     # IN-SCRIPT verify form. NOREV already guaranteed above.
@@ -1519,6 +1610,9 @@ try:
     # Terminal PASS point 2 — the in-script branch.
     IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
         declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
+    # DEV half of the split — same reason as terminal PASS point 1.
+    if completion_gap:
+        COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
     emit(pass_or_size(), entry_marker)
 except SystemExit:
     raise
@@ -1527,11 +1621,14 @@ except Exception:
 PY
   )"
 
-  # Run the helper. It prints FIVE lines: line 1 = verdict token, line 2 = entry marker
+  # Run the helper. It prints TEN lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
-  # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT). A non-zero exit OR unparseable output → fail-open (PASS +
-  # ENTRY_OK + all flags SILENT). The fallback literal below MUST gain a token in LOCKSTEP with emit()
+  # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT), line 6 = DEV flag, line 7 = IMPL_SLOTS=<n>, line 8 =
+  # size-map flag, line 9 = entry-cardinality flag, line 10 = the MULTIPLEXED completion-channel flag
+  # (COMPLETION_ADVISE[:<value>]|COMPLETION_SILENT).
+  # A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK + all flags SILENT).
+  # The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
   # stale literal is byte-identical in observable behaviour (pre-seeded defaults + swallowed EOF).
   # The inner `|| true` keeps a verdict-engine CRASH (python3 interpreter failure — its PRESENCE was
@@ -1544,10 +1641,10 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT'
   fi
 
-  # Parse the nine helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # Parse the ten helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
   # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
@@ -1557,6 +1654,7 @@ PY
   schema_cap_flag="SCHEMA_CAP_SILENT"
   local dev_flag_raw="DEV_NO" impl_slots_raw="IMPL_SLOTS=0"
   local size_map_flag="SIZE_MAP_SILENT" entry_card_flag="ENTRY_CARD_SILENT"
+  local completion_flag="COMPLETION_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
@@ -1567,6 +1665,7 @@ PY
     IFS= read -r impl_slots_raw
     IFS= read -r size_map_flag
     IFS= read -r entry_card_flag
+    IFS= read -r completion_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
@@ -1581,6 +1680,17 @@ PY
   # non-`R<digits>` suffix still collapses to SILENT.
   if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
     schema_cap_flag="SCHEMA_CAP_SILENT"
+  fi
+
+  # The multiplexed completion-channel flag carries its decision as a value suffix. Admitted by SHAPE —
+  # an identifier-shaped value — and NEVER by an enumeration of today's values: an enumeration would
+  # silently swallow a value added later, collapsing it to SILENT so its advisory stops printing AND
+  # stops being traced with no error anywhere, which is the exact trap the schema-cap suffix records.
+  # A bare COMPLETION_ADVISE stays admitted so a legacy/short helper output is not re-classified.
+  # The comma is deliberately OUT of the shape: the trace joins tags with commas, so a comma inside a
+  # value would destroy the tag boundary a reader splits on.
+  if [[ ! "${completion_flag}" =~ ^COMPLETION_ADVISE(:[A-Za-z0-9][A-Za-z0-9_-]*)?$ ]]; then
+    completion_flag="COMPLETION_SILENT"
   fi
 
   # INSTRUMENTATION FIELDS (never a verdict input) — normalize to the safe reading on any stray or
@@ -1619,6 +1729,24 @@ PY
     # Trace tag carries the matched rule when the helper supplied one (`SCHEMA_CAP_ADVISE:R1`); a bare
     # flag records as plain `schema-cap` rather than inventing a rule it never reported.
     add_advisory "schema-cap${schema_cap_flag#SCHEMA_CAP_ADVISE}"
+  fi
+
+  # COMPLETION-CHANNEL ADVISORY (fail-open, stderr-only) — the helper's isolated scan found a
+  # schema-mode site with the reserved completion-channel property absent; nudge here so it rides ANY
+  # verdict. Placed with the other advisory emitters, before the entry-miss block and the verdict case
+  # dispatch, so it can NEVER alter an exit code.
+  # MULTIPLEXED DISPATCH: the MESSAGE keys on the value, the TRACE TAG does not. A value added later is
+  # therefore recorded from the moment it exists, and only its message waits on a new case arm — which
+  # is what keeps the seam paid once.
+  case "${completion_flag}" in
+    COMPLETION_ADVISE:property-absent) print_completion_channel_advisory ;;
+    # SILENT, or a value whose message this build does not carry yet: print nothing. The trace below
+    # is value-agnostic, so such a value still records and loses no adjudication window.
+    *) ;;
+  esac
+  if [[ "${completion_flag}" == COMPLETION_ADVISE* ]]; then
+    # A bare flag records as plain `completion-channel` rather than inventing a value it never reported.
+    add_advisory "completion-channel${completion_flag#COMPLETION_ADVISE}"
   fi
 
   # CARDINALITY ADVISORIES (trace-only — no stderr nudge, deliberately). These record a measurement;

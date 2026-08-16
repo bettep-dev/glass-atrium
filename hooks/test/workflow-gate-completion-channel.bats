@@ -35,6 +35,20 @@ SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
+  TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  NUDGE_PHRASE='ADVISORY (completion channel, non-blocking)'
+  # A DEV workflow that clears every attestation gate and reaches the terminal emit.
+  DECL_TEAM="/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-nestjs
+[/AGENT-COMPOSITION] */
+log('plan-ref: clauded-docs/7440')
+log('[SCOPE] files=hooks/a.sh')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  SIZE_EST="log('[SIZE-EST] bundles=1 tool_uses~=10 — small.')"
+  SCHEMA_SITE="const S = { findings: 'string' };
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
   GATE_DEFS="${BATS_TEST_TMPDIR}/gate_defs.py"
   PROBE_PY="${BATS_TEST_TMPDIR}/probe.py"
   # Definitions only: cut at the module-level `try:` so importing runs no argv-reading dispatch.
@@ -58,6 +72,21 @@ PYX
 # no shell quoting can reshape a fixture.
 probe() {
   printf '%s' "${1}" | python3 "${PROBE_PY}" "${GATE_DEFS}" 2>&1
+}
+
+# Drive the hook as a command with a Workflow envelope wrapping $1, against a temp trace log so no
+# live-install state is read or written.
+run_hook_exec() {
+  run bash -c '
+    script="$1"; hook="$2"; trace="$3"
+    payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
+    printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+}
+
+# The advisory field of the LAST recorded trace line, or MISSING when absent.
+last_advisory() {
+  awk -F'\t' 'END { for (i = 1; i <= NF; i++) if (index($i, "advisory=") == 1) { print substr($i, 10); exit } print "MISSING" }' "${TRACE_LOG}"
 }
 
 # check EXPECTED LABEL SRC — non-zero on mismatch, with the observed value named.
@@ -208,6 +237,91 @@ print("silent" if mod.completion_block_advisory_needed("const r = agent({ schema
 PYX
   [[ "${status}" -eq 0 && "${output}" == "silent" ]] || {
     echo "isolation broken: status=${status} output=${output}" >&2
+    return 1
+  }
+}
+
+# ── the wiring: the multiplexed advisory line, its trace value, and the precedence split ────────────
+
+# SEAM PRESENCE PIN (source-structural). A black-box fixture cannot see a stale fail-open literal: the
+# reads are pre-seeded to their silent defaults and the read group swallows EOF, so a nine-token literal
+# and a ten-token one are byte-identical in observable behaviour. The DERIVED-EQUALITY arity assertion
+# lives in the sibling declaration-contract suite and re-derives on its own across a tenth line, so it
+# is deliberately not duplicated here — only the name-specific presence of the new token is owed.
+@test "completion-channel(seam): the fail-open fallback literal carries the silent token" {
+  local literal_line
+  literal_line="$(grep -F "helper_out=\$'PASS" "${HOOK_SH}")"
+  [[ "${literal_line}" == *"COMPLETION_SILENT"* ]] || {
+    echo "SEAM: fail-open fallback literal lacks COMPLETION_SILENT: ${literal_line}" >&2
+    return 1
+  }
+}
+
+@test "completion-channel(wiring): a site with the property absent nudges, exits 0, and traces its value" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "${SCHEMA_SITE}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "an advisory must never alter the exit code, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "no nudge -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" == *"completion-channel:property-absent"* ]] || {
+    echo "value not traced: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+@test "completion-channel(wiring): the declared property silences the nudge and the tag" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "const S = { completion_block: 'string' };
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
+    echo "nudged despite the declared property -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" != *"completion-channel"* ]] || {
+    echo "tagged despite the declared property: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+# PRECEDENCE SPLIT — a DEV script blocked BEFORE the terminal emit carries no tag (the block is the
+# louder signal), while one blocked AT the terminal emit carries it. The counterfactual is what proves
+# the advisory decides nothing: the same script with the property declared blocks identically.
+@test "completion-channel(precedence): a DEV script blocked before the terminal emit carries no tag" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "const s = { schema: {} };
+agent('glass-atrium-dev-shell', { goal: 'x' });"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"missing composition declaration"* ]] || return 1
+  [[ "$(last_advisory)" != *"completion-channel"* ]] || {
+    echo "pre-empted block still tagged: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+@test "completion-channel(precedence): a terminal-emit block keeps its exit with and without the nudge" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "${DECL_TEAM}
+${SCHEMA_SITE}"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"size-attestation miss"* ]] || return 1
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "the nudge must ride a terminal-emit block -- ${output}" >&2
+    return 1
+  }
+  # Counterfactual: property declared → same verdict, same exit, no nudge → the advisory decided nothing.
+  run_hook_exec "${DECL_TEAM}
+const S = { completion_block: 'string' };
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
+  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${output}" == *"size-attestation miss"* ]] || return 1
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
+    echo "nudged despite the declared property -- ${output}" >&2
     return 1
   }
 }
