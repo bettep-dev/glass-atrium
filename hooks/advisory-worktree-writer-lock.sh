@@ -28,6 +28,34 @@
 #   * ~5.6% of workflow agents / ~2.9% of manual agents never fire SubagentStop (measured on this
 #     machine's sidecar corpus joined to core.agent_events), so the TTL is the sole release path for
 #     that tail.
+#   * WHICH lock a path resolves to is decided TEXTUALLY. hook_normalize_path never touches the
+#     filesystem, so two spellings of one file take two independent verdicts: on this machine
+#     ~/.claude/agents/*.md are symlinks into ~/.glass-atrium/agents/, which HAS a .git while
+#     ~/.claude does not — a write through the symlink finds no repo and takes no lock at all, while
+#     the same file by its real path locks the agents repo (a genuine concurrent-write surface: the
+#     lifecycle CLI and the updater both write it). The same textual walk collapses every tree under
+#     a repo-rooted ancestor onto ONE lock, so on a machine whose $HOME is itself a git repo the
+#     whole home directory would contend as a single worktree (not the case here — measured: no
+#     ~/.git).
+#   * "orchestrator" is not one actor, it is every id-less caller folded together, and that cuts
+#     BOTH ways. The main session fires Stop, not SubagentStop, so it never releases its own lock —
+#     but ANY other actor's id-less SubagentStop matches the fold and releases it early. A lock main
+#     still needs can therefore vanish, after which a second writer enters silently and NO
+#     LOCK-ADV-001 fires though two writers are really present. That false negative is the accepted
+#     side of a deliberate trade (worktree-lock.sh, Collision note case 2): not folding would make
+#     every id-less lock unreleasable and warn every later writer for 6 h, and this hook's promotion
+#     gate is keyed on zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
+#
+# WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
+# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm and the advisory
+# measurement window its promotion gate depends on can accumulate. The release arm was already live
+# (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is written by
+# wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION START — so
+# the first data point comes from a fresh session after the next release lands, not from this commit.
+# MultiEdit is deliberately NOT in the matcher: it has zero registrations on the recorded host
+# (test/hook-matcher-shape-invariant.bats), so binding it would add a dead token — that file's
+# one-token legacy allowlist exists precisely to stop the set widening. Re-check before relying on
+# any of this: `grep advisory-worktree-writer-lock lib/ga-env.sh`.
 #
 # Fail-open on EVERYTHING else: absent python3, unwritable lock store, unparseable envelope, missing
 # apply-lock primitive → exit 0 silently. Worst case is a missing or spurious advisory line.
@@ -35,7 +63,9 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# Instant kill switch — the other disable is removing the single PreToolUse entry.
+# Instant kill switch — the other disable is dropping this hook's EXPECTED_HOOK_BINDINGS row
+# (lib/ga-env.sh) and re-running wire_hooks, which needs an install run plus a session restart to
+# take effect; this env var needs neither. See WIRED above.
 [[ -n "${WORKTREE_WRITER_LOCK_OFF:-}" ]] && exit 0
 
 # fail-open ERR trap — never interfere with the tool call.
@@ -103,7 +133,22 @@ TARGET="$(hook_normalize_path "${FILE_PATH}")"
 # sharing a worktree (core-git-workflow.md), so locking it would warn on exactly the prescribed
 # behaviour. The three basenames are the harness-write exemption enforce-delegation.sh already
 # carries; keeping the two exemption sets aligned avoids contradicting a sanctioned write.
-case "${TARGET}" in
+#
+# The seven-arm carve-out is enforce-delegation.sh's, mirrored VERBATIM (its step 3) rather than
+# approximated: a "memory" segment nested directly under a protected harness dir is not a
+# session-state root, which is why that gate BLOCKS those forms. Exempting them here would have been
+# the opposite of the alignment this comment claims — and would have hidden concurrent writes to
+# agents/memory/ and rules/memory/, which are real shared surfaces, behind a rule written for a
+# checkpoint file. The "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
+#
+# DRIFT HAZARD (deferred, not overlooked): "verbatim" is maintained BY HAND. These seven arms have no
+# shared source with enforce-delegation.sh's copy and no test compares the two lists, so an eighth
+# protected dir added there and not here leaves this hook exempting it with NOTHING failing.
+# hook_is_session_state_path() in hook-utils.sh would close it; deferred because it rewrites a
+# security-relevant gate's predicate. The same warning sits at the gate, where the edit would start.
+case "/${TARGET}/" in
+  */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \
+    */autoagent/memory/* | */monitor/memory/* | */scripts/memory/*) ;;
   */memory/*) exit 0 ;;
   *) ;;
 esac
@@ -122,8 +167,10 @@ WORKTREE_ROOT="${worktree_lock_root_out}"
 worktree_lock_dir_for "${WORKTREE_ROOT}" || exit 0
 LOCK_DIR="${worktree_lock_dir_out}"
 
-HOLDER="${AGENT_ID//$'\n'/ }" # a newline would truncate the single-line holder record on read-back
-[[ -n "${HOLDER}" ]] || HOLDER="orchestrator"
+# Both arms canonicalize through the lib so an id-less acquire here and an id-less release in
+# agent-tracker.sh land on the SAME identity — see worktree_lock_holder_id.
+worktree_lock_holder_id "${AGENT_ID}"
+HOLDER="${worktree_lock_holder_id_out}"
 
 worktree_lock_acquire "${LOCK_DIR}" "${HOLDER}"
 [[ "${worktree_lock_state}" == "contended" ]] || exit 0
@@ -150,6 +197,12 @@ printf '%s\n' \
   "      worktree still warns, and past it a live holder's lock can be reclaimed." \
   "    - ~5.6% of workflow agents and ~2.9% of manual agents never fire SubagentStop, so the" \
   "      release arm misses that tail and the TTL is its only release path." \
+  "    - Which lock a path resolves to is decided TEXTUALLY, never by resolving the filesystem: a" \
+  "      symlinked spelling and a real path take two independent verdicts, and every tree under a" \
+  "      repo-rooted ancestor collapses onto one lock." \
+  "    - \"orchestrator\" is every id-less caller folded into one identity: the main session never" \
+  "      releases its own lock (it fires Stop, not SubagentStop), yet ANY other actor's id-less" \
+  "      SubagentStop releases it early — after which a real second writer draws no warning." \
   >&2
 
 exit 0

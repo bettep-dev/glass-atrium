@@ -184,6 +184,16 @@ ga_init_env() {
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
   # all read this one array (the prior per-script duplication collapsed here).
+  # COMMENT LINES INSIDE THE ARRAY ARE FORBIDDEN: the awk parsers in test/hook-bindings-complete.bats +
+  # test/hook-bindings-executable.bats print EVERY line between the `(` and the `)`, so a comment counts as a
+  # leaf and breaks the total. Any note about a row belongs in THIS block, above the array.
+  # MATCHER CONVENTION — a Write/Edit-family row is "Write|Edit", NEVER "Write|Edit|MultiEdit". MultiEdit has
+  # ZERO registrations on the recorded host, so adding it to a NEW row registers a token that guards nothing;
+  # test/hook-matcher-shape-invariant.bats pins a ONE-token legacy allowlist (MultiEdit) whose stated purpose is
+  # to stop exactly that set widening, and its row asserts the allowlist stays size 1. The single surviving
+  # Write|Edit|MultiEdit row (enforce-harness-critical.sh) is that grandfathered legacy, kept as forward-compat
+  # insurance and pointed at a deferred rewire — it is NOT a pattern to copy. So: if a design doc or an older
+  # sibling row shows MultiEdit, prefer the invariant's evidence over the design text and leave it out.
   EXPECTED_HOOK_BINDINGS=(
     "PreToolUse	advisory-context-budget.sh	Agent"
     "PreToolUse	advisory-egress-secret.sh	Bash"
@@ -191,6 +201,7 @@ ga_init_env() {
     "PreToolUse	advisory-spawn-budget.sh	Agent"
     "PreToolUse	advisory-spawn-cost.sh	Agent"
     "PreToolUse	advisory-subagent-budget.sh	"
+    "PreToolUse	advisory-worktree-writer-lock.sh	Write|Edit"
     "PreToolUse	block-dangerous-commands.sh	Bash"
     "PreToolUse	block-doc-routing-leak.sh	Write"
     "PreToolUse	block-md-creation.sh	Write"

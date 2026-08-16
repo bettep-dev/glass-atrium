@@ -106,13 +106,19 @@ if [[ -n "${marker_key}" ]]; then
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
       fi
       # Release arm of the per-worktree writer lock (lib/worktree-lock.sh; the acquire arm is
-      # advisory-worktree-writer-lock.sh). Keyed on the RAW agent_id, which is the holder record —
-      # never marker_key, whose sanitizer is lossy and would miss the lock it means to free.
+      # advisory-worktree-writer-lock.sh). Keyed on the agent_id, which is the holder record — never
+      # marker_key, whose sanitizer is lossy and would miss the lock it means to free.
+      # worktree_lock_holder_id is what makes the two arms agree: AGENT_ID is already this hook's
+      # `unknown` sentinel when the envelope carried no id, and the acquire arm stamped that same
+      # case as "orchestrator" — releasing the raw sentinel simply never matched, leaving an id-less
+      # lock to its 6h TTL. The PG row above deliberately keeps the raw `unknown`; only the LOCK
+      # identity folds.
       # Pure bash + one rm per match: this hook's 2-python3-per-fire budget is pinned by
       # agent-tracker.bats, which is also why the lock's TTL is evaluated at acquire, not here.
       # SC2310: the release is a predicate whose rc 1 IS the loud-warn branch — set -e disable intended.
+      worktree_lock_holder_id "${AGENT_ID}"
       # shellcheck disable=SC2310
-      if ! worktree_lock_release_by_holder "${AGENT_ID}"; then
+      if ! worktree_lock_release_by_holder "${worktree_lock_holder_id_out}"; then
         emit_error "DATA-076" "warn" \
           "worktree writer-lock release failed — the stale lock will over-warn until its TTL expires" \
           "Remove the holder-matching lock dir under ${WORKTREE_LOCK_ROOT} manually" \

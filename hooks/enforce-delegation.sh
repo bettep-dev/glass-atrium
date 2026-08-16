@@ -73,6 +73,14 @@ esac
 #    directly under a protected harness dir (agents/, rules/, hooks/, skills/, autoagent/,
 #    monitor/, scripts/) is NOT a session-state root — those stay BLOCKED so a harness write
 #    cannot bypass via a "memory" segment (e.g. agents/memory/x.md must route through delegation).
+#
+#    DUPLICATED LIST — READ BEFORE ADDING AN EIGHTH ARM. hooks/advisory-worktree-writer-lock.sh
+#    mirrors these seven arms VERBATIM to keep its lock exemption from contradicting this gate, and
+#    the two lists have NO shared source: each side pins its own copy, and no test compares them. So
+#    adding a protected dir here and not there silently leaves the advisory exempting it, and NOTHING
+#    FAILS to tell you. Extracting hook_is_session_state_path() into hook-utils.sh would make that
+#    drift impossible; it is DEFERRED, not overlooked, because it rewrites the predicate of a
+#    security-relevant gate and that deserves its own change with its own test. Until then: edit both.
 NORM_PATH=$(hook_normalize_path "${FILE_PATH}")
 case "/${NORM_PATH}/" in
   */agents/memory/* | */rules/memory/* | */hooks/memory/* | */skills/memory/* | \
