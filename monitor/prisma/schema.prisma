@@ -645,6 +645,44 @@ model AutoagentLoopEvent {
   @@schema("core")
 }
 
+/// Source: autoagent daemon_cycle.py::audit_corpus_size — one corpus reading per
+/// cycle. Own table because the cardinality matches no existing row: proposals are
+/// keyed per proposal, loop events are a fixed per-stage stream.
+model AutoagentCorpusAudit {
+  id BigInt @id @default(autoincrement())
+
+  // UPSERT key — one reading per cycle, a same-day re-run overwrites. Logical FK
+  // to core.daemon_runs(run_date) WHERE daemon_name='autoagent'; no Prisma relation
+  // because that PK is composite (same convention autoagent_proposals.cycle_date uses).
+  cycleDate DateTime @unique(map: "autoagent_corpus_audits_cycle_date_key") @map("cycle_date") @db.Date
+
+  wordCount       Int  @map("word_count")
+  tokenEstimate   Int  @map("token_estimate")
+  fileCount       Int  @map("file_count")
+  seededThreshold Int  @map("seeded_threshold")
+  gatePassCount   Int  @map("gate_pass_count")
+  gateTripCount   Int  @map("gate_trip_count")
+  gateTotalCount  Int  @map("gate_total_count")
+  // Null when the emitter had no prior baseline to diff against — distinct from a
+  // measured zero delta.
+  trendDelta      Int? @map("trend_delta")
+
+  trendAlert    Boolean @map("trend_alert")
+  absoluteAlert Boolean @map("absolute_alert")
+
+  // Null = honest insufficient-data, mirroring the emitter; never a fabricated 0.0.
+  // override_rate is always null today (the dimension has no durable store) and is
+  // carried anyway so the column set stays 1:1 with the signal.
+  complianceRate Float? @map("compliance_rate") @db.Real
+  overrideRate   Float? @map("override_rate") @db.Real
+
+  indexedAt DateTime @default(now()) @map("indexed_at") @db.Timestamptz(6)
+
+  @@index([cycleDate(sort: Desc)], map: "autoagent_corpus_audits_cycle_date_idx")
+  @@map("autoagent_corpus_audits")
+  @@schema("core")
+}
+
 /// Source: outcomes-audit-queue.txt etc. (per plan §3.2 audit_queue —
 /// learning-exclusion paths)
 model AuditQueueEntry {
