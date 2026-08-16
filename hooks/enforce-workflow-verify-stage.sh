@@ -104,15 +104,26 @@
 # KNOWN FALSE NEGATIVE: a QUOTED schema key, blanked by the mask — fail-open, the safe direction.
 # WHERE THE CLAIM STOPS: this raises the floor from "channel structurally ABSENT" to "channel
 # structurally PRESENT" and no further. It does NOT reach whether the prompt instructs the fill
-# (unfilled → empty string → the same lost signal), whether a filled block parses, a second bare site
-# behind a compliant one, or a schema dropped ENTIRELY (that shape yields no site at all and is
-# deliberately out of blocking reach — forcing schema everywhere would trade the non-emit failure class
-# for the crash-on-non-emit class). Above that floor everything stays honor-system.
+# (unfilled → empty string → the same lost signal), whether a filled block parses, or a schema dropped
+# ENTIRELY (that shape yields no site at all and is deliberately out of blocking reach — forcing schema
+# everywhere would trade the non-emit failure class for the crash-on-non-emit class). A second bare site
+# behind a compliant one is out of THIS value's reach — one declaration satisfies its token half for the
+# whole file — and is carried by the per-site value below. Above that floor everything stays honor-system.
+#
+# PER-SITE GAP (the SECOND value on the same multiplexed line, advisory — NEVER exit 2, no promotion
+# staging of its own): flags the property declared on ONE schema-mode site and omitted from ANOTHER, the
+# shape no script-wide read can see. PREDICATE (completion_per_site_advisory_needed, verdict-isolated,
+# own except -> False): the same opposite-polarity operands, applied INSIDE a site span, not across the
+# file. ADJUDICABLE SITES ONLY — a site counts only when its own schema is an INLINE OBJECT LITERAL; a
+# constant, builder call, spread or shorthand is SKIPPED rather than judged, so firing needs BOTH halves
+# in-file and a file of only those shapes stays silent (false NEGATIVE, the safe direction). DISJOINT by
+# construction (token absent script-wide vs present on some site); residuals sit at the predicate.
 #
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
-# decision and the two later nudges that join it share ONE flag line carrying a value suffix
-# (COMPLETION_ADVISE:<value>), so the output-arity seam is paid ONCE and a later decision adds a value
-# plus a message case arm, never a line. The shell-side normalizer admits the suffix by SHAPE, never by
+# decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
+# seam is paid ONCE and each further decision adds a value plus a message case arm, never a line — the
+# per-site value cost exactly that and no seam edit, as designed. Values today: `property-absent` and
+# `per-site-gap`. The shell-side normalizer admits the suffix by SHAPE, never by
 # enumerating today's values: a value falling through an enumeration would collapse to SILENT, so its
 # advisory would stop printing AND stop being traced with no error anywhere — the identical trap
 # recorded for the schema-cap `:R<n>` suffix.
@@ -173,7 +184,8 @@
 # compatible): `advisory=` records WHICH advisories
 # fired on that invocation and, for the two suffixed advisories, WHICH value matched — the schema-cap
 # rule (`advisory=schema-cap:R1`) and the multiplexed completion-channel value
-# (`advisory=completion-channel:property-absent`); several tags join with a comma; none fired →
+# (`advisory=completion-channel:property-absent` or `advisory=completion-channel:per-site-gap`);
+# several tags join with a comma; none fired →
 # `advisory=none`. This exists so
 # the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
 # window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
@@ -409,6 +421,22 @@ print_completion_channel_advisory() {
 [enforce-workflow-verify-stage] ADVISORY (completion channel, non-blocking): this workflow script carries a schema-mode site but never mentions the reserved completion-channel property, so a StructuredOutput payload has nowhere to carry the [COMPLETION] block. A schema-mode emit is engine-guaranteed while the text channel is honor-system — measured non-emission on the text channel runs 16-25% depending on the window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a schema omitting the property drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run records no lesson. ONE-EDIT FIX — add this property to the schema you already declare:
   completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
 and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
+EOF
+  return 0
+}
+
+# print_completion_per_site_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit
+# code). The DECISION fires inside the verdict helper (completion_per_site_advisory_needed) and arrives
+# as the COMPLETION_ADVISE:per-site-gap value on the SAME multiplexed TENTH output line — a value, not a
+# line, which is what keeps the output-arity seam paid once.
+# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
+# NO promotion staging of its own: the header records a promotion condition for the property-absent
+# value only, and this shape stays advisory.
+print_completion_per_site_advisory() {
+  cat <<'EOF' >&2
+[enforce-workflow-verify-stage] ADVISORY (completion channel per-site, non-blocking): this workflow declares the reserved completion-channel property on one schema-mode site and omits it from another, so the script-wide check reads the file as compliant while a second StructuredOutput payload still has nowhere to carry the [COMPLETION] block. One compliant site MASKS the bare one: a single declaration satisfies the script-wide token half for the whole file, and the run behind the bare site records no lesson because the recorder falls to derived synthesis. ONE-EDIT FIX — add the same property to the schema on the site that omits it:
+  completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
+and instruct that agent in its delegation prompt to FILL it — prompt-side, and NOT checked here. WHICH SITES THIS READS, stated exactly so silence is not mistaken for a clean bill: only a site whose schema is an INLINE OBJECT LITERAL, the one span in which presence and absence are both decidable from this file. A site whose schema is a named constant, a builder call, a spread or the object shorthand is SKIPPED rather than judged — its declaration lives elsewhere or nowhere, so calling it bare would report a gap this scan never saw. A file whose sites are all of that kind therefore stays silent: a false NEGATIVE, the safe direction, and the same polarity every residual in this pass takes. KNOWN FALSE POSITIVE: a site whose inline literal spreads a shared base carrying the property reads as bare, because the spread is a reference and the property is not inside the span — remediable by the same one-edit fix above. ADVISORY ONLY, this check NEVER blocks.
 EOF
   return 0
 }
@@ -1315,6 +1343,81 @@ def completion_block_advisory_needed(stripped):
         return False
 
 
+def completion_per_site_advisory_needed(stripped):
+    # ADVISORY-ONLY (never a verdict, never exit 2): True when the reserved property is declared on at
+    # least ONE schema-mode site and absent from at least one OTHER — the shape the script-wide check
+    # above cannot see, because one compliant site satisfies its token half for the whole file and
+    # silences it while a second payload still has nowhere to carry the block.
+    # DISJOINT from that check by construction: it requires the token ABSENT script-wide, this one
+    # requires it PRESENT, so the two can never contend for the single multiplexed value.
+    #
+    # ADJUDICABLE SITES ONLY — the deliberate narrowing that keeps a per-site read sound. A site counts
+    # here only when its own schema is an INLINE object literal, because that literal is the only span
+    # in which presence and absence are both decidable from the file. A site whose schema is a named
+    # constant, a builder call, a spread or the object shorthand has no such span: its declaration lives
+    # elsewhere or nowhere, and reading absence off the spawn would report a bare site for a schema the
+    # scan never saw. Those sites are SKIPPED, so a script of only such sites stays silent — a false
+    # NEGATIVE, the safe direction, and the same polarity every residual in this pass takes.
+    # Consequence stated rather than implied: BOTH halves must be demonstrated in-file before anything
+    # fires, which is exactly what the criterion asks for — one compliant site AND one bare site.
+    #
+    # OPERAND POLARITY, unchanged from the sibling: the SITE half reads the MASKED, value-excluded
+    # struct (block-enabling → precision), the TOKEN half reads the UNMASKED span at the same offsets
+    # (block-suppressing → recall, so a quoted property name still counts as compliant).
+    #
+    # KNOWN FALSE POSITIVE: a site whose inline literal spreads a shared base carrying the property
+    # reads as bare, since the spread is a reference and the property is not in the span. One nudge is
+    # its whole cost, and the one-edit fix — declare the property inline on that site too — is the same
+    # remediation the message already names.
+    # VERDICT ISOLATION: a top-level function with its OWN terminal except -> False, for the reason
+    # recorded at the sibling predicate.
+    try:
+        if SO_COMPLETION_FIELD not in stripped:
+            return False
+        if "schema" not in stripped:
+            return False
+        smask = _string_mask(stripped)
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        n = len(struct)
+        obrace, cbrace = chr(123), chr(125)
+        ws = " \t\r\n\f\v"
+        compliant = False
+        bare = False
+        for m in SCHEMA_SITE_RE.finditer(struct):
+            if SCHEMA_DISABLED_RE.match(struct, m.end()):
+                continue
+            k = m.end()
+            while k < n and struct[k] in ws:
+                k += 1
+            if k < n and struct[k] == ":":
+                k += 1
+                while k < n and struct[k] in ws:
+                    k += 1
+            if k >= n or struct[k] != obrace:
+                continue
+            depth = 0
+            end = None
+            j = k
+            while j < n:
+                if struct[j] == obrace:
+                    depth += 1
+                elif struct[j] == cbrace:
+                    depth -= 1
+                    if depth == 0:
+                        end = j
+                        break
+                j += 1
+            if end is None:
+                continue
+            if SO_COMPLETION_FIELD in stripped[k:end + 1]:
+                compliant = True
+            else:
+                bare = True
+        return compliant and bare
+    except Exception:
+        return False
+
+
 # RESIL_FLAG — resilience advisory decision, printed as the THIRD helper output line by emit(). Default
 # SILENT so a fail-open exit (an exception before the scan) never fires a spurious advisory.
 RESIL_FLAG = "RESIL_SILENT"
@@ -1347,9 +1450,10 @@ ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 # group is paid exactly once.
 # Default SILENT so a fail-open exit never fires a spurious nudge.
 COMPLETION_FLAG = "COMPLETION_SILENT"
-# The one value defined today. A later value is a new literal here plus a message case arm on the
-# shell side; the shell normalizer admits the suffix by SHAPE, so no seam edit follows.
+# The values defined today, each a literal here plus a message case arm on the shell side; the shell
+# normalizer admits the suffix by SHAPE, so neither cost a seam edit.
 COMPLETION_PROPERTY_ABSENT = "COMPLETION_ADVISE:property-absent"
+COMPLETION_PER_SITE_GAP = "COMPLETION_ADVISE:per-site-gap"
 
 
 def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
@@ -1418,11 +1522,18 @@ try:
     if schema_cap_rule:
         SCHEMA_CAP_FLAG = "SCHEMA_CAP_ADVISE:" + schema_cap_rule
 
-    # Completion-channel decision — computed ONCE here.
+    # Completion-channel decision — computed ONCE here, as the VALUE the multiplexed line will carry.
     # The ASSIGNMENT is deliberately SPLIT on the DEV predicate (PRECEDENCE SPLIT, this file header).
     # Why no single position serves both halves → reaching a non-DEV analysis fan-out needs a position
     # before the non-DEV early PASS, and that same position would pre-empt every DEV attestation gate.
-    completion_gap = completion_block_advisory_needed(antigaming_src)
+    # ONE LINE, ONE VALUE: the two predicates are disjoint by their opposite token conditions (absent
+    # script-wide vs present on some site), so the chain below never has to choose between two live
+    # values — it makes the single-value contract structural rather than incidental.
+    completion_value = ""
+    if completion_block_advisory_needed(antigaming_src):
+        completion_value = COMPLETION_PROPERTY_ABSENT
+    elif completion_per_site_advisory_needed(antigaming_src):
+        completion_value = COMPLETION_PER_SITE_GAP
 
     dev_alt = '|'.join(re.escape(d) for d in dev_set if d)
 
@@ -1497,8 +1608,8 @@ try:
     if not dev_present:
         # NON-DEV half of the split: the last position before the early PASS, so the analysis fan-outs
         # this advisory exists for are reached at all. docroute above keeps precedence deliberately.
-        if completion_gap:
-            COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
+        if completion_value:
+            COMPLETION_FLAG = completion_value
         emit("PASS", entry_marker)
 
     # DEV workflow → a declaration is REQUIRED. Distinguish ABSENT (nodecl) from a MALFORMED /
@@ -1583,8 +1694,8 @@ try:
             declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
         # DEV half of the split: folded into the terminal emit, so every attestation gate above keeps
         # precedence and a DEV script blocked earlier carries no completion-channel tag.
-        if completion_gap:
-            COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
+        if completion_value:
+            COMPLETION_FLAG = completion_value
         emit(pass_or_size(), entry_marker)
 
     # IN-SCRIPT verify form. NOREV already guaranteed above.
@@ -1643,8 +1754,8 @@ try:
     IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
         declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
     # DEV half of the split — same reason as terminal PASS point 1.
-    if completion_gap:
-        COMPLETION_FLAG = COMPLETION_PROPERTY_ABSENT
+    if completion_value:
+        COMPLETION_FLAG = completion_value
     emit(pass_or_size(), entry_marker)
 except SystemExit:
     raise
@@ -1772,6 +1883,7 @@ PY
   # is what keeps the seam paid once.
   case "${completion_flag}" in
     COMPLETION_ADVISE:property-absent) print_completion_channel_advisory ;;
+    COMPLETION_ADVISE:per-site-gap) print_completion_per_site_advisory ;;
     # SILENT, or a value whose message this build does not carry yet: print nothing. The trace below
     # is value-agnostic, so such a value still records and loses no adjudication window.
     *) ;;

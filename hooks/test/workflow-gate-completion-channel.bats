@@ -68,15 +68,17 @@ import importlib.util
 spec = importlib.util.spec_from_file_location("gate_defs", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+predicate = getattr(mod, sys.argv[2])
 src = sys.stdin.read()
-print("ADVISE" if mod.completion_block_advisory_needed(mod.strip_comments(src)) else "silent")
+print("ADVISE" if predicate(mod.strip_comments(src)) else "silent")
 PYX
 }
 
-# probe SRC — the predicate verdict for one JS source, as ADVISE or silent. Source arrives on stdin so
-# no shell quoting can reshape a fixture.
+# probe SRC [PREDICATE] — the verdict for one JS source, as ADVISE or silent. Source arrives on stdin so
+# no shell quoting can reshape a fixture. PREDICATE names which detector answers, defaulting to the
+# script-wide one so every pre-existing row reads unchanged.
 probe() {
-  printf '%s' "${1}" | python3 "${PROBE_PY}" "${GATE_DEFS}" 2>&1
+  printf '%s' "${1}" | python3 "${PROBE_PY}" "${GATE_DEFS}" "${2:-completion_block_advisory_needed}" 2>&1
 }
 
 # Drive the hook as a command with a Workflow envelope wrapping $1, against a temp trace log so no
@@ -94,10 +96,10 @@ last_advisory() {
   awk -F'\t' 'END { for (i = 1; i <= NF; i++) if (index($i, "advisory=") == 1) { print substr($i, 10); exit } print "MISSING" }' "${TRACE_LOG}"
 }
 
-# check EXPECTED LABEL SRC — non-zero on mismatch, with the observed value named.
+# check EXPECTED LABEL SRC [PREDICATE] — non-zero on mismatch, with the observed value named.
 check() {
   local expected="${1}" label="${2}" observed
-  observed="$(probe "${3}")"
+  observed="$(probe "${3}" "${4:-}")"
   [[ "${observed}" == "${expected}" ]] || {
     echo "row [${label}]: expected ${expected}, observed ${observed}" >&2
     return 1
@@ -258,6 +260,77 @@ agent('x', { schema: S });" || fails="${fails} token-comment-only"
   }
 }
 
+# ── the per-site gap: the shape one compliant site hides from every script-wide read ────────────────
+#
+# FROZEN OBSERVATION for completion_per_site_advisory_needed (produced by RUNNING it over these exact
+# rows). ADVISE = one site declares the reserved property and another omits it.
+#   one inline compliant + one inline bare  ->  ADVISE   (the criterion)
+#   both inline compliant                   ->  silent
+#   both inline bare                        ->  silent   (the script-wide value owns that shape)
+#   both bound to a named constant          ->  silent   (no inline span -> skipped, not judged)
+#   compliant inline + object shorthand     ->  silent   (shorthand has no span either)
+#   quoted property key inside the span     ->  ADVISE   (token half unmasked -> recall, as compliant)
+#   inline spreading a base that declares   ->  ADVISE   (published false positive: the span holds a
+#                                                         reference, not the property)
+@test "per-site(criterion): one compliant and one bare site fires; either uniform script does not" {
+  local fails=""
+  check ADVISE "one-compliant-one-bare" \
+    "agent('a', { goal: 'x', schema: { properties: { completion_block: { type: 'string' } } } });
+agent('b', { goal: 'y', schema: { properties: { verdict: { type: 'string' } } } });" \
+    completion_per_site_advisory_needed || fails="${fails} one-compliant-one-bare"
+  check silent "both-compliant" \
+    "agent('a', { schema: { properties: { completion_block: { type: 'string' } } } });
+agent('b', { schema: { properties: { completion_block: { type: 'string' } } } });" \
+    completion_per_site_advisory_needed || fails="${fails} both-compliant"
+  check silent "both-bare" \
+    "agent('a', { schema: { properties: { findings: { type: 'string' } } } });
+agent('b', { schema: { properties: { verdict: { type: 'string' } } } });" \
+    completion_per_site_advisory_needed || fails="${fails} both-bare"
+  # DISJOINTNESS, the property that lets ONE line carry ONE value: the script-wide predicate is silent
+  # on the very fixture the per-site one fires for, because a single declaration satisfies its token
+  # half. Asserted rather than argued, since the multiplexed contract rests on it.
+  check silent "script-wide-silent-on-the-gap" \
+    "agent('a', { goal: 'x', schema: { properties: { completion_block: { type: 'string' } } } });
+agent('b', { goal: 'y', schema: { properties: { verdict: { type: 'string' } } } });" \
+    completion_block_advisory_needed || fails="${fails} script-wide-silent-on-the-gap"
+  [[ -z "${fails}" ]] || {
+    echo "per-site criterion rows failed:${fails}" >&2
+    return 1
+  }
+}
+
+# ADJUDICABLE SITES ONLY — the narrowing that keeps the per-site read sound, pinned from both ends: the
+# skipped shapes stay silent, and the one shape whose span really does answer the question still fires.
+@test "per-site(scope): sites with no inline span are skipped, and the span reads unmasked" {
+  local fails=""
+  check silent "const-bound-pair" \
+    "const S = { properties: { completion_block: { type: 'string' } } };
+agent('a', { schema: S });
+agent('b', { schema: S });" \
+    completion_per_site_advisory_needed || fails="${fails} const-bound-pair"
+  check silent "shorthand-alongside-compliant" \
+    "agent('a', { schema: { properties: { completion_block: { type: 'string' } } } });
+agent('b', { ...opts, schema });" \
+    completion_per_site_advisory_needed || fails="${fails} shorthand-alongside-compliant"
+  # Token half inside the span keeps the sibling polarity: a QUOTED key counts as compliant, so this
+  # fires. Were the span read masked instead, the quoted key would blank and the row would go silent.
+  check ADVISE "quoted-key-is-compliant" \
+    "agent('a', { schema: { properties: { 'completion_block': { type: 'string' } } } });
+agent('b', { schema: { properties: { verdict: { type: 'string' } } } });" \
+    completion_per_site_advisory_needed || fails="${fails} quoted-key-is-compliant"
+  # PUBLISHED FALSE POSITIVE, pinned rather than left to be rediscovered: the spread is a reference, so
+  # the property is not in the span and the site reads bare.
+  check ADVISE "spread-base-reads-bare" \
+    "const base = { completion_block: { type: 'string' } };
+agent('a', { schema: { ...base, findings: { type: 'string' } } });
+agent('b', { schema: { properties: { completion_block: { type: 'string' } } } });" \
+    completion_per_site_advisory_needed || fails="${fails} spread-base-reads-bare"
+  [[ -z "${fails}" ]] || {
+    echo "per-site scope rows failed:${fails}" >&2
+    return 1
+  }
+}
+
 # FALSE-POSITIVE FLOOR — the copy-verbatim authoring skeletons are the shapes an author pastes, so a
 # firing on one of them is a false block waiting to happen.
 @test "completion-channel(floor): no skill JS skeleton fires the detector" {
@@ -278,10 +351,14 @@ agent('x', { schema: S });" || fails="${fails} token-comment-only"
     echo "harvested no js fence from ${SKILL_MD}" >&2
     return 1
   }
+  # Both values on the line share this floor: a paste of a canonical skeleton must nudge on neither,
+  # since the author cannot tell which value produced the stderr they are reading.
   for fence in "${outdir}"/fence_*.js; do
     name="${fence##*/}"
     body="$(cat "${fence}")"
     check silent "${name}" "${body}" || fails="${fails} ${name}"
+    check silent "${name}:per-site" "${body}" completion_per_site_advisory_needed ||
+      fails="${fails} ${name}:per-site"
   done
   [[ -z "${fails}" ]] || {
     echo "FALSE POSITIVE on skill skeletons:${fails}" >&2
@@ -290,7 +367,10 @@ agent('x', { schema: S });" || fails="${fails} token-comment-only"
 }
 
 # Verdict isolation is the blocking requirement: the scan owns its failure so it can never reach the
-# module handler whose recovery path emits PASS.
+# module handler whose recovery path emits PASS. BOTH predicates are asserted from one injection — they
+# share the masker, so one raising import breaks whichever of them lacks its own terminal handler. Each
+# fixture is chosen to reach the masker: the per-site one carries the token, without which it would
+# return early and pass the row vacuously.
 @test "completion-channel(isolation): a raising scan returns false rather than propagating" {
   run python3 - "${GATE_DEFS}" <<'PYX'
 import sys
@@ -306,7 +386,12 @@ def boom(_src):
 
 
 mod._string_mask = boom
-print("silent" if mod.completion_block_advisory_needed("const r = agent({ schema: S });") is False else "LEAKED")
+per_site_src = "agent({ schema: { completion_block: 'string' } }); agent({ schema: {} });"
+leaked = (
+    mod.completion_block_advisory_needed("const r = agent({ schema: S });") is not False
+    or mod.completion_per_site_advisory_needed(per_site_src) is not False
+)
+print("LEAKED" if leaked else "silent")
 PYX
   [[ "${status}" -eq 0 && "${output}" == "silent" ]] || {
     echo "isolation broken: status=${status} output=${output}" >&2
@@ -433,6 +518,43 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
   }
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
     echo "tagged despite the declared property on the PASS arm: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+# The per-site value end to end: it reaches stderr as its OWN message, records its OWN trace
+# value, and leaves the exit code alone. The two nudges are asserted apart rather than by a shared
+# prefix, because a value that printed the sibling message would be indistinguishable to the author.
+@test "per-site(wiring): a masked bare site nudges with its own message, traces its value, exits 0" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  run_hook_exec "const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } });
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { verdict: { type: 'string' } } } });"
+  [[ "${status}" -eq 0 ]] || {
+    echo "an advisory must never alter the exit code, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" == *"ADVISORY (completion channel per-site, non-blocking)"* ]] || {
+    echo "no per-site nudge -- ${output}" >&2
+    return 1
+  }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
+    echo "the script-wide message fired too; one line carries one value -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" == *"completion-channel:per-site-gap"* ]] || {
+    echo "value not traced: $(last_advisory)" >&2
+    return 1
+  }
+  # Counterfactual: declare the property on the second site too → same PASS, neither nudge, no tag.
+  run_hook_exec "const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } });
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { completion_block: { type: 'string' } } } });"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"ADVISORY (completion channel"* ]] || {
+    echo "nudged despite the property on every site -- ${output}" >&2
+    return 1
+  }
+  [[ "$(last_advisory)" != *"completion-channel"* ]] || {
+    echo "tagged despite the property on every site: $(last_advisory)" >&2
     return 1
   }
 }
