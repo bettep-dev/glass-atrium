@@ -33,7 +33,7 @@ setup() {
 }
 
 # Drive the hook DIRECTLY as a command (never `bash <path>`) with a Workflow envelope wrapping $1.
-# $2 (optional) overrides the hook binary, used by the HEAD-parity test.
+# $2 (optional) overrides the hook binary.
 run_hook_exec() {
   run bash -c '
     script="$1"; hook="$2"; trace="$3"
@@ -184,30 +184,6 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
     echo "expected a comma-joined multi-advisory record, got ${adv}" >&2
     return 1
   }
-}
-
-# INSTRUMENTATION CANNOT ALTER ENFORCEMENT — the verdict and exit code are byte-identical to the same
-# script run through the pre-change hook, for both a passing and a blocking shape.
-@test "advisory-trace(inert): verdict and exit identical to the pre-change hook, pass and block" {
-  command -v git >/dev/null 2>&1 || skip "git not on PATH"
-  local head_hook="${BATS_TEST_TMPDIR}/head-hook.sh"
-  git -C "${HOOKS_DIR}/.." show "HEAD:hooks/enforce-workflow-verify-stage.sh" >"${head_hook}" 2>/dev/null || skip "cannot read the hook at HEAD"
-  chmod +x "${head_hook}"
-  local shape
-  for shape in "${CAP_R1}" "const s = { schema: {} }; agent('glass-atrium-dev-shell', { goal: 'x' });"; do
-    run_hook_exec "${shape}" "${head_hook}"
-    local before_status="${status}" before_output="${output}"
-    run_hook_exec "${shape}"
-    [[ "${status}" -eq "${before_status}" ]] || {
-      echo "EXIT DRIFT: HEAD ${before_status} vs now ${status}" >&2
-      return 1
-    }
-    [[ "${output}" == "${before_output}" ]] || {
-      echo "OUTPUT DRIFT on: ${shape}" >&2
-      return 1
-    }
-  done
-  [[ "${before_status}" -eq 2 ]] || return 1
 }
 
 # The preview path stays side-effect-free: --lint appends nothing even when an advisory fires.

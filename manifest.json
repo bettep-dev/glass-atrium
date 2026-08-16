@@ -1063,7 +1063,7 @@
     "hooks/test/validate-secret-scan.bats": "be3109bf2021ce45e0781d0542a690aaac0055f0899b297a3db1edfab483a80f",
     "hooks/test/validate-tool-response-parity.bats": "9984f417997b11103adcd6e7be1a9866a3c5bdd01a9eff54bafe28bb8bb8216d",
     "hooks/test/wiring-only-smoke.bats": "90587d78959c5a89b9be937a500f6a7759b064b8509de4aef085dc7c30225d20",
-    "hooks/test/workflow-gate-advisory-trace.bats": "bc466291ed7aec8367224a3ffe171a4d83549834efe56052d2100ea8c79100f1",
+    "hooks/test/workflow-gate-advisory-trace.bats": "5fd34ddd234c3960f6dd59758fc816fb38f42d55ed6b5d074fd7f5ecf97fe8c6",
     "hooks/test/workflow-gate-wave-a.bats": "d3c10879360f1673e34042df33ec56ea2906a67936fed31bb6e7b4d25b864ab8",
     "hooks/track-outcome.sh": "fae69abf0d6631c63bf50b8b4ecab2f4977dc8981af313432cc65ef11ee0507e",
     "hooks/validate-compliance-matrix.sh": "b2a3b4ba844f8eed775c68ee52dc9f1debd772eed6291e06442f624cdcdc45ce",
