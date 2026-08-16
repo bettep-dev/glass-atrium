@@ -400,9 +400,12 @@ export interface ImprovementLearningLogStatusBucket {
 }
 
 // Repeat-apply cap state — patterns the daemon terminalized after N applied patches
-// failed to abate their signal. The cap has no self re-arm by design, so a capped
-// pattern stays parked until a human resets its status; nothing surfaced that fact
-// outside the daemon log before this field existed.
+// failed to abate their signal. The cap has no self re-arm, and no operator re-arm
+// either: it is recomputed each cycle from the agent's applied-proposal history, so
+// resetting the learning_log status re-parks the row and overwrites its original park
+// timestamp and reason. A capped pattern stays parked until that apply evidence is
+// cleared or scoped; nothing surfaced that fact outside the daemon log before this
+// field existed.
 //
 // `capped_patterns` counts capped patterns, NOT every pattern row — a count over the
 // whole table reports a parked loop as parked regardless of whether it is.

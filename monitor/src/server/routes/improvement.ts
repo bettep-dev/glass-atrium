@@ -285,12 +285,21 @@ interface LearningLogStatusDbRow {
 // count keys on it rather than on status alone.
 const APPLY_CAP_REASON_PREFIX = "repeat-apply cap:";
 
-// Operator recovery text. Mirrors the daemon's own reason template so the screen
-// states the same remedy the terminalized row carries.
-const APPLY_CAP_REARM_HINT =
-  "The repeat-apply cap is terminal and never self re-arms. Re-arm a parked pattern " +
-  "by setting its core.learning_log status back to 'identified' — the underlying " +
-  "signal is still open and needs a human design decision, not another patch.";
+// Operator-facing text for a parked pattern. It deliberately does NOT mirror the
+// daemon's reason template: that template still recommends a status reset, which
+// drop_apply_capped_patterns makes both inert and lossy — the cap is recomputed each
+// cycle from the agent's applied proposals, so a reset row re-parks and loses its
+// original park timestamp and reason.
+// Exported for test/improvement.rearm-hint.unit.test.ts, which pins the claims this
+// text makes without standing up a database.
+export const APPLY_CAP_REARM_HINT =
+  "The repeat-apply cap is terminal and never self re-arms. Setting a parked " +
+  "pattern's core.learning_log status back to 'identified' does NOT re-arm it: " +
+  "the cap is recomputed every cycle from that agent's applied-proposal history " +
+  "in core.autoagent_proposals, so the pattern re-parks on the next run and its " +
+  "original park timestamp and reason are overwritten. A real re-arm has to " +
+  "clear or scope that apply evidence; until that ships, treat a parked row as " +
+  "an open design decision and leave its status alone.";
 
 interface ApplyCapDbRow {
   capped_patterns: bigint;
