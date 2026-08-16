@@ -50,6 +50,10 @@ _MEASUREMENT_COLUMNS = (
     "gate_total_count",
 )
 
+# indexed_at trails the measurements in the INSERT list: it is written from a
+# SQL literal rather than a bound parameter, so it carries no %s of its own.
+_WRITTEN_COLUMNS = _MEASUREMENT_COLUMNS + ("indexed_at",)
+
 
 _HELPER_SOURCE = (_REPO_ROOT / "scripts" / "_pg_dual_write_daemon.py").read_text(
     encoding="utf-8"
@@ -76,11 +80,108 @@ def _corpus_audit_sql() -> str:
 
 
 def _insert_columns(sql: str) -> tuple[str, ...]:
-    """Column names of the writer's INSERT list, in declared order."""
+    """Column names of the writer's INSERT list after cycle_date, in order."""
     columns = re.search(r"\(cycle_date,(.*?)\)\s*VALUES", sql, re.S)
     if columns is None:
         raise AssertionError("no INSERT column list found in the writer SQL")
     return tuple(c.strip() for c in columns.group(1).replace("\n", " ").split(","))
+
+
+def _all_insert_columns(sql: str) -> tuple[str, ...]:
+    return ("cycle_date",) + _insert_columns(sql)
+
+
+def _values_expressions(sql: str) -> tuple[str, ...]:
+    """The VALUES(...) expressions in order, split at parenthesis depth 0."""
+    after = sql.split("VALUES", 1)[1]
+    opened = after.index("(")
+    depth = 0
+    inner = None
+    for offset, char in enumerate(after[opened:], opened):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                inner = after[opened + 1 : offset]
+                break
+    if inner is None:
+        raise AssertionError("unterminated VALUES list in the writer SQL")
+    parts: list[str] = []
+    depth = 0
+    current = ""
+    for char in inner:
+        if char == "," and depth == 0:
+            parts.append(current)
+            current = ""
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        current += char
+    parts.append(current)
+    return tuple(" ".join(part.split()) for part in parts)
+
+
+def _conflict_key(sql: str) -> str | None:
+    """The UPSERT key column — None when the statement is a plain INSERT."""
+    match = re.search(r"ON CONFLICT\s*\(([^)]*)\)\s*DO UPDATE", sql)
+    return None if match is None else match.group(1).strip()
+
+
+def _conflict_update_columns(sql: str) -> tuple[str, ...]:
+    """Columns the DO UPDATE SET clause refreshes from the proposed row."""
+    if "DO UPDATE SET" not in sql:
+        return ()
+    clause = sql.split("DO UPDATE SET", 1)[1].split("RETURNING", 1)[0]
+    return tuple(m.group(1) for m in re.finditer(r"(\w+)\s*=\s*EXCLUDED\.", clause))
+
+
+class _UpsertTable:
+    """Executes the writer's own statement as row semantics, no live driver.
+
+    The conflict key, the column list and the DO UPDATE SET assignments are
+    read out of the SQL the writer actually issued, then applied. A writer that
+    issued a plain INSERT appends a second row here; a writer whose update set
+    omits a column leaves that column at the first write's value. Both are
+    visible to the assertions, which is what a dict keyed on params[0] could
+    never see.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, object]] = []
+        self.clock = 0  # stands in for CURRENT_TIMESTAMP, one tick per statement
+
+    def _bind(self, sql: str, params) -> list[object]:
+        supplied = list(params)
+        bound: list[object] = []
+        for expression in _values_expressions(sql):
+            if expression == "%s":
+                bound.append(supplied.pop(0))
+            elif expression == "CURRENT_TIMESTAMP":
+                bound.append(self.clock)
+            else:
+                raise AssertionError(f"unsupported VALUES expression: {expression}")
+        if supplied:
+            raise AssertionError("more parameters than VALUES placeholders")
+        return bound
+
+    def execute(self, sql: str, params) -> None:
+        self.clock += 1
+        columns = _all_insert_columns(sql)
+        values = self._bind(sql, params)
+        if len(columns) != len(values):
+            raise AssertionError("INSERT column list and VALUES list disagree")
+        incoming = dict(zip(columns, values))
+        key_column = _conflict_key(sql)
+        if key_column is not None:
+            for stored in self.rows:
+                if stored[key_column] == incoming[key_column]:
+                    for column in _conflict_update_columns(sql):
+                        stored[column] = incoming[column]
+                    return
+        self.rows.append(incoming)
 
 
 def _fixture_corpus(root: Path) -> tuple[Path, Path]:
@@ -133,34 +234,38 @@ class CorpusAuditUpsertTest(unittest.TestCase):
 
     def test_sql_binds_thirteen_columns_in_declared_order(self) -> None:
         sql = _corpus_audit_sql()
-        self.assertEqual(_insert_columns(sql), _MEASUREMENT_COLUMNS)
+        self.assertEqual(_insert_columns(sql), _WRITTEN_COLUMNS)
         self.assertEqual(sql.count("%s"), 1 + len(_MEASUREMENT_COLUMNS))
         self.assertIn("ON CONFLICT (cycle_date) DO UPDATE", sql)
-        for column in _MEASUREMENT_COLUMNS:
+        for column in _WRITTEN_COLUMNS:
             self.assertIn(f"{column} = EXCLUDED.{column}", sql)
 
     @unittest.skipUnless(HAS_PSYCOPG, "psycopg absent — driver-bound path")
     def test_two_runs_leave_exactly_one_row(self) -> None:
+        """The fake applies the writer's own upsert clause, not a keyed dict.
+
+        A plain INSERT would append and leave two cycle_date entries below; an
+        update set missing indexed_at would leave the row's stamp at the first
+        write's tick while its values came from the second.
+        """
         helper = _load_pg_helper()
+        table = _UpsertTable()
 
-        rows: dict[object, tuple] = {}
-        statements: list[str] = []
-
-        def _execute(sql, params):
-            statements.append(sql)
-            rows[params[0]] = params
-
-        with _patched_connect(helper, _execute):
+        with _patched_connect(helper, table.execute):
             for word_count in (100, 200):
                 helper.write_autoagent_corpus_audit(
                     "2026-08-16", word_count, 10, 3, True, 5, False, 110,
                     None, None, 1, 0, 1,
                 )
 
-        self.assertEqual(len(rows), 1)
-        # The second run overwrote the first — an UPSERT, not an append.
-        self.assertEqual(rows["2026-08-16"][1], 200)
-        self.assertIn("ON CONFLICT (cycle_date) DO UPDATE", statements[0])
+        # One reading per cycle_date, whatever the writer issued.
+        self.assertEqual([row["cycle_date"] for row in table.rows], ["2026-08-16"])
+        stored = table.rows[0]
+        # Every measurement carries the second run's value...
+        self.assertEqual(stored["word_count"], 200)
+        # ...and so does the timestamp — a row of second-run values must not
+        # read as of the first run.
+        self.assertEqual(stored["indexed_at"], table.clock)
 
     @unittest.skipUnless(HAS_PSYCOPG, "psycopg absent — driver-bound path")
     def test_parameter_order_matches_the_insert_column_list(self) -> None:
@@ -169,7 +274,7 @@ class CorpusAuditUpsertTest(unittest.TestCase):
         seen: list[tuple] = []
 
         def _execute(sql, params):
-            self.assertEqual(_insert_columns(sql), _MEASUREMENT_COLUMNS)
+            self.assertEqual(_insert_columns(sql), _WRITTEN_COLUMNS)
             seen.append(params)
 
         with _patched_connect(helper, _execute):
