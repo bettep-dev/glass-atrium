@@ -33,13 +33,12 @@ setup() {
 }
 
 # Drive the hook DIRECTLY as a command (never `bash <path>`) with a Workflow envelope wrapping $1.
-# $2 (optional) overrides the hook binary.
 run_hook_exec() {
   run bash -c '
     script="$1"; hook="$2"; trace="$3"
     payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
     printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
-  ' _ "${1}" "${2:-${HOOK_SH}}" "${TRACE_LOG}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
 }
 
 # Same, but the script body is read from a FILE so the exact bytes reach the hook.
@@ -48,7 +47,7 @@ run_hook_file_exec() {
     file="$1"; hook="$2"; trace="$3"
     payload="$(jq -n --rawfile s "${file}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
     printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
-  ' _ "${1}" "${2:-${HOOK_SH}}" "${TRACE_LOG}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
 }
 
 # The advisory field of the LAST recorded trace line, or the literal MISSING when absent.
