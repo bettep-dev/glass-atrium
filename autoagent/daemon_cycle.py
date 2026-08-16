@@ -836,6 +836,34 @@ def _scope_file_for_agent(agent: str) -> Path | None:
     return candidate
 
 
+# Named signal for an unresolvable C4 target file, carried on BOTH channels for
+# the same reason C3 carries one.
+TARGET_UNRESOLVED_SIGNAL = "TARGET-FILE-UNRESOLVED"
+
+
+def _get_target_path(target_file: str) -> Path | None:
+    """Resolve the C4 target agent file, independent of process cwd.
+
+    The updater hands a repo-relative ``agents/<name>.md``. Resolved against cwd
+    that yields two wrong outcomes: the not-available placeholder from an
+    unrelated cwd, and — worse — the RELEASE copy whenever cwd happens to be a
+    repo root, which renders a plausible excerpt of a file that is not the live
+    target. A relative path therefore anchors on the ga_paths base root, the
+    same seam C3 resolves through, and a miss is loud rather than neutral.
+    """
+    candidate = Path(target_file)
+    if not candidate.is_absolute():
+        candidate = ga_paths.get_base_root() / candidate
+    if not candidate.is_file():
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {TARGET_UNRESOLVED_SIGNAL} — {target_file!r} resolved "
+            f"to {candidate}, which is not a readable file; C4 has no target body to "
+            "judge against\n"
+        )
+        return None
+    return candidate
+
+
 # -- Promotion ladder config ------------------------------------------------
 #
 # Confidence-weighted learning loop — a Beta-Binomial posterior gate atop the
@@ -5617,7 +5645,20 @@ def _build_pre_verify_prompt(
     same prompt text. Truncations are deterministic (slice from char 0 with a
     fixed cap), so retries against the same diff hit identical bytes.
     """
-    target_path = Path(patch.target_file)
+    target_path = _get_target_path(patch.target_file)
+    if target_path is None:
+        # Same reasoning as the C3 slot: an excerpt-missing note reads to the
+        # verifier as an axis it inspected and cleared.
+        target_file_name = f"{TARGET_UNRESOLVED_SIGNAL} ({patch.target_file})"
+        target_agent_excerpt = (
+            f"{TARGET_UNRESOLVED_SIGNAL}: no target agent file resolved for "
+            f"{patch.target_file}. C4 cannot be judged from this prompt — answer "
+            "C4: FAIL."
+        )
+    else:
+        target_file_name = str(target_path)
+        target_agent_excerpt = _read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP)
+
     scope_path = _scope_file_for_agent(pattern.agent)
     if scope_path is None:
         # Directing the verdict is the point: told only that the excerpt is
@@ -5634,7 +5675,7 @@ def _build_pre_verify_prompt(
 
     return _PRE_VERIFY_PROMPT_TEMPLATE.format(
         target_agent=pattern.agent,
-        target_file=str(target_path),
+        target_file=target_file_name,
         pattern_label=_neutralize_field(pattern.label),
         diff=patch.proposed_diff[:DIFF_EXCERPT_CHAR_CAP],
         patch_rationale=patch.rationale[:400],
@@ -5642,7 +5683,7 @@ def _build_pre_verify_prompt(
         global_rules_excerpt=_read_truncated(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
-        target_agent_excerpt=_read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP),
+        target_agent_excerpt=target_agent_excerpt,
     )
 
 
