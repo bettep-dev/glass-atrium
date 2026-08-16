@@ -892,7 +892,7 @@
     "hooks/enforce-foreground-harness.sh": "322486297e240772097067d68f8b42e70eae4862588bb56a58b78c73f9ae8695",
     "hooks/enforce-harness-critical.sh": "a67dcd0c50235c001590affe3143b87c032e0520021b6593e5ff23275f21b0a8",
     "hooks/enforce-verification-gate.sh": "06c3753ea69984b5321200b75a31c500c05a0622f8e4d01d760abcbe6786085f",
-    "hooks/enforce-workflow-verify-stage.sh": "5ad082f4c49b6d91fa114c0504a945849f1fe5b5f3eb6ea1133614806d67c1a4",
+    "hooks/enforce-workflow-verify-stage.sh": "4d6dd44987d6ea0a619074b1453b8c7a07988b019593df8250a0ada59ef6b9ba",
     "hooks/ga_paths.py": "605029dc9143dbc17e0e3e2515d8dbbd6b49b2eeab63de059a7e389cdae76b16",
     "hooks/hook-utils.sh": "7185bf1cee2c62ea2e996f8778528209c0ababc675020ae148501e03516d13ee",
     "hooks/inject-scope-rules.sh": "b850d63f57c7fcf2dd6b4499e7038465393ef0492511cc465c558d3623516135",
