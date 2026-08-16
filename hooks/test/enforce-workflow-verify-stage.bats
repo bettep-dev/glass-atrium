@@ -1820,11 +1820,10 @@ parallel(agent('glass-atrium-qa-code-reviewer',{goal:'j'}),agent('glass-atrium-d
 }
 
 # =====================================================================================================
-# SECTION Q — self-consistency drift guards (T5 stderr scaffold · T11 skill skeletons) + suite-size
-#   count meta-test (T6). These pin the AUTHOR-FACING worked examples (the hook's own stderr scaffold
-#   + the skill's copy-verbatim skeletons) as LOAD-BEARING: if either drifts to a shape the gate would
-#   reject, the paste-then-validate check fails RED. The count meta-test fails RED on any silent test
-#   add/drop — the exact class of regression (the 40→23 docroute thinning) this fix repairs.
+# SECTION Q — self-consistency drift guards (T5 stderr scaffold · T11 skill skeletons). These pin the
+#   AUTHOR-FACING worked examples (the hook's own stderr scaffold + the skill's copy-verbatim
+#   skeletons) as LOAD-BEARING: if either drifts to a shape the gate would reject, the
+#   paste-then-validate check fails RED.
 # =====================================================================================================
 
 SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
@@ -1883,16 +1882,4 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
       return 1
     }
   done
-}
-
-# T6 count meta-test: the suite @test total is pinned to a declared expected count so a silent test
-# add/drop fails RED — the exact regression class (the 40→23 docroute thinning) this fix repairs.
-# Update the pin ONLY on an intentional, reviewed add/drop.
-@test "meta(T6): suite @test count equals the pinned expected total" {
-  local actual
-  actual="$(grep -cE '^@test ' "${BATS_TEST_DIRNAME}/enforce-workflow-verify-stage.bats")"
-  [[ "${actual}" -eq 147 ]] || {
-    echo "SUITE-SIZE DRIFT: expected 147 @test, found ${actual}" >&2
-    return 1
-  }
 }

@@ -983,7 +983,7 @@
     "hooks/test/enforce-verification-gate-scope.bats": "3c472bdce2d5513e6c4295c2898636f59a33d19f456ea9b81274ec4abe965b38",
     "hooks/test/enforce-verification-gate.bats": "5cd1cd6e92763c87d6db760af6375a15e2b7c4332bd7d712e6213066ab807dee",
     "hooks/test/enforce-workflow-verify-stage-scope.bats": "21b98d94fc19bd8ba259687c074048aa22636ce9cc48350d89054104c21f88d7",
-    "hooks/test/enforce-workflow-verify-stage.bats": "16c82fea497e782da629a4d4c127515ad2affe2682dc8ea8d815af43500ecaa7",
+    "hooks/test/enforce-workflow-verify-stage.bats": "2504231e8d1688e09c69f995b97b3789eb4e45fd96454c7d98f01765a26c3277",
     "hooks/test/ephemeral-pg-locale.bats": "decfc05d8f9abfdb28a920b277ea00e848d92cda9cda22d36bf65dd285323ec9",
     "hooks/test/h2-untrusted-ingest.bats": "2e5c7f145a13a21506118c5ccc0952aa9bd08b80fced7ea5bbd14f05e192dac6",
     "hooks/test/hook-utils-emit-error.bats": "fdf0b07befbe15da71175ddc32508b82d6056b4dc3967275ba46d1ba44359ad5",
