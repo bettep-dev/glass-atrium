@@ -1,8 +1,10 @@
 // T9 — parked-loop state on GET /api/improvement/learning-log.
 //
-// The repeat-apply cap terminalizes a learning_log pattern and never self re-arms, so
-// a capped pattern parks the loop until a human resets its status. The route must
-// report how many patterns are parked — NOT how many patterns exist.
+// The repeat-apply cap terminalizes a learning_log pattern and never self re-arms, and
+// a status reset does not re-arm it either — the cap is recomputed each cycle from the
+// agent's applied-proposal history, so a reset row simply re-parks. A capped pattern
+// therefore parks the loop until that apply evidence is cleared or scoped. The route
+// must report how many patterns are parked — NOT how many patterns exist.
 //
 // Discrimination: every fixture carries a NON-capped control population, so an
 // implementation counting all pattern rows returns the wrong number and fails. The
@@ -185,10 +187,11 @@ test("K=2: capped count is the capped subset, not the pattern total", async (t) 
     "a count over every pattern row must not satisfy this",
   );
   assert.strictEqual(body.apply_cap_state.capped_agents, 2, "two distinct agents parked");
+  // Presence only — what the text must claim is pinned in improvement.rearm-hint.unit.test.ts.
   assert.ok(
     typeof body.apply_cap_state.rearm_hint === "string" &&
       body.apply_cap_state.rearm_hint.includes("identified"),
-    "re-arm instruction present when K>0",
+    "the parked-pattern hint is on the payload when K>0",
   );
 });
 
