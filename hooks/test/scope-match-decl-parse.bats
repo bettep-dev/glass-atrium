@@ -150,3 +150,17 @@ hooks/x.sh' \
 @test "the grammar's own field names are still dropped in the separator-less form" {
   assert_entries '[SCOPE] files=hooks/a.sh deliverable=bug-fix out=none' 'hooks/a.sh'
 }
+
+# The drop vocabulary is matched case-insensitively because the opening bind accepts `[Ff]iles=`.
+# A narrower drop set let an uppercase field spelling through as an unknown key, which stopped the
+# bare-word drop firing and leaked the swallowed field's prose into the allow-list — the plan-3631
+# §7 leak the second refusal exists to close.
+@test "an uppercase field spelling leaks no prose into the allow-list" {
+  local lit='[SCOPE] files=hooks/a.sh OUT=none legacy'
+  refute_declared 'monitor/legacy/x.ts' "${lit}" \
+    && assert_declared 'hooks/a.sh' "${lit}"
+}
+
+@test "every field name drops in either case" {
+  assert_entries '[SCOPE] Files=hooks/a.sh DELIVERABLE=bug-fix Out=none' 'hooks/a.sh'
+}

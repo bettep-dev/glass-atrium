@@ -76,7 +76,10 @@ scope_task_type_is_code() {
 # accusing compliant work, the worst outcome available to it. Two refusals keep that mis-parse from
 # becoming an accusation again, at different granularity because they mean different things:
 #   - an `=`-bearing TOKEN whose KEY (the text before its first `=`) is one of the grammar's own
-#     three field names ⇒ a sibling field swallowed by a missing separator ⇒ that token alone is
+#     three field names — matched case-insensitively, exactly as the opening bind above accepts
+#     `[Ff]iles=`; a drop vocabulary narrower than the bind would let the two halves of this parser
+#     disagree about what a field name IS, and `OUT=none legacy` would leak `legacy` into the list
+#     ⇒ a sibling field swallowed by a missing separator ⇒ that token alone is
 #     dropped. The vocabulary is CLOSED rather than shape-based on purpose: dropping every
 #     `=`-bearing token also dropped a genuine declared path (`docs/a=b.md`), and an edit to it
 #     then read as excess — a false accusation, the one cost this parser refuses. An unknown key
@@ -125,7 +128,7 @@ scope_decl_files() {
       # Only the grammar's OWN three keys mark a swallowed sibling field. Anything else carrying
       # an `=` is treated as a declared path and kept.
       case "${key}" in
-        files | Files | FILES | deliverable | Deliverable | out | Out)
+        [Ff][Ii][Ll][Ee][Ss] | [Dd][Ee][Ll][Ii][Vv][Ee][Rr][Aa][Bb][Ll][Ee] | [Oo][Uu][Tt])
           seen_field_token=1
           continue
           ;;
