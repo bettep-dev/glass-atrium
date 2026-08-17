@@ -183,6 +183,21 @@ class ScopeFileResolutionTest(unittest.TestCase):
         self.assertNotIn(_PLACEHOLDER, c3_block)
         self.assertIn("DEV Scope Rules", c3_block)
 
+    def test_when_scope_file_empty_then_named_signal_is_loud(self):
+        # A zero-byte scope file resolves and reads clean, so the excerpt was
+        # blank and C3 carried no verdict — the same blind axis, content-side.
+        with tempfile.TemporaryDirectory() as root:
+            scope_file = Path(root) / "scoped" / "scope-dev.md"
+            scope_file.parent.mkdir(parents=True)
+            scope_file.write_text("", encoding="utf-8")
+            with _base_root(Path(root)):
+                prompt, stderr = _get_prompt("glass-atrium-dev-python")
+
+        self.assertIn(dc.SCOPE_EMPTY_SIGNAL, stderr)
+        self.assertIn(dc.SCOPE_EMPTY_SIGNAL, prompt)
+        c3_block = prompt.split("[C3 ", 1)[1].split("[C4 ", 1)[0]
+        self.assertIn("C3: FAIL", c3_block)
+
 
 if __name__ == "__main__":
     unittest.main()
