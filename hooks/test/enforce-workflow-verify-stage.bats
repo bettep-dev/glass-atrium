@@ -1456,50 +1456,38 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 #   durable regression anchor.
 # =====================================================================================================
 
-@test "corpus: blocked_9599.js (undeclared, config-array fan-out) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/blocked_9599.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
+# One corpus row: file|exit|trace. The trace log is truncated per row so the tag assertion is scoped
+# to this row's firing, and the file name is echoed first so a failing row names itself.
+run_corpus_row() {
+  local row="$1" file exit_code tag rest
+  file="${row%%|*}"
+  rest="${row#*|}"
+  exit_code="${rest%%|*}"
+  tag="${rest#*|}"
+  echo "row=${file}"
+  : >"${TRACE_LOG}"
+  run_hook_file "${CORPUS_DIR}/${file}"
+  [[ "${status}" -eq "${exit_code}" ]] && assert_trace "${tag}"
 }
 
-@test "corpus: blocked_7938.js (undeclared, literal agentType spawn) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/blocked_7938.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
-}
-
-@test "corpus: passed_9599_resubmit.js (undeclared, ternary literals) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/passed_9599_resubmit.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
-}
-
-# UPSTREAM-form declared variant of the config-array fan-out (impl-computed + upstream clauded-docs/3).
-@test "corpus: variant_A.js (upstream + impl-computed) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_A.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-# UPSTREAM-form declared variant of the literal-spawn script (upstream clauded-docs/1 + impl dev-shell).
-@test "corpus: variant_B.js (upstream + literal impl) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_B.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-@test "corpus: variant_resubmit.js (upstream + impl-computed) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_resubmit.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-# TEAM-form (in-script {qa, dev} pair) declared variant — the OTHER declaration path, so the corpus
-# exercises BOTH forms (not a single-path corpus).
-@test "corpus: variant_team.js (in-script verify team) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_team.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
+# file|exit|trace triples. The 3 undeclared originals are missing-declaration BLOCK pins; the 4
+# declared variants cover BOTH declaration forms (upstream and in-script team), so the corpus is not
+# a single-path one. passed_9599_resubmit.js blocks despite its name — a naming artifact of commit
+# 054e59f, recorded at its observed behaviour and NOT a regression.
+@test "corpus: archived-script fixture table (file, exit, trace)" {
+  local -a table=(
+    "blocked_9599.js|2|block-nodecl"
+    "blocked_7938.js|2|block-nodecl"
+    "passed_9599_resubmit.js|2|block-nodecl"
+    "variant_A.js|0|pass"
+    "variant_B.js|0|pass"
+    "variant_resubmit.js|0|pass"
+    "variant_team.js|0|pass"
+  )
+  local row
+  for row in "${table[@]}"; do
+    run_corpus_row "${row}" || return 1
+  done
 }
 
 # =====================================================================================================
