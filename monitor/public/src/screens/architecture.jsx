@@ -317,6 +317,11 @@ function ScreenArchitecture(
 		liveState.status === "ready" && liveState.data?.stale === true;
 	const driftDiffs = driftStale ? liveState.data?.diffs || [] : [];
 
+	// 거버넌스 멤버십 — 컴플라이언스 매트릭스가 이름 댄 문서의 부재 목록(총계 아님).
+	const governance =
+		liveState.status === "ready" ? liveState.data?.governance : null;
+	const absentDocs = governance?.absent || [];
+
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			<TypeScaleStyle />
@@ -417,6 +422,14 @@ function ScreenArchitecture(
 				{/* 구조 드리프트 배너(설계도 카운트 mismatch) — daemon LiveStrip(런타임 헬스)과
             별개 영역. stale 일 때만 노출, info-tone 으로 daemon-down warn-tone 과 구별. */}
 				{driftStale && <DriftBannerAR diffs={driftDiffs} />}
+
+				{/* 거버넌스 문서 부재 — 이름을 부르는 경고. 카운트 드리프트보다 상위 심각도(warn-tone). */}
+				{(absentDocs.length > 0 || governance?.sourceMissing) && (
+					<MembershipBannerAR
+						absent={absentDocs}
+						sourceMissing={governance?.sourceMissing}
+					/>
+				)}
 
 				{/* 상단: 라이브 상태 가로 컴팩트 스트립 (좌측 컬럼 폐기 → 캔버스 폭 회수) */}
 				<LiveStrip state={liveState} onRetry={triggerRefresh} />
@@ -1369,6 +1382,44 @@ function ErrorBannerAR({ title, detail, onRetry }) {
 					Retry
 				</button>
 			)}
+		</div>
+	);
+}
+
+// 거버넌스 멤버십 배너 — 매트릭스가 선언한 scope/rule 문서가 사라졌을 때 그 이름을 부른다.
+// 총계 배지는 무엇이 없어졌는지 말하지 못하므로 이름 목록이 곧 신호다.
+function MembershipBannerAR({ absent, sourceMissing }) {
+	const { Icon, Badge } = window.UI;
+	const names = absent || [];
+	return (
+		<div
+			role="alert"
+			className="rounded-md border p-3 flex items-start gap-3"
+			style={{
+				background: "rgb(var(--warn) / 0.08)",
+				borderColor: "rgb(var(--warn) / 0.4)",
+			}}
+		>
+			<Icon name="warn" size={16} className="text-warn mt-0.5" />
+			<div className="flex-1 min-w-0">
+				<div className="fs-body font-medium text-ink">
+					{sourceMissing
+						? "Governance membership unverifiable — compliance matrix unreadable"
+						: "Governance document missing"}
+				</div>
+				<div className="fs-meta text-dim mt-1">
+					The compliance matrix names these files; they are not on disk.
+				</div>
+				{names.length > 0 && (
+					<div className="flex flex-wrap gap-1.5 mt-2">
+						{names.map((name) => (
+							<Badge key={name} role="status" tone="warn" glyph={false}>
+								{name}
+							</Badge>
+						))}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }
