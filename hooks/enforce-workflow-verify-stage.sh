@@ -167,6 +167,23 @@
 #   in skills/glass-atrium-ops-orchestrator.md passing unmodified; and the remediation round-trip green
 #   with a paired negative control.
 #
+# ROLLBACK LEVER (the operator-reversible counterpart of the promotion condition above): while a MARKER
+# FILE exists at WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER, the completion-channel property-absent value
+# is DEMOTED — its message is not printed. Stage A carries no blocking verdict for this cause, so today
+# the lever silences one message and moves nothing else; the obligation it places on the promoting
+# commit is that a Stage-B blocking verdict route through this same marker read before it can exit 2.
+# A FILE rather than an environment variable because the hook is a fresh process per tool call yet
+# inherits the session's SNAPSHOTTED environment, so only a per-invocation file read is reversible
+# mid-session; the path takes its own env override mirroring the trace-log variable, so a suite never
+# reads live-install state. The data dir is writable and outside harness protection scope, so the lever
+# needs no approval.
+# DEMOTION SCOPE, pinned rather than left to the reader: the PROPERTY-ABSENT cause ONLY. The per-site-gap
+# and schema-absent values, the schema-cap advisory and the [SIZE-EST]-bounds pass are UNCHANGED by the
+# marker — demoting the whole multiplexed line would silence the schema-absent nudge, which is the only
+# signal on the measured incident shape. And the TRACE is never demoted: the tag is accumulated PAST the
+# message dispatch, so a rollback period keeps recording its firings and the promotion window stays
+# adjudicable instead of going vacuously quiet.
+#
 # HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
 # enforcement. It verifies the declaration is PRESENT and CONSISTENT with the code's spawns; it does
 # NOT verify a feasible verdict was emitted or that a gating expression consumes it (those stay the
@@ -280,6 +297,13 @@ trace_line_cap="${WORKFLOW_GATE_FIRED_LOG_CAP:-${DEFAULT_TRACE_LINE_CAP}}"
 if [[ ! "${trace_line_cap}" =~ ^[1-9][0-9]*$ ]]; then
   trace_line_cap="${DEFAULT_TRACE_LINE_CAP}"
 fi
+
+# Rollback-marker path for the completion-channel PROPERTY-ABSENT value (header → ROLLBACK LEVER, which
+# is the scope SoT: this value only, and never the trace). Same override shape as the trace-log variable
+# above, so a suite points it at a temp path and never reads live-install state. The file is READ per
+# invocation (the hook is a fresh process per tool call) and never written here, so touching or removing
+# it takes effect on the next Workflow call with no session restart.
+WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER="${WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/workflow-gate-completion-rollback}"
 
 # advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
 # emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the pass-path trace
@@ -2115,8 +2139,15 @@ PY
   # MULTIPLEXED DISPATCH: the MESSAGE keys on the value, the TRACE TAG does not. A value added later is
   # therefore recorded from the moment it exists, and only its message waits on a new case arm — which
   # is what keeps the seam paid once.
+  # ROLLBACK LEVER (header → ROLLBACK LEVER, the scope SoT) — the marker demotes the property-absent arm
+  # ONLY: the two sibling arms below are deliberately UNGUARDED, and the tag accumulation past this case
+  # is untouched, so a rollback period silences one message and keeps every other signal, trace included.
+  # A bare existence test read inline — an unreadable or otherwise odd path reads as ARMED, the
+  # fail-safe direction for a lever whose other failure mode is a check silently disarmed by accident.
   case "${completion_flag}" in
-    COMPLETION_ADVISE:property-absent) print_completion_channel_advisory ;;
+    COMPLETION_ADVISE:property-absent)
+      [[ -e "${WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER}" ]] || print_completion_channel_advisory
+      ;;
     COMPLETION_ADVISE:per-site-gap) print_completion_per_site_advisory ;;
     COMPLETION_ADVISE:schema-absent) print_completion_schema_absent_advisory ;;
     # SILENT, or a value whose message this build does not carry yet: print nothing. The trace below

@@ -42,8 +42,15 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
+  # The rollback marker's own override, pointed at a per-test temp path that does NOT exist: every row
+  # therefore runs with the lever disarmed and none of them reads live-install state (the marker rows
+  # below create the file themselves).
+  ROLLBACK_MARKER="${BATS_TEST_TMPDIR}/completion-rollback"
   NUDGE_PHRASE='ADVISORY (completion channel, non-blocking)'
   ABSENT_PHRASE='ADVISORY (completion channel absent, non-blocking)'
+  PER_SITE_PHRASE='ADVISORY (completion channel per-site, non-blocking)'
+  CAP_PHRASE='ADVISORY (schema-cap, non-blocking)'
+  BOUNDS_PHRASE='ADVISORY ([SIZE-EST] plausibility'
   # A DEV workflow that clears every attestation gate and reaches the terminal emit.
   DECL_TEAM="/* [AGENT-COMPOSITION]
 verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
@@ -86,10 +93,17 @@ probe() {
 # live-install state is read or written.
 run_hook_exec() {
   run bash -c '
-    script="$1"; hook="$2"; trace="$3"
+    script="$1"; hook="$2"; trace="$3"; marker="$4"
     payload="$(jq -n --arg s "${script}" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
-    printf "%s" "${payload}" | WORKFLOW_GATE_FIRED_LOG="${trace}" "${hook}"
-  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}"
+    printf "%s" "${payload}" |
+      WORKFLOW_GATE_FIRED_LOG="${trace}" WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER="${marker}" "${hook}"
+  ' _ "${1}" "${HOOK_SH}" "${TRACE_LOG}" "${ROLLBACK_MARKER}"
+}
+
+# The last recorded trace line WITHOUT its leading timestamp field — the byte-comparable remainder, so
+# two runs of one fixture are comparable across the one field that legitimately differs.
+last_trace_body() {
+  tail -n 1 "${TRACE_LOG}" | cut -f2-
 }
 
 # The advisory field of the LAST recorded trace line, or MISSING when absent.
@@ -745,6 +759,101 @@ log('[SIZE-EST] bundles=1 tool_uses~=8 — small')"
   }
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
     echo "tagged a DEV workflow: $(last_advisory)" >&2
+    return 1
+  }
+}
+
+# ── the rollback lever: what the marker demotes, and everything it must not ─────────────────────────
+#
+# The lever exists so an operator can silence ONE cause mid-session without waiting for a release. Its
+# scope is what these rows pin: the property-absent MESSAGE goes quiet, and nothing else moves — not the
+# exit code, not the sibling advisories, and above all not the trace, because the promotion window is
+# adjudicated from the firing log and a rollback period that stopped recording would read as clean.
+
+@test "rollback(marker): the marker demotes the property-absent message and never its trace line" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  # Armed (no marker): the message fires and the value is recorded.
+  run_hook_exec "${SCHEMA_SITE}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "the armed run must exit 0, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "the armed run did not nudge -- ${output}" >&2
+    return 1
+  }
+  local armed_trace demoted_trace
+  armed_trace="$(last_trace_body)"
+
+  # Demoted: the same fixture with the marker present.
+  : >"${ROLLBACK_MARKER}"
+  run_hook_exec "${SCHEMA_SITE}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "the marker must introduce no exit path, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
+    echo "the message survived the marker -- ${output}" >&2
+    return 1
+  }
+  demoted_trace="$(last_trace_body)"
+  [[ "${demoted_trace}" == "${armed_trace}" ]] || {
+    echo "the trace moved: armed [${armed_trace}] vs demoted [${demoted_trace}]" >&2
+    return 1
+  }
+
+  # Reversible mid-session: the marker is read per invocation, so removing it re-arms the next call.
+  rm -f "${ROLLBACK_MARKER}"
+  run_hook_exec "${SCHEMA_SITE}"
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "removing the marker did not re-arm the message -- ${output}" >&2
+    return 1
+  }
+}
+
+# The unchanged set, named rather than assumed: each sibling drives its own fixture WITH the marker in
+# place. A marker that demoted the whole multiplexed line would silence the schema-absent nudge, which
+# is the only signal on the measured incident shape — so that row is the one that matters most here.
+@test "rollback(scope): the marker leaves every sibling advisory firing" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
+  : >"${ROLLBACK_MARKER}"
+  local fails=""
+
+  run_hook_exec "const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } });
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { verdict: { type: 'string' } } } });"
+  [[ "${status}" -eq 0 && "${output}" == *"${PER_SITE_PHRASE}"* ]] &&
+    [[ "$(last_advisory)" == *"completion-channel:per-site-gap"* ]] || fails="${fails} per-site-gap"
+
+  run_hook_exec "const r = await agent('glass-atrium-intel-researcher', { goal: 'survey the landscape' });"
+  [[ "${status}" -eq 0 && "${output}" == *"${ABSENT_PHRASE}"* ]] &&
+    [[ "$(last_advisory)" == *"completion-channel:schema-absent"* ]] || fails="${fails} schema-absent"
+
+  run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
+  [[ "${status}" -eq 0 && "${output}" == *"${CAP_PHRASE}"* ]] &&
+    [[ "$(last_advisory)" == *"schema-cap"* ]] || fails="${fails} schema-cap"
+
+  # Four implementation slots of a type distinct from the verify dev, so the derived floor is 18 and a
+  # declared 10 sits under it.
+  run_hook_exec "/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: glass-atrium-dev-shell
+[/AGENT-COMPOSITION] */
+log('plan-ref: clauded-docs/7440');
+log('[SCOPE] files=hooks/a.sh');
+log('[SIZE-EST] bundles=1 tool_uses~=10 — under-declared');
+await parallel(
+  agent('glass-atrium-qa-code-reviewer', { goal: 'judge -> pass|revise' }),
+  agent('glass-atrium-dev-nestjs',       { goal: 'judge -> feasible|infeasible' }),
+);
+await agent('glass-atrium-dev-shell', { goal: 'slice one' });
+await agent('glass-atrium-dev-shell', { goal: 'slice two' });
+await agent('glass-atrium-dev-shell', { goal: 'slice three' });
+await agent('glass-atrium-dev-shell', { goal: 'slice four' });"
+  [[ "${status}" -eq 0 && "${output}" == *"${BOUNDS_PHRASE}"* ]] &&
+    [[ "$(last_advisory)" == *"sizeest-bounds:low"* ]] || fails="${fails} sizeest-bounds"
+
+  [[ -z "${fails}" ]] || {
+    echo "the marker demoted a sibling it must leave alone:${fails}" >&2
     return 1
   }
 }
