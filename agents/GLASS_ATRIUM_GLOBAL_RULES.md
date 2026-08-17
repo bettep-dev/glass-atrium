@@ -131,6 +131,8 @@ Items to deliver during agent handoff: **Purpose + relevant files + key constrai
 
 - Excessive politeness / parrot repetition · Over-summarization / verbose explanation (3+ paragraphs without code)
 - Out-of-scope modifications · Empty apologies / excessive disclaimers · False confidence / silent acceptance (fix it or flag it)
+- **Chained-arrow run-on narration** — ONE sentence joining 4+ stages with `→` / `·` connectors; the paragraph-count trigger above structurally cannot fire on a one-sentence shape, so it is named separately here
+- Main-session user-facing reply FORM (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `rules/glass-atrium/orchestrator-role.md` → `### Reply Form Contract` — honor-system (no hook reads reply text); the response-language rule above is unaffected
 - ※ Mandatory comments per shared-comment-logging.md are exempt
 
 ## System Prompt Protection [ALL]
