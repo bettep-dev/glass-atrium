@@ -138,6 +138,15 @@
 # canonical DEV workflow carries a reviewer verify-stage that is deliberately text-mode, so including
 # them would fire on nearly every copy-verbatim skeleton.
 #
+# SIXTH ADVISORY PASS ([SIZE-EST] plausibility bounds, advisory — NEVER exit 2): bounds the DECLARED
+# DEV-mode tool_uses~ value against the implementation-slot count the gate already computes — below
+# slots x 4.5 (the empirical per-file calibration) fires `:low`, above ~40 (the split trigger ahead of
+# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from orchestrator-role.md
+# -> Spawn Budget, not counts maintained here. Fires ONLY where a DEV-mode token exists: the
+# token-absent case is the BLOCK_SIZEEST gate's, and advising it too would double-advise one miss.
+# The value rides its OWN output line rather than the completion-channel multiplex — that line's trace
+# tag names the completion channel, and the two decisions can co-occur on one invocation.
+#
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
 # seam is paid ONCE and each further decision adds a value plus a message case arm, never a line — the
@@ -422,6 +431,19 @@ print_schema_cap_advisory() {
 # contract is untouched. Advisory-first is deliberate and not a staging step: a raw scan cannot tell a
 # declaration from a mention of one, so promotion to exit 2 waits on false-positive data plus an
 # explicit user decision.
+# print_sizeest_low_advisory / print_sizeest_high_advisory — ADVISORY-ONLY (stderr, NEVER blocks /
+# NEVER alters the exit code). The DECISION fires inside the verdict helper (sizeest_bounds) and
+# arrives as a value on the eleventh output line; these only render it. Both bounds are DERIVED from
+# orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
+# ~40 split trigger ahead of the measured 46-52 truncation band), never a count maintained here.
+print_sizeest_low_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks." >&2
+}
+
+print_sizeest_high_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks." >&2
+}
+
 print_scope_advisory() {
   printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
@@ -1558,6 +1580,25 @@ IMPL_SLOTS = 0
 SIZE_MAP_FLAG = "SIZE_MAP_SILENT"
 ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 
+# SIZEEST_BOUNDS_FLAG — plausibility bounds on the DECLARED DEV-mode [SIZE-EST] tool_uses~ value,
+# printed as the ELEVENTH output line. Value-suffixed on the same shape contract as the schema-cap and
+# completion-channel flags, so a value added later costs a message arm and no seam edit.
+# SEPARATE LINE, not a value on the completion-channel multiplex: that line carries completion-channel
+# decisions whose trace tag names that channel, and a sizing value there would mis-report itself; the
+# two can also fire on one invocation, which a single-value multiplex cannot express.
+# ADVISORY ONLY — no verdict, no exit code, promotable later on this file's advisory-then-promote
+# precedent. The two anchors are DERIVED, not maintained here: the per-file floor is the
+# `ceil(files x 4.5)` empirical tool_use calibration and the ceiling is the ~40 split trigger ahead of
+# the measured 46-52 truncation band, both from orchestrator-role.md -> Spawn Budget
+# ("Empirical tool_use calibration" + the HARD SECONDARY split rule).
+SIZEEST_BOUNDS_FLAG = "SIZEEST_BOUNDS_SILENT"
+SIZEEST_BOUNDS_LOW = "SIZEEST_BOUNDS_ADVISE:low"
+SIZEEST_BOUNDS_HIGH = "SIZEEST_BOUNDS_ADVISE:high"
+# DEV-mode token only: the analysis-mode form declares `reads~=` and no `tool_uses~=`, so keying the
+# capture on `tool_uses~=` excludes it by shape rather than by a second mode test.
+SIZE_EST_TOOLUSES_RE = re.compile(r"\[SIZE-EST\][^\n]{0,400}?tool_uses~=\s*(\d+)")
+SIZEEST_BOUNDS_CEILING = 40
+
 # COMPLETION_FLAG — the MULTIPLEXED completion-channel advisory, printed as the TENTH output line.
 # Value-suffixed (COMPLETION_ADVISE:<value>) so the later per-site-gap and schema-absent nudges add a
 # VALUE rather than a line → the output-arity seam across emit() / the fail-open literal / the read
@@ -1604,6 +1645,27 @@ def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
         return 0
 
 
+def sizeest_bounds(attestation_src, slots):
+    # Plausibility bounds on the DECLARED DEV-mode tool_uses~ value against the slot count the gate
+    # already computes. TOTAL function: any surprise returns SILENT, so a parse accident can never
+    # manufacture a nudge. Fires only where a DEV-mode token EXISTS — the token-absent case is already
+    # the BLOCK_SIZEEST gate's, and advising it too would double-advise the same miss.
+    # LOW takes precedence over HIGH: under-declaring is the DANGEROUS direction (it smuggles an
+    # oversized delegation past the split discipline), over-declaring is the safe one.
+    try:
+        declared = [int(m.group(1)) for m in SIZE_EST_TOOLUSES_RE.finditer(attestation_src)]
+        if not declared:
+            return "SIZEEST_BOUNDS_SILENT"
+        # floor = slots x 4.5, in integer arithmetic so no float rounding decides a nudge.
+        if slots > 0 and any(d * 2 < slots * 9 for d in declared):
+            return SIZEEST_BOUNDS_LOW
+        if any(d > SIZEEST_BOUNDS_CEILING for d in declared):
+            return SIZEEST_BOUNDS_HIGH
+        return "SIZEEST_BOUNDS_SILENT"
+    except Exception:
+        return "SIZEEST_BOUNDS_SILENT"
+
+
 def emit(verdict, entry_marker):
     print(verdict)
     print(entry_marker)
@@ -1615,6 +1677,7 @@ def emit(verdict, entry_marker):
     print(SIZE_MAP_FLAG)
     print(ENTRY_CARD_FLAG)
     print(COMPLETION_FLAG)
+    print(SIZEEST_BOUNDS_FLAG)
     sys.exit(0)
 
 
@@ -1718,7 +1781,7 @@ try:
         n = impl_slot_count(dev_spawns, verify_types, impl_types, computed_types)
         size_map = "SIZE_MAP_ADVISE" if size_est_count != n else "SIZE_MAP_SILENT"
         entry_card = "ENTRY_CARD_ADVISE" if (entry_literal_found and n >= 4) else "ENTRY_CARD_SILENT"
-        return (n, size_map, entry_card)
+        return (n, size_map, entry_card, sizeest_bounds(attestation_src, n))
 
     # SECOND detection pass (doc-routing leak) — independent, runs first.
     if detect_docroute_leak(antigaming_src, attestation_src):
@@ -1810,7 +1873,7 @@ try:
         # ordering waived under upstream (verify happened upstream).
         # Terminal PASS point 1 — the upstream branch. Verify types are empty by construction here,
         # which is exactly what makes the slot definition total rather than branch-specific.
-        IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
+        IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG, SIZEEST_BOUNDS_FLAG = wave_a_signals(
             declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
         # DEV half of the split: folded into the terminal emit, so every attestation gate above keeps
         # precedence and a DEV script blocked earlier carries no completion-channel tag.
@@ -1871,7 +1934,7 @@ try:
         if not (min(rev_starts) < min(impl_positions)):
             emit("BLOCK_ORDER", entry_marker)
     # Terminal PASS point 2 — the in-script branch.
-    IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG = wave_a_signals(
+    IMPL_SLOTS, SIZE_MAP_FLAG, ENTRY_CARD_FLAG, SIZEEST_BOUNDS_FLAG = wave_a_signals(
         declared_verify_dev_types, declared_impl_dev_types, declared_computed_types)
     # DEV half of the split — same reason as terminal PASS point 1.
     if completion_value:
@@ -1889,7 +1952,8 @@ PY
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
   # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT), line 6 = DEV flag, line 7 = IMPL_SLOTS=<n>, line 8 =
   # size-map flag, line 9 = entry-cardinality flag, line 10 = the MULTIPLEXED completion-channel flag
-  # (COMPLETION_ADVISE[:<value>]|COMPLETION_SILENT).
+  # (COMPLETION_ADVISE[:<value>]|COMPLETION_SILENT), line 11 = the [SIZE-EST] plausibility-bounds flag
+  # (SIZEEST_BOUNDS_ADVISE[:<value>]|SIZEEST_BOUNDS_SILENT).
   # A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK + all flags SILENT).
   # The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
@@ -1904,7 +1968,7 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT\nSIZEEST_BOUNDS_SILENT'
   fi
 
   # Parse the ten helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
@@ -1918,6 +1982,7 @@ PY
   local dev_flag_raw="DEV_NO" impl_slots_raw="IMPL_SLOTS=0"
   local size_map_flag="SIZE_MAP_SILENT" entry_card_flag="ENTRY_CARD_SILENT"
   local completion_flag="COMPLETION_SILENT"
+  local sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
@@ -1929,6 +1994,7 @@ PY
     IFS= read -r size_map_flag
     IFS= read -r entry_card_flag
     IFS= read -r completion_flag
+    IFS= read -r sizeest_bounds_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
@@ -1954,6 +2020,13 @@ PY
   # value would destroy the tag boundary a reader splits on.
   if [[ ! "${completion_flag}" =~ ^COMPLETION_ADVISE(:[A-Za-z0-9][A-Za-z0-9_-]*)?$ ]]; then
     completion_flag="COMPLETION_SILENT"
+  fi
+
+  # The [SIZE-EST] bounds flag carries its decision as a value suffix, admitted by the SAME shape
+  # contract (identifier-shaped value, comma excluded so the trace tag boundary survives) and never by
+  # an enumeration of today's values — same trap the two sibling suffixes record.
+  if [[ ! "${sizeest_bounds_flag}" =~ ^SIZEEST_BOUNDS_ADVISE(:[A-Za-z0-9][A-Za-z0-9_-]*)?$ ]]; then
+    sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   fi
 
   # INSTRUMENTATION FIELDS (never a verdict input) — normalize to the safe reading on any stray or
@@ -2012,6 +2085,20 @@ PY
   if [[ "${completion_flag}" == COMPLETION_ADVISE* ]]; then
     # A bare flag records as plain `completion-channel` rather than inventing a value it never reported.
     add_advisory "completion-channel${completion_flag#COMPLETION_ADVISE}"
+  fi
+
+  # [SIZE-EST] PLAUSIBILITY ADVISORY (fail-open, stderr-only) — the helper bounded the DECLARED
+  # DEV-mode tool_uses~ value against the slot count it already computes; nudge here so it rides ANY
+  # verdict. Placed with the other advisory emitters, before the entry-miss block and the verdict case
+  # dispatch, so it can NEVER alter an exit code. Same multiplexed dispatch shape as the
+  # completion-channel arm: the MESSAGE keys on the value, the TRACE TAG does not.
+  case "${sizeest_bounds_flag}" in
+    SIZEEST_BOUNDS_ADVISE:low) print_sizeest_low_advisory ;;
+    SIZEEST_BOUNDS_ADVISE:high) print_sizeest_high_advisory ;;
+    *) ;;
+  esac
+  if [[ "${sizeest_bounds_flag}" == SIZEEST_BOUNDS_ADVISE* ]]; then
+    add_advisory "sizeest-bounds${sizeest_bounds_flag#SIZEEST_BOUNDS_ADVISE}"
   fi
 
   # CARDINALITY ADVISORIES (trace-only — no stderr nudge, deliberately). These record a measurement;
