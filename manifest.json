@@ -1493,7 +1493,7 @@
     "test/oss-e2e-bootstrap.sh": "fbdfcfb7113ecc5637fb4805a7fc2084a3eb86eaaf140134ebd06cdb169212b8",
     "test/pg-backup-rotation.bats": "02d5f2ab77a8aaa3b4ff1d2bac2c2835b2098f215597bc0eae3cef702d6cb3c0",
     "test/pg-detect-connect-deadline.bats": "5fb01ce3ffa5b2acb4f300062e5e04906df9605565582889127194447bd749da",
-    "test/poll-wallclock-ceiling.bats": "4a3278f4eff67a52957c65107deefc3b3df40b52ac41660df870da211098759b",
+    "test/poll-wallclock-ceiling.bats": "a56ef874641e983aa909372857a2e53234f4b83ab9dff5cd5fc7080099a53ac3",
     "test/preflight-frame-composition-harness.sh": "6772c4561dec7d56a9bdfe84eebc3874d0805f8a320ca7616483c8ec499e7380",
     "test/progress-bar-continuity-harness.sh": "82974975bb849d32a6219470be6f4aab77452bbe8c207f8e8977bb822f1721cb",
     "test/publish-release-remote-consistency.bats": "edf423202e40dd5322889ad26b7234f4d91828e9df2cee829f6ec5e297e45a26",

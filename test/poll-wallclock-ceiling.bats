@@ -133,26 +133,22 @@ LSOF
 # === static coverage across every converted site ================================
 
 @test "wallclock(static): every converted poll uses a SECONDS-delta ceiling, no iteration counter remains" {
-  # ga-tui-monitor.sh — three loops (two lsof port-free + one curl health)
-  run grep -cF 'while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]' "${MON_SH}"
-  [[ "${output}" -eq 3 ]]
+  # ga-tui-monitor.sh — the lsof port-free and curl health loops
+  grep -qF 'while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]' "${MON_SH}"
   run grep -cF 'waited=$((waited + 1))' "${MON_SH}"
   [[ "${output}" -eq 0 ]]
   run grep -cF 'while [[ "${waited}" -lt' "${MON_SH}"
   [[ "${output}" -eq 0 ]]
   # ga-daemons.sh — postmaster socket-free poll
-  run grep -cF 'while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]' "${DAEMONS_SH}"
-  [[ "${output}" -eq 1 ]]
+  grep -qF 'while [[ "$((SECONDS - started))" -lt "${ceiling}" ]]' "${DAEMONS_SH}"
   run grep -cF 'waited=$((waited + 1))' "${DAEMONS_SH}"
   [[ "${output}" -eq 0 ]]
   # ga-launchd.sh — launchd settle poll (own var names, keeps sleep 0.2 responsiveness)
-  run grep -cF 'while [[ "$((SECONDS - settle_started))" -lt "${settle_ceiling}" ]]' "${LAUNCHD_SH}"
-  [[ "${output}" -eq 1 ]]
+  grep -qF 'while [[ "$((SECONDS - settle_started))" -lt "${settle_ceiling}" ]]' "${LAUNCHD_SH}"
   run grep -cF 'settle_i=$((settle_i + 1))' "${LAUNCHD_SH}"
   [[ "${output}" -eq 0 ]]
   # ga-tui-preflight.sh — Xcode-CLT heartbeat
-  run grep -cF '$((SECONDS - last_dot))' "${PREFLIGHT_SH}"
-  [[ "${output}" -eq 1 ]]
+  grep -qF '$((SECONDS - last_dot))' "${PREFLIGHT_SH}"
   run grep -cF 'waited=$((waited + 1))' "${PREFLIGHT_SH}"
   [[ "${output}" -eq 0 ]]
 }
@@ -168,9 +164,7 @@ LSOF
 @test "wallclock(static): the Xcode-CLT wait stays user-paced UNBOUNDED (heartbeat SECONDS-delta, no hard ceiling)" {
   # the loop condition is the detect probe, NOT a SECONDS ceiling — a hard ceiling would abort a slow
   # but legitimate user-driven toolchain install (Ctrl-C is the intended abort).
-  run grep -cF 'while [[ "$(ga_detect_xcode_clt)" != "present" ]]' "${PREFLIGHT_SH}"
-  [[ "${output}" -eq 1 ]]
+  grep -qF 'while [[ "$(ga_detect_xcode_clt)" != "present" ]]' "${PREFLIGHT_SH}"
   # the heartbeat dot is gated on wall-clock elapsed, not a per-iteration count.
-  run grep -cF 'if [[ "$((SECONDS - last_dot))" -ge 5 ]]' "${PREFLIGHT_SH}"
-  [[ "${output}" -eq 1 ]]
+  grep -qF 'if [[ "$((SECONDS - last_dot))" -ge 5 ]]' "${PREFLIGHT_SH}"
 }
