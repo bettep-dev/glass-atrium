@@ -133,8 +133,12 @@ interface WriterFailureRow {
 }
 
 // Overlay = PG/fs runtime signals only. Drift (stale/diffs) is a separate concern
-// composed at the route from computeArchDrift() — keep this return drift-free.
-type LiveOverlay = Omit<ArchitectureLiveResponse, "stale" | "diffs">;
+// composed at the route from computeArchDrift(), governance from the membership
+// surface — keep this return free of both.
+type LiveOverlay = Omit<
+	ArchitectureLiveResponse,
+	"stale" | "diffs" | "governance"
+>;
 
 // The overlay reruns a full PG fan-out + fs marker scan on every /api/architecture/live
 // call (high-volume), yet its inputs are quasi-static (daemon runs / hourly counters move

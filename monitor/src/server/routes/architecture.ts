@@ -8,6 +8,7 @@ import { getPrisma } from "../db.js";
 import { getArchitecture } from "../architecture/parser.js";
 import { getLiveOverlay } from "../architecture/live-overlay.js";
 import { computeArchDrift } from "../architecture/compute-arch-drift.js";
+import { computeGovernanceMembership } from "../architecture/governance-membership.js";
 import type {
 	ArchitectureErrorBody,
 	ArchitectureLiveResponse,
@@ -33,9 +34,10 @@ async function handleLive(
 		// warns on un-audited counts — bounded ≤30s staleness is acceptable, since a
 		// file add/remove or a fresh audit surfaces within the TTL window. Runs in
 		// parallel with the PG/fs overlay (no data dependency).
-		const [overlay, drift] = await Promise.all([
+		const [overlay, drift, governance] = await Promise.all([
 			getLiveOverlay(prisma, request.log),
 			computeArchDrift(request.log),
+			computeGovernanceMembership(request.log),
 		]);
 		request.log.info(
 			{
@@ -45,10 +47,11 @@ async function handleLive(
 				writerCount: overlay.writers.length,
 				stale: drift.stale,
 				diffCount: drift.diffs.length,
+				governanceAbsent: governance.absent,
 			},
 			"architecture live query complete",
 		);
-		return { ...overlay, stale: drift.stale, diffs: drift.diffs };
+		return { ...overlay, stale: drift.stale, diffs: drift.diffs, governance };
 	} catch (error) {
 		// getLiveOverlay swallows per-signal failures via Promise.allSettled, so
 		// reaching this catch implies a synchronous wiring error — surface 503 so

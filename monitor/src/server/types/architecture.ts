@@ -31,6 +31,13 @@ export interface ArchDriftDiff {
 	actual: number;
 }
 
+// Governance membership — documents the compliance matrix names by path, checked for existence.
+// A named-absence list, deliberately not a total: a vanished scope file must fail by name.
+export interface GovernanceMembershipStatus {
+	absent: string[];
+	sourceMissing: boolean;
+}
+
 export interface ArchitectureLiveResponse {
 	computed_at: string;
 	daemons: DaemonLiveStatus[];
@@ -40,6 +47,7 @@ export interface ArchitectureLiveResponse {
 	// Computed LIVE per /live call (never cached) → badge warns on un-audited drift.
 	stale: boolean;
 	diffs: ArchDriftDiff[];
+	governance: GovernanceMembershipStatus;
 }
 
 // Base layer/node/edge types composing the /api/architecture/diagrams response.
