@@ -5,7 +5,7 @@ description: On-demand audit-and-fix for the Atrium architecture diagrams (diagr
 
 ## Overview
 
-The Atrium system diagrams live in a single source of truth — `~/.glass-atrium/monitor/src/server/architecture/diagrams-source.ts` (7 v2 Mermaid diagrams). Their quantitative invariants (agent count, per-event hook wiring, launchd jobs, rule/scoped/skill counts) are extracted into `arch-invariants.ts` (`ARCH_INVARIANTS`). This skill audits the diagrams against reality in two complementary layers:
+The Atrium system diagrams live in a single source of truth — `~/.glass-atrium/monitor/src/server/architecture/diagrams-source.ts` (7 v2 Mermaid diagrams). Their quantitative invariant — per-event hook wiring — is extracted into `arch-invariants.ts` (`ARCH_INVARIANTS`); filesystem inventory is governed by the named-absence membership surface, not by a total. This skill audits the diagrams against reality in two complementary layers:
 
 - **Machine layer** — calls `computeArchDrift()` for a deterministic count diff. Catches count-movement drift only.
 - **Semantic layer** — LLM checks the machine cannot do: orphan nodes, diagram-prose vs actual-behavior mismatch, a new agent missing from the team-orchestration graph, broken cross-references, and a per-node "does this have a real counterpart?" pass. Catches count-invariant drift (e.g. an agent's role changed but the count stayed 23).
@@ -56,8 +56,8 @@ The result shape is `ArchDriftResult`:
 { stale: boolean, diffs: ArchDiff[] }            // ArchDiff = { key: string, claimed: number, actual: number }
 ```
 
-- `key` is a dot-notation invariant key: `agents`, `launchd`, `rules`, `scoped`, `scopedScope`, `scopedShared`, `skills`, `uniqueHookBasename`, or `hooks.<Event>` (e.g. `hooks.PreToolUse`).
-- `claimed` = the value `ARCH_INVARIANTS` asserts (what the diagram says). `actual` = the live Atrium-scoped filesystem count.
+- `key` is a dot-notation invariant key: `hooks.<Event>` (e.g. `hooks.PreToolUse`).
+- `claimed` = the value `ARCH_INVARIANTS` asserts (what the diagram says). `actual` = the live Atrium-owned hook-command count.
 - `stale === true` means at least one count drifted. Each `diff` is one drifted invariant.
 
 **Hook-count semantics (do not re-derive)**: the hook count is "Atrium-owned hook-COMMAND per settings.json event" — flattened command count, not matcher-entry count, filtered to commands whose resolved path is under `~/.glass-atrium/hooks/` (the in-place primary) or its historical fallback `~/.claude/hooks/` (absent in current installs — fail-open to 0). This is the SoT defined in `arch-invariants.ts`; report `hooks.*` diffs verbatim from `computeArchDrift()`.
@@ -91,7 +91,7 @@ Semantic:
   # "(no semantic drift)" if none
 
 Fix list (actionable):
-  - <file:invariant or diagram slug> — <exact change to make>   # e.g. arch-invariants.ts agents: 23 -> 24
+  - <file:invariant or diagram slug> — <exact change to make>   # e.g. arch-invariants.ts hooks.PreToolUse: 27 -> 28
 ```
 
 - Every machine diff maps to a concrete `arch-invariants.ts` update (`claimed -> actual`).
