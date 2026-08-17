@@ -14,7 +14,10 @@ ROTATE_SH="${BATS_TEST_DIRNAME}/../monitor-log-rotate.sh"
 setup() {
   [[ -f "${ROTATE_SH}" ]] || skip "monitor-log-rotate.sh not found"
   MR_TMP="$(mktemp -d -t monitor-log-rotate.XXXXXX)"
-  mkdir -p "${MR_TMP}/.claude/logs"
+  mkdir -p "${MR_TMP}/.claude/logs" "${MR_TMP}/tmpsink"
+  # Hermetic second sink: without the override the run would reach the real /tmp
+  # launchd sink the script now covers.
+  export GA_TMP_LOG_ROOT="${MR_TMP}/tmpsink"
 }
 
 teardown() {
@@ -47,4 +50,21 @@ line3"
   run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
   [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
   [[ "${output}" != *"rotated:"* ]] || return 1
+}
+
+@test "oversized /tmp sink member: rotated, truncated in place, neighbours untouched" {
+  local sink="${MR_TMP}/tmpsink"
+  # 50 MiB threshold + 1 MiB, written once — the sink members are named, not globbed.
+  python3 -c "open('${sink}/wiki-daemon.log','wb').write(b'x'*(51*1024*1024))"
+  printf 'small\n' >"${sink}/pg-backup.log"
+  printf 'keep\n' >"${sink}/unrelated.log"
+
+  run env HOME="${MR_TMP}" bash "${ROTATE_SH}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"rotated: ${sink}/wiki-daemon.log."* ]] || { echo "sink member not rotated: ${output}"; return 1; }
+  [ ! -s "${sink}/wiki-daemon.log" ] || { echo "live log not truncated in place"; return 1; }
+  ls "${sink}"/wiki-daemon.log.*.gz >/dev/null 2>&1 || { echo "no archive produced"; return 1; }
+  [ "$(cat "${sink}/pg-backup.log")" == "small" ] || { echo "below-threshold member mutated"; return 1; }
+  [ "$(cat "${sink}/unrelated.log")" == "keep" ] || { echo "non-member file touched"; return 1; }
 }
