@@ -287,11 +287,12 @@ interface LearningLogStatusDbRow {
 // count keys on it rather than on status alone.
 const APPLY_CAP_REASON_PREFIX = "repeat-apply cap:";
 
-// Operator-facing text for a parked pattern. It deliberately does NOT mirror the
-// daemon's reason template: that template still recommends a status reset, which
-// drop_apply_capped_patterns makes both inert and lossy — the cap is recomputed each
-// cycle from the agent's applied proposals, so a reset row re-parks and loses its
-// original park timestamp and reason.
+// Operator-facing text for a parked pattern, making the same claims as the daemon's
+// APPLY_CAP_REASON_TEMPLATE: a status reset is inert and lossy, because
+// drop_apply_capped_patterns recomputes the cap each cycle from the agent's applied
+// proposals, so a reset row re-parks and loses its original park timestamp and reason.
+// The two are worded separately rather than shared because their budgets differ — the
+// daemon's reason is sliced to LEARNING_LOG_REASON_MAX on write, this banner is not.
 // Exported for test/improvement.rearm-hint.unit.test.ts, which pins the claims this
 // text makes without standing up a database.
 export const APPLY_CAP_REARM_HINT =

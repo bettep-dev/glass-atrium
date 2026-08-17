@@ -1205,7 +1205,7 @@
     "monitor/src/server/routes/dashboard.ts": "45b99b1b11c81847c9f3c71910e00a4f148888177168ac385b11bfc09ced4b6c",
     "monitor/src/server/routes/health-detail.ts": "abe9c702115ac96f5a7bf37eb115363eb359c47b63b3982048e2ac74f753f244",
     "monitor/src/server/routes/health.ts": "96fecb9feead632826eed83e4c6fb90ba1d4a1217d86c52e6263953310827537",
-    "monitor/src/server/routes/improvement.ts": "e81f9d547e509fc60a27d6cdf29d588c74054033c17921486a6715e535ef850d",
+    "monitor/src/server/routes/improvement.ts": "3a93e5cfdd4782fc33164bcc904c2a65bcea59f90890ae56748d7630cdca202d",
     "monitor/src/server/routes/index.ts": "61b07c7a25603a69c49ec6dc8100377058eabd307048b4ac8cd8ef2b6261fcc0",
     "monitor/src/server/routes/model-config.ts": "87642dbf800fe809cdeb7b664e279bf85bb6b04badd5c1f9e84198a3b6d7d7e3",
     "monitor/src/server/routes/outcomes.ts": "f7b253eb66663cfd3feb32e552d459d3b571386ee8788d6b6d4cfaebd0e8df49",
