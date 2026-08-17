@@ -125,7 +125,10 @@ check() {
   # Anchor operand: masked. A colon after the word inside a goal string is not a site.
   check silent "prose-with-colon" \
     "agent('x', { goal: 'fill the schema: use the fields' });" || fails="${fails} prose-with-colon"
-  # Match shape: bare word. A colon test would lose the shorthand the exemplar uses.
+  # Match shape: bare word — the grounds are the merits, NOT a census. The spread-object form is
+  # semantically a genuine schema-mode spawn, and for a non-blocking advisory the error directions are
+  # asymmetric: a false positive costs one nudge, a false negative is the silent gap. Do not re-justify
+  # or retire this row by counting live occurrences; that reason was measured false once already.
   check ADVISE "shorthand" \
     "const r = await agent('x', { ...opts, schema });" || fails="${fails} shorthand"
   # Value exclusion: the recommended text-mode fallback explicitly DISABLES schema mode.

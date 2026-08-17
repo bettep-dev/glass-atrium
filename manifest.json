@@ -1075,7 +1075,7 @@
     "hooks/test/validate-tool-response-parity.bats": "9984f417997b11103adcd6e7be1a9866a3c5bdd01a9eff54bafe28bb8bb8216d",
     "hooks/test/wiring-only-smoke.bats": "90587d78959c5a89b9be937a500f6a7759b064b8509de4aef085dc7c30225d20",
     "hooks/test/workflow-gate-advisory-trace.bats": "dbe081f8b7fae45013ecac9de5e46e44f1e60dce564f459804fd22d73b74b216",
-    "hooks/test/workflow-gate-completion-channel.bats": "bb4d81ac3b4bc043c4c7dc3608891f03570801e0e1bd9d7c42cf47f509d96968",
+    "hooks/test/workflow-gate-completion-channel.bats": "8b64ab125e67c95071edfde9939cb3ceff7edbd555a6acb0bf58d1373f72c232",
     "hooks/test/workflow-gate-sizeest-bounds.bats": "399de92ca9c1660beb30b0368ba63c04bcef7b538ffd471e0f7494ba8da9d58e",
     "hooks/test/workflow-gate-wave-a.bats": "28a59cdd40d286165561af8bb27f607b0aba68572151a6e8dd88736bb96412a2",
     "hooks/track-outcome.sh": "f1b707d09f0a47d2df495c1bf5e01e2581b16e988af884ca063c48ed7297fa50",
