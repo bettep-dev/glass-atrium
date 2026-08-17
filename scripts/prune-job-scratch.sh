@@ -4,7 +4,7 @@
 #
 # Behavior:
 #   1. Validate the scratch root by construction (see Scope below) — refuse anything else
-#   2. Remove each top-level job entry whose mtime is older than the retention window — a DIRECTORY
+#   2. Remove each top-level job entry at least one whole day past the retention window — a DIRECTORY
 #      is removed with its contents, a SYMLINK is unlinked as a link and its target left untouched
 #   3. Report each removal on stdout; a run with nothing to prune is silent apart from the summary
 #
@@ -40,6 +40,8 @@ IFS=$'\n\t'
 # override cannot widen the scope — it can only point the prune at another directory named `jobs`.
 readonly SCRATCH_ROOT="${GA_JOB_SCRATCH_ROOT:-${HOME}/.claude/jobs}"
 # 14 days — longer than any background job survives, so an entry this old belongs to no live job.
+# `find -mtime +N` truncates age to whole days, so the cut lands one whole day past the window: an
+# entry inside that extra day is never matched, however many times the prune runs.
 readonly RETENTION_DAYS=14
 
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
