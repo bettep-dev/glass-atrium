@@ -584,7 +584,10 @@ EOF
   run_hook_exec "${script}"
   [[ "${status}" -eq 0 ]] || return 1
   [[ "$(last_field verdict)" == "pass" ]] || return 1
-  [[ "$(last_field impl_slots)" == "0" ]] || return 1
+  # DEV-presence floor: `impl: none` scores no implementation slot, but a dev-* verify-team member is
+  # statically spawned here and spends a real budget, so the count floors at one rather than reading
+  # zero on a script that demonstrably spawns a DEV agent.
+  [[ "$(last_field impl_slots)" == "1" ]] || return 1
 }
 
 # ===================================================================================================
