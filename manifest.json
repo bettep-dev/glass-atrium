@@ -1474,7 +1474,7 @@
     "test/headless-auth-selftest-cred-isolation.bats": "30d865c1f7bb984a5ea7d08a02215c01532afe2998593f51d7649cbcb9565b89",
     "test/headless-auth-selftest-quota.bats": "402d5a8e15607dc3375ae3fe302ad3b9241e9a92a487eaebef815917084dad7c",
     "test/headless-auth-selftest-timeout.bats": "daf63b3354cf723fda539712be95c6e287d0a406b301610050b398ccb32d7547",
-    "test/hook-bindings-complete.bats": "b60e934fa6aee7d25fed0c7bc19000c9c72fc5876505c8d35ec7d858cdce2016",
+    "test/hook-bindings-complete.bats": "1cfe0ea08356bbea88c352c62bccbd7d516b2e15504f61115a32c8c419792949",
     "test/hook-bindings-executable.bats": "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158",
     "test/hook-matcher-shape-invariant.bats": "88364cdfebdb6ce899b1fcb6ffd5288d0f7dbdd8df3cdb606b2764af2ac34a4c",
     "test/hook-repoint-dualdir.bats": "f0bf2afd3a66c0b69f76bb28ab01dc11b62769468413221187ffe12e798b7b56",

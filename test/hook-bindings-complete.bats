@@ -4,9 +4,10 @@
 # iterates this array, so a SHORT array silently leaves deployed hooks DORMANT
 # (the 15->42 install-wiring gap this test locks down — 3 whole events,
 # SubagentStart/SubagentStop/PreCompact, plus security + agent-tracker hooks were
-# unwired). The guard parses BOTH sources LIVE and asserts a per-event AND total
-# leaf-count match, so a future hook added to arch-invariants but not to the array
-# (or vice-versa) fails here.
+# unwired). The guard parses BOTH sources LIVE and asserts a per-event leaf-count
+# match, so a future hook added to arch-invariants but not to the array (or
+# vice-versa) fails here, plus named membership for the security-critical hooks —
+# which fails naming the binding that vanished.
 #
 # Counting basis: per FLATTENED matcher-leaf, exactly as jq flattens
 # .hooks.<event>[].hooks[] and as arch-invariants.ts HookEventCounts is defined
@@ -33,6 +34,20 @@ ARCH="${GA}/monitor/src/server/architecture/arch-invariants.ts"
 
 # the 7 settings.json hook events arch-invariants.ts HookEventCounts declares.
 EVENTS=(PreToolUse PostToolUse SessionStart Stop SubagentStart SubagentStop PreCompact)
+
+# hooks whose ABSENCE from the array silently disarms a gate rather than dropping a
+# convenience — the set membership must name, so a vanished binding fails by name.
+SECURITY_CRITICAL_HOOKS=(
+  block-dangerous-commands.sh
+  block-no-verify.sh
+  detect-secret-file-write.sh
+  enforce-config-protection.sh
+  enforce-foreground-harness.sh
+  enforce-harness-critical.sh
+  validate-pre-write-raw.sh
+  validate-prompt.sh
+  validate-secret-scan.sh
+)
 
 setup() {
   [[ -f "${CORE}" ]] || skip "ga-env.sh not found: ${CORE}"
@@ -89,23 +104,17 @@ arch_event_count() {
   done
 }
 
-@test "total: array leaf count == 49 == sum(arch-invariants.ts hooks)" {
-  local ev m total arch_sum=0
-  total="$(array_rows | wc -l | tr -d ' ')"
-  for ev in "${EVENTS[@]}"; do
-    m="$(arch_event_count "${ev}")"
-    if [[ "${m}" == "MISSING" ]]; then
-      echo "arch-invariants.ts has no numeric count for event: ${ev}"
-      return 1
-    fi
-    arch_sum=$((arch_sum + m))
+@test "membership: every security-critical hook is bound in EXPECTED_HOOK_BINDINGS" {
+  local name basename_field ev rest found missing=""
+  for name in "${SECURITY_CRITICAL_HOOKS[@]}"; do
+    found=""
+    while IFS=$'\t' read -r ev basename_field rest; do
+      [[ "${basename_field}" == "${name}" ]] && found=1
+    done < <(array_rows)
+    [[ -n "${found}" ]] || missing="${missing} ${name}"
   done
-  if [[ "${total}" != "49" ]]; then
-    echo "array leaf total=${total}, expected 49"
-    return 1
-  fi
-  if [[ "${arch_sum}" != "49" ]]; then
-    echo "arch-invariants hooks sum=${arch_sum}, expected 49"
+  if [[ -n "${missing}" ]]; then
+    echo "unbound security-critical hook(s):${missing}"
     return 1
   fi
 }
