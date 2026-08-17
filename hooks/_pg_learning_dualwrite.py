@@ -37,6 +37,12 @@ except ImportError as exc:
 # trigger / single-definition suites. Group 2 has no such reader in this repo: those
 # names were DEFINED here before the extraction, so the re-export preserves their
 # original namespace for an out-of-repo importer — the only argument that carries them.
+# Column limits live in a stdlib-only sibling for the same reason the negative-signal
+# predicate does: this module dies without psycopg, and the budget check for the
+# daemon's reason templates runs where psycopg is absent. Unguarded — a failure
+# there is a packaging fault, not a degradable condition.
+from _learning_log_limits import LEARNING_LOG_REASON_MAX
+
 from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     negative_signal_hits,
     is_negative_signal_outcome,
@@ -333,18 +339,6 @@ def upsert_learning_pattern(
 # skip-set + _validate_status_transition block any resurrection to 'identified'.
 # Reversal is an explicit operator action only (manual UPDATE back to
 # 'identified'); last_transition_reason carries the audit trail.
-
-# Width of core.learning_log.last_transition_reason (varchar(500)). Named here,
-# at the write path that enforces it, because the slice below is SILENT: an
-# over-long reason is stored truncated with no error and no warning.
-#
-# It is named rather than repeated so the check can live somewhere: the daemon's
-# reason templates are static, so autoagent/test/test_reason_tail_budget.py
-# imports this constant and asserts each widest formatted case survives the
-# slice. daemon_cycle.py itself does NOT import it — the templates carry a
-# pointer to that test instead, which keeps a string-length regression a red
-# test rather than an import-time crash in the loop.
-LEARNING_LOG_REASON_MAX = 500
 
 _LEARNING_LOG_REJECT_SQL = """
 UPDATE core.learning_log

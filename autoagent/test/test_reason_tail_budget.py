@@ -34,10 +34,15 @@ for _d in (_HOOKS_DIR, _AUTOAGENT_DIR):
     if str(_d) not in sys.path:
         sys.path.insert(0, str(_d))
 
-import _pg_learning_dualwrite as pgdw  # noqa: E402 — hooks dir pinned above
+# The ceiling comes from the stdlib-only limits module, NOT from
+# _pg_learning_dualwrite: that one imports psycopg unguarded and CI does not
+# install it. Importing it here would make this suite skip exactly where it is
+# most needed. It is still the same single definition — the write path imports
+# it from the same place.
+from _learning_log_limits import LEARNING_LOG_REASON_MAX  # noqa: E402 — dir pinned above
 import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
 
-CEILING = pgdw.LEARNING_LOG_REASON_MAX
+CEILING = LEARNING_LOG_REASON_MAX
 
 # Widest substitution the {n}/{thr} templates are checked against. Every count
 # they carry — the apply count, the reject streak — is bounded by
