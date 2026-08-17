@@ -2,7 +2,9 @@
 # monitor-log-rotate.sh — size-triggered, fd-preserving rotation for monitor logs
 # Usage: monitor-log-rotate.sh
 #
-# Behavior: (1) iterate the canonical monitor logs (out + err); (2) rotate a log
+# Behavior: (1) iterate the canonical monitor logs (out + err) and the named /tmp
+#   launchd sink members (every rendered plist log, this rotator's own two included);
+#   (2) rotate a log
 #   only when size exceeds the threshold (default 50 MiB), else skip silently;
 #   (3) copy to a timestamped sibling, gzip it, then truncate the original in place
 #      (`: > "${log}"`). Truncation (NOT unlink + recreate) is mandatory: launchd
@@ -30,6 +32,20 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 readonly LOG_ROOT="${HOME}/.claude/logs"
+# Second sink: the installed launch agents write their StandardOutPath/StandardErrorPath
+# into /tmp (render-launchd-plists.sh), including this rotator's own two logs. The sink
+# is shared with unrelated files, so the members are named rather than globbed and the
+# archive prune is keyed to each member's own name. Overridable for test seeding only.
+readonly TMP_LOG_ROOT="${GA_TMP_LOG_ROOT:-/tmp}"
+readonly TMP_LOG_NAMES="autoagent-daemon.log
+autoagent-daemon-loop.log
+wiki-daemon.log
+wiki-compile.log
+pg-backup.log
+daemon-daily-restart.log
+monitor-log-rotate.out.log
+monitor-log-rotate.err.log
+glass-atrium-update-oneshot.log"
 # 50 MiB threshold — keeps the active log under a single grep buffer, batching
 # rotations to ~weekly cadence at observed write rates.
 readonly MAX_SIZE_BYTES=$((50 * 1024 * 1024))
@@ -74,18 +90,26 @@ rotate_one() {
 }
 
 prune_archives() {
+  local dir="$1" pattern="$2"
   # `|| true` justified: find exits non-zero on an empty dir or a concurrent-delete
   # race — a no-op here that MUST NOT fail the rotation cycle.
   # GA-ABSORB[benign]: find exits non-zero on an empty dir or a concurrent-delete race — a prune no-op, never a failure
-  find "${LOG_ROOT}" -maxdepth 1 -name "*.gz" -mtime +"${ARCHIVE_RETENTION_DAYS}" -delete 2>/dev/null || true
+  find "${dir}" -maxdepth 1 -name "${pattern}" -mtime +"${ARCHIVE_RETENTION_DAYS}" -delete 2>/dev/null || true
 }
 
 main() {
-  local log
+  local log name
   for log in "${LOG_ROOT}/monitor.out.log" "${LOG_ROOT}/monitor.err.log"; do
     rotate_one "${log}"
   done
-  prune_archives
+  prune_archives "${LOG_ROOT}" "*.gz"
+
+  # Intentional split of the newline-separated member list (IFS=$'\n\t').
+  # shellcheck disable=SC2086
+  for name in ${TMP_LOG_NAMES}; do
+    rotate_one "${TMP_LOG_ROOT}/${name}"
+    prune_archives "${TMP_LOG_ROOT}" "${name}.*.gz"
+  done
 }
 
 main "$@"
