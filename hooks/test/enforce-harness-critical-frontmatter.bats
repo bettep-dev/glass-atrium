@@ -320,84 +320,27 @@ passed_clean() {
   passed_clean
 }
 
-# ── AC-B6: body prose edits pass on ALL SEVEN live block-list files ──────────
-# Explicit rows, not a loop: the TAP output must name WHICH file regressed.
+# ── AC-B6: body prose edits pass on EVERY corpus file ────────────────────────
+# Driven by the corpus glob rather than an explicit list, so a corpus file added
+# later is covered without an edit here. Each row echoes its own file name on
+# failure, so the output still names WHICH file regressed.
 
-@test "AC-B6 glass-atrium-design-designer: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-design-designer.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-design-designer: add a prose bullet → pass" {
-  edit_agent "glass-atrium-design-designer.md" '- ordinary prose bullet' '- ordinary prose bullet
+@test "AC-B6 body prose edits pass on every corpus file (remove + add)" {
+  local path base
+  for path in "${CORPUS}"/*.md; do
+    base="$(basename "${path}")"
+    edit_agent "${base}" '- second prose bullet' ''
+    passed_clean || {
+      echo "AC-B6 ${base}: remove a prose bullet expected pass, got status ${status}" >&2
+      return 1
+    }
+    edit_agent "${base}" '- ordinary prose bullet' '- ordinary prose bullet
 - third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-android: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-android.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-android: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-android.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-db: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-db.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-db: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-db.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-gsap: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-gsap.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-gsap: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-gsap.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-rag: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-rag.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-rag: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-rag.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-shell: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-shell.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-shell: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-shell.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-meta-prompt-engineer: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-meta-prompt-engineer.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-meta-prompt-engineer: add a prose bullet → pass" {
-  edit_agent "glass-atrium-meta-prompt-engineer.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
+    passed_clean || {
+      echo "AC-B6 ${base}: add a prose bullet expected pass, got status ${status}" >&2
+      return 1
+    }
+  done
 }
 
 # Fail-closed direction, UNREACHABLE through the real tool layer: the Edit tool
@@ -628,59 +571,37 @@ name: s24-keyorder'
 
 # ── AC-B7: an unanswerable identity question is a NAMED block, never an allow ─
 
-@test "AC-B7 nested map under tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-nested.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
+# One table over form and tool. Every fixture and tool pairing survives as a data
+# row, and the row echoes its own form and tool on failure.
 
-@test "AC-B7 nested map under tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-nested.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 multi-line flow on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-flow.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 multi-line flow on tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-flow.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the tools value: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-blockscalar.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the tools value: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-blockscalar.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the name value: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-namepipe.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 anchor on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-anchor.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 anchor on tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-anchor.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 alias on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-alias.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 tag on name: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-tag.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
+@test "AC-B7 out-of-contract frontmatter forms → frontmatter-unparseable (form × tool)" {
+  local row form tool fixture
+  for row in \
+    'nested map under tools::Edit::b7-nested.md' \
+    'nested map under tools::Write::b7-nested.md' \
+    'multi-line flow on tools::Edit::b7-flow.md' \
+    'multi-line flow on tools::Write::b7-flow.md' \
+    'block scalar as the tools value::Edit::b7-blockscalar.md' \
+    'block scalar as the tools value::Write::b7-blockscalar.md' \
+    'block scalar as the name value::Edit::b7-namepipe.md' \
+    'anchor on tools::Edit::b7-anchor.md' \
+    'anchor on tools::Write::b7-anchor.md' \
+    'alias on tools::Edit::b7-alias.md' \
+    'tag on name::Edit::b7-tag.md'; do
+    form="${row%%::*}"
+    tool="${row#*::}"
+    tool="${tool%%::*}"
+    fixture="${row##*::}"
+    if [[ "${tool}" == "Edit" ]]; then
+      edit_agent "${fixture}" 'model: claude-model-a' 'model: claude-model-b'
+    else
+      write_agent_body_only "${fixture}"
+    fi
+    blocked_unparseable || {
+      echo "AC-B7 ${form} (${tool}): expected frontmatter-unparseable, got status ${status}" >&2
+      return 1
+    }
+  done
 }
 
 @test "AC-B7 unparseable frontmatter surfaces as HAR-001, never HAR-003" {
