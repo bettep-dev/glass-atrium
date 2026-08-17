@@ -103,6 +103,30 @@ assert_target_intact() {
   [[ "${output}" == *"pruned=1"* ]] || { echo "summary count wrong: ${output}"; return 1; }
 }
 
+@test "aged entry whose name holds a newline: removed whole, no fragment escapes" {
+  # A line-oriented read splits this one name into two entries. The first keeps the root
+  # prefix and names a FRESH top-level regular file; the second is relative and resolves in
+  # whatever directory the script was invoked from — so a split feeds `rm` an in-root file
+  # the prune promises to leave alone and a path outside the root entirely.
+  local split_name
+  split_name="$(printf 'oldjob\nleftover')"
+  mkdir "${ROOT}/${split_name}"
+  touch -t "${STALE_STAMP}" "${ROOT}/${split_name}"
+  printf '{}\n' >"${ROOT}/oldjob"
+  local cwd_dir="${PJ_TMP}/cwd"
+  mkdir -p "${cwd_dir}"
+  printf 'bystander\n' >"${cwd_dir}/leftover"
+
+  run env GA_JOB_SCRATCH_ROOT="${ROOT}" bash -c 'cd "$1" && bash "$2"' _ "${cwd_dir}" "${PRUNE_SH}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [ ! -d "${ROOT}/${split_name}" ] || { echo "aged entry survived: ${output}"; return 1; }
+  [ -f "${ROOT}/oldjob" ] || { echo "fresh top-level regular file removed"; return 1; }
+  [ -f "${cwd_dir}/leftover" ] || { echo "path outside the root removed"; return 1; }
+  [[ "${output}" == *"pruned=1"* ]] || { echo "summary count wrong: ${output}"; return 1; }
+  assert_target_intact
+}
+
 @test "dry-run: aged directory AND aged link listed, neither removed" {
   mkdir -p "${ROOT}/oldjob"
   touch -t "${STALE_STAMP}" "${ROOT}/oldjob"

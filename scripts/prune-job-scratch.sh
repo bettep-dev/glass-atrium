@@ -90,10 +90,13 @@ main() {
     exit 3
   fi
 
+  # NUL-delimited because a newline inside an entry name splits a line-oriented read into
+  # fragments that each reach `rm` below — one still absolute inside the root, the rest
+  # relative and resolved against the invoker's cwd. NUL is the one byte a name cannot hold.
   # shellcheck disable=SC2312  # the root proved a writable dir above; find over one level cannot fail
-  while IFS= read -r entry; do
+  while IFS= read -r -d '' entry; do
     stale+=("${entry}")
-  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -mtime +"${RETENTION_DAYS}" | LC_ALL=C sort)
+  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -mtime +"${RETENTION_DAYS}" -print0 | LC_ALL=C sort -z)
 
   for entry in "${stale[@]:-}"; do
     [[ -n "${entry}" ]] || continue
