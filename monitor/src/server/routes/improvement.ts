@@ -50,6 +50,7 @@ import type {
   ImprovementProposalRow,
   ImprovementProseOnlyAddAgentRow,
   ImprovementProseOnlyAddSummary,
+  ImprovementRejectBucketSummary,
   ImprovementResponse,
   ImprovementStatsResponse,
   ImprovementStyleRefAgentRow,
@@ -326,6 +327,32 @@ const PROSE_ONLY_ADD_TRUNCATION_CAVEAT =
   "truncated before classification, so a longer patch whose removals fall past the " +
   "cut is still classified prose-only-add.";
 
+// One reject-lifecycle bucket and the rows in it. Bucket is the SQL CASE label, so the
+// three tokens below are its only possible values.
+interface RejectBucketDbRow {
+  bucket: string;
+  row_count: bigint;
+}
+
+// The three reject-lifecycle bucket labels, shared by the SQL CASE that assigns them and
+// the fold that reads them — one definition, both sides derived from it.
+const REJECT_BUCKET_LIFECYCLE = "lifecycle";
+const REJECT_BUCKET_INFRA = "infra";
+const REJECT_BUCKET_QUALITY = "quality";
+
+// Head of daemon_cycle.py's _SUPERSEDE_REASON, stamped on a prior-cycle pending row that
+// supersede_prior_pending_for_agent terminates. The tail carries the anchoring detail, so
+// the marker is a prefix match. No status enum distinguishes these rows — the daemon
+// reuses 'rejected' — which is why the rationale text is the only discriminator available.
+const SUPERSEDE_RATIONALE_LIKE = "superseded by fresher per-agent proposal%";
+
+// The daemon's own apply gate (is_apply_eligible_haiku_status / the daemon-apply
+// `haiku_status LIKE 'ok%'` SELECT) reads an ok-prefixed status as "the model produced a
+// usable diff". The quality bucket reuses that reading rather than enumerating skip
+// tokens: a skip reason added upstream then books as infra, which is what it is, instead
+// of silently inflating the quality count.
+const HAIKU_OK_LIKE = "ok%";
+
 interface LoopEventDbRow {
   id: bigint;
   event_ts: Date;
@@ -476,6 +503,7 @@ async function handleImprovement(
       linkedAgentRows,
       styleRefAgentRows,
       proseOnlyAddRows,
+      rejectBucketRows,
     ] = await Promise.all([
       // tier_distribution — UNFILTERED by `tier` param so the FE chip badges
       // stay stable when the user toggles a tier filter. `agent` + window apply.
@@ -624,6 +652,34 @@ async function handleImprovement(
           AND pre_verify_axes->>${PROSE_ONLY_ADD_AXIS_KEY} = 'true'
         GROUP BY target_agent
         ORDER BY target_agent
+      `,
+      // Reject lifecycle split. Tier is omitted for the same reason as the prose-only-add
+      // count above — the split is tier-independent.
+      //   - CASE order is the contract: a superseded row carries haiku_status 'ok', so the
+      //     lifecycle arm must precede the quality arm or the mechanical rows book as
+      //     quality rejects (the defect).
+      //   - COALESCE on both columns keeps the CASE total: a NULL rationale or NULL status
+      //     compares NULL against LIKE and would otherwise fall through untyped.
+      //   - The provenance filter drops updater-written release rows, which are not
+      //     rejections at all — the same guard the prose-only-add count carries.
+      //   - GROUP BY 1 (ordinal): the bucket labels are bind parameters, so a repeated
+      //     textual copy of the CASE would arrive as distinct placeholders (42803).
+      prisma.$queryRaw<RejectBucketDbRow[]>`
+        SELECT
+          CASE
+            WHEN COALESCE(rationale, '') LIKE ${SUPERSEDE_RATIONALE_LIKE}
+              THEN ${REJECT_BUCKET_LIFECYCLE}
+            WHEN COALESCE(haiku_status, '') LIKE ${HAIKU_OK_LIKE}
+              THEN ${REJECT_BUCKET_QUALITY}
+            ELSE ${REJECT_BUCKET_INFRA}
+          END AS bucket,
+          COUNT(*)::bigint AS row_count
+        FROM core.autoagent_proposals
+        ${buildProposalWhere(windowDays, null, agent, canonicalKeys)}
+        ${buildDaemonProvenanceFilter()}
+          AND status = 'rejected'::core."ProposalStatus"
+        GROUP BY 1
+        ORDER BY 1
       `,
     ]);
 
@@ -780,6 +836,8 @@ async function handleImprovement(
 
     const proseOnlyAddSummary = buildProseOnlyAddSummary(proseOnlyAddRows, windowDays);
 
+    const rejectBucketSummary = buildRejectBucketSummary(rejectBucketRows, windowDays);
+
     request.log.info(
       {
         route: "/api/improvement",
@@ -812,6 +870,7 @@ async function handleImprovement(
         windowDays,
       ),
       prose_only_add_summary: proseOnlyAddSummary,
+      reject_bucket_summary: rejectBucketSummary,
     };
   } catch (error) {
     return failWithDb(request, reply, "/api/improvement", error);
@@ -2189,6 +2248,36 @@ export function buildProseOnlyAddSummary(
     agents,
     total,
     truncation_caveat: PROSE_ONLY_ADD_TRUNCATION_CAVEAT,
+  };
+}
+
+// Folds the grouped bucket rows into the payload shape (exported for node:test).
+// `total` sums the buckets rather than carrying its own count, so the partition holds by
+// construction: a label outside the CASE's three cannot land in a bucket and inflate the
+// total behind it.
+export function buildRejectBucketSummary(
+  rows: RejectBucketDbRow[],
+  windowDays: number,
+): ImprovementRejectBucketSummary {
+  let infra = 0;
+  let quality = 0;
+  let lifecycle = 0;
+  for (const row of rows) {
+    const count = bigintToNumber(row.row_count);
+    if (row.bucket === REJECT_BUCKET_LIFECYCLE) {
+      lifecycle += count;
+    } else if (row.bucket === REJECT_BUCKET_QUALITY) {
+      quality += count;
+    } else if (row.bucket === REJECT_BUCKET_INFRA) {
+      infra += count;
+    }
+  }
+  return {
+    window_days: windowDays,
+    infra_count: infra,
+    quality_count: quality,
+    lifecycle_count: lifecycle,
+    total: infra + quality + lifecycle,
   };
 }
 
