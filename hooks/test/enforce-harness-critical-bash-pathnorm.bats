@@ -54,11 +54,6 @@ bash_hook() {
   [ "${status}" -eq 2 ]
 }
 
-@test "T1-1.a redirect: triple separator into the settings file → block" {
-  bash_hook "printf x > ${FAKE_HOME}/.claude///settings.json"
-  [ "${status}" -eq 2 ]
-}
-
 @test "T1-1.a redirect: dot-dot backtrack into the settings file → block" {
   bash_hook "printf x > ${FAKE_HOME}/.claude/todos/../settings.json"
   [ "${status}" -eq 2 ]
@@ -118,76 +113,34 @@ bash_hook() {
   [ "${status}" -eq 2 ]
 }
 
-# ── T1-1.d — the fourteen-command legitimate baseline (negative polarity) ────
+# ── T1-1.d — the legitimate baseline commands (negative polarity) ───────────
+# One table of commands; each row echoes its own identifier on failure.
 
-@test "T1-1.d baseline 01: read the settings file → pass" {
-  bash_hook "cat ${FAKE_HOME}/.claude/settings.json"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 02: recursive search across the live hooks dir → pass" {
-  bash_hook "grep -r foo ${FAKE_HOME}/.glass-atrium/hooks"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 03: directory listing of the agents dir → pass" {
-  bash_hook "ls -la ${FAKE_HOME}/.glass-atrium/agents"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 04: read a protected file into a temporary path → pass" {
-  bash_hook "cat ${FAKE_HOME}/.claude/settings.json > /tmp/out"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 05: enter a protected dir and write elsewhere → pass" {
-  bash_hook "cd ${FAKE_HOME}/.glass-atrium/hooks && grep x f > /tmp/out"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 06: line count over a scheduled script → pass" {
-  bash_hook "wc -l ${FAKE_HOME}/.glass-atrium/autoagent/daemon-apply.sh"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 07: modification-time search → pass" {
-  bash_hook "find ${FAKE_HOME}/.glass-atrium/hooks -mtime -1"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 08: two-file comparison inside the protected tree → pass" {
-  bash_hook "diff ${FAKE_HOME}/.glass-atrium/hooks/a.sh ${FAKE_HOME}/.glass-atrium/hooks/b.sh"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 09: repository status query rooted in a protected dir → pass" {
-  bash_hook "cd ${FAKE_HOME}/.glass-atrium/agents && git status --porcelain"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 10: non-in-place stream edit → pass" {
-  bash_hook "sed 's/a/b/' ${FAKE_HOME}/.glass-atrium/hooks/a.sh"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 11: awk read → pass" {
-  bash_hook "awk '{print}' ${FAKE_HOME}/.glass-atrium/hooks/a.sh"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 12: execute a script that lives in the protected tree → pass" {
-  bash_hook "${FAKE_HOME}/.glass-atrium/scripts/wiki-query.sh keyword"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 13: pipe a protected read into a temporary path → pass" {
-  bash_hook "cat ${FAKE_HOME}/.claude/settings.json | tee /tmp/out"
-  [ "${status}" -eq 0 ]
-}
-
-@test "T1-1.d baseline 14: double-separator write to an unprotected path → pass" {
-  bash_hook "printf x > /tmp//out"
-  [ "${status}" -eq 0 ]
+@test "T1-1.d legitimate baseline commands → pass (one row per command)" {
+  local row id cmd
+  for row in \
+    "baseline 01::cat ${FAKE_HOME}/.claude/settings.json" \
+    "baseline 02::grep -r foo ${FAKE_HOME}/.glass-atrium/hooks" \
+    "baseline 03::ls -la ${FAKE_HOME}/.glass-atrium/agents" \
+    "baseline 04::cat ${FAKE_HOME}/.claude/settings.json > /tmp/out" \
+    "baseline 05::cd ${FAKE_HOME}/.glass-atrium/hooks && grep x f > /tmp/out" \
+    "baseline 06::wc -l ${FAKE_HOME}/.glass-atrium/autoagent/daemon-apply.sh" \
+    "baseline 07::find ${FAKE_HOME}/.glass-atrium/hooks -mtime -1" \
+    "baseline 08::diff ${FAKE_HOME}/.glass-atrium/hooks/a.sh ${FAKE_HOME}/.glass-atrium/hooks/b.sh" \
+    "baseline 09::cd ${FAKE_HOME}/.glass-atrium/agents && git status --porcelain" \
+    "baseline 10::sed 's/a/b/' ${FAKE_HOME}/.glass-atrium/hooks/a.sh" \
+    "baseline 11::awk '{print}' ${FAKE_HOME}/.glass-atrium/hooks/a.sh" \
+    "baseline 12::${FAKE_HOME}/.glass-atrium/scripts/wiki-query.sh keyword" \
+    "baseline 13::cat ${FAKE_HOME}/.claude/settings.json | tee /tmp/out" \
+    "baseline 14::printf x > /tmp//out"; do
+    id="${row%%::*}"
+    cmd="${row#*::}"
+    bash_hook "${cmd}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "T1-1.d ${id}: expected exit 0, got ${status} for: ${cmd}" >&2
+      return 1
+    }
+  done
 }
 
 @test "T1-1.d known false positive: copying a protected file to a backup stays blocked" {

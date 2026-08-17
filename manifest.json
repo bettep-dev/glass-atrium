@@ -979,7 +979,7 @@
     "hooks/test/enforce-delegation.bats": "0df79d54823da5728f62347d85c81dcf0da0068ad1a54b5e4dbf1e8182e7ae6e",
     "hooks/test/enforce-foreground-harness-branch.bats": "febac8750038b5e91c331b2a67285521f21eb9099821fd3948c82db86870b948",
     "hooks/test/enforce-foreground-harness.bats": "d702f283a6c3d1e3afc92ec02ba99918dcbbe83d78702383ca7883b27e3ff9e6",
-    "hooks/test/enforce-harness-critical-bash-pathnorm.bats": "43c4b275e08da48efef392e5e4956fe5edfd1e0c7af61789345aae26ee0b6163",
+    "hooks/test/enforce-harness-critical-bash-pathnorm.bats": "739f6e3afe474ac4786ce66f92dd7b5abae5466b76a044da24d8fdbdcf4fc348",
     "hooks/test/enforce-harness-critical-branch.bats": "db3532e93cf3fd9a04d4f884329889fb9bfa4f80a5bd651a427f6b1696c8c53d",
     "hooks/test/enforce-harness-critical-frontmatter.bats": "df3c1e7d98de8de60a972222415705ca29443109ecc6f9333931c6ef64fd72c6",
     "hooks/test/enforce-harness-critical-messages.bats": "62c324167baeeb98645cd6db63a52fb47adfdc53231e667c6315c767298a9f4b",
