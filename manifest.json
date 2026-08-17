@@ -1453,7 +1453,7 @@
     "test/data-root-seam-wiki-audit.bats": "6732afe71df47f145c0c33952fdc525cbd0076c8ae68e1489463f581214a18a9",
     "test/db-backup-path-consistency.bats": "5479842c283c372ff87529a3bf4315f2ac8824bbc3be98454f4cd98274b39652",
     "test/deps-preflight-exec-harness.sh": "2a0cd1ecc8a5060c83e236e22f50b09149edf5723fe72d7fa4938596e84a872c",
-    "test/deps-preflight-noninteractive.bats": "5cdbcfe89f594d371b9cc20bdabb14b2402e0a86dc814c09c7280f6e152036ff",
+    "test/deps-preflight-noninteractive.bats": "e81a5c8f0c2cecb3e42217f23eb2b28d57a9322470f4082c54f10795284f4456",
     "test/doctor-apply-abort-rows.bats": "a4495a13e7e78bb138e0d0d59eaea4a472109d517b0b56eb21c7cb4a0e46d870",
     "test/doctor-apply-abort-supersession.bats": "992760ed9e4c75a234ca880f7797804fce9bee9e23ddc8f774f99b0c8c620552",
     "test/doctor-auth-report-scan-sigpipe.bats": "3a4f7432eb9b4fc3c05b1222fd337742acca4d65935b376fcaecab2b03820022",

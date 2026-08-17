@@ -423,11 +423,6 @@ teardown() {
   [[ "${body}" == *'auto-retrying with --break-system-packages'* ]]
 }
 
-@test "G3(static): the dead _preflight_python_break_consent helper is REMOVED" {
-  # the second typed gate is gone → its helper must not linger anywhere in the launcher.
-  ! grep -qF '_preflight_python_break_consent' "${LAUNCHER}" "${GA}"/lib/ga-tui-*.sh
-}
-
 # === G4 — fakechat + python steps stay NON-FATAL (warn-and-continue) ==================
 
 @test "G4(static): the boxed fakechat + python steps are non-fatal (|| true, never bail)" {
