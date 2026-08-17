@@ -982,54 +982,98 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 #   check, so a leak blocks a doc-agent workflow regardless of the declaration.
 # =====================================================================================================
 
-@test "docroute: reporter spawn hardcodes local Target, no monitor POST → BLOCK" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/design-md-analysis/improvement-report.md then Write the markdown file'}))"
-  assert_docroute_block || return 1
+# One docroute fixture row: id|verdict|script. The script is the TRAILING field, split by parameter
+# expansion rather than `read -r`, so a multi-line fixture survives intact. The id is echoed before the
+# run so a failing row names itself in the bats output.
+run_docroute_row() {
+  local row="$1" id verdict script rest
+  id="${row%%|*}"
+  rest="${row#*|}"
+  verdict="${rest%%|*}"
+  script="${rest#*|}"
+  echo "row=${id}"
+  run_hook "${script}"
+  case "${verdict}" in
+    pass) assert_docroute_pass ;;
+    block) assert_docroute_block ;;
+    *) echo "unknown verdict: ${verdict}" && return 1 ;;
+  esac
 }
 
-@test "docroute: planner spawn mkdir -p then Write local path, no POST → BLOCK" {
-  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'mkdir -p \$HOME/reports && Write the plan markdown'}))"
-  assert_docroute_block || return 1
+# Every two-line docroute body collapsed into ONE table — each row is a distinct regular-expression
+# alternative and every pre-collapse fixture survives as a data row (none dropped).
+@test "docroute: verdict-and-goal fixture table (one row per alternative)" {
+  local -a table=(
+    "docroute: reporter spawn hardcodes local Target, no monitor POST → BLOCK|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/design-md-analysis/improvement-report.md then Write the markdown file'}))"
+    "docroute: planner spawn mkdir -p then Write local path, no POST → BLOCK|block|pipeline(agent('glass-atrium-intel-planner',{goal:'mkdir -p \$HOME/reports && Write the plan markdown'}))"
+    "docroute: same reporter spawn WITH a monitor-POST instruction → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md then POST it to the monitor clauded-docs API'}))"
+    "docroute: planner /tmp staging cat-piped into clauded-docs POST → PASS (staging is normal)|pass|pipeline(agent('glass-atrium-intel-planner',{goal:'Target file: /tmp/plan.md then curl POST /api/clauded-docs with html_body'}))"
+    "docroute: non-doc non-DEV agent with a local path → PASS (unrelated, fail-open)|pass|pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'Target file: ~/notes.md review it'}))"
+    "docroute: doc agent spawn with NO hardcoded local path → PASS (fail-open)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings into a coherent document'}))"
+    "docroute: local Target path inside a comment is comment-stripped → PASS (fail-open)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize'}) /* Target file: ~/leak.md */)"
+    # docroute runs BEFORE the declaration check, so a nested DEV verify-stage workflow with a leak still
+    # blocks on the leak (independent pass), regardless of any declaration.
+    "docroute: leak nested in a DEV verify-stage workflow → BLOCK (docroute pass runs first)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
+    # P0 asymmetric raw-scan: a commented monitor-POST routing note still suppresses the leak (raw-scanned
+    # suppressor); a commented qa-reviewer / dev spawn still counts as absent (comment-stripped spawns).
+    "docroute: commented monitor-POST note suppresses BLOCK_DOCROUTE → PASS (raw-scan suppressor)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md'}) /* route: POST to clauded-docs */)"
+    # docroute destination-gate + [DOC-ROUTE] token semantics (retained regression set).
+    "docroute-gate: edit-existing .md mention ('at' framing) → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
+    "docroute-gate: read-context .md reference, StructuredOutput deliverable → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'read ~/.glass-atrium/scoped/scope-dev.md for background; deliverable is StructuredOutput'}))"
+    "docroute-gate: memory/progress checkpoint phrasings → PASS (left-boundary lookbehind) #1|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'save your progress notes to memory/progress-x.md'}))"
+    "docroute-gate: memory/progress checkpoint phrasings → PASS (left-boundary lookbehind) #2|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'write your progress notes to memory/progress-x.md'}))"
+    "docroute-gate: 'emit StructuredOutput summarizing <path>.md' → PASS (emit not a destination verb)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'emit StructuredOutput summarizing ~/.glass-atrium/rules/x.md'}))"
+    "docroute-gate: 'revise and save <path>.md in place' → PASS (no destination preposition)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'revise and save ~/.glass-atrium/rules/x.md in place'}))"
+    "docroute-token: raw .md stamp suppresses its stamped-path leak line → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy')"
+    "docroute-token: stamped form inside a /* */ comment still suppresses (raw-scan) → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
+/* [DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy */"
+    "docroute-gate: 'store results under <path>.md' → BLOCK|block|pipeline(agent('glass-atrium-intel-planner',{goal:'store results under ~/reports/summary.md'}))"
+    "docroute-gate: 'deliver the final HTML into <path>.html' → BLOCK (bare-path strength)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the final HTML into ~/exports/report.html'}))"
+    "docroute-token: stamp for a DIFFERENT path never clears a separate leak → BLOCK (path-scoped)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file')"
+    "docroute-gate: A11 unit pair — singular 'Target file:' BLOCKs, plural 'Target files:' PASSes #1|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: ~/x.md'}))"
+    "docroute-gate: A11 unit pair — singular 'Target file:' BLOCKs, plural 'Target files:' PASSes #2|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Target files: ~/x.md'}))"
+    # --- RETAINED docroute regression family (restored near-verbatim from 952e84a). These are doc-agent-
+    # only fixtures (no DEV spawn) exercising the LOCAL_TARGET_RE / TOKEN_LINE_RE suppressor-precision
+    # guards, which are byte-equivalent to 952e84a; they need NO declaration rewrite. The declaration
+    # rework must NOT thin these safety-relevant pins (the silent 40→23 drop is the defect under repair).
+    "docroute-gate: plural 'Target files:' 6-element edit-delegation header → PASS (A11 companion)|pass|pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: ~/.glass-atrium/rules/x.md
+Constraints: edit in place
+Completion criteria: emit StructuredOutput'}))"
+    "docroute-gate: output-as-noun 'Output Format Routing in <path>.md' → PASS ('in' excluded)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'follow the Output Format Routing in ~/.glass-atrium/scoped/scope-report.md'}))"
+    "docroute-gate: 'Persist nothing. Read <path>.md for context' → PASS (persist without destination)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Persist nothing. Read ~/.glass-atrium/rules/x.md for context'}))"
+    "docroute-token: raw .html stamp suppresses the A4b bare-path line → PASS|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the dashboard into ~/exports/dash.html'}))
+log('[DOC-ROUTE] user-requested-local: ~/exports/dash.html — user asked for a local dashboard file')"
+    "docroute-token: 'Revise and save the doc to ~/project/README.md' + stamp → PASS (adapted A19c)|pass|pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/project/README.md — user asked to revise the repo README')"
+    "docroute-gate: 'save the report as <path>.md' → BLOCK (A4a 'as')|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report as ~/reports/q3.md'}))"
+    "docroute-gate: verb-free 'Deliverable: <path>.html' noun header → BLOCK (A4b bare-path — .html noun-headers ride A4b)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/dash.html'}))"
+    "docroute-gate: verb-free 'Deliverable: <path>.md' noun header → BLOCK (A4c .md branch)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/q3.md'}))"
+    "docroute-gate: passive 'should end up at <path>.html' → BLOCK (A4b)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'the dashboard should end up at ~/reports/dash.html'}))"
+    "docroute-gate: 'store the final deliverable at <path>.html' → BLOCK (A4b — former accepted FN, now TP)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'store the final deliverable at ~/reports/final.html'}))"
+    "docroute-gate: 'Target files: write everything to ~/x.md' → BLOCK (A3 residual catch under plural header)|block|pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: write everything to ~/x.md'}))"
+    "docroute-gate: 'Revise and save the doc to ~/project/README.md' WITHOUT token → BLOCK (adapted A19c)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))"
+    "docroute-token: bare stamp without a path + real leak → BLOCK (path-after-colon required)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))
+log('[DOC-ROUTE] user-requested-local: — no path stamped')"
+    "docroute-token: the degenerate '~' stamp + real leak on another line → BLOCK (concrete path required)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~ — user asked')"
+    "docroute-token: the degenerate '/' stamp + real leak on another line → BLOCK (concrete path required)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: / — root stamp')"
+    "docroute-token: the extensionless dir stamp '~/reports' + leak inside that dir → BLOCK (dot-extension required)|block|pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
+log('[DOC-ROUTE] user-requested-local: ~/reports — user asked for the reports dir')"
+    # A /* */ block comment spanning from the stamp line onto a DIFFERENT spawn's leak line must NOT merge
+    # the two source lines (strip_comments preserves newlines inside block comments) — the line-scoped
+    # stamp suppressor may drop only its own line, so the second spawn's leak still BLOCKs.
+    "docroute-token: block comment spans stamp line onto a different spawn's leak line → BLOCK (line identity)|block|log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file') /* span
+continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))"
+  )
+  local row
+  for row in "${table[@]}"; do
+    run_docroute_row "${row}" || return 1
+  done
 }
 
-@test "docroute: same reporter spawn WITH a monitor-POST instruction → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md then POST it to the monitor clauded-docs API'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute: planner /tmp staging cat-piped into clauded-docs POST → PASS (staging is normal)" {
-  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target file: /tmp/plan.md then curl POST /api/clauded-docs with html_body'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute: non-doc non-DEV agent with a local path → PASS (unrelated, fail-open)" {
-  run_hook "pipeline(agent('glass-atrium-qa-code-reviewer',{goal:'Target file: ~/notes.md review it'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute: doc agent spawn with NO hardcoded local path → PASS (fail-open)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize the findings into a coherent document'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute: local Target path inside a comment is comment-stripped → PASS (fail-open)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'synthesize'}) /* Target file: ~/leak.md */)"
-  assert_docroute_pass || return 1
-}
-
-# docroute runs BEFORE the declaration check, so a nested DEV verify-stage workflow with a leak still
-# blocks on the leak (independent pass), regardless of any declaration.
-@test "docroute: leak nested in a DEV verify-stage workflow → BLOCK (docroute pass runs first)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}), parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-python',{goal:'feasible'})), agent('glass-atrium-dev-python',{goal:'implement'}))"
-  assert_docroute_block || return 1
-}
-
-# P0 asymmetric raw-scan: a commented monitor-POST routing note still suppresses the leak (raw-scanned
-# suppressor); a commented qa-reviewer / dev spawn still counts as absent (comment-stripped spawns).
-@test "docroute: commented monitor-POST note suppresses BLOCK_DOCROUTE → PASS (raw-scan suppressor)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE the report to ~/r.md'}) /* route: POST to clauded-docs */)"
-  assert_docroute_pass || return 1
-}
 
 # docroute + a dev-* spawn + ENTRY_ADVISORY → BLOCK_DOCROUTE with the entry-format addendum (the
 # addendum rides the block-docroute verdict via the ADR-2 allowlist). Fixture purity: NO clauded-docs
@@ -1042,6 +1086,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   assert_trace block-docroute || return 1
 }
 
+
 @test "docroute F1: pure leak, NO dev-* spawn → BLOCK, NO entry addendum (no spurious nudge)" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: WRITE to ~/r.md'}))"
   [[ "${status}" -eq 2 ]] || return 1
@@ -1049,45 +1094,6 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   [[ "${output}" != *"entry classification / plan-reference also required"* ]] || return 1
 }
 
-# docroute destination-gate + [DOC-ROUTE] token semantics (retained regression set).
-@test "docroute-gate: edit-existing .md mention ('at' framing) → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Update the existing document at ~/.glass-atrium/rules/x.md - revise section Y'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: read-context .md reference, StructuredOutput deliverable → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'read ~/.glass-atrium/scoped/scope-dev.md for background; deliverable is StructuredOutput'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: memory/progress checkpoint phrasings → PASS (left-boundary lookbehind)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save your progress notes to memory/progress-x.md'}))"
-  assert_docroute_pass || return 1
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'write your progress notes to memory/progress-x.md'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: 'emit StructuredOutput summarizing <path>.md' → PASS (emit not a destination verb)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'emit StructuredOutput summarizing ~/.glass-atrium/rules/x.md'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: 'revise and save <path>.md in place' → PASS (no destination preposition)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'revise and save ~/.glass-atrium/rules/x.md in place'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-token: raw .md stamp suppresses its stamped-path leak line → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
-log('[DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy')"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-token: stamped form inside a /* */ comment still suppresses (raw-scan) → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/user-req.md'}))
-/* [DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for a local md copy */"
-  assert_docroute_pass || return 1
-}
 
 @test "docroute-gate: 'save the finished report to <path>.md' → BLOCK + stamp taught" {
   run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))"
@@ -1095,130 +1101,6 @@ log('[DOC-ROUTE] user-requested-local: ~/reports/user-req.md — user asked for 
   [[ "${output}" == *"log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')"* ]] || return 1
 }
 
-@test "docroute-gate: 'store results under <path>.md' → BLOCK" {
-  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'store results under ~/reports/summary.md'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: 'deliver the final HTML into <path>.html' → BLOCK (bare-path strength)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the final HTML into ~/exports/report.html'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-token: stamp for a DIFFERENT path never clears a separate leak → BLOCK (path-scoped)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
-log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file')"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: A11 unit pair — singular 'Target file:' BLOCKs, plural 'Target files:' PASSes" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target file: ~/x.md'}))"
-  assert_docroute_block || return 1
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Target files: ~/x.md'}))"
-  assert_docroute_pass || return 1
-}
-
-# --- RETAINED docroute regression family (restored near-verbatim from 952e84a). These are doc-agent-
-# only fixtures (no DEV spawn) exercising the LOCAL_TARGET_RE / TOKEN_LINE_RE suppressor-precision
-# guards, which are byte-equivalent to 952e84a; they need NO declaration rewrite. The declaration
-# rework must NOT thin these safety-relevant pins (the silent 40→23 drop is the defect under repair).
-
-@test "docroute-gate: plural 'Target files:' 6-element edit-delegation header → PASS (A11 companion)" {
-  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: ~/.glass-atrium/rules/x.md
-Constraints: edit in place
-Completion criteria: emit StructuredOutput'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: output-as-noun 'Output Format Routing in <path>.md' → PASS ('in' excluded)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'follow the Output Format Routing in ~/.glass-atrium/scoped/scope-report.md'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: 'Persist nothing. Read <path>.md for context' → PASS (persist without destination)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Persist nothing. Read ~/.glass-atrium/rules/x.md for context'}))"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-token: raw .html stamp suppresses the A4b bare-path line → PASS" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'deliver the dashboard into ~/exports/dash.html'}))
-log('[DOC-ROUTE] user-requested-local: ~/exports/dash.html — user asked for a local dashboard file')"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-token: 'Revise and save the doc to ~/project/README.md' + stamp → PASS (adapted A19c)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))
-log('[DOC-ROUTE] user-requested-local: ~/project/README.md — user asked to revise the repo README')"
-  assert_docroute_pass || return 1
-}
-
-@test "docroute-gate: 'save the report as <path>.md' → BLOCK (A4a 'as')" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report as ~/reports/q3.md'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: verb-free 'Deliverable: <path>.html' noun header → BLOCK (A4b bare-path — .html noun-headers ride A4b)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/dash.html'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: verb-free 'Deliverable: <path>.md' noun header → BLOCK (A4c .md branch)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Deliverable: ~/reports/q3.md'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: passive 'should end up at <path>.html' → BLOCK (A4b)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'the dashboard should end up at ~/reports/dash.html'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: 'store the final deliverable at <path>.html' → BLOCK (A4b — former accepted FN, now TP)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'store the final deliverable at ~/reports/final.html'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: 'Target files: write everything to ~/x.md' → BLOCK (A3 residual catch under plural header)" {
-  run_hook "pipeline(agent('glass-atrium-intel-planner',{goal:'Target files: write everything to ~/x.md'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-gate: 'Revise and save the doc to ~/project/README.md' WITHOUT token → BLOCK (adapted A19c)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'Revise and save the doc to ~/project/README.md'}))"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-token: bare stamp without a path + real leak → BLOCK (path-after-colon required)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the finished report to ~/reports/q3.md'}))
-log('[DOC-ROUTE] user-requested-local: — no path stamped')"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-token: the degenerate '~' stamp + real leak on another line → BLOCK (concrete path required)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
-log('[DOC-ROUTE] user-requested-local: ~ — user asked')"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-token: the degenerate '/' stamp + real leak on another line → BLOCK (concrete path required)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
-log('[DOC-ROUTE] user-requested-local: / — root stamp')"
-  assert_docroute_block || return 1
-}
-
-@test "docroute-token: the extensionless dir stamp '~/reports' + leak inside that dir → BLOCK (dot-extension required)" {
-  run_hook "pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))
-log('[DOC-ROUTE] user-requested-local: ~/reports — user asked for the reports dir')"
-  assert_docroute_block || return 1
-}
-
-# A /* */ block comment spanning from the stamp line onto a DIFFERENT spawn's leak line must NOT merge
-# the two source lines (strip_comments preserves newlines inside block comments) — the line-scoped
-# stamp suppressor may drop only its own line, so the second spawn's leak still BLOCKs.
-@test "docroute-token: block comment spans stamp line onto a different spawn's leak line → BLOCK (line identity)" {
-  run_hook "log('[DOC-ROUTE] user-requested-local: ~/notes/a.md — user asked for a local note file') /* span
-continues */ pipeline(agent('glass-atrium-intel-reporter',{goal:'save the report to ~/reports/b.md'}))"
-  assert_docroute_block || return 1
-}
 
 # =====================================================================================================
 # SECTION N — RESILIENCE ADVISORY (advisory-only, never blocks). DEV PASS fixtures carry a valid
@@ -1574,50 +1456,38 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 #   durable regression anchor.
 # =====================================================================================================
 
-@test "corpus: blocked_9599.js (undeclared, config-array fan-out) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/blocked_9599.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
+# One corpus row: file|exit|trace. The trace log is truncated per row so the tag assertion is scoped
+# to this row's firing, and the file name is echoed first so a failing row names itself.
+run_corpus_row() {
+  local row="$1" file exit_code tag rest
+  file="${row%%|*}"
+  rest="${row#*|}"
+  exit_code="${rest%%|*}"
+  tag="${rest#*|}"
+  echo "row=${file}"
+  : >"${TRACE_LOG}"
+  run_hook_file "${CORPUS_DIR}/${file}"
+  [[ "${status}" -eq "${exit_code}" ]] && assert_trace "${tag}"
 }
 
-@test "corpus: blocked_7938.js (undeclared, literal agentType spawn) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/blocked_7938.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
-}
-
-@test "corpus: passed_9599_resubmit.js (undeclared, ternary literals) → BLOCK_NODECL" {
-  run_hook_file "${CORPUS_DIR}/passed_9599_resubmit.js"
-  [[ "${status}" -eq 2 ]] || return 1
-  assert_trace block-nodecl || return 1
-}
-
-# UPSTREAM-form declared variant of the config-array fan-out (impl-computed + upstream clauded-docs/3).
-@test "corpus: variant_A.js (upstream + impl-computed) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_A.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-# UPSTREAM-form declared variant of the literal-spawn script (upstream clauded-docs/1 + impl dev-shell).
-@test "corpus: variant_B.js (upstream + literal impl) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_B.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-@test "corpus: variant_resubmit.js (upstream + impl-computed) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_resubmit.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
-}
-
-# TEAM-form (in-script {qa, dev} pair) declared variant — the OTHER declaration path, so the corpus
-# exercises BOTH forms (not a single-path corpus).
-@test "corpus: variant_team.js (in-script verify team) → PASS" {
-  run_hook_file "${CORPUS_DIR}/variant_team.js"
-  [[ "${status}" -eq 0 ]] || return 1
-  assert_trace pass || return 1
+# file|exit|trace triples. The 3 undeclared originals are missing-declaration BLOCK pins; the 4
+# declared variants cover BOTH declaration forms (upstream and in-script team), so the corpus is not
+# a single-path one. passed_9599_resubmit.js blocks despite its name — a naming artifact of commit
+# 054e59f, recorded at its observed behaviour and NOT a regression.
+@test "corpus: archived-script fixture table (file, exit, trace)" {
+  local -a table=(
+    "blocked_9599.js|2|block-nodecl"
+    "blocked_7938.js|2|block-nodecl"
+    "passed_9599_resubmit.js|2|block-nodecl"
+    "variant_A.js|0|pass"
+    "variant_B.js|0|pass"
+    "variant_resubmit.js|0|pass"
+    "variant_team.js|0|pass"
+  )
+  local row
+  for row in "${table[@]}"; do
+    run_corpus_row "${row}" || return 1
+  done
 }
 
 # =====================================================================================================
