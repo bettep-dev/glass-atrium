@@ -1,15 +1,16 @@
-"""T12/T13/T14 — the corpus-size audit's Postgres destination.
+"""T12/T14 — the corpus-size audit's Postgres destination.
 
 The audit used to land in an append-only JSONL file nobody queried. These tests
-pin the replacement and the two properties that make it safe:
+pin the replacement and the two properties that make it safe (the JSONL
+retirement itself is pinned by test_signal_store_retired.py, which drives all
+four census emitters rather than the two populated ones):
 
   T12 (1) every one of the 12 measurement columns reaches the writer equal to
           the fixture's known answer, and an insufficient-data reading stays
           NULL rather than collapsing to 0.0;
       (2) two runs of the same cycle_date leave exactly ONE row (UPSERT), and
           the parameter tuple matches the INSERT column list positionally;
-  T13 (3) neither detection family appends to the JSONL store across two runs;
-  T14 (4) a sink outage on EITHER family leaves the caller's normal result
+  T14 (3) a sink outage on EITHER family leaves the caller's normal result
           intact, raises nothing, emits exactly one named warning line, and
           leaves the loss retrievable on the named degradation channel.
 
@@ -283,36 +284,6 @@ class CorpusAuditUpsertTest(unittest.TestCase):
             )
         self.assertEqual(len(seen[0]), 1 + len(_MEASUREMENT_COLUMNS))
         self.assertIsNone(seen[0][5])
-
-
-class JsonlRetirementTest(unittest.TestCase):
-    """T13 — neither detection family appends to the JSONL store any more."""
-
-    def test_two_cycles_append_no_jsonl_record(self) -> None:
-        import compliance_telemetry
-
-        with tempfile.TemporaryDirectory() as tmp:
-            store = Path(tmp) / "signals.jsonl"
-            store.write_text("", encoding="utf-8")
-            rules_dir, global_rules = _fixture_corpus(Path(tmp))
-            appended: list[object] = []
-            original = compliance_telemetry.append_signal
-            compliance_telemetry.append_signal = (
-                lambda signal, store_file=None: appended.append(signal) or True
-            )
-            try:
-                for _run in (1, 2):
-                    dc.audit_corpus_size(
-                        rules_dir=rules_dir, global_rules_file=global_rules
-                    )
-                    dc.classify_prose_only_add(
-                        "+added line\n+another", target_file="rules/a.md"
-                    )
-            finally:
-                compliance_telemetry.append_signal = original
-            self.assertEqual(store.read_text(encoding="utf-8"), "")
-
-        self.assertEqual(appended, [])
 
 
 class SinkOutageTest(unittest.TestCase):

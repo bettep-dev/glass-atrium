@@ -15,7 +15,7 @@ Covered: the original set (project_key.py / _pg_push_autoagent_loop_events.py /
 learning-aggregator.py / autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
-(SIGNAL_STORE_FILE + WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
+(WORKFLOW_GATE_LOG_FILE), autoagent/daemon_cycle.py
 (DEFAULT_OUTCOMES_DIR / DEFAULT_REPORTS_DIR / HAIKU_FAILURE_LOG_DIR /
 FEATURE_FLAGS_FILE), wiki_dedup.py (DEFAULT_VERIFIED_HASHES_PATH), and
 wiki_daemon_cycle.py (DEFAULT_REPORTS_DIR). DEFAULT_LEARNING_LOG stays legacy — not
@@ -164,19 +164,11 @@ class DefaultResolutionTest(unittest.TestCase):
 
     def test_compliance_telemetry_stores_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
-            for _k in (
-                "GA_DATA_ROOT",
-                "AUTOAGENT_SIGNAL_STORE_FILE",
-                "WORKFLOW_GATE_LOG_FILE",
-            ):
+            for _k in ("GA_DATA_ROOT", "WORKFLOW_GATE_LOG_FILE"):
                 os.environ.pop(_k, None)
             m = _load_fresh(_HOOKS / "compliance_telemetry.py", "compliance_probe")
             base = Path(_SANDBOX_HOME) / ".glass-atrium" / "data"
-            self.assertEqual(
-                m.SIGNAL_STORE_FILE, base / "learning" / "self-improve-signals.jsonl"
-            )
             self.assertEqual(m.WORKFLOW_GATE_LOG_FILE, base / "workflow-gate-fired.log")
-            self.assertNotIn(".claude", str(m.SIGNAL_STORE_FILE))
             self.assertNotIn(".claude", str(m.WORKFLOW_GATE_LOG_FILE))
 
     def test_daemon_cycle_roots_under_glass_atrium(self) -> None:
@@ -291,12 +283,10 @@ class OverrideParityTest(unittest.TestCase):
             self.assertEqual(m.CONFIG_PATH, Path(override))
 
     def test_compliance_env_overrides_preserved(self) -> None:
-        sig = "/custom/sig.jsonl"
         gate = "/custom/gate.log"
         with mock.patch.dict(
             "os.environ",
             {
-                "AUTOAGENT_SIGNAL_STORE_FILE": sig,
                 "WORKFLOW_GATE_LOG_FILE": gate,
                 "HOME": _SANDBOX_HOME,
             },
@@ -304,7 +294,6 @@ class OverrideParityTest(unittest.TestCase):
         ):
             os.environ.pop("GA_DATA_ROOT", None)
             m = _load_fresh(_HOOKS / "compliance_telemetry.py", "compliance_ovr_probe")
-            self.assertEqual(m.SIGNAL_STORE_FILE, Path(sig))
             self.assertEqual(m.WORKFLOW_GATE_LOG_FILE, Path(gate))
 
     def test_ga_data_root_redirects_daemon_cycle(self) -> None:
