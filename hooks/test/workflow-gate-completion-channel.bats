@@ -857,3 +857,211 @@ await agent('glass-atrium-dev-shell', { goal: 'slice four' });"
     return 1
   }
 }
+
+# ── the remediation round trip: the message's own fix, extracted, applied, re-run ────────────────────
+#
+# Every row above pins WHEN the channel fires. These pin that the fix it PRINTS works: the one-edit
+# snippet is read out of the live message, applied to the carrier that fired, and the carrier re-run to
+# silence. The paired negative control is what keeps the green honest — an edit of the same shape and
+# size that is not the snippet leaves the message firing, so the silence is caused by the remediation
+# rather than by having edited anything at all, and a vacuous green cannot pass.
+#
+# DRIVER: the offline --lint path, because applying an edit is a file operation and --lint takes a file.
+# It reaches the same printers through the same decode-to-dispatch tail as the envelope path (only
+# emit_trace is LINT_MODE-guarded), so the message under test is the shipped one.
+
+# The reserved property declared as a WHOLE LINE — the bare one-edit form. Anchored on the line rather
+# than searched as a substring, and that choice is load-bearing: the schema-absent advisory nests the
+# same description inside a full schema object as a teaching form, so a substring read would swallow
+# that fourth site and report it as a fourth copy of a line it is not.
+bare_snippet_line() {
+  awk '/^[[:space:]]*completion_block: \{/ { print; exit }'
+}
+
+# The quoted description of the FIRST declared-property occurrence, whatever object nests it — the one
+# span the bare line and the embedded teaching form genuinely share.
+snippet_description() {
+  awk -v q="'" 'BEGIN { key = "description: " q }
+    index($0, "completion_block:") == 0 { next }
+    {
+      i = index($0, key)
+      if (i == 0) next
+      rest = substr($0, i + length(key))
+      j = index(rest, q)
+      if (j == 0) next
+      print substr(rest, 1, j - 1)
+      exit
+    }'
+}
+
+# Drive the offline lint path over a FILE. The rollback marker is pointed at the per-test path that does
+# not exist, so no live-install lever can silence the very message this round trip extracts, and the
+# firing log is redirected even though LINT_MODE already makes emit_trace a no-op.
+run_lint() {
+  run env \
+    WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER="${ROLLBACK_MARKER}" \
+    WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" \
+    bash "${HOOK_SH}" --lint "${1}"
+}
+
+# The carrier's marker line swapped for $3, verbatim. A shell read loop rather than sed: the replacement
+# is derived at runtime and carries slashes, brackets and quotes, so no sed delimiter is safe against
+# text this test must never reshape.
+replace_marker() {
+  local line
+  while IFS= read -r line; do
+    if [[ "${line}" == *"${2}"* ]]; then
+      printf '%s\n' "${3}"
+    else
+      printf '%s\n' "${line}"
+    fi
+  done <"${1}"
+}
+
+# A schema-mode carrier that fires the property-absent value and NOTHING else: the sizing token and the
+# .catch() handler are present so the only advisory in play is the one under test, which is what lets
+# the green step assert silence rather than merely a smaller set of messages.
+write_carrier() {
+  cat >"${1}" <<'JS'
+log('[SIZE-EST] reads~=6 fields=2 effort=medium scope=allowlist — one bounded survey');
+const S = {
+  findings: { type: 'string' },
+  // <one-edit remediation lands on this line>
+};
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S }).catch(() => null);
+JS
+}
+
+@test "round-trip(remediation): the message's own one-edit snippet silences it; a wrong edit does not" {
+  local carrier="${BATS_TEST_TMPDIR}/carrier.js"
+  local marker='// <one-edit remediation lands on this line>'
+  write_carrier "${carrier}"
+
+  # RED — the carrier fires, and the fix it prints is the input to the next step.
+  run_lint "${carrier}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "an advisory must never alter the exit code, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "the carrier did not fire, so there is no round trip to run -- ${output}" >&2
+    return 1
+  }
+  local snippet
+  snippet="$(printf '%s\n' "${output}" | bare_snippet_line)"
+  [[ -n "${snippet}" ]] || {
+    echo "no one-edit snippet extractable from the message -- ${output}" >&2
+    return 1
+  }
+
+  # GREEN — the SAME text the message printed, applied to the carrier that printed it.
+  local remediated="${BATS_TEST_TMPDIR}/remediated.js"
+  replace_marker "${carrier}" "${marker}" "${snippet}" >"${remediated}"
+  run_lint "${remediated}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "the remediated carrier must exit 0, got ${status}" >&2
+    return 1
+  }
+  [[ "${output}" != *"ADVISORY (completion channel"* ]] || {
+    echo "the message's own fix did not silence it -- ${output}" >&2
+    return 1
+  }
+
+  # NEGATIVE CONTROL — the same line with the reserved name spelled camelCase, the plausible author
+  # error. Same shape, same length class, one token off: it must leave the message firing, else the
+  # green above would have been bought by the act of editing rather than by the remediation.
+  local wrong="${BATS_TEST_TMPDIR}/wrong-edit.js"
+  replace_marker "${carrier}" "${marker}" "${snippet/completion_block/completionBlock}" >"${wrong}"
+  run_lint "${wrong}"
+  [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
+    echo "a wrong edit silenced the message; the green step proves nothing -- ${output}" >&2
+    return 1
+  }
+}
+
+# EQUALITY, BOTH SIDES DERIVED — each of the three bare sites is read out of the shipped printer at run
+# time and compared. A literal typed here would pin this file's copy rather than the shipped ones and
+# would keep passing while all three drifted together, so no expected value appears below.
+@test "round-trip(equality): the one-edit snippet is byte-identical across its three bare sites" {
+  local carrier="${BATS_TEST_TMPDIR}/carrier.js"
+  local per_site_src="${BATS_TEST_TMPDIR}/per-site.js"
+  write_carrier "${carrier}"
+  cat >"${per_site_src}" <<'JS'
+log('[SIZE-EST] reads~=6 fields=2 effort=medium scope=allowlist — two bounded reads');
+const a = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: { properties: { completion_block: { type: 'string' } } } }).catch(() => null);
+const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { properties: { verdict: { type: 'string' } } } }).catch(() => null);
+JS
+
+  local channel per_site template
+  run_lint "${carrier}"
+  channel="$(printf '%s\n' "${output}" | bare_snippet_line)"
+  run_lint "${per_site_src}"
+  per_site="$(printf '%s\n' "${output}" | bare_snippet_line)"
+  run bash "${HOOK_SH}" --lint --template
+  template="$(printf '%s\n' "${output}" | bare_snippet_line)"
+
+  local empty=""
+  [[ -n "${channel}" ]] || empty="${empty} channel-advisory"
+  [[ -n "${per_site}" ]] || empty="${empty} per-site-advisory"
+  [[ -n "${template}" ]] || empty="${empty} template"
+  [[ -z "${empty}" ]] || {
+    echo "no snippet extractable from:${empty}" >&2
+    return 1
+  }
+
+  # Self-naming: the pair list plus the labelled values, so a failure says WHICH copy moved. The site
+  # appearing in two pairs is the odd one out.
+  local drift=""
+  [[ "${channel}" == "${per_site}" ]] || drift="${drift} channel-advisory/per-site-advisory"
+  [[ "${channel}" == "${template}" ]] || drift="${drift} channel-advisory/template"
+  [[ "${per_site}" == "${template}" ]] || drift="${drift} per-site-advisory/template"
+  [[ -z "${drift}" ]] || {
+    echo "the one-edit snippet drifted between:${drift}" >&2
+    echo "  channel-advisory:  ${channel}" >&2
+    echo "  per-site-advisory: ${per_site}" >&2
+    echo "  template:          ${template}" >&2
+    return 1
+  }
+}
+
+# THE FOURTH SITE, and why it is not a fourth copy. The schema-absent advisory embeds the same property
+# inside a full schema object because its remediation is "give the spawn a schema", not "add a line" —
+# a deliberate teaching form, not drift. Two rows hold that reading in place from both ends: the bare
+# line does NOT occur in that message (so the equality pin above stays honest about what it covers, and
+# weakening its extraction to a substring would break here), while the DESCRIPTION does match (so the
+# shared prose cannot drift unnoticed). The description pin constrains the shared TEXT only — the
+# embedded form stays free to nest it in whatever object its own remediation needs.
+@test "round-trip(equality): the embedded teaching form shares the description and is not a bare line" {
+  local absent_src="${BATS_TEST_TMPDIR}/schema-absent.js"
+  local carrier="${BATS_TEST_TMPDIR}/carrier.js"
+  write_carrier "${carrier}"
+  cat >"${absent_src}" <<'JS'
+log('[SIZE-EST] reads~=4 fields=2 effort=medium scope=allowlist — prose-free bounded read');
+const r = await agent('glass-atrium-intel-researcher', { goal: 'survey the landscape' }).catch(() => null);
+JS
+
+  run_lint "${absent_src}"
+  [[ "${output}" == *"${ABSENT_PHRASE}"* ]] || {
+    echo "the schema-absent fixture did not fire -- ${output}" >&2
+    return 1
+  }
+  local embedded_out="${output}" embedded_desc bare_desc
+  [[ -z "$(printf '%s\n' "${embedded_out}" | bare_snippet_line)" ]] || {
+    echo "the embedded form matched the bare-line extraction; the equality pin now covers it" >&2
+    return 1
+  }
+  embedded_desc="$(printf '%s\n' "${embedded_out}" | snippet_description)"
+
+  run_lint "${carrier}"
+  bare_desc="$(printf '%s\n' "${output}" | snippet_description)"
+  [[ -n "${bare_desc}" && -n "${embedded_desc}" ]] || {
+    echo "description not extractable: bare [${bare_desc}] embedded [${embedded_desc}]" >&2
+    return 1
+  }
+  [[ "${bare_desc}" == "${embedded_desc}" ]] || {
+    echo "the shared description drifted:" >&2
+    echo "  bare sites:     ${bare_desc}" >&2
+    echo "  embedded form:  ${embedded_desc}" >&2
+    return 1
+  }
+}
