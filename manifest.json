@@ -1502,7 +1502,7 @@
     "test/recovery-snapshot-staleness.bats": "3b37a6380b00ef54adbc12cd7093a213bb92cf47d150d4cdf3a1f3b7f9b673fd",
     "test/render-launchd-plists.bats": "477f9d5815fba52a013cd4c05fdfcf82df2b5f5be4bf6390882b23406d72d837",
     "test/retire-hook-binding.bats": "bcc4d7dae6591a8a13b8bc7d975153af01693e8deffe978d7d58139384a45439",
-    "test/run-step-fail-return.bats": "fa2e2bb0e7c69c24b4a8839ddab3eb9c273239faf5edf0ded3c2daadc74cfd49",
+    "test/run-step-fail-return.bats": "886911cf87d8e72647bcd42cb19d591b7a6fae0d4e3d77e625075c17d01e28ee",
     "test/setup_suite.bash": "f69f8b356efef84669e55be3be671c8f740711c4362bc498f0f2b9b2b932b620",
     "test/spinner-cursor-visibility.bats": "45b54b363be2256c4c5075a8f95e12c8c8fa3de0dbec4e97c1ab8eb796620dc6",
     "test/spinner-jobcontrol-restore.bats": "5d254987ad6003d6ed881f933d9133a909d82cfb44dfcc9418203b22e53aecdc",

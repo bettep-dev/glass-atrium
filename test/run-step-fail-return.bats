@@ -240,10 +240,19 @@ drive_gate() {
 
 # === hash -r static-scan — hash -r after node@24 keg inject + guide-only CLT check ===============
 
-@test "hash-r(static): hash -r follows every preflight_keg_path_inject node@24 (both render paths)" {
-  # exactly the two keg-inject node@24 sites (scroll + boxed) each get a following `hash -r`.
-  [[ "$(awk -v p='preflight_keg_path_inject node@24' 'index($0,p){c++} END{print c+0}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)" -eq 2 ]] \
-    && [[ "$(awk '/^[[:space:]]*hash -r/{c++} END{print c+0}' "${TUI}" "${GA}"/lib/ga-tui-*.sh)" -ge 2 ]]
+@test "hash-r(static): each named render path injects the node@24 keg and follows it with hash -r" {
+  # Named render paths, not a total: per-FILE membership cannot separate them (both call sites live
+  # in the same interface library), and a count says only that a number moved. Each body is extracted
+  # with the file's own body-extraction idiom, so a path that loses its inject fails BY NAME.
+  local fn body preflight="${GA}/lib/ga-tui-preflight.sh"
+  for fn in _run_dependency_preflight_scroll _run_dependency_preflight_boxed; do
+    body="$(awk -v fn="${fn}" '$0 ~ "^"fn"\\(\\) \\{"{f=1} f{print} f&&/^}/{exit}' "${preflight}")"
+    [[ -n "${body}" ]] || { echo "render path ${fn} not found in ${preflight}" >&2; return 1; }
+    [[ "${body}" == *'preflight_keg_path_inject node@24'* ]] \
+      || { echo "render path ${fn} does not inject the node@24 keg" >&2; return 1; }
+    [[ "${body}" == *'hash -r'* ]] \
+      || { echo "render path ${fn} does not clear the command hash after the keg inject" >&2; return 1; }
+  done
 }
 
 @test "hash-r(static): the guide-only Xcode CLT gate is invoked before the build path (pre-existing coverage)" {
