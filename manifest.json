@@ -1476,7 +1476,7 @@
     "test/headless-auth-selftest-timeout.bats": "daf63b3354cf723fda539712be95c6e287d0a406b301610050b398ccb32d7547",
     "test/hook-bindings-complete.bats": "1cfe0ea08356bbea88c352c62bccbd7d516b2e15504f61115a32c8c419792949",
     "test/hook-bindings-executable.bats": "8723bf2fcc98b7efe31f62315c90f6d8e5ddce2efba1a6ab44348df0c8333158",
-    "test/hook-matcher-shape-invariant.bats": "88364cdfebdb6ce899b1fcb6ffd5288d0f7dbdd8df3cdb606b2764af2ac34a4c",
+    "test/hook-matcher-shape-invariant.bats": "52fa587a2f061f8dda31a42e86415c48cc1254d3627df435d1d4f5d138b1a451",
     "test/hook-repoint-dualdir.bats": "f0bf2afd3a66c0b69f76bb28ab01dc11b62769468413221187ffe12e798b7b56",
     "test/install-acceptance.sh": "ce4182fae3dececf798a976731411f03767c5f3bf1b271265a2ffbec24d23168",
     "test/install-bootstrap-subcommand.bats": "6cad6a050ffcab43725445cd6718ff9e7409d1b5b9ed91af206657b58078214f",
