@@ -1518,104 +1518,64 @@ MD
 # the same spelling resolves to nothing, so the block CLASS legitimately diverges by
 # platform while the exit code does not.
 
-@test "T1-BC1 case-varied legacy hooks dir, Bash mutation verb → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.claude/Hooks/x.sh')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
+# One table per arm, one row per protection class — the row identifier is echoed on
+# failure so a red names the class rather than a loop index. The plist LABEL rows are
+# a SEPARATE PROT_RE alternative (the label carries the prefilter literal, so a
+# case-varied label defeats prefilter and regex in one move); the cwd-arming rows
+# exercise PROT_DIR_RE, the second consumer; BC3 is the OUTERMOST prefilter root
+# literal, defective independently of everything downstream.
 
-@test "T1-BC2 case-varied agents dir, Bash mutation verb → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Agents/victim.md')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC4 case-varied live settings, Bash redirect → block" {
-  run_hook "Bash" "$(bash_input 'echo x > ~/.claude/Settings.json')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC5 case-varied autoagent dir, Bash mutation verb → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/AutoAgent/daemon-apply.sh')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC6 case-varied scripts dir, Bash mutation verb → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Scripts/x.sh')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC7 case-varied skills dir, Bash mutation verb → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.glass-atrium/Skills/x.md')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-# The plist LABEL is a SEPARATE PROT_RE alternative — the label itself carries the
-# prefilter literal, so a case-varied label defeats the prefilter and the regex in
-# one move.
-
-@test "T1-BC8 case-varied glass-atrium plist label → block" {
-  run_hook "Bash" "$(bash_input 'cp /tmp/evil.plist ~/Library/LaunchAgents/com.Glass-Atrium.monitor.plist')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC8b case-varied legacy claude plist label → block" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/Library/LaunchAgents/com.CLAUDE.monitor.plist')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-# PROT_DIR_RE is the SECOND consumer — the bare-directory form that arms a cwd.
-
-@test "T1-BC10 case-varied cwd arming on the GA hooks dir → block" {
-  run_hook "Bash" "$(bash_input 'cd ~/.glass-atrium/Hooks && printf x > y.sh')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-BC10b case-varied cwd arming on the legacy agents dir → block" {
-  run_hook "Bash" "$(bash_input 'cd ~/.claude/Agents && echo x | tee y.md')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-# The prefilter root literal is the OUTERMOST layer and is shared by both arms: a
-# case-varied ROOT exits 0 before any classifier runs, so this row is defective
-# independently of everything downstream.
-
-@test "T1-BC3 case-varied protected ROOT literal → block (prefilter layer)" {
-  run_hook "Bash" "$(bash_input 'echo x | tee ~/.Claude/hooks/x.sh')"
-  [[ "${status}" -eq 2 ]] || return 1
+@test "T1-BC case-varied protected paths, Bash arm → block (one row per class)" {
+  local row id cmd
+  for row in \
+    'BC1 legacy hooks dir::echo x | tee ~/.claude/Hooks/x.sh' \
+    'BC2 agents dir::echo x | tee ~/.glass-atrium/Agents/victim.md' \
+    'BC4 live settings redirect::echo x > ~/.claude/Settings.json' \
+    'BC5 autoagent dir::echo x | tee ~/.glass-atrium/AutoAgent/daemon-apply.sh' \
+    'BC6 scripts dir::echo x | tee ~/.glass-atrium/Scripts/x.sh' \
+    'BC7 skills dir::echo x | tee ~/.glass-atrium/Skills/x.md' \
+    'BC8 glass-atrium plist label::cp /tmp/evil.plist ~/Library/LaunchAgents/com.Glass-Atrium.monitor.plist' \
+    'BC8b legacy claude plist label::echo x | tee ~/Library/LaunchAgents/com.CLAUDE.monitor.plist' \
+    'BC10 cwd arming, GA hooks dir::cd ~/.glass-atrium/Hooks && printf x > y.sh' \
+    'BC10b cwd arming, legacy agents dir::cd ~/.claude/Agents && echo x | tee y.md' \
+    'BC3 protected ROOT literal (prefilter layer)::echo x | tee ~/.Claude/hooks/x.sh'; do
+    id="${row%%::*}"
+    cmd="${row#*::}"
+    run_hook "Bash" "$(bash_input "${cmd}")"
+    [[ "${status}" -eq 2 ]] || {
+      echo "T1-${id}: expected exit 2, got ${status} for: ${cmd}" >&2
+      return 1
+    }
+  done
 }
 
 # ── T1 guarded-write arm, one row per protection class ────────────────────────
 
-@test "T1-K4 case-varied .MD Write of a NEW agent file → block" {
-  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/agents/victim.MD" '---
-name: victim
-tools: [Read, Bash, Write]
-scope: DEV
----
-# Body
-')"
-  [[ "${status}" -eq 2 ]] || return 1
+@test "T1-K case-varied protected paths, Write arm → block (one row per class)" {
+  local row id path
+  for row in \
+    "K4 NEW agent file .MD::${FAKE_HOME}/.glass-atrium/agents/victim.MD" \
+    "K6 live settings::${FAKE_HOME}/.claude/Settings.json" \
+    "K7 live hooks dir::${FAKE_HOME}/.glass-atrium/Hooks/somehook.sh" \
+    "K8 scheduled-exec dir::${FAKE_HOME}/.glass-atrium/AutoAgent/daemon-apply.sh"; do
+    id="${row%%::*}"
+    path="${row#*::}"
+    run_hook "Write" "$(write_input "${path}" 'echo pwn')"
+    [[ "${status}" -eq 2 ]] || {
+      echo "T1-${id}: expected exit 2, got ${status} for: ${path}" >&2
+      return 1
+    }
+  done
 }
+
+# K5 stays a separate row: it is the only write-arm class needing a materialized
+# case-variant of an existing file and an Edit envelope, not a Write payload.
 
 @test "T1-K5 case-varied .MD Edit widening the identity trio → block" {
   local variant="${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.MD"
   materialize_case_variant \
     "${FAKE_HOME}/.glass-atrium/agents/glass-atrium-dev-shell.md" "${variant}"
   run_hook "Edit" "$(edit_input "${variant}" 'tools: [Read, Bash]' 'tools: [Read, Bash, Write]')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-K6 case-varied live settings Write → block" {
-  run_hook "Write" "$(write_input "${FAKE_HOME}/.claude/Settings.json" '{"hooks":{}}')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-K7 case-varied live hooks dir Write → block" {
-  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/Hooks/somehook.sh" 'echo pwn')"
-  [[ "${status}" -eq 2 ]] || return 1
-}
-
-@test "T1-K8 case-varied scheduled-exec dir Write → block" {
-  run_hook "Write" "$(write_input "${FAKE_HOME}/.glass-atrium/AutoAgent/daemon-apply.sh" 'echo pwn')"
   [[ "${status}" -eq 2 ]] || return 1
 }
 

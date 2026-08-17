@@ -985,7 +985,7 @@
     "hooks/test/enforce-harness-critical-messages.bats": "62c324167baeeb98645cd6db63a52fb47adfdc53231e667c6315c767298a9f4b",
     "hooks/test/enforce-harness-critical-multiedit.bats": "e6c8098d17cac5b570a67f3adfe954d1816f84b297fa9265366148009d03a359",
     "hooks/test/enforce-harness-critical-pathnorm.bats": "0dd3a88bea44575b25fddf7695cf579c626af42be932494003a895bbbfc080e4",
-    "hooks/test/enforce-harness-critical.bats": "446f8ca74cebf8e23f260e5c79c3f9cf0777132c421f9e4ceb14ac008d5a3cce",
+    "hooks/test/enforce-harness-critical.bats": "a0bc4188a5c7379088c2cb4c465ef69522d4ed84c55943e8475f0c49d11631df",
     "hooks/test/enforce-verification-gate-plan-subset.bats": "ca773c2b6d84200415bda632d6b9906a62e8ae88df7ce819ae3c5d1b35d200fc",
     "hooks/test/enforce-verification-gate-reviewer-block.bats": "5e5b6cc2e811518e796c6de26a97ba1a9f394ed244ffbb8c5135ba318bb080b1",
     "hooks/test/enforce-verification-gate-scope.bats": "3c472bdce2d5513e6c4295c2898636f59a33d19f456ea9b81274ec4abe965b38",
