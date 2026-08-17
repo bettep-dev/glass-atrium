@@ -4,15 +4,20 @@
 #
 # Behavior:
 #   1. Validate the scratch root by construction (see Scope below) — refuse anything else
-#   2. Remove each top-level job entry DIRECTORY whose mtime is older than the retention window
+#   2. Remove each top-level job entry whose mtime is older than the retention window — a DIRECTORY
+#      is removed with its contents, a SYMLINK is unlinked as a link and its target left untouched
 #   3. Report each removal on stdout; a run with nothing to prune is silent apart from the summary
 #
 # Scope (by construction, not by convention): the root is validated before any removal — it must be
 # an absolute path, an existing real directory (a symlinked root is refused, never followed), and
-# its basename must be `jobs`. The walk is `-mindepth 1 -maxdepth 1 -type d`, so nothing above the
-# root and nothing below a job entry is ever enumerated, and top-level FILES (pins.json, the job
-# index) are left alone. `rm -rf` on a matched entry removes symlinks as links: a link inside job
-# scratch that resolves to a real file elsewhere loses the link, never the target.
+# its basename must be `jobs`. The walk is `-mindepth 1 -maxdepth 1 \( -type d -o -type l \)`, so
+# nothing above the root and nothing below a job entry is ever enumerated. Per top-level entry type:
+#   - DIRECTORY, aged out  → removed with its contents (`rm -rf`)
+#   - SYMLINK, aged out    → unlinked (`rm -f`), never followed and never traversed; the mtime tested
+#                            is the link's own (find does not dereference), and the target survives
+#   - REGULAR FILE         → always left alone (pins.json, the job index)
+# `rm -rf` on a matched directory likewise removes any link inside it as a link: a link planted in
+# job scratch that resolves to a real file elsewhere loses the link, never the target.
 #
 # Rationale: the harness creates a scratch directory per background job and never reaps one whose
 # job died past its cleanup, so the tree accumulates state and stray links indefinitely. Shape is
@@ -88,12 +93,17 @@ main() {
   # shellcheck disable=SC2312  # the root proved a writable dir above; find over one level cannot fail
   while IFS= read -r entry; do
     stale+=("${entry}")
-  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime +"${RETENTION_DAYS}" | LC_ALL=C sort)
+  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -mtime +"${RETENTION_DAYS}" | LC_ALL=C sort)
 
   for entry in "${stale[@]:-}"; do
     [[ -n "${entry}" ]] || continue
     if ((dry_run == 1)); then
       printf 'would prune: %s\n' "${entry}"
+    elif [[ -L "${entry}" ]]; then
+      # Unlink, never traverse: -L is tested before -d so a link TO a directory takes this branch
+      # and `rm -f` removes the link alone, leaving the target tree intact.
+      rm -f -- "${entry}"
+      printf 'pruned: %s\n' "${entry}"
     else
       rm -rf -- "${entry}"
       printf 'pruned: %s\n' "${entry}"
