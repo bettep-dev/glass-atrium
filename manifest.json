@@ -981,7 +981,7 @@
     "hooks/test/enforce-foreground-harness.bats": "d702f283a6c3d1e3afc92ec02ba99918dcbbe83d78702383ca7883b27e3ff9e6",
     "hooks/test/enforce-harness-critical-bash-pathnorm.bats": "739f6e3afe474ac4786ce66f92dd7b5abae5466b76a044da24d8fdbdcf4fc348",
     "hooks/test/enforce-harness-critical-branch.bats": "db3532e93cf3fd9a04d4f884329889fb9bfa4f80a5bd651a427f6b1696c8c53d",
-    "hooks/test/enforce-harness-critical-frontmatter.bats": "df3c1e7d98de8de60a972222415705ca29443109ecc6f9333931c6ef64fd72c6",
+    "hooks/test/enforce-harness-critical-frontmatter.bats": "0464bedd2bc067ce2bdc14c04529b378fdcf551f2a66a7ecac00aa427337bd57",
     "hooks/test/enforce-harness-critical-messages.bats": "62c324167baeeb98645cd6db63a52fb47adfdc53231e667c6315c767298a9f4b",
     "hooks/test/enforce-harness-critical-multiedit.bats": "e6c8098d17cac5b570a67f3adfe954d1816f84b297fa9265366148009d03a359",
     "hooks/test/enforce-harness-critical-pathnorm.bats": "0dd3a88bea44575b25fddf7695cf579c626af42be932494003a895bbbfc080e4",

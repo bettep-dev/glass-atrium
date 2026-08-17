@@ -571,59 +571,37 @@ name: s24-keyorder'
 
 # ── AC-B7: an unanswerable identity question is a NAMED block, never an allow ─
 
-@test "AC-B7 nested map under tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-nested.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
+# One table over form and tool. Every fixture and tool pairing survives as a data
+# row, and the row echoes its own form and tool on failure.
 
-@test "AC-B7 nested map under tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-nested.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 multi-line flow on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-flow.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 multi-line flow on tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-flow.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the tools value: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-blockscalar.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the tools value: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-blockscalar.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 block scalar as the name value: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-namepipe.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 anchor on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-anchor.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 anchor on tools: body-only Write → frontmatter-unparseable" {
-  write_agent_body_only "b7-anchor.md"
-  blocked_unparseable
-}
-
-@test "AC-B7 alias on tools: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-alias.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
-}
-
-@test "AC-B7 tag on name: Edit overlapping the region → frontmatter-unparseable" {
-  edit_agent "b7-tag.md" 'model: claude-model-a' 'model: claude-model-b'
-  blocked_unparseable
+@test "AC-B7 out-of-contract frontmatter forms → frontmatter-unparseable (form × tool)" {
+  local row form tool fixture
+  for row in \
+    'nested map under tools::Edit::b7-nested.md' \
+    'nested map under tools::Write::b7-nested.md' \
+    'multi-line flow on tools::Edit::b7-flow.md' \
+    'multi-line flow on tools::Write::b7-flow.md' \
+    'block scalar as the tools value::Edit::b7-blockscalar.md' \
+    'block scalar as the tools value::Write::b7-blockscalar.md' \
+    'block scalar as the name value::Edit::b7-namepipe.md' \
+    'anchor on tools::Edit::b7-anchor.md' \
+    'anchor on tools::Write::b7-anchor.md' \
+    'alias on tools::Edit::b7-alias.md' \
+    'tag on name::Edit::b7-tag.md'; do
+    form="${row%%::*}"
+    tool="${row#*::}"
+    tool="${tool%%::*}"
+    fixture="${row##*::}"
+    if [[ "${tool}" == "Edit" ]]; then
+      edit_agent "${fixture}" 'model: claude-model-a' 'model: claude-model-b'
+    else
+      write_agent_body_only "${fixture}"
+    fi
+    blocked_unparseable || {
+      echo "AC-B7 ${form} (${tool}): expected frontmatter-unparseable, got status ${status}" >&2
+      return 1
+    }
+  done
 }
 
 @test "AC-B7 unparseable frontmatter surfaces as HAR-001, never HAR-003" {
