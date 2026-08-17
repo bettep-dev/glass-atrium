@@ -320,84 +320,27 @@ passed_clean() {
   passed_clean
 }
 
-# ── AC-B6: body prose edits pass on ALL SEVEN live block-list files ──────────
-# Explicit rows, not a loop: the TAP output must name WHICH file regressed.
+# ── AC-B6: body prose edits pass on EVERY corpus file ────────────────────────
+# Driven by the corpus glob rather than an explicit list, so a corpus file added
+# later is covered without an edit here. Each row echoes its own file name on
+# failure, so the output still names WHICH file regressed.
 
-@test "AC-B6 glass-atrium-design-designer: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-design-designer.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-design-designer: add a prose bullet → pass" {
-  edit_agent "glass-atrium-design-designer.md" '- ordinary prose bullet' '- ordinary prose bullet
+@test "AC-B6 body prose edits pass on every corpus file (remove + add)" {
+  local path base
+  for path in "${CORPUS}"/*.md; do
+    base="$(basename "${path}")"
+    edit_agent "${base}" '- second prose bullet' ''
+    passed_clean || {
+      echo "AC-B6 ${base}: remove a prose bullet expected pass, got status ${status}" >&2
+      return 1
+    }
+    edit_agent "${base}" '- ordinary prose bullet' '- ordinary prose bullet
 - third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-android: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-android.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-android: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-android.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-db: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-db.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-db: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-db.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-gsap: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-gsap.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-gsap: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-gsap.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-rag: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-rag.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-rag: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-rag.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-shell: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-shell.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-dev-shell: add a prose bullet → pass" {
-  edit_agent "glass-atrium-dev-shell.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-meta-prompt-engineer: remove a prose bullet → pass" {
-  edit_agent "glass-atrium-meta-prompt-engineer.md" '- second prose bullet' ''
-  passed_clean
-}
-
-@test "AC-B6 glass-atrium-meta-prompt-engineer: add a prose bullet → pass" {
-  edit_agent "glass-atrium-meta-prompt-engineer.md" '- ordinary prose bullet' '- ordinary prose bullet
-- third bullet'
-  passed_clean
+    passed_clean || {
+      echo "AC-B6 ${base}: add a prose bullet expected pass, got status ${status}" >&2
+      return 1
+    }
+  done
 }
 
 # Fail-closed direction, UNREACHABLE through the real tool layer: the Edit tool
