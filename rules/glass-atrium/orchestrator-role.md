@@ -419,15 +419,17 @@ The orchestrator oversees document-lifecycle completion (`doc_status` transition
     curl -sf -X PUT http://127.0.0.1:16145/api/clauded-docs/123 -H 'content-type: application/json' \
       --data "$(jq -n --arg b "$BODY" --arg h "$HASH" '{html_body:$b, expected_hash:$h, doc_status:"done"}')"
     ```
-- **Step 2 — supersede vs new document (decision tree)**: when new content arises, decide the path before any write — the only axis is topic-sameness (no prefix/category constraint) —
+- **Step 2 — supersede vs new document (decision tree)**: when new content arises, decide the path before any write — the axes are topic-sameness and, for a same-topic `progress` predecessor, whether this is a Stage-2 revise cycle (no prefix/category constraint on either) —
   - **same topic**, predecessor `done` → **supersede** (new POST with `supersedes_id` set); the monitor auto-transitions the predecessor to `done` (no agent intervention).
-  - **same topic**, predecessor `progress` → **PUT-edit** the existing document (continue working the same doc).
+  - **same topic**, predecessor `progress`, and NOT a Stage-2 revise cycle → **PUT-edit** the existing document (continue working the same doc).
+  - **same topic**, predecessor `progress`, and the document was returned `revise`/`infeasible` by `### Plan Direction Verification (Stage-2 gate)` → **supersede-POST** (new POST with `supersedes_id` set), NEVER a PUT-edit. This revise-case carve-out is the only branch where a `progress` predecessor supersedes, and it is what makes the reviewed revision an immutable, fetchable chain root the revising actor cannot rewrite — the next pass then compares against the origin rather than against the declaration that actor just authored. The completing agent's own obligation, including what the chain root must CONTAIN, is duty text in its loaded rules: `scope-report.md` → Document Lifecycle (canonical) · `scope-planning.md` mirror.
   - **unrelated topic** → **new-document POST** (`supersedes_id` omitted). A `done` document MUST NOT be reopened/edited — revisions reach it only via supersede.
   - **uncertain topic-relatedness → default to a new POST, never reopen a done document** (decisive tiebreaker — asymmetric cost: a surplus new document is cheap + recoverable, whereas reopening a done document causes progress regression).
+  - **Residual — the per-cycle persist-path choice is HONOR-SYSTEM and fails OPEN silently**: no hook distinguishes a revise-case PUT-edit from a sanctioned same-topic `progress` edit, so skipping the carve-out raises no error on any surface — the chain root is simply never created, the next Stage-2 pass has no immutable comparand to fetch, and the scope-fidelity check degrades back to the current declaration it exists to replace. That fail-open is exactly why the duty is written into the completing agent's OWN loaded rules rather than left to the delegation that asks for the edit: a control the growing actor can suspend by phrasing is not a control.
 - **Step 3 — Monitoring-phase omission fallback (orchestrator)**: during the Monitoring phase, verify the completed deliverable's `doc_status`. If it is still `progress` but the work is finished, apply the `done` transition as a fallback (the completing agent omitted it). This is the orchestrator's correction role — the completing agent remains the primary trigger.
 
 > [!NOTE]
-> Supersede is for a same-topic *revision* only — never a vehicle for unrelated content. Topic-sameness is the sole supersede axis (uncertain → new POST).
+> Supersede is for a same-topic *revision* only — never a vehicle for unrelated content. Topic-sameness gates supersede against unrelated content (uncertain → new POST); the Stage-2 revise cycle is the one case where a same-topic `progress` predecessor supersedes instead of being PUT-edited.
 
 ## Harness Path Protection (`~/.claude/` and every `~/.claude-*` profile branch)
 
