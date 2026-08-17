@@ -100,7 +100,11 @@ setup() {
 GRADER_SRC="${REPO_ROOT}/hooks/lib/code-based-grader.sh"
 GRADER_GUIDE="${REPO_ROOT}/rules/glass-atrium/core-outcome-record.md"
 EMITTER_MARKER="VERIFIED_FAIL_EMITTER:"
-EMITTER_EXPECTED=2
+
+# Named emitters, not a total: a count cannot detect one emitter swapped for another, and a
+# legitimate third emitter costs one edit here rather than three across three files.
+EMITTER_NAMES="LLM09 zero-evidence guard
+total transcript-authorship contradiction"
 
 @test "EMITTER grader source and guide declare the same verified_fail emitter count" {
   [[ -f "${GRADER_SRC}" ]] || skip "grader source not found: ${GRADER_SRC}"
@@ -119,9 +123,22 @@ EMITTER_EXPECTED=2
       "${GRADER_SRC}" "${src_count}" "${GRADER_GUIDE}" "${guide_count}" >&2
     return 1
   }
-  [[ "${src_count}" -eq "${EMITTER_EXPECTED}" ]] || {
-    printf 'expected %s verified_fail emitters, both sides carry %s\n' \
-      "${EMITTER_EXPECTED}" "${src_count}" >&2
-    return 1
-  }
+}
+
+@test "EMITTER each named verified_fail emitter appears in the grader source and the guide" {
+  [[ -f "${GRADER_SRC}" ]] || skip "grader source not found: ${GRADER_SRC}"
+  [[ -f "${GRADER_GUIDE}" ]] || skip "grader guide not found: ${GRADER_GUIDE}"
+
+  local name
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    grep -qF "${EMITTER_MARKER} ${name}" "${GRADER_SRC}" || {
+      printf 'emitter "%s" absent from %s\n' "${name}" "${GRADER_SRC}" >&2
+      return 1
+    }
+    grep -qF "${EMITTER_MARKER} ${name}" "${GRADER_GUIDE}" || {
+      printf 'emitter "%s" absent from %s\n' "${name}" "${GRADER_GUIDE}" >&2
+      return 1
+    }
+  done <<<"${EMITTER_NAMES}"
 }
