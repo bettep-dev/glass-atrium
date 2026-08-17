@@ -334,6 +334,14 @@ def upsert_learning_pattern(
 # Reversal is an explicit operator action only (manual UPDATE back to
 # 'identified'); last_transition_reason carries the audit trail.
 
+# Width of core.learning_log.last_transition_reason (varchar(500)). Named here,
+# at the write path that enforces it, because the slice below is SILENT: an
+# over-long reason is stored truncated with no error and no warning. Callers that
+# build a reason from a template import this constant and assert their widest
+# formatted case fits, so the failure surfaces in a test rather than in a stored
+# row ending mid-word.
+LEARNING_LOG_REASON_MAX = 500
+
 _LEARNING_LOG_REJECT_SQL = """
 UPDATE core.learning_log
 SET status = 'rejected'::core."LearningStatus",
@@ -371,8 +379,11 @@ def reject_learning_pattern(pattern_id: int, reason: str) -> int | None:
             with conn.cursor() as cur:
                 cur.execute(
                     _LEARNING_LOG_REJECT_SQL,
-                    # varchar(500) guard — mirrors the agent[:64] boundary style.
-                    {"pattern_id": pattern_id, "reason": reason[:500]},
+                    # varchar guard — mirrors the agent[:64] boundary style.
+                    {
+                        "pattern_id": pattern_id,
+                        "reason": reason[:LEARNING_LOG_REASON_MAX],
+                    },
                 )
                 updated.extend(row[0] for row in cur.fetchall())
             conn.commit()
@@ -455,8 +466,11 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
             with conn.cursor() as cur:
                 cur.execute(
                     _LEARNING_LOG_DISCHARGE_SQL,
-                    # varchar(500) guard — mirrors the agent[:64] boundary style.
-                    {"pattern_id": pattern_id, "reason": reason[:500]},
+                    # varchar guard — mirrors the agent[:64] boundary style.
+                    {
+                        "pattern_id": pattern_id,
+                        "reason": reason[:LEARNING_LOG_REASON_MAX],
+                    },
                 )
                 updated.extend(row[0] for row in cur.fetchall())
             conn.commit()

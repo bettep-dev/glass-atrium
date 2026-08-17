@@ -472,11 +472,20 @@ APPLY_CAP_THRESHOLD = int(os.environ.get("AUTOAGENT_APPLY_CAP_THRESHOLD", "3") o
 # row is an OPEN item awaiting a human design decision. Never restate this
 # transition as resolved / fixed / closed, and never route it through the
 # applied-discharge path — that would claim a resolution the evidence refutes.
+# The tail is sized, not transcribed: everything through "another patch — " is
+# the head the monitor's parked count and the lifecycle test key on, and the
+# write path silently slices the whole reason to LEARNING_LOG_REASON_MAX, so the
+# tail's budget is that ceiling minus the WIDEST formatted head (the {n}/{thr}
+# substitution moves it). test_reason_tail_budget.py derives both sides and
+# fails if a future edit outgrows the budget.
 APPLY_CAP_REASON_TEMPLATE = (
     "repeat-apply cap: {n} applied proposals (cap {thr}) did NOT abate the "
     "signal — STOP PROPOSING; the underlying problem is UNRESOLVED and needs a "
-    "human design decision, not another patch — re-arm by setting status back "
-    "to 'identified'"
+    "human design decision, not another patch — NOT self re-arming: a status "
+    "reset to 'identified' does not re-arm it — the cap is recomputed each "
+    "cycle from this agent's applied-proposal history, so the row re-parks next "
+    "run, overwriting its park time and reason. A real re-arm must first clear "
+    "or scope that apply evidence; until then leave the status alone."
 )
 # Rolling live-rate window. 14d = 2× the 7-day promotion sustain window — long
 # enough to smooth weekday gaps, short enough that a stale failure burst decays.
