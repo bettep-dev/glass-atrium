@@ -773,7 +773,7 @@
   ],
   "hashes": {
     "agent-registry.json": "e37021b3661cf44f9f864b10fa570ff2c58a564c95d2b4f5e17ea42999a46d70",
-    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "ef94753a6bd5dd58ab3b79debe95f685d499a3b1ad659a4612ab01261a0d1811",
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "e8045ca224958415b3e5afd6a2d66c63c82962f0f2b6568957552e60e1bd473c",
     "agents/glass-atrium-design-designer.md": "8dd0aecec82678806b0510031ed5d7fddc4570fcaf21f187526ccfa907cf0a85",
     "agents/glass-atrium-dev-android.md": "0e74f9aba4bbb4dab48d8a6b6a7091863bffebf4de8911fe7b1062f63e568044",
     "agents/glass-atrium-dev-angular.md": "66c7a17a6b5ae44c6e63ff3facf367cc9ef907d5d3b41df83d483091281300ee",
@@ -1233,7 +1233,7 @@
     "monitor/src/server/version.ts": "752c9ad6d08a0debae2641cba6eb59a4f6b6c4a4e28b855059bc8b65f8fc2f7c",
     "monitor/tsconfig.json": "28983bf0f2e87ed5721283feb68d98ec19dc3318e26bc429a983e4c0a7ac4b35",
     "requirements.txt": "eae3486e48ad1b5cb6dea1024cdf0e3360461a9bf4a304f49713ee18985c5f23",
-    "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md": "ef94753a6bd5dd58ab3b79debe95f685d499a3b1ad659a4612ab01261a0d1811",
+    "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md": "e8045ca224958415b3e5afd6a2d66c63c82962f0f2b6568957552e60e1bd473c",
     "rules/glass-atrium/core-compliance-matrix.md": "ccb64e1cf2c56a9562830847e5a7c2ce1836d39578403eed95d23a697cc5f421",
     "rules/glass-atrium/core-git-workflow.md": "5b7434ea8713ad7e70919bcd711dd78a4b909c54c6841e558b6f404177e46783",
     "rules/glass-atrium/core-learning-log.md": "7ef54b511078558460e1b293e9ed3bfd8b64d00038244db4b015470148836ece",
@@ -2312,7 +2312,7 @@
     "test/workbox-bar-count-visible-during-resolve.bats": "644"
   },
   "vendor_hashes": {
-    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "ef94753a6bd5dd58ab3b79debe95f685d499a3b1ad659a4612ab01261a0d1811",
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "e8045ca224958415b3e5afd6a2d66c63c82962f0f2b6568957552e60e1bd473c",
     "agents/glass-atrium-design-designer.md": "05e179b0dfb85ea965cfd6afe7e4117380e23781e2bc1fba39e3e094ce13b550",
     "agents/glass-atrium-dev-android.md": "cf2c66b2e36b7489f616f602602d51edf48a622be12d1bd443c8303af37bc503",
     "agents/glass-atrium-dev-angular.md": "4c58b8748d5707deba7b5ec6df4495d4b157f6ef0b97a391b85bb4cd12804aab",
