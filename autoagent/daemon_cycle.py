@@ -796,6 +796,14 @@ DIFF_EXCERPT_CHAR_CAP = 4000
 PRE_VERIFY_FAILURES_CHAR_CAP = 4000
 PRE_VERIFY_FAILURES_LIMIT = 8
 
+# The other half of that memory: what this agent successfully LANDED. Without it
+# the generator recalls only a slice of its failures and nothing of its
+# successes, and re-proposes what is already in the body. Same HARD cap
+# discipline as the failure block — the two share one prompt's budget.
+LANDED_HISTORY_CHAR_CAP = 4000
+LANDED_HISTORY_LIMIT = 5
+LANDED_HISTORY_ENTRY_CHAR_CAP = 400
+
 # Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
 # Used to pick the correct scope-*.md file for axis C3.
 _AGENT_SCOPE_MAP: dict[str, str] = {
@@ -2439,7 +2447,7 @@ TARGET AGENT: {pattern_agent}
 
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
-{avoid_patterns_block}
+{avoid_patterns_block}{landed_history_block}
 PRIOR-DAY OUTCOMES for this agent (most-recent first — ALL of yesterday):
 {outcomes_block}
 
@@ -3087,10 +3095,23 @@ def generate_consolidated_proposal(
         else ""
     )
 
+    # Feedback half of that memory: what this agent already landed.
+    landed = _fetch_landed_proposals(agent)
+    landed_body = _render_landed_history_block(landed) if landed else ""
+    landed_history_block = (
+        "rules that previously LANDED for this agent "
+        "(already in the body — build on them, never re-propose them):\n"
+        + landed_body
+        + "\n"
+        if landed_body
+        else ""
+    )
+
     base_prompt = _CONSOLIDATED_PROMPT_TEMPLATE.format(
         pattern_agent=agent,
         signals_block=signals_block,
         avoid_patterns_block=avoid_patterns_block,
+        landed_history_block=landed_history_block,
         outcomes_block=outcomes_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
@@ -8455,6 +8476,80 @@ def _render_pre_verify_failures_block(
     block = "\n".join(lines)
     if len(block) > char_cap:
         marker = f"\n[TRUNCATED: avoid-pattern memory capped at {char_cap} chars]"
+        block = block[: char_cap - len(marker)] + marker
+    return block
+
+
+def _fetch_landed_proposals(
+    target_agent: str,
+    limit: int = LANDED_HISTORY_LIMIT,
+) -> list[tuple[str, str]] | None:
+    """Recently APPLIED proposals for one agent, newest-first.
+
+    The feedback half of the optimizer-side memory: the generator is told what it
+    already landed so it builds on those rules instead of re-proposing them.
+    SEPARATE projection from the sibling readers (do NOT widen theirs) — this one
+    SELECTs the patch text and filters on the terminal ``applied`` status.
+
+    Mirrors the sibling fail-OPEN discipline: PG off / read error → ``None``
+    (a memory miss must never block generation).
+
+    Returns:
+        ``[(pattern_label, proposed_diff), ...]`` newest-first (≤ ``limit``),
+        ``[]`` when PG holds no applied rows, ``None`` on PG-off / read error.
+    """
+    select_sql = (
+        "SELECT pattern_label, proposed_diff "
+        "FROM core.autoagent_proposals "
+        "WHERE target_agent = %s AND status::text = 'applied' "
+        "AND proposed_diff IS NOT NULL "
+        "ORDER BY cycle_date DESC, id DESC "
+        "LIMIT %s"
+    )
+    rows = _fetch_proposal_rows(
+        target_agent, select_sql, (target_agent, limit), "landed-history"
+    )
+    if rows is None:
+        return None
+    return [(label or "", diff or "") for label, diff in rows]
+
+
+def _render_landed_history_block(
+    rows: list[tuple[str, str]],
+    *,
+    char_cap: int = LANDED_HISTORY_CHAR_CAP,
+) -> str:
+    """Render the 'already landed for this agent' block, HARD char-capped.
+
+    Each row → its pattern label plus the lines the patch ADDED; those lines are
+    what now sits in the body, and the context lines around them are already
+    visible in the whole-file excerpt further down the prompt. Model-authored
+    patch text re-entering a prompt is an LLM trust boundary, so every field goes
+    through the shared ``_neutralize_field`` sanitizer (LLM01).
+
+    Returns ``""`` for empty input so the caller omits the block cleanly.
+    """
+    if not rows:
+        return ""
+
+    lines: list[str] = []
+    for label, diff in rows:
+        added = [
+            line[1:].strip()
+            for line in (diff or "").splitlines()
+            if line.startswith("+") and not line.startswith("+++")
+        ]
+        added_text = " / ".join(text for text in added if text)
+        rendered = (
+            _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
+            if added_text
+            else "(no added lines recorded)"
+        )
+        lines.append(f"- [{_neutralize_field(label)}] {rendered}")
+
+    block = "\n".join(lines)
+    if len(block) > char_cap:
+        marker = f"\n[TRUNCATED: landed-history memory capped at {char_cap} chars]"
         block = block[: char_cap - len(marker)] + marker
     return block
 
