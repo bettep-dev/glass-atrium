@@ -93,5 +93,31 @@ class TestApplyCapReasonBudget(unittest.TestCase):
         self.assertIn("clear or scope that apply evidence", reason)
 
 
+class TestRevertedSnoozeReasonBudget(unittest.TestCase):
+    """The reverted-snooze reason survives the same slice; its head is fixed."""
+
+    def test_load_bearing_head_is_unchanged(self):
+        self.assertTrue(dc.REVERTED_SNOOZE_REASON.startswith("reverted snooze:"))
+
+    def test_survives_slice(self):
+        reason = dc.REVERTED_SNOOZE_REASON
+        self.assertEqual(
+            _slice(reason),
+            reason,
+            "reason truncates silently (%d > %d)" % (len(reason), CEILING),
+        )
+
+    def test_ends_on_a_complete_clause(self):
+        self.assertTrue(_slice(dc.REVERTED_SNOOZE_REASON).endswith("."))
+
+    def test_carries_the_corrected_remedy(self):
+        # drop_reverted_patterns re-derives the verdict from the reverted rows
+        # in the same history window, so the status flip re-parks the row.
+        reason = dc.REVERTED_SNOOZE_REASON
+        self.assertNotIn("re-arm by setting status back to 'identified'", reason)
+        self.assertIn("does not re-arm it", reason)
+        self.assertIn("clear or scope that reverted-apply evidence", reason)
+
+
 if __name__ == "__main__":
     unittest.main()

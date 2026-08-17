@@ -448,10 +448,17 @@ NON_AUTO_FIXABLE_REASON = (
 # back-out of an APPLIED proposal (status 'reverted') is the strongest terminal
 # verdict — regenerating from the same pattern would re-propose the exact
 # change a human just backed out.
+# Same tail correction and the same sizing discipline as APPLY_CAP_REASON_TEMPLATE
+# below: the head is fixed here (no substitution), so the budget is simply
+# LEARNING_LOG_REASON_MAX minus its length. Pinned by test_reason_tail_budget.py.
 REVERTED_SNOOZE_REASON = (
     "reverted snooze: a covering applied proposal was reverted (human/CLI "
-    "back-out) — pattern excluded from re-application; re-arm by setting "
-    "status back to 'identified'"
+    "back-out) — pattern excluded from re-application; NOT self re-arming: a "
+    "status reset to 'identified' does not re-arm it — the snooze is re-derived "
+    "each cycle from the reverted proposal rows in the same history window, so "
+    "the row re-parks next run, overwriting its park time and reason. A real "
+    "re-arm must first clear or scope that reverted-apply evidence; until then "
+    "leave the status alone."
 )
 # Repeat-apply cap. Non-redundant with the reject-streak gate precisely because
 # an 'applied' row RESETS that streak (consecutive_reject_count breaks on it), so
