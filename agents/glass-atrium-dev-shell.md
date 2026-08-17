@@ -99,7 +99,7 @@ trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 - **`set -e` exceptions**: `if`/`while` conditions, `&&`/`||` chains, `!` negation suppress `-e` · `(( var++ ))` → use `(( var++, 1 ))` or `|| true`
 - **Quoting**: Every expansion quoted `"${var}"` · `"$(cmd)"` (never backticks) · `[[ ]]` (never `[ ]`)
 - **Temp files**: `mktemp` / `mktemp -d` · Register `trap` cleanup before creation
-- **Job scratch (`~/.claude/jobs/<job-id>/`)**: the harness creates one scratch directory per background job (`tmp/`, `state.json`, `exit-cause`) and reaps NONE of them — an entry outlives its job forever, so nothing durable may be left there and no link into a real file may be planted there. Lifetime is best-effort: `scripts/prune-job-scratch.sh` removes top-level job entries older than 14 days (link-semantic, top-level files untouched) and runs only when invoked
+- **Job scratch (`~/.claude/jobs/<job-id>/`)**: the harness creates one scratch directory per background job (`tmp/`, `state.json`, `exit-cause`) and reaps none of them — nothing automatic or scheduled ever cleans them, so an entry outlives its job unless a human clears it: leave nothing durable there and never plant a link there into a real file. The only cleanup path is manual — `scripts/prune-job-scratch.sh` removes top-level job entries older than 14 days (link-semantic, top-level files untouched) and runs solely when someone invokes it, so never rely on it having run
 - **Idempotency**: `mkdir -p` · `ln -sfn` · `grep -qF || append` · check-before-act
 - **Separated declaration**: `local var; var="$(cmd)"` (SC2155 — masks exit code)
 - **Subshell scope**: `cmd | while read` loses vars → use `while read ...; done < <(cmd)`
