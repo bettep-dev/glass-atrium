@@ -4,7 +4,7 @@
 #
 # Behavior:
 #   1. Validate the scratch root by construction (see Scope below) — refuse anything else
-#   2. Remove each top-level job entry whose mtime is older than the retention window — a DIRECTORY
+#   2. Remove each top-level job entry at least one whole day past the retention window — a DIRECTORY
 #      is removed with its contents, a SYMLINK is unlinked as a link and its target left untouched
 #   3. Report each removal on stdout; a run with nothing to prune is silent apart from the summary
 #
@@ -40,6 +40,8 @@ IFS=$'\n\t'
 # override cannot widen the scope — it can only point the prune at another directory named `jobs`.
 readonly SCRATCH_ROOT="${GA_JOB_SCRATCH_ROOT:-${HOME}/.claude/jobs}"
 # 14 days — longer than any background job survives, so an entry this old belongs to no live job.
+# `find -mtime +N` truncates age to whole days, so the cut lands one whole day past the window: an
+# entry inside that extra day is never matched, however many times the prune runs.
 readonly RETENTION_DAYS=14
 
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
@@ -90,10 +92,13 @@ main() {
     exit 3
   fi
 
+  # NUL-delimited because a newline inside an entry name splits a line-oriented read into
+  # fragments that each reach `rm` below — one still absolute inside the root, the rest
+  # relative and resolved against the invoker's cwd. NUL is the one byte a name cannot hold.
   # shellcheck disable=SC2312  # the root proved a writable dir above; find over one level cannot fail
-  while IFS= read -r entry; do
+  while IFS= read -r -d '' entry; do
     stale+=("${entry}")
-  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -mtime +"${RETENTION_DAYS}" | LC_ALL=C sort)
+  done < <(find "${SCRATCH_ROOT}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -mtime +"${RETENTION_DAYS}" -print0 | LC_ALL=C sort -z)
 
   for entry in "${stale[@]:-}"; do
     [[ -n "${entry}" ]] || continue

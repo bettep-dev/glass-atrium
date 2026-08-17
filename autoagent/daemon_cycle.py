@@ -419,7 +419,9 @@ INTER_CALL_SPACING_SEC = float(
 # forever once the live evidence stopped supporting it:
 #   1) reject-streak snooze — N CONSECUTIVE genuinely-rejected proposals for the
 #      same pattern+agent transition the learning_log row to terminal 'rejected'
-#      ("LearningStatus" has no 'snoozed' value; re-arm = manual status reset).
+#      ("LearningStatus" has no 'snoozed' value; a re-arm must first clear or
+#      scope that reject evidence — a bare status reset re-derives the streak
+#      and re-parks in the same cycle, see REJECT_STREAK_REASON_TEMPLATE).
 #   2) staleness skip — the pattern's rate recomputed from a rolling LIVE
 #      outcomes window (poisoned_window rows excluded inside read_outcomes_since)
 #      no longer meets the aggregator's emit threshold → skip this cycle only
