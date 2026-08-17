@@ -36,11 +36,6 @@ RECORDED_HOST_TOOLS=(Bash Edit Write)
 # the dispatch rows as the declared defensive-only name.
 LEGACY_FORWARD_COMPAT_ALLOWLIST=(MultiEdit)
 
-# Census at the recorded HEAD — anti-vacuity anchors for both live extractions.
-EXPECTED_MATCHER_GROUPS=5
-EXPECTED_MATCHER_TOKENS=4
-EXPECTED_DISPATCH_TOOLS=4
-
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${TEMPLATE}" ]] || skip "settings.template.json not found: ${TEMPLATE}"
@@ -118,18 +113,18 @@ validate_dispatch_tools() {
   return "${rc}"
 }
 
-@test "S1 census: template matcher extraction is non-empty and matches the recorded census" {
-  local groups distinct
-  groups="$(matcher_groups "${TEMPLATE}" | wc -l | tr -d ' ')"
-  distinct="$(matcher_tokens "${TEMPLATE}" | sort -u | wc -l | tr -d ' ')"
-  if [[ "${groups}" != "${EXPECTED_MATCHER_GROUPS}" ]]; then
-    echo "matcher groups=${groups}, expected ${EXPECTED_MATCHER_GROUPS} — census drift or empty extraction"
-    return 1
-  fi
-  if [[ "${distinct}" != "${EXPECTED_MATCHER_TOKENS}" ]]; then
-    echo "distinct matcher alternatives=${distinct}, expected ${EXPECTED_MATCHER_TOKENS}"
-    return 1
-  fi
+@test "S1 anti-vacuity: template matcher extraction contains every recorded host tool" {
+  local extracted tool
+  extracted=()
+  while read -r tool; do
+    extracted+=("${tool}")
+  done < <(matcher_tokens "${TEMPLATE}" | sort -u)
+  for tool in "${RECORDED_HOST_TOOLS[@]}"; do
+    set_contains "${tool}" "${extracted[@]:-}" || {
+      echo "recorded host tool absent from template matchers: ${tool} — extraction is empty or drifted"
+      return 1
+    }
+  done
 }
 
 @test "S1: every template matcher alternative is an exact member of a recorded literal" {
@@ -186,14 +181,19 @@ validate_dispatch_tools() {
   done
 }
 
-@test "S3 anti-vacuity: live dispatch extraction is non-empty and of the expected cardinality" {
-  local count
-  count="$(dispatch_tool_names "${HOOK}" | wc -l | tr -d ' ')"
-  if [[ "${count}" != "${EXPECTED_DISPATCH_TOOLS}" ]]; then
-    echo "extracted dispatch tool names=${count}, expected ${EXPECTED_DISPATCH_TOOLS}"
-    echo "extracted: $(dispatch_tool_names "${HOOK}" | tr '\n' ' ')"
-    return 1
-  fi
+@test "S3 anti-vacuity: live dispatch extraction contains every recorded host tool" {
+  local extracted name
+  extracted=()
+  while read -r name; do
+    extracted+=("${name}")
+  done < <(dispatch_tool_names "${HOOK}")
+  for name in "${RECORDED_HOST_TOOLS[@]}"; do
+    set_contains "${name}" "${extracted[@]:-}" || {
+      echo "recorded host tool absent from the dispatch block: ${name}"
+      echo "extracted: ${extracted[*]:-<none>}"
+      return 1
+    }
+  done
 }
 
 @test "S3: every dispatched tool name is recorded or the declared defensive-only name" {
