@@ -683,6 +683,34 @@ model AutoagentCorpusAudit {
   @@schema("core")
 }
 
+/// Source: hooks/learning-aggregator.py — one row per terminal-row skip, appended
+/// where the aggregator would otherwise discard a cleared cluster silently. The
+/// accrued series is the liveness evidence a later per-row triage reads.
+model LearningPatternLiveness {
+  id BigInt @id @default(autoincrement())
+
+  // Matches core.learning_log.pattern_signature ("<pattern core>|<agent>"). Logical
+  // join, no Prisma relation: observations outlive the learning_log row they describe.
+  patternSignature String @map("pattern_signature")
+
+  // Denormalised out of the signature for per-agent reads; null exactly when the
+  // clustered entry carried no agent.
+  agent String?
+
+  runDate DateTime @map("run_date") @db.Date
+
+  // The count the run clustered — carried so a triage verdict is reproducible from
+  // this record alone, without re-running the aggregation.
+  frequency Int
+
+  observedAt DateTime @default(now()) @map("observed_at") @db.Timestamptz(6)
+
+  @@unique([patternSignature, runDate], map: "learning_pattern_liveness_signature_run_key")
+  @@index([agent, runDate(sort: Desc)], map: "learning_pattern_liveness_agent_run_idx")
+  @@map("learning_pattern_liveness")
+  @@schema("core")
+}
+
 /// Source: outcomes-audit-queue.txt etc. (per plan §3.2 audit_queue —
 /// learning-exclusion paths)
 model AuditQueueEntry {
