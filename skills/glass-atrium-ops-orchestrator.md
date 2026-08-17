@@ -252,7 +252,7 @@ The authoring idioms that implement those rules:
 - **Shape-tolerant schema authoring (fixes the SHAPE mismatch — distinct from the SIZE caps above)**: for rich / open-ended / multi-faceted output do NOT force a flat, all-string `additionalProperties: false` object. Prefer a SMALL number of FREE-TEXT string fields — or a single `analysis` free-text field — that ABSORB multi-facet prose so the model never needs an undeclared key; declare an ARRAY for inherently multi-item content instead of stuffing it into one string (a SINGLE top-level `maxItems` on that array is the one admitted cap — it does not multiply; caps on the properties INSIDE its `items` object stay forbidden); keep `required` MINIMAL (only always-present keys) and make every facet field OPTIONAL. Prevents the invent-a-key (rejected) / nest-where-string-declared (type violation) → prose-shrink collapse loop above by construction.
 - **Never let one agent crash the run**: ALWAYS `.catch(() => null)` agent thunks and `.filter(Boolean)` parallel/pipeline results, so ONE agent's failure can NEVER reject/crash the whole workflow — it degrades to a surfaced-incomplete item, re-delegable in a follow-up.
 - **Self-recover, never hard-stop**: never terminate the run on a missing result — a mis-sized or failed delegation MUST self-recover (re-delegate / continue), never end the run with lost work.
-- **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: a schema-mode run's printed `[COMPLETION]` text turn does NOT survive — the engine consumes ONLY the StructuredOutput call (0/129 observed), so the printed block is never recorded. RELIABLE path: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block (contract SoT: `GLASS_ATRIUM_GLOBAL_RULES.md` → Emit-before-cap). Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, parses it, and records the run as WRITER-emitted (attribution `structuredoutput-completion`, a healthy row). The text-mode fallback above is the exception — a schema-LESS re-spawn DOES print a text turn, captured by the `_last_assistant_text_from_transcript()` reverse-scan (which PREFERS the last `[COMPLETION]`-bearing assistant text). Without the `completion_block` field, the run falls to `structuredoutput-derived` synthesis (`result=done`, `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`), permanently losing the writer signal the self-improvement loop feeds on.
+- **Print-block-then-emit (record honesty — every schema-mode delegation MUST provide the completion channel)**: a schema-mode run's printed `[COMPLETION]` text turn does NOT survive — the engine consumes ONLY the StructuredOutput call (0/129 observed), so the printed block is never recorded. RELIABLE path: RESERVE an optional `completion_block` string property in the schema and instruct the agent to fill it with the full multi-line `[COMPLETION]` block — reference form: the Analysis-Track worked example's `const AnalysisSchema = { findings: 'string', completion_block: 'string' };`, where `completion_block` is a DECLARED, UNCAPPED schema member (prose telling the agent to "include a completion block" reserves nothing — an undeclared key is rejected by `additionalProperties: false`) (contract SoT: `GLASS_ATRIUM_GLOBAL_RULES.md` → Emit-before-cap). Parser guarantee: `track-outcome.sh` detects the terminal StructuredOutput (`detect_terminal_structuredoutput`) and, absent a text-channel `[COMPLETION]`, recovers the `completion_block` string from its input, parses it, and records the run as WRITER-emitted (attribution `structuredoutput-completion`, a healthy row). The text-mode fallback above is the exception — a schema-LESS re-spawn DOES print a text turn, captured by the `_last_assistant_text_from_transcript()` reverse-scan (which PREFERS the last `[COMPLETION]`-bearing assistant text). Without the `completion_block` field, the run falls to `structuredoutput-derived` synthesis (`result=done`, `confidence=low` + `metric_pass=false`, `downgrade_origin=synthesized`), permanently losing the writer signal the self-improvement loop feeds on.
 - **Plain-JS script — escape bash `${...}` in template literals**: a workflow script is JavaScript; a bash `${VAR}`/`$(…)` or bash-operator form (`${#a[@]}`, `${a[@]}`, `${VAR:-x}`) pasted inside a backtick template literal is read as JS interpolation → Workflow parse error (the engine MISLABELS it a "TypeScript syntax" error, hiding the real cause). Put shell snippets in single/double-quoted JS strings, or escape the dollar (`\${…}`), or concatenate — so `${` never reaches the JS parser as interpolation (plain `${jsVar}` interpolation is fine; only bash forms break). Backstopped by the `lint-workflow-template-literal.sh` `PreToolUse(Workflow)` hook (honor-system-primary). **Second, DISTINCT parse-break form — a nested backtick template literal inside `${…}`**: a nested backtick template literal placed inside a `${…}` interpolation (e.g. a role-branch ternary) also trips the Workflow parser at the INNER backtick — VALID ES2015 JavaScript the parser nonetheless rejects, and NOT the bash-form case above (no shell syntax is involved). Remedy: precompute the branch value as a plain string variable, then interpolate the plain `${var}` so no nested backtick reaches the parser inside `${…}`:
 
   ```js
@@ -268,14 +268,16 @@ The authoring idioms that implement those rules:
 EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-once on null, THEN text-mode-fallback (schema-less re-spawn) on a 2nd null, isolate each agent's failure via `.catch(() => null)` + `.filter(Boolean)`, self-recover rather than hard-stop, and shall reserve a `completion_block` string field + instruct the agent to fill it with the full `[COMPLETION]` block in every schema-mode delegation prompt. Copyable helper (engine-agnostic vocabulary per the Non-brittleness caveat — `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`):
 
 ```js
-// robustAgent: retry-once-on-null, isolated failure, never crashes the workflow
+// robustAgent: retry-once-on-null, isolated failure, never crashes the workflow.
+// Empty-string guard: an '' structured result is a silent non-deliverable that .filter(Boolean)
+// would drop unretried, so every gate and the counter test null OR '' (loose == null misses it).
 async function robustAgent(agentType, opts) {
   const run = (extra) => {
     const merged = { ...opts, ...extra };
     return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
   };
   let result = await run();
-  if (result == null) {
+  if (result == null || result === '') {
     // re-spawn ONCE — CHANGE STRATEGY, never re-send the identical tight schema (a verbatim
     // same-schema retry reproduces the identical cap-exceeded failure — 5+5 internal retries
     // wasted, observed). Drop to a PERMISSIVE single-free-text schema (no tight caps) so the
@@ -288,7 +290,7 @@ async function robustAgent(agentType, opts) {
       goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
     });
   }
-  if (result == null) {
+  if (result == null || result === '') {
     // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
     // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
     // but the record + work survive instead of vanishing.
@@ -308,8 +310,8 @@ async function robustAgent(agentType, opts) {
 const results = await parallel(items.map((i) =>
   robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', ...mkOpts(i) })));
 // surface dropped tracks BEFORE .filter(Boolean) so "surfaced-incomplete" is actually surfaced.
-const nulls = results.filter((r) => r == null).length;
-if (nulls) log('[resilience] ' + nulls + '/' + results.length + ' agent(s) returned null -> surfaced-incomplete, re-delegate in a follow-up');
+const nulls = results.filter((r) => r == null || r === '').length;
+if (nulls) log('[resilience] ' + nulls + '/' + results.length + ' agent(s) returned null/empty -> surfaced-incomplete, re-delegate in a follow-up');
 const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete items, re-delegable in a follow-up
 ```
 
@@ -441,6 +443,10 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
   // stage goal MUST also reserve a completion_block schema string field + instruct the agent to
   // fill it with the full [COMPLETION] block (### Resilient Workflow Authoring) — the printed text
   // turn does NOT survive schema-mode; the recorder reads completion_block from the SO input.
+  // TEXT-MODE BY DESIGN: the stages below declare NO schema — a verify stage returns a prose
+  // verdict (pass|revise, feasible|infeasible), so its printed [COMPLETION] IS captured by
+  // SubagentStop synthesis and the completion_block reservation above does not apply to them.
+  // Reserve it in any stage you convert to schema mode; do not add a schema here just to carry it.
 
   /* [AGENT-COMPOSITION]
   verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
@@ -459,13 +465,13 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
       return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
     };
     let result = await run();
-    if (result == null) {
+    if (result == null || result === '') {
       // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
       result = await run({
         goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; put your full [COMPLETION] block in the completion_block schema string field (the recorder reads it from the StructuredOutput input), then emit partial-but-complete before the working ceiling, never end on prose.\nVALIDATOR CONTRACT (invalid-emission mode) — emit ONLY these keys: <list them> and put ANY extra observation inside the declared free-text field (never invent a key); respect every maxLength/maxItems cap; on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates), do NOT merely shorten (a verbatim shorten reproduces the identical failure).`,
       });
     }
-    if (result == null) {
+    if (result == null || result === '') {
       // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
       // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
       // but the record + work survive instead of vanishing.

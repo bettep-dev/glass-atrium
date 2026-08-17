@@ -129,3 +129,33 @@ assert_absent() {
   assert_present "promotion-to-blocking condition"
   assert_present "enforce-workflow-verify-stage.sh"
 }
+
+# ── AC13: the declared-property exemplar carries completion_block as a schema MEMBER ─────
+# Membership, not a count: the assertion extracts the ONE fenced block that declares
+# AnalysisSchema and requires the reserved property to appear as a declared member INSIDE that
+# fence. A prose mention elsewhere in the file — or a comment inside the fence — cannot satisfy
+# it, which is what makes the exemplar decidable as a reference form rather than as narration.
+
+# helper: print the js fence containing the given needle (first match only)
+fence_with() {
+  awk -v needle="$1" '
+    /^```/ { if (infence) { if (hit) { printf "%s", buf; exit } ; infence=0; buf=""; hit=0 } else { infence=1 } ; next }
+    infence { buf = buf $0 "\n"; if (index($0, needle)) hit=1 }
+  ' "${SKILL}"
+}
+
+@test "AC13 the exemplar fence declares completion_block as a schema member, not prose" {
+  local fence
+  fence="$(fence_with "const AnalysisSchema")"
+  [[ -n "${fence}" ]] || {
+    printf 'no fenced block declaring AnalysisSchema found in %s\n' "${SKILL}" >&2
+    return 1
+  }
+  # strip full-line comments so a commented mention cannot satisfy membership
+  local code
+  code="$(printf '%s\n' "${fence}" | grep -v '^[[:space:]]*//' || true)"
+  printf '%s\n' "${code}" | grep -Eq "completion_block:[[:space:]]*'string'" || {
+    printf 'completion_block is not a declared member of the exemplar schema:\n%s\n' "${fence}" >&2
+    return 1
+  }
+}
