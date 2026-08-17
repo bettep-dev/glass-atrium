@@ -229,14 +229,17 @@
 # `impl_slots=N` records the implementation-slot count defined at impl_slot_count(): a total function
 # over BOTH terminal PASS branches, counting static spawn positions of declared literal impl types
 # (minus the greedy-earliest verify slot per verify-dev type) plus one slot per declared computed
-# type. Both fields are OBSERVABILITY ONLY — no verdict, exit code or advisory text reads them.
+# type, and floored at one wherever a static dev spawn exists so the verify-team-only shape stops
+# reporting zero on a script that demonstrably spawns a DEV agent. Neither field reaches a verdict or
+# an exit code; the slot count additionally feeds the ADVISORY [SIZE-EST] lower bound (see
+# sizeest_bounds()), which is why its zero reading was worth repairing rather than tolerating.
 # Two cardinality advisory tags ride the existing `advisory=` field and likewise decide nothing:
 # `size-map` (the [SIZE-EST] occurrence count differs from the slot count, either direction) and
 # `entry-cardinality` (an [ENTRY-CLASS] simple-task classification alongside 4+ implementation slots).
 # HONESTY: only the COUNT is mechanical. Which sizing entry corresponds to which call site is
 # author-assigned and unverifiable — the same honor-system trust class as declaration role
 # truthfulness above — and the count is blind to a loop fan-out, which spawns N runtime instances from
-# ONE static position and so reads as one slot.
+# ONE static position and so reads as one slot. That residual is unrepaired and stated at the counter.
 #
 # Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
 #   missing-declaration (block-nodecl) · malformed-declaration (block-grammar) · the five
@@ -1622,9 +1625,18 @@ def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
     # ZERO-POSITION CARVE-OUT: a computed type has no discoverable spawn position (the ordering check
     # already skips it for that reason), so it contributes one slot and no ordinal — asserting more
     # would be a number the gate cannot check.
+    # DEV-PRESENCE FLOOR: a script whose ONLY declared dev-* spawn is the verify-team member scores
+    # zero implementation slots by the definition above, yet a real DEV agent runs and spends a real
+    # budget. That shape is not an edge case — it is the dominant `dev=yes impl_slots=0` reading in
+    # the trace log, and against a zero count every slot-derived floor is vacuously satisfied. So a
+    # statically observed dev spawn floors the count at one. This is a FLOOR, not a recount: it
+    # asserts only what the static evidence supports — at least one DEV agent runs — and never
+    # promotes a verify slot into an implementation slot or otherwise inflates a count above zero.
     # SCOPE LIMIT (honest, no static fix available): the count sees STATIC spawn positions only. A
-    # loop fan-out spawning N runtime instances from one token is one position and one slot, and that
-    # is the shape most likely to be under-sized.
+    # loop fan-out spawning N runtime instances from one token is one position and one slot, and a
+    # wrapper-indirected type declared `impl-computed:` likewise contributes exactly one. Both remain
+    # under-sized whenever N > 1; the floor above fixes the zero case only, and asserting a runtime
+    # fan-out width would be a number this gate cannot check.
     try:
         pos_by_type = {}
         for (p, t) in dev_spawns:
@@ -1640,7 +1652,10 @@ def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
             for p in pos_by_type.get(t, []):
                 if p not in verify_slots:
                     n += 1
-        return n + len(set(computed_types))
+        n += len(set(computed_types))
+        if n == 0 and dev_spawns:
+            n = 1
+        return n
     except Exception:
         return 0
 

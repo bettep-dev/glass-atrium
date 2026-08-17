@@ -95,6 +95,39 @@ EOF
   [[ "$(last_advisory)" != *"sizeest-bounds"* ]] || return 1
 }
 
+# A DEV spawn whose only declared dev-* role is the verify-team member: `impl: none` scores no
+# implementation slot, so before the DEV-presence floor this shape counted zero and every slot-derived
+# bound was vacuously satisfied on it — the dominant `dev=yes impl_slots=0` reading in the trace log.
+# The floor makes it one, so the derived floor is 5 tool_uses. $1 = the sizing-token line under test.
+verify_only_script() {
+  cat <<EOF
+/* [AGENT-COMPOSITION]
+verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-nestjs
+impl: none
+[/AGENT-COMPOSITION] */
+log('plan-ref: clauded-docs/3634');
+${1}
+await parallel(
+  agent('glass-atrium-qa-code-reviewer', { goal: 'judge -> pass|revise' }),
+  agent('glass-atrium-dev-nestjs',       { goal: 'judge -> feasible|infeasible' }),
+);
+EOF
+}
+
+@test "bounds(floor): the previously-vacuous verify-only DEV shape now draws :low when under-declared" {
+  run_hook_exec "$(verify_only_script "log('[SIZE-EST] bundles=1 tool_uses~=2 — under-declared');")"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" == *"BELOW the slot-count floor"* ]] || return 1
+  [[ "$(last_advisory)" == *"sizeest-bounds:low"* ]] || return 1
+}
+
+@test "bounds(floor): the same shape declared at its floor stays silent — the floor is one, not more" {
+  run_hook_exec "$(verify_only_script "log('[SIZE-EST] bundles=1 tool_uses~=5 — at the floor');")"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "${output}" != *"ADVISORY ([SIZE-EST] plausibility"* ]] || return 1
+  [[ "$(last_advisory)" != *"sizeest-bounds"* ]] || return 1
+}
+
 # SEAM: the fail-open fallback literal must carry the new silent token; the equal-arity assertion
 # across emit() / literal / read group lives in the sibling suite's arity pin and is untouched here.
 @test "bounds(seam): the fail-open fallback literal carries SIZEEST_BOUNDS_SILENT" {
