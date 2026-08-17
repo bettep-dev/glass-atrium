@@ -130,7 +130,10 @@ _assert_no_cred_advisory() {
   GA_AUTH_ENV_LIB="$(_write_env_lib)"
   # body printed BEFORE the sleep so it reaches the capture pipe; run_with_timeout kills at 1s.
   GA_AUTH_CLAUDE_BIN="$(_write_stub_claude "Usage ⚠ out of extra usage — ${QUOTA_RESET}" 0 20)"
-  GA_AUTH_SELFTEST_TIMEOUT_SECS=1
+  # 5s, not 1s: this arm needs the stub's body to reach the capture pipe BEFORE the kill, and under
+  # a fully-parallel suite run a 1s ceiling can elapse before the stub is even scheduled (body empty
+  # → the bare-timeout arm's rc 1). The 20s stub sleep keeps the timeout itself guaranteed.
+  GA_AUTH_SELFTEST_TIMEOUT_SECS=5
   local out rc=0
   out="$(headless_auth_selftest 2>&1)" || rc=$?
   [[ "${rc}" -eq 3 ]] || return 1
