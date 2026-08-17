@@ -268,14 +268,16 @@ The authoring idioms that implement those rules:
 EARS: When a workflow spawns any schema-mode `agent()`, the script shall retry-once on null, THEN text-mode-fallback (schema-less re-spawn) on a 2nd null, isolate each agent's failure via `.catch(() => null)` + `.filter(Boolean)`, self-recover rather than hard-stop, and shall reserve a `completion_block` string field + instruct the agent to fill it with the full `[COMPLETION]` block in every schema-mode delegation prompt. Copyable helper (engine-agnostic vocabulary per the Non-brittleness caveat — `orchestrator-role.md` → `### Ultracode / Workflow-tool Mode`):
 
 ```js
-// robustAgent: retry-once-on-null, isolated failure, never crashes the workflow
+// robustAgent: retry-once-on-null, isolated failure, never crashes the workflow.
+// Empty-string guard: an '' structured result is a silent non-deliverable that .filter(Boolean)
+// would drop unretried, so every gate and the counter test null OR '' (loose == null misses it).
 async function robustAgent(agentType, opts) {
   const run = (extra) => {
     const merged = { ...opts, ...extra };
     return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
   };
   let result = await run();
-  if (result == null) {
+  if (result == null || result === '') {
     // re-spawn ONCE — CHANGE STRATEGY, never re-send the identical tight schema (a verbatim
     // same-schema retry reproduces the identical cap-exceeded failure — 5+5 internal retries
     // wasted, observed). Drop to a PERMISSIVE single-free-text schema (no tight caps) so the
@@ -288,7 +290,7 @@ async function robustAgent(agentType, opts) {
       goal: `${opts.goal}\nRETRY — the prior tight schema failed validation, so you now have a PERMISSIVE schema. Put ALL output prose into the single analysis free-text field (no tight caps); if the content is large or multi-item, WRITE IT TO A FILE and return the path + a compact summary in analysis. Put the full multi-line [COMPLETION] block into completion_block (the recorder reads it from the StructuredOutput input). RESERVE BUDGET to emit StructuredOutput before the working ceiling — never end on prose.`,
     });
   }
-  if (result == null) {
+  if (result == null || result === '') {
     // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
     // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
     // but the record + work survive instead of vanishing.
@@ -308,8 +310,8 @@ async function robustAgent(agentType, opts) {
 const results = await parallel(items.map((i) =>
   robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', ...mkOpts(i) })));
 // surface dropped tracks BEFORE .filter(Boolean) so "surfaced-incomplete" is actually surfaced.
-const nulls = results.filter((r) => r == null).length;
-if (nulls) log('[resilience] ' + nulls + '/' + results.length + ' agent(s) returned null -> surfaced-incomplete, re-delegate in a follow-up');
+const nulls = results.filter((r) => r == null || r === '').length;
+if (nulls) log('[resilience] ' + nulls + '/' + results.length + ' agent(s) returned null/empty -> surfaced-incomplete, re-delegate in a follow-up');
 const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete items, re-delegable in a follow-up
 ```
 
@@ -459,13 +461,13 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
       return agent(merged.goal ?? merged.prompt, { ...merged, agentType }).catch(() => null); // typed + isolated
     };
     let result = await run();
-    if (result == null) {
+    if (result == null || result === '') {
       // re-spawn ONCE: tighten budget + force the emit (optionally a higher-turn agentType)
       result = await run({
         goal: `${opts.goal}\nRESERVE BUDGET to emit StructuredOutput — the structured result IS the deliverable; put your full [COMPLETION] block in the completion_block schema string field (the recorder reads it from the StructuredOutput input), then emit partial-but-complete before the working ceiling, never end on prose.\nVALIDATOR CONTRACT (invalid-emission mode) — emit ONLY these keys: <list them> and put ANY extra observation inside the declared free-text field (never invent a key); respect every maxLength/maxItems cap; on a validation error ADD the missing key OR FIX THE TYPE (a nested object where a string is declared type-violates), do NOT merely shorten (a verbatim shorten reproduces the identical failure).`,
       });
     }
-    if (result == null) {
+    if (result == null || result === '') {
       // 2nd null -> text-mode fallback: re-spawn WITHOUT schema so the printed [COMPLETION]
       // is caught by SubagentStop synthesis (track-outcome.sh). Not merged into the join,
       // but the record + work survive instead of vanishing.
