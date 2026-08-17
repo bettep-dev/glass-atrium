@@ -422,6 +422,29 @@ PYX
   }
 }
 
+# The AUTHOR-FACING half of the same channel: the --lint --template scaffold teaches what the advisory
+# remediates — the declared property, the prompt-side fill instruction, and the null-OR-empty-string
+# resilience wrapper. The intro row is the one that keeps the section from being read as universal: a
+# copy-verbatim DEV skeleton is deliberately text-mode (D7) and owes no schema. Presence rows only; the
+# message-to-template snippet EQUALITY pin is the round-trip task's, not duplicated here.
+@test "completion-channel(template): --lint --template teaches the schema-mode completion scaffold" {
+  run bash "${HOOK_SH}" --lint --template
+  [[ "${status}" -eq 0 ]] || {
+    echo "--lint --template must exit 0, got ${status}" >&2
+    return 1
+  }
+  local missing=""
+  [[ "${output}" == *"Completion channel (schema-mode spawns ONLY"* ]] || missing="${missing} section"
+  [[ "${output}" == *"completion_block: { type: 'string', description:"* ]] || missing="${missing} declared-property"
+  [[ "${output}" == *"instruct that agent to FILL it"* ]] || missing="${missing} fill-instruction"
+  [[ "${output}" == *"result == null || result === ''"* ]] || missing="${missing} wrapper-null-or-empty"
+  [[ "${output}" == *"fourth section is CONDITIONAL"* ]] || missing="${missing} conditional-intro"
+  [[ -z "${missing}" ]] || {
+    echo "template scaffold missing:${missing}" >&2
+    return 1
+  }
+}
+
 @test "completion-channel(wiring): a site with the property absent nudges, exits 0, and traces its value" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "${SCHEMA_SITE}"

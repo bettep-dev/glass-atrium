@@ -541,9 +541,15 @@ EOF
 # print_lint_template — --lint --template output: the full author self-attestation scaffold assembled
 # from the SAME scaffold emitters the gate's block remediations use (so the taught template is exactly
 # what the gate accepts). The [SIZE-EST] line mirrors the BLOCK_SIZEEST remediation format.
+#
+# FOURTH SECTION (completion channel) — CONDITIONAL, and the intro says so: the schema scaffold applies
+# to a schema-mode spawn only. A DEV verify stage returns a prose verdict and is deliberately text-mode
+# (D7), so a copy-verbatim DEV skeleton declares no schema and owes this section nothing. Its declared
+# property line is kept BYTE-EQUAL to the one-edit snippet the two completion-channel advisory messages
+# already ship, so the taught scaffold and the shipped remediation cannot drift apart.
 print_lint_template() {
   cat <<'EOF'
-[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate).
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it.
 
 [AGENT-COMPOSITION] declaration (pick ONE form):
 EOF
@@ -563,6 +569,26 @@ Delegation-size self-attestation (at EVERY DEV spawn — ONE [SIZE-EST] token, t
   RIGHT-SIZE the analysis spawn: reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) → SPLIT by
   domain into N narrow agents up front. Default effort=medium for broad reads; high only for narrow deep
   reasoning. Bound the read scope to a file/dir allowlist (never a repo sweep) and cap output fields <=3.
+
+Completion channel (schema-mode spawns ONLY — a DEV verify stage is text-mode by design and skips this):
+  --- (a) declare the reserved property on EVERY schema-mode site (the gate reads presence only) ---
+  completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
+  --- (b) instruct that agent to FILL it — prompt-side, and NOT checked here ---
+  goal: '<the delegation> ... Put the FULL multi-line [COMPLETION] block into completion_block: the
+  recorder reads it from the StructuredOutput input, and a printed text turn does NOT survive the engine.'
+  --- (c) route the spawn through the resilience wrapper (compact sketch of the shipped helper) ---
+  async function robustAgent(agentType, opts) {
+    const run = (extra) => agent(opts.goal, { ...opts, ...extra, agentType }).catch(() => null);
+    let result = await run();
+    if (result == null || result === '') result = await run({ /* PERMISSIVE re-schema, keep completion_block */ });
+    if (result == null || result === '') await agent(opts.goal, { ...opts, agentType, schema: undefined }).catch(() => null);
+    return result; // caller .filter(Boolean)s a surviving null out
+  }
+  GATE both times on null OR the EMPTY STRING: an empty structured result is a silent non-deliverable that
+  .filter(Boolean) drops unretried, and a loose == null misses it.
+  GATE NOTE: robustAgent's FIRST argument is INVISIBLE here — this gate reads agent() first-args and
+  agentType: field values only — so a DECLARED type must ALSO appear as an opts agentType: string literal
+  (keep both literals identical), else the gate reads it un-spawned → block-declspawn.
 EOF
 }
 
