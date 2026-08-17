@@ -777,9 +777,15 @@ COMPLIANCE_AXIS_KEYS = ("C1", "C2", "C3", "C4")
 # truncation sensitivity: removals past the cut read as prose-only-add.
 PROSE_ONLY_ADD_AXIS_KEY = "prose_only_add"
 
-# Truncation caps for verifier prompt (token budget protection).
-RULE_EXCERPT_CHAR_CAP = 6000
-TARGET_AGENT_EXCERPT_CHAR_CAP = 6000
+# Runaway bounds for the verifier prompt's rule/target excerpts — NOT content
+# caps. The excerpts are composed of WHOLE heading blocks, so a bound below the
+# corpus size blinds the verifier to every block past it (the canonical Turn
+# Budget section of GLOBAL_RULES.md sits well past 6000 chars). Sized above the
+# generator-view headroom floor — twice the 51,401-char maximum
+# first-editable-region-to-end span over the registry agent corpus — so no live
+# body reaches it.
+RULE_EXCERPT_CHAR_CAP = 120_000
+TARGET_AGENT_EXCERPT_CHAR_CAP = 120_000
 DIFF_EXCERPT_CHAR_CAP = 4000
 
 # Optimizer-side memory (SkillOpt R2): the consolidated generation prompt
@@ -789,6 +795,14 @@ DIFF_EXCERPT_CHAR_CAP = 4000
 # PRE_VERIFY_MAX_BUDGET_USD — truncation is loud, never advisory.
 PRE_VERIFY_FAILURES_CHAR_CAP = 4000
 PRE_VERIFY_FAILURES_LIMIT = 8
+
+# The other half of that memory: what this agent successfully LANDED. Without it
+# the generator recalls only a slice of its failures and nothing of its
+# successes, and re-proposes what is already in the body. Same HARD cap
+# discipline as the failure block — the two share one prompt's budget.
+LANDED_HISTORY_CHAR_CAP = 4000
+LANDED_HISTORY_LIMIT = 5
+LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
 # Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
 # Used to pick the correct scope-*.md file for axis C3.
@@ -2433,7 +2447,7 @@ TARGET AGENT: {pattern_agent}
 
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
-{avoid_patterns_block}
+{avoid_patterns_block}{landed_history_block}
 PRIOR-DAY OUTCOMES for this agent (most-recent first — ALL of yesterday):
 {outcomes_block}
 
@@ -3081,10 +3095,23 @@ def generate_consolidated_proposal(
         else ""
     )
 
+    # Feedback half of that memory: what this agent already landed.
+    landed = _fetch_landed_proposals(agent)
+    landed_body = _render_landed_history_block(landed) if landed else ""
+    landed_history_block = (
+        "rules that previously LANDED for this agent "
+        "(already in the body — build on them, never re-propose them):\n"
+        + landed_body
+        + "\n"
+        if landed_body
+        else ""
+    )
+
     base_prompt = _CONSOLIDATED_PROMPT_TEMPLATE.format(
         pattern_agent=agent,
         signals_block=signals_block,
         avoid_patterns_block=avoid_patterns_block,
+        landed_history_block=landed_history_block,
         outcomes_block=outcomes_block,
         agent_path=str(target_file),
         agent_excerpt=agent_text,
@@ -5684,14 +5711,62 @@ _PRE_VERIFY_VERDICT_RE = re.compile(r"^VERDICT:\s*(verified|unverified)\s*$", re
 _PRE_VERIFY_RATIONALE_RE = re.compile(r"^RATIONALE:\s*(.+?)(?=\n[A-Z]+:|\Z)", re.MULTILINE | re.DOTALL)
 
 
-def _read_truncated(path: Path | None, cap: int) -> str:
-    """Read a text file truncated to `cap` chars; return placeholder if missing."""
+_MD_HEADING_RE = re.compile(r"^#{1,6} ")
+
+
+def _split_heading_blocks(text: str) -> list[str]:
+    """Split markdown into whole heading blocks — leading preamble, then one per heading."""
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if current and _MD_HEADING_RE.match(line):
+            blocks.append("".join(current))
+            current = []
+        current.append(line)
+    if current:
+        blocks.append("".join(current))
+    return blocks
+
+
+def _read_sections(path: Path | None, cap: int) -> str:
+    """Read a text file as WHOLE markdown heading blocks bounded by `cap` chars.
+
+    A character slice cuts mid-section, and a section the verifier sees only the
+    head of reads as a section carrying no rule to violate. Blocks are taken in
+    file order until the next would cross `cap`; an oversized FIRST block is kept
+    whole, because an excerpt of nothing is worse than one over the bound. Either
+    departure is loud on stderr and inside the excerpt itself.
+
+    An empty file returns "" so the caller's emptiness check still fires.
+    """
     if path is None or not path.exists():
         return "(file not available)"
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[:cap]
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return f"(read error: {exc})"
+    if len(text) <= cap:
+        return text
+
+    blocks = _split_heading_blocks(text)
+    kept: list[str] = []
+    used = 0
+    for block in blocks:
+        if kept and used + len(block) > cap:
+            break
+        kept.append(block)
+        used += len(block)
+
+    dropped = len(blocks) - len(kept)
+    if dropped:
+        note = (
+            f"[TRUNCATED: {dropped} whole heading block(s) dropped at the "
+            f"{cap}-char excerpt bound]"
+        )
+    else:
+        note = f"[OVERSIZED: one heading block exceeds the {cap}-char excerpt bound; kept whole]"
+    sys.stderr.write(f"[daemon-cycle] WARN: {note} — {path}\n")
+    return "".join(kept) + f"\n{note}\n"
 
 
 # Named signal for an axis file that RESOLVED but carries no content. Distinct
@@ -5721,8 +5796,9 @@ def _build_pre_verify_prompt(
     """Compose the 4-axis verification prompt with rule excerpts injected.
 
     Idempotent — same inputs (patch, pattern, on-disk rule files) produce the
-    same prompt text. Truncations are deterministic (slice from char 0 with a
-    fixed cap), so retries against the same diff hit identical bytes.
+    same prompt text. Excerpts are deterministic (whole heading blocks taken in
+    file order under a fixed bound), so retries against the same diff hit
+    identical bytes.
     """
     target_path = _get_target_path(patch.target_file)
     if target_path is None:
@@ -5736,7 +5812,7 @@ def _build_pre_verify_prompt(
         )
     else:
         target_file_name = str(target_path)
-        target_agent_excerpt = _read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP)
+        target_agent_excerpt = _read_sections(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP)
         if not target_agent_excerpt.strip():
             target_file_name = f"{TARGET_EMPTY_SIGNAL} ({patch.target_file})"
             target_agent_excerpt = _empty_excerpt_directive(
@@ -5755,7 +5831,7 @@ def _build_pre_verify_prompt(
         )
     else:
         scope_file_name = scope_path.name
-        scope_excerpt = _read_truncated(scope_path, RULE_EXCERPT_CHAR_CAP)
+        scope_excerpt = _read_sections(scope_path, RULE_EXCERPT_CHAR_CAP)
         if not scope_excerpt.strip():
             scope_file_name = f"{SCOPE_EMPTY_SIGNAL} ({pattern.agent})"
             scope_excerpt = _empty_excerpt_directive(
@@ -5768,8 +5844,8 @@ def _build_pre_verify_prompt(
         pattern_label=_neutralize_field(pattern.label),
         diff=patch.proposed_diff[:DIFF_EXCERPT_CHAR_CAP],
         patch_rationale=patch.rationale[:400],
-        compliance_matrix_excerpt=_read_truncated(COMPLIANCE_MATRIX_FILE, RULE_EXCERPT_CHAR_CAP),
-        global_rules_excerpt=_read_truncated(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),
+        compliance_matrix_excerpt=_read_sections(COMPLIANCE_MATRIX_FILE, RULE_EXCERPT_CHAR_CAP),
+        global_rules_excerpt=_read_sections(GLOBAL_RULES_FILE, RULE_EXCERPT_CHAR_CAP),
         scope_file_name=scope_file_name,
         scope_excerpt=scope_excerpt,
         target_agent_excerpt=target_agent_excerpt,
@@ -8400,6 +8476,80 @@ def _render_pre_verify_failures_block(
     block = "\n".join(lines)
     if len(block) > char_cap:
         marker = f"\n[TRUNCATED: avoid-pattern memory capped at {char_cap} chars]"
+        block = block[: char_cap - len(marker)] + marker
+    return block
+
+
+def _fetch_landed_proposals(
+    target_agent: str,
+    limit: int = LANDED_HISTORY_LIMIT,
+) -> list[tuple[str, str]] | None:
+    """Recently APPLIED proposals for one agent, newest-first.
+
+    The feedback half of the optimizer-side memory: the generator is told what it
+    already landed so it builds on those rules instead of re-proposing them.
+    SEPARATE projection from the sibling readers (do NOT widen theirs) — this one
+    SELECTs the patch text and filters on the terminal ``applied`` status.
+
+    Mirrors the sibling fail-OPEN discipline: PG off / read error → ``None``
+    (a memory miss must never block generation).
+
+    Returns:
+        ``[(pattern_label, proposed_diff), ...]`` newest-first (≤ ``limit``),
+        ``[]`` when PG holds no applied rows, ``None`` on PG-off / read error.
+    """
+    select_sql = (
+        "SELECT pattern_label, proposed_diff "
+        "FROM core.autoagent_proposals "
+        "WHERE target_agent = %s AND status::text = 'applied' "
+        "AND proposed_diff IS NOT NULL "
+        "ORDER BY cycle_date DESC, id DESC "
+        "LIMIT %s"
+    )
+    rows = _fetch_proposal_rows(
+        target_agent, select_sql, (target_agent, limit), "landed-history"
+    )
+    if rows is None:
+        return None
+    return [(label or "", diff or "") for label, diff in rows]
+
+
+def _render_landed_history_block(
+    rows: list[tuple[str, str]],
+    *,
+    char_cap: int = LANDED_HISTORY_CHAR_CAP,
+) -> str:
+    """Render the 'already landed for this agent' block, HARD char-capped.
+
+    Each row → its pattern label plus the lines the patch ADDED; those lines are
+    what now sits in the body, and the context lines around them are already
+    visible in the whole-file excerpt further down the prompt. Model-authored
+    patch text re-entering a prompt is an LLM trust boundary, so every field goes
+    through the shared ``_neutralize_field`` sanitizer (LLM01).
+
+    Returns ``""`` for empty input so the caller omits the block cleanly.
+    """
+    if not rows:
+        return ""
+
+    lines: list[str] = []
+    for label, diff in rows:
+        added = [
+            line[1:].strip()
+            for line in (diff or "").splitlines()
+            if line.startswith("+") and not line.startswith("+++")
+        ]
+        added_text = " / ".join(text for text in added if text)
+        rendered = (
+            _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
+            if added_text
+            else "(no added lines recorded)"
+        )
+        lines.append(f"- [{_neutralize_field(label)}] {rendered}")
+
+    block = "\n".join(lines)
+    if len(block) > char_cap:
+        marker = f"\n[TRUNCATED: landed-history memory capped at {char_cap} chars]"
         block = block[: char_cap - len(marker)] + marker
     return block
 
