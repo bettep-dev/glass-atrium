@@ -14,6 +14,10 @@ four census emitters rather than the two populated ones):
           intact, raises nothing, emits exactly one named warning line, and
           leaves the loss retrievable on the named degradation channel.
 
+T4's widened file set is pinned here too, against the same sink: the enumerated
+set gains every agent body while keeping every rules file and GLOBAL_RULES.md,
+and the widened reading rides the delivered columns with no schema touch.
+
 Run with either runner:
     uv run --python 3.13 --with pytest pytest autoagent/test/test_corpus_audit_pg_sink.py -v
     python3 -m unittest autoagent.test.test_corpus_audit_pg_sink -v
@@ -185,14 +189,20 @@ class _UpsertTable:
         self.rows.append(incoming)
 
 
-def _fixture_corpus(root: Path) -> tuple[Path, Path]:
-    """Two rule files with a hand-countable word total."""
+def _fixture_corpus(root: Path) -> tuple[Path, Path, Path]:
+    """Two rule files with a hand-countable word total, and no agent body.
+
+    The empty agents directory is load-bearing: every corpus root has a live
+    default, so a fixture that leaves one unset measures this machine.
+    """
     rules_dir = root / "rules"
     rules_dir.mkdir()
     (rules_dir / "a.md").write_text("alpha beta gamma\n", encoding="utf-8")
     global_rules = root / "GLOBAL.md"
     global_rules.write_text("delta epsilon\n", encoding="utf-8")
-    return rules_dir, global_rules
+    agents_dir = root / "agents"
+    agents_dir.mkdir()
+    return rules_dir, global_rules, agents_dir
 
 
 class CorpusAuditSignalTest(unittest.TestCase):
@@ -200,10 +210,11 @@ class CorpusAuditSignalTest(unittest.TestCase):
 
     def test_emit_carries_every_measurement_column_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            rules_dir, global_rules = _fixture_corpus(Path(tmp))
+            rules_dir, global_rules, agents_dir = _fixture_corpus(Path(tmp))
             signal = dc.audit_corpus_size(
                 rules_dir=rules_dir,
                 global_rules_file=global_rules,
+                agents_dir=agents_dir,
                 gate_log_file=Path(tmp) / "absent-gate.log",
             )
 
@@ -222,12 +233,85 @@ class CorpusAuditSignalTest(unittest.TestCase):
 
     def test_signal_word_count_matches_the_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            rules_dir, global_rules = _fixture_corpus(Path(tmp))
+            rules_dir, global_rules, agents_dir = _fixture_corpus(Path(tmp))
             signal = dc.audit_corpus_size(
-                rules_dir=rules_dir, global_rules_file=global_rules
+                rules_dir=rules_dir,
+                global_rules_file=global_rules,
+                agents_dir=agents_dir,
             )
         self.assertEqual(signal["word_count"], 5)
         self.assertEqual(signal["file_count"], 2)
+
+
+def _fixture_widened_corpus(root: Path) -> tuple[Path, Path, Path]:
+    """A tree carrying rules files, agent bodies and GLOBAL_RULES.md.
+
+    The archived body is the discrimination control — a recursive agents glob
+    sweeps it in, and it is not corpus the loop appends to.
+    """
+    rules_dir = root / "rules"
+    (rules_dir / "nested").mkdir(parents=True)
+    (rules_dir / "core.md").write_text("alpha beta\n", encoding="utf-8")
+    (rules_dir / "nested" / "scope.md").write_text("gamma\n", encoding="utf-8")
+    agents_dir = root / "agents"
+    (agents_dir / "archive").mkdir(parents=True)
+    (agents_dir / "dev-python.md").write_text("delta epsilon zeta\n", encoding="utf-8")
+    (agents_dir / "qa-reviewer.md").write_text("eta\n", encoding="utf-8")
+    (agents_dir / "archive" / "retired.md").write_text("theta\n", encoding="utf-8")
+    global_rules = agents_dir / "GLASS_ATRIUM_GLOBAL_RULES.md"
+    global_rules.write_text("iota kappa\n", encoding="utf-8")
+    return rules_dir, global_rules, agents_dir
+
+
+class CorpusFileSetTest(unittest.TestCase):
+    """T4 — the enumerated set gained the agent bodies and lost no rules file."""
+
+    def test_widened_set_adds_agent_bodies_and_keeps_the_rules_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_dir, global_rules, agents_dir = _fixture_widened_corpus(Path(tmp))
+            returned = set(dc._corpus_files(rules_dir, global_rules, agents_dir))
+            agent_bodies = set(agents_dir.glob("*.md"))
+            pre_widening = set(rules_dir.rglob("*.md")) | {global_rules}
+
+            self.assertEqual(agent_bodies - returned, set())
+            self.assertEqual(pre_widening - returned, set())
+            self.assertNotIn(agents_dir / "archive" / "retired.md", returned)
+
+    def test_the_returned_list_carries_no_duplicate(self) -> None:
+        """GLOBAL_RULES.md sits inside agents_dir, so both sources find it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_dir, global_rules, agents_dir = _fixture_widened_corpus(Path(tmp))
+            files = dc._corpus_files(rules_dir, global_rules, agents_dir)
+            self.assertIn(global_rules, files)
+        self.assertEqual(len(files), len(set(files)))
+
+    def test_the_widened_measurement_reaches_the_writer_unchanged(self) -> None:
+        """Zero schema touch — the widened reading rides the delivered columns."""
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_dir, global_rules, agents_dir = _fixture_widened_corpus(Path(tmp))
+            enumerated = dc._corpus_files(rules_dir, global_rules, agents_dir)
+            expected_words = sum(
+                len(path.read_text(encoding="utf-8").split()) for path in enumerated
+            )
+            signal = dc.audit_corpus_size(
+                rules_dir=rules_dir,
+                global_rules_file=global_rules,
+                agents_dir=agents_dir,
+                gate_log_file=Path(tmp) / "absent-gate.log",
+            )
+
+        captured: dict[str, object] = {}
+        with _patched_writer(lambda **kw: captured.update(kw) or 1):
+            self.assertTrue(dc.emit_corpus_audit(signal, "2026-08-17"))
+
+        self.assertEqual(signal["word_count"], expected_words)
+        self.assertEqual(signal["file_count"], len(enumerated))
+        for column in _MEASUREMENT_COLUMNS:
+            self.assertEqual(captured[column], signal[column], column)
+        # The one-time step is not an alert: no baseline is passed, so the trend
+        # axis stays insufficient-data rather than firing on the jump.
+        self.assertIsNone(captured["trend_delta"])
+        self.assertFalse(captured["trend_alert"])
 
 
 class CorpusAuditUpsertTest(unittest.TestCase):
