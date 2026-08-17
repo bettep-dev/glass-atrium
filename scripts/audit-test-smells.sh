@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# audit-test-smells.sh — advisory audit of two mechanically-detectable Bats test smells
+# audit-test-smells.sh — advisory audit of three mechanically-detectable Bats test smells
 # Usage: audit-test-smells.sh [--path <file>]... [--root <dir>] [--quiet] [--advisory|--strict]
 #
 # Behavior:
@@ -7,7 +7,9 @@
 #   2. Split each file into @test bodies with a heredoc-aware extractor
 #   3. Report signal (a) — a body whose last non-exempt `run` result is never inspected
 #   4. Report signal (b) — a comparison whose two operands are the same literal or variable token
-#   5. Emit per-finding lines plus a summary carrying the two counts and the bodies scanned
+#   5. Report signal (c) — a count pin: an assertion comparing a non-zero integer literal against a
+#      value the SAME assertion derives by counting the tree or a source file
+#   6. Emit per-finding lines plus a summary carrying the three counts and the bodies scanned
 #
 # Surface: ADVISORY by default — findings still exit 0 on every surface, including the scope-list
 # run. Only `--strict` applies blocking exit semantics; `--advisory` reports without failing
@@ -40,6 +42,26 @@
 #   - Signal (b) measures 0 on the current corpus. That is the EXPECTED result, not a defect: the
 #     empirical burden is carried by signal (a), and (b) is kept in a portable form for other
 #     corpora.
+#   - Signal (c) measures 0 on the current corpus, and that clean run is its acceptance
+#     demonstration rather than a null result: the conversion set that removed every known count pin
+#     landed first, so the detector is reading a tree those conversions emptied. It is proved to
+#     FIRE by planting a synthetic pin in a copy of a suite outside the tree.
+#
+# Signal (c) scope, and what it deliberately does not claim. It fires only where all three hold in
+# ONE assertion: the count is taken over a TREE or SOURCE anchor (a `git ls-files`/`git grep` walk, or
+# a path rooted at the suite's own directory or a repository root), the literal sits in the same
+# assertion, and the comparison states an exact or bounded census. Three neighbouring shapes are
+# exempt BY CONSTRUCTION rather than by adjudication:
+#   - a literal `0` — a "no occurrence" assertion states a property, not a census;
+#   - a membership floor (`-ge 1`, `-gt 0`) — the shape the conversions in this repository adopted as
+#     the CORRECT replacement for a pin, so reporting it would argue against the fix;
+#   - a count over a sandbox artifact the test itself produced (call logs, captured output, seeded
+#     fixtures) — its expected value is a behavioural expectation the test controls end to end, and
+#     nothing in the tree can drift it. These are numerous and legitimate; reporting them would bury
+#     the signal.
+# A comparison whose two sides are both derived (a drift check) matches no literal and so falls out
+# on its own. A pin split across two lines — a count captured into a variable, compared further down —
+# is out of reach and is not reported; the reviewer keeps that one.
 #
 # Named exemptions for signal (a): the self-asserting `run !` form; the `run -N` forms that assert
 # status at the call site; `run --separate-stderr` (whose bodies inspect `$stderr`); a `run` token
@@ -91,8 +113,22 @@ readonly RE_HELPER='(^|[^[:alnum:]_])assert_[a-zA-Z_]+'
 # falls out of the signal rather than being guessed at.
 readonly RE_COMPARE='(^|[^[:alnum:]_])\[\[?[[:space:]]+([^][:space:]]+)[[:space:]]+(=|==|-eq)[[:space:]]+([^][:space:]]+)[[:space:]]+\]\]?([^[:alnum:]_]|$)'
 
+# A counting idiom inside a command substitution is what makes the other operand a census rather
+# than a constant: `wc` in any counting mode, and `grep -c` in any flag cluster.
+readonly RE_COUNT_SOURCE='\$\('
+readonly RE_COUNT_CMD='(wc[[:space:]]+-[lcwm]|grep[[:space:]]+-[A-Za-z]*c([[:space:]]|$))'
+# The counted target must be the tree or a source file under it — a sandbox artifact the test wrote
+# itself carries a behavioural expectation, not a census, and is out of scope (see the header).
+readonly RE_TREE_ANCHOR='(git[[:space:]]+(ls-files|grep)|BATS_TEST_DIRNAME|REPO_ROOT|PROJECT_ROOT|SRC_ROOT|REAL_SCRIPT|\.\./)'
+# The literal may sit on either side of a test operator, or trail an assert_equal call.
+readonly RE_PIN_RHS='(-eq|-ne|-gt|-ge|-lt|-le|==|=)[[:space:]]+["'"'"']?([0-9]+)["'"'"']?([^[:alnum:]_]|$)'
+readonly RE_PIN_LHS='(^|[[:space:]])["'"'"']?([0-9]+)["'"'"']?[[:space:]]+(-eq|-ne|-gt|-ge|-lt|-le|==|=)[[:space:]]'
+readonly RE_PIN_HELPER='assert_equal[[:space:]].*[[:space:]]["'"'"']?([0-9]+)["'"'"']?[[:space:]]*$'
+readonly RE_ASSERTION_HEAD='^(\[|assert_)'
+
 no_result_check=0
 tautology=0
+count_pin=0
 tests_scanned=0
 LINE_CODE=""
 LINE_TEXT=""
@@ -153,6 +189,42 @@ line_inspects() {
     *) ;;
   esac
   [[ "${code}" =~ ${RE_HELPER} ]]
+}
+
+# True when the operator/literal pair states a census rather than a presence claim: zero and the two
+# membership-floor forms are the shapes the conversions in this repository adopted, never pins.
+pin_is_census() {
+  local op="${1}" lit=$((10#${2}))
+  ((lit != 0)) || return 1
+  case "${op}" in
+    -ge | -gt) ((lit > 1)) || return 1 ;;
+    *) ;;
+  esac
+  return 0
+}
+
+# True when one assertion both derives a count and compares it against a non-zero integer literal.
+# The assertion head is read from the code view so a comparison quoted inside a fixture row is not a
+# claim the test makes; the operands are read from the text view so a quoted literal survives.
+line_pins_count() {
+  local text="${1}" code="${2}" trimmed=""
+  trimmed="${code#"${code%%[![:space:]]*}"}"
+  [[ "${trimmed}" =~ ${RE_ASSERTION_HEAD} ]] || return 1
+  [[ "${text}" =~ ${RE_COUNT_SOURCE} ]] || return 1
+  [[ "${text}" =~ ${RE_COUNT_CMD} ]] || return 1
+  [[ "${text}" =~ ${RE_TREE_ANCHOR} ]] || return 1
+  # shellcheck disable=SC2310  # each predicate's false branch continues the scan, it is not an error
+  if [[ "${text}" =~ ${RE_PIN_RHS} ]] && pin_is_census "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+    return 0
+  fi
+  # shellcheck disable=SC2310  # as above
+  if [[ "${text}" =~ ${RE_PIN_LHS} ]] && pin_is_census "${BASH_REMATCH[3]}" "${BASH_REMATCH[2]}"; then
+    return 0
+  fi
+  if [[ "${text}" =~ ${RE_PIN_HELPER} ]] && ((10#${BASH_REMATCH[1]} != 0)); then
+    return 0
+  fi
+  return 1
 }
 
 audit_file() {
@@ -233,6 +305,13 @@ audit_file() {
         detail="${text#"${text%%[![:space:]]*}"}"
         audit_cli_report TAUTOLOGY "${rel}:$((idx + 1))" "@test ${test_name} — ${detail}"
       fi
+
+      # shellcheck disable=SC2310  # a false predicate is the reportable outcome, not an error
+      if line_pins_count "${text}" "${code}"; then
+        count_pin=$((count_pin + 1))
+        detail="${text#"${text%%[![:space:]]*}"}"
+        audit_cli_report COUNT_PIN "${rel}:$((idx + 1))" "@test ${test_name} — ${detail}"
+      fi
     fi
 
     # Detected on the code view, never the raw line: a `<<` inside a quoted string (a test
@@ -277,12 +356,12 @@ main() {
     done
   fi
 
-  printf 'no_result_check=%d tautology=%d tests_scanned=%d\n' \
-    "${no_result_check}" "${tautology}" "${tests_scanned}"
+  printf 'no_result_check=%d tautology=%d count_pin=%d tests_scanned=%d\n' \
+    "${no_result_check}" "${tautology}" "${count_pin}" "${tests_scanned}"
 
-  printf -v fail_msg 'FAIL: %d uninspected run result(s) and %d tautological assertion(s) in the audited surface' \
-    "${no_result_check}" "${tautology}"
-  audit_cli_finish "${blocking}" "$((no_result_check + tautology))" "${fail_msg}"
+  printf -v fail_msg 'FAIL: %d uninspected run result(s), %d tautological assertion(s) and %d count pin(s) in the audited surface' \
+    "${no_result_check}" "${tautology}" "${count_pin}"
+  audit_cli_finish "${blocking}" "$((no_result_check + tautology + count_pin))" "${fail_msg}"
 }
 
 main "$@"

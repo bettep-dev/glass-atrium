@@ -1,9 +1,11 @@
 #!/usr/bin/env bats
-# audit-test-smells.bats — pins the two-signal contract of scripts/audit-test-smells.sh.
+# audit-test-smells.bats — pins the three-signal contract of scripts/audit-test-smells.sh.
 #
 # The suite asserts RELATIONSHIPS over fixture tables rather than enumerating cases: for signal (a)
 # the relationship is "a body is reported exactly when its last non-exempt `run` is never inspected",
-# and for signal (b) "a comparison is reported exactly when both operands are the same token".
+# and for signal (b) "a comparison is reported exactly when both operands are the same token", and for
+# signal (c) "a count over a tree or source anchor is reported exactly when it is pinned to an exact
+# census, never when it states absence, a membership floor, or a sandbox artifact's behaviour".
 # A loop whose body asserts on EVERY row is the data-driven form the conditional-test-logic carve-out
 # in scoped/shared-testing.md -> Meaningless-Test Prohibitions explicitly permits.
 #
@@ -89,6 +91,35 @@ audit_body() {
     IFS='|' read -r name body want <<<"${row}"
     out="$(audit_body "${name}" "${body}")"
     [[ "${out}" == *"tautology=${want} "* ]] || {
+      echo "row=${row}"
+      echo "got=${out}"
+      return 1
+    }
+  done
+}
+
+@test "signal (c): a tree-anchored count is reported exactly when it is pinned to an exact census" {
+  # Unit-separator rows, not the `|` of the tables above: every fixture here carries a shell pipeline,
+  # and splitting on `|` would truncate each body at its first `wc`.
+  local -a table=(
+    $'exact_git_census\x1f  [ "$(git ls-files | wc -l)" -eq 42 ]\x1f1'
+    $'exact_source_census\x1f  [[ "$(grep -c row "${BATS_TEST_DIRNAME}/../lib/x.sh")" -eq 5 ]]\x1f1'
+    $'exact_relative_source\x1f  [ "$(grep -c row ../lib/x.sh)" -eq 5 ]\x1f1'
+    $'literal_on_the_left\x1f  [ 5 -eq "$(git grep -c row | wc -l)" ]\x1f1'
+    $'helper_form\x1f  assert_equal "$(git ls-files | wc -l)" 42\x1f1'
+    $'absence_claim\x1f  [ "$(git ls-files bad | wc -l)" -eq 0 ]\x1f0'
+    $'membership_floor_ge\x1f  [[ "$(grep -c row "${REAL_SCRIPT}")" -ge 1 ]]\x1f0'
+    $'membership_floor_gt\x1f  [[ "$(grep -c row "${REAL_SCRIPT}")" -gt 0 ]]\x1f0'
+    $'sandbox_artifact\x1f  [ "$(wc -l <"${CALL_LOG}")" -eq 2 ]\x1f0'
+    $'both_sides_derived\x1f  [ "$(git ls-files | wc -l)" -eq "$(git ls-files a | wc -l)" ]\x1f0'
+    $'no_count_command\x1f  [ "$(git ls-files)" = x ]\x1f0'
+    $'quoted_row_not_an_assertion\x1f  echo "[ \\"$(git ls-files | wc -l)\\" -eq 42 ]"\x1f0'
+  )
+  local row name body want out
+  for row in "${table[@]}"; do
+    IFS=$'\x1f' read -r name body want <<<"${row}"
+    out="$(audit_body "${name}" "${body}")"
+    [[ "${out}" == *"count_pin=${want} "* ]] || {
       echo "row=${row}"
       echo "got=${out}"
       return 1
