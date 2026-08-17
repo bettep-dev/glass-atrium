@@ -867,7 +867,7 @@
     "autoagent/test/test_removal_discard_refusal.py": "e75c79c1636c1df7c68a374f19309026cb07d195e0057108470ac53f963faf22",
     "autoagent/test/test_removal_exact_match_gate.py": "86053512266ae10d77572e78edf037b84151c83d1cfdf80cd3f51b3a20ca634d",
     "autoagent/test/test_sensitive_patterns.py": "6a5179272f291c2f36b981621f2088d230fc8fcb3c64359711293cebf071fc42",
-    "autoagent/test/test_signal_store_retired.py": "5df57754877008b5ad6f14f7f2eced4558307b35473a422f53ff2273e03515f4",
+    "autoagent/test/test_signal_store_retired.py": "5205c31db50c6797bc04acf29ecce417b68a866b28ad10439e827653abcf95d4",
     "autoagent/test/test_single_regen_reason_line.py": "f7ea6ec917105836f0f5a486b4592dbffa2d7cfd22daf4f80d6722fed5e83ab0",
     "autoagent/test/test_timeout_backoff_release.py": "eba09fb08f520ac9c9e09271bf0ad53d6b3cb7c629e39ec91e3d708ef39930b8",
     "autoagent/test/test_transient_backoff_polarity.py": "bbd38ece6d8849f29cdccda77a9399f6ef38b773361080f889f055b145611252",

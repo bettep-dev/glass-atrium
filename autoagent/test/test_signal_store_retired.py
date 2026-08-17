@@ -70,13 +70,20 @@ def _load_aggregator() -> types.ModuleType:
     return module
 
 
-def _fixture_corpus(root: Path) -> tuple[Path, Path]:
+def _fixture_corpus(root: Path) -> tuple[Path, Path, Path]:
+    """Two rule files and no agent body.
+
+    The empty agents directory is load-bearing: every corpus root has a live
+    default, so a fixture that leaves one unset measures this machine.
+    """
     rules_dir = root / "rules"
     rules_dir.mkdir()
     (rules_dir / "a.md").write_text("alpha beta gamma\n", encoding="utf-8")
     global_rules = root / "GLOBAL.md"
     global_rules.write_text("delta epsilon\n", encoding="utf-8")
-    return rules_dir, global_rules
+    agents_dir = root / "agents"
+    agents_dir.mkdir()
+    return rules_dir, global_rules, agents_dir
 
 
 @contextlib.contextmanager
@@ -143,13 +150,14 @@ class ForcedEmitPathAbsence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = root / "signals.jsonl"
-            rules_dir, global_rules = _fixture_corpus(root)
+            rules_dir, global_rules, agents_dir = _fixture_corpus(root)
             diff = f"+> See `{_DEAD_REFERENCE}` for the spec.\n+another added line"
 
             with _recording_seam(store) as attempts:
                 dc.audit_corpus_size(
                     rules_dir=rules_dir,
                     global_rules_file=global_rules,
+                    agents_dir=agents_dir,
                     gate_log_file=root / "absent-gate.log",
                 )
                 classification = dc.classify_prose_only_add(
