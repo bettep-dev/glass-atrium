@@ -39,10 +39,15 @@ import daemon_cycle as dc  # noqa: E402 — autoagent dir pinned above
 
 CEILING = pgdw.LEARNING_LOG_REASON_MAX
 
-# Widest substitution the apply-cap template is checked against. The apply count
-# is bounded by _fetch_proposal_history's LIMIT 50 window and the threshold is a
-# small env-overridable integer, so three digits each is far past reachable —
-# deliberately, since the point is headroom, not a tight fit.
+# Widest substitution the {n}/{thr} templates are checked against. Every count
+# they carry — the apply count, the reject streak — is bounded by
+# _fetch_proposal_history's LIMIT 50 window, and the thresholds are small
+# env-overridable integers, so three digits each is far past reachable.
+#
+# That reachability argument is the ONLY thing keeping this ceiling honest: if
+# _fetch_proposal_history's LIMIT ever rises past 999, a four-digit count
+# overflows a budget these tests still call green. Raising that LIMIT means
+# raising this width in the same change.
 _WIDEST_SUBSTITUTION = 10**3 - 1
 
 
@@ -91,6 +96,60 @@ class TestApplyCapReasonBudget(unittest.TestCase):
         self.assertNotIn("re-arm by setting status back to 'identified'", reason)
         self.assertIn("does not re-arm it", reason)
         self.assertIn("clear or scope that apply evidence", reason)
+
+
+class TestRejectStreakReasonBudget(unittest.TestCase):
+    """The reject-streak reason: same substitution-dependent shape as the cap."""
+
+    def test_load_bearing_head_is_unchanged(self):
+        # test_pattern_lifecycle_gates asserts "reject-streak snooze: 3
+        # consecutive" — the head through the substitution is load-bearing.
+        self.assertTrue(
+            dc.REJECT_STREAK_REASON_TEMPLATE.format(n=3, thr=3).startswith(
+                "reject-streak snooze: 3 consecutive"
+            )
+        )
+
+    def test_survives_slice_at_widest_substitution(self):
+        for n, thr in ((3, 3), (50, 3), (_WIDEST_SUBSTITUTION, _WIDEST_SUBSTITUTION)):
+            with self.subTest(n=n, thr=thr):
+                reason = dc.REJECT_STREAK_REASON_TEMPLATE.format(n=n, thr=thr)
+                self.assertEqual(
+                    _slice(reason),
+                    reason,
+                    "reason truncates silently at n=%d thr=%d (%d > %d)"
+                    % (n, thr, len(reason), CEILING),
+                )
+
+    def test_ends_on_a_complete_clause(self):
+        reason = dc.REJECT_STREAK_REASON_TEMPLATE.format(
+            n=_WIDEST_SUBSTITUTION, thr=_WIDEST_SUBSTITUTION
+        )
+        self.assertTrue(_slice(reason).endswith("."))
+
+    def test_carries_the_corrected_remedy(self):
+        # consecutive_reject_count is recomputed each cycle from the same
+        # proposal history and breaks only on a covering applied/approved row,
+        # which a parked pattern can never produce — so the streak is frozen and
+        # the status flip re-parks the row.
+        reason = dc.REJECT_STREAK_REASON_TEMPLATE.format(n=3, thr=3)
+        self.assertNotIn("re-arm by setting status back to 'identified'", reason)
+        self.assertIn("does not re-arm it", reason)
+        self.assertIn("clear or scope that reject evidence", reason)
+
+
+class TestSoundControlIsUntouched(unittest.TestCase):
+    """NON_AUTO_FIXABLE_REASON is the control case and keeps its own remedy."""
+
+    def test_names_the_evidence_step_before_the_status_reset(self):
+        reason = dc.NON_AUTO_FIXABLE_REASON
+        self.assertIn("wrapping the target in an EDITABLE region", reason)
+        self.assertLess(
+            reason.index("EDITABLE region"),
+            reason.index("status to 'identified'"),
+            "the control case names the evidence-clearing step first",
+        )
+        self.assertEqual(_slice(reason), reason)
 
 
 class TestRevertedSnoozeReasonBudget(unittest.TestCase):

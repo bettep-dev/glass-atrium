@@ -336,10 +336,14 @@ def upsert_learning_pattern(
 
 # Width of core.learning_log.last_transition_reason (varchar(500)). Named here,
 # at the write path that enforces it, because the slice below is SILENT: an
-# over-long reason is stored truncated with no error and no warning. Callers that
-# build a reason from a template import this constant and assert their widest
-# formatted case fits, so the failure surfaces in a test rather than in a stored
-# row ending mid-word.
+# over-long reason is stored truncated with no error and no warning.
+#
+# It is named rather than repeated so the check can live somewhere: the daemon's
+# reason templates are static, so autoagent/test/test_reason_tail_budget.py
+# imports this constant and asserts each widest formatted case survives the
+# slice. daemon_cycle.py itself does NOT import it — the templates carry a
+# pointer to that test instead, which keeps a string-length regression a red
+# test rather than an import-time crash in the loop.
 LEARNING_LOG_REASON_MAX = 500
 
 _LEARNING_LOG_REJECT_SQL = """
