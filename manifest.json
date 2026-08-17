@@ -1486,7 +1486,7 @@
     "test/install-step-counter-grand-total.bats": "d556012f3e437233008f4f077434e2a7334b74cb58368eb9ffac682682fe0457",
     "test/install-update-state.bats": "a4819330b59ad05f1618562898fdae260adae3f7921742ec6313d285da4862b7",
     "test/lib/bats-hermetic-env.bash": "c940a821276e05a07a01e86f74abda4c8473e33aa9ecb83f103364aa6f884c89",
-    "test/licenses-audit-gate.bats": "44711d8896d2f488064e6d6079a37687710474d9fdf5548fc6af5e9d8bbe79b4",
+    "test/licenses-audit-gate.bats": "afaaa08b5d35b45c01f2a5a59342e65d53dfb2f4e193025d6bdede2f61887dc3",
     "test/merged-box-shape.bats": "41bad090c3cc0ddfcb22559340d0cb7aa4c7761b46d3b4e5bad0d943cbbc58b9",
     "test/monitor-build-selfheal.bats": "346120a7efec580705f6743c09eec491dcdcecfe5fb30fc779a0a99d27c190ca",
     "test/oss-db-setup.bats": "7bee9d909c23f2d4ade0e680327663e06519cb88cd03faa0a0e6761960157847",
