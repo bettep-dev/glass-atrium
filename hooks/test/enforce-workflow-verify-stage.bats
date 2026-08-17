@@ -1341,6 +1341,16 @@ robustAgent('glass-atrium-dev-nestjs', { goal: 'implement', schema: OutSchema })
   [[ ! "${output}" == *"ADVISORY (resilience"* ]] || return 1
 }
 
+# ABSENT-VALUE ALIGNMENT — a key-position absent value disables schema mode, so the per-site scan reads
+# it the same way the script-wide completion-channel values do. Before the alignment the two co-emitted
+# at opposite polarity on this one fixture (spawns a schema-mode agent beside declares NO schema site).
+@test "resilience(absent value): schema: undefined spawn → NO resilience advisory, no co-emission" {
+  run_hook "await agent('glass-atrium-intel-reporter', { schema: undefined });"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! "${output}" == *"ADVISORY (resilience"* ]] &&
+    [[ "${output}" == *"ADVISORY (completion channel absent"* ]] || return 1
+}
+
 # =====================================================================================================
 # SECTION N2 — ANALYSIS SIZE-ATTESTATION ADVISORY (advisory-only, never blocks; the parallel non-DEV
 #   branch of [SIZE-EST], clauded-docs/279 D2). Fires on a schema-mode NON-DEV analysis/research/audit

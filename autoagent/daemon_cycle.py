@@ -5668,6 +5668,26 @@ def _read_truncated(path: Path | None, cap: int) -> str:
         return f"(read error: {exc})"
 
 
+# Named signal for an axis file that RESOLVED but carries no content. Distinct
+# from the unresolved signals — the path is fine, the miss is content-side — and
+# loud for the same reason: an empty excerpt reads to the verifier as an axis it
+# inspected and found nothing to violate (Precondition Loud-Fail).
+SCOPE_EMPTY_SIGNAL = "SCOPE-FILE-EMPTY"
+TARGET_EMPTY_SIGNAL = "TARGET-FILE-EMPTY"
+
+
+def _empty_excerpt_directive(signal: str, axis: str, subject: str, path: Path) -> str:
+    """Warn on stderr and return the directed-FAIL excerpt for an empty axis file."""
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: {signal} — {path} is empty ({subject}); "
+        f"{axis} has no content to judge against\n"
+    )
+    return (
+        f"{signal}: {subject} resolved to {path}, which is empty. "
+        f"{axis} cannot be judged from this prompt — answer {axis}: FAIL."
+    )
+
+
 def _build_pre_verify_prompt(
     patch: PatchProposal,
     pattern: Pattern,
@@ -5691,6 +5711,11 @@ def _build_pre_verify_prompt(
     else:
         target_file_name = str(target_path)
         target_agent_excerpt = _read_truncated(target_path, TARGET_AGENT_EXCERPT_CHAR_CAP)
+        if not target_agent_excerpt.strip():
+            target_file_name = f"{TARGET_EMPTY_SIGNAL} ({patch.target_file})"
+            target_agent_excerpt = _empty_excerpt_directive(
+                TARGET_EMPTY_SIGNAL, "C4", "target agent file", target_path
+            )
 
     scope_path = _scope_file_for_agent(pattern.agent)
     if scope_path is None:
@@ -5705,6 +5730,11 @@ def _build_pre_verify_prompt(
     else:
         scope_file_name = scope_path.name
         scope_excerpt = _read_truncated(scope_path, RULE_EXCERPT_CHAR_CAP)
+        if not scope_excerpt.strip():
+            scope_file_name = f"{SCOPE_EMPTY_SIGNAL} ({pattern.agent})"
+            scope_excerpt = _empty_excerpt_directive(
+                SCOPE_EMPTY_SIGNAL, "C3", "scope file", scope_path
+            )
 
     return _PRE_VERIFY_PROMPT_TEMPLATE.format(
         target_agent=pattern.agent,

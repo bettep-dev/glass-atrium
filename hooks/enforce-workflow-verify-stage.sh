@@ -974,8 +974,10 @@ def resilience_advisory_needed(stripped):
     # remains in ANY workflow (DEV or non-DEV). The DEV gate is GONE (#widen): the crashed runs were
     # non-DEV researcher/reporter fan-outs, so a schema-mode agent() throws-on-non-emit crash is not a
     # DEV-only failure mode — every schema-mode workflow is in scope. FAIL-OPEN: no schema site OR any
-    # parse uncertainty returns False (silent). A site is schema-mode when the literal token schema
-    # appears within its call arguments. A site is HANDLED when [a] a .catch member is chained onto its
+    # parse uncertainty returns False (silent). A site is schema-mode per the SHARED site test
+    # (_schema_site_in_span) applied to its raw call arguments — the pinned string-mention eagerness is
+    # kept, and the key-position absent value (schema: undefined | null | void <x>) is excluded here as
+    # it already is script-wide, so the two can no longer co-emit at opposite polarity on one fixture. A site is HANDLED when [a] a .catch member is chained onto its
     # call, [b] it sits inside a try block, [c] it sits inside a robustAgent-style wrapper body, or
     # [d] it sits inside a CUSTOM-named wrapper whose OWN invocation is .catch-chained at the join (the
     # qa-named false-positive guard: a bare agent({schema}) inside such a wrapper is already handled at
@@ -1073,7 +1075,7 @@ def resilience_advisory_needed(stripped):
             close_idx = match_close(open_idx, chr(40), chr(41))
             if close_idx is None:
                 continue
-            if "schema" not in stripped[open_idx + 1:close_idx]:
+            if not _schema_site_in_span(stripped[open_idx + 1:close_idx]):
                 continue
             call_start = am.start()
             if any(s <= call_start < e for (s, e) in handled_spans):
@@ -1335,6 +1337,20 @@ SCHEMA_SITE_RE = re.compile(r"(?<![A-Za-z0-9_$])schema(?![A-Za-z0-9_$])")
 SCHEMA_DISABLED_RE = re.compile(r"\s*:\s*(?:undefined|null|void)(?![A-Za-z0-9_$])")
 
 
+def _schema_site_in_span(span):
+    # Site test over a comment-stripped text span (the whole script, or one call argument list).
+    # Single-sited so the script-wide consumers and the per-site resilience scan can never disagree
+    # about what a site is — a key-position absent value (schema: undefined | null | void <x>) is not one.
+    # Masking is the CALLER decision: the script-wide consumers pass MASKED text (precision), while the
+    # resilience scan passes the raw span, keeping its pinned string-mention eagerness for a nudge that
+    # can only over-advise.
+    for m in SCHEMA_SITE_RE.finditer(span):
+        if SCHEMA_DISABLED_RE.match(span, m.end()):
+            continue
+        return True
+    return False
+
+
 def _has_schema_site(stripped):
     # THE site test, single-sited: is there a schema-mode site anywhere in the comment-stripped script?
     # The value that fires when a site EXISTS and the value that fires when NONE does both read this
@@ -1348,11 +1364,7 @@ def _has_schema_site(stripped):
         return False
     smask = _string_mask(stripped)
     struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
-    for m in SCHEMA_SITE_RE.finditer(struct):
-        if SCHEMA_DISABLED_RE.match(struct, m.end()):
-            continue
-        return True
-    return False
+    return _schema_site_in_span(struct)
 
 
 def completion_block_advisory_needed(stripped):

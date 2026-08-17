@@ -188,6 +188,24 @@ class TargetFileResolutionTest(unittest.TestCase):
                 dc._get_target_path(_RELATIVE_TARGET)
         self.assertNotIn(dc.TARGET_UNRESOLVED_SIGNAL, captured.getvalue())
 
+    def test_when_target_file_empty_then_named_signal_is_loud(self):
+        # Zero-byte but present: is_file() passes and the read succeeds, so the
+        # C4 excerpt was blank with no signal and no directed verdict.
+        with tempfile.TemporaryDirectory() as live:
+            live_root = Path(live)
+            target = live_root / "agents" / f"{_AGENT}.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("", encoding="utf-8")
+
+            with _base_root(live_root):
+                prompt, stderr = _get_prompt(_RELATIVE_TARGET)
+
+        self.assertIn(dc.TARGET_EMPTY_SIGNAL, stderr)
+        self.assertIn(dc.TARGET_EMPTY_SIGNAL, prompt)
+        c4_block = _c4_block(prompt)
+        self.assertNotIn(_PLACEHOLDER, c4_block)
+        self.assertIn("C4: FAIL", c4_block)
+
 
 if __name__ == "__main__":
     unittest.main()
