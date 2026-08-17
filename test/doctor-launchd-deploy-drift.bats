@@ -97,8 +97,12 @@ deploy_all() {
 }
 
 # Run the REAL run_doctor against the sandbox in a fresh strict-mode subprocess.
+# AUTOAGENT_BACKUP_DIR is sandboxed because GA_ROOT stays the REAL install here: §15 derives the
+# merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
+# suppress the PASS-only warn rollup this test asserts on.
 run_doctor_sandbox() {
   run env HOME="${SANDBOX_HOME}" GA_TARGET_HOME="${TARGET}" \
+    AUTOAGENT_BACKUP_DIR="${SANDBOX}/agents-bak" \
     GA_CONFIG_TOML="${FAKE_CONFIG}" GA_MANIFEST="${FAKE_MANIFEST}" \
     GA_GENERATE_MANIFEST="${GEN_STUB}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
     bash -c '

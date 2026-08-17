@@ -79,10 +79,14 @@ teardown() {
 }
 
 # Drive the REAL doctor with the target + data-root seams redirected at the sandbox.
+# AUTOAGENT_BACKUP_DIR is sandboxed because GA_ROOT stays the REAL install here: §15 derives the
+# merge-decline record from GA_ROOT's sibling, so an open decline on the host would FAIL the run and
+# suppress the PASS-only warn rollup the `0 inject-drop` assertions read.
 # `run` records the exit in $status; run_doctor returns 1 on any §1-12 FAIL, so we assert
 # on the merged output lines (log() → stderr, captured by bats `run`), never $status.
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
+    AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
 }
 
