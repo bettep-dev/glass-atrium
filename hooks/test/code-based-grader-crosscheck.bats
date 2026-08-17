@@ -11,8 +11,9 @@
 #     contradicted → verified_fail (the fabrication signal). A PARTIAL mismatch (>=1
 #     unmatched WITH >=1 matched) → withhold → unverified: a tool-generated sibling
 #     (manifest / migration / snapshot) never flips an otherwise-authored row.
-#     Companion emitter: the LLM09 zero-evidence guard — both sites carry a
-#     VERIFIED_FAIL_EMITTER marker in the grader source (2 emitters total).
+#     Companion emitter: the LLM09 zero-evidence guard — each site carries a
+#     VERIFIED_FAIL_EMITTER marker in the grader source, asserted by name in
+#     emit-discipline-doc-consistency.bats.
 #   * AC 265 — an unverifiable transcript (scan=unverifiable) → promotion withheld →
 #     unverified, for code task_types.
 #   * W2 SAFETY — an EMPTY write-history → withhold (never verified_fail): Write/Edit is
@@ -279,14 +280,7 @@ grade_cc() {
   [[ "${output}" == "unverified" ]] || { echo "recognition must run AFTER ~ expansion (live rows carry the ~ form), got: ${output}" >&2; return 1; }
 }
 
-# --- AC-1.2: the grader source declares BOTH verified_fail emitters, no sole-path claim ---
-
-@test "grader source carries exactly 2 VERIFIED_FAIL_EMITTER markers" {
-  local markers
-  markers="$(grep -c 'VERIFIED_FAIL_EMITTER:' "${REAL_LIB}" || true)"
-  if [[ -z "${markers}" ]]; then markers=0; fi
-  [[ "${markers}" -eq 2 ]] || { echo "expected 2 emitter markers in ${REAL_LIB}, got: ${markers}" >&2; return 1; }
-}
+# --- AC-1.2: no sole-path claim in the grader Outputs header stanza ---
 
 @test "grader Outputs header stanza carries 0 sole-path claims" {
   local stanza claims
