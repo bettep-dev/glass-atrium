@@ -5,7 +5,9 @@
 # =============================================================================
 
 # === global: dependency trees / regenerable artifacts ===
-node_modules/
+# no trailing slash — a borrowed symlink of this name is not a directory to git,
+# and the slash form would leave it untracked-and-visible in a linked worktree
+node_modules
 
 # === global: transient backup cruft (.bak / .bak-* basenames) ===
 # scoped to .bak basenames so kept-history (-pre- named under tracked archive/)
