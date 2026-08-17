@@ -37,6 +37,12 @@ except ImportError as exc:
 # trigger / single-definition suites. Group 2 has no such reader in this repo: those
 # names were DEFINED here before the extraction, so the re-export preserves their
 # original namespace for an out-of-repo importer — the only argument that carries them.
+# Column limits live in a stdlib-only sibling for the same reason the negative-signal
+# predicate does: this module dies without psycopg, and the budget check for the
+# daemon's reason templates runs where psycopg is absent. Unguarded — a failure
+# there is a packaging fault, not a degradable condition.
+from _learning_log_limits import LEARNING_LOG_REASON_MAX
+
 from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     negative_signal_hits,
     is_negative_signal_outcome,
@@ -371,8 +377,11 @@ def reject_learning_pattern(pattern_id: int, reason: str) -> int | None:
             with conn.cursor() as cur:
                 cur.execute(
                     _LEARNING_LOG_REJECT_SQL,
-                    # varchar(500) guard — mirrors the agent[:64] boundary style.
-                    {"pattern_id": pattern_id, "reason": reason[:500]},
+                    # varchar guard — mirrors the agent[:64] boundary style.
+                    {
+                        "pattern_id": pattern_id,
+                        "reason": reason[:LEARNING_LOG_REASON_MAX],
+                    },
                 )
                 updated.extend(row[0] for row in cur.fetchall())
             conn.commit()
@@ -455,8 +464,11 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
             with conn.cursor() as cur:
                 cur.execute(
                     _LEARNING_LOG_DISCHARGE_SQL,
-                    # varchar(500) guard — mirrors the agent[:64] boundary style.
-                    {"pattern_id": pattern_id, "reason": reason[:500]},
+                    # varchar guard — mirrors the agent[:64] boundary style.
+                    {
+                        "pattern_id": pattern_id,
+                        "reason": reason[:LEARNING_LOG_REASON_MAX],
+                    },
                 )
                 updated.extend(row[0] for row in cur.fetchall())
             conn.commit()

@@ -429,9 +429,22 @@ REJECT_STREAK_THRESHOLD = int(
     os.environ.get("AUTOAGENT_REJECT_STREAK_THRESHOLD", "3") or "3"
 )
 # last_transition_reason stamped on a reject-streak snooze (grep-able audit trail).
+# Structurally the repeat-apply cap, and its tail is sized the same way (see
+# APPLY_CAP_REASON_TEMPLATE below): consecutive_reject_count is recomputed each
+# cycle from the same _fetch_proposal_history rows, and the streak breaks ONLY on
+# a covering 'applied'/'approved' row — which a parked pattern can never produce,
+# because intake selects 'identified' only and a rejected row proposes nothing.
+# So the streak is frozen and a manual status reset re-derives it and re-parks in
+# the same cycle. The "re-arms by itself when the live rate returns" clause in the
+# block comment above belongs to gate (2) staleness skip, NOT to this gate.
 REJECT_STREAK_REASON_TEMPLATE = (
     "reject-streak snooze: {n} consecutive rejected proposals (threshold {thr}) "
-    "— re-arm by setting status back to 'identified'"
+    "— NOT self re-arming: a status reset to 'identified' does not re-arm it — "
+    "the streak is recomputed each cycle from this agent's proposal history and "
+    "breaks only on a covering applied/approved row, which a parked pattern can "
+    "never produce, so the row re-parks next run, overwriting its park time and "
+    "reason. A real re-arm must first clear or scope that reject evidence; until "
+    "then leave the status alone."
 )
 # last_transition_reason stamped on a non-auto-fixable (out-of-region MODIFY)
 # terminalization (RC3). The add-only synthesis pipeline can never express a
@@ -448,10 +461,17 @@ NON_AUTO_FIXABLE_REASON = (
 # back-out of an APPLIED proposal (status 'reverted') is the strongest terminal
 # verdict — regenerating from the same pattern would re-propose the exact
 # change a human just backed out.
+# Same tail correction and the same sizing discipline as APPLY_CAP_REASON_TEMPLATE
+# below: the head is fixed here (no substitution), so the budget is simply
+# LEARNING_LOG_REASON_MAX minus its length. Pinned by test_reason_tail_budget.py.
 REVERTED_SNOOZE_REASON = (
     "reverted snooze: a covering applied proposal was reverted (human/CLI "
-    "back-out) — pattern excluded from re-application; re-arm by setting "
-    "status back to 'identified'"
+    "back-out) — pattern excluded from re-application; NOT self re-arming: a "
+    "status reset to 'identified' does not re-arm it — the snooze is re-derived "
+    "each cycle from the reverted proposal rows in the same history window, so "
+    "the row re-parks next run, overwriting its park time and reason. A real "
+    "re-arm must first clear or scope that reverted-apply evidence; until then "
+    "leave the status alone."
 )
 # Repeat-apply cap. Non-redundant with the reject-streak gate precisely because
 # an 'applied' row RESETS that streak (consecutive_reject_count breaks on it), so
@@ -472,11 +492,20 @@ APPLY_CAP_THRESHOLD = int(os.environ.get("AUTOAGENT_APPLY_CAP_THRESHOLD", "3") o
 # row is an OPEN item awaiting a human design decision. Never restate this
 # transition as resolved / fixed / closed, and never route it through the
 # applied-discharge path — that would claim a resolution the evidence refutes.
+# The tail is sized, not transcribed: everything through "another patch — " is
+# the head the monitor's parked count and the lifecycle test key on, and the
+# write path silently slices the whole reason to LEARNING_LOG_REASON_MAX, so the
+# tail's budget is that ceiling minus the WIDEST formatted head (the {n}/{thr}
+# substitution moves it). test_reason_tail_budget.py derives both sides and
+# fails if a future edit outgrows the budget.
 APPLY_CAP_REASON_TEMPLATE = (
     "repeat-apply cap: {n} applied proposals (cap {thr}) did NOT abate the "
     "signal — STOP PROPOSING; the underlying problem is UNRESOLVED and needs a "
-    "human design decision, not another patch — re-arm by setting status back "
-    "to 'identified'"
+    "human design decision, not another patch — NOT self re-arming: a status "
+    "reset to 'identified' does not re-arm it — the cap is recomputed each "
+    "cycle from this agent's applied-proposal history, so the row re-parks next "
+    "run, overwriting its park time and reason. A real re-arm must first clear "
+    "or scope that apply evidence; until then leave the status alone."
 )
 # Rolling live-rate window. 14d = 2× the 7-day promotion sustain window — long
 # enough to smooth weekday gaps, short enough that a stale failure burst decays.
@@ -8202,6 +8231,12 @@ def _fetch_proposal_history(
     Bounded LIMIT 50 mirrors consecutive_timeout_count (only recent history
     matters for a back-off decision). PG unavailable / read error → None
     (fail-OPEN: a read failure must never snooze a healthy pattern).
+
+    This LIMIT also bounds every count stamped into a reason template ({n} in
+    the reject-streak and apply-cap reasons), which is what lets
+    test_reason_tail_budget.py check those budgets at a three-digit width.
+    Raising it past 999 means widening _WIDEST_SUBSTITUTION there in the same
+    change, or an over-long reason gets sliced silently with the test green.
     """
     select_sql = (
         "SELECT status::text, pattern_label, rationale "
