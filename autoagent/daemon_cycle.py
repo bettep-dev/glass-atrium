@@ -5067,8 +5067,14 @@ _CHARS_PER_TOKEN = 4
 def _corpus_files(
     rules_dir: Path = DEFAULT_RULES_DIR,
     global_rules_file: Path = GLOBAL_RULES_FILE,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
 ) -> list[Path]:
-    """The rule corpus = every ``*.md`` under rules_dir plus GLOBAL_RULES.md.
+    """The prompt corpus: every ``*.md`` under rules_dir, the agent bodies
+    directly under agents_dir, and GLOBAL_RULES.md.
+
+    Agent bodies glob non-recursively, mirroring ``_agent_roster`` — an archived
+    or template body under a subdirectory is not corpus the loop appends to.
+    GLOBAL_RULES.md itself lives in agents_dir; the set de-duplicates it.
 
     Returns a sorted, de-duplicated path list. A missing directory yields an
     empty list (detection-only — never raises into the cycle).
@@ -5076,6 +5082,8 @@ def _corpus_files(
     found: set[Path] = set()
     if rules_dir.is_dir():
         found.update(p for p in rules_dir.rglob("*.md") if p.is_file())
+    if agents_dir.is_dir():
+        found.update(p for p in agents_dir.glob("*.md") if p.is_file())
     if global_rules_file.is_file():
         found.add(global_rules_file)
     return sorted(found)
@@ -5084,8 +5092,9 @@ def _corpus_files(
 def compute_corpus_telemetry(
     rules_dir: Path = DEFAULT_RULES_DIR,
     global_rules_file: Path = GLOBAL_RULES_FILE,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
 ) -> dict[str, int]:
-    """Total word + estimated-token count across the rule corpus (detection-only).
+    """Total word + estimated-token count across the prompt corpus (detection-only).
 
     Returns ``{"word_count", "token_estimate", "file_count"}``. An unreadable
     file is skipped (counted as zero, logged to stderr) so one bad file cannot
@@ -5094,7 +5103,7 @@ def compute_corpus_telemetry(
     word_count = 0
     char_count = 0
     file_count = 0
-    for path in _corpus_files(rules_dir, global_rules_file):
+    for path in _corpus_files(rules_dir, global_rules_file, agents_dir):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
@@ -5182,6 +5191,7 @@ def audit_corpus_size(
     *,
     rules_dir: Path = DEFAULT_RULES_DIR,
     global_rules_file: Path = GLOBAL_RULES_FILE,
+    agents_dir: Path = DEFAULT_AGENTS_DIR,
     prev_word_count: int | None = None,
     absolute_threshold: int | None = None,
     gate_log_file: Path | None = None,
@@ -5206,10 +5216,18 @@ def audit_corpus_size(
     override dimension has no durable store, so ``override_rate`` is always
     ``None``.
 
+    ONE-TIME SERIES STEP — for the Tier-3 reader of the multi-week series: the
+    first reading taken after the corpus widened to the agent bodies jumps by
+    the agents-directory word count. That step is a change of what is measured,
+    not growth of what was already measured — read it as a new baseline and
+    compare later readings against it, not across it. Harmless on the alert
+    axes: the live call passes no ``prev_word_count``, so ``trend_delta`` stays
+    null and no trend alert fires on the step.
+
     Returns the signal dict. Persistence is the caller's step (``emit_corpus_audit``
     → core.autoagent_corpus_audits); this function is pure measurement.
     """
-    telemetry = compute_corpus_telemetry(rules_dir, global_rules_file)
+    telemetry = compute_corpus_telemetry(rules_dir, global_rules_file, agents_dir)
     current_words = telemetry["word_count"]
 
     trend_alert = False
@@ -9573,7 +9591,9 @@ def run_cycle(
     if not skip_loop_emit:
         try:
             corpus_signal = audit_corpus_size(
-                rules_dir=DEFAULT_RULES_DIR, global_rules_file=GLOBAL_RULES_FILE
+                rules_dir=DEFAULT_RULES_DIR,
+                global_rules_file=GLOBAL_RULES_FILE,
+                agents_dir=DEFAULT_AGENTS_DIR,
             )
         except Exception as exc:  # noqa: BLE001 — telemetry must never break the cycle
             sys.stderr.write(

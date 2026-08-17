@@ -49,10 +49,15 @@ try:
         read_learning_log_signatures as _pg_read_learning_log_signatures,
         read_outcomes_since as _pg_read_outcomes_since,
         insert_audit_queue_rows as _pg_insert_audit_queue_rows,
+        insert_liveness_observation as _pg_insert_liveness_observation,
+        LivenessSinkMissing,
     )
     HAS_PG_DUALWRITE = True
 except Exception as _pg_import_exc:  # noqa: BLE001 — psycopg or helper itself
     HAS_PG_DUALWRITE = False
+    # Keep the name bindable so the liveness except-clause below stays valid on the
+    # psycopg-absent path (that path returns before it can ever be reached).
+    LivenessSinkMissing = RuntimeError
     print(
         f"[learning-aggregator] PG dual-write disabled (import failed): "
         f"{type(_pg_import_exc).__name__}: {_pg_import_exc}",
@@ -213,6 +218,72 @@ def _warn_dead_signals(signal_counts: dict[str, int], sample: int) -> None:
         f"across {sample} aggregated records: {', '.join(dead)}",
         file=sys.stderr,
     )
+
+
+# --- Liveness observation channel -------------------------------------------
+
+# A terminal learning_log row still clusters: the run built its entry, so the
+# pattern cleared its own family's emit gate. The aggregator then discards it at a
+# bare `continue`. These helpers append that fact instead, and report a lost append
+# on a named channel — the module's fail-open "PG skip" line is not enough here,
+# because this evidence accrues for weeks before anyone reads it, so a silent
+# outage surfaces only once the window it was supposed to cover is spent.
+_LIVENESS_DEGRADATIONS: list[dict[str, str]] = []
+
+# Latched for the rest of the run after the first failed append: the cause is
+# per-run (table absent, sink down), so retrying it once per terminal row would
+# repeat one line per row and say nothing new.
+_liveness_sink_down = False
+
+
+def get_liveness_degradations() -> list[dict[str, str]]:
+    """Lost appends so far — one entry per cause, latched at the first occurrence."""
+    return list(_LIVENESS_DEGRADATIONS)
+
+
+def clear_liveness_degradations() -> None:
+    global _liveness_sink_down
+    _LIVENESS_DEGRADATIONS.clear()
+    _liveness_sink_down = False
+
+
+def record_liveness_degradation(reason: str, error: BaseException) -> None:
+    """Record one lost observation + emit its named warning."""
+    detail = f"{type(error).__name__}: {str(error)[:160]}"
+    _LIVENESS_DEGRADATIONS.append({"reason": reason, "error": detail})
+    print(
+        f"[learning-aggregator] WARN: liveness observation not persisted "
+        f"({reason}) — terminal-skip evidence is accruing nowhere: {detail}",
+        file=sys.stderr,
+    )
+
+
+def emit_liveness_observation(signature: str, agent: str | None, run_date, frequency: int) -> bool:
+    """Append one observation for a terminal row whose family floor cleared this run.
+
+    True when this run appended the row. The floor is the family's own, applied
+    upstream at its emit gate, so no threshold is introduced here. A missing table
+    (migration merged, never deployed) and a live sink outage are distinct named
+    causes, both loud; never raises into the aggregation.
+    """
+    global _liveness_sink_down
+    if not HAS_PG_DUALWRITE or _liveness_sink_down:
+        return False
+    try:
+        return _pg_insert_liveness_observation(
+            pattern_signature=signature,
+            agent=agent,
+            run_date=run_date,
+            frequency=frequency,
+        )
+    except LivenessSinkMissing as exc:
+        _liveness_sink_down = True
+        record_liveness_degradation("migration_absent", exc)
+        return False
+    except Exception as exc:  # noqa: BLE001 — branched below, never absorbed
+        _liveness_sink_down = True
+        record_liveness_degradation("sink_unavailable", exc)
+        return False
 
 
 def atomic_write(path: str, content: str, mode: int = 0o644) -> None:
@@ -1554,6 +1625,9 @@ def main(registry_path: str | None = None) -> None:
                 # terminal rows (rejected/applied) are already adjudicated — re-emitting as
                 # 'identified' is an illegal state-machine regression; skip (no signal lost).
                 if existing and existing.get("status") in ("rejected", "applied"):
+                    # The skip stays exactly as it was; the observation records that this
+                    # signature was still clustering when the run discarded it.
+                    emit_liveness_observation(signature, agent_label, today_date, new_freq)
                     continue
                 if existing:
                     merged_freq = int(existing.get("frequency", 0) or 0) + new_freq

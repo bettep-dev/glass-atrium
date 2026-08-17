@@ -628,6 +628,69 @@ def insert_audit_queue_rows(rows: list[dict]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Liveness observation — the aggregator's terminal skip, made durable
+# ---------------------------------------------------------------------------
+
+
+class LivenessSinkMissing(RuntimeError):
+    """core.learning_pattern_liveness is absent — the migration never reached this install."""
+
+
+_LIVENESS_INSERT_SQL = """
+INSERT INTO core.learning_pattern_liveness
+    (pattern_signature, agent, run_date, frequency)
+VALUES (%(pattern_signature)s, %(agent)s, %(run_date)s, %(frequency)s)
+ON CONFLICT (pattern_signature, run_date) DO NOTHING
+"""
+
+
+def insert_liveness_observation(
+    pattern_signature: str,
+    agent: str | None,
+    run_date,
+    frequency: int,
+) -> bool:
+    """Append one liveness observation. True when this call wrote the row.
+
+    False means the signature already carried an observation for that run — the
+    append-only ON CONFLICT DO NOTHING, not a failure.
+
+    Deliberately NOT routed through _run_with_retry: the sibling writers may
+    degrade quietly because their signal is re-derived on the next run, whereas a
+    lost observation is a dated fact nothing regenerates. PG errors therefore
+    propagate, and a missing table — the migration merged but never deployed —
+    raises the distinct LivenessSinkMissing so the caller names that cause rather
+    than reporting a generic outage.
+    """
+    if not pattern_signature or not isinstance(pattern_signature, str):
+        raise ValueError("pattern_signature must be non-empty str")
+    if not isinstance(frequency, int) or frequency < 0:
+        raise ValueError("frequency must be non-negative int, got %r" % (frequency,))
+
+    row = {
+        "pattern_signature": pattern_signature,
+        "agent": (agent or None),
+        "run_date": run_date,
+        "frequency": frequency,
+    }
+
+    try:
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_LIVENESS_INSERT_SQL, row)
+                written = cur.rowcount == 1
+            conn.commit()
+    except pg_errors.UndefinedTable as exc:
+        raise LivenessSinkMissing(
+            "core.learning_pattern_liveness is missing — apply the monitor's "
+            "db:deploy; scripts/update.sh never runs migrations"
+        ) from exc
+    return written
+
+
+# ---------------------------------------------------------------------------
 # Optional: end-of-run summary
 # ---------------------------------------------------------------------------
 
