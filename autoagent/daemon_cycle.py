@@ -5001,24 +5001,20 @@ def _diff_touches_frontmatter(diff: str) -> bool:
 # -- T3/T4: corpus-size telemetry + prose-only-add detection ----------------
 #
 # DETECTION-ONLY. These helpers NEVER block, reject, or alter cycle flow — they
-# compute a signal and (optionally) append a record to the self-improvement
-# signal store. The governing plan (doc 57031) tasks T3/T4 mandate honest
-# DETECTION labels: a growing rule corpus or an append-only patch produces a
+# compute a signal and hand it to the caller for persistence. The governing plan
+# (doc 57031) tasks T3/T4 mandate honest DETECTION labels: a growing rule corpus or an append-only patch produces a
 # WARNING, never a fail-closed reject (false-blocking the learning loop is the
 # worse failure than a missed warning).
 
-# Signal-store sink + compliance-rate computation now live in ONE shared module
-# (hooks/compliance_telemetry.py), imported by BOTH daemon_cycle.py and
-# learning-aggregator.py so the rate formula and the JSONL writer each exist
-# once (plan T3/T4 DRY requirement). The hooks dir is already on sys.path (added
-# at module top for _pg_learning_dualwrite). Fail-soft: a missing shared module
+# The compliance-rate computation lives in ONE shared module
+# (hooks/compliance_telemetry.py) so the formula exists once (plan T3/T4 DRY
+# requirement); its JSONL writer half is retired. The hooks dir is already on
+# sys.path (added at module top for _pg_learning_dualwrite). Fail-soft: a missing shared module
 # disables telemetry (detection-only) rather than crashing the cycle.
 try:
     import compliance_telemetry as _compliance_telemetry
 except Exception as _ct_import_exc:  # noqa: BLE001 — telemetry is non-critical
-    # _compliance_telemetry is None is the SOLE disabled-state flag consulted
-    # (every write routes through append_signal, which owns its own path
-    # resolution — no local SIGNAL_STORE_FILE fallback is needed or read).
+    # _compliance_telemetry is None is the SOLE disabled-state flag consulted.
     _compliance_telemetry = None  # type: ignore[assignment]
     sys.stderr.write(
         "[daemon-cycle] WARN: compliance_telemetry import failed — corpus/compliance "
@@ -5084,23 +5080,6 @@ def compute_corpus_telemetry(
         "token_estimate": char_count // _CHARS_PER_TOKEN,
         "file_count": file_count,
     }
-
-
-def _record_signal(signal: dict[str, object], store_file: Path | None = None) -> bool:
-    """Append one detection signal to the signal store (delegates to the SoT).
-
-    Thin wrapper over ``compliance_telemetry.append_signal`` — the JSONL writer
-    lives once in the shared module. Fail-soft: a missing shared module or a
-    store-write failure logs + returns False; a sink problem MUST NOT block the
-    cycle (sibling fail-soft policy).
-    """
-    if _compliance_telemetry is None:
-        print(
-            "[signal-store] compliance_telemetry unavailable — signal not recorded",
-            file=sys.stderr,
-        )
-        return False
-    return _compliance_telemetry.append_signal(signal, store_file)
 
 
 # --- Detection-only sink degradation channel --------------------------------
@@ -5405,7 +5384,6 @@ def classify_dead_reference(
     diff: str,
     *,
     target_file: str = "",
-    store_file: Path | None = None,
     record: bool = True,
 ) -> dict[str, object]:
     """Deterministic dead-reference detector for ADDED pointer tokens (DETECTION-ONLY).
@@ -5415,8 +5393,8 @@ def classify_dead_reference(
     `<var>` placeholder, then resolves the rest on disk (``.exists()`` follows
     symlinks). A token that does NOT resolve is a DEAD reference → collected.
 
-    Emits a ``reference_resolution`` WARNING into the signal store (+ a loud
-    stderr note) when ≥1 dead reference is found. It NEVER rejects the patch.
+    Emits a ``reference_resolution`` WARNING as a loud stderr note when ≥1 dead
+    reference is found (``record`` gates it). It NEVER rejects the patch.
     """
     dead: list[str] = []
     checked_count = 0
@@ -5445,7 +5423,6 @@ def classify_dead_reference(
         "target_file": target_file,
     }
     if record and is_dead:
-        _record_signal(signal, store_file)
         sys.stderr.write(
             "[daemon-cycle] WARN: dead-reference — added line(s) cite "
             f"unresolved pointer(s) {dead} in target={target_file or '<unknown>'} "
