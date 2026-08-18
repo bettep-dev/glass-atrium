@@ -148,6 +148,28 @@ BUDGET_OVERAGE_LABEL = "budget-overage concentration"
 # learning_log UPSERT frequency merge, not a lowered floor.
 BUDGET_OVERAGE_MIN_OCCURRENCE = 3
 
+# Pattern-8 (size-est under-estimate concentration) — the retrospective half of the
+# [SIZE-EST] attestation. track-outcome.sh records, on one body_md line, the MEASURED
+# tool_use count of a spawn beside the estimate its parent DECLARED; this pattern reads
+# the pair back and surfaces an agent whose spawns systematically overrun the estimate.
+# Detection, not trust: the declaration is never blocked in the moment, so the correction
+# is next-cycle. The improvement target is the ESTIMATING side, but the pattern is keyed on
+# the measured AGENT because that is the only patchable file in the row (an orchestrator
+# sizing miss has no agent file — the same D4 routing split pattern 7 makes).
+TOOL_USE_BODY_PREFIX = "- **Tool use**: "
+# Writer of this grammar: hooks/track-outcome.sh (TOOL_USE_LINE). The two literals are pinned
+# against each other by hooks/test/test_size_est_underestimate.py — a silent divergence would
+# leave this reader matching nothing while the recorder kept writing.
+_TOOL_USE_BODY_RE = re.compile(
+    r"^- \*\*Tool use\*\*: actual=(\d+)(?: declared=(\d+))?$", re.M
+)
+SIZE_EST_UNDER_LABEL = "size-est under-estimate concentration"
+# Same 3+ occurrence floor as the sibling patterns, PLUS a rate floor: 3 overruns out of 30
+# paired spawns is ordinary estimate noise, and only the rate distinguishes that from an agent
+# whose estimates are systematically low. Both floors must clear.
+SIZE_EST_UNDER_MIN_OCCURRENCE = 3
+SIZE_EST_UNDER_RATE_FLOOR = 0.5
+
 # Pattern-1 DISPLAY label decouple (P3a). The signature-ANCHOR literal is load-bearing:
 # PATTERN1_FAIL_LABEL is the core.learning_log pattern_signature core AND the daemon
 # _FAIL_COUNT_LABEL_PREFIXES startswith-match target, so it MUST stay verbatim. A
@@ -720,6 +742,68 @@ def _cluster_budget_overages(overage_rows: list[dict]) -> dict[str, int]:
             continue  # null / unknown / cross-cutting → no agent file to patch
         counts[agent] += 1
     return counts
+
+
+def _read_size_est_pairs(since_epoch: float) -> list[dict]:
+    """Read core.outcomes rows carrying a recorded tool_use measurement after since_epoch.
+
+    Windowed by the shared aggregator watermark for the same reason
+    _read_budget_overages is — a whole-table read would re-count every row under the
+    learning_log UPSERT frequency merge. The LIKE narrows the scan to rows the recorder
+    actually measured (the body line is omitted where no counter existed), so an install
+    with the advisory disabled reads nothing rather than scanning every body. PG absent /
+    unreachable → [] (degrade-not-die, sibling policy to the other read helpers)."""
+    if not HAS_PG_DUALWRITE:
+        return []
+    try:
+        import psycopg  # HAS_PG_DUALWRITE True guarantees this import succeeds
+    except ImportError:
+        return []
+    try:
+        with psycopg.connect(
+            "dbname=glass_atrium", connect_timeout=2, autocommit=True
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT agent, body_md FROM core.outcomes "
+                    "WHERE record_ts > to_timestamp(%s) AND body_md LIKE %s",
+                    (since_epoch, f"%{TOOL_USE_BODY_PREFIX}%"),
+                )
+                return [{"agent": row[0], "body_md": row[1]} for row in cur.fetchall()]
+    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
+        print(
+            f"[learning-aggregator] size-est actuals read failed, skip "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+        return []
+
+
+def _cluster_size_est_underestimates(rows: list[dict]) -> dict[str, dict[str, int]]:
+    """Cluster measured-vs-declared rows into per-agent {'paired', 'under', 'excess'} counts.
+
+    Pure (no I/O) so it unit-tests without a live DB. A row whose body carries only
+    `actual=` is DROPPED, not counted as a match: an unpaired measurement says nothing
+    about estimate quality, and counting it as a non-overrun would dilute the rate floor
+    toward silence. 'excess' accumulates actual-declared over the overrunning rows only,
+    so the emitted label can state the size of the miss rather than just its frequency.
+    Agent canonicalization + the unpatchable drop mirror _cluster_budget_overages."""
+    stats: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"paired": 0, "under": 0, "excess": 0}
+    )
+    for row in rows:
+        agent = _canonical_agent(row.get("agent"))
+        if agent in _UNPREFIXABLE_AGENTS:
+            continue  # null / unknown / cross-cutting → no agent file to patch
+        match = _TOOL_USE_BODY_RE.search(row.get("body_md") or "")
+        if not match or match.group(2) is None:
+            continue  # no measurement, or measured with nothing declared to compare against
+        actual, declared = int(match.group(1)), int(match.group(2))
+        stats[agent]["paired"] += 1
+        if actual > declared:
+            stats[agent]["under"] += 1
+            stats[agent]["excess"] += actual - declared
+    return dict(stats)
 
 
 # ---------------------------------------------------------------------------
@@ -1570,6 +1654,20 @@ def main(registry_path: str | None = None) -> None:
             emit_agent_pattern(
                 _build_entry(today, BUDGET_OVERAGE_LABEL, str(overages), agent, overages),
                 agent,
+            )
+
+    # pattern 8: per-agent [SIZE-EST] under-estimate concentration. Pairs the measured
+    # tool_use count against the declared estimate on the same outcome row, so no CID join
+    # is needed — both sides are recorded by one hook on one row. Windowed by `since` like
+    # pattern 7. Rows measured with nothing declared never reach the rate (they are dropped
+    # at clustering), so an install that declares no estimates emits nothing at all.
+    size_est_stats = _cluster_size_est_underestimates(_read_size_est_pairs(since))
+    for agent, stats in size_est_stats.items():
+        under, paired, excess = stats["under"], stats["paired"], stats["excess"]
+        if under >= SIZE_EST_UNDER_MIN_OCCURRENCE and under / paired >= SIZE_EST_UNDER_RATE_FLOOR:
+            label = f"{SIZE_EST_UNDER_LABEL} (avg overrun +{round(excess / under)} tool_uses)"
+            emit_agent_pattern(
+                _build_entry(today, label, f"{under}/{paired}", agent, under), agent
             )
 
     # Outside the `if entries:` block on purpose — a run whose every pattern was gated still
