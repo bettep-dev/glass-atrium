@@ -26,8 +26,13 @@
 # through the ATRIUM_UPDATE_SRC_DIR seam with the confirm injected. No ~/.claude or
 # ~/.glass-atrium mutation, and Trash is redirected via ATRIUM_UPDATE_TRASH_DIR.
 #
-# Every assertion is gated `|| return 1` inside a helper, or asserted directly by
-# bats in the test body (the final command decides the verdict).
+# ASSERTION FORM — every `[[ ]]` check goes through a gated helper, and that is not
+# a style choice. bats runs a test body with errexit OFF, relying on its ERR trap,
+# and bash 3.2 (macOS /bin/bash, this suite's baseline) does not fire ERR for the
+# `[[ ]]` KEYWORD — only for simple commands. A bare mid-body `[[ ]]` is therefore
+# MASKED: execution runs straight past it and only the LAST command of the body
+# decides. `[ ... ]` IS a simple command and does gate, which is why the status /
+# -f / -L checks below stay bare.
 #
 # Run via: bats scripts/test/update-charter-sync-exemption.bats
 # Requires: bats 1.5+, jq, python3, diff, bash 3.2+
@@ -122,6 +127,49 @@ load_skill() {
   trap - ERR
 }
 
+# ---------------------------------------------------------------------------
+# Assertion helpers — each gated `|| return 1` so the check DECIDES the verdict
+# (see the ASSERTION FORM note in the header for why a bare `[[ ]]` cannot).
+# ---------------------------------------------------------------------------
+
+# Count a relpath's occurrences inside one bucket of the partition output.
+# $1 = the captured output · $2 = CLEAN|SENS · $3 = relpath · $4 = expected count.
+assert_bucket_count() {
+  local out="$1" bucket="$2" rel="$3" want="$4" range got
+  case "${bucket}" in
+    CLEAN) range='/^CLEAN:/,/^SENS:/p' ;;
+    SENS) range='/^SENS:/,$p' ;;
+    *)
+      printf 'assert_bucket_count: unknown bucket %s\n' "${bucket}" >&2
+      return 1
+      ;;
+  esac
+  # grep -c exits 1 on zero matches having ALREADY printed "0" — `|| true` keeps
+  # the printed count; `|| echo 0` would append a second line.
+  got="$(sed -n "${range}" <<<"${out}" | grep -c "${rel}$" || true)"
+  [[ "${got}" == "${want}" ]] || {
+    printf 'FAILED: %s bucket holds %s occurrence(s) of %s, expected %s\npartition output:\n%s\n' \
+      "${bucket}" "${got}" "${rel}" "${want}" "${out}" >&2
+    return 1
+  }
+}
+
+# $1 = haystack · $2 = needle substring.
+assert_contains() {
+  [[ "$1" == *"$2"* ]] || {
+    printf 'FAILED: [%s] absent from:\n%s\n' "$2" "$1" >&2
+    return 1
+  }
+}
+
+# $1 = observed · $2 = expected · $3 = label naming what was compared.
+assert_equals() {
+  [[ "$1" == "$2" ]] || {
+    printf 'FAILED: %s — expected [%s], got [%s]\n' "$3" "$2" "$1" >&2
+    return 1
+  }
+}
+
 @test "changed-file partition ALLOWS the charter and still refuses the symlink row + a retained entry" {
   run bash -c '
     '"$(declare -f load_skill)"'
@@ -135,9 +183,9 @@ load_skill() {
   ' 2>/dev/null
   [ "$status" -eq 0 ]
   # the real charter path is the ONLY exemption
-  [[ "$(sed -n '/^CLEAN:/,/^SENS:/p' <<<"$output" | grep -c "${CHARTER}$")" -eq 1 ]]
-  [[ "$(sed -n '/^SENS:/,$p' <<<"$output" | grep -c "${CHARTER_LINK}$")" -eq 1 ]]
-  [[ "$(sed -n '/^SENS:/,$p' <<<"$output" | grep -c "${RETAINED}$")" -eq 1 ]]
+  assert_bucket_count "$output" CLEAN "${CHARTER}" 1
+  assert_bucket_count "$output" SENS "${CHARTER_LINK}" 1
+  assert_bucket_count "$output" SENS "${RETAINED}" 1
 }
 
 @test "REGRESSION: the strict partition still refuses the charter (removal sweep must not relax)" {
@@ -151,8 +199,8 @@ load_skill() {
     echo "SENS:"; cat "'"${WORK}"'/sens"
   ' 2>/dev/null
   [ "$status" -eq 0 ]
-  [[ "$(sed -n '/^SENS:/,$p' <<<"$output" | grep -c "${CHARTER}$")" -eq 1 ]]
-  [[ "$(sed -n '/^CLEAN:/,/^SENS:/p' <<<"$output" | grep -c "${CHARTER}$")" -eq 0 ]]
+  assert_bucket_count "$output" SENS "${CHARTER}" 1
+  assert_bucket_count "$output" CLEAN "${CHARTER}" 0
 }
 
 @test "REGRESSION: a vendor DROP of the charter is reported, never Trashed" {
@@ -181,11 +229,11 @@ load_skill() {
     update_sweep_removed_files "'"${WORK}"'/baseline.json" "'"${WORK}"'/new.json" "'"${INSTALL}"'"
   ' 2>/dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"sensitive vendor-drop, NOT removed"* ]]
-  [[ "$output" == *"GLASS_ATRIUM_GLOBAL_RULES.md"* ]]
+  assert_contains "$output" "sensitive vendor-drop, NOT removed"
+  assert_contains "$output" "GLASS_ATRIUM_GLOBAL_RULES.md"
   # the file survived and nothing reached the Trash sink
   [ -f "${INSTALL}/${CHARTER}" ]
-  [[ -z "$(find "${WORK}/trash" -type f 2>/dev/null)" ]]
+  assert_equals "$(find "${WORK}/trash" -type f 2>/dev/null)" "" "Trash sink must stay empty"
 }
 
 @test "C5: a full run syncs the charter, leaves the symlink a symlink, and clears BOTH manifest rows" {
@@ -210,12 +258,17 @@ load_skill() {
   [ "$status" -eq 0 ]
 
   # the real file was replaced through the sync
-  [[ "$(cat "${INSTALL}/${CHARTER}")" == "new charter" ]]
+  assert_equals "$(cat "${INSTALL}/${CHARTER}")" "new charter" "charter body after sync"
   # the symlink row was NOT byte-swapped — still a link, still resolving
   [ -L "${INSTALL}/${CHARTER_LINK}" ]
-  [[ "$(cat "${INSTALL}/${CHARTER_LINK}")" == "new charter" ]]
+  assert_equals "$(cat "${INSTALL}/${CHARTER_LINK}")" "new charter" \
+    "charter body read through the symlink row"
   # and BOTH manifest rows now reconcile: syncing the real file alone clears the
   # drift the symlink row reported, which is why exempting the link is unnecessary
-  [[ "$(sha256_of "${INSTALL}/${CHARTER}")" == "$(jq -r --arg p "${CHARTER}" '.hashes[$p]' "${WORK}/manifest.json")" ]]
-  [[ "$(sha256_of "${INSTALL}/${CHARTER_LINK}")" == "$(jq -r --arg p "${CHARTER_LINK}" '.hashes[$p]' "${WORK}/manifest.json")" ]]
+  assert_equals "$(sha256_of "${INSTALL}/${CHARTER}")" \
+    "$(jq -r --arg p "${CHARTER}" '.hashes[$p]' "${WORK}/manifest.json")" \
+    "manifest row ${CHARTER}"
+  assert_equals "$(sha256_of "${INSTALL}/${CHARTER_LINK}")" \
+    "$(jq -r --arg p "${CHARTER_LINK}" '.hashes[$p]' "${WORK}/manifest.json")" \
+    "manifest row ${CHARTER_LINK}"
 }

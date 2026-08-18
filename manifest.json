@@ -1387,7 +1387,7 @@
     "scripts/test/test_scaffold_smuggle.py": "8eba118d71c161df70414c40f9e1170bfa5e8f801639a5f815703e595e8e3fa3",
     "scripts/test/test_wiki_quota_detection.py": "7637e5c693dd11755ef566e475bb037d9bfb434683da70f92c21ef0af0c2df78",
     "scripts/test/test_wiki_source_raw.py": "15ca73d16024c27b60e2e4ed91abcd5b87d986597dd645b1f6792070c9db95a1",
-    "scripts/test/update-charter-sync-exemption.bats": "c9d59fa6fe0d95773868291c7fe5f865530572a01c32b66d229ba3f47fb67611",
+    "scripts/test/update-charter-sync-exemption.bats": "371df92955b62d2f3216e2165f233051d61db3195c3e979ec2fec2e354aa3080",
     "scripts/test/update-deletion-shape-tripwire.bats": "2b078312e393ca9ba200dbe229fbf5f4929c90129697c2cc086e79ed90afbded",
     "scripts/test/update-pause-flag.bats": "c2e3e96cfd3660894009452d180d2ffcf1682674c01a71cabf226497c0891326",
     "scripts/test/update-resident-launchd-redeploy.bats": "01eb646a69f9fc7cd25a44d101e9d9d931cdcb3cb76ff0b7058ab06000f8336f",
