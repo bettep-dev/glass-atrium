@@ -1272,31 +1272,54 @@ else:
 # Two or more declarations inside record 0 → the first wins (deterministic, never merged).
 # Extraction only: the comparison itself stays on the bash side against the shared lib predicate.
 # Fail-open on every anomaly — an empty value skips the comparison entirely.
-def _read_scope_decl(payload_d):
+_DELEGATION_PROMPT_MEMO = {}
+
+
+# Record 0 of the subagent's own transcript IS the delegation prompt the parent authored, so both
+# parent-authored declarations this hook reads ([SCOPE] and [SIZE-EST]) come from one record. Sourced
+# through the SHARED cached parse rather than a private readline: the collectors above already opened
+# this file, so a second reader here would break the single-open invariant
+# (track-outcome-transcript-parse-once) that the [SCOPE] read was gated to protect.
+def _read_delegation_prompt(payload_d):
     import os as _os
-    import json as _json
+    key = (payload_d.get('agent_id', '') or '', payload_d.get('session_id', '') or '')
+    if key in _DELEGATION_PROMPT_MEMO:
+        return _DELEGATION_PROMPT_MEMO[key]
+    text = ''
     tpath = _resolve_subagent_transcript(payload_d)
-    if not tpath or not _os.path.isfile(tpath):
-        return ''
-    try:
-        with open(tpath, 'r', encoding='utf-8', errors='replace') as _fh:
-            first_line = _fh.readline()
-        record = _json.loads(first_line)
-    except (OSError, IOError, ValueError):
-        return ''
-    if not isinstance(record, dict):
-        return ''
-    content = (record.get('message') or {}).get('content', '')
-    if isinstance(content, list):
-        content = '\n'.join(
-            part.get('text', '') for part in content if isinstance(part, dict)
-        )
-    if not isinstance(content, str):
-        return ''
-    for line in content.splitlines():
+    if tpath and _os.path.isfile(tpath):
+        items, _tail_partial = _read_subagent_transcript_once(tpath)
+        record = items[0] if items else None
+        if isinstance(record, dict):
+            content = (record.get('message') or {}).get('content', '')
+            if isinstance(content, list):
+                content = '\n'.join(
+                    part.get('text', '') for part in content if isinstance(part, dict)
+                )
+            if isinstance(content, str):
+                text = content
+    _DELEGATION_PROMPT_MEMO[key] = text
+    return text
+
+
+def _read_scope_decl(payload_d):
+    for line in _read_delegation_prompt(payload_d).splitlines():
         if '[SCOPE]' in line:
             return line.strip()
     return ''
+
+
+# Same literal + bounded-gap shape as enforce-workflow-verify-stage.sh's SIZE_EST_TOOLUSES_RE, so the
+# gate that advises on the declared number and the recorder that measures against it read one grammar.
+# DEV-mode token only: the analysis-mode form declares `reads~=`, which carries no tool_use claim.
+_SIZE_EST_TOOLUSES_RE = re.compile(r'\[SIZE-EST\][^\n]{0,400}?tool_uses~=\s*(\d+)')
+
+
+# Detection-not-trust: the declared estimate is read from the PARENT's prompt, never from the child's
+# [COMPLETION] emit — a writer-supplied field would let the measured party restate its own claim.
+def _read_size_est_declared(payload_d):
+    match = _SIZE_EST_TOOLUSES_RE.search(_read_delegation_prompt(payload_d))
+    return match.group(1) if match else ''
 
 # Gated for the SAME reason the sibling scan above is: this is a SECOND open of the same transcript,
 # and the single-open perf invariant (track-outcome-transcript-parse-once) holds only if it is
@@ -1308,6 +1331,10 @@ if _cc_files or synth_files:
     out('scope_decl', _read_scope_decl(d))
 else:
     out('scope_decl', '')
+# Ungated, unlike the sibling above: the estimate-vs-actual comparison has a candidate on EVERY
+# subagent stop (the tool_use counter is written per call, not per deliverable), and the memo means
+# a gate would save nothing where the [SCOPE] read already happened.
+out('size_est_declared', _read_size_est_declared(d))
 out('grader_write_scan', _write_scan)
 for _wp in _write_paths:
     out('grader_write_path', _wp)
@@ -1443,6 +1470,13 @@ case "${PARSE_TIER}" in
 esac
 case "${TOOL_USE_COUNT}" in
   '' | *[!0-9]*) TOOL_USE_COUNT=0 ;;
+esac
+# size_est_declared: the PARENT's `[SIZE-EST] … tool_uses~=N` claim, read off the delegation prompt by
+# the python leg. Empty on every legitimate no-declaration shape (main-session turn · ultracode, which
+# declares the token in the workflow script rather than the prompt · analysis-mode `reads~=` form).
+SIZE_EST_DECLARED=$(extract_field size_est_declared)
+case "${SIZE_EST_DECLARED}" in
+  '' | *[!0-9]*) SIZE_EST_DECLARED="" ;;
 esac
 SYNTH_HAS_WRITES=$(extract_field synth_has_writes)
 SYNTH_FILES=$(extract_field synth_files)
@@ -1643,31 +1677,38 @@ if [ "${PARSE_TIER}" = "3" ] \
   exit 0
 fi
 
-# detect_budget_truncation — PRIMARY hard-kill discriminator for the completion-synthesized branch.
-# A [COMPLETION]-absent, tool_use≥1 turn whose cumulative per-agent_id tool_use counter (persisted by
-# advisory-subagent-budget.sh) sits at/over SUBAGENT_TOOL_BUDGET is a budget/turn HARD-KILL (killed at
-# its cap mid-work), NOT a "forgot the [COMPLETION] block". Reads the counter with the SAME
-# hook_path_safe_key transform + env contract advisory-subagent-budget.sh uses (single SoT; a divergent
-# key mis-locates the file). Returns 0=budget-truncation, 1=fail-open (not a budget kill / signal
-# absent/unreadable / advisory disabled) — NEVER errors, so the caller keeps completion-synthesized.
+# get_tool_use_actual — this spawn's cumulative tool_use count, echoed as digits (empty = no signal).
+# Reads the counter with the SAME hook_path_safe_key transform + env contract advisory-subagent-budget.sh
+# uses (single SoT; a divergent key mis-locates the file). Two consumers share it: the hard-kill
+# discriminator below, and the estimate-vs-actual record field. Echo-empty rather than non-zero return —
+# both consumers treat "no signal" as fail-open, and a status-carrying reader cannot also carry a value.
 # Origin discriminator (hook_is_subagent): agent_id present ⇒ nested sub-worker; absent ⇒ main-session orchestrator (no per-agent tool budget).
-detect_budget_truncation() {
+get_tool_use_actual() {
   # Kill-switch parity: advisory disabled ⇒ the counter is not maintained ⇒ no reliable signal.
-  [[ -n "${SUBAGENT_TOOL_BUDGET_OFF:-}" ]] && return 1
+  [[ -n "${SUBAGENT_TOOL_BUDGET_OFF:-}" ]] && return 0
   # agent_id = the counter key AND the sub-worker-origin signal; absent ⇒ main-session origin.
-  [[ -z "${AGENT_ID:-}" ]] && return 1
+  [[ -z "${AGENT_ID:-}" ]] && return 0
   # hook_path_safe_key unavailable (utils source failed) ⇒ fail-open, never error.
-  command -v hook_path_safe_key >/dev/null 2>&1 || return 1
+  command -v hook_path_safe_key >/dev/null 2>&1 || return 0
   local agent_key
   agent_key="$(hook_path_safe_key "${AGENT_ID}")"
-  [[ -z "${agent_key}" ]] && return 1
+  [[ -z "${agent_key}" ]] && return 0
   local budget_dir counter_file
   budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${HOOK_DATA_DIR}/agent-tool-budget}"
   counter_file="${budget_dir}/${agent_key}"
-  [[ -f "${counter_file}" && -r "${counter_file}" ]] || return 1
+  [[ -f "${counter_file}" && -r "${counter_file}" ]] || return 0
+  # Strip to digits — a corrupt/racing/non-integer file degrades to empty (→ silent), never errors.
+  tr -cd '0-9' <"${counter_file}" 2>/dev/null || true
+}
+
+# detect_budget_truncation — PRIMARY hard-kill discriminator for the completion-synthesized branch.
+# A [COMPLETION]-absent, tool_use≥1 turn whose cumulative per-agent_id tool_use counter sits at/over
+# SUBAGENT_TOOL_BUDGET is a budget/turn HARD-KILL (killed at its cap mid-work), NOT a "forgot the
+# [COMPLETION] block". Returns 0=budget-truncation, 1=fail-open (not a budget kill / signal
+# absent/unreadable / advisory disabled) — NEVER errors, so the caller keeps completion-synthesized.
+detect_budget_truncation() {
   local count
-  # Strip to digits — a corrupt/racing/non-integer file degrades to empty (→ fail-open), never errors.
-  count="$(tr -cd '0-9' <"${counter_file}" 2>/dev/null || true)"
+  count="$(get_tool_use_actual)"
   [[ -z "${count}" ]] && return 1
   # Budget threshold — same default (40) + env var as advisory-subagent-budget.sh. A non-integer or
   # zero override degrades to the default; force base-10 so a leading-zero value is not mis-read as
@@ -2559,6 +2600,24 @@ trap 'rm -f "$PY_SCRIPT_FILE" "${T9_PY_FILE:-}"' EXIT INT TERM
 # in body_md would be redundant; the renderer CLI re-synthesizes frontmatter from columns for output.
 # NOTE: the body labels below (Agent/Task type/Result/Summary) are an intentional output contract —
 # `core-outcome-record.md` requires the `## Summary` section and the renderer/daemon consume these labels (record content, not dev comments).
+# Estimate-vs-actual pairing. The actual comes from the per-agent_id counter advisory-subagent-budget.sh
+# already writes per tool call; the declared side comes from the parent's prompt. Both are recorded on
+# ONE body line whose grammar the learning-aggregator parses back out (TOOL_USE_BODY_PREFIX there — the
+# hooks/test/test_size_est_underestimate.py drift check pins the two literals against each other).
+# The line is OMITTED whenever no actual exists (main-session turn, counter absent, advisory disabled):
+# a row with no measurement must not look like a row measured at zero.
+TOOL_USE_ACTUAL="$(get_tool_use_actual)"
+TOOL_USE_LINE=""
+if [ -n "${TOOL_USE_ACTUAL}" ]; then
+  if [ -n "${SIZE_EST_DECLARED:-}" ]; then
+    TOOL_USE_LINE="- **Tool use**: actual=${TOOL_USE_ACTUAL} declared=${SIZE_EST_DECLARED}"
+  else
+    TOOL_USE_LINE="- **Tool use**: actual=${TOOL_USE_ACTUAL}"
+  fi
+  printf '[outcome-record] tool_use actual=%s declared=%s agent=%s\n' \
+    "${TOOL_USE_ACTUAL}" "${SIZE_EST_DECLARED:-none}" "${AGENT_TYPE}" >&2
+fi
+
 BODY_MD=$(
   printf '# Outcome Record\n\n'
   printf '%s\n' "- **Agent**: ${AGENT_TYPE}"
@@ -2572,6 +2631,9 @@ BODY_MD=$(
   fi
   if [ -n "${FILES}" ]; then
     printf '%s\n' "- **Files**: ${FILES}"
+  fi
+  if [ -n "${TOOL_USE_LINE}" ]; then
+    printf '%s\n' "${TOOL_USE_LINE}"
   fi
   printf '\n## Summary\n\n%s\n' "${SUMMARY}"
   printf '\n## Lesson\n\n%s\n' "${LESSON:-(not recorded)}"
