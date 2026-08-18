@@ -55,12 +55,18 @@
 #   7. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
 #      path (success, decline, failure, SIGINT/SIGTERM).
 #
-# Sensitive-path refusal (T15 / gate G7): a sensitive harness file (GLASS_ATRIUM_GLOBAL_RULES.md,
-# a security scope rule, a credential file, a launchd plist) is NEVER auto-synced
-# by the deterministic path — it is partitioned OUT of the apply set via the
-# shared python helper (autoagent/lib/sensitive_patterns.py, the SINGLE refusal
-# source) and reported for manual review. The shell NEVER re-implements the
-# refusal regex.
+# Sensitive-path refusal (T15 / gate G7): a sensitive harness file (a security
+# scope rule, a credential file, a launchd plist) is NEVER auto-synced by the
+# deterministic path — it is partitioned OUT of the apply set via the shared
+# python helper (autoagent/lib/sensitive_patterns.py, the SINGLE refusal source)
+# and reported for manual review. The shell NEVER re-implements the refusal regex.
+# ONE carve-out, and it applies to the CHANGED-FILE partition only (preview +
+# apply, via update_partition_sensitive_sync): the charter
+# agents/GLASS_ATRIUM_GLOBAL_RULES.md is exempt, because the updater is the sole
+# live write seam and its refusal made that file unreachable by any deploy while
+# ga-doctor advertised this updater as the drift remedy. The vendor-REMOVAL sweep
+# keeps the STRICT partition — a vendor-dropped charter is reported, not Trashed.
+# The exempt set lives in daemon_cycle.py beside the compiled tuple, never here.
 #
 # Strict mode: this is an executable ENTRY POINT (unlike the sourced libs), so it
 # sets strict mode itself. The sourced libs are written to be safe under it.
@@ -800,20 +806,41 @@ update_normalize_relpath() {
   printf '%s\n' "${joined}"
 }
 
-update_partition_sensitive() {
-  local clean_out="$1" sensitive_out="$2" path norm
+# Shared partition loop. $1 = the fail-closed path guard to consult (a function
+# name), $2 = clean bucket, $3 = sensitive bucket. Reading the guard from an
+# argument is what keeps ONE loop for both partitions — the two callers differ in
+# their guard alone, and a duplicated loop is how the normalization gate below
+# would drift out of one of them.
+update_partition_with_guard() {
+  local guard="$1" clean_out="$2" sensitive_out="$3" path norm
   : >"${clean_out}"
   : >"${sensitive_out}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     # Verdict on the NORMAL form; bucket entries keep the original spelling
     # (downstream sync consumes the manifest-relative path as listed).
-    if norm="$(update_normalize_relpath "${path}")" && sensitive_path_ok "${norm}"; then
+    if norm="$(update_normalize_relpath "${path}")" && "${guard}" "${norm}"; then
       printf '%s\n' "${path}" >>"${clean_out}"
     else
       printf '%s\n' "${path}" >>"${sensitive_out}"
     fi
   done
+}
+
+# STRICT partition — the guard every consumer but the changed-file sync uses.
+# The vendor-REMOVAL sweep calls this one: its contract is that a vendor-dropped
+# harness file is REPORTED, never auto-Trashed, so it must never see an
+# exemption that turns a report into a deletion.
+update_partition_sensitive() {
+  update_partition_with_guard sensitive_path_ok "$1" "$2"
+}
+
+# CHANGED-FILE partition (preview + apply). Same fail-closed mechanism, but the
+# guard subtracts the daemon-owned sync exemption set — the charter, which no
+# deploy path could otherwise reach. Bound HERE rather than inside
+# sensitive_path_ok so the relaxation reaches this one partition and nothing else.
+update_partition_sensitive_sync() {
+  update_partition_with_guard sensitive_path_ok_for_sync "$1" "$2"
 }
 
 # ---------------------------------------------------------------------------
@@ -2544,7 +2571,7 @@ update_preview() {
   clean_paths="${work}/clean.paths"
   sensitive_paths="${work}/sensitive.paths"
   printf '%s\n' "${changed}" \
-    | update_partition_sensitive "${clean_paths}" "${sensitive_paths}"
+    | update_partition_sensitive_sync "${clean_paths}" "${sensitive_paths}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] && update_log "  (sensitive, would be skipped) ${path}"
   done <"${sensitive_paths}"
@@ -3023,7 +3050,7 @@ update_run() {
   clean_paths="${work}/clean.paths"
   sensitive_paths="${work}/sensitive.paths"
   printf '%s\n' "${changed}" \
-    | update_partition_sensitive "${clean_paths}" "${sensitive_paths}"
+    | update_partition_sensitive_sync "${clean_paths}" "${sensitive_paths}"
   n_sensitive="$(grep -c . "${sensitive_paths}" 2>/dev/null || true)"
   [[ -n "${n_sensitive}" ]] || n_sensitive=0
   if [[ "${n_sensitive}" -gt 0 ]]; then

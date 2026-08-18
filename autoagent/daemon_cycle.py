@@ -638,7 +638,14 @@ ApprovalTier = Literal["auto", "safety", ""]
 # absolute paths like ~/Library/LaunchAgents/com.claude.monitor.plist.
 # Rationale per core-security.md "High-impact actions" + orchestrator-role.md
 # "Self-Improvement User-Approval Trigger":
-#   - GLOBAL_RULES / core-security.md / scope-security.md: absolute-rule weakening
+#   - GLOBAL_RULES / scope-security.md: absolute-rule weakening
+#   - KNOWN GAP: the `security.md` pattern is `(^|/)security\.md$`, so it matches
+#     a bare `security.md` only — it does NOT match `core-security.md`, which IS
+#     the real manifest row (rules/glass-atrium/core-security.md), and it matches
+#     ZERO rows of the shipped manifest. core-learning-log.md's Tier-2 trigger
+#     text names core-security.md, so that claim is currently half-untrue of this
+#     code. Widening the pattern is a Tier-2 governance change, deliberately NOT
+#     made here; the gap is stated so a reader is not misled by the list above.
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
@@ -650,6 +657,31 @@ _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)\.env(\.|$)"),
     re.compile(r"(^|/)com\.claude\.[^/]+\.plist$"),
     re.compile(r"(^|/)com\.glass-atrium\.[^/]+\.plist$"),
+)
+
+# Sync-path exemptions — EXACT normalized manifest relpaths, never a regex. The
+# updater's changed-file partition normalizes with update_normalize_relpath
+# (which resolves `.`/`..` and fail-closes on anything it cannot normalize)
+# before shelling out, so an exact set cannot over-match the way the tuple's own
+# `security.md` pattern does.
+#
+# NARROW by design — this is the ONLY entry, and every other sensitive path stays
+# refused on every consumer. The charter is exempted because it is the one
+# sensitive row NO deploy path can reach: the updater is the sole live write
+# seam, its partition refuses the charter, and ga-doctor advertises that same
+# updater as the remedy for the drift the refusal causes — a warning the operator
+# cannot clear. Weighed against that, the charter's own refusal buys little: it
+# is vendor-owned prose with no EDITABLE region and no live-only frontmatter pin.
+#
+# The SYMLINK row (rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md -> the entry
+# below) is DELIBERATELY absent: the spine stages with a dereferencing `cp -p`
+# and commits by rename, so routing the link through the byte-swap would replace
+# it with a regular file and let the two manifest rows drift apart. Syncing the
+# real file alone clears BOTH rows, because the link resolves through it.
+_SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
+    {
+        "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
+    }
 )
 
 # Sensitive diff-body patterns (word-boundary regex — avoid `farm`/`confirm`
@@ -722,6 +754,30 @@ def match_sensitive_path(path: str) -> str | None:
         if pat.search(path or ""):
             return pat.pattern
     return None
+
+
+def match_sensitive_path_for_sync(path: str) -> str | None:
+    """``match_sensitive_path`` minus the ``_SYNC_EXEMPT_RELPATHS`` carve-out —
+    the matcher for ONE consumer: the updater's CHANGED-FILE partition
+    (``update_partition_sensitive_sync``, reached from the preview and apply
+    stages of scripts/update.sh via lib/sensitive_patterns.py's ``path-sync``
+    mode).
+
+    Every OTHER consumer keeps calling the bare ``match_sensitive_path`` and so
+    stays strict on the exempt set:
+      * the updater's VENDOR-REMOVAL sweep — a vendor-dropped harness file is
+        reported, never auto-Trashed, so its partition must not be relaxed;
+      * ``classify_safety_tier`` — the daemon's 2-tier approval routing;
+      * ``editable_merge.build_merge_candidate`` — the agent-body merge refusal,
+        which imports the bare matcher directly and never traverses this path.
+
+    The exemption is keyed on an EXACT normalized relpath, so a spelling the
+    caller could not normalize never reaches a match (the shell fails closed
+    upstream) and no near-miss basename is silently swept in.
+    """
+    if (path or "") in _SYNC_EXEMPT_RELPATHS:
+        return None
+    return match_sensitive_path(path)
 
 
 def match_sensitive_diff(diff: str) -> str | None:
@@ -5600,7 +5656,13 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 
     Three triggers per core-security.md High-impact actions:
       1. target_file path matches a sensitive-file regex (GLOBAL_RULES,
-         core-security.md, scope-security.md, .env, com.claude.*.plist)
+         scope-security.md, .env, com.claude.*.plist / com.glass-atrium.*.plist).
+         KNOWN GAP: the tuple's `security.md` pattern matches a BARE security.md
+         only — not `core-security.md`, the real manifest row — and hits zero
+         shipped rows; see the note on _SAFETY_SENSITIVE_PATH_PATTERNS. Widening
+         it is a separate Tier-2 governance change.
+         This tier ALWAYS calls the bare matcher, never the updater's
+         sync-exempt variant — the charter classifies safety-sensitive here.
       2. proposed_diff body contains a sensitive-token regex (rm -rf, chmod,
          tccutil, launchctl bootstrap/bootout, git push --force, DROP TABLE,
          eval/exec)
