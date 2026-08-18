@@ -567,5 +567,77 @@ class ForcePushFlagPositionsAreGuarded(unittest.TestCase):
             self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
 
 
+_RM_CLUSTER_SOURCE = r"\b" + _RM + r"\s+-[rRfF]+\b"
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class RmFlagClusterFormsAreGuarded(unittest.TestCase):
+    """The deletion entry fires on a recursive/force short-flag cluster and on
+    nothing else — the flagless form and the `farm`/`confirm` word-boundary
+    negatives are what keep the safety queue from flooding on ordinary prose."""
+
+    def test_flag_clusters_return_the_deletion_source(self) -> None:
+        for line in (
+            "+ " + _RM + " -rf build/",
+            "+ " + _RM + " -f x",
+            "+ " + _RM + " -r dir",
+            "+ " + _RM + " -fr build/",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _RM_CLUSTER_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_flagless_and_word_boundary_lookalikes_stay_clean(self) -> None:
+        for line in (
+            "+ " + _RM + " file.txt",
+            "+ the farm was rebuilt",
+            "+ please confirm the layout",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+
+_GA_PLIST_SOURCE = r"(^|/)com\.glass-atrium\.[^/]+\.plist$"
+_LEGACY_PLIST_SOURCE = r"(^|/)com\.claude\.[^/]+\.plist$"
+# The label set the Tier-2 plist clause names by hand — each one must be a form
+# the tuple demonstrably matches, or the clause claims a control that is not there.
+_CLAUSE_PLIST_LABELS: tuple[str, ...] = (
+    "monitor",
+    "autoagent-daemon",
+    "daemon-daily-restart",
+)
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class PlistLabelFamiliesAreGuarded(unittest.TestCase):
+    """Both label families the clause names stay matched, in bare-basename and
+    absolute form; a plist under any other prefix stays clean, which is the
+    other half of what the clause asserts."""
+
+    def test_clause_named_labels_match_in_both_path_forms(self) -> None:
+        for label in _CLAUSE_PLIST_LABELS:
+            name = f"com.glass-atrium.{label}.plist"
+            for path in (name, f"/Users/x/Library/LaunchAgents/{name}"):
+                self.assertEqual(
+                    dc.match_sensitive_path(path), _GA_PLIST_SOURCE, msg=f"for {path!r}"
+                )
+
+    def test_retained_legacy_family_still_matches(self) -> None:
+        for path in (
+            "com.claude.monitor.plist",
+            "/Users/x/Library/LaunchAgents/com.claude.autoagent-daemon.plist",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_path(path), _LEGACY_PLIST_SOURCE, msg=f"for {path!r}"
+            )
+
+    def test_other_label_prefixes_stay_clean(self) -> None:
+        for path in (
+            "com.apple.something.plist",
+            "homebrew.mxcl.postgresql@18.plist",
+            "com.glass-atrium.monitor.plist.bak",
+        ):
+            self.assertIsNone(dc.match_sensitive_path(path), msg=f"for {path!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
