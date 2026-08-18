@@ -475,5 +475,97 @@ class RuleFileRowsAreGuarded(unittest.TestCase):
         self.assertEqual(refused, set(_REFUSED_MANIFEST_ROWS))
 
 
+# The diff patterns the daemon-lifecycle and force-push widenings own, each
+# spelled with the source the matcher must return — a source, never a count, so
+# a widening that fires through some OTHER entry of the tuple fails here.
+_LIFECYCLE_SOURCE = r"\blaunchctl\s+(bootstrap|bootout|kickstart|load|unload)\b"
+_FORCE_LONG_SOURCE = r"\bgit\s+push\b.*\s--force\b"
+_FORCE_SHORT_SOURCE = r"\bgit\s+push\b.*\s-f\b"
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class LaunchctlLifecycleVerbsAreGuarded(unittest.TestCase):
+    """The legacy `load`/`unload` verbs drive the same daemon lifecycle as the
+    modern ones and are still functional on macOS, so the pattern must reach
+    both spellings — and reach them through the lifecycle entry, not another."""
+
+    def test_legacy_verbs_return_the_lifecycle_source(self) -> None:
+        for line in (
+            "+ launchctl load ~/Library/LaunchAgents/com.glass-atrium.monitor.plist",
+            "+ launchctl unload -w ~/Library/LaunchAgents/com.glass-atrium.monitor.plist",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _LIFECYCLE_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_modern_verbs_keep_firing(self) -> None:
+        for line in (
+            "+ launchctl bootstrap gui/501 x.plist",
+            "+ launchctl bootout gui/501",
+            "+ launchctl kickstart -k gui/501/com.glass-atrium.monitor",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _LIFECYCLE_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_legacy_verbs_on_non_added_lines_stay_clean(self) -> None:
+        # The added-lines-only mechanic is what keeps a removed hazard from
+        # re-routing the proposal that removes it.
+        for line in (
+            "- launchctl load com.glass-atrium.monitor.plist",
+            "  launchctl unload com.glass-atrium.monitor.plist",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_lifecycle_lookalikes_stay_clean(self) -> None:
+        for line in (
+            "+ launchctl list",
+            "+ launchctl print gui/501",
+            "+ the loader downloads the payload",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class ForcePushFlagPositionsAreGuarded(unittest.TestCase):
+    """The flag usually trails the refspec in real usage. Each form asserts the
+    per-flag source, so the pair's WARN attribution survives the widening."""
+
+    def test_flag_after_refspec_returns_the_matching_flag_source(self) -> None:
+        for line, source in (
+            ("+ git push origin main --force", _FORCE_LONG_SOURCE),
+            ("+ git push origin main --force-with-lease", _FORCE_LONG_SOURCE),
+            ("+ git push origin -f", _FORCE_SHORT_SOURCE),
+        ):
+            self.assertEqual(dc.match_sensitive_diff(line), source, msg=f"for {line!r}")
+
+    def test_flag_adjacent_forms_keep_their_attribution(self) -> None:
+        for line, source in (
+            ("+ git push --force origin main", _FORCE_LONG_SOURCE),
+            ("+ git push --force-with-lease", _FORCE_LONG_SOURCE),
+            ("+ git push -f origin main", _FORCE_SHORT_SOURCE),
+        ):
+            self.assertEqual(dc.match_sensitive_diff(line), source, msg=f"for {line!r}")
+
+    def test_ordinary_push_forms_stay_clean(self) -> None:
+        for line in (
+            "+ git push origin main",
+            "+ git push --follow-tags",
+            "+ git push origin main -xf",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_bundled_short_flag_cluster_is_the_accepted_gap(self) -> None:
+        # Named as a limit, not a claim: `\s-f\b` demands a boundary a trailing
+        # cluster letter denies, so these force forms stay uncovered. Pinned so
+        # the gap is a decision on record rather than a silent miss.
+        for line in (
+            "+ git push origin main -fq",
+            "+ git push origin main -qf",
+            "+ git push origin main -fu",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -685,7 +685,7 @@ _SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
 # Sensitive diff-body patterns (word-boundary regex — avoid `farm`/`confirm`
 # false positives that triggered the original 3-tier user-queue inflation).
 # Per core-security.md High-impact actions (file deletion / external network /
-# git push / chmod / TCC / launchctl bootstrap) + dev-db DROP TABLE.
+# git push / chmod / TCC / launchctl daemon lifecycle) + dev-db DROP TABLE.
 _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # File deletion — rm with any recursive/force short-flag cluster
     re.compile(r"\brm\s+-[rRfF]+\b"),
@@ -694,11 +694,13 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bchown\b"),
     # macOS TCC reset
     re.compile(r"\btccutil\b"),
-    # launchctl bootstrap / bootout — daemon lifecycle
-    re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart)\b"),
-    # git force-push
-    re.compile(r"\bgit\s+push\s+--force\b"),
-    re.compile(r"\bgit\s+push\s+-f\b"),
+    # launchctl daemon lifecycle — modern verbs + still-functional legacy load/unload
+    re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart|load|unload)\b"),
+    # git force-push — flag adjacent to `push` or trailing a refspec
+    # pair kept split so the loud WARN still names the matched flag
+    # bundled short-flag cluster (`-fq`) = accepted gap, the trailing `\b` denies it
+    re.compile(r"\bgit\s+push\b.*\s--force\b"),
+    re.compile(r"\bgit\s+push\b.*\s-f\b"),
     # DB drop
     re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE),
     re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE),
@@ -5659,7 +5661,7 @@ def classify_safety_tier(patch: PatchProposal) -> str:
          This tier ALWAYS calls the bare matcher, never the updater's
          sync-exempt variant — the charter classifies safety-sensitive here.
       2. proposed_diff body contains a sensitive-token regex (rm -rf, chmod,
-         tccutil, launchctl bootstrap/bootout, git push --force, DROP TABLE,
+         tccutil, launchctl daemon lifecycle, git force-push, DROP TABLE,
          eval/exec)
       3. touched_frontmatter=True (name/tools/scope/etc. — identity surface)
 
