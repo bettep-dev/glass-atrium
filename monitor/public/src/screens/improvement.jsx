@@ -867,6 +867,7 @@ function KanbanCardI({
 	const { CardHead } = window.UI;
 	const isLoading = state.status === "loading";
 	const isError = state.status === "error";
+	const rejectBuckets = state.data?.reject_bucket_summary || null;
 
 	// 카드 max-h:70vh — 본문 페이지 무한 늘어남 차단 · 컬럼 내부만 자체 스크롤.
 	// 레이아웃: ROW-1 = AWAITING 존(그리드 밖 배너/스트립, T2) · ROW-2 = 종결 그리드(2fr/1fr, T3).
@@ -926,6 +927,7 @@ function KanbanCardI({
 									column={col}
 									rows={columnRows[col.key] || []}
 									loopAggregate={loopAggregate}
+									rejectBuckets={rejectBuckets}
 									onRowClick={onRowClick}
 									onAction={onAction}
 									pendingActionId={pendingActionId}
@@ -1001,6 +1003,7 @@ function KanbanColumnI({
 	column,
 	rows,
 	loopAggregate,
+	rejectBuckets,
 	onRowClick,
 	onAction,
 	pendingActionId,
@@ -1034,12 +1037,15 @@ function KanbanColumnI({
 						symbol={column.symbol}
 					/>
 				) : (
-					<RejectedHeaderI
-						count={rows.length}
-						label={column.label}
-						symbol={column.symbol}
-						trend={loopAggregate?.trend}
-					/>
+					<React.Fragment>
+						<RejectedHeaderI
+							count={rows.length}
+							label={column.label}
+							symbol={column.symbol}
+							trend={loopAggregate?.trend}
+						/>
+						<RejectBucketSplitI summary={rejectBuckets} />
+					</React.Fragment>
 				)}
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
@@ -1094,6 +1100,45 @@ function RejectedHeaderI({ count, label, symbol, trend }) {
 			<span className="ml-auto flex items-center">
 				<RejectSparkI trend={trend} />
 			</span>
+		</div>
+	);
+}
+
+// T7 — REJECTED 3분할(quality/infra/lifecycle) · 서버 집계(provenance 필터 포함)를 그대로 표시.
+// 클라 재집계/재필터 금지 — 행 모집단이 서버 윈도우와 달라 수치가 어긋난다.
+// summary 부재(구 payload) → null = 오늘과 동일 렌더 · chrome 중립(--crit 은 헤더 전용, T7 색상 예약).
+function RejectBucketSplitI({ summary }) {
+	if (!summary) return null;
+
+	// quality 만 실질 반려 — infra/lifecycle 은 품질 판정에 도달조차 못한 건.
+	const cells = [
+		[
+			"Quality",
+			summary.quality_count,
+			"A diff existed and was rejected on substance — the only bucket a reject rate may be read from",
+		],
+		[
+			"Infra",
+			summary.infra_count,
+			"The model call yielded no usable diff (quota / transient / auth) — never judged",
+		],
+		[
+			"Lifecycle",
+			summary.lifecycle_count,
+			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
+		],
+	];
+	return (
+		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-micro font-mono">
+			{cells.map(([label, count, hint]) => (
+				<span
+					key={label}
+					className="inline-flex items-baseline gap-1"
+					title={hint}>
+					<span className="text-faint uppercase tracking-wider">{label}</span>
+					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
+				</span>
+			))}
 		</div>
 	);
 }
