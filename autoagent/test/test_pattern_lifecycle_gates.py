@@ -109,7 +109,7 @@ class TestConsecutiveRejectCount(unittest.TestCase):
 
     def test_when_supersede_and_timeout_rows_then_looked_past(self) -> None:
         rows = [
-            _reject(rationale=dc._SUPERSEDE_REASON),
+            _reject(rationale=dc._SUPERSEDE_REASON_CROSS_DAY),
             _reject(),
             _reject(rationale="haiku timeout after 90s"),
             _reject(),
