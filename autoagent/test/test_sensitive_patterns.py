@@ -22,6 +22,7 @@ Run with either runner:
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import unittest
@@ -54,8 +55,9 @@ _PATH_CORPUS: tuple[str, ...] = (
     "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
     "GLASS_ATRIUM_GLOBAL_RULES.md",
-    "rules/security.md",
+    "rules/glass-atrium/core-security.md",
     "scoped/scope-security.md",
+    "rules/glass-atrium/core-learning-log.md",
     "project/.env",
     "project/.env.local",
     "~/Library/LaunchAgents/com.claude.monitor.plist",
@@ -66,7 +68,10 @@ _PATH_CORPUS: tuple[str, ...] = (
     "scripts/lib/apply-spine.sh",
     "scripts/update.sh",
     "config.toml",
-    "rules/security-notes.md",  # not exactly security.md
+    "rules/security.md",  # the retired phantom — must stay clean
+    "rules/security-notes.md",  # not exactly core-security.md
+    "rules/glass-atrium/core-learning-log-notes.md",  # suffix near-miss
+    "hooks/learning-aggregator.py",  # live manifest neighbor, not the rule file
     "envoy.md",  # not .env
     # clean — pre-rename charter basenames lock in the GLASS_ATRIUM_ rename:
     # the refusal SoT matches ONLY the new name, so the old forms are ordinary.
@@ -98,6 +103,8 @@ _I1_BULLET = (
 
 _DIFF_SENSITIVE: tuple[str, ...] = (
     f"+ {_RM} -rf /tmp/x",
+    f"+ {_RM} -f x",
+    f"+ {_RM} -r dir",
     f"+    {_CHMOD} 0777 secret",
     "+ git push --force origin main",
     "+ DROP TABLE core.outcomes;",
@@ -121,6 +128,7 @@ _DIFF_CLEAN: tuple[str, ...] = (
     f"- {_RM} -rf /tmp/x",  # removed line, not added → ignored
     "+++ b/path.md",  # diff header, not body
     "+ a perfectly ordinary documentation line",
+    f"+ {_RM} file.txt",  # flagless deletion — outside the cluster claim
     # The SAFE tagged-stash recipe (I1) must NEVER trip the detector — the
     # negative-lookahead keeps push/apply/list clean.
     "+ git stash push -u -m tag",
@@ -195,8 +203,9 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
         for path in (
             "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
             "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
-            "rules/security.md",
+            "rules/glass-atrium/core-security.md",
             "scoped/scope-security.md",
+            "rules/glass-atrium/core-learning-log.md",
             "project/.env",
             "~/Library/LaunchAgents/com.claude.monitor.plist",
         ):
@@ -210,6 +219,9 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
             "agents/dev-python.md",
             "rules/scope-dev.md",
             "config.toml",
+            "rules/security.md",
+            "rules/glass-atrium/core-learning-log-notes.md",
+            "hooks/learning-aggregator.py",
             "rules/GLOBAL_RULES.md",
             "GLOBAL_RULES.md",
         ):
@@ -328,7 +340,7 @@ class SyncExemptionIsOneConsumerWide(unittest.TestCase):
             )
 
     def test_exemption_set_is_exact_relpaths_not_patterns(self) -> None:
-        # An exact set cannot over-match the way the tuple's own `security.md`
+        # An exact set cannot over-match the way the tuple's own `core-security.md`
         # pattern does; a regex or a glob character here would reopen that class.
         for entry in dc._SYNC_EXEMPT_RELPATHS:
             self.assertNotIn("*", entry)
@@ -394,6 +406,73 @@ class SyncCliExitContract(unittest.TestCase):
         res = self._run(["path", _CHARTER_REAL])
         self.assertEqual(res.returncode, sp.EXIT_SENSITIVE)
         self.assertIn("REFUSED", res.stderr)
+
+
+# The rule-file rows the path tuple guards, each spelled with the pattern source
+# it must return — a source, never a count, so a widening cannot pass by
+# refusing more rows than it claims.
+_CORE_SECURITY_ROW = "rules/glass-atrium/core-security.md"
+_CORE_SECURITY_SOURCE = r"(^|/)core-security\.md$"
+_TRIGGER_LIST_ROW = "rules/glass-atrium/core-learning-log.md"
+_TRIGGER_LIST_SOURCE = r"(^|/)core-learning-log\.md$"
+
+# Every manifest row the strict matcher refuses. Pinning the whole set is what
+# bounds a path-pattern edit's blast radius: a widening that reaches an
+# unintended row fails here rather than at the next release.
+_REFUSED_MANIFEST_ROWS: frozenset[str] = frozenset(
+    {
+        "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
+        "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
+        "monitor/.env.example",
+        "scoped/scope-security.md",
+        _CORE_SECURITY_ROW,
+        _TRIGGER_LIST_ROW,
+    }
+)
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class RuleFileRowsAreGuarded(unittest.TestCase):
+    """The Tier-2 clause list names the security rules and its own definition
+    file; the tuple must actually reach both, and reach nothing adjacent."""
+
+    def test_core_security_row_returns_its_pattern_source(self) -> None:
+        self.assertEqual(
+            dc.match_sensitive_path(_CORE_SECURITY_ROW), _CORE_SECURITY_SOURCE
+        )
+
+    def test_trigger_list_row_returns_its_pattern_source(self) -> None:
+        self.assertEqual(
+            dc.match_sensitive_path(_TRIGGER_LIST_ROW), _TRIGGER_LIST_SOURCE
+        )
+
+    def test_retired_phantom_and_suffix_near_misses_stay_clean(self) -> None:
+        for path in (
+            "rules/security.md",
+            "rules/security-notes.md",
+            "rules/glass-atrium/core-learning-log-notes.md",
+            "hooks/learning-aggregator.py",
+        ):
+            self.assertIsNone(
+                dc.match_sensitive_path(path), msg=f"unexpected refusal for {path!r}"
+            )
+
+    def test_live_neighbors_stay_refused(self) -> None:
+        # Refusal, not source equality — the charter literal is owned by a
+        # separate replaceability track, so pinning it here would fail this
+        # suite for a reason unrelated to the rule-file rows.
+        for path in (_CHARTER_REAL, _CHARTER_LINK, _RETAINED_SENSITIVE):
+            self.assertIsNotNone(
+                dc.match_sensitive_path(path), msg=f"expected refusal for {path!r}"
+            )
+
+    def test_refused_manifest_rows_are_exactly_the_named_set(self) -> None:
+        manifest = _REPO_ROOT / "manifest.json"
+        if not manifest.exists():
+            self.skipTest("manifest.json absent — release manifest not in this tree")
+        rows = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+        refused = {row for row in rows if dc.match_sensitive_path(row) is not None}
+        self.assertEqual(refused, set(_REFUSED_MANIFEST_ROWS))
 
 
 if __name__ == "__main__":
