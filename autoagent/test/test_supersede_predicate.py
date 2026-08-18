@@ -5,7 +5,7 @@ proposal rows. It matched on status + agent + file with no identity term, so a
 second run sharing a cycle date superseded the row its own push was about to
 update — a proposal that should have applied was terminalized instead.
 
-Three properties are covered:
+Four properties are covered:
 (1) the opposed triple — the run's own identity survives, a same-cycle row under
     a drifted label transitions, and a prior-cycle row transitions. The middle
     arm is what a strictly-prior-date guard fails, and the last is what a
@@ -18,14 +18,20 @@ Three properties are covered:
 (3) the two fixes COMPOSED over one store — the same-cycle stamp this predicate
     writes still explains the rejected status after a later run re-pushes that
     identity through _pg_dual_write_daemon's UPSERT, and the run's own row is
-    still live for its own push. Either fix reverted and this pair goes red.
+    still live for its own push. Either fix reverted and this pair goes red;
+(4) the CALL-SITE binding — the cycle loop passes its own cycle date and the
+    CONSOLIDATED label, untransposed. (1)-(3) drive the predicate directly and
+    so hold for any caller, including one handing it the lead pattern's label:
+    the exclusion is only as good as the identity the loop binds into it.
 
 Backend: the stdlib sqlite stand-in from ``scripts/test/_pg_stub_backend.py``
 runs the REAL statement text (cast-stripped, qmark-rewritten), so no Postgres
-and no psycopg are needed and all three run on the merge-gating unittest
-leg. What it cannot see, and what nothing here claims: the date-typed
-``cycle_date`` column, its cast, and the driver's type adaptation — those stay
-live-Postgres verification steps.
+and no psycopg are needed and the store-backed properties run on the
+merge-gating unittest leg. Property (4) touches no store at all — it drives the
+loop with a recorder in place of the predicate. What the stand-in cannot see,
+and what nothing here claims: the date-typed ``cycle_date``
+column, its cast, and the driver's type adaptation — those stay live-Postgres
+verification steps.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_supersede_predicate.py -v
@@ -240,6 +246,108 @@ class TestSupersedeStampSurvivesRepush(unittest.TestCase):
             {"status": "pending", "rationale": _generation_text(2)},
         )
 
+
+class TestSupersedeCallSiteBinding(unittest.TestCase):
+    """The loop binds the run's OWN identity into the call — positionally.
+
+    Every test above drives the predicate directly, so each one holds for ANY
+    caller: one that passes the lead pattern's label instead of the consolidated
+    one, or transposes the date and the label, keeps them all green while the
+    exclusion silently spares the wrong row. The loop is the only place that
+    knows which identity the push will own, so the binding is asserted there,
+    with a recorder standing in for the predicate.
+
+    The fixture gives one agent TWO patterns on purpose: the consolidated label
+    equals the lead pattern's label whenever there is only one, and a
+    single-pattern probe could not tell the two apart.
+
+    Seams are the loop's own gates, stubbed to reach the call deterministically —
+    generation (no Haiku, no network), the apply-area verdict, and the safety
+    tier (whose 'safety' route reaches 'pending' without an LLM pre-verify and
+    passes floor terminalization untouched). ``HAS_PG_LOOP_WRITE`` is off, so
+    every other emit in the cycle early-returns; the supersede seam is the only
+    live call site left.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp_dir = Path(tmp.name)
+        self.agents_dir = self.tmp_dir / "agents"
+        self.agents_dir.mkdir()
+        self.target_md = self.agents_dir / f"{_AGENT}.md"
+        self.target_md.write_text("# probe agent\n", encoding="utf-8")
+
+        self.lead = self._pattern("lead signal", "9", row_id=1)
+        self.second = self._pattern("trailing signal", "4", row_id=2)
+        self.calls: list[tuple[object, ...]] = []
+
+    def _pattern(self, label: str, frequency: str, *, row_id: int) -> "dc.Pattern":
+        return dc.Pattern(
+            date="2026-07-01",
+            label=label,
+            frequency=frequency,
+            agent=_AGENT,
+            status="identified",
+            tier="user-pending",
+            raw_line=f"pg:learning_log:{row_id}:{label}|{_AGENT}",
+            row_id=row_id,
+        )
+
+    def _proposal(self, *_args: object, **_kwargs: object) -> "dc.PatchProposal":
+        return dc.PatchProposal(
+            target_file=str(self.target_md),
+            rationale="probe rationale",
+            proposed_diff="--- a\n+++ b\n@@ -1 +1,2 @@\n # probe agent\n+- probe rule\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="probe raw response",
+        )
+
+    def _record(self, *args: object) -> int:
+        self.calls.append(args)
+        return 0
+
+    def _drive_cycle(self) -> "dc.CycleReport":
+        """Run one cycle over the two-pattern agent, recording the supersede call."""
+        seams = {
+            "read_user_pending_patterns": lambda *a, **k: [self.lead, self.second],
+            "fetch_generation_outcomes": lambda *a, **k: [],
+            # Absent flags file → the confidence filter resolves 'floor', so the
+            # promotion ladder never reaches PG for stats.
+            "FEATURE_FLAGS_FILE": self.tmp_dir / "no-such-flags.json",
+            "HAS_PG_LOOP_WRITE": False,
+            "generate_consolidated_proposal": self._proposal,
+            "classify_patch_area": lambda *a, **k: "body-auto",
+            "classify_safety_tier": lambda *a, **k: "safety",
+            "supersede_prior_pending_for_agent": self._record,
+        }
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            for name, repl in seams.items():
+                stack.enter_context(mock.patch.object(dc, name, repl))
+            return dc.run_cycle(
+                log_path=self.tmp_dir / "learning-log.md",
+                outcomes_dir=self.tmp_dir,
+                agents_dir=self.agents_dir,
+                skip_haiku=True,
+                skip_pre_verify=True,
+                skip_loop_emit=False,
+            )
+
+    def test_when_the_loop_supersedes_then_it_binds_its_own_date_and_label(self) -> None:
+        report = self._drive_cycle()
+        consolidated = dc._consolidated_pattern_label(_AGENT, [self.lead, self.second])
+        # A fixture whose two candidate labels coincide would pass on a wrong
+        # binding, so the discrimination is asserted before the binding is.
+        self.assertNotEqual(consolidated, self.lead.label)
+        self.assertNotEqual(consolidated, report.cycle_date)
+
+        self.assertEqual(len(self.calls), 1, f"expected one supersede call: {self.calls}")
+        self.assertEqual(
+            self.calls[0],
+            (_AGENT, str(self.target_md), report.cycle_date, consolidated),
+        )
 
 if __name__ == "__main__":
     unittest.main()
