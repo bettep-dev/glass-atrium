@@ -23,13 +23,13 @@ The self-improvement loop (daemon_cycle.py) user-approval queue is **safety-only
 
 **Tier 2 — Safety**:
 - **trigger** — irreversible + external-effect only (reuses the `core-security.md` "High-impact actions" definition):
-  - file deletion / DB drop (`rm` · `DROP TABLE`)
+  - forced/recursive file deletion / DB drop (`rm -r`/`-f` · `DROP TABLE`)
   - external network call (external host API)
   - git push --force / rebase published branch
-  - security-permission change (chmod / TCC / launchctl bootstrap)
-  - monitor plist change (com.claude.monitor / autoagent-daemon)
+  - security-permission change (chmod / TCC / launchctl daemon lifecycle (bootstrap/bootout/kickstart/load/unload))
+  - launchd plist change — any path whose FINAL component matches `com.claude.*.plist` or `com.glass-atrium.*.plist` (not monitor-only; this project's live labels are `com.glass-atrium.*` — monitor, autoagent-daemon, daemon-daily-restart, …). A plist under any other label prefix is not matched by this path-pattern set
   - frontmatter identity field (name / tools / scope) change
-  - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules
+  - weakening of GLASS_ATRIUM_GLOBAL_RULES / core-security.md absolute rules, or any change to `core-learning-log.md` — the Tier-2 trigger list's own home
 - **non-safety quality issue** (rule-scope misapplication / minor instruction tuning, etc.) → absorbed by Tier 1 Auto + LLM retry — creating a user pending queue forbidden
 
 > Cross-ref: this section is the **approval-rule canonical (SoT)** for the 2-tier policy · `orchestrator-role.md` Self-Improvement User-Approval Trigger carries only the orchestrator-side operational delta (Monitoring-phase routing + dashboard surfacing) and points here

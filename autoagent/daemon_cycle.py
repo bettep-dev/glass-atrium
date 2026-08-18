@@ -643,6 +643,7 @@ ApprovalTier = Literal["auto", "safety", ""]
 #     weakening on the real manifest row (rules/glass-atrium/core-security.md)
 #   - core-learning-log.md: home of the Tier-2 trigger clause list itself, so a
 #     proposal rewriting the definition of Tier-2 cannot route as Tier-1 auto
+#     (the basename also covers the `memory/` CTM/EPM store of the same name)
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
@@ -687,7 +688,8 @@ _SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
 # Per core-security.md High-impact actions (file deletion / external network /
 # git push / chmod / TCC / launchctl daemon lifecycle) + dev-db DROP TABLE.
 _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # File deletion — rm with any recursive/force short-flag cluster
+    # File deletion — rm plus a short-flag cluster of only r/R/f/F
+    # a mixed cluster (`-rfv`, `-fq`) is an accepted gap the trailing `\b` denies
     re.compile(r"\brm\s+-[rRfF]+\b"),
     # Permission / ACL changes
     re.compile(r"\bchmod\b"),
@@ -696,7 +698,8 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\btccutil\b"),
     # launchctl daemon lifecycle — modern verbs + still-functional legacy load/unload
     re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart|load|unload)\b"),
-    # git force-push — flag adjacent to `push` or trailing a refspec
+    # git force-push — force flag anywhere later on a `git push` line; the `.*`
+    # spans the line, so a chained line's unrelated force flag fires too
     # pair kept split so the loud WARN still names the matched flag
     # bundled short-flag cluster (`-fq`) = accepted gap, the trailing `\b` denies it
     re.compile(r"\bgit\s+push\b.*\s--force\b"),
