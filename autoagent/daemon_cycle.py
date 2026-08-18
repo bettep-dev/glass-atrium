@@ -7584,7 +7584,7 @@ def regenerate_single_proposal(
     return result
 
 
-# -- Cross-day same-agent supersede ----------------------------------------
+# -- Same-agent supersede (prior cycle, and same-cycle label drift) --------
 
 
 # Head of every supersede rationale. classify_failure_rationale prefix-tests
@@ -7605,6 +7605,7 @@ _SUPERSEDE_REASON_SAME_CYCLE = (
 def supersede_prior_pending_for_agent(
     target_agent: str,
     target_file: str,
+    *,
     cycle_date: str,
     pattern_label: str,
 ) -> int:
@@ -7696,7 +7697,7 @@ def supersede_prior_pending_for_agent(
     if superseded_ids:
         sys.stderr.write(
             f"[daemon-cycle] supersede: agent={target_agent} terminated "
-            f"{len(superseded_ids)} prior pending row(s) ids={superseded_ids} "
+            f"{len(superseded_ids)} other pending row(s) ids={superseded_ids} "
             f"→ rejected (fresher per-agent proposal)\n"
         )
     return len(superseded_ids)
@@ -10242,7 +10243,10 @@ def run_cycle(
         # will update, so they are what the supersede must spare.
         if status_value == "pending" and not skip_loop_emit:
             supersede_prior_pending_for_agent(
-                agent, proposal.target_file, report.cycle_date, consolidated_label
+                agent,
+                proposal.target_file,
+                cycle_date=report.cycle_date,
+                pattern_label=consolidated_label,
             )
 
         report.patches.append(

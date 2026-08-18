@@ -82,18 +82,6 @@ def _generation_text(run: int) -> str:
 
 
 
-class _RowSetCursor(stub._Cursor):
-    """The supersede statement RETURNs a row set; the shared cursor reads one row."""
-
-    def fetchall(self) -> list[tuple[object, ...]]:
-        return self._inner.fetchall()
-
-
-class _RowSetConnection(stub._Connection):
-    def cursor(self) -> _RowSetCursor:
-        return _RowSetCursor(self._db.cursor())
-
-
 def _run_supersede(db_path: Path) -> None:
     """Drive the real supersede statement against the stdlib backend."""
     # create=True: the connect alias is bound only when psycopg imported, and the
@@ -101,10 +89,12 @@ def _run_supersede(db_path: Path) -> None:
     quiet = contextlib.redirect_stderr(io.StringIO())
     armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
     seam = mock.patch.object(
-        dc, "_pg_connect", lambda: _RowSetConnection(db_path), create=True
+        dc, "_pg_connect", lambda: stub.create_connection(db_path), create=True
     )
     with quiet, armed, seam:
-        dc.supersede_prior_pending_for_agent(_AGENT, _TARGET, _RUN_DATE, _RUN_LABEL)
+        dc.supersede_prior_pending_for_agent(
+            _AGENT, _TARGET, cycle_date=_RUN_DATE, pattern_label=_RUN_LABEL
+        )
 
 
 class TestSupersedePredicate(unittest.TestCase):
@@ -255,7 +245,9 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
     one, or transposes the date and the label, keeps them all green while the
     exclusion silently spares the wrong row. The loop is the only place that
     knows which identity the push will own, so the binding is asserted there,
-    with a recorder standing in for the predicate.
+    with a recorder standing in for the predicate. The recorder captures keywords
+    as well as positionals — the two identity terms are keyword-only, and a
+    positional-only recorder could not see them at all.
 
     The fixture gives one agent TWO patterns on purpose: the consolidated label
     equals the lead pattern's label whenever there is only one, and a
@@ -304,8 +296,8 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
             raw_response="probe raw response",
         )
 
-    def _record(self, *args: object) -> int:
-        self.calls.append(args)
+    def _record(self, *args: object, **kwargs: object) -> int:
+        self.calls.append((args, kwargs))
         return 0
 
     def _drive_cycle(self) -> "dc.CycleReport":
@@ -346,7 +338,10 @@ class TestSupersedeCallSiteBinding(unittest.TestCase):
         self.assertEqual(len(self.calls), 1, f"expected one supersede call: {self.calls}")
         self.assertEqual(
             self.calls[0],
-            (_AGENT, str(self.target_md), report.cycle_date, consolidated),
+            (
+                (_AGENT, str(self.target_md)),
+                {"cycle_date": report.cycle_date, "pattern_label": consolidated},
+            ),
         )
 
 if __name__ == "__main__":
