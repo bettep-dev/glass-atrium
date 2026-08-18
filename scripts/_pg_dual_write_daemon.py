@@ -541,7 +541,23 @@ def write_autoagent_proposal(
         ON CONFLICT (cycle_date, pattern_label, target_file) DO UPDATE SET
             target_agent = EXCLUDED.target_agent,
             classification = EXCLUDED.classification,
-            rationale = EXCLUDED.rationale,
+            -- The rationale is part of the status verdict, so it MOVES WITH the
+            -- status: the arm that preserves a stored terminal status preserves the
+            -- stored text that records why, and the arm that takes the incoming
+            -- status takes the incoming text. Assigning it unconditionally erased a
+            -- supersede stamp on every re-push while the terminal status survived,
+            -- leaving a verdict no text explains — and the erased text is live input
+            -- to the reject-streak classifier, not inert history. The two predicates
+            -- below MUST stay identical; the co-movement is pinned by
+            -- scripts/test/test_pg_dual_write_proposal_upsert.py, not by this comment.
+            rationale = CASE
+                          WHEN core.autoagent_proposals.status
+                               IN ('applied', 'approved', 'rejected')
+                               AND EXCLUDED.status
+                                   NOT IN ('applied', 'approved', 'rejected')
+                          THEN core.autoagent_proposals.rationale
+                          ELSE EXCLUDED.rationale
+                        END,
             haiku_status = EXCLUDED.haiku_status,
             approval_tier = EXCLUDED.approval_tier,
             -- RC1 fix: never downgrade a terminal status on cycle-end re-push.
