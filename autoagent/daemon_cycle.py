@@ -7584,27 +7584,49 @@ def regenerate_single_proposal(
     return result
 
 
-# -- Cross-day same-agent supersede ----------------------------------------
+# -- Same-agent supersede (prior cycle, and same-cycle label drift) --------
 
 
-_SUPERSEDE_REASON = (
-    "superseded by fresher per-agent proposal (current-file-anchored, "
-    "previous calendar day data)"
+# Head of every supersede rationale. classify_failure_rationale prefix-tests
+# against this name and the monitor reject-bucket route stores it as a LIKE
+# marker, so a variant tail is composed ONTO the head, never substituted for it.
+_SUPERSEDE_REASON = "superseded by fresher per-agent proposal"
+
+_SUPERSEDE_REASON_CROSS_DAY = (
+    f"{_SUPERSEDE_REASON} (current-file-anchored, previous calendar day data)"
+)
+# A same-cycle row is superseded because its label drifted, not because its data
+# is a day old — the cross-day tail would be a false claim on it.
+_SUPERSEDE_REASON_SAME_CYCLE = (
+    f"{_SUPERSEDE_REASON} (current-file-anchored, same-cycle label drift)"
 )
 
 
-def supersede_prior_pending_for_agent(target_agent: str, target_file: str) -> int:
-    """Terminate the same agent's prior-cycle PENDING proposal → 'rejected'.
+def supersede_prior_pending_for_agent(
+    target_agent: str,
+    target_file: str,
+    *,
+    cycle_date: str,
+    pattern_label: str,
+) -> int:
+    """Terminate the same agent's OTHER pending proposals → 'rejected'.
 
-    One proposal per agent per cycle — but a leftover same-agent PENDING row from
-    a prior cycle re-accumulates backlog across multiple rows. The new proposal
-    has fresher data + current-file anchoring, so supersede (transition to
-    rejected) the prior PENDING to block same-agent duplicate accumulation.
+    One proposal per agent per cycle — but a leftover same-agent PENDING row
+    re-accumulates backlog across multiple rows. The new proposal has fresher
+    data + current-file anchoring, so supersede (transition to rejected) the
+    others to block same-agent duplicate accumulation.
+
+    The run's OWN row is excluded by the (cycle_date, pattern_label, target_file)
+    identity its push will update. The FU-1 dedup key cannot do that work: this
+    statement never touches cycle_date, so two runs sharing a cycle_date would
+    otherwise terminalize each other's still-pending row — a proposal that should
+    have applied. Everything else still transitions, including a same-cycle row
+    under a drifted label.
 
     monitor has no dedicated supersede enum, so this is marked 'rejected' +
-    rationale (ProposalStatus enum preserved — no schema change). The FU-1 dedup
-    key (cycle_date, pattern_label, target_file) is unaffected — the new INSERT has
-    a distinct cycle_date, so only prior-cycle rows transition.
+    rationale (ProposalStatus enum preserved — no schema change). The stamp is
+    per row: the run's own cycle date carries the same-cycle tail, an older row
+    the cross-day tail.
 
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
@@ -7612,9 +7634,12 @@ def supersede_prior_pending_for_agent(target_agent: str, target_file: str) -> in
     Args:
         target_agent: target agent (core.autoagent_proposals.target_agent column).
         target_file: target agent .md absolute path.
+        cycle_date: the run's own cycle date (YYYY-MM-DD), date-cast in the
+            statement because the column is date-typed.
+        pattern_label: the consolidated label the run's own push will own.
 
     Returns:
-        count of prior pending rows terminated (transitioned to rejected).
+        count of other pending rows terminated (transitioned to rejected).
     """
     if not HAS_PG_LOOP_WRITE:
         sys.stderr.write(
@@ -7624,18 +7649,42 @@ def supersede_prior_pending_for_agent(target_agent: str, target_file: str) -> in
         return 0
     if not target_agent or not target_file:
         return 0
+    if not cycle_date or not pattern_label:
+        # Without the run's own identity the exclusion cannot be expressed, and
+        # superseding without it terminalizes the very row this run will push.
+        sys.stderr.write(
+            "[daemon-cycle] supersede: missing run identity "
+            f"(cycle_date={cycle_date!r} pattern_label={pattern_label!r}) — "
+            f"skipped for agent={target_agent}\n"
+        )
+        return 0
 
+    # The excluded triple IS the FU-1 dedup key — the identity the run's own push
+    # will update, so it must survive its own supersede.
     update_sql = (
         "UPDATE core.autoagent_proposals "
-        "SET status = 'rejected', rationale = %s "
+        "SET status = 'rejected', "
+        "rationale = CASE WHEN cycle_date = %s::date THEN %s ELSE %s END "
         "WHERE status = 'pending' "
         "AND target_agent = %s AND target_file = %s "
+        "AND NOT (cycle_date = %s::date AND pattern_label = %s "
+        "AND target_file = %s) "
         "RETURNING id"
+    )
+    update_params = (
+        cycle_date,
+        _SUPERSEDE_REASON_SAME_CYCLE,
+        _SUPERSEDE_REASON_CROSS_DAY,
+        target_agent,
+        target_file,
+        cycle_date,
+        pattern_label,
+        target_file,
     )
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(update_sql, (_SUPERSEDE_REASON, target_agent, target_file))
+                cur.execute(update_sql, update_params)
                 superseded_ids = [row[0] for row in cur.fetchall()]
             conn.commit()
     except Exception as exc:  # noqa: BLE001 — loud-fail: log named + re-raise
@@ -7648,7 +7697,7 @@ def supersede_prior_pending_for_agent(target_agent: str, target_file: str) -> in
     if superseded_ids:
         sys.stderr.write(
             f"[daemon-cycle] supersede: agent={target_agent} terminated "
-            f"{len(superseded_ids)} prior pending row(s) ids={superseded_ids} "
+            f"{len(superseded_ids)} other pending row(s) ids={superseded_ids} "
             f"→ rejected (fresher per-agent proposal)\n"
         )
     return len(superseded_ids)
@@ -10185,13 +10234,20 @@ def run_cycle(
                     f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
                 )
 
-        # Cross-day supersede — only when the new proposal is an actual emit target
-        # (pending), terminate the prior cycle's same-agent pending row (block
+        # Same-agent supersede — only when the new proposal is an actual emit
+        # target (pending), terminate the agent's OTHER pending rows (block
         # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
         # not touch PG → supersede also skipped. A floor-terminalized row is now
         # 'rejected', so it correctly does NOT trigger supersede as a fresh emit.
+        # The cycle date + consolidated label are the identity this run's own push
+        # will update, so they are what the supersede must spare.
         if status_value == "pending" and not skip_loop_emit:
-            supersede_prior_pending_for_agent(agent, proposal.target_file)
+            supersede_prior_pending_for_agent(
+                agent,
+                proposal.target_file,
+                cycle_date=report.cycle_date,
+                pattern_label=consolidated_label,
+            )
 
         report.patches.append(
             PatchResult(

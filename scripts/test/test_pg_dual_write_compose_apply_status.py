@@ -24,8 +24,9 @@ stderr, AND the status it declined to overwrite still survives untouched.
 Why a shim instead of a live database: the op's SQL is PG-specific (schema-
 qualified table, `::core."DaemonStatus"` casts) and the 'apply_failed' enum label
 ships as an unapplied migration, so a live run fails for reasons unrelated to the
-CASE. The psycopg stand-in (same PYTHONPATH mechanism as the exit-contract suite)
-hands the helper's REAL SQL text to sqlite3 after two mechanical rewrites. The
+CASE. The shared psycopg stand-in (scripts/test/_pg_stub_backend.py, reached here
+through the same PYTHONPATH mechanism as the exit-contract suite) hands the
+helper's REAL SQL text to sqlite3 after two mechanical rewrites. The
 CASE arms are therefore evaluated by a real SQL engine, never re-implemented here
 — which is what keeps the pin failable.
 
@@ -48,6 +49,8 @@ from pathlib import Path
 
 import pytest
 
+import _pg_stub_backend as stub
+
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 _HELPER = _SCRIPTS_ROOT / "_pg_dual_write_daemon.py"
 
@@ -64,122 +67,8 @@ _COMPOSED = "composed:"
 _DECLINED = "declined:"
 _PROVENANCE_COLUMN = "apply_status_provenance"
 
-_PSYCOPG_SHIM = r'''"""Minimal psycopg stand-in that executes the caller's SQL through sqlite3.
-
-Only the surface _pg_dual_write_daemon.py touches is implemented. SQL text is
-never interpreted here — two mechanical rewrites (pyformat params, PG cast
-suffixes) hand it to a real SQL engine, so the caller's semantics stay under test.
-"""
-
-import os
-import re
-import sqlite3
-
-
-class Error(Exception):
-    pass
-
-
-class OperationalError(Error):
-    pass
-
-
-class IntegrityError(Error):
-    pass
-
-
-class UndefinedColumn(Error):
-    pass
-
-
-_CAST = re.compile(r'::(?:\w+\.)?"?\w+"?')
-_PYFORMAT = re.compile(r"%\((\w+)\)s")
-
-
-def _rewrite(sql):
-    return _PYFORMAT.sub(r":\1", _CAST.sub("", sql))
-
-
-class _Cursor:
-    def __init__(self, inner):
-        self._inner = inner
-        self.rowcount = -1
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        return False
-
-    def execute(self, sql, params=None):
-        try:
-            self._inner.execute(_rewrite(sql), params or {})
-        except sqlite3.OperationalError as exc:
-            # PG signals a missing column as SQLSTATE 42703, which psycopg raises as
-            # UndefinedColumn; sqlite signals it in the message text only. Translating that ONE
-            # message is what puts the helper's degradation arm under a real engine — every
-            # other sqlite fault surfaces unchanged, so this cannot green a failure the helper
-            # was supposed to see.
-            if "no such column" in str(exc):
-                raise UndefinedColumn(str(exc)) from exc
-            raise
-        self.rowcount = self._inner.rowcount
-
-    def fetchall(self):
-        return self._inner.fetchall()
-
-
-class _Connection:
-    def __init__(self, path):
-        self._db = sqlite3.connect(":memory:")
-        # ATTACH aliases the file as schema `core` → the helper's qualified
-        # `core.daemon_runs` runs verbatim, with no table-name rewrite.
-        self._db.execute("ATTACH DATABASE ? AS core", (path,))
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        self._db.close()
-        return False
-
-    def cursor(self):
-        return _Cursor(self._db.cursor())
-
-    def commit(self):
-        self._db.commit()
-
-    def rollback(self):
-        self._db.rollback()
-
-
-def connect(conninfo, **kwargs):
-    return _Connection(os.environ["GA_PIN_SQLITE"])
-'''
-
-_ERRORS_SHIM = '''"""psycopg.errors surface: the classes _classify_error and the degradation arm branch on."""
-
-from psycopg import Error, IntegrityError, OperationalError, UndefinedColumn
-
-__all__ = ["Error", "IntegrityError", "OperationalError", "UndefinedColumn"]
-'''
-
-_JSON_SHIM = '''"""psycopg.types.json surface: imported at module scope, unused by this op."""
-
-
-class Jsonb:
-    def __init__(self, obj):
-        self.obj = obj
-'''
-
-
 def _make_env(tmp_path: Path, *, provenance_column: bool) -> dict[str, str]:
-    pkg = tmp_path / "psycopg"
-    (pkg / "types").mkdir(parents=True)
-    (pkg / "__init__.py").write_text(_PSYCOPG_SHIM, encoding="utf-8")
-    (pkg / "errors.py").write_text(_ERRORS_SHIM, encoding="utf-8")
-    (pkg / "types" / "__init__.py").write_text("", encoding="utf-8")
-    (pkg / "types" / "json.py").write_text(_JSON_SHIM, encoding="utf-8")
+    stub.create_psycopg_package(tmp_path)
 
     db_path = tmp_path / "daemon_runs.sqlite"
     columns = "run_date TEXT, daemon_name TEXT, status TEXT"
@@ -193,7 +82,7 @@ def _make_env(tmp_path: Path, *, provenance_column: bool) -> dict[str, str]:
     env["PYTHONPATH"] = os.pathsep.join(
         [str(tmp_path), env["PYTHONPATH"]] if env.get("PYTHONPATH") else [str(tmp_path)]
     )
-    env["GA_PIN_SQLITE"] = str(db_path)
+    env[stub.SQLITE_PATH_ENV] = str(db_path)
     return env
 
 
@@ -214,7 +103,7 @@ def pg_shim_premigration(tmp_path: Path) -> dict[str, str]:
 
 
 def _seed(env: dict[str, str], status: str) -> None:
-    with closing(sqlite3.connect(env["GA_PIN_SQLITE"])) as db:
+    with closing(sqlite3.connect(env[stub.SQLITE_PATH_ENV])) as db:
         db.execute(
             "INSERT INTO daemon_runs (run_date, daemon_name, status) VALUES (?, ?, ?)",
             (_RUN_DATE, _DAEMON, status),
@@ -223,7 +112,7 @@ def _seed(env: dict[str, str], status: str) -> None:
 
 
 def _get_status(env: dict[str, str]) -> str | None:
-    with closing(sqlite3.connect(env["GA_PIN_SQLITE"])) as db:
+    with closing(sqlite3.connect(env[stub.SQLITE_PATH_ENV])) as db:
         row = db.execute(
             "SELECT status FROM daemon_runs WHERE run_date = ? AND daemon_name = ?",
             (_RUN_DATE, _DAEMON),
@@ -232,7 +121,7 @@ def _get_status(env: dict[str, str]) -> str | None:
 
 
 def _get_provenance(env: dict[str, str]) -> str | None:
-    with closing(sqlite3.connect(env["GA_PIN_SQLITE"])) as db:
+    with closing(sqlite3.connect(env[stub.SQLITE_PATH_ENV])) as db:
         row = db.execute(
             "SELECT apply_status_provenance FROM daemon_runs "
             "WHERE run_date = ? AND daemon_name = ?",
@@ -576,7 +465,7 @@ def test_when_the_column_is_absent_then_an_unrelated_fault_is_not_degraded_away(
     # The scoped arm's whole justification: only SQLSTATE 42703 takes the degraded path. A fault
     # the helper must still fail on — here the run row's table missing entirely — stays a named
     # failure exit, so the degradation cannot mask a broken install as a clean cycle.
-    with closing(sqlite3.connect(pg_shim_premigration["GA_PIN_SQLITE"])) as db:
+    with closing(sqlite3.connect(pg_shim_premigration[stub.SQLITE_PATH_ENV])) as db:
         db.execute("DROP TABLE daemon_runs")
         db.commit()
 

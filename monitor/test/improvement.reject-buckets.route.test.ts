@@ -37,9 +37,9 @@ const AGENT = `${SUITE_MARKER}-agent`;
 // The updater's own pattern label — a merge-resolution row, not a daemon proposal.
 const UPDATER_LABEL = "editable-region-resolved-release";
 
-// Head of daemon_cycle.py's _SUPERSEDE_REASON, written verbatim here rather than imported:
-// the route's own constant is the thing under test, so sharing it would let a drifted
-// marker pass on both sides.
+// A full supersede rationale as daemon_cycle.py composes it (head + cross-day tail),
+// written verbatim here rather than imported: the route's own marker is the thing under
+// test, so sharing a constant would let a drifted marker pass on both sides.
 const SUPERSEDE_RATIONALE =
   "superseded by fresher per-agent proposal (current-file-anchored, previous calendar day data)";
 
