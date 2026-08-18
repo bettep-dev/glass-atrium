@@ -276,5 +276,125 @@ class CliExitContract(unittest.TestCase):
         self.assertIn("cannot read diff source", res.stderr)
 
 
+# The charter pair, spelled once: the REAL manifest row and the SYMLINK row that
+# points at it. Deliberately NOT added to _PATH_CORPUS — that corpus feeds the
+# identity assertions above, which must keep proving helper == daemon ==
+# classify_safety_tier over an UNCHANGED set. The carve-out below is a separate
+# matcher, asserted separately.
+_CHARTER_REAL = "agents/GLASS_ATRIUM_GLOBAL_RULES.md"
+_CHARTER_LINK = "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
+_RETAINED_SENSITIVE = "scoped/scope-security.md"
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class SyncExemptionIsOneConsumerWide(unittest.TestCase):
+    """The charter is reachable through the updater's CHANGED-FILE partition and
+    nowhere else. Each test below names the consumer it pins, so a silent
+    widening of the carve-out cannot ship as a green suite."""
+
+    def test_charter_is_exempt_on_the_sync_matcher(self) -> None:
+        self.assertIsNone(
+            dc.match_sensitive_path_for_sync(_CHARTER_REAL),
+            msg="the charter must be syncable — the updater is the only live write seam",
+        )
+        self.assertIsNone(sp.is_sensitive_path_for_sync(_CHARTER_REAL))
+
+    def test_charter_is_still_refused_by_the_strict_matcher(self) -> None:
+        # The strict matcher is what the vendor-removal sweep and every non-sync
+        # consumer call; the carve-out must not reach it.
+        self.assertIsNotNone(dc.match_sensitive_path(_CHARTER_REAL))
+        self.assertIsNotNone(sp.is_sensitive_path(_CHARTER_REAL))
+
+    def test_charter_symlink_row_is_not_exempt(self) -> None:
+        # C5: the spine stages with a dereferencing `cp -p` and commits by rename,
+        # so syncing this row would replace the link with a regular file and let
+        # the two manifest rows drift apart. The real file alone clears both.
+        self.assertIsNotNone(
+            dc.match_sensitive_path_for_sync(_CHARTER_LINK),
+            msg="the symlink row must stay refused — a byte-swap would delete the link",
+        )
+        self.assertIsNotNone(sp.is_sensitive_path_for_sync(_CHARTER_LINK))
+
+    def test_retained_entry_refuses_on_every_matcher(self) -> None:
+        for matcher in (
+            dc.match_sensitive_path,
+            dc.match_sensitive_path_for_sync,
+            sp.is_sensitive_path,
+            sp.is_sensitive_path_for_sync,
+        ):
+            self.assertIsNotNone(
+                matcher(_RETAINED_SENSITIVE),
+                msg=f"{matcher.__name__} must still refuse {_RETAINED_SENSITIVE!r}",
+            )
+
+    def test_exemption_set_is_exact_relpaths_not_patterns(self) -> None:
+        # An exact set cannot over-match the way the tuple's own `security.md`
+        # pattern does; a regex or a glob character here would reopen that class.
+        for entry in dc._SYNC_EXEMPT_RELPATHS:
+            self.assertNotIn("*", entry)
+            self.assertFalse(entry.startswith("/"))
+            self.assertEqual(entry, entry.strip())
+        self.assertEqual(dc._SYNC_EXEMPT_RELPATHS, frozenset({_CHARTER_REAL}))
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class CharterStaysSafetySensitive(unittest.TestCase):
+    """The two consumers the carve-out is most likely to weaken by accident. Both
+    reach the bare matcher without traversing the bridge, and both must keep
+    refusing the charter."""
+
+    def test_classify_safety_tier_still_returns_safety_for_the_charter(self) -> None:
+        patch = dc.PatchProposal(
+            target_file=_CHARTER_REAL,
+            rationale="probe",
+            proposed_diff="+ a benign documentation line\n",
+            touched_frontmatter=False,
+            estimated_added_lines=1,
+            raw_response="",
+        )
+        self.assertEqual(dc.classify_safety_tier(patch), "safety")
+
+    def test_build_merge_candidate_still_refuses_the_charter(self) -> None:
+        sys.path.insert(0, str(_LIB_DIR))
+        import editable_merge as em  # noqa: PLC0415 — deferred, mirrors the module's own seam
+
+        cand = em.build_merge_candidate(
+            _CHARTER_REAL, "old\n", "new\n", base_text=None, skip_pre_verify=True
+        )
+        self.assertIsNotNone(
+            cand.sensitive_hit,
+            msg="the agent-body merge must keep refusing the charter",
+        )
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class SyncCliExitContract(unittest.TestCase):
+    """`path-sync` is the mode the updater's changed-file partition shells out to."""
+
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(_HELPER), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_path_sync_clears_the_charter_silently(self) -> None:
+        res = self._run(["path-sync", _CHARTER_REAL])
+        self.assertEqual(res.returncode, sp.EXIT_CLEAN)
+        self.assertEqual(res.stderr, "")
+
+    def test_path_sync_still_refuses_the_symlink_row_and_a_retained_entry(self) -> None:
+        for path in (_CHARTER_LINK, _RETAINED_SENSITIVE):
+            res = self._run(["path-sync", path])
+            self.assertEqual(res.returncode, sp.EXIT_SENSITIVE, msg=f"for {path!r}")
+            self.assertIn("REFUSED", res.stderr)
+
+    def test_strict_path_mode_is_unchanged_for_the_charter(self) -> None:
+        res = self._run(["path", _CHARTER_REAL])
+        self.assertEqual(res.returncode, sp.EXIT_SENSITIVE)
+        self.assertIn("REFUSED", res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

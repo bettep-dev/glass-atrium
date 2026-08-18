@@ -24,6 +24,13 @@
 #   3  SENSITIVE  — refuse; the helper printed the matched pattern + reason
 #   2  USAGE      — bad invocation
 #   4  ENV        — compiled source unreachable
+#
+# Two path guards, one source. sensitive_path_ok is STRICT and stays the guard for
+# every consumer. sensitive_path_ok_for_sync is the updater CHANGED-FILE partition's
+# guard only: it shells out to the helper's `path-sync` mode, which subtracts the
+# exemption set the daemon owns beside the compiled tuple. The exempt relpaths are
+# NOT listed here — a shell-side allowlist would be a second home for path knowledge,
+# exactly what the single-source rule above forbids.
 
 # Resolve the python helper path. Honors GA_ROOT (test seam), falling back to
 # ${HOME}/.glass-atrium — same precedence as atrium-config.sh.
@@ -86,6 +93,18 @@ sensitive_check_diff() {
 # or refused path is NEVER synced.
 sensitive_path_ok() {
   sensitive_check_path "$1" && return 0
+  return 1
+}
+
+# Higher-order guard for the updater's CHANGED-FILE partition ONLY (preview +
+# apply). Same fail-CLOSED contract as sensitive_path_ok — 0 only on a provably
+# CLEAN-or-exempt verdict — but consults the helper's `path-sync` mode, which
+# subtracts the daemon-owned sync exemption set. The vendor-REMOVAL sweep keeps
+# calling sensitive_path_ok: a vendor-dropped harness file is reported for manual
+# review, never auto-Trashed, so relaxing its partition would convert a report
+# into a deletion.
+sensitive_path_ok_for_sync() {
+  sensitive_invoke path-sync "$1" && return 0
   return 1
 }
 
