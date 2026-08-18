@@ -5,7 +5,7 @@ proposal rows. It matched on status + agent + file with no identity term, so a
 second run sharing a cycle date superseded the row its own push was about to
 update — a proposal that should have applied was terminalized instead.
 
-Two properties are covered:
+Three properties are covered:
 (1) the opposed triple — the run's own identity survives, a same-cycle row under
     a drifted label transitions, and a prior-cycle row transitions. The middle
     arm is what a strictly-prior-date guard fails, and the last is what a
@@ -14,11 +14,15 @@ Two properties are covered:
     supersede failure class through the REAL classifier (a variant that missed
     would fall to the quality class and advance the reject-streak kill
     mechanism), and the monitor route's stored LIKE marker is still a prefix of
-    the head.
+    the head;
+(3) the two fixes COMPOSED over one store — the same-cycle stamp this predicate
+    writes still explains the rejected status after a later run re-pushes that
+    identity through _pg_dual_write_daemon's UPSERT, and the run's own row is
+    still live for its own push. Either fix reverted and this pair goes red.
 
 Backend: the stdlib sqlite stand-in from ``scripts/test/_pg_stub_backend.py``
 runs the REAL statement text (cast-stripped, qmark-rewritten), so no Postgres
-and no psycopg are needed and both properties run on the merge-gating unittest
+and no psycopg are needed and all three run on the merge-gating unittest
 leg. What it cannot see, and what nothing here claims: the date-typed
 ``cycle_date`` column, its cast, and the driver's type adaptation — those stay
 live-Postgres verification steps.
@@ -63,10 +67,13 @@ _PRIOR_DATE = "2026-08-17"
 _RUN_LABEL = "supersede probe pattern (consolidated)"
 _DRIFTED_LABEL = "supersede probe pattern (drifted)"
 _SEED_RATIONALE = "generation rationale — must survive untouched"
-
 _COLUMNS = (
     "cycle_date", "pattern_label", "target_agent", "target_file", "status", "rationale",
 )
+def _generation_text(run: int) -> str:
+    """A push's own rationale — distinct per run so a stale text is visible."""
+    return f"pattern recurred across 5 outcomes [run {run}]"
+
 
 
 class _RowSetCursor(stub._Cursor):
@@ -79,6 +86,19 @@ class _RowSetCursor(stub._Cursor):
 class _RowSetConnection(stub._Connection):
     def cursor(self) -> _RowSetCursor:
         return _RowSetCursor(self._db.cursor())
+
+
+def _run_supersede(db_path: Path) -> None:
+    """Drive the real supersede statement against the stdlib backend."""
+    # create=True: the connect alias is bound only when psycopg imported, and the
+    # gating leg has no psycopg — the seam must exist either way.
+    quiet = contextlib.redirect_stderr(io.StringIO())
+    armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
+    seam = mock.patch.object(
+        dc, "_pg_connect", lambda: _RowSetConnection(db_path), create=True
+    )
+    with quiet, armed, seam:
+        dc.supersede_prior_pending_for_agent(_AGENT, _TARGET, _RUN_DATE, _RUN_LABEL)
 
 
 class TestSupersedePredicate(unittest.TestCase):
@@ -104,15 +124,7 @@ class TestSupersedePredicate(unittest.TestCase):
             db.commit()
 
     def _supersede(self) -> None:
-        # create=True: the connect alias is bound only when psycopg imported, and
-        # the gating leg has no psycopg — the seam must exist either way.
-        quiet = contextlib.redirect_stderr(io.StringIO())
-        armed = mock.patch.object(dc, "HAS_PG_LOOP_WRITE", True)
-        seam = mock.patch.object(
-            dc, "_pg_connect", lambda: _RowSetConnection(self.db), create=True
-        )
-        with quiet, armed, seam:
-            dc.supersede_prior_pending_for_agent(_AGENT, _TARGET, _RUN_DATE, _RUN_LABEL)
+        _run_supersede(self.db)
 
     def _row(self, cycle_date: str, label: str) -> dict[str, str]:
         row = stub.read_proposal(self.db, (cycle_date, label, _TARGET))
@@ -153,6 +165,79 @@ class TestSupersedeRationaleConsumers(unittest.TestCase):
         self.assertTrue(
             dc._SUPERSEDE_REASON.startswith(marker[:-1]),
             f"route marker {marker!r} no longer prefixes head {dc._SUPERSEDE_REASON!r}",
+        )
+
+
+class TestSupersedeStampSurvivesRepush(unittest.TestCase):
+    """The two fixes composed over ONE store: the supersede stamps, the push keeps it.
+
+    The identity exclusion is what makes a SAME-CYCLE rejected row exist at all —
+    without it the run's own row is the one terminalized, and no drifted-label row
+    survives the cycle carrying a stamp. The rationale co-movement in the UPSERT's
+    conflict arm is what keeps that stamp when a later run re-sends the identity
+    with the report's baked-in 'pending'. Revert either and the pair stops holding:
+    without the exclusion the run's own row goes rejected and the drifted row's
+    stamp is the cross-day text, and without the co-movement the stamp is replaced
+    by the incoming generation text while the rejected status it explains stays —
+    which is exactly the unrecognised text the failure classifier defaults to the
+    quality class, advancing the reject streak.
+
+    Both writers reach the SAME sqlite file in the SAME process: the supersede
+    through the patched _pg_connect seam, the push through the helper that
+    load_helper imports against the fabricated psycopg surface. A subprocess
+    harness cannot express this property — it cannot see the other writer's
+    in-process transaction.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "proposals.sqlite"
+        stub.create_proposals_table(self.db)
+        with stub.load_helper(self.db) as helper:
+            self._push(helper, _RUN_LABEL, _generation_text(1))
+            self._push(helper, _DRIFTED_LABEL, _generation_text(1))
+            _run_supersede(self.db)
+            self._push(helper, _RUN_LABEL, _generation_text(2))
+            self._push(helper, _DRIFTED_LABEL, _generation_text(2))
+
+    def _push(self, helper: object, label: str, rationale: str) -> None:
+        """A cycle push of one identity — always the report's baked-in 'pending'."""
+        helper.write_autoagent_proposal(
+            cycle_date=_RUN_DATE,
+            pattern_label=label,
+            target_file=_TARGET,
+            target_agent=_AGENT,
+            classification="apply",
+            rationale=rationale,
+            haiku_status="ok",
+            approval_tier="auto",
+            status="pending",
+            proposed_diff="",
+            cost_guard_state="ok",
+            source_file="autoagent/daemon_cycle.py",
+            source_file_mtime=0,
+        )
+
+    def _row(self, label: str) -> dict[str, str]:
+        row = stub.read_proposal(self.db, (_RUN_DATE, label, _TARGET))
+        self.assertIsNotNone(row, f"row vanished from the shared store: {label}")
+        return row
+
+    def test_when_a_stamped_row_is_repushed_then_the_stamp_stays_with_its_status(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._row(_DRIFTED_LABEL),
+            {"status": "rejected", "rationale": dc._SUPERSEDE_REASON_SAME_CYCLE},
+        )
+
+    def test_when_the_row_is_the_runs_own_then_its_next_push_still_refreshes_it(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._row(_RUN_LABEL),
+            {"status": "pending", "rationale": _generation_text(2)},
         )
 
 
