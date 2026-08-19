@@ -6,8 +6,6 @@
 # re-diffed the already-merged region against a stale base and wrote literal git
 # conflict markers into the live agent file. Three pins:
 #   * the end-to-end second run (no markers, no content change);
-#   * the capture ORDERING that keeps the base advancing even when the (fatal)
-#     vendor sweep dies right after a landed merge;
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
 #   * a conflicting region, both ways round the gap-policy kill switch: with the
@@ -165,39 +163,6 @@ run_update() {
   # an always-created empty file would make "no declines" and "never recorded"
   # indistinguishable at exactly the moment an operator is asking which it was.
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
-}
-
-@test "base-content capture survives a FATAL vendor sweep (ordering pin)" {
-  # update_sweep_removed_files hard-dies (update_die_code 13). With the capture
-  # sequenced AFTER it, that death strands a LANDED merge at the old base — the
-  # stale anchor that re-conflicts on the next same-release run. The capture must
-  # therefore run IMMEDIATELY after the merge, before any fatal step.
-  mkdir -p "${NEWSRC}/agents" "${STATE}/update-state/base-agents"
-  printf 'RELEASE body' >"${NEWSRC}/agents/dev-a.md"
-  printf 'BASE v0' >"${STATE}/update-state/base-agents/dev-a.md"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    bash -c '
-      source "'"${SKILL}"'"
-      source "'"${REAL_LIB_ROOT}"'/scripts/lib/apply-spine.sh"
-      # a merge that LANDED dev-a.md — the outcome ledger is the carrier the
-      # capture reads to decide which files may advance.
-      update_merge_agent_editable_regions() {
-        _update_agent_outcomes_file="'"${WORK}"'/agent-outcomes.ledger"
-        printf "dev-a.md\n" >"${_update_agent_outcomes_file}"
-      }
-      update_sweep_removed_files() { exit 13; }  # the fatal-sweep crash window
-      update_capture_baseline() { :; }
-      update_finalize_merge_and_anchors \
-        "'"${NEWSRC}"'" "/dev/null" "'"${INSTALL}"'" "/dev/null"
-    '
-
-  [ "$status" -eq 13 ] || return 1  # the sweep still hard-fails, loudly (unchanged)
-  # … yet the landed merge already advanced past the stale anchor.
-  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
 }
 
 @test "with the gap policy OFF a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {

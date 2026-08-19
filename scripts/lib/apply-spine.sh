@@ -8,11 +8,9 @@
 # suite sources it under strict mode to prove that).
 #
 # Scope (E3 capabilities): spine_find_changed_files (T13, non-agent hash-diff
-# selection) · spine_find_removed_files (T13, vendor-removal provenance selection
-# — files the prior baseline shipped but the new release dropped) ·
-# spine_stage_and_verify + spine_commit_staged + spine_apply (T11, stage +
-# per-file SHA-256 verify, then atomic swap with rollback) · spine_set_baseline +
-# spine_get_baseline (T14, base@install anchor capture/read).
+# selection) · spine_stage_and_verify + spine_commit_staged + spine_apply (T11,
+# stage + per-file SHA-256 verify, then atomic swap with rollback) ·
+# spine_set_baseline + spine_get_baseline (T14, base@install anchor capture/read).
 #
 # Manifest schema (from generate-manifest.sh, v1.0.0):
 #   { "version": "1.0.0", "files": ["agents/foo.md", …],
@@ -259,64 +257,6 @@ spine_find_changed_files() {
       printf '%s\n' "${path}"
     fi
   done < <(jq -r '.files[]' -- "${manifest}")
-}
-
-# T13 — vendor-removal provenance selection
-
-# Emit (one relative path per line) the NON-AGENT files that the PRIOR-VENDOR
-# baseline shipped but the new release DROPPED, restricted to files still holding
-# their pristine vendor content — i.e. safe to sweep. A live file whose content
-# diverges from the baseline hash is a USER edit and is PRESERVED (never listed).
-# The agent/overlay/config exclusions apply (those paths are owned by the E4
-# merge / user, not the vendor sync). A path already absent locally is a no-op.
-# This is the detection half of the deletion pass; the CALLER wires the list into
-# the confirm-gate preview + the Trash removal (removal policy stays caller-side,
-# same split as spine_find_changed_files → update_commit_callback). Args: $1 =
-# prior-vendor baseline manifest.json · $2 = new-release manifest.json · $3 = live
-# install root. Loud-fails (rc 1) on a missing manifest or a baseline path that
-# carries no hash.
-spine_find_removed_files() {
-  local baseline_manifest="$1" new_manifest="$2" install_root="$3"
-  local path want live target new_files
-  spine_require_tools jq || return 1
-  if [[ ! -f "${baseline_manifest}" ]]; then
-    printf 'apply-spine: removal scan needs a baseline manifest: %s\n' \
-      "${baseline_manifest}" >&2
-    return 1
-  fi
-  if [[ ! -f "${new_manifest}" ]]; then
-    printf 'apply-spine: removal scan needs a new-release manifest: %s\n' \
-      "${new_manifest}" >&2
-    return 1
-  fi
-  # Materialise the new release's file set ONCE for a fork-free membership test.
-  new_files="$(jq -r '.files[]' -- "${new_manifest}")" || return 1
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    # agent/overlay/config paths are owned by other merge paths, never swept.
-    if spine_is_excluded_path "${path}"; then
-      continue
-    fi
-    # Still shipped by the new release → not a removal. Quoted pattern = literal.
-    case $'\n'"${new_files}"$'\n' in
-      *$'\n'"${path}"$'\n'*) continue ;;
-      *) ;; # dropped by the new release → fall through to the provenance check
-    esac
-    target="${install_root}/${path}"
-    # Already gone (or not a regular file we own) → nothing to remove.
-    [[ -f "${target}" ]] || continue
-    want="$(spine_get_manifest_hash "${baseline_manifest}" "${path}")"
-    if [[ -z "${want}" ]]; then
-      printf 'apply-spine: baseline has no hash for %s\n' "${path}" >&2
-      return 1
-    fi
-    live="$(spine_sha256_of "${target}")" || return 1
-    # User-modified vs the prior-vendor baseline → PRESERVE (never sweep an edit).
-    if [[ "${live}" != "${want}" ]]; then
-      continue
-    fi
-    printf '%s\n' "${path}"
-  done < <(jq -r '.files[]' -- "${baseline_manifest}")
 }
 
 # T11 — staged apply + rollback

@@ -43,15 +43,14 @@
 #   4a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
 #      conflicting EDITABLE gaps took the release side (the boundary note above) —
 #      emitted from the merge step in every entry mode, best-effort.
-#   4b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
-#      files the prior-vendor baseline shipped but this release DROPPED (provenance
-#      -clean only; a user-edited drop is PRESERVED) to Trash. Runs before the
-#      baseline capture (still-old anchor) and the mirror-farm refresh (a removed
-#      file gains no dangling mirror).
 #   5. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
 #      base@install anchor for the next update's 3-anchor merge.
 #   6. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
 #      path (success, failure, SIGINT/SIGTERM).
+#
+# No deletion pass, deliberately: the bundle is authoritative for REPLACEMENT, so a
+# file this release stops shipping is left where it is — accepted residue, since the
+# new manifest no longer carries a row for it.
 #
 # Sensitive-path refusal (T15 / gate G7): a sensitive harness file (a security
 # scope rule, a credential file, a launchd plist) is NEVER auto-synced by the
@@ -62,8 +61,7 @@
 # path, via update_partition_sensitive_sync): the charter
 # agents/GLASS_ATRIUM_GLOBAL_RULES.md is exempt, because the updater is the sole
 # live write seam and its refusal made that file unreachable by any deploy while
-# ga-doctor advertised this updater as the drift remedy. The vendor-REMOVAL sweep
-# keeps the STRICT partition — a vendor-dropped charter is reported, not Trashed.
+# ga-doctor advertised this updater as the drift remedy.
 # The exempt set lives in daemon_cycle.py beside the compiled tuple, never here.
 #
 # Strict mode: this is an executable ENTRY POINT (unlike the sourced libs), so it
@@ -104,13 +102,11 @@
 # not refreshed — run `glass-atrium agents-only`; no rollback of applied files) ·
 # 12 hook-binding wiring failed (files APPLIED + mirror refreshed, but the
 # settings.json event->hook bindings were NOT reconciled to the new release — run
-# `glass-atrium wire-hooks`; no rollback of applied files) · 13 vendor-removal
-# sweep failed (files APPLIED, but a vendor-DROPPED file could not be moved to
-# Trash — remove it manually; no rollback of applied files) · 14 release asset
+# `glass-atrium wire-hooks`; no rollback of applied files) · 14 release asset
 # fetch/derivation failed BEFORE apply (manifest or bundle HTTP download failed,
 # or the manifest carries no .version to derive the bundle name — nothing was
 # applied). A commit callback returns a plain non-zero on failure and its caller
-# maps that to the named code above — the removal sweep's move failure to 13.
+# maps that to the named code above.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -129,8 +125,7 @@
 # (<GA root>/rendered/launchd) · ATRIUM_UPDATE_MONITOR_DIR ·
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
-# ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base) ·
-# ATRIUM_UPDATE_TRASH_DIR (vendor-removal Trash sink; default ${HOME}/.Trash).
+# ATRIUM_UPDATE_CLAUDE_BIN · AUTOAGENT_BACKUP_DIR (agents-bak base).
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -227,13 +222,6 @@ _update_workdir=""
 _update_clean_paths=""
 _update_staging=""
 _update_snapshot=""
-# Vendor-removal sweep (#14) run state: the removal set + per-run Trash sink +
-# install root. SET in update_sweep_removed_files, READ by the removal commit
-# callback — the same carrier pattern as _update_clean_paths for the swap
-# callback, so the callback needs no arguments and no stdin.
-_update_removal_paths=""
-_update_removal_root=""
-_update_removal_dest=""
 
 # P3 headless / web-triggered orchestration run state (see the file header). Mode
 # flag + DB update_job tracking state + the resolved running-script dir (for the
@@ -2578,168 +2566,23 @@ update_report_uncovered_paths() {
   return 0
 }
 
-# ---------------------------------------------------------------------------
-# Vendor-removal sweep (#14) — the deletion counterpart of the non-agent sync
-# ---------------------------------------------------------------------------
-#
-# spine_find_changed_files selects files the release ADDS or CHANGES; nothing
-# handled the files a release DROPS, so a vendor-retired file lingered forever
-# (the "no deletion pass" gap). spine_find_removed_files (apply-spine.sh) is the
-# provenance-gated DETECTION half — the non-agent files the PRIOR-VENDOR baseline
-# shipped but the new release dropped, restricted to still-pristine copies (live
-# hash == baseline hash); a USER-edited dropped file is PRESERVED (never listed).
-# Below is the caller-side REMOVAL half: sensitive-partition the list, then MOVE
-# each remaining file to a per-run Trash sink (File Deletion Policy: rm is FORBIDDEN
-# for source/config — mv to ~/.Trash on macOS). Removal policy stays caller-side —
-# the same split as
-# spine_find_changed_files -> update_commit_callback.
-
-# The macOS Trash dir the sweep moves vendor-dropped files into. ATRIUM_UPDATE_TRASH_DIR
-# overrides for hermetic tests; default ${HOME}/.Trash.
-update_trash_dir() {
-  printf '%s\n' "${ATRIUM_UPDATE_TRASH_DIR:-${HOME}/.Trash}"
-}
-
-# The removal sweep's committing callback. Moves each vendor-dropped file to the
-# per-run Trash sink preserving its relative path (atomic mv into one recovery
-# bundle). Reads the removal set + sink from globals, the same carrier pattern as
-# update_commit_callback. Loud-fail non-zero on ANY move failure, which the caller
-# maps to its named exit code.
-_update_removal_commit_callback() {
-  local path src dest rc=0
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    src="${_update_removal_root}/${path}"
-    # Already gone (concurrent sweep / manual delete) → nothing to move.
-    [[ -e "${src}" ]] || continue
-    dest="${_update_removal_dest}/${path}"
-    if mkdir -p -- "$(dirname -- "${dest}")" && mv -f -- "${src}" "${dest}"; then
-      update_log "vendor-dropped file removed → Trash: ${path}"
-    else
-      update_log "WARN: could NOT move ${src} to Trash (${dest}) — left in place"
-      rc=1
-    fi
-  done <<<"${_update_removal_paths}"
-  return "${rc}"
-}
-
-# Retire the settings.json BINDINGS of any HOOK files the vendor-removal sweep just
-# Trashed (#13). A dropped hooks/<name> file whose event->hook binding LINGERS still
-# points at the now-absent file → the hook ERRORS when its event fires. wire_hooks only
-# ADDS bindings, so the launcher's targeted `retire-hook-bindings` subcommand (a jq
-# surgical per-basename removal) is invoked — via the SAME launcher-subprocess model as
-# update_wire_hooks_post_apply (sourcing ga-core.sh in-process collides on readonly
-# GA_ROOT + bare log()/die()). Best-effort + LOUD: a retire failure WARNs (the file is
-# already removed; doctor's hook-binding check surfaces a dangling binding), NEVER rolls
-# back the applied sync. Args: $1 = removed paths (newline-separated) · $2 =
-# live install root.
-update_retire_swept_hook_bindings() {
-  local removed_paths="$1" root="$2" path launcher
-  local -a basenames=()
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    # a BOUND hook is a TOP-LEVEL hooks/<basename> file — bindings key on the flat
-    # basename, so hooks/lib/*, hooks/test/* etc. are never bound and are skipped.
-    case "${path}" in
-      hooks/*/*) continue ;; # nested (lib/test/…) — not a bound hook
-      hooks/*) basenames+=("${path#hooks/}") ;;
-      *) continue ;; # non-hook file
-    esac
-  done <<<"${removed_paths}"
-  [[ "${#basenames[@]}" -gt 0 ]] || return 0
-  launcher="${root}/glass-atrium"
-  if [[ ! -x "${launcher}" ]]; then
-    update_log "WARN: launcher missing (${launcher}) — could NOT retire the settings.json binding(s) for removed hook(s): ${basenames[*]}; run '${launcher} retire-hook-bindings ${basenames[*]}' after repairing the install"
-    return 0
-  fi
-  # if-condition suppresses set -e; a launcher die/non-zero is a plain rc here (never
-  # aborts the parent) → WARN, do not roll back the already-applied sync.
-  if "${launcher}" retire-hook-bindings "${basenames[@]}"; then
-    update_log "retired settings.json binding(s) for removed hook(s): ${basenames[*]}"
-  else
-    update_log "WARN: retire of settings.json binding(s) for removed hook(s) FAILED (${basenames[*]}) — the dropped hook file(s) were removed but a dangling binding may remain; run '${launcher} retire-hook-bindings ${basenames[*]}' manually"
-  fi
-}
-
-# Drive the vendor-removal sweep for a completed apply. No prior-vendor baseline
-# (first-ever update / relocated install) → empty set → no-op (degrade-safe: never
-# sweep without vendor provenance, the same stance as the roster gate's remove
-# side). A DETECTION failure (corrupt baseline hash gap) is LOUD but NON-fatal —
-# it WARNs and skips so the run still captures a fresh baseline that self-heals the
-# corrupt anchor (aborting here would only re-abort next run). A move that FAILS is
-# a named loud-fail (exit 13) so a stale-file leftover surfaces with
-# an actionable cause (never 2>/dev/null-absorbed); the applied sync is never
-# rolled back. Args: $1 = prior-vendor baseline manifest (may be empty/absent) ·
-# $2 = new manifest · $3 = live install root.
-update_sweep_removed_files() {
-  local baseline_manifest="${1:-}" manifest="$2" root="$3"
-  local removed clean_removals sensitive_removals path ts rc=0
-  # No provenance anchor → refuse to sweep anything.
-  [[ -n "${baseline_manifest}" && -f "${baseline_manifest}" ]] || return 0
-  if ! removed="$(spine_find_removed_files "${baseline_manifest}" "${manifest}" "${root}")"; then
-    update_log "WARN: vendor-removal selection failed (baseline hash gap) — skipping the deletion pass; a fresh baseline will be captured next"
-    return 0
-  fi
-  [[ -n "${removed}" ]] || return 0
-
-  # Sensitive-partition the removal set: a vendor-dropped harness file (plist,
-  # security rule, credential) is REPORTED for manual review, never auto-Trashed —
-  # the same fail-closed carve-out the non-agent sync applies to changed files.
-  clean_removals="$(mktemp -t glass-atrium-remove-clean.XXXXXX)"
-  sensitive_removals="$(mktemp -t glass-atrium-remove-sens.XXXXXX)"
-  printf '%s\n' "${removed}" \
-    | update_partition_sensitive "${clean_removals}" "${sensitive_removals}"
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] && update_log "  (sensitive vendor-drop, NOT removed — review manually) ${path}"
-  done <"${sensitive_removals}"
-  if [[ ! -s "${clean_removals}" ]]; then
-    rm -f -- "${clean_removals}" "${sensitive_removals}"
-    return 0
-  fi
-
-  # Per-run Trash sink: a timestamped subdir so one run's removals form a single
-  # recovery bundle and same-basename drops never collide.
-  ts="$(date +%Y%m%d-%H%M%S)"
-  _update_removal_root="${root}"
-  _update_removal_dest="$(update_trash_dir)/glass-atrium-update-removed-${ts}_$$"
-  _update_removal_paths="$(cat "${clean_removals}")"
-
-  _update_removal_commit_callback || rc=$?
-  rm -f -- "${clean_removals}" "${sensitive_removals}"
-  case "${rc}" in
-    0)
-      update_log "vendor-removal sweep complete"
-      # #13: only on a COMPLETE sweep (all dropped files moved to Trash) retire the
-      # settings.json bindings of any removed hook files — a failed sweep left the
-      # files in place, so their bindings MUST stay.
-      update_retire_swept_hook_bindings "${_update_removal_paths}" "${root}"
-      ;;
-    *) update_die_code 13 "vendor-removal sweep FAILED to move one or more dropped files to Trash — update files applied, but stale vendor files remain; remove them manually (see the WARN lines above)" ;;
-  esac
-}
-
-# The merge → base-content-capture → vendor-sweep → baseline-capture finalize
-# sequence, shared by the main post-apply path and both early-return paths
-# (already-up-to-date / all-sensitive). TWO order constraints, both load-bearing:
-#   * update_capture_base_content IMMEDIATELY follows the merge. The sweep is FATAL
-#     on failure (update_die_code 13), so any step between the two can strand a
-#     LANDED merge at the OLD base — and a stale base re-conflicts that already-
-#     merged region on the next same-release run. It reads only the release tree +
-#     the merge's own ledger/backup globals, so it has no sweep dependency.
-#   * the sweep keys off the STILL-OLD baseline, so it MUST precede
-#     update_capture_baseline advancing the hash anchor.
+# The merge → base-content-capture → baseline-capture finalize sequence, shared by
+# the main post-apply path and both early-return paths (already-up-to-date /
+# all-sensitive). One order constraint is load-bearing: update_capture_base_content
+# reads the merge's own outcome ledger to decide which bodies may advance, so it
+# runs after the merge and before update_capture_baseline advances the hash anchor
+# — a base left at the OLD anchor re-conflicts an already-merged region on the next
+# same-release run.
 # The merge step also emits the resolved-gap core.autoagent_proposals record, so this
 # shared path — not the headless-only update_job section — is why an INTERACTIVE run
 # reaches Postgres (boundary note at the top of the file).
 # finding #9 (anchors advance for landed agent merges even on an agent-only /
-# sensitive-only update) + finding #14 (a drop-only release still sweeps). Args: $1
-# = new-release tree · $2 = manifest · $3 = install root · $4 = prior-vendor
-# baseline manifest.
+# sensitive-only update). Args: $1 = new-release tree · $2 = manifest · $3 =
+# install root.
 update_finalize_merge_and_anchors() {
-  local new_dir="$1" manifest="$2" root="$3" baseline_manifest="$4"
+  local new_dir="$1" manifest="$2" root="$3"
   update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
   update_capture_base_content "${new_dir}"
-  update_sweep_removed_files "${baseline_manifest}" "${manifest}" "${root}"
   update_capture_baseline "${manifest}"
 }
 
@@ -2918,10 +2761,9 @@ update_run() {
     || update_die "change selection failed (manifest hash gap) — refusing to apply"
   if [[ -z "${changed}" ]]; then
     update_log "already up to date — no non-agent files changed"
-    # Agent-only release path (finding #9 / #14): still advance the anchors for
-    # landed merges (outcome-keyed) and sweep a drop-only release, even with no
-    # non-agent content change.
-    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # Agent-only release path (finding #9): still advance the anchors for landed
+    # merges (outcome-keyed), even with no non-agent content change.
+    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}"
     # post-landing mode enforcement (D6 R1) — agent merges may still have landed
     update_enforce_manifest_modes "${manifest}" "${root}"
     # Persist the new-version manifest even with no non-agent file change, so an
@@ -2952,9 +2794,9 @@ update_run() {
   fi
   if [[ ! -s "${clean_paths}" ]]; then
     update_log "no auto-syncable files remain after the sensitive partition — nothing to apply"
-    # Sensitive-only path (finding #9 / #14): advance anchors for landed merges
-    # (outcome-keyed) and sweep a drop-only release on the all-sensitive path too.
-    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+    # Sensitive-only path (finding #9): advance anchors for landed merges
+    # (outcome-keyed) on the all-sensitive path too.
+    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}"
     # post-landing mode enforcement (D6 R1) — agent merges may still have landed
     update_enforce_manifest_modes "${manifest}" "${root}"
     # Persist the new-version (source-present-filtered) manifest so the sensitive-only
@@ -2983,14 +2825,10 @@ update_run() {
     *) update_die "apply failed — the spine rolled back the partial swap (no files changed)" ;;
   esac
 
-  # Steps 5b/5c/6 — agent EDITABLE-region merge (E4), then the vendor-removal sweep
-  # (#14: drops keyed off the STILL-OLD baseline), then capture the applied manifest
-  # as the base@install anchor + persist the
-  # new-release agent bodies into the base-content store (T24 — real base TEXT for the
-  # next 3-way merge). Ordering is load-bearing: the sweep runs BEFORE the baseline
-  # advance and BEFORE the mirror-farm refresh below, so a removed file gains no
-  # dangling mirror.
-  update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}" "${baseline_manifest}"
+  # Steps 5b/6 — agent EDITABLE-region merge (E4), then capture the applied manifest
+  # as the base@install anchor + persist the new-release agent bodies into the
+  # base-content store (T24 — real base TEXT for the next 3-way merge).
+  update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}"
 
   # Step 6.5 — post-landing mode enforcement (D6 R1): every landing surface of
   # this run (spine sync, agent merges) has completed — converge on manifest.modes.

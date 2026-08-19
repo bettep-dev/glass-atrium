@@ -461,11 +461,10 @@ seed_baseline() {
 }
 
 # Seed a prior-vendor baseline manifest with REAL hashes computed from the LIVE
-# install tree — the vendor-removal sweep (#14) needs a baseline hash to prove a
-# dropped file is still pristine (unmodified vs the vendor body). Unlike
-# seed_baseline (empty hashes; agent-only roster tests), this is for NON-agent
-# removals whose provenance check does a hash lookup. $1 = update-state dir, $2 =
-# install root, $3.. = relative paths (hashed from ${install}/<path>).
+# install tree, so a dropped file reads as still pristine (unmodified vs the vendor
+# body) to anything that hash-checks it. Unlike seed_baseline (empty hashes;
+# agent-only roster tests), this is for NON-agent drops. $1 = update-state dir, $2
+# = install root, $3.. = relative paths (hashed from ${install}/<path>).
 seed_baseline_hashed() {
   local statedir="$1" install_root="$2"
   shift 2
@@ -1663,8 +1662,8 @@ rm -rf /tmp/everything
   [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
 }
 
-# Same-release idempotency (second-run no-op · fatal-sweep capture ordering ·
-# conflict routing) lives in scripts/test/glass-atrium-update-idempotency.bats —
+# Same-release idempotency (second-run no-op · conflict routing) lives in
+# scripts/test/glass-atrium-update-idempotency.bats —
 # a separate file so it gets its own CI per-file parallel timeout slot.
 
 # ---------------------------------------------------------------------------
@@ -1922,19 +1921,15 @@ rm -rf /tmp/everything
   [[ "$output" != *"dev-b"* ]] || return 1
 }
 
-# vendor-removal sweep (#14)
-#
-# spine_find_removed_files (apply-spine.sh) already SELECTS the vendor-dropped,
-# provenance-clean files (unit-covered in apply-spine.bats); these pin the
-# caller-side REMOVAL half wired into update_run: the dropped file is MOVED to a
-# per-run Trash sink, a user-edited drop is PRESERVED, and the sweep still runs on
-# the no-content-change path. ATRIUM_UPDATE_TRASH_DIR redirects the sink into
-# the sandbox so no real ~/.Trash is touched.
+# vendor drops (Rule 1: the release replaces, it never deletes)
 
-@test "#14 sweep: a provenance-clean dropped file is MOVED to Trash" {
+# A file the release stops shipping is LEFT IN PLACE. The prior code selected a
+# still-pristine dropped file and moved it to a Trash sink; that sweep is gone, so
+# the accepted residue is pinned here rather than discovered on a live install.
+@test "a vendor-dropped file is LEFT IN PLACE and no removal is reported" {
   # baseline (prior vendor) ships hooks/old.sh; the new release DROPS it while
-  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash → pristine →
-  # swept to the per-run Trash sink (mv, not rm), not left dangling in the install.
+  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash, which is
+  # exactly the provenance-clean case the removed sweep acted on.
   seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
@@ -1949,74 +1944,10 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ] || return 1
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # sync still applied
-  [[ ! -e "${INSTALL}/hooks/old.sh" ]] || return 1                         # dropped file removed
-  [[ "$output" == *"vendor-dropped file removed"* ]] || return 1
-  # moved to the per-run Trash sink (recovery bundle), preserving its relative path
-  run bash -c 'cat "'"${WORK}"'/trash"/glass-atrium-update-removed-*/hooks/old.sh'
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == "vendor-body" ]] || return 1
-}
-
-@test "#14 sweep: a USER-MODIFIED dropped file is PRESERVED (provenance guard)" {
-  # live hooks/old.sh diverges from the baseline (pristine) hash → a user edit →
-  # NEVER swept, even though the release dropped it. 100% user-edit preservation.
-  seed_file "${INSTALL}" "hooks/old.sh" "USER-EDITED"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${WORK}" "pristine" "vendor-body"
-  local pristine_hash
-  pristine_hash="$(sha256_of "${WORK}/pristine")"
-  mkdir -p "${STATE}/update-state"
-  printf '{"version":"1.0.0","files":["hooks/old.sh"],"hashes":{"hooks/old.sh":"%s"}}\n' \
-    "${pristine_hash}" >"${STATE}/update-state/baseline-manifest.json"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "USER-EDITED" ]] || return 1 # PRESERVED (not swept)
-}
-
-@test "#14 sweep: a drop-only release sweeps on the no-content-change path" {
-  # No non-agent content change (scripts/tool.sh identical both sides) → update_run
-  # hits the "already up to date" early return, which STILL runs the sweep, so the
-  # dropped file reaches the Trash sink on a run that applied no content at all.
-  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "same"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "same"
-  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" # hooks/old.sh DROPPED
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"already up to date"* ]] || return 1 # no content change → early return
-  [[ "$output" == *"vendor-dropped file removed"* ]] || return 1
-  [[ ! -e "${INSTALL}/hooks/old.sh" ]] || return 1 # swept even with nothing to apply
-  run bash -c 'cat "'"${WORK}"'/trash"/glass-atrium-update-removed-*/hooks/old.sh'
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == "vendor-body" ]] || return 1
+  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1    # dropped file untouched
+  [[ "$output" != *"vendor-dropped file removed"* ]] || return 1           # nothing reported
 }

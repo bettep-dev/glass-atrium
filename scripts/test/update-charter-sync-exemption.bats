@@ -6,11 +6,8 @@
 # it out of every apply. No deploy path could reach the file, while ga-doctor
 # advertised that same updater as the remedy for the drift the refusal caused.
 #
-# THE CONTRACT NOW UNDER TEST — the carve-out is ONE cell of a 4-consumer grid:
+# THE CONTRACT NOW UNDER TEST — the carve-out is ONE cell of a 3-consumer grid:
 #   * the CHANGED-FILE partition (the apply path) ALLOWS the charter;
-#   * the VENDOR-REMOVAL sweep still REFUSES it — a vendor drop is reported, never
-#     auto-Trashed, and relaxing that partition would convert a report into a
-#     deletion;
 #   * a retained sensitive entry (scoped/scope-security.md) refuses on BOTH;
 #   * the SYMLINK row (rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md) is NOT
 #     exempt: the spine stages with a dereferencing `cp -p` and commits by rename,
@@ -23,8 +20,7 @@
 # STRATEGY mirrors the established suite pattern: update.sh is SOURCED (update_main
 # is skipped when sourced) inside a per-test mktemp sandbox with GA_ROOT and the
 # state dirs redirected into it; the end-to-end test drives the real entry point
-# through the ATRIUM_UPDATE_SRC_DIR seam with the confirm injected. No ~/.claude or
-# ~/.glass-atrium mutation, and Trash is redirected via ATRIUM_UPDATE_TRASH_DIR.
+# through the ATRIUM_UPDATE_SRC_DIR seam. No ~/.claude or ~/.glass-atrium mutation.
 #
 # ASSERTION FORM — every `[[ ]]` check goes through a gated helper, and that is not
 # a style choice. bats runs a test body with errexit OFF, relying on its ERR trap,
@@ -152,14 +148,6 @@ assert_bucket_count() {
   }
 }
 
-# $1 = haystack · $2 = needle substring.
-assert_contains() {
-  [[ "$1" == *"$2"* ]] || {
-    printf 'FAILED: [%s] absent from:\n%s\n' "$2" "$1" >&2
-    return 1
-  }
-}
-
 # $1 = observed · $2 = expected · $3 = label naming what was compared.
 assert_equals() {
   [[ "$1" == "$2" ]] || {
@@ -201,35 +189,6 @@ assert_equals() {
   assert_bucket_count "$output" CLEAN "${CHARTER}" 0
 }
 
-@test "REGRESSION: a vendor DROP of the charter is reported, never Trashed" {
-  # baseline ships the charter, the new release drops it — the sweep's provenance
-  # check clears (live content == baseline hash), so only the sensitive partition
-  # stands between the file and the Trash sink.
-  seed_file "${NEWSRC}" "${CHARTER}" "charter body"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "tool"
-  write_manifest_with_modes "${WORK}/baseline.json" "${CHARTER}" "scripts/tool.sh"
-  write_manifest_with_modes "${WORK}/new.json" "scripts/tool.sh"
-  seed_file "${INSTALL}" "${CHARTER}" "charter body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "tool"
-
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_TRASH_DIR="'"${WORK}"'/trash"
-    mkdir -p "${ATRIUM_UPDATE_TRASH_DIR}"
-    # The sweep asks nothing, so the ONLY thing standing between the charter and
-    # the Trash sink is the strict partition — which is what this test pins.
-    update_sweep_removed_files "'"${WORK}"'/baseline.json" "'"${WORK}"'/new.json" "'"${INSTALL}"'"
-  ' 2>/dev/null
-  [ "$status" -eq 0 ]
-  assert_contains "$output" "sensitive vendor-drop, NOT removed"
-  assert_contains "$output" "GLASS_ATRIUM_GLOBAL_RULES.md"
-  # the file survived and nothing reached the Trash sink
-  [ -f "${INSTALL}/${CHARTER}" ]
-  assert_equals "$(find "${WORK}/trash" -type f 2>/dev/null)" "" "Trash sink must stay empty"
-}
-
 @test "C5: a full run syncs the charter, leaves the symlink a symlink, and clears BOTH manifest rows" {
   seed_charter_pair "${INSTALL}" "old charter"
   seed_charter_pair "${NEWSRC}" "new charter"
@@ -244,7 +203,6 @@ assert_equals() {
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
