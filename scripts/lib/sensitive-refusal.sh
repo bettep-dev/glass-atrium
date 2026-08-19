@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # sensitive-refusal.sh — the update skill's shared sensitive-file refusal gate.
 # Pure sourced library: function defs only, no side effects (same convention as
-# apply-spine.sh / apply-gate.sh / atrium-config.sh); strict mode is the CALLER's
-# responsibility (a sourced lib must not mutate caller shell options).
+# apply-spine.sh / atrium-config.sh); strict mode is the CALLER's responsibility
+# (a sourced lib must not mutate caller shell options).
 #
 # Role (gate G7): the skill MUST refuse to sync a sensitive harness file
 # (GLOBAL_RULES, security scope rules, a credential file, a launchd plist) or a

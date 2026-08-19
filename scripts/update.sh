@@ -2536,11 +2536,11 @@ USAGE
 # The committing callback for the non-agent sync: snapshot+swap the staged change
 # set via the spine. Globals carry the paths, so the callback takes no arguments.
 #
-# Drops a `.commit-ok` FILE marker on a clean swap (finding #7). A file rather than a
-# shell var, so the marker reaches the parent's EXIT trap from any subshell this is
-# invoked from. Its presence tells update_cleanup the swap committed cleanly (snapshot
-# is safe to delete); its absence beside a non-empty snapshot means a failed or
-# interrupted apply whose snapshot must be preserved.
+# Drops a `.commit-ok` FILE marker on a clean swap (finding #7). Its presence tells
+# update_cleanup the swap committed cleanly (snapshot is safe to delete); its absence
+# beside a non-empty snapshot means a failed or interrupted apply whose snapshot must
+# be preserved. A file rather than a return value because the EXIT trap reads it on
+# ANY exit path, including a signal that ends the run with no verdict to return.
 update_commit_callback() {
   local rc=0
   printf '%s\n' "${_update_clean_paths}" \
