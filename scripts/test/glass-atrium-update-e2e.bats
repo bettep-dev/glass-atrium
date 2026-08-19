@@ -15,10 +15,9 @@
 # Hermetic (as glass-atrium-update.bats): a per-test mktemp sandbox with GA_ROOT /
 # AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
 # into it; libs source from the REAL install. gh download bypassed via
-# ATRIUM_UPDATE_SRC_DIR, confirm injected via ATRIUM_UPDATE_CONFIRM_ANSWER, the
-# both-changed Haiku verify pointed at a hermetic claude STUB (AUTOAGENT_CLAUDE_BIN)
-# that contacts no network — /dev/tty, gh, the real claude CLI, and the live install /
-# daemon / monitor are never touched.
+# ATRIUM_UPDATE_SRC_DIR, the both-changed Haiku verify pointed at a hermetic claude
+# STUB (AUTOAGENT_CLAUDE_BIN) that contacts no network — gh, the real claude CLI, and
+# the live install / daemon / monitor are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -169,7 +168,6 @@ STUB
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/fake-claude.sh" \
     GA_PAUSE_FLAG="${STATE}/update-state/autoagent-pause.flag" \
@@ -219,7 +217,7 @@ STUB
 
 @test "SIGTERM mid-merge releases the .apply-lock and clears the pause flag (trap path)" {
   # Minimal fixture that reaches the both-changed Haiku verify: one non-agent
-  # change (drives the confirmed spine sync) + the both-changed agent (the
+  # change (drives the spine sync) + the both-changed agent (the
   # claude call site — the updater is INSIDE the merge, lock + pause flag held).
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"
   seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"
@@ -252,7 +250,6 @@ STUB
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/fake-claude.sh" \
     UPD_CLAUDE_READY="${WORK}/claude.ready" \
     UPD_CLAUDE_RESUME="${WORK}/claude.resume" \

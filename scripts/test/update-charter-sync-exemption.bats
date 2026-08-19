@@ -7,7 +7,7 @@
 # advertised that same updater as the remedy for the drift the refusal caused.
 #
 # THE CONTRACT NOW UNDER TEST — the carve-out is ONE cell of a 4-consumer grid:
-#   * the CHANGED-FILE partition (preview + apply) ALLOWS the charter;
+#   * the CHANGED-FILE partition (the apply path) ALLOWS the charter;
 #   * the VENDOR-REMOVAL sweep still REFUSES it — a vendor drop is reported, never
 #     auto-Trashed, and relaxing that partition would convert a report into a
 #     deletion;
@@ -119,8 +119,6 @@ load_skill() {
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-spine.sh"
   # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/apply-gate.sh"
-  # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/sensitive-refusal.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-lock.sh"
@@ -220,12 +218,8 @@ assert_equals() {
     load_skill
     export ATRIUM_UPDATE_TRASH_DIR="'"${WORK}"'/trash"
     mkdir -p "${ATRIUM_UPDATE_TRASH_DIR}"
-    # CONFIRM INJECTED ON PURPOSE: without it the gate declines for want of a tty
-    # and the charter survives for a reason that has nothing to do with the
-    # partition — the test would pass even with the refusal removed. With a "y"
-    # queued, the ONLY thing standing between the charter and the Trash sink is
-    # the strict partition, which is what this test exists to pin.
-    export ATRIUM_UPDATE_CONFIRM_ANSWER="y"
+    # The sweep asks nothing, so the ONLY thing standing between the charter and
+    # the Trash sink is the strict partition — which is what this test pins.
     update_sweep_removed_files "'"${WORK}"'/baseline.json" "'"${WORK}"'/new.json" "'"${INSTALL}"'"
   ' 2>/dev/null
   [ "$status" -eq 0 ]
@@ -253,7 +247,6 @@ assert_equals() {
     ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
   [ "$status" -eq 0 ]
 

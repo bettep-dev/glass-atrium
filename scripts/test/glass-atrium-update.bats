@@ -6,17 +6,16 @@
 # reclaimed, a live one blocks; update_partition_sensitive — clean vs sensitive split,
 # fail-CLOSED on error; update_serialize_begin / update_cleanup — pause flag set + lock
 # acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
-# run via the ATRIUM_UPDATE_SRC_DIR seam (verify → confirm → deterministic non-agent
-# sync → baseline; decline writes nothing); boundary asserts — NOT a merge engine
+# run via the ATRIUM_UPDATE_SRC_DIR seam (verify → deterministic non-agent sync →
+# baseline — every changed file applies, the run asks nothing); boundary asserts — NOT a merge engine
 # (agent md excluded), and core.autoagent_proposals reachable through the single
 # sanctioned resolved-gap envelope channel only (no raw SQL, one emitter, one pipe).
 # git is deliberately NOT required — the flow is git-free end to end, proving it runs
 # on a git-less no-.git consumer host.
 # Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
 # AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
-# into it; libs are sourced from the REAL install (REAL_LIB_ROOT). Confirmation
-# injected via ATRIUM_UPDATE_CONFIRM_ANSWER, download bypassed via ATRIUM_UPDATE_SRC_DIR
-# — /dev/tty and gh are never touched.
+# into it; libs are sourced from the REAL install (REAL_LIB_ROOT). The download is
+# bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -92,8 +91,6 @@ load_skill() {
   source "${REAL_LIB_ROOT}/scripts/lib/update-pause-flag.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-spine.sh"
-  # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/apply-gate.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/sensitive-refusal.sh"
   # The git-free serialize path (update_serialize_begin / update_cleanup) resolves
@@ -232,7 +229,7 @@ load_skill() {
 
 # end-to-end apply via the test seam
 
-@test "full run applies a non-agent change on confirm and captures a baseline" {
+@test "full run applies a non-agent change and captures a baseline" {
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -245,7 +242,6 @@ load_skill() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -257,37 +253,11 @@ load_skill() {
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
-@test "full run writes NOTHING when the confirm gate is declined" {
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
-    bash "${SKILL}"
-
-  [ "$status" -ne 0 ]                                  # declined → non-zero
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] # unchanged
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # failure-trap (T09): BOTH the pause flag AND the daemon .apply-lock are
-  # released on the non-zero (declined) exit path so the launchd daemon resumes —
-  # the lock-release leg was previously unasserted on the failure path.
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
-}
-
 @test "full run is a clean no-op (rc0, trap unwound) when nothing changed" {
   # install == new release (identical content + matching manifest hashes) → the
-  # spine selects zero changed files → update_run returns 0 BEFORE the confirm
-  # gate, and the trap still releases the flag + lock. Pins the "already up to
-  # date" orchestration branch (previously untested).
+  # spine selects zero changed files → update_run returns 0 BEFORE the apply step,
+  # and the trap still releases the flag + lock. Pins the "already up to date"
+  # orchestration branch (previously untested).
   seed_file "${INSTALL}" "scripts/tool.sh" "same content"
   seed_file "${NEWSRC}" "scripts/tool.sh" "same content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -300,7 +270,6 @@ load_skill() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -325,7 +294,6 @@ load_skill() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -363,7 +331,7 @@ STUB
   chmod +x "${root}/glass-atrium"
 }
 
-@test "post-apply: update_run invokes 'glass-atrium wire-hooks' AFTER a confirmed apply + farm refresh (install parity)" {
+@test "post-apply: update_run invokes 'glass-atrium wire-hooks' AFTER the apply + farm refresh (install parity)" {
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -379,7 +347,6 @@ STUB
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -416,7 +383,6 @@ STUB
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 12 ]                                          # named loud-fail code
@@ -529,7 +495,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -ne 0 ]                                # gated → non-zero
@@ -562,7 +527,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -ne 0 ]
@@ -591,7 +555,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -629,7 +592,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -663,7 +625,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -ne 0 ]                                  # genuine vendor remove gates
@@ -692,7 +653,6 @@ seed_baseline_hashed() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -730,7 +690,6 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
@@ -821,7 +780,7 @@ PY
   export ATRIUM_UPDATE_PSQL="${WORK}/psql"
   export PSQL_LOG="${WORK}/psql.log"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does NOT fail
   # a bats test, so it would assert nothing here.
@@ -872,7 +831,7 @@ PY
 # agent EDITABLE-region merge (E4 / T19)
 #
 # These pin the LIVE merge integration: each changed agents/<name>.md flows through
-# editable_merge `plan` → the SAME T12 confirm gate → git_txn_apply. The transaction is
+# editable_merge `plan` → git_txn_apply. The transaction is
 # git-FREE (before-image copy → apply → verify → atomic restore on fail; no git repo, no
 # rev-parse — proven by autoagent/test/git-txn-gitfree.bats), so these fixtures run in a
 # NON-git INSTALL sandbox and the merge PROCEEDS whether or not a .git repo is present.
@@ -963,7 +922,6 @@ run_update() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
     bash "${SKILL}"
 }
 
@@ -976,7 +934,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # local learned region kept, vendor Rules structure taken
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
@@ -997,7 +955,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${PIN_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"model: claude-opus-4-8"* ]] # pin kept
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]       # structure taken
@@ -1024,21 +982,9 @@ old vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${pin_only_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${PIN_LOCAL}" ]] # byte-identical
-}
-
-@test "T19: a declined confirm leaves the agent file unmerged (zero writes)" {
-  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
-  seed_base_store "dev-a.md" "${GOAL_BASE}"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
-  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
-
-  run_update n
-  [ "$status" -eq 0 ] # agent merge decline is non-fatal (non-agent path already done/none)
-  [[ "$output" == *"declined"* ]]
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
 }
 
 @test "T19: STRUCTURAL region-count mismatch routes to the agent_lifecycle ceremony (not applied)" {
@@ -1059,7 +1005,7 @@ region one vendor
   seed_file "${NEWSRC}" "agents/dev-a.md" "${one_region}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" == *"STRUCTURAL"* ]]
   [[ "$output" == *"agent_lifecycle"* ]]
@@ -1082,7 +1028,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${danger_body}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" == *"REFUSED sensitive"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${local_body}" ]] # untouched
@@ -1098,7 +1044,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" != *"not a git repo"* ]]                                 # no SKIP path
   [[ "$output" != *"SKIPPED"* ]]
@@ -1107,7 +1053,7 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
 }
 
-@test "T19: agent merge coexists with the non-agent sync (both apply on one confirm)" {
+@test "T19: agent merge coexists with the non-agent sync (both apply in one run)" {
   # A non-agent file AND an agent file both change. The non-agent sync applies via
   # the spine; the agent merge applies via git_txn — both gated by the same y.
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
@@ -1117,7 +1063,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "scripts/tool.sh"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]            # non-agent synced
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
@@ -1133,7 +1079,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # the merge applied — proof the verify PASSED while anchored on the agents-bak copy
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
@@ -1146,22 +1092,19 @@ rm -rf /tmp/everything
   [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
 }
 
-@test "T19: a failed per-file transaction summarizes as rolled-back/unapplied, NOT declined (rc-collision fix)" {
-  # A CONFIRMED run whose single agent transaction fails (read-only target → the
-  # apply cp cannot write → GIT_TXN_APPLY_FAIL) must surface the distinct rc-3
-  # summary. Before the fix the commit callback returned 1, colliding with the
-  # gate's own 1=declined — a confirmed-but-failed run was mislabeled "declined"
-  # and the rolled-back summary branch was unreachable.
+@test "T19: a failed per-file transaction summarizes as rolled-back/unapplied" {
+  # A run whose single agent transaction fails (read-only target → the apply cp
+  # cannot write → GIT_TXN_APPLY_FAIL) must reach the rolled-back summary branch
+  # rather than reporting the merge as applied.
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
   chmod a-w "${INSTALL}/agents/dev-a.md" # plan/diff still read it; the apply cp loud-fails
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] # the agent merge stays best-effort / non-fatal
   [[ "$output" == *"rolled-back or unapplied file(s)"* ]]
-  [[ "$output" != *"merge declined"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
 }
 
@@ -1175,7 +1118,6 @@ rm -rf /tmp/everything
 #   * heartbeat + pause-flag mtime refresh on a long-stage tick
 #   * the EXIT-trap in-progress→failed marking (abort/crash recovery) + WHERE-guarded
 #     terminal writes (a stale-swept row is never resurrected)
-#   * confirm-seam fail-closed (a blank token declines, zero writes)
 #   * install-parity post-step (mock npm build + launchctl kickstart/bootstrap probe)
 #   * the decoupled one-shot launchd plist render
 #   * the claude -p precondition (resolve ok / unresolvable → exit 7 / plist PATH miss)
@@ -1413,41 +1355,6 @@ PLIST
   [ "$output" -ge 2 ] # both terminal writes name the in-progress guard
 }
 
-@test "P3 headless: a blank confirm token is fail-closed (declines, writes nothing)" {
-  # The web commit injects ATRIUM_UPDATE_CONFIRM_ANSWER=yes; ANY other value — including
-  # the empty string that a missing token / no-TTY both resolve to — declines via the
-  # gate's `case "" ) …decline` branch. DB disabled + a stubbed claude keep the run
-  # hermetic; the assertion is that a headless apply with a blank token writes ZERO files.
-  local claude="${WORK}/claude"
-  write_mock_claude "${claude}"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_DB=off \
-    ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
-    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
-    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/nonexistent-oneshot.plist" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="" \
-    bash "${SKILL}" --headless
-
-  [ "$status" -ne 0 ] # declined → non-zero
-  [[ "$output" == *"declined"* ]]
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] # zero writes
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # trap unwound the pause flag + lock on the fail-closed exit
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
-}
-
 @test "P3 headless: a confirmed apply drives in-progress→completed and runs the install-parity post-step" {
   # Full headless success e2e with every external effect seamed to a mock: psql (DB
   # tracking), claude (precondition), npm (monitor rebuild), launchctl (launchd refresh).
@@ -1470,7 +1377,6 @@ PLIST
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="yes" \
     ATRIUM_UPDATE_PSQL="${WORK}/psql" \
     PSQL_LOG="${WORK}/psql.log" \
     ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
@@ -1746,7 +1652,7 @@ rm -rf /tmp/everything
   write_manifest "${WORK}/manifest.json" \
     "agents/dev-a.md" "agents/dev-ref.md" "scripts/tool.sh"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"REFUSED sensitive"* ]] || return 1
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new" ]] || return 1            # non-agent applied
@@ -1762,22 +1668,20 @@ rm -rf /tmp/everything
 # a separate file so it gets its own CI per-file parallel timeout slot.
 
 # ---------------------------------------------------------------------------
-# finding #8 — a rolled-back NON-agent commit must NOT collide with the confirm
-# gate's 1=declined verdict. gate_apply_confirmed propagates the callback's rc
-# VERBATIM; update_commit_callback now remaps ANY spine failure to rc 3 (disjoint
-# from the gate's 1/2), so update_run reports "apply failed — rolled back" instead
-# of the wrong "declined at the confirm gate — no files written".
+# finding #8 — a rolled-back NON-agent commit must reach the caller as a failure.
+# update_commit_callback returns non-zero on any spine failure, so update_run dies
+# with "apply failed — rolled back" and drops no clean-apply marker.
 # ---------------------------------------------------------------------------
 
-@test "finding#8: a rolled-back non-agent commit dies 'apply failed'/rolled-back, NOT 'declined'" {
-  # Force spine_commit_staged to fail on a CONFIRMED apply: the target's parent dir is
-  # read-only, so the atomic-swap sibling-temp write loud-fails → rollback (spine rc 1).
+@test "finding#8: a rolled-back non-agent commit dies 'apply failed'/rolled-back" {
+  # Force spine_commit_staged to fail: the target's parent dir is read-only, so the
+  # atomic-swap sibling-temp write loud-fails → rollback (spine rc 1).
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
   chmod a-w "${INSTALL}/scripts" # the swap's sibling-temp write into this dir loud-fails
 
-  run_update y
+  run_update
   chmod u+w "${INSTALL}/scripts" 2>/dev/null || true # restore BEFORE teardown rm -rf
 
   # NOTE: every assertion is `|| return 1` — bats-core only enforces the LAST command
@@ -1785,11 +1689,10 @@ rm -rf /tmp/everything
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"apply failed"* ]] || return 1
   [[ "$output" == *"rolled back"* ]] || return 1
-  [[ "$output" != *"declined at the confirm gate"* ]] || return 1 # the rc-collision mislabel is gone
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] || return 1 # never left half-swapped
 }
 
-@test "finding#8: update_commit_callback remaps a spine rollback to rc 3 (disjoint from 1/2) + no .commit-ok" {
+@test "finding#8: update_commit_callback reports a spine rollback non-zero + no .commit-ok" {
   run bash -c '
     '"$(declare -f load_skill)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
@@ -1802,7 +1705,7 @@ rm -rf /tmp/everything
     [[ ! -f "${work}/.commit-ok" ]] && echo "NO_MARKER"
   '
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"RC=3"* ]] || return 1     # remapped, not the raw spine rc 1
+  [[ "$output" == *"RC=1"* ]] || return 1      # the spine failure reaches the caller
   [[ "$output" == *"NO_MARKER"* ]] || return 1 # a failed commit never drops the clean-apply marker
 }
 
@@ -1937,7 +1840,6 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
@@ -1971,7 +1873,6 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
@@ -2008,7 +1909,6 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
@@ -2026,13 +1926,12 @@ rm -rf /tmp/everything
 #
 # spine_find_removed_files (apply-spine.sh) already SELECTS the vendor-dropped,
 # provenance-clean files (unit-covered in apply-spine.bats); these pin the
-# caller-side REMOVAL half wired into update_run: the dropped file is previewed
-# through the SAME confirm gate and MOVED to a per-run Trash sink on confirm,
-# a user-edited drop is PRESERVED, a decline leaves it in place, and --preview
-# surfaces the impending deletion. ATRIUM_UPDATE_TRASH_DIR redirects the sink into
+# caller-side REMOVAL half wired into update_run: the dropped file is MOVED to a
+# per-run Trash sink, a user-edited drop is PRESERVED, and the sweep still runs on
+# the no-content-change path. ATRIUM_UPDATE_TRASH_DIR redirects the sink into
 # the sandbox so no real ~/.Trash is touched.
 
-@test "#14 sweep: a provenance-clean dropped file is MOVED to Trash on confirm" {
+@test "#14 sweep: a provenance-clean dropped file is MOVED to Trash" {
   # baseline (prior vendor) ships hooks/old.sh; the new release DROPS it while
   # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash → pristine →
   # swept to the per-run Trash sink (mv, not rm), not left dangling in the install.
@@ -2050,7 +1949,6 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     bash "${SKILL}"
 
@@ -2086,7 +1984,6 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     bash "${SKILL}"
 
@@ -2094,10 +1991,10 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/hooks/old.sh")" == "USER-EDITED" ]] || return 1 # PRESERVED (not swept)
 }
 
-@test "#14 sweep: a drop-only release sweeps on the no-content-change path; decline leaves it" {
+@test "#14 sweep: a drop-only release sweeps on the no-content-change path" {
   # No non-agent content change (scripts/tool.sh identical both sides) → update_run
-  # hits the "already up to date" early return, which STILL runs the sweep. Declining
-  # the removal gate leaves the dropped file untouched and the run stays rc 0.
+  # hits the "already up to date" early return, which STILL runs the sweep, so the
+  # dropped file reaches the Trash sink on a run that applied no content at all.
   seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
   seed_file "${INSTALL}" "scripts/tool.sh" "same"
   seed_file "${NEWSRC}" "scripts/tool.sh" "same"
@@ -2112,35 +2009,14 @@ rm -rf /tmp/everything
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
     ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"already up to date"* ]] || return 1                 # no content change → early return
-  [[ "$output" == *"declined"* ]] || return 1                           # removal gate declined
-  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1 # NOT removed
-}
-
-@test "#14 preview: --preview lists a vendor-dropped file as a would-be removal (zero writes)" {
-  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    bash "${SKILL}" --preview
-
+  [[ "$output" == *"already up to date"* ]] || return 1 # no content change → early return
+  [[ "$output" == *"vendor-dropped file removed"* ]] || return 1
+  [[ ! -e "${INSTALL}/hooks/old.sh" ]] || return 1 # swept even with nothing to apply
+  run bash -c 'cat "'"${WORK}"'/trash"/glass-atrium-update-removed-*/hooks/old.sh'
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"would be removed"* ]] || return 1
-  [[ "$output" == *"hooks/old.sh"* ]] || return 1
-  [[ -e "${INSTALL}/hooks/old.sh" ]] || return 1 # preview writes NOTHING
+  [[ "$output" == "vendor-body" ]] || return 1
 }

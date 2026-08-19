@@ -55,7 +55,6 @@ SCOPE_FILES=(
   scripts/lib/daemon-bootstrap-common.sh
   scripts/lib/daemon-lock.sh
   scripts/lib/update-pause-flag.sh
-  scripts/lib/apply-gate.sh
   scripts/lib/pg-report-drop.sh
   scripts/lib/wiki-envelope.sh
 )

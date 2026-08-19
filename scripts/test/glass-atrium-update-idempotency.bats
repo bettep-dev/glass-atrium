@@ -28,9 +28,8 @@
 #
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
 # ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected into it; the
-# download is bypassed via ATRIUM_UPDATE_SRC_DIR, the confirm injected via
-# ATRIUM_UPDATE_CONFIRM_ANSWER and AUTOAGENT_CLAUDE_BIN pointed at a path that is
-# never created, so /dev/tty, gh and the claude CLI are never touched.
+# download is bypassed via ATRIUM_UPDATE_SRC_DIR and AUTOAGENT_CLAUDE_BIN points at
+# a path that is never created, so gh and the claude CLI are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -123,7 +122,7 @@ base goal
 ## Rules
 NEW vendor rules'
 
-# $1 = confirm answer · $2 = gap-policy kill switch (empty = the default policy).
+# $1 = gap-policy kill switch (empty = the default policy).
 # The switch is passed EXPLICITLY rather than forwarded from the ambient environment:
 # a `${VAR:-}` forward reads as a hermeticity pin while actually letting an operator's
 # exported value decide which policy the run under test exercises.
@@ -136,8 +135,7 @@ run_update() {
     ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
-    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${2-}" \
+    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${1-}" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/no-such-claude" \
     bash "${SKILL}"
 }
@@ -148,7 +146,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   local merged
   merged="$(cat "${INSTALL}/agents/dev-a.md")"
@@ -157,7 +155,7 @@ run_update() {
   # the base advanced to the RELEASE body — the anchor that makes run 2 a no-op
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_RELEASE}" ]] || return 1
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"no net change"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${merged}" ]] || return 1
@@ -233,7 +231,7 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y 0
+  run_update 0
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
@@ -290,7 +288,7 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" != *"CONFLICT (merge-conflict)"* ]] || return 1
 
@@ -350,7 +348,7 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-b.md" "${GOAL_RELEASE//dev-a/dev-b}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "agents/dev-b.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"CONFLICT (gated-2way-present-both) in agents/dev-a.md"* ]] || return 1
 

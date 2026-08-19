@@ -37,31 +37,29 @@
 #      (manifest.json + the hashed bundle) for config [release].repo and extract.
 #   3. VERIFY: per-file SHA-256 of every changed file == manifest hashes[path]
 #      (spine_stage_and_verify — loud-fail leaves the install untouched).
-#   4. FOREGROUND CONFIRM (T12 / gate G3): a per-file unified-diff preview then a
-#      single explicit y/N confirm; declining writes ZERO files (structural).
-#   5. DETERMINISTIC NON-AGENT SYNC (T13): snapshot + swap + rollback via the
+#   4. DETERMINISTIC NON-AGENT SYNC (T13): snapshot + swap + rollback via the
 #      apply-spine (spine_commit_staged). Agent EDITABLE-region merge is EXCLUDED
 #      here and left as a documented CALL SEAM for E4 (T17-T19).
-#   5a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
+#   4a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
 #      conflicting EDITABLE gaps took the release side (the boundary note above) —
 #      emitted from the merge step in every entry mode, best-effort.
-#   5b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
+#   4b. VENDOR-REMOVAL SWEEP (#14): the deletion counterpart of the sync — move
 #      files the prior-vendor baseline shipped but this release DROPPED (provenance
-#      -clean only; a user-edited drop is PRESERVED) to Trash, previewed through the
-#      SAME confirm gate. Runs before the baseline capture (still-old anchor) and
-#      the mirror-farm refresh (a removed file gains no dangling mirror).
-#   6. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
+#      -clean only; a user-edited drop is PRESERVED) to Trash. Runs before the
+#      baseline capture (still-old anchor) and the mirror-farm refresh (a removed
+#      file gains no dangling mirror).
+#   5. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
 #      base@install anchor for the next update's 3-anchor merge.
-#   7. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
-#      path (success, decline, failure, SIGINT/SIGTERM).
+#   6. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
+#      path (success, failure, SIGINT/SIGTERM).
 #
 # Sensitive-path refusal (T15 / gate G7): a sensitive harness file (a security
 # scope rule, a credential file, a launchd plist) is NEVER auto-synced by the
 # deterministic path — it is partitioned OUT of the apply set via the shared
 # python helper (autoagent/lib/sensitive_patterns.py, the SINGLE refusal source)
 # and reported for manual review. The shell NEVER re-implements the refusal regex.
-# ONE carve-out, and it applies to the CHANGED-FILE partition only (preview +
-# apply, via update_partition_sensitive_sync): the charter
+# ONE carve-out, and it applies to the CHANGED-FILE partition only (the apply
+# path, via update_partition_sensitive_sync): the charter
 # agents/GLASS_ATRIUM_GLOBAL_RULES.md is exempt, because the updater is the sole
 # live write seam and its refusal made that file unreachable by any deploy while
 # ga-doctor advertised this updater as the drift remedy. The vendor-REMOVAL sweep
@@ -73,26 +71,22 @@
 #
 # Test seam: ATRIUM_UPDATE_SRC_DIR + ATRIUM_UPDATE_SRC_MANIFEST, when both set,
 # bypass the network download/extract (the new-release tree + manifest are supplied
-# directly) so the apply pipeline is exercisable hermetically. Confirmation is
-# injectable via ATRIUM_UPDATE_CONFIRM_ANSWER (the apply-gate's own seam).
+# directly) so the apply pipeline is exercisable hermetically.
 #
 # ---------------------------------------------------------------------------
-# P3 — headless / web-triggered orchestration (layered ON TOP of the interactive
-# E3 flow above; the interactive TTY path is behavior-unchanged).
+# P3 — headless / web-triggered orchestration (layered ON TOP of the CLI flow
+# above; the CLI path is behavior-unchanged).
 # ---------------------------------------------------------------------------
-# Entry-point invariance: the SAME script backs both `glass-atrium update` (CLI,
-# interactive TTY) and the web Update button (headless, non-TTY), the latter run
-# by a DECOUPLED one-shot launchd job so the install-parity post-step's monitor
-# `kickstart -k` cannot kill the update runner. Subflags select the mode:
-#   (default)            interactive TTY apply — E3 behavior, NO DB tracking.
-#   --headless           non-TTY apply: core.update_job status tracking
+# Entry-point invariance: the SAME script backs both `glass-atrium update` (CLI)
+# and the web Update button (headless), the latter run by a DECOUPLED one-shot
+# launchd job so the install-parity post-step's monitor `kickstart -k` cannot kill
+# the update runner. No mode asks a question: the release bundle is authoritative
+# and every changed file is applied. Subflags select the mode:
+#   (default)            CLI apply — E3 behavior, NO DB tracking.
+#   --headless           apply with core.update_job status tracking
 #                        (in-progress→completed/failed) + heartbeat + the
 #                        install-parity post-step (monitor rebuild + launchd
-#                        refresh). Confirm is the ATRIUM_UPDATE_CONFIRM_ANSWER
-#                        seam (no TTY): unset/empty => fail-closed decline, zero
-#                        writes; P3-T3 injects `yes` on an explicit web confirm.
-#   --preview            dry-run: download + per-file diff to stdout, ZERO writes,
-#                        no lock, no DB (P3-T3 consumes the diff for its nonce).
+#                        refresh).
 #   --restore-agents ID  restore agents/*.md from the agents-bak <ID> before-image
 #                        (git-revert replacement, consumed by P3-T5).
 #   --render-oneshot     render the DECOUPLED one-shot launchd plist and print its
@@ -115,7 +109,8 @@
 # Trash — remove it manually; no rollback of applied files) · 14 release asset
 # fetch/derivation failed BEFORE apply (manifest or bundle HTTP download failed,
 # or the manifest carries no .version to derive the bundle name — nothing was
-# applied).
+# applied). A commit callback returns a plain non-zero on failure and its caller
+# maps that to the named code above — the removal sweep's move failure to 13.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -219,24 +214,23 @@ update_require_tools() {
 # Writer-serialization (pause flag + lock) — state tracked for trap cleanup
 # ---------------------------------------------------------------------------
 
-# Mutable run state (globals — set across functions, consumed in the gate
-# callback + the trap cleanup; declared here so strict mode + shellcheck see a
+# Mutable run state (globals — set across functions, consumed in the commit
+# callbacks + the trap cleanup; declared here so strict mode + shellcheck see a
 # defined origin).
 _update_pause_created=0
 # Background pause-flag heartbeat refresher pid (finding #14) — set by
-# update_pause_refresher_start, killed+cleared by update_cleanup so a long confirm
-# wait cannot let the flag age past its TTL and un-pause the daemon mid-update.
+# update_pause_refresher_start, killed+cleared by update_cleanup so a long apply
+# cannot let the flag age past its TTL and un-pause the daemon mid-update.
 _update_pause_refresher_pid=""
 _update_lock_acquired=0
 _update_workdir=""
 _update_clean_paths=""
 _update_staging=""
 _update_snapshot=""
-# Vendor-removal sweep (#14) run state: the confirmed removal set + per-run Trash
-# sink + install root. SET in update_sweep_removed_files, READ by the removal
-# commit callback — which runs on the confirm gate's pipe-RHS subshell, so the
-# values travel through globals (the gate owns stdin; the same carrier pattern as
-# _update_clean_paths for the swap callback).
+# Vendor-removal sweep (#14) run state: the removal set + per-run Trash sink +
+# install root. SET in update_sweep_removed_files, READ by the removal commit
+# callback — the same carrier pattern as _update_clean_paths for the swap
+# callback, so the callback needs no arguments and no stdin.
 _update_removal_paths=""
 _update_removal_root=""
 _update_removal_dest=""
@@ -267,9 +261,9 @@ _update_modes_manifest=""
 # Per-run agent-merge OUTCOME ledger (finding #9): one basename per line = the
 # base-content store MAY advance for that file (its merge actually landed — applied
 # GIT_TXN_OK, byte-identical, or resolved with no net change). Every other outcome
-# (declined / rolled-back / refused / structural / plan-failed) is ABSENT, so the
-# capture keeps its prior base entry. File-backed (not a shell var) because the
-# commit callback runs on the gate's pipe-RHS subshell.
+# (rolled-back / refused / structural / plan-failed) is ABSENT, so the capture
+# keeps its prior base entry. File-backed (not a shell var) so an append survives
+# any subshell the callback is invoked from.
 _update_agent_outcomes_file=""
 _update_agent_verify_local=""
 _update_agent_verify_release=""
@@ -445,10 +439,10 @@ print(json.dumps({
 # update_finalize_merge_and_anchors → update_run) carries no mode test, so an
 # interactive `glass-atrium update` records too.
 #
-# Equally deliberate: the emit does not read the confirm gate's verdict. A decline
-# offered the discard and refused it, which is itself the accountability event, so a
-# declined run still records — as status=rejected, since the outcome ledger below
-# supplies the landed split.
+# Equally deliberate: the emit does not read whether the body actually landed. A run
+# that offered the discard and did not apply it is itself the accountability event, so
+# it still records — as status=rejected, since the outcome ledger below supplies the
+# landed split.
 #
 # Best-effort with a loud warning, following the conflict-decline precedent — a
 # database write failure must NEVER abort a deploy.
@@ -485,9 +479,10 @@ update_emit_resolved_records() {
   while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text needs_llm; do
     [[ -n "${base}" ]] || continue
     # Landed == the commit callback appended this basename to the per-run outcome
-    # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a
-    # declined gate writes no entries at all, and a row that falsely read applied
-    # would claim daemon content was discarded when none was. That default is the
+    # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a run
+    # that never reached the callback writes no entries at all, and a row that
+    # falsely read applied would claim daemon content was discarded when none was.
+    # That default is the
     # OPPOSITE of update_capture_base_content's blanket advance, which is why the
     # shared matcher below carries no default of its own.
     landed=0
@@ -544,26 +539,25 @@ update_editable_region_lines() {
 
 # Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
 # vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
-# that carries no conflict and sails through the gate. That shape is all-take-release WITH a
+# that carries no conflict and lands unremarked. That shape is all-take-release WITH a
 # net-negative EDITABLE-region line delta. merge-resolved-release is deletion-capable for the
 # same reason by a different route — a conflicting gap drops its local lines for the release
 # side — so it is covered here rather than left outside the one guard built for deletion.
-# ADVISORY only: the candidate is still queued and
-# the confirm gate is untouched, but the operator gets a loud per-file warning plus a durable
-# record beside the conflict-decline ledger.
+# ADVISORY only: the candidate is still queued and the merge is untouched, but the operator
+# gets a loud per-file warning plus a durable record beside the conflict-decline ledger.
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
   case "${verdict}" in
     'take-release' | 'merge-resolved-release') ;;
-    *) return 0 ;; # GA-ABSORB[benign]: any other verdict is not a deletion-capable shape — the tripwire has no advisory to emit and the gate is unaffected.
+    *) return 0 ;; # GA-ABSORB[benign]: any other verdict is not a deletion-capable shape — the tripwire has no advisory to emit and the merge is unaffected.
   esac
   local before after delta dest
-  before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the gate is unaffected.
+  before="$(update_editable_region_lines "${local_file}")" || return 0 # GA-ABSORB[benign]: an unreadable body means there is no shape to measure — the advisory simply has nothing to say and the merge is unaffected.
   after="$(update_editable_region_lines "${candidate}")" || return 0   # GA-ABSORB[benign]: as above for the candidate — an unmeasurable pair yields no advisory, never a blocked merge.
   delta=$((before - after))
   [[ "${delta}" -gt 0 ]] || return 0 # GA-ABSORB[benign]: a zero-or-positive line delta is not a deletion — the tripwire stays silent by design, never blocking the merge.
-  update_log "WARN: deletion-shape tripwire — ${rel} resolves ${verdict} and drops ${delta} EDITABLE-region line(s); inspect the diff at the confirm gate before accepting (advisory — the candidate is still offered)"
+  update_log "WARN: deletion-shape tripwire — ${rel} resolves ${verdict} and drops ${delta} EDITABLE-region line(s); review ${rel} after the run (advisory — the candidate still lands)"
   dest="$(update_declines_dir "${root}")"
   # Three columns only: the row shape predates the second covered verdict and stays
   # unchanged, since the file and the line delta are what an operator inspects — the
@@ -582,8 +576,8 @@ update_check_deletion_shape() {
 # release skeleton and only the merge lib's narrow allowlist is re-attached, so a live
 # key that is neither allowlisted nor release-carried is dropped by design. That is the
 # intended policy — inverting it would retain keys the vendor removed on purpose — but
-# the drop must be ANNOUNCED, so the next unallowlisted key surfaces at the confirm gate
-# rather than after the fact. ADVISORY only: exactly one line, never a blocked merge.
+# the drop must be ANNOUNCED, so the next unallowlisted key surfaces in the run log
+# rather than only in the resulting file. ADVISORY only: exactly one line, never a blocked merge.
 # $1 = repo-relative path, $2 = the editable_merge plan line.
 update_warn_dropped_frontmatter() {
   local rel="$1" keys
@@ -599,7 +593,7 @@ update_warn_dropped_frontmatter() {
 update_cleanup() {
   local exit_code=$?
   # Headless DB-job finalization: any exit that did NOT already mark the row
-  # 'completed' (update_die, a declined confirm gate, a crash caught by the trap)
+  # 'completed' (update_die, a crash caught by the trap)
   # leaves an in-progress row → mark it 'failed' with the exit code so the P3-T3
   # stale sweep + the web UI never observe a phantom-active job. Best-effort +
   # WHERE-guarded on status='in-progress' (a stale-sweep 'failed' is never
@@ -665,13 +659,13 @@ update_serialize_begin() {
   fi
   _update_lock_acquired=1
   # Start the pause-flag heartbeat refresher LAST, once the flag + lock are held, so a
-  # long interactive confirm wait cannot let the flag age past its TTL (finding #14).
+  # long apply cannot let the flag age past its TTL (finding #14).
   update_pause_refresher_start
 }
 
 # Start ONE liveness-guarded background refresher for the whole serialized section
 # (finding #14): re-write the pause flag every tick so its mtime never ages past the
-# 1800s TTL during a long interactive confirm wait — which would otherwise let the
+# 1800s TTL during a long apply — which would otherwise let the
 # daemon treat the flag as crashed-updater residue and un-pause mid-update. The
 # `kill -0 "${updater_pid}"` parent guard PRESERVES the TTL's crash-safety purpose: a
 # SIGKILLed updater (no EXIT trap) makes the next tick's guard fail, the refresher
@@ -835,7 +829,7 @@ update_partition_sensitive() {
   update_partition_with_guard sensitive_path_ok "$1" "$2"
 }
 
-# CHANGED-FILE partition (preview + apply). Same fail-closed mechanism, but the
+# CHANGED-FILE partition (the apply path). Same fail-closed mechanism, but the
 # guard subtracts the daemon-owned sync exemption set — the charter, which no
 # deploy path could otherwise reach. Bound HERE rather than inside
 # sensitive_path_ok so the relaxation reaches this one partition and nothing else.
@@ -1065,11 +1059,10 @@ update_filter_clean_path() {
 # This is the agent-file counterpart to the deterministic non-agent sync: the
 # spine EXCLUDES agents/**/*.md (spine_is_excluded_path), so each changed agent
 # *.md flows through the three-anchor (base@install / vendor / local) resolver in
-# autoagent/lib/editable_merge.py instead of being byte-swapped. Per plan S2 the
-# merged candidate then passes the SAME T12 foreground confirm gate as the
-# non-agent path AND is applied through the shared git-free git_txn_apply
-# transaction (before-image → apply → verify → leave|restore). Reuse only — no
-# merge logic is re-implemented here; this is the wiring.
+# autoagent/lib/editable_merge.py instead of being byte-swapped. The merged
+# candidate is applied through the shared git-free git_txn_apply transaction
+# (before-image → apply → verify → leave|restore). Reuse only — no merge logic is
+# re-implemented here; this is the wiring.
 #
 # Per-file verdicts (from editable_merge `plan`) route as follows:
 #   * REFUSED (sensitive path/diff, plan rc 3)  -> skipped, reported (never written)
@@ -1083,9 +1076,9 @@ update_filter_clean_path() {
 #                                                  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
 #   * merge-resolved-release (changed)          -> conflicting gaps took the release
 #                                                  side, marker-free -> collected ->
-#                                                  gate -> txn, same as merge-clean
+#                                                  txn, same as merge-clean
 #   * keep-local / no-op (changed=False)         -> no write
-#   * keep-local|take-release|merge-clean (changed) -> collected -> gate -> txn
+#   * keep-local|take-release|merge-clean (changed) -> collected -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
 # ROSTER change already handled by update_roster_gate; the merge skips it (the add
 # belongs to the agent_lifecycle ceremony, not an in-band content merge).
@@ -1199,8 +1192,8 @@ _update_agent_verify() {
 
 # Record a base-content ADVANCE for an agent basename in the per-run outcome ledger
 # (finding #9). Append-only; a no-op when no ledger is active (a caller that ran no
-# merge). Called from BOTH the parent merge loop (pre-gate advances) and the commit
-# callback's pipe-RHS subshell — the file append is the shared-state carrier.
+# merge). Called from BOTH the parent merge loop (no-write advances) and the commit
+# callback — the file append is the shared-state carrier across any subshell.
 update_agent_outcome_advance() {
   [[ -n "${_update_agent_outcomes_file}" ]] || return 0
   printf '%s\n' "$1" >>"${_update_agent_outcomes_file}"
@@ -1217,17 +1210,11 @@ update_agent_outcome_landed() {
   [[ "$2" == *$'\n'"$1"$'\n'* ]]
 }
 
-# The committing callback the foreground gate invokes ONLY on explicit confirm.
-# Iterates the collected candidate records (TSV: logical, real, candidate,
-# release, agent) and drives each through git_txn_apply. Each file is an
-# independent transaction — a verify failure rolls back that file alone and is
-# reported LOUDLY; the rest still apply. rc 3 when any file rolled back / did
-# not apply: 3 is deliberately DISJOINT from gate_apply_confirmed's own verdict
-# codes (1 = declined, 2 = empty set) because the gate propagates a callback rc
-# verbatim — a colliding 1 would summarize a rolled-back run as "declined".
-#
-# shellcheck disable=SC2329
-#   Passed by NAME to gate_apply_confirmed (`"$@"`), never called by `()` here.
+# The committing callback for the agent merge. Iterates the collected candidate
+# records (TSV: logical, real, candidate, release, agent) and drives each through
+# git_txn_apply. Each file is an independent transaction — a verify failure rolls
+# back that file alone and is reported LOUDLY; the rest still apply. Returns
+# non-zero when any file rolled back or did not apply.
 _update_agent_commit_callback() {
   local logical real candidate release agent rc=0
   while IFS=$'\t' read -r logical real candidate release agent; do
@@ -1258,24 +1245,24 @@ _update_agent_commit_callback() {
         # Applied cleanly → the base-content store may advance for this file
         # (finding #9). Any other GIT_TXN outcome leaves the file at its local
         # version, so it is deliberately NOT recorded (the capture keeps its prior
-        # base entry). File append survives this pipe-RHS subshell.
+        # base entry).
         update_agent_outcome_advance "${logical##*/}"
         ;;
       "${GIT_TXN_VERIFY_FAIL}")
         update_log "WARN: agent merge verify failed — ${logical} restored from its before-image (left at local version)"
-        rc=3
+        rc=1
         ;;
       "${GIT_TXN_BACKUP_CAPTURE_FAIL}")
         update_log "WARN: agent merge aborted before apply (before-image capture failed) — ${logical} untouched"
-        rc=3
+        rc=1
         ;;
       "${GIT_TXN_APPLY_REGEN}" | "${GIT_TXN_APPLY_FAIL}")
         update_log "WARN: agent merge not applied (GIT_TXN_RC=${GIT_TXN_RC}) — ${logical} left at its local version"
-        rc=3
+        rc=1
         ;;
       *)
         update_log "WARN: agent merge unexpected outcome (GIT_TXN_RC=${GIT_TXN_RC}) — ${logical} left at its local version"
-        rc=3
+        rc=1
         ;;
     esac
   done <"${_update_agent_records_file}"
@@ -1288,7 +1275,7 @@ _update_agent_commit_callback() {
 update_merge_agent_editable_regions() {
   local new_dir="$1" manifest="$2" root="$3"
   : "${manifest:?manifest}"
-  local merge_dir records_file resolved_file gate_records=""
+  local merge_dir records_file resolved_file
   local file base local_file candidate plan_err plan_line plan_rc
   local verdict reason changed n_candidates=0 rc=0
   local backup_base cycle_date version
@@ -1361,7 +1348,7 @@ update_merge_agent_editable_regions() {
     fi
     # Marker-bearing verdicts are REPORTS, not files: their candidate carries literal
     # conflict markers, which in a live agent body is corruption. Skip them instead of
-    # offering an un-landable candidate at the confirm gate (the merge lib refuses the
+    # offering an un-landable candidate (the merge lib refuses the
     # write regardless), and name the repair pair that actually resolves one — see the
     # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
     # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
@@ -1390,8 +1377,7 @@ update_merge_agent_editable_regions() {
       continue
     fi
 
-    # A mergeable candidate. Queue the record + the gate preview row (current =
-    # live local, proposed = merged candidate). NO ephemeral local backup here:
+    # A mergeable candidate. Queue the record. NO ephemeral local backup here:
     # the ORIGINAL local body the verify anchors on is the persistent agents-bak
     # before-image git_txn_apply captures pre-apply — the SINGLE authoritative
     # copy (P2-T2), derived per-file by the commit callback.
@@ -1404,8 +1390,8 @@ update_merge_agent_editable_regions() {
     # scan and the Haiku gate ran against), so re-deriving it here with a second
     # diff implementation would record a diff the merge never saw. Capturing it at
     # plan time also predates the transaction below, which overwrites the live
-    # body — after the gate the dropped daemon lines exist nowhere else. The row
-    # itself is emitted only once the outcome is known (post-gate), so it can
+    # body — once it is overwritten the dropped daemon lines exist nowhere else. The
+    # row itself is emitted only once the outcome is known, so it can
     # record what actually landed rather than what was offered.
     #
     # Field 2 (target_file) stays REPO-RELATIVE on purpose. The daemon writes the
@@ -1428,7 +1414,6 @@ update_merge_agent_editable_regions() {
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "agents/${base}" "$(update_realpath "${local_file}")" "${candidate}" \
       "${file}" "${base%.md}" >>"${records_file}"
-    gate_records="${gate_records}$(printf 'agents/%s\x1f%s\x1f%s' "${base}" "${local_file}" "${candidate}")"$'\n'
     n_candidates=$((n_candidates + 1))
   done
 
@@ -1442,10 +1427,9 @@ update_merge_agent_editable_regions() {
   # atomically restores from it (no repo lookup, no worktree), so the merge proceeds
   # on ANY install whether or not it is a git repo.
 
-  # Foreground confirm (the SAME T12 gate as the non-agent path), then the per-file
-  # git_txn transactions on explicit confirm. The agent merge is best-effort and
-  # NON-fatal to the (already-applied) non-agent sync: a decline simply leaves the
-  # agent files unmerged.
+  # The per-file git_txn transactions. The agent merge is best-effort and NON-fatal
+  # to the (already-applied) non-agent sync: a failure leaves the affected agent
+  # files at their local version.
   _update_agent_install_root="${root}"
   _update_agent_records_file="${records_file}"
   # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
@@ -1460,14 +1444,9 @@ update_merge_agent_editable_regions() {
   cycle_date="$(date +%Y-%m-%d)"
   version="$(jq -r '.version // "unknown"' "${manifest}")"
   _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
-  printf '%s' "${gate_records}" | gate_apply_confirmed _update_agent_commit_callback || rc=$?
-  # rc namespace: 0/1/2 are the gate's own verdicts; 3 is the commit callback's
-  # rolled-back/unapplied signal propagated verbatim through the gate (kept
-  # disjoint from 1/2 so a confirmed run with a failed file never reads "declined").
+  _update_agent_commit_callback || rc=$?
   case "${rc}" in
     0) update_log "agent EDITABLE-region merge applied (${n_candidates} file(s))" ;;
-    1) update_log "agent EDITABLE-region merge declined — agent files left unmerged" ;;
-    2) update_log "agent EDITABLE-region merge: no changes to confirm" ;;
     *) update_log "WARN: agent EDITABLE-region merge had rolled-back or unapplied file(s) — see the per-file outcome above" ;;
   esac
   # Before merge_dir (and the captured diffs inside it) is torn down.
@@ -1726,7 +1705,7 @@ update_refresh_mirror_farm() {
 # mode (interactive TTY, headless launchd, web button) — placed on the shared
 # update_run path, NOT the headless-only finalize, so the DECOUPLED launchd
 # update reconciles bindings too. Ordering is load-bearing: it runs ONLY after
-# the confirmed apply + farm refresh SUCCEEDED, so the atomic-restore/rollback
+# the apply + farm refresh SUCCEEDED, so the atomic-restore/rollback
 # contract stays intact (a declined/failed apply exits before ever reaching here)
 # and the hook FILES the new bindings point at already exist on disk.
 #
@@ -2512,13 +2491,13 @@ update_restore_agents() {
 }
 
 # ---------------------------------------------------------------------------
-# P3 — success finalizer + preview (dry-run)
+# P3 — success finalizer
 # ---------------------------------------------------------------------------
 
 # Single success-path finalizer. On the applied path (did_apply=1) in headless mode
 # run the install-parity post-step (fatal on build failure → exit 9); then mark the
 # job completed. did_apply=0 (a no-op "already up to date" path) skips the post-step
-# (nothing was built). Interactive mode no-ops both.
+# (nothing was built). The CLI mode no-ops both.
 update_finalize_success() {
   local did_apply="${1:-0}"
   if [[ "${_update_headless}" -eq 1 && "${did_apply}" -eq 1 ]]; then
@@ -2527,66 +2506,6 @@ update_finalize_success() {
     fi
   fi
   update_job_complete
-}
-
-# Dry-run preview (P3-T3 consumes): download + stage the release, then render a
-# per-file unified diff to STDOUT with ZERO writes. No lock, no pause flag, no DB row
-# — a preview must never contend with (or block) a real apply; the server re-verifies
-# bundle==pinned at commit, so the read/apply race is handled there.
-update_preview() {
-  local root work dl_dir new_dir manifest changed clean_paths sensitive_paths
-  local records label current proposed path
-  local rm_baseline rm_removed rm_path
-  root="$(update_ga_root)"
-  # git is NOT required: the whole flow (spine sync + git-free git_txn_apply
-  # merge) runs without any git invocation, by design (no-.git consumer install).
-  update_require_tools jq python3
-  work="$(mktemp -d -t glass-atrium-update-preview.XXXXXX)"
-  _update_workdir="${work}"
-  dl_dir="${work}/download"
-  new_dir="${work}/new"
-  update_fetch_release "${dl_dir}" "${new_dir}"
-  manifest="${dl_dir}/manifest.json"
-  update_log "preview: dry-run diff for release version $(jq -r '.version // "unknown"' "${manifest}" 2>/dev/null || printf 'unknown')"
-  # Vendor-removal preview (#14): list files the prior-vendor baseline shipped but
-  # this release DROPS (provenance-clean only) — a dry-run MUST surface impending
-  # deletions, not just content diffs, so the headless/web confirm is not blind.
-  # No baseline → nothing to list; a detection failure degrades to no listing
-  # (spine's own stderr is loud), never an aborted preview.
-  rm_baseline="$(spine_get_baseline || true)"
-  if [[ -n "${rm_baseline}" && -f "${rm_baseline}" ]]; then
-    if rm_removed="$(spine_find_removed_files "${rm_baseline}" "${manifest}" "${root}")" \
-      && [[ -n "${rm_removed}" ]]; then
-      while IFS= read -r rm_path; do
-        [[ -n "${rm_path}" ]] && update_log "  (would be removed -> Trash) ${rm_path}"
-      done <<<"${rm_removed}"
-    fi
-  fi
-  changed="$(spine_find_changed_files "${manifest}" "${root}")" \
-    || update_die "preview: change selection failed (manifest hash gap)"
-  if [[ -z "${changed}" ]]; then
-    update_log "preview: already up to date — no non-agent files changed"
-    return 0
-  fi
-  clean_paths="${work}/clean.paths"
-  sensitive_paths="${work}/sensitive.paths"
-  printf '%s\n' "${changed}" \
-    | update_partition_sensitive_sync "${clean_paths}" "${sensitive_paths}"
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] && update_log "  (sensitive, would be skipped) ${path}"
-  done <"${sensitive_paths}"
-  if [[ ! -s "${clean_paths}" ]]; then
-    update_log "preview: no auto-syncable files after the sensitive partition"
-    return 0
-  fi
-  # Render every change's unified diff to STDOUT (no confirm prompt, no write). Reuse
-  # the SAME record + diff format the confirm gate uses so P3-T3 sees identical output.
-  records="$(gate_build_nonagent_records "${new_dir}" "${root}" <"${clean_paths}")"
-  while IFS=$'\x1f' read -r label current proposed; do
-    [[ -n "${label}" ]] || continue
-    gate_render_diff "${label}" "${current}" "${proposed}" || true
-  done <<<"${records}"
-  update_log "preview complete (dry-run — no files written)"
 }
 
 # ---------------------------------------------------------------------------
@@ -2598,17 +2517,15 @@ update_usage() {
 glass-atrium update — apply the latest Glass Atrium release.
 
 Usage:
-  glass-atrium update                    download, preview a per-file diff, confirm, apply (interactive TTY)
-  glass-atrium update --headless         non-TTY apply: update_job DB tracking + heartbeat + install-parity
-                                         post-step (monitor rebuild + launchd refresh). Confirm via the
-                                         ATRIUM_UPDATE_CONFIRM_ANSWER seam (unset/empty => fail-closed decline).
-  glass-atrium update --preview          dry-run: download + per-file diff to stdout, ZERO writes (no lock/DB).
+  glass-atrium update                    download, verify and apply every changed file (CLI)
+  glass-atrium update --headless         apply with update_job DB tracking + heartbeat + install-parity
+                                         post-step (monitor rebuild + launchd refresh).
   glass-atrium update --restore-agents ID  restore agents/*.md from the agents-bak <ID> before-image.
   glass-atrium update --render-oneshot   render the decoupled one-shot launchd plist, print its path (no writes elsewhere).
   glass-atrium update --help             show this help
 
 Flow: pause the autoagent daemon → acquire the apply-lock → download + verify the
-release → foreground diff/confirm → deterministic non-agent sync → agent
+release → deterministic non-agent sync → agent
 EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
 farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
 tracks the core.update_job row and runs the install-parity post-step. Sensitive
@@ -2616,18 +2533,14 @@ harness files are never auto-synced (reported for manual review).
 USAGE
 }
 
-# The committing callback the foreground gate invokes ONLY on explicit confirm.
-# Reads the clean change set (one path per line) from STDIN and snapshot+swaps via
-# the spine. Globals carry the paths the gate cannot (the gate owns stdin).
+# The committing callback for the non-agent sync: snapshot+swap the staged change
+# set via the spine. Globals carry the paths, so the callback takes no arguments.
 #
-# Drops a `.commit-ok` FILE marker on a clean swap (finding #7). It MUST be a file,
-# not a shell var: the gate runs this callback on a pipe RHS (a subshell), so a var
-# set here would never reach the parent's EXIT trap — but the marker file survives.
-# Its presence tells update_cleanup the swap committed cleanly (snapshot is safe to
-# delete); its absence beside a non-empty snapshot means a failed/interrupted apply
-# whose snapshot must be preserved. A spine failure is remapped to rc 3 (finding #8) —
-# DISJOINT from the gate's own 1=declined / 2=empty verdicts it propagates verbatim —
-# so a rolled-back apply is never mislabeled "declined".
+# Drops a `.commit-ok` FILE marker on a clean swap (finding #7). A file rather than a
+# shell var, so the marker reaches the parent's EXIT trap from any subshell this is
+# invoked from. Its presence tells update_cleanup the swap committed cleanly (snapshot
+# is safe to delete); its absence beside a non-empty snapshot means a failed or
+# interrupted apply whose snapshot must be preserved.
 update_commit_callback() {
   local rc=0
   printf '%s\n' "${_update_clean_paths}" \
@@ -2638,13 +2551,8 @@ update_commit_callback() {
     fi
     return 0
   fi
-  # spine_commit_staged failed and rolled back the partial swap (finding #8). Map ANY
-  # non-zero spine rc to 3 — DISJOINT from gate_apply_confirmed's own 1 (declined) /
-  # 2 (empty set) verdicts, which it propagates VERBATIM from this callback. Without
-  # the remap a spine rc 1 collided with the gate's 1=declined, so update_run
-  # mislabeled a rolled-back apply "declined at the confirm gate — no files written".
-  # Mirrors the agent path's _update_agent_commit_callback rc-3 convention.
-  return 3
+  # spine_commit_staged failed and rolled back the partial swap (finding #8).
+  return 1
 }
 
 # Deploy-coverage detection half: name every manifest path claimed by NEITHER
@@ -2680,10 +2588,10 @@ update_report_uncovered_paths() {
 # provenance-gated DETECTION half — the non-agent files the PRIOR-VENDOR baseline
 # shipped but the new release dropped, restricted to still-pristine copies (live
 # hash == baseline hash); a USER-edited dropped file is PRESERVED (never listed).
-# Below is the caller-side REMOVAL half: sensitive-partition the list, preview it
-# through the SAME confirm gate as the sync, and MOVE each confirmed file to a
-# per-run Trash sink (File Deletion Policy: rm is FORBIDDEN for source/config — mv
-# to ~/.Trash on macOS). Removal policy stays caller-side — the same split as
+# Below is the caller-side REMOVAL half: sensitive-partition the list, then MOVE
+# each remaining file to a per-run Trash sink (File Deletion Policy: rm is FORBIDDEN
+# for source/config — mv to ~/.Trash on macOS). Removal policy stays caller-side —
+# the same split as
 # spine_find_changed_files -> update_commit_callback.
 
 # The macOS Trash dir the sweep moves vendor-dropped files into. ATRIUM_UPDATE_TRASH_DIR
@@ -2692,17 +2600,11 @@ update_trash_dir() {
   printf '%s\n' "${ATRIUM_UPDATE_TRASH_DIR:-${HOME}/.Trash}"
 }
 
-# The removal confirm gate's committing callback — invoked ONLY on explicit
-# confirm. Moves each vendor-dropped file to the per-run Trash sink preserving its
-# relative path (atomic mv into one recovery bundle). Reads the removal set + sink
-# from globals: it runs on the gate's pipe-RHS subshell (which owns no stdin — the
-# gate consumed it), the same carrier pattern as update_commit_callback. Loud-fail
-# rc 3 on ANY move failure — DISJOINT from gate_apply_confirmed's own 1 (declined)
-# / 2 (empty set) verdicts it propagates verbatim — so the caller maps a genuine
-# move failure to its named exit code without colliding with "declined".
-#
-# shellcheck disable=SC2329
-#   Passed by NAME to gate_apply_confirmed ("$@"), never called by () here.
+# The removal sweep's committing callback. Moves each vendor-dropped file to the
+# per-run Trash sink preserving its relative path (atomic mv into one recovery
+# bundle). Reads the removal set + sink from globals, the same carrier pattern as
+# update_commit_callback. Loud-fail non-zero on ANY move failure, which the caller
+# maps to its named exit code.
 _update_removal_commit_callback() {
   local path src dest rc=0
   while IFS= read -r path; do
@@ -2715,7 +2617,7 @@ _update_removal_commit_callback() {
       update_log "vendor-dropped file removed → Trash: ${path}"
     else
       update_log "WARN: could NOT move ${src} to Trash (${dest}) — left in place"
-      rc=3
+      rc=1
     fi
   done <<<"${_update_removal_paths}"
   return "${rc}"
@@ -2729,7 +2631,7 @@ _update_removal_commit_callback() {
 # update_wire_hooks_post_apply (sourcing ga-core.sh in-process collides on readonly
 # GA_ROOT + bare log()/die()). Best-effort + LOUD: a retire failure WARNs (the file is
 # already removed; doctor's hook-binding check surfaces a dangling binding), NEVER rolls
-# back the applied sync. Args: $1 = confirmed-removed paths (newline-separated) · $2 =
+# back the applied sync. Args: $1 = removed paths (newline-separated) · $2 =
 # live install root.
 update_retire_swept_hook_bindings() {
   local removed_paths="$1" root="$2" path launcher
@@ -2764,15 +2666,14 @@ update_retire_swept_hook_bindings() {
 # sweep without vendor provenance, the same stance as the roster gate's remove
 # side). A DETECTION failure (corrupt baseline hash gap) is LOUD but NON-fatal —
 # it WARNs and skips so the run still captures a fresh baseline that self-heals the
-# corrupt anchor (aborting here would only re-abort next run). A confirmed move
-# that FAILS is a named loud-fail (exit 13) so a stale-file leftover surfaces with
+# corrupt anchor (aborting here would only re-abort next run). A move that FAILS is
+# a named loud-fail (exit 13) so a stale-file leftover surfaces with
 # an actionable cause (never 2>/dev/null-absorbed); the applied sync is never
 # rolled back. Args: $1 = prior-vendor baseline manifest (may be empty/absent) ·
 # $2 = new manifest · $3 = live install root.
 update_sweep_removed_files() {
   local baseline_manifest="${1:-}" manifest="$2" root="$3"
-  local removed clean_removals sensitive_removals records empty_proposed
-  local path label current ts rc=0
+  local removed clean_removals sensitive_removals path ts rc=0
   # No provenance anchor → refuse to sweep anything.
   [[ -n "${baseline_manifest}" && -f "${baseline_manifest}" ]] || return 0
   if ! removed="$(spine_find_removed_files "${baseline_manifest}" "${manifest}" "${root}")"; then
@@ -2803,33 +2704,17 @@ update_sweep_removed_files() {
   _update_removal_dest="$(update_trash_dir)/glass-atrium-update-removed-${ts}_$$"
   _update_removal_paths="$(cat "${clean_removals}")"
 
-  # Preview each removal through the SAME confirm gate as the sync (structural
-  # zero-write-on-decline). A removal has no proposed content, so an EMPTY file is
-  # the diff RHS — the preview renders every line of the doomed file as removed.
-  empty_proposed="$(mktemp -t glass-atrium-remove-empty.XXXXXX)"
-  : >"${empty_proposed}"
-  records=""
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    current="${root}/${path}"
-    label="REMOVE ${path} (-> Trash)"
-    records="${records}$(printf '%s\x1f%s\x1f%s' "${label}" "${current}" "${empty_proposed}")"$'\n'
-  done <"${clean_removals}"
-
-  printf '%s' "${records}" | gate_apply_confirmed _update_removal_commit_callback || rc=$?
-  rm -f -- "${clean_removals}" "${sensitive_removals}" "${empty_proposed}"
+  _update_removal_commit_callback || rc=$?
+  rm -f -- "${clean_removals}" "${sensitive_removals}"
   case "${rc}" in
     0)
       update_log "vendor-removal sweep complete"
-      # #13: only on a CONFIRMED sweep (all dropped files moved to Trash) retire the
-      # settings.json bindings of any removed hook files — a declined/failed sweep left
-      # the files in place, so their bindings MUST stay.
+      # #13: only on a COMPLETE sweep (all dropped files moved to Trash) retire the
+      # settings.json bindings of any removed hook files — a failed sweep left the
+      # files in place, so their bindings MUST stay.
       update_retire_swept_hook_bindings "${_update_removal_paths}" "${root}"
       ;;
-    1) update_log "vendor-removal sweep declined — dropped files left in place" ;;
-    2) update_log "vendor-removal sweep: nothing to remove" ;;
-    3) update_die_code 13 "vendor-removal sweep FAILED to move one or more dropped files to Trash — update files applied, but stale vendor files remain; remove them manually (see the WARN lines above)" ;;
-    *) update_die_code 13 "vendor-removal sweep failed (rc ${rc}) — update files applied; stale vendor files may remain" ;;
+    *) update_die_code 13 "vendor-removal sweep FAILED to move one or more dropped files to Trash — update files applied, but stale vendor files remain; remove them manually (see the WARN lines above)" ;;
   esac
 }
 
@@ -2934,10 +2819,10 @@ update_enforce_manifest_modes() {
 
 update_run() {
   local root work dl_dir new_dir manifest staging snapshot baseline_manifest
-  local changed clean_paths sensitive_paths n_sensitive records rc=0 path name
+  local changed clean_paths sensitive_paths n_sensitive rc=0 path name
   local withhold_registry=0 orphan_adds orphan_removes
   root="$(update_ga_root)"
-  # git is NOT required (see update_preview) — requiring it would loud-fail the
+  # git is NOT required — requiring it would loud-fail the
   # git-less no-.git consumer install Phase 2 exists to enable.
   update_require_tools jq python3
 
@@ -3087,24 +2972,20 @@ update_run() {
   spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" <"${clean_paths}" \
     || update_die "per-file hash verification failed — corrupt download, refusing to apply"
 
-  # Step 5 — foreground diff/confirm gate, then deterministic snapshot+swap.
+  # Step 5 — deterministic snapshot+swap of every staged change.
   _update_clean_paths="$(cat "${clean_paths}")"
   _update_staging="${staging}"
   _update_snapshot="${snapshot}"
   update_heartbeat
-  records="$(gate_build_nonagent_records "${new_dir}" "${root}" <"${clean_paths}")"
-  printf '%s\n' "${records}" | gate_apply_confirmed update_commit_callback || rc=$?
+  update_commit_callback || rc=$?
   case "${rc}" in
     0) update_log "non-agent sync applied" ;;
-    1) update_die "declined at the confirm gate — no files written" ;;
-    2) update_log "no changes to confirm" ;;
-    3) update_die "apply failed — the spine rolled back the partial swap (no files changed)" ;;
-    *) update_die "apply failed (rc ${rc}) — the spine rolled back any partial swap" ;;
+    *) update_die "apply failed — the spine rolled back the partial swap (no files changed)" ;;
   esac
 
   # Steps 5b/5c/6 — agent EDITABLE-region merge (E4), then the vendor-removal sweep
-  # (#14: drops keyed off the STILL-OLD baseline, previewed through the same confirm
-  # gate), then capture the applied manifest as the base@install anchor + persist the
+  # (#14: drops keyed off the STILL-OLD baseline), then capture the applied manifest
+  # as the base@install anchor + persist the
   # new-release agent bodies into the base-content store (T24 — real base TEXT for the
   # next 3-way merge). Ordering is load-bearing: the sweep runs BEFORE the baseline
   # advance and BEFORE the mirror-farm refresh below, so a removed file gains no
@@ -3138,7 +3019,7 @@ update_run() {
 
 update_main() {
   # Mode selection (entry-point invariance — CLI + web button both land here).
-  # Default = interactive TTY apply; subflags select headless / preview / restore.
+  # Default = the CLI apply; subflags select headless / restore / render-oneshot.
   local mode="run" restore_cycle="" arg
   while [[ $# -gt 0 ]]; do
     arg="$1"
@@ -3149,10 +3030,6 @@ update_main() {
         ;;
       --headless)
         _update_headless=1
-        shift
-        ;;
-      --preview)
-        mode="preview"
         shift
         ;;
       --render-oneshot)
@@ -3216,8 +3093,6 @@ update_main() {
   # shellcheck source=/dev/null
   source "${lib_dir}/apply-spine.sh"
   # shellcheck source=/dev/null
-  source "${lib_dir}/apply-gate.sh"
-  # shellcheck source=/dev/null
   source "${lib_dir}/sensitive-refusal.sh"
   # Headless claude auth: a launchd job cannot use the GUI keychain, so the merge
   # stage's Haiku verify needs the 0600 token file's exporter. Function-only source.
@@ -3240,7 +3115,6 @@ update_main() {
   # Register cleanup BEFORE any state is created so an early failure still unwinds.
   trap update_cleanup EXIT INT TERM
   case "${mode}" in
-    preview) update_preview ;;
     restore) update_restore_agents "${restore_cycle}" ;;
     render-oneshot) update_render_oneshot_plist ;;
     *) update_run ;;
