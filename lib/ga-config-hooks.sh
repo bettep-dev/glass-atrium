@@ -268,7 +268,7 @@ rewrite_hook_paths() {
 
 # wire reconcile primitive: DROP a stale-matcher binding left behind by a matcher change.
 # WHY: the wire loop is ADD-ONLY — is_hook_bound is (event, matcher, basename)-scoped, so when a hook's EXPECTED_HOOK_BINDINGS matcher CHANGES (validate-pre-write-raw.sh Write -> Write|Edit) the new row is ADDED while the OLD-matcher row survives → the hook DOUBLE-FIRES on every matching tool call. This pass removes every Atrium binding whose (event, basename) IS expected but whose matcher is NOT.
-# NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding / update_retire_swept_hook_bindings, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh and enforce-harness-critical.sh each legitimately hold TWO matcher rows under PreToolUse).
+# NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh and enforce-harness-critical.sh each legitimately hold TWO matcher rows under PreToolUse).
 # COMMAND granularity (matches is_hook_bound's (event, matcher, basename) scope): the drop unit is the COMMAND, never the hook-group OBJECT. A CONSOLIDATED group — several commands under ONE matcher, the idiomatic Claude Code shape — would otherwise lose every sibling command, so the filter assigns INTO the group's command list (matcher and every other group key survive) and removes the group only when its own drop emptied it.
 # DATA-SAFETY (same "only Atrium commands" property as retire_hook_binding): a command is Atrium-owned only when its tilde-normalized path resolves under ${HOME}/.claude/hooks/ or ${HOME}/.glass-atrium/hooks/ — a foreign user hook at any other path is neither a match TARGET nor collateral, because a non-target command inside a matched group is preserved too. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), KEY-PRUNE symmetry, injection-safe (--arg everywhere), IDEMPOTENT (a re-run drops nothing).
 reconcile_stale_hook_matchers() {
@@ -583,12 +583,12 @@ unwire_hooks() {
 }
 
 # settings.json TARGETED hook-binding retirement (#13) — retire the binding for ONE
-# specific vendor-REMOVED hook basename, across ALL events. The `glass-atrium update`
-# vendor-removal sweep Trashes a dropped hook FILE, but its settings.json event->hook
-# BINDING lingers and still points at the now-absent file, so the hook ERRORS when its
-# event fires. wire_hooks only ADDS bindings and unwire_hooks removes ALL of them (too
-# broad for an update) — this retires EXACTLY the dropped hook's binding. Arg: $1 = hook
-# basename (e.g. "foo-hook.sh").
+# specific hook basename, across ALL events. A binding whose hook file is gone still
+# points at an absent path, so the hook ERRORS when its event fires. wire_hooks only ADDS
+# bindings and unwire_hooks removes ALL of them (too broad when one hook is being
+# retired) — this retires EXACTLY that one binding. No caller in this repo invokes it
+# today; it is the operator-facing primitive for the case. Arg: $1 = hook basename
+# (e.g. "foo-hook.sh").
 # SCOPE (surgical — narrower than unwire_hooks' remove-ALL): a hook-GROUP is dropped ONLY
 # when it holds a command that, tilde-normalized, EQUALS "$HOME/.claude/hooks/<basename>"
 # OR "$HOME/.glass-atrium/hooks/<basename>" — the exact command wire_hooks emitted for

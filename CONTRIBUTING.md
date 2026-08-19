@@ -98,33 +98,20 @@ install untouched.
 SRC=~/src/glass-atrium
 cd "$SRC" && ./scripts/generate-manifest.sh
 
-# 1. dry run — per-file diffs, zero writes, no lock
 ATRIUM_UPDATE_SRC_DIR="$SRC" \
 ATRIUM_UPDATE_SRC_MANIFEST="$SRC/manifest.json" \
-  glass-atrium update --preview
-
-# 2. apply, answering the confirm prompt non-interactively
-ATRIUM_UPDATE_SRC_DIR="$SRC" \
-ATRIUM_UPDATE_SRC_MANIFEST="$SRC/manifest.json" \
-ATRIUM_UPDATE_CONFIRM_ANSWER=y \
   glass-atrium update
 ```
 
-`ATRIUM_UPDATE_CONFIRM_ANSWER` is the confirm gate's only injection seam. It is
-matched literally against `y`, `Y`, `yes`, `Yes`, and `YES`; anything else —
-including an empty value — declines and writes zero files. Leave it unset to
-answer the prompt by hand.
-
-Read the `--preview` output before you apply. Besides content diffs it lists
-impending deletions as `(would be removed -> Trash) <path>` — files the previous
-release shipped that your tree no longer has. On a branch a few commits ahead of
-the install that list should be empty; if it is not, your tree is missing files
-rather than intentionally dropping them.
+The apply runs to completion with no prompt in front of it, so there is no step
+between running that command and your install changing. Read the diff you are
+about to deploy from git, and re-read `ATRIUM_UPDATE_SRC_DIR` before you press
+return.
 
 Then check that it worked:
 
-- **Exit code.** 0 means applied. A decline at the confirm gate exits 1. The
-  named exit codes in the `scripts/update.sh` header identify which step failed
+- **Exit code.** 0 means applied. The named exit codes in the
+  `scripts/update.sh` header identify which step failed
   and what to re-run — several of them mean the files landed but a post-apply
   step did not.
 - **`glass-atrium doctor`**, via the *live* launcher on your `PATH`. Do not run

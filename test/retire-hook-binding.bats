@@ -1,11 +1,12 @@
 #!/usr/bin/env bats
 # retire_hook_binding — targeted settings.json hook-binding retirement (#13).
 #
-# The `glass-atrium update` vendor-removal sweep Trashes a dropped hook FILE, but its
-# settings.json event->hook BINDING lingers pointing at the now-absent file, so the hook
-# ERRORS when its event fires. wire_hooks only ADDS bindings and unwire_hooks removes ALL
-# (too broad for an update). retire_hook_binding surgically drops ONLY the binding of ONE
-# vendor-removed hook basename, in EITHER Atrium dir. It MUST:
+# A settings.json event->hook BINDING whose hook file is gone still points at an absent
+# path, so the hook ERRORS when its event fires. wire_hooks only ADDS bindings and
+# unwire_hooks removes ALL (too broad when one hook is being retired).
+# retire_hook_binding surgically drops ONLY the binding of ONE hook basename, in EITHER
+# Atrium dir. No caller in this repo invokes it today, so this suite is its whole
+# exercise surface. It MUST:
 #   * retire the target basename's binding across ALL events (tilde + absolute + dual-dir);
 #   * PRESERVE every OTHER Atrium binding and a same-basename FOREIGN-path user hook;
 #   * PRUNE an event key IT emptied, but LEAVE a pre-existing user-owned empty [];
