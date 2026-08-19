@@ -702,6 +702,10 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # spans the line, so a chained line's unrelated force flag fires too
     # pair kept split so the loud WARN still names the matched flag
     # bundled short-flag cluster (`-fq`) = accepted gap, the trailing `\b` denies it
+    # Residual: two non-fixture rule-prose lines fire here (git-workflow, learning-log)
+    # Pre-existing: the flag-adjacent form these rows widened fired on both too
+    # Reachable route targets agents/<name>.md, so the path axis reads that path
+    # → no rules-file path pattern backstops those fires; the diff axis routes them
     re.compile(r"\bgit\s+push\b.*\s--force\b"),
     re.compile(r"\bgit\s+push\b.*\s-f\b"),
     # DB drop
@@ -709,7 +713,12 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE),
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
-    re.compile(r"\bexec\s*\("),
+    # The `Sync` group covers the execSync call form the bare row missed
+    # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
+    # → a proposal re-adding that bullet routes to safety
+    # Cleaning that live copy is an operator follow-up, outside this branch
+    # execFile / execFileSync stay uncovered — named as a limit, not a claim
+    re.compile(r"\bexec(?:Sync)?\s*\("),
     # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
     # tree reset). A bare `git stash` (incl. `git stash && ...`) discards the
     # tree onto a shared, session-crossing stash stack with no restore guarantee;
@@ -736,6 +745,13 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # `git clean -f` / `--force` (force flag in any short-flag cluster) deletes
     # untracked files irreversibly; a dry-run (`-n`, no `f`) stays clean.
     re.compile(r"\bgit\s+clean\s+(?:-\S+\s+)*(?:-[a-zA-Z]*f|--force\b)"),
+    # Published-history rewrite → backs the Tier-2 clause "rebase published branch"
+    # Fires on the plain `git-rebase` spelling: bare operand, `-i`, `--onto`
+    # Fail-closed over-escalation: `--abort` / `--continue` / `--skip` fire too
+    # A `rebase-<suffix>` token fires as well — a hyphen satisfies the trailing `\b`
+    # Accepted gaps: the `-c` / `-C` prefixed and aliased spellings split the pair
+    # Residual: the clause text stays narrower — "published" is not regex-decidable
+    re.compile(r"\bgit\s+rebase\b"),
 )
 
 

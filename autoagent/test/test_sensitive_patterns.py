@@ -122,6 +122,8 @@ _DIFF_SENSITIVE: tuple[str, ...] = (
     "+ git restore .",  # modern worktree discard (default --worktree)
     "+ git restore --worktree .",  # explicit-worktree bare-dot discard
     "+ git clean -fd",
+    "+ git rebase --onto main feature",  # published-history rewrite
+    "+ const out = execSync(cmd);",  # the Sync call form the bare exec row missed
 )
 _DIFF_CLEAN: tuple[str, ...] = (
     "+ this confirms the farm output",  # 'confirm'/'farm' must NOT match \brm\b
@@ -142,6 +144,8 @@ _DIFF_CLEAN: tuple[str, ...] = (
     "+ git checkout .gitignore",  # dot-prefixed path, not the bare-dot tree discard
     "+ git checkout feature-branch",  # branch switch, not a pathspec discard
     f"+ {_I1_BULLET}",  # the I1 bullet verbatim — pins the safe instruction clean
+    "+ git pull --rebase origin main",  # replays local commits, rewrites no published history
+    "+ execFile(bin, args)",  # outside the exec-call claim, pinned below as a limit
 )
 
 
@@ -563,6 +567,135 @@ class ForcePushFlagPositionsAreGuarded(unittest.TestCase):
             "+ git push origin main -fq",
             "+ git push origin main -qf",
             "+ git push origin main -fu",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+
+_REBASE_SOURCE = r"\bgit\s+rebase\b"
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class PublishedHistoryRewriteIsGuarded(unittest.TestCase):
+    """The Tier-2 clause names a rebase of a published branch, so the plain
+    spelling must route to safety through THIS entry. Publishedness is not
+    regex-decidable, so the row escalates every branch — the over-escalation
+    forms below are pinned as chosen behaviour, not as an unnoticed spill."""
+
+    def test_plain_forms_return_the_rebase_source(self) -> None:
+        for line in (
+            "+ git rebase main",
+            "+ git rebase -i HEAD~3",
+            "+ git rebase --onto main feature",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _REBASE_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_recovery_subcommands_are_deliberate_over_escalation(self) -> None:
+        # These ABORT or resume a rewrite rather than starting one, and they
+        # still escalate. Fail-closed in direction, so pinned as the chosen
+        # cost of a row that cannot read intent off the flag.
+        for line in (
+            "+ git rebase --abort",
+            "+ git rebase --continue",
+            "+ git rebase --skip",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _REBASE_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_hyphen_suffixed_tokens_are_deliberate_over_escalation(self) -> None:
+        # A hyphen satisfies the trailing `\b`, so a non-command token fires.
+        for line in (
+            "+ git rebase-todo",
+            "+ git rebase-merge state dir",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _REBASE_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_split_pair_spellings_are_the_accepted_gap(self) -> None:
+        # `\s+` demands adjacency, so anything between the two words denies the
+        # match. Named as a family-wide limit, not a claim.
+        for line in (
+            "+ git -c pull.rebase=true rebase main",
+            "+ git -C /tmp/repo rebase main",
+            "+ git rb main",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_non_rewriting_and_prose_forms_stay_clean(self) -> None:
+        for line in (
+            "+ git pull --rebase origin main",
+            "+ git pull --rebase=merges",
+            "+ git config pull.rebase true",
+            "+ rebase the feature branch onto main",
+            "+ npm run rebase",
+            "- git rebase main",  # removed line — the added-lines-only mechanic
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_row_source_and_descriptive_idiom_do_not_self_fire(self) -> None:
+        # A comment or a rule sentence documenting this row must stay clean, or
+        # documenting the hazard becomes a fire of the hazard.
+        for line in (
+            "+ " + _REBASE_SOURCE,
+            "+ a git-rebase of a published branch is a Tier-2 trigger",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_clause_line_keeps_its_pre_existing_force_attribution(self) -> None:
+        # The clause spells the rewrite with no `git ` prefix, so this row adds
+        # no fire on it; the line's fire is the force row's, and predates it.
+        self.assertEqual(
+            dc.match_sensitive_diff("+   - git push --force / rebase published branch"),
+            _FORCE_LONG_SOURCE,
+        )
+
+
+_EXEC_SOURCE = r"\bexec(?:Sync)?\s*\("
+_EVAL_SOURCE = r"\beval\s*\("
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class DynamicExecutionCallFormsAreGuarded(unittest.TestCase):
+    """The `Sync` variant is the form a body recipe actually spells, and the
+    bare row missed it. The eval neighbour must keep its own attribution, so a
+    widening here cannot quietly swallow the row beside it."""
+
+    def test_sync_and_bare_call_forms_return_the_exec_source(self) -> None:
+        for line in (
+            "+ const out = execSync(cmd);",
+            "+ const out = execSync (cmd);",
+            "+ exec(cmd, cb)",
+            "+ exec (cmd, cb)",
+            "+ child_process.execSync(cmd)",
+        ):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _EXEC_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_eval_neighbor_keeps_its_own_source(self) -> None:
+        for line in ("+ eval(src)", "+ eval (src)"):
+            self.assertEqual(
+                dc.match_sensitive_diff(line), _EVAL_SOURCE, msg=f"for {line!r}"
+            )
+
+    def test_file_execution_family_is_the_accepted_gap(self) -> None:
+        # `execFile`/`execFileSync` take an argv array rather than a shell
+        # string, and no row reaches them. Named as a limit, not a claim.
+        for line in (
+            "+ execFile(bin, args)",
+            "+ execFileSync(bin, args)",
+            "+ spawnSync(bin, args)",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
+
+    def test_word_boundary_lookalikes_stay_clean(self) -> None:
+        for line in (
+            "+ execute(plan)",
+            "+ codeexec(cmd)",
+            "+ the runner executes the plan",
         ):
             self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
 
