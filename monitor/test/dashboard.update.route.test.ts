@@ -1,17 +1,16 @@
-// P3-T3 — POST /api/dashboard/update (single atomic apply) + GET
-// /api/dashboard/update-job. Exercises the routes INSIDE registerDashboardRoutes
-// (routes/index.ts untouched) against real Postgres, with ALL side effects seamed:
-//   - scripts/update.sh          → a mode-aware bash stub (ATRIUM_UPDATE_SCRIPT):
-//                                   --preview emits a canned gate-diff, --render-oneshot
-//                                   writes a base plist, --headless is NEVER expected.
+// POST /api/dashboard/update (single atomic apply) + GET /api/dashboard/update-job.
+// Exercises the routes INSIDE registerDashboardRoutes (routes/index.ts untouched)
+// against real Postgres, with ALL side effects seamed:
+//   - scripts/update.sh          → a mode-aware bash stub (ATRIUM_UPDATE_SCRIPT) that
+//                                   logs every argv it receives, serves --render-oneshot,
+//                                   and exits 2 loudly on any other flag. --headless is
+//                                   never expected from the route.
 //   - launchctl                  → a stub that logs its argv (ATRIUM_UPDATE_LAUNCHCTL).
 //   - claude binary resolution   → ATRIUM_UPDATE_CLAUDE_BIN (authoritative when set).
-//   - confirm gate               → apply injects ATRIUM_UPDATE_CONFIRM_ANSWER=yes into
-//                                   the plist env (no-TTY decoupled job); every other
-//                                   outcome (up_to_date / single_active / claude_unresolved)
-//                                   never touches the plist.
-// No real update / launchctl / restart is triggered. update_job rows are isolated
-// by a per-suite marker embedded in target_version and scrubbed in after().
+// No real update / launchctl / restart is triggered. Route-created rows carry the
+// reservation placeholder in target_version, so they are isolated by their id (captured
+// from the response or read back) and by a per-suite start instant; the two rows the
+// suite inserts by hand carry a per-suite marker.
 //
 // Runner: npx tsx --test test/dashboard.update.route.test.ts
 
@@ -32,55 +31,38 @@ import { registerDashboardRoutes } from "../src/server/routes/dashboard.js";
 const MARKER = `dashupd-${randomUUID().slice(0, 8)}`;
 const VERSION = `9.9.9-${MARKER}`;
 
-// Two-file canned --preview stdout in the apply-gate.sh gate_render_diff format
-// (`=== <path> ===`, optional new-file marker, unified-diff body, blank line).
-const DIFF_A = [
-  "=== install.sh ===",
-  "--- a/install.sh",
-  "+++ b/install.sh",
-  "@@ -1 +1 @@",
-  "-old",
-  "+new",
-  "",
-  "=== monitor/new-file.txt ===",
-  "(new file — no current version)",
-  "--- /dev/null",
-  "+++ b/monitor/new-file.txt",
-  "@@ -0,0 +1 @@",
-  "+hello",
-  "",
-].join("\n");
+// The placeholder the route reserves with (the decoupled job overwrites it).
+const PENDING_VERSION = "pending";
 
 let app: FastifyInstance;
 let stubDir: string;
-let stdoutFile: string;
 let launchctlLog: string;
+let updateArgvLog: string;
 let headlessSentinel: string;
 let oneshotPlist: string;
 let updateStub: string;
 let dbReady = false;
 
+// Every row this suite creates through the route, so cleanup never keys on a
+// placeholder another run could share.
+const createdJobIds: bigint[] = [];
+
 before(async () => {
   stubDir = mkdtempSync(path.join(tmpdir(), "dashboard-update-stub-"));
-  stdoutFile = path.join(stubDir, "preview-stdout.txt");
   launchctlLog = path.join(stubDir, "launchctl.log");
+  updateArgvLog = path.join(stubDir, "update-argv.log");
   headlessSentinel = path.join(stubDir, "headless-called");
   oneshotPlist = path.join(stubDir, "com.glass-atrium.update-oneshot.plist");
 
-  // Mode-aware update.sh stub. Reads STUB_* env inherited from the test process.
+  // Mode-aware update.sh stub. Reads STUB_* env inherited from the test process, and
+  // records each argv so a probe can assert which flags the route actually invoked.
   updateStub = path.join(stubDir, "update.sh");
   writeFileSync(
     updateStub,
     `#!/usr/bin/env bash
 set -u
+printf '%s\\n' "$*" >> "\${STUB_UPDATE_ARGV_LOG}"
 case "$1" in
-  --preview)
-    if [[ -n "\${STUB_PREVIEW_STDOUT_FILE:-}" && -f "\${STUB_PREVIEW_STDOUT_FILE}" ]]; then
-      cat "\${STUB_PREVIEW_STDOUT_FILE}"
-    fi
-    printf 'preview: dry-run diff for release version %s\\n' "\${STUB_PREVIEW_VERSION:-0.0.0}" >&2
-    exit "\${STUB_PREVIEW_EXIT:-0}"
-    ;;
   --render-oneshot)
     out="\${ATRIUM_UPDATE_ONESHOT_PLIST}"
     mkdir -p "$(dirname "\${out}")"
@@ -108,6 +90,7 @@ PLIST
     exit 0
     ;;
   *)
+    printf 'update.sh stub: unsupported flag %s\\n' "$1" >&2
     exit 2
     ;;
 esac
@@ -125,15 +108,12 @@ esac
   );
   chmodSync(launchctlStub, 0o755);
 
-  writeFileSync(stdoutFile, DIFF_A, "utf8");
-
   process.env.ATRIUM_UPDATE_SCRIPT = updateStub;
   process.env.ATRIUM_UPDATE_LAUNCHCTL = launchctlStub;
   process.env.ATRIUM_UPDATE_ONESHOT_PLIST = oneshotPlist;
-  process.env.STUB_PREVIEW_STDOUT_FILE = stdoutFile;
-  process.env.STUB_PREVIEW_VERSION = VERSION;
   process.env.STUB_HEADLESS_SENTINEL = headlessSentinel;
   process.env.STUB_LAUNCHCTL_LOG = launchctlLog;
+  process.env.STUB_UPDATE_ARGV_LOG = updateArgvLog;
 
   app = Fastify({ logger: false });
   await registerDashboardRoutes(app);
@@ -155,21 +135,17 @@ after(async () => {
     "ATRIUM_UPDATE_LAUNCHCTL",
     "ATRIUM_UPDATE_ONESHOT_PLIST",
     "ATRIUM_UPDATE_CLAUDE_BIN",
-    "STUB_PREVIEW_STDOUT_FILE",
-    "STUB_PREVIEW_VERSION",
-    "STUB_PREVIEW_EXIT",
     "STUB_HEADLESS_SENTINEL",
     "STUB_LAUNCHCTL_LOG",
     "STUB_LAUNCHCTL_EXIT",
+    "STUB_UPDATE_ARGV_LOG",
     "ATRIUM_UPDATE_STALE_MS",
   ]) {
     delete process.env[key];
   }
   if (dbReady) {
     try {
-      await getPrisma().$executeRaw`
-        DELETE FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-      `;
+      await scrubJobs();
     } catch (error) {
       console.error("[dashboard-update cleanup] DB scrub failed:", error);
     }
@@ -185,32 +161,51 @@ after(async () => {
   }
 });
 
-// Reset the marker rows + the mutable env/stub state to defaults before each test.
-async function resetJobs(): Promise<void> {
-  await getPrisma().$executeRaw`
-    DELETE FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-  `;
+// Drop this suite's rows: the hand-inserted marker rows plus every id the suite
+// captured. A row this suite never touched is never matched.
+async function scrubJobs(): Promise<void> {
+  await getPrisma().updateJob.deleteMany({
+    where: { OR: [{ targetVersion: { contains: MARKER } }, { id: { in: createdJobIds } }] },
+  });
+  createdJobIds.length = 0;
 }
 
-beforeEach(() => {
-  process.env.STUB_PREVIEW_EXIT = "0";
+beforeEach(async () => {
   process.env.STUB_LAUNCHCTL_EXIT = "0";
-  process.env.STUB_PREVIEW_STDOUT_FILE = stdoutFile;
   process.env.ATRIUM_UPDATE_CLAUDE_BIN = updateStub; // resolvable executable default
   delete process.env.ATRIUM_UPDATE_STALE_MS;
-  writeFileSync(stdoutFile, DIFF_A, "utf8");
   rmSync(headlessSentinel, { force: true });
   rmSync(launchctlLog, { force: true });
+  rmSync(updateArgvLog, { force: true });
+  if (dbReady) {
+    await scrubJobs();
+  }
 });
 
-// A foreign (non-marker) in-progress row would trip the table-wide single-active
+// A foreign (non-suite) in-progress row would trip the table-wide single-active
 // index and confound the DB tests — detect it so those tests skip rather than fail.
 async function foreignInProgress(): Promise<boolean> {
-  const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-    SELECT count(*) AS n FROM core.update_job
-    WHERE status = 'in-progress'::core."UpdateJobStatus" AND target_version NOT LIKE ${`%${MARKER}%`}
+  const rows = await getPrisma().$queryRaw<Array<{ id: string }>>`
+    SELECT id::text AS id FROM core.update_job
+    WHERE status = 'in-progress'::core."UpdateJobStatus"
   `;
-  return Number(rows[0]!.n) > 0;
+  const mine = new Set(createdJobIds.map((id) => id.toString()));
+  return rows.some((row) => !mine.has(row.id));
+}
+
+// Rows the route reserved after `since`. The reservation carries the placeholder
+// version, so the instant is what scopes the read to this test; each id found is
+// registered for cleanup.
+async function reservedRows(since: Date): Promise<Array<{ id: string; status: string }>> {
+  const rows = await getPrisma().$queryRaw<Array<{ id: string; status: string }>>`
+    SELECT id::text AS id, status::text AS status FROM core.update_job
+    WHERE target_version = ${PENDING_VERSION} AND started_at >= ${since}
+    ORDER BY id
+  `;
+  for (const row of rows) {
+    createdJobIds.push(BigInt(row.id));
+  }
+  return rows;
 }
 
 async function apply(): Promise<{ statusCode: number; body: Record<string, unknown> }> {
@@ -219,7 +214,11 @@ async function apply(): Promise<{ statusCode: number; body: Record<string, unkno
     url: "/api/dashboard/update",
     payload: { mode: "apply" },
   });
-  return { statusCode: res.statusCode, body: res.json() as Record<string, unknown> };
+  const body = res.json() as Record<string, unknown>;
+  if (typeof body.job_id === "number") {
+    createdJobIds.push(BigInt(body.job_id));
+  }
+  return { statusCode: res.statusCode, body };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +234,7 @@ test("routes registered inside registerDashboardRoutes (not 404)", async () => {
 
 // ---------------------------------------------------------------------------
 // Manual body validation (NO Zod) — 400 invalid_body. Only mode:'apply' is valid;
-// the removed 2-step modes ('preview' / 'commit') are now rejected at the boundary.
+// the two-step modes are rejected at the boundary.
 // ---------------------------------------------------------------------------
 test("validation: non-object body → 400 invalid_body(field=body)", async () => {
   const res = await app.inject({ method: "POST", url: "/api/dashboard/update", payload: [] });
@@ -253,7 +252,7 @@ test("validation: unknown mode → 400 invalid_body(field=mode)", async () => {
   assert.strictEqual((res.json() as { field: string }).field, "mode");
 });
 
-test("validation: removed mode 'preview' → 400 invalid_body(field=mode)", async () => {
+test("validation: two-step mode 'preview' → 400 invalid_body(field=mode)", async () => {
   const res = await app.inject({
     method: "POST",
     url: "/api/dashboard/update",
@@ -263,7 +262,7 @@ test("validation: removed mode 'preview' → 400 invalid_body(field=mode)", asyn
   assert.strictEqual((res.json() as { field: string }).field, "mode");
 });
 
-test("validation: removed mode 'commit' → 400 invalid_body(field=mode)", async () => {
+test("validation: two-step mode 'commit' → 400 invalid_body(field=mode)", async () => {
   const res = await app.inject({
     method: "POST",
     url: "/api/dashboard/update",
@@ -275,32 +274,28 @@ test("validation: removed mode 'commit' → 400 invalid_body(field=mode)", async
 
 // ---------------------------------------------------------------------------
 // apply → enqueued: reserve the row AND enqueue the DECOUPLED job atomically. The
-// route returns immediately; update.sh --headless is NEVER run by the route, and
-// the job id + no-TTY confirm answer are injected into the one-shot plist env so
-// the decoupled job adopts the reserved row.
+// route returns immediately; update.sh --headless is NEVER run by the route, and the
+// job id is written into the one-shot plist env so the decoupled job adopts the row.
 // ---------------------------------------------------------------------------
-test("apply enqueued: 200 enqueued, row reserved, launchd bootstrap, NO --headless, job id + confirm in plist", async (t) => {
+test("apply enqueued: 200 enqueued, row reserved, launchd bootstrap, NO --headless, job id in plist", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
 
   const { statusCode, body } = await apply();
   assert.strictEqual(statusCode, 200);
   assert.strictEqual(body.mode, "apply");
   assert.strictEqual(body.status, "enqueued");
-  assert.strictEqual(body.target_version, VERSION);
+  assert.strictEqual(body.target_version, PENDING_VERSION);
   assert.strictEqual(typeof body.job_id, "number");
 
   const jobId = body.job_id as number;
 
-  // The reserved row is in-progress and carries the record nonce (bound to
-  // {version + per-file hash}) — stored as a forensic record, not a gate.
-  const rows = await getPrisma().$queryRaw<Array<{ preview_nonce: string | null; status: string }>>`
-    SELECT preview_nonce, status::text AS status FROM core.update_job
+  const rows = await getPrisma().$queryRaw<Array<{ status: string; target_version: string }>>`
+    SELECT status::text AS status, target_version FROM core.update_job
     WHERE id = ${BigInt(jobId)}
   `;
   assert.strictEqual(rows[0]!.status, "in-progress");
-  assert.match(rows[0]!.preview_nonce as string, /^[0-9a-f]{64}$/);
+  assert.strictEqual(rows[0]!.target_version, PENDING_VERSION);
 
   // The route enqueued via launchctl bootstrap (decoupled) — it did NOT run the
   // long apply itself (update.sh --headless is never invoked by the route).
@@ -312,57 +307,20 @@ test("apply enqueued: 200 enqueued, row reserved, launchd bootstrap, NO --headle
   const plist = readFileSync(oneshotPlist, "utf8");
   assert.match(plist, /<key>ATRIUM_UPDATE_JOB_ID<\/key>\s*<string>\d+<\/string>/);
   assert.match(plist, new RegExp(`<string>${jobId}</string>`));
-
-  // The decoupled job has no TTY: without the explicit web-confirm answer,
-  // apply-gate.sh gate_read_answer fail-closed-declines and every web apply dies
-  // at the confirm gate. The apply-enqueue path (and ONLY it) injects yes.
-  assert.match(
-    plist,
-    /<key>ATRIUM_UPDATE_CONFIRM_ANSWER<\/key>\s*<string>yes<\/string>/,
-    "apply-path plist must carry ATRIUM_UPDATE_CONFIRM_ANSWER=yes for the no-TTY confirm gate",
-  );
 });
 
-// apply with no changed files → up_to_date, reserves NOTHING and never touches the
-// plist (fail-closed: only the enqueue path injects the confirm answer).
-test("apply up_to_date: no diffs → 200 up_to_date + no row + plist untouched", async (t) => {
+// The stub exits 2 on any flag it does not serve, so an apply that reached a removed
+// flag would fail the call. Assert the argv log directly as well: the whole updater
+// contract the route drives is one --render-oneshot.
+test("apply enqueued: the route invokes update.sh with --render-oneshot and nothing else", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
-  writeFileSync(stdoutFile, "", "utf8"); // empty preview
 
-  // Seed a base plist so the "no confirm answer injected" assertion is non-vacuous.
-  const basePlist = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<plist version="1.0">',
-    "<dict>",
-    "\t<key>EnvironmentVariables</key>",
-    "\t<dict>",
-    "\t\t<key>HOME</key>",
-    "\t\t<string>/tmp</string>",
-    "\t</dict>",
-    "</dict>",
-    "</plist>",
-    "",
-  ].join("\n");
-  writeFileSync(oneshotPlist, basePlist, "utf8");
+  const { statusCode } = await apply();
+  assert.strictEqual(statusCode, 200, "apply succeeds against a stub that rejects unserved flags");
 
-  const { statusCode, body } = await apply();
-  assert.strictEqual(statusCode, 200);
-  assert.deepStrictEqual(body, { mode: "apply", status: "up_to_date" });
-
-  const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-    SELECT count(*) AS n FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-  `;
-  assert.strictEqual(Number(rows[0]!.n), 0, "no row reserved on up_to_date");
-
-  assert.ok(!existsSync(launchctlLog), "no launchctl enqueue on up_to_date");
-  const plist = readFileSync(oneshotPlist, "utf8");
-  assert.ok(
-    !plist.includes("ATRIUM_UPDATE_CONFIRM_ANSWER"),
-    "up_to_date must not inject the confirm answer (fail-closed outside the enqueue path)",
-  );
-  assert.strictEqual(plist, basePlist, "up_to_date leaves the one-shot plist byte-identical");
+  const argv = readFileSync(updateArgvLog, "utf8").trim().split("\n");
+  assert.deepStrictEqual(argv, ["--render-oneshot"], "one updater invocation, --render-oneshot");
 });
 
 // ---------------------------------------------------------------------------
@@ -372,7 +330,7 @@ test("apply up_to_date: no diffs → 200 up_to_date + no row + plist untouched",
 test("single-active: 2nd apply → 409 single_active (partial-unique, no row churn)", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
+  const since = new Date();
 
   const first = await apply();
   assert.strictEqual(first.statusCode, 200);
@@ -382,11 +340,9 @@ test("single-active: 2nd apply → 409 single_active (partial-unique, no row chu
   assert.strictEqual(second.statusCode, 409);
   assert.strictEqual((second.body as { error: string }).error, "single_active");
 
-  const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-    SELECT count(*) AS n FROM core.update_job
-    WHERE status = 'in-progress'::core."UpdateJobStatus" AND target_version LIKE ${`%${MARKER}%`}
-  `;
-  assert.strictEqual(Number(rows[0]!.n), 1, "exactly one in-progress row (2nd INSERT rejected)");
+  const rows = await reservedRows(since);
+  const inProgress = rows.filter((row) => row.status === "in-progress");
+  assert.strictEqual(inProgress.length, 1, "exactly one in-progress row (2nd INSERT rejected)");
 });
 
 // ---------------------------------------------------------------------------
@@ -396,7 +352,6 @@ test("single-active: 2nd apply → 409 single_active (partial-unique, no row chu
 test("stale sweep: stale in-progress flipped to failed, new apply reserves", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
 
   const prisma = getPrisma();
   const staleVersion = `stale-${VERSION}`;
@@ -421,7 +376,6 @@ test("stale sweep: stale in-progress flipped to failed, new apply reserves", asy
 test("stale sweep: a FRESH in-progress row is NOT swept (blocks new apply)", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
 
   const prisma = getPrisma();
   const freshVersion = `fresh-${VERSION}`;
@@ -443,45 +397,23 @@ test("stale sweep: a FRESH in-progress row is NOT swept (blocks new apply)", asy
 });
 
 // ---------------------------------------------------------------------------
-// apply preview loud-fail: update.sh --preview non-zero → 500 preview_failed, no
-// row reserved, no enqueue.
-// ---------------------------------------------------------------------------
-test("apply: preview CLI failure → 500 preview_failed + no row + no enqueue", async (t) => {
-  if (!dbReady) return t.skip("DB unavailable");
-  if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
-  process.env.STUB_PREVIEW_EXIT = "1";
-
-  const { statusCode, body } = await apply();
-  assert.strictEqual(statusCode, 500);
-  assert.strictEqual((body as { error: string }).error, "preview_failed");
-
-  const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-    SELECT count(*) AS n FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-  `;
-  assert.strictEqual(Number(rows[0]!.n), 0, "no row reserved on preview failure");
-  assert.ok(!existsSync(launchctlLog), "no launchctl enqueue on preview failure");
-});
-
-// ---------------------------------------------------------------------------
 // apply claude precondition: an unresolvable claude → loud-fail BEFORE reserving,
 // so no row is created and no enqueue is attempted.
 // ---------------------------------------------------------------------------
 test("apply: claude unresolvable → 500 claude_unresolved + no row + no enqueue", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
+  const since = new Date();
   process.env.ATRIUM_UPDATE_CLAUDE_BIN = path.join(stubDir, "no-such-claude");
 
   const { statusCode, body } = await apply();
   assert.strictEqual(statusCode, 500);
   assert.strictEqual((body as { error: string }).error, "claude_unresolved");
   assert.ok(!existsSync(launchctlLog), "no launchctl enqueue on claude precondition fail");
+  assert.ok(!existsSync(updateArgvLog), "update.sh not invoked when the precondition fails");
 
-  const rows = await getPrisma().$queryRaw<Array<{ n: bigint }>>`
-    SELECT count(*) AS n FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-  `;
-  assert.strictEqual(Number(rows[0]!.n), 0, "no row reserved when claude precondition fails");
+  const rows = await reservedRows(since);
+  assert.strictEqual(rows.length, 0, "no row reserved when claude precondition fails");
 });
 
 // ---------------------------------------------------------------------------
@@ -491,16 +423,14 @@ test("apply: claude unresolvable → 500 claude_unresolved + no row + no enqueue
 test("apply: launchctl bootstrap failure → 500 enqueue_failed + row failed", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
+  const since = new Date();
   process.env.STUB_LAUNCHCTL_EXIT = "1";
 
   const { statusCode, body } = await apply();
   assert.strictEqual(statusCode, 500);
   assert.strictEqual((body as { error: string }).error, "enqueue_failed");
 
-  const rows = await getPrisma().$queryRaw<Array<{ status: string }>>`
-    SELECT status::text AS status FROM core.update_job WHERE target_version LIKE ${`%${MARKER}%`}
-  `;
+  const rows = await reservedRows(since);
   assert.strictEqual(rows.length, 1, "the reserved row exists");
   assert.strictEqual(rows[0]!.status, "failed", "enqueue-failed row marked failed");
 });
@@ -511,7 +441,6 @@ test("apply: launchctl bootstrap failure → 500 enqueue_failed + row failed", a
 test("status GET: exposes status + heartbeat + failure_reason of the latest job", async (t) => {
   if (!dbReady) return t.skip("DB unavailable");
   if (await foreignInProgress()) return t.skip("foreign in-progress row present");
-  await resetJobs();
 
   const enqueued = await apply();
   assert.strictEqual(enqueued.statusCode, 200);
@@ -522,7 +451,7 @@ test("status GET: exposes status + heartbeat + failure_reason of the latest job"
   const body = res.json() as Record<string, unknown>;
   assert.strictEqual(body.status, "in-progress");
   assert.strictEqual(body.id, jobId);
-  assert.strictEqual(body.target_version, VERSION);
+  assert.strictEqual(body.target_version, PENDING_VERSION);
   assert.strictEqual(typeof body.started_at, "string");
   assert.strictEqual(typeof body.heartbeat_at, "string");
   assert.strictEqual(body.failure_reason, null);

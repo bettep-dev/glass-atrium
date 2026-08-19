@@ -9,7 +9,6 @@
 import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -36,7 +35,6 @@ import type {
   DashboardErrorBody,
   KpiResponse,
   UpdateApplyResponse,
-  UpdateFileDiff,
   UpdateJobStatusResponse,
   UpdateJobStatusValue,
   UpdateMutationErrorBody,
@@ -402,29 +400,27 @@ function invalidParam(name: string): DashboardErrorBody {
 
 const execFileAsync = promisify(execFile);
 
-// Preview downloads the release before diffing → generous ceiling + large buffer
-// (a full release diff can be multi-MB). Enqueue only renders a plist + boots a
-// launchd job (both sub-second) → a tight ceiling.
-const PREVIEW_TIMEOUT_MS = 120_000;
-const PREVIEW_MAX_BUFFER = 16 * 1024 * 1024;
+// Enqueue only renders a plist + boots a launchd job (both sub-second) → a tight
+// ceiling; the buffer holds the one line of stdout the renderer prints.
 const ENQUEUE_TIMEOUT_MS = 20_000;
+const ENQUEUE_MAX_BUFFER = 1024 * 1024;
 
 // Default stale-sweep cutoff (30 min) — matches update.sh's 1800s pause TTL, so a
 // crashed decoupled updater (heartbeat frozen) is reclaimed but a live one is
 // never clobbered. Override: ATRIUM_UPDATE_STALE_MS (test seam).
 const DEFAULT_STALE_MS = 30 * 60 * 1000;
 
-// The literal gate_render_diff marks a first-time add (update.sh apply-gate.sh).
-const NEW_FILE_MARKER = "(new file — no current version)";
-const DIFF_HEADER_RE = /^=== (.+) ===$/;
+// Row-reservation placeholder: the route resolves no release version before enqueue.
+// The decoupled job overwrites target_version via update.sh update_job_set_version.
+const PENDING_TARGET_VERSION = "pending";
 
 type UpdateBodyResult =
   | { kind: "apply" }
   | { kind: "error"; body: UpdateMutationErrorBody };
 
 // Manual body validation (NO Zod — these Fastify routes carry none; mirrors the
-// agents.ts NAME_RE + typeof idiom). The only accepted mode is 'apply' (the 2-step
-// preview/commit dispatch is removed). Any deviation → 400 invalid_body.
+// agents.ts NAME_RE + typeof idiom). The only accepted mode is 'apply'; any
+// deviation → 400 invalid_body.
 function validateUpdateBody(rawBody: unknown): UpdateBodyResult {
   if (rawBody === null || typeof rawBody !== "object" || Array.isArray(rawBody)) {
     return { kind: "error", body: invalidBody("body", "must be a JSON object") };
@@ -463,8 +459,8 @@ async function handleUpdate(
 
 // Stale sweep — a single WHERE-guarded UPDATE (status='in-progress' AND
 // heartbeat_at < cutoff). It can only ever flip a genuinely stale row: a live
-// updater advances heartbeat_at, and a fresh preview reservation is younger than
-// the cutoff, so neither is clobbered.
+// updater advances heartbeat_at, and a freshly reserved row is younger than the
+// cutoff, so neither is clobbered.
 async function sweepStaleJobs(prisma: ReturnType<typeof getPrisma>): Promise<void> {
   const cutoff = new Date(Date.now() - resolveStaleMs());
   await prisma.updateJob.updateMany({
@@ -476,35 +472,23 @@ async function sweepStaleJobs(prisma: ReturnType<typeof getPrisma>): Promise<voi
   });
 }
 
-// mode=apply — the single atomic apply. Dry-run the headless update to get the
-// target version + per-file diff; with no changes → up_to_date (reserve nothing).
-// Otherwise verify the `claude` precondition, reserve the single-active in-progress
-// row (the partial UNIQUE INDEX makes the INSERT the atomic single-active guard),
-// then IMMEDIATELY enqueue the decoupled one-shot launchd job and return. The
-// handler never runs (nor awaits) the long apply — the one-shot launchd job runs it
-// detached, and the UI polls GET /api/dashboard/update-job for progress.
-//
-// SAFETY: dropping the old 2-step preview/commit removes ONLY the human diff
-// eyeball; the mechanical per-file SHA-256 integrity verify (+ sensitive-file skip,
-// atomic swap, rollback) still runs in update.sh update_run() Step 4 regardless.
+/**
+ * mode=apply — the single atomic apply. Verify the `claude` precondition, reserve the
+ * single-active in-progress row (the partial UNIQUE INDEX makes the INSERT the atomic
+ * single-active guard), then IMMEDIATELY enqueue the decoupled one-shot launchd job and
+ * return. The handler never runs (nor awaits) the long apply — the one-shot launchd job
+ * runs it detached, and the UI polls GET /api/dashboard/update-job for progress.
+ *
+ * The route inspects nothing before enqueueing, so a click on an already-current install
+ * reserves a row and starts a job that applies nothing. The per-file SHA-256 verify,
+ * atomic swap and rollback all run inside update.sh on whatever the release turns out to
+ * hold.
+ */
 async function runUpdateApply(
   request: FastifyRequest,
   reply: FastifyReply,
   prisma: ReturnType<typeof getPrisma>,
 ): Promise<UpdateApplyResponse | UpdateMutationErrorBody | DashboardErrorBody> {
-  const preview = await runPreviewCli();
-  if (!preview.ok) {
-    request.log.error({ route: "/api/dashboard/update", stderr: preview.stderr }, "preview failed");
-    reply.code(500);
-    return { error: "preview_failed", reason: truncate(preview.stderr) };
-  }
-  const files = parsePreviewDiffs(preview.stdout);
-  if (files.length === 0) {
-    // Nothing to apply → reserve nothing (no row), return up_to_date.
-    return { mode: "apply", status: "up_to_date" };
-  }
-  const targetVersion = parsePreviewVersion(preview.stderr);
-
   // claude -p precondition — the decoupled job's merge stage needs `claude`. Verify
   // it resolves BEFORE reserving/enqueuing so a doomed job is never launched and no
   // phantom in-progress row is left behind (loud-fail 500 claude_unresolved).
@@ -520,7 +504,6 @@ async function runUpdateApply(
   // Reserve the single-active in-progress row. The partial UNIQUE INDEX
   // (WHERE status='in-progress') makes this INSERT the atomic single-active guard:
   // a 2nd concurrent apply trips PG 23505 → Prisma P2002 → 409 single_active.
-  // preview_nonce is stored as a forensic record only — no longer a confirm/drift gate.
   const now = new Date();
   let rowId: bigint;
   try {
@@ -529,8 +512,7 @@ async function runUpdateApply(
         status: "in_progress",
         startedAt: now,
         heartbeatAt: now,
-        targetVersion,
-        previewNonce: computeNonce(targetVersion, files),
+        targetVersion: PENDING_TARGET_VERSION,
       },
     });
     rowId = row.id;
@@ -559,14 +541,14 @@ async function runUpdateApply(
     return { error: "enqueue_failed", reason: truncate(parsed.stderr) };
   }
   request.log.info(
-    { route: "/api/dashboard/update", jobId: rowId.toString(), targetVersion, fileCount: files.length },
+    { route: "/api/dashboard/update", jobId: rowId.toString() },
     "decoupled update job enqueued (handler returning immediately)",
   );
   return {
     mode: "apply",
     status: "enqueued",
     job_id: bigintToNumber(rowId),
-    target_version: targetVersion,
+    target_version: PENDING_TARGET_VERSION,
   };
 }
 
@@ -660,40 +642,25 @@ function resolveOneshotPlistPath(): string {
   return path.join(resolveAtriumRoot(), "rendered", "launchd", "com.glass-atrium.update-oneshot.plist");
 }
 
-// Dry-run the update.sh preview (download + per-file diff to stdout, ZERO writes,
-// no lock, no DB). Exit-code contract (P3-T2 --preview): 0 (diff emitted /
-// up-to-date) → ok:true; non-zero (download/verify failure) → ok:false. execFile
-// (argv array, no shell) with a fixed script path — not a shell-injection / SSRF
-// surface.
-async function runPreviewCli(): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync(resolveUpdateScript(), ["--preview"], {
-      timeout: PREVIEW_TIMEOUT_MS,
-      maxBuffer: PREVIEW_MAX_BUFFER,
-    });
-    return { ok: true, stdout: asString(stdout), stderr: asString(stderr) };
-  } catch (error) {
-    const parsed = parseExecErr(error);
-    return { ok: false, stdout: parsed.stdout, stderr: parsed.stderr };
-  }
-}
-
-// Enqueue the decoupled one-shot launchd job. (1) render the base plist via
-// update.sh --render-oneshot (guarantees the plist file + config-derived HOME/PATH
-// exist — chicken-and-egg on first enqueue). (2) inject the server-derived job id
-// + the explicit web-confirm answer into the plist env so the job ADOPTS the
-// reserved row (never INSERTs a 2nd single-active row → exit 8) AND passes the
-// no-TTY confirm gate. (3) bootout-then-bootstrap so a one-shot that already ran
-// re-enqueues cleanly. Any failure throws → the caller marks the row failed +
-// returns 500 enqueue_failed.
+/**
+ * Enqueue the decoupled one-shot launchd job. (1) render the base plist via update.sh
+ * --render-oneshot (guarantees the plist file + config-derived HOME/PATH exist —
+ * chicken-and-egg on first enqueue). (2) write the server-derived job id into the plist
+ * env so the job ADOPTS the reserved row (never INSERTs a 2nd single-active row → exit
+ * 8). (3) bootout-then-bootstrap so a one-shot that already ran re-enqueues cleanly. Any
+ * failure throws → the caller marks the row failed + returns 500 enqueue_failed.
+ *
+ * execFile (argv array, no shell) with a fixed script path — not a shell-injection
+ * surface.
+ */
 async function enqueueDecoupledJob(jobId: number): Promise<void> {
   const render = await execFileAsync(resolveUpdateScript(), ["--render-oneshot"], {
     timeout: ENQUEUE_TIMEOUT_MS,
-    maxBuffer: PREVIEW_MAX_BUFFER,
+    maxBuffer: ENQUEUE_MAX_BUFFER,
   });
   const rendered = asString(render.stdout).trim();
   const plistPath = rendered.length > 0 ? rendered : resolveOneshotPlistPath();
-  await injectCommitEnvIntoPlist(plistPath, jobId);
+  await setPlistJobId(plistPath, jobId);
 
   const launchctl = resolveLaunchctlBin();
   const domain = `gui/${process.getuid?.() ?? 0}`;
@@ -729,25 +696,18 @@ function setPlistEnvValue(raw: string, key: string, value: string): string {
   return patched;
 }
 
-// Inject the apply-scoped env into the plist: (1) ATRIUM_UPDATE_JOB_ID so the
-// decoupled update.sh --headless adopts the route-created row; (2)
-// ATRIUM_UPDATE_CONFIRM_ANSWER=yes — the decoupled job has no TTY, so
-// apply-gate.sh gate_read_answer would otherwise fail-closed to a decline and
-// every web apply would die at the confirm gate. Reached ONLY from the apply
-// handler via enqueueDecoupledJob (its sole caller), after the row is reserved and
-// the claude precondition passed — so the fail-closed default and the
-// no-blanket-auto-yes rule stay intact everywhere else. Atomic temp+rename.
-async function injectCommitEnvIntoPlist(plistPath: string, jobId: number): Promise<void> {
+// Write ATRIUM_UPDATE_JOB_ID into the plist env so the decoupled update.sh
+// --headless adopts the route-created row. Atomic temp+rename.
+async function setPlistJobId(plistPath: string, jobId: number): Promise<void> {
   const raw = await readFile(plistPath, "utf8");
   let patched: string;
   try {
     patched = setPlistEnvValue(raw, "ATRIUM_UPDATE_JOB_ID", String(jobId));
-    patched = setPlistEnvValue(patched, "ATRIUM_UPDATE_CONFIRM_ANSWER", "yes");
   } catch (error) {
-    throw new Error(`could not inject commit env into plist: ${plistPath}`, { cause: error });
+    throw new Error(`could not write the job id into plist: ${plistPath}`, { cause: error });
   }
   await mkdir(path.dirname(plistPath), { recursive: true });
-  const tmp = `${plistPath}.ga-commit-env.${process.pid}`;
+  const tmp = `${plistPath}.ga-job-id.${process.pid}`;
   await writeFile(tmp, patched, "utf8");
   await rename(tmp, plistPath);
 }
@@ -785,61 +745,6 @@ async function isExecutable(candidate: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// preview-output parsing + nonce
-
-// Parse update.sh --preview stdout (apply-gate.sh gate_render_diff format) into
-// structured per-file diffs. Each block: `=== <path> ===`, an optional new-file
-// marker line, then the unified-diff body up to the next header.
-function parsePreviewDiffs(stdout: string): UpdateFileDiff[] {
-  const files: UpdateFileDiff[] = [];
-  const lines = stdout.split("\n");
-  let i = 0;
-  while (i < lines.length) {
-    const header = DIFF_HEADER_RE.exec(lines[i]!);
-    if (header === null) {
-      i++;
-      continue;
-    }
-    const filePath = header[1]!;
-    i++;
-    let isNew = false;
-    if (i < lines.length && lines[i] === NEW_FILE_MARKER) {
-      isNew = true;
-      i++;
-    }
-    const bodyLines: string[] = [];
-    while (i < lines.length && !DIFF_HEADER_RE.test(lines[i]!)) {
-      bodyLines.push(lines[i]!);
-      i++;
-    }
-    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1] === "") {
-      bodyLines.pop();
-    }
-    files.push({ path: filePath, diff: bodyLines.join("\n"), is_new: isNew });
-  }
-  return files;
-}
-
-// The update.sh --preview stderr logs `... release version <V>`; fall back to
-// "unknown" (still binds the nonce deterministically). Version-only, no side effect.
-function parsePreviewVersion(stderr: string): string {
-  const match = /release version (\S+)/.exec(stderr);
-  return match === null ? "unknown" : match[1]!;
-}
-
-// Nonce = sha256 over {version + each file's (path, is_new, sha256(diff))} in the
-// preview's emit order. Stored in update_job.preview_nonce as a forensic record of
-// exactly which release+diff set was applied — no longer a confirm/drift gate. 64-char hex.
-function computeNonce(version: string, files: UpdateFileDiff[]): string {
-  const hash = createHash("sha256");
-  hash.update(`v=${version}\n`);
-  for (const file of files) {
-    const diffHash = createHash("sha256").update(file.diff).digest("hex");
-    hash.update(`${file.path}\0${file.is_new ? 1 : 0}\0${diffHash}\n`);
-  }
-  return hash.digest("hex");
 }
 
 // execFile output normalization (stdout/stderr — like improvement.ts / agents.ts,
