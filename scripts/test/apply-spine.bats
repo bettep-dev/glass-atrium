@@ -329,6 +329,33 @@ spine() {
     && [[ ! -e "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
 }
 
+@test "T1 link: a staging copy that FAILS on a link row loud-fails the stage" {
+  # A link row is hash-verified at its release-tree position, so the hash cannot
+  # see a staged link that never landed — the copy's own status is the only
+  # signal, and the substitution below is a copy that fails on every row.
+  # The call carries the production caller's `|| rc=$?` form, which suspends
+  # errexit for the whole invocation: with the status unchecked the run reports
+  # a clean stage and the swap then finds nothing to move.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    spine_copy_entry() { return 1; }
+    rc=0
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3" || rc=$?
+    exit "${rc}"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  # One && chain: a bats verdict is its LAST command's status, so a mid-body
+  # bracket would pass silently.
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"staging copy failed"* ]] \
+    && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
+}
+
 @test "T1 link: with the link-preserving copy reverted the same fixture stages a REGULAR file" {
   # The load-bearing check for the staging branch: substituting the pre-T1
   # dereferencing copy on the identical fixture reproduces the loss, so the

@@ -349,7 +349,14 @@ spine_stage_and_verify() {
     fi
     dst="${staging}/${path}"
     mkdir -p -- "$(dirname -- "${dst}")"
-    spine_copy_entry "${src}" "${dst}"
+    # The copy's status is the ONLY detection a link row has: the hash below
+    # reads the release-tree source for a link, so a staged link that never
+    # landed still verifies clean and the swap would then find nothing to move.
+    # shellcheck disable=SC2310  # copy in a condition by design — verdict branched on
+    if ! spine_copy_entry "${src}" "${dst}"; then
+      printf 'apply-spine: staging copy failed: %s -> %s\n' "${src}" "${dst}" >&2
+      return 1
+    fi
     # A staged link is dangling whenever its target is not co-staged, and hashing
     # a dangling link fails, so a link row is hashed at its position in the
     # release tree, where its target resolves. The manifest records the target's
