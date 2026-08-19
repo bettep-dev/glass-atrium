@@ -63,6 +63,15 @@ seed_file() {
   printf '%s' "${content}" >"${root}/${rel}"
 }
 
+# Create a symlink at $2 (relative) under root $1 holding the literal target
+# text $3, creating parent dirs. The target itself is a separate row and exists
+# only where a fixture seeds it, so a seeded link may be dangling by design.
+seed_link() {
+  local root="$1" rel="$2" target="$3"
+  mkdir -p -- "$(dirname -- "${root}/${rel}")"
+  ln -sfn -- "${target}" "${root}/${rel}"
+}
+
 # Build a manifest.json at $1 whose files[] + hashes map describe the files
 # under root $2 listed in $3.. (relative paths). Hashes are the real shasum of
 # the files under $2 (the new-release tree).
@@ -297,6 +306,50 @@ spine() {
   [[ "${output}" == *"staged source missing"* ]]
 }
 
+@test "T1 link: a link row whose target is NOT staged stages as a link and verifies" {
+  # The manifest records the TARGET's content hash for a link row, and a link
+  # preserved into staging is dangling there while its target stays out of the
+  # change set — so the row can only verify at its release-tree position.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  # One && chain: a bats verdict is its LAST command's status, so a mid-body
+  # bracket would pass silently. The trailing member is the danglingness inside
+  # the staging dir, which is why the hash is read at the source position.
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
+    && [[ ! -e "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
+}
+
+@test "T1 link: with the link-preserving copy reverted the same fixture stages a REGULAR file" {
+  # The load-bearing check for the staging branch: substituting the pre-T1
+  # dereferencing copy on the identical fixture reproduces the loss, so the
+  # branch is what preserves the link rather than the fixture being trivial.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    spine_copy_entry() { cp -p -- "$1" "$2"; }
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  [[ "${status}" -eq 0 ]] \
+    && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ -f "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(cat "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "charter-body" ]]
+}
+
 # T11 — spine_commit_staged (swap success + rollback on failure)
 
 @test "T11 commit: swaps staged files into the live install" {
@@ -350,6 +403,49 @@ spine() {
   ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
   [[ "${status}" -eq 1 ]]
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
+}
+
+@test "T1 link: a driven apply lands the live row as a link holding the release's target text" {
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-old"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/OLD-CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_apply "$1" "$2" "$3" "$4"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
+  # the closing member: the row the link points at is a separate manifest row,
+  # untouched by this change set
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "$(readlink "${NEW}/rules/glass-atrium/CHARTER.md")" ]] \
+    && [[ "$(cat "${LIVE}/agents/CHARTER.md")" == "charter-old" ]]
+}
+
+@test "T1 link: an apply carrying BOTH the link row and its target row lands both" {
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-old"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/OLD-CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md" \
+      | spine_apply "$1" "$2" "$3" "$4"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
+  # the closing member: the two rows are one file again, so reading through the
+  # link reaches the target's new content
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
+    && [[ "$(cat "${LIVE}/agents/CHARTER.md")" == "charter-new" ]] \
+    && [[ "$(cat "${LIVE}/rules/glass-atrium/CHARTER.md")" == "charter-new" ]]
 }
 
 # #10 / #11 — atomic swap + atomic rollback restore (sibling temp + rename(2))
@@ -416,6 +512,49 @@ spine() {
   # rollback left no sibling temp behind in the install dir
   run bash -c 'ls "$1"/hooks/*.tmp.* 2>/dev/null || true' _ "${LIVE}"
   [[ -z "${output}" ]]
+}
+
+@test "T1 link rollback: a failure AFTER the link row swapped restores it as a LINK with its original target" {
+  # The failure path reaches the same destruction as the success path: without a
+  # link-preserving snapshot the restore writes a regular file holding the OLD
+  # target's bytes over the link position.
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-live"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_link "${WORKDIR}/staging" "rules/glass-atrium/CHARTER.md" "../../agents/NEW-CHARTER.md"
+  # scripts/z.sh has no staged source → the commit fails on the row AFTER the link
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" "scripts/z.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  # the failure-row member is load-bearing: it pins that the link row swapped
+  # and the run then failed on a LATER row, which is what reaches the rollback
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"commit FAILED at scripts/z.sh"* ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]]
+}
+
+@test "T1 link rollback: the same forced failure leaves the live link row PRESENT" {
+  # Separate guard on the remove-if-no-snapshot default: the snapshot entry for a
+  # link row is itself dangling inside the snapshot dir, and a dereferencing
+  # snapshot test reads it as absent and DELETES the live row. This fixture's
+  # live link points outside the install root, so -e is false for it and only
+  # link-ness can witness that the row survived at all.
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/ABSENT-CHARTER.md"
+  seed_link "${WORKDIR}/staging" "rules/glass-atrium/CHARTER.md" "../../agents/NEW-CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" "scripts/z.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"commit FAILED at scripts/z.sh"* ]] \
+    && [[ ! -e "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/ABSENT-CHARTER.md" ]]
 }
 
 # T11 — spine_apply (full transaction)

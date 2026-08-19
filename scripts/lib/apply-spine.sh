@@ -28,6 +28,12 @@
 # and ROLLBACK-GUARDED, and a mid-swap failure restores every already-swapped
 # file from a pre-swap snapshot. No cross-file all-or-nothing primitive exists.
 #
+# Symlink rows travel the same chain without being flattened into regular files:
+# the source test, the staged-file test and the snapshot test all read link-ness
+# first, the staging, snapshot and swap copies reproduce a link as a link, and a
+# link row is hash-verified at its release-tree position, where its target
+# resolves.
+#
 # Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): every
 # verify mismatch, missing source, or missing manifest hash returns non-zero +
 # stderr, never a silent skip.
@@ -67,6 +73,32 @@ spine_sha256_of() {
     return 1
   fi
   printf '%s\n' "${out%% *}"
+}
+
+# Link-aware existence test — the shared predicate for every path in the apply
+# chain that may be a symlink (the release source, the staged file, the live
+# destination, the snapshot entry). A dereferencing `-f` reads FALSE for a link
+# whose target is absent, and a staged or snapshotted link is dangling whenever
+# its target is not copied into the same directory, so link-ness is tested FIRST
+# and regular-file-ness second. Each caller's default on false is destructive in
+# a different way — abort the apply, skip the snapshot, delete the live row.
+spine_is_present_path() {
+  [[ -L "$1" ]] || [[ -f "$1" ]]
+}
+
+# Copy src to dst preserving link-ness: a symlink source is reproduced at dst as
+# a symlink carrying the same target text, never dereferenced into a regular
+# file; every other source takes the mode-preserving file copy. Every dst passed
+# here is a staging entry, a snapshot entry or an atomic swap's sibling temp —
+# never a live row — so the force flag replaces nothing an operator owns.
+spine_copy_entry() {
+  local src="$1" dst="$2" link_target
+  if [[ -L "${src}" ]]; then
+    link_target="$(readlink -- "${src}")" || return 1
+    ln -sfn -- "${link_target}" "${dst}"
+    return
+  fi
+  cp -p -- "${src}" "${dst}"
 }
 
 # NON-INTERACTIVE python3 runnability probe (bootstrap parity with install.sh's
@@ -290,21 +322,23 @@ spine_find_removed_files() {
 # T11 — staged apply + rollback
 
 # Phase 1: copy each changed file from the new-release tree into a staging dir
-# and verify the staged copy's SHA-256 equals the manifest hashes[path]. Reads
-# the change set (one relative path per line) from STDIN. Touches ONLY the
-# staging dir — the live install is never modified here, so any mismatch is a
-# clean loud-fail (rc 1) with zero rollback needed. Args: $1 = new-release tree
-# root · $2 = manifest.json · $3 = staging dir.
+# and verify its SHA-256 equals the manifest hashes[path]. Reads the change set
+# (one relative path per line) from STDIN. Touches ONLY the staging dir — the
+# live install is never modified here, so any mismatch is a clean loud-fail
+# (rc 1) with zero rollback needed. A symlink row is staged as a symlink and
+# verified at its release-tree position (see the hash-subject branch below).
+# Args: $1 = new-release tree root · $2 = manifest.json · $3 = staging dir.
 spine_stage_and_verify() {
   local new_dir="$1" manifest="$2" staging="$3"
-  local path src dst want got
+  local path src dst want got verify_src
   # jq OR runnable python3 — the install.sh bootstrap verifies jq-less (pre-ga-deps).
   # shellcheck disable=SC2310
   spine_require_manifest_parser || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     src="${new_dir}/${path}"
-    if [[ ! -f "${src}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if ! spine_is_present_path "${src}"; then
       printf 'apply-spine: staged source missing: %s\n' "${src}" >&2
       return 1
     fi
@@ -315,8 +349,16 @@ spine_stage_and_verify() {
     fi
     dst="${staging}/${path}"
     mkdir -p -- "$(dirname -- "${dst}")"
-    cp -p -- "${src}" "${dst}"
-    got="$(spine_sha256_of "${dst}")" || return 1
+    spine_copy_entry "${src}" "${dst}"
+    # A staged link is dangling whenever its target is not co-staged, and hashing
+    # a dangling link fails, so a link row is hashed at its position in the
+    # release tree, where its target resolves. The manifest records the target's
+    # content hash either way, so the comparison itself is unchanged.
+    verify_src="${dst}"
+    if [[ -L "${src}" ]]; then
+      verify_src="${src}"
+    fi
+    got="$(spine_sha256_of "${verify_src}")" || return 1
     if [[ "${got}" != "${want}" ]]; then
       printf 'apply-spine: hash mismatch staging %s (want=%s got=%s)\n' \
         "${path}" "${want}" "${got}" >&2
@@ -333,10 +375,15 @@ spine_stage_and_verify() {
 # in-place cp would expose. On any failure the partial temp is removed and rc 1
 # returned; the CALLER owns the failure policy (warn-and-continue / break-and-
 # rollback / set -e abort). Args: $1 = src file · $2 = dst path.
+#
+# A symlink src is reproduced as a symlink at the temp and rename(2) moves the
+# link itself over dst, so the forward swap and the rollback restore both land a
+# link row as a link rather than as a regular file holding the target's bytes.
 spine_atomic_swap() {
   local src="$1" dst="$2" tmp
   tmp="${dst}.tmp.$$"
-  if ! { cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
+  # shellcheck disable=SC2310  # copy in a condition by design — verdict branched on
+  if ! { spine_copy_entry "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
     rm -f -- "${tmp}"
     return 1
   fi
@@ -347,6 +394,11 @@ spine_atomic_swap() {
 # newly created by the swap → remove it. Args: $1 = install root · $2 = snapshot
 # dir · $3.. = touched relative paths. Best-effort: a failed restore is reported
 # but does not abort the remaining restores (partial-recovery beats no recovery).
+#
+# The "no snapshot → created by the swap" reading is safe only because the
+# snapshot test is link-aware: a snapshotted link is dangling inside the snapshot
+# dir whenever its target is not co-copied, and a dereferencing test would read
+# that entry as absent and DELETE the live row it was taken to protect.
 spine_rollback() {
   local install_root="$1" snapshot="$2"
   shift 2
@@ -355,7 +407,8 @@ spine_rollback() {
     [[ -n "${path}" ]] || continue
     snap="${snapshot}/${path}"
     dst="${install_root}/${path}"
-    if [[ -f "${snap}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_present_path "${snap}"; then
       # Atomic restore via the shared swap (sibling temp + rename, never in-place).
       spine_atomic_swap "${snap}" "${dst}" \
         || printf 'apply-spine: rollback restore FAILED: %s\n' "${path}" >&2
@@ -373,6 +426,11 @@ spine_rollback() {
 # temp + rename). On the first failure, every touched file is rolled back to its
 # pre-swap state and rc 1 is returned. Args: $1 = staging dir · $2 = install root
 # · $3 = snapshot dir.
+#
+# A link row is carried through both steps as a link: the staged-source test is
+# link-aware (a staged link is dangling whenever its target is not co-staged),
+# and the snapshot copy preserves the live link's target text so the rollback
+# restores a link rather than a regular file holding the old target's bytes.
 spine_commit_staged() {
   local staging="$1" install_root="$2" snapshot="$3"
   local -a paths=() touched=()
@@ -385,15 +443,18 @@ spine_commit_staged() {
     src="${staging}/${path}"
     dst="${install_root}/${path}"
     snap="${snapshot}/${path}"
-    if [[ ! -f "${src}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if ! spine_is_present_path "${src}"; then
       failed="${path}"
       rc=1
       break
     fi
     # snapshot the pre-swap live file BEFORE marking touched / overwriting.
-    if [[ -f "${dst}" ]]; then
+    # shellcheck disable=SC2310
+    if spine_is_present_path "${dst}"; then
       mkdir -p -- "$(dirname -- "${snap}")"
-      if ! cp -p -- "${dst}" "${snap}"; then
+      # shellcheck disable=SC2310
+      if ! spine_copy_entry "${dst}" "${snap}"; then
         failed="${path}"
         rc=1
         break
