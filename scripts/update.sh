@@ -1494,11 +1494,17 @@ update_capture_base_content() {
 #   2. REFRESH the farm via the canonical entrypoint (shared lib ->
 #      `glass-atrium agents-only`, a subprocess — never source ga-core.sh
 #      in-process: readonly GA_ROOT/TARGET_HOME + bare log()/die() collide).
-#      The scope passed is the applied manifest itself, unfiltered. Every row it
-#      lists needs a source under ${root} for the farm to mirror it, and
-#      swap_symlink dies naming a row that has none — so a body the agent merge
-#      declined, or agent-registry.json withheld for this run, ends this step at
-#      the named exit 11 with the files already applied and the mirror stale.
+#      The scope passed is the applied manifest itself, unfiltered — no filter
+#      narrows it to the rows that happen to be present. A row with no source
+#      under ${root} is fatal at swap_symlink and ends this step at the named
+#      exit 11, with ONE exception update_enforce_manifest_modes shares: a merge-claimed
+#      agents/<name>.md is reported and skipped, because the EDITABLE-region
+#      merge defers a release-only ADD to the agent_lifecycle ceremony and so
+#      leaves that row nothing to link. Two adjacent steps of one run cannot
+#      hold opposite verdicts on the same row, and refusing here would strand
+#      the install: the files are already swapped in, so the hook-binding
+#      reconcile and the success finalisation below would never run, and the
+#      next run would take the up-to-date early return, which reaches neither.
 
 # Persist ${1} (the release manifest) as the root install manifest ${2}/manifest.json,
 # atomically (temp + rename so a concurrent reader never sees a half-written file).

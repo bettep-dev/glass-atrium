@@ -79,9 +79,9 @@ farm_has_ga_links() {
 #   0 = farm ran to completion (mirrors created / verified idempotently)
 #   3 = cleanly SKIPPED — facade home absent (consumer machine without a
 #       facade) or launcher missing; both logged, never silent
-#   1 = the farm subprocess FAILED (unwritable facade / manifest source
-#       missing / user-file refusal) — files a caller already applied STAY
-#       applied; no rollback is attempted here
+#   1 = the farm subprocess FAILED (unwritable facade / a manifest row with no
+#       source that the agent merge does not claim / user-file refusal) — files
+#       a caller already applied STAY applied; no rollback is attempted here
 farm_refresh() {
   local ga_root="$1" manifest="${2:-}" home launcher
   home="$(farm_target_home)"

@@ -58,6 +58,32 @@ is_symlink_excluded() {
   printf 'no\n'
 }
 
+# agent-body merge claim query
+# Echo "yes" when a manifest-relative path is a top-level agents/<name>.md other than the non-agent
+# charter — the set the EDITABLE-region merge resolves instead of the byte-swap; else "no". The merge
+# has a documented decline for a release-only ADD (it defers the body to the agent_lifecycle
+# ceremony), so exactly these rows can be listed by the manifest with nothing on disk yet. Stdout-verdict
+# (exits 0) so the ERR trap never fires, mirroring is_collision_scope / is_symlink_excluded. Restates
+# scripts/lib/apply-spine.sh::spine_is_merge_claimed_path because the launcher never sources the
+# updater's spine; the two are pinned against each other by scripts/test/mirror-farm.bats.
+is_merge_claimed_agent() {
+  local rel="$1" rest
+  case "${rel}" in
+    agents/*.md) ;;
+    *)
+      printf 'no\n'
+      return 0
+      ;;
+  esac
+  rest="${rel#agents/}"
+  case "${rest}" in
+    */* | 'GLASS_ATRIUM_GLOBAL_RULES.md')
+      printf 'no\n'
+      ;;
+    *) printf 'yes\n' ;;
+  esac
+}
+
 # H-3 atomic per-file symlink swap
 # Creates TARGET_HOME/<rel> as a symlink -> GA_ROOT/<rel>. Idempotent (skips when the correct
 # symlink already exists). Coexistence: refuses to overwrite a non-symlink user file or a foreign
@@ -80,7 +106,21 @@ swap_symlink() {
     die "refusing to touch never-touch path: ${rel}"
   fi
 
-  [[ -e "${src}" ]] || die "manifest source missing: ${src}"
+  # A merge-claimed agent body with no source is a REPORT: the row reaches the install through the
+  # EDITABLE-region merge, which defers a release-only ADD to the agent_lifecycle ceremony, so the
+  # manifest can legitimately list it before anything exists to link. Dying here would abort the farm
+  # loop mid-run for a row the farm was never going to resolve, and on the update path that abort
+  # lands after the byte-swap has committed. Every other row travels the byte-swap, where an absent
+  # source means the apply did not land it — still fatal. The same policy is read at the updater's
+  # mode-enforcement pass (scripts/update.sh update_enforce_manifest_modes).
+  if [[ ! -e "${src}" ]]; then
+    # shellcheck disable=SC2310,SC2311,SC2312  # stdout verdict (exits 0) — masking intentional
+    if [[ "$(is_merge_claimed_agent "${rel}")" == "yes" ]]; then
+      log "skip (agent body not installed; run the agent_lifecycle ceremony to install it): ${rel}"
+      return 0
+    fi
+    die "manifest source missing: ${src}"
+  fi
 
   # ensure the target subdirectory exists (per-file farm coexists with user dirs)
   if [[ ! -d "${dst_dir}" ]]; then
