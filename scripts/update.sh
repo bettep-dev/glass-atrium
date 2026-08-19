@@ -52,17 +52,17 @@
 # file this release stops shipping is left where it is — accepted residue, since the
 # new manifest no longer carries a row for it.
 #
-# Sensitive-path refusal (T15 / gate G7): a sensitive harness file (a security
-# scope rule, a credential file, a launchd plist) is NEVER auto-synced by the
-# deterministic path — it is partitioned OUT of the apply set via the shared
-# python helper (autoagent/lib/sensitive_patterns.py, the SINGLE refusal source)
-# and reported for manual review. The shell NEVER re-implements the refusal regex.
-# ONE carve-out, and it applies to the CHANGED-FILE partition only (the apply
-# path, via update_partition_sensitive_sync): the charter
-# agents/GLASS_ATRIUM_GLOBAL_RULES.md is exempt, because the updater is the sole
-# live write seam and its refusal made that file unreachable by any deploy while
-# ga-doctor advertised this updater as the drift remedy.
-# The exempt set lives in daemon_cycle.py beside the compiled tuple, never here.
+# Replacement scope: the path-pattern refusal that used to partition the changed set
+# is gone and nothing in this file replaces it. Two mechanisms still route a row away
+# from the byte-swap, both drivable: spine_is_excluded_path (an agents/*.md the
+# EDITABLE-region merge claims — delivered by that merge, not withheld — plus
+# *.local.md and config.toml), and the finding #16 registry withhold, which drops
+# agent-registry.json for one run when an added agent's body did not install.
+# The refusal governing the DAEMON's own writes is untouched and lives outside this
+# file: daemon_cycle.classify_safety_tier routes an approval, and the agent-body merge
+# refuses at editable_merge.build_merge_candidate (plan rc 3, handled at the merge step
+# below). Neither reads the changed-file set, so a rule file the daemon may not
+# self-edit is still delivered by a release.
 #
 # Strict mode: this is an executable ENTRY POINT (unlike the sourced libs), so it
 # sets strict mode itself. The sourced libs are written to be safe under it.
@@ -219,7 +219,7 @@ _update_pause_created=0
 _update_pause_refresher_pid=""
 _update_lock_acquired=0
 _update_workdir=""
-_update_clean_paths=""
+_update_apply_paths=""
 _update_staging=""
 _update_snapshot=""
 
@@ -751,81 +751,6 @@ update_fetch_release() {
 }
 
 # ---------------------------------------------------------------------------
-# Sensitive-path partition (T15 / gate G7) — fail-closed
-# ---------------------------------------------------------------------------
-
-# Split the change set (one relative path per line on STDIN) into two files:
-# $1 = clean paths (safe to auto-sync) · $2 = sensitive paths (refused — manual
-# review). A path the helper cannot conclusively clear (env/usage error) is
-# fail-CLOSED into the sensitive set, never auto-synced. Returns 0 always; the
-# caller decides on the sensitive set.
-# Lexical relpath normalization — resolves `.` / `..` / empty segments WITHOUT
-# touching the filesystem. Prints the normal form on rc 0. Un-normalizable input
-# (absolute path, escape above root via leading `..`, or an empty result) → rc 1,
-# so the caller fails CLOSED: a spelling variant like `agents/NAME.md/.` or
-# `agents/../NAME.md` can no longer dodge the helper's basename-anchored regex
-# and get a false CLEAN verdict (manifest paths are always relative).
-update_normalize_relpath() {
-  local input="$1" seg joined
-  local -a segs=() out=()
-  [[ "${input}" == /* ]] && return 1
-  IFS='/' read -r -a segs <<<"${input}"
-  for seg in "${segs[@]+"${segs[@]}"}"; do
-    case "${seg}" in
-      '' | '.') ;;
-      '..')
-        [[ ${#out[@]} -gt 0 ]] || return 1
-        unset "out[$((${#out[@]} - 1))]"
-        ;;
-      *) out+=("${seg}") ;;
-    esac
-  done
-  [[ ${#out[@]} -gt 0 ]] || return 1
-  joined="$(
-    IFS='/'
-    printf '%s' "${out[*]}"
-  )"
-  printf '%s\n' "${joined}"
-}
-
-# Shared partition loop. $1 = the fail-closed path guard to consult (a function
-# name), $2 = clean bucket, $3 = sensitive bucket. Reading the guard from an
-# argument is what keeps ONE loop for both partitions — the two callers differ in
-# their guard alone, and a duplicated loop is how the normalization gate below
-# would drift out of one of them.
-update_partition_with_guard() {
-  local guard="$1" clean_out="$2" sensitive_out="$3" path norm
-  : >"${clean_out}"
-  : >"${sensitive_out}"
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    # Verdict on the NORMAL form; bucket entries keep the original spelling
-    # (downstream sync consumes the manifest-relative path as listed).
-    if norm="$(update_normalize_relpath "${path}")" && "${guard}" "${norm}"; then
-      printf '%s\n' "${path}" >>"${clean_out}"
-    else
-      printf '%s\n' "${path}" >>"${sensitive_out}"
-    fi
-  done
-}
-
-# STRICT partition — the guard every consumer but the changed-file sync uses.
-# The vendor-REMOVAL sweep calls this one: its contract is that a vendor-dropped
-# harness file is REPORTED, never auto-Trashed, so it must never see an
-# exemption that turns a report into a deletion.
-update_partition_sensitive() {
-  update_partition_with_guard sensitive_path_ok "$1" "$2"
-}
-
-# CHANGED-FILE partition (the apply path). Same fail-closed mechanism, but the
-# guard subtracts the daemon-owned sync exemption set — the charter, which no
-# deploy path could otherwise reach. Bound HERE rather than inside
-# sensitive_path_ok so the relaxation reaches this one partition and nothing else.
-update_partition_sensitive_sync() {
-  update_partition_with_guard sensitive_path_ok_for_sync "$1" "$2"
-}
-
-# ---------------------------------------------------------------------------
 # Roster-migration gate (T20 / gate G8) — fail-closed
 # ---------------------------------------------------------------------------
 #
@@ -1029,15 +954,15 @@ update_roster_orphan_registry_removes() {
   done < <(LC_ALL=C comm -23 <(printf '%s\n' "${prior_vendor}") <(printf '%s\n' "${new_list}"))
 }
 
-# Remove the exact whole-line path $2 from the clean apply-set file $1 (finding #16
+# Remove the exact whole-line path $2 from the apply-set file $1 (finding #16
 # registry withholding). Fixed-string, whole-line match (a manifest-relative path);
 # atomic temp+rename. Best-effort: a no-match / now-empty set is a normal result.
-update_filter_clean_path() {
-  local clean_file="$1" drop="$2" tmp
-  [[ -f "${clean_file}" ]] || return 0
-  tmp="${clean_file}.filter.$$"
-  grep -vxF -- "${drop}" "${clean_file}" >"${tmp}" 2>/dev/null || true
-  mv -f -- "${tmp}" "${clean_file}"
+update_filter_apply_path() {
+  local set_file="$1" drop="$2" tmp
+  [[ -f "${set_file}" ]] || return 0
+  tmp="${set_file}.filter.$$"
+  grep -vxF -- "${drop}" "${set_file}" >"${tmp}" 2>/dev/null || true
+  mv -f -- "${tmp}" "${set_file}"
 }
 
 # ---------------------------------------------------------------------------
@@ -1569,70 +1494,28 @@ update_capture_base_content() {
 #   2. REFRESH the farm via the canonical entrypoint (shared lib ->
 #      `glass-atrium agents-only`, a subprocess — never source ga-core.sh
 #      in-process: readonly GA_ROOT/TARGET_HOME + bare log()/die() collide).
-#      The scope passed is FILTERED to sources present under ${root}
-#      (farm_write_present_manifest): a release file the sensitive partition
-#      REFUSED to auto-sync is listed in the new manifest but missing from the
-#      tree — unfiltered, swap_symlink would hard-die "manifest source missing"
-#      on every update until manual review (warn+skip is the update contract).
+#      The scope passed is the applied manifest itself, unfiltered. Every row it
+#      lists needs a source under ${root} for the farm to mirror it, and
+#      swap_symlink dies naming a row that has none — so a body the agent merge
+#      declined, or agent-registry.json withheld for this run, ends this step at
+#      the named exit 11 with the files already applied and the mirror stale.
 
-# Persist ${1} (the release manifest) as the root install manifest ${2}/manifest.json:
-# atomic (temp + rename so a concurrent reader never sees a half-written file) AND
-# source-present-FILTERED. Any manifest .files / .hashes entry with NO source under the
-# root — a sensitive harness file the update REFUSED to auto-sync, or an unapplied /
-# rolled-back member — is dropped from the persisted copy, so doctor §4 (manifest
-# source-present) no longer BRICKS on the legitimately-absent file (DF-8); a file that
-# WAS present at persist time and later goes missing is NOT in the persisted set and is
-# still §4-caught. The common case (nothing absent) is a byte-identical cp -p, so a
-# normal release keeps its unfiltered manifest. .version + every other key (e.g.
-# _doc_settings_json) are preserved, so an agent-only bump still clears the "update
-# available" badge (DF-10). WARN-not-fatal: a persist failure leaves the root scope
-# stale until the next update (never aborts an applied update).
+# Persist ${1} (the release manifest) as the root install manifest ${2}/manifest.json,
+# atomically (temp + rename so a concurrent reader never sees a half-written file).
+# The persisted copy is the release manifest verbatim — no row is dropped from it, so
+# doctor §4 (manifest source-present) reads an absent source as the gap it is. WARN-not-fatal:
+# a persist failure leaves the root scope stale until the next update (never aborts an
+# applied update).
 update_persist_root_manifest() {
-  local src="$1" root="$2" dst tmp present_txt rel absent=0
+  local src="$1" root="$2" dst tmp
   dst="${root}/manifest.json"
   tmp="${dst}.ga-update.$$"
-  present_txt="$(mktemp -t glass-atrium-present-manifest.XXXXXX)"
-
-  # Single pass: keep the source-present entries, count + name the absent ones.
-  while IFS= read -r rel; do
-    [[ -n "${rel}" ]] || continue
-    if [[ -e "${root}/${rel}" ]]; then
-      printf '%s\n' "${rel}" >>"${present_txt}"
-    else
-      update_log "  (manifest source absent — dropped from the persisted manifest) ${rel}"
-      absent=$((absent + 1))
-    fi
-  done < <(jq -r '.files[]' -- "${src}" 2>/dev/null)
-
-  if [[ "${absent}" -eq 0 ]]; then
-    # Nothing absent → byte-identical persist (a normal release is unfiltered).
-    rm -f -- "${present_txt}" 2>/dev/null || true
-    if cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; then
-      update_log "root manifest persisted (install-parity): ${dst}"
-    else
-      rm -f -- "${tmp}" 2>/dev/null || true
-      update_log "WARN: could not persist the release manifest to ${dst} — root scope stays stale until the next update"
-    fi
-    return 0
-  fi
-
-  # Absent entries exist → drop them from .files + .hashes, preserve .version + the
-  # rest, via jq into the temp, then atomically rename.
-  if jq --rawfile present "${present_txt}" '
-      ($present | split("\n") | map(select(length > 0))
-        | map({key: ., value: true}) | from_entries) as $keep
-      | .files = (.files | map(select($keep[.])))
-      | (if (.hashes | type) == "object"
-         then .hashes = (.hashes | to_entries | map(select($keep[.key])) | from_entries)
-         else . end)
-    ' -- "${src}" >"${tmp}" 2>/dev/null \
-    && mv -f -- "${tmp}" "${dst}"; then
-    update_log "root manifest persisted source-present-filtered (${absent} absent entr(y/ies) dropped): ${dst}"
+  if cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; then
+    update_log "root manifest persisted (install-parity): ${dst}"
   else
     rm -f -- "${tmp}" 2>/dev/null || true
-    update_log "WARN: could not persist the filtered release manifest to ${dst} — root scope stays stale until the next update"
+    update_log "WARN: could not persist the release manifest to ${dst} — root scope stays stale until the next update"
   fi
-  rm -f -- "${present_txt}" 2>/dev/null || true
   return 0
 }
 
@@ -1642,18 +1525,15 @@ update_persist_root_manifest() {
 # post-step precedent); NEVER rolls back the applied files. Arg: $1 = the
 # downloaded/applied manifest.json.
 update_refresh_mirror_farm() {
-  local manifest="$1" root filtered rc=0
+  local manifest="$1" root rc=0
   root="$(update_ga_root)"
 
-  # Step 1 — persist the root manifest (source-present-FILTERED, atomic temp+rename).
+  # Step 1 — persist the root manifest (atomic temp+rename).
   update_persist_root_manifest "${manifest}" "${root}"
 
-  # Step 2 — filtered refresh via the canonical entrypoint (shared lib).
-  filtered="${_update_workdir}/farm-manifest.json"
-  if ! farm_write_present_manifest "${root}" "${manifest}" "${filtered}"; then
-    update_die_code 11 "mirror-farm scope filter failed — update files applied but the facade mirror was NOT refreshed; run '${root}/glass-atrium agents-only' manually"
-  fi
-  farm_refresh "${root}" "${filtered}" || rc=$?
+  # Step 2 — refresh via the canonical entrypoint (shared lib), scoped to the
+  # applied manifest itself.
+  farm_refresh "${root}" "${manifest}" || rc=$?
   case "${rc}" in
     0)
       # refreshed — orphan-mirror report only (removal stays explicit-opt-in).
@@ -1673,7 +1553,7 @@ update_refresh_mirror_farm() {
 # The file apply + mirror-farm refresh (above) deploy the new release's hook
 # FILES and their ~/.claude mirrors, but the EVENT->HOOK BINDINGS live ONLY in
 # settings.json — which the deterministic spine NEVER writes (settings.json is
-# user-owned + sensitive-partitioned). Pre-wiring, an update that ADDED or
+# user-owned and carries no manifest row). Pre-wiring, an update that ADDED or
 # CHANGED a hook binding shipped the new hook file yet left settings.json pinned
 # to the OLD binding set, so the new hook stayed DORMANT until the next full
 # install (the "update completes but the bindings stay stale" class). Install
@@ -2516,8 +2396,8 @@ Flow: pause the autoagent daemon → acquire the apply-lock → download + verif
 release → deterministic non-agent sync → agent
 EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
 farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
-tracks the core.update_job row and runs the install-parity post-step. Sensitive
-harness files are never auto-synced (reported for manual review).
+tracks the core.update_job row and runs the install-parity post-step. No
+path-pattern refusal holds a changed row back for manual review.
 USAGE
 }
 
@@ -2531,7 +2411,7 @@ USAGE
 # ANY exit path, including a signal that ends the run with no verdict to return.
 update_commit_callback() {
   local rc=0
-  printf '%s\n' "${_update_clean_paths}" \
+  printf '%s\n' "${_update_apply_paths}" \
     | spine_commit_staged "${_update_staging}" "$(update_ga_root)" "${_update_snapshot}" || rc=$?
   if [[ "${rc}" -eq 0 ]]; then
     if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
@@ -2567,8 +2447,8 @@ update_report_uncovered_paths() {
 }
 
 # The merge → base-content-capture → baseline-capture finalize sequence, shared by
-# the main post-apply path and both early-return paths (already-up-to-date /
-# all-sensitive). One order constraint is load-bearing: update_capture_base_content
+# the main post-apply path and the already-up-to-date early return. One order
+# constraint is load-bearing: update_capture_base_content
 # reads the merge's own outcome ledger to decide which bodies may advance, so it
 # runs after the merge and before update_capture_baseline advances the hash anchor
 # — a base left at the OLD anchor re-conflicts an already-merged region on the next
@@ -2576,9 +2456,8 @@ update_report_uncovered_paths() {
 # The merge step also emits the resolved-gap core.autoagent_proposals record, so this
 # shared path — not the headless-only update_job section — is why an INTERACTIVE run
 # reaches Postgres (boundary note at the top of the file).
-# finding #9 (anchors advance for landed agent merges even on an agent-only /
-# sensitive-only update). Args: $1 = new-release tree · $2 = manifest · $3 =
-# install root.
+# finding #9 (anchors advance for landed agent merges even on an agent-only
+# update). Args: $1 = new-release tree · $2 = manifest · $3 = install root.
 update_finalize_merge_and_anchors() {
   local new_dir="$1" manifest="$2" root="$3"
   update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
@@ -2591,11 +2470,17 @@ update_finalize_merge_and_anchors() {
 # archive modes), the spine's cp -p staging + atomic swap (deterministic sync),
 # and the agent-merge _update_agent_apply copy. None ASSERTS the landed mode, so
 # a mode-stripped bundle member updates silently inert (the FB-2 shipped-inert
-# class). The modes map covers EVERY files[] entry; a member absent on disk
-# (e.g. a sensitive-refused new file) warns and is skipped — only an existing
-# file that cannot converge is fatal. A manifest without a modes map (pre-modes
-# release) skips fail-open with one notice. (The launchd-plist staging cp -f is
-# a scratch-dir copy, not a landing surface — out of scope here.)
+# class). The modes map covers EVERY files[] entry, so a regular member absent on
+# disk is an apply defect and is fatal, as is an existing file that cannot converge.
+# Two rows are not fatal: a symlink row is skipped (its target reconciles on its own
+# row), and a merge-claimed agents/<name>.md with no file on disk warns and is
+# skipped, because the EDITABLE-region merge defers a release-only ADD to the
+# agent_lifecycle ceremony and so leaves that row nothing to reconcile — dying on it
+# would strand the run after the swap and before the version-of-record is persisted,
+# and the up-to-date early return would then die at the same row on every later run.
+# A manifest without a modes map (pre-modes release) skips fail-open
+# with one notice. (The launchd-plist staging cp -f is a scratch-dir copy, not a
+# landing surface — out of scope here.)
 
 # Echo the octal permission mode of a single file — BSD stat (macOS) first,
 # GNU coreutils fallback (Linux CI parity). Exit codes cannot select the form:
@@ -2625,10 +2510,6 @@ update_enforce_manifest_modes() {
     # never a silent skip (the silent-inert class one level up)
     [[ "${mode}" =~ ^[0-7]{3,4}$ ]] \
       || update_die "manifest.modes[${rel}] is not a valid octal mode: '${mode}'"
-    if [[ ! -f "${root}/${rel}" ]]; then
-      update_log "WARN: mode target missing on disk (skipped): ${rel}"
-      continue
-    fi
     # A SYMLINK row has nothing of its own to reconcile, and reconciling it is
     # not merely useless but impossible: the gate above and `chmod` both FOLLOW
     # the link, while update_file_mode_octal's `stat -f '%Lp'` is BSD LSTAT and
@@ -2644,6 +2525,20 @@ update_enforce_manifest_modes() {
     if [[ -L "${root}/${rel}" ]]; then
       update_log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
       continue
+    fi
+    # Ordered after the symlink arm so a dangling link is skipped as a link row
+    # rather than read as an absent file by a dereferencing test. A merge-claimed
+    # agent body reaches the install through the EDITABLE-region merge, which has a
+    # documented decline for it, so its absence is a report; every other row travels
+    # the byte-swap, where absence means the apply did not land it. The claim is read
+    # through the shared spine predicate, the same one the merge selects on.
+    if [[ ! -f "${root}/${rel}" ]]; then
+      # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+      if spine_is_merge_claimed_path "${rel}"; then
+        update_log "WARN: mode target missing on disk (the agent merge declined this body; run the agent_lifecycle ceremony to install it): ${rel}"
+        continue
+      fi
+      update_die "mode target missing on disk: ${rel} (the release lists it, so the apply did not land it)"
     fi
     actual="$(update_file_mode_octal "${root}/${rel}")"
     [[ -n "${actual}" ]] || update_die "cannot read the on-disk mode of ${rel}"
@@ -2662,7 +2557,7 @@ update_enforce_manifest_modes() {
 
 update_run() {
   local root work dl_dir new_dir manifest staging snapshot baseline_manifest
-  local changed clean_paths sensitive_paths n_sensitive rc=0 path name
+  local changed apply_paths rc=0 path name
   local withhold_registry=0 orphan_adds orphan_removes
   root="$(update_ga_root)"
   # git is NOT required — requiring it would loud-fail the
@@ -2753,9 +2648,9 @@ update_run() {
   update_headless_verify_claude
 
   # Step 3 — select the changed NON-AGENT files (merge-claimed agent md / overlays
-  # / config are excluded by the spine), then partition out sensitive harness
-  # files. The coverage scan runs first so an unclaimed path is named BEFORE the
-  # run reports success without having delivered it.
+  # / config are excluded by the spine). The coverage scan runs first so an
+  # unclaimed path is named BEFORE the run reports success without having
+  # delivered it.
   update_report_uncovered_paths "${manifest}"
   changed="$(spine_find_changed_files "${manifest}" "${root}")" \
     || update_die "change selection failed (manifest hash gap) — refusing to apply"
@@ -2774,48 +2669,22 @@ update_run() {
     update_finalize_success 0
     return 0
   fi
-  clean_paths="${work}/clean.paths"
-  sensitive_paths="${work}/sensitive.paths"
-  printf '%s\n' "${changed}" \
-    | update_partition_sensitive_sync "${clean_paths}" "${sensitive_paths}"
-  n_sensitive="$(grep -c . "${sensitive_paths}" 2>/dev/null || true)"
-  [[ -n "${n_sensitive}" ]] || n_sensitive=0
-  if [[ "${n_sensitive}" -gt 0 ]]; then
-    update_log "REFUSED to auto-sync ${n_sensitive} sensitive harness file(s) — review manually:"
-    while IFS= read -r path; do
-      [[ -n "${path}" ]] && update_log "  (sensitive, skipped) ${path}"
-    done <"${sensitive_paths}"
-  fi
+  apply_paths="${work}/apply.paths"
+  printf '%s\n' "${changed}" >"${apply_paths}"
   # finding #16: drop agent-registry.json from the apply set when withheld above, so the
-  # deterministic sync cannot register an agent whose body was not installed. Runs after
-  # the sensitive partition so the `! -s` empty-set branch below fires if this empties it.
+  # deterministic sync cannot register an agent whose body was not installed.
   if [[ "${withhold_registry}" -eq 1 ]]; then
-    update_filter_clean_path "${clean_paths}" "agent-registry.json"
-  fi
-  if [[ ! -s "${clean_paths}" ]]; then
-    update_log "no auto-syncable files remain after the sensitive partition — nothing to apply"
-    # Sensitive-only path (finding #9): advance anchors for landed merges
-    # (outcome-keyed) on the all-sensitive path too.
-    update_finalize_merge_and_anchors "${new_dir}" "${manifest}" "${root}"
-    # post-landing mode enforcement (D6 R1) — agent merges may still have landed
-    update_enforce_manifest_modes "${manifest}" "${root}"
-    # Persist the new-version (source-present-filtered) manifest so the sensitive-only
-    # bump advances the installed version-of-record + clears the "update available"
-    # badge (DF-10); the filter drops the just-refused sensitive entries so doctor §4
-    # does not brick on them (DF-8).
-    update_persist_root_manifest "${manifest}" "${root}"
-    update_finalize_success 0
-    return 0
+    update_filter_apply_path "${apply_paths}" "agent-registry.json"
   fi
 
-  # Step 4 (verify) — per-file SHA-256 of every clean changed file == manifest
+  # Step 4 (verify) — per-file SHA-256 of every changed file == manifest
   # hashes[path], staged into the work dir. Loud-fail leaves the install untouched.
   update_heartbeat
-  spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" <"${clean_paths}" \
+  spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" <"${apply_paths}" \
     || update_die "per-file hash verification failed — corrupt download, refusing to apply"
 
   # Step 5 — deterministic snapshot+swap of every staged change.
-  _update_clean_paths="$(cat "${clean_paths}")"
+  _update_apply_paths="$(cat "${apply_paths}")"
   _update_staging="${staging}"
   _update_snapshot="${snapshot}"
   update_heartbeat
@@ -2930,15 +2799,12 @@ update_main() {
   source "${lib_dir}/apply-lock.sh"
   # shellcheck source=/dev/null
   source "${lib_dir}/apply-spine.sh"
-  # shellcheck source=/dev/null
-  source "${lib_dir}/sensitive-refusal.sh"
   # Headless claude auth: a launchd job cannot use the GUI keychain, so the merge
   # stage's Haiku verify needs the 0600 token file's exporter. Function-only source.
   # shellcheck source=/dev/null
   source "${lib_dir}/claude-auth-env.sh"
   # The facade mirror-farm refresh wrapper (incident #58325) — farm_refresh /
-  # farm_write_present_manifest / farm_prune_advisory, consumed post-apply by
-  # update_refresh_mirror_farm. Function-only source (static directive so
+  # farm_prune_advisory, consumed post-apply by update_refresh_mirror_farm. Function-only source (static directive so
   # ShellCheck follows it under --external-sources, the apply-lock.sh idiom).
   # shellcheck source-path=SCRIPTDIR
   # shellcheck source=./lib/mirror-farm.sh

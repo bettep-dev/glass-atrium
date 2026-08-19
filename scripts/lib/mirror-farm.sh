@@ -71,9 +71,9 @@ farm_has_ga_links() {
 }
 
 # Refresh the facade mirror farm for GA root $1 via the canonical entrypoint,
-# optionally scoped to manifest $2 (GA_MANIFEST override — the update flow
-# passes a source-present FILTERED manifest, see farm_write_present_manifest;
-# empty/omitted -> the launcher's default <ga_root>/manifest.json).
+# optionally scoped to manifest $2 (GA_MANIFEST override — the update flow passes
+# the manifest it just applied; empty/omitted -> the launcher's default
+# <ga_root>/manifest.json).
 # rc contract (callers translate to their own named exit codes; invoke as
 # `farm_refresh ... || rc=$?` under set -e):
 #   0 = farm ran to completion (mirrors created / verified idempotently)
@@ -100,55 +100,6 @@ farm_refresh() {
   else
     "${launcher}" agents-only || return 1
   fi
-}
-
-# Write to $3 a {version, files} manifest copying $2 with .files FILTERED to
-# entries whose source exists under GA root $1, WARN-listing each absent one.
-# Update-context guard: a release file the sensitive partition REFUSED to sync (or
-# a rolled-back apply) is in the new manifest but missing from the tree —
-# unfiltered, swap_symlink would loud-die "manifest source missing" and hard-fail
-# EVERY update until manual review. Warn+skip is the update contract (the doctor §4
-# check still reports the gap). Output is a per-run scratch scope (hashes dropped),
-# NEVER the persisted root manifest. rc 1 on jq/manifest/write failure.
-farm_write_present_manifest() {
-  local ga_root="$1" src="$2" out="$3" rel version missing=0 kept=0
-  local present_list=""
-  # RESIDUAL jq requirement (T6 pre-bundle de-dependency, deliberate): this helper
-  # BUILDS JSON via jq -R/-s — construction, not the plain read the install.sh
-  # jq-or-python3 parse fallback covers. It is update-path-only (called from
-  # update.sh post-install, where ga-deps has provisioned jq); install.sh's
-  # reinstall refresh calls farm_refresh, never this helper. A jq-less reinstall
-  # can still fail INSIDE the farm_refresh launcher subprocess (surfaced loudly as
-  # install.sh exit 18 with the agents-only remedy) — loud-fail stays the contract.
-  if ! command -v jq >/dev/null 2>&1; then
-    farm_log "ERROR: jq required to filter ${src}"
-    return 1
-  fi
-  if ! jq -e '.files | type == "array"' -- "${src}" >/dev/null 2>&1; then
-    farm_log "ERROR: manifest absent or .files not an array: ${src}"
-    return 1
-  fi
-  while IFS= read -r rel; do
-    [[ -n "${rel}" ]] || continue
-    if [[ -e "${ga_root}/${rel}" ]]; then
-      present_list="${present_list}${rel}"$'\n'
-      kept=$((kept + 1))
-    else
-      farm_log "WARN: manifest source missing under ${ga_root} (sensitive-refused or unapplied) — mirror skipped: ${rel}"
-      missing=$((missing + 1))
-    fi
-  done < <(jq -r '.files[]' -- "${src}")
-  version="$(jq -r '.version // "unknown"' -- "${src}" 2>/dev/null || printf 'unknown\n')"
-  if ! printf '%s' "${present_list}" \
-    | jq -R . \
-    | jq -s --arg ver "${version}" '{version: $ver, files: .}' >"${out}"; then
-    farm_log "ERROR: could not write the filtered farm manifest: ${out}"
-    return 1
-  fi
-  if [[ "${missing}" -gt 0 ]]; then
-    farm_log "WARN: ${missing} of $((kept + missing)) manifest entries have no source — their mirrors were NOT refreshed this run"
-  fi
-  return 0
 }
 
 # Post-refresh orphan-mirror ADVISORY for GA root $1: report (never remove)

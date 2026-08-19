@@ -126,6 +126,9 @@ make_update_driver() {
   cat >"${DRIVER}" <<DRV
 #!/usr/bin/env bash
 set -uo pipefail
+# update_main sources the spine at run time; a driver calling a single function
+# has to supply it, and the mode step reads spine_is_merge_claimed_path.
+source "${GA}/scripts/lib/apply-spine.sh"
 source "${GA}/scripts/update.sh"
 trap - ERR
 _update_agent_install_root="\${DRV_ROOT:-}"
@@ -239,20 +242,49 @@ require_install_sh() {
   [ "$(mode_of "${root}/agents/a.md")" = "644" ] || return 1
 }
 
-@test "update: enforce fixes drift, logs delta, warn-skips missing targets" {
+@test "update: enforce fixes drift and logs the delta" {
   make_update_driver
-  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json" enf_out
+  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json"
   mkdir -p "${root}/hooks"
   printf '#!/usr/bin/env bash\nprintf u-ok\n' >"${root}/hooks/u.sh"
   chmod 644 "${root}/hooks/u.sh"
-  jq -n '{files:[], hashes:{}, modes:{"hooks/u.sh":"755","hooks/ghost.sh":"755"}}' >"${mm}"
+  jq -n '{files:[], hashes:{}, modes:{"hooks/u.sh":"755"}}' >"${mm}"
   run -0 "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
-  enf_out="${output}"
-  [[ "${enf_out}" == *"mode applied: hooks/u.sh 644 -> 755"* ]] || return 1
-  [[ "${enf_out}" == *"mode target missing"* ]] || return 1
+  [[ "${output}" == *"mode applied: hooks/u.sh 644 -> 755"* ]] || return 1
   [ "$(mode_of "${root}/hooks/u.sh")" = "755" ] || return 1
   run -0 "${root}/hooks/u.sh" # direct-command execution proof
   [ "${output}" = "u-ok" ] || return 1
+}
+
+@test "update: a byte-swap row with no file on disk is a loud failure" {
+  # A row the deterministic sync owns reaches disk or the apply failed, so its
+  # absence dies naming the row instead of warning past it.
+  make_update_driver
+  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json"
+  mkdir -p "${root}/hooks"
+  jq -n '{files:[], hashes:{}, modes:{"hooks/ghost.sh":"755"}}' >"${mm}"
+  run "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
+  [ "$status" -ne 0 ] || return 1
+  [[ "$output" == *"mode target missing on disk: hooks/ghost.sh"* ]] || return 1
+}
+
+@test "update: a merge-claimed agent row with no file on disk warns and continues" {
+  # The merge declines a release-only agent ADD to the agent_lifecycle ceremony, so
+  # its mode row has nothing to reconcile. Dying here would strand the run between
+  # the swap and the version-of-record persist, and every later run would reach the
+  # same row from the up-to-date early return. The row after it still reconciles.
+  make_update_driver
+  local root="${SANDBOX}/aroot" mm="${SANDBOX}/am.json"
+  mkdir -p "${root}/agents" "${root}/hooks"
+  printf 'body\n' >"${root}/agents/kept.md"
+  chmod 600 "${root}/agents/kept.md"
+  jq -n '{files:[], hashes:{},
+          modes:{"agents/absent.md":"644","agents/kept.md":"644"}}' >"${mm}"
+  run -0 "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
+  [[ "${output}" == *"mode target missing on disk (the agent merge declined this body"* ]] || return 1
+  [[ "${output}" == *"agents/absent.md"* ]] || return 1
+  [[ "${output}" != *"FATAL"* ]] || return 1
+  [ "$(mode_of "${root}/agents/kept.md")" = "644" ] || return 1
 }
 
 @test "update: update_file_mode_octal survives the GNU stat -f trap (PATH shim)" {
@@ -294,10 +326,10 @@ SHIM
   [ "$(grep -c 'no modes map' <<<"${output}")" -eq 1 ] || return 1
 }
 
-@test "update: update_run wires post-landing enforcement on all three exit paths" {
+@test "update: update_run wires post-landing enforcement on both exit paths" {
   # wiring pin: one enforcement call after each update_finalize_merge_and_anchors
-  # site (already-up-to-date, sensitive-only, full-apply) — behavior rows above
-  # cover the function; this pins the call sites.
+  # site (already-up-to-date, full-apply) — behavior rows above cover the
+  # function; this pins the call sites.
   [ "$(grep -c 'update_enforce_manifest_modes "${manifest}" "${root}"' \
-    "${GA}/scripts/update.sh")" -eq 3 ] || return 1
+    "${GA}/scripts/update.sh")" -eq 2 ] || return 1
 }

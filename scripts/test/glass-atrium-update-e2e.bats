@@ -165,7 +165,6 @@ STUB
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
@@ -247,7 +246,6 @@ STUB
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/fake-claude.sh" \

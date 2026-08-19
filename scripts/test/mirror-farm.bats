@@ -19,9 +19,9 @@
 #   7. stale mirror pruning       → --dry-run ADVISORY reports without removing;
 #                                   the explicit opt-in `prune` removes it under
 #                                   the 4-criteria guard
-#   8. missing-source filter      → farm_write_present_manifest warn+skips a
-#                                   manifest entry with no on-disk source (the
-#                                   update-context sensitive-refusal edge)
+#   8. missing-source is loud     → a manifest entry with no on-disk source
+#                                   fails the refresh (rc 1); the lib narrows no
+#                                   scope of its own, so the caller sees the gap
 #   9. deployment detection       → farm_has_ga_links flips no -> yes once a
 #                                   mirror exists
 #
@@ -164,23 +164,20 @@ run_refresh() {
   [[ ! -L "${FACADE}/skills/testkit/ghost.sh" ]]
 }
 
-@test "missing-source manifest entries are warn+skipped via the filtered scope (update context)" {
-  # ghost.sh is listed but has NO source under GAROOT (the sensitive-refused /
-  # unapplied release-file edge) — unfiltered, swap_symlink would loud-die.
+@test "a manifest entry with no on-disk source fails the refresh loudly" {
+  # ghost.sh is listed but has NO source under GAROOT. The refresh reports rc 1 and
+  # names the row rather than quietly narrowing the scope it was handed; the caller
+  # owns what to do with the gap.
   write_manifest "skills/testkit/newlib.sh" "skills/testkit/ghost.sh"
   mkdir -p "${FACADE}"
   run env GA_TARGET_HOME="${FACADE}" bash -c '
     set -Eeuo pipefail
     source "'"${LIB}"'"
-    farm_write_present_manifest "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json" "'"${WORK}"'/filtered.json"
-    farm_refresh "'"${GAROOT}"'" "'"${WORK}"'/filtered.json"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
   '
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"mirror skipped: skills/testkit/ghost.sh"* ]]
-  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]]
-  [[ ! -e "${FACADE}/skills/testkit/ghost.sh" ]]
-  # the filtered scope carries only the present entry
-  [[ "$(jq -r '.files | join(",")' "${WORK}/filtered.json")" == "skills/testkit/newlib.sh" ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ghost.sh"* ]] || return 1
+  [[ ! -e "${FACADE}/skills/testkit/ghost.sh" ]] || return 1
 }
 
 @test "farm_has_ga_links detects deployment links (no -> yes)" {

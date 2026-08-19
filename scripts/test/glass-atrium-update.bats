@@ -3,8 +3,8 @@
 # resolution helpers (GA_ROOT / reports-dir / .apply-lock / release slug); .apply-lock
 # serialize — a mid-apply daemon is signalled by .apply-lock CONTENTION (the retired
 # update_head_is_wip / [WIP-AUTO]-HEAD detector is gone): a stale/dead lock is
-# reclaimed, a live one blocks; update_partition_sensitive — clean vs sensitive split,
-# fail-CLOSED on error; update_serialize_begin / update_cleanup — pause flag set + lock
+# reclaimed, a live one blocks; the changed-file set — no path-pattern refusal holds a
+# row back from it; update_serialize_begin / update_cleanup — pause flag set + lock
 # acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
 # run via the ATRIUM_UPDATE_SRC_DIR seam (verify → deterministic non-agent sync →
 # baseline — every changed file applies, the run asks nothing); boundary asserts — NOT a merge engine
@@ -72,6 +72,31 @@ write_manifest() {
     "${files%,}" "${hashes%,}" >"${out}"
 }
 
+# Seed the charter pair as the live tree carries it: a real file plus the link row
+# pointing at it. Args: $1 = root · $2 = charter content.
+seed_charter_pair() {
+  local root="$1" content="$2"
+  seed_file "${root}" "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "${content}"
+  mkdir -p -- "${root}/rules/glass-atrium"
+  ln -sfn "../../agents/GLASS_ATRIUM_GLOBAL_RULES.md" \
+    "${root}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
+}
+
+# write_manifest plus a modes map (644 per row, as the shipped manifest records a
+# link row too) — the mode reconciler's symlink arm needs a row to skip.
+write_manifest_with_modes() {
+  local out="$1"
+  shift
+  local p hashes="" files="" modes=""
+  for p in "$@"; do
+    files="${files}$(printf '%s' "${p}" | jq -R .),"
+    hashes="${hashes}$(printf '%s' "${p}" | jq -R .):$(sha256_of "${NEWSRC}/${p}" | jq -R .),"
+    modes="${modes}$(printf '%s' "${p}" | jq -R .):\"644\","
+  done
+  printf '{"version":"1.0.0","files":[%s],"hashes":{%s},"modes":{%s}}\n' \
+    "${files%,}" "${hashes%,}" "${modes%,}" >"${out}"
+}
+
 # Source the skill (functions only — the `if BASH_SOURCE==$0` guard prevents
 # update_main from running) then source its libs, under full strict mode.
 load_skill() {
@@ -81,8 +106,6 @@ load_skill() {
   export AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports"
   export ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state"
-  # the sensitive helper lives in the REAL install (the sandbox GA_ROOT has none)
-  export ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py"
   # shellcheck source=/dev/null
   source "${SKILL}"
   # shellcheck source=/dev/null
@@ -91,8 +114,6 @@ load_skill() {
   source "${REAL_LIB_ROOT}/scripts/lib/update-pause-flag.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-spine.sh"
-  # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/sensitive-refusal.sh"
   # The git-free serialize path (update_serialize_begin / update_cleanup) resolves
   # apply_lock_acquire / apply_lock_release from this lib; update_main sources it at
   # runtime, so the function-only test seam must source it here too.
@@ -123,47 +144,73 @@ load_skill() {
   [[ "$output" == "owner/repo" ]]
 }
 
-# sensitive partition (fail-closed)
+# changed-file set — no path-pattern refusal holds a row back
 
-@test "update_partition_sensitive splits clean vs sensitive, fail-closed" {
-  # Exercises the T09 partition MECHANISM (does it route each path to the right
-  # bucket per the shared helper's verdict). GLASS_ATRIUM_GLOBAL_RULES.md is the
-  # canonical sensitive fixture — it matches the compiled refusal pattern, so the
-  # split is asserted independently of any single pattern's coverage. The
-  # traversal spelling additionally pins the lexical-normalization gate (a `..`
-  # variant must not dodge the verdict). (The launchd-plist refusal contract is
-  # pinned separately below.)
-  run bash -c '
-    '"$(declare -f load_skill seed_file)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    printf "scripts/foo.sh\nagents/../GLASS_ATRIUM_GLOBAL_RULES.md\n" \
-      | update_partition_sensitive "'"${WORK}"'/clean" "'"${WORK}"'/sens"
-    echo "CLEAN:"; cat "'"${WORK}"'/clean"
-    echo "SENS:"; cat "'"${WORK}"'/sens"
-  '
+@test "a release changing every formerly-refused harness row lands all of them" {
+  # The rows the changed-file partition used to hold back: a credential example, a
+  # launchd plist, the charter and three rule files. Each is seeded old in the
+  # install and new in the release, and each must carry the release bytes after a
+  # driven run — an empty held-back set, observed through the apply rather than
+  # through a predicate.
+  local rel
+  local -a rows=(
+    "monitor/.env.example"
+    "launchd/com.glass-atrium.autoagent-cycle.plist"
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md"
+    "scoped/scope-security.md"
+    "rules/glass-atrium/core-security.md"
+    "rules/glass-atrium/core-learning-log.md"
+  )
+  for rel in "${rows[@]}"; do
+    seed_file "${INSTALL}" "${rel}" "old ${rel}"
+    seed_file "${NEWSRC}" "${rel}" "new ${rel}"
+  done
+  write_manifest "${WORK}/manifest.json" "${rows[@]}"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
   [ "$status" -eq 0 ]
-  # clean path lands in the clean bucket, sensitive path in the sensitive bucket
-  [[ "$output" == *"CLEAN:"*"scripts/foo.sh"* ]]
-  [[ "$output" == *"SENS:"*"GLASS_ATRIUM_GLOBAL_RULES.md"* ]]
+  for rel in "${rows[@]}"; do
+    [ "$(cat "${INSTALL}/${rel}")" = "new ${rel}" ] || return 1
+  done
+  [[ "$output" != *"REFUSED to auto-sync"* ]] || return 1
 }
 
-@test "update_partition_sensitive refuses a glass-atrium launchd plist (gate G7)" {
-  # SECURITY CONTRACT: the project's launchd plists (com.glass-atrium.*.plist —
-  # the live launchctl bootstrap surface) MUST be partitioned OUT of the auto-sync
-  # set. Enforced now that daemon_cycle.py _SAFETY_SENSITIVE_PATH_PATTERNS carries
-  # the additive com.glass-atrium.*.plist pattern alongside the legacy com.claude.*.
-  run bash -c '
-    '"$(declare -f load_skill seed_file)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    printf "scripts/foo.sh\nlaunchd/com.glass-atrium.autoagent-cycle.plist\n" \
-      | update_partition_sensitive "'"${WORK}"'/clean" "'"${WORK}"'/sens"
-    echo "CLEAN:"; cat "'"${WORK}"'/clean"
-    echo "SENS:"; cat "'"${WORK}"'/sens"
-  '
+@test "a full run syncs the charter and leaves the link row a link (preservation, not exemption)" {
+  # The charter ships as a real file plus a link row pointing at it. Both rows are
+  # replaced like any other; the link survives because staging and the swap
+  # reproduce a link as a link, so syncing the real file clears BOTH manifest rows.
+  seed_charter_pair "${INSTALL}" "old charter"
+  seed_charter_pair "${NEWSRC}" "new charter"
+  write_manifest_with_modes "${WORK}/manifest.json" \
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
+
+  [ -L "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md" ]
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"SENS:"*"plist"* ]]
+
+  [ "$(cat "${INSTALL}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" = "new charter" ] || return 1
+  [ -L "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md" ]
+  [ "$(cat "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md")" = "new charter" ] || return 1
+  # both manifest rows reconcile: the link resolves through the real file
+  [ "$(sha256_of "${INSTALL}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" \
+    = "$(jq -r '.hashes["agents/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
+  [ "$(sha256_of "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md")" \
+    = "$(jq -r '.hashes["rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
 }
 
 # serialize begin + cleanup unwind
@@ -239,7 +286,6 @@ load_skill() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -267,7 +313,6 @@ load_skill() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -291,7 +336,6 @@ load_skill() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -344,7 +388,6 @@ STUB
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -380,7 +423,6 @@ STUB
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -491,7 +533,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -523,7 +564,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -551,7 +591,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -588,7 +627,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -621,7 +659,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -649,7 +686,6 @@ seed_baseline_hashed() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -686,7 +722,6 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
@@ -918,7 +953,6 @@ run_update() {
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
@@ -1373,7 +1407,6 @@ PLIST
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_PSQL="${WORK}/psql" \
@@ -1513,7 +1546,6 @@ PLIST
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "${cyc}"
 
@@ -1531,7 +1563,6 @@ PLIST
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "../etc/evil"
   [ "$status" -eq 10 ] # SECURITY: request-supplied id cannot escape the base dir
@@ -1544,7 +1575,6 @@ PLIST
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "2099-01-01_update-9.9.9"
   [ "$status" -eq 10 ]
@@ -1698,7 +1728,7 @@ rm -rf /tmp/everything
     load_skill
     work="'"${WORK}"'/wk"; mkdir -p "${work}/staging" "${work}/snapshot"
     _update_workdir="${work}"; _update_staging="${work}/staging"; _update_snapshot="${work}/snapshot"
-    _update_clean_paths="scripts/tool.sh" # NO staged src for it → spine_commit_staged rc 1
+    _update_apply_paths="scripts/tool.sh" # NO staged src for it → spine_commit_staged rc 1
     rc=0; update_commit_callback || rc=$?
     echo "RC=${rc}"
     [[ ! -f "${work}/.commit-ok" ]] && echo "NO_MARKER"
@@ -1836,7 +1866,6 @@ rm -rf /tmp/everything
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
@@ -1869,7 +1898,6 @@ rm -rf /tmp/everything
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
@@ -1905,7 +1933,6 @@ rm -rf /tmp/everything
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
@@ -1941,7 +1968,6 @@ rm -rf /tmp/everything
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"

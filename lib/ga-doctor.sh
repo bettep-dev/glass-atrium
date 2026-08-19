@@ -313,13 +313,10 @@ run_doctor() {
         # preserving the EDITABLE regions and the live-only `model:` pins. The former "regenerate on
         # the source tree, then re-release" could not clear it: the source tree has no drift, and
         # forcing live to match the whole-file hash would overwrite exactly those pins.
-        # The remedy is honest about its own reach: the updater's changed-file partition still
-        # REFUSES the remaining sensitive rows (security scope rules, credential files, launchd
-        # plists) and reports them instead, so a drift on one of those needs a manual review and
-        # will NOT clear on the next run. The charter is no longer in that set — it syncs.
+        # The updater no longer partitions a row out of its apply set by path pattern, so no
+        # drifted row is unreachable by the remedy for what the file is named.
         log "  ---- ${drift} manifest hash drift(s) on this consumer install ----"
         log "         remedy: run 'glass-atrium update' to restore the listed file(s) from the release (EDITABLE regions + model: pins are preserved)"
-        log "         note  : a drift on a sensitive row (security scope rule / credential / launchd plist) is REFUSED by the updater and reported for manual review — it will not clear on the next run"
       fi
     fi
   fi
