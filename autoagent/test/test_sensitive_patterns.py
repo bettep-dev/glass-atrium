@@ -555,18 +555,19 @@ class ForcePushFlagPositionsAreGuarded(unittest.TestCase):
         for line in (
             "+ git push origin main",
             "+ git push --follow-tags",
-            "+ git push origin main -xf",
         ):
             self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
 
     def test_bundled_short_flag_cluster_is_the_accepted_gap(self) -> None:
-        # Named as a limit, not a claim: `\s-f\b` demands a boundary a trailing
-        # cluster letter denies, so these force forms stay uncovered. Pinned so
-        # the gap is a decision on record rather than a silent miss.
+        # Named as a limit, not a claim: `\s-f\b` wants the force flag standing
+        # alone after whitespace, and a cluster denies it from either side — a
+        # letter after `f` fails the trailing `\b`, a letter before it fails the
+        # literal `-f`. Pinned so the gap is a decision on record.
         for line in (
             "+ git push origin main -fq",
             "+ git push origin main -qf",
             "+ git push origin main -fu",
+            "+ git push origin main -xf",
         ):
             self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
 
@@ -705,9 +706,10 @@ _RM_CLUSTER_SOURCE = r"\b" + _RM + r"\s+-[rRfF]+\b"
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
 class RmFlagClusterFormsAreGuarded(unittest.TestCase):
-    """The deletion entry fires on a recursive/force short-flag cluster and on
-    nothing else — the flagless form and the `farm`/`confirm` word-boundary
-    negatives are what keep the safety queue from flooding on ordinary prose."""
+    """The deletion entry fires on a short-flag cluster of only r/R/f/F letters.
+    The flagless form, a cluster carrying any other letter, and the
+    `farm`/`confirm` word-boundary negatives all stay clean — that is what keeps
+    the safety queue from flooding on ordinary prose."""
 
     def test_flag_clusters_return_the_deletion_source(self) -> None:
         for line in (
@@ -719,6 +721,18 @@ class RmFlagClusterFormsAreGuarded(unittest.TestCase):
             self.assertEqual(
                 dc.match_sensitive_diff(line), _RM_CLUSTER_SOURCE, msg=f"for {line!r}"
             )
+
+    def test_mixed_flag_cluster_is_the_accepted_gap(self) -> None:
+        # Named as a limit, not a claim: `-[rRfF]+\b` wants the cluster to end
+        # at a word boundary, so a letter outside r/R/f/F anywhere in the same
+        # cluster denies the match from either side. Pinned so the gap is a
+        # decision on record.
+        for line in (
+            "+ " + _RM + " -rfv /tmp/x",
+            "+ " + _RM + " -fq x",
+            "+ " + _RM + " -vrf /tmp/x",
+        ):
+            self.assertIsNone(dc.match_sensitive_diff(line), msg=f"for {line!r}")
 
     def test_flagless_and_word_boundary_lookalikes_stay_clean(self) -> None:
         for line in (

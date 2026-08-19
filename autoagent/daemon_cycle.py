@@ -643,7 +643,6 @@ ApprovalTier = Literal["auto", "safety", ""]
 #     weakening on the real manifest row (rules/glass-atrium/core-security.md)
 #   - core-learning-log.md: home of the Tier-2 trigger clause list itself, so a
 #     proposal rewriting the definition of Tier-2 cannot route as Tier-1 auto
-#     (the basename also covers the `memory/` CTM/EPM store of the same name)
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
@@ -690,6 +689,8 @@ _SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
 _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # File deletion — rm plus a short-flag cluster of only r/R/f/F
     # a mixed cluster (`-rfv`, `-fq`) is an accepted gap the trailing `\b` denies
+    # Residual: the Tier-2 clause line in core-learning-log.md fires here — its
+    # own flag spelling precedes the DB row that also matches that same line
     re.compile(r"\brm\s+-[rRfF]+\b"),
     # Permission / ACL changes
     re.compile(r"\bchmod\b"),
@@ -713,7 +714,7 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE),
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
-    # The `Sync` group covers the execSync call form the bare row missed
+    # Optional `Sync` group → the bare and execSync call forms both fire
     # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
     # → a proposal re-adding that bullet routes to safety
     # Cleaning that live copy is an operator follow-up, outside this branch
@@ -5679,9 +5680,11 @@ def classify_safety_tier(patch: PatchProposal) -> str:
          com.claude.*.plist / com.glass-atrium.*.plist).
          This tier ALWAYS calls the bare matcher, never the updater's
          sync-exempt variant — the charter classifies safety-sensitive here.
-      2. proposed_diff body contains a sensitive-token regex (rm -rf, chmod,
-         tccutil, launchctl daemon lifecycle, git force-push, DROP TABLE,
-         eval/exec)
+      2. proposed_diff body contains a sensitive-token regex. The tuple
+         _SAFETY_SENSITIVE_DIFF_PATTERNS is the authority for the row set —
+         forced deletion, permission/ACL, TCC reset, launchctl lifecycle,
+         force-push, destructive-git recovery forms, DB drop, dynamic
+         execution — and each row carries its own scope comment there.
       3. touched_frontmatter=True (name/tools/scope/etc. — identity surface)
 
     Empty diff → no safety classification (downstream classify_patch_area
