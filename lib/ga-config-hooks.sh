@@ -586,8 +586,9 @@ unwire_hooks() {
 # specific hook basename, across ALL events. A binding whose hook file is gone still
 # points at an absent path, so the hook ERRORS when its event fires. wire_hooks only ADDS
 # bindings and unwire_hooks removes ALL of them (too broad when one hook is being
-# retired) — this retires EXACTLY that one binding. No caller in this repo invokes it
-# today; it is the operator-facing primitive for the case. Arg: $1 = hook basename
+# retired) — this retires EXACTLY that one binding. Its one in-repo caller is the launcher's
+# `retire-hook-bindings` subcommand, which passes each positional basename through here; no
+# automated flow reaches that subcommand, so the operator drives it. Arg: $1 = hook basename
 # (e.g. "foo-hook.sh").
 # SCOPE (surgical — narrower than unwire_hooks' remove-ALL): a hook-GROUP is dropped ONLY
 # when it holds a command that, tilde-normalized, EQUALS "$HOME/.claude/hooks/<basename>"

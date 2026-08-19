@@ -5,8 +5,9 @@
 # path, so the hook ERRORS when its event fires. wire_hooks only ADDS bindings and
 # unwire_hooks removes ALL (too broad when one hook is being retired).
 # retire_hook_binding surgically drops ONLY the binding of ONE hook basename, in EITHER
-# Atrium dir. No caller in this repo invokes it today, so this suite is its whole
-# exercise surface. It MUST:
+# Atrium dir. Its one in-repo caller is the launcher's `retire-hook-bindings` subcommand,
+# which no automated flow invokes, so this suite is the primitive's whole exercise
+# surface. It MUST:
 #   * retire the target basename's binding across ALL events (tilde + absolute + dual-dir);
 #   * PRESERVE every OTHER Atrium binding and a same-basename FOREIGN-path user hook;
 #   * PRUNE an event key IT emptied, but LEAVE a pre-existing user-owned empty [];

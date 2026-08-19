@@ -797,13 +797,12 @@ passthrough() {
     exit "${update_rc}"
   fi
 
-  # retire-hook-bindings: the `glass-atrium update` vendor-removal sweep forwards the
-  # basenames of vendor-DROPPED hook files here so their now-dangling settings.json
-  # bindings are retired (the dropped file is Trashed; an un-retired binding still
-  # points at the absent file and ERRORS when its event fires — #13). Detected on the
-  # RAW tokens BEFORE the position-independent split below (which loud-dies on a 2nd
-  # non-flag token), exactly like the `update` forward above — the basenames are
-  # positional args, each passed to the targeted retire primitive.
+  # retire-hook-bindings: retire the now-dangling settings.json bindings of hook files that
+  # are no longer installed — an un-retired binding still points at the absent file and
+  # ERRORS when its event fires (#13). The basenames are positional args, each passed to the
+  # targeted retire primitive; the operator supplies them, because no in-repo flow invokes
+  # this subcommand. Detected on the RAW tokens BEFORE the position-independent split below
+  # (which loud-dies on a 2nd non-flag token), exactly like the `update` forward above.
   if [[ "$1" == "retire-hook-bindings" ]]; then
     shift
     local rhb

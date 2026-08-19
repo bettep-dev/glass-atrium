@@ -931,12 +931,12 @@ update_roster_orphan_registry_adds() {
 
 # Symmetric REMOVE-direction counterpart to update_roster_orphan_registry_adds
 # (finding #16). Under ATRIUM_UPDATE_ALLOW_ROSTER a release that DROPS a vendor
-# agent correctly swaps in the new (agent-less) registry — but agents/<name>.md is
-# USER-EDITABLE, deliberately EXCLUDED from the vendor sweep, so the body LINGERS on
-# disk with no registry key: a silent orphan the roster gate never re-detects (it
-# keys removals on the prior-vendor baseline, which the just-advanced baseline no
-# longer carries). Emit (one per line) each prior-vendor agent NAME the new release
-# dropped whose agents/<name>.md is still present — the leftover bodies to surface
+# agent correctly swaps in the new (agent-less) registry — but no step of this flow
+# removes a file the release stopped shipping, so the USER-EDITABLE agents/<name>.md
+# LINGERS on disk with no registry key: a silent orphan the roster gate never
+# re-detects (it keys removals on the prior-vendor baseline, which the just-advanced
+# baseline no longer carries). Emit (one per line) each prior-vendor agent NAME the
+# new release dropped whose agents/<name>.md is still present — the leftover bodies to surface
 # for MANUAL review (NOT auto-removed; the registry is NOT withheld — the drop is
 # intended). Provenance-scoped like the gate's remove side: a USER-added local-only
 # agent (never in the baseline) is not a vendor drop and never appears here. Empty
@@ -2636,9 +2636,9 @@ update_run() {
       done <<<"${orphan_adds}"
     fi
     # Symmetric REMOVE half (finding #16): the release dropped a vendor agent whose
-    # USER-EDITABLE body still lingers on disk (agents/*.md is excluded from the
-    # vendor sweep). Do NOT withhold the registry (the drop is intended) and do NOT
-    # auto-remove the body — emit a loud WARN so the leftover is not silently masked.
+    # USER-EDITABLE body still lingers on disk (no step of this flow removes a file
+    # the release stopped shipping). Do NOT withhold the registry (the drop is
+    # intended) and do NOT auto-remove the body — emit a loud WARN so the leftover is not silently masked.
     orphan_removes="$(update_roster_orphan_registry_removes "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}")"
     if [[ -n "${orphan_removes}" ]]; then
       update_log "ATRIUM_UPDATE_ALLOW_ROSTER: WARN — the release DROPPED an agent whose body still lingers on disk (USER-EDITABLE, not auto-removed) — review for manual removal:"
