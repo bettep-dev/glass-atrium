@@ -641,8 +641,12 @@ ApprovalTier = Literal["auto", "safety", ""]
 #   - GLOBAL_RULES / scope-security.md: absolute-rule weakening
 #   - core-security.md: the cross-cutting security rules — absolute-rule
 #     weakening on the real manifest row (rules/glass-atrium/core-security.md)
-#   - core-learning-log.md: home of the Tier-2 trigger clause list itself, so a
-#     proposal rewriting the definition of Tier-2 cannot route as Tier-1 auto
+#   - core-learning-log.md: home of the Tier-2 trigger clause list itself. The
+#     PROPOSAL axis never reaches this row — classify_safety_tier reads a
+#     target_file that is always an agent body — so the row is load-bearing on
+#     the two updater path partitions, which see every changed manifest
+#     relpath: the changed-file sync (update_partition_sensitive_sync) and the
+#     vendor-removal sweep (update_partition_sensitive)
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
@@ -699,8 +703,9 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\btccutil\b"),
     # launchctl daemon lifecycle — modern verbs + still-functional legacy load/unload
     re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart|load|unload)\b"),
-    # git force-push — force flag anywhere later on a `git push` line; the `.*`
-    # spans the line, so a chained line's unrelated force flag fires too
+    # git force-push — a force flag STANDING ALONE after whitespace, anywhere
+    # later on a `git push` line; the `.*` spans the line, so a chained line's
+    # unrelated force flag fires too
     # pair kept split so the loud WARN still names the matched flag
     # bundled short-flag cluster (`-fq`) = accepted gap, the trailing `\b` denies it
     # Residual: two non-fixture rule-prose lines fire here (git-workflow, learning-log)
@@ -747,7 +752,9 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # untracked files irreversibly; a dry-run (`-n`, no `f`) stays clean.
     re.compile(r"\bgit\s+clean\s+(?:-\S+\s+)*(?:-[a-zA-Z]*f|--force\b)"),
     # Published-history rewrite → backs the Tier-2 clause "rebase published branch"
-    # Fires on the plain `git-rebase` spelling: bare operand, `-i`, `--onto`
+    # Fires on the two-token `git` + `rebase` spelling — whitespace between the
+    # tokens is required, so the hyphen-joined `git-rebase` form stays clean —
+    # with a bare operand, `-i`, or `--onto`
     # Fail-closed over-escalation: `--abort` / `--continue` / `--skip` fire too
     # A `rebase-<suffix>` token fires as well — a hyphen satisfies the trailing `\b`
     # Accepted gaps: the `-c` / `-C` prefixed and aliased spellings split the pair
@@ -5683,8 +5690,9 @@ def classify_safety_tier(patch: PatchProposal) -> str:
       2. proposed_diff body contains a sensitive-token regex. The tuple
          _SAFETY_SENSITIVE_DIFF_PATTERNS is the authority for the row set —
          forced deletion, permission/ACL, TCC reset, launchctl lifecycle,
-         force-push, destructive-git recovery forms, DB drop, dynamic
-         execution — and each row carries its own scope comment there.
+         force-push, destructive-git recovery forms, published-history
+         rewrite, DB drop, dynamic execution — and each row carries its own
+         scope comment there.
       3. touched_frontmatter=True (name/tools/scope/etc. — identity surface)
 
     Empty diff → no safety classification (downstream classify_patch_area
