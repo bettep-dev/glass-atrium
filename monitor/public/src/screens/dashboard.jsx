@@ -60,6 +60,9 @@ const UPDATE_STALE_MS = 30 * 60 * 1000;
 const UPDATE_ENDPOINT = '/api/dashboard/update';
 const UPDATE_JOB_ENDPOINT = '/api/dashboard/update-job';
 const UPDATE_STATUS_ENDPOINT = '/api/dashboard/update-status';
+// 라우트가 row 예약 시 넣는 자리표시자 미러 (routes/dashboard.ts PENDING_TARGET_VERSION) — 실제 릴리스 버전은
+//   decoupled job 이 나중에 덮어쓴다. 버전 라벨로 렌더하면 'pending' 이라는 버전이 있는 것처럼 읽힌다.
+const UPDATE_PENDING_VERSION = 'pending';
 
 function ScreenDashboard({ onNav }) {
   const { Icon, PageHeader, TypeScaleStyle, Badge } = window.UI;
@@ -87,8 +90,6 @@ function ScreenDashboard({ onNav }) {
   // update-job / update-status 온디맨드 재조회 — UpdateBadge 의 poll interval + mutate 직후 즉시 상태 반영에 사용.
   //   메인 wave 와 독립(단건 GET, signal 불요 — AbortError 는 handleError 가 흡수).
   const refetchUpdateJob = useCallbackD(() => runFetch(UPDATE_JOB_ENDPOINT, undefined, setUpdateJobState), []);
-  // up_to_date apply 응답 후 availability 재확인 → resting 'current'(green) 로 해소.
-  const refetchUpdateStatus = useCallbackD(() => runFetch(UPDATE_STATUS_ENDPOINT, undefined, setUpdateState), []);
 
   useEffectD(() => {
     const ctrl = new AbortController();
@@ -159,7 +160,6 @@ function ScreenDashboard({ onNav }) {
                 availabilityState={updateState}
                 jobState={updateJobState}
                 onRefetchJob={refetchUpdateJob}
-                onRefetchStatus={refetchUpdateStatus}
               />
               {/* 단일 worst-severity rollup (T-DSH-2) — status Badge 가 TONE_ICON Lucide 선행(색+기호). 로딩 중엔 미렌더. */}
               {rollupTone && (
@@ -227,7 +227,7 @@ function ScreenDashboard({ onNav }) {
 //   {mode:'apply'} POST 계약과 job poll 은 불변. 4상태가 모양(window.UI.Badge) 공유 — tone/선행 아이콘/텍스트/상호작용만
 //   상태별로 바뀐다(색 단독 신호 아님: 선행 Icon 이 shape+color dual-encode). heartbeat 초과 in-progress 는 stalled →
 //   failed(crit, 클릭=재시도)로 degrade(영구 spinner 금지). 非actionable verdict(unknown/source-dev) + 무 job → null(무신호).
-function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatus }) {
+function UpdateBadge({ availabilityState, jobState, onRefetchJob }) {
   const { Icon, Badge } = window.UI;
   const [phase,       setPhase]       = useStateD('idle');  // idle | working (apply POST 전송 중, 낙관적 updating)
   const [actionError, setActionError] = useStateD(null);    // { message, canRetry } | null (mutation 오류 → failed)
@@ -256,8 +256,9 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatu
     return () => clearInterval(timer);
   }, [isPolling, onRefetchJob]);
 
-  // 단일 원자적 apply — 즉시 적용. enqueued 면 job poll 인계, up_to_date 면 availability 재확인(green resting),
-  //   single_active(409) 면 live job 노출로 인계, 그 외 오류는 crit failed 배지(클릭=재-apply).
+  // 단일 원자적 apply — 즉시 적용. 성공 응답은 status:'enqueued' 단일 결과라 job poll 로 일원화된다
+  //   (라우트가 사전 검사 없이 예약하므로 이미 최신인 설치도 job 을 받는다). single_active(409) 는
+  //   live job 노출로 인계, 그 외 오류는 crit failed 배지(클릭=재-apply).
   const startApply = useCallbackD(async () => {
     setActionError(null);
     setPhase('working');
@@ -274,13 +275,9 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatu
       setActionError({ message: mutationErrorMessage(res.status, res.data), canRetry: true });
       return;
     }
-    if (res.data && res.data.status === 'up_to_date') {
-      onRefetchStatus();
-      return;
-    }
     // status:'enqueued' — decoupled job 기동. poll 로 진행상태 인계.
     onRefetchJob();
-  }, [onRefetchJob, onRefetchStatus]);
+  }, [onRefetchJob]);
 
   if (view.kind === 'hidden') return null;
 
@@ -301,7 +298,7 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatu
     }
     // updating — spinner(모양+motion=tone carrier)를 pill 내부 leading glyph 로 배치. 다른 state 와 동일하게 심볼이 배지 안에 들어감. 非클릭(span → 내재적 비활성).
     case 'updating': {
-      const target = job && job.target_version;
+      const target = getJobVersion(job);
       cluster = (
         <Badge role="status" tone="neutral" glyph={false}>
           <Icon name="refresh" size={11} className="text-info ga-spin"/> {target ? `Updating ${target}` : 'Updating'}
@@ -312,7 +309,7 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob, onRefetchStatu
     // current — green(ok) persistent resting 배지. 인접 "All clear" 와 동일 idiom(check icon + --dim 버전 라벨).
     //   completed job → target_version, 그 외(availability current) → local_version. ✓ 는 icon=true 가 그림(리터럴 금지).
     case 'current': {
-      const version = (job && job.status === 'completed' && job.target_version)
+      const version = (job && job.status === 'completed' && getJobVersion(job))
         || (availabilityData && availabilityData.local_version)
         || '';
       cluster = <Badge role="status" tone="ok" icon>{version}</Badge>;
@@ -371,6 +368,13 @@ function deriveUpdateView(args) {
   return { kind: 'hidden' };
 }
 
+// job row 의 표시 가능한 릴리스 버전 — 자리표시자와 빈 값은 null. 호출부는 null 일 때 버전 없는 라벨로 떨어진다.
+function getJobVersion(job) {
+  const version = job && job.target_version;
+  if (!version || version === UPDATE_PENDING_VERSION) return null;
+  return version;
+}
+
 // POST /api/dashboard/update — JSON body(mode: 'apply'). { ok, status, data } 정규화(네트워크
 //   실패도 typed shape 로 흡수).
 async function postUpdate(body) {
@@ -394,7 +398,6 @@ function mutationErrorMessage(status, data) {
   if (code === 'single_active')    return 'Another update is already in progress.';
   if (code === 'claude_unresolved') return "The updater couldn't find the tool it needs on this host.";
   if (code === 'enqueue_failed')   return "Couldn't start the update job.";
-  if (code === 'preview_failed')   return reason ? `Update check failed: ${reason}` : 'Update check failed.';
   if (code === 'network')          return reason ? `Network error: ${reason}` : 'Network error.';
   if (reason)                      return String(reason);
   return `Request failed (HTTP ${status}).`;
