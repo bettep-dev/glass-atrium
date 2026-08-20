@@ -1313,7 +1313,7 @@
     "scripts/generate-manifest.sh": "95f89c33837d8a54db5dbd16a5c684e9344dbe19d1aa4f5b69303d3bb2122c63",
     "scripts/init-test-repos.sh": "01042b12ec3ef320a108a7dc38b8f8d17b3df6f7e35574e9e93369c002e1aa03",
     "scripts/lib/apply-lock.sh": "b9b5ee21d91b052cd5505029f93ed51901796e80f9663fa3941211077bedc492",
-    "scripts/lib/apply-spine.sh": "3279cf9016737cffcd3ab0c01e8718b3c33a3124eb1b29812d05b37f64a86c4b",
+    "scripts/lib/apply-spine.sh": "e6e1f3a8a996f545639a0b7bae5b09ed33b462c82e5918da9d4e82035dd96101",
     "scripts/lib/atrium-config.sh": "bcaa8f0bfaaf0b3af98d1c8a0b999dc9e824168a5f7cfdb220c856adc8aee74a",
     "scripts/lib/audit-cli.sh": "240097362cf6bc86242053a06eb04fbed99b83f71850dc79c32a10726fa1247d",
     "scripts/lib/claude-auth-env.sh": "6d2becb8639ae2ca22001e4fb41199801ec313570aec711ece6427e34d7073fa",
