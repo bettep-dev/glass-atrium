@@ -405,9 +405,10 @@ const execFileAsync = promisify(execFile);
 const ENQUEUE_TIMEOUT_MS = 20_000;
 const ENQUEUE_MAX_BUFFER = 1024 * 1024;
 
-// Default stale-sweep cutoff (30 min) — matches update.sh's 1800s pause TTL, so a
-// crashed decoupled updater (heartbeat frozen) is reclaimed but a live one is
-// never clobbered. Override: ATRIUM_UPDATE_STALE_MS (test seam).
+// Default stale-sweep cutoff (30 min). update.sh heartbeats its update_job row at
+// long-stage boundaries rather than on a timer, so the cutoff must exceed the widest
+// gap between two ticks: a crashed decoupled updater (heartbeat frozen) is reclaimed
+// while a live one is never clobbered. Override: ATRIUM_UPDATE_STALE_MS (test seam).
 const DEFAULT_STALE_MS = 30 * 60 * 1000;
 
 // Row-reservation placeholder: the route resolves no release version before enqueue.

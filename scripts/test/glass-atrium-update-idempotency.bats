@@ -43,7 +43,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t ga-update-idem.XXXXXX)" && pwd -P)"
   INSTALL="${WORK}/install" # sandbox GA_ROOT (the live install under test)
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
-  STATE="${WORK}/state"     # reports / pause / baseline sandbox
+  STATE="${WORK}/state"     # daemon-reports + update-state (baseline, base-agents) sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
 }
 
