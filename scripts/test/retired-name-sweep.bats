@@ -80,8 +80,14 @@ update-pause-flag.sh
 PAUSE_FLAG_LIB
 spine_apply
 spine_find_removed_files
+update_preview
+update_sweep_removed_files
+update_trash_dir
+update_retire_swept_hook_bindings
+_update_removal_commit_callback
+update_normalize_relpath
 update_partition_sensitive
-is_sensitive_path_for_sync
+_sensitive_path_for_sync
 _SYNC_EXEMPT_RELPATHS
 path-sync
 confirm gate
