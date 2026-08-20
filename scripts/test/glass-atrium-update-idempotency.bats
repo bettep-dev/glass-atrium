@@ -9,12 +9,11 @@
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
 #   * a conflicting region, both ways round the gap-policy kill switch: with the
-#     switch OFF it declines durably and never lands markers; with the switch at
-#     its default it resolves to the release side and lands, declining nothing —
-#     and lands with the Haiku gate UNREACHABLE, which is the property the policy
-#     was chosen for (merge-resolved-release is deliberately out of
-#     editable_merge._LLM_REQUIRED, so no model stands between a resolved gap and
-#     the disk; an outage or an exhausted quota cannot drop it back to declining).
+#     switch OFF the resolver emits a marker-bearing report and the body declines
+#     durably; with the switch at its default the gap is contested, neither side
+#     is emitted, and the body declines under merge-pending-arbitration with its
+#     base entry held back — the same local body survives either way, and no model
+#     is consulted on either path.
 #
 # Split out of glass-atrium-update.bats rather than appended to it: CI runs one
 # GNU parallel job per *.bats file under a 240s per-file timeout, and that file
@@ -219,19 +218,17 @@ NEW vendor rules'
   [[ "${entry}" == *"local-body-kept"* ]] || return 1
 }
 
-@test "with the gap policy ON the same conflicting body LANDS the release side with the Haiku gate unreachable" {
-  # The shell-side pin on the property the policy was chosen for. The input that
-  # declines above is the shape the stuck agents present every release; under the
-  # DEFAULT policy the resolver emits merge-resolved-release, the candidate joins
-  # the normal records queue and lands.
+@test "with the gap policy ON the same conflicting body declines pending arbitration and keeps local" {
+  # The shell-side pin on the contested-gap routing. The input that declines above
+  # is the shape the stuck agents present every release; under the DEFAULT policy
+  # the resolver now emits merge-pending-arbitration — neither side chosen — and
+  # the updater's verdict routing declines it rather than queueing a candidate.
   #
-  # It lands with the gate ABSENT. run_update points AUTOAGENT_CLAUDE_BIN at a
-  # path that does not exist, which is what CI and an offline deploy look like to
-  # fail-safe run_pre_verify. Were merge-resolved-release still LLM-required, that
-  # refusal would roll the body back and this test would red — so this is the
-  # assertion standing between the deterministic policy and a silent regression to
-  # the mediator's availability profile, where the feature lands NOTHING on a host
-  # that cannot reach the model while reporting success at plan time.
+  # The kill-switch test above and this one therefore differ in VERDICT and in
+  # candidate shape while agreeing on the outcome: the local body survives and no
+  # marker is written. What separates them is that the kill switch produces a
+  # marker-bearing report the write path refuses, whereas this path produces no
+  # merged wording at all.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -253,17 +250,16 @@ NEW vendor rules'
 
   run_update
   [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"CONFLICT (merge-pending-arbitration)"* ]] || return 1
   [[ "$output" != *"CONFLICT (merge-conflict)"* ]] || return 1
 
-  local landed
-  landed="$(cat "${INSTALL}/agents/dev-a.md")"
-  # The tripwire never had to fire: resolution replaces markers, it does not emit them.
-  [[ "${landed}" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
-  [[ "${landed}" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
-  # The conflicting region took the release side, and the vendor structure came with it.
-  [[ "${landed}" == *"VENDOR rewrite"* ]] || return 1
-  [[ "${landed}" == *"NEW vendor rules"* ]] || return 1
-  [[ "${landed}" != *"LOCAL rewrite"* ]] || return 1
+  local kept
+  kept="$(cat "${INSTALL}/agents/dev-a.md")"
+  # The candidate was never queued, so the live body is byte-identical to what the
+  # run found — including the vendor structure the release rewrote outside the region.
+  [[ "${kept}" == "${conflict_local}" ]] || return 1
+  [[ "${kept}" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
+  [[ "${kept}" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
 
   # The gate was never CONSULTED, not merely overruled. run_pre_verify resolves a
   # verifier model before it shells out, and that resolution is the only source of
@@ -272,13 +268,15 @@ NEW vendor rules'
   # that happened to agree". Only the former survives an outage.
   [[ "$output" != *"[daemon-cycle]"* ]] || return 1
 
-  # The base advanced to the landed body — the anchor that keeps the next same-release
-  # run a no-op instead of re-diffing against a stale base.
-  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${conflict_release}" ]] || return 1
+  # The base stayed at its prior entry. Advancing it would retire the contested gap
+  # without anyone judging it: the next run would diff against the release the gap
+  # never accepted and see nothing left to contest.
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
 
-  # Nothing declined, so no durable record should exist. Asserting absence of the FILE
-  # (not an empty one) keeps "no declines" distinguishable from "never recorded".
-  [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
+  # The decline is durable, and it names the verdict that produced it.
+  local declines="${INSTALL}/update-declines/conflict-declines.log"
+  [[ -f "${declines}" ]] || return 1
+  [[ "$(cat "${declines}")" == *"merge-pending-arbitration"* ]] || return 1
 }
 
 @test "a declined body does not leak its conflict reason onto the NEXT mergeable body" {

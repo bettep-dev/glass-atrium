@@ -1149,7 +1149,7 @@ class ThreeWayMergePureFunctionTest(unittest.TestCase):
         base = ["x\n"]
         local = ["LOCAL\n"]
         release = ["RELEASE\n"]
-        # resolve_release stays OFF (the default) — the marker assertions below
+        # arbitrate stays OFF (the default) — the marker assertions below
         # only hold on the reporting path.
         merged, hunks = em.three_way_merge_hunks(base, local, release)
         self.assertTrue(hunks)
@@ -1235,7 +1235,7 @@ def _fm_doc(front: str, region: str) -> str:
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class GapPolicyTest(unittest.TestCase):
-    """Deterministic conflicting-gap resolution: the release side, marker-free."""
+    """Contested-gap routing: neither side emitted, marker-free, judgment pending."""
 
     _BASE = _doc(top="# A", region="same-old", bottom="z")
     _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
@@ -1251,15 +1251,29 @@ class GapPolicyTest(unittest.TestCase):
             resolve_conflicting_gaps=resolve_gaps,
         )
 
-    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
+    def test_when_arbitration_on_then_contested_gap_keeps_local_marker_free(self) -> None:
         res = self._resolve(resolve_gaps=True)
 
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertFalse(res.has_conflict)
         self.assertFalse(res.regions[0].had_conflict)
         self.assertFalse(em.has_conflict_markers(res.candidate_text))
-        self.assertIn("VENDOR rewrite", res.candidate_text)
-        self.assertNotIn("LOCAL rewrite", res.candidate_text)
+        self.assertIn("LOCAL rewrite", res.candidate_text)
+        self.assertNotIn("VENDOR rewrite", res.candidate_text)
+
+    def test_when_the_candidate_equals_local_then_it_is_not_reported_as_a_no_op(
+        self,
+    ) -> None:
+        """A no-op lets the updater advance the base entry, retiring the gap unjudged.
+
+        This fixture's release differs from local only INSIDE the region, so the
+        emitted local gap makes the candidate byte-identical to the local body —
+        the shape that would otherwise take the no-op collapse.
+        """
+        res = self._resolve(resolve_gaps=True)
+
+        self.assertEqual(res.candidate_text, self._LOCAL)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
 
     def test_when_policy_on_then_region_carries_its_hunks_forward(self) -> None:
         res = self._resolve(resolve_gaps=True)
@@ -1283,6 +1297,8 @@ class GapPolicyTest(unittest.TestCase):
         self.assertTrue(res.has_conflict)
         self.assertTrue(em.has_conflict_markers(res.candidate_text))
         self.assertIn("LOCAL rewrite", res.candidate_text)
+        # Report-only asks for no judgment: the marker block IS the report.
+        self.assertEqual(res.regions[0].requests, ())
 
     def test_when_kill_switch_set_then_the_default_reverts_to_reporting(self) -> None:
         prior = os.environ.get(em._RESOLVE_GAPS_ENV)
@@ -1298,14 +1314,16 @@ class GapPolicyTest(unittest.TestCase):
                 os.environ[em._RESOLVE_GAPS_ENV] = prior
 
         self.assertEqual(off.verdict, em.MERGE_CONFLICT)
-        self.assertEqual(on.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(on.verdict, em.MERGE_PENDING_ARBITRATION)
 
-    def test_when_policy_on_then_candidate_applies_and_verifies_without_the_gate(self) -> None:
-        # The stub FAILS and counts its calls: a resolved gap is deterministic, so
-        # the landing must not consult the model at all. Verifying green against a
-        # verifier that would refuse is what proves the gate is out of the path —
-        # a passing stub would leave "never called" and "called and agreed"
-        # indistinguishable, which is the whole property the policy rests on.
+    def test_when_arbitration_on_then_the_library_refuses_nothing_and_calls_no_gate(
+        self,
+    ) -> None:
+        # A pending candidate carries no marker, so no library-side guard stops it:
+        # the refusal is the updater's verdict routing and lives THERE alone, which
+        # is why apply reports a no-op rather than the pre-write refusal a
+        # marker-bearing candidate takes. The stub FAILS and counts its calls, so
+        # verifying green proves the gate was never reached rather than agreed with.
         stub = _StubVerify(passed=False)
         cand = em.build_merge_candidate(
             "dev-android.md",
@@ -1316,12 +1334,12 @@ class GapPolicyTest(unittest.TestCase):
             resolve_conflicting_gaps=True,
         )
 
-        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
-        self.assertFalse(cand.resolution.needs_llm)  # deterministic — no model gate
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertFalse(cand.resolution.needs_llm)  # no merged wording to screen
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "dev-android.md"
             target.write_text(self._LOCAL, encoding="utf-8")
-            self.assertEqual(cand.apply(str(target)), em.APPLY_OK)
+            self.assertEqual(cand.apply(str(target)), em.APPLY_NOOP)
             self.assertEqual(cand.verify(str(target)), 0)
             self.assertEqual(stub.calls, 0)  # the gate was never reached
             self.assertFalse(
@@ -1331,9 +1349,7 @@ class GapPolicyTest(unittest.TestCase):
     def test_when_gap_is_non_conflicting_then_no_hunk_and_release_lands(self) -> None:
         base, local, release = ["A\n"], ["A\n"], ["R\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
         self.assertEqual(hunks, [])
         self.assertEqual(merged, ["R\n"])
@@ -1343,11 +1359,9 @@ class GapPolicyTest(unittest.TestCase):
         local = ["LA\n", "s\n", "LB\n"]
         release = ["RA\n", "s\n", "RB\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
-        self.assertEqual(merged, ["RA\n", "s\n", "RB\n"])
+        self.assertEqual(merged, ["LA\n", "s\n", "LB\n"])
         self.assertEqual([h.local for h in hunks], [("LA\n",), ("LB\n",)])
         self.assertEqual([h.out_index for h in hunks], [0, 2])
 
@@ -1356,21 +1370,19 @@ class GapPolicyTest(unittest.TestCase):
         local = ["LOCAL1\n", "s\n", "B\n"]
         release = ["REL1\n", "s\n", "B-REL\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
         self.assertEqual(len(hunks), 1)
-        self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
+        self.assertEqual(merged, ["LOCAL1\n", "s\n", "B-REL\n"])
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ResolvedGapStatsTest(unittest.TestCase):
-    """The shape the recording caller reads back from a resolved file.
+    """The richer-local fixture: two local lines against one release line.
 
-    The row it writes is the only trace that daemon-authored content was
-    discarded, so the counts it reports have to come from the resolution rather
-    than from a re-derivation the caller could get wrong.
+    It is the shape that shows a whole-side rule discarding content, so it drives
+    both what a contested gap asks for and what the recording caller reads back
+    from a resolution that discarded nothing.
     """
 
     _BASE = _doc(top="# A", region="same-old", bottom="z")
@@ -1387,26 +1399,73 @@ class ResolvedGapStatsTest(unittest.TestCase):
             resolve_conflicting_gaps=True,
         )
 
-    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
+    def test_when_the_gap_is_contested_then_one_request_names_it_and_no_side_wins(
+        self,
+    ) -> None:
+        res = self._resolve(self._RELEASE)
+
+        (request,) = res.regions[0].requests
+        self.assertEqual(request.region_index, 0)
+        self.assertEqual(request.gap.base, ("same-old\n",))
+        self.assertEqual(request.gap.local, ("LOCAL one\n", "LOCAL two\n"))
+        self.assertEqual(request.gap.release, ("VENDOR rewrite\n",))
+        # The judge reads the gap inside the region the candidate is assembled
+        # from, so the context is the release side's region content.
+        self.assertEqual(request.context, ("VENDOR rewrite\n",))
+        self.assertNotIn("VENDOR rewrite", res.candidate_text)
+
+    def test_when_the_gap_is_contested_then_no_gap_counts_as_resolved(self) -> None:
+        """The recording caller's counts describe a discard; a pending gap discards
+        nothing, so it contributes none."""
         res = self._resolve(self._RELEASE)
 
         stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 0)
+        self.assertEqual(stats["regions"], "")
+
+    def test_when_a_region_resolved_to_release_then_stats_count_both_line_sides(
+        self,
+    ) -> None:
+        """The counting shape itself, driven over a resolution built to carry it."""
+        hunk = em.ConflictHunk(
+            out_index=0,
+            base=("same-old\n",),
+            local=("LOCAL one\n", "LOCAL two\n"),
+            release=("VENDOR rewrite\n",),
+        )
+        resolution = em.FileResolution(
+            target_file="dev-android.md",
+            verdict=em.MERGE_RESOLVED_RELEASE,
+            candidate_text="",
+            local_text="",
+            regions=[
+                em.RegionResolution(
+                    0,
+                    em.MERGE_RESOLVED_RELEASE,
+                    list(hunk.release),
+                    hunks=(hunk,),
+                )
+            ],
+        )
+
+        stats = em.resolved_gap_stats(resolution)
         self.assertEqual(stats["hunks"], 1)
         self.assertEqual(stats["dropped_lines"], 2)
         self.assertEqual(stats["added_lines"], 1)
         self.assertEqual(stats["regions"], "0")
 
-    def test_when_a_clean_region_accompanies_a_resolved_gap_then_needs_llm_is_true(
+    def test_when_a_clean_region_accompanies_a_contested_gap_then_needs_llm_is_true(
         self,
     ) -> None:
-        """The mixed file: the resolved verdict does NOT imply a model-free landing.
+        """The mixed file: a contested gap does not suppress the file-level gate.
 
-        Every other resolved-gap fixture is single-region, so needs_llm is False
-        throughout and the recorded row's "no model call" claim reads as
-        universally true. A production body carries several EDITABLE regions: one
-        resolved gap beside one both-changed region reports the resolved verdict
-        while the Haiku improvement-verify gate DOES run, and a Haiku outage rolls
-        the landing back. The updater keys its provenance fields on this flag.
+        Every other contested-gap fixture is single-region, so needs_llm is False
+        throughout and a reader could take the pending verdict to mean the file
+        needs no model. A production body carries several EDITABLE regions: one
+        contested gap beside one both-changed region reports the pending verdict
+        for the file while the both-changed region still requires the Haiku
+        improvement-verify gate. The updater keys its provenance fields on this
+        flag, so the two facts are independent and both are read.
         """
         two_region = (
             "# T\n<!-- EDITABLE:BEGIN -->\n{r0}\n<!-- EDITABLE:END -->\n"
@@ -1428,9 +1487,9 @@ class ResolvedGapStatsTest(unittest.TestCase):
 
         self.assertEqual(
             [r.verdict for r in res.regions],
-            [em.MERGE_CLEAN, em.MERGE_RESOLVED_RELEASE],
+            [em.MERGE_CLEAN, em.MERGE_PENDING_ARBITRATION],
         )
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertTrue(res.needs_llm)
 
     def test_when_no_gap_resolved_then_stats_are_zero_and_regions_empty(self) -> None:
@@ -1444,7 +1503,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
         # empty value as empty now that it guards on the key being present.
         self.assertEqual(stats["regions"], "")
 
-    def test_when_plan_runs_then_the_line_carries_every_stat_field(self) -> None:
+    def test_when_plan_runs_on_a_contested_file_then_it_reports_no_drop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
@@ -1470,28 +1529,34 @@ class ResolvedGapStatsTest(unittest.TestCase):
                     ]
                 )
 
-            # The sidecar carries the discarded local lines and NOTHING else —
-            # the recording caller's excerpt would otherwise quote vendor prose
-            # the release restructured and attribute it to the daemon.
-            dropped_text = (root / "cand.md.dropped").read_text(encoding="utf-8")
+            # The sidecar exists to hand the recording caller text that a gap
+            # discarded. A contested gap keeps both sides, so writing one would
+            # offer local lines that are still in the body as if they were gone.
+            sidecar_written = (root / "cand.md.dropped").exists()
 
         self.assertEqual(rc, em.EXIT_OK)
-        self.assertEqual(dropped_text, "LOCAL one\nLOCAL two\n")
+        self.assertFalse(sidecar_written)
         line = buf.getvalue()
-        self.assertIn(f"verdict={em.MERGE_RESOLVED_RELEASE} ", line)
-        self.assertIn("resolved_hunks=1 ", line)
-        self.assertIn("resolved_dropped_lines=2 ", line)
-        self.assertIn("resolved_added_lines=1 ", line)
-        self.assertIn("resolved_regions=0 ", line)
+        self.assertIn(f"verdict={em.MERGE_PENDING_ARBITRATION} ", line)
+        self.assertIn("resolved_hunks=0 ", line)
+        self.assertIn("resolved_dropped_lines=0 ", line)
+        self.assertIn("resolved_added_lines=0 ", line)
+        self.assertIn("resolved_regions= ", line)
 
     def test_when_diff_out_given_then_it_holds_the_libs_own_diff(self) -> None:
         # The recording caller reads THIS file rather than shelling out to
         # `diff -u`: one diff implementation in the loop, and the text is the one
         # the candidate was validated against.
+        #
+        # The release also revises prose OUTSIDE the region, which is what makes
+        # the candidate differ from the local body at all: the contested gap keeps
+        # the local side, so a release confined to the region would diff to
+        # nothing and the comparison would hold vacuously.
+        release = _doc(top="# A", region="VENDOR rewrite", bottom="z revised")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
-            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "release.md").write_text(release, encoding="utf-8")
             (root / "base.md").write_text(self._BASE, encoding="utf-8")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -1519,7 +1584,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
         expected = em.build_merge_candidate(
             "agents/dev-android.md",
             self._LOCAL,
-            self._RELEASE,
+            release,
             base_text=self._BASE,
             skip_pre_verify=True,
         ).diff
@@ -1577,14 +1642,14 @@ class BaseAwareFrontmatterTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
-class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
-    """The union behavior NEITHER phase has alone: a live pin on a LANDING conflict.
+class ContestedRegionKeepsLivePinsTest(unittest.TestCase):
+    """The union behavior NEITHER phase has alone: a live pin on a WRITABLE conflict.
 
-    Before the gap policy a conflicting file never reached apply, so the
-    frontmatter carry was dead code on exactly the bodies that needed it — the six
-    stuck agents conflicted every release and were declined. The gap policy is what
-    makes that carry reachable, so the two are only correct together and the
-    assertion that matters is a pin surviving all the way onto disk.
+    The frontmatter carry and the region resolution are separate steps, and the
+    carry is only proven once a pin survives the write rather than the assembly.
+    A contested region is what puts both in one candidate: it is marker-free, so
+    apply accepts it, and the pin has to ride the release skeleton's frontmatter
+    the whole way to disk.
     """
 
     _TOOLS = "name: glass-atrium-dev-python\ntools: Read, Write\n"
@@ -1610,7 +1675,7 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             self._body(release_fm, "VENDOR revised rule"),
         )
 
-    def test_both_pins_survive_a_resolved_release_landing_on_disk(self) -> None:
+    def test_both_pins_survive_a_pending_arbitration_write_on_disk(self) -> None:
         base, local, release = self._anchors(release_effort="max")
         stub = _StubVerify(passed=True)
 
@@ -1623,10 +1688,9 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             verify_fn=stub,
         )
 
-        # Phase 1 half: the conflicting region resolves marker-free, so it LANDS.
-        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        # Phase 1 half: the contested region emits no marker, so apply accepts it.
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertFalse(cand.resolution.has_conflict)
-        self.assertTrue(cand.resolution.is_changed)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "dev-python.md"
             self.assertEqual(cand.apply(str(path)), em.APPLY_OK)
@@ -1634,12 +1698,12 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             landed = path.read_text(encoding="utf-8")
 
         # Phase 0 half: read back from DISK, not from the in-memory candidate — the
-        # carry is only proven once it survives the write the gap policy unlocked.
+        # carry is only proven once it survives the write.
         self.assertIn("model: claude-opus-5\n", landed)  # live-only, live-wins
         self.assertIn("effort: xhigh\n", landed)  # base-aware pin, differs from base
         self.assertNotIn("effort: max\n", landed)  # the release value loses to the pin
-        self.assertIn("VENDOR revised rule", landed)  # the gap took the release side
-        self.assertNotIn("LOCAL daemon-learned rule", landed)
+        self.assertIn("LOCAL daemon-learned rule", landed)  # the gap chose no side
+        self.assertNotIn("VENDOR revised rule", landed)
 
     def test_a_release_without_effort_still_lands_the_pin_unnamed(self) -> None:
         # The advisory must consult BOTH allowlists: effort is absent from the
@@ -1649,7 +1713,7 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
 
         res = em.resolve_file("dev-python.md", local, release, base)
 
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertIn("effort: xhigh\n", res.candidate_text)
         self.assertIn("model: claude-opus-5\n", res.candidate_text)
         self.assertEqual(

@@ -747,9 +747,15 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [ "$(grep -cF 'python3 "${helper}"' "${SKILL}")" -eq 1 ]
 
   # Leg 3 — observe the write channels on a real INTERACTIVE run. All three anchors
-  # of the EDITABLE region differ, so the resolver takes the release side and the
-  # emitter fires; the dual-write CLI is replaced by a spy that records what it was
-  # piped. This is the leg a source grep structurally cannot supply.
+  # of the EDITABLE region differ, so the gap is contested; the dual-write CLI is
+  # replaced by a spy that records what it was piped. This is the leg a source grep
+  # structurally cannot supply.
+  #
+  # The observation is of SILENCE. The queue that feeds the emitter is gated on the
+  # verdict merge-resolved-release (grepped for below, so the gate cannot move
+  # without this leg noticing), and a contested gap emits merge-pending-arbitration
+  # instead, which the routing declines. So this run composes no envelope, and the
+  # leg pins that neither channel carries anything a declined body did not earn.
   local gap_base gap_local gap_release
   gap_base='# dev-a
 ## Goal
@@ -791,34 +797,20 @@ PY
   [ "$status" -eq 0 ]
   # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does NOT fail
   # a bats test, so it would assert nothing here.
-  if [[ "$output" != *"resolved-gap discard recorded"* ]]; then
-    echo "the run recorded no resolved-gap discard: ${output}"
+  if [[ "$output" != *"CONFLICT (merge-pending-arbitration)"* ]]; then
+    echo "the contested body did not decline: ${output}"
     return 1
   fi
 
-  # Every observed envelope carries the sanctioned shape, including the properties
-  # the apply-ineligibility argument rests on (no LIKE ok% match; a repo-relative
-  # target_file, disjoint from the daemon's absolute-path namespace).
-  run python3 - "${ENVELOPE_LOG}" <<'PY'
-import json, sys
-
-rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
-assert rows, "no envelope observed on the helper channel"
-for r in rows:
-    assert r["op"] == "write_autoagent_proposal", r["op"]
-    a = r["args"]
-    assert a["pattern_label"] == "editable-region-resolved-release", a["pattern_label"]
-    assert a["approval_tier"] == "auto", a["approval_tier"]
-    assert a["status"] in ("applied", "rejected"), a["status"]
-    assert not a["haiku_status"].startswith("ok"), a["haiku_status"]
-    assert not a["target_file"].startswith("/"), a["target_file"]
-print(len(rows))
-PY
+  # The gate this leg's silence rests on, read from the source rather than assumed:
+  # the queue writes the resolved-record row only for merge-resolved-release.
+  run grep -cF "== 'merge-resolved-release' ]]" "${SKILL}"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 
-  # The psql channel stayed shut on the interactive path, so no raw statement named
-  # the table at runtime either.
+  # Neither channel carried anything. Absence of the FILE, not an empty one, keeps
+  # "the spy was never piped" distinguishable from "the spy ran and wrote nothing".
+  [ ! -e "${ENVELOPE_LOG}" ]
   [ ! -s "${PSQL_LOG}" ]
 
   # Leg 4 — every DML statement in the file targets core.update_job. Extended to the

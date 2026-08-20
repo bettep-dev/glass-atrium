@@ -101,6 +101,7 @@ TAKE_RELEASE = "take-release"  # local region == base -> vendor region taken
 MERGE_CLEAN = "merge-clean"  # both changed, diff3 merged without conflict
 MERGE_CONFLICT = "merge-conflict"  # both changed with an overlapping conflict
 MERGE_RESOLVED_RELEASE = "merge-resolved-release"  # conflicting gap took the release side
+MERGE_PENDING_ARBITRATION = "merge-pending-arbitration"  # contested gap emits neither side
 GATED_2WAY = "gated-2way-present-both"  # base content unavailable, sides differ
 STRUCTURAL = "structural-change"  # region-count mismatch -> manual ceremony
 REFUSED = "sensitive-refused"  # target path / diff matched a sensitive pattern
@@ -132,6 +133,11 @@ NO_OP = "no-op"  # candidate identical to current local file
 # (``resolved_gap_stats`` here supplies its counts, the sidecar beside the
 # candidate its dropped text, and ``update_emit_resolved_records`` in the updater
 # writes it). So the discard is reviewed AFTER the fact, from the recorded row.
+#
+# MERGE_PENDING_ARBITRATION is OUT for a different reason: the gap emits the local
+# side and the updater declines the file, so no merged wording reaches a write for
+# the gate to screen. The verdict that carries an arbitrated wording is what needs
+# the gate, and it is not this one.
 _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
@@ -224,6 +230,7 @@ class RegionResolution:
     had_conflict: bool = False
     reason: str = ""
     hunks: tuple[ConflictHunk, ...] = ()  # conflicting gaps, document order
+    requests: tuple[ArbitrationRequest, ...] = ()  # gaps awaiting judgment, same order
 
 
 @dataclass
@@ -334,8 +341,8 @@ class ConflictHunk:
     """One gap both sides changed DIFFERENTLY, with its three anchor texts.
 
     ``out_index`` is where the gap's emitted content begins in the merged output,
-    which differs by policy: the marker block's opening line under the reporting
-    default, the first release line under the resolve-release policy. The three
+    which differs by mode: the marker block's opening line under the reporting
+    default, the first local line under the arbitration mode. The three
     anchors are tuples so the record is immutable alongside its sibling
     ``RegionResolution`` — a caller reasoning about a resolution's hunks can never
     mutate the merge's own view of them.
@@ -347,30 +354,46 @@ class ConflictHunk:
     release: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ArbitrationRequest:
+    """One contested gap routed to a judgment call, with what the judge must read.
+
+    ``region_index`` is the containing region's document-order ordinal and
+    ``context`` its RELEASE-side lines: the candidate is assembled from the release
+    skeleton, so those are the neighbours the resolved gap will sit among. The gap's
+    three anchors ride in ``gap`` rather than being copied out of it, so the request
+    and the merge cannot disagree about what the gap was.
+    """
+
+    region_index: int
+    gap: ConflictHunk
+    context: tuple[str, ...]
+
+
 def three_way_merge_hunks(
     base: list[str],
     local: list[str],
     release: list[str],
     *,
-    resolve_release: bool = False,
+    arbitrate: bool = False,
 ) -> tuple[list[str], list[ConflictHunk]]:
     """diff3-style line merge of one region. Returns (merged_lines, hunks).
 
     A gap changed by only one side is taken from that side; a gap both sides
     changed identically collapses to one copy. A gap both sides changed
     DIFFERENTLY is recorded as a ``ConflictHunk`` either way, and its emitted
-    content is what ``resolve_release`` selects:
+    content is what ``arbitrate`` selects:
 
       * False (the reporting default) — git-style conflict markers, so the
         candidate is report-only: ``apply`` refuses it pre-write
         (APPLY_MALFORMED, zero bytes) and ``verify``'s on-disk marker scan fails
         the transaction into the before-image restore.
-      * True — the RELEASE gap verbatim, so the candidate is marker-free by
-        construction and lands through the normal queue. The release body is the
-        reviewed content; the local side of a conflicting gap is unreviewed
-        daemon output, which the corpus adjudication found wrong far more often
-        than right. Non-conflicting gaps keep their existing rule untouched, so
-        daemon content outside a conflict survives byte-for-byte.
+      * True — the LOCAL gap verbatim, so the candidate is marker-free by
+        construction while no side has been chosen: which wording supersedes is a
+        judgment this function does not make, and the local body is the only copy
+        of locally accumulated content, whereas the release side is recoverable by
+        re-running the update. ``_resolve_region`` pairs the emission with a
+        request per gap and a verdict the updater declines on.
 
     Hunks are returned in document order — one per conflicting gap.
     """
@@ -400,8 +423,8 @@ def three_way_merge_hunks(
                     release=tuple(rel_gap),
                 )
             )
-            if resolve_release:
-                out.extend(rel_gap)
+            if arbitrate:
+                out.extend(local_gap)
             else:
                 out.append(_C_LOCAL)
                 out.extend(local_gap)
@@ -427,11 +450,11 @@ def _resolve_region(
     local: list[str],
     release: list[str],
     *,
-    resolve_release: bool = False,
+    arbitrate: bool = False,
 ) -> RegionResolution:
     """Classify one region against the three anchors and resolve its content.
 
-    ``resolve_release`` selects what a gap both sides changed differently emits —
+    ``arbitrate`` selects what a gap both sides changed differently emits —
     see ``three_way_merge_hunks``. It defaults OFF so the library keeps its
     reporting behavior for a caller that names no policy; the production entry
     points read ``_resolve_gaps_default`` instead.
@@ -467,19 +490,23 @@ def _resolve_region(
         )
 
     # Both changed differently -> net-new 3-way merge candidate (Haiku-gated).
-    merged, hunks = three_way_merge_hunks(
-        base, local, release, resolve_release=resolve_release
-    )
+    merged, hunks = three_way_merge_hunks(base, local, release, arbitrate=arbitrate)
+    requests: tuple[ArbitrationRequest, ...] = ()
     if not hunks:
         verdict = MERGE_CLEAN
-    elif resolve_release:
-        verdict = MERGE_RESOLVED_RELEASE
+    elif arbitrate:
+        verdict = MERGE_PENDING_ARBITRATION
+        # One request per contested gap, carrying the release-side region as the
+        # context the judge reads the gap in.
+        requests = tuple(
+            ArbitrationRequest(index, hunk, tuple(release)) for hunk in hunks
+        )
     else:
         verdict = MERGE_CONFLICT
     # had_conflict is derived from _MARKER_VERDICTS membership rather than set per
     # branch, so a verdict later added to that set carries this site with it.
-    # A resolved gap therefore CLEARS the flag: every emitted line is verbatim from
-    # an anchor and no marker was written, so the apply refusal and the on-disk
+    # An arbitrated gap therefore CLEARS the flag: every emitted line is verbatim
+    # from an anchor and no marker was written, so the apply refusal and the on-disk
     # rescan pass on their own terms rather than by exemption.
     return RegionResolution(
         index,
@@ -488,6 +515,7 @@ def _resolve_region(
         had_conflict=verdict in _MARKER_VERDICTS,
         reason="both changed; net-new diff3 candidate",
         hunks=tuple(hunks),
+        requests=requests,
     )
 
 
@@ -709,9 +737,7 @@ def resolve_file(
         if base_regions is not None and idx < len(base_regions):
             base_c = base_regions[idx][2]
         resolutions.append(
-            _resolve_region(
-                idx, base_c, local_c, release_c, resolve_release=resolve_gaps
-            )
+            _resolve_region(idx, base_c, local_c, release_c, arbitrate=resolve_gaps)
         )
 
     candidate = _assemble(release_lines, release_regions, resolutions)
@@ -719,12 +745,13 @@ def resolve_file(
     needs_llm = any(r.verdict in _LLM_REQUIRED for r in resolutions)
 
     # Overall verdict = the worst-case region verdict (severity order).
-    # MERGE_RESOLVED_RELEASE sits ahead of MERGE_CLEAN so a file carrying one
-    # resolved region and several clean ones still reports the resolved verdict —
+    # MERGE_PENDING_ARBITRATION and MERGE_RESOLVED_RELEASE sit ahead of MERGE_CLEAN
+    # so a file carrying one such region and several clean ones still reports it —
     # the routing, deletion advisory and recording paths all key on seeing it.
     severity = [
         MERGE_CONFLICT,
         GATED_2WAY,
+        MERGE_PENDING_ARBITRATION,
         MERGE_RESOLVED_RELEASE,
         MERGE_CLEAN,
         TAKE_RELEASE,
@@ -732,7 +759,12 @@ def resolve_file(
     ]
     present = {r.verdict for r in resolutions}
     overall = next((level for level in severity if level in present), KEEP_LOCAL)
-    if candidate == local_text and not needs_llm:
+    # A pending gap is exempt from the no-op collapse: its candidate equals the
+    # local body precisely BECAUSE no side was chosen, and reporting that as a
+    # no-op would tell the updater the file resolved stably and let its base entry
+    # advance, which retires the contested gap without anyone judging it.
+    pending = overall == MERGE_PENDING_ARBITRATION
+    if candidate == local_text and not needs_llm and not pending:
         overall = NO_OP
 
     return FileResolution(

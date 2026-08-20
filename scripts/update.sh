@@ -925,9 +925,14 @@ update_filter_apply_path() {
 #   * merge-conflict                            -> the same decline, now reachable
 #                                                  only with the gap-policy kill switch
 #                                                  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
+#   * merge-pending-arbitration                 -> the contested gap emitted neither
+#                                                  side -> the same decline, local
+#                                                  body kept, decline recorded
 #   * merge-resolved-release (changed)          -> conflicting gaps took the release
 #                                                  side, marker-free -> collected ->
 #                                                  txn, same as merge-clean
+#   * a verdict named in NONE of the arms       -> fail-closed decline, recorded,
+#                                                  zero bytes written
 #   * keep-local / no-op (changed=False)         -> no write
 #   * keep-local|take-release|merge-clean (changed) -> collected -> txn
 # A release-only agent file (an ADD: present in the release, absent locally) is a
@@ -1208,13 +1213,25 @@ update_merge_agent_editable_regions() {
     # clause varies per verdict while the repair instruction is shared: the two-way
     # case has no base anchor and therefore no side any policy could prefer, which is
     # why it declines unconditionally and the gap-policy kill switch never reaches it.
-    # merge-conflict is reachable only WITH that switch set — the resolver emits
-    # merge-resolved-release otherwise — so that verdict IS today's path, and
-    # restoring it is what the switch buys.
+    # merge-conflict is reachable only WITH that switch set — the resolver routes a
+    # contested gap to arbitration otherwise — so restoring the marker-bearing report
+    # is what the switch buys.
+    #
+    # The final arm is FAIL-CLOSED, and the empty reason is an ALLOWLIST outcome
+    # rather than a default: a verdict this routing does not name is one it cannot
+    # know the write-safety of, and the arms below it queue a candidate and apply it.
     case "${verdict}" in
       gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
       merge-conflict) reason='a conflict-marker candidate NEVER lands' ;;
-      *) reason='' ;; # per-file reset — a leaked reason would decline a mergeable body
+      merge-pending-arbitration) reason='a contested gap emitted neither side, so nothing was resolved to land' ;;
+      keep-local | take-release | merge-clean | merge-resolved-release | no-op)
+        reason='' # per-file reset — a leaked reason would decline a mergeable body
+        ;;
+      *)
+        update_log "agent merge: DECLINED unrecognised resolver verdict (${verdict}) for agents/${base} — no candidate queued; local body kept"
+        update_record_conflict_decline "${root}" "agents/${base}" "${verdict}"
+        continue
+        ;;
     esac
     if [[ -n "${reason}" ]]; then
       update_log "agent merge: CONFLICT (${verdict}) in agents/${base} — ${reason}; local body kept. Repair by hand: capture a pre-change image of the live body and its base entry, edit the live body to resolve the region, then sync the base store to this release"
