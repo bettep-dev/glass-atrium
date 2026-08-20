@@ -8,9 +8,10 @@
 # suite sources it under strict mode to prove that).
 #
 # Scope (E3 capabilities): spine_find_changed_files (T13, non-agent hash-diff
-# selection) · spine_stage_and_verify + spine_commit_staged + spine_apply (T11,
-# stage + per-file SHA-256 verify, then atomic swap with rollback) ·
-# spine_set_baseline + spine_get_baseline (T14, base@install anchor capture/read).
+# selection) · spine_stage_and_verify then spine_commit_staged (T11, stage +
+# per-file SHA-256 verify, then atomic swap with rollback — each caller sequences
+# the two phases itself) · spine_set_baseline + spine_get_baseline (T14,
+# base@install anchor capture/read).
 #
 # Manifest schema (from generate-manifest.sh, v1.0.0):
 #   { "version": "1.0.0", "files": ["agents/foo.md", …],
@@ -172,33 +173,16 @@ spine_is_merge_claimed_path() {
 }
 
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
-# sync? Returns 0 (excluded) / 1 (included). THREE disjoint arms (T13 CRITICAL):
-#   * *.local.md   — learned local-overlay files (never vendor-owned)
-#   * config.toml  — rendered, git-ignored runtime config (user-owned)
-#   * agents-subtree markdown the E4 merge CLAIMS — resolved by that separate
-#     three-anchor merge path (base@install / vendor / local), never here
-#
-# The two user-owned arms are UNCONDITIONAL and run FIRST: they are not part of
-# the merge's complement and must never be folded into it, because a user-owned
-# file routed into this hash-verified byte-swap is overwritten from the release
-# manifest — silent user-data destruction. Only the agents-markdown arm is the
-# merge's business, and there the exclusion is EXACTLY the merge's complement.
+# sync? Returns 0 (excluded) / 1 (included). ONE arm: agents-subtree markdown the
+# E4 merge CLAIMS, resolved by that separate three-anchor merge path
+# (base@install / vendor / local) rather than here. The exclusion is therefore
+# EXACTLY the merge's complement, which is what makes the two deploy consumers a
+# partition of the manifest — a second arm would carve a row out of both scopes
+# and leave it hash-verified by no deploy path at all.
 spine_is_excluded_path() {
   local path="$1"
-  if [[ "${path}" == *.local.md ]]; then
-    return 0
-  fi
-  case "${path}" in
-    config.toml | */config.toml) return 0 ;;
-  esac
-  if [[ "${path}" == agents/* && "${path}" == *.md ]]; then
-    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
-    if spine_is_merge_claimed_path "${path}"; then
-      return 0
-    fi
-    return 1
-  fi
-  return 1
+  [[ "${path}" == agents/* && "${path}" == *.md ]] || return 1
+  spine_is_merge_claimed_path "${path}"
 }
 
 # Emit (one relative path per line) every manifest path claimed by NEITHER deploy
@@ -229,8 +213,8 @@ spine_find_uncovered_paths() {
 # T13 — non-agent hash-diff change selection
 
 # Emit (one relative path per line) the NON-AGENT files whose live content
-# differs from the staged new-release manifest, with the agent/overlay/config
-# exclusions applied. A path absent from the live install is reported as changed
+# differs from the staged new-release manifest, with the merge-claimed agent
+# exclusion applied. A path absent from the live install is reported as changed
 # (it must be installed). Args: $1 = new-release manifest.json · $2 = live
 # install root. Loud-fails (rc 1) on a manifest path that carries no hash.
 spine_find_changed_files() {
@@ -424,30 +408,6 @@ spine_commit_staged() {
     spine_rollback "${install_root}" "${snapshot}" "${touched[@]:-}"
     return 1
   fi
-}
-
-# T11 transaction: verify the ENTIRE change set first (no install mutation),
-# then commit with rollback. Reads the change set (one relative path per line)
-# from STDIN. A staging/verify failure aborts before the install is touched at
-# all; a commit failure rolls back. Args: $1 = new-release tree root · $2 =
-# manifest.json · $3 = install root · $4 = work dir (staging/ + snapshot/ are
-# created beneath it). Returns 0 only when every changed file is committed.
-spine_apply() {
-  local new_dir="$1" manifest="$2" install_root="$3" work_dir="$4"
-  local staging="${work_dir}/staging" snapshot="${work_dir}/snapshot"
-  local -a paths=()
-  local path
-  spine_require_tools jq || return 1
-  mkdir -p -- "${staging}" "${snapshot}"
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] && paths+=("${path}")
-  done
-  # Phase 1 — stage + verify ALL (loud-fail leaves the install untouched).
-  printf '%s\n' "${paths[@]:-}" \
-    | spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" || return 1
-  # Phase 2 — snapshot + swap with rollback on any mid-swap failure.
-  printf '%s\n' "${paths[@]:-}" \
-    | spine_commit_staged "${staging}" "${install_root}" "${snapshot}" || return 1
 }
 
 # T14 — baseline (base@install) anchor capture + read

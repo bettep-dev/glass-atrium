@@ -14,11 +14,11 @@
 # per-file log read) rather than by restating its rule here, so the test cannot
 # agree with a drifted predicate.
 #
-# Three regression pins guard the scoping: the spine's exclusion has THREE
-# disjoint arms and only the agents-markdown arm is the merge's complement.
-# Folding the learned local-overlay arm or the rendered runtime-config arm into
-# that complement would route user-owned files into a hash-verified byte-swap
-# against the release manifest — silent user-data destruction on the next update.
+# Three regression pins guard the scoping: the spine's exclusion is EXACTLY the
+# merge's complement, so a learned local-overlay path and the rendered runtime
+# config are selected like any other row rather than carved out of both scopes.
+# A second exclusion arm would put a row back in the state this suite exists to
+# detect — reached by neither consumer and hash-verified by no deploy path.
 #
 # Hermetic: every fixture is built in a per-test mktemp sandbox; the repo
 # manifest is read read-only and the live install is never touched.
@@ -241,16 +241,19 @@ first_manifest_path_under() {
   [ -z "${output}" ]
 }
 
-@test "a learned local-overlay path stays excluded from the spine's selection" {
-  run selection_for 'agents/glass-atrium-dev-shell.local.md'
+# An overlay UNDER agents/ is claimed by the merge's own glob, so it is covered by
+# the merge-claimed test above; this one probes a spelling outside that glob,
+# where the selection is the sole consumer.
+@test "a learned local-overlay path outside the agents glob is SELECTED" {
+  run selection_for 'rules/glass-atrium/scope-dev.local.md'
   [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  [ "${output}" = 'rules/glass-atrium/scope-dev.local.md' ]
 }
 
-@test "the rendered runtime config path stays excluded from the spine's selection" {
+@test "the rendered runtime config path is SELECTED like any other unclaimed row" {
   run selection_for 'config.toml'
   [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  [ "${output}" = 'config.toml' ]
 }
 
 # tests — the merge consumer, and the loud detection line
@@ -273,16 +276,19 @@ first_manifest_path_under() {
   [ "$(cat "${live}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" = 'local charter' ]
 }
 
-@test "a manifest path claimed by neither consumer produces a loud named line" {
-  local dir="${WORK}/orphan" synthetic='config.toml'
+# The scan is the tripwire for a re-added exclusion arm, driven on the two
+# spellings a second arm would carve out of both scopes: while the exclusion is
+# the merge's complement they are covered, and an arm re-added around either one
+# makes this test name it.
+@test "the paths a second exclusion arm would orphan are covered by a consumer" {
+  local dir="${WORK}/orphan" overlay='rules/glass-atrium/scope-dev.local.md' config='config.toml'
   mkdir -p -- "${dir}"
-  printf '{"version":"t","files":["%s"],"hashes":{"%s":"deadbeef"}}\n' \
-    "${synthetic}" "${synthetic}" >"${dir}/manifest.json"
+  printf '{"version":"t","files":["%s","%s"],"hashes":{"%s":"deadbeef","%s":"deadbeef"}}\n' \
+    "${overlay}" "${config}" "${overlay}" "${config}" >"${dir}/manifest.json"
   run spine_find_uncovered_paths "${dir}/manifest.json"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "${synthetic}" ]
+  [ -z "${output}" ]
   run update_report_uncovered_paths "${dir}/manifest.json"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *'deploy coverage gap'* ]] || return 1
-  [[ "${output}" == *"${synthetic}"* ]] || return 1
+  [[ "${output}" != *'deploy coverage gap'* ]] || return 1
 }

@@ -1,12 +1,13 @@
 #!/usr/bin/env bats
 # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
 # T13 spine_find_changed_files — hash-diff selection, excluding the agents markdown
-# the E4 merge CLAIMS (top-level agents/<name>.md minus the charter) + *.local.md +
-# config.toml, with the missing-locally → changed rule.
+# the E4 merge CLAIMS (top-level agents/<name>.md minus the charter), with the
+# missing-locally → changed rule.
 # T11 spine_stage_and_verify (per-file SHA-256 verify; loud-fail on a hash mismatch
 # with ZERO install mutation) · spine_commit_staged (swap + rollback to pre-swap:
-# existing files restored, newly created files DELETED) · spine_apply (full
-# verify-then-commit transaction). T14 spine_set/get_baseline — capture + read the
+# existing files restored, newly created files DELETED), sequenced by each caller
+# the way the updater and the installer sequence them.
+# T14 spine_set/get_baseline — capture + read the
 # base@install anchor (absence → rc 1, the `get` contract).
 # Hermetic: baseline state dir pinned via ATRIUM_UPDATE_STATE_DIR so the live
 # ~/.claude/data/update tree is NEVER touched; the lib is sourced under
@@ -25,7 +26,7 @@ setup() {
   NEW="${WORK}/new"     # staged new-release tree
   LIVE="${WORK}/live"   # live install root
   STATE="${WORK}/state" # pinned baseline state dir
-  WORKDIR="${WORK}/wd"  # spine_apply staging/snapshot work dir
+  WORKDIR="${WORK}/wd"  # staging/ + snapshot/ work dir
   mkdir -p "${NEW}" "${LIVE}" "${STATE}" "${WORKDIR}"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}"
 }
@@ -154,7 +155,7 @@ spine() {
   [[ "${output}" == *"hooks/a.sh"* ]] || return 1
 }
 
-@test "T13: *.local.md overlay and config.toml are EXCLUDED" {
+@test "T13: a changed overlay and a changed runtime config are SELECTED like any other row" {
   seed_file "${NEW}" "rules/x.local.md" "vendor-overlay"
   seed_file "${LIVE}" "rules/x.local.md" "local-overlay"
   seed_file "${NEW}" "config.toml" "vendor-config"
@@ -164,8 +165,12 @@ spine() {
   build_manifest "${WORK}/manifest.json" "${NEW}" \
     "rules/x.local.md" "config.toml" "rules/real.md"
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "rules/real.md" ]]
+  # the closing member: the selection is the merge's complement and nothing else,
+  # so a row is withheld only by the merge claiming it
+  [[ "${status}" -eq 0 ]] \
+    && [[ "${output}" == *"rules/x.local.md"* ]] \
+    && [[ "${output}" == *"config.toml"* ]] \
+    && [[ "${output}" == *"rules/real.md"* ]]
 }
 
 @test "T13: loud-fail (rc 1) when a manifest path carries no hash" {
@@ -362,8 +367,11 @@ spine() {
   run bash -c '
     set -Eeuo pipefail
     source "$1"; shift
+    mkdir -p -- "$4/staging" "$4/snapshot"
     printf "%s\n" "rules/glass-atrium/CHARTER.md" \
-      | spine_apply "$1" "$2" "$3" "$4"
+      | spine_stage_and_verify "$1" "$2" "$4/staging"
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_commit_staged "$4/staging" "$3" "$4/snapshot"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
   # the closing member: the row the link points at is a separate manifest row,
   # untouched by this change set
@@ -383,8 +391,11 @@ spine() {
   run bash -c '
     set -Eeuo pipefail
     source "$1"; shift
+    mkdir -p -- "$4/staging" "$4/snapshot"
     printf "%s\n" "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md" \
-      | spine_apply "$1" "$2" "$3" "$4"
+      | spine_stage_and_verify "$1" "$2" "$4/staging"
+    printf "%s\n" "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md" \
+      | spine_commit_staged "$4/staging" "$3" "$4/snapshot"
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
   # the closing member: the two rows are one file again, so reading through the
   # link reaches the target's new content
@@ -502,40 +513,6 @@ spine() {
     && [[ ! -e "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
     && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
     && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/ABSENT-CHARTER.md" ]]
-}
-
-# T11 — spine_apply (full transaction)
-
-@test "T11 apply: verify-then-commit applies the whole change set" {
-  seed_file "${NEW}" "hooks/a.sh" "applied-a"
-  seed_file "${NEW}" "scripts/b.sh" "applied-b"
-  seed_file "${LIVE}" "hooks/a.sh" "old-a"
-  build_manifest "${WORK}/manifest.json" "${NEW}" "hooks/a.sh" "scripts/b.sh"
-  run bash -c '
-    set -Eeuo pipefail
-    source "$1"; shift
-    printf "%s\n" "hooks/a.sh" "scripts/b.sh" \
-      | spine_apply "$1" "$2" "$3" "$4"
-  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
-  [[ "${status}" -eq 0 ]]
-  [[ "$(cat "${LIVE}/hooks/a.sh")" == "applied-a" ]]
-  [[ "$(cat "${LIVE}/scripts/b.sh")" == "applied-b" ]]
-}
-
-@test "T11 apply: a verify failure aborts before the install is touched" {
-  seed_file "${NEW}" "hooks/a.sh" "tampered"
-  seed_file "${LIVE}" "hooks/a.sh" "live-original"
-  # manifest hash does NOT match the new-release file content
-  jq -n '{version:"1.0.0", files:["hooks/a.sh"],
-          hashes:{"hooks/a.sh":"0000000000000000000000000000000000000000000000000000000000000000"}}' \
-    >"${WORK}/manifest.json"
-  run bash -c '
-    set -Eeuo pipefail
-    source "$1"; shift
-    printf "%s\n" "hooks/a.sh" | spine_apply "$1" "$2" "$3" "$4"
-  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
-  [[ "${status}" -eq 1 ]]
-  [[ "$(cat "${LIVE}/hooks/a.sh")" == "live-original" ]]
 }
 
 # T14 — baseline capture + read

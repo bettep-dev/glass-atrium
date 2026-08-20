@@ -55,8 +55,8 @@
 # Replacement scope: the path-pattern refusal that used to partition the changed set
 # is gone and nothing in this file replaces it. Two mechanisms still route a row away
 # from the byte-swap, both drivable: spine_is_excluded_path (an agents/*.md the
-# EDITABLE-region merge claims — delivered by that merge, not withheld — plus
-# *.local.md and config.toml), and the finding #16 registry withhold, which drops
+# EDITABLE-region merge claims — delivered by that merge, not withheld), and the
+# finding #16 registry withhold, which drops
 # agent-registry.json for one run when an added agent's body did not install.
 # The refusal governing the DAEMON's own writes is untouched and lives outside this
 # file: daemon_cycle.classify_safety_tier routes an approval, and the agent-body merge
@@ -2707,10 +2707,7 @@ update_main() {
   # sandbox, whereas the running updater's libs always sit beside it.
   # ATRIUM_UPDATE_LIB_DIR overrides for non-standard layouts.
   local script_dir lib_dir merge_lib_dir
-  # Realpath the FILE before dirname — pwd -P cannot dereference a file-level
-  # symlink of the script itself, so a facade invocation would mis-anchor
-  # lib_dir/merge_lib_dir (incident #58325 failure class; cf. daemon-apply.sh).
-  script_dir="$(dirname -- "$(update_realpath "${BASH_SOURCE[0]}")")"
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
   # Resolved running-script dir — the FIXED, request-independent anchor the headless
   # render-parity post-step resolves render-launchd-plists.sh / render-monitor-env.sh
   # from (SECURITY: never request-derived).
