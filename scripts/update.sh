@@ -1073,6 +1073,12 @@ update_agent_outcome_landed() {
 # non-zero when any file rolled back or did not apply.
 _update_agent_commit_callback() {
   local logical real candidate release agent rc=0
+  # Restore-index rows accumulate in memory and land in ONE write below. A row
+  # appended per file would leave a PARTIAL index behind a failed write, and a
+  # partial index is worse than none: the restore reads it instead of falling back,
+  # so the unlisted files are silently skipped. One write fails whole, and a whole
+  # failure degrades the cycle to the directory convention.
+  local index_rows=""
   while IFS=$'\t' read -r logical real candidate release agent; do
     [[ -n "${logical}" ]] || continue
     _update_agent_verify_target="${logical}"
@@ -1095,6 +1101,15 @@ _update_agent_commit_callback() {
       "${_update_agent_install_root}" "${real}" "${real}" "${candidate}" \
       "${_update_agent_backup_dir}" \
       _update_agent_apply _update_agent_verify "${agent}" "${logical}"
+    # Record which target this before-image belongs to, from the path the
+    # transaction publishes rather than from a path this callback recomposes.
+    # Recorded on ANY outcome that captured an image, matching what the restore
+    # can act on: the sink holds an image whenever the capture succeeded, whether
+    # or not the apply that followed it landed. An empty publication means the
+    # capture itself failed, and no image exists to name.
+    if [[ -n "${GIT_TXN_BEFORE_IMAGE:-}" ]]; then
+      index_rows="${index_rows}${GIT_TXN_BEFORE_IMAGE##*/}"$'\t'"${logical}"$'\n'
+    fi
     case "${GIT_TXN_RC}" in
       "${GIT_TXN_OK}")
         update_log "agent merged + applied: ${logical}"
@@ -1122,6 +1137,7 @@ _update_agent_commit_callback() {
         ;;
     esac
   done <"${_update_agent_records_file}"
+  update_write_restore_index "${_update_agent_backup_dir}" "${index_rows}"
   return "${rc}"
 }
 
@@ -1373,7 +1389,13 @@ update_roster_base_store_dir() {
 # a roster key's store path is composed. The two namespaces cannot collide: an agent
 # key is a bare basename ending `.md`, and no declared roster path has that shape, so
 # a lookup in one namespace can never resolve an entry of the other. Args: $1 =
-# capture key (an agent `<name>.md`, or a declared roster path) · $2 = flat store dir.
+# capture key (an agent `<name>.md`, its manifest-relative form, or a declared roster
+# path) · $2 = flat store dir.
+#
+# The flat namespace is keyed by BASENAME, so its key composes from the key's last
+# path segment: a caller holding `agents/<name>.md` resolves the same entry as one
+# holding `<name>.md`. That is what lets the restore hand this function one recorded
+# path per before-image instead of discriminating the namespace at its own site.
 update_base_entry_path() {
   local key="$1" flat_store="$2" rel
   while IFS= read -r rel; do
@@ -1381,7 +1403,7 @@ update_base_entry_path() {
     printf '%s\n' "$(update_roster_base_store_dir)/${rel}"
     return 0
   done < <(spine_get_roster_paths)
-  printf '%s\n' "${flat_store}/${key}"
+  printf '%s\n' "${flat_store}/${key##*/}"
 }
 
 # Persist the new-release top-level agents/<name>.md bodies into the base-content
@@ -2274,6 +2296,58 @@ PY
   done
 }
 
+# ---------------------------------------------------------------------------
+# Per-cycle restore index — the target each before-image belongs to
+# ---------------------------------------------------------------------------
+#
+# The before-image sink is ONE flat directory of <basename>.bak files, so the target
+# an image belongs to is not recoverable from the sink itself: the restore rebuilt it
+# from a directory convention, which holds only while every captured file sits
+# directly under agents/. The index records the target the merge actually held, from
+# the path the transaction publishes — so the shared transaction library needs no
+# edit to supply it.
+
+# Echo the per-cycle restore index path. Arg: $1 = cycle dir.
+update_restore_index_path() {
+  printf '%s\n' "$1/restore-index.tsv"
+}
+
+# Write the per-cycle restore index in ONE write. Args: $1 = cycle dir · $2 = the
+# accumulated rows (<before-image basename> TAB <manifest-relative target>).
+# Best-effort and LOUD: a failed write removes the partial file, leaving the cycle to
+# the index-less fallback — the arm every cycle captured before this existed takes.
+update_write_restore_index() {
+  local cycle_dir="$1" rows="$2" index
+  [[ -n "${rows}" && -d "${cycle_dir}" ]] || return 0
+  index="$(update_restore_index_path "${cycle_dir}")"
+  if ! printf '%s' "${rows}" >"${index}"; then
+    update_log "WARN: restore index write failed for ${cycle_dir##*/} — --restore-agents falls back to the agents/ directory convention for this cycle"
+    rm -f -- "${index}" || true
+  fi
+}
+
+# Emit one `<before-image basename> TAB <manifest-relative target>` pair per
+# before-image in a cycle dir: from the index when the cycle carries one, and from
+# the agents/ directory convention when it does not. The second arm synthesizes the
+# pairs that convention always implied, so an index-less cycle restores exactly as it
+# did before the index existed. Arg: $1 = cycle dir.
+update_restore_before_images() {
+  local cycle_dir="$1" index bak name
+  index="$(update_restore_index_path "${cycle_dir}")"
+  if [[ -f "${index}" ]]; then
+    cat -- "${index}"
+    return 0
+  fi
+  # The *.md.bak glob matches ONLY live before-images — a sibling *.md.base.bak ends
+  # in .base.bak, so the base snapshots are never iterated as restore targets.
+  for bak in "${cycle_dir}"/*.md.bak; do
+    [[ -e "${bak}" ]] || continue
+    name="${bak##*/}"
+    name="${name%.bak}" # <name>.md
+    printf '%s\t%s\n' "${name}.bak" "agents/${name}"
+  done
+}
+
 # Reverse the base-content store entry for a just-restored agent (finding #9 part
 # 4). A restore that reverts the live agent body WITHOUT reverting its base entry
 # leaves the NEXT update's 3-way merge keyed on the wrong (release) base. A
@@ -2314,13 +2388,14 @@ update_restore_base_entry() {
   return 0
 }
 
-# Restore agent md from a <cycle-id> before-image set. Serializes (writes live agent
+# Restore a <cycle-id> before-image set to the targets that cycle recorded, falling
+# back to the agents/ convention for a cycle with no index. Serializes (writes live
 # files) via the same apply-lock. Atomic per-file (temp+rename). Loud-fail (exit 10)
 # on a bad cycle-id or missing snapshot dir. Prune runs first (retention). Each
 # reverted live body ALSO reverses its base-content store entry (finding #9 part 4)
 # so the next 3-way merge is not left keyed on the reverted-away release base.
 update_restore_agents() {
-  local cycle_id="${1:-}" root base restore_dir bak name target real store count=0 fail=0
+  local cycle_id="${1:-}" root base restore_dir bak bak_name rel target real store count=0 fail=0
   [[ -n "${cycle_id}" ]] || update_die_code 10 "--restore-agents requires a <cycle-id>"
   # SECURITY: reject path separators / traversal in the request-supplied cycle-id.
   case "${cycle_id}" in
@@ -2338,28 +2413,53 @@ update_restore_agents() {
   # reversal target (finding #9 part 4).
   store="$(update_base_store_dir)"
   update_serialize_begin
-  # The *.md.bak glob matches ONLY the live before-images — a sibling *.md.base.bak
-  # ends in .base.bak, not .md.bak, so it is never iterated here (it is consumed by
-  # update_restore_base_entry below, keyed on the live file's <name>).
-  for bak in "${restore_dir}"/*.md.bak; do
-    [[ -e "${bak}" ]] || continue
-    name="${bak##*/}"
-    name="${name%.bak}" # <name>.md
-    target="${root}/agents/${name}"
+  # Each pair names an image in this cycle dir and the target it belongs to — read
+  # from the index, or synthesized from the agents/ convention for a cycle that
+  # predates it. The base reversal takes the SAME recorded path as its capture key:
+  # the store composer resolves a roster path to the roster sink and an agent path to
+  # its flat basename entry, so this loop discriminates no namespace of its own.
+  while IFS=$'\t' read -r bak_name rel; do
+    [[ -n "${bak_name}" && -n "${rel}" ]] || continue
+    # SECURITY: a recorded row is joined to the cycle dir and to the install root, so
+    # a separator in the image name and traversal or an absolute form in the target
+    # are rejected here — the same shape the cycle-id argument is rejected for.
+    case "${bak_name}" in
+      */* | *'..'*)
+        update_log "WARN: restore index names an image outside the cycle dir — skipping: ${bak_name}"
+        fail=1
+        continue
+        ;;
+      *) ;;
+    esac
+    case "${rel}" in
+      /* | *'..'*)
+        update_log "WARN: restore index names a target outside the install root — skipping: ${rel}"
+        fail=1
+        continue
+        ;;
+      *) ;;
+    esac
+    bak="${restore_dir}/${bak_name}"
+    if [[ ! -f "${bak}" ]]; then
+      update_log "WARN: restore index names a missing before-image: ${bak_name}"
+      fail=1
+      continue
+    fi
+    target="${root}/${rel}"
     real="$(update_realpath "${target}" 2>/dev/null || printf '%s\n' "${target}")"
     if cp -p -- "${bak}" "${real}.restore.$$" 2>/dev/null \
       && mv -f -- "${real}.restore.$$" "${real}" 2>/dev/null; then
-      update_log "restored agents/${name} from ${cycle_id} before-image"
+      update_log "restored ${rel} from ${cycle_id} before-image"
       count=$((count + 1))
       # base reversal AFTER the live body reverted — keep base + live in lock-step
       # (a base revert without its live revert would desync the next merge anchor).
-      update_restore_base_entry "${name}" "${restore_dir}" "${store}" || fail=1
+      update_restore_base_entry "${rel}" "${restore_dir}" "${store}" || fail=1
     else
       rm -f -- "${real}.restore.$$" 2>/dev/null || true
-      update_log "WARN: restore FAILED for agents/${name}"
+      update_log "WARN: restore FAILED for ${rel}"
       fail=1
     fi
-  done
+  done < <(update_restore_before_images "${restore_dir}")
   [[ "${count}" -gt 0 ]] \
     || update_die_code 10 "no *.md.bak before-images found in ${restore_dir}"
   update_log "agents-bak restore complete: ${count} file(s) from ${cycle_id}"

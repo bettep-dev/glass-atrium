@@ -85,6 +85,18 @@ run_restore() {
     ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "${CYCLE}"
 }
 
+# Emit the declared roster paths by reading the ONE declaration, in a contained
+# subshell. A literal list here would be a second declaration of the fact the single
+# declaration exists to hold.
+roster_paths() {
+  bash -c '
+    set -Eeuo pipefail
+    # shellcheck source=/dev/null
+    source "$1"
+    spine_get_roster_paths
+  ' _ "${REAL_SPINE}"
+}
+
 # Drive update_restore_base_entry DIRECTLY. Arm A takes a capture key rather than a
 # live target, and its only production caller is the restore loop that does not yet
 # iterate roster paths — so a roster key reaches it here and nowhere else. $1 = key.
@@ -163,6 +175,51 @@ run_restore_base_entry() {
   [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live reverted
   # THE FALLBACK: the poisoned RELEASE base entry is DELETED (load_base_text → None)
   [[ ! -e "${STORE}/dev-x.md" ]] || return 1
+}
+
+@test "Arm B restores every declared roster path to the target the index recorded" {
+  local rel bn index="${CYCLEDIR}/restore-index.tsv"
+  : >"${index}"
+  while IFS= read -r rel; do
+    bn="${rel##*/}"
+    case "${rel}" in */*) mkdir -p "${ROOT}/${rel%/*}" ;; *) ;; esac
+    printf 'MERGED %s\n' "${rel}" >"${ROOT}/${rel}"    # the applied body restore reverts AWAY
+    printf 'LOCAL %s\n' "${rel}" >"${CYCLEDIR}/${bn}.bak"
+    printf '%s\t%s\n' "${bn}.bak" "${rel}" >>"${index}"
+  done < <(roster_paths)
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  while IFS= read -r rel; do
+    [[ "$(cat "${ROOT}/${rel}")" == "LOCAL ${rel}" ]] || return 1
+  done < <(roster_paths)
+  # One declared roster path is a `.md` under a NON-agents directory, so the
+  # convention the index replaces would have rebuilt it under agents/ while the real
+  # file stayed unrestored. Its absence there is what the index bought.
+  [[ ! -e "${ROOT}/agents/scope-dev.md" ]] || return 1
+}
+
+@test "a cycle dir with NO index restores agent bodies exactly as the convention did" {
+  printf 'BASE RELEASE\n' >"${STORE}/dev-x.md"
+  printf 'PRIOR BASE\n' >"${CYCLEDIR}/dev-x.md.base.bak"
+  printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
+  printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"
+  [[ ! -e "${CYCLEDIR}/restore-index.tsv" ]] || return 1 # the fixture IS a pre-index cycle
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live body, agents/ convention
+  [[ "$(cat "${STORE}/dev-x.md")" == "PRIOR BASE" ]] || return 1       # base reversed under the flat key
+}
+
+@test "the restore refuses an index row naming a target outside the install root" {
+  printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
+  printf '%s\t%s\n' 'dev-x.md.bak' '../escape.md' >"${CYCLEDIR}/restore-index.tsv"
+
+  run_restore
+  [[ "${status}" -ne 0 ]] || return 1
+  [[ "${output}" == *"outside the install root"* ]] || return 1
+  [[ ! -e "${SANDBOX}/escape.md" ]] || return 1
 }
 
 @test "Arm A reverses a ROSTER base entry against its PATH key, leaving the flat namespace alone" {

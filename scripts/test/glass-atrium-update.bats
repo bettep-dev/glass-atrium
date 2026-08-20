@@ -1146,6 +1146,23 @@ rm -rf /tmp/everything
   [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
 }
 
+@test "the driven merge records each before-image against the target it belongs to" {
+  # The cycle's restore index is written from the path the transaction publishes, so a
+  # later --restore-agents rebuilds each file where the merge held it instead of where
+  # the agents/ convention guesses.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update
+  [ "$status" -eq 0 ] || return 1
+  local index
+  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/restore-index.tsv" | head -1)"
+  [[ -f "${index}" ]] || return 1
+  grep -qF "$(printf 'dev-a.md.bak\tagents/dev-a.md')" "${index}" || return 1
+}
+
 @test "T19: a failed per-file transaction summarizes as rolled-back/unapplied" {
   # A run whose single agent transaction fails (read-only target → the apply cp
   # cannot write → GIT_TXN_APPLY_FAIL) must reach the rolled-back summary branch
