@@ -120,10 +120,6 @@ UNTRACKED_LISTED="$(LC_ALL=C comm -23 \
 [[ "${UNTRACKED_LISTED}" -eq 0 ]] \
   && ok "zero manifest entries outside git ls-files (fresh-clone doctor safe)" \
   || no "${UNTRACKED_LISTED} manifest entries are not git-tracked"
-# the settings.json never-touch contract doc must survive regeneration
-jq -er '._doc_settings_json | type == "string" and length > 0' "${GA}/manifest.json" >/dev/null \
-  && ok "_doc_settings_json carried over (settings.json contract doc intact)" \
-  || no "_doc_settings_json missing/empty after regeneration"
 
 # =============================================================================
 hdr "STEP 1 — doctor preflight (sandbox)"

@@ -20,13 +20,11 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_PUBLISH="${GA}/scripts/publish-release.sh"
 REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
 REAL_CONFIG="${GA}/scripts/lib/atrium-config.sh"
-REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 setup() {
   [[ -f "${REAL_PUBLISH}" ]] || skip "publish-release.sh not found: ${REAL_PUBLISH}"
   [[ -f "${REAL_GENMAN}" ]] || skip "generate-manifest.sh not found: ${REAL_GENMAN}"
   [[ -f "${REAL_CONFIG}" ]] || skip "atrium-config.sh not found: ${REAL_CONFIG}"
-  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
 
   # pwd -P resolves /var -> /private/var so GA_ROOT (pwd -P inside the script)
   # matches the paths the test computes.
@@ -39,9 +37,6 @@ setup() {
   cp "${REAL_PUBLISH}" "${SCRIPT}"
   cp "${REAL_GENMAN}" "${WORK}/scripts/generate-manifest.sh"
   cp "${REAL_CONFIG}" "${WORK}/scripts/lib/atrium-config.sh"
-  # the generator sources this leaf for the vendor-region map — a sandbox without
-  # it exits 7 (loud-fail), so the copy is part of the generator's fixture.
-  cp "${REAL_VENDOR_LIB}" "${WORK}/scripts/lib/vendor-digest.sh"
 
   # An in-scope tracked file (feeds the manifest) + an out-of-scope tracked file
   # (root, absent from generate-manifest SCOPE_PATHS) used to dirty the tree
@@ -49,9 +44,9 @@ setup() {
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf 'release notes scratch\n' >"${WORK}/notes.txt"
 
-  # Seed the minimal manifest carrying the _doc_settings_json key the generator
-  # refuses to regenerate without (files/hashes start empty, then get stamped).
-  printf '{"_doc_settings_json":"sandbox settings.json contract doc","files":[],"hashes":{}}\n' \
+  # Seed the minimal manifest the generator refuses to regenerate without
+  # (files/hashes start empty, then get stamped).
+  printf '{"files":[],"hashes":{}}\n' \
     >"${MANIFEST}"
 
   git -C "${WORK}" init -q

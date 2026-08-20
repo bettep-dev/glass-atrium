@@ -29,7 +29,6 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
-REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
@@ -53,24 +52,18 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
 }
 
-# Throwaway git fixture holding a COPY of the generator + the vendor-digest leaf it
-# sources (GA_ROOT = the fixture), one 755 hook + one 644 agent file, and a seed
-# manifest carrying the required _doc_settings_json contract key. git index only —
-# ls-files needs no commit. The lib guard is PER-FIXTURE (not setup-wide) because
-# the install/update rows never run the generator and must keep running without it.
+# Throwaway git fixture holding a COPY of the generator (GA_ROOT = the fixture), one
+# 755 hook + one 644 agent file, and the seed manifest the generator refuses to
+# regenerate without. git index only — ls-files needs no commit.
 make_gen_fixture() {
-  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
   FIX="${SANDBOX}/genfix"
   mkdir -p "${FIX}/scripts/lib" "${FIX}/hooks" "${FIX}/agents"
   cp -p -- "${GA}/scripts/generate-manifest.sh" "${FIX}/scripts/generate-manifest.sh"
-  # the generator sources this leaf for the vendor-region map — a sandbox without
-  # it exits 7 (loud-fail), so the copy is part of the generator's fixture.
-  cp -p -- "${REAL_VENDOR_LIB}" "${FIX}/scripts/lib/vendor-digest.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"
   chmod 644 "${FIX}/agents/a.md"
-  printf '{"version":"0.0.0","_doc_settings_json":"contract","files":["x"],"hashes":{}}\n' \
+  printf '{"version":"0.0.0","files":["x"],"hashes":{}}\n' \
     >"${FIX}/manifest.json"
   git -C "${FIX}" init -q
   git -C "${FIX}" add hooks agents scripts
@@ -107,7 +100,7 @@ make_install_fixture() {
   SRC_MANIFEST="${SANDBOX}/manifest.json"
   jq -n \
     --arg hp "${h_probe}" --arg hl "${h_launcher}" --arg hs "${h_spine}" \
-    '{version:"9.9.9", _doc_settings_json:"t",
+    '{version:"9.9.9",
       files:["glass-atrium","hooks/probe.sh","scripts/lib/apply-spine.sh"],
       hashes:{"glass-atrium":$hl,"hooks/probe.sh":$hp,"scripts/lib/apply-spine.sh":$hs}}' \
     >"${SRC_MANIFEST}"
@@ -162,7 +155,6 @@ DRV
   # old-consumer required-key gate (pinned pre-modes shape) — additive key inert
   jq -e '
     (.version | type == "string")
-    and (._doc_settings_json | type == "string")
     and (.files | type == "array" and length > 0)
     and (.hashes | type == "object")
     and ((.hashes | length) == (.files | length))

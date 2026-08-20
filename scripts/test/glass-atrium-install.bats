@@ -31,7 +31,6 @@ INSTALL_SH="${GA}/install.sh"
 REAL_SPINE="${GA}/scripts/lib/apply-spine.sh"
 REAL_FARM="${GA}/scripts/lib/mirror-farm.sh"
 REAL_GENMAN="${GA}/scripts/generate-manifest.sh"
-REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 setup() {
   [[ -f "${INSTALL_SH}" ]] || skip "install.sh not found: ${INSTALL_SH}"
@@ -257,7 +256,6 @@ run_install() {
 @test "release scope: agents-bak/wiki/secrets/rendered/data never enter manifest.files or the bundle" {
   command -v git >/dev/null 2>&1 || skip "git required"
   [[ -f "${REAL_GENMAN}" ]] || skip "generate-manifest.sh not found: ${REAL_GENMAN}"
-  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
 
   # sandbox repo, generate-manifest.bats hermetic idiom: a COPY of the real
   # generator so its BASH_SOURCE-derived GA_ROOT resolves to the sandbox
@@ -266,10 +264,7 @@ run_install() {
     "${repo}/agents-bak/2026-01-01_p1" "${repo}/wiki" "${repo}/secrets" \
     "${repo}/rendered" "${repo}/data"
   cp "${REAL_GENMAN}" "${repo}/scripts/generate-manifest.sh"
-  # the generator sources this leaf for the vendor-region map — a sandbox without
-  # it exits 7 (loud-fail), so the copy is part of the generator's fixture.
-  cp "${REAL_VENDOR_LIB}" "${repo}/scripts/lib/vendor-digest.sh"
-  printf '{"_doc_settings_json":"sandbox settings.json contract doc","files":[],"hashes":{}}\n' \
+  printf '{"files":[],"hashes":{}}\n' \
     >"${repo}/manifest.json"
   printf '# agent alpha\n' >"${repo}/agents/alpha.md"
   printf '# rule beta\n' >"${repo}/rules/beta.md"
