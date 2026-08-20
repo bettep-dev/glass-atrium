@@ -20,9 +20,15 @@
 # A second exclusion arm would put a row back in the state this suite exists to
 # detect — reached by neither consumer and hash-verified by no deploy path.
 #
-# One invariant sits above those pins: the manifest rows held back from plain
-# replacement are EXACTLY the agent bodies the merge delivers, compared against an
-# expectation spelled out in the test rather than read from the predicate.
+# One invariant sits above those pins, scoped to the CHANGE SELECTION: the rows the
+# selection holds back are EXACTLY the agent bodies the merge delivers, compared
+# against an expectation spelled out in the test rather than read from the predicate.
+# Scoped because one non-agent row is held back DOWNSTREAM of the selection and so
+# outside what this measures — the registry withhold drops agent-registry.json from
+# the apply set for a run whose added agent body did not install. That mechanism is
+# owned by the roster work at clauded-docs/12418, which also widens the held-back
+# claim to the roster files; when it lands this suite is owed a presence guard over
+# those roster paths, and it carries none today.
 #
 # Hermetic: every fixture is built in a per-test mktemp sandbox; the repo
 # manifest is read read-only and the live install is never touched.
@@ -207,8 +213,9 @@ first_manifest_path_under() {
   [ -z "${mismatch}" ]
 }
 
-# The set of manifest rows held back from plain replacement, pinned as an
-# invariant so a re-added exclusion cannot grow it silently.
+# The set of manifest rows the change selection holds back, pinned as an invariant
+# so a re-added exclusion cannot grow it silently. Held-back rows produced after
+# the selection are out of this reading, per the suite header.
 #
 # Observed side: the shipped change selection, run over the real manifest against
 # an EMPTY install root. Every row it does not name is a row some mechanism inside
@@ -220,7 +227,7 @@ first_manifest_path_under() {
 # against itself: a wrong predicate moves both sides identically and the check
 # could not go red in either direction. Spelled out, a predicate change moves the
 # observed side alone and this list is what must then be re-spelled.
-@test "exactly the merge-delivered agent bodies are held back from plain replacement" {
+@test "the change selection holds back exactly the merge-delivered agent bodies" {
   local all_paths selected observed="" expected="" path rest
   local extra="" missing="" mechanism
   all_paths="$(manifest_paths)"
@@ -264,7 +271,7 @@ first_manifest_path_under() {
   done <<<"${expected}"
 
   if [[ -n "${extra}" ]]; then
-    echo "manifest path(s) held back from plain replacement that the merge does not deliver:"
+    echo "manifest path(s) the change selection holds back that the merge does not deliver:"
     printf '%s' "${extra}"
   fi
   if [[ -n "${missing}" ]]; then

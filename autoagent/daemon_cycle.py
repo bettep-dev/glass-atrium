@@ -99,8 +99,8 @@ DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
-# shells out and imports it purely to reach the compiled refusal patterns) MUST
-# stay silent — the CliExitContract clean path asserts stderr == "". The PG helper
+# imports it purely to reach the compiled refusal patterns) MUST stay silent —
+# the CliExitContract clean path asserts stderr == "". The PG helper
 # itself writes a JSON `import_error` line to stderr AND re-raises on missing
 # psycopg, so the redirect_stderr below swallows THAT import-time line too; it is
 # scoped to this single import (stderr is restored on block exit — never globally
@@ -649,6 +649,12 @@ ApprovalTier = Literal["auto", "safety", ""]
 # <agents_dir>/<agent>.md, and editable_merge.build_merge_candidate the body it
 # merges — so a row whose basename no agent body can carry cannot fire through
 # either of them.
+#
+# That reach is what the tuple's membership is pinned against, and it is a
+# CONDITION rather than a property of the rows: rows naming a file no agent body
+# can be were dropped because no consumer could present one. A consumer that
+# passes arbitrary manifest relpaths puts them back in range, so adding one
+# obliges a re-read of this set before it ships.
 _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)GLASS_ATRIUM_GLOBAL_RULES\.md$"),
     re.compile(r"(^|/)scope-security\.md$"),
@@ -736,10 +742,10 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 # -- shared sensitive-match primitives (single compiled source) -------------
 # These two pure functions are the ONE matching implementation over the
-# compiled tuples above. classify_safety_tier calls them, and the helper
-# lib/sensitive_patterns.py re-exports them to callers outside this module, so
-# the pattern set is never re-expressed in a second regex dialect (T15 / gate G7
-# — a shell-ERE data file is forbidden).
+# compiled tuples above. classify_safety_tier calls them, and lib/sensitive_patterns.py
+# re-exports them so the pattern set is never re-expressed in a second regex
+# dialect — a shell-ERE data file in particular is forbidden. That re-export has
+# no non-test importer today; the daemon's own call is the load-bearing one.
 
 
 def match_sensitive_path(path: str) -> str | None:

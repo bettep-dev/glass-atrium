@@ -1,10 +1,10 @@
-"""Behavioral tests for the shared sensitive-file refusal source (T15 / gate G7).
+"""Behavioral tests for the shared sensitive-file refusal source.
 
-The update skill (a shell pipeline) must refuse to sync a sensitive harness file
-or a diff carrying an irreversible command. The refusal set is the COMPILED
-regex tuples in ``daemon_cycle.py`` — the single source. The skill consults that
-set ONLY by shelling out to ``autoagent/lib/sensitive_patterns.py``, which
-IMPORTS those tuples (no shell-ERE re-implementation).
+The refusal set — a sensitive harness file, or a diff carrying an irreversible
+command — is the COMPILED regex tuples in ``daemon_cycle.py``, the single source.
+``autoagent/lib/sensitive_patterns.py`` reaches that set by IMPORTING those tuples
+(no shell-ERE re-implementation) and is the only bridge over them; this suite is
+its only consumer.
 
 These tests pin the SINGLE-SOURCE invariant:
   * the python helper imports the daemon's compiled matchers (object identity);

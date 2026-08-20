@@ -1,19 +1,18 @@
-"""Sensitive-file refusal helper for the Glass Atrium update skill (T15 / gate G7).
+"""Importable bridge over the compiled sensitive-refusal patterns in ``daemon_cycle``.
 
-The update skill (a shell pipeline) MUST refuse to sync a sensitive harness file
-— GLOBAL_RULES, the security scope rules, a credential file, a launchd plist, or
-a diff body carrying an irreversible/external-effect command. The refusal set is
-defined ONCE, as the compiled regex tuples in ``daemon_cycle.py``
-(``_SAFETY_SENSITIVE_PATH_PATTERNS`` / ``_SAFETY_SENSITIVE_DIFF_PATTERNS``).
+The refusal set — GLOBAL_RULES, the security scope rules, a credential file, a
+launchd plist, or a diff body carrying an irreversible/external-effect command —
+is defined ONCE, as the compiled regex tuples ``_SAFETY_SENSITIVE_PATH_PATTERNS``
+/ ``_SAFETY_SENSITIVE_DIFF_PATTERNS`` in ``daemon_cycle.py``. This module imports
+the matchers over those tuples and re-exports them, so the set is never
+re-expressed in a second regex dialect; a shell-ERE data file in particular would
+silently diverge from Python's ``re``.
 
-This module is the single bridge the shell shells out to: it IMPORTS those
-compiled patterns (via ``daemon_cycle.match_sensitive_path`` /
-``match_sensitive_diff``) and exposes both an importable API and a thin CLI. The
-patterns are NEVER re-expressed as a shell-ERE data file — a shell-regex dialect
-would silently diverge from Python's ``re`` (forbidden re-implementation), so the
-daemon and the skill provably refuse the SAME set.
+Consumers: the test corpus and nothing else. No shell caller exists in this tree,
+and neither re-export nor the CLI has a non-test importer today. Whether the CLI
+still earns its place is an open routing question, not a settled one.
 
-CLI (the shell-out contract):
+CLI:
     python3 sensitive_patterns.py path <PATH>      # test one path
     python3 sensitive_patterns.py diff [FILE]      # test a unified diff
                                                    # FILE omitted or '-' → stdin
@@ -37,12 +36,12 @@ from pathlib import Path
 
 # daemon_cycle.py lives in the autoagent root, one level up from this lib/ dir.
 # Add it to the path so the compiled patterns import cleanly regardless of the
-# caller's CWD (the shell shells out from arbitrary working directories).
+# caller's CWD — the CLI is invoked from arbitrary working directories.
 _AUTOAGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AUTOAGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_ROOT))
 
-# Named exit codes — the shell wiring branches on these.
+# Named exit codes — the CLI's contract with whatever invokes it.
 EXIT_CLEAN = 0
 EXIT_SENSITIVE = 3
 EXIT_USAGE = 2
@@ -67,8 +66,8 @@ def _import_matchers() -> tuple[object, object]:
 def is_sensitive_path(path: str) -> str | None:
     """Return the matched sensitive-path pattern source, or ``None`` if clean.
 
-    Thin re-export of ``daemon_cycle.match_sensitive_path`` — the daemon owns the
-    compiled tuple; this module is the stable API the shell consumes.
+    Thin re-export of ``daemon_cycle.match_sensitive_path``; the daemon owns the
+    compiled tuple.
     """
     match_path, _ = _import_matchers()
     return match_path(path)  # type: ignore[operator]
@@ -88,8 +87,8 @@ def _refuse(kind: str, subject: str, pattern: str) -> int:
         f"sensitive_patterns: REFUSED — {kind} matched a sensitive-refusal "
         f"pattern /{pattern}/\n"
         f"  subject: {subject}\n"
-        "  the update skill will NOT sync this (GLOBAL_RULES / security rule / "
-        "credential / launchd / irreversible command).\n"
+        "  refusal class: GLOBAL_RULES / security rule / credential / launchd / "
+        "irreversible command.\n"
     )
     return EXIT_SENSITIVE
 
