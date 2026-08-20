@@ -173,16 +173,15 @@ spine_is_merge_claimed_path() {
 }
 
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
-# sync? Returns 0 (excluded) / 1 (included). ONE arm: agents-subtree markdown the
-# E4 merge CLAIMS, resolved by that separate three-anchor merge path
-# (base@install / vendor / local) rather than here. The exclusion is therefore
-# EXACTLY the merge's complement, which is what makes the two deploy consumers a
-# partition of the manifest — a second arm would carve a row out of both scopes
-# and leave it hash-verified by no deploy path at all.
+# sync? Returns 0 (excluded) / 1 (included). ONE arm, so the exclusion is the
+# merge's claim and nothing else: a claimed body is resolved by the separate
+# three-anchor merge path (base@install / vendor / local) rather than here. That
+# equality is what makes the two deploy consumers a partition of the manifest —
+# a second arm would carve a row out of both scopes and leave it hash-verified by
+# no deploy path at all. The name is kept because the two consumers ask opposite
+# questions of the same fact, and the spine's callers read better asking this one.
 spine_is_excluded_path() {
-  local path="$1"
-  [[ "${path}" == agents/* && "${path}" == *.md ]] || return 1
-  spine_is_merge_claimed_path "${path}"
+  spine_is_merge_claimed_path "$1"
 }
 
 # Emit (one relative path per line) every manifest path claimed by NEITHER deploy
@@ -190,14 +189,17 @@ spine_is_excluded_path() {
 # ever hash-verifies it and a deploy reports success without having considered it.
 # Detection only: the CALLER owns the loud line (same split as
 # spine_find_changed_files → update_commit_callback). Arg: $1 = manifest.json.
+#
+# While the spine's exclusion is exactly the merge's claim this emits NOTHING for
+# any input, which is the invariant rather than a defect: the two guards below are
+# the general definition, and they are what re-arms the scan the moment a second
+# exclusion arm makes the two predicates differ again.
 spine_find_uncovered_paths() {
   local manifest="$1" path
   spine_require_tools jq || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
-    # Exclusion first: a path the spine syncs is covered, and every non-agent path
-    # answers that without consulting the merge predicate at all. The conjunction
-    # is the same either way — both predicates are pure.
+    # Exclusion first: a path the spine syncs is covered whatever the merge says.
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if ! spine_is_excluded_path "${path}"; then
       continue
