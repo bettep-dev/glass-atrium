@@ -501,9 +501,10 @@ seed_baseline_hashed() {
     "${files%,}" "${hashes%,}" >"${statedir}/baseline-manifest.json"
 }
 
-@test "roster gate REFUSES an update that ADDS an agent (file-set signal)" {
+@test "roster gate PROCEEDS on an add-only release and the create path installs the body" {
   # The release introduces a brand-new agent file (dev-new) absent locally — a
-  # roster ADD. The gate must refuse/defer BEFORE any sync and write nothing.
+  # roster ADD. The add direction no longer aborts: the change is
+  # still reported, and the body lands in-band through the updater's create path.
   seed_file "${INSTALL}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
@@ -517,14 +518,74 @@ seed_baseline_hashed() {
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     bash "${SKILL}"
 
-  [ "$status" -ne 0 ]                                # gated → non-zero
-  [[ "$output" == *"ROSTER CHANGE DETECTED"* ]]
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"ROSTER CHANGE DETECTED"* ]]      # still reported, never silent
   [[ "$output" == *"add dev-new"* ]]
-  [[ "$output" == *"agent_lifecycle"* ]]             # directs to the ceremony
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]          # nothing written
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # the trap still releases the lock on the refused exit
+  [[ "$output" == *"roster ADD only"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
+}
+
+@test "roster gate still DIES on the remove of a release that both adds and removes" {
+  # The split is by DIRECTION, not by presence of an add: a release carrying any
+  # vendor removal dies on that removal even when it also ships a new agent, and
+  # the add it carried is not installed by the run that refused.
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md" "agents/dev-b.md"
+  seed_registry "${INSTALL}" "dev-a" "dev-b"
+  seed_registry "${NEWSRC}" "dev-a" "dev-new"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" "agent-registry.json" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"add dev-new"* ]]
+  [[ "$output" == *"remove dev-b"* ]]
+  [[ "$output" == *"agent_lifecycle"* ]]
+  [[ "$output" != *"roster ADD only"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
+}
+
+@test "a release-only body whose create verify FAILS leaves no body and reports the rollback" {
+  # The created file carries an updater-authored conflict marker, which the verify
+  # callback's tripwire backstop rejects. The create's rollback is a DELETE — the
+  # inverse a restore-from-before-image cannot express, there being no before-image.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+>>>>>>> RELEASE (vendor)"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create verify FAILED"* ]]
+  [[ "$output" == *"agents/dev-new.md"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
+  # and no temp file was left behind by the rolled-back write
+  [ "$(find "${INSTALL}/agents" -name 'dev-new.md.create.*' | wc -l | tr -d ' ')" -eq 0 ]
+}
+
+@test "the shared transaction library carries no create branch (its own probe, run here)" {
+  # The updater's create path exists BECAUSE the library must not gain one.
+  # Invoked here so the suite carrying the create path is the one pinning the library's shape.
+  run bats -f 'carries no create branch' \
+    "${BATS_TEST_DIRNAME}/../../autoagent/test/git-txn-gitfree.bats"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  # A filter matching nothing also exits 0, so pin that exactly one test ran.
+  [[ "$output" == *"1..1"* ]] || { echo "the named probe did not run: $output"; return 1; }
 }
 
 @test "roster gate REFUSES an update that REMOVES a VENDOR agent (registry signal)" {
@@ -680,9 +741,10 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [[ "$output" == *"new vendor body"* ]]
 }
 
-@test "roster gate OVERRIDE (ATRIUM_UPDATE_ALLOW_ROSTER) proceeds past an add" {
-  # The explicit, non-silent opt-in downgrades the refusal to a warning and lets
-  # the update proceed (agent md still excluded from the deterministic sync).
+@test "roster gate OVERRIDE means NOTHING on the add direction (the add no longer dies)" {
+  # The override is now scoped to the remove direction: on an add-only release the
+  # gate returns before reading it, so the run neither announces the opt-in nor
+  # depends on it, and the outcome equals the un-set run's — the body installs.
   seed_file "${INSTALL}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
@@ -701,9 +763,10 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]
+  [[ "$output" != *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]      # the add never reaches it
+  [[ "$output" == *"roster ADD only"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]  # non-agent synced
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]                  # agent md still E4-excluded
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
 }
 
 @test "boundary: the only core.autoagent_proposals write is the sanctioned resolved-gap envelope" {
@@ -1822,7 +1885,9 @@ rm -rf /tmp/everything
   [[ "$output" == *"WITHHOLDING agent-registry.json"* ]] || return 1
   [[ "$output" == *"dev-new"* ]] || return 1
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] || return 1 # the legit non-agent file still synced
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]] || return 1                 # the added body is still absent
+  # The check reads the tree BEFORE the agent stage, so it withholds on a body the
+  # create path lands later in the same run — the two are not contradictory here.
+  [[ -f "${INSTALL}/agents/dev-new.md" ]] || return 1
   # the live registry did NOT gain the orphan dev-new key (files ∪ registry stays consistent)
   run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
   [[ "$output" == "dev-existing" ]] || return 1
@@ -2086,13 +2151,54 @@ run_roster_update() {
     bash "${SKILL}"
 }
 
+# The same drive with the override UNSET — the path an add-only release takes now
+# that the gate splits by direction, and the only one on which the pre-merge
+# registry withhold (override-gated) stays out of the way.
+run_roster_update_unoverridden() {
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+}
+
+@test "a release-shipped NEW agent lands as a vendor row: body, registry key, every roster" {
+  # The add path end to end. The release adds dev-new to all four roster shapes and
+  # ships its body; the run installs the body in the agent stage and the roster
+  # dispatch that follows carries the name into the registry and the other three.
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+brand new vendor agent"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
+
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == *"brand new vendor agent"* ]] \
+    || { echo "$output"; return 1; }
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"dev-new"* ]] || { echo "$output"; return 1; }
+  local rel
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'dev-new' "${INSTALL}/${rel}" || { echo "the new name is missing from ${rel}"; return 1; }
+  done
+}
+
 @test "OPERATOR ACCEPTANCE: a user-created registry row survives while vendor rows take the release" {
   # The three anchors, one per root: base = the prior release, live = that plus a
   # user-created member, release = the prior release with the vendor member's
   # content changed and a second vendor member DROPPED. Dropped rather than added
-  # because the merge defers a release-only agent body to the agent_lifecycle
-  # ceremony, so an added member's body never installs and the finding#16 withhold
-  # would take the registry out of this dispatch before it resolved anything.
+  # because this drive sets the roster override, under which the pre-merge withhold
+  # would take the registry out of the dispatch before it resolved anything; the
+  # added-member case is driven on the un-overridden path by its own test above.
   seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a legacy-y
   seed_roster_quartet "${INSTALL}" "vendor-old" dev-a legacy-y user-x
   seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a

@@ -90,9 +90,10 @@ set_has() {
 # Which manifest paths does the MERGE consumer actually claim? Measured, not
 # restated: a release tree carrying every agents-subtree markdown path is handed
 # to the real merge loop against an EMPTY live install, so each path the loop
-# reaches is reported by its own "is release-only (ADD)" line and each path it
-# never reaches is silent. No python plan runs on this path, so the probe is
-# cheap and has no dependency beyond the loop itself.
+# reaches is reported by its own "agent create" line — the create path every
+# release-only body now takes — and each path it never reaches is silent. All
+# three create outcomes name the path the same way, so the reading counts a path
+# the loop reached whether or not the body it wrote survived its verify.
 merge_claimed_paths() {
   local new="${WORK}/oracle/new" live="${WORK}/oracle/live" log="${WORK}/oracle/log"
   local path base claimed=""
@@ -106,7 +107,7 @@ merge_claimed_paths() {
   printf '{"version":"oracle","files":[],"hashes":{}}\n' >"${new}/manifest.json"
   update_merge_agent_editable_regions "${new}" "${new}/manifest.json" "${live}" \
     >/dev/null 2>"${log}"
-  claimed="$(sed -n 's/^.*agent merge: \(.*\) is release-only.*$/\1/p' "${log}")"
+  claimed="$(sed -n 's#^.*agent create[^/]*agents/\([^ ]*\).*$#\1#p' "${log}")"
   # Map the reported basenames back to manifest paths. Basenames are asserted
   # unique across the domain (see the partition test), so the mapping is exact.
   while IFS= read -r path; do

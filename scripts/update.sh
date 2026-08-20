@@ -266,6 +266,12 @@ _update_restore_index_rows=""
 # finding #16 registry withhold, decided in update_run and read by the roster
 # dispatch — the two arms it now has to reach sit in different functions.
 _update_withhold_registry=0
+# The agent stage's create-outcome handle: one name per line for every release-only
+# body whose create did not land. A variable rather than a log line only, so the
+# registry-withhold rebuild can read the set between the roster candidates being
+# generated and being applied — nothing reads it yet. Reset per run with the outcome
+# ledger.
+_update_agent_create_failures=""
 
 # Preserve a failed/interrupted apply's pre-swap snapshot so the operator keeps a
 # rollback source after the workdir is torn down (finding #7). No-op when the
@@ -840,13 +846,18 @@ update_detect_roster_changes() {
   return 0
 }
 
-# The gate proper (T20 / gate G8). On a detected roster change: report each
-# add/remove and REFUSE — directing the user to the agent_lifecycle ceremony —
-# unless ATRIUM_UPDATE_ALLOW_ROSTER is set, the explicit, non-silent opt-in that
-# downgrades the refusal to a logged warning and proceeds. No roster change → a
-# silent pass-through (return 0). Args mirror update_detect_roster_changes.
+# The gate proper (T20 / gate G8). Reports every detected add/remove, then decides
+# BY DIRECTION: the ADD direction proceeds — a release-shipped new agent
+# lands as a vendor row through the create path of the agent stage — while the REMOVE
+# direction keeps today's behaviour, refusing and directing the user to the
+# agent_lifecycle ceremony unless ATRIUM_UPDATE_ALLOW_ROSTER is set. One combined
+# change string is detected across both directions, so the decision is a SPLIT of that
+# string rather than a branch that already existed: a release that adds one agent and
+# drops another still dies on the drop. The override is thereby scoped to the remove
+# direction — on an add-only release the gate returns before reading it. No roster
+# change → a silent pass-through (return 0). Args mirror update_detect_roster_changes.
 update_roster_gate() {
-  local new_manifest="$1" new_registry="$2" install_root="$3" baseline_manifest="${4:-}" changes line
+  local new_manifest="$1" new_registry="$2" install_root="$3" baseline_manifest="${4:-}" changes line removes
   changes="$(update_detect_roster_changes "${new_manifest}" "${new_registry}" "${install_root}" "${baseline_manifest}")"
   if [[ -z "${changes}" ]]; then
     return 0
@@ -855,6 +866,12 @@ update_roster_gate() {
   while IFS= read -r line; do
     [[ -n "${line}" ]] && update_log "  ${line}"
   done <<<"${changes}"
+  # No match is data, not an error: an add-only release has an empty remove half.
+  removes="$(printf '%s\n' "${changes}" | grep '^remove ' || true)"
+  if [[ -z "${removes}" ]]; then
+    update_log "roster ADD only — the release-shipped agent installs in-band through the updater's create path"
+    return 0
+  fi
   if [[ -n "${ATRIUM_UPDATE_ALLOW_ROSTER:-}" ]]; then
     update_log "ATRIUM_UPDATE_ALLOW_ROSTER set — proceeding past the roster gate on explicit confirmation"
     return 0
@@ -953,9 +970,10 @@ update_filter_apply_path() {
 #                                                  zero bytes written
 #   * keep-local / no-op (changed=False)         -> no write
 #   * keep-local|take-release|merge-clean (changed) -> collected -> txn
-# A release-only agent file (an ADD: present in the release, absent locally) is a
-# ROSTER change already handled by update_roster_gate; the merge skips it (the add
-# belongs to the agent_lifecycle ceremony, not an in-band content merge).
+# A release-only agent file (an ADD: present in the release, absent locally) has no
+# local anchor and so nothing to merge; it lands through update_create_agent_body,
+# the create path that sits beside the shared transaction rather than in this loop's
+# candidate set.
 #
 # CONFLICT REPAIR — the ceremony is NOT the route for a conflicted region. Its six
 # subcommands (add / extend / delete / orphan-scan / sync-inject / sync-gate-roster)
@@ -1158,6 +1176,53 @@ _update_agent_commit_callback() {
   return "${rc}"
 }
 
+# Install a release-only agent body (an ADD). The create sits BESIDE the shared
+# transaction and not inside it: git_txn's before-image capture
+# copies the real target unconditionally and the transaction returns on a capture
+# failure BEFORE the apply callback, so a create — which has no target to copy —
+# could never reach its own apply there, and the transaction library is on the
+# do-not-edit list. The transaction's shape is therefore restated for this one case:
+# an atomic temp-plus-rename write, the agent-body verify callback, and rollback by
+# DELETING the created file — the inverse of a create, which a restore-from-
+# before-image cannot express. Args: $1 = release file · $2 = target path ·
+# $3 = manifest-relative logical path · $4 = agent name.
+# Returns 0 applied · 1 the write did not land · 2 verify failed and the file was
+# removed.
+update_create_agent_body() {
+  local release_file="$1" target="$2" logical="$3" agent="$4" tmp mode
+  mkdir -p -- "${target%/*}" || return 1
+  tmp="$(mktemp "${target}.create.XXXXXX")" || return 1
+  # -p carries the release file's mode across mktemp's 0600, and a mapped manifest
+  # mode then overrides it — both before the rename, so the target never exists at a
+  # mode the run did not choose.
+  if ! cp -p -- "${release_file}" "${tmp}"; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+  mode="$(jq -r --arg p "${logical}" '(.modes // {})[$p] // empty' \
+    -- "${_update_modes_manifest:-/dev/null}" 2>/dev/null || true)" # GA-ABSORB[handled@the regex guard below]: a map-less release yields empty, which the guard treats as "no mapped mode"
+  if [[ "${mode}" =~ ^[0-7]{3,4}$ ]] && ! chmod "${mode}" "${tmp}"; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+  if ! mv -f -- "${tmp}" "${target}"; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+  # No before-image exists, so the verify's local anchor is the release itself: the
+  # candidate it reconstructs is a no-op, which still runs the sensitive re-scan of
+  # the created file and reaches no LLM-required region.
+  _update_agent_verify_target="${logical}"
+  _update_agent_verify_local="${release_file}"
+  _update_agent_verify_release="${release_file}"
+  _update_agent_verify_agent="${agent}"
+  if ! _update_agent_verify "${target}"; then
+    rm -f -- "${target}"
+    return 2
+  fi
+  return 0
+}
+
 # Drive the three-anchor agent merge for every changed agents/<name>.md. Args:
 # $1 = new-release tree root · $2 = new manifest (its .version names the per-run
 # agents-bak before-image dir) · $3 = live install root.
@@ -1166,7 +1231,7 @@ update_merge_agent_editable_regions() {
   : "${manifest:?manifest}"
   local merge_dir records_file resolved_file
   local file base local_file candidate plan_err plan_line plan_rc
-  local verdict reason changed n_candidates=0 rc=0
+  local verdict reason changed n_candidates=0 rc=0 create_rc=0
   local backup_base cycle_date version
 
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
@@ -1208,6 +1273,7 @@ update_merge_agent_editable_regions() {
   _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
   _update_agent_install_root="${root}"
   _update_restore_index_rows=""
+  _update_agent_create_failures=""
 
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
   # top-level only (references/ + templates/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md
@@ -1221,7 +1287,24 @@ update_merge_agent_editable_regions() {
     spine_is_merge_claimed_path "agents/${base}" || continue
     local_file="${root}/agents/${base}"
     if [[ ! -f "${local_file}" ]]; then
-      update_log "agent merge: ${base} is release-only (ADD) — defer to the agent_lifecycle ceremony, skipping"
+      # The create runs HERE, in the agent stage, which is what orders it before the
+      # roster dispatch that later applies this name's registry key and roster rows.
+      create_rc=0
+      update_create_agent_body "${file}" "${local_file}" "agents/${base}" "${base%.md}" || create_rc=$?
+      case "${create_rc}" in
+        0)
+          update_log "agent create: installed release-only agents/${base}"
+          update_agent_outcome_advance "agents/${base}"
+          ;;
+        2)
+          update_log "WARN: agent create verify FAILED for agents/${base} — the created body was DELETED (rollback)"
+          _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
+          ;;
+        *)
+          update_log "WARN: agent create failed for agents/${base} — the release body did not land"
+          _update_agent_create_failures="${_update_agent_create_failures}${base%.md}"$'\n'
+          ;;
+      esac
       continue
     fi
     # Byte-identical → nothing to merge (equivalent to plan changed=False). Local
@@ -2927,10 +3010,10 @@ update_run() {
   update_roster_gate "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}"
 
   # Step 2.5b — finding #16 (ATRIUM_UPDATE_ALLOW_ROSTER fail-closed roster consistency).
-  # The override just proceeded past a detected add/remove, but the E4 merge SKIPS a
-  # release-only ADD's agents/<name>.md — so letting the deterministic sync swap in the
-  # release agent-registry.json would register an agent whose body never landed (a
-  # permanently half-applied roster the union-based local roster then masks forever).
+  # The override just proceeded past a detected add/remove. This check reads the live
+  # tree BEFORE the agent stage runs, so a release-only ADD's body is absent to it even
+  # on a run whose create path lands that body later — which is why it withholds on the
+  # override path and is not the guard the default add path relies on.
   # Fail-closed: mark agent-registry.json to be WITHHELD from the apply set (Step 3)
   # whenever the incoming registry references an agent whose live .md is absent, keeping
   # files and registry consistent (both without the un-installed agent). Only under the

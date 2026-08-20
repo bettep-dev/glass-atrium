@@ -189,14 +189,14 @@ STUB
   [[ "$(cat "${INSTALL}/agents/dev-both.md")" != *"VENDOR changed both goal"* ]]
   [[ "$output" == *"agents/dev-both.md"* ]]
 
-  # (d) the roster ADD was DEFERRED to the agent_lifecycle ceremony: detected +
-  #     overridden by the explicit opt-in, but the new agent file is NEVER written
-  #     in-band (it belongs to the ceremony)
+  # (d) the roster ADD is reported and then INSTALLED in-band through the create
+  #     path: an add-only release returns from the gate before the override is
+  #     read, so the opt-in this run happens to set is announced nowhere
   [[ "$output" == *"ROSTER CHANGE DETECTED"* ]]
   [[ "$output" == *"add dev-new"* ]]
-  [[ "$output" == *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]
-  [[ "$output" == *"agent_lifecycle"* ]]
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
+  [[ "$output" == *"roster ADD only"* ]]
+  [[ "$output" != *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == *"brand new vendor agent"* ]]
 
   # cross-cutting: the daemon .apply-lock was HELD during the run (the claude stub
   # observed it) and released on exit
