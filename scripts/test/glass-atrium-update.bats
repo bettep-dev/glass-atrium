@@ -1904,3 +1904,67 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1    # dropped file untouched
   [[ "$output" != *"vendor-dropped file removed"* ]] || return 1           # nothing reported
 }
+
+# ---------------------------------------------------------------------------
+# C2a′ — the roster base anchor. The four declared roster paths are captured into a
+# SIBLING store keyed by manifest-relative path, so a base exists for them before
+# the merge claim widens. The arm is deliberately ledger-free: every ledger writer
+# keys on an agent basename, so a roster path can never be listed, and a gate here
+# would hold all four at a prior base that does not exist.
+# ---------------------------------------------------------------------------
+
+# Seed one roster path on both sides with distinct content and echo its rel path, so
+# the fixture reads from the declaration rather than restating it.
+seed_roster_pair() {
+  seed_file "${INSTALL}" "$1" "roster local"
+  seed_file "${NEWSRC}" "$1" "roster release $1"
+}
+
+@test "C2a1: a driven apply leaves a roster base entry under each declared PATH key" {
+  local rel rels=()
+  while IFS= read -r rel; do
+    rels+=("${rel}")
+    seed_roster_pair "${rel}"
+  done < <(bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh")
+  [ "${#rels[@]}" -eq 4 ] || return 1
+  write_manifest "${WORK}/manifest.json" "${rels[@]}"
+
+  run_update
+  [ "$status" -eq 0 ] || return 1
+  for rel in "${rels[@]}"; do
+    # under the SIBLING root, at the full path — not flattened beside the agent keys
+    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster release ${rel}" ]] || return 1
+    [[ ! -e "${STATE}/update-state/base-agents/${rel##*/}" ]] || return 1
+  done
+}
+
+@test "C2a1: an ACTIVE ledger naming no roster path still advances all four" {
+  local rel rels=()
+  while IFS= read -r rel; do
+    rels+=("${rel}")
+    seed_roster_pair "${rel}"
+  done < <(bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh")
+  # A REFUSED agent merge makes the ledger active AND demonstrably gating: its prior
+  # base entry is kept, so an unchanged roster entry could not be blamed on an idle ledger.
+  local ref_local='# dev-ref
+<!-- EDITABLE:BEGIN -->
+safe local line
+<!-- EDITABLE:END -->'
+  local ref_release='# dev-ref
+<!-- EDITABLE:BEGIN -->
+rm -rf /tmp/everything
+<!-- EDITABLE:END -->'
+  seed_file "${INSTALL}" "agents/dev-ref.md" "${ref_local}"
+  seed_base_store "dev-ref.md" "REF PRIOR BASE"
+  seed_file "${NEWSRC}" "agents/dev-ref.md" "${ref_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-ref.md" "${rels[@]}"
+
+  run_update
+  [ "$status" -eq 0 ] || return 1
+  # the ledger is active and gating — the refused agent kept its prior base …
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
+  # … while the ledger-free roster arm advanced all four regardless.
+  for rel in "${rels[@]}"; do
+    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster release ${rel}" ]] || return 1
+  done
+}

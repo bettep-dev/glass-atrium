@@ -1360,6 +1360,30 @@ update_base_store_dir() {
   printf '%s\n' "$(spine_baseline_dir)/base-agents"
 }
 
+# Echo the ROSTER base-content store dir — a SIBLING of the flat agent store under
+# the same state dir, mirroring each roster path as nested subdirectories. Sibling
+# rather than shared because one declared roster path is a top-level manifest row
+# whose path key IS its own basename: written into the flat directory its namespace
+# would be told apart by a file extension rather than by structure.
+update_roster_base_store_dir() {
+  printf '%s\n' "$(spine_baseline_dir)/base-roster"
+}
+
+# Echo the store path holding the base entry for one capture key — the SINGLE place
+# a roster key's store path is composed. The two namespaces cannot collide: an agent
+# key is a bare basename ending `.md`, and no declared roster path has that shape, so
+# a lookup in one namespace can never resolve an entry of the other. Args: $1 =
+# capture key (an agent `<name>.md`, or a declared roster path) · $2 = flat store dir.
+update_base_entry_path() {
+  local key="$1" flat_store="$2" rel
+  while IFS= read -r rel; do
+    [[ "${key}" == "${rel}" ]] || continue
+    printf '%s\n' "$(update_roster_base_store_dir)/${rel}"
+    return 0
+  done < <(spine_get_roster_paths)
+  printf '%s\n' "${flat_store}/${key}"
+}
+
 # Persist the new-release top-level agents/<name>.md bodies into the base-content
 # store (basename-keyed, full body — what load_base_text reads + _region_contents
 # splits). Non-recursive (references/ excluded, same as the roster dir scan). A
@@ -1425,6 +1449,28 @@ update_capture_base_content() {
     fi
   done
   update_log "base-content store updated: ${count} advanced, ${kept} kept at prior base${kept_names:+ (${kept_names})} → ${store}"
+  # Roster base anchor: each declared roster path captured under its manifest-relative
+  # path key in the sibling sink, whose leading directories the key requires.
+  #
+  # UNCONDITIONAL, unlike the agent loop above — no ledger lookup. Every writer of the
+  # ledger keys on an agent basename produced by that loop, so a roster path cannot be
+  # listed in it; consulting it here would read all four as not-landed on every run and
+  # hold them at a prior base that does not exist. The gate is owed once the ledger
+  # itself carries roster keys, and it arrives with them — this arm is the declared
+  # ledger-free state until then, not an oversight.
+  local roster_store rel roster_src roster_target roster_count=0
+  roster_store="$(update_roster_base_store_dir)"
+  while IFS= read -r rel; do
+    roster_src="${new_dir}/${rel}"
+    [[ -f "${roster_src}" ]] || continue
+    roster_target="$(update_base_entry_path "${rel}" "${store}")"
+    if mkdir -p -- "${roster_target%/*}" && cp -p -- "${roster_src}" "${roster_target}"; then
+      roster_count=$((roster_count + 1))
+    else
+      update_log "WARN: roster base-content capture failed for ${rel} (next update falls back to gated 2-way for it)"
+    fi
+  done < <(spine_get_roster_paths)
+  update_log "roster base-content store updated: ${roster_count} advanced → ${roster_store}"
   # One-shot ledger: reset so a later capture in the same process never reads a
   # stale set (the workdir teardown removes the file itself).
   _update_agent_outcomes_file=""
@@ -2236,13 +2282,20 @@ PY
 # (the release created the FIRST base for this agent, or the capture-time snapshot
 # failed) → DELETE the live base entry so load_base_text returns None and the next
 # merge falls back to the deterministic gated 2-way present-both path (strictly
-# safer than a poisoned diff3 base). Args: $1 = <name>.md · $2 = restore cycle dir
-# · $3 = base-content store dir. rc 1 on a revert/delete failure — LOUD, never
-# silent (the caller marks the whole restore failed).
+# safer than a poisoned diff3 base). Args: $1 = a capture key — an agent `<name>.md`
+# or a declared roster path · $2 = restore cycle dir · $3 = FLAT base-content store
+# dir. rc 1 on a revert/delete failure — LOUD, never silent (the caller marks the
+# whole restore failed).
+#
+# The store side resolves through update_base_entry_path, so a roster key reverses
+# against its own namespace; the SNAPSHOT side stays basename-flat because the
+# before-image sink is a single directory and a nested key would name a snapshot no
+# writer can produce. An agent key holds no slash, so both compositions are
+# unchanged for it.
 update_restore_base_entry() {
   local name="$1" restore_dir="$2" store="$3" base_bak base_target
-  base_bak="${restore_dir}/${name}.base.bak"
-  base_target="${store}/${name}"
+  base_bak="${restore_dir}/${name##*/}.base.bak"
+  base_target="$(update_base_entry_path "${name}" "${store}")"
   if [[ -f "${base_bak}" ]]; then
     if spine_atomic_swap "${base_bak}" "${base_target}"; then
       update_log "reverted base-content store entry for ${name}"

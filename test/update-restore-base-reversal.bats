@@ -85,6 +85,21 @@ run_restore() {
     ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "${CYCLE}"
 }
 
+# Drive update_restore_base_entry DIRECTLY. Arm A takes a capture key rather than a
+# live target, and its only production caller is the restore loop that does not yet
+# iterate roster paths — so a roster key reaches it here and nowhere else. $1 = key.
+run_restore_base_entry() {
+  run env GA_ROOT="${ROOT}" AUTOAGENT_BACKUP_DIR="${BAKBASE}" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}" bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      update_restore_base_entry "$3" "$4" "$5"
+    ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "$1" "${CYCLEDIR}" "${STORE}"
+}
+
 @test "capture snapshots the PRIOR base into <name>.md.base.bak before advancing" {
   printf 'BASE v0\n' >"${STORE}/dev-x.md"            # prior base entry
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"  # live before-image → file is restorable
@@ -148,4 +163,29 @@ run_restore() {
   [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live reverted
   # THE FALLBACK: the poisoned RELEASE base entry is DELETED (load_base_text → None)
   [[ ! -e "${STORE}/dev-x.md" ]] || return 1
+}
+
+@test "Arm A reverses a ROSTER base entry against its PATH key, leaving the flat namespace alone" {
+  local rel='hooks/lib/styleref-roster.sh' bn='styleref-roster.sh'
+  local roster_store="${STATE}/base-roster"
+  mkdir -p "${roster_store}/hooks/lib"
+  printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
+  # The before-image sink is one flat directory, so the snapshot is keyed by basename
+  # while the store entry it reverses is keyed by path.
+  printf 'ROSTER BASE v0\n' >"${CYCLEDIR}/${bn}.base.bak"
+  # A flat entry under the same basename: a roster key must not reach it.
+  printf 'AGENT BASE\n' >"${STORE}/${bn}"
+
+  run_restore_base_entry "${rel}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${roster_store}/${rel}")" == "ROSTER BASE v0" ]] || return 1
+  [[ "$(cat "${STORE}/${bn}")" == "AGENT BASE" ]] || return 1
+
+  # No snapshot → DELETE the entry (safe gated 2-way), still under the path key.
+  rm -f "${CYCLEDIR}/${bn}.base.bak"
+  printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
+  run_restore_base_entry "${rel}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -e "${roster_store}/${rel}" ]] || return 1
+  [[ -f "${STORE}/${bn}" ]] || return 1
 }

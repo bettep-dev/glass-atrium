@@ -119,3 +119,22 @@ seed() {
   oc "re-seed FORCED for alpha.md" "${output}" || return 1
   cmp -s "${FAKE_ROOT}/agents/alpha.md" "${STORE}/alpha.md" || return 1
 }
+
+# T6 — the flat store's key is an agents/** row's BASENAME, so two rows sharing one
+# basename would silently share one base entry and anchor the second merge on the
+# first's body. Uniqueness is a naming property rather than a structural one, so it
+# is asserted here, beside the writer that depends on it: a future release that
+# breaks it fails the build instead of resolving a wrong base unattended.
+
+@test "T6 the manifest's agent-row basenames are unique (the flat key's precondition)" {
+  local manifest="${GA}/manifest.json" dups
+  [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
+  command -v jq >/dev/null 2>&1 || skip "jq required"
+  dups="$(jq -r '.files[] | select(startswith("agents/"))' -- "${manifest}" \
+    | sed 's#.*/##' | sort | uniq -d)"
+  if [[ -n "${dups}" ]]; then
+    echo "agents/** rows sharing a basename — the flat base-store key cannot tell them apart:"
+    printf '%s\n' "${dups}"
+  fi
+  [ -z "${dups}" ]
+}
