@@ -879,7 +879,7 @@
     "autoagent/test/test_regression_gate.py": "ebe70c385c9b11b17925d17f688ef52ec823037891550a0f48b480920a94d929",
     "autoagent/test/test_removal_discard_refusal.py": "e75c79c1636c1df7c68a374f19309026cb07d195e0057108470ac53f963faf22",
     "autoagent/test/test_removal_exact_match_gate.py": "86053512266ae10d77572e78edf037b84151c83d1cfdf80cd3f51b3a20ca634d",
-    "autoagent/test/test_roster_merge.py": "f7561dff68cb7e11c53999e2f7fcfb97bb0ab208f5ce59fb245146bfddc9812d",
+    "autoagent/test/test_roster_merge.py": "268a0b51928da45570a2a2f32142cfaee78ce3958981e0825f1b53e6457d221e",
     "autoagent/test/test_sensitive_patterns.py": "45832e1d5a5cea35785512a4e89b0f789fa3bacf2e357f4b39826b06fa4ac076",
     "autoagent/test/test_signal_store_retired.py": "5205c31db50c6797bc04acf29ecce417b68a866b28ad10439e827653abcf95d4",
     "autoagent/test/test_single_regen_reason_line.py": "f7ea6ec917105836f0f5a486b4592dbffa2d7cfd22daf4f80d6722fed5e83ab0",

@@ -16,7 +16,9 @@ Covered behaviors:
     physical line;
   * the two-run bootstrap -> an empty store seeds from the release, keeps the
     live-only member, emits a loud row and leaves a real base entry, and the
-    same fixture run again honours a release-side removal;
+    same fixture run again honours a release-side removal, and a first sight
+    that DECLINES on vocabulary still leaves that entry, so the re-run resolves
+    against a real base instead of seeding again;
   * the base entry's key -> the manifest-relative path under the sibling root;
   * the thin CLI -> a written candidate and a named vocabulary refusal.
 
@@ -401,6 +403,33 @@ class BootstrapTest(unittest.TestCase):
             self.assertEqual(second.notices, ())
             self.assertNotIn(_VENDOR[1], _shell_names(second.text))
             self.assertIn(_LIVE_ONLY, _shell_names(second.text))
+
+    def test_a_declining_first_sight_seeds_and_the_rerun_converges(self):
+        # The seed precedes the vocabulary assertion, so the decline is one run
+        # rather than a permanent one: the entry it leaves is what lets the next
+        # run resolve as a real base-aware merge.
+        with tempfile.TemporaryDirectory() as tmp:
+            live = _shell_of([*_VENDOR, _LIVE_ONLY])
+            release_one = _shell_of(_VENDOR)
+
+            with self.assertRaises(rm.VocabularyError) as caught:
+                rm.build_roster_candidate(
+                    self.PATH, live, release_one, _VENDOR, state_dir=tmp
+                )
+            self.assertIn(_LIVE_ONLY, str(caught.exception))
+
+            entry = rm.roster_base_store_dir(tmp) / self.PATH
+            self.assertTrue(entry.is_file())
+            self.assertEqual(entry.read_text(encoding="utf-8"), release_one)
+
+            release_two = _shell_of([_VENDOR[0]])
+            second = rm.build_roster_candidate(
+                self.PATH, live, release_two, [*_VENDOR, _LIVE_ONLY], state_dir=tmp
+            )
+            self.assertFalse(second.bootstrapped)
+            self.assertEqual(second.notices, ())
+            self.assertIn(_LIVE_ONLY, _shell_names(second.text))
+            self.assertNotIn(_VENDOR[1], _shell_names(second.text))
 
     def test_the_seeding_run_cannot_honour_a_release_side_removal(self):
         with tempfile.TemporaryDirectory() as tmp:
