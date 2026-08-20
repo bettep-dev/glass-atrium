@@ -431,3 +431,113 @@ _inode_of() {
     "${LIB}" "${daemon}" "${update}"
   [ "${status}" -ne 0 ] # grep finds nothing → non-zero
 }
+
+# ---------------------------------------------------------------------------
+# (13) static no-guard-migration proof: the shared transaction lib invokes
+#      neither pre-apply assert the daemon owns, and carries no create-shaped
+#      branch — which is what keeps the updater's create path outside this
+#      do-not-edit lib.
+#
+#      Create shape = a file test naming a target parameter: a create branch has
+#      to ask whether the target is there before creating it, and the positive
+#      control drives that the lib asks no such question of its target today.
+#      The two assert names are matched anywhere in the text, comments included
+#      — the lib is expected to stay free of the names, not to explain them.
+#
+#      POLARITY: each negative asserts its OWN diagnostic, exactly, so a probe
+#      widened until everything trips it reddens the other two. All three share
+#      this file with the positive control, so a scanner that reports
+#      unconditionally reddens the control instead of reading as passing
+#      negatives.
+# ---------------------------------------------------------------------------
+MIGRATION_EDITABLE='guard-migration: assert_diff_in_editable_region referenced'
+MIGRATION_REMOVAL='guard-migration: assert_removal_evidence referenced'
+MIGRATION_CREATE='guard-migration: target file test — create-shaped branch'
+
+# find_guard_migration — echo one diagnostic per guard/create shape found in a
+# candidate lib text; silence means none of the three is present. Arg: $1 file.
+find_guard_migration() {
+  local candidate="$1"
+  if grep -qF -e 'assert_diff_in_editable_region' "${candidate}"; then
+    printf '%s\n' "${MIGRATION_EDITABLE}"
+  fi
+  if grep -qF -e 'assert_removal_evidence' "${candidate}"; then
+    printf '%s\n' "${MIGRATION_REMOVAL}"
+  fi
+  if grep -qE -e '-[a-z][[:space:]]+"?\$\{?(real_)?target' "${candidate}"; then
+    printf '%s\n' "${MIGRATION_CREATE}"
+  fi
+}
+
+# build_mutated_lib — copy the live lib, append one mutation, and prove the copy
+# both parses and carries the injection, so a mutation that silently failed to
+# land cannot read as a passing negative. Args: $1 destination, $2 injected
+# shell text, $3 fixed string the injection must contain.
+build_mutated_lib() {
+  local dest="$1" injection="$2" needle="$3"
+  {
+    cat "${LIB}"
+    printf '%s\n' "${injection}"
+  } >"${dest}"
+  bash -n "${dest}" || {
+    echo "the mutation produced unparseable shell, so the probe proves nothing" >&2
+    return 1
+  }
+  grep -qF -e "${needle}" "${dest}" || {
+    echo "the mutation did not land in ${dest}, so this probe would assert nothing" >&2
+    return 1
+  }
+}
+
+@test "static: git-txn.sh invokes neither pre-apply assert and carries no create branch" {
+  run find_guard_migration "${LIB}"
+  [ "${status}" -eq 0 ]
+  [[ -z "${output}" ]] || {
+    echo "the live transaction lib tripped the migration probe: ${output}" >&2
+    return 1
+  }
+}
+
+@test "an editable-region assert introduced into git-txn.sh trips the probe" {
+  local mutated="${WORK}/with-editable-assert.sh"
+  build_mutated_lib "${mutated}" \
+    '_git_txn_migrated() { assert_diff_in_editable_region "$1" "$2"; }' \
+    'assert_diff_in_editable_region'
+
+  run find_guard_migration "${mutated}"
+  [[ "${output}" == "${MIGRATION_EDITABLE}" ]] || {
+    echo "expected exactly the editable-region diagnostic, got: ${output}" >&2
+    return 1
+  }
+}
+
+@test "a removal-evidence assert introduced into git-txn.sh trips the probe" {
+  local mutated="${WORK}/with-removal-assert.sh"
+  build_mutated_lib "${mutated}" \
+    '_git_txn_migrated() { assert_removal_evidence "$1" "$2" "$3" "$4"; }' \
+    'assert_removal_evidence'
+
+  run find_guard_migration "${mutated}"
+  [[ "${output}" == "${MIGRATION_REMOVAL}" ]] || {
+    echo "expected exactly the removal-evidence diagnostic, got: ${output}" >&2
+    return 1
+  }
+}
+
+@test "a create-shaped branch introduced into git-txn.sh trips the probe" {
+  local mutated="${WORK}/with-create-branch.sh"
+  build_mutated_lib "${mutated}" \
+    '_git_txn_migrated() {
+  local real_target="$1"
+  if [[ ! -e "${real_target}" ]]; then
+    : >"${real_target}"
+  fi
+}' \
+    'if [[ ! -e "${real_target}" ]]; then'
+
+  run find_guard_migration "${mutated}"
+  [[ "${output}" == "${MIGRATION_CREATE}" ]] || {
+    echo "expected exactly the create-branch diagnostic, got: ${output}" >&2
+    return 1
+  }
+}

@@ -839,7 +839,7 @@
     "autoagent/test/daemon-apply-zero-eligible-row.bats": "ffbe46d343ce9e5e15d59108e62d53c260ed0f6c7a329a7e5c76f1185fb9baea",
     "autoagent/test/daemon-cycle-apply-status.bats": "63fc922618be29738fe66936447a40e53515304289a1eaa2f24a99878adc67f4",
     "autoagent/test/daemon-cycle-doctor-stage.bats": "9887067ed693f73e9d333b6fcf67a11f9b232b0c0f979599b0595ecf21972267",
-    "autoagent/test/git-txn-gitfree.bats": "d50194ad90f920921514615c2930e64105ca2cb154ffe2d0b1d2884407944593",
+    "autoagent/test/git-txn-gitfree.bats": "8a0cdc8ec50790268893de03c3caa5949d40f7619c9b7e29a60401c5fae98cfb",
     "autoagent/test/git-txn-restore-outcome.bats": "88880d26d2e4252cc47834287248340bf53282730727dc12e3f649f65f10d461",
     "autoagent/test/test_all_reject_alert.py": "b596c2fbe4321c22485d8bf6cdd99b825ba92395e8389ae5f99864a41b79011f",
     "autoagent/test/test_all_reject_alert_e2e.py": "d97649aa39993b7df3db9f43304e91ef9b8439563a287bdfd9c8786278ced664",
