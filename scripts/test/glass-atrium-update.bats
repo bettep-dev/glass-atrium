@@ -830,9 +830,8 @@ PY
 @test "an unrecognised resolver verdict declines fail-closed and writes zero bytes" {
   # The routing arm that has no fixture in the resolver: the verdicts that REACH
   # the case are all named in it, so the only way to reach the final arm is to
-  # inject one. structural-change is the exception that costs nothing — the
-  # library emits it, but the loop intercepts it above the case with its own
-  # ceremony route, so its absence from the arms is not a hole.
+  # inject one. A library verdict absent from the arms is one the loop has already
+  # disposed of before the case is reached, so its absence is not a hole.
   # ATRIUM_UPDATE_MERGE_LIB_DIR points the updater at a shim that
   # delegates every subcommand to the real module and rewrites just the verdict
   # token on the plan line, so the candidate, the diff and the exit code are the

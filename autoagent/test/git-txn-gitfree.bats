@@ -444,8 +444,8 @@ _inode_of() {
 #      The operator class is the bash file tests (uppercase ones included, so a
 #      `-L`/`-S` probe is not a way past it) and the variable half accepts any
 #      target-bearing name the lib uses — `diff_target` as much as `real_target` —
-#      after an optional path prefix, since the lib composes paths under
-#      `install_root`. A string test like `-z` is deliberately outside the class:
+#      after an optional path prefix. A string test like `-z` is deliberately
+#      outside the class:
 #      it asks whether the parameter is EMPTY, not whether the file is there.
 #      The two assert names are matched anywhere in the text, comments included
 #      — the lib is expected to stay free of the names, not to explain them.

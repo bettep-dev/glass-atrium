@@ -110,10 +110,10 @@ NO_OP = "no-op"  # candidate identical to current local file
 # MERGE_RESOLVED_RELEASE is UNASSIGNABLE by this resolver: no value of the gap
 # policy produces it, because the contested-gap branch assigns
 # MERGE_PENDING_ARBITRATION whenever arbitration is on and MERGE_CONFLICT when it
-# is off. The token stays because scripts/update.sh still names it — a routing arm
-# and a resolved-record branch, both outside this module. So every mention of it
-# below describes a verdict that does not currently occur, and the code it guards
-# (the stats filter, the severity slot, the dropped-lines sidecar) is inert.
+# is off. The token stays because scripts/update.sh still references it, which
+# makes removing it a wider change than this file. Every mention of it below
+# therefore describes a verdict that does not currently occur, and the code it
+# guards (the stats filter, the severity slot, the dropped-lines sidecar) is inert.
 
 # Verdicts that REQUIRE the Haiku improvement-verify gate (an ambiguous,
 # net-new-merged region). KEEP_LOCAL / TAKE_RELEASE / NO_OP are deterministic and
@@ -130,7 +130,9 @@ _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 # never writable to a live agent file (see the module header's tripwire section).
 #
 # MERGE_PENDING_ARBITRATION is OUT: an arbitrated gap emits the local lines
-# verbatim, so its candidate is marker-free and keeps its write path.
+# verbatim, so its candidate is marker-free and the tripwire has nothing to
+# refuse. Membership here turns on markers alone — the updater declines the file
+# either way, so this is not a statement that such a candidate lands.
 # MERGE_RESOLVED_RELEASE is OUT and unassignable — see the note above the gate.
 _MARKER_VERDICTS = frozenset({MERGE_CONFLICT, GATED_2WAY})
 
@@ -1036,8 +1038,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         local_text, cand.resolution.candidate_text
     )
     gaps = resolved_gap_stats(cand.resolution)
-    # Unreachable today: gaps["hunks"] counts MERGE_RESOLVED_RELEASE regions, and
-    # no resolution carries that verdict (see the note beside the constant), so no
+    # Unreachable today: gaps["hunks"] counts the conflict hunks across
+    # MERGE_RESOLVED_RELEASE regions (their indices ride a separate field), and no
+    # resolution carries that verdict (see the note beside the constant), so no
     # sidecar is written. The intent, were it assignable: the dropped local lines
     # exist nowhere else once the resolution has replaced them, and they cannot
     # ride the plan line (free text, and the updater's extractor reads up to the
