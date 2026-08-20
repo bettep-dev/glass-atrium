@@ -101,50 +101,37 @@ TAKE_RELEASE = "take-release"  # local region == base -> vendor region taken
 MERGE_CLEAN = "merge-clean"  # both changed, diff3 merged without conflict
 MERGE_CONFLICT = "merge-conflict"  # both changed with an overlapping conflict
 MERGE_RESOLVED_RELEASE = "merge-resolved-release"  # conflicting gap took the release side
-MERGE_PENDING_ARBITRATION = "merge-pending-arbitration"  # contested gap emits neither side
+MERGE_PENDING_ARBITRATION = "merge-pending-arbitration"  # contested gap emits the local side
 GATED_2WAY = "gated-2way-present-both"  # base content unavailable, sides differ
 STRUCTURAL = "structural-change"  # region-count mismatch -> manual ceremony
 REFUSED = "sensitive-refused"  # target path / diff matched a sensitive pattern
 NO_OP = "no-op"  # candidate identical to current local file
 
+# MERGE_RESOLVED_RELEASE is UNASSIGNABLE by this resolver: no value of the gap
+# policy produces it, because the contested-gap branch assigns
+# MERGE_PENDING_ARBITRATION whenever arbitration is on and MERGE_CONFLICT when it
+# is off. The token stays because scripts/update.sh still names it — a routing arm
+# and a resolved-record branch, both outside this module. So every mention of it
+# below describes a verdict that does not currently occur, and the code it guards
+# (the stats filter, the severity slot, the dropped-lines sidecar) is inert.
+
 # Verdicts that REQUIRE the Haiku improvement-verify gate (an ambiguous,
 # net-new-merged region). KEEP_LOCAL / TAKE_RELEASE / NO_OP are deterministic and
 # make NO LLM call (T18 AC: "only-local or only-vendor changes make NO LLM call").
 #
-# MERGE_RESOLVED_RELEASE is deliberately OUT. The gap policy was chosen over an
-# LLM mediator BECAUSE it is deterministic — it improves on the status quo under
-# every outcome, where the mediator only does under some. Gating it on a live
-# model would inherit the mediator's availability profile without its judgment:
-# run_pre_verify is fail-safe, so a Haiku outage or an exhausted quota (observed
-# here, not hypothetical) would roll every resolved gap back to declining — the
-# exact behavior the policy exists to replace. The property that justified the
-# choice only holds if the landing does not depend on a model being reachable.
+# MERGE_PENDING_ARBITRATION is OUT: the gap emits the local side and the updater
+# declines the file, so no merged wording reaches a write for the gate to screen.
+# The verdict that would carry an arbitrated wording is what needs the gate.
 #
-# That independence is per-REGION, not per-file: a file carrying one resolved gap
-# beside a both-changed region still reports needs_llm=True and IS model-gated as
-# a whole. The recorded provenance therefore keys on needs_llm, never on this
-# verdict — see update_emit_resolved_records.
-#
-# The cost is real and accepted: nothing prompts a human between this verdict
-# and the write, so the discard is unscreened at apply time. Unlike TAKE_RELEASE,
-# which fires when the daemon never touched the region, a resolved gap DISCARDS
-# daemon-authored content. The accountability is a record rather than a prompt —
-# every resolved file writes one self-improvement-history row
-# (``resolved_gap_stats`` here supplies its counts, the sidecar beside the
-# candidate its dropped text, and ``update_emit_resolved_records`` in the updater
-# writes it). So the discard is reviewed AFTER the fact, from the recorded row.
-#
-# MERGE_PENDING_ARBITRATION is OUT for a different reason: the gap emits the local
-# side and the updater declines the file, so no merged wording reaches a write for
-# the gate to screen. The verdict that carries an arbitrated wording is what needs
-# the gate, and it is not this one.
+# MERGE_RESOLVED_RELEASE is OUT and unassignable — see the note above the gate.
 _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
 # never writable to a live agent file (see the module header's tripwire section).
 #
-# MERGE_RESOLVED_RELEASE is deliberately OUT: it is marker-FREE by construction
-# (every emitted line is verbatim from an anchor), so it keeps its write path.
+# MERGE_PENDING_ARBITRATION is OUT: an arbitrated gap emits the local lines
+# verbatim, so its candidate is marker-free and keeps its write path.
+# MERGE_RESOLVED_RELEASE is OUT and unassignable — see the note above the gate.
 _MARKER_VERDICTS = frozenset({MERGE_CONFLICT, GATED_2WAY})
 
 # git_txn_apply apply-callback contract (mirrors daemon-apply.sh apply_diff):
@@ -358,11 +345,12 @@ class ConflictHunk:
 class ArbitrationRequest:
     """One contested gap routed to a judgment call, with what the judge must read.
 
-    ``region_index`` is the containing region's document-order ordinal and
-    ``context`` its RELEASE-side lines: the candidate is assembled from the release
-    skeleton, so those are the neighbours the resolved gap will sit among. The gap's
-    three anchors ride in ``gap`` rather than being copied out of it, so the request
-    and the merge cannot disagree about what the gap was.
+    ``region_index`` is the containing region's document-order ordinal.
+    ``context`` is that region's RELEASE-side content in full, vendor wording of
+    the contested gap included — NOT the merged region the candidate carries, and
+    not a neighbourhood slice around the gap. The gap's three anchors ride in
+    ``gap`` rather than being copied out of it, so the request and the merge cannot
+    disagree about what the gap was.
     """
 
     region_index: int
@@ -496,8 +484,7 @@ def _resolve_region(
         verdict = MERGE_CLEAN
     elif arbitrate:
         verdict = MERGE_PENDING_ARBITRATION
-        # One request per contested gap, carrying the release-side region as the
-        # context the judge reads the gap in.
+        # One request per contested gap, carrying the region's release side in full.
         requests = tuple(
             ArbitrationRequest(index, hunk, tuple(release)) for hunk in hunks
         )
@@ -522,8 +509,13 @@ def _resolve_region(
 def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
     """Shape of the conflicting gaps this file resolved to the release side.
 
-    The recording caller needs to say WHAT was discarded without pasting whole
-    regions, and the hunks are the only place the dropped local text still
+    Currently always zeros: the filter keys on MERGE_RESOLVED_RELEASE, which no
+    resolution carries (see the note beside that constant), so even a file holding
+    a contested gap reports none. The shape is kept because the updater still reads
+    these four plan-line fields.
+
+    The intent, were the verdict assignable: say WHAT was discarded without pasting
+    whole regions, since the hunks are the only place the dropped local text still
     exists once the resolution has replaced it. Counts only — the excerpt comes
     from the live-to-candidate diff the caller already composes.
 
@@ -745,9 +737,11 @@ def resolve_file(
     needs_llm = any(r.verdict in _LLM_REQUIRED for r in resolutions)
 
     # Overall verdict = the worst-case region verdict (severity order).
-    # MERGE_PENDING_ARBITRATION and MERGE_RESOLVED_RELEASE sit ahead of MERGE_CLEAN
-    # so a file carrying one such region and several clean ones still reports it —
-    # the routing, deletion advisory and recording paths all key on seeing it.
+    # MERGE_PENDING_ARBITRATION sits ahead of MERGE_CLEAN so a file carrying one
+    # such region and several clean ones still reports it — the routing, deletion
+    # advisory and recording paths all key on seeing it. The MERGE_RESOLVED_RELEASE
+    # slot below it is inert: no resolution carries that verdict, so the pick never
+    # lands on it (see the note beside the constant).
     severity = [
         MERGE_CONFLICT,
         GATED_2WAY,
@@ -1042,12 +1036,15 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         local_text, cand.resolution.candidate_text
     )
     gaps = resolved_gap_stats(cand.resolution)
-    # The dropped local lines exist nowhere else once the resolution has replaced
-    # them, and they cannot ride the plan line (free text, and the updater's
-    # extractor reads up to the next space). A sidecar beside the candidate keeps
-    # the recording caller's excerpt to text a gap actually discarded — a
-    # diff-derived excerpt would also quote vendor lines the release restructured,
-    # which the record would then misattribute to the daemon.
+    # Unreachable today: gaps["hunks"] counts MERGE_RESOLVED_RELEASE regions, and
+    # no resolution carries that verdict (see the note beside the constant), so no
+    # sidecar is written. The intent, were it assignable: the dropped local lines
+    # exist nowhere else once the resolution has replaced them, and they cannot
+    # ride the plan line (free text, and the updater's extractor reads up to the
+    # next space). A sidecar beside the candidate would keep the recording caller's
+    # excerpt to text a gap actually discarded — a diff-derived excerpt would also
+    # quote vendor lines the release restructured, which the record would then
+    # misattribute to the daemon.
     if gaps["hunks"]:
         Path(f"{args.out}.dropped").write_text(
             "".join(
