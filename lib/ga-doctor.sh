@@ -321,11 +321,10 @@ run_doctor() {
     fi
   fi
 
-  # 9. update-system advisory (E5 — T22/T27). PASS-compatible by design: every line is info, a
+  # 9. update-system advisory (E5 — T22). PASS-compatible by design: every line is info, a
   #    note, or a WARN — §9 NEVER sets `fail` (an unconfigured release repo / source-dev tree is a
   #    valid state). Surfaces the update CLI's health: installed version, source-dev vs consumer
-  #    tree, release-repo wiring, base@install baseline presence, a STALE-pause warning.
-  local stale_pause=0
+  #    tree, release-repo wiring, base@install baseline presence.
   # 9a — installed CLI version (manifest.version), advisory visibility.
   if command -v jq >/dev/null 2>&1 && [[ -f "${MANIFEST}" ]]; then
     local mver
@@ -382,34 +381,6 @@ run_doctor() {
   else
     log "  warn : no base@install baseline — run 'glass-atrium install' to capture it (next update falls back to a wider merge base)"
   fi
-  # 9e — STALE update pause flag (T27). doctor is MUTATION-FREE, so it must NOT
-  #      call update_pause_is_active (that loud-CLEARS a stale flag as a side
-  #      effect); instead read the age directly vs the TTL. A present-but-stale
-  #      flag is crashed-updater residue holding the autoagent daemon dormant.
-  local pause_flag pause_age pause_ttl
-  # stdout-only resolver (printf; rc 0) — no condition, no masking concern.
-  pause_flag="$(update_pause_flag_path)"
-  if [[ ! -e "${pause_flag}" ]]; then
-    log "  ok   : no update pause flag (autoagent daemon not update-suspended)"
-  else
-    pause_ttl="$(update_pause_ttl_secs)"
-    # update_pause_flag_age_secs (python3 mtime) rc 1 when un-ageable (python3
-    # broken / a race removed the flag). Masking in the `if` is intentional —
-    # the un-ageable case is handled in the else branch (SC2310/SC2311 disabled).
-    # shellcheck disable=SC2310,SC2311
-    if pause_age="$(update_pause_flag_age_secs "${pause_flag}")"; then
-      if [[ "${pause_age}" -gt "${pause_ttl}" ]]; then
-        log "  warn : STALE update pause flag (age=${pause_age}s > ttl=${pause_ttl}s): ${pause_flag} — crashed-updater residue; the autoagent daemon is suspended behind it (remove it or run an update)"
-        stale_pause=1
-      else
-        log "  info : update pause flag active (age=${pause_age}s ttl=${pause_ttl}s) — an update is in progress; daemon paused"
-      fi
-    else
-      log "  warn : update pause flag present but un-ageable (${pause_flag}) — cannot determine staleness (python3 missing?)"
-      stale_pause=1
-    fi
-  fi
-
   # 10. inject-scope-rules shed surface. inject-scope-rules.sh compresses the AGENT-INJECT source
   #     blocks so the worst-case DEV assembly fits INJECT_CTX_MAX_BYTES; when the assembly still
   #     overruns, a block is shed SILENTLY (Claude Code discards SubagentStart hook stderr), so the
@@ -760,7 +731,7 @@ run_doctor() {
   fi
 
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + stale_pause + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -768,7 +739,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${stale_pause} stale-pause + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind — see above) =="
     fi
     return 0
   fi
@@ -1097,7 +1068,7 @@ data_sep_leftover_scan() {
 
 # newest tracked-file mtime (snapshot_staleness_scan helper) — echoes the max mtime epoch across the
 # tracked set of the repo at $1, rc 1 when un-computable (python3 absent / git read failed). python3
-# os.stat is the portable mtime idiom the apply-lock + update-pause-flag libs already use, NEVER the
+# os.stat is the portable mtime idiom the apply-lock lib already uses, NEVER the
 # BSD/GNU-divergent `stat -f` / `stat -c`. The program body is captured FIRST and passed via -c so the
 # NUL-delimited path list can travel on STDIN (a heredoc body would occupy stdin instead, SC2259), and
 # the repo root travels through argv — an exotic path is never interpolated into the program text.

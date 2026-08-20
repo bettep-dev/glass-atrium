@@ -4,8 +4,8 @@
 # serialize — a mid-apply daemon is signalled by .apply-lock CONTENTION (the retired
 # update_head_is_wip / [WIP-AUTO]-HEAD detector is gone): a stale/dead lock is
 # reclaimed, a live one blocks; the changed-file set — no path-pattern refusal holds a
-# row back from it; update_serialize_begin / update_cleanup — pause flag set + lock
-# acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
+# row back from it; update_serialize_begin / update_cleanup — lock acquired,
+# contention loud-fails, stale lock reclaimed, trap releases it; end-to-end
 # run via the ATRIUM_UPDATE_SRC_DIR seam (verify → deterministic non-agent sync →
 # baseline — every changed file applies, the run asks nothing); boundary asserts — NOT a merge engine
 # (agent md excluded), and core.autoagent_proposals reachable through the single
@@ -13,7 +13,7 @@
 # git is deliberately NOT required — the flow is git-free end to end, proving it runs
 # on a git-less no-.git consumer host.
 # Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
-# AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
+# AUTOAGENT_REPORTS_DIR / ATRIUM_UPDATE_STATE_DIR redirected
 # into it; libs are sourced from the REAL install (REAL_LIB_ROOT). The download is
 # bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched.
 
@@ -36,7 +36,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t ga-update-bats.XXXXXX)" && pwd -P)"
   INSTALL="${WORK}/install" # sandbox GA_ROOT (the live install under test)
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
-  STATE="${WORK}/state"     # reports / pause / baseline sandbox
+  STATE="${WORK}/state"     # reports / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
 }
 
@@ -104,14 +104,11 @@ load_skill() {
   IFS=$'\n\t'
   export GA_ROOT="${INSTALL}"
   export AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports"
-  export ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state"
   # shellcheck source=/dev/null
   source "${SKILL}"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/atrium-config.sh"
-  # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/update-pause-flag.sh"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-spine.sh"
   # The git-free serialize path (update_serialize_begin / update_cleanup) resolves
@@ -170,7 +167,6 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -196,7 +192,6 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -215,25 +210,19 @@ load_skill() {
 
 # serialize begin + cleanup unwind
 
-@test "serialize_begin sets the pause flag + acquires the lock; cleanup unwinds both" {
+@test "serialize_begin acquires the apply-lock; cleanup releases it" {
   run bash -c '
     '"$(declare -f load_skill)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     update_serialize_begin
-    flag="$(update_pause_flag_path)"
     lock="$(update_apply_lock_dir)"
-    [[ -e "${flag}" ]] && echo "FLAG_SET"
     [[ -d "${lock}" ]] && echo "LOCK_HELD"
     update_cleanup
-    [[ ! -e "${flag}" ]] && echo "FLAG_CLEARED"
     [[ ! -d "${lock}" ]] && echo "LOCK_RELEASED"
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"FLAG_SET"* ]]
-  [[ "$output" == *"LOCK_HELD"* ]]
-  [[ "$output" == *"FLAG_CLEARED"* ]]
-  [[ "$output" == *"LOCK_RELEASED"* ]]
+  [[ "$output" == *"LOCK_HELD"* ]] && [[ "$output" == *"LOCK_RELEASED"* ]]
 }
 
 @test "serialize_begin loud-fails when the .apply-lock is already held" {
@@ -284,7 +273,6 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -294,8 +282,7 @@ load_skill() {
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]
   # baseline anchor captured under the update-state dir
   [[ -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # pause flag + lock cleaned up by the trap
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  # lock cleaned up by the trap
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -311,7 +298,6 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -320,7 +306,6 @@ load_skill() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"already up to date"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "same content" ]]
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -334,7 +319,6 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -386,7 +370,6 @@ STUB
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${WORK}/facade" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -421,7 +404,6 @@ STUB
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${WORK}/facade" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -431,7 +413,6 @@ STUB
   [[ "$output" == *"hook-binding wiring failed"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]  # files APPLIED, not rolled back
   # the trap still released the writer-serialization state on the failure path
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -531,7 +512,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -543,8 +523,7 @@ seed_baseline_hashed() {
   [[ "$output" == *"agent_lifecycle"* ]]             # directs to the ceremony
   [[ ! -f "${INSTALL}/agents/dev-new.md" ]]          # nothing written
   [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # trap still unwinds the pause flag + lock on the refused exit
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  # the trap still releases the lock on the refused exit
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -562,7 +541,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -589,7 +567,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -625,7 +602,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -657,7 +633,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -684,7 +659,6 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -720,7 +694,6 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -951,7 +924,6 @@ run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -1148,7 +1120,7 @@ rm -rf /tmp/everything
 #     via the ATRIUM_UPDATE_PSQL seam — a mock psql that logs argv+SQL and returns a
 #     RETURNING id, so NO live Postgres is touched
 #   * single-active enforcement (partial unique index violation → loud-fail exit 8)
-#   * heartbeat + pause-flag mtime refresh on a long-stage tick
+#   * the DB heartbeat on a long-stage tick
 #   * the EXIT-trap in-progress→failed marking (abort/crash recovery) + WHERE-guarded
 #     terminal writes (a stale-swept row is never resurrected)
 #   * install-parity post-step (mock npm build + launchctl kickstart/bootstrap probe)
@@ -1320,7 +1292,7 @@ PLIST
   [[ ! -s "${WORK}/psql.log" ]] # no psql process was ever invoked
 }
 
-@test "P3 headless: update_heartbeat refreshes BOTH the pause-flag mtime and the DB heartbeat" {
+@test "P3 headless: update_heartbeat fires the DB heartbeat at a long-stage boundary" {
   write_mock_psql "${WORK}/psql"
   run bash -c '
     '"$(declare -f load_skill)"'
@@ -1329,20 +1301,13 @@ PLIST
     export PSQL_LOG="'"${WORK}"'/psql.log"
     export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
     _update_headless=1
-    update_serialize_begin # sets the pause flag (_update_pause_created=1) + lock
-    flag="$(update_pause_flag_path)"
+    update_serialize_begin
     _update_job_id=42
-    # backdate the flag past the 1800s TTL so a genuine refresh is observable
-    python3 -c "import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1],(t,t))" "${flag}"
-    aged="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 0)"
-    update_heartbeat # long-stage tick: refresh flag mtime + DB heartbeat
-    fresh="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 999)"
-    if [[ "${aged}" -ge 1800 && "${fresh}" -lt 60 ]]; then echo "PAUSE_REFRESHED"; fi
+    update_heartbeat
     update_cleanup
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"PAUSE_REFRESHED"* ]]           # mtime advanced from 3600s to near-0
-  grep -q "heartbeat_at = now()" "${WORK}/psql.log" # DB heartbeat fired on the same tick
+  grep -q "heartbeat_at = now()" "${WORK}/psql.log"
 }
 
 @test "P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)" {
@@ -1405,7 +1370,6 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -1432,7 +1396,6 @@ PLIST
   grep -q "kickstart -k" "${WORK}/launchctl.log"                     # loaded → kickstart -k
   [[ -f "${WORK}/oneshot.plist" ]]                                   # one-shot plist rendered
   grep -q "com.glass-atrium.update-oneshot" "${WORK}/oneshot.plist"  # correct decoupled label
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]            # trap unwound
 }
 
 @test "P3: install-parity post-step is idempotent (loaded→kickstart -k, unloaded→bootstrap; mock npm/launchctl)" {
@@ -1544,7 +1507,6 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "${cyc}"
@@ -1552,8 +1514,7 @@ PLIST
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "BEFORE IMAGE BODY" ]] # reverted to the before-image
   [[ "$output" == *"agents-bak restore complete"* ]]
-  # the restore serializes via the same pause+lock; the trap unwinds both
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  # the restore serializes via the same apply-lock; the trap releases it
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -1561,7 +1522,6 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "../etc/evil"
@@ -1573,7 +1533,6 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "2099-01-01_update-9.9.9"
@@ -1766,83 +1725,6 @@ rm -rf /tmp/everything
 }
 
 # ---------------------------------------------------------------------------
-# finding #14 — a long interactive confirm wait must NOT let the pause flag age past
-# its TTL and un-pause the daemon mid-update. A liveness-guarded background refresher
-# re-writes the flag every tick; update_cleanup kills it BEFORE removing the flag
-# (kill-before-remove closes the recreate-after-removal race).
-# ATRIUM_UPDATE_PAUSE_REFRESH_SECS shrinks the 600s tick for these tests.
-# ---------------------------------------------------------------------------
-
-@test "finding#14: the pause-flag refresher advances the flag mtime across a long wait (TTL not defeated)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    flag="$(update_pause_create)"
-    m0="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
-    update_pause_refresher_start
-    rpid="${_update_pause_refresher_pid}"
-    [[ -n "${rpid}" ]] && echo "STARTED"
-    sleep 3 # ~3 ticks
-    m1="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
-    update_pause_refresher_stop
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "STOPPED"
-    python3 -c "import sys;sys.exit(0 if float(sys.argv[2])>float(sys.argv[1]) else 1)" "${m0}" "${m1}" \
-      && echo "MTIME_ADVANCED"
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"STARTED"* ]] || return 1
-  [[ "$output" == *"MTIME_ADVANCED"* ]] || return 1 # heartbeat keeps the flag fresh under the TTL
-  [[ "$output" == *"STOPPED"* ]] || return 1        # stop killed the refresher cleanly
-}
-
-@test "finding#14: the refresher exits within one tick after its watched updater dies (TTL guard regains authority)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    update_pause_create >/dev/null
-    ( sleep 30 ) & fake_updater=$! # stand-in updater the refresher watches
-    update_pause_refresher_start "${fake_updater}"
-    rpid="${_update_pause_refresher_pid}"
-    kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_ALIVE"
-    kill "${fake_updater}" 2>/dev/null || true # SIGKILL-equivalent updater death
-    wait "${fake_updater}" 2>/dev/null || true
-    sleep 3 # > one tick
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_EXITED"
-    kill "${rpid}" 2>/dev/null || true
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"REFRESHER_ALIVE"* ]] || return 1
-  [[ "$output" == *"REFRESHER_EXITED"* ]] || return 1 # parent-death guard → flag can age out (TTL recovery)
-}
-
-@test "finding#14: cleanup stops the refresher AND leaves no pause flag (no recreate-after-removal)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    update_serialize_begin # sets flag + lock AND starts the refresher
-    flag="$(update_pause_flag_path)"
-    rpid="${_update_pause_refresher_pid}"
-    [[ -n "${rpid}" ]] && kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_RUNNING"
-    [[ -e "${flag}" ]] && echo "FLAG_SET"
-    update_cleanup
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_STOPPED"
-    sleep 2 # a would-be zombie refresher gets >1 tick to (wrongly) recreate the flag
-    [[ ! -e "${flag}" ]] && echo "FLAG_STAYS_CLEARED"
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"REFRESHER_RUNNING"* ]] || return 1
-  [[ "$output" == *"FLAG_SET"* ]] || return 1
-  [[ "$output" == *"REFRESHER_STOPPED"* ]] || return 1
-  [[ "$output" == *"FLAG_STAYS_CLEARED"* ]] || return 1 # kill-before-remove: no recreate after removal
-}
-
-# ---------------------------------------------------------------------------
 # finding #16 — ATRIUM_UPDATE_ALLOW_ROSTER must NOT leave a half-applied roster. The
 # E4 merge SKIPS a release-only ADD's agents/<name>.md, so syncing the release
 # agent-registry.json alone would register an agent whose body never landed (masked
@@ -1864,7 +1746,6 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -1896,7 +1777,6 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -1931,7 +1811,6 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -1966,7 +1845,6 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \

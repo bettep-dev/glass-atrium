@@ -25,7 +25,7 @@
 # the LAST command's status, so a bare mid-body `[[ ]]` would be silently ignored.
 #
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
-# ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected into it; the
+# ATRIUM_UPDATE_STATE_DIR redirected into it; the
 # download is bypassed via ATRIUM_UPDATE_SRC_DIR and AUTOAGENT_CLAUDE_BIN points at
 # a path that is never created, so gh and the claude CLI are never touched.
 
@@ -128,7 +128,6 @@ run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \

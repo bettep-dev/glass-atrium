@@ -46,8 +46,8 @@ setup_file() {
     "${ENGINE_SRC}/lib/"
   # ga_init_env HARD-requires several scripts/lib libs under <GA_ROOT>/scripts/lib and die()s when
   # any is absent (the E5 update-system set PLUS fakechat-cleanup.sh). Copy the WHOLE scripts/lib
-  # dir so the next mandatory-lib addition cannot re-break this (the class already recurred:
-  # update-pause-flag, then fakechat-cleanup). init sources only the named libs, so the extras sit
+  # dir so the next mandatory-lib addition cannot re-break this (the class has recurred before,
+  # most recently with fakechat-cleanup). init sources only the named libs, so the extras sit
   # unread — a SOURCE-time dependency of init, not of run_bootstrap.
   cp "${GA}/scripts/lib/"*.sh "${ENGINE_SRC}/scripts/lib/"
 }

@@ -683,26 +683,6 @@ ts_now_json() {
     printf '%s' "$(ts_now)" | json_escape
 }
 
-# -- Cooperative update pause-flag gate (T10) ------------------------------
-# The apply stage is the daemon's WRITER (it swaps agent-file content in place),
-# so honor the update pause flag here too (defense in depth beyond
-# daemon-cycle.sh): a cron OR explicit apply must never write while a Glass
-# Atrium update is swapping files. A STALE flag (crashed updater) is TTL-cleared
-# by the lib so the daemon can never freeze forever. A clean skip is exit 0.
-# DAEMON SAFETY: a missing lib degrades to a loud WARN + proceed.
-PAUSE_FLAG_LIB="${HOME}/.glass-atrium/scripts/lib/update-pause-flag.sh"
-if [[ -f "${PAUSE_FLAG_LIB}" ]]; then
-    # shellcheck disable=SC1090,SC1091
-    . "${PAUSE_FLAG_LIB}"
-    if update_pause_is_active; then
-        printf '[daemon-apply] update in progress (pause flag held) — skipping apply (exit 0)\n' >&2
-        exit 0
-    fi
-else
-    printf '[daemon-apply] WARN: pause-flag lib missing (%s) — proceeding without update-pause gate\n' \
-        "${PAUSE_FLAG_LIB}" >&2
-fi
-
 # -- Test-suite preflight (loud-fail: verify the harness before mutating it) --
 # The daemon mutates agent files it can trust only if the test suite that
 # certifies them is BOTH present and green — root PRESENCE alone is theater, a
@@ -854,8 +834,8 @@ verify_test_harness
 # -- Shared apply-lock helper (stale-reclaim guard) ------------------------
 # The .apply-lock stale-reclaim logic is SHARED with the updater (update.sh) via
 # ONE lib so the two writers cannot drift a divergent reclaim (a race hazard).
-# Load-bearing: unlike the pause-flag gate (defense-in-depth), a missing lock lib
-# is FATAL — writers cannot be serialized without it (Precondition Loud-Fail).
+# Load-bearing: a missing lock lib is FATAL — this lock is the ONLY guard
+# serializing the two writers (Precondition Loud-Fail).
 # Facade-safe default: SCRIPT_DIR is the realpathed self dir, so the lib resolves
 # to <real-tree>/scripts/lib/apply-lock.sh even when invoked via the ~/.claude
 # facade (which has NO apply-lock.sh mirror — the 2026-07-02 exit-5 incident).

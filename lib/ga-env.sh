@@ -268,14 +268,13 @@ ga_init_env() {
   # can call the update-system helpers:
   #   * atrium-config.sh    — atrium_toml_get (doctor §9 [release].repo read)
   #   * apply-spine.sh       — spine_set_baseline / spine_get_baseline / spine_* (T24 capture · §9 probe)
-  #   * update-pause-flag.sh — update_pause_remove / update_pause_flag_path / update_pause_flag_age_secs (T26 · T27)
-  # All three are PURE (function-only, no side effects / strict-mode mutation), so sourcing here defines the
+  # Both are PURE (function-only, no side effects / strict-mode mutation), so sourcing here defines the
   # functions without any file-scope action. Resolved under GA_ROOT/scripts/lib (GA_LIB_DIR overrides for
   # sandbox/CI). Loud-fail (die) on an absent lib — a missing E5 lib is a broken install, never a silent
   # skip (shared-self-improve-hygiene Precondition Loud-Fail Principle).
   readonly LIB_DIR="${GA_LIB_DIR:-${GA_ROOT}/scripts/lib}"
   local _e5_lib
-  for _e5_lib in atrium-config.sh apply-spine.sh update-pause-flag.sh; do
+  for _e5_lib in atrium-config.sh apply-spine.sh; do
     [[ -f "${LIB_DIR}/${_e5_lib}" ]] \
       || die "E5 lib missing: ${LIB_DIR}/${_e5_lib} (broken install — scripts/lib is incomplete)"
     # shellcheck source=/dev/null

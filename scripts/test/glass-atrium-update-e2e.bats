@@ -8,12 +8,12 @@
 #                                      rolled back via a failing claude stub)
 #   (d) release-only agent (ROSTER ADD) -> deferred to the agent_lifecycle ceremony,
 #                                      never written in-band
-# plus the cross-cutting invariants: the pause flag is SET during the run then CLEARED
-# on exit, and the daemon .apply-lock is released. git is NOT required — the whole
+# plus the cross-cutting invariant: the daemon .apply-lock is HELD during the run
+# then released on exit. git is NOT required — the whole
 # flow (spine sync + git-free git_txn_apply merge) runs without any git invocation
 # (no-.git consumer install, P2-T2).
 # Hermetic (as glass-atrium-update.bats): a per-test mktemp sandbox with GA_ROOT /
-# AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
+# AUTOAGENT_REPORTS_DIR / ATRIUM_UPDATE_STATE_DIR redirected
 # into it; libs source from the REAL install. gh download bypassed via
 # ATRIUM_UPDATE_SRC_DIR, the both-changed Haiku verify pointed at a hermetic claude
 # STUB (AUTOAGENT_CLAUDE_BIN) that contacts no network — gh, the real claude CLI, and
@@ -33,7 +33,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t ga-update-e2e.XXXXXX)" && pwd -P)"
   INSTALL="${WORK}/install" # sandbox GA_ROOT (the live install under test)
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
-  STATE="${WORK}/state"     # reports / pause / baseline sandbox
+  STATE="${WORK}/state"     # reports / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
 }
 
@@ -150,12 +150,12 @@ brand new vendor agent" # (d) roster ADD
     "scripts/tool.sh" "agents/dev-vendor.md" "agents/dev-both.md" "agents/dev-new.md"
 
   # Hermetic claude stub for the both-changed Haiku verify: it records that the
-  # pause flag is HELD at invocation (proving "set during the run") then exits
-  # non-zero so run_pre_verify conservative-fails -> the both-changed merge is
-  # gated (git_txn rolls it back). It never contacts the network.
+  # apply-lock is HELD at invocation (proving the writer stays serialized for the
+  # whole run) then exits non-zero so run_pre_verify conservative-fails -> the
+  # both-changed merge is gated (git_txn rolls it back). It never contacts the network.
   cat >"${WORK}/fake-claude.sh" <<'STUB'
 #!/usr/bin/env bash
-[[ -e "${GA_PAUSE_FLAG}" ]] && : >"${GA_PAUSE_WITNESS}"
+[[ -d "${GA_LOCK_DIR}" ]] && : >"${GA_LOCK_WITNESS}"
 exit 1
 STUB
   chmod +x "${WORK}/fake-claude.sh"
@@ -163,14 +163,13 @@ STUB
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/fake-claude.sh" \
-    GA_PAUSE_FLAG="${STATE}/update-state/autoagent-pause.flag" \
-    GA_PAUSE_WITNESS="${WORK}/pause-witness" \
+    GA_LOCK_DIR="${STATE}/daemon-reports/.apply-lock" \
+    GA_LOCK_WITNESS="${WORK}/lock-witness" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -199,11 +198,10 @@ STUB
   [[ "$output" == *"agent_lifecycle"* ]]
   [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
 
-  # cross-cutting: the pause flag was SET during the run (the claude stub observed
-  # it held) THEN CLEARED on exit; the daemon .apply-lock was released
-  [[ -e "${WORK}/pause-witness" ]]                        # set-during-run
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]] # cleared on exit
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock released
+  # cross-cutting: the daemon .apply-lock was HELD during the run (the claude stub
+  # observed it) and released on exit
+  [[ -e "${WORK}/lock-witness" ]]                  # held-during-run
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]] # lock released
 
   # the successful non-agent sync anchored the next update's base (baseline +
   # base-content store both captured)
@@ -212,12 +210,12 @@ STUB
 }
 
 # SIGTERM mid-run → update_cleanup (the EXIT INT TERM trap) releases the
-# .apply-lock and clears the pause flag — no stranded writer-serialization
+# .apply-lock — no stranded writer-serialization
 
-@test "SIGTERM mid-merge releases the .apply-lock and clears the pause flag (trap path)" {
+@test "SIGTERM mid-merge releases the .apply-lock (trap path)" {
   # Minimal fixture that reaches the both-changed Haiku verify: one non-agent
   # change (drives the spine sync) + the both-changed agent (the
-  # claude call site — the updater is INSIDE the merge, lock + pause flag held).
+  # claude call site — the updater is INSIDE the merge, lock held).
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool content"
   seed_file "${INSTALL}" "agents/dev-both.md" "${BOTH_LOCAL}"
   seed_base_store "dev-both.md" "${BOTH_BASE}"
@@ -244,7 +242,6 @@ STUB
   env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
@@ -260,16 +257,15 @@ STUB
     sleep 0.1
     i=$((i + 1))
   done
-  [[ -e "${WORK}/claude.ready" ]]                       # updater reached the verify
-  [[ -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock held mid-run
-  [[ -e "${STATE}/update-state/autoagent-pause.flag" ]] # pause flag held mid-run
+  [[ -e "${WORK}/claude.ready" ]]                # updater reached the verify
+  [[ -d "${STATE}/daemon-reports/.apply-lock" ]] # lock held mid-run
 
   kill -TERM "${UPDATE_PID}" # delivered NOW, pending while the stub is in flight
   : >"${WORK}/claude.resume" # unblock the verify so the deferred trap can fire
 
   # Bounded reap. Regression pin: if TERM ever drops out of the trap list the
   # updater dies trap-LESS (EXIT traps do NOT run on an untrapped fatal signal),
-  # stranding the lock dir + pause flag asserted gone below.
+  # stranding the lock dir asserted gone below.
   i=0
   while kill -0 "${UPDATE_PID}" 2>/dev/null && [[ "${i}" -lt 100 ]]; do
     sleep 0.1
@@ -284,6 +280,5 @@ STUB
   wait "${UPDATE_PID}" 2>/dev/null || true
   UPDATE_PID=""
 
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]        # lock released by the trap
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]] # pause flag cleared
+  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]] # lock released by the trap
 }

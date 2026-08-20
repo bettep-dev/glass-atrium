@@ -30,9 +30,9 @@
 # emitter, one envelope op, one helper pipe) rather than SQL syntax.
 #
 # What it does, in order (each step builds on the previous):
-#   1. WRITER-SERIALIZATION (T10): create the cooperative pause flag so the
-#      launchd-live autoagent daemon SUSPENDS, then acquire the daemon .apply-lock
-#      (its mkdir contention refuses to start while a daemon apply is mid-flight).
+#   1. WRITER-SERIALIZATION: acquire the daemon .apply-lock — its mkdir contention
+#      refuses to start while a daemon apply is mid-flight, and a daemon reaching
+#      for the same lock while this run holds it skips loudly with a named reason.
 #   2. DOWNLOAD + STAGE (T04 transport): fetch the latest GitHub Release assets
 #      (manifest.json + the hashed bundle) for config [release].repo and extract.
 #   3. VERIFY: per-file SHA-256 of every changed file == manifest hashes[path]
@@ -45,8 +45,8 @@
 #      emitted from the merge step in every entry mode, best-effort.
 #   5. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
 #      base@install anchor for the next update's 3-anchor merge.
-#   6. CLEANUP: a trap removes the pause flag and releases the lock on EVERY exit
-#      path (success, failure, SIGINT/SIGTERM).
+#   6. CLEANUP: a trap releases the lock on EVERY exit path (success, failure,
+#      SIGINT/SIGTERM).
 #
 # No deletion pass, deliberately: the bundle is authoritative for REPLACEMENT, so a
 # file this release stops shipping is left where it is — accepted residue, since the
@@ -206,17 +206,12 @@ update_require_tools() {
 }
 
 # ---------------------------------------------------------------------------
-# Writer-serialization (pause flag + lock) — state tracked for trap cleanup
+# Writer-serialization (apply lock) — state tracked for trap cleanup
 # ---------------------------------------------------------------------------
 
 # Mutable run state (globals — set across functions, consumed in the commit
 # callbacks + the trap cleanup; declared here so strict mode + shellcheck see a
 # defined origin).
-_update_pause_created=0
-# Background pause-flag heartbeat refresher pid (finding #14) — set by
-# update_pause_refresher_start, killed+cleared by update_cleanup so a long apply
-# cannot let the flag age past its TTL and un-pause the daemon mid-update.
-_update_pause_refresher_pid=""
 _update_lock_acquired=0
 _update_workdir=""
 _update_apply_paths=""
@@ -576,8 +571,8 @@ update_warn_dropped_frontmatter() {
 }
 
 # Single idempotent cleanup: remove ONLY what this run created. Registered on
-# EXIT INT TERM so the pause flag clears and the daemon resumes on any exit path —
-# the trap-guarded quiesce/restore the T10 contract requires.
+# EXIT INT TERM so the apply lock is released on every exit path and the next
+# writer — daemon or updater — can take it.
 update_cleanup() {
   local exit_code=$?
   # Headless DB-job finalization: any exit that did NOT already mark the row
@@ -595,15 +590,6 @@ update_cleanup() {
     apply_lock_release "$(update_apply_lock_dir)"
     _update_lock_acquired=0
   fi
-  # Stop the pause-flag heartbeat refresher BEFORE removing the flag (finding #14):
-  # kill-before-remove so the background refresher can never recreate the flag after
-  # update_pause_remove deletes it — closing the recreate-after-removal race on every
-  # EXIT/INT/TERM path (including a declined update_die and Ctrl-C).
-  update_pause_refresher_stop
-  if [[ "${_update_pause_created}" -eq 1 ]]; then
-    update_pause_remove
-    _update_pause_created=0
-  fi
   if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
     # Snapshot preservation (finding #7): a swap that BEGAN but did NOT commit
     # cleanly leaves the pre-swap snapshot as the ONLY rollback source, yet the
@@ -620,19 +606,12 @@ update_cleanup() {
   fi
 }
 
-# Set the pause flag FIRST (the daemon's decision-to-run gate suspends as soon as
-# it sees it), then acquire the lock. Acquiring after the flag minimizes the
-# window in which a daemon cycle could already hold the lock; if one does, the
-# mkdir loud-fails and we abort (the trap clears the flag we just set).
+# Acquire the daemon .apply-lock — the single atomic guard serializing this run
+# against the daemon's own writer. A daemon apply already holding it makes the
+# mkdir loud-fail and we abort; a daemon reaching for it while we hold it fails
+# the same way and skips with a named reason.
 update_serialize_begin() {
   local lock_dir
-  # Set _update_pause_created ONLY on create success. A refusal (rc 1) means a fresh
-  # flag is already held by a live foreign updater → abort WITHOUT touching it; the
-  # flag stays 0 so the EXIT trap skips removal and the winner's flag survives.
-  if ! update_pause_create >/dev/null; then
-    update_die "another apply is in progress (pause flag held by a live updater)"
-  fi
-  _update_pause_created=1
   # Ensure the reports dir exists (same as daemon-apply.sh) so the lock mkdir
   # fails ONLY on genuine contention, not a missing parent.
   mkdir -p -- "$(update_reports_dir)"
@@ -646,50 +625,6 @@ update_serialize_begin() {
     update_die "another apply is in progress (lock held): ${lock_dir}"
   fi
   _update_lock_acquired=1
-  # Start the pause-flag heartbeat refresher LAST, once the flag + lock are held, so a
-  # long apply cannot let the flag age past its TTL (finding #14).
-  update_pause_refresher_start
-}
-
-# Start ONE liveness-guarded background refresher for the whole serialized section
-# (finding #14): re-write the pause flag every tick so its mtime never ages past the
-# 1800s TTL during a long apply — which would otherwise let the
-# daemon treat the flag as crashed-updater residue and un-pause mid-update. The
-# `kill -0 "${updater_pid}"` parent guard PRESERVES the TTL's crash-safety purpose: a
-# SIGKILLed updater (no EXIT trap) makes the next tick's guard fail, the refresher
-# exits within one tick, the flag then ages out and update_pause_is_active reclaims
-# it. `$$` inside a ( ) subshell stays the PARENT updater pid, so the refresher's
-# update_pause_create takes the own-pid heartbeat-refresh path (never the finding #15
-# live-foreign-owner refusal). Tick default 600s (ample margin under the TTL);
-# ATRIUM_UPDATE_PAUSE_REFRESH_SECS overrides for tests. Arg: $1 = pid to watch
-# (default $$ — the updater), a test seam for the parent-death path.
-update_pause_refresher_start() {
-  local updater_pid="${1:-$$}" tick="${ATRIUM_UPDATE_PAUSE_REFRESH_SECS:-600}"
-  # fd1/fd2 are detached to /dev/null so the background subshell (and its sleep child)
-  # NEVER hold an inherited stdout pipe open — else a captured pipe (the bats harness
-  # reads the parent's pipe to EOF) would wedge for a full tick after the parent exits.
-  # The TERM trap kills the in-flight sleep child too, so update_pause_refresher_stop's
-  # `kill` leaves NO stray sleep process (killing the subshell alone would orphan it).
-  (
-    trap 'if [[ -n "${_ga_sleep_pid:-}" ]]; then kill "${_ga_sleep_pid}" 2>/dev/null || true; fi; exit 0' TERM
-    while kill -0 "${updater_pid}" 2>/dev/null; do
-      update_pause_create >/dev/null 2>&1 || true
-      sleep "${tick}" &
-      _ga_sleep_pid=$!
-      wait "${_ga_sleep_pid}" 2>/dev/null || true
-    done
-  ) >/dev/null 2>&1 &
-  _update_pause_refresher_pid=$!
-}
-
-# Stop the background pause-flag refresher (finding #14): kill + reap + clear the pid.
-# Idempotent (no refresher running → rc 0). Called from update_cleanup BEFORE the flag
-# is removed so the refresher can never recreate the flag after removal.
-update_pause_refresher_stop() {
-  [[ -n "${_update_pause_refresher_pid}" ]] || return 0
-  kill "${_update_pause_refresher_pid}" 2>/dev/null || true
-  wait "${_update_pause_refresher_pid}" 2>/dev/null || true
-  _update_pause_refresher_pid=""
 }
 
 # ---------------------------------------------------------------------------
@@ -1733,15 +1668,10 @@ PSQL
 }
 
 # One heartbeat tick at a long-stage boundary: refresh the update_job heartbeat
-# (headless) AND rewrite the cooperative pause flag so its mtime advances — the
-# 1800s pause TTL must NOT trip mid-update (else the daemon would clear a flag we
-# still hold and then FATAL on the still-held .apply-lock). The .apply-lock needs no
-# mtime refresh: its stale-reclaim additionally requires the holder to be not-live
-# (kill -0), and this process is live, so the lock is liveness-protected.
+# (headless). The .apply-lock needs no mtime refresh — its stale-reclaim
+# additionally requires the holder to be not-live (kill -0), and this process is
+# live, so the lock is liveness-protected for as long as the apply runs.
 update_heartbeat() {
-  if [[ "${_update_pause_created}" -eq 1 ]] && declare -F update_pause_create >/dev/null 2>&1; then
-    update_pause_create >/dev/null 2>&1 || update_log "WARN: pause-flag heartbeat refresh failed"
-  fi
   update_job_heartbeat
 }
 
@@ -2312,7 +2242,7 @@ update_restore_base_entry() {
 }
 
 # Restore agent md from a <cycle-id> before-image set. Serializes (writes live agent
-# files) via the same pause+lock. Atomic per-file (temp+rename). Loud-fail (exit 10)
+# files) via the same apply-lock. Atomic per-file (temp+rename). Loud-fail (exit 10)
 # on a bad cycle-id or missing snapshot dir. Prune runs first (retention). Each
 # reverted live body ALSO reverses its base-content store entry (finding #9 part 4)
 # so the next 3-way merge is not left keyed on the reverted-away release base.
@@ -2398,7 +2328,7 @@ Usage:
   glass-atrium update --render-oneshot   render the decoupled one-shot launchd plist, print its path (no writes elsewhere).
   glass-atrium update --help             show this help
 
-Flow: pause the autoagent daemon → acquire the apply-lock → download + verify the
+Flow: acquire the apply-lock → download + verify the
 release → deterministic non-agent sync → agent
 EDITABLE-region merge (E4) → capture the baseline → refresh the ~/.claude mirror
 farm → reconcile settings.json hook bindings (wire-hooks). Headless additionally
@@ -2574,7 +2504,7 @@ update_run() {
   # start of every run so the rollback sink cannot grow unbounded.
   update_prune_agents_bak
 
-  # Step 1 — writer-serialization (pause flag → lock; lock contention IS the
+  # Step 1 — writer-serialization (apply lock; lock contention IS the
   # mid-apply-daemon signal, with stale-dead-holder reclaim).
   update_serialize_begin
 
@@ -2793,8 +2723,6 @@ update_main() {
   _update_merge_lib_dir="${merge_lib_dir}"
   # shellcheck source=/dev/null
   source "${lib_dir}/atrium-config.sh"
-  # shellcheck source=/dev/null
-  source "${lib_dir}/update-pause-flag.sh"
   # The shared .apply-lock stale-reclaim guard — the SAME lib daemon-apply.sh
   # sources, so updater and daemon reclaim a crashed holder's lock identically
   # (a divergent reclaim between the two writers would be a race hazard). A static

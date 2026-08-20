@@ -420,8 +420,7 @@ _inode_of() {
 #      lib OR its two callers (daemon-apply.sh, update.sh). The optional
 #      `-C <dir>` alternative catches the daemon's `git -C <root> <sub>` call
 #      shape — `git apply` is the ONLY sanctioned invocation. The tree keeps
-#      comments clean of these tokens too, so no comment-stripping is needed
-#      (unlike update-pause-flag.bats's stat -f / stat -c static check).
+#      comments clean of these tokens too, so no comment-stripping is needed.
 # ---------------------------------------------------------------------------
 @test "static: git-txn.sh, daemon-apply.sh, update.sh contain no non-apply git subcommand" {
   local daemon="${GA}/autoagent/daemon-apply.sh"
