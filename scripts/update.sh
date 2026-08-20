@@ -1084,11 +1084,11 @@ update_agent_outcome_landed() {
 # non-zero when any file rolled back or did not apply.
 _update_agent_commit_callback() {
   local logical real candidate release agent rc=0
-  # Restore-index rows accumulate in memory and land in ONE write below. A row
-  # appended per file would leave a PARTIAL index behind a failed write, and a
-  # partial index is worse than none: the restore reads it instead of falling back,
-  # so the unlisted files are silently skipped. One write fails whole, and a whole
-  # failure degrades the cycle to the directory convention.
+  # Restore-index rows accumulate in memory and land in ONE write below: a row
+  # appended per file would leave a PARTIAL index behind a failed write, while one
+  # write fails whole and degrades the cycle to the directory convention. The restore
+  # reads the union of index and directory, so an unlisted image is still reached —
+  # this keeps a half-written index from naming targets for a half-applied run.
   local index_rows=""
   while IFS=$'\t' read -r logical real candidate release agent; do
     [[ -n "${logical}" ]] || continue
@@ -2344,24 +2344,40 @@ update_write_restore_index() {
 }
 
 # Emit one `<before-image basename> TAB <manifest-relative target>` pair per
-# before-image in a cycle dir: from the index when the cycle carries one, and from
-# the agents/ directory convention when it does not. The second arm synthesizes the
-# pairs that convention always implied, so an index-less cycle restores exactly as it
-# did before the index existed. Arg: $1 = cycle dir.
+# before-image in a cycle dir, as the UNION of what the index names and what the
+# directory holds: an indexed image pairs with its recorded target, every other
+# *.md.bak with the agents/ target the convention always implied.
+#
+# UNION rather than index-first because the two sinks have different lifetimes: the
+# cycle dir is keyed by date and version and is never cleared, while the index write
+# truncates. A second run on the same day therefore leaves the earlier run's images in
+# the dir named by no row, and an index-first read would restore only its own — the
+# desync the reversal exists to prevent. It is also the one shape that covers a cycle
+# whose index write FAILED, since that cycle keeps its images and loses its rows.
+#
+# An index-less cycle is the whole-directory case of the same rule, so it restores
+# exactly as it did before the index existed. Arg: $1 = cycle dir.
 update_restore_before_images() {
-  local cycle_dir="$1" index bak name
+  local cycle_dir="$1" index bak name bak_name rel indexed=$'\n'
   index="$(update_restore_index_path "${cycle_dir}")"
   if [[ -f "${index}" ]]; then
-    cat -- "${index}"
-    return 0
+    # A row missing either field names no pair, so it is dropped here and its image
+    # left to the convention arm below — which reaches the image rather than losing it.
+    while IFS=$'\t' read -r bak_name rel || [[ -n "${bak_name}" ]]; do
+      [[ -n "${bak_name}" && -n "${rel}" ]] || continue
+      printf '%s\t%s\n' "${bak_name}" "${rel}"
+      indexed="${indexed}${bak_name}"$'\n'
+    done <"${index}"
   fi
   # The *.md.bak glob matches ONLY live before-images — a sibling *.md.base.bak ends
   # in .base.bak, so the base snapshots are never iterated as restore targets.
   for bak in "${cycle_dir}"/*.md.bak; do
     [[ -e "${bak}" ]] || continue
     name="${bak##*/}"
-    name="${name%.bak}" # <name>.md
-    printf '%s\t%s\n' "${name}.bak" "agents/${name}"
+    # Whole-line membership through the newline anchors, mirroring `grep -qxF`: an
+    # image the index already paired must not also take the convention target.
+    [[ "${indexed}" == *$'\n'"${name}"$'\n'* ]] && continue
+    printf '%s\t%s\n' "${name}" "agents/${name%.bak}"
   done
 }
 

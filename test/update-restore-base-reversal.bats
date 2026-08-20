@@ -97,9 +97,10 @@ roster_paths() {
   ' _ "${REAL_SPINE}"
 }
 
-# Drive update_restore_base_entry DIRECTLY. Arm A takes a capture key rather than a
-# live target, and its only production caller is the restore loop that does not yet
-# iterate roster paths — so a roster key reaches it here and nowhere else. $1 = key.
+# Drive update_restore_base_entry DIRECTLY, on a capture key rather than a live
+# target. The restore loop reaches Arm A only after a live body reverted, so the
+# direct form is what isolates one key's reversal from the revert that gates it.
+# $1 = key.
 run_restore_base_entry() {
   run env GA_ROOT="${ROOT}" AUTOAGENT_BACKUP_DIR="${BAKBASE}" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}" bash -c '
@@ -210,6 +211,23 @@ run_restore_base_entry() {
   [[ "${status}" -eq 0 ]] || return 1
   [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live body, agents/ convention
   [[ "$(cat "${STORE}/dev-x.md")" == "PRIOR BASE" ]] || return 1       # base reversed under the flat key
+}
+
+@test "a reused cycle dir restores the images its index does not name" {
+  # Two runs share ONE cycle dir: it is keyed by date + version and never cleared,
+  # while the index write truncates. Run 1's image survives in the dir carrying no
+  # row of its own, and only the union of index and directory reaches both.
+  printf 'LOCAL a\n' >"${CYCLEDIR}/dev-a.md.bak" # run 1 — no row survives for it
+  printf 'MERGED a\n' >"${ROOT}/agents/dev-a.md"
+  printf 'LOCAL b\n' >"${CYCLEDIR}/dev-b.md.bak" # run 2 — the row the index kept
+  printf 'MERGED b\n' >"${ROOT}/agents/dev-b.md"
+  printf '%s\t%s\n' 'dev-b.md.bak' 'agents/dev-b.md' >"${CYCLEDIR}/restore-index.tsv"
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${ROOT}/agents/dev-b.md")" == "LOCAL b" ]] || return 1 # indexed → recorded path
+  [[ "$(cat "${ROOT}/agents/dev-a.md")" == "LOCAL a" ]] || return 1 # unindexed → convention
+  [[ "${output}" == *"restore complete: 2 file(s)"* ]] || return 1
 }
 
 @test "the restore refuses an index row naming a target outside the install root" {
