@@ -678,15 +678,15 @@ t6_build_jqless_toolbin() {
   [[ "${output}" == "/tmp/custom-update-state" ]]
 }
 
-# === C2a′ — the roster path declaration ====================================
-# The four roster paths are declared ONCE, as data beside the claim predicate, so
-# the capture that iterates them and the predicate C1 later wires cannot drift into
-# two hand-agreed lists. The declaration is inert where it sits: the predicate reads
-# no list, so nothing it answers can move. This probe pins both halves — that the
-# declared paths are real, unclaimed manifest rows, and that neither predicate's
-# classification of the full manifest moved when the declaration landed beside them.
+# === The roster path declaration ============================================
+# The four roster paths are declared ONCE, as data beside the claim predicate, so the
+# capture that iterates them and the predicate that will read them cannot drift into
+# two hand-agreed lists. The declaration is inert where it sits: neither predicate
+# reads a list, so nothing either answers depends on it. These probes pin both halves
+# — that the declared paths are real, unclaimed manifest rows, and that both
+# predicates still classify the full manifest by path shape alone.
 
-@test "C2a1: the roster declaration holds exactly four unclaimed manifest rows" {
+@test "the roster declaration holds exactly four unclaimed manifest rows" {
   local manifest="${GA}/manifest.json" rel n=0
   [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
   # shellcheck source=/dev/null
@@ -708,7 +708,7 @@ t6_build_jqless_toolbin() {
   [ "${n}" -eq 4 ]
 }
 
-@test "C2a1: neither predicate's classification of the manifest moved" {
+@test "both predicates classify every manifest row by path shape alone" {
   local manifest="${GA}/manifest.json" path oracle claimed excluded mismatch=""
   [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
   # shellcheck source=/dev/null
@@ -716,8 +716,8 @@ t6_build_jqless_toolbin() {
 
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
-    # The rule both predicates answered BEFORE the declaration landed, recomputed
-    # from the path shape alone so this cannot agree with a drifted predicate.
+    # The rule recomputed from the path shape alone, so this oracle cannot agree
+    # with a drifted predicate.
     oracle=0
     case "${path}" in
       agents/*/* | agents/GLASS_ATRIUM_GLOBAL_RULES.md) ;;
@@ -734,7 +734,7 @@ t6_build_jqless_toolbin() {
   done < <(jq -r '.files[]' -- "${manifest}")
 
   if [[ -n "${mismatch}" ]]; then
-    echo "predicate classification moved:"
+    echo "predicate classification disagrees with the path-shape rule:"
     printf '%s' "${mismatch}"
   fi
   [ -z "${mismatch}" ]

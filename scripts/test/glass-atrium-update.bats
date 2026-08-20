@@ -1930,8 +1930,8 @@ rm -rf /tmp/everything
 # landed and for nothing else.
 # ---------------------------------------------------------------------------
 
-# Seed one roster path on both sides with distinct content and echo its rel path, so
-# the fixture reads from the declaration rather than restating it.
+# Seed one roster path on both sides, the release body carrying the path itself so a
+# captured base entry is identifiable per path. $1 = manifest-relative roster path.
 seed_roster_pair() {
   seed_file "${INSTALL}" "$1" "roster local"
   seed_file "${NEWSRC}" "$1" "roster release $1"
