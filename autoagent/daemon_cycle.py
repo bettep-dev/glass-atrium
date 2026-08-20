@@ -745,9 +745,9 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
 # compiled tuples above. classify_safety_tier calls them, and lib/sensitive_patterns.py
 # re-exports them so the pattern set is never re-expressed in a second regex
 # dialect — a shell-ERE data file in particular is forbidden. That re-export has
-# no non-test importer today, but the matchers themselves have two direct callers:
-# classify_safety_tier below, and editable_merge.build_merge_candidate, which the
-# updater shells from its merge stage — so the update path consumes them too.
+# no non-test importer today, but the matchers themselves are reached from
+# editable_merge, which the updater shells at its merge stage — so the update
+# path consumes them too, not the daemon alone.
 
 
 def match_sensitive_path(path: str) -> str | None:

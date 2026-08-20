@@ -813,7 +813,7 @@
     "autoagent/baseline/baseline-2026-07-22.md": "0245801bb318346197bb3a06619d47f9d73f9d818f1b605d39f39fb125d75b85",
     "autoagent/daemon-apply.sh": "e8094c502b201b28b9fc6a81bdf4920aa99182177b61915a13f74204aa1fca76",
     "autoagent/daemon-cycle.sh": "c404be6d22921ed5623cfaabb22c5a495b33b28f11d7ac6a30d556400774c8a0",
-    "autoagent/daemon_cycle.py": "430c27b64d20791f9ff34d41b3b0b414411b1f70b478e833607d057978cae395",
+    "autoagent/daemon_cycle.py": "e9c676557a5577e153056747640efe21cb79ecc37212a4ffa9554452162daf21",
     "autoagent/lib/autoagent_pause.py": "022418b1dd36eaa4e5a808cf29ca7d0a7fb042bfd4b1ff446042081f47863946",
     "autoagent/lib/confidence.py": "6ff631f4b55c8a3051cac7b87dcaecdbcdbbd9c1ed894ed5cf43f0f5af9bde10",
     "autoagent/lib/editable_merge.py": "bf5772657eb23d1b0864c4a28d0d9213bec48f5271a484b00f47c497b5fd6f01",
