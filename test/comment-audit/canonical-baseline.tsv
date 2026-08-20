@@ -79,7 +79,6 @@ scripts/wiki-lock.sh	48	110	0.4364	1	0	1	0
 scripts/wiki-metrics.sh	38	274	0.1387	1	0	1	8
 scripts/wiki-query.sh	34	167	0.2036	0	0	0	3
 scripts/wiki-sync.sh	41	339	0.1209	0	0	3	0
-scripts/lib/apply-gate.sh	90	83	1.0843	0	0	0	8
 scripts/lib/apply-lock.sh	152	158	0.9620	1	3	0	0
 scripts/lib/apply-spine.sh	113	193	0.5855	0	0	3	8
 scripts/lib/atrium-config.sh	84	120	0.7000	0	0	0	0
@@ -87,8 +86,6 @@ scripts/lib/claude-auth-env.sh	17	23	0.7391	1	0	0	0
 scripts/lib/daemon-bootstrap-common.sh	213	248	0.8589	3	0	1	0
 scripts/lib/daemon-lock.sh	29	33	0.8788	1	0	0	0
 scripts/lib/mirror-farm.sh	80	76	1.0526	1	0	0	0
-scripts/lib/sensitive-refusal.sh	52	43	1.2093	0	0	0	0
-scripts/lib/update-pause-flag.sh	80	65	1.2308	0	0	0	8
 scripts/lib/wiki-compile-lock.sh	19	23	0.8261	0	0	0	0
 monitor/scripts/oss-db-setup.sh	144	184	0.7826	0	1	0	13
 build-glass-atrium.sh	41	144	0.2847	0	0	1	7
@@ -107,7 +104,6 @@ hooks/test/track-outcome-budget-truncation.bats	56	168	0.3333	0	0	0	5
 hooks/test/track-outcome-schema-mode-completion.bats	166	499	0.3327	0	0	0	2
 hooks/test/track-outcome-transcript-source.bats	45	143	0.3147	0	0	0	0
 hooks/test/track-outcome-workflow-root-synthesis.bats	59	169	0.3491	0	0	0	0
-scripts/test/apply-gate.bats	46	157	0.2930	1	0	0	9
 scripts/test/apply-lock.bats	149	315	0.4730	0	1	0	18
 scripts/test/apply-spine.bats	61	253	0.2411	1	0	1	11
 scripts/test/atrium-config.bats	20	126	0.1587	0	0	0	1
@@ -122,7 +118,6 @@ scripts/test/mirror-farm.bats	61	130	0.4692	0	0	0	0
 scripts/test/pii-scan.bats	41	95	0.4316	0	0	0	6
 scripts/test/render-monitor-env.bats	77	184	0.4185	0	0	0	6
 scripts/test/swap-symlink-collision.bats	81	139	0.5827	1	0	0	0
-scripts/test/update-pause-flag.bats	63	172	0.3663	1	0	0	6
 scripts/test/wiki-source-raw.bats	58	160	0.3625	1	0	1	6
 monitor/src/server/agents/registry.ts	107	216	0.4954	0	0	1	0
 monitor/src/server/architecture/arch-invariants.ts	12	39	0.3077	0	0	2	0
@@ -178,4 +173,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	16075	38839	0.4139	192	25	148	443	files=179
+TOTAL	15744	38319	0.4109	190	25	148	412	files=174

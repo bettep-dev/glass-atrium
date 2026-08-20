@@ -21,9 +21,9 @@
 # Hermetic: a mktemp "real tree" holds a COPIED daemon + its sourced libs, so
 # GA_ROOT (= the realpathed script dir's parent) is the sandbox and the four
 # roots are present/absent under test control — nothing under the live tree is
-# read or written. A fake HOME makes the HOME-anchored pause-flag lib miss (loud
-# WARN + proceed). psql is masked so the deterministic report-fallback path runs
-# with no DB. The green-suite runner is stubbed (AUTOAGENT_BATS_RUNNER) so the
+# read or written. A fake HOME keeps the daemon's HOME-anchored reports dir,
+# agents dir and backfill script inside the sandbox. psql is masked so the
+# deterministic report-fallback path runs with no DB. The green-suite runner is stubbed (AUTOAGENT_BATS_RUNNER) so the
 # real suite is never shelled recursively.
 #
 # Run via: bats autoagent/test/daemon-apply-preflight.bats

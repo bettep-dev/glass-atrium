@@ -223,7 +223,7 @@ NEW vendor rules'
   # The shell-side pin on the property the policy was chosen for. The input that
   # declines above is the shape the stuck agents present every release; under the
   # DEFAULT policy the resolver emits merge-resolved-release, the candidate joins
-  # the normal records queue, clears the confirm gate and lands.
+  # the normal records queue and lands.
   #
   # It lands with the gate ABSENT. run_update points AUTOAGENT_CLAUDE_BIN at a
   # path that does not exist, which is what CI and an offline deploy look like to

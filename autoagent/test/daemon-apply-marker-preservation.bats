@@ -284,7 +284,7 @@ gutting_diff_b64() {
 }
 
 # run_apply ARGS... — invoke daemon-apply DIRECTLY (never `bash <path>`), with the
-# stub PATH, a temp HOME (so no live install script or pause-flag lib is reached)
+# stub PATH, a temp HOME (so no live install script or HOME-anchored daemon path is reached)
 # and the re-entry sentinel that keeps a bats-invoked run from shelling the full
 # suite recursively.
 #
