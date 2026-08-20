@@ -92,7 +92,12 @@ class Answer:
 
 @dataclass(frozen=True)
 class Decision:
-    """What the gap resolves to, and why, whether or not a model answered."""
+    """What the gap resolves to, and why, whether or not a model answered.
+
+    ``refs`` carries the interleave selection so a recording caller can persist
+    the decision as references rather than as text — ``lines`` is text, and text
+    written to a record is text a later reader could take for an author's.
+    """
 
     lines: tuple[str, ...]
     choice: str | None
@@ -102,6 +107,7 @@ class Decision:
     discarded_novel: int
     rejected_stale: int
     row: str
+    refs: tuple[LineRef, ...] = ()
 
 
 @dataclass
@@ -445,6 +451,7 @@ def get_decision(
             count_rejected_stale(request) if answer.choice == CHOICE_INTERLEAVE else 0
         ),
         row=build_row(request, f"resolved:{answer.choice}", HAIKU_MODEL),
+        refs=answer.refs,
     )
 
 

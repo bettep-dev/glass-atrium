@@ -77,9 +77,12 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
+import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -441,6 +444,8 @@ def _resolve_region(
     release: list[str],
     *,
     arbitrate: bool = False,
+    arbiter: GapArbiter | None = None,
+    region_count: int = 1,
 ) -> RegionResolution:
     """Classify one region against the three anchors and resolve its content.
 
@@ -448,6 +453,10 @@ def _resolve_region(
     see ``three_way_merge_hunks``. It defaults OFF so the library keeps its
     reporting behavior for a caller that names no policy; the production entry
     points read ``_resolve_gaps_default`` instead.
+
+    ``arbiter`` is what turns the emitted local gap into a judged one. Absent it
+    the emission stays local: a caller that supplies no arbiter has asked for no
+    judgment, which is the shape every deterministic path relies on.
     """
     if base is None:
         # FALLBACK: gated 2-way present-both (base content unavailable).
@@ -490,6 +499,15 @@ def _resolve_region(
         requests = tuple(
             ArbitrationRequest(index, hunk, tuple(release)) for hunk in hunks
         )
+        if arbiter is not None:
+            merged = _splice_arbitrated(
+                merged,
+                hunks,
+                arbiter,
+                region_index=index,
+                region_count=region_count,
+                release=release,
+            )
     else:
         verdict = MERGE_CONFLICT
     # had_conflict is derived from _MARKER_VERDICTS membership rather than set per
@@ -683,6 +701,7 @@ def resolve_file(
     base_text: str | None = None,
     *,
     resolve_conflicting_gaps: bool | None = None,
+    arbiter: GapArbiter | None = None,
 ) -> FileResolution:
     """T17 three-anchor resolver — pure, makes NO LLM call.
 
@@ -731,7 +750,15 @@ def resolve_file(
         if base_regions is not None and idx < len(base_regions):
             base_c = base_regions[idx][2]
         resolutions.append(
-            _resolve_region(idx, base_c, local_c, release_c, arbitrate=resolve_gaps)
+            _resolve_region(
+                idx,
+                base_c,
+                local_c,
+                release_c,
+                arbitrate=resolve_gaps,
+                arbiter=arbiter if resolve_gaps else None,
+                region_count=len(release_regions),
+            )
         )
 
     candidate = _assemble(release_lines, release_regions, resolutions)
@@ -780,10 +807,27 @@ def resolve_file(
 
 # Default location of the retained base@install agent bodies. SEPARATE from the
 # hash-only baseline manifest; populated by T24's install/post-apply wiring.
+_STATE_DIR_ENV = "ATRIUM_UPDATE_STATE_DIR"
+
+
+def state_root(state_dir: str | None = None) -> str:
+    """Echo the update state root, at the precedence ``spine_baseline_dir`` uses.
+
+    The environment leg is what lets a caller that was never handed the state
+    directory reach the same root as one that was — the verify shell-out passes
+    it to the base-store reader and nowhere else, so a second argv slot would be
+    a value held on one side and reconstructed on the other.
+    """
+    return (
+        state_dir
+        or os.environ.get(_STATE_DIR_ENV, "").strip()
+        or str(Path.home() / ".claude" / "data" / "update")
+    )
+
+
 def base_store_dir(state_dir: str | None = None) -> Path:
     """Echo the base-content store dir (mirrors ``spine_baseline_dir`` layout)."""
-    root = state_dir or str(Path.home() / ".claude" / "data" / "update")
-    return Path(root) / "base-agents"
+    return Path(state_root(state_dir)) / "base-agents"
 
 
 def load_base_text(target_file: str, state_dir: str | None = None) -> str | None:
@@ -797,6 +841,320 @@ def load_base_text(target_file: str, state_dir: str | None = None) -> str | None
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8")
     return None
+
+
+# -- Contested-gap arbitration: derive once, record, replay (A2b) ------------
+
+# The two process modes. Replay is the DEFAULT because the verify shell-out
+# names no mode: a caller that does not ask to derive must not be able to reach
+# a model, and the update's verify process is exactly that caller.
+ARBITER_PLAN = "plan"
+ARBITER_REPLAY = "replay"
+
+_ARBITER_RECORD_DIR = "arbiter-decisions"
+_ARBITER_RETENTION_DAYS = 14
+
+# The arbiter's three answer tokens, duplicated rather than imported: the record
+# is the seam BETWEEN the two processes, and replay reads it without importing
+# the module that holds the model seam. ``test_editable_merge`` pins this tuple
+# against ``gap_arbiter.CHOICES`` so the duplication cannot drift unnoticed.
+_ARBITER_CHOICES = ("LOCAL", "RELEASE", "INTERLEAVE")
+_ARBITER_REF_RE = re.compile(r"^([LR])([0-9]+)$")
+
+_REPLAY_ABSENT = "record-absent"
+_REPLAY_MALFORMED = "record-malformed"
+_REPLAY_MISMATCH = "record-fingerprint-mismatch"
+_ARBITER_UNREACHABLE = "arbiter-unreachable"
+
+
+def arbiter_record_dir(state_dir: str | None = None) -> Path:
+    """Echo the per-gap decision dir — the base-content store's own sibling."""
+    return base_store_dir(state_dir).with_name(_ARBITER_RECORD_DIR)
+
+
+def build_gap_key(target: str, region_index: int, gap_index: int) -> str:
+    """Name one gap's record file from the three fields that identify it.
+
+    The digest is what keeps two targets whose sanitised stems collide apart;
+    the readable stem is what makes the directory answerable by eye.
+    """
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", target)
+    digest = hashlib.sha256(target.encode("utf-8")).hexdigest()[:12]
+    return f"{stem}-{digest}.r{region_index}.g{gap_index}.json"
+
+
+def build_gap_fingerprints(hunk: ConflictHunk) -> dict[str, str]:
+    """Digest each anchor run, so a replay can tell it holds the same gap."""
+    return {
+        name: hashlib.sha256("\x00".join(lines).encode("utf-8")).hexdigest()
+        for name, lines in (
+            ("base", hunk.base),
+            ("local", hunk.local),
+            ("release", hunk.release),
+        )
+    }
+
+
+class GapArbiter:
+    """One file's contested gaps, resolved in one of the two process modes.
+
+    Under ``ARBITER_PLAN`` each gap is derived through the arbiter module and
+    the decision is recorded; under ``ARBITER_REPLAY`` the record is read and
+    its references are resolved against the anchors the fingerprints pin. Every
+    path that cannot produce a decision returns the local run with a named row,
+    so a gap is never left to a caller to interpret.
+    """
+
+    def __init__(
+        self,
+        target: str,
+        agent: str,
+        *,
+        mode: str = ARBITER_REPLAY,
+        state_dir: str | None = None,
+    ) -> None:
+        self.target = target
+        self.agent = agent
+        self.mode = mode
+        self.record_dir = arbiter_record_dir(state_dir)
+        self._run_state = None
+        self._pruned = False
+
+    def get_gap_lines(
+        self,
+        *,
+        region_index: int,
+        region_count: int,
+        gap_index: int,
+        hunk: ConflictHunk,
+        context: str,
+    ) -> tuple[str, ...]:
+        """Resolve one contested gap to the lines the candidate emits for it."""
+        if self.mode == ARBITER_PLAN:
+            return self._get_derived_lines(
+                region_index=region_index,
+                region_count=region_count,
+                gap_index=gap_index,
+                hunk=hunk,
+                context=context,
+            )
+        return self._get_replayed_lines(
+            region_index=region_index,
+            region_count=region_count,
+            gap_index=gap_index,
+            hunk=hunk,
+        )
+
+    # -- plan side -----------------------------------------------------------
+
+    def _get_derived_lines(
+        self,
+        *,
+        region_index: int,
+        region_count: int,
+        gap_index: int,
+        hunk: ConflictHunk,
+        context: str,
+    ) -> tuple[str, ...]:
+        try:
+            import gap_arbiter as ga  # noqa: PLC0415 — the model seam loads here only
+        except Exception as exc:  # noqa: BLE001 — any import failure keeps local
+            self._write_row(region_index, region_count, _ARBITER_UNREACHABLE, repr(exc))
+            return hunk.local
+
+        request = ga.GapRequest(
+            agent=self.agent,
+            region_index=region_index,
+            region_count=region_count,
+            region_context=context,
+            base_lines=hunk.base,
+            local_lines=hunk.local,
+            release_lines=hunk.release,
+        )
+        if self._run_state is None:
+            self._run_state = ga.RunState()
+        try:
+            decision = ga.get_decision(request, run_state=self._run_state)
+        except Exception as exc:  # noqa: BLE001 — a raising judge keeps local
+            self._write_row(region_index, region_count, _ARBITER_UNREACHABLE, repr(exc))
+            return hunk.local
+
+        self._set_record(
+            region_index=region_index,
+            region_count=region_count,
+            gap_index=gap_index,
+            hunk=hunk,
+            decision=decision,
+        )
+        if decision.row:
+            sys.stderr.write(f"{decision.row}\n")
+        return decision.lines
+
+    def _set_record(
+        self,
+        *,
+        region_index: int,
+        region_count: int,
+        gap_index: int,
+        hunk: ConflictHunk,
+        decision,
+    ) -> None:
+        """Persist one gap's outcome where the verify process can read it."""
+        record = {
+            "target": self.target,
+            "agent": self.agent,
+            "region_index": region_index,
+            "region_count": region_count,
+            "gap_index": gap_index,
+            "choice": decision.choice,
+            "refs": [f"{ref.source}{ref.ordinal}" for ref in decision.refs],
+            "rationale": decision.rationale,
+            "failure_class": decision.failure_class,
+            "clause": decision.clause,
+            "fingerprints": build_gap_fingerprints(hunk),
+        }
+        path = self.record_dir / build_gap_key(self.target, region_index, gap_index)
+        try:
+            self.record_dir.mkdir(parents=True, exist_ok=True)
+            self._prune_records()
+            path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            # An unrecorded decision is not a wrong one: the verify replay finds
+            # no record and keeps local, which is what a failed derivation does.
+            self._write_row(region_index, region_count, _REPLAY_ABSENT, repr(exc))
+
+    def _prune_records(self) -> None:
+        """Drop records older than the retention window, once per process.
+
+        Age, not count: a gap's record is overwritten under its own key, so what
+        accumulates is the records of gaps that stopped occurring.
+        """
+        if self._pruned:
+            return
+        self._pruned = True
+        cutoff = time.time() - _ARBITER_RETENTION_DAYS * 86400
+        for path in self.record_dir.glob("*.json"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError as exc:
+                # Retention is best-effort and retried next run; a record that
+                # cannot be pruned costs disk, whereas failing the merge here
+                # would cost the update.
+                sys.stderr.write(f"[arbiter] prune-skipped path={path} {exc!r}\n")
+
+    # -- verify side (no import that can reach a model) ----------------------
+
+    def _get_replayed_lines(
+        self,
+        *,
+        region_index: int,
+        region_count: int,
+        gap_index: int,
+        hunk: ConflictHunk,
+    ) -> tuple[str, ...]:
+        path = self.record_dir / build_gap_key(self.target, region_index, gap_index)
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            self._write_row(region_index, region_count, _REPLAY_ABSENT, str(path))
+            return hunk.local
+        except (OSError, ValueError) as exc:
+            self._write_row(region_index, region_count, _REPLAY_MALFORMED, repr(exc))
+            return hunk.local
+
+        if (
+            not isinstance(record, dict)
+            or record.get("fingerprints") != build_gap_fingerprints(hunk)
+        ):
+            # Fail CLOSED: a record made against other anchors describes another
+            # gap, and consuming it would land text nobody judged for this one.
+            self._write_row(region_index, region_count, _REPLAY_MISMATCH, str(path))
+            return hunk.local
+
+        choice = record.get("choice")
+        if choice is None:
+            # The plan process reached no answer and wrote its own row there.
+            return hunk.local
+        if choice == "LOCAL":
+            return hunk.local
+        if choice == "RELEASE":
+            return hunk.release
+        if choice != "INTERLEAVE":
+            self._write_row(region_index, region_count, _REPLAY_MALFORMED, str(choice))
+            return hunk.local
+
+        lines = self._find_referenced_lines(record.get("refs"), hunk)
+        if lines is None:
+            self._write_row(region_index, region_count, _REPLAY_MALFORMED, str(path))
+            return hunk.local
+        return lines
+
+    @staticmethod
+    def _find_referenced_lines(
+        refs: object, hunk: ConflictHunk
+    ) -> tuple[str, ...] | None:
+        """Resolve a recorded reference list to anchor lines, or None if it cannot.
+
+        The record names lines and never carries their text, so an interleave's
+        wording comes from the anchors the fingerprint check has already pinned.
+        """
+        if not isinstance(refs, list) or not refs:
+            return None
+        runs = {"L": hunk.local, "R": hunk.release}
+        resolved: list[str] = []
+        for ref in refs:
+            match = _ARBITER_REF_RE.match(ref) if isinstance(ref, str) else None
+            if match is None:
+                return None
+            run = runs[match.group(1)]
+            ordinal = int(match.group(2))
+            if not 1 <= ordinal <= len(run):
+                return None
+            resolved.append(run[ordinal - 1])
+        return tuple(resolved)
+
+    def _write_row(
+        self, region_index: int, region_count: int, failure_class: str, detail: str
+    ) -> None:
+        """Write one named row in the grammar the arbiter's own rows use."""
+        sys.stderr.write(
+            f"[arbiter] {failure_class} agent={self.agent} "
+            f"region={region_index}/{region_count} ceiling={detail}\n"
+        )
+
+
+def _splice_arbitrated(
+    merged: list[str],
+    hunks: list[ConflictHunk],
+    arbiter: GapArbiter,
+    *,
+    region_index: int,
+    region_count: int,
+    release: list[str],
+) -> list[str]:
+    """Replace each emitted local gap with what the arbiter resolved it to.
+
+    Gaps resolve in document order, so a per-run call ceiling cuts the later
+    ones; the splice then runs back to front, so an earlier splice cannot move
+    the index a later gap recorded.
+    """
+    context = "".join(release)
+    resolved = [
+        arbiter.get_gap_lines(
+            region_index=region_index,
+            region_count=region_count,
+            gap_index=gap_index,
+            hunk=hunk,
+            context=context,
+        )
+        for gap_index, hunk in enumerate(hunks)
+    ]
+    out = list(merged)
+    for gap_index in reversed(range(len(hunks))):
+        hunk = hunks[gap_index]
+        out[hunk.out_index : hunk.out_index + len(hunk.local)] = resolved[gap_index]
+    return out
 
 
 # -- Sensitive refusal + Haiku verify gate (T18) -----------------------------
@@ -960,6 +1318,8 @@ def build_merge_candidate(
     verify_fn: VerifyFn | None = None,
     skip_pre_verify: bool = False,
     resolve_conflicting_gaps: bool | None = None,
+    arbiter_mode: str = ARBITER_REPLAY,
+    state_dir: str | None = None,
 ) -> MergeCandidate:
     """T18 entry — produce the candidate + its apply/verify callbacks.
 
@@ -968,13 +1328,21 @@ def build_merge_candidate(
     added lines. A refused candidate exposes apply()/verify() that hard-fail so the
     git_txn transaction rolls back. ``verify_fn`` defaults to the daemon's
     ``run_pre_verify`` (injectable for tests).
+
+    ``arbiter_mode`` defaults to replay so the verify shell-out — which names no
+    mode and receives no candidate path — consumes the plan process's record
+    instead of deriving a second decision from the same anchors.
     """
+    agent_name = agent or Path(target_file).stem
     resolution = resolve_file(
         target_file,
         local_text,
         release_text,
         base_text,
         resolve_conflicting_gaps=resolve_conflicting_gaps,
+        arbiter=GapArbiter(
+            target_file, agent_name, mode=arbiter_mode, state_dir=state_dir
+        ),
     )
     diff = _unified_diff(local_text, resolution.candidate_text, target_file)
 
@@ -986,7 +1354,7 @@ def build_merge_candidate(
         resolution=resolution,
         diff=diff,
         sensitive_hit=sensitive_hit,
-        agent=agent or Path(target_file).stem,
+        agent=agent_name,
         verify_fn=verify_fn or dc.run_pre_verify,
         skip_pre_verify=skip_pre_verify,
     )
@@ -1018,6 +1386,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         base_text=base_text,
         agent=args.agent,
         skip_pre_verify=True,  # planning is structural only; verify runs in the txn
+        arbiter_mode=ARBITER_PLAN,  # the one process permitted to reach the model
+        state_dir=args.state_dir,
     )
     if cand.refused:
         sys.stderr.write(

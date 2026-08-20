@@ -31,11 +31,17 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
@@ -1513,7 +1519,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
             (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
             (root / "base.md").write_text(self._BASE, encoding="utf-8")
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with contextlib.redirect_stdout(buf), _stub_model():
                 rc = em.main(
                     [
                         "plan",
@@ -1529,6 +1535,8 @@ class ResolvedGapStatsTest(unittest.TestCase):
                         str(root / "cand.md"),
                         "--agent",
                         "dev-android",
+                        "--state-dir",
+                        str(root / "state"),
                     ]
                 )
 
@@ -1562,7 +1570,7 @@ class ResolvedGapStatsTest(unittest.TestCase):
             (root / "release.md").write_text(release, encoding="utf-8")
             (root / "base.md").write_text(self._BASE, encoding="utf-8")
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with contextlib.redirect_stdout(buf), _stub_model():
                 rc = em.main(
                     [
                         "plan",
@@ -1580,17 +1588,20 @@ class ResolvedGapStatsTest(unittest.TestCase):
                         str(root / "cand.diff"),
                         "--agent",
                         "dev-android",
+                        "--state-dir",
+                        str(root / "state"),
                     ]
                 )
             written = (root / "cand.diff").read_text(encoding="utf-8")
-
-        expected = em.build_merge_candidate(
-            "agents/dev-android.md",
-            self._LOCAL,
-            release,
-            base_text=self._BASE,
-            skip_pre_verify=True,
-        ).diff
+            expected = em.build_merge_candidate(
+                "agents/dev-android.md",
+                self._LOCAL,
+                release,
+                base_text=self._BASE,
+                skip_pre_verify=True,
+                arbiter_mode=em.ARBITER_REPLAY,
+                state_dir=str(root / "state"),
+            ).diff
 
         self.assertEqual(rc, em.EXIT_OK)
         self.assertEqual(written, expected)
@@ -1745,6 +1756,408 @@ class ContestedRegionKeepsLivePinsTest(unittest.TestCase):
             path = Path(d) / "dev-python.md"
             self.assertEqual(cand.apply(str(path)), em.APPLY_MALFORMED)
             self.assertFalse(path.exists())  # zero bytes written
+
+
+@contextlib.contextmanager
+def _stub_model(answer: str = "CHOICE: LOCAL\nRATIONALE: fixture"):
+    """Pin the model seam in-process, so no drive can reach the headless CLI."""
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=answer, stderr="")
+    with mock.patch.object(
+        em.dc, "_invoke_haiku_cli", return_value=(completed, None, None)
+    ) as seam:
+        yield seam
+
+
+# A stub whose SECOND invocation answers differently from its first: the record
+# is what must make that difference unobservable.
+_TWO_ANSWER_STUB = """#!/bin/sh
+n=0
+if [ -s "$ARB_STUB_COUNT" ]; then n=$(wc -c < "$ARB_STUB_COUNT"); fi
+printf 'x' >> "$ARB_STUB_COUNT"
+if [ "$n" -eq 0 ]; then printf '%s\\n' "$ARB_STUB_ANSWER1"; else printf '%s\\n' "$ARB_STUB_ANSWER2"; fi
+"""
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ArbiterRecordReplayTest(unittest.TestCase):
+    """The per-gap decision is derived once, recorded, and replayed (A2b).
+
+    The contested fixture's two novel lines make an interleave the answer the
+    five clauses admit, so a replay that fell back to either whole side — or
+    re-derived through a stub that has changed its mind — is visible in the
+    candidate bytes rather than only in an internal flag.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+    _TARGET = "dev-android.md"
+    _INTERLEAVE = "CHOICE: INTERLEAVE\nLINES: L1, R1\nRATIONALE: independent edits"
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.state = self.root / "state"
+        store = em.base_store_dir(str(self.state))
+        store.mkdir(parents=True)
+        (store / self._TARGET).write_text(self._BASE, encoding="utf-8")
+        self.local_p = self.root / "local.md"
+        self.local_p.write_text(self._LOCAL, encoding="utf-8")
+        self.release_p = self.root / "release.md"
+        self.release_p.write_text(self._RELEASE, encoding="utf-8")
+        self.record_dir = em.arbiter_record_dir(str(self.state))
+        self.record_path = self.record_dir / em.build_gap_key(self._TARGET, 0, 0)
+
+    # -- helpers -------------------------------------------------------------
+
+    def _plan(self, answer: str = None) -> em.MergeCandidate:
+        """Derive in-process under the plan mode, with the seam stubbed."""
+        with _stub_model(answer or self._INTERLEAVE):
+            return em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN,
+                state_dir=str(self.state),
+            )
+
+    def _replay(self) -> tuple[em.MergeCandidate, str]:
+        """Replay in the default mode, with the model seam armed to fail loudly."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(
+            em.dc,
+            "_invoke_haiku_cli",
+            side_effect=AssertionError("the replay reached the model seam"),
+        ):
+            cand = em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                state_dir=str(self.state),
+            )
+        return cand, err.getvalue()
+
+    # -- the record ----------------------------------------------------------
+
+    def test_when_plan_derives_then_the_record_names_lines_and_carries_no_text(
+        self,
+    ) -> None:
+        self._plan()
+
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["choice"], "INTERLEAVE")
+        self.assertEqual(record["refs"], ["L1", "R1"])
+        self.assertEqual(set(record["fingerprints"]), {"base", "local", "release"})
+        body = self.record_path.read_text(encoding="utf-8")
+        for anchor in ("same-old", "LOCAL rewrite", "VENDOR rewrite"):
+            self.assertNotIn(anchor, body)
+
+    def test_when_the_gap_falls_to_the_ladder_then_its_class_is_recorded(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            cand = self._plan(answer="not an answer at all")
+
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        self.assertIsNone(record["choice"])
+        self.assertEqual(record["failure_class"], "unparseable-answer")
+        self.assertEqual(cand.resolution.candidate_text, self._LOCAL)
+
+    # -- the replay ----------------------------------------------------------
+
+    def test_when_replayed_then_the_candidate_is_the_derived_one_and_no_model_runs(
+        self,
+    ) -> None:
+        planned = self._plan()
+
+        replayed, rows = self._replay()
+
+        self.assertIn("LOCAL rewrite", planned.resolution.candidate_text)
+        self.assertIn("VENDOR rewrite", planned.resolution.candidate_text)
+        self.assertEqual(
+            replayed.resolution.candidate_text, planned.resolution.candidate_text
+        )
+        self.assertEqual(rows, "")
+
+    def test_when_a_fingerprint_is_corrupted_then_the_gap_falls_closed_to_local(
+        self,
+    ) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["fingerprints"]["local"] = "0" * 64
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-fingerprint-mismatch", rows)
+        self.assertIn("agent=dev-android", rows)
+
+    def test_when_no_record_exists_then_the_gap_keeps_local_with_a_named_row(
+        self,
+    ) -> None:
+        replayed, rows = self._replay()
+
+        self.assertFalse(self.record_path.exists())
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-absent", rows)
+
+    def test_when_the_reference_list_is_malformed_then_the_gap_keeps_local(
+        self,
+    ) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["refs"] = ["L1", "R9"]  # R9 resolves to no release line
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-malformed", rows)
+
+    # -- the two-process path ------------------------------------------------
+
+    def _write_two_answer_stub(self) -> dict[str, str]:
+        stub = self.root / "claude-stub"
+        stub.write_text(_TWO_ANSWER_STUB, encoding="utf-8")
+        stub.chmod(0o755)
+        return {
+            **os.environ,
+            # What the updater's own run exports: the plan option and the
+            # environment leg carry the SAME root, which is how the verify
+            # process — handed the state dir for the base store alone — reaches
+            # the record directory without a second argv slot.
+            em._STATE_DIR_ENV: str(self.state),
+            "AUTOAGENT_CLAUDE_BIN": str(stub),
+            "ARB_STUB_COUNT": str(self.root / "count"),
+            "ARB_STUB_ANSWER1": self._INTERLEAVE,
+            "ARB_STUB_ANSWER2": "CHOICE: RELEASE\nRATIONALE: a different mind",
+        }
+
+    def test_when_the_stub_changes_its_answer_then_the_verify_process_is_unmoved(
+        self,
+    ) -> None:
+        """The acceptance drive: two real processes, one invocation between them.
+
+        The verify process is launched with exactly the eight arguments the
+        updater's own callback passes — read out of ``scripts/update.sh`` rather
+        than paraphrased — so the candidate path it never receives cannot leak
+        in, and the scratch directory holding that candidate is removed before
+        it runs.
+        """
+        env = self._write_two_answer_stub()
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        candidate = scratch / "cand.md"
+
+        plan = subprocess.run(
+            [
+                sys.executable,
+                str(_REPO_ROOT / "autoagent" / "lib" / "editable_merge.py"),
+                "plan",
+                "--target", self._TARGET,
+                "--local", str(self.local_p),
+                "--release", str(self.release_p),
+                "--out", str(candidate),
+                "--agent", "dev-android",
+                "--state-dir", str(self.state),
+            ],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        self.assertEqual(plan.returncode, em.EXIT_OK, plan.stderr)
+        planned_text = candidate.read_text(encoding="utf-8")
+        live = self.root / self._TARGET
+        live.write_text(planned_text, encoding="utf-8")
+        shutil.rmtree(scratch)
+
+        verify = subprocess.run(
+            [
+                sys.executable, "-c", _get_verify_shell_out(),
+                str(_REPO_ROOT / "autoagent" / "lib"),
+                self._TARGET,
+                str(self.local_p),
+                str(self.release_p),
+                "",
+                "dev-android",
+                str(self.state),
+                str(live),
+            ],
+            capture_output=True, text=True, env=env, check=False,
+        )
+
+        self.assertIn("LOCAL rewrite", planned_text)
+        self.assertIn("VENDOR rewrite", planned_text)  # the first answer landed
+        self.assertTrue(self.record_path.is_file())  # outlived the scratch dir
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        self.assertEqual(
+            (self.root / "count").read_text(encoding="utf-8"),
+            "x",  # one invocation across BOTH processes
+        )
+        self.assertNotIn("record-", verify.stderr)
+
+    # -- the seam the two modules share --------------------------------------
+
+    def test_when_two_targets_sanitise_alike_then_their_keys_still_differ(self) -> None:
+        collide = ("agents/dev-x.md", "agents_dev-x.md")
+
+        keys = [em.build_gap_key(target, 0, 0) for target in collide]
+
+        self.assertEqual(*(re.sub(r"-[0-9a-f]{12}\.", ".", key) for key in keys))
+        self.assertNotEqual(*keys)
+
+    def test_when_the_arbiter_is_unreachable_then_the_gap_keeps_local_with_a_row(
+        self,
+    ) -> None:
+        """Both unreachable arms: the import fails, and the judge itself raises."""
+        import gap_arbiter as ga
+
+        arms = (
+            mock.patch.dict(sys.modules, {"gap_arbiter": None}),
+            mock.patch.object(ga, "get_decision", side_effect=RuntimeError("judge")),
+        )
+        for arm in arms:
+            with self.subTest(arm=arm), arm:
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    cand = em.build_merge_candidate(
+                        self._TARGET,
+                        self._LOCAL,
+                        self._RELEASE,
+                        base_text=self._BASE,
+                        agent="dev-android",
+                        arbiter_mode=em.ARBITER_PLAN,
+                        state_dir=str(self.state),
+                    )
+
+                self.assertEqual(cand.resolution.candidate_text, self._LOCAL)
+                self.assertIn("arbiter-unreachable", err.getvalue())
+
+    def test_when_a_recorded_choice_is_unknown_then_the_gap_keeps_local(self) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["choice"] = "BOTH"
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-malformed", rows)
+
+    def test_when_the_same_gap_is_derived_twice_then_one_record_holds_it(self) -> None:
+        self._plan()
+        self._plan()
+
+        self.assertEqual([p.name for p in self.record_dir.glob("*.json")],
+                         [self.record_path.name])
+
+    def test_when_a_region_holds_two_gaps_then_each_lands_where_it_was_recorded(
+        self,
+    ) -> None:
+        """The splice: two gaps in one region, resolved forward, spliced backward.
+
+        A back-to-front splice is what keeps the first gap's replacement from
+        moving the index the second one recorded, and the resolution order is
+        what decides which gap a per-run ceiling would cut.
+        """
+        import gap_arbiter as ga
+
+        base = _doc(top="# A", region="A\ns\nB", bottom="z")
+        local = _doc(top="# A", region="LA\ns\nLB", bottom="z")
+        release = _doc(top="# A", region="RA\ns\nRB", bottom="z")
+        seen: list[tuple[str, ...]] = []
+
+        def _interleave(request, **_kwargs):
+            seen.append(request.local_lines)
+            return ga.Decision(
+                lines=request.local_lines + request.release_lines,
+                choice="INTERLEAVE",
+                rationale="both edits stand",
+                failure_class=None,
+                clause=None,
+                discarded_novel=0,
+                rejected_stale=0,
+                row="",
+                refs=(ga.LineRef("L", 1), ga.LineRef("R", 1)),
+            )
+
+        with mock.patch.object(ga, "get_decision", side_effect=_interleave):
+            planned = em.build_merge_candidate(
+                self._TARGET, local, release,
+                base_text=base, agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN, state_dir=str(self.state),
+            )
+        with mock.patch.object(
+            ga, "get_decision", side_effect=AssertionError("replay derived again")
+        ):
+            replayed = em.build_merge_candidate(
+                self._TARGET, local, release,
+                base_text=base, agent="dev-android", state_dir=str(self.state),
+            )
+
+        self.assertEqual(seen, [("LA\n",), ("LB\n",)])  # document order
+        self.assertIn("LA\nRA\ns\nLB\nRB\n", planned.resolution.candidate_text)
+        self.assertEqual(
+            replayed.resolution.candidate_text, planned.resolution.candidate_text
+        )
+
+    def test_the_state_root_precedence_matches_the_spines(self) -> None:
+        """Argument, then environment, then the home default — the spine's order.
+
+        A plan process is handed the root as an argument and a verify process
+        derives it from the environment; they land on the same directory only
+        while this order is the one ``spine_baseline_dir`` uses.
+        """
+        with mock.patch.dict(os.environ, {em._STATE_DIR_ENV: "/env/root"}):
+            self.assertEqual(em.state_root("/arg/root"), "/arg/root")
+            self.assertEqual(em.state_root(), "/env/root")
+            self.assertEqual(
+                em.arbiter_record_dir(), Path("/env/root/arbiter-decisions")
+            )
+        with mock.patch.dict(os.environ, {em._STATE_DIR_ENV: ""}):
+            self.assertEqual(
+                em.state_root(), str(Path.home() / ".claude" / "data" / "update")
+            )
+        self.assertEqual(
+            em.arbiter_record_dir("/arg/root").parent,
+            em.base_store_dir("/arg/root").parent,
+        )
+
+    def test_the_replay_tokens_match_the_arbiter_answer_contract(self) -> None:
+        import gap_arbiter as ga
+
+        self.assertEqual(em._ARBITER_CHOICES, ga.CHOICES)
+
+    def test_the_verify_shell_out_reaches_no_arbiter_module(self) -> None:
+        shell_out = _get_verify_shell_out()
+
+        self.assertIn("build_merge_candidate", shell_out)
+        self.assertNotIn("gap_arbiter", shell_out)
+        self.assertNotIn("get_decision", shell_out)
+
+    def test_when_a_record_ages_past_retention_then_the_next_write_prunes_it(
+        self,
+    ) -> None:
+        self.record_dir.mkdir(parents=True)
+        stale = self.record_dir / "stale-000000000000.r0.g0.json"
+        stale.write_text("{}", encoding="utf-8")
+        aged = time.time() - (em._ARBITER_RETENTION_DAYS + 1) * 86400
+        os.utime(stale, (aged, aged))
+
+        self._plan()
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(self.record_path.is_file())
+
+
+def _get_verify_shell_out() -> str:
+    """Read the updater's verify shell-out source, the text the callback runs."""
+    text = (_REPO_ROOT / "scripts" / "update.sh").read_text(encoding="utf-8")
+    match = re.search(r"_UPDATE_VERIFY_PY='\n(.*?)\n'\n", text, re.DOTALL)
+    assert match is not None, "the verify shell-out constant moved"
+    return match.group(1)
 
 
 if __name__ == "__main__":
