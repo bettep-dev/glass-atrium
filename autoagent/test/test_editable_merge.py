@@ -1502,6 +1502,9 @@ class ResolvedGapStatsTest(unittest.TestCase):
         # No resolved region, no index list — the updater's extractor reads an
         # empty value as empty now that it guards on the key being present.
         self.assertEqual(stats["regions"], "")
+        # An unchanged region asks for no judgment, so the arbitration channel is
+        # empty alongside the stats.
+        self.assertEqual([r.requests for r in res.regions], [()])
 
     def test_when_plan_runs_on_a_contested_file_then_it_reports_no_drop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

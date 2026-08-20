@@ -827,6 +827,61 @@ PY
   done <<<"${output}"
 }
 
+@test "an unrecognised resolver verdict declines fail-closed and writes zero bytes" {
+  # The routing arm that has no fixture in the resolver: every verdict the library
+  # emits is named in the case above it, so the only way to reach the final arm is
+  # to inject one. ATRIUM_UPDATE_MERGE_LIB_DIR points the updater at a shim that
+  # delegates every subcommand to the real module and rewrites just the verdict
+  # token on the plan line, so the candidate, the diff and the exit code are the
+  # real ones and the verdict is the only injected thing.
+  #
+  # The fixture is the shape that LANDS — base region == release region, so the
+  # region keeps local and the body takes the new vendor structure (T19 above
+  # drives that landing on the same three anchors). Byte-identity is therefore the
+  # assertion with teeth here: a verdict the routing lets past reaches a queue that
+  # applies this candidate, so an unchanged body means it was never queued.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  # The dir is the updater's whole merge-library seam — it also sources git-txn.sh
+  # from here — so it is a symlink farm over the real one with a single file
+  # replaced.
+  mkdir -p "${WORK}/shimlib"
+  ln -s "${GA}"/autoagent/lib/* "${WORK}/shimlib/"
+  rm -f "${WORK}/shimlib/editable_merge.py"
+  cat >"${WORK}/shimlib/editable_merge.py" <<PY
+import io, runpy, sys, contextlib
+
+real = "${GA}/autoagent/lib/editable_merge.py"
+if sys.argv[1:2] != ["plan"]:
+    runpy.run_path(real, run_name="__main__")
+    raise SystemExit(0)
+buf = io.StringIO()
+rc = 0
+try:
+    with contextlib.redirect_stdout(buf):
+        runpy.run_path(real, run_name="__main__")
+except SystemExit as exc:
+    rc = exc.code or 0
+line = buf.getvalue()
+head, _, rest = line.partition(" ")
+sys.stdout.write("verdict=verdict-this-routing-never-named " + rest)
+raise SystemExit(rc)
+PY
+
+  export ATRIUM_UPDATE_MERGE_LIB_DIR="${WORK}/shimlib"
+  run_update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DECLINED unrecognised resolver verdict (verdict-this-routing-never-named)"* ]]
+
+  # Zero bytes: not merely "no markers" but the same body the run found.
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]]
+  # The decline is durable rather than a line that scrolled past.
+  [[ "$(cat "${INSTALL}/update-declines/conflict-declines.log")" == *"verdict-this-routing-never-named"* ]]
+}
+
 # agent EDITABLE-region merge (E4 / T19)
 #
 # These pin the LIVE merge integration: each changed agents/<name>.md flows through
