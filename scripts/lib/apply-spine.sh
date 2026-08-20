@@ -152,19 +152,27 @@ PY
   python3 -c "${py_src}" "${path}" "${manifest}"
 }
 
-# Predicate: does the E4 agent three-anchor merge path CLAIM this manifest path?
-# Returns 0 (claimed) / 1 (not claimed). The merge iterates a NON-recursive
-# agents/*.md glob and skips the non-agent charter by basename before its lib is
-# ever invoked (update.sh update_merge_agent_editable_regions), so its claim is
-# exactly "a top-level agents/<name>.md that is not the charter".
+# Predicate: does a three-anchor merge path CLAIM this manifest path? Returns 0
+# (claimed) / 1 (not claimed). Two iteration sites answer to it, so the claim is a
+# union of two rules: the E4 agent merge walks a NON-recursive agents/*.md glob and
+# skips the non-agent charter by basename before its lib is ever invoked, and the
+# roster dispatch walks the declaration below by path identity (both in
+# update.sh — update_merge_agent_editable_regions, update_dispatch_roster_merge).
 #
-# SINGLE source of truth for both deploy consumers: the merge loop iterates
-# through this predicate and the spine's agents-markdown exclusion below is its
-# complement, so the two scopes cannot drift apart into a path claimed by neither
-# (which is how the charter, the reference documents and the templates were
-# excluded here AND unreachable there, hash-verified by no deploy path at all).
+# SINGLE source of truth for both deploy consumers: each merge loop iterates
+# through this predicate — the roster one through the very list this reads — and
+# the spine's agents-markdown exclusion below is its complement, so the two scopes
+# cannot drift apart into a path claimed by neither (which is how the charter, the
+# reference documents and the templates were excluded here AND unreachable there,
+# hash-verified by no deploy path at all).
 spine_is_merge_claimed_path() {
   local path="$1" rest
+  # The declaration is a constant, so it is read once per process: this predicate
+  # answers once per manifest row, and a fork per row would pay for the same list.
+  if [[ -z "${_SPINE_ROSTER_SET:-}" ]]; then
+    _SPINE_ROSTER_SET=$'\n'"$(spine_get_roster_paths)"$'\n'
+  fi
+  [[ "${_SPINE_ROSTER_SET}" == *$'\n'"${path}"$'\n'* ]] && return 0
   [[ "${path}" == agents/*.md ]] || return 1
   rest="${path#agents/}"
   [[ "${rest}" == */* ]] && return 1                            # below the non-recursive glob
@@ -176,11 +184,11 @@ spine_is_merge_claimed_path() {
 # live-generated rows, so a plain replacement discards the live half. Emitted one
 # relative path per line.
 #
-# DATA only, and inert where it sits: the claim predicate above reads no list — it
-# answers from the path's shape alone — so a declaration beside it changes no answer
-# it can give. ONE declaration is the invariant: a second list authored elsewhere
-# would agree with this one by hand rather than by construction, and drift silently
-# the first time either moves.
+# DATA, and load-bearing where it sits: the claim predicate above reads this list
+# for its membership arm and the roster dispatch iterates it, so both the claim and
+# the delivery of these rows move with one edit here. ONE declaration is the
+# invariant: a second list authored elsewhere would agree with this one by hand
+# rather than by construction, and drift silently the first time either moves.
 spine_get_roster_paths() {
   printf '%s\n' \
     'agent-registry.json' \

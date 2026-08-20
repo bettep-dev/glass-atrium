@@ -1867,6 +1867,11 @@ rm -rf /tmp/everything
   seed_file "${INSTALL}" "agents/dev-a.md" "x"
   seed_file "${INSTALL}" "agents/dev-b.md" "dropped vendor body still here"
   seed_registry "${INSTALL}" "dev-a" "dev-b"
+  # The registry reaches the roster merge now, and a merge honours a release-side
+  # removal only against a base that CARRIED the dropped key: with no base entry the
+  # first run seeds one from the release, and dev-b then reads as a live-only key the
+  # merge must preserve. The prior-vendor registry is that base.
+  seed_registry "${STATE}/update-state/base-roster" "dev-a" "dev-b"
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
   seed_file "${NEWSRC}" "agents/dev-a.md" "x"
   seed_registry "${NEWSRC}" "dev-a"
@@ -2024,4 +2029,159 @@ rm -rf /tmp/everything
   for rel in "${rels[@]}"; do
     [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster prior base ${rel}" ]] || return 1
   done
+}
+
+# === The roster dispatch, driven end-to-end ==================================
+# The claim widening's load-bearing probes. Everything below runs a REAL update
+# against a sandbox install whose four roster files each carry a live-only member,
+# so what is measured is the installed artifact rather than the merge library —
+# which has its own fixture suite at autoagent/test/test_roster_merge.py.
+#
+# One member name does duty as the live-only member in every shape: the closed
+# vocabulary admits a resolved member only if the release roster or an on-disk
+# agent body names it, so a live-only member needs a body on disk whatever shape
+# it sits in.
+
+# Seed the four declared roster paths under one root, each slot carrying $2.. as
+# its members. $1 = root. Shapes per the module's suffix map: .json registry,
+# .md brace list, .sh space-padded readonly array.
+seed_roster_quartet() {
+  local root="$1" marker="$2"
+  shift 2
+  local names="$*" objs="" k
+  for k in "$@"; do
+    objs="${objs}$(printf '%s' "${k}" | jq -R .):{\"scope\":\"DEV\",\"domains\":[$(printf '%s' "${marker}" | jq -R .)]},"
+  done
+  mkdir -p -- "${root}"
+  printf '{"version":"1.0.0","agents":{%s}}\n' "${objs%,}" >"${root}/agent-registry.json"
+  seed_file "${root}" "scoped/scope-dev.md" \
+    "# DEV scope (${marker})
+> Loading: Tier 2 — loads when agent_scope ∈ {${names// /, }}
+"
+  seed_file "${root}" "hooks/inject-scope-rules.sh" \
+    "#!/usr/bin/env bash
+# ${marker}
+readonly INJECT_AGENTS=\" ${names} \"
+"
+  seed_file "${root}" "hooks/lib/styleref-roster.sh" \
+    "#!/usr/bin/env bash
+# ${marker}
+readonly STYLEREF_AGENTS=\" ${names} \"
+"
+}
+
+roster_quartet_manifest_rows() {
+  printf '%s\n' 'agent-registry.json' 'scoped/scope-dev.md' \
+    'hooks/inject-scope-rules.sh' 'hooks/lib/styleref-roster.sh'
+}
+
+run_roster_update() {
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
+    bash "${SKILL}"
+}
+
+@test "OPERATOR ACCEPTANCE: a user-created registry row survives while vendor rows take the release" {
+  # The three anchors, one per root: base = the prior release, live = that plus a
+  # user-created member, release = the prior release with the vendor member's
+  # content changed and a second vendor member DROPPED. Dropped rather than added
+  # because the merge defers a release-only agent body to the agent_lifecycle
+  # ceremony, so an added member's body never installs and the finding#16 withhold
+  # would take the registry out of this dispatch before it resolved anything.
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a legacy-y
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a legacy-y user-x
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a
+  # The vocabulary source for the live-only member, and the agent bodies the
+  # roster gate compares across the two sides.
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${INSTALL}" "agents/user-x.md" "mine"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) 'agents/dev-a.md'
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+
+  # The registry: the user-created row is present and the vendor row carries the
+  # release's content.
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"user-x"* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"legacy-y"* ]] || { echo "$output"; return 1; }
+  run jq -r '.agents["dev-a"].domains[0]' "${INSTALL}/agent-registry.json"
+  [ "$output" = "vendor-new" ] || { cat "${INSTALL}/agent-registry.json"; return 1; }
+
+  # The other three: each keeps its live-only member, honours the release-side
+  # removal, and carries the release's text outside the slot — so neither side
+  # was dropped for the other.
+  local rel
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'user-x' "${INSTALL}/${rel}" || { echo "live-only member lost from ${rel}"; return 1; }
+    ! grep -q 'legacy-y' "${INSTALL}/${rel}" || { echo "release-side removal not honoured in ${rel}"; return 1; }
+    grep -q 'vendor-new' "${INSTALL}/${rel}" || { echo "release text outside the slot missing from ${rel}"; return 1; }
+  done
+
+  # A shell roster's slot is selected by the array NAME, so a second declaration
+  # of the same name is valid shell the reader cannot see; only a count catches it.
+  [ "$(grep -c '^readonly INJECT_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly STYLEREF_AGENTS=' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || return 1
+  # Each rewritten array stays ONE physical line however many members resolved.
+  [ "$(grep -c '^readonly STYLEREF_AGENTS=" dev-a user-x "$' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || {
+    cat "${INSTALL}/hooks/lib/styleref-roster.sh"
+    return 1
+  }
+}
+
+@test "a roster path whose shape does not read is DECLINED, left byte-identical, and named" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a
+  # A SECOND brace-delimited list makes the markdown slot ambiguous, which is the
+  # reader's refusal rather than a merge outcome — the one shape failure a live
+  # file can carry without being invalid markdown.
+  printf '\nAlso loads when agent_scope ∈ {DEV}\n' >>"${INSTALL}/scoped/scope-dev.md"
+  local before
+  before="$(cat "${INSTALL}/scoped/scope-dev.md")"
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows)
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"DECLINED scoped/scope-dev.md"* ]] || { echo "$output"; return 1; }
+  [ "$(cat "${INSTALL}/scoped/scope-dev.md")" = "${before}" ] || return 1
+  # The decline is per-path: the siblings still took the release.
+  grep -q 'vendor-new' "${INSTALL}/hooks/lib/styleref-roster.sh" || return 1
+}
+
+@test "a run changing none of the four roster paths touches none of them" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-old" dev-a
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  local rel before_all=""
+  while IFS= read -r rel; do
+    before_all="${before_all}${rel}:$(sha256_of "${INSTALL}/${rel}")"$'\n'
+  done < <(roster_quartet_manifest_rows)
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) 'scripts/tool.sh'
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "new tool" ] || return 1
+  local after_all=""
+  while IFS= read -r rel; do
+    after_all="${after_all}${rel}:$(sha256_of "${INSTALL}/${rel}")"$'\n'
+  done < <(roster_quartet_manifest_rows)
+  [ "${before_all}" = "${after_all}" ] || { echo "a roster path moved on a no-change run"; return 1; }
+  [[ "$output" != *"roster merged + applied"* ]] || return 1
+  [[ "$output" != *"DECLINED"* ]] || return 1
 }

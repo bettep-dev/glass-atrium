@@ -680,13 +680,13 @@ t6_build_jqless_toolbin() {
 
 # === The roster path declaration ============================================
 # The four roster paths are declared ONCE, as data beside the claim predicate, so the
-# capture that iterates them and the predicate that will read them cannot drift into
-# two hand-agreed lists. The declaration is inert where it sits: neither predicate
-# reads a list, so nothing either answers depends on it. These probes pin both halves
-# — that the declared paths are real, unclaimed manifest rows, and that both
-# predicates still classify the full manifest by path shape alone.
+# capture that iterates them, the dispatch that merges them and the predicate that
+# claims them cannot drift into hand-agreed lists. These probes pin both halves —
+# that the declared paths are real manifest rows the claim now holds, and that the
+# claim is otherwise still decided by path shape, the four being the whole of the
+# difference.
 
-@test "the roster declaration holds exactly four unclaimed manifest rows" {
+@test "the roster declaration holds exactly four merge-claimed manifest rows" {
   local manifest="${GA}/manifest.json" rel n=0
   [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
   # shellcheck source=/dev/null
@@ -699,31 +699,53 @@ t6_build_jqless_toolbin() {
       echo "declared roster path is not a manifest row: ${rel}"
       return 1
     fi
-    # Declaring them must not make them merge-claimed — the claim widens elsewhere.
-    if spine_is_merge_claimed_path "${rel}"; then
-      echo "declared roster path is merge-claimed: ${rel}"
+    # The claim reads this declaration, so a declared path is claimed AND excluded
+    # from the byte-swap — the dispatch is what delivers it from here on.
+    if ! spine_is_merge_claimed_path "${rel}"; then
+      echo "declared roster path is NOT merge-claimed: ${rel}"
+      return 1
+    fi
+    if ! spine_is_excluded_path "${rel}"; then
+      echo "declared roster path is NOT excluded from the byte-swap: ${rel}"
       return 1
     fi
   done < <(spine_get_roster_paths)
   [ "${n}" -eq 4 ]
 }
 
-@test "both predicates classify every manifest row by path shape alone" {
-  local manifest="${GA}/manifest.json" path oracle claimed excluded mismatch=""
+# The predecessor of this probe asserted the two predicates classify EVERY row by
+# path shape alone. The claim widening BREAKS that, and the break is declared here
+# rather than absorbed: the oracle gains the declared roster rows as its second arm,
+# and the rows on which the two arms disagree are asserted to be exactly those four,
+# so a fifth path slipping into either predicate still fails.
+@test "both predicates classify every manifest row by path shape or the declaration" {
+  local manifest="${GA}/manifest.json" path oracle shape_oracle claimed excluded
+  local mismatch="" widened="" n_widened=0
   [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
   # shellcheck source=/dev/null
   source "${REAL_LIB}"
+
+  local declared
+  declared=$'\n'"$(spine_get_roster_paths)"$'\n'
 
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     # The rule recomputed from the path shape alone, so this oracle cannot agree
     # with a drifted predicate.
-    oracle=0
+    shape_oracle=0
     case "${path}" in
       agents/*/* | agents/GLASS_ATRIUM_GLOBAL_RULES.md) ;;
-      agents/*.md) oracle=1 ;;
+      agents/*.md) shape_oracle=1 ;;
       *) ;;
     esac
+    oracle="${shape_oracle}"
+    if [[ "${declared}" == *$'\n'"${path}"$'\n'* ]]; then
+      oracle=1
+    fi
+    if [[ "${oracle}" -ne "${shape_oracle}" ]]; then
+      widened="${widened}${path}"$'\n'
+      n_widened=$((n_widened + 1))
+    fi
     claimed=0
     if spine_is_merge_claimed_path "${path}"; then claimed=1; fi
     excluded=0
@@ -738,4 +760,10 @@ t6_build_jqless_toolbin() {
     printf '%s' "${mismatch}"
   fi
   [ -z "${mismatch}" ]
+  # The whole of the widening, named: four rows the shape rule alone would not claim.
+  if [[ "${n_widened}" -ne 4 ]]; then
+    echo "rows claimed by the declaration rather than by shape (expected 4):"
+    printf '%s' "${widened}"
+  fi
+  [ "${n_widened}" -eq 4 ]
 }

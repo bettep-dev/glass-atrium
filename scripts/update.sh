@@ -258,6 +258,14 @@ _update_agent_verify_local=""
 _update_agent_verify_release=""
 _update_agent_verify_agent=""
 _update_agent_verify_target=""
+_update_roster_verify_target=""
+# Restore-index rows for THIS cycle, from both merge iteration sites. One sink and
+# one write: the index write truncates, so a second producer writing its own rows
+# would drop the first producer's.
+_update_restore_index_rows=""
+# finding #16 registry withhold, decided in update_run and read by the roster
+# dispatch — the two arms it now has to reach sit in different functions.
+_update_withhold_registry=0
 
 # Preserve a failed/interrupted apply's pre-swap snapshot so the operator keeps a
 # rollback source after the workdir is torn down (finding #7). No-op when the
@@ -960,6 +968,11 @@ update_filter_apply_path() {
 #   3. sync the base store to the release the conflict was reported against
 #   4. re-run the resolver against the captured images — the verdict transitions from
 #      merge-conflict to no-op, which is what proves closure (asserting it does not)
+# The steps above say "the base store" and mean the FLAT, basename-keyed one, which
+# is where an agent body's entry lives. A DECLINED roster path's entry is in the
+# sibling roster store instead, keyed by the manifest-relative path — the two are
+# composed at the one site that knows the difference (update_base_entry_path), and a
+# repair that reaches for the flat path finds nothing there for a roster file.
 
 # Resolve a (possibly facade-symlink) path to its real location so the before-image
 # capture + copy-apply act on the REAL file rather than a symlink (mirrors the
@@ -1084,12 +1097,6 @@ update_agent_outcome_landed() {
 # non-zero when any file rolled back or did not apply.
 _update_agent_commit_callback() {
   local logical real candidate release agent rc=0
-  # Restore-index rows accumulate in memory and land in ONE write below: a row
-  # appended per file would leave a PARTIAL index behind a failed write, while one
-  # write fails whole and degrades the cycle to the directory convention. The restore
-  # reads the union of index and directory, so an unlisted image is still reached —
-  # this keeps a half-written index from naming targets for a half-applied run.
-  local index_rows=""
   while IFS=$'\t' read -r logical real candidate release agent; do
     [[ -n "${logical}" ]] || continue
     _update_agent_verify_target="${logical}"
@@ -1119,7 +1126,7 @@ _update_agent_commit_callback() {
     # or not the apply that followed it landed. An empty publication means the
     # capture itself failed, and no image exists to name.
     if [[ -n "${GIT_TXN_BEFORE_IMAGE:-}" ]]; then
-      index_rows="${index_rows}${GIT_TXN_BEFORE_IMAGE##*/}"$'\t'"${logical}"$'\n'
+      _update_restore_index_rows="${_update_restore_index_rows}${GIT_TXN_BEFORE_IMAGE##*/}"$'\t'"${logical}"$'\n'
     fi
     case "${GIT_TXN_RC}" in
       "${GIT_TXN_OK}")
@@ -1148,7 +1155,6 @@ _update_agent_commit_callback() {
         ;;
     esac
   done <"${_update_agent_records_file}"
-  update_write_restore_index "${_update_agent_backup_dir}" "${index_rows}"
   return "${rc}"
 }
 
@@ -1182,6 +1188,26 @@ update_merge_agent_editable_regions() {
     _update_agent_outcomes_file="$(mktemp -t glass-atrium-agent-outcomes.XXXXXX)"
   fi
   : >"${_update_agent_outcomes_file}"
+
+  # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
+  # agents-bak/<cycle_date>_update-<version> dir (env override shares the daemon's
+  # AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
+  # tar merge-extract never clobbers it; the per-run subdir groups this run's
+  # <basename>.bak images for retention prune. git_txn_apply captures + restores
+  # from here (never commits). The base is derived by the shared
+  # update_agents_bak_base helper — the SAME computation the prune/restore paths read,
+  # so this write side and that read side can never drift apart.
+  #
+  # Resolved BEFORE the candidate loop, and its rows reset with it: the roster
+  # dispatch captures into the same cycle dir and writes the shared index, and the
+  # no-candidate early return below must not leave it either unset or carrying the
+  # previous run's rows.
+  backup_base="$(update_agents_bak_base "${root}")"
+  cycle_date="$(date +%Y-%m-%d)"
+  version="$(jq -r '.version // "unknown"' "${manifest}")"
+  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
+  _update_agent_install_root="${root}"
+  _update_restore_index_rows=""
 
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
   # top-level only (references/ + templates/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md
@@ -1325,20 +1351,7 @@ update_merge_agent_editable_regions() {
   # The per-file git_txn transactions. The agent merge is best-effort and NON-fatal
   # to the (already-applied) non-agent sync: a failure leaves the affected agent
   # files at their local version.
-  _update_agent_install_root="${root}"
   _update_agent_records_file="${records_file}"
-  # Per-run before-image sink for the git-free transaction: a ROOT-SIBLING
-  # agents-bak/<cycle_date>_update-<version> dir (env override shares the daemon's
-  # AUTOAGENT_BACKUP_DIR base var). Root-sibling so git ls-files never lists it and
-  # tar merge-extract never clobbers it; the per-run subdir groups this run's
-  # <agent>.md.bak images for retention prune. git_txn_apply captures + restores
-  # from here (never commits). The base is derived by the shared
-  # update_agents_bak_base helper — the SAME computation the prune/restore paths read,
-  # so this write side and that read side can never drift apart.
-  backup_base="$(update_agents_bak_base "${root}")"
-  cycle_date="$(date +%Y-%m-%d)"
-  version="$(jq -r '.version // "unknown"' "${manifest}")"
-  _update_agent_backup_dir="${backup_base}/${cycle_date}_update-${version}"
   _update_agent_commit_callback || rc=$?
   case "${rc}" in
     0) update_log "agent EDITABLE-region merge applied (${n_candidates} file(s))" ;;
@@ -1348,6 +1361,162 @@ update_merge_agent_editable_regions() {
   update_emit_resolved_records "${root}" "${resolved_file}" "${_update_agent_outcomes_file}"
   rm -rf -- "${merge_dir}"
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# Roster dispatch — the merge claim's second iteration site
+# ---------------------------------------------------------------------------
+#
+# The agent merge iterates a directory GLOB, and no declared roster row lives under
+# that directory, so the claim reaches them and no loop does. This stage is their
+# iteration source, walking the SAME declaration the claim predicate reads: a path
+# added there is claimed and dispatched by one edit rather than by two agreeing.
+
+# Per-shape validity of a landed roster artifact — asked of the module that owns
+# the shape rather than restated as a second set of patterns here, so the check and
+# the merge cannot disagree about what the shape is. argv: 1 module dir · 2
+# manifest-relative path (selects the shape) · 3 the file on disk.
+_UPDATE_ROSTER_SHAPE_PY='
+import sys
+sys.path.insert(0, sys.argv[1])
+import roster_merge as rm
+try:
+    rm.get_slot_members(open(sys.argv[3], encoding="utf-8").read(), rm.get_shape(sys.argv[2]))
+except rm.RosterMergeError as exc:
+    print("roster shape invalid: %s: %s" % (sys.argv[2], exc), file=sys.stderr)
+    raise SystemExit(1)
+'
+
+# git_txn_apply VERIFY callback for a roster path — 0 ok / non-0 fail. Carries the
+# AUTHOR-NEUTRAL subset of the body checks plus the per-shape validity check. Stated
+# here rather than shared with the agent-body predicate: that one requires a heading
+# line unconditionally, and the registry and the two shell rosters carry none, so
+# sharing it would ROLL BACK every merged roster instead of refusing it — a silent
+# outcome where this one is a named row.
+#
+# shellcheck disable=SC2329
+#   Invoked INDIRECTLY as the verify callback NAME injected into git_txn_apply.
+_update_roster_verify() {
+  local on_disk="$1" before="${GIT_TXN_BEFORE_IMAGE:-}" before_fm after_fm dup
+  [[ -s "${on_disk}" ]] || return 1
+  if [[ -z "${before}" || ! -r "${before}" ]]; then
+    update_log "WARN: roster verify has no readable before-image for ${_update_roster_verify_target} — failing verify"
+    return 1
+  fi
+  # Frontmatter and the rules anchor: present-before implies present-after, vacuous
+  # on a shape that carries neither. Separated substitution so head's exit is not
+  # masked (SC2312).
+  before_fm="$(head -n 1 "${before}")"
+  after_fm="$(head -n 1 "${on_disk}")"
+  if [[ "${before_fm}" == '---' && "${after_fm}" != '---' ]]; then
+    return 1
+  fi
+  if grep -q '^> Rules:' "${before}" && ! grep -q '^> Rules:' "${on_disk}"; then
+    return 1
+  fi
+  # A shell roster declaring one array twice is valid shell whose LAST declaration
+  # wins, so the shape reader — which keys on the array name — cannot see the
+  # duplicate. Only a count catches it.
+  if [[ "${_update_roster_verify_target}" == *.sh ]]; then
+    dup="$(grep -oE '^readonly[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=' "${on_disk}" | LC_ALL=C sort | uniq -d || true)"
+    if [[ -n "${dup}" ]]; then
+      update_log "WARN: roster verify found a repeated declaration in ${_update_roster_verify_target}: ${dup}"
+      return 1
+    fi
+  fi
+  python3 -c "${_UPDATE_ROSTER_SHAPE_PY}" \
+    "${_update_merge_lib_dir}" "${_update_roster_verify_target}" "${on_disk}" >&2 || return 1
+  return 0
+}
+
+# Drive the base-aware roster merge for every declared roster path. Each path is an
+# independent transaction with its own before-image: a verify failure rolls that
+# path back alone and is reported LOUDLY, and the rest still apply. Non-fatal
+# throughout — a roster path that cannot resolve stays at its local content, which
+# is the state the run started in. Args: $1 = new-release tree root · $2 = new
+# manifest · $3 = live install root.
+update_dispatch_roster_merge() {
+  local new_dir="$1" manifest="$2" root="$3"
+  local rel release_file local_file candidate merge_dir plan_rc n=0
+  : "${manifest:?manifest}"
+  _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
+  _update_state_dir="$(spine_baseline_dir)"
+  _update_agent_install_root="${root}"
+  merge_dir="$(mktemp -d -t glass-atrium-roster-merge.XXXXXX)"
+
+  while IFS= read -r rel; do
+    release_file="${new_dir}/${rel}"
+    [[ -f "${release_file}" ]] || continue
+    local_file="${root}/${rel}"
+
+    # Absent locally: the byte-swap no longer reaches a claimed row, so a plain copy
+    # is what delivers it. No transaction — there is no local content to protect and
+    # so nothing a rollback could restore it to.
+    if [[ ! -f "${local_file}" ]]; then
+      if mkdir -p -- "${local_file%/*}" && cp -p -- "${release_file}" "${local_file}"; then
+        update_log "roster merge: installed ${rel} (absent locally — no local content to preserve)"
+        update_agent_outcome_advance "${rel}"
+      else
+        update_log "WARN: roster install failed for ${rel} — the release copy did not land"
+      fi
+      continue
+    fi
+    # Byte-identical → nothing to merge, and the base may advance.
+    if cmp -s -- "${local_file}" "${release_file}"; then
+      update_agent_outcome_advance "${rel}"
+      continue
+    fi
+    # The registry withhold reaches this arm as well now: the row it used to drop
+    # from the byte-swap apply set is dispatched here instead, and dropping it from
+    # only one of the two would register an agent whose body did not install.
+    if [[ "${_update_withhold_registry}" -eq 1 && "${rel}" == 'agent-registry.json' ]]; then
+      update_log "roster merge: WITHHELD ${rel} — the run withheld the registry (an added agent body is not installed)"
+      continue
+    fi
+
+    n=$((n + 1))
+    candidate="${merge_dir}/${n}.candidate"
+    plan_rc=0
+    python3 "${_update_merge_lib_dir}/roster_merge.py" plan \
+      --target "${rel}" --local "${local_file}" --release "${release_file}" \
+      --out "${candidate}" --agents-dir "${root}/agents" \
+      --state-dir "${_update_state_dir}" >/dev/null || plan_rc=$?
+    if [[ "${plan_rc}" -ne 0 ]]; then
+      update_log "roster merge: DECLINED ${rel} (rc ${plan_rc}) — left at its local version; the release content for this row is NOT installed until the refusal above is resolved"
+      continue
+    fi
+
+    _update_roster_verify_target="${rel}"
+    GIT_TXN_RC=""
+    # BARE invocation (git-txn.sh header contract): it returns 0 for every handled
+    # outcome and reports the structured result in GIT_TXN_RC.
+    git_txn_apply \
+      "${root}" "${local_file}" "${local_file}" "${candidate}" \
+      "${_update_agent_backup_dir}" \
+      _update_agent_apply _update_roster_verify "${rel}" "${rel}"
+    if [[ -n "${GIT_TXN_BEFORE_IMAGE:-}" ]]; then
+      _update_restore_index_rows="${_update_restore_index_rows}${GIT_TXN_BEFORE_IMAGE##*/}"$'\t'"${rel}"$'\n'
+    fi
+    case "${GIT_TXN_RC}" in
+      "${GIT_TXN_OK}")
+        update_log "roster merged + applied: ${rel}"
+        update_agent_outcome_advance "${rel}"
+        ;;
+      "${GIT_TXN_VERIFY_FAIL}")
+        update_log "WARN: roster merge verify failed — ${rel} restored from its before-image (left at local version)"
+        ;;
+      "${GIT_TXN_BACKUP_CAPTURE_FAIL}")
+        update_log "WARN: roster merge aborted before apply (before-image capture failed) — ${rel} untouched"
+        ;;
+      *)
+        update_log "WARN: roster merge not applied (GIT_TXN_RC=${GIT_TXN_RC}) — ${rel} left at its local version"
+        ;;
+    esac
+  done < <(spine_get_roster_paths)
+
+  rm -rf -- "${merge_dir}"
+  # The cycle's ONE index write, holding both iteration sites' rows.
+  update_write_restore_index "${_update_agent_backup_dir}" "${_update_restore_index_rows}"
 }
 
 # ---------------------------------------------------------------------------
@@ -2603,6 +2772,10 @@ update_report_uncovered_paths() {
 update_finalize_merge_and_anchors() {
   local new_dir="$1" manifest="$2" root="$3"
   update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
+  # Between the two: the roster dispatch shares the agent merge's outcome ledger and
+  # its cycle dir, so it runs after the merge opens both and before the capture reads
+  # the ledger and resets it.
+  update_dispatch_roster_merge "${new_dir}" "${manifest}" "${root}"
   update_capture_base_content "${new_dir}"
   update_capture_baseline "${manifest}"
 }
@@ -2766,6 +2939,7 @@ update_run() {
     orphan_adds="$(update_roster_orphan_registry_adds "${new_dir}/agent-registry.json" "${root}")"
     if [[ -n "${orphan_adds}" ]]; then
       withhold_registry=1
+      _update_withhold_registry=1
       update_log "ATRIUM_UPDATE_ALLOW_ROSTER: WITHHOLDING agent-registry.json sync — the agent body is NOT installed for:"
       while IFS= read -r path; do
         [[ -n "${path}" ]] && update_log "  ${path} (run the agent_lifecycle ceremony to install it, then re-run update)"
@@ -2789,8 +2963,9 @@ update_run() {
   # binary — loud-fail exit 7 if not, so the merge cannot fail cryptically mid-flight.
   update_headless_verify_claude
 
-  # Step 3 — spine-synced selection: every manifest row except a merge-claimed
-  # top-level agents/<name>.md (the charter is unclaimed → selected here).
+  # Step 3 — spine-synced selection: every manifest row the merge claim does not
+  # hold — so neither a top-level agents/<name>.md nor a declared roster row (the
+  # charter is unclaimed → selected here).
   # A user-owned overlay, or the rendered config file, is out of this byte-swap
   # solely by carrying no manifest row — the manifest is generated from tracked
   # files, and that render output is git-ignored with only its template tracked.

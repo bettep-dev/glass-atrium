@@ -21,14 +21,15 @@
 # detect — reached by neither consumer and hash-verified by no deploy path.
 #
 # One invariant sits above those pins, scoped to the CHANGE SELECTION: the rows the
-# selection holds back are EXACTLY the agent bodies the merge delivers, compared
-# against an expectation spelled out in the test rather than read from the predicate.
-# Scoped because one non-agent row is held back DOWNSTREAM of the selection and so
-# outside what this measures — the registry withhold drops agent-registry.json from
-# the apply set for a run whose added agent body did not install. That mechanism is
-# owned by the roster work at clauded-docs/12418, which also widens the held-back
-# claim to the roster files; when it lands this suite is owed a presence guard over
-# those roster paths, and it carries none today.
+# selection holds back are EXACTLY the rows a merge delivers — the agent bodies and
+# the declared roster paths — compared against an expectation spelled out in the test
+# rather than read from the predicate.
+#
+# The merge side has TWO iteration sites since the claim widened, the agents glob and
+# the roster dispatch, and both are measured behaviourally. That is what carries the
+# presence guard those roster rows were owed: a row the predicate claims that neither
+# loop reaches fails here, which is the claimed-and-undelivered state the widening
+# had to avoid.
 #
 # Hermetic: every fixture is built in a per-test mktemp sandbox; the repo
 # manifest is read read-only and the live install is never touched.
@@ -115,6 +116,37 @@ merge_claimed_paths() {
       printf '%s\n' "${path}"
     fi
   done < <(manifest_agent_md_paths)
+  # The claim has TWO iteration sites, so a reading taken from one of them would
+  # report every row of the other as claimed-by-nobody.
+  roster_dispatched_paths
+}
+
+# Which manifest paths does the ROSTER dispatch actually reach? Measured the same
+# way and for the same reason: a release tree carrying every declared roster row is
+# handed to the real dispatch against an EMPTY live install, so each path the loop
+# reaches reports its own "installed" line and each path it never reaches is silent.
+# No python plan runs on this path either — an absent local file has no merge.
+roster_dispatched_paths() {
+  local new="${WORK}/roster/new" live="${WORK}/roster/live" log="${WORK}/roster/log"
+  local rel
+  rm -rf -- "${WORK}/roster"
+  mkdir -p -- "${new}" "${live}"
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    mkdir -p -- "$(dirname -- "${new}/${rel}")"
+    printf 'release %s\n' "${rel}" >"${new}/${rel}"
+  done < <(spine_get_roster_paths)
+  printf '{"version":"oracle","files":[],"hashes":{}}\n' >"${new}/manifest.json"
+  update_dispatch_roster_merge "${new}" "${new}/manifest.json" "${live}" \
+    >/dev/null 2>"${log}"
+  sed -n 's/^.*roster merge: installed \([^ ]*\) (absent locally.*$/\1/p' "${log}"
+}
+
+# The domain in which the predicate and the loops can disagree at all: the agents
+# subtree the glob walks, plus the rows the declaration names.
+merge_domain_paths() {
+  manifest_agent_md_paths
+  spine_get_roster_paths
 }
 
 # Build a release tree + live install in which every path given differs from the
@@ -193,7 +225,12 @@ first_manifest_path_under() {
   [ -z "${output}" ]
 }
 
-@test "the shared predicate answers for the merge consumer exactly as the loop behaves" {
+# Both directions at once, over the union domain: a row the predicate claims that no
+# loop reaches is the claimed-and-undelivered state the widening exists to avoid, and
+# a row a loop reaches that the predicate does not claim is byte-swapped behind the
+# merge's back. A path added to the declaration and forgotten in the dispatch fails
+# HERE, which is what makes the two sites one edit rather than two.
+@test "the shared predicate answers for the merge consumer exactly as the loops behave" {
   local claimed_paths path expected actual mismatch=""
   claimed_paths="$(merge_claimed_paths)"
   while IFS= read -r path; do
@@ -205,7 +242,7 @@ first_manifest_path_under() {
     if [[ "${expected}" -ne "${actual}" ]]; then
       mismatch="${mismatch}${path} (loop=${expected} predicate=${actual})"$'\n'
     fi
-  done < <(manifest_agent_md_paths)
+  done < <(merge_domain_paths)
   if [[ -n "${mismatch}" ]]; then
     echo "shared predicate disagrees with the merge loop it speaks for:"
     printf '%s' "${mismatch}"
@@ -227,9 +264,16 @@ first_manifest_path_under() {
 # against itself: a wrong predicate moves both sides identically and the check
 # could not go red in either direction. Spelled out, a predicate change moves the
 # observed side alone and this list is what must then be re-spelled.
-@test "the change selection holds back exactly the merge-delivered agent bodies" {
-  local all_paths selected observed="" expected="" path rest
+#
+# The roster rows are the ONE part read rather than spelled: they are named by a
+# declaration and not by a rule, so there is no rule to restate, and a hand-copied
+# second list is the drift the single declaration exists to prevent. What a
+# re-spelling would have caught — the declaration itself growing — is pinned in
+# apply-spine.bats, where the declared set is asserted to hold exactly four rows.
+@test "the change selection holds back exactly the merge-delivered rows" {
+  local all_paths selected observed="" expected="" path rest declared
   local extra="" missing="" mechanism
+  declared=$'\n'"$(spine_get_roster_paths)"$'\n'
   all_paths="$(manifest_paths)"
   mkdir -p -- "${WORK}/emptyroot"
   selected="$(spine_find_changed_files "${MANIFEST}" "${WORK}/emptyroot")"
@@ -244,6 +288,9 @@ first_manifest_path_under() {
       if [[ "${rest}" != */* && "${rest}" != 'GLASS_ATRIUM_GLOBAL_RULES.md' ]]; then
         expected="${expected}${path}"$'\n'
       fi
+    fi
+    if [[ "${declared}" == *$'\n'"${path}"$'\n'* ]]; then
+      expected="${expected}${path}"$'\n'
     fi
   done <<<"${all_paths}"
 
@@ -275,7 +322,7 @@ first_manifest_path_under() {
     printf '%s' "${extra}"
   fi
   if [[ -n "${missing}" ]]; then
-    echo "merge-delivered agent body(ies) that reached plain replacement:"
+    echo "merge-delivered row(s) that reached plain replacement:"
     printf '%s' "${missing}"
   fi
   [ -z "${extra}" ]
