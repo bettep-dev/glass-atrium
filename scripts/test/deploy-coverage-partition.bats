@@ -20,6 +20,10 @@
 # A second exclusion arm would put a row back in the state this suite exists to
 # detect — reached by neither consumer and hash-verified by no deploy path.
 #
+# One invariant sits above those pins: the manifest rows held back from plain
+# replacement are EXACTLY the agent bodies the merge delivers, compared against an
+# expectation spelled out in the test rather than read from the predicate.
+#
 # Hermetic: every fixture is built in a per-test mktemp sandbox; the repo
 # manifest is read read-only and the live install is never touched.
 
@@ -201,6 +205,74 @@ first_manifest_path_under() {
     printf '%s' "${mismatch}"
   fi
   [ -z "${mismatch}" ]
+}
+
+# The set of manifest rows held back from plain replacement, pinned as an
+# invariant so a re-added exclusion cannot grow it silently.
+#
+# Observed side: the shipped change selection, run over the real manifest against
+# an EMPTY install root. Every row it does not name is a row some mechanism inside
+# the selection held back — measured through the real path rather than restated.
+# The empty root makes every present row differ, so nothing narrows the reading.
+#
+# Expected side: the manifest's own file list filtered by a glob spelled out
+# here. Deriving it from the exclusion predicate would compare that predicate
+# against itself: a wrong predicate moves both sides identically and the check
+# could not go red in either direction. Spelled out, a predicate change moves the
+# observed side alone and this list is what must then be re-spelled.
+@test "exactly the merge-delivered agent bodies are held back from plain replacement" {
+  local all_paths selected observed="" expected="" path rest
+  local extra="" missing="" mechanism
+  all_paths="$(manifest_paths)"
+  mkdir -p -- "${WORK}/emptyroot"
+  selected="$(spine_find_changed_files "${MANIFEST}" "${WORK}/emptyroot")"
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${selected}" "${path}"; then
+      observed="${observed}${path}"$'\n'
+    fi
+    if [[ "${path}" == agents/*.md ]]; then
+      rest="${path#agents/}"
+      if [[ "${rest}" != */* && "${rest}" != 'GLASS_ATRIUM_GLOBAL_RULES.md' ]]; then
+        expected="${expected}${path}"$'\n'
+      fi
+    fi
+  done <<<"${all_paths}"
+
+  # Guards against a silently degrading derivation: an empty agent set or a
+  # renamed charter would shrink the expectation instead of failing.
+  [ -n "${expected}" ]
+  set_has "${all_paths}" 'agents/GLASS_ATRIUM_GLOBAL_RULES.md' || return 1
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${expected}" "${path}"; then
+      mechanism='a mechanism this suite does not name'
+      if spine_is_merge_claimed_path "${path}"; then
+        mechanism='the merge claim'
+      fi
+      extra="${extra}${path} (held back by ${mechanism})"$'\n'
+    fi
+  done <<<"${observed}"
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${observed}" "${path}"; then
+      missing="${missing}${path}"$'\n'
+    fi
+  done <<<"${expected}"
+
+  if [[ -n "${extra}" ]]; then
+    echo "manifest path(s) held back from plain replacement that the merge does not deliver:"
+    printf '%s' "${extra}"
+  fi
+  if [[ -n "${missing}" ]]; then
+    echo "merge-delivered agent body(ies) that reached plain replacement:"
+    printf '%s' "${missing}"
+  fi
+  [ -z "${extra}" ]
+  [ -z "${missing}" ]
 }
 
 # tests — the orphan class now reaches the deterministic sync

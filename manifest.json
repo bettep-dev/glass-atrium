@@ -1354,7 +1354,7 @@
     "scripts/test/daemon-daily-restart.bats": "fcc6a5bb0baf5a8901b0be9051236746f8b0f568c4bdb227720ec32f25b6c227",
     "scripts/test/daemon-healthcheck-cron.bats": "0004368e9c41b551983aa542caeff78d9d0820f51570645c89544417c30435a7",
     "scripts/test/daemon-inject-entry.bats": "3f18f06a9a6089e87c72804e455c1ef636f2c194dc5fc405a4271ddb34168258",
-    "scripts/test/deploy-coverage-partition.bats": "0680d7b03fb94f27b6b240e52dc88c7036ce7fdc13572c6f55a7acd7281b298b",
+    "scripts/test/deploy-coverage-partition.bats": "1188b8fdb6c9c9652ec360304822764401e846c983cf9fa81ab6c47124b322ad",
     "scripts/test/generate-manifest.bats": "4322a9c8a037ada216a0d04a0985bf5ed5ca0305c220f2565416b0a6e6dd8afe",
     "scripts/test/glass-atrium-dispatch.bats": "9999a2285cfcc954bf6361938d0abf3c31cc6efb11e2303a1cee53ad71ce2ecf",
     "scripts/test/glass-atrium-install.bats": "c00dbd3963b405d0e052b566c676616795517ba37ba5dba63edc673bcb0f03f6",
