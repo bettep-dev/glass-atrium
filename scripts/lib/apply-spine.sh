@@ -172,6 +172,23 @@ spine_is_merge_claimed_path() {
   return 0
 }
 
+# The ROSTER paths: manifest rows whose content is a union of vendor rows and
+# live-generated rows, so a plain replacement discards the live half. Emitted one
+# relative path per line.
+#
+# DATA only, and inert where it sits: the claim predicate above reads no list — it
+# answers from the path's shape alone — so a declaration beside it changes no answer
+# it can give. ONE declaration is the invariant: a second list authored elsewhere
+# would agree with this one by hand rather than by construction, and drift silently
+# the first time either moves.
+spine_get_roster_paths() {
+  printf '%s\n' \
+    'agent-registry.json' \
+    'scoped/scope-dev.md' \
+    'hooks/inject-scope-rules.sh' \
+    'hooks/lib/styleref-roster.sh'
+}
+
 # Predicate: is this manifest path EXCLUDED from the deterministic non-agent
 # sync? Returns 0 (excluded) / 1 (included). ONE arm, so the exclusion is the
 # merge's claim and nothing else: a claimed body is resolved by the separate

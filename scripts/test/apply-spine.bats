@@ -677,3 +677,65 @@ t6_build_jqless_toolbin() {
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "/tmp/custom-update-state" ]]
 }
+
+# === C2a′ — the roster path declaration ====================================
+# The four roster paths are declared ONCE, as data beside the claim predicate, so
+# the capture that iterates them and the predicate C1 later wires cannot drift into
+# two hand-agreed lists. The declaration is inert where it sits: the predicate reads
+# no list, so nothing it answers can move. This probe pins both halves — that the
+# declared paths are real, unclaimed manifest rows, and that neither predicate's
+# classification of the full manifest moved when the declaration landed beside them.
+
+@test "C2a1: the roster declaration holds exactly four unclaimed manifest rows" {
+  local manifest="${GA}/manifest.json" rel n=0
+  [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
+  # shellcheck source=/dev/null
+  source "${REAL_LIB}"
+
+  while IFS= read -r rel; do
+    n=$((n + 1))
+    # A mistyped key would capture nothing and fail SILENTLY at the sink.
+    if ! jq -e --arg p "${rel}" '.files | index($p) != null' -- "${manifest}" >/dev/null; then
+      echo "declared roster path is not a manifest row: ${rel}"
+      return 1
+    fi
+    # Declaring them must not make them merge-claimed — the claim widens elsewhere.
+    if spine_is_merge_claimed_path "${rel}"; then
+      echo "declared roster path is merge-claimed: ${rel}"
+      return 1
+    fi
+  done < <(spine_get_roster_paths)
+  [ "${n}" -eq 4 ]
+}
+
+@test "C2a1: neither predicate's classification of the manifest moved" {
+  local manifest="${GA}/manifest.json" path oracle claimed excluded mismatch=""
+  [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
+  # shellcheck source=/dev/null
+  source "${REAL_LIB}"
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # The rule both predicates answered BEFORE the declaration landed, recomputed
+    # from the path shape alone so this cannot agree with a drifted predicate.
+    oracle=0
+    case "${path}" in
+      agents/*/* | agents/GLASS_ATRIUM_GLOBAL_RULES.md) ;;
+      agents/*.md) oracle=1 ;;
+      *) ;;
+    esac
+    claimed=0
+    if spine_is_merge_claimed_path "${path}"; then claimed=1; fi
+    excluded=0
+    if spine_is_excluded_path "${path}"; then excluded=1; fi
+    if [[ "${claimed}" -ne "${oracle}" || "${excluded}" -ne "${oracle}" ]]; then
+      mismatch="${mismatch}${path} (oracle=${oracle} claimed=${claimed} excluded=${excluded})"$'\n'
+    fi
+  done < <(jq -r '.files[]' -- "${manifest}")
+
+  if [[ -n "${mismatch}" ]]; then
+    echo "predicate classification moved:"
+    printf '%s' "${mismatch}"
+  fi
+  [ -z "${mismatch}" ]
+}
