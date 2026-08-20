@@ -657,31 +657,6 @@ _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)com\.glass-atrium\.[^/]+\.plist$"),
 )
 
-# Sync-path exemptions — EXACT normalized manifest relpaths, never a regex. The
-# updater's changed-file partition normalizes with update_normalize_relpath
-# (which resolves `.`/`..` and fail-closes on anything it cannot normalize)
-# before shelling out, so an exact set cannot over-match the way a basename
-# pattern in the tuple can.
-#
-# NARROW by design — this is the ONLY entry, and every other sensitive path stays
-# refused on every consumer. The charter is exempted because it is the one
-# sensitive row NO deploy path can reach: the updater is the sole live write
-# seam, its partition refuses the charter, and ga-doctor advertises that same
-# updater as the remedy for the drift the refusal causes — a warning the operator
-# cannot clear. Weighed against that, the charter's own refusal buys little: it
-# is vendor-owned prose with no EDITABLE region and no live-only frontmatter pin.
-#
-# The SYMLINK row (rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md -> the entry
-# below) is DELIBERATELY absent: the spine stages with a dereferencing `cp -p`
-# and commits by rename, so routing the link through the byte-swap would replace
-# it with a regular file and let the two manifest rows drift apart. Syncing the
-# real file alone clears BOTH rows, because the link resolves through it.
-_SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
-    {
-        "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
-    }
-)
-
 # Sensitive diff-body patterns (word-boundary regex — avoid `farm`/`confirm`
 # false positives that triggered the original 3-tier user-queue inflation).
 # Per core-security.md High-impact actions (file deletion / external network /
@@ -761,10 +736,10 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 # -- shared sensitive-match primitives (single compiled source) -------------
 # These two pure functions are the ONE matching implementation over the
-# compiled tuples above. classify_safety_tier (the daemon path) calls them, and
-# the update skill's python helper (lib/sensitive_patterns.py) imports them, so
-# the daemon and the shell updater refuse the SAME path/diff set with zero regex
-# re-implementation (T15 / gate G7 — a shell-ERE data file is forbidden).
+# compiled tuples above. classify_safety_tier calls them, and the helper
+# lib/sensitive_patterns.py re-exports them to callers outside this module, so
+# the pattern set is never re-expressed in a second regex dialect (T15 / gate G7
+# — a shell-ERE data file is forbidden).
 
 
 def match_sensitive_path(path: str) -> str | None:
@@ -777,30 +752,6 @@ def match_sensitive_path(path: str) -> str | None:
         if pat.search(path or ""):
             return pat.pattern
     return None
-
-
-def match_sensitive_path_for_sync(path: str) -> str | None:
-    """``match_sensitive_path`` minus the ``_SYNC_EXEMPT_RELPATHS`` carve-out —
-    the matcher for ONE consumer: the updater's CHANGED-FILE partition
-    (``update_partition_sensitive_sync``, reached from the preview and apply
-    stages of scripts/update.sh via lib/sensitive_patterns.py's ``path-sync``
-    mode).
-
-    Every OTHER consumer keeps calling the bare ``match_sensitive_path`` and so
-    stays strict on the exempt set:
-      * the updater's VENDOR-REMOVAL sweep — a vendor-dropped harness file is
-        reported, never auto-Trashed, so its partition must not be relaxed;
-      * ``classify_safety_tier`` — the daemon's 2-tier approval routing;
-      * ``editable_merge.build_merge_candidate`` — the agent-body merge refusal,
-        which imports the bare matcher directly and never traverses this path.
-
-    The exemption is keyed on an EXACT normalized relpath, so a spelling the
-    caller could not normalize never reaches a match (the shell fails closed
-    upstream) and no near-miss basename is silently swept in.
-    """
-    if (path or "") in _SYNC_EXEMPT_RELPATHS:
-        return None
-    return match_sensitive_path(path)
 
 
 def match_sensitive_diff(diff: str) -> str | None:
