@@ -37,6 +37,8 @@
 #                  every LIKE 'ok%' apply-eligibility gate.
 #   T10 no ledger — an empty or absent ledger PATH records rejected and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
+#   T12 roster   — the landed lookup keys on the row's manifest-relative target, so a
+#                  path that is not an agent body splits landed by the same rule.
 #
 # T2/T3 need Postgres and skip without it; every other test is hermetic (update.sh is
 # SOURCED, the CLI is stubbed, all paths stay in a temp dir).
@@ -80,8 +82,10 @@ DROPPED
   RELEASE="${WORK}/release-body.md"
   printf 'release body\n' >"${RELEASE}"
 
-  # The per-run outcome ledger: the commit callback appends a basename on
-  # GIT_TXN_OK, which is how the emitter learns a file actually landed.
+  # The per-run outcome ledger: the commit callback appends a manifest-relative
+  # path on GIT_TXN_OK, which is how the emitter learns a file actually landed. The
+  # emitter reads the row's target field against it, so a fixture line here is the
+  # same string the row carries.
   LEDGER="${WORK}/agent-outcomes.ledger"
   : >"${LEDGER}"
 
@@ -160,7 +164,7 @@ db_available() {
 
 @test "T1 envelope carries the auto tier, the constant label and a non-empty cost guard state" {
   write_tsv
-  printf 'ga-rec-probe.md\n' >"${LEDGER}"
+  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
   run run_driver
   [ "$status" -eq 0 ]
   [ -s "${CAPTURE}" ]
@@ -234,7 +238,7 @@ db_available() {
   # and a Haiku outage would have rolled the landing back. A row reading
   # skipped:no-model-call tells an auditor that landing was deterministic.
   write_tsv ga-rec-probe.md "${DROPPED_TEXT}" True
-  printf 'ga-rec-probe.md\n' >"${LEDGER}"
+  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
   run run_driver
   [ "$status" -eq 0 ]
 
@@ -292,7 +296,7 @@ db_available() {
       "${name}" "agents/${name}" "${RELEASE}" 2 2 1 "0,3" \
       "${DIFF_FILE}" "${DROPPED_TEXT}" False >>"${TSV}"
   done
-  printf 'ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
+  printf 'agents/ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
 
   DATE_TICKS="${WORK}/date.ticks" run run_driver
   [ "$status" -eq 0 ]
@@ -302,6 +306,47 @@ db_available() {
   [ "$(envelope_field cycle_date 1)" = "$(envelope_field cycle_date 2)" ]
   # One tick == one fork for the whole run, whatever the row count.
   [ "$(wc -l <"${WORK}/date.ticks" | tr -d ' ')" -eq 1 ]
+}
+
+# Read the declared roster paths in a contained subshell. A literal list here would
+# be a second declaration of the fact the single declaration exists to hold.
+roster_paths() {
+  bash -c '
+    set -Eeuo pipefail
+    # shellcheck source=/dev/null
+    source "$1"
+    spine_get_roster_paths
+  ' _ "${GA}/scripts/lib/apply-spine.sh"
+}
+
+@test "T12 a landed roster path stamps landed and an unlanded one does not" {
+  # The lookup key is the row's target, so a path that is not an agent body resolves
+  # by the same rule and at any depth. Both directions ride one run: a probe phrased
+  # only as "this does not stamp landed" is satisfied by a fixture that matches
+  # nothing at all.
+  # The landed side must be NESTED: a top-level path's basename equals its path, so
+  # it cannot tell the two key forms apart and would stamp landed either way.
+  # Every assertion is gated `|| return 1`: this bats version fails a test only on
+  # the LAST command's status, so a bare mid-body test would be silently ignored.
+  local landed_rel unlanded_rel
+  landed_rel="$(roster_paths | grep / | sed -n 1p)"
+  unlanded_rel="$(roster_paths | grep -v -F -x "${landed_rel}" | sed -n 1p)"
+  [ -n "${landed_rel}" ] || return 1
+  [ -n "${unlanded_rel}" ] || return 1
+
+  : >"${TSV}"
+  local rel
+  for rel in "${landed_rel}" "${unlanded_rel}"; do
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${rel##*/}" "${rel}" "${RELEASE}" 2 2 1 "0,3" \
+      "${DIFF_FILE}" "${DROPPED_TEXT}" False >>"${TSV}"
+  done
+  printf '%s\n' "${landed_rel}" >"${LEDGER}"
+
+  run run_driver
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"(${landed_rel}, landed=1)"* ]] || return 1
+  [[ "$output" == *"(${unlanded_rel}, landed=0)"* ]] || return 1
 }
 
 @test "T10 an empty or absent ledger path records rejected and still returns 0" {
@@ -340,7 +385,7 @@ db_available() {
 
   target="ga-rec-landed-$$.md"
   write_tsv "${target}"
-  printf '%s\n' "${target}" >"${LEDGER}"
+  printf 'agents/%s\n' "${target}" >"${LEDGER}"
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
   [[ "$output" == *"resolved-gap discard recorded"* ]]
@@ -386,7 +431,7 @@ db_available() {
   [ "$status" -eq 0 ]
   first="$(status_now)"
 
-  printf '%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
+  printf 'agents/%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
   second="$(status_now)"

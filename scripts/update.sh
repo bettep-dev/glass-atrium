@@ -241,12 +241,18 @@ _update_agent_records_file=""
 # New-release manifest carrying the modes map (FB-2) — read by _update_agent_apply
 # for its post-copy mode re-apply; empty/absent map degrades to a plain copy.
 _update_modes_manifest=""
-# Per-run agent-merge OUTCOME ledger (finding #9): one basename per line = the
-# base-content store MAY advance for that file (its merge actually landed — applied
-# GIT_TXN_OK, byte-identical, or resolved with no net change). Every other outcome
-# (rolled-back / refused / structural / plan-failed) is ABSENT, so the capture
-# keeps its prior base entry. File-backed (not a shell var) so an append survives
-# any subshell the callback is invoked from.
+# Per-run merge OUTCOME ledger (finding #9): one MANIFEST-RELATIVE PATH per line =
+# the base-content store MAY advance for that file (its merge actually landed —
+# applied GIT_TXN_OK, byte-identical, or resolved with no net change). Every other
+# outcome (rolled-back / refused / structural / plan-failed) is ABSENT, so the
+# capture keeps its prior base entry. File-backed (not a shell var) so an append
+# survives any subshell the callback is invoked from.
+#
+# The path key is what every producer writes and every consumer reads, so one line
+# names one file to both — including the consumer across a process boundary, whose
+# default on a key it cannot find is to record the content as not landed. A
+# basename could not carry that: the claim widens to paths at distinct depths, and
+# any two of them sharing a basename would collapse onto one line.
 _update_agent_outcomes_file=""
 _update_agent_verify_local=""
 _update_agent_verify_release=""
@@ -461,15 +467,19 @@ update_emit_resolved_records() {
   # addition available (the merge lib prints True/False on every plan line).
   while IFS=$'\t' read -r base target release hunks dropped added regions diff_file dropped_text needs_llm; do
     [[ -n "${base}" ]] || continue
-    # Landed == the commit callback appended this basename to the per-run outcome
-    # ledger on GIT_TXN_OK. With NO ledger every row records as not-applied: a run
+    # Landed == the commit callback appended this row's manifest-relative path to
+    # the per-run outcome ledger on GIT_TXN_OK. The lookup takes the row's target
+    # field, which is already that path, rather than recomposing one from the
+    # basename field — a recomposition here would be a second statement of the key
+    # form, on the far side of the process boundary from the writers.
+    # With NO ledger every row records as not-applied: a run
     # that never reached the callback writes no entries at all, and a row that
     # falsely read applied would claim daemon content was discarded when none was.
     # That default is the
     # OPPOSITE of update_capture_base_content's blanket advance, which is why the
     # shared matcher below carries no default of its own.
     landed=0
-    if update_agent_outcome_landed "${base}" "${ledger_lines}"; then
+    if update_agent_outcome_landed "${target}" "${ledger_lines}"; then
       landed=1
     fi
     if GA_REC_CYCLE_DATE="${cycle_date}" GA_REC_TARGET="${target}" \
@@ -1046,22 +1056,23 @@ _update_agent_verify() {
   return 0
 }
 
-# Record a base-content ADVANCE for an agent basename in the per-run outcome ledger
-# (finding #9). Append-only; a no-op when no ledger is active (a caller that ran no
-# merge). Called from BOTH the parent merge loop (no-write advances) and the commit
-# callback — the file append is the shared-state carrier across any subshell.
+# Record a base-content ADVANCE for one MANIFEST-RELATIVE PATH in the per-run
+# outcome ledger (finding #9). Append-only; a no-op when no ledger is active (a
+# caller that ran no merge). Called from BOTH the parent merge loop (no-write
+# advances) and the commit callback — the file append is the shared-state carrier
+# across any subshell.
 update_agent_outcome_advance() {
   [[ -n "${_update_agent_outcomes_file}" ]] || return 0
   printf '%s\n' "$1" >>"${_update_agent_outcomes_file}"
 }
 
-# Whole-line membership test for ONE basename against the ledger, mirroring
+# Whole-line membership test for ONE manifest-relative path against the ledger, mirroring
 # `grep -qxF` through the newline anchors the caller wrapped the text in. Takes the
 # PRE-LOADED text rather than a path so a per-row call costs no fork and no re-read,
 # and answers only "is it listed" — the two readers disagree on what an ABSENT
 # ledger means (the capture side advances everything, the emit side records nothing
 # as landed), so that default stays with each caller.
-# $1 = basename · $2 = newline-wrapped ledger text.
+# $1 = manifest-relative path · $2 = newline-wrapped ledger text.
 update_agent_outcome_landed() {
   [[ "$2" == *$'\n'"$1"$'\n'* ]]
 }
@@ -1117,7 +1128,7 @@ _update_agent_commit_callback() {
         # (finding #9). Any other GIT_TXN outcome leaves the file at its local
         # version, so it is deliberately NOT recorded (the capture keeps its prior
         # base entry).
-        update_agent_outcome_advance "${logical##*/}"
+        update_agent_outcome_advance "${logical}"
         ;;
       "${GIT_TXN_VERIFY_FAIL}")
         update_log "WARN: agent merge verify failed — ${logical} restored from its before-image (left at local version)"
@@ -1190,7 +1201,7 @@ update_merge_agent_editable_regions() {
     # Byte-identical → nothing to merge (equivalent to plan changed=False). Local
     # already equals the release, so the base-content store may advance (finding #9).
     if cmp -s -- "${local_file}" "${file}"; then
-      update_agent_outcome_advance "${base}"
+      update_agent_outcome_advance "agents/${base}"
       continue
     fi
 
@@ -1257,7 +1268,7 @@ update_merge_agent_editable_regions() {
     if [[ "${changed}" != 'True' ]]; then
       update_log "agent merge: agents/${base} resolves with no net change (regions kept local) — no write"
       # No net change → the resolved body is stable, so the base may advance (finding #9).
-      update_agent_outcome_advance "${base}"
+      update_agent_outcome_advance "agents/${base}"
       continue
     fi
 
@@ -1439,9 +1450,9 @@ update_capture_base_content() {
   for file in "${new_dir}"/agents/*.md; do
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
-    # An active ledger that does NOT list this basename → the file's merge did not
+    # An active ledger that does NOT list this path → the file's merge did not
     # land → keep its prior base entry (do not advance).
-    if [[ "${ledger_active}" -eq 1 ]] && ! update_agent_outcome_landed "${base}" "${ledger_lines}"; then
+    if [[ "${ledger_active}" -eq 1 ]] && ! update_agent_outcome_landed "agents/${base}" "${ledger_lines}"; then
       kept=$((kept + 1))
       # Name the kept basenames in the summary: a merge-claimed-path exclusion (the charter
       # file) is kept EVERY run, so an unlabeled "N kept" reads as an unexplained anomaly.
@@ -1474,17 +1485,23 @@ update_capture_base_content() {
   # Roster base anchor: each declared roster path captured under its manifest-relative
   # path key in the sibling sink, whose leading directories the key requires.
   #
-  # UNCONDITIONAL, unlike the agent loop above — no ledger lookup. Every writer of the
-  # ledger keys on an agent basename produced by that loop, so a roster path cannot be
-  # listed in it; consulting it here would read all four as not-landed on every run and
-  # hold them at a prior base that does not exist. The gate is owed once the ledger
-  # itself carries roster keys, and it arrives with them — this arm is the declared
-  # ledger-free state until then, not an oversight.
-  local roster_store rel roster_src roster_target roster_count=0
+  # Gated on the SAME ledger and the SAME key form as the agent loop above: the
+  # manifest-relative path IS the ledger line, so this arm composes no key of its
+  # own and a roster line means here exactly what it means to the emit side.
+  # A path an active ledger does not name did not land, so its prior base entry is
+  # kept — and until the merge claim widens no producer can name a roster path,
+  # every one of them writing from the agent-directory loop above. An anchor is
+  # therefore written for a roster merge that landed and for nothing else, which is
+  # the same rule the agent loop follows rather than a second one.
+  local roster_store rel roster_src roster_target roster_count=0 roster_kept=0
   roster_store="$(update_roster_base_store_dir)"
   while IFS= read -r rel; do
     roster_src="${new_dir}/${rel}"
     [[ -f "${roster_src}" ]] || continue
+    if [[ "${ledger_active}" -eq 1 ]] && ! update_agent_outcome_landed "${rel}" "${ledger_lines}"; then
+      roster_kept=$((roster_kept + 1))
+      continue
+    fi
     roster_target="$(update_base_entry_path "${rel}" "${store}")"
     if mkdir -p -- "${roster_target%/*}" && cp -p -- "${roster_src}" "${roster_target}"; then
       roster_count=$((roster_count + 1))
@@ -1492,7 +1509,7 @@ update_capture_base_content() {
       update_log "WARN: roster base-content capture failed for ${rel} (next update falls back to gated 2-way for it)"
     fi
   done < <(spine_get_roster_paths)
-  update_log "roster base-content store updated: ${roster_count} advanced → ${roster_store}"
+  update_log "roster base-content store updated: ${roster_count} advanced, ${roster_kept} kept at prior base → ${roster_store}"
   # One-shot ledger: reset so a later capture in the same process never reads a
   # stale set (the workdir teardown removes the file itself).
   _update_agent_outcomes_file=""

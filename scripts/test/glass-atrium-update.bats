@@ -1923,11 +1923,11 @@ rm -rf /tmp/everything
 }
 
 # ---------------------------------------------------------------------------
-# C2a′ — the roster base anchor. The four declared roster paths are captured into a
-# SIBLING store keyed by manifest-relative path, so a base exists for them before
-# the merge claim widens. The arm is deliberately ledger-free: every ledger writer
-# keys on an agent basename, so a roster path can never be listed, and a gate here
-# would hold all four at a prior base that does not exist.
+# The roster base anchor. The four declared roster paths are captured into a SIBLING
+# store keyed by manifest-relative path, so a base exists for them before the merge
+# claim widens. The arm reads the same outcome ledger as the agent loop and keys on
+# the same manifest-relative path, so an anchor is written for a roster merge that
+# landed and for nothing else.
 # ---------------------------------------------------------------------------
 
 # Seed one roster path on both sides with distinct content and echo its rel path, so
@@ -1937,30 +1937,69 @@ seed_roster_pair() {
   seed_file "${NEWSRC}" "$1" "roster release $1"
 }
 
-@test "C2a1: a driven apply leaves a roster base entry under each declared PATH key" {
-  local rel rels=()
-  while IFS= read -r rel; do
-    rels+=("${rel}")
-    seed_roster_pair "${rel}"
-  done < <(bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh")
-  [ "${#rels[@]}" -eq 4 ] || return 1
-  write_manifest "${WORK}/manifest.json" "${rels[@]}"
-
-  run_update
-  [ "$status" -eq 0 ] || return 1
-  for rel in "${rels[@]}"; do
-    # under the SIBLING root, at the full path — not flattened beside the agent keys
-    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster release ${rel}" ]] || return 1
-    [[ ! -e "${STATE}/update-state/base-agents/${rel##*/}" ]] || return 1
-  done
+# Seed a PRIOR roster base entry, so a kept path is observable as byte-identical
+# rather than as an absent file (which an unwritten path produces either way).
+seed_roster_base() {
+  mkdir -p -- "$(dirname -- "${STATE}/update-state/base-roster/$1")"
+  printf '%s' "roster prior base $1" >"${STATE}/update-state/base-roster/$1"
 }
 
-@test "C2a1: an ACTIVE ledger naming no roster path still advances all four" {
+# Emit the declared roster paths by reading the ONE declaration, in a contained
+# subshell. A literal list here would be a second declaration of the fact the single
+# declaration exists to hold.
+roster_paths() {
+  bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh"
+}
+
+# Drive update_capture_base_content directly against a FIXTURE ledger, in an
+# isolated strict-mode subshell. No producer can name a roster path until the merge
+# claim widens — all three write from the agent-directory loop — so a listed roster
+# path reaches the gate here and reaches it nowhere else.
+# $1 = ledger content (one manifest-relative path per line).
+run_capture_with_ledger() {
+  printf '%s' "$1" >"${WORK}/fixture.ledger"
+  run env GA_ROOT="${INSTALL}" ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      _update_agent_outcomes_file="$3"
+      update_capture_base_content "$4"
+    ' _ "${SKILL}" "${GA}/scripts/lib/apply-spine.sh" "${WORK}/fixture.ledger" "${NEWSRC}"
+}
+
+@test "the roster gate advances a LISTED path and keeps an OMITTED one byte-identical" {
+  # Both directions ride one drive: a probe phrased only as "this must not advance"
+  # is satisfied by any failure, a broken fixture included.
   local rel rels=()
   while IFS= read -r rel; do
     rels+=("${rel}")
     seed_roster_pair "${rel}"
-  done < <(bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh")
+    seed_roster_base "${rel}"
+  done < <(roster_paths)
+  [ "${#rels[@]}" -eq 4 ] || return 1
+  local listed="${rels[0]}" omitted="${rels[1]}"
+
+  run_capture_with_ledger "${listed}
+"
+  [ "$status" -eq 0 ] || return 1
+  # the listed path advanced, under the SIBLING root at its full path — not
+  # flattened beside the basename-keyed agent entries
+  [[ "$(cat "${STATE}/update-state/base-roster/${listed}")" == "roster release ${listed}" ]] || return 1
+  [[ ! -e "${STATE}/update-state/base-agents/${listed##*/}" ]] || return 1
+  # the omitted path kept the entry a later merge would anchor on
+  [[ "$(cat "${STATE}/update-state/base-roster/${omitted}")" == "roster prior base ${omitted}" ]] || return 1
+}
+
+@test "an ACTIVE ledger naming no roster path keeps all four at their prior base" {
+  local rel rels=()
+  while IFS= read -r rel; do
+    rels+=("${rel}")
+    seed_roster_pair "${rel}"
+    seed_roster_base "${rel}"
+  done < <(roster_paths)
   # A REFUSED agent merge makes the ledger active AND demonstrably gating: its prior
   # base entry is kept, so an unchanged roster entry could not be blamed on an idle ledger.
   local ref_local='# dev-ref
@@ -1980,8 +2019,9 @@ rm -rf /tmp/everything
   [ "$status" -eq 0 ] || return 1
   # the ledger is active and gating — the refused agent kept its prior base …
   [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
-  # … while the ledger-free roster arm advanced all four regardless.
+  # … and so did every roster path, none of which the ledger names. An end-to-end run
+  # cannot yet produce one that it does: the merge claim reaches agent bodies only.
   for rel in "${rels[@]}"; do
-    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster release ${rel}" ]] || return 1
+    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster prior base ${rel}" ]] || return 1
   done
 }

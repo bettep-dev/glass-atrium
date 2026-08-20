@@ -116,7 +116,7 @@ run_restore_base_entry() {
   printf 'BASE v0\n' >"${STORE}/dev-x.md"            # prior base entry
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"  # live before-image → file is restorable
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md" # release body → store advances to this
-  printf 'dev-x.md\n' >"${LEDGER}"                   # outcome ledger lists the landed merge
+  printf 'agents/dev-x.md\n' >"${LEDGER}"            # outcome ledger lists the landed merge
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -131,7 +131,7 @@ run_restore_base_entry() {
   printf 'BASE v0\n' >"${STORE}/dev-y.md"            # prior base exists
   # NO ${CYCLEDIR}/dev-y.md.bak — a byte-identical / no-net-change advance is not restorable
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-y.md"
-  printf 'dev-y.md\n' >"${LEDGER}"
+  printf 'agents/dev-y.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -144,7 +144,7 @@ run_restore_base_entry() {
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
   printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"  # the applied merge result restore reverts AWAY
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md"
-  printf 'dev-x.md\n' >"${LEDGER}"
+  printf 'agents/dev-x.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -163,7 +163,7 @@ run_restore_base_entry() {
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
   printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md"
-  printf 'dev-x.md\n' >"${LEDGER}"
+  printf 'agents/dev-x.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
