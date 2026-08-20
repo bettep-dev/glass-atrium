@@ -312,6 +312,12 @@ spine_stage_and_verify() {
 # A symlink src is reproduced as a symlink at the temp and rename(2) moves the
 # link itself over dst, so the forward swap and the rollback restore both land a
 # link row as a link rather than as a regular file holding the target's bytes.
+#
+# Residue: the temp is a SIBLING of dst, so it sits inside the install root, while
+# the updater's cleanup tears down only its own work dir. A process killed between
+# the copy and the rename therefore leaves that temp behind. It carries no manifest
+# row, so the manifest-scoped stages (change selection, mode enforcement, the mirror
+# refresh) never reach it and the swap stays atomic — clearing it is a manual sweep.
 spine_atomic_swap() {
   local src="$1" dst="$2" tmp
   tmp="${dst}.tmp.$$"

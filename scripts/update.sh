@@ -690,9 +690,9 @@ update_fetch_release() {
 # ---------------------------------------------------------------------------
 #
 # A release that ADDS or REMOVES an agent is a ROSTER change, NOT a content edit.
-# It MUST NOT be auto-applied by the silent deterministic sync: agents/**/*.md is
-# already excluded by the spine (E4 merge path), but agent-registry.json is a
-# NON-agent file that WOULD flow through the deterministic sync and silently swap
+# It MUST NOT be auto-applied by the silent deterministic sync: a top-level
+# agents/<name>.md is excluded by the spine (E4 merge path), but agent-registry.json
+# is a NON-agent file that WOULD flow through the deterministic sync and silently swap
 # an agent into / out of the roster. Roster changes belong to the agent_lifecycle
 # human-pause ceremony (create/delete passes its gate + the two HITL pauses), so
 # this gate refuses/defers them. A pure CONTENT edit to an already-present agent
@@ -904,10 +904,13 @@ update_filter_apply_path() {
 # Agent EDITABLE-region merge — E4 (T17-T19), the live integration
 # ---------------------------------------------------------------------------
 #
-# This is the agent-file counterpart to the deterministic non-agent sync: the
-# spine EXCLUDES agents/**/*.md (spine_is_excluded_path), so each changed agent
-# *.md flows through the three-anchor (base@install / vendor / local) resolver in
-# autoagent/lib/editable_merge.py instead of being byte-swapped. The merged
+# This is the agent-file counterpart to the deterministic sync: spine_is_excluded_path
+# claims exactly the top-level agents/<name>.md other than the charter, so each such
+# changed body flows through the three-anchor (base@install / vendor / local) resolver
+# in autoagent/lib/editable_merge.py instead of being byte-swapped. Nested agent
+# markdown (agents/references/, agents/templates/) and the charter are NOT claimed
+# here — the spine selects them and they travel the byte-swap like any other manifest
+# row, so nothing below reaches them. The merged
 # candidate is applied through the shared git-free git_txn_apply transaction
 # (before-image → apply → verify → leave|restore). Reuse only — no merge logic is
 # re-implemented here; this is the wiring.
@@ -2583,10 +2586,14 @@ update_run() {
   # binary — loud-fail exit 7 if not, so the merge cannot fail cryptically mid-flight.
   update_headless_verify_claude
 
-  # Step 3 — select the changed NON-AGENT files (merge-claimed agent md / overlays
-  # / config are excluded by the spine). The coverage scan runs first so an
-  # unclaimed path is named BEFORE the run reports success without having
-  # delivered it.
+  # Step 3 — spine-synced selection: every manifest row except a merge-claimed
+  # top-level agents/<name>.md (the charter is unclaimed → selected here).
+  # A user-owned overlay, or the rendered config file, is out of this byte-swap
+  # solely by carrying no manifest row — the manifest is generated from tracked
+  # files, and that render output is git-ignored with only its template tracked.
+  # Give such a file a row and it is swapped: no arm on this path withholds it.
+  # The coverage scan runs first so an unclaimed path is named BEFORE the run
+  # reports success without having delivered it.
   update_report_uncovered_paths "${manifest}"
   changed="$(spine_find_changed_files "${manifest}" "${root}")" \
     || update_die "change selection failed (manifest hash gap) — refusing to apply"

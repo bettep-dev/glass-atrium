@@ -246,8 +246,9 @@ capture_install_baseline() {
 # the gated-2-way fallback (more human gating, never a silent corrupt). The updater
 # (scripts/update.sh update_capture_base_content) re-seeds the SAME store post-apply; install seeds first.
 # Source bodies come from ${GA_ROOT}/<rel> (the real release files the symlink farm points at), NOT the
-# installed target symlinks. Only agents/*.md carry EDITABLE regions (predicate mirrors
-# spine_is_excluded_path). ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
+# installed target symlinks. Only agent markdown carries EDITABLE regions; the loop's
+# predicate is deliberately broader than spine_is_excluded_path (see its note below).
+# ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
 capture_base_agent_store() {
   local store rel src dst base copied=0 missing=0 refused=0
   store="$(spine_baseline_dir)/base-agents"
@@ -261,7 +262,10 @@ capture_base_agent_store() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
-    # canonical "agent markdown" predicate (mirrors spine_is_excluded_path).
+    # ANY agent markdown — strictly BROADER than spine_is_excluded_path, which claims
+    # only the top-level bodies other than the charter. The surplus (nested references
+    # and templates, the charter) seeds basename keys the merge never asks for, since
+    # load_base_text is called only for a body the merge claims: dead weight, not risk.
     [[ "${rel}" == agents/* && "${rel}" == *.md ]] || continue
     src="${GA_ROOT}/${rel}"
     if [[ ! -f "${src}" ]]; then
