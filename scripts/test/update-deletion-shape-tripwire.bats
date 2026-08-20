@@ -99,21 +99,21 @@ trip() {
   [ ! -e "${LEDGER_DIR}/conflict-declines.log" ] || return 1
 }
 
-@test "T1b merge-resolved-release with a net-negative delta warns and persists a record" {
+@test "T1b merge-arbiter-resolved with a net-negative delta warns and persists a record" {
   # The second deletion-capable verdict, and the one this branch added to the case
   # list. take-release drops local lines because the daemon never wrote them;
-  # merge-resolved-release drops lines the daemon DID write, by taking the release
+  # merge-arbiter-resolved drops lines the daemon DID write, by taking the release
   # side of a conflicting gap. That is a strictly larger loss reaching the same
   # advisory, so covering only take-release would leave the newer route — the one
   # the gap policy actually exercises — untested at the guard built for it.
   seed_body "${WORK}/local.md" 'daemon line 1' 'daemon line 2' 'daemon line 3'
   seed_body "${WORK}/candidate.md" 'vendor line 1'
-  VERDICT="merge-resolved-release"
+  VERDICT="merge-arbiter-resolved"
   trip
   [ "${status}" -eq 0 ] || return 1
   oc "deletion-shape tripwire" "${output}" || return 1
   oc "agents/alpha.md" "${output}" || return 1
-  oc "resolves merge-resolved-release" "${output}" || return 1
+  oc "resolves merge-arbiter-resolved" "${output}" || return 1
   oc "drops 2 EDITABLE-region line(s)" "${output}" || return 1
   [ -f "${LEDGER_DIR}/deletion-shape-warnings.log" ] || return 1
   local record

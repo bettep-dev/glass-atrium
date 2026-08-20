@@ -1441,15 +1441,16 @@ class ResolvedGapStatsTest(unittest.TestCase):
         )
         resolution = em.FileResolution(
             target_file="dev-android.md",
-            verdict=em.MERGE_RESOLVED_RELEASE,
+            verdict=em.MERGE_ARBITER_RESOLVED,
             candidate_text="",
             local_text="",
             regions=[
                 em.RegionResolution(
                     0,
-                    em.MERGE_RESOLVED_RELEASE,
+                    em.MERGE_ARBITER_RESOLVED,
                     list(hunk.release),
                     hunks=(hunk,),
+                    decisions=(em.GapOutcome(hunk.release, "RELEASE", "fixture"),),
                 )
             ],
         )
@@ -1541,18 +1542,20 @@ class ResolvedGapStatsTest(unittest.TestCase):
                 )
 
             # The sidecar exists to hand the recording caller text that a gap
-            # discarded. A contested gap keeps both sides, so writing one would
-            # offer local lines that are still in the body as if they were gone.
+            # discarded. This answer re-emits the local lines, so writing one
+            # would offer lines that are still in the body as if they were gone.
             sidecar_written = (root / "cand.md.dropped").exists()
 
         self.assertEqual(rc, em.EXIT_OK)
         self.assertFalse(sidecar_written)
         line = buf.getvalue()
-        self.assertIn(f"verdict={em.MERGE_PENDING_ARBITRATION} ", line)
-        self.assertIn("resolved_hunks=0 ", line)
+        # The gap WAS answered, so the file is arbiter-resolved and counted —
+        # what the answer chose is what makes the two line counts zero.
+        self.assertIn(f"verdict={em.MERGE_ARBITER_RESOLVED} ", line)
+        self.assertIn("resolved_hunks=1 ", line)
         self.assertIn("resolved_dropped_lines=0 ", line)
         self.assertIn("resolved_added_lines=0 ", line)
-        self.assertIn("resolved_regions= ", line)
+        self.assertIn("resolved_regions=0 ", line)
 
     def test_when_diff_out_given_then_it_holds_the_libs_own_diff(self) -> None:
         # The recording caller reads THIS file rather than shelling out to
@@ -1768,13 +1771,25 @@ def _stub_model(answer: str = "CHOICE: LOCAL\nRATIONALE: fixture"):
         yield seam
 
 
-# A stub whose SECOND invocation answers differently from its first: the record
-# is what must make that difference unobservable.
+# A stub whose SECOND arbiter invocation answers differently from its first: the
+# record is what must make that difference unobservable. One binary now serves
+# BOTH model seams — the arbiter and the compliance gate the resolved verdict
+# pulls in — so it routes on the answer format each prompt asks for and counts
+# them apart. A gate call answered with an arbiter answer would fail the axes and
+# veto the transaction, which is how a mis-routed prompt shows up.
 _TWO_ANSWER_STUB = """#!/bin/sh
-n=0
-if [ -s "$ARB_STUB_COUNT" ]; then n=$(wc -c < "$ARB_STUB_COUNT"); fi
-printf 'x' >> "$ARB_STUB_COUNT"
-if [ "$n" -eq 0 ]; then printf '%s\\n' "$ARB_STUB_ANSWER1"; else printf '%s\\n' "$ARB_STUB_ANSWER2"; fi
+case "$*" in
+  *"CHOICE: LOCAL|RELEASE|INTERLEAVE"*)
+    n=0
+    if [ -s "$ARB_STUB_COUNT" ]; then n=$(wc -c < "$ARB_STUB_COUNT"); fi
+    printf 'x' >> "$ARB_STUB_COUNT"
+    if [ "$n" -eq 0 ]; then printf '%s\\n' "$ARB_STUB_ANSWER1"; else printf '%s\\n' "$ARB_STUB_ANSWER2"; fi
+    ;;
+  *)
+    printf 'x' >> "$ARB_STUB_GATE_COUNT"
+    printf 'C1: PASS\\nC2: PASS\\nC3: PASS\\nC4: PASS\\nVERDICT: verified\\nRATIONALE: stub\\n'
+    ;;
+esac
 """
 
 
@@ -1933,6 +1948,7 @@ class ArbiterRecordReplayTest(unittest.TestCase):
             em._STATE_DIR_ENV: str(self.state),
             "AUTOAGENT_CLAUDE_BIN": str(stub),
             "ARB_STUB_COUNT": str(self.root / "count"),
+            "ARB_STUB_GATE_COUNT": str(self.root / "gate-count"),
             "ARB_STUB_ANSWER1": self._INTERLEAVE,
             "ARB_STUB_ANSWER2": "CHOICE: RELEASE\nRATIONALE: a different mind",
         }
@@ -1994,7 +2010,13 @@ class ArbiterRecordReplayTest(unittest.TestCase):
         self.assertEqual(verify.returncode, 0, verify.stderr)
         self.assertEqual(
             (self.root / "count").read_text(encoding="utf-8"),
-            "x",  # one invocation across BOTH processes
+            "x",  # one ARBITER invocation across BOTH processes
+        )
+        # The verify process makes the one model call A6 adds: the compliance
+        # gate over the candidate. It is a different seam from the arbiter, so
+        # the two counters move independently.
+        self.assertEqual(
+            (self.root / "gate-count").read_text(encoding="utf-8"), "x"
         )
         self.assertNotIn("record-", verify.stderr)
 
@@ -2150,6 +2172,87 @@ class ArbiterRecordReplayTest(unittest.TestCase):
 
         self.assertFalse(stale.exists())
         self.assertTrue(self.record_path.is_file())
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ArbiterResolvedGateTest(unittest.TestCase):
+    """A6: the answered gap is the candidate class the compliance gate reads.
+
+    The two rungs below differ in ONE input — whether the arbiter reached an
+    answer — so the call counter reports the verdict's coupling rather than a
+    property of the fixture.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+    _ANSWER = "CHOICE: RELEASE\nRATIONALE: fixture"
+
+    class _GateResult:
+        """The duck-typed shape the gate reads off its verifier."""
+
+        def __init__(self, passed: bool) -> None:
+            self.passed = passed
+            self.axes: dict[str, bool] = {}
+            self.status = "ok"
+            self.rationale = "fixture"
+
+    def _drive(self, answer: str, *, passed: bool = True):
+        """Resolve, apply and verify one contested file against a counting gate."""
+        calls: list[object] = []
+
+        def verify_fn(patch, pattern, skip_pre_verify=False):  # noqa: ARG001
+            calls.append(patch)
+            return self._GateResult(passed)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "dev-android.md"
+            live.write_text(self._LOCAL, encoding="utf-8")
+            with _stub_model(answer):
+                cand = em.build_merge_candidate(
+                    "agents/dev-android.md",
+                    self._LOCAL,
+                    self._RELEASE,
+                    base_text=self._BASE,
+                    agent="dev-android",
+                    verify_fn=verify_fn,
+                    arbiter_mode=em.ARBITER_PLAN,
+                    state_dir=str(root / "state"),
+                )
+            applied = cand.apply(str(live))
+            gate = cand.verify(str(live))
+            return cand, calls, applied, gate
+
+    def test_when_the_gap_is_answered_then_the_gate_runs_exactly_once(self) -> None:
+        cand, calls, applied, gate = self._drive(self._ANSWER)
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertTrue(cand.resolution.needs_llm)
+        self.assertEqual(applied, em.APPLY_OK)
+        self.assertEqual(gate, 0)
+        self.assertEqual(len(calls), 1)
+
+    def test_when_no_answer_is_reached_then_the_gate_never_runs(self) -> None:
+        """The arbiter-unavailable rung — the shape every contested file had
+        before A6, and the live one while the model CLI is exhausted."""
+        cand, calls, applied, gate = self._drive("not an answer")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertFalse(cand.resolution.needs_llm)
+        self.assertEqual(calls, [])
+
+    def test_when_the_gate_vetoes_then_the_candidate_fails_its_transaction(
+        self,
+    ) -> None:
+        """A veto is a transaction failure, which is what returns the target to
+        its before-image — the restore itself is driven over the real
+        transaction by "T19: a failed per-file transaction summarizes as
+        rolled-back/unapplied" in scripts/test/glass-atrium-update.bats."""
+        cand, calls, applied, gate = self._drive(self._ANSWER, passed=False)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(gate, 1)
 
 
 def _get_verify_shell_out() -> str:

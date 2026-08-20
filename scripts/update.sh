@@ -19,7 +19,7 @@
 # it". That table belongs to the autoagent self-improvement loop, so the updater
 # reaches it through exactly ONE channel: update_emit_resolved_records, via the
 # write_autoagent_proposal envelope piped to scripts/_pg_dual_write_daemon.py,
-# always carrying pattern_label=editable-region-resolved-release and a structurally
+# always carrying pattern_label=editable-region-arbiter-resolved and a structurally
 # apply-INELIGIBLE row (terminal status, a haiku_status that no LIKE ok% gate
 # matches, approval_tier=auto). Raw SQL against that table is FORBIDDEN from every
 # path. The write runs in EVERY entry mode, interactive included: the row is the
@@ -41,7 +41,7 @@
 #      apply-spine (spine_commit_staged). Agent EDITABLE-region merge is EXCLUDED
 #      here and left as a documented CALL SEAM for E4 (T17-T19).
 #   4a. RESOLVED-GAP RECORD: one core.autoagent_proposals row per agent body whose
-#      conflicting EDITABLE gaps took the release side (the boundary note above) —
+#      contested EDITABLE gaps the arbiter answered (the boundary note above) —
 #      emitted from the merge step in every entry mode, best-effort.
 #   5. BASELINE (T14 fns; T24 wiring seam): capture the applied manifest as the
 #      base@install anchor for the next update's 3-anchor merge.
@@ -111,8 +111,8 @@
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
 # the resolved-gap accountability row (boundary note at the top) is written in EVERY
-# mode, so an interactive run does reach Postgres whenever a body's conflicting gaps
-# resolved to the release side. update_job rows are written via psql reusing the
+# mode, so an interactive run does reach Postgres whenever a body's contested gaps
+# were answered. update_job rows are written via psql reusing the
 # daemon-apply.sh idiom; single-active is the migration's partial UNIQUE INDEX
 # (update_job_single_active_uniq WHERE status='in-progress'). Seams (all default to
 # production): ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) ·
@@ -310,7 +310,7 @@ update_declines_dir() {
 # diff text can reach a shell or JSON quoting seam. Reads GA_REC_* + the diff
 # file; prints one JSON line.
 _UPDATE_PROPOSAL_PY='
-import json, os, pathlib
+import json, os, pathlib, sys
 
 DIFF_CAP = 20000
 EXCERPT_CAP = 120
@@ -353,27 +353,27 @@ for line in source_lines:
         break
 
 landed = env("GA_REC_LANDED") == "1"
-# The gap resolution itself is deterministic, but the FILE it lands in may carry
-# a second, both-changed region whose verdict does require the Haiku
-# improvement-verify gate. needs_llm is that file-level fact, taken from the plan
-# line rather than re-derived: on a mixed file a model DID run and an outage
-# would have rolled the landing back, so the flat "no model call" claim would
-# tell an auditor the landing was deterministic when it was model-gated.
-model_gated = env("GA_REC_NEEDS_LLM") == "True"
-screening = (
-    "the other region(s) of this file required the improvement-verify gate, "
-    "which ran and passed"
-    if model_gated
-    else "no model call and no operator judgment"
-)
+# Every arbiter-resolved verdict sits in the model-required set of the resolver,
+# so a row of this label describes a candidate the improvement-verify gate read
+# and a gate outage would have rolled back. The claim is unconditional for that
+# reason rather than read off the plan line — and a plan line contradicting it is
+# a disagreement between two processes, reported rather than absorbed
+# into a quieter provenance token.
+if env("GA_REC_NEEDS_LLM") != "True":
+    sys.stderr.write(
+        "update: WARN resolved-record needs_llm={0} for {1} — the arbiter-resolved "
+        "verdict is model-gated, so the plan line disagrees with the resolver\n".format(
+            env("GA_REC_NEEDS_LLM", "(unset)"), env("GA_REC_TARGET", "(unnamed)")
+        )
+    )
 rationale = (
-    "conflicting-gap resolution took the release side "
-    "(deterministic policy, {screening}): "
+    "contested-gap resolution judged by the arbiter "
+    "({screening}): "
     "{hunks} gap(s) in EDITABLE region(s) {regions}; "
     "dropped {dropped} daemon-authored line(s), added {added} release line(s); "
-    "verdict=merge-resolved-release, outcome={outcome}."
+    "verdict=merge-arbiter-resolved, outcome={outcome}."
 ).format(
-    screening=screening,
+    screening="the improvement-verify gate ran over the candidate and passed",
     hunks=env("GA_REC_HUNKS", "0"),
     regions=env("GA_REC_REGIONS", "none"),
     dropped=env("GA_REC_DROPPED", "0"),
@@ -393,7 +393,7 @@ print(json.dumps({
     "op": "write_autoagent_proposal",
     "args": {
         "cycle_date": env("GA_REC_CYCLE_DATE"),
-        "pattern_label": "editable-region-resolved-release",
+        "pattern_label": "editable-region-arbiter-resolved",
         "target_file": env("GA_REC_TARGET"),
         "target_agent": env("GA_REC_AGENT"),
         # The dispatcher coerces an UNKNOWN classification label to
@@ -401,15 +401,10 @@ print(json.dumps({
         # must carry the daemon body label that maps to the apply enum.
         "classification": "body-auto" if landed else "reject",
         "rationale": rationale,
-        # The gap resolution runs no model, so no ok*/skipped:* token the daemon
-        # composes is true for a wholly-resolved file. A mixed file is the other
-        # case: its clean region DID run the improvement-verify gate, so
-        # skipped:no-model-call would be a false provenance claim. Neither token
-        # carries the ok prefix — an updater row must never satisfy the apply
-        # -eligibility gate, which reads a LIKE ok% prefix.
-        "haiku_status": (
-            "verified:improvement-gate" if model_gated else "skipped:no-model-call"
-        ),
+        # The token names the gate the candidate passed, and carries no ok
+        # prefix — an updater row must never satisfy the apply-eligibility gate,
+        # which reads a LIKE ok% prefix.
+        "haiku_status": "verified:improvement-gate",
         # The legacy llm tier folds into the safety bucket in both the tier
         # count fold and the query builder, so an llm-tiered row would inflate
         # the operator awaiting-decision count for a row awaiting nothing.
@@ -425,13 +420,12 @@ print(json.dumps({
 }))
 '
 
-# Record ONE self-improvement-history row per body whose conflicting gaps
-# resolved to the release side. This is the only trace that daemon-authored
-# content was discarded: the path takes the release side with no per-file operator
+# Record ONE self-improvement-history row per body whose contested gaps the
+# arbiter answered. This is the only trace that daemon-authored content was
+# displaced: a model chose between the two sides with no per-file operator
 # judgment, so the recorded row IS the accountability surface the human reviews
-# afterwards. The gap resolution itself calls no model — but a file whose OTHER
-# regions are both-changed still runs the improvement-verify gate, so the row's
-# provenance fields follow the plan line's needs_llm rather than the verdict.
+# afterwards. Every such candidate also passed the improvement-verify gate, which
+# is why the row's provenance fields state that gate unconditionally.
 #
 # This is the SINGLE sanctioned exception to the file-header core.autoagent_proposals
 # boundary, and it is deliberately NOT headless-gated: the caller chain (merge →
@@ -543,16 +537,16 @@ update_editable_region_lines() {
 # Deletion-shape tripwire. A base anchor contaminated to equal the local body resolves EVERY
 # vendor-differing region take-release, so daemon-evolved lines are trimmed by a candidate
 # that carries no conflict and lands unremarked. That shape is all-take-release WITH a
-# net-negative EDITABLE-region line delta. merge-resolved-release is deletion-capable for the
-# same reason by a different route — a conflicting gap drops its local lines for the release
-# side — so it is covered here rather than left outside the one guard built for deletion.
+# net-negative EDITABLE-region line delta. merge-arbiter-resolved is deletion-capable for the
+# same reason by a different route — an answered gap may emit lines the local side did not
+# have — so it is covered here rather than left outside the one guard built for deletion.
 # ADVISORY only: the candidate is still queued and the merge is untouched, but the operator
 # gets a loud per-file warning plus a durable record beside the conflict-decline ledger.
 # $1 = install root, $2 = repo-relative path, $3 = plan verdict, $4 = local body, $5 = candidate.
 update_check_deletion_shape() {
   local root="$1" rel="$2" verdict="$3" local_file="$4" candidate="$5"
   case "${verdict}" in
-    'take-release' | 'merge-resolved-release') ;;
+    'take-release' | 'merge-arbiter-resolved') ;;
     *) return 0 ;; # GA-ABSORB[benign]: any other verdict is not a deletion-capable shape — the tripwire has no advisory to emit and the merge is unaffected.
   esac
   local before after delta dest
@@ -928,9 +922,10 @@ update_roster_orphan_registry_removes() {
 #   * merge-pending-arbitration                 -> the contested gap emitted neither
 #                                                  side -> the same decline, local
 #                                                  body kept, decline recorded
-#   * merge-resolved-release (changed)          -> conflicting gaps took the release
-#                                                  side, marker-free -> collected ->
-#                                                  txn, same as merge-clean
+#   * merge-arbiter-resolved (changed)          -> the arbiter answered every
+#                                                  contested gap, marker-free ->
+#                                                  collected -> txn, and the
+#                                                  improvement-verify gate reads it
 #   * a verdict named in NONE of the arms       -> fail-closed decline, recorded,
 #                                                  zero bytes written
 #   * keep-local / no-op (changed=False)         -> no write
@@ -1341,7 +1336,7 @@ update_merge_agent_editable_regions() {
       gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
       merge-conflict) reason='a conflict-marker candidate NEVER lands' ;;
       merge-pending-arbitration) reason='a contested gap emitted neither side, so nothing was resolved to land' ;;
-      keep-local | take-release | merge-clean | merge-resolved-release | no-op)
+      keep-local | take-release | merge-clean | merge-arbiter-resolved | no-op)
         reason='' # per-file reset — a leaked reason would decline a mergeable body
         ;;
       *)
@@ -1369,8 +1364,8 @@ update_merge_agent_editable_regions() {
     update_check_deletion_shape "${root}" "agents/${base}" "${verdict}" "${local_file}" "${candidate}"
     update_warn_dropped_frontmatter "agents/${base}" "${plan_line}"
 
-    # Queue the self-improvement-history row for a body whose conflicting gaps
-    # took the release side. The live-to-candidate diff comes from `plan
+    # Queue the self-improvement-history row for a body whose contested gaps the
+    # arbiter answered. The live-to-candidate diff comes from `plan
     # --diff-out`: the merge lib already computed it (it is the text the sensitive
     # scan and the Haiku gate ran against), so re-deriving it here with a second
     # diff implementation would record a diff the merge never saw. Capturing it at
@@ -1384,7 +1379,7 @@ update_merge_agent_editable_regions() {
     # so the two namespaces being disjoint is what keeps an updater row out of that
     # read. "Normalizing" this to an absolute path would silently feed the daemon's
     # back-off state.
-    if [[ "${verdict}" == 'merge-resolved-release' ]]; then
+    if [[ "${verdict}" == 'merge-arbiter-resolved' ]]; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${base}" "agents/${base}" "${file}" \
         "$(update_plan_field resolved_hunks "${plan_line}")" \

@@ -32,9 +32,10 @@
 #   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
 #                  cycle date: the date is forked once per run, so a midnight
 #                  crossing can never split one run's rows across two days.
-#   T11 gated    — a file whose OTHER region needed the Haiku improvement-verify gate
-#                  records that gate, never skipped:no-model-call, and stays outside
-#                  every LIKE 'ok%' apply-eligibility gate.
+#   T11 gated    — EVERY row records the improvement-verify gate that ran, never
+#                  skipped:no-model-call, and stays outside every LIKE 'ok%'
+#                  apply-eligibility gate. An invariant rather than one fixture:
+#                  the arbiter verdict has no non-gated complement to contrast.
 #   T10 no ledger — an empty or absent ledger PATH records rejected and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
 #   T12 roster   — the landed lookup keys on the row's manifest-relative target, so a
@@ -132,11 +133,11 @@ teardown() {
 # One resolved-file row: base, target, release, hunks, dropped, added, regions,
 # diff, dropped-text sidecar, needs_llm. $2 overrides the sidecar path (an absent
 # one exercises the diff fallback); $3 overrides the file-level needs_llm, whose
-# default False is the wholly-resolved file every other test describes.
+# default True is what the resolver reports for every arbiter-resolved file.
 write_tsv() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${1:-ga-rec-probe.md}" "agents/${1:-ga-rec-probe.md}" "${RELEASE}" \
-    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" "${3:-False}" >"${TSV}"
+    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" "${3:-True}" >"${TSV}"
 }
 
 run_driver() {
@@ -170,7 +171,7 @@ db_available() {
   [ -s "${CAPTURE}" ]
 
   run envelope_field pattern_label
-  [ "$output" = "editable-region-resolved-release" ]
+  [ "$output" = "editable-region-arbiter-resolved" ]
 
   run envelope_field approval_tier
   [ "$output" = "auto" ]
@@ -193,8 +194,8 @@ db_available() {
     echo "haiku_status satisfies a LIKE 'ok%' apply-eligibility gate: ${output}"
     return 1
   fi
-  if [[ "$output" != skipped:* ]]; then
-    echo "haiku_status must be a skipped: form: ${output}"
+  if [[ "$output" != verified:improvement-gate ]]; then
+    echo "haiku_status must name the gate the candidate passed: ${output}"
     return 1
   fi
 
@@ -223,7 +224,7 @@ db_available() {
   [[ "$rationale" == *"region(s) 0,3"* ]]
   [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]]
   [[ "$rationale" == *"added 1 release line(s)"* ]]
-  [[ "$rationale" == *"no model call"* ]]
+  [[ "$rationale" == *"improvement-verify gate ran"* ]]
   # The excerpt comes from the resolver's dropped-line sidecar, so it is
   # daemon-authored text and is attributed as such.
   [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]]
@@ -232,28 +233,35 @@ db_available() {
   [ "${#rationale}" -lt 800 ]
 }
 
-@test "T11 a model-gated file records the gate that ran, never no-model-call" {
-  # A file with one resolved region AND one both-changed region reports the
-  # resolved verdict with needs_llm=True: the Haiku improvement-verify gate ran
-  # and a Haiku outage would have rolled the landing back. A row reading
-  # skipped:no-model-call tells an auditor that landing was deterministic.
-  write_tsv ga-rec-probe.md "${DROPPED_TEXT}" True
-  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
-  run run_driver
-  [ "$status" -eq 0 ]
+@test "T11 every row records the gate that ran, never no-model-call" {
+  # An INVARIANT over the rows this emitter writes, not a property of one
+  # fixture: the arbiter verdict is in the model-required set, so a row whose
+  # plan line claims otherwise is two processes disagreeing rather than a
+  # deterministic landing. Both plan-line values are driven for that reason —
+  # the row reads the same either way, and the disagreeing one says so aloud.
+  for needs_llm in True False; do
+    write_tsv ga-rec-probe.md "${DROPPED_TEXT}" "${needs_llm}"
+    printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
+    run run_driver
+    [ "$status" -eq 0 ] || return 1
+    driver_out="${output}"
 
-  run envelope_field haiku_status
-  [ "$output" = "verified:improvement-gate" ]
-  # Apply-ineligibility is unconditional: neither provenance token may satisfy a
-  # LIKE 'ok%' gate.
-  [[ "$output" != ok* ]]
+    run envelope_field haiku_status
+    [ "$output" = "verified:improvement-gate" ] || return 1
+    # Apply-ineligibility is unconditional: the provenance token may never
+    # satisfy a LIKE 'ok%' gate.
+    [[ "$output" != ok* ]] || return 1
 
-  rationale="$(envelope_field rationale)"
-  [[ "$rationale" != *"no model call"* ]]
-  [[ "$rationale" == *"improvement-verify gate"* ]]
-  # The deterministic half of the claim is unchanged — only the screening clause moves.
-  [[ "$rationale" == *"took the release side"* ]]
-  [[ "$rationale" == *"2 gap(s)"* ]]
+    rationale="$(envelope_field rationale)"
+    [[ "$rationale" != *"no model call"* ]] || return 1
+    [[ "$rationale" == *"improvement-verify gate ran"* ]] || return 1
+    [[ "$rationale" == *"judged by the arbiter"* ]] || return 1
+    [[ "$rationale" == *"2 gap(s)"* ]] || return 1
+
+    if [ "${needs_llm}" = "False" ]; then
+      [[ "${driver_out}" == *"disagrees with the resolver"* ]] || return 1
+    fi
+  done
 }
 
 @test "T8 without the resolver sidecar the excerpt falls back to the diff and says so" {
@@ -393,17 +401,17 @@ roster_paths() {
   row="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT approval_tier || '|' || status || '|' || haiku_status || '|' || cost_guard_state
        FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
   # This runs against the PRODUCTION database, and pattern_label is the one real rows
   # carry — the pid-unique target is the ONLY thing separating this cleanup from live
   # accountability records. Never widen the predicate to the label alone.
   psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
     "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'" >/dev/null
 
-  [ "${row}" = "auto|applied|skipped:no-model-call|ok" ]
+  [ "${row}" = "auto|applied|verified:improvement-gate|ok" ]
 }
 
 @test "T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome" {
@@ -422,7 +430,7 @@ roster_paths() {
   status_now() {
     psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
       "SELECT status FROM core.autoagent_proposals
-        WHERE pattern_label = 'editable-region-resolved-release'
+        WHERE pattern_label = 'editable-region-arbiter-resolved'
           AND target_file = 'agents/${target}'"
   }
 
@@ -443,12 +451,12 @@ roster_paths() {
 
   count="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT count(*) FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
   # Same production-database caveat as T2: the pid-unique target is the whole guard.
   psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
     "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'" >/dev/null
 
   [ "${count}" = "1" ]

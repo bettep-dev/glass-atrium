@@ -914,10 +914,15 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   # structurally cannot supply.
   #
   # The observation is of SILENCE. The queue that feeds the emitter is gated on the
-  # verdict merge-resolved-release (grepped for below, so the gate cannot move
-  # without this leg noticing), and a contested gap emits merge-pending-arbitration
-  # instead, which the routing declines. So this run composes no envelope, and the
-  # leg pins that neither channel carries anything a declined body did not earn.
+  # verdict merge-arbiter-resolved (grepped for below, so the gate cannot move
+  # without this leg noticing), and an UNANSWERED contested gap emits
+  # merge-pending-arbitration instead, which the routing declines. So this run
+  # composes no envelope, and the leg pins that neither channel carries anything a
+  # declined body did not earn.
+  #
+  # The arbiter seam is stubbed to reach no answer, which is what makes the decline
+  # the leg observes a property of the code rather than of whether a model happened
+  # to be reachable from this machine.
   local gap_base gap_local gap_release
   gap_base='# dev-a
 ## Goal
@@ -950,6 +955,12 @@ with open(os.environ["ENVELOPE_LOG"], "a", encoding="utf-8") as fh:
     fh.write(sys.stdin.read())
 PY
   write_mock_psql "${WORK}/psql"
+  cat >"${WORK}/arbiter-stub" <<'SH'
+#!/bin/sh
+printf 'unparsable\n'
+SH
+  chmod +x "${WORK}/arbiter-stub"
+  export AUTOAGENT_CLAUDE_BIN="${WORK}/arbiter-stub"
   export ENVELOPE_LOG="${WORK}/envelopes.jsonl"
   export ATRIUM_UPDATE_PG_HELPER="${WORK}/spy-helper.py"
   export ATRIUM_UPDATE_PSQL="${WORK}/psql"
@@ -965,8 +976,8 @@ PY
   fi
 
   # The gate this leg's silence rests on, read from the source rather than assumed:
-  # the queue writes the resolved-record row only for merge-resolved-release.
-  run grep -cF "== 'merge-resolved-release' ]]" "${SKILL}"
+  # the queue writes the resolved-record row only for merge-arbiter-resolved.
+  run grep -cF "== 'merge-arbiter-resolved' ]]" "${SKILL}"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 

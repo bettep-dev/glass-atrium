@@ -103,20 +103,19 @@ KEEP_LOCAL = "keep-local"  # release region == base -> local kept verbatim
 TAKE_RELEASE = "take-release"  # local region == base -> vendor region taken
 MERGE_CLEAN = "merge-clean"  # both changed, diff3 merged without conflict
 MERGE_CONFLICT = "merge-conflict"  # both changed with an overlapping conflict
-MERGE_RESOLVED_RELEASE = "merge-resolved-release"  # conflicting gap took the release side
+MERGE_ARBITER_RESOLVED = "merge-arbiter-resolved"  # contested gap the arbiter answered
 MERGE_PENDING_ARBITRATION = "merge-pending-arbitration"  # contested gap emits the local side
 GATED_2WAY = "gated-2way-present-both"  # base content unavailable, sides differ
 STRUCTURAL = "structural-change"  # region-count mismatch -> manual ceremony
 REFUSED = "sensitive-refused"  # target path / diff matched a sensitive pattern
 NO_OP = "no-op"  # candidate identical to current local file
 
-# MERGE_RESOLVED_RELEASE is UNASSIGNABLE by this resolver: no value of the gap
-# policy produces it, because the contested-gap branch assigns
-# MERGE_PENDING_ARBITRATION whenever arbitration is on and MERGE_CONFLICT when it
-# is off. The token stays because scripts/update.sh still references it, which
-# makes removing it a wider change than this file. Every mention of it below
-# therefore describes a verdict that does not currently occur, and the code it
-# guards (the stats filter, the severity slot, the dropped-lines sidecar) is inert.
+# MERGE_ARBITER_RESOLVED and MERGE_PENDING_ARBITRATION split the contested-gap
+# branch by whether an answer was reached, not by how the gap looked: an answered
+# gap emits the arbiter's run and carries its choice and rationale in the region's
+# GapOutcome list, while an unanswered one emits the local run and leaves the
+# region pending. Every failure path lands in the pending half, which is what
+# keeps a file nobody judged out of the write path.
 
 # Verdicts that REQUIRE the Haiku improvement-verify gate (an ambiguous,
 # net-new-merged region). KEEP_LOCAL / TAKE_RELEASE / NO_OP are deterministic and
@@ -124,10 +123,13 @@ NO_OP = "no-op"  # candidate identical to current local file
 #
 # MERGE_PENDING_ARBITRATION is OUT: the gap emits the local side and the updater
 # declines the file, so no merged wording reaches a write for the gate to screen.
-# The verdict that would carry an arbitrated wording is what needs the gate.
 #
-# MERGE_RESOLVED_RELEASE is OUT and unassignable — see the note above the gate.
-_LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
+# MERGE_ARBITER_RESOLVED is IN: its candidate carries wording a model chose
+# between two human-authored sides, which is the one candidate class no anchor
+# rule vouches for, so the gate is the only reader that sees it before it lands.
+_LLM_REQUIRED = frozenset(
+    {MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY, MERGE_ARBITER_RESOLVED}
+)
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
 # never writable to a live agent file (see the module header's tripwire section).
@@ -136,7 +138,8 @@ _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 # verbatim, so its candidate is marker-free and the tripwire has nothing to
 # refuse. Membership here turns on markers alone — the updater declines the file
 # either way, so this is not a statement that such a candidate lands.
-# MERGE_RESOLVED_RELEASE is OUT and unassignable — see the note above the gate.
+# MERGE_ARBITER_RESOLVED is OUT for the same reason: an answered gap emits lines
+# taken verbatim from an anchor, so no marker is ever written into its candidate.
 _MARKER_VERDICTS = frozenset({MERGE_CONFLICT, GATED_2WAY})
 
 # git_txn_apply apply-callback contract (mirrors daemon-apply.sh apply_diff):
@@ -213,6 +216,20 @@ def has_conflict_markers(text: str) -> bool:
 
 
 @dataclass(frozen=True)
+class GapOutcome:
+    """What one contested gap resolved to, and on whose authority.
+
+    ``choice`` is None for every path that reached no answer. Those paths emit the
+    local run too, so the lines alone cannot tell a judged LOCAL from a failure —
+    the token is the only thing that separates them.
+    """
+
+    lines: tuple[str, ...]
+    choice: str | None = None
+    rationale: str = ""
+
+
+@dataclass(frozen=True)
 class RegionResolution:
     """Outcome for a single EDITABLE region (document order ``index``)."""
 
@@ -223,6 +240,7 @@ class RegionResolution:
     reason: str = ""
     hunks: tuple[ConflictHunk, ...] = ()  # conflicting gaps, document order
     requests: tuple[ArbitrationRequest, ...] = ()  # gaps awaiting judgment, same order
+    decisions: tuple[GapOutcome, ...] = ()  # per answered gap, same order as hunks
 
 
 @dataclass
@@ -491,6 +509,7 @@ def _resolve_region(
     # Both changed differently -> net-new 3-way merge candidate (Haiku-gated).
     merged, hunks = three_way_merge_hunks(base, local, release, arbitrate=arbitrate)
     requests: tuple[ArbitrationRequest, ...] = ()
+    decisions: tuple[GapOutcome, ...] = ()
     if not hunks:
         verdict = MERGE_CLEAN
     elif arbitrate:
@@ -500,7 +519,7 @@ def _resolve_region(
             ArbitrationRequest(index, hunk, tuple(release)) for hunk in hunks
         )
         if arbiter is not None:
-            merged = _splice_arbitrated(
+            merged, decisions = _splice_arbitrated(
                 merged,
                 hunks,
                 arbiter,
@@ -508,6 +527,11 @@ def _resolve_region(
                 region_count=region_count,
                 release=release,
             )
+            # ONE answered gap is enough: the region's wording is then no longer
+            # the local body, and the gate reads whole candidates rather than
+            # gaps. An unanswered sibling rides along as its own local lines.
+            if any(outcome.choice is not None for outcome in decisions):
+                verdict = MERGE_ARBITER_RESOLVED
     else:
         verdict = MERGE_CONFLICT
     # had_conflict is derived from _MARKER_VERDICTS membership rather than set per
@@ -523,37 +547,71 @@ def _resolve_region(
         reason="both changed; net-new diff3 candidate",
         hunks=tuple(hunks),
         requests=requests,
+        decisions=decisions,
     )
 
 
+def _gap_line_split(
+    hunk: ConflictHunk, outcome: GapOutcome
+) -> tuple[list[str], list[str]]:
+    """One gap's local lines the answer left out, and its lines drawn elsewhere.
+
+    Matching is by line VALUE, one occurrence at a time: an answer that re-emits a
+    local line has not dropped it, whichever run the arbiter named it from.
+    """
+    unmatched = list(outcome.lines)
+    dropped: list[str] = []
+    for line in hunk.local:
+        if line in unmatched:
+            unmatched.remove(line)
+        else:
+            dropped.append(line)
+    return dropped, unmatched
+
+
+def _answered_gaps(
+    resolution: "FileResolution",
+) -> list[tuple[RegionResolution, ConflictHunk, GapOutcome]]:
+    """Every contested gap of every arbiter-resolved region, in document order."""
+    return [
+        (region, hunk, outcome)
+        for region in resolution.regions
+        if region.verdict == MERGE_ARBITER_RESOLVED
+        for hunk, outcome in zip(region.hunks, region.decisions, strict=True)
+    ]
+
+
+def dropped_gap_lines(resolution: "FileResolution") -> list[str]:
+    """Local lines the answers discarded — the only copy left once spliced.
+
+    A gap answered LOCAL contributes nothing: its lines are still in the candidate,
+    so quoting them as discarded would attribute a loss to a resolution that took
+    none.
+    """
+    return [
+        line
+        for _, hunk, outcome in _answered_gaps(resolution)
+        for line in _gap_line_split(hunk, outcome)[0]
+    ]
+
+
 def resolved_gap_stats(resolution: "FileResolution") -> dict[str, str | int]:
-    """Shape of the conflicting gaps this file resolved to the release side.
+    """Shape of the contested gaps this file resolved through the arbiter.
 
-    Currently always zeros: the filter keys on MERGE_RESOLVED_RELEASE, which no
-    resolution carries (see the note beside that constant), so even a file holding
-    a contested gap reports none. The shape is kept because the updater still reads
-    these four plan-line fields.
-
-    The intent, were the verdict assignable: say WHAT was discarded without pasting
-    whole regions, since the hunks are the only place the dropped local text still
-    exists once the resolution has replaced it. Counts only — the excerpt comes
-    from the live-to-candidate diff the caller already composes.
+    Says WHAT the answers displaced without pasting whole regions. Counts only —
+    the excerpt comes from the live-to-candidate diff the caller already composes.
 
     ``regions`` is a comma-joined index list (space-free, so it survives the
     updater's up-to-next-space plan-line extractor), empty when no gap resolved.
     """
-    resolved = [
-        r
-        for r in resolution.regions
-        if r.verdict == MERGE_RESOLVED_RELEASE and r.hunks
-    ]
-    hunks = [h for r in resolved for h in r.hunks]
-    indices = [str(r.index) for r in resolved]
+    answered = _answered_gaps(resolution)
+    splits = [_gap_line_split(hunk, outcome) for _, hunk, outcome in answered]
+    indices = sorted({region.index for region, _, _ in answered})
     return {
-        "hunks": len(hunks),
-        "dropped_lines": sum(len(h.local) for h in hunks),
-        "added_lines": sum(len(h.release) for h in hunks),
-        "regions": ",".join(indices),
+        "hunks": len(answered),
+        "dropped_lines": sum(len(dropped) for dropped, _ in splits),
+        "added_lines": sum(len(added) for _, added in splits),
+        "regions": ",".join(str(index) for index in indices),
     }
 
 
@@ -768,14 +826,14 @@ def resolve_file(
     # Overall verdict = the worst-case region verdict (severity order).
     # MERGE_PENDING_ARBITRATION sits ahead of MERGE_CLEAN so a file carrying one
     # such region and several clean ones still reports it — the routing, deletion
-    # advisory and recording paths all key on seeing it. The MERGE_RESOLVED_RELEASE
-    # slot below it is inert: no resolution carries that verdict, so the pick never
-    # lands on it (see the note beside the constant).
+    # advisory and recording paths all key on seeing it. It also sits ahead of
+    # MERGE_ARBITER_RESOLVED: a file with one unanswered gap declines whole rather
+    # than landing its answered siblings while the unanswered one waits.
     severity = [
         MERGE_CONFLICT,
         GATED_2WAY,
         MERGE_PENDING_ARBITRATION,
-        MERGE_RESOLVED_RELEASE,
+        MERGE_ARBITER_RESOLVED,
         MERGE_CLEAN,
         TAKE_RELEASE,
         KEEP_LOCAL,
@@ -920,7 +978,7 @@ class GapArbiter:
         self._run_state = None
         self._pruned = False
 
-    def get_gap_lines(
+    def get_gap_outcome(
         self,
         *,
         region_index: int,
@@ -928,17 +986,17 @@ class GapArbiter:
         gap_index: int,
         hunk: ConflictHunk,
         context: str,
-    ) -> tuple[str, ...]:
+    ) -> GapOutcome:
         """Resolve one contested gap to the lines the candidate emits for it."""
         if self.mode == ARBITER_PLAN:
-            return self._get_derived_lines(
+            return self._get_derived_outcome(
                 region_index=region_index,
                 region_count=region_count,
                 gap_index=gap_index,
                 hunk=hunk,
                 context=context,
             )
-        return self._get_replayed_lines(
+        return self._get_replayed_outcome(
             region_index=region_index,
             region_count=region_count,
             gap_index=gap_index,
@@ -947,7 +1005,7 @@ class GapArbiter:
 
     # -- plan side -----------------------------------------------------------
 
-    def _get_derived_lines(
+    def _get_derived_outcome(
         self,
         *,
         region_index: int,
@@ -955,12 +1013,12 @@ class GapArbiter:
         gap_index: int,
         hunk: ConflictHunk,
         context: str,
-    ) -> tuple[str, ...]:
+    ) -> GapOutcome:
         try:
             import gap_arbiter as ga  # noqa: PLC0415 — the model seam loads here only
         except Exception as exc:  # noqa: BLE001 — any import failure keeps local
             self._write_row(region_index, region_count, _ARBITER_UNREACHABLE, repr(exc))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
 
         request = ga.GapRequest(
             agent=self.agent,
@@ -977,7 +1035,7 @@ class GapArbiter:
             decision = ga.get_decision(request, run_state=self._run_state)
         except Exception as exc:  # noqa: BLE001 — a raising judge keeps local
             self._write_row(region_index, region_count, _ARBITER_UNREACHABLE, repr(exc))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
 
         self._set_record(
             region_index=region_index,
@@ -988,7 +1046,7 @@ class GapArbiter:
         )
         if decision.row:
             sys.stderr.write(f"{decision.row}\n")
-        return decision.lines
+        return GapOutcome(tuple(decision.lines), decision.choice, decision.rationale)
 
     def _set_record(
         self,
@@ -1045,23 +1103,23 @@ class GapArbiter:
 
     # -- verify side (no import that can reach a model) ----------------------
 
-    def _get_replayed_lines(
+    def _get_replayed_outcome(
         self,
         *,
         region_index: int,
         region_count: int,
         gap_index: int,
         hunk: ConflictHunk,
-    ) -> tuple[str, ...]:
+    ) -> GapOutcome:
         path = self.record_dir / build_gap_key(self.target, region_index, gap_index)
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             self._write_row(region_index, region_count, _REPLAY_ABSENT, str(path))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
         except (OSError, ValueError) as exc:
             self._write_row(region_index, region_count, _REPLAY_MALFORMED, repr(exc))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
 
         if (
             not isinstance(record, dict)
@@ -1070,25 +1128,26 @@ class GapArbiter:
             # Fail CLOSED: a record made against other anchors describes another
             # gap, and consuming it would land text nobody judged for this one.
             self._write_row(region_index, region_count, _REPLAY_MISMATCH, str(path))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
 
         choice = record.get("choice")
+        rationale = str(record.get("rationale") or "")
         if choice is None:
             # The plan process reached no answer and wrote its own row there.
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
         if choice == "LOCAL":
-            return hunk.local
+            return GapOutcome(tuple(hunk.local), choice, rationale)
         if choice == "RELEASE":
-            return hunk.release
+            return GapOutcome(tuple(hunk.release), choice, rationale)
         if choice != "INTERLEAVE":
             self._write_row(region_index, region_count, _REPLAY_MALFORMED, str(choice))
-            return hunk.local
+            return GapOutcome(tuple(hunk.local))
 
         lines = self._find_referenced_lines(record.get("refs"), hunk)
         if lines is None:
             self._write_row(region_index, region_count, _REPLAY_MALFORMED, str(path))
-            return hunk.local
-        return lines
+            return GapOutcome(tuple(hunk.local))
+        return GapOutcome(lines, choice, rationale)
 
     @staticmethod
     def _find_referenced_lines(
@@ -1132,7 +1191,7 @@ def _splice_arbitrated(
     region_index: int,
     region_count: int,
     release: list[str],
-) -> list[str]:
+) -> tuple[list[str], tuple[GapOutcome, ...]]:
     """Replace each emitted local gap with what the arbiter resolved it to.
 
     Gaps resolve in document order, so a per-run call ceiling cuts the later
@@ -1141,7 +1200,7 @@ def _splice_arbitrated(
     """
     context = "".join(release)
     resolved = [
-        arbiter.get_gap_lines(
+        arbiter.get_gap_outcome(
             region_index=region_index,
             region_count=region_count,
             gap_index=gap_index,
@@ -1153,8 +1212,10 @@ def _splice_arbitrated(
     out = list(merged)
     for gap_index in reversed(range(len(hunks))):
         hunk = hunks[gap_index]
-        out[hunk.out_index : hunk.out_index + len(hunk.local)] = resolved[gap_index]
-    return out
+        out[hunk.out_index : hunk.out_index + len(hunk.local)] = resolved[
+            gap_index
+        ].lines
+    return out, tuple(resolved)
 
 
 # -- Sensitive refusal + Haiku verify gate (T18) -----------------------------
@@ -1408,26 +1469,16 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         local_text, cand.resolution.candidate_text
     )
     gaps = resolved_gap_stats(cand.resolution)
-    # Unreachable today: gaps["hunks"] counts the conflict hunks across
-    # MERGE_RESOLVED_RELEASE regions (their indices ride a separate field), and no
-    # resolution carries that verdict (see the note beside the constant), so no
-    # sidecar is written. The intent, were it assignable: the dropped local lines
-    # exist nowhere else once the resolution has replaced them, and they cannot
-    # ride the plan line (free text, and the updater's extractor reads up to the
-    # next space). A sidecar beside the candidate would keep the recording caller's
-    # excerpt to text a gap actually discarded — a diff-derived excerpt would also
-    # quote vendor lines the release restructured, which the record would then
-    # misattribute to the daemon.
-    if gaps["hunks"]:
+    # The discarded local lines cannot ride the plan line — it is free text and the
+    # updater's extractor reads only up to the next space — and they exist nowhere
+    # else once the answers have replaced them. The sidecar keeps the recording
+    # caller's excerpt to text a gap actually discarded; a diff-derived excerpt
+    # would also quote vendor lines the release restructured, which the record
+    # would then misattribute to the daemon.
+    dropped_lines = dropped_gap_lines(cand.resolution)
+    if dropped_lines:
         Path(f"{args.out}.dropped").write_text(
-            "".join(
-                line
-                for region in cand.resolution.regions
-                if region.verdict == MERGE_RESOLVED_RELEASE
-                for hunk in region.hunks
-                for line in hunk.local
-            ),
-            encoding="utf-8",
+            "".join(dropped_lines), encoding="utf-8"
         )
     sys.stdout.write(
         f"verdict={cand.resolution.verdict} needs_llm={cand.resolution.needs_llm} "

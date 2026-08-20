@@ -111,7 +111,7 @@ before(async () => {
          approval_tier, status, source_file, source_file_mtime)
       VALUES
         (CURRENT_DATE,
-         'editable-region-resolved-release',
+         'editable-region-arbiter-resolved',
          ${`/__test__/${SUITE_MARKER}-updater.md`},
          ${`${SUITE_MARKER}-agent`},
          'apply'::core."ProposalClassification",

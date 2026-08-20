@@ -1691,6 +1691,10 @@ interface ProposalRestoreRow {
 // daemon-apply.sh. They land status='applied' to report the release outcome, but no
 // agents-bak before-image was ever captured for them — restore can only ever fail.
 const UPDATER_WRITTEN_PATTERN_LABELS: ReadonlySet<string> = new Set([
+  "editable-region-arbiter-resolved",
+  // Historical, and retained for that reason alone: rows written under the label the
+  // updater used before the arbiter verdict are already in the table, so dropping it
+  // would start counting them as daemon activity retroactively.
   "editable-region-resolved-release",
 ]);
 
