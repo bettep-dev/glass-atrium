@@ -41,8 +41,8 @@
 
 # TTL (seconds) beyond which a not-live lock is treated as crashed-holder residue.
 # ATRIUM_APPLY_LOCK_TTL_SECS override; a non-positive / non-integer value falls
-# back to 1800s (30 min) — the same generous upper bound the update pause-flag
-# stale-TTL uses, since the two guards protect the same apply window.
+# back to 1800s (30 min) — generous enough to outlast the slowest legitimate
+# apply window, so a live holder is never reclaimed out from under itself.
 apply_lock_ttl_secs() {
   local raw="${ATRIUM_APPLY_LOCK_TTL_SECS:-}"
   if [[ "${raw}" =~ ^[0-9]+$ ]] && [[ "${raw}" -gt 0 ]]; then
@@ -53,7 +53,7 @@ apply_lock_ttl_secs() {
 }
 
 # Echo the integer age in seconds (now - mtime) of the lock dir at $1 via python3
-# os.stat().st_mtime — the SAME portable idiom the pause-flag lib uses, NEVER the
+# os.stat().st_mtime — portable by construction, NEVER the
 # BSD/GNU-divergent `stat -f` / `stat -c`. The dir mtime tracks the pid-file write
 # (the acquisition instant); nothing mutates the lock dir afterward. Loud-fails
 # (rc 1) when the dir is absent OR python3 cannot compute it. Negative age (clock

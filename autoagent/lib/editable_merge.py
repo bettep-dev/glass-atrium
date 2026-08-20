@@ -124,20 +124,14 @@ NO_OP = "no-op"  # candidate identical to current local file
 # a whole. The recorded provenance therefore keys on needs_llm, never on this
 # verdict — see update_emit_resolved_records.
 #
-# The cost is real, accepted, and NOT backstopped by the confirm gate:
-# gate_confirm_changes resolves ATRIUM_UPDATE_CONFIRM_ANSWER BEFORE /dev/tty, so
-# on the unattended path — every deploy on this host today — the confirm is an
-# automatic yes and no human reads the diff. Unlike TAKE_RELEASE, which fires
-# when the daemon never touched the region, a resolved gap DISCARDS
-# daemon-authored content. That discard therefore happens with no automatic
-# screening. Removing the screening was the deliberate half; the record that
-# replaces it is the other, and it now exists — every resolved file writes one
-# self-improvement-history row (``resolved_gap_stats`` here supplies its counts,
-# the sidecar beside the candidate its dropped text, and
-# ``update_emit_resolved_records`` in the updater writes it). So the discard is
-# reviewed AFTER the fact, from the recorded row, rather than screened before
-# it — which is the accountability the confirm gate does not provide on an
-# unattended deploy.
+# The cost is real and accepted: nothing prompts a human between this verdict
+# and the write, so the discard is unscreened at apply time. Unlike TAKE_RELEASE,
+# which fires when the daemon never touched the region, a resolved gap DISCARDS
+# daemon-authored content. The accountability is a record rather than a prompt —
+# every resolved file writes one self-improvement-history row
+# (``resolved_gap_stats`` here supplies its counts, the sidecar beside the
+# candidate its dropped text, and ``update_emit_resolved_records`` in the updater
+# writes it). So the discard is reviewed AFTER the fact, from the recorded row.
 _LLM_REQUIRED = frozenset({MERGE_CLEAN, MERGE_CONFLICT, GATED_2WAY})
 
 # Verdicts whose candidate carries conflict markers BY CONSTRUCTION — report-only,
@@ -166,8 +160,9 @@ APPLY_MALFORMED = 2
 # {name, tools, scope} stay vendor-owned (hooks/enforce-harness-critical.sh
 # protects those and explicitly excludes model). A live-only key outside BOTH
 # tuples is still dropped ON PURPOSE — inverting the default would retain a key
-# the vendor removed deliberately — so dropped_local_frontmatter_keys()
-# names it at the confirm gate rather than letting it vanish unannounced. Tuple,
+# the vendor removed deliberately — so dropped_local_frontmatter_keys() reports
+# it on the plan line, which the updater's update_warn_dropped_frontmatter turns
+# into a run-log advisory rather than letting the drop vanish unannounced. Tuple,
 # not set → the append order below is deterministic across runs.
 _LOCAL_ONLY_FRONTMATTER_KEYS = ("model",)
 
