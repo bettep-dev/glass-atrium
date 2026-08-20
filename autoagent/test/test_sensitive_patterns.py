@@ -55,9 +55,7 @@ _PATH_CORPUS: tuple[str, ...] = (
     "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
     "GLASS_ATRIUM_GLOBAL_RULES.md",
-    "rules/glass-atrium/core-security.md",
     "scoped/scope-security.md",
-    "rules/glass-atrium/core-learning-log.md",
     "project/.env",
     "project/.env.local",
     "~/Library/LaunchAgents/com.claude.monitor.plist",
@@ -69,9 +67,13 @@ _PATH_CORPUS: tuple[str, ...] = (
     "scripts/update.sh",
     "config.toml",
     "rules/security.md",  # the retired phantom — must stay clean
-    "rules/security-notes.md",  # not exactly core-security.md
-    "rules/glass-atrium/core-learning-log-notes.md",  # suffix near-miss
-    "hooks/learning-aggregator.py",  # live manifest neighbor, not the rule file
+    "rules/security-notes.md",
+    # The two rule-file rows the tuple no longer names, plus the neighbours a
+    # basename pattern over them used to have to miss.
+    "rules/glass-atrium/core-security.md",
+    "rules/glass-atrium/core-learning-log.md",
+    "rules/glass-atrium/core-learning-log-notes.md",
+    "hooks/learning-aggregator.py",
     "envoy.md",  # not .env
     # clean — pre-rename charter basenames lock in the GLASS_ATRIUM_ rename:
     # the refusal SoT matches ONLY the new name, so the old forms are ordinary.
@@ -207,9 +209,7 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
         for path in (
             "rules/GLASS_ATRIUM_GLOBAL_RULES.md",
             "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
-            "rules/glass-atrium/core-security.md",
             "scoped/scope-security.md",
-            "rules/glass-atrium/core-learning-log.md",
             "project/.env",
             "~/Library/LaunchAgents/com.claude.monitor.plist",
         ):
@@ -224,6 +224,8 @@ class DaemonAndSkillRefuseSameSet(unittest.TestCase):
             "rules/scope-dev.md",
             "config.toml",
             "rules/security.md",
+            "rules/glass-atrium/core-security.md",
+            "rules/glass-atrium/core-learning-log.md",
             "rules/glass-atrium/core-learning-log-notes.md",
             "hooks/learning-aggregator.py",
             "rules/GLOBAL_RULES.md",
@@ -344,8 +346,8 @@ class SyncExemptionIsOneConsumerWide(unittest.TestCase):
             )
 
     def test_exemption_set_is_exact_relpaths_not_patterns(self) -> None:
-        # An exact set cannot over-match the way the tuple's own `core-security.md`
-        # pattern does; a regex or a glob character here would reopen that class.
+        # An exact set cannot over-match the way a basename pattern in the tuple
+        # can; a regex or a glob character here would reopen that class.
         for entry in dc._SYNC_EXEMPT_RELPATHS:
             self.assertNotIn("*", entry)
             self.assertFalse(entry.startswith("/"))
@@ -412,13 +414,11 @@ class SyncCliExitContract(unittest.TestCase):
         self.assertIn("REFUSED", res.stderr)
 
 
-# The rule-file rows the path tuple guards, each spelled with the pattern source
-# it must return — a source, never a count, so a widening cannot pass by
-# refusing more rows than it claims.
+# The two rule-file rows the path tuple no longer names. Both live outside the
+# agents directory, and both matchers' callers pass an agent body path, so a row
+# for either could not have fired.
 _CORE_SECURITY_ROW = "rules/glass-atrium/core-security.md"
-_CORE_SECURITY_SOURCE = r"(^|/)core-security\.md$"
 _TRIGGER_LIST_ROW = "rules/glass-atrium/core-learning-log.md"
-_TRIGGER_LIST_SOURCE = r"(^|/)core-learning-log\.md$"
 
 # Every manifest row the strict matcher refuses. Pinning the whole set is what
 # bounds a path-pattern edit's blast radius: a widening that reaches an
@@ -429,26 +429,37 @@ _REFUSED_MANIFEST_ROWS: frozenset[str] = frozenset(
         "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md",
         "monitor/.env.example",
         "scoped/scope-security.md",
-        _CORE_SECURITY_ROW,
-        _TRIGGER_LIST_ROW,
     }
 )
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
-class RuleFileRowsAreGuarded(unittest.TestCase):
-    """The Tier-2 clause list names the security rules and its own definition
-    file; the tuple must actually reach both, and reach nothing adjacent."""
+class RuleFileRowsAreOutOfReach(unittest.TestCase):
+    """Neither rule file is a path the tuple's callers can present: both matcher
+    consumers pass an agents/<name>.md body path. A row for either would read as
+    protection the code cannot deliver, so the tuple names neither."""
 
-    def test_core_security_row_returns_its_pattern_source(self) -> None:
-        self.assertEqual(
-            dc.match_sensitive_path(_CORE_SECURITY_ROW), _CORE_SECURITY_SOURCE
-        )
+    def test_rule_file_rows_are_not_refused(self) -> None:
+        for path in (_CORE_SECURITY_ROW, _TRIGGER_LIST_ROW):
+            self.assertIsNone(
+                dc.match_sensitive_path(path), msg=f"unexpected refusal for {path!r}"
+            )
+            self.assertIsNone(sp.is_sensitive_path(path))
 
-    def test_trigger_list_row_returns_its_pattern_source(self) -> None:
-        self.assertEqual(
-            dc.match_sensitive_path(_TRIGGER_LIST_ROW), _TRIGGER_LIST_SOURCE
-        )
+    def test_rule_file_rows_classify_auto_on_the_daemon_path(self) -> None:
+        # The tier consumer, driven: a benign-diff patch against either row is
+        # auto-eligible, which is what the removed rows would otherwise claim to
+        # prevent for a target the daemon never builds.
+        for path in (_CORE_SECURITY_ROW, _TRIGGER_LIST_ROW):
+            patch = dc.PatchProposal(
+                target_file=path,
+                rationale="probe",
+                proposed_diff="+ a benign documentation line\n",
+                touched_frontmatter=False,
+                estimated_added_lines=1,
+                raw_response="",
+            )
+            self.assertEqual(dc.classify_safety_tier(patch), "", msg=f"for {path!r}")
 
     def test_retired_phantom_and_suffix_near_misses_stay_clean(self) -> None:
         for path in (

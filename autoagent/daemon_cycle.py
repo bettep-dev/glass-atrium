@@ -639,23 +639,19 @@ ApprovalTier = Literal["auto", "safety", ""]
 # Rationale per core-security.md "High-impact actions" + orchestrator-role.md
 # "Self-Improvement User-Approval Trigger":
 #   - GLOBAL_RULES / scope-security.md: absolute-rule weakening
-#   - core-security.md: the cross-cutting security rules — absolute-rule
-#     weakening on the real manifest row (rules/glass-atrium/core-security.md)
-#   - core-learning-log.md: home of the Tier-2 trigger clause list itself. The
-#     PROPOSAL axis never reaches this row — classify_safety_tier reads a
-#     target_file that is always an agent body — so the row is load-bearing on
-#     the two updater path partitions, which see every changed manifest
-#     relpath: the changed-file sync (update_partition_sensitive_sync) and the
-#     vendor-removal sweep (update_partition_sensitive)
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
 #     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
+#
+# Consumer reach, which bounds what a row here can buy: both consumers pass an
+# agent BODY path — classify_safety_tier a target_file built as
+# <agents_dir>/<agent>.md, and editable_merge.build_merge_candidate the body it
+# merges — so a row whose basename no agent body can carry cannot fire through
+# either of them.
 _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)GLASS_ATRIUM_GLOBAL_RULES\.md$"),
-    re.compile(r"(^|/)core-security\.md$"),
     re.compile(r"(^|/)scope-security\.md$"),
-    re.compile(r"(^|/)core-learning-log\.md$"),
     re.compile(r"(^|/)\.env(\.|$)"),
     re.compile(r"(^|/)com\.claude\.[^/]+\.plist$"),
     re.compile(r"(^|/)com\.glass-atrium\.[^/]+\.plist$"),
@@ -664,8 +660,8 @@ _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
 # Sync-path exemptions — EXACT normalized manifest relpaths, never a regex. The
 # updater's changed-file partition normalizes with update_normalize_relpath
 # (which resolves `.`/`..` and fail-closes on anything it cannot normalize)
-# before shelling out, so an exact set cannot over-match the way the tuple's own
-# `core-security.md` pattern does.
+# before shelling out, so an exact set cannot over-match the way a basename
+# pattern in the tuple can.
 #
 # NARROW by design — this is the ONLY entry, and every other sensitive path stays
 # refused on every consumer. The charter is exempted because it is the one
@@ -5683,10 +5679,9 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 
     Three triggers per core-security.md High-impact actions:
       1. target_file path matches a sensitive-file regex (GLOBAL_RULES,
-         core-security.md, scope-security.md, core-learning-log.md, .env,
-         com.claude.*.plist / com.glass-atrium.*.plist).
-         This tier ALWAYS calls the bare matcher, never the updater's
-         sync-exempt variant — the charter classifies safety-sensitive here.
+         scope-security.md, .env, com.claude.*.plist /
+         com.glass-atrium.*.plist). The tuple's own header states what the
+         agent-body reach of this call leaves such a row able to buy.
       2. proposed_diff body contains a sensitive-token regex. The tuple
          _SAFETY_SENSITIVE_DIFF_PATTERNS is the authority for the row set —
          forced deletion, permission/ACL, TCC reset, launchctl lifecycle,
