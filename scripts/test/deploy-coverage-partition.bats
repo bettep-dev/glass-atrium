@@ -96,15 +96,19 @@ set_has() {
 # the loop reached whether or not the body it wrote survived its verify.
 merge_claimed_paths() {
   local new="${WORK}/oracle/new" live="${WORK}/oracle/live" log="${WORK}/oracle/log"
-  local path base claimed=""
+  local path base claimed="" files=""
   rm -rf -- "${WORK}/oracle"
   mkdir -p -- "${new}/agents" "${live}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     mkdir -p -- "$(dirname -- "${new}/${path}")"
     printf 'release %s\n' "${path}" >"${new}/${path}"
+    files="${files}$(printf '%s' "${path}" | jq -R .),"
   done < <(manifest_agent_md_paths)
-  printf '{"version":"oracle","files":[],"hashes":{}}\n' >"${new}/manifest.json"
+  # The stage targets through name legs, and this manifest is the release leg: a
+  # release declaring no body names no target, so the reading would report the
+  # whole domain as claimed by nobody. A real release declares every body it ships.
+  printf '{"version":"oracle","files":[%s],"hashes":{}}\n' "${files%,}" >"${new}/manifest.json"
   update_merge_agent_editable_regions "${new}" "${new}/manifest.json" "${live}" \
     >/dev/null 2>"${log}"
   claimed="$(sed -n 's#^.*agent create[^/]*agents/\([^ ]*\).*$#\1#p' "${log}")"

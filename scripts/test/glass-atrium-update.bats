@@ -578,6 +578,105 @@ seed_baseline_hashed() {
   [ "$(find "${INSTALL}/agents" -name 'dev-new.md.create.*' | wc -l | tr -d ' ')" -eq 0 ]
 }
 
+# Multi-leg targeting of the agent stage
+#
+# Each probe below isolates ONE leg: the name it turns on is named by that leg and
+# by no other, so the drive fails if the union collapses to any single leg. The
+# last probe is the union's complement, which is what makes the gate observable at
+# all — every other release body reaches the stage exactly as it did before.
+
+@test "a registry key whose body is absent keeps the release's body a target" {
+  # The registry leg alone: dev-keyed is a live registry row with no body on disk,
+  # and the release ships the body without declaring it in the manifest.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing" "dev-keyed"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-keyed.md" "keyed body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create: installed release-only agents/dev-keyed.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-keyed.md")" == "keyed body" ]]
+  [[ "$output" != *"agents/dev-keyed.md is on no name leg"* ]]
+}
+
+@test "a body whose registry key is absent stays a target (the surviving objection)" {
+  # The on-disk leg alone: dev-loose is a live body the registry never names and
+  # the release manifest never declares, the half-registered shape a pure registry
+  # scope would freeze forever. It must still merge.
+  seed_file "${INSTALL}" "agents/dev-loose.md" "old agent"
+  seed_registry "${INSTALL}" "dev-other"
+  seed_file "${NEWSRC}" "agents/dev-loose.md" "new agent"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent merged + applied: agents/dev-loose.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-loose.md")" == "new agent" ]]
+  [[ "$output" != *"agents/dev-loose.md is on no name leg"* ]]
+}
+
+@test "a release-only name on neither live leg is a target that installs" {
+  # The release leg alone: the live registry exists and is silent about dev-new,
+  # and no body carries the name either.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create: installed release-only agents/dev-new.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
+  [[ "$output" != *"agents/dev-new.md is on no name leg"* ]]
+}
+
+@test "a release body no leg names is reported and not installed" {
+  # The complement: dev-stray rides in the release tree undeclared by its manifest
+  # and registry, and is unknown to the install. The create path does not reach it.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-stray.md" "stray body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agents/dev-stray.md is on no name leg"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-stray.md" ]]
+}
+
 @test "the shared transaction library carries no create branch (its own probe, run here)" {
   # The updater's create path exists BECAUSE the library must not gain one.
   # Invoked here so the suite carrying the create path is the one pinning the library's shape.

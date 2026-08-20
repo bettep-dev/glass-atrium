@@ -1240,6 +1240,18 @@ update_merge_agent_editable_regions() {
   _update_restore_index_rows=""
   _update_agent_create_failures=""
 
+  # The name legs the agent stage targets THROUGH: the live install's on-disk
+  # bodies and registry keys, plus the release's own declared roster. A UNION, so
+  # a release body drops out of the stage only by being named on NO leg — the
+  # registry leg alone can never scope out a body that is present on disk with its
+  # registry row missing, which is the half-registered shape a pure registry scope
+  # would silently freeze. Newline-wrapped for the whole-line membership test below.
+  local target_names
+  target_names=$'\n'"$({
+    update_roster_local "${root}"
+    update_roster_new "${manifest}" "${new_dir}/agent-registry.json"
+  } | LC_ALL=C sort -u)"$'\n'
+
   # Collect a candidate per changed, mergeable agent file. agents/<name>.md is
   # top-level only (references/ + templates/ + the non-agent GLASS_ATRIUM_GLOBAL_RULES.md
   # charter excluded, same scoping as the roster scan). The claim is expressed
@@ -1250,6 +1262,10 @@ update_merge_agent_editable_regions() {
     [[ -e "${file}" ]] || continue
     base="${file##*/}"
     spine_is_merge_claimed_path "agents/${base}" || continue
+    if [[ "${target_names}" != *$'\n'"${base%.md}"$'\n'* ]]; then
+      update_log "agent merge: agents/${base} is on no name leg (absent on disk, from the registry and from the release roster) — not a target"
+      continue
+    fi
     local_file="${root}/agents/${base}"
     if [[ ! -f "${local_file}" ]]; then
       # The create runs HERE, in the agent stage, which is what orders it before the
