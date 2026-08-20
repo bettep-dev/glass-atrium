@@ -488,5 +488,139 @@ class CliTest(unittest.TestCase):
             self.assertFalse((Path(tmp) / "candidate.sh").exists())
 
 
+@unittest.skipIf(rm is None, f"roster_merge import failed: {_IMPORT_ERROR}")
+class WithholdTest(unittest.TestCase):
+    """The backstop's reduction, driven across every shape."""
+
+    _FAILED = "glass-atrium-dev-node"
+
+    def test_the_withheld_name_leaves_the_slot_in_every_shape(self):
+        for path, build, names_of, _strip in _SHAPES:
+            with self.subTest(path=path):
+                candidate = build([*_VENDOR, _LIVE_ONLY])
+                text, removed = rm.withhold_members(path, candidate, [self._FAILED])
+                self.assertEqual(removed, (self._FAILED,))
+                self.assertNotIn(self._FAILED, names_of(text))
+
+    def test_the_members_it_was_not_asked_about_stay(self):
+        for path, build, names_of, _strip in _SHAPES:
+            with self.subTest(path=path):
+                candidate = build([*_VENDOR, _LIVE_ONLY])
+                text, _ = rm.withhold_members(path, candidate, [self._FAILED])
+                kept = [name for name in [*_VENDOR, _LIVE_ONLY] if name != self._FAILED]
+                self.assertEqual(names_of(text), kept)
+
+    def test_content_outside_the_slots_is_untouched(self):
+        for path, build, _names, strip in _SHAPES:
+            with self.subTest(path=path):
+                candidate = build([*_VENDOR, _LIVE_ONLY])
+                text, _ = rm.withhold_members(path, candidate, [self._FAILED])
+                self.assertEqual(strip(text), strip(candidate))
+
+    def test_a_name_no_slot_carries_reduces_nothing(self):
+        for path, build, _names, _strip in _SHAPES:
+            with self.subTest(path=path):
+                candidate = build([*_VENDOR, _LIVE_ONLY])
+                text, removed = rm.withhold_members(path, candidate, ["never-shipped"])
+                self.assertEqual(removed, ())
+                self.assertEqual(text, candidate)
+
+    def test_every_array_of_a_multi_array_file_loses_the_name(self):
+        candidate = (
+            _SH_HEAD
+            + 'readonly INJECT_AGENTS=" ' + " ".join([*_VENDOR, _LIVE_ONLY]) + ' "\n'
+            + 'readonly STYLEREF_AGENTS=" ' + " ".join(_VENDOR) + ' "\n'
+            + _SH_TAIL
+        )
+        text, removed = rm.withhold_members(
+            "hooks/inject-scope-rules.sh", candidate, [self._FAILED]
+        )
+        self.assertEqual(removed, (self._FAILED,))
+        for array in ("INJECT_AGENTS", "STYLEREF_AGENTS"):
+            self.assertNotIn(self._FAILED, _shell_names(text, array))
+
+    def test_a_candidate_whose_shape_does_not_read_refuses(self):
+        with self.assertRaises(rm.ShapeError):
+            rm.withhold_members("agent-registry.json", "not json", [self._FAILED])
+
+
+@unittest.skipIf(rm is None, f"roster_merge import failed: {_IMPORT_ERROR}")
+class WithholdCliTest(unittest.TestCase):
+    """The seam the dispatch drives between candidate generation and apply."""
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rm.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_withhold_writes_the_reduced_candidate_and_names_what_it_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "candidate.sh").write_text(
+                _shell_of([*_VENDOR, _LIVE_ONLY]), encoding="utf-8"
+            )
+            code, out, _ = self._run(
+                [
+                    "withhold",
+                    "--target",
+                    "hooks/lib/styleref-roster.sh",
+                    "--candidate",
+                    str(root / "candidate.sh"),
+                    "--out",
+                    str(root / "reduced.sh"),
+                    "--name",
+                    _LIVE_ONLY,
+                ]
+            )
+            self.assertEqual(code, rm.EXIT_OK)
+            self.assertIn(f"withheld={_LIVE_ONLY}", out)
+            reduced = (root / "reduced.sh").read_text(encoding="utf-8")
+            self.assertEqual(_shell_names(reduced), _VENDOR)
+            # the generated candidate stays readable beside its reduction
+            self.assertIn(_LIVE_ONLY, _shell_names((root / "candidate.sh").read_text()))
+
+    def test_withhold_reports_an_empty_drop_set_when_no_name_was_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "candidate.sh").write_text(_shell_of(_VENDOR), encoding="utf-8")
+            code, out, _ = self._run(
+                [
+                    "withhold",
+                    "--target",
+                    "hooks/lib/styleref-roster.sh",
+                    "--candidate",
+                    str(root / "candidate.sh"),
+                    "--out",
+                    str(root / "reduced.sh"),
+                    "--name",
+                    _LIVE_ONLY,
+                ]
+            )
+            self.assertEqual(code, rm.EXIT_OK)
+            self.assertIn("withheld= ", out)
+
+    def test_withhold_refuses_an_unreadable_shape_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "candidate.json").write_text("not json", encoding="utf-8")
+            code, _, err = self._run(
+                [
+                    "withhold",
+                    "--target",
+                    "agent-registry.json",
+                    "--candidate",
+                    str(root / "candidate.json"),
+                    "--out",
+                    str(root / "reduced.json"),
+                    "--name",
+                    _LIVE_ONLY,
+                ]
+            )
+            self.assertEqual(code, rm.EXIT_SHAPE)
+            self.assertIn("ROSTER WITHHOLD REFUSED", err)
+            self.assertFalse((root / "reduced.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -56,8 +56,8 @@
 # is gone and nothing in this file replaces it. Two mechanisms still route a row away
 # from the byte-swap, both drivable: spine_is_excluded_path (an agents/*.md the
 # EDITABLE-region merge claims — delivered by that merge, not withheld), and the
-# finding #16 registry withhold, which drops
-# agent-registry.json for one run when an added agent's body did not install.
+# roster merge claim over the four declared roster paths, whose own withhold
+# backstop drops a failed create's name from each candidate rather than the row.
 # The refusal governing the DAEMON's own writes is untouched and lives outside this
 # file: daemon_cycle.classify_safety_tier routes an approval, and the agent-body merge
 # refuses at editable_merge.build_merge_candidate (plan rc 3, handled at the merge step
@@ -263,14 +263,10 @@ _update_roster_verify_target=""
 # one write: the index write truncates, so a second producer writing its own rows
 # would drop the first producer's.
 _update_restore_index_rows=""
-# finding #16 registry withhold, decided in update_run and read by the roster
-# dispatch — the two arms it now has to reach sit in different functions.
-_update_withhold_registry=0
 # The agent stage's create-outcome handle: one name per line for every release-only
 # body whose create did not land. A variable rather than a log line only, so the
-# registry-withhold rebuild can read the set between the roster candidates being
-# generated and being applied — nothing reads it yet. Reset per run with the outcome
-# ledger.
+# withhold backstop can read the set between the roster candidates being generated
+# and being applied. Reset per run with the outcome ledger.
 _update_agent_create_failures=""
 
 # Preserve a failed/interrupted apply's pre-swap snapshot so the operator keeps a
@@ -879,28 +875,8 @@ update_roster_gate() {
   update_die "roster changes are NOT auto-applied — run the agent_lifecycle human-pause ceremony (python -m agent_lifecycle add|extend|delete) to add or remove an agent, then re-run the update (override for an explicit, non-silent apply: ATRIUM_UPDATE_ALLOW_ROSTER=1)"
 }
 
-# Fail-closed consistency check for the ATRIUM_UPDATE_ALLOW_ROSTER override (finding
-# #16). When the override proceeds past a detected roster ADD, the deterministic sync
-# WOULD swap in the release agent-registry.json, but the E4 merge SKIPS a release-only
-# ADD's agents/<name>.md — so registering the agent WITHOUT its body leaves a
-# PERMANENTLY half-applied roster (a registry key whose .md never landed, thereafter
-# masked by the union-based local roster on every later update). Emit (one per line)
-# the new-registry agent NAMES whose live agents/<name>.md is absent — the orphan-adds
-# whose presence means the registry sync MUST be withheld. Empty when the incoming
-# registry is absent/unparseable or every referenced body is present locally. Args:
-# $1 = new-tree agent-registry.json · $2 = install root.
-update_roster_orphan_registry_adds() {
-  local new_registry="$1" install_root="$2" name
-  [[ -f "${new_registry}" ]] || return 0
-  while IFS= read -r name; do
-    [[ -n "${name}" ]] || continue
-    [[ -e "${install_root}/agents/${name}.md" ]] && continue
-    printf '%s\n' "${name}"
-  done < <(update_roster_keys_from_registry "${new_registry}")
-}
-
-# Symmetric REMOVE-direction counterpart to update_roster_orphan_registry_adds
-# (finding #16). Under ATRIUM_UPDATE_ALLOW_ROSTER a release that DROPS a vendor
+# The REMOVE-direction orphan report, whose ADD-direction counterpart is the roster
+# dispatch's withhold backstop (finding #16). Under ATRIUM_UPDATE_ALLOW_ROSTER a release that DROPS a vendor
 # agent correctly swaps in the new (agent-less) registry — but no step of this flow
 # removes a file the release stopped shipping, so the USER-EDITABLE agents/<name>.md
 # LINGERS on disk with no registry key: a silent orphan the roster gate never
@@ -922,17 +898,6 @@ update_roster_orphan_registry_removes() {
     [[ -e "${install_root}/agents/${name}.md" ]] || continue
     printf '%s\n' "${name}"
   done < <(LC_ALL=C comm -23 <(printf '%s\n' "${prior_vendor}") <(printf '%s\n' "${new_list}"))
-}
-
-# Remove the exact whole-line path $2 from the apply-set file $1 (finding #16
-# registry withholding). Fixed-string, whole-line match (a manifest-relative path);
-# atomic temp+rename. Best-effort: a no-match / now-empty set is a normal result.
-update_filter_apply_path() {
-  local set_file="$1" drop="$2" tmp
-  [[ -f "${set_file}" ]] || return 0
-  tmp="${set_file}.filter.$$"
-  grep -vxF -- "${drop}" "${set_file}" >"${tmp}" 2>/dev/null || true
-  mv -f -- "${tmp}" "${set_file}"
 }
 
 # ---------------------------------------------------------------------------
@@ -1512,33 +1477,83 @@ _update_roster_verify() {
   return 0
 }
 
-# Drive the base-aware roster merge for every declared roster path. Each path is an
-# independent transaction with its own before-image: a verify failure rolls that
+# Withhold every agent whose body create did not land from the roster candidates
+# the stage below generated, BEFORE any of them is applied. Un-gated by any
+# override, and keyed on the agent stage's create-outcome handle rather than on a
+# byte-swap path list: a failed create's name leaves the registry key map and the
+# three other shapes in the same pass, while the paths themselves still apply.
+# Rewrites the records file in place; each reduced candidate is a SIBLING file, so
+# the generated one stays readable beside the artifact applied from it.
+# Arg: $1 = records file (rel TAB mode TAB candidate).
+update_withhold_failed_creates() {
+  local records="$1" name rel mode candidate reduced tmp out stripped
+  local names=()
+  [[ -n "${_update_agent_create_failures}" ]] || return 0
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] && names+=(--name "${name}")
+  done <<<"${_update_agent_create_failures}"
+  [[ "${#names[@]}" -gt 0 ]] || return 0
+
+  tmp="${records}.reduced"
+  : >"${tmp}"
+  while IFS=$'\t' read -r rel mode candidate; do
+    [[ -n "${rel}" ]] || continue
+    reduced="${candidate%.candidate}.withheld"
+    if out="$(python3 "${_update_merge_lib_dir}/roster_merge.py" withhold \
+      --target "${rel}" --candidate "${candidate}" --out "${reduced}" "${names[@]}")"; then
+      printf '%s\t%s\t%s\n' "${rel}" "${mode}" "${reduced}" >>"${tmp}"
+      stripped="${out#withheld=}"
+      stripped="${stripped%% *}"
+      [[ -n "${stripped}" ]] \
+        && update_log "roster withhold: dropped ${stripped} from ${rel} — that agent body's create did not land"
+    else
+      update_log "WARN: roster withhold could not reduce ${rel} — the path is NOT applied, so no unwithheld candidate can land"
+    fi
+  done <"${records}"
+  mv -f -- "${tmp}" "${records}"
+}
+
+# Drive the base-aware roster merge for every declared roster path, in two stages
+# with the withhold backstop between them: stage one resolves a candidate per path,
+# stage two applies each candidate that survived the backstop. Each applied path is
+# an independent transaction with its own before-image: a verify failure rolls that
 # path back alone and is reported LOUDLY, and the rest still apply. Non-fatal
 # throughout — a roster path that cannot resolve stays at its local content, which
-# is the state the run started in. Args: $1 = new-release tree root · $2 = new
-# manifest · $3 = live install root.
+# is the state the run started in.
+# Args: $1 = new-release tree root · $2 = new manifest · $3 = live install root.
 update_dispatch_roster_merge() {
   local new_dir="$1" manifest="$2" root="$3"
-  local rel release_file local_file candidate merge_dir plan_rc n=0
+  local rel release_file local_file candidate merge_dir records plan_rc mode
   : "${manifest:?manifest}"
   _update_merge_lib_dir="${ATRIUM_UPDATE_MERGE_LIB_DIR:-${_update_merge_lib_dir}}"
   _update_state_dir="$(spine_baseline_dir)"
   _update_agent_install_root="${root}"
-  merge_dir="$(mktemp -d -t glass-atrium-roster-merge.XXXXXX)"
+  # A caller-pinned candidate dir SURVIVES the run, which is what lets a drive read
+  # a generated candidate against the artifact applied from it. Unset — every path
+  # but a drive — the candidates live in a temp dir this function removes.
+  merge_dir="${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}"
+  if [[ -n "${merge_dir}" ]]; then
+    mkdir -p -- "${merge_dir}"
+  else
+    merge_dir="$(mktemp -d -t glass-atrium-roster-merge.XXXXXX)"
+  fi
+  records="${merge_dir}/records.tsv"
+  : >"${records}"
 
+  # Stage one — candidate generation.
   while IFS= read -r rel; do
     release_file="${new_dir}/${rel}"
     [[ -f "${release_file}" ]] || continue
     local_file="${root}/${rel}"
+    candidate="${merge_dir}/${rel//\//_}.candidate"
 
     # Absent locally: the byte-swap no longer reaches a claimed row, so a plain copy
     # is what delivers it. No transaction — there is no local content to protect and
-    # so nothing a rollback could restore it to.
+    # so nothing a rollback could restore it to. Routed through the candidate set all
+    # the same, so the backstop below has one input rather than two.
     if [[ ! -f "${local_file}" ]]; then
-      if mkdir -p -- "${local_file%/*}" && cp -p -- "${release_file}" "${local_file}"; then
-        update_log "roster merge: installed ${rel} (absent locally — no local content to preserve)"
-        update_agent_outcome_advance "${rel}"
+      if cp -p -- "${release_file}" "${candidate}"; then
+        printf '%s\t%s\t%s\n' "${rel}" install "${candidate}" >>"${records}"
       else
         update_log "WARN: roster install failed for ${rel} — the release copy did not land"
       fi
@@ -1549,16 +1564,7 @@ update_dispatch_roster_merge() {
       update_agent_outcome_advance "${rel}"
       continue
     fi
-    # The registry withhold reaches this arm as well now: the row it used to drop
-    # from the byte-swap apply set is dispatched here instead, and dropping it from
-    # only one of the two would register an agent whose body did not install.
-    if [[ "${_update_withhold_registry}" -eq 1 && "${rel}" == 'agent-registry.json' ]]; then
-      update_log "roster merge: WITHHELD ${rel} — the run withheld the registry (an added agent body is not installed)"
-      continue
-    fi
 
-    n=$((n + 1))
-    candidate="${merge_dir}/${n}.candidate"
     plan_rc=0
     python3 "${_update_merge_lib_dir}/roster_merge.py" plan \
       --target "${rel}" --local "${local_file}" --release "${release_file}" \
@@ -1566,6 +1572,26 @@ update_dispatch_roster_merge() {
       --state-dir "${_update_state_dir}" >/dev/null || plan_rc=$?
     if [[ "${plan_rc}" -ne 0 ]]; then
       update_log "roster merge: DECLINED ${rel} (rc ${plan_rc}) — left at its local version; the release content for this row is NOT installed until the refusal above is resolved"
+      continue
+    fi
+    printf '%s\t%s\t%s\n' "${rel}" merge "${candidate}" >>"${records}"
+  done < <(spine_get_roster_paths)
+
+  # Between the two stages: every candidate is resolved and none is applied yet, so
+  # one pass here reaches the name in all four shapes and none of them has landed.
+  update_withhold_failed_creates "${records}"
+
+  # Stage two — apply.
+  while IFS=$'\t' read -r rel mode candidate; do
+    [[ -n "${rel}" ]] || continue
+    local_file="${root}/${rel}"
+    if [[ "${mode}" == 'install' ]]; then
+      if mkdir -p -- "${local_file%/*}" && cp -p -- "${candidate}" "${local_file}"; then
+        update_log "roster merge: installed ${rel} (absent locally — no local content to preserve)"
+        update_agent_outcome_advance "${rel}"
+      else
+        update_log "WARN: roster install failed for ${rel} — the release copy did not land"
+      fi
       continue
     fi
 
@@ -1595,9 +1621,9 @@ update_dispatch_roster_merge() {
         update_log "WARN: roster merge not applied (GIT_TXN_RC=${GIT_TXN_RC}) — ${rel} left at its local version"
         ;;
     esac
-  done < <(spine_get_roster_paths)
+  done <"${records}"
 
-  rm -rf -- "${merge_dir}"
+  [[ -n "${ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR:-}" ]] || rm -rf -- "${merge_dir}"
   # The cycle's ONE index write, holding both iteration sites' rows.
   update_write_restore_index "${_update_agent_backup_dir}" "${_update_restore_index_rows}"
 }
@@ -2955,8 +2981,8 @@ update_enforce_manifest_modes() {
 
 update_run() {
   local root work dl_dir new_dir manifest staging snapshot baseline_manifest
-  local changed apply_paths rc=0 path name
-  local withhold_registry=0 orphan_adds orphan_removes
+  local changed apply_paths rc=0 name
+  local orphan_removes
   root="$(update_ga_root)"
   # git is NOT required — requiring it would loud-fail the
   # git-less no-.git consumer install Phase 2 exists to enable.
@@ -3009,26 +3035,11 @@ update_run() {
   # beside the manifest's agent files; the prior-vendor baseline scopes removals.
   update_roster_gate "${manifest}" "${new_dir}/agent-registry.json" "${root}" "${baseline_manifest}"
 
-  # Step 2.5b — finding #16 (ATRIUM_UPDATE_ALLOW_ROSTER fail-closed roster consistency).
-  # The override just proceeded past a detected add/remove. This check reads the live
-  # tree BEFORE the agent stage runs, so a release-only ADD's body is absent to it even
-  # on a run whose create path lands that body later — which is why it withholds on the
-  # override path and is not the guard the default add path relies on.
-  # Fail-closed: mark agent-registry.json to be WITHHELD from the apply set (Step 3)
-  # whenever the incoming registry references an agent whose live .md is absent, keeping
-  # files and registry consistent (both without the un-installed agent). Only under the
-  # override — the un-set path already died at the gate on any roster change.
+  # Step 2.5b — the REMOVE-direction orphan report (finding #16). The ADD direction
+  # is guarded by the roster dispatch's withhold backstop instead, which reads the
+  # create's own outcome and is gated by no override.
   if [[ -n "${ATRIUM_UPDATE_ALLOW_ROSTER:-}" ]]; then
-    orphan_adds="$(update_roster_orphan_registry_adds "${new_dir}/agent-registry.json" "${root}")"
-    if [[ -n "${orphan_adds}" ]]; then
-      withhold_registry=1
-      _update_withhold_registry=1
-      update_log "ATRIUM_UPDATE_ALLOW_ROSTER: WITHHOLDING agent-registry.json sync — the agent body is NOT installed for:"
-      while IFS= read -r path; do
-        [[ -n "${path}" ]] && update_log "  ${path} (run the agent_lifecycle ceremony to install it, then re-run update)"
-      done <<<"${orphan_adds}"
-    fi
-    # Symmetric REMOVE half (finding #16): the release dropped a vendor agent whose
+    # The release dropped a vendor agent whose
     # USER-EDITABLE body still lingers on disk (no step of this flow removes a file
     # the release stopped shipping). Do NOT withhold the registry (the drop is
     # intended) and do NOT auto-remove the body — emit a loud WARN so the leftover is not silently masked.
@@ -3075,11 +3086,6 @@ update_run() {
   fi
   apply_paths="${work}/apply.paths"
   printf '%s\n' "${changed}" >"${apply_paths}"
-  # finding #16: drop agent-registry.json from the apply set when withheld above, so the
-  # deterministic sync cannot register an agent whose body was not installed.
-  if [[ "${withhold_registry}" -eq 1 ]]; then
-    update_filter_apply_path "${apply_paths}" "agent-registry.json"
-  fi
 
   # Step 4 (verify) — per-file SHA-256 of every changed file == manifest
   # hashes[path], staged into the work dir. Loud-fail leaves the install untouched.

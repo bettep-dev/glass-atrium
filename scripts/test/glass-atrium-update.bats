@@ -1861,65 +1861,6 @@ rm -rf /tmp/everything
 # while its referenced .md is absent, keeping files + registry consistent.
 # ---------------------------------------------------------------------------
 
-@test "finding#16: ALLOW_ROSTER WITHHOLDS agent-registry.json when the added agent body is not installed" {
-  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
-  seed_registry "${INSTALL}" "dev-existing"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
-  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
-  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
-  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
-  write_manifest "${WORK}/manifest.json" \
-    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"WITHHOLDING agent-registry.json"* ]] || return 1
-  [[ "$output" == *"dev-new"* ]] || return 1
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] || return 1 # the legit non-agent file still synced
-  # The check reads the tree BEFORE the agent stage, so it withholds on a body the
-  # create path lands later in the same run — the two are not contradictory here.
-  [[ -f "${INSTALL}/agents/dev-new.md" ]] || return 1
-  # the live registry did NOT gain the orphan dev-new key (files ∪ registry stays consistent)
-  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
-  [[ "$output" == "dev-existing" ]] || return 1
-}
-
-@test "finding#16: ALLOW_ROSTER SYNCS agent-registry.json normally when the added body IS present locally" {
-  # Guard against over-withholding: when every new-registry agent has a live .md
-  # (dev-new was installed out-of-band), the registry sync must proceed unchanged.
-  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
-  seed_file "${INSTALL}" "agents/dev-new.md" "already here"
-  seed_registry "${INSTALL}" "dev-existing"
-  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
-  seed_file "${NEWSRC}" "agents/dev-new.md" "already here"
-  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
-  write_manifest "${WORK}/manifest.json" \
-    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" != *"WITHHOLDING agent-registry.json"* ]] || return 1 # no orphan → no withhold
-  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
-  [[ "$output" == *"dev-new"* ]] || return 1 # registry synced to include dev-new (its body is present)
-}
-
 @test "finding#16: ALLOW_ROSTER WARNS about a vendor-dropped agent whose .md lingers on disk" {
   # Symmetric REMOVE-direction orphan (the ADD guard's mirror). dev-b was a
   # PRIOR-VENDOR agent (in the baseline) whose body is still on disk; the new
@@ -2140,6 +2081,8 @@ roster_quartet_manifest_rows() {
     'hooks/inject-scope-rules.sh' 'hooks/lib/styleref-roster.sh'
 }
 
+# CANDIDATES, when a test sets it, pins the dispatch's candidate dir so the
+# generated candidates survive the run and can be read against what was applied.
 run_roster_update() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -2147,13 +2090,13 @@ run_roster_update() {
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR="${CANDIDATES:-}" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 }
 
 # The same drive with the override UNSET — the path an add-only release takes now
-# that the gate splits by direction, and the only one on which the pre-merge
-# registry withhold (override-gated) stays out of the way.
+# that the gate splits by direction.
 run_roster_update_unoverridden() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -2161,6 +2104,7 @@ run_roster_update_unoverridden() {
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR="${CANDIDATES:-}" \
     bash "${SKILL}"
 }
 
@@ -2192,13 +2136,96 @@ brand new vendor agent"
   done
 }
 
+# The three probes of the rebuilt withhold backstop. Its input is the agent stage's
+# create outcome, so each drive seeds a release-only body and decides whether that
+# body installs; the roster candidates carry the name either way.
+seed_failing_create_add() {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  # An updater-authored conflict marker, which the create's verify callback rejects:
+  # the create fails and its rollback DELETES the body it wrote.
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+>>>>>>> RELEASE (vendor)"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
+}
+
+assert_withheld_from_every_roster() {
+  local name="$1" rel
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" != *"${name}"* ]] || { echo "the registry carries ${name}: $output"; return 1; }
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    ! grep -q "${name}" "${INSTALL}/${rel}" || { echo "${rel} carries ${name}"; return 1; }
+  done
+}
+
+@test "the withhold backstop does not trip on a run whose new agent body installs" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+brand new vendor agent"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
+
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" != *"roster withhold"* ]] || { echo "$output"; return 1; }
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"dev-new"* ]] || { echo "$output"; return 1; }
+}
+
+@test "a forced create failure withholds that name from the registry and every roster" {
+  CANDIDATES="${WORK}/candidates"
+  seed_failing_create_add
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create verify FAILED"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster withhold: dropped dev-new from agent-registry.json"* ]] \
+    || { echo "$output"; return 1; }
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]] || { echo "the rolled-back body is on disk"; return 1; }
+
+  # The reading the two-point ordering makes observable: the candidate generated for
+  # the registry path carries the name BEFORE apply, and the artifact applied from it
+  # does not. Both files are read from the pinned candidate dir and the live install.
+  grep -q 'dev-new' "${CANDIDATES}/agent-registry.json.candidate" \
+    || { echo "the generated candidate never carried the name"; return 1; }
+  assert_withheld_from_every_roster dev-new
+  # Every path still applied — only the name was taken out of it. The registry's
+  # surviving row carries the release content, and each shape's non-slot prose
+  # carries the release marker.
+  run jq -r '.agents["dev-a"].domains[0]' "${INSTALL}/agent-registry.json"
+  [ "$output" = "vendor-new" ] || { cat "${INSTALL}/agent-registry.json"; return 1; }
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'vendor-new' "${INSTALL}/${rel}" || { cat "${INSTALL}/${rel}"; return 1; }
+  done
+}
+
+@test "the withhold backstop is reached with the roster override UNSET" {
+  # The de-gating, pinned: the predecessor's whole block sat inside the override
+  # condition, so this run reached no check at all.
+  seed_failing_create_add
+
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster ADD only"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster withhold: dropped dev-new"* ]] || { echo "$output"; return 1; }
+  assert_withheld_from_every_roster dev-new
+}
+
 @test "OPERATOR ACCEPTANCE: a user-created registry row survives while vendor rows take the release" {
   # The three anchors, one per root: base = the prior release, live = that plus a
   # user-created member, release = the prior release with the vendor member's
-  # content changed and a second vendor member DROPPED. Dropped rather than added
-  # because this drive sets the roster override, under which the pre-merge withhold
-  # would take the registry out of the dispatch before it resolved anything; the
-  # added-member case is driven on the un-overridden path by its own test above.
+  # content changed and a second vendor member DROPPED — the added-member case is
+  # driven by its own test above, so this one exercises the removal direction.
   seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a legacy-y
   seed_roster_quartet "${INSTALL}" "vendor-old" dev-a legacy-y user-x
   seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a

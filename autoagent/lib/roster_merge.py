@@ -367,6 +367,26 @@ def build_roster_candidate(
     )
 
 
+def withhold_members(
+    roster_path: str, candidate_text: str, names: object
+) -> tuple[str, tuple[str, ...]]:
+    """Drop each named member from every slot of one already-merged candidate.
+
+    The candidate is the skeleton here rather than the release, so everything
+    outside the slots stays the text the merge resolved and only membership
+    moves. Echoes the reduced text with the names that were actually present.
+    """
+    shape = get_shape(roster_path)
+    withheld = set(names)
+    slots = get_slot_members(candidate_text, shape)
+    removed = {name for members in slots.values() for name in members} & withheld
+    reduced = {
+        slot: {name: value for name, value in members.items() if name not in withheld}
+        for slot, members in slots.items()
+    }
+    return set_slot_members(candidate_text, reduced, shape), tuple(sorted(removed))
+
+
 # -- thin CLI (mirrors the editable_merge invocation seam) ---------------------
 
 
@@ -401,6 +421,19 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_withhold(args: argparse.Namespace) -> int:
+    try:
+        text, removed = withhold_members(
+            args.target, Path(args.candidate).read_text(encoding="utf-8"), args.name
+        )
+    except ShapeError as exc:
+        print(f"ROSTER WITHHOLD REFUSED: {args.target}: {exc}", file=sys.stderr)
+        return EXIT_SHAPE
+    Path(args.out).write_text(text, encoding="utf-8")
+    print(f"withheld={','.join(removed)} path={args.target}")
+    return EXIT_OK
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="roster_merge.py",
@@ -415,9 +448,22 @@ def main(argv: list[str]) -> int:
     p_plan.add_argument("--out", required=True, help="candidate output path")
     p_plan.add_argument("--agents-dir", help="live agent body dir (closed vocabulary)")
     p_plan.add_argument("--state-dir", help="update state dir override")
+    p_withhold = sub.add_parser(
+        "withhold", help="drop named members from a generated candidate"
+    )
+    p_withhold.add_argument(
+        "--target", required=True, help="manifest-relative roster path"
+    )
+    p_withhold.add_argument("--candidate", required=True, help="generated candidate")
+    p_withhold.add_argument("--out", required=True, help="reduced candidate output")
+    p_withhold.add_argument(
+        "--name", action="append", default=[], help="member to drop (repeatable)"
+    )
     args = parser.parse_args(argv)
     if args.command == "plan":
         return _cmd_plan(args)
+    if args.command == "withhold":
+        return _cmd_withhold(args)
     parser.print_usage(sys.stderr)
     return EXIT_USAGE
 
