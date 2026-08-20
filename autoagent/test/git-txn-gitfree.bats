@@ -441,6 +441,12 @@ _inode_of() {
 #      Create shape = a file test naming a target parameter: a create branch has
 #      to ask whether the target is there before creating it, and the positive
 #      control drives that the lib asks no such question of its target today.
+#      The operator class is the bash file tests (uppercase ones included, so a
+#      `-L`/`-S` probe is not a way past it) and the variable half accepts any
+#      target-bearing name the lib uses — `diff_target` as much as `real_target` —
+#      after an optional path prefix, since the lib composes paths under
+#      `install_root`. A string test like `-z` is deliberately outside the class:
+#      it asks whether the parameter is EMPTY, not whether the file is there.
 #      The two assert names are matched anywhere in the text, comments included
 #      — the lib is expected to stay free of the names, not to explain them.
 #
@@ -464,7 +470,7 @@ find_guard_migration() {
   if grep -qF -e 'assert_removal_evidence' "${candidate}"; then
     printf '%s\n' "${MIGRATION_REMOVAL}"
   fi
-  if grep -qE -e '-[a-z][[:space:]]+"?\$\{?(real_)?target' "${candidate}"; then
+  if grep -qE -e '-[abcdefghkprstuwxGLNOS][[:space:]]+[^[:space:]]*\$\{?[A-Za-z_]*[Tt]arget' "${candidate}"; then
     printf '%s\n' "${MIGRATION_CREATE}"
   fi
 }
@@ -534,6 +540,29 @@ build_mutated_lib() {
   fi
 }' \
     'if [[ ! -e "${real_target}" ]]; then'
+
+  run find_guard_migration "${mutated}"
+  [[ "${output}" == "${MIGRATION_CREATE}" ]] || {
+    echo "expected exactly the create-branch diagnostic, got: ${output}" >&2
+    return 1
+  }
+}
+
+# The shape a narrower probe let through: `diff_target` is a real git_txn_apply
+# parameter, and the test reaches it through a path composed under install_root.
+# A probe anchored on the variable's first characters, or one requiring the `$` to
+# follow the operator's whitespace directly, passes this mutation — which reads as
+# coverage while the create branch it is meant to catch is sitting in the lib.
+@test "a create branch on a composed diff_target path trips the probe" {
+  local mutated="${WORK}/with-composed-create-branch.sh"
+  build_mutated_lib "${mutated}" \
+    '_git_txn_migrated() {
+  local install_root="$1" diff_target="$2"
+  if [[ ! -f "${install_root}/${diff_target}" ]]; then
+    : >"${install_root}/${diff_target}"
+  fi
+}' \
+    'if [[ ! -f "${install_root}/${diff_target}" ]]; then'
 
   run find_guard_migration "${mutated}"
   [[ "${output}" == "${MIGRATION_CREATE}" ]] || {
