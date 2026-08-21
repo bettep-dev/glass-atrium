@@ -151,6 +151,44 @@
 # The value rides its OWN output line rather than the completion-channel multiplex — that line's trace
 # tag names the completion channel, and the two decisions can co-occur on one invocation.
 #
+# SEVENTH ADVISORY PASS (first-link question on a REVISION cycle, advisory — NEVER exit 2): flags a DEV
+# workflow that EXECUTES a revised plan while its text carries no first-link question. Decided in bash
+# off the raw script plus a LIVE monitor read, on the PASS arm only (siting rationale at the emitter).
+# PREDICATE, four conjuncts in cost order so the compliant case pays nothing:
+#   (1) a DEV workflow (dev=yes) — the question is the Stage-2 DEV participant's verdict-gating job;
+#   (2) FIRST_LINK_LITERAL absent from the RAW script — raw, not comment-stripped, because the literal's
+#       one legitimate home is a verify-stage GOAL STRING (attestation-token weighting, not spawn-token);
+#   (3) a plan-ref clauded-docs/<N> id present in the raw script — the same id shape the upstream verify
+#       clause parses, re-read in bash so the helper's fixed output-line contract stays untouched;
+#   (4) get_supersede_chain resolves that id to a chain of DEPTH >= 1 — the revision test, derived by
+#       WALKING the live chain at evaluation time (GET .supersedes_id per hop up to a root), never from a
+#       stored cycle counter and never from anything the script itself asserts.
+# FAIL-OPEN ON EVERY UNCERTAINTY (an advisory that fires on infrastructure trouble is the inversion this
+# codebase forbids): curl or jq absent · unresolvable monitor port · GET failure or monitor down · a
+# non-integer or absent id · a chain still unterminated at the GET cap (too deep, or a supersedes_id
+# cycle) — each yields NO nudge. Silence therefore means "not established as a revision", never "checked
+# and clean". A depth-0 chain (an original plan) is a real negative, not a fail-open.
+# COST: zero GETs unless all three cheap conjuncts hold; then at most WORKFLOW_GATE_CHAIN_MAX_HOPS
+# loopback GETs at WORKFLOW_GATE_CURL_TIMEOUT each. A down monitor refuses instantly; only a HUNG
+# monitor pays the timeout, which is why the per-hop budget is 1s rather than the sibling hook's 2s.
+# WHERE THE CLAIM STOPS: presence of the QUESTION in the delegation text, and nothing beyond it. Whether
+# the DEV answers it, and whether the answer is honest, is unreachable here — an honest DOWNGRADE from
+# the withdrawn schema-required-key shape (a required key would have forced an ANSWER into the emitted
+# payload; the canonical verify stage declares no schema, so no required array exists to attach one to).
+# The literal is quoted from ONE canonical home — scoped/scope-dev.md -> "Plan Direction Verification
+# Gate [DEV+QA]", first-link question — and the advisory MESSAGE interpolates that same constant rather
+# than restating it, so no second maintained copy exists in this file. A paraphrase in either place
+# disables the scan silently, which is why the canonical fixes the sentence as a quotable literal.
+# KNOWN FALSE NEGATIVES, stated rather than tuned away: a workflow carrying no plan-ref (the entry gate's
+# concern, not this one); a plan persisted as a fresh document instead of a supersede-POST (no chain, so
+# no revision is observable — the honor-system persist-path residual recorded in the rule text); and a
+# paraphrased question. KNOWN FALSE POSITIVE: the literal quoted in a script that is NOT the delegation
+# text silences it, the same string-residency ceiling every attestation token carries.
+# PROMOTION: advisory-first is a ceiling here, not a staging step. A raw scan cannot separate a
+# delegation's goal text from a mention of one, and the decision additionally rests on a live network
+# read, so promotion to exit 2 would let a monitor outage block correct work. It waits on accumulated
+# false-positive data plus an explicit user decision.
+#
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
 # seam is paid ONCE and each further decision adds a value plus a message case arm, never a line — the
@@ -234,6 +272,7 @@
 # fired on that invocation and, for the two suffixed advisories, WHICH value matched — the schema-cap
 # rule (`advisory=schema-cap:R1`) and the multiplexed completion-channel value
 # (`advisory=completion-channel:property-absent`, `:per-site-gap` or `:schema-absent`);
+# the revision-cycle nudge records as `advisory=first-link`, unsuffixed (it carries one decision);
 # several tags join with a comma; none fired →
 # `advisory=none`. This exists so
 # the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
@@ -308,6 +347,26 @@ fi
 # invocation (the hook is a fresh process per tool call) and never written here, so touching or removing
 # it takes effect on the next Workflow call with no session restart.
 WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER="${WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/workflow-gate-completion-rollback}"
+
+# --- first-link advisory: the question literal + the live-chain read's knobs ------------------------
+# The first-link question, quoted BYTE-EXACT from its ONE canonical home — scoped/scope-dev.md ->
+# "## Plan Direction Verification Gate [DEV+QA]", the backticked sentence under "First-link question".
+# Cross-read against that line rather than edited here: the canonical fixes it as a quotable literal
+# precisely so this scan and the verify-stage skeleton can match it, and a paraphrase on either side
+# disables the mechanical half with no visible failure. The advisory message interpolates THIS constant,
+# so the file holds exactly one copy.
+readonly FIRST_LINK_LITERAL='name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists'
+
+# Monitor-read knobs for the chain walk, mirroring validate-scope-drift.sh's precedent: a full-URL
+# override wins outright (test isolation), otherwise the loopback default derives from the shared port
+# wrapper — NO literal port here, the single default lives in the resolver. The per-hop budget is 1s
+# because only a HUNG monitor pays it (a down one refuses instantly) and the cap multiplies it.
+WORKFLOW_GATE_CURL_TIMEOUT="${WORKFLOW_GATE_CURL_TIMEOUT:-1}"
+# Maximum monitor GETs per walk — bounds latency AND terminates a supersedes_id cycle in malformed data.
+WORKFLOW_GATE_CHAIN_MAX_HOPS="${WORKFLOW_GATE_CHAIN_MAX_HOPS:-8}"
+# Non-integer / zero overrides fall back to the defaults (a bad knob must not disable the bound).
+[[ "${WORKFLOW_GATE_CURL_TIMEOUT}" =~ ^[1-9][0-9]*$ ]] || WORKFLOW_GATE_CURL_TIMEOUT=1
+[[ "${WORKFLOW_GATE_CHAIN_MAX_HOPS}" =~ ^[1-9][0-9]*$ ]] || WORKFLOW_GATE_CHAIN_MAX_HOPS=8
 
 # advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
 # emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the pass-path trace
@@ -477,6 +536,72 @@ print_sizeest_high_advisory() {
 
 print_scope_advisory() {
   printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
+  return 0
+}
+
+# get_monitor_docs_url — the clauded-docs collection URL for the chain walk, or rc 1 when no URL can be
+# resolved (which fails the walk open). A full WORKFLOW_GATE_MONITOR_URL override wins outright so a
+# suite never touches live-install state; otherwise the port comes from the shared hook wrapper, sourced
+# LAZILY here so a non-DEV or already-compliant workflow never loads the lib at all.
+get_monitor_docs_url() {
+  if [[ -n "${WORKFLOW_GATE_MONITOR_URL:-}" ]]; then
+    printf '%s' "${WORKFLOW_GATE_MONITOR_URL}"
+    return 0
+  fi
+  local lib port
+  lib="${BASH_SOURCE%/*}/lib/hook-utils.sh"
+  [[ -r "${lib}" ]] || return 1
+  # shellcheck source=lib/hook-utils.sh
+  source "${lib}" || return 1
+  # shellcheck disable=SC2310
+  #   As above — a resolver miss degrades to an empty port, which the integer test below rejects.
+  port="$(hook_monitor_port 2>/dev/null || true)"
+  [[ "${port}" =~ ^[0-9]+$ ]] || return 1
+  printf 'http://127.0.0.1:%s/api/clauded-docs' "${port}"
+}
+
+# get_supersede_chain ID — walk the LIVE supersede chain upward from ID and derive its revision depth
+# AT EVALUATION TIME. Each hop GETs the doc and follows .supersedes_id; the walk ends at the root (the
+# first doc with no predecessor). Sets CHAIN_DEPTH (hops taken; 0 = an original plan) and CHAIN_ROOT_ID,
+# then returns 0. Returns 1 — no measurement, caller nudges nothing — on every uncertainty: curl or jq
+# absent, no resolvable URL, a failed or empty GET, a non-integer predecessor id, or a chain still
+# unterminated at the GET cap (too deep to price, or a supersedes_id cycle in the data; the cap is what
+# terminates the latter). Deliberately NOT cached: a per-session cache would answer from the state at
+# first read, and the revision this predicate exists to see is created mid-session.
+get_supersede_chain() {
+  local id="${1}" base json next gets=0
+  CHAIN_DEPTH=0
+  CHAIN_ROOT_ID=""
+  [[ "${id}" =~ ^[0-9]+$ ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  # shellcheck disable=SC2310
+  #   Predicate call — an unresolvable URL is this walk's fail-open answer, not an error to propagate.
+  base="$(get_monitor_docs_url)" || return 1
+  [[ -n "${base}" ]] || return 1
+
+  while ((gets < WORKFLOW_GATE_CHAIN_MAX_HOPS)); do
+    gets=$((gets + 1))
+    json="$(curl -sf --max-time "${WORKFLOW_GATE_CURL_TIMEOUT}" "${base}/${id}" 2>/dev/null || true)"
+    [[ -n "${json}" ]] || return 1
+    # `// empty` collapses BOTH a null and an absent key to the root signal — a root doc reports either.
+    next="$(printf '%s' "${json}" | jq -r '.supersedes_id // empty' 2>/dev/null || true)"
+    if [[ -z "${next}" ]]; then
+      CHAIN_ROOT_ID="${id}"
+      return 0
+    fi
+    [[ "${next}" =~ ^[0-9]+$ ]] || return 1
+    id="${next}"
+    CHAIN_DEPTH=$((CHAIN_DEPTH + 1))
+  done
+  return 1
+}
+
+# print_first_link_advisory DEPTH ROOT_ID — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit
+# code). The literal is INTERPOLATED from FIRST_LINK_LITERAL, never retyped, so the remediation a reader
+# copies is the same bytes the scan looks for.
+print_first_link_advisory() {
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (first-link question, non-blocking): this DEV workflow executes a REVISED plan (live supersede chain depth ${1}, chain root clauded-docs/${2}) but its text carries NO first-link question. Each link of a chained plan is justified against the state its predecessor established, so a per-link check passes at every step while the chain as a whole leaves what was asked; the earliest decision is the only one whose replacement re-prices everything built on it, and it is the one nobody re-opens. ONE-EDIT FIX — quote this sentence VERBATIM into the {glass-atrium-qa-code-reviewer, DEV} verify stage's goal text (a paraphrase silences this scan with no visible failure): ${FIRST_LINK_LITERAL}. Canonical duty text + the three-part answer shape: scoped/scope-dev.md -> 'Plan Direction Verification Gate [DEV+QA]', first-link question; copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md -> 'Pipeline Acceptance Criteria'. HONEST CEILING: presence of the QUESTION only — the canonical verify stage is text-mode and declares no schema, so nothing can force an ANSWER into a payload, and whether the DEV answers is honor-system (a stated DOWNGRADE from the withdrawn schema-required-key shape, not a swap of equals). The revision test is a LIVE chain read: monitor down, curl absent, no plan-ref or a chain too deep to walk all yield SILENCE, so no nudge never means checked-and-clean. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -2334,6 +2459,25 @@ EOF
       if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF '[SCOPE]'; then
         print_scope_advisory
         add_advisory "scope"
+      fi
+      # FIRST-LINK ADVISORY — PASS arm only, for the scope advisory's reason AND one of its own: this is
+      # the only check here that reads the network, so a blocked script never pays a loopback GET. The
+      # three cheap conjuncts are ordered ahead of the walk, so a compliant or plan-ref-less workflow
+      # issues zero GETs. Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
+      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF "${FIRST_LINK_LITERAL}"; then
+        local plan_refs first_link_plan_id
+        # First plan-ref in file order. No `head` in the pipe: a SIGPIPE'd grep under pipefail would
+        # trip the fail-open ERR trap, so the whole match set is captured and sliced in bash.
+        plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
+        first_link_plan_id="${plan_refs%%$'\n'*}"
+        first_link_plan_id="${first_link_plan_id##*/}"
+        # shellcheck disable=SC2310
+        #   Predicate call — the exit status IS the answer (chain resolved vs fail-open).
+        if [[ -n "${first_link_plan_id}" ]] && get_supersede_chain "${first_link_plan_id}" \
+          && ((CHAIN_DEPTH >= 1)); then
+          print_first_link_advisory "${CHAIN_DEPTH}" "${CHAIN_ROOT_ID}"
+          add_advisory "first-link"
+        fi
       fi
       emit_trace "pass" "${script_len}"
       exit 0
