@@ -532,7 +532,7 @@ def _resolve_region(
             ArbitrationRequest(index, hunk, tuple(release)) for hunk in hunks
         )
         if arbiter is not None:
-            merged, decisions = _splice_arbitrated(
+            spliced, decisions = _splice_arbitrated(
                 merged,
                 hunks,
                 arbiter,
@@ -540,10 +540,14 @@ def _resolve_region(
                 region_count=region_count,
                 release=release,
             )
-            # ONE answered gap is enough: the region's wording is then no longer
-            # the local body, and the gate reads whole candidates rather than
-            # gaps. An unanswered sibling rides along as its own local lines.
-            if any(outcome.choice is not None for outcome in decisions):
+            # EVERY gap of the region, not merely one: a landed region retires the
+            # gaps it contains — the next run's base equals this release and the
+            # contest is gone — so a sibling left unanswered would be decided by
+            # the landing rather than by a judge. Short of that the region stays
+            # pending and emits the diff3 output, whose runs are the local lines,
+            # which is the decline the whole-file rule already describes.
+            if decisions and all(outcome.choice is not None for outcome in decisions):
+                merged = spliced
                 verdict = MERGE_ARBITER_RESOLVED
     else:
         verdict = MERGE_CONFLICT

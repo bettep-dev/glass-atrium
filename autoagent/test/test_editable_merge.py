@@ -2424,6 +2424,75 @@ class ArbiterResolvedGateTest(unittest.TestCase):
         self.assertEqual(gate, 1)
 
 
+@unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
+class ArbiterPartialRegionTest(unittest.TestCase):
+    """A region holding TWO contested gaps, one of which the arbiter cannot answer.
+
+    Landing the region would retire both gaps — the next run's base equals this
+    release — so the unanswered one would be decided by the landing rather than by
+    a judge. The region declines instead, and the answered gap's wording stays out
+    of the candidate.
+    """
+
+    _BASE = _doc(top="# A", region="first old\nkeep me\nsecond old", bottom="z")
+    _LOCAL = _doc(top="# A", region="first LOCAL\nkeep me\nsecond LOCAL", bottom="z")
+    _RELEASE = _doc(
+        top="# A", region="first VENDOR\nkeep me\nsecond VENDOR", bottom="z"
+    )
+
+    def _drive(self, second_answer: str):
+        calls: list[int] = []
+
+        def seam(**_kwargs):
+            # The FIRST gap only: an unparseable answer spends a strict retry, so a
+            # fixed two-element script would answer the second gap on its retry.
+            calls.append(1)
+            payload = (
+                "CHOICE: RELEASE\nRATIONALE: fixture"
+                if len(calls) == 1
+                else second_answer
+            )
+            done = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=payload, stderr=""
+            )
+            return done, None, None
+
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(
+            io.StringIO()
+        ), mock.patch.object(em.dc, "_invoke_haiku_cli", side_effect=seam):
+            return em.build_merge_candidate(
+                "agents/dev-android.md",
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN,
+                state_dir=str(Path(tmp) / "state"),
+            )
+
+    def test_two_gaps_are_two_hunks_of_one_region(self) -> None:
+        _merged, hunks = em.three_way_merge_hunks(
+            self._BASE.splitlines(),
+            self._LOCAL.splitlines(),
+            self._RELEASE.splitlines(),
+            arbitrate=True,
+        )
+        self.assertEqual(len(hunks), 2)
+
+    def test_one_unanswered_gap_declines_the_whole_region(self) -> None:
+        cand = self._drive("not an answer at all")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertNotIn("first VENDOR", cand.resolution.candidate_text)
+
+    def test_both_answered_resolves_the_region(self) -> None:
+        cand = self._drive("CHOICE: LOCAL\nRATIONALE: fixture")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertIn("first VENDOR", cand.resolution.candidate_text)
+        self.assertIn("second LOCAL", cand.resolution.candidate_text)
+
+
 def _get_verify_shell_out() -> str:
     """Read the updater's verify shell-out source, the text the callback runs."""
     text = (_REPO_ROOT / "scripts" / "update.sh").read_text(encoding="utf-8")
