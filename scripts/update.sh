@@ -629,6 +629,22 @@ update_cleanup() {
   fi
 }
 
+# Signal disposition. A handler that merely RETURNS resumes the interrupted script
+# at the next statement — with the apply-lock released, the workdir (and the merge
+# outcome ledger inside it) deleted and the headless row already marked failed, so
+# the rest of the run walks on over torn-down state. Clean up once, disarm both the
+# EXIT trap and this one, then re-raise under the default disposition so the process
+# dies of the signal and the parent reads 128+signum. The subshell exit seeds `$?`
+# for update_cleanup, whose failed-row message records that same status.
+# Args: $1 = signal name · $2 = its number.
+update_on_signal() {
+  local sig="$1" num="$2"
+  (exit $((128 + num)))
+  update_cleanup
+  trap - EXIT "${sig}"
+  kill -s "${sig}" "$$"
+}
+
 # Acquire the daemon .apply-lock — the single atomic guard serializing this run
 # against the daemon's own writer. A daemon apply already holding it makes the
 # mkdir loud-fail and we abort; a daemon reaching for it while we hold it fails
@@ -3346,7 +3362,11 @@ update_main() {
   source "${merge_lib_dir}/git-txn.sh"
 
   # Register cleanup BEFORE any state is created so an early failure still unwinds.
-  trap update_cleanup EXIT INT TERM
+  # A signal takes the re-raising handler rather than the bare cleanup: sharing one
+  # handler across EXIT and the two signals is what let an interrupted run continue.
+  trap update_cleanup EXIT
+  trap 'update_on_signal INT 2' INT
+  trap 'update_on_signal TERM 15' TERM
   case "${mode}" in
     restore) update_restore_agents "${restore_cycle}" ;;
     render-oneshot) update_render_oneshot_plist ;;

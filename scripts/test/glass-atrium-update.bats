@@ -1629,6 +1629,27 @@ PLIST
   [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
+@test "an interrupted run dies of its signal instead of walking on over torn-down state" {
+  # A handler that merely RETURNS resumes the script at the next statement — with the
+  # lock released, the workdir deleted and the row already marked failed. The re-raise is
+  # what makes the process die of the signal, so the parent reads 128+signum, and the
+  # disarm is what keeps the cleanup to exactly one run.
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_cleanup() { printf "cleaned\n" >>"'"${WORK}"'/signal.log"; }
+    trap update_cleanup EXIT
+    trap "update_on_signal TERM 15" TERM
+    kill -s TERM $$
+    printf "CONTINUED\n" >>"'"${WORK}"'/signal.log"
+  '
+  [ "$status" -eq 143 ] || { echo "status=${status} $output"; return 1; }
+  [[ "$(grep -c . "${WORK}/signal.log")" -eq 1 ]] || return 1
+  grep -q "cleaned" "${WORK}/signal.log" || return 1
+  ! grep -q "CONTINUED" "${WORK}/signal.log" || return 1
+}
+
 @test "P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)" {
   # A headless run that dies mid-flight (update_die, a declined gate, a crash caught by
   # the trap) leaves an in-progress row → update_cleanup marks it 'failed' with the exit
