@@ -125,7 +125,20 @@ sys.exit(int(os.environ.get("STUB_RC", "0")))
 PY
 }
 
+# The production-row cleanup runs HERE, not at the end of a body: an assertion that
+# fires mid-body aborts the rest of that body, so a delete placed after it strands the
+# row in the live glass_atrium. A test arms it by exporting PG_ROW_TARGET before the
+# driver runs. The pid-unique target stays the whole guard — never widen the predicate
+# to the pattern label alone, which real accountability rows also carry.
+delete_pg_row() {
+  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
+    "DELETE FROM core.autoagent_proposals
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
+        AND target_file = 'agents/${1}'" >/dev/null 2>&1 || true # GA-ABSORB[benign]: a cleanup of a row no run ever wrote is a normal outcome
+}
+
 teardown() {
+  [[ -n "${PG_ROW_TARGET:-}" ]] && delete_pg_row "${PG_ROW_TARGET}"
   [[ -n "${WORK:-}" ]] && rm -rf -- "${WORK}"
   return 0
 }
@@ -397,6 +410,7 @@ roster_paths() {
   python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
 
   target="ga-rec-landed-$$.md"
+  PG_ROW_TARGET="${target}"
   write_tsv "${target}"
   printf 'agents/%s\n' "${target}" >"${LEDGER}"
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
@@ -408,14 +422,6 @@ roster_paths() {
        FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
-  # This runs against the PRODUCTION database, and pattern_label is the one real rows
-  # carry — the pid-unique target is the ONLY thing separating this cleanup from live
-  # accountability records. Never widen the predicate to the label alone.
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
-    "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-arbiter-resolved'
-        AND target_file = 'agents/${target}'" >/dev/null
-
   [ "${row}" = "auto|applied|verified:improvement-gate|ok" ]
 }
 
@@ -425,6 +431,7 @@ roster_paths() {
   python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
 
   target="ga-rec-upsert-$$.md"
+  PG_ROW_TARGET="${target}"
   write_tsv "${target}"
 
   # Both re-runs carry a DIFFERENT ledger state, so the row's status has to
@@ -458,12 +465,6 @@ roster_paths() {
     "SELECT count(*) FROM core.autoagent_proposals
       WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
-  # Same production-database caveat as T2: the pid-unique target is the whole guard.
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
-    "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-arbiter-resolved'
-        AND target_file = 'agents/${target}'" >/dev/null
-
   [ "${count}" = "1" ]
   [ "${first}" = "rejected" ]
   [ "${second}" = "applied" ]
