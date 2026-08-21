@@ -360,12 +360,13 @@ for line in source_lines:
         break
 
 landed = env("GA_REC_LANDED") == "1"
-# Every arbiter-resolved verdict sits in the model-required set of the resolver,
-# so a row of this label describes a candidate the improvement-verify gate read
-# and a gate outage would have rolled back. The claim is unconditional for that
-# reason rather than read off the plan line — and a plan line contradicting it is
-# a disagreement between two processes, reported rather than absorbed
-# into a quieter provenance token.
+# Every arbiter-resolved verdict sits in the model-required set of the resolver, so
+# a LANDED candidate is one the improvement-verify gate read and passed — a gate
+# outage rolls the transaction back instead. A candidate that did not land carries
+# no such verdict, so the screening half is written per outcome rather than
+# unconditionally. The plan line is still read: one contradicting the resolver is a
+# disagreement between two processes, reported rather than absorbed into a quieter
+# provenance token.
 if env("GA_REC_NEEDS_LLM") != "True":
     sys.stderr.write(
         "update: WARN resolved-record needs_llm={0} for {1} — the arbiter-resolved "
@@ -380,7 +381,11 @@ rationale = (
     "dropped {dropped} daemon-authored line(s), added {added} release line(s); "
     "verdict=merge-arbiter-resolved, outcome={outcome}."
 ).format(
-    screening="the improvement-verify gate ran over the candidate and passed",
+    screening=(
+        "the improvement-verify gate ran over the candidate and passed"
+        if landed
+        else "the candidate did not land, so no gate verdict stands behind it"
+    ),
     hunks=env("GA_REC_HUNKS", "0"),
     regions=env("GA_REC_REGIONS", "none"),
     dropped=env("GA_REC_DROPPED", "0"),

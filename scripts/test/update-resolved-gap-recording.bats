@@ -290,7 +290,12 @@ db_available() {
   [ "$output" = "rejected" ]
 
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"not applied"* ]]
+  [[ "$rationale" == *"not applied"* ]] || return 1
+  # The screening claim is per OUTCOME, not per label: only a LANDED candidate is one
+  # the improvement-verify gate read and passed. An unlanded one was rolled back, so a
+  # row asserting a gate verdict for it would credit a screening that never concluded.
+  [[ "$rationale" == *"no gate verdict stands behind it"* ]] || return 1
+  [[ "$rationale" != *"gate ran over the candidate and passed"* ]] || return 1
 }
 
 @test "T9 a multi-row run splits landed per row and stamps both with ONE cycle date" {
