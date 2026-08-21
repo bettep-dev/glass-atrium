@@ -23,8 +23,9 @@
 # runtime-data root and update state dir are temp dirs; the manifest generator path does not exist
 # (§8 hashing skipped) and the monitor port is dead (§16 curls nothing).
 #
-# BATS GATING NOTE: @test bodies run WITHOUT `set -e`, so only the LAST command gates pass/fail.
-# Every assertion `return 1`s on mismatch, so each one independently fails the test.
+# BATS GATING NOTE: a bare non-final `[[ ]]` / `(( ))` does NOT gate — the keyword is read as a
+# tested condition — whereas a plain command's non-zero return IS caught mid-body. Every assertion
+# here `return 1`s on mismatch, so each one independently fails the test.
 #
 # Run via: bats test/doctor-arbiter-decision-surface.bats
 # Requires: bats >= 1.5.0, jq, python3, bash 3.2+
