@@ -533,6 +533,42 @@ seed_baseline_hashed() {
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
+@test "the ADD side splits on provenance: a locally deleted agent is NOT re-created" {
+  # Both directions of the split in ONE run. dev-gone is in the PRIOR-VENDOR
+  # baseline and absent from disk — this install deleted it through the
+  # agent_lifecycle ceremony, and the release still ships it, so re-creating it
+  # would reverse that deletion on every update. dev-new is in no baseline, so it
+  # is a genuine vendor ADD and must still land. Keyed on the same baseline the
+  # remove side reads, which is what makes the two sides answer one question.
+  seed_baseline "${STATE}/update-state" "agents/dev-keep.md" "agents/dev-gone.md"
+  seed_file "${INSTALL}" "agents/dev-keep.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-keep.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-gone.md" "the body this install removed"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-keep.md" "agents/dev-gone.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  # The delta names the two by DIRECTION, never both as adds.
+  [[ "$output" == *"deleted-locally dev-gone"* ]] || return 1
+  [[ "$output" != *"add dev-gone"* ]] || return 1
+  [[ "$output" == *"add dev-new"* ]] || return 1
+  # The gate reports the split, and the create is where it is actually withheld.
+  [[ "$output" == *"roster deleted-locally"* ]] || return 1
+  [[ "$output" == *"roster ADD only"* ]] || return 1
+  [[ "$output" == *"NOT re-created"* ]] || return 1
+  [[ ! -f "${INSTALL}/agents/dev-gone.md" ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]] || return 1
+}
+
 @test "roster gate still DIES on the remove of a release that both adds and removes" {
   # The split is by DIRECTION, not by presence of an add: a release carrying any
   # vendor removal dies on that removal even when it also ships a new agent, and

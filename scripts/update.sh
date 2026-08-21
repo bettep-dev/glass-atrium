@@ -268,6 +268,10 @@ _update_restore_index_rows=""
 # withhold backstop can read the set between the roster candidates being generated
 # and being applied. Reset per run with the outcome ledger.
 _update_agent_create_failures=""
+# The prior-vendor agent roster (newline-wrapped) resolved once per run beside the
+# roster gate. The agent stage reads it to tell a release-shipped NEW agent from one
+# this install deleted through the ceremony, which the release still ships.
+_update_prior_vendor_roster=$'\n'
 
 # Preserve a failed/interrupted apply's pre-swap snapshot so the operator keeps a
 # rollback source after the workdir is torn down (finding #7). No-op when the
@@ -820,8 +824,18 @@ update_detect_roster_changes() {
   prior_vendor="$(update_roster_prior_vendor "${baseline_manifest}")"
   # `comm` requires sorted input (every list is already `sort -u`-ed). The empty
   # line a bare "" produces sorts first and is filtered by the -n guard below.
+  # The add side splits on PROVENANCE the way the remove side does. A name the
+  # release ships and this install lacks is a vendor ADD only when no prior vendor
+  # release shipped it too: a name the prior baseline carries and disk no longer
+  # does was deleted here — through the very ceremony this gate defers to — and
+  # installing it again would undo that deletion on every update.
   while IFS= read -r name; do
-    [[ -n "${name}" ]] && printf 'add %s\n' "${name}"
+    [[ -n "${name}" ]] || continue
+    if [[ $'\n'"${prior_vendor}"$'\n' == *$'\n'"${name}"$'\n'* ]]; then
+      printf 'deleted-locally %s\n' "${name}"
+    else
+      printf 'add %s\n' "${name}"
+    fi
   done < <(LC_ALL=C comm -23 <(printf '%s\n' "${new_list}") <(printf '%s\n' "${local_list}"))
   # remove = prior-vendor baseline MINUS the new release (vendor-dropped only).
   while IFS= read -r name; do
@@ -859,7 +873,12 @@ update_roster_gate() {
   # No match is data, not an error: an add-only release has an empty remove half.
   removes="$(printf '%s\n' "${changes}" | grep '^remove ' || true)"
   if [[ -z "${removes}" ]]; then
-    update_log "roster ADD only — the release-shipped agent installs in-band through the updater's create path"
+    if printf '%s\n' "${changes}" | grep -q '^add '; then
+      update_log "roster ADD only — the release-shipped agent installs in-band through the updater's create path"
+    fi
+    if printf '%s\n' "${changes}" | grep -q '^deleted-locally '; then
+      update_log "roster deleted-locally — the release still ships an agent this install removed; its body is NOT re-created (re-add through python -m agent_lifecycle add)"
+    fi
     return 0
   fi
   if [[ -n "${ATRIUM_UPDATE_ALLOW_ROSTER:-}" ]]; then
@@ -1262,6 +1281,14 @@ update_merge_agent_editable_regions() {
     fi
     local_file="${root}/agents/${base}"
     if [[ ! -f "${local_file}" ]]; then
+      # A body the PRIOR vendor release shipped and disk no longer holds was deleted
+      # here, not newly shipped — re-creating it would resurrect it on every update
+      # and silently reverse the ceremony that removed it. The gate reports the same
+      # split; this is where the create it describes is actually withheld.
+      if [[ "${_update_prior_vendor_roster}" == *$'\n'"${base%.md}"$'\n'* ]]; then
+        update_log "agent create: agents/${base} was deleted from this install and is still shipped by the release — NOT re-created (re-add through python -m agent_lifecycle add)"
+        continue
+      fi
       # The create runs HERE, in the agent stage, which is what orders it before the
       # roster dispatch that later applies this name's registry key and roster rows.
       create_rc=0
@@ -3040,6 +3067,9 @@ update_run() {
   # NEVER false-block a content update. Absent baseline → empty → no removes
   # flagged (`|| true`: absence is a normal non-error result of the `get`).
   baseline_manifest="$(spine_get_baseline || true)"
+  # Resolved once here so the agent stage answers the same provenance question the
+  # gate below asks, off the same baseline.
+  _update_prior_vendor_roster=$'\n'"$(update_roster_prior_vendor "${baseline_manifest}")"$'\n'
 
   # Step 2.5 — roster-migration gate (T20 / gate G8). A release that ADDS or
   # REMOVES a VENDOR agent must route through the agent_lifecycle human-pause
