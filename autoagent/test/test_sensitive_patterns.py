@@ -173,11 +173,12 @@ class SingleSourceIdentity(unittest.TestCase):
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
-class DaemonAndSkillRefuseSameSet(unittest.TestCase):
-    """AC: a test asserts the python daemon and the shell skill refuse the SAME
-    path set. The skill refuses iff the helper refuses (it shells out to it), so
-    helper-vs-daemon parity over the corpus IS that proof — cross-checked here
-    against the daemon's own classify_safety_tier (path-only patch)."""
+class DaemonAndHelperRefuseSameSet(unittest.TestCase):
+    """The three PATH surfaces refuse the SAME corpus: the helper, the daemon's
+    bare match_sensitive_path, and classify_safety_tier under a path-only patch.
+
+    No shell consumer stands behind these: the helper's only caller is this suite,
+    as the module header states, so the parity proved here is python-to-python."""
 
     def _path_only_tier(self, path: str) -> str:
         # A patch that ONLY changes target_file (benign body) — isolates the

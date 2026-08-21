@@ -1426,19 +1426,26 @@ def build_merge_candidate(
     instead of deriving a second decision from the same anchors.
     """
     agent_name = agent or Path(target_file).stem
+    # The PATH verdict is reached BEFORE the resolver, because the resolver is what
+    # crosses the model seam: a refused target that built its arbiter first would
+    # spend a call, and a retry, on a file whose candidate is thrown away.
+    sensitive_hit = dc.match_sensitive_path(target_file)
     resolution = resolve_file(
         target_file,
         local_text,
         release_text,
         base_text,
         resolve_conflicting_gaps=resolve_conflicting_gaps,
-        arbiter=GapArbiter(
-            target_file, agent_name, mode=arbiter_mode, state_dir=state_dir
+        arbiter=(
+            None
+            if sensitive_hit is not None
+            else GapArbiter(
+                target_file, agent_name, mode=arbiter_mode, state_dir=state_dir
+            )
         ),
     )
     diff = _unified_diff(local_text, resolution.candidate_text, target_file)
 
-    sensitive_hit = dc.match_sensitive_path(target_file)
     if sensitive_hit is None:
         sensitive_hit = dc.match_sensitive_diff(diff)
 

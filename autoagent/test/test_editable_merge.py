@@ -2083,6 +2083,57 @@ class ArbiterRecordReplayTest(unittest.TestCase):
         )
         self.assertEqual(rows, "")
 
+    def test_when_the_record_is_gone_then_the_verify_refuses_the_bytes_on_disk(
+        self,
+    ) -> None:
+        """The plan's arbitrated wording is on disk and this side resolved pending,
+        so the two disagree about what the file should say — which is the one thing
+        the verify can still catch before the transaction is allowed to stand."""
+        planned = self._plan()
+        live = self.root / self._TARGET
+        live.write_text(self._LOCAL, encoding="utf-8")
+        self.assertEqual(planned.apply(str(live)), em.APPLY_OK)
+        self.record_path.unlink()
+
+        replayed, _rows = self._replay()
+
+        self.assertEqual(replayed.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertNotEqual(
+            live.read_text(encoding="utf-8"), replayed.resolution.candidate_text
+        )
+        self.assertEqual(replayed.verify(str(live)), 1)
+
+    def test_when_the_record_stands_then_the_replayed_verify_passes_those_bytes(
+        self,
+    ) -> None:
+        planned = self._plan()
+        live = self.root / self._TARGET
+        live.write_text(self._LOCAL, encoding="utf-8")
+        self.assertEqual(planned.apply(str(live)), em.APPLY_OK)
+
+        gate_calls: list[object] = []
+
+        def verify_fn(patch, pattern, skip_pre_verify=False):  # noqa: ARG001
+            gate_calls.append(patch)
+            return _StubVerify(passed=True)
+
+        with mock.patch.object(
+            em.dc,
+            "_invoke_haiku_cli",
+            side_effect=AssertionError("the replay reached the model seam"),
+        ):
+            replayed = em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                verify_fn=verify_fn,
+                state_dir=str(self.state),
+            )
+        self.assertEqual(replayed.verify(str(live)), 0)
+        self.assertEqual(len(gate_calls), 1)
+
     def test_when_a_fingerprint_is_corrupted_then_the_gap_falls_closed_to_local(
         self,
     ) -> None:
