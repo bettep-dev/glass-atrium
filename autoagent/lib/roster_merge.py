@@ -138,6 +138,32 @@ def _get_markdown_slots(text: str) -> dict[str, dict[str, object]]:
     return {_MARKDOWN_SLOT: {name: name for name in members if name}}
 
 
+def _get_anchor_slots(
+    text: str, shape: str, anchor: str, *, seeding: bool = False
+) -> dict[str, dict[str, object]]:
+    """Read one anchor's slots, naming the anchor and its remedy on a refusal.
+
+    A bare shape complaint says what is wrong with some text and nothing about
+    which of the three texts it was, so the operator cannot tell a malformed
+    release from a malformed live file from a poisoned base entry — and the three
+    are repaired in three different places.
+    """
+    remedies = {
+        "base": "delete the recorded base entry so the next run re-seeds it",
+        "live": "repair the installed file, then re-run the update",
+        "release": "the release itself ships this shape — report it upstream",
+    }
+    try:
+        return get_slot_members(text, shape)
+    except ShapeError as exc:
+        # A seeding run's base IS the release, so pointing at the store would send
+        # the operator to an entry that does not exist yet.
+        source = "release" if anchor == "base" and seeding else anchor
+        raise ShapeError(
+            f"the {source} anchor does not parse: {exc} — {remedies[source]}"
+        ) from exc
+
+
 def _set_markdown_slots(release_text: str, slots: dict[str, dict[str, object]]) -> str:
     members = ", ".join(slots[_MARKDOWN_SLOT])
     return _MARKDOWN_LIST_RE.sub(
@@ -337,21 +363,27 @@ def build_roster_candidate(
     bootstrapped = False
     if base_text is None:
         base_text = load_roster_base_text(roster_path, state_dir)
-    if base_text is None:
+    seeding = base_text is None
+    if seeding:
+        base_text = release_text
+    # PARSE all three anchors before persisting anything. A seed written ahead of
+    # the parse survives the refusal it caused: the store then holds text no anchor
+    # reading accepts, and every later run — healthy release and healthy live
+    # included — refuses on the base it wrote itself.
+    base_slots = _get_anchor_slots(base_text, shape, "base", seeding=seeding)
+    live_slots = _get_anchor_slots(local_text, shape, "live")
+    release_slots = _get_anchor_slots(release_text, shape, "release")
+    if seeding:
         # Seed the base from the release on first sight rather than declining
         # forever or unioning silently. The cost is named where it is paid: the
         # seeded base equals the release, so a release-side removal cannot be
         # honoured on this run, and the entry left behind honours one on the next.
-        base_text = release_text
         set_roster_base_text(roster_path, release_text, state_dir)
         bootstrapped = True
         notices.append(
             f"ROSTER BOOTSTRAP: {roster_path} had no base entry — base seeded from "
             "the release; a release-side removal is not honoured on this run"
         )
-    base_slots = get_slot_members(base_text, shape)
-    live_slots = get_slot_members(local_text, shape)
-    release_slots = get_slot_members(release_text, shape)
     resolved = {
         slot: _resolve_members(
             base_slots.get(slot, {}), live_slots.get(slot, {}), members

@@ -378,6 +378,38 @@ class BootstrapTest(unittest.TestCase):
 
     PATH = "hooks/lib/styleref-roster.sh"
 
+    def test_a_refused_first_run_writes_no_base_and_the_next_healthy_run_seeds(self):
+        """A seed written ahead of the parse would wedge every later run: the store
+        would hold the very text the refusal was about."""
+        path = "scoped/scope-dev.md"
+        healthy = _markdown_of(list(_VENDOR))
+        malformed = healthy + "a second ∈ {DEV} list\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(rm.ShapeError) as caught:
+                rm.build_roster_candidate(
+                    path, healthy, malformed, list(_VENDOR), state_dir=tmp
+                )
+            self.assertIn("release anchor", str(caught.exception))
+            self.assertIsNone(rm.load_roster_base_text(path, tmp))
+
+            recovered = rm.build_roster_candidate(
+                path, healthy, healthy, list(_VENDOR), state_dir=tmp
+            )
+            self.assertTrue(recovered.bootstrapped)
+
+    def test_a_poisoned_base_entry_names_the_base_anchor_and_its_remedy(self):
+        path = "scoped/scope-dev.md"
+        healthy = _markdown_of(list(_VENDOR))
+        with tempfile.TemporaryDirectory() as tmp:
+            rm.set_roster_base_text(path, healthy + "a second ∈ {DEV} list\n", tmp)
+            with self.assertRaises(rm.ShapeError) as caught:
+                rm.build_roster_candidate(
+                    path, healthy, healthy, list(_VENDOR), state_dir=tmp
+                )
+        message = str(caught.exception)
+        self.assertIn("base anchor", message)
+        self.assertIn("delete the recorded base entry", message)
+
     def test_an_empty_store_seeds_then_the_same_fixture_honours_a_removal(self):
         with tempfile.TemporaryDirectory() as tmp:
             live = _shell_of([*_VENDOR, _LIVE_ONLY])
