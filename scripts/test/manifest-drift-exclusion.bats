@@ -8,7 +8,9 @@
 # union of vendor and live rows in each roster file — so a whole-file hash reads them as drift
 # under a remedy that cannot clear it.
 #
-# The fourth test is the agreement gate: it iterates the manifest and drives BOTH sides per row
+# The agreement gate is the test named "the exclusion and the claim predicate agree on every
+# manifest row" — named rather than numbered, because an ordinal renumbers on the next insertion.
+# It iterates the manifest and drives BOTH sides per row
 # (mutate → is it reported, ask the predicate → is it claimed), so a family added to one side and
 # not the other fails here rather than silently converting a loud false warning into a quiet
 # wrong one. Neither implementation is inspected.

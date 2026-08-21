@@ -732,8 +732,102 @@ run_doctor() {
     log "         remedy: the recorder stopped writing through the named channel — check the hook path that feeds it (hooks/track-outcome.sh) before reading the resulting gap as a quality change"
   fi
 
+  # 17. registry keys with no agent body. The registry's `.agents` keys are the authoritative roster
+  #     the update flow reconciles a release against, and each key's body is a sibling file under
+  #     agents/, so a key whose body is absent is a roster entry the tree does not carry. The updater
+  #     already surfaces the INVERSE (a body left behind with no key); this is the other direction, and
+  #     nothing read it. ADVISORY by construction — both remedies (lay the body, or drop
+  #     the key) are operator decisions on a live registry, and neither is safe to force through an
+  #     install abort, so this section never touches `fail`. ONE counter for the whole section, on the
+  #     §10 precedent: an unparseable registry is a warning of this section exactly as an orphan key is.
+  local registry_warns=0 registry_orphans=0
+  local registry_json="${GA_ROOT}/agent-registry.json"
+  local registry_keys="" registry_key=""
+  if ! command -v jq >/dev/null 2>&1; then
+    log "  note : jq absent — registry keys not reconciled against agent bodies (advisory)"
+  elif [[ ! -f "${registry_json}" ]]; then
+    log "  note : no agent registry at ${registry_json} — registry keys not reconciled (advisory)"
+  # jq's rc is the separator that matters here: a registry with no `agents` member reads as zero keys,
+  # which is indistinguishable from a healthy empty one, whereas a file jq cannot parse is this reader
+  # going blind — reported, never folded into the clean case.
+  elif ! registry_keys="$(jq -r '(.agents // {}) | keys[]' -- "${registry_json}" 2>/dev/null)"; then
+    log "  warn : agent registry unparseable (${registry_json}) — a key with no agent body cannot be detected here; check the file's JSON"
+    registry_warns=1
+  else
+    while IFS= read -r registry_key; do
+      [[ -n "${registry_key}" ]] || continue
+      [[ ! -f "${GA_ROOT}/agents/${registry_key}.md" ]] || continue
+      log "  warn : registry key with no agent body — ${registry_key} (agents/${registry_key}.md absent)"
+      registry_orphans=$((registry_orphans + 1))
+    done <<<"${registry_keys}"
+    if [[ "${registry_orphans}" -eq 0 ]]; then
+      log "  ok   : every agent-registry key has a body under agents/"
+    else
+      registry_warns="${registry_orphans}"
+      log "         remedy: re-run 'glass-atrium update' to lay the missing body, or drop the key from ${registry_json}"
+    fi
+  fi
+
+  # 18. contested-gap arbitration surface. The plan process writes one decision record per contested
+  #     EDITABLE gap under the update state dir and the verify process replays it. A record is keyed by
+  #     target+region+gap and REWRITTEN in place, so a present record is that gap's LAST outcome rather
+  #     than an accumulating history — presence is what makes a standing condition answerable across
+  #     runs. A record carrying a failure class is a gap the arbiter did not answer: the merge kept the
+  #     local run, which is a correct outcome and a silent one, and the silence is what this section
+  #     removes. WARN, never fail — an unreachable model seam is a supported state for an unattended
+  #     run, so naming it must not abort an install through the preflight alias.
+  local arbiter_warns=0 arbiter_resolved=0
+  local arbiter_dir="" arbiter_rec="" arbiter_row=""
+  local rec_fail="" rec_agent="" rec_region="" rec_target="" rec_choice=""
+  # Derived through the producer's OWN state-root helper rather than by restating the default path
+  # here — a location held on one side and reconstructed on the other is the drift shape the merge
+  # library's kill-switch comment warns about. Sourced by BASH_SOURCE (the §8 idiom) so a bats-sourced
+  # doctor lib resolves it without the launcher's ga_init_env having run.
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/apply-spine.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/apply-spine.sh"
+  # shellcheck disable=SC2311
+  arbiter_dir="$(spine_baseline_dir)/arbiter-decisions"
+  if ! command -v jq >/dev/null 2>&1; then
+    log "  note : jq absent — contested-gap decision records not read (advisory)"
+  elif [[ ! -d "${arbiter_dir}" ]]; then
+    log "  ok   : no contested-gap decision records (${arbiter_dir})"
+  else
+    for arbiter_rec in "${arbiter_dir}"/*.json; do
+      # An empty dir leaves the glob unexpanded (nullglob is not set install-wide); -f is the guard.
+      [[ -f "${arbiter_rec}" ]] || continue
+      # Every field carries a literal placeholder when it is empty: the read below splits on TAB, an
+      # IFS whitespace character, so an empty leading field would collapse and shift every value one
+      # column left — the resolved case (no failure class) is exactly that shape.
+      if ! arbiter_row="$(jq -r '[
+            (if (.failure_class // "") == "" then "-" else .failure_class end),
+            (.agent // "?"),
+            "\(.region_index // "?")/\(.region_count // "?")",
+            (.target // "?"),
+            (if (.choice // "") == "" then "-" else .choice end)
+          ] | @tsv' -- "${arbiter_rec}" 2>/dev/null)"; then
+        log "  warn : contested-gap decision record unreadable (${arbiter_rec}) — the gap it names cannot be classified; inspect the file"
+        arbiter_warns=$((arbiter_warns + 1))
+        continue
+      fi
+      IFS=$'\t' read -r rec_fail rec_agent rec_region rec_target rec_choice <<<"${arbiter_row}"
+      if [[ "${rec_fail}" != "-" ]]; then
+        log "  warn : contested gap unanswered — ${rec_fail} agent=${rec_agent} region=${rec_region} target=${rec_target} (local run kept)"
+        arbiter_warns=$((arbiter_warns + 1))
+      else
+        log "  info : contested gap arbiter-resolved — ${rec_choice} agent=${rec_agent} region=${rec_region} target=${rec_target}"
+        arbiter_resolved=$((arbiter_resolved + 1))
+      fi
+    done
+    if [[ "${arbiter_warns}" -gt 0 ]]; then
+      log "         remedy: the named gap(s) kept the local run — re-run the update once the arbiter's model seam is reachable, or hand-merge the region"
+    elif [[ "${arbiter_resolved}" -eq 0 ]]; then
+      log "  ok   : no contested-gap decision records (${arbiter_dir})"
+    fi
+  fi
+
   if [[ "${fail}" -eq 0 ]]; then
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -741,7 +835,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap — see above) =="
     fi
     return 0
   fi
