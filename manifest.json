@@ -1376,7 +1376,7 @@
     "scripts/test/glass-atrium-update.bats": "55a4de82e5e6524e871353d129ac07f829be7552f3e2e5f306fae1ea439fa731",
     "scripts/test/init-test-repos.bats": "829c8f2cae854af35fa9e87491ae83481e35f5af5122306be728af7af3934a80",
     "scripts/test/manifest-drift-exclusion.bats": "1d990ae848192488e16fa879d1e67caea1340efec255ec98b308d9406f261e08",
-    "scripts/test/manifest-mode-integrity.bats": "9a717cc9fdfc050e17faa193e38a5db505b741801085898b16a11444df2dd844",
+    "scripts/test/manifest-mode-integrity.bats": "08d22c4b59b18a0f198501892d6263c0a16260887b2cbf3f11172a49c38ce896",
     "scripts/test/migrate-claude-to-ga-data.bats": "71d7ad10246670c9f81877345789643fff13e83a57c2d1702d263fe8b4c1a87c",
     "scripts/test/mirror-farm.bats": "86e8018e2398346f68f63b2418bae68afa506122fe79eca2de51018e59bd1ecd",
     "scripts/test/monitor-log-rotate-size.bats": "854b822803d65f04ac9c61aea75e923f6936e70fd97af0eb3e369907e1bd66a5",

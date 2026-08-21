@@ -71,9 +71,13 @@ make_gen_fixture() {
 
 # Local release bundle + manifest for the GA_INSTALL_SRC_* seams. The bundled
 # hook ships MODE-STRIPPED (644) while the manifest maps it 755 — the
-# post-extract enforcement must close that gap. $1 = with-modes|no-modes|bad-octal.
+# post-extract enforcement must close that gap. The `symlink` variant adds a
+# mode-stripped target plus a link row pointing at it, the shape the real
+# manifest carries: the link's own mode (macOS lrwxr-xr-x) can never equal the
+# target mode the map records, so an enforcement without the link skip aborts.
+# $1 = with-modes|no-modes|bad-octal|symlink.
 make_install_fixture() {
-  local variant="$1" h_probe h_launcher h_spine m_spine modes_json
+  local variant="$1" h_probe h_launcher h_spine m_spine modes_json h_charter
   BUNDLE_ROOT="${SANDBOX}/bundle-root"
   GA_DIR_FIX="${SANDBOX}/ga-home"
   mkdir -p "${BUNDLE_ROOT}/hooks" "${BUNDLE_ROOT}/scripts/lib"
@@ -86,6 +90,16 @@ make_install_fixture() {
   h_launcher="$(shasum -a 256 "${BUNDLE_ROOT}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
   m_spine="$(mode_of "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh")"
+  h_charter=""
+  if [[ "${variant}" == "symlink" ]]; then
+    mkdir -p "${BUNDLE_ROOT}/agents" "${BUNDLE_ROOT}/rules"
+    printf 'charter body\n' >"${BUNDLE_ROOT}/agents/charter.md"
+    chmod 600 "${BUNDLE_ROOT}/agents/charter.md" # STRIPPED on purpose
+    ln -sfn ../agents/charter.md "${BUNDLE_ROOT}/rules/charter.md"
+    # shasum FOLLOWS the link, so both rows carry the target's content hash —
+    # the shape generate-manifest.sh emits for a link row.
+    h_charter="$(shasum -a 256 "${BUNDLE_ROOT}/agents/charter.md" | awk '{print $1}')"
+  fi
   case "${variant}" in
     with-modes)
       modes_json="{\"glass-atrium\":\"755\",\"hooks/probe.sh\":\"755\",\"scripts/lib/apply-spine.sh\":\"${m_spine}\"}"
@@ -96,6 +110,11 @@ make_install_fixture() {
     no-modes)
       modes_json=""
       ;;
+    symlink)
+      # the link row maps the TARGET's mode — what generate-manifest.sh's
+      # `stat -L` probe reads through the link
+      modes_json="{\"glass-atrium\":\"755\",\"hooks/probe.sh\":\"755\",\"scripts/lib/apply-spine.sh\":\"${m_spine}\",\"agents/charter.md\":\"644\",\"rules/charter.md\":\"644\"}"
+      ;;
   esac
   SRC_MANIFEST="${SANDBOX}/manifest.json"
   jq -n \
@@ -104,12 +123,25 @@ make_install_fixture() {
       files:["glass-atrium","hooks/probe.sh","scripts/lib/apply-spine.sh"],
       hashes:{"glass-atrium":$hl,"hooks/probe.sh":$hp,"scripts/lib/apply-spine.sh":$hs}}' \
     >"${SRC_MANIFEST}"
+  if [[ -n "${h_charter}" ]]; then
+    # target first so the staged link resolves at its own row's position
+    jq --arg hc "${h_charter}" '
+      .files += ["agents/charter.md", "rules/charter.md"]
+      | .hashes += {"agents/charter.md": $hc, "rules/charter.md": $hc}' \
+      "${SRC_MANIFEST}" >"${SRC_MANIFEST}.tmp"
+    mv -f -- "${SRC_MANIFEST}.tmp" "${SRC_MANIFEST}"
+  fi
   if [[ -n "${modes_json}" ]]; then
     jq --argjson m "${modes_json}" '. + {modes:$m}' "${SRC_MANIFEST}" >"${SRC_MANIFEST}.tmp"
     mv -f -- "${SRC_MANIFEST}.tmp" "${SRC_MANIFEST}"
   fi
   SRC_BUNDLE="${SANDBOX}/bundle.tar.gz"
-  tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts
+  if [[ "${variant}" == "symlink" ]]; then
+    # no -h/-L: tar archives the link AS a link, the shape the release ships
+    tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts agents rules
+  else
+    tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts
+  fi
 }
 
 # DRIVER command: source update.sh, clear the inherited ERR trap, assign the
@@ -205,6 +237,23 @@ require_install_sh() {
   [ "$(grep -c 'no modes map' <<<"${output}")" -eq 1 ] || return 1
   # fail-open means SKIP: the stripped hook stays as the archive shipped it
   [ ! -x "${GA_DIR_FIX}/hooks/probe.sh" ] || return 1
+}
+
+@test "install: symlink mode row is skipped, link intact, target row converged" {
+  require_install_sh
+  [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
+  make_install_fixture symlink
+  run -0 env GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
+    GA_INSTALL_SRC_MANIFEST="${SRC_MANIFEST}" GA_INSTALL_SRC_BUNDLE="${SRC_BUNDLE}" \
+    "${GA}/install.sh"
+  local install_out="${output}"
+  [[ "${install_out}" == *"mode row is a symlink (skipped, target reconciled on its own row): rules/charter.md"* ]] || return 1
+  [[ "${install_out}" != *"post-apply mode mismatch"* ]] || return 1
+  # the link survives as a link, and the row that carries the real mode converged
+  [ -L "${GA_DIR_FIX}/rules/charter.md" ] || return 1
+  [[ "${install_out}" == *"mode applied: agents/charter.md 600 -> 644"* ]] || return 1
+  [ "$(mode_of "${GA_DIR_FIX}/agents/charter.md")" = "644" ] || return 1
+  [ "$(cat "${GA_DIR_FIX}/rules/charter.md")" = "charter body" ] || return 1
 }
 
 @test "install: malformed octal in modes map is a loud named failure (exit 19)" {
