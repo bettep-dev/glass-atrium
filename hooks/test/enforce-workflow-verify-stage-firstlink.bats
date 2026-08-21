@@ -29,7 +29,8 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
 
-  WORK="$(mktemp -d -t wfgate-firstlink.XXXXXX)"
+  # Per-test scratch, created and reaped by bats itself — no mktemp and no teardown of our own.
+  WORK="${BATS_TEST_TMPDIR}"
   SHIMBIN="${WORK}/bin"
   DOCS="${WORK}/docs"
   COUNT_FILE="${WORK}/curl.count"
@@ -42,7 +43,9 @@ setup() {
   printf '%s\n' '{"id":103,"supersedes_id":102}' >"${DOCS}/103.json"
 
   # Counting curl shim: one tally char per call, then serve the doc named by the URL's trailing id.
-  # An unknown id exits 22 (curl's -f HTTP-error status), which is the monitor-down shape too.
+  # An unknown id exits 22 (curl's -f HTTP-error status); a DOWN monitor exits 7 (connection refused)
+  # instead. The walk discards the status — `curl -sf … || true` then an emptiness test — so both shapes
+  # reach fail-open through the identical branch and an exit-7 arm would drive no further code.
   cat >"${SHIMBIN}/curl" <<'SH'
 #!/usr/bin/env bash
 printf 'x' >>"${CURL_COUNT_FILE}"
@@ -68,10 +71,16 @@ impl: glass-atrium-dev-nestjs
   # against a paraphrase the production scan can no longer find.
   LITERAL="$(sed -n "s/^readonly FIRST_LINK_LITERAL='\(.*\)'$/\1/p" "${HOOK_SH}")"
   [[ -n "${LITERAL}" ]] || skip "could not read FIRST_LINK_LITERAL from ${HOOK_SH}"
-}
 
-teardown() {
-  [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
+  # Hermetic env shared by both entry points: the shim PATH with its counter + doc root, the full-URL
+  # override that keeps the walk off any live monitor, and a per-test trace sink.
+  GATE_ENV=(
+    PATH="${SHIMBIN}:${PATH}"
+    CURL_COUNT_FILE="${COUNT_FILE}"
+    DOCS_DIR="${DOCS}"
+    WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs"
+    WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}"
+  )
 }
 
 curl_count() { wc -c <"${COUNT_FILE}" | tr -d '[:space:]'; }
@@ -90,13 +99,7 @@ dev_script() {
 run_hook() {
   local script="${1}"
   shift
-  run env \
-    PATH="${SHIMBIN}:${PATH}" \
-    CURL_COUNT_FILE="${COUNT_FILE}" \
-    DOCS_DIR="${DOCS}" \
-    WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
-    WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" \
-    "$@" \
+  run env "${GATE_ENV[@]}" "$@" \
     bash -c '
       payload="$(jq -n --arg s "$1" '\''{tool_name:"Workflow",tool_input:{script:$s}}'\'')"
       printf "%s" "${payload}" | bash "$2" 2>&1
@@ -106,13 +109,7 @@ run_hook() {
 run_lint() {
   local script="${1}"
   shift
-  run env \
-    PATH="${SHIMBIN}:${PATH}" \
-    CURL_COUNT_FILE="${COUNT_FILE}" \
-    DOCS_DIR="${DOCS}" \
-    WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:16145/api/clauded-docs" \
-    WORKFLOW_GATE_FIRED_LOG="${TRACE_LOG}" \
-    "$@" \
+  run env "${GATE_ENV[@]}" "$@" \
     bash -c 'printf "%s" "$1" | bash "$2" --lint 2>&1' _ "${script}" "${HOOK_SH}"
 }
 
@@ -146,7 +143,9 @@ run_lint() {
   [[ "$(curl_count)" == "0" ]] || { echo "walked despite the short-circuit: $(curl_count) GETs" >&2; return 1; }
 }
 
-@test "monitor unreachable → silent, exit 0 (fail-open on infrastructure)" {
+@test "a failed GET → silent, exit 0 (fail-open on infrastructure)" {
+  # Drives the HTTP-error shape (shim exit 22). A refused connection (exit 7) is the same branch: the
+  # walk keeps no status, only the emptiness of the capture.
   rm -f "${DOCS}/103.json"
   run_hook "$(dev_script 103 'judge it')"
   [[ "${status}" -eq 0 ]] || { echo "infrastructure trouble must not block, status ${status}" >&2; return 1; }

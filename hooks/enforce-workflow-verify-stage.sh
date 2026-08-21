@@ -153,13 +153,16 @@
 #
 # SEVENTH ADVISORY PASS (first-link question on a REVISION cycle, advisory — NEVER exit 2): flags a DEV
 # workflow that EXECUTES a revised plan while its text carries no first-link question. Decided in bash
-# off the raw script plus a LIVE monitor read, on the PASS arm only (siting rationale at the emitter).
+# off the raw script plus a LIVE monitor read, on the PASS arm only (siting rationale at the call site).
 # PREDICATE, four conjuncts in cost order so the compliant case pays nothing:
 #   (1) a DEV workflow (dev=yes) — the question is the Stage-2 DEV participant's verdict-gating job;
 #   (2) FIRST_LINK_LITERAL absent from the RAW script — raw, not comment-stripped, because the literal's
 #       one legitimate home is a verify-stage GOAL STRING (attestation-token weighting, not spawn-token);
-#   (3) a plan-ref clauded-docs/<N> id present in the raw script — the same id shape the upstream verify
-#       clause parses, re-read in bash so the helper's fixed output-line contract stays untouched;
+#   (3) the FIRST clauded-docs/<N> id in file order, taken from the raw script — the id SHAPE, matched
+#       unanchored: no plan-ref token required and no [AGENT-COMPOSITION]-span exclusion, so an upstream
+#       clause, a monitor URL or a prose mention supplies it exactly as a plan-ref does (the false
+#       negative that follows from this is listed below). Re-read in bash so the helper's fixed
+#       output-line contract stays untouched;
 #   (4) get_supersede_chain resolves that id to a chain of DEPTH >= 1 — the revision test, derived by
 #       WALKING the live chain at evaluation time (GET .supersedes_id per hop up to a root), never from a
 #       stored cycle counter and never from anything the script itself asserts.
@@ -179,15 +182,21 @@
 # Gate [DEV+QA]", first-link question — and the advisory MESSAGE interpolates that same constant rather
 # than restating it, so no second maintained copy exists in this file. A paraphrase in either place
 # disables the scan silently, which is why the canonical fixes the sentence as a quotable literal.
-# KNOWN FALSE NEGATIVES, stated rather than tuned away: a workflow carrying no plan-ref (the entry gate's
-# concern, not this one); a plan persisted as a fresh document instead of a supersede-POST (no chain, so
-# no revision is observable — the honor-system persist-path residual recorded in the rule text); and a
-# paraphrased question. KNOWN FALSE POSITIVE: the literal quoted in a script that is NOT the delegation
-# text silences it, the same string-residency ceiling every attestation token carries.
-# PROMOTION: advisory-first is a ceiling here, not a staging step. A raw scan cannot separate a
-# delegation's goal text from a mention of one, and the decision additionally rests on a live network
-# read, so promotion to exit 2 would let a monitor outage block correct work. It waits on accumulated
-# false-positive data plus an explicit user decision.
+# KNOWN FALSE NEGATIVES, stated rather than tuned away — each is a non-compliant script this check leaves
+# unflagged: a workflow carrying no plan-ref (the entry gate's concern, not this one); a plan persisted as
+# a fresh document instead of a supersede-POST (no chain, so no revision is observable — the honor-system
+# persist-path residual recorded in the rule text); a paraphrased question; the literal quoted ANYWHERE in
+# the script rather than in the delegation goal text, which silences the nudge on the same string-residency
+# ceiling every attestation token carries; and an earlier clauded-docs/<N> id winning conjunct (3) over the
+# plan-ref — driven: a `// background reading: clauded-docs/101` comment placed ahead of a plan-ref to 103
+# walks the depth-0 root and yields silence, and a monitor URL naming 102 makes the nudge report that
+# document's depth rather than the plan's.
+# PROMOTION: advisory-first is a ceiling here, not a staging step. The load-bearing blocker is the
+# string-residency ceiling above — a raw scan cannot separate a delegation's goal text from a mention of
+# one, so an exit-2 verdict would rest on an observable a non-compliant author satisfies with a comment.
+# The live network read adds NO second blocker: every infrastructure failure fails open to silence, so a
+# monitor outage yields no nudge rather than a spurious block. Re-opening the decision needs a new signal
+# that separates goal text from a mention, plus an explicit user decision — not more coverage of this one.
 #
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
@@ -2466,8 +2475,10 @@ EOF
       # issues zero GETs. Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
       if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | grep -qF "${FIRST_LINK_LITERAL}"; then
         local plan_refs first_link_plan_id
-        # First plan-ref in file order. No `head` in the pipe: a SIGPIPE'd grep under pipefail would
-        # trip the fail-open ERR trap, so the whole match set is captured and sliced in bash.
+        # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
+        # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
+        # a SIGPIPE'd grep under pipefail would trip the fail-open ERR trap, so the whole match set is
+        # captured and sliced in bash.
         plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
         first_link_plan_id="${plan_refs%%$'\n'*}"
         first_link_plan_id="${first_link_plan_id##*/}"
