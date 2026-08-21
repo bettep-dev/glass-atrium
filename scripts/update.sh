@@ -1292,7 +1292,12 @@ update_merge_agent_editable_regions() {
     candidate="${merge_dir}/${base}.candidate"
     plan_err="${merge_dir}/${base}.planerr"
     plan_rc=0
-    plan_line="$(python3 "${_update_merge_lib_dir}/editable_merge.py" plan \
+    # The per-run arbiter call ceiling is counted in a file rather than in one plan
+    # process: the loop spawns a process per body, so a per-process tally bounds one
+    # body and leaves the run's total at the body count times the ceiling. The file
+    # lives in this run's merge dir, so it is created and torn down with the run.
+    plan_line="$(GA_ARBITER_RUN_COUNTER="${merge_dir}/arbiter-calls" \
+      python3 "${_update_merge_lib_dir}/editable_merge.py" plan \
       --target "agents/${base}" --local "${local_file}" --release "${file}" \
       --out "${candidate}" --agent "${base%.md}" \
       --diff-out "${merge_dir}/${base}.resolved.diff" \

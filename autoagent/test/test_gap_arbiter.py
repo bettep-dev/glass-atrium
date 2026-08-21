@@ -242,6 +242,24 @@ class ConfigSourceTest(unittest.TestCase):
             config.write_text("{not json", encoding="utf-8")
             self.assertEqual(ga.get_run_ceiling(config), absent_key)
             self.assertGreater(absent_key, 0)
+            # bool is an int subclass: `true` must take the fallback, not read as 1.
+            config.write_text(json.dumps({ga.RUN_CEILING_KEY: True}), encoding="utf-8")
+            self.assertEqual(ga.get_run_ceiling(config), absent_key)
+
+    def test_the_named_counter_file_spans_the_run_and_its_absence_spans_the_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            counter = Path(tmp) / "arbiter-calls"
+            with mock.patch.dict(os.environ, {ga.COUNTER_ENV: str(counter)}):
+                first_process = ga.RunState()
+                first_process.spend_call()
+                first_process.spend_call()
+                # A SECOND plan process of the same run reads what the first spent.
+                self.assertEqual(ga.RunState().get_spent(), 2)
+            with mock.patch.dict(os.environ, {ga.COUNTER_ENV: ""}):
+                unnamed = ga.RunState()
+                unnamed.spend_call()
+                self.assertEqual(unnamed.get_spent(), 1)
+                self.assertEqual(ga.RunState().get_spent(), 0)
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")

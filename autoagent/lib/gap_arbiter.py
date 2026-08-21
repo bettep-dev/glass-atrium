@@ -14,6 +14,7 @@ from.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -59,6 +60,13 @@ CLAUSE_NO_STALE = "no-stale"
 RUN_CEILING_KEY = "arbiter_max_calls_per_run"
 _RUN_CEILING_FALLBACK = 24
 
+# The run-wide call counter's path, named by the process that owns the run. One
+# update spawns one plan process per body, so a tally living only in a process
+# bounds that body alone; the file is what makes the ceiling the RUN's. Absent
+# (a unit test, a direct plan) → the in-process tally, which is the same number
+# for a run of one body.
+COUNTER_ENV = "GA_ARBITER_RUN_COUNTER"
+
 
 def get_run_ceiling(path: Path | None = None) -> int:
     """Echo the per-run arbiter call ceiling the daemon config file names."""
@@ -70,7 +78,16 @@ def get_run_ceiling(path: Path | None = None) -> int:
     if not isinstance(raw, dict):
         return _RUN_CEILING_FALLBACK
     value = raw.get(RUN_CEILING_KEY)
-    return value if isinstance(value, int) and value > 0 else _RUN_CEILING_FALLBACK
+    # bool is an int subclass, so `true` would otherwise read as a ceiling of 1.
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return _RUN_CEILING_FALLBACK
+    return value
+
+
+def get_counter_path() -> Path | None:
+    """Echo the run-wide counter file the environment names, or None."""
+    raw = os.environ.get(COUNTER_ENV, "")
+    return Path(raw) if raw else None
 
 
 @dataclass(frozen=True)
@@ -125,11 +142,43 @@ class Decision:
 
 @dataclass
 class RunState:
-    """Per-run call accounting. One instance spans every gap of one run."""
+    """Per-run call accounting. One instance spans every gap of one process, and
+    the counter file — when the run names one — spans every process of one run."""
 
     ceiling: int = field(default_factory=get_run_ceiling)
     calls: int = 0
     ceiling_reported: bool = False
+    counter_path: Path | None = field(default_factory=get_counter_path)
+
+    def get_spent(self) -> int:
+        """Calls the run has already spent — the shared file when one is named."""
+        if self.counter_path is None:
+            return self.calls
+        try:
+            return int(self.counter_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            # A first gap finds no file, which is zero spent; an unreadable or
+            # garbled one is reported and falls back to this process's own tally.
+            if self.counter_path.exists():
+                sys.stderr.write(
+                    f"[arbiter] counter-unreadable path={self.counter_path}\n"
+                )
+            return self.calls
+
+    def spend_call(self) -> None:
+        """Charge one call to this process and to the run-wide counter."""
+        spent = self.get_spent()
+        self.calls += 1
+        if self.counter_path is None:
+            return
+        try:
+            self.counter_path.write_text(f"{spent + 1}\n", encoding="utf-8")
+        except OSError as exc:
+            # Loud: a counter that stops advancing silently restores the per-process
+            # ceiling this file exists to replace.
+            sys.stderr.write(
+                f"[arbiter] counter-write-failed path={self.counter_path} {exc!r}\n"
+            )
 
 
 # -- prompt assembly (D1.5) --------------------------------------------------
@@ -393,11 +442,11 @@ def get_decision(
     remaining classes take none because each is a real cap or a contract breach
     rather than a transient.
     """
-    if run_state.calls >= run_state.ceiling:
+    if run_state.get_spent() >= run_state.ceiling:
         # An ENTRY check: a gap admitted on the last slot still takes its retry,
-        # so a run overshoots the ceiling by at most that one further call.
-        # Every subsequent gap of an over-ceiling run takes the ladder, but only
-        # the first writes a row: one summary row per run, not one per gap.
+        # so a run overshoots the ceiling by at most that one further call per
+        # process. Every subsequent gap of an over-ceiling run takes the ladder,
+        # but only the first of THIS process writes a row.
         ceiling = str(run_state.ceiling)
         row = (
             "" if run_state.ceiling_reported
@@ -464,7 +513,7 @@ def _invoke(prompt: str, claude_bin: str, timeout_sec: int, run_state: RunState)
     duration it returns third is dropped, since the failure rows this module
     writes name a class rather than a timing.
     """
-    run_state.calls += 1
+    run_state.spend_call()
     completed, early_exit, _ = daemon_cycle._invoke_haiku_cli(
         prompt=prompt, claude_bin=claude_bin, timeout_sec=timeout_sec
     )
