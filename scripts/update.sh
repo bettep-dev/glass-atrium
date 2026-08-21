@@ -2663,10 +2663,29 @@ update_write_restore_index() {
   fi
 }
 
+# Echo the manifest-relative roster path a before-image basename belongs to, or
+# nothing when no roster row owns that basename. The before-image sink is a single
+# flat directory keyed by basename (git_txn captures `${target##*/}.bak`), so a
+# roster image's own path is recoverable only by asking the roster declaration —
+# which is what makes `scope-dev.md.bak` the roster's `scoped/scope-dev.md` rather
+# than the `agents/scope-dev.md` the agents-only convention would invent. Arg: $1 =
+# the image basename with its `.bak` suffix already stripped.
+update_roster_path_for_image() {
+  local name="$1" path
+  while IFS= read -r path; do
+    if [[ "${path##*/}" == "${name}" ]]; then
+      printf '%s\n' "${path}"
+      return 0
+    fi
+  done < <(spine_get_roster_paths)
+  return 0
+}
+
 # Emit one `<before-image basename> TAB <manifest-relative target>` pair per
 # before-image in a cycle dir, as the UNION of what the index names and what the
 # directory holds: an indexed image pairs with its recorded target, every other
-# *.md.bak with the agents/ target the convention always implied.
+# image with the target its basename belongs to — a roster row for a roster
+# basename, the agents/ convention for every other *.md.bak.
 #
 # UNION rather than index-first because the two sinks have different lifetimes: the
 # cycle dir is keyed by date and version and is never cleared, while the index write
@@ -2678,7 +2697,7 @@ update_write_restore_index() {
 # An index-less cycle is the whole-directory case of the same rule, so it restores
 # exactly as it did before the index existed. Arg: $1 = cycle dir.
 update_restore_before_images() {
-  local cycle_dir="$1" index bak name bak_name rel indexed=$'\n'
+  local cycle_dir="$1" index bak name bak_name rel roster_path indexed=$'\n'
   index="$(update_restore_index_path "${cycle_dir}")"
   if [[ -f "${index}" ]]; then
     # A row missing either field names no pair, so it is dropped here and its image
@@ -2689,15 +2708,25 @@ update_restore_before_images() {
       indexed="${indexed}${bak_name}"$'\n'
     done <"${index}"
   fi
-  # The *.md.bak glob matches ONLY live before-images — a sibling *.md.base.bak ends
-  # in .base.bak, so the base snapshots are never iterated as restore targets.
-  for bak in "${cycle_dir}"/*.md.bak; do
+  # The glob is *.bak so a roster image the index lost is reached too — the three
+  # non-.md roster paths (the registry, the injector, the styleref lib) leave
+  # images no *.md.bak glob can see. The .base.bak siblings are skipped by suffix:
+  # base snapshots are the reversal's own input, never restore targets.
+  for bak in "${cycle_dir}"/*.bak; do
     [[ -e "${bak}" ]] || continue
     name="${bak##*/}"
+    [[ "${name}" == *.base.bak ]] && continue
     # Whole-line membership through the newline anchors, mirroring `grep -qxF`: an
     # image the index already paired must not also take the convention target.
     [[ "${indexed}" == *$'\n'"${name}"$'\n'* ]] && continue
-    printf '%s\t%s\n' "${name}" "agents/${name%.bak}"
+    roster_path="$(update_roster_path_for_image "${name%.bak}")"
+    if [[ -n "${roster_path}" ]]; then
+      printf '%s\t%s\n' "${name}" "${roster_path}"
+    elif [[ "${name}" == *.md.bak ]]; then
+      printf '%s\t%s\n' "${name}" "agents/${name%.bak}"
+    fi
+    # An image that is neither roster-owned nor markdown names no convention
+    # target, so it is left for the index rather than guessed into agents/.
   done
 }
 
@@ -2814,7 +2843,7 @@ update_restore_agents() {
     fi
   done < <(update_restore_before_images "${restore_dir}")
   [[ "${count}" -gt 0 ]] \
-    || update_die_code 10 "no *.md.bak before-images found in ${restore_dir}"
+    || update_die_code 10 "no before-images found in ${restore_dir}"
   update_log "agents-bak restore complete: ${count} file(s) from ${cycle_id}"
   [[ "${fail}" -eq 0 ]] \
     || update_die_code 10 "one or more agent restores failed (see WARN lines) — cycle-id ${cycle_id}"

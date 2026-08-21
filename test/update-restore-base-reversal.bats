@@ -213,6 +213,33 @@ run_restore_base_entry() {
   [[ "$(cat "${STORE}/dev-x.md")" == "PRIOR BASE" ]] || return 1       # base reversed under the flat key
 }
 
+@test "an INDEXLESS roster image restores to its roster path, and a nameless one to nothing" {
+  # The before-image sink is one flat directory keyed by basename, so an image the index
+  # lost is recoverable only by asking the roster declaration. Two ways the old convention
+  # lost these: the three non-.md roster rows leave images the *.md.bak glob cannot even
+  # see, and scope-dev.md.bak is the one it CAN see and would have rebuilt under agents/
+  # while the real file stayed unrestored.
+  local rel bn
+  while IFS= read -r rel; do
+    bn="${rel##*/}"
+    case "${rel}" in */*) mkdir -p "${ROOT}/${rel%/*}" ;; *) ;; esac
+    printf 'MERGED %s\n' "${rel}" >"${ROOT}/${rel}"
+    printf 'LOCAL %s\n' "${rel}" >"${CYCLEDIR}/${bn}.bak"
+  done < <(roster_paths)
+  # Neither roster-owned nor markdown: no convention target exists for it, so it is left
+  # for an index rather than guessed into agents/.
+  printf 'LOCAL notes\n' >"${CYCLEDIR}/notes.txt.bak"
+  [[ ! -e "${CYCLEDIR}/restore-index.tsv" ]] || return 1 # the fixture IS an index-less cycle
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  while IFS= read -r rel; do
+    [[ "$(cat "${ROOT}/${rel}")" == "LOCAL ${rel}" ]] || return 1
+  done < <(roster_paths)
+  [[ ! -e "${ROOT}/agents/scope-dev.md" ]] || return 1
+  [[ ! -e "${ROOT}/agents/notes.txt" ]] || return 1
+}
+
 @test "a reused cycle dir restores the images its index does not name" {
   # Two runs share ONE cycle dir: it is keyed by date + version and never cleared,
   # while the index write truncates. Run 1's image survives in the dir carrying no

@@ -1645,8 +1645,8 @@ async function handleReject(
 // POST /api/improvement/:id/restore
 
 // Resolves scripts/update.sh — git-free recovery entry. --restore-agents <cycle-id> rolls
-// the touched agent .md files back from the agents-bak before-image and acquires the shared
-// pause + .apply-lock itself, so this route does NOT double-lock. Fixed home-dir path, never
+// every file the cycle holds a before-image for back to it and acquires the shared
+// .apply-lock itself, so this route does NOT double-lock. Fixed home-dir path, never
 // request-derived → not a shell-injection / SSRF surface. ATRIUM_UPDATE_SCRIPT is a
 // server-startup test seam (process-env, never request-derived).
 function resolveRestoreScript(): string {
