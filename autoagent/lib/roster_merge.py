@@ -151,9 +151,9 @@ def _set_markdown_slots(release_text: str, slots: dict[str, dict[str, object]]) 
 
 
 # A slot is a space-padded single-string readonly declaration. The padding is
-# what selects it: against the two live roster shell files the pattern picks the
-# six named arrays of inject-scope-rules.sh out of its 42 readonly lines and the
-# one array of styleref-roster.sh out of its 2.
+# what selects it: in both live roster shell files every roster array carries the
+# padding and no other readonly declaration does, so no list of array names is
+# restated here.
 _SHELL_ARRAY_RE = re.compile(
     r'^(?P<open>readonly[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_]*)=")'
     r'(?P<body> [^"\n]* )'

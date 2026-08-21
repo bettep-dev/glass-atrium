@@ -60,6 +60,19 @@ RUN_CEILING_KEY = "arbiter_max_calls_per_run"
 _RUN_CEILING_FALLBACK = 24
 
 
+def get_run_ceiling(path: Path | None = None) -> int:
+    """Echo the per-run arbiter call ceiling the daemon config file names."""
+    config_path = path if path is not None else CONFIG_PATH
+    try:
+        raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _RUN_CEILING_FALLBACK
+    if not isinstance(raw, dict):
+        return _RUN_CEILING_FALLBACK
+    value = raw.get(RUN_CEILING_KEY)
+    return value if isinstance(value, int) and value > 0 else _RUN_CEILING_FALLBACK
+
+
 @dataclass(frozen=True)
 class GapRequest:
     """One contested gap plus the read-only context the model judges it in."""
@@ -114,22 +127,9 @@ class Decision:
 class RunState:
     """Per-run call accounting. One instance spans every gap of one run."""
 
-    ceiling: int = field(default_factory=lambda: get_run_ceiling())
+    ceiling: int = field(default_factory=get_run_ceiling)
     calls: int = 0
     ceiling_reported: bool = False
-
-
-def get_run_ceiling(path: Path | None = None) -> int:
-    """Echo the per-run arbiter call ceiling the daemon config file names."""
-    config_path = path if path is not None else CONFIG_PATH
-    try:
-        raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _RUN_CEILING_FALLBACK
-    if not isinstance(raw, dict):
-        return _RUN_CEILING_FALLBACK
-    value = raw.get(RUN_CEILING_KEY)
-    return value if isinstance(value, int) and value > 0 else _RUN_CEILING_FALLBACK
 
 
 # -- prompt assembly (D1.5) --------------------------------------------------
@@ -398,21 +398,19 @@ def get_decision(
         # so a run overshoots the ceiling by at most that one further call.
         # Every subsequent gap of an over-ceiling run takes the ladder, but only
         # the first writes a row: one summary row per run, not one per gap.
+        ceiling = str(run_state.ceiling)
         row = (
-            build_row(request, FAILURE_RUN_CEILING, str(run_state.ceiling))
-            if not run_state.ceiling_reported
-            else ""
+            "" if run_state.ceiling_reported
+            else build_row(request, FAILURE_RUN_CEILING, ceiling)
         )
         run_state.ceiling_reported = True
-        return _build_local_decision(
-            request, FAILURE_RUN_CEILING, str(run_state.ceiling), row=row
-        )
+        return _build_local_decision(request, FAILURE_RUN_CEILING, ceiling, row=row)
 
     prompt = build_prompt(request)
-    completed, early_exit, _ = _invoke(prompt, claude_bin, timeout_sec, run_state)
+    completed, early_exit = _invoke(prompt, claude_bin, timeout_sec, run_state)
 
     if early_exit is not None and _is_timeout(early_exit):
-        completed, early_exit, _ = _invoke(
+        completed, early_exit = _invoke(
             prompt, claude_bin, escalated_timeout_sec, run_state
         )
         if early_exit is not None and _is_timeout(early_exit):
@@ -429,7 +427,7 @@ def get_decision(
 
     answer = parse_answer(completed.stdout)
     if answer is None:
-        completed, early_exit, _ = _invoke(
+        completed, early_exit = _invoke(
             prompt + _STRICT_RETRY_SUFFIX, claude_bin, timeout_sec, run_state
         )
         if early_exit is not None or completed is None or completed.returncode != 0:
@@ -460,11 +458,17 @@ def get_decision(
 
 
 def _invoke(prompt: str, claude_bin: str, timeout_sec: int, run_state: RunState):
-    """Spend one call through the daemon's own CLI helper, which carries the model and cap."""
+    """Spend one call through the daemon's own CLI helper, which carries the model and cap.
+
+    Echoes the helper's completed process and its early-exit proposal; the call
+    duration it returns third is dropped, since the failure rows this module
+    writes name a class rather than a timing.
+    """
     run_state.calls += 1
-    return daemon_cycle._invoke_haiku_cli(
+    completed, early_exit, _ = daemon_cycle._invoke_haiku_cli(
         prompt=prompt, claude_bin=claude_bin, timeout_sec=timeout_sec
     )
+    return completed, early_exit
 
 
 def _is_timeout(early_exit) -> bool:
