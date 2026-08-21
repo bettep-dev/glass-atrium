@@ -271,6 +271,9 @@ _update_agent_create_failures=""
 # The background heartbeat ticker's pid while the merge span holds the run (empty
 # when none is live). One at a time — the start is a no-op while it is set.
 _update_ticker_pid=""
+# The interval sleep's pid, set INSIDE the ticker subshell only (the parent's copy
+# stays empty). The subshell's TERM handler reads it to reap the sleep it owns.
+_update_ticker_sleep_pid=""
 # The prior-vendor agent roster (newline-wrapped) resolved once per run beside the
 # roster gate. The agent stage reads it to tell a release-shipped NEW agent from one
 # this install deleted through the ceremony, which the release still ships.
@@ -2144,19 +2147,47 @@ update_ticker_start() {
     # The parent's traps are not this subshell's business: it holds no lock, no
     # workdir and no job row of its own, and dies by the kill below.
     trap - EXIT INT TERM
-    while sleep "${_UPDATE_TICKER_INTERVAL}"; do
+    # The interval sleep runs in the BACKGROUND and is waited on, so this subshell
+    # OWNS it. A foreground `while sleep N` makes it a GRANDCHILD instead, which the
+    # parent's kill (a single pid, not a process group) never reaches: it reparents
+    # onto init and lives out the rest of the interval still holding the run's
+    # stdout — 300s of survivor after a stop that reported success.
+    trap 'update_ticker_on_term' TERM
+    while :; do
+      sleep "${_UPDATE_TICKER_INTERVAL}" &
+      # shellcheck disable=SC2030  # subshell-local BY DESIGN: only this subshell's own TERM handler reads it, and the parent's copy must stay empty
+      _update_ticker_sleep_pid=$!
+      wait "${_update_ticker_sleep_pid}" || break
+      _update_ticker_sleep_pid=""
       update_job_heartbeat
     done
   ) &
   _update_ticker_pid=$!
 }
 
-# Stop the ticker. Idempotent, and safe on a pid that already exited — the run's
-# own cleanup calls it on every exit path so no ticker outlives the process.
+# The ticker subshell's own TERM handler: reap the interval sleep it owns, THEN
+# exit. Reaping before the exit is what lets the parent's `wait` mean "the whole
+# ticker tree is gone" rather than "its top pid is gone".
+update_ticker_on_term() {
+  # shellcheck disable=SC2031  # reading the subshell's own assignment is the point: this handler only ever runs INSIDE that subshell
+  if [[ -n "${_update_ticker_sleep_pid}" ]]; then
+    kill -TERM "${_update_ticker_sleep_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the sleep can expire between the signal landing and this line — nothing left to TERM
+    wait "${_update_ticker_sleep_pid}" 2>/dev/null || true       # GA-ABSORB[benign]: the killed sleep's non-zero wait status is the expected shape here
+  fi
+  exit 0
+}
+
+# Stop the ticker AND reap it. Idempotent, and safe on a pid that already exited —
+# the run's own cleanup calls it on every exit path so no ticker outlives the process.
+# The `wait` is the contract, not hygiene: this function must not return while any
+# descendant can still write, because the caller's next move is teardown (the workdir
+# rm, the terminal job write) that a late writer would race. TERM lands on the
+# subshell, whose handler reaps the sleep; a TERM arriving mid-heartbeat is deferred
+# until that heartbeat's own child has finished, so the wait covers it too.
 update_ticker_stop() {
   [[ -n "${_update_ticker_pid}" ]] || return 0
-  kill "${_update_ticker_pid}" 2>/dev/null || true # GA-ABSORB[benign]: an already-exited ticker is a normal outcome, not a failure to report
-  wait "${_update_ticker_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the killed child's non-zero wait status is the expected shape here
+  kill -TERM "${_update_ticker_pid}" 2>/dev/null || true # GA-ABSORB[benign]: an already-exited ticker is a normal outcome, not a failure to report
+  wait "${_update_ticker_pid}" 2>/dev/null || true       # GA-ABSORB[benign]: the killed child's non-zero wait status is the expected shape here
   _update_ticker_pid=""
 }
 

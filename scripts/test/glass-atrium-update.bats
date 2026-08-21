@@ -1615,6 +1615,43 @@ PLIST
   '
   [ "$status" -eq 0 ] || { echo "$output"; return 1; }
   [[ "$(grep -c . "${WORK}/ticks")" -ge 2 ]] || return 1
+
+  # "outlives no run", GATED — the half the pid probe above cannot see. The interval
+  # sleep is a GRANDCHILD of this shell, so a stop that signals only the subshell pid
+  # leaves it orphaned onto init for the REST of the interval, still holding the run's
+  # stdout. bats captures `run` through a command substitution, which cannot return
+  # until every holder of that pipe closes it, so a survivor turns a finished test into
+  # an interval-long block — 300s at the production interval, past the CI per-file
+  # timeout. A distinctive fractional interval keeps the pgrep match unambiguous against
+  # the other suites running in parallel.
+  local t0 t1
+  t0="$(date +%s)"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    _update_headless=1
+    _UPDATE_TICKER_INTERVAL=13.7
+    update_ticker_start
+    [[ -n "${_update_ticker_pid}" ]] || exit 3
+    sleep 1 # let the ticker reach its interval sleep — stopping it before the fork proves nothing
+    update_ticker_stop
+    command -v pgrep >/dev/null 2>&1 || exit 0
+    # Bounded poll to zero. The wait bounds a REGRESSION, it does not grant the stop
+    # time to finish: a stop that has returned owes no further teardown.
+    waited=0
+    while pgrep -xf "sleep 13.7" >/dev/null 2>&1; do
+      [[ "${waited}" -lt 30 ]] || exit 6
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+  '
+  t1="$(date +%s)"
+  [ "$status" -eq 0 ] || { echo "survivor gate: status=${status} ${output}"; return 1; }
+  # The capture itself is the second, pgrep-free reading of the same property: it
+  # closes only once no descendant holds the pipe, so it must come back far inside
+  # the 13.7s interval it would otherwise have to sit out.
+  [[ "$((t1 - t0))" -lt 5 ]] || { echo "capture blocked $((t1 - t0))s — a ticker descendant outlived the stop"; return 1; }
 }
 
 @test "P3 headless: the interactive path starts no ticker" {
