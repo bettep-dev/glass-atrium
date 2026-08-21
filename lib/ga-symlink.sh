@@ -58,16 +58,34 @@ is_symlink_excluded() {
   printf 'no\n'
 }
 
-# agent-body merge claim query
-# Echo "yes" when a manifest-relative path is a top-level agents/<name>.md other than the non-agent
-# charter — the set the EDITABLE-region merge resolves instead of the byte-swap; else "no". The merge
-# has a documented decline for a release-only ADD (it defers the body to the agent_lifecycle
-# ceremony), so exactly these rows can be listed by the manifest with nothing on disk yet. Stdout-verdict
-# (exits 0) so the ERR trap never fires, mirroring is_collision_scope / is_symlink_excluded. Restates
-# scripts/lib/apply-spine.sh::spine_is_merge_claimed_path because the launcher never sources the
-# updater's spine; the two are pinned against each other by scripts/test/mirror-farm.bats.
-is_merge_claimed_agent() {
-  local rel="$1" rest
+# The ROSTER rows, restated. scripts/lib/apply-spine.sh::spine_get_roster_paths is the declaration;
+# this list exists only because the launcher never sources the updater's spine, and the two are
+# driven against each other over EVERY member by scripts/test/mirror-farm.bats — which is what keeps
+# a hand copy from drifting into a row one side claims and the other byte-swaps.
+GA_ROSTER_PATHS=(
+  'agent-registry.json'
+  'scoped/scope-dev.md'
+  'hooks/inject-scope-rules.sh'
+  'hooks/lib/styleref-roster.sh'
+)
+
+# merge claim query
+# Echo "yes" when a manifest-relative path is resolved by a MERGE rather than the byte-swap: a
+# top-level agents/<name>.md other than the non-agent charter, or one of the roster rows above; else
+# "no". Both merges have a documented decline — the agent one defers a release-only ADD to the
+# agent_lifecycle ceremony, the roster one declines a shape it cannot parse — so exactly these rows
+# can be listed by the manifest with nothing on disk yet. Stdout-verdict (exits 0) so the ERR trap
+# never fires, mirroring is_collision_scope / is_symlink_excluded. Restates
+# scripts/lib/apply-spine.sh::spine_is_merge_claimed_path; the two are pinned against each other by
+# scripts/test/mirror-farm.bats.
+is_merge_claimed_path() {
+  local rel="$1" rest roster
+  for roster in "${GA_ROSTER_PATHS[@]}"; do
+    if [[ "${rel}" == "${roster}" ]]; then
+      printf 'yes\n'
+      return 0
+    fi
+  done
   case "${rel}" in
     agents/*.md) ;;
     *)
@@ -106,17 +124,28 @@ swap_symlink() {
     die "refusing to touch never-touch path: ${rel}"
   fi
 
-  # A merge-claimed agent body with no source is a REPORT: the row reaches the install through the
-  # EDITABLE-region merge, which defers a release-only ADD to the agent_lifecycle ceremony, so the
-  # manifest can legitimately list it before anything exists to link. Dying here would abort the farm
-  # loop mid-run for a row the farm was never going to resolve, and on the update path that abort
-  # lands after the byte-swap has committed. Every other row travels the byte-swap, where an absent
-  # source means the apply did not land it — still fatal. The same policy is read at the updater's
-  # mode-enforcement pass (scripts/update.sh update_enforce_manifest_modes).
+  # A merge-claimed row with no source is a REPORT: the row reaches the install through a merge that
+  # can legitimately decline it, so the manifest can list it before anything exists to link. Dying
+  # here would abort the farm loop mid-run for a row the farm was never going to resolve, and on the
+  # update path that abort lands after the byte-swap has committed. Every other row travels the
+  # byte-swap, where an absent source means the apply did not land it — still fatal. The same policy
+  # is read at the updater's mode-enforcement pass (scripts/update.sh update_enforce_manifest_modes),
+  # which names the same two remedies.
   if [[ ! -e "${src}" ]]; then
     # shellcheck disable=SC2310,SC2311,SC2312  # stdout verdict (exits 0) — masking intentional
-    if [[ "$(is_merge_claimed_agent "${rel}")" == "yes" ]]; then
-      log "skip (agent body not installed; run the agent_lifecycle ceremony to install it): ${rel}"
+    if [[ "$(is_merge_claimed_path "${rel}")" == "yes" ]]; then
+      # Two remedies, because no ceremony can install a roster row: an agent body is created through
+      # agent_lifecycle, whereas an absent roster row is a roster install that did not land. The
+      # roster arm is unreachable while every roster row is symlink-excluded upstream of here (the
+      # exclusion is pinned in mirror-farm.bats) — it answers the row that leaves that list.
+      case "${rel}" in
+        agents/*.md)
+          log "skip (agent body not installed; run the agent_lifecycle ceremony to install it): ${rel}"
+          ;;
+        *)
+          log "skip (roster row not installed; see the roster WARN above and re-run the update): ${rel}"
+          ;;
+      esac
       return 0
     fi
     die "manifest source missing: ${src}"

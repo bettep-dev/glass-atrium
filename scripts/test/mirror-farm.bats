@@ -220,16 +220,20 @@ run_refresh() {
   # The launcher never sources the updater's spine, so the farm restates the claim. Drive both over
   # one path set: a divergence would put the farm and the mode-enforcement pass on opposite verdicts
   # for the same row, which is the split this carve-out exists to close.
+  # The path set is the spine's OWN roster declaration plus the agent-arm cases, so a roster row
+  # added there enters this drive without an edit here — a hand-listed roster would be the very
+  # second copy the pin exists to catch.
   run env bash -c '
     set -Eeuo pipefail
     source "'"${GA}"'/lib/ga-symlink.sh"
     source "'"${GA}"'/scripts/lib/apply-spine.sh"
     for p in agents/glass-atrium-dev-shell.md agents/GLASS_ATRIUM_GLOBAL_RULES.md \
       agents/templates/progress.md agents/notes.txt skills/testkit/newlib.sh \
-      rules/glass-atrium/core-security.md agents/a.md.local.md; do
+      rules/glass-atrium/core-security.md agents/a.md.local.md \
+      $(spine_get_roster_paths); do
       spine=no
       spine_is_merge_claimed_path "${p}" && spine=yes
-      printf "%s %s %s\n" "${p}" "$(is_merge_claimed_agent "${p}")" "${spine}"
+      printf "%s %s %s\n" "${p}" "$(is_merge_claimed_path "${p}")" "${spine}"
     done
   '
   [ "$status" -eq 0 ] || return 1
@@ -239,6 +243,55 @@ run_refresh() {
   done
   [[ "$output" == *"agents/glass-atrium-dev-shell.md yes yes"* ]] || return 1
   [[ "$output" == *"agents/GLASS_ATRIUM_GLOBAL_RULES.md no no"* ]] || return 1
+  # Every declared roster row, by name: the loop above passes vacuously on an empty word split.
+  # The spine is not sourced in THIS process, so the list is read through one that does — an
+  # undefined function here would word-split to nothing and skip the loop, which is the inert
+  # assertion this suite's own gating note warns about. The non-empty guard is what forbids it.
+  local roster roster_paths
+  roster_paths="$(bash -c 'source "'"${GA}"'/scripts/lib/apply-spine.sh"; spine_get_roster_paths')"
+  [[ -n "${roster_paths}" ]] || return 1
+  for roster in ${roster_paths}; do
+    [[ "$output" == *"${roster} yes yes"* ]] || return 1
+  done
+}
+
+@test "an absent roster row is excluded before the farm's missing-source arm, never fatal" {
+  # WHERE the roster rows are answered, which is upstream of the claim predicate: all four are
+  # install-internal (the scoped/ and hooks/ prefixes, agent-registry.json exact), so
+  # is_symlink_excluded answers first and swap_symlink is never called for one. That is what makes
+  # an absent roster row non-fatal here — a fatal one would abort the farm loop mid-run, and on the
+  # update path that abort lands after the byte-swap has already committed. Dropping a prefix from
+  # the exclusion list would route the row into swap_symlink instead, which is the regression this
+  # pins; the claim predicate then decides, and its roster arm is reached only in that case.
+  # ga_init_env is what defines the exclusion arrays; sourcing the lib alone leaves them unbound and
+  # every verdict empty, which reads as "not no" and asserts nothing. The per-line `== yes` and the
+  # seen count are what make an empty verdict fail instead.
+  local excluded path verdict seen=0
+  excluded="$(GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${GAROOT}"'/lib/ga-core.sh"
+    ga_init_env "'"${GAROOT}"'"
+    source "'"${GA}"'/scripts/lib/apply-spine.sh"
+    for p in $(spine_get_roster_paths); do printf "%s %s\n" "${p}" "$(is_symlink_excluded "${p}")"; done
+  ')"
+  while read -r path verdict; do
+    [[ "${verdict}" == "yes" ]] || return 1
+    seen=$((seen + 1))
+  done <<<"${excluded}"
+  [[ "${seen}" -gt 0 ]] || return 1
+
+  write_manifest "scoped/scope-dev.md" "skills/testkit/newlib.sh"
+  rm -f "${GAROOT}/scoped/scope-dev.md"
+  mkdir -p "${FACADE}"
+  run env GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${LIB}"'"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"skip (install-internal"*"scoped/scope-dev.md"* ]] || return 1
+  [[ "$output" != *"manifest source missing"* ]] || return 1
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]] || return 1
 }
 
 @test "farm_has_ga_links detects deployment links (no -> yes)" {

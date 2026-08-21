@@ -3001,7 +3001,14 @@ update_enforce_manifest_modes() {
     if [[ ! -f "${root}/${rel}" ]]; then
       # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
       if spine_is_merge_claimed_path "${rel}"; then
-        update_log "WARN: mode target missing on disk (the agent merge declined this body; run the agent_lifecycle ceremony to install it): ${rel}"
+        # The claim predicate covers the four roster rows as well as the agent
+        # bodies, and an absent roster file is a failed roster install that no agent
+        # ceremony can repair — so the remedy is named per direction, not once.
+        if [[ "${rel}" == agents/*.md ]]; then
+          update_log "WARN: mode target missing on disk (the agent merge declined this body; run the agent_lifecycle ceremony to install it): ${rel}"
+        else
+          update_log "WARN: mode target missing on disk (a merge-claimed roster row the roster install did not land — see the roster WARN above and re-run the update): ${rel}"
+        fi
         continue
       fi
       update_die "mode target missing on disk: ${rel} (the release lists it, so the apply did not land it)"
