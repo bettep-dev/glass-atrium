@@ -1097,8 +1097,10 @@ class GapArbiter:
             self._prune_records()
             path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:
-            # An unrecorded decision is not a wrong one: the verify replay finds
-            # no record and keeps local, which is what a failed derivation does.
+            # An unrecorded decision is not a wrong one, but it is unverifiable:
+            # the verify replay finds no record, resolves the region pending and
+            # fails the transaction, so the plan's arbitrated text is restored
+            # rather than landing behind a gate that never read it.
             self._write_row(region_index, region_count, _REPLAY_ABSENT, repr(exc))
 
     def _prune_records(self) -> None:
@@ -1324,6 +1326,15 @@ class MergeCandidate:
         # restored backup, a crash window) fail the transaction into the git_txn
         # before-image restore rather than leaving a corrupted live agent body.
         if has_conflict_markers(on_disk):
+            return 1
+        # The bytes on disk must be the ones THIS process resolved. They are not,
+        # whenever the verify replay derives a different candidate from the plan
+        # that wrote them — a decision record the plan failed to persist, or one
+        # pruned between the two, leaves the plan's arbitrated wording on disk while
+        # this side resolves the region pending. Passing that through would land
+        # wording no reader screened, so it fails into the before-image restore the
+        # way the base-less gated path already does.
+        if on_disk != self.resolution.candidate_text:
             return 1
         post_diff = _unified_diff(self.resolution.local_text, on_disk, self.target_file)
         if dc.match_sensitive_diff(post_diff) is not None:

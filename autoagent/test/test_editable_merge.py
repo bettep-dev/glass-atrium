@@ -868,6 +868,23 @@ class MergeCandidateGateTest(unittest.TestCase):
             self.assertEqual(cand.verify(str(p)), 1)
         self.assertEqual(stub.calls, 0)
 
+    def test_a_refused_path_never_crosses_the_model_seam(self) -> None:
+        """The refusal is a PATH verdict, so it is reached before the resolver that
+        would spend a call — and a retry — on a candidate thrown away regardless."""
+        local = _doc(top="# R", region="rule a local", bottom="z")
+        release = _doc(top="# R", region="rule a vendor", bottom="z")
+        with _stub_model("CHOICE: RELEASE\nRATIONALE: fixture") as seam:
+            cand = em.build_merge_candidate(
+                "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
+                local,
+                release,
+                base_text=None,
+                verify_fn=_StubVerify(passed=True),
+                arbiter_mode=em.ARBITER_PLAN,
+            )
+        self.assertTrue(cand.refused)
+        self.assertEqual(seam.call_count, 0)
+
     def test_sensitive_path_glass_atrium_plist_refused(self) -> None:
         base = _doc(top="# P", region="cfg", bottom="z")
         local = _doc(top="# P", region="cfg local", bottom="z")
