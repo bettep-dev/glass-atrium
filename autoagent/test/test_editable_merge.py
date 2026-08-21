@@ -1247,8 +1247,8 @@ class GapPolicyTest(unittest.TestCase):
     _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
     _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-    def _resolve(self, *, resolve_gaps: bool | None = None) -> em.FileResolution:
-        """The class fixtures under one policy setting; None leaves it env-driven."""
+    def _resolve(self, *, resolve_gaps: bool = True) -> em.FileResolution:
+        """The class fixtures under one mode setting; the default is the library's."""
         return em.resolve_file(
             "dev-android.md",
             self._LOCAL,
@@ -1306,21 +1306,22 @@ class GapPolicyTest(unittest.TestCase):
         # Report-only asks for no judgment: the marker block IS the report.
         self.assertEqual(res.regions[0].requests, ())
 
-    def test_when_kill_switch_set_then_the_default_reverts_to_reporting(self) -> None:
-        prior = os.environ.get(em._RESOLVE_GAPS_ENV)
+    def test_when_no_mode_named_then_the_default_arbitrates(self) -> None:
+        # The mode selector is the parameter alone. Nothing in the environment can
+        # reach it, so the retired switch is set here at its former OFF value and the
+        # default must still arbitrate — the pin on resolving the mode in-library.
+        prior = os.environ.get("ATRIUM_UPDATE_MERGE_RESOLVE_GAPS")
         try:
-            os.environ[em._RESOLVE_GAPS_ENV] = "0"
-            off = self._resolve()
-            os.environ.pop(em._RESOLVE_GAPS_ENV)
-            on = self._resolve()
+            os.environ["ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"] = "0"
+            defaulted = self._resolve()
         finally:
             if prior is None:
-                os.environ.pop(em._RESOLVE_GAPS_ENV, None)
+                os.environ.pop("ATRIUM_UPDATE_MERGE_RESOLVE_GAPS", None)
             else:
-                os.environ[em._RESOLVE_GAPS_ENV] = prior
+                os.environ["ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"] = prior
 
-        self.assertEqual(off.verdict, em.MERGE_CONFLICT)
-        self.assertEqual(on.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertEqual(defaulted.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertEqual(self._resolve(resolve_gaps=False).verdict, em.MERGE_CONFLICT)
 
     def test_when_arbitration_on_then_the_library_refuses_nothing_and_calls_no_gate(
         self,
@@ -1737,10 +1738,10 @@ class ContestedRegionKeepsLivePinsTest(unittest.TestCase):
             em.dropped_local_frontmatter_keys(local, res.candidate_text), []
         )
 
-    def test_without_the_gap_policy_the_pin_path_is_unreachable(self) -> None:
-        # The control the union rests on: with the kill switch set, this same file
-        # is a marker-bearing report that apply refuses, so no pin can survive
-        # because nothing is written at all.
+    def test_in_report_only_mode_the_pin_path_is_unreachable(self) -> None:
+        # The control the union rests on: in report-only mode this same file is a
+        # marker-bearing report that apply refuses, so no pin can survive because
+        # nothing is written at all.
         base, local, release = self._anchors(release_effort="max")
 
         cand = em.build_merge_candidate(

@@ -179,20 +179,6 @@ _FRONTMATTER_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):")
 # rather than dropping a pin it cannot adjudicate.
 _BASE_AWARE_FRONTMATTER_KEYS = ("effort",)
 
-# Kill switch for the conflicting-gap policy (rollout default: ON). Reading it
-# HERE rather than in the updater is what keeps `plan` and the verify shell-out's
-# re-derivation on the same policy — they are separate processes reconstructing the
-# candidate from the same anchors, so a switch held on only one side would resolve at
-# plan time and re-conflict at verify time, failing every transaction into a restore.
-_RESOLVE_GAPS_ENV = "ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"
-_RESOLVE_GAPS_OFF = frozenset({"0", "false", "no", "off"})
-
-
-def _resolve_gaps_default() -> bool:
-    """Whether the conflicting-gap policy is enabled for this process."""
-    return os.environ.get(_RESOLVE_GAPS_ENV, "").strip().lower() not in _RESOLVE_GAPS_OFF
-
-
 # Conflict markers for an overlapping both-changed region (diff3 / git style).
 _C_LOCAL = "<<<<<<< LOCAL (learned)\n"
 _C_BASE = "||||||| BASE (base@install)\n"
@@ -468,9 +454,10 @@ def _resolve_region(
     """Classify one region against the three anchors and resolve its content.
 
     ``arbitrate`` selects what a gap both sides changed differently emits —
-    see ``three_way_merge_hunks``. It defaults OFF so the library keeps its
-    reporting behavior for a caller that names no policy; the production entry
-    points read ``_resolve_gaps_default`` instead.
+    see ``three_way_merge_hunks``. It defaults OFF so this private helper keeps
+    its reporting behavior for a caller that names no policy; the two entry
+    points ``resolve_file`` and ``build_merge_candidate`` default it ON instead,
+    so every production path arbitrates and report-only is opt-in.
 
     ``arbiter`` is what turns the emitted local gap into a judged one. Absent it
     the emission stays local: a caller that supplies no arbiter has asked for no
@@ -758,10 +745,17 @@ def resolve_file(
     release_text: str,
     base_text: str | None = None,
     *,
-    resolve_conflicting_gaps: bool | None = None,
+    resolve_conflicting_gaps: bool = True,
     arbiter: GapArbiter | None = None,
 ) -> FileResolution:
     """T17 three-anchor resolver — pure, makes NO LLM call.
+
+    ``resolve_conflicting_gaps`` has exactly two settings — arbiter (the default)
+    and report-only — and no environment reads it. A mode carried in the process
+    environment would be settable on one side only, and `plan` and the verify
+    shell-out are separate processes reconstructing the candidate from the same
+    anchors: a mode resolved at plan time and re-conflicting at verify time fails
+    every transaction into a restore.
 
     Pairs the Nth EDITABLE region across base/local/release, classifies each, and
     assembles a candidate (release structure + resolved region content). A
@@ -795,11 +789,7 @@ def resolve_file(
             ),
         )
 
-    resolve_gaps = (
-        _resolve_gaps_default()
-        if resolve_conflicting_gaps is None
-        else resolve_conflicting_gaps
-    )
+    resolve_gaps = resolve_conflicting_gaps
     resolutions: list[RegionResolution] = []
     for idx, ((_, _, local_c), (_, _, release_c)) in enumerate(
         zip(local_regions, release_regions, strict=True)
@@ -1378,7 +1368,7 @@ def build_merge_candidate(
     agent: str | None = None,
     verify_fn: VerifyFn | None = None,
     skip_pre_verify: bool = False,
-    resolve_conflicting_gaps: bool | None = None,
+    resolve_conflicting_gaps: bool = True,
     arbiter_mode: str = ARBITER_REPLAY,
     state_dir: str | None = None,
 ) -> MergeCandidate:

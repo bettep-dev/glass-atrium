@@ -916,9 +916,6 @@ update_roster_orphan_registry_removes() {
 #   * gated-2way-present-both                   -> marker-bearing REPORT, never
 #                                                  landable -> local body kept, decline
 #                                                  recorded, repaired by hand (below)
-#   * merge-conflict                            -> the same decline, now reachable
-#                                                  only with the gap-policy kill switch
-#                                                  ATRIUM_UPDATE_MERGE_RESOLVE_GAPS=0
 #   * merge-pending-arbitration                 -> the contested gap emitted neither
 #                                                  side -> the same decline, local
 #                                                  body kept, decline recorded
@@ -945,7 +942,7 @@ update_roster_orphan_registry_removes() {
 #   2. edit the LIVE body to resolve the region by hand (vendor lines transplanted in)
 #   3. sync the base store to the release the conflict was reported against
 #   4. re-run the resolver against the captured images — the verdict transitions from
-#      merge-conflict to no-op, which is what proves closure (asserting it does not)
+#      the contested decline to no-op, which is what proves closure (asserting it does not)
 # The steps above say "the base store" and mean the FLAT, basename-keyed one, which
 # is where an agent body's entry lives. A DECLINED roster path's entry is in the
 # sibling roster store instead, keyed by the manifest-relative path — the two are
@@ -1321,20 +1318,20 @@ update_merge_agent_editable_regions() {
     # CONFLICT REPAIR block in this function's header for why the ceremony cannot.
     # The decline is also PERSISTED: this stderr line scrolls past a deploy nobody is
     # watching, which leaves an operator no later way to learn a body was declined.
-    # The two decline through the SAME ledger for DIFFERENT reasons, so the reason
-    # clause varies per verdict while the repair instruction is shared: the two-way
-    # case has no base anchor and therefore no side any policy could prefer, which is
-    # why it declines unconditionally and the gap-policy kill switch never reaches it.
-    # merge-conflict is reachable only WITH that switch set — the resolver routes a
-    # contested gap to arbitration otherwise — so restoring the marker-bearing report
-    # is what the switch buys.
+    # The declines share the SAME ledger for DIFFERENT reasons, so the reason clause
+    # varies per verdict while the repair instruction is shared: the two-way case has
+    # no base anchor and therefore no side any policy could prefer.
+    # merge-conflict is NOT an arm here. The resolver arbitrates every contested gap
+    # and no updater-visible setting selects report-only, so the marker-bearing report
+    # cannot arrive by this route; naming it would advertise a reachable state. A
+    # merge-conflict verdict that did arrive falls to the fail-closed arm below, which
+    # declines it and records the verdict verbatim.
     #
     # The final arm is FAIL-CLOSED, and the empty reason is an ALLOWLIST outcome
     # rather than a default: a verdict this routing does not name is one it cannot
     # know the write-safety of, and the arms below it queue a candidate and apply it.
     case "${verdict}" in
       gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
-      merge-conflict) reason='a conflict-marker candidate NEVER lands' ;;
       merge-pending-arbitration) reason='a contested gap emitted neither side, so nothing was resolved to land' ;;
       keep-local | take-release | merge-clean | merge-arbiter-resolved | no-op)
         reason='' # per-file reset — a leaked reason would decline a mergeable body

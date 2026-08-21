@@ -8,12 +8,11 @@
 #   * the end-to-end second run (no markers, no content change);
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
-#   * a conflicting region, both ways round the gap-policy kill switch: with the
-#     switch OFF the resolver emits a marker-bearing report and the body declines
-#     durably; with the switch at its default the gap is contested, neither side
-#     is emitted, and the body declines under merge-pending-arbitration with its
-#     base entry held back — the same local body survives either way, and no model
-#     is consulted on either path.
+#   * a conflicting region, twice: once with the retired gap-policy switch exported
+#     at its former OFF value and once with the environment clean. Both runs reach
+#     merge-pending-arbitration — the gap is contested, neither side is emitted, the
+#     base entry is held back and the local body survives — so the switch is inert
+#     and no model is consulted on either path.
 #
 # Split out of glass-atrium-update.bats rather than appended to it: CI runs one
 # GNU parallel job per *.bats file under a 240s per-file timeout, and that file
@@ -119,10 +118,10 @@ base goal
 ## Rules
 NEW vendor rules'
 
-# $1 = gap-policy kill switch (empty = the default policy).
-# The switch is passed EXPLICITLY rather than forwarded from the ambient environment:
-# a `${VAR:-}` forward reads as a hermeticity pin while actually letting an operator's
-# exported value decide which policy the run under test exercises.
+# $1 = the RETIRED gap-policy switch, exported for the tests that pin its inertness
+# (empty = a clean environment). It is passed EXPLICITLY rather than forwarded from
+# the ambient environment: a `${VAR:-}` forward reads as a hermeticity pin while
+# actually letting an operator's exported value into the run under test.
 run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
@@ -162,18 +161,16 @@ run_update() {
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
 }
 
-@test "with the gap policy OFF a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {
-  # The kill switch is what this test now buys: under the default policy this same
-  # input resolves to the release side and lands (the sibling test below), so the
-  # decline path is reachable only with the switch set. It still has to WORK when
-  # it is — a rollback of the gap policy must land on a decline that behaves, and
-  # an untested switch is a rollback nobody can take.
-  # Overlapping both-changed region: the merged candidate carries conflict markers,
-  # which in a live agent body is corruption. It must be reported + skipped, with
-  # the local body byte-identical and its base entry left at the prior anchor.
-  # The decline also has to OUTLIVE the run that produced it — the stderr line is
-  # gone the moment the deploy transcript scrolls — and it must not send the reader
-  # to the agent_lifecycle ceremony, whose subcommand set cannot reconcile a region.
+@test "the retired gap-policy switch is inert: the contested decline is durable, names the working repair pair, and NEVER writes markers into the live body" {
+  # Two properties in one run. First the retirement: the switch is exported at the
+  # value that used to select the marker-bearing report, and the run must decline
+  # under the contested verdict anyway — no environment reaches the mode, which is
+  # what keeps `plan` and the verify shell-out on one resolution.
+  # Then the decline itself, which the sibling test below does not cover: it must
+  # OUTLIVE the run that produced it — the stderr line is gone the moment the deploy
+  # transcript scrolls — with the local body byte-identical, its base entry left at
+  # the prior anchor, and no route to the agent_lifecycle ceremony, whose subcommand
+  # set cannot reconcile a region.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -195,13 +192,14 @@ NEW vendor rules'
 
   run_update 0
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
+  [[ "$output" == *"CONFLICT (merge-pending-arbitration)"* ]] || return 1
+  [[ "$output" != *"merge-conflict"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
 
   # The emitted line names the repair that works and routes nobody to the ceremony.
   local conflict_line
-  conflict_line="$(printf '%s\n' "$output" | grep 'CONFLICT (merge-conflict)')"
+  conflict_line="$(printf '%s\n' "$output" | grep 'CONFLICT (merge-pending-arbitration)')"
   [[ "${conflict_line}" != *"ceremony"* ]] || return 1
   [[ "${conflict_line}" == *"capture a pre-change image"* ]] || return 1
   [[ "${conflict_line}" == *"sync the base store"* ]] || return 1
@@ -213,22 +211,21 @@ NEW vendor rules'
   [[ "$(wc -l <"${declines}" | tr -d ' ')" == "1" ]] || return 1
   local entry
   entry="$(cat "${declines}")"
-  [[ "${entry}" == *"merge-conflict"* ]] || return 1
+  [[ "${entry}" == *"merge-pending-arbitration"* ]] || return 1
   [[ "${entry}" == *"agents/dev-a.md"* ]] || return 1
   [[ "${entry}" == *"local-body-kept"* ]] || return 1
 }
 
-@test "with the gap policy ON the same conflicting body declines pending arbitration and keeps local" {
+@test "with a clean environment the same conflicting body declines pending arbitration and keeps local" {
   # The shell-side pin on the contested-gap routing. The input that declines above
-  # is the shape the stuck agents present every release; under the DEFAULT policy
-  # the resolver now emits merge-pending-arbitration — neither side chosen — and
-  # the updater's verdict routing declines it rather than queueing a candidate.
+  # is the shape the stuck agents present every release; the resolver emits
+  # merge-pending-arbitration — neither side chosen — and the updater's verdict
+  # routing declines it rather than queueing a candidate.
   #
-  # The kill-switch test above and this one therefore differ in VERDICT and in
-  # candidate shape while agreeing on the outcome: the local body survives and no
-  # marker is written. What separates them is that the kill switch produces a
-  # marker-bearing report the write path refuses, whereas this path produces no
-  # merged wording at all.
+  # This run and the one above differ ONLY in whether the retired switch is exported,
+  # and they agree on verdict, candidate shape and outcome. That agreement is the
+  # retirement: an environment value that once changed the verdict now changes
+  # nothing, and neither run writes a marker or consults a model.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
