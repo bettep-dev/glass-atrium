@@ -458,6 +458,19 @@ class FailureLadderTest(unittest.TestCase):
         self.assertEqual(decision.clause, ga.CLAUSE_NO_STALE)
         self.assertIn(f"clause={ga.CLAUSE_NO_STALE}", decision.row)
 
+    def test_a_gap_admitted_on_the_last_slot_spends_one_call_past_the_ceiling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _request, decision, run_state, calls = self._drive(
+                {"ARB_STUB_SLEEP": "3"},
+                ceiling=1,
+                tmpdir=tmp,
+                timeout_sec=1,
+                escalated_timeout_sec=1,
+            )
+        self.assertEqual(decision.failure_class, ga.FAILURE_TIMEOUT)
+        self.assertEqual(calls, 2)
+        self.assertEqual(run_state.calls, 2)
+
     def test_an_over_ceiling_run_emits_one_summary_row_not_one_per_gap(self):
         request = _adjacency_request()
         run_state = ga.RunState(ceiling=0)

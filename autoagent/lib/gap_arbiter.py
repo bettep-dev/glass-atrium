@@ -394,6 +394,8 @@ def get_decision(
     rather than a transient.
     """
     if run_state.calls >= run_state.ceiling:
+        # An ENTRY check: a gap admitted on the last slot still takes its retry,
+        # so a run overshoots the ceiling by at most that one further call.
         # Every subsequent gap of an over-ceiling run takes the ladder, but only
         # the first writes a row: one summary row per run, not one per gap.
         row = (
@@ -421,6 +423,8 @@ def get_decision(
         return _build_local_decision(request, FAILURE_UNAVAILABLE, claude_bin)
     assert completed is not None
     if completed.returncode != 0:
+        # A CLI that RAN and refused classifies here, a quota-exhausted one
+        # included; unavailable is the early exit above, which is a missing binary.
         return _build_local_decision(request, FAILURE_BUDGET, HAIKU_MAX_BUDGET_USD)
 
     answer = parse_answer(completed.stdout)

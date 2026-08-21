@@ -439,6 +439,85 @@ class BaseUnavailableFallbackTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class NoBaseArbitratedRegionTest(unittest.TestCase):
+    """A8 — the base-less differing region is judged, with the decline behind it.
+
+    Both arms drive the model seam as a stub: the live headless CLI is the one
+    thing a merge fixture must never reach.
+    """
+
+    _LOCAL = _doc(top="# A", region="local learned", bottom="z")
+    _RELEASE = _doc(top="# A", region="vendor variant", bottom="z")
+    _TARGET = "dev-rag.md"
+
+    def _build(self, seam) -> tuple[em.MergeCandidate, str]:
+        """Resolve the fixture with no base entry, deriving through ``seam``."""
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as state, contextlib.redirect_stderr(err):
+            with mock.patch.object(em.dc, "_invoke_haiku_cli", **seam):
+                cand = em.build_merge_candidate(
+                    self._TARGET,
+                    self._LOCAL,
+                    self._RELEASE,
+                    base_text=None,
+                    agent="dev-rag",
+                    arbiter_mode=em.ARBITER_PLAN,
+                    state_dir=state,
+                    verify_fn=_StubVerify(True),
+                )
+        return cand, err.getvalue()
+
+    @staticmethod
+    def _answer(text: str) -> dict:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=text, stderr=""
+        )
+        return {"return_value": (completed, None, None)}
+
+    def test_when_the_arbiter_answers_then_the_region_is_judged_not_declined(
+        self,
+    ) -> None:
+        cand, _rows = self._build(self._answer("CHOICE: RELEASE\nRATIONALE: fixture"))
+
+        res = cand.resolution
+        self.assertFalse(res.base_available)
+        self.assertEqual(res.regions[0].verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertFalse(res.has_conflict)
+        self.assertIn("vendor variant", res.candidate_text)
+        self.assertNotIn("local learned", res.candidate_text)
+
+    def test_when_an_interleave_drops_a_line_then_clause_four_reaches_it(self) -> None:
+        # The empty base slot is what makes this fail: no line of either side is
+        # base-present, so an answer naming only one of the two drops a novel line.
+        cand, rows = self._build(
+            self._answer("CHOICE: INTERLEAVE\nLINES: L1\nRATIONALE: fixture")
+        )
+
+        self.assertEqual(cand.resolution.regions[0].verdict, em.GATED_2WAY)
+        self.assertIn("clause=no-drop-of-novel", rows)
+
+    def test_when_the_arbiter_answers_nothing_then_the_present_both_decline_stands(
+        self,
+    ) -> None:
+        # A present CLI exiting non-zero — the live quota-exhausted shape.
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="quota"
+        )
+        cand, rows = self._build({"return_value": (completed, None, None)})
+
+        res = cand.resolution
+        self.assertEqual(res.regions[0].verdict, em.GATED_2WAY)
+        self.assertTrue(res.has_conflict)
+        self.assertIn("local learned", res.candidate_text)
+        self.assertIn("vendor variant", res.candidate_text)
+        self.assertIn("budget-exceeded", rows)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / self._TARGET
+            self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertFalse(p.exists())
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class MergeCandidateGateTest(unittest.TestCase):
     """T18 — candidate apply/verify callbacks + Haiku gate + sensitive refusal."""
 

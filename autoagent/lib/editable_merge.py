@@ -43,8 +43,11 @@ Resolution (chosen, not faked):
      relocated install without retained bodies) the resolver does NOT fabricate a
      base anchor. It compares vendor-region vs local-region only:
        * identical  -> keep-local (unambiguous, no merge, no LLM).
-       * different  -> GATED_2WAY verdict: a present-both REPORT surfacing BOTH
-                       sides, routed to the manual ceremony — never silently
+       * different  -> routed to the arbiter with the base slot marked
+                       unavailable; an ANSWERED region resolves like any judged
+                       gap, and an unanswered one falls to the GATED_2WAY
+                       verdict: a present-both REPORT surfacing BOTH sides,
+                       routed to the manual ceremony — never silently
                        auto-picked, never a faked 3-way.
 
 So a missing base-content store DEGRADES safety-conservatively (more human
@@ -464,11 +467,34 @@ def _resolve_region(
     judgment, which is the shape every deterministic path relies on.
     """
     if base is None:
-        # FALLBACK: gated 2-way present-both (base content unavailable).
+        # FALLBACK: base content unavailable — the arbiter first, then the gate.
         if local == release:
             return RegionResolution(
                 index, KEEP_LOCAL, local, reason="2way: sides identical"
             )
+        # With no base run to synchronize against, the region IS one contested
+        # gap and its base slot is empty: no line of either side is base-present,
+        # so clause four reaches every one of them and clause five is vacuous.
+        hunk = ConflictHunk(
+            out_index=0, base=(), local=tuple(local), release=tuple(release)
+        )
+        if arbiter is not None:
+            outcome = arbiter.get_gap_outcome(
+                region_index=index,
+                region_count=region_count,
+                gap_index=0,
+                hunk=hunk,
+                context="".join(release),
+            )
+            if outcome.choice is not None:
+                return RegionResolution(
+                    index,
+                    MERGE_ARBITER_RESOLVED,
+                    list(outcome.lines),
+                    reason="base content unavailable; arbiter judged the region",
+                    hunks=(hunk,),
+                    decisions=(outcome,),
+                )
         merged = [_C_LOCAL, *local, _C_REL, *release, _C_END]
         return RegionResolution(
             index,

@@ -913,7 +913,9 @@ update_roster_orphan_registry_removes() {
 #   * REFUSED (sensitive path/diff, plan rc 3)  -> skipped, reported (never written)
 #   * structural-change (region-count mismatch) -> routed to the agent_lifecycle
 #                                                  ceremony (NOT auto-applied)
-#   * gated-2way-present-both                   -> marker-bearing REPORT, never
+#   * gated-2way-present-both                   -> the base-less region reached the
+#                                                  arbiter and it answered nothing ->
+#                                                  marker-bearing REPORT, never
 #                                                  landable -> local body kept, decline
 #                                                  recorded, repaired by hand (below)
 #   * merge-pending-arbitration                 -> the contested gap emitted neither
@@ -1331,7 +1333,7 @@ update_merge_agent_editable_regions() {
     # rather than a default: a verdict this routing does not name is one it cannot
     # know the write-safety of, and the arms below it queue a candidate and apply it.
     case "${verdict}" in
-      gated-2way-present-both) reason='no base anchor, so neither side can be preferred' ;;
+      gated-2way-present-both) reason='no base anchor and the arbiter answered nothing, so neither side can be preferred' ;;
       merge-pending-arbitration) reason='a contested gap emitted neither side, so nothing was resolved to land' ;;
       keep-local | take-release | merge-clean | merge-arbiter-resolved | no-op)
         reason='' # per-file reset — a leaked reason would decline a mergeable body
