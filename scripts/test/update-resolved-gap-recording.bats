@@ -44,6 +44,11 @@
 # T2/T3 need Postgres and skip without it; every other test is hermetic (update.sh is
 # SOURCED, the CLI is stubbed, all paths stay in a temp dir).
 #
+# Gating hazard: a bare mid-body `[[ ]]` is NOT gated by errexit under bash 3.2 (the
+# macOS default) while bash 5 gates it, so an ungated conditional assertion is silently
+# ignored on macOS and fails only on Linux. Every conditional assertion below is
+# therefore gated explicitly — `|| return 1`, or an if-block that returns.
+#
 # Run via: bats scripts/test/update-resolved-gap-recording.bats
 # Requires: bats 1.5+, bash 3.2+, python3
 
@@ -230,18 +235,22 @@ db_available() {
 
 @test "T7 rationale names the hunk count, the line deltas and a bounded dropped excerpt" {
   write_tsv
+  # The APPLIED rationale is the one under test, and only a landed ledger entry
+  # produces it: without one the emitter records landed=0 and the row carries the
+  # unlanded text instead, so the gate-verdict clause would be probed on T6's branch.
+  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
   run run_driver
   [ "$status" -eq 0 ]
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"2 gap(s)"* ]]
-  [[ "$rationale" == *"region(s) 0,3"* ]]
-  [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]]
-  [[ "$rationale" == *"added 1 release line(s)"* ]]
-  [[ "$rationale" == *"improvement-verify gate ran"* ]]
+  [[ "$rationale" == *"2 gap(s)"* ]] || return 1
+  [[ "$rationale" == *"region(s) 0,3"* ]] || return 1
+  [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]] || return 1
+  [[ "$rationale" == *"added 1 release line(s)"* ]] || return 1
+  [[ "$rationale" == *"improvement-verify gate ran"* ]] || return 1
   # The excerpt comes from the resolver's dropped-line sidecar, so it is
   # daemon-authored text and is attributed as such.
-  [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]]
-  [[ "$rationale" == *"checkpoint tool_use progress"* ]]
+  [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]] || return 1
+  [[ "$rationale" == *"checkpoint tool_use progress"* ]] || return 1
   # Bounded: an excerpt, never the whole region.
   [ "${#rationale}" -lt 800 ]
 }
@@ -285,9 +294,9 @@ db_available() {
   run run_driver
   [ "$status" -eq 0 ]
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"Excerpt of lines the candidate drops"* ]]
-  [[ "$rationale" != *"Dropped daemon-authored excerpt"* ]]
-  [[ "$rationale" == *"2 gap(s)"* ]]
+  [[ "$rationale" == *"Excerpt of lines the candidate drops"* ]] || return 1
+  [[ "$rationale" != *"Dropped daemon-authored excerpt"* ]] || return 1
+  [[ "$rationale" == *"2 gap(s)"* ]] || return 1
 }
 
 @test "T6 a file that did not land records reject / rejected" {
@@ -326,8 +335,8 @@ db_available() {
 
   DATE_TICKS="${WORK}/date.ticks" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(agents/ga-rec-first.md, landed=1)"* ]]
-  [[ "$output" == *"(agents/ga-rec-second.md, landed=0)"* ]]
+  [[ "$output" == *"(agents/ga-rec-first.md, landed=1)"* ]] || return 1
+  [[ "$output" == *"(agents/ga-rec-second.md, landed=0)"* ]] || return 1
 
   [ "$(envelope_field cycle_date 1)" = "$(envelope_field cycle_date 2)" ]
   # One tick == one fork for the whole run, whatever the row count.
@@ -393,15 +402,15 @@ roster_paths() {
   write_tsv
   STUB_RC=7 run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN: could not record the resolved-gap discard"* ]]
-  [[ "$output" == *"deploy continues"* ]]
+  [[ "$output" == *"WARN: could not record the resolved-gap discard"* ]] || return 1
+  [[ "$output" == *"deploy continues"* ]] || return 1
 }
 
 @test "T5 an absent dual-write helper warns and continues" {
   write_tsv
   ATRIUM_UPDATE_PG_HELPER="${WORK}/nope.py" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no dual-write helper"* ]]
+  [[ "$output" == *"no dual-write helper"* ]] || return 1
 }
 
 @test "T2 the row LANDS in core.autoagent_proposals through the real dual-write CLI" {
@@ -415,7 +424,7 @@ roster_paths() {
   printf 'agents/%s\n' "${target}" >"${LEDGER}"
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"resolved-gap discard recorded"* ]]
+  [[ "$output" == *"resolved-gap discard recorded"* ]] || return 1
 
   row="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT approval_tier || '|' || status || '|' || haiku_status || '|' || cost_guard_state
