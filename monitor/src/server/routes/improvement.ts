@@ -1645,8 +1645,8 @@ async function handleReject(
 // POST /api/improvement/:id/restore
 
 // Resolves scripts/update.sh — git-free recovery entry. --restore-agents <cycle-id> rolls
-// the touched agent .md files back from the agents-bak before-image and acquires the shared
-// pause + .apply-lock itself, so this route does NOT double-lock. Fixed home-dir path, never
+// every file the cycle holds a before-image for back to it and acquires the shared
+// .apply-lock itself, so this route does NOT double-lock. Fixed home-dir path, never
 // request-derived → not a shell-injection / SSRF surface. ATRIUM_UPDATE_SCRIPT is a
 // server-startup test seam (process-env, never request-derived).
 function resolveRestoreScript(): string {
@@ -1691,6 +1691,10 @@ interface ProposalRestoreRow {
 // daemon-apply.sh. They land status='applied' to report the release outcome, but no
 // agents-bak before-image was ever captured for them — restore can only ever fail.
 const UPDATER_WRITTEN_PATTERN_LABELS: ReadonlySet<string> = new Set([
+  "editable-region-arbiter-resolved",
+  // Historical, and retained for that reason alone: rows written under the label the
+  // updater used before the arbiter verdict are already in the table, so dropping it
+  // would start counting them as daemon activity retroactively.
   "editable-region-resolved-release",
 ]);
 

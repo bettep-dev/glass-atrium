@@ -116,28 +116,18 @@ export type DashboardErrorBody =
 
 export type UpdateJobStatusValue = "in-progress" | "failed" | "completed";
 
-// One changed file parsed from the update.sh --preview dry-run. `diff` = raw unified-diff
-// body; `is_new` flags a first-time add. Used internally by the apply path (up-to-date
-// detection + record nonce); not surfaced in the response.
-export interface UpdateFileDiff {
-  path: string;
-  diff: string;
-  is_new: boolean;
+// POST mode=apply result — single atomic apply, one outcome. `enqueued` reserves the
+// single-active in-progress row and IMMEDIATELY enqueues the decoupled one-shot launchd
+// job (the long apply runs detached; the UI polls update-job for progress). The route
+// inspects nothing beforehand, so an already-current install reserves a row too.
+export interface UpdateApplyResponse {
+  mode: "apply";
+  status: "enqueued";
+  // BIGSERIAL id of the reserved core.update_job row (safe-int range).
+  job_id: number;
+  // 'pending' at reservation — the decoupled job overwrites it with the release version.
+  target_version: string;
 }
-
-// POST mode=apply result — single atomic apply. `enqueued` reserves the
-// single-active in-progress row and IMMEDIATELY enqueues the decoupled one-shot
-// launchd job (the long apply runs detached; the UI polls update-job for
-// progress). `up_to_date` reserves nothing (no changed files → nothing to apply).
-export type UpdateApplyResponse =
-  | {
-      mode: "apply";
-      status: "enqueued";
-      // BIGSERIAL id of the reserved core.update_job row (safe-int range).
-      job_id: number;
-      target_version: string;
-    }
-  | { mode: "apply"; status: "up_to_date" };
 
 // GET /api/dashboard/update-job — polling shape. `none` when no job row exists.
 export type UpdateJobStatusResponse =
@@ -159,7 +149,6 @@ export type UpdateJobStatusResponse =
 export type UpdateMutationErrorBody =
   | { error: "invalid_body"; field: string; reason: string }
   | { error: "single_active"; reason: string }
-  | { error: "preview_failed"; reason: string }
   | { error: "enqueue_failed"; reason: string }
   | { error: "claude_unresolved"; reason: string }
   | { error: "invalid_input"; reason: string }

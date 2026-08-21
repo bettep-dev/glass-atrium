@@ -1,22 +1,19 @@
-"""Sensitive-file refusal helper for the Glass Atrium update skill (T15 / gate G7).
+"""Importable bridge over the compiled sensitive-refusal patterns in ``daemon_cycle``.
 
-The update skill (a shell pipeline) MUST refuse to sync a sensitive harness file
-— GLOBAL_RULES, the security scope rules, a credential file, a launchd plist, or
-a diff body carrying an irreversible/external-effect command. The refusal set is
-defined ONCE, as the compiled regex tuples in ``daemon_cycle.py``
-(``_SAFETY_SENSITIVE_PATH_PATTERNS`` / ``_SAFETY_SENSITIVE_DIFF_PATTERNS``).
+The refusal set — GLOBAL_RULES, the security scope rules, a credential file, a
+launchd plist, or a diff body carrying an irreversible/external-effect command —
+is defined ONCE, as the compiled regex tuples ``_SAFETY_SENSITIVE_PATH_PATTERNS``
+/ ``_SAFETY_SENSITIVE_DIFF_PATTERNS`` in ``daemon_cycle.py``. This module imports
+the matchers over those tuples and re-exports them, so the set is never
+re-expressed in a second regex dialect; a shell-ERE data file in particular would
+silently diverge from Python's ``re``.
 
-This module is the single bridge the shell shells out to: it IMPORTS those
-compiled patterns (via ``daemon_cycle.match_sensitive_path`` /
-``match_sensitive_diff``) and exposes both an importable API and a thin CLI. The
-patterns are NEVER re-expressed as a shell-ERE data file — a shell-regex dialect
-would silently diverge from Python's ``re`` (forbidden re-implementation), so the
-daemon and the skill provably refuse the SAME set.
+Consumers: the test corpus and nothing else. No shell caller exists in this tree,
+and neither re-export nor the CLI has a non-test importer today. Whether the CLI
+still earns its place is an open routing question, not a settled one.
 
-CLI (the shell-out contract):
-    python3 sensitive_patterns.py path <PATH>      # test one path (strict)
-    python3 sensitive_patterns.py path-sync <PATH> # strict MINUS the updater's
-                                                   # sync-path exemption set
+CLI:
+    python3 sensitive_patterns.py path <PATH>      # test one path
     python3 sensitive_patterns.py diff [FILE]      # test a unified diff
                                                    # FILE omitted or '-' → stdin
 
@@ -28,8 +25,6 @@ Exit codes (loud-fail per shared-self-improve-hygiene Precondition Loud-Fail):
 
 Importable API:
     is_sensitive_path(path)           -> str | None  # matched pattern, or None
-    is_sensitive_path_for_sync(path)  -> str | None  # updater changed-file
-                                                     # partition ONLY
     is_sensitive_diff(diff)           -> str | None  # matched pattern, or None
 """
 
@@ -41,19 +36,19 @@ from pathlib import Path
 
 # daemon_cycle.py lives in the autoagent root, one level up from this lib/ dir.
 # Add it to the path so the compiled patterns import cleanly regardless of the
-# caller's CWD (the shell shells out from arbitrary working directories).
+# caller's CWD — the CLI is invoked from arbitrary working directories.
 _AUTOAGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AUTOAGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_ROOT))
 
-# Named exit codes — the shell wiring branches on these.
+# Named exit codes — the CLI's contract with whatever invokes it.
 EXIT_CLEAN = 0
 EXIT_SENSITIVE = 3
 EXIT_USAGE = 2
 EXIT_ENV = 4
 
 
-def _import_matchers() -> tuple[object, object, object]:
+def _import_matchers() -> tuple[object, object]:
     """Import the compiled-pattern matchers from daemon_cycle (the single source).
 
     Isolated so a failed import becomes a loud EXIT_ENV at the CLI boundary
@@ -65,38 +60,24 @@ def _import_matchers() -> tuple[object, object, object]:
     return (
         daemon_cycle.match_sensitive_path,
         daemon_cycle.match_sensitive_diff,
-        daemon_cycle.match_sensitive_path_for_sync,
     )
 
 
 def is_sensitive_path(path: str) -> str | None:
     """Return the matched sensitive-path pattern source, or ``None`` if clean.
 
-    Thin re-export of ``daemon_cycle.match_sensitive_path`` — the daemon owns the
-    compiled tuple; this module is the stable API the shell consumes.
+    Thin re-export of ``daemon_cycle.match_sensitive_path``; the daemon owns the
+    compiled tuple.
     """
-    match_path, _, _ = _import_matchers()
+    match_path, _ = _import_matchers()
     return match_path(path)  # type: ignore[operator]
-
-
-def is_sensitive_path_for_sync(path: str) -> str | None:
-    """Return the matched sensitive-path pattern source, or ``None`` when the path
-    is clean OR carries the updater's sync-path exemption.
-
-    Thin re-export of ``daemon_cycle.match_sensitive_path_for_sync``. The policy
-    (which relpaths are exempt, and which consumers stay strict) lives in the
-    daemon beside the compiled tuple — this module stays a bridge, never a
-    decider.
-    """
-    _, _, match_path_sync = _import_matchers()
-    return match_path_sync(path)  # type: ignore[operator]
 
 
 def is_sensitive_diff(diff: str) -> str | None:
     """Return the matched sensitive-diff pattern source (added lines only), or
     ``None`` if clean. Thin re-export of ``daemon_cycle.match_sensitive_diff``.
     """
-    _, match_diff, _ = _import_matchers()
+    _, match_diff = _import_matchers()
     return match_diff(diff)  # type: ignore[operator]
 
 
@@ -106,15 +87,15 @@ def _refuse(kind: str, subject: str, pattern: str) -> int:
         f"sensitive_patterns: REFUSED — {kind} matched a sensitive-refusal "
         f"pattern /{pattern}/\n"
         f"  subject: {subject}\n"
-        "  the update skill will NOT sync this (GLOBAL_RULES / security rule / "
-        "credential / launchd / irreversible command).\n"
+        "  refusal class: GLOBAL_RULES / security rule / credential / launchd / "
+        "irreversible command.\n"
     )
     return EXIT_SENSITIVE
 
 
-def _cmd_path(path: str, *, for_sync: bool = False) -> int:
+def _cmd_path(path: str) -> int:
     try:
-        hit = is_sensitive_path_for_sync(path) if for_sync else is_sensitive_path(path)
+        hit = is_sensitive_path(path)
     except Exception as exc:  # noqa: BLE001 — import/runtime failure → loud EXIT_ENV
         sys.stderr.write(f"sensitive_patterns: cannot reach compiled source: {exc}\n")
         return EXIT_ENV
@@ -152,15 +133,8 @@ def main(argv: list[str]) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_path = sub.add_parser("path", help="test a single file path (strict)")
+    p_path = sub.add_parser("path", help="test a single file path")
     p_path.add_argument("path", help="file path to test")
-
-    p_path_sync = sub.add_parser(
-        "path-sync",
-        help="test a path for the updater's CHANGED-FILE partition only "
-        "(strict minus the sync-path exemption set)",
-    )
-    p_path_sync.add_argument("path", help="file path to test")
 
     p_diff = sub.add_parser("diff", help="test a unified diff (added lines)")
     p_diff.add_argument(
@@ -174,8 +148,6 @@ def main(argv: list[str]) -> int:
 
     if args.command == "path":
         return _cmd_path(args.path)
-    if args.command == "path-sync":
-        return _cmd_path(args.path, for_sync=True)
     if args.command == "diff":
         return _cmd_diff(args.file)
     # argparse `required=True` makes this unreachable; defensive only.

@@ -32,14 +32,22 @@
 #   T9 multi-row — a run of two rows splits landed per row and stamps BOTH with one
 #                  cycle date: the date is forked once per run, so a midnight
 #                  crossing can never split one run's rows across two days.
-#   T11 gated    — a file whose OTHER region needed the Haiku improvement-verify gate
-#                  records that gate, never skipped:no-model-call, and stays outside
-#                  every LIKE 'ok%' apply-eligibility gate.
+#   T11 gated    — EVERY row records the improvement-verify gate that ran, never
+#                  skipped:no-model-call, and stays outside every LIKE 'ok%'
+#                  apply-eligibility gate. An invariant rather than one fixture:
+#                  the arbiter verdict has no non-gated complement to contrast.
 #   T10 no ledger — an empty or absent ledger PATH records rejected and still
 #                  returns 0 (an unreadable ledger must not abort the deploy).
+#   T12 roster   — the landed lookup keys on the row's manifest-relative target, so a
+#                  path that is not an agent body splits landed by the same rule.
 #
 # T2/T3 need Postgres and skip without it; every other test is hermetic (update.sh is
 # SOURCED, the CLI is stubbed, all paths stay in a temp dir).
+#
+# Gating hazard: a bare mid-body `[[ ]]` is NOT gated by errexit under bash 3.2 (the
+# macOS default) while bash 5 gates it, so an ungated conditional assertion is silently
+# ignored on macOS and fails only on Linux. Every conditional assertion below is
+# therefore gated explicitly — `|| return 1`, or an if-block that returns.
 #
 # Run via: bats scripts/test/update-resolved-gap-recording.bats
 # Requires: bats 1.5+, bash 3.2+, python3
@@ -80,8 +88,10 @@ DROPPED
   RELEASE="${WORK}/release-body.md"
   printf 'release body\n' >"${RELEASE}"
 
-  # The per-run outcome ledger: the commit callback appends a basename on
-  # GIT_TXN_OK, which is how the emitter learns a file actually landed.
+  # The per-run outcome ledger: the commit callback appends a manifest-relative
+  # path on GIT_TXN_OK, which is how the emitter learns a file actually landed. The
+  # emitter reads the row's target field against it, so a fixture line here is the
+  # same string the row carries.
   LEDGER="${WORK}/agent-outcomes.ledger"
   : >"${LEDGER}"
 
@@ -120,7 +130,20 @@ sys.exit(int(os.environ.get("STUB_RC", "0")))
 PY
 }
 
+# The production-row cleanup runs HERE, not at the end of a body: an assertion that
+# fires mid-body aborts the rest of that body, so a delete placed after it strands the
+# row in the live glass_atrium. A test arms it by exporting PG_ROW_TARGET before the
+# driver runs. The pid-unique target stays the whole guard — never widen the predicate
+# to the pattern label alone, which real accountability rows also carry.
+delete_pg_row() {
+  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
+    "DELETE FROM core.autoagent_proposals
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
+        AND target_file = 'agents/${1}'" >/dev/null 2>&1 || true # GA-ABSORB[benign]: a cleanup of a row no run ever wrote is a normal outcome
+}
+
 teardown() {
+  [[ -n "${PG_ROW_TARGET:-}" ]] && delete_pg_row "${PG_ROW_TARGET}"
   [[ -n "${WORK:-}" ]] && rm -rf -- "${WORK}"
   return 0
 }
@@ -128,11 +151,11 @@ teardown() {
 # One resolved-file row: base, target, release, hunks, dropped, added, regions,
 # diff, dropped-text sidecar, needs_llm. $2 overrides the sidecar path (an absent
 # one exercises the diff fallback); $3 overrides the file-level needs_llm, whose
-# default False is the wholly-resolved file every other test describes.
+# default True is what the resolver reports for every arbiter-resolved file.
 write_tsv() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${1:-ga-rec-probe.md}" "agents/${1:-ga-rec-probe.md}" "${RELEASE}" \
-    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" "${3:-False}" >"${TSV}"
+    2 2 1 "0,3" "${DIFF_FILE}" "${2-${DROPPED_TEXT}}" "${3:-True}" >"${TSV}"
 }
 
 run_driver() {
@@ -160,13 +183,13 @@ db_available() {
 
 @test "T1 envelope carries the auto tier, the constant label and a non-empty cost guard state" {
   write_tsv
-  printf 'ga-rec-probe.md\n' >"${LEDGER}"
+  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
   run run_driver
   [ "$status" -eq 0 ]
   [ -s "${CAPTURE}" ]
 
   run envelope_field pattern_label
-  [ "$output" = "editable-region-resolved-release" ]
+  [ "$output" = "editable-region-arbiter-resolved" ]
 
   run envelope_field approval_tier
   [ "$output" = "auto" ]
@@ -189,8 +212,8 @@ db_available() {
     echo "haiku_status satisfies a LIKE 'ok%' apply-eligibility gate: ${output}"
     return 1
   fi
-  if [[ "$output" != skipped:* ]]; then
-    echo "haiku_status must be a skipped: form: ${output}"
+  if [[ "$output" != verified:improvement-gate ]]; then
+    echo "haiku_status must name the gate the candidate passed: ${output}"
     return 1
   fi
 
@@ -212,44 +235,55 @@ db_available() {
 
 @test "T7 rationale names the hunk count, the line deltas and a bounded dropped excerpt" {
   write_tsv
+  # The APPLIED rationale is the one under test, and only a landed ledger entry
+  # produces it: without one the emitter records landed=0 and the row carries the
+  # unlanded text instead, so the gate-verdict clause would be probed on T6's branch.
+  printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
   run run_driver
   [ "$status" -eq 0 ]
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"2 gap(s)"* ]]
-  [[ "$rationale" == *"region(s) 0,3"* ]]
-  [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]]
-  [[ "$rationale" == *"added 1 release line(s)"* ]]
-  [[ "$rationale" == *"no model call"* ]]
+  [[ "$rationale" == *"2 gap(s)"* ]] || return 1
+  [[ "$rationale" == *"region(s) 0,3"* ]] || return 1
+  [[ "$rationale" == *"dropped 2 daemon-authored line(s)"* ]] || return 1
+  [[ "$rationale" == *"added 1 release line(s)"* ]] || return 1
+  [[ "$rationale" == *"improvement-verify gate ran"* ]] || return 1
   # The excerpt comes from the resolver's dropped-line sidecar, so it is
   # daemon-authored text and is attributed as such.
-  [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]]
-  [[ "$rationale" == *"checkpoint tool_use progress"* ]]
+  [[ "$rationale" == *"Dropped daemon-authored excerpt"* ]] || return 1
+  [[ "$rationale" == *"checkpoint tool_use progress"* ]] || return 1
   # Bounded: an excerpt, never the whole region.
   [ "${#rationale}" -lt 800 ]
 }
 
-@test "T11 a model-gated file records the gate that ran, never no-model-call" {
-  # A file with one resolved region AND one both-changed region reports the
-  # resolved verdict with needs_llm=True: the Haiku improvement-verify gate ran
-  # and a Haiku outage would have rolled the landing back. A row reading
-  # skipped:no-model-call tells an auditor that landing was deterministic.
-  write_tsv ga-rec-probe.md "${DROPPED_TEXT}" True
-  printf 'ga-rec-probe.md\n' >"${LEDGER}"
-  run run_driver
-  [ "$status" -eq 0 ]
+@test "T11 every row records the gate that ran, never no-model-call" {
+  # An INVARIANT over the rows this emitter writes, not a property of one
+  # fixture: the arbiter verdict is in the model-required set, so a row whose
+  # plan line claims otherwise is two processes disagreeing rather than a
+  # deterministic landing. Both plan-line values are driven for that reason —
+  # the row reads the same either way, and the disagreeing one says so aloud.
+  for needs_llm in True False; do
+    write_tsv ga-rec-probe.md "${DROPPED_TEXT}" "${needs_llm}"
+    printf 'agents/ga-rec-probe.md\n' >"${LEDGER}"
+    run run_driver
+    [ "$status" -eq 0 ] || return 1
+    driver_out="${output}"
 
-  run envelope_field haiku_status
-  [ "$output" = "verified:improvement-gate" ]
-  # Apply-ineligibility is unconditional: neither provenance token may satisfy a
-  # LIKE 'ok%' gate.
-  [[ "$output" != ok* ]]
+    run envelope_field haiku_status
+    [ "$output" = "verified:improvement-gate" ] || return 1
+    # Apply-ineligibility is unconditional: the provenance token may never
+    # satisfy a LIKE 'ok%' gate.
+    [[ "$output" != ok* ]] || return 1
 
-  rationale="$(envelope_field rationale)"
-  [[ "$rationale" != *"no model call"* ]]
-  [[ "$rationale" == *"improvement-verify gate"* ]]
-  # The deterministic half of the claim is unchanged — only the screening clause moves.
-  [[ "$rationale" == *"took the release side"* ]]
-  [[ "$rationale" == *"2 gap(s)"* ]]
+    rationale="$(envelope_field rationale)"
+    [[ "$rationale" != *"no model call"* ]] || return 1
+    [[ "$rationale" == *"improvement-verify gate ran"* ]] || return 1
+    [[ "$rationale" == *"judged by the arbiter"* ]] || return 1
+    [[ "$rationale" == *"2 gap(s)"* ]] || return 1
+
+    if [ "${needs_llm}" = "False" ]; then
+      [[ "${driver_out}" == *"disagrees with the resolver"* ]] || return 1
+    fi
+  done
 }
 
 @test "T8 without the resolver sidecar the excerpt falls back to the diff and says so" {
@@ -260,9 +294,9 @@ db_available() {
   run run_driver
   [ "$status" -eq 0 ]
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"Excerpt of lines the candidate drops"* ]]
-  [[ "$rationale" != *"Dropped daemon-authored excerpt"* ]]
-  [[ "$rationale" == *"2 gap(s)"* ]]
+  [[ "$rationale" == *"Excerpt of lines the candidate drops"* ]] || return 1
+  [[ "$rationale" != *"Dropped daemon-authored excerpt"* ]] || return 1
+  [[ "$rationale" == *"2 gap(s)"* ]] || return 1
 }
 
 @test "T6 a file that did not land records reject / rejected" {
@@ -278,7 +312,12 @@ db_available() {
   [ "$output" = "rejected" ]
 
   rationale="$(envelope_field rationale)"
-  [[ "$rationale" == *"not applied"* ]]
+  [[ "$rationale" == *"not applied"* ]] || return 1
+  # The screening claim is per OUTCOME, not per label: only a LANDED candidate is one
+  # the improvement-verify gate read and passed. An unlanded one was rolled back, so a
+  # row asserting a gate verdict for it would credit a screening that never concluded.
+  [[ "$rationale" == *"no gate verdict stands behind it"* ]] || return 1
+  [[ "$rationale" != *"gate ran over the candidate and passed"* ]] || return 1
 }
 
 @test "T9 a multi-row run splits landed per row and stamps both with ONE cycle date" {
@@ -292,16 +331,57 @@ db_available() {
       "${name}" "agents/${name}" "${RELEASE}" 2 2 1 "0,3" \
       "${DIFF_FILE}" "${DROPPED_TEXT}" False >>"${TSV}"
   done
-  printf 'ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
+  printf 'agents/ga-rec-first.md\n' >"${LEDGER}" # only the first row's transaction landed
 
   DATE_TICKS="${WORK}/date.ticks" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(agents/ga-rec-first.md, landed=1)"* ]]
-  [[ "$output" == *"(agents/ga-rec-second.md, landed=0)"* ]]
+  [[ "$output" == *"(agents/ga-rec-first.md, landed=1)"* ]] || return 1
+  [[ "$output" == *"(agents/ga-rec-second.md, landed=0)"* ]] || return 1
 
   [ "$(envelope_field cycle_date 1)" = "$(envelope_field cycle_date 2)" ]
   # One tick == one fork for the whole run, whatever the row count.
   [ "$(wc -l <"${WORK}/date.ticks" | tr -d ' ')" -eq 1 ]
+}
+
+# Read the declared roster paths in a contained subshell. A literal list here would
+# be a second declaration of the fact the single declaration exists to hold.
+roster_paths() {
+  bash -c '
+    set -Eeuo pipefail
+    # shellcheck source=/dev/null
+    source "$1"
+    spine_get_roster_paths
+  ' _ "${GA}/scripts/lib/apply-spine.sh"
+}
+
+@test "T12 a landed roster path stamps landed and an unlanded one does not" {
+  # The lookup key is the row's target, so a path that is not an agent body resolves
+  # by the same rule and at any depth. Both directions ride one run: a probe phrased
+  # only as "this does not stamp landed" is satisfied by a fixture that matches
+  # nothing at all.
+  # The landed side must be NESTED: a top-level path's basename equals its path, so
+  # it cannot tell the two key forms apart and would stamp landed either way.
+  # Every assertion is gated `|| return 1`: this bats version fails a test only on
+  # the LAST command's status, so a bare mid-body test would be silently ignored.
+  local landed_rel unlanded_rel
+  landed_rel="$(roster_paths | grep / | sed -n 1p)"
+  unlanded_rel="$(roster_paths | grep -v -F -x "${landed_rel}" | sed -n 1p)"
+  [ -n "${landed_rel}" ] || return 1
+  [ -n "${unlanded_rel}" ] || return 1
+
+  : >"${TSV}"
+  local rel
+  for rel in "${landed_rel}" "${unlanded_rel}"; do
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${rel##*/}" "${rel}" "${RELEASE}" 2 2 1 "0,3" \
+      "${DIFF_FILE}" "${DROPPED_TEXT}" False >>"${TSV}"
+  done
+  printf '%s\n' "${landed_rel}" >"${LEDGER}"
+
+  run run_driver
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"(${landed_rel}, landed=1)"* ]] || return 1
+  [[ "$output" == *"(${unlanded_rel}, landed=0)"* ]] || return 1
 }
 
 @test "T10 an empty or absent ledger path records rejected and still returns 0" {
@@ -322,15 +402,15 @@ db_available() {
   write_tsv
   STUB_RC=7 run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN: could not record the resolved-gap discard"* ]]
-  [[ "$output" == *"deploy continues"* ]]
+  [[ "$output" == *"WARN: could not record the resolved-gap discard"* ]] || return 1
+  [[ "$output" == *"deploy continues"* ]] || return 1
 }
 
 @test "T5 an absent dual-write helper warns and continues" {
   write_tsv
   ATRIUM_UPDATE_PG_HELPER="${WORK}/nope.py" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no dual-write helper"* ]]
+  [[ "$output" == *"no dual-write helper"* ]] || return 1
 }
 
 @test "T2 the row LANDS in core.autoagent_proposals through the real dual-write CLI" {
@@ -339,26 +419,19 @@ db_available() {
   python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
 
   target="ga-rec-landed-$$.md"
+  PG_ROW_TARGET="${target}"
   write_tsv "${target}"
-  printf '%s\n' "${target}" >"${LEDGER}"
+  printf 'agents/%s\n' "${target}" >"${LEDGER}"
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
-  [[ "$output" == *"resolved-gap discard recorded"* ]]
+  [[ "$output" == *"resolved-gap discard recorded"* ]] || return 1
 
   row="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT approval_tier || '|' || status || '|' || haiku_status || '|' || cost_guard_state
        FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
-  # This runs against the PRODUCTION database, and pattern_label is the one real rows
-  # carry — the pid-unique target is the ONLY thing separating this cleanup from live
-  # accountability records. Never widen the predicate to the label alone.
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
-    "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
-        AND target_file = 'agents/${target}'" >/dev/null
-
-  [ "${row}" = "auto|applied|skipped:no-model-call|ok" ]
+  [ "${row}" = "auto|applied|verified:improvement-gate|ok" ]
 }
 
 @test "T3 the same file resolved twice on one day lands ONE row that tracks the LAST outcome" {
@@ -367,6 +440,7 @@ db_available() {
   python3 -c 'import psycopg' 2>/dev/null || skip "psycopg unavailable"
 
   target="ga-rec-upsert-$$.md"
+  PG_ROW_TARGET="${target}"
   write_tsv "${target}"
 
   # Both re-runs carry a DIFFERENT ledger state, so the row's status has to
@@ -377,7 +451,7 @@ db_available() {
   status_now() {
     psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
       "SELECT status FROM core.autoagent_proposals
-        WHERE pattern_label = 'editable-region-resolved-release'
+        WHERE pattern_label = 'editable-region-arbiter-resolved'
           AND target_file = 'agents/${target}'"
   }
 
@@ -386,7 +460,7 @@ db_available() {
   [ "$status" -eq 0 ]
   first="$(status_now)"
 
-  printf '%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
+  printf 'agents/%s\n' "${target}" >"${LEDGER}" # same-day re-run, accepted
   ATRIUM_UPDATE_PG_HELPER="${PG_HELPER}" run run_driver
   [ "$status" -eq 0 ]
   second="$(status_now)"
@@ -398,14 +472,8 @@ db_available() {
 
   count="$(psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -tAc \
     "SELECT count(*) FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
+      WHERE pattern_label = 'editable-region-arbiter-resolved'
         AND target_file = 'agents/${target}'")"
-  # Same production-database caveat as T2: the pid-unique target is the whole guard.
-  psql -d "${ATRIUM_UPDATE_DB_NAME:-glass_atrium}" -qc \
-    "DELETE FROM core.autoagent_proposals
-      WHERE pattern_label = 'editable-region-resolved-release'
-        AND target_file = 'agents/${target}'" >/dev/null
-
   [ "${count}" = "1" ]
   [ "${first}" = "rejected" ]
   [ "${second}" = "applied" ]

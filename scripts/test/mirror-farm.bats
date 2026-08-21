@@ -19,9 +19,12 @@
 #   7. stale mirror pruning       → --dry-run ADVISORY reports without removing;
 #                                   the explicit opt-in `prune` removes it under
 #                                   the 4-criteria guard
-#   8. missing-source filter      → farm_write_present_manifest warn+skips a
-#                                   manifest entry with no on-disk source (the
-#                                   update-context sensitive-refusal edge)
+#   8. missing-source is loud     → a manifest entry with no on-disk source
+#                                   fails the refresh (rc 1); the lib narrows no
+#                                   scope of its own, so the caller sees the gap
+#   8b. except a claimed agent    → a top-level agents/<name>.md the merge claims
+#                                   is reported and skipped instead (rc 0), the
+#                                   run continues, and the charter is not claimed
 #   9. deployment detection       → farm_has_ga_links flips no -> yes once a
 #                                   mirror exists
 #
@@ -164,23 +167,131 @@ run_refresh() {
   [[ ! -L "${FACADE}/skills/testkit/ghost.sh" ]]
 }
 
-@test "missing-source manifest entries are warn+skipped via the filtered scope (update context)" {
-  # ghost.sh is listed but has NO source under GAROOT (the sensitive-refused /
-  # unapplied release-file edge) — unfiltered, swap_symlink would loud-die.
+@test "a manifest entry with no on-disk source fails the refresh loudly" {
+  # ghost.sh is listed but has NO source under GAROOT. The refresh reports rc 1 and
+  # names the row rather than quietly narrowing the scope it was handed; the caller
+  # owns what to do with the gap.
   write_manifest "skills/testkit/newlib.sh" "skills/testkit/ghost.sh"
   mkdir -p "${FACADE}"
   run env GA_TARGET_HOME="${FACADE}" bash -c '
     set -Eeuo pipefail
     source "'"${LIB}"'"
-    farm_write_present_manifest "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json" "'"${WORK}"'/filtered.json"
-    farm_refresh "'"${GAROOT}"'" "'"${WORK}"'/filtered.json"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
   '
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"mirror skipped: skills/testkit/ghost.sh"* ]]
-  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]]
-  [[ ! -e "${FACADE}/skills/testkit/ghost.sh" ]]
-  # the filtered scope carries only the present entry
-  [[ "$(jq -r '.files | join(",")' "${WORK}/filtered.json")" == "skills/testkit/newlib.sh" ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ghost.sh"* ]] || return 1
+  [[ ! -e "${FACADE}/skills/testkit/ghost.sh" ]] || return 1
+}
+
+@test "a merge-claimed agent body with no source is reported and skipped, and the run continues" {
+  # The release-only agent ADD: the manifest carries the body, the EDITABLE-region merge declined to
+  # create it and deferred it to the agent_lifecycle ceremony, so the row exists with nothing on disk.
+  # The farm reports it and finishes — the loop must still reach the rows behind it, because the
+  # update caller runs its hook-binding reconcile and its success finalisation only on a completed
+  # refresh, and by then the byte-swap has already committed.
+  write_manifest "agents/glass-atrium-dev-ghost.md" "skills/testkit/newlib.sh"
+  mkdir -p "${FACADE}"
+  run env GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${LIB}"'"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"agent body not installed"*"agents/glass-atrium-dev-ghost.md"* ]] || return 1
+  [[ ! -e "${FACADE}/agents/glass-atrium-dev-ghost.md" ]] || return 1
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]] || return 1
+}
+
+@test "the charter row is not merge-claimed, so its absent source stays loud" {
+  # The charter is a top-level agents/*.md the merge skips by basename, so it travels the byte-swap
+  # like any other row — an absent source there is an apply defect, not a deferred install.
+  write_manifest "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "skills/testkit/newlib.sh"
+  mkdir -p "${FACADE}"
+  run env GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${LIB}"'"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
+  '
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"manifest source missing"*"GLASS_ATRIUM_GLOBAL_RULES.md"* ]] || return 1
+}
+
+@test "the farm's claim predicate answers exactly as the updater spine's does" {
+  # The launcher never sources the updater's spine, so the farm restates the claim. Drive both over
+  # one path set: a divergence would put the farm and the mode-enforcement pass on opposite verdicts
+  # for the same row, which is the split this carve-out exists to close.
+  # The path set is the spine's OWN roster declaration plus the agent-arm cases, so a roster row
+  # added there enters this drive without an edit here — a hand-listed roster would be the very
+  # second copy the pin exists to catch.
+  run env bash -c '
+    set -Eeuo pipefail
+    source "'"${GA}"'/lib/ga-symlink.sh"
+    source "'"${GA}"'/scripts/lib/apply-spine.sh"
+    for p in agents/glass-atrium-dev-shell.md agents/GLASS_ATRIUM_GLOBAL_RULES.md \
+      agents/templates/progress.md agents/notes.txt skills/testkit/newlib.sh \
+      rules/glass-atrium/core-security.md agents/a.md.local.md \
+      $(spine_get_roster_paths); do
+      spine=no
+      spine_is_merge_claimed_path "${p}" && spine=yes
+      printf "%s %s %s\n" "${p}" "$(is_merge_claimed_path "${p}")" "${spine}"
+    done
+  '
+  [ "$status" -eq 0 ] || return 1
+  local line
+  for line in "${lines[@]}"; do
+    [[ "${line}" == *" yes yes" || "${line}" == *" no no" ]] || return 1
+  done
+  [[ "$output" == *"agents/glass-atrium-dev-shell.md yes yes"* ]] || return 1
+  [[ "$output" == *"agents/GLASS_ATRIUM_GLOBAL_RULES.md no no"* ]] || return 1
+  # Every declared roster row, by name: the loop above passes vacuously on an empty word split.
+  # The spine is not sourced in THIS process, so the list is read through one that does — an
+  # undefined function here would word-split to nothing and skip the loop, which is the inert
+  # assertion this suite's own gating note warns about. The non-empty guard is what forbids it.
+  local roster roster_paths
+  roster_paths="$(bash -c 'source "'"${GA}"'/scripts/lib/apply-spine.sh"; spine_get_roster_paths')"
+  [[ -n "${roster_paths}" ]] || return 1
+  for roster in ${roster_paths}; do
+    [[ "$output" == *"${roster} yes yes"* ]] || return 1
+  done
+}
+
+@test "an absent roster row is excluded before the farm's missing-source arm, never fatal" {
+  # WHERE the roster rows are answered, which is upstream of the claim predicate: all four are
+  # install-internal (the scoped/ and hooks/ prefixes, agent-registry.json exact), so
+  # is_symlink_excluded answers first and swap_symlink is never called for one. That is what makes
+  # an absent roster row non-fatal here — a fatal one would abort the farm loop mid-run, and on the
+  # update path that abort lands after the byte-swap has already committed. Dropping a prefix from
+  # the exclusion list would route the row into swap_symlink instead, which is the regression this
+  # pins; the claim predicate then decides, and its roster arm is reached only in that case.
+  # ga_init_env is what defines the exclusion arrays; sourcing the lib alone leaves them unbound and
+  # every verdict empty, which reads as "not no" and asserts nothing. The per-line `== yes` and the
+  # seen count are what make an empty verdict fail instead.
+  local excluded path verdict seen=0
+  excluded="$(GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${GAROOT}"'/lib/ga-core.sh"
+    ga_init_env "'"${GAROOT}"'"
+    source "'"${GA}"'/scripts/lib/apply-spine.sh"
+    for p in $(spine_get_roster_paths); do printf "%s %s\n" "${p}" "$(is_symlink_excluded "${p}")"; done
+  ')"
+  while read -r path verdict; do
+    [[ "${verdict}" == "yes" ]] || return 1
+    seen=$((seen + 1))
+  done <<<"${excluded}"
+  [[ "${seen}" -gt 0 ]] || return 1
+
+  write_manifest "scoped/scope-dev.md" "skills/testkit/newlib.sh"
+  rm -f "${GAROOT}/scoped/scope-dev.md"
+  mkdir -p "${FACADE}"
+  run env GA_TARGET_HOME="${FACADE}" bash -c '
+    set -Eeuo pipefail
+    source "'"${LIB}"'"
+    farm_refresh "'"${GAROOT}"'" "'"${GAROOT}"'/manifest.json"
+  '
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"skip (install-internal"*"scoped/scope-dev.md"* ]] || return 1
+  [[ "$output" != *"manifest source missing"* ]] || return 1
+  [[ -L "${FACADE}/skills/testkit/newlib.sh" ]] || return 1
 }
 
 @test "farm_has_ga_links detects deployment links (no -> yes)" {

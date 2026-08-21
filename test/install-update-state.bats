@@ -7,12 +7,10 @@
 #        under <state-dir>/base-agents/ (the editable_merge.base_store_dir layout that
 #        load_base_text CONSUMES), and that re-capturing after a body change re-seeds
 #        it (hash changes — never a stale base anchor).
-#   T26  teardown_update_state — the pause flag (ephemeral coordination state) is
-#        ALWAYS removed on uninstall even if present beforehand; the baseline
-#        (recovery state) is KEPT unless --purge-config.
-#   T27  doctor section-9e — the STALE update-pause-flag advisory: WARN on a
-#        present/stale flag, OK (no WARN) when absent, and MUTATION-FREE (doctor never
-#        clears the flag, unlike the daemon honor predicate).
+#   T26  teardown_update_state — the baseline (recovery state) is KEPT unless
+#        --purge-config, and no other file under the state dir is touched.
+#   T27  doctor section-9 — the update-system advisory carries no daemon-pause line;
+#        writer serialization is the apply-lock alone, so there is no flag to report.
 #
 # Isolation strategy (two seams, both hermetic):
 #   * T24/T26 drive SOURCED engine functions (capture_install_baseline /
@@ -27,7 +25,7 @@
 # ~/.glass-atrium/.update-state.
 #
 # Run via: bats test/install-update-state.bats
-# Requires: bats >= 1.5.0, jq, python3 (pause-flag age check), bash 3.2+
+# Requires: bats >= 1.5.0, jq, python3 (doctor mtime probes), bash 3.2+
 
 bats_require_minimum_version 1.5.0
 
@@ -36,7 +34,7 @@ REAL_GA="${REAL_GA_DIR}/glass-atrium"
 
 setup() {
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  command -v python3 >/dev/null 2>&1 || skip "python3 required (pause-flag age check)"
+  command -v python3 >/dev/null 2>&1 || skip "python3 required (doctor mtime probes)"
   command -v shasum >/dev/null 2>&1 || skip "shasum required"
   [[ -f "${REAL_GA_DIR}/lib/ga-core.sh" ]] || skip "ga-core.sh not found: ${REAL_GA_DIR}"
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium entry not found: ${REAL_GA}"
@@ -44,25 +42,24 @@ setup() {
   SANDBOX="$(mktemp -d -t install-update-state-bats.XXXXXX)"
   GA_SANDBOX="${SANDBOX}/ga" # sandbox GA_ROOT — the agent SOURCE bodies live here
   TARGET="${SANDBOX}/target" # throwaway install target
-  STATE="${SANDBOX}/state"   # update-state dir (baseline + base-agents + pause flag)
+  STATE="${SANDBOX}/state"   # update-state dir (baseline + base-agents)
   MANIFEST="${SANDBOX}/manifest.json"
   ENGINE_RUNNER="${SANDBOX}/run-engine.sh"
   mkdir -p "${GA_SANDBOX}/agents" "${TARGET}" "${STATE}"
 
   # Sandbox overrides consumed by ga_init_env + the E5 helpers. GA_LIB_DIR points the
-  # E5-lib source at the REAL scripts/lib while GA_ROOT stays the sandbox; the two
-  # ATRIUM_* dirs pin the baseline/base-content store + the pause flag into the sandbox.
+  # E5-lib source at the REAL scripts/lib while GA_ROOT stays the sandbox; the
+  # ATRIUM_* dir pins the baseline/base-content store into the sandbox.
   export REAL_GA_DIR GA_SANDBOX
   export GA_LIB_DIR="${REAL_GA_DIR}/scripts/lib"
   export GA_TARGET_HOME="${TARGET}"
   export GA_MANIFEST="${MANIFEST}"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}"
-  export ATRIUM_PAUSE_STATE_DIR="${STATE}"
   export EBATS_DRY="false"   # per-test override for DRY_RUN
   export EBATS_PURGE="false" # per-test override for PURGE_CONFIG
 
   # Skip 3 assertion-IRRELEVANT heavy doctor sections via the existing test-mode seams.
-  # T27 asserts ONLY §9 pause-flag lines — never §8 manifest / auth self-test / §reports.
+  # T27 asserts ONLY §9 advisory lines — never §8 manifest / auth self-test / §reports.
   mkdir -p "${SANDBOX}/bin" "${SANDBOX}/empty-reports"
   cat >"${SANDBOX}/bin/claude" <<'SH'
 #!/bin/bash
@@ -202,25 +199,6 @@ file_hash() {
 
 # === T26 — teardown_update_state (uninstall non-symlink state) ==============
 
-@test "T26: teardown_update_state removes the pause flag when present" {
-  printf 'pid=1 created=1\n' >"${STATE}/autoagent-pause.flag"
-  [[ -e "${STATE}/autoagent-pause.flag" ]]
-
-  run_engine teardown_update_state
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"removed update pause flag"* ]]
-  # the ephemeral coordination flag is GONE after uninstall, even though present before
-  [[ ! -e "${STATE}/autoagent-pause.flag" ]]
-}
-
-@test "T26: teardown_update_state is a clean no-op when no pause flag is present" {
-  [[ ! -e "${STATE}/autoagent-pause.flag" ]]
-
-  run_engine teardown_update_state
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"no update pause flag to remove"* ]]
-}
-
 @test "T26: teardown keeps the base@install baseline by default (no --purge-config)" {
   printf '{"version":"1.0.0"}\n' >"${STATE}/baseline-manifest.json"
 
@@ -231,45 +209,21 @@ file_hash() {
   [[ -f "${STATE}/baseline-manifest.json" ]]
 }
 
-@test "T26: dry-run reports the pause-flag removal without performing it" {
-  printf 'pid=1 created=1\n' >"${STATE}/autoagent-pause.flag"
-  export EBATS_DRY="true"
+@test "T26: teardown_update_state leaves every other update-state file in place" {
+  printf '{"version":"1.0.0"}\n' >"${STATE}/baseline-manifest.json"
+  printf 'unrelated\n' >"${STATE}/stray-runtime-state"
 
   run_engine teardown_update_state
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == *"would remove update pause flag"* ]]
-  [[ -e "${STATE}/autoagent-pause.flag" ]] # report-only — still present
+  [[ "${status}" -eq 0 ]] \
+    && [[ -f "${STATE}/stray-runtime-state" ]] \
+    && [[ "${output}" != *"pause"* ]]
 }
 
-# === T27 — doctor section-9e STALE update-pause-flag advisory ===============
+# === T27 — doctor section-9 carries no daemon-pause line =====================
 
-@test "T27: doctor section-9 reports OK (no WARN) when no pause flag is present" {
+@test "T27: doctor section-9 reports the baseline and no daemon-pause line" {
   write_manifest "agents/dev-x.md"
 
   run "${REAL_GA}" doctor
-  [[ "${output}" == *"no update pause flag"* ]]
-  [[ "${output}" != *"STALE update pause flag"* ]]
-}
-
-@test "T27: doctor section-9 WARNs on a STALE pause flag and leaves it in place" {
-  write_manifest "agents/dev-x.md"
-  printf 'pid=1 created=1\n' >"${STATE}/autoagent-pause.flag"
-  # age the flag past the 1800s TTL → crashed-updater residue (BSD -v / GNU -d fallback)
-  touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" \
-    "${STATE}/autoagent-pause.flag"
-
-  run "${REAL_GA}" doctor
-  [[ "${output}" == *"STALE update pause flag"* ]]
-  # doctor is MUTATION-FREE — unlike the daemon honor predicate it never clears the flag
-  [[ -e "${STATE}/autoagent-pause.flag" ]]
-}
-
-@test "T27: doctor section-9 reports a fresh pause flag as an ACTIVE in-progress update" {
-  write_manifest "agents/dev-x.md"
-  printf 'pid=1 created=1\n' >"${STATE}/autoagent-pause.flag" # fresh mtime = now
-
-  run "${REAL_GA}" doctor
-  [[ "${output}" == *"update pause flag active"* ]]
-  [[ "${output}" != *"STALE update pause flag"* ]]
-  [[ -e "${STATE}/autoagent-pause.flag" ]]
+  [[ "${output}" == *"base@install baseline"* ]] && [[ "${output}" != *"pause"* ]]
 }

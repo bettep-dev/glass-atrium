@@ -6,17 +6,13 @@
 # re-diffed the already-merged region against a stale base and wrote literal git
 # conflict markers into the live agent file. Three pins:
 #   * the end-to-end second run (no markers, no content change);
-#   * the capture ORDERING that keeps the base advancing even when the (fatal)
-#     vendor sweep dies right after a landed merge;
 #   * a declined body followed by a mergeable one: the decline reason is per-file
 #     state, and a leaked one declines a body that had no conflict at all;
-#   * a conflicting region, both ways round the gap-policy kill switch: with the
-#     switch OFF it declines durably and never lands markers; with the switch at
-#     its default it resolves to the release side and lands, declining nothing —
-#     and lands with the Haiku gate UNREACHABLE, which is the property the policy
-#     was chosen for (merge-resolved-release is deliberately out of
-#     editable_merge._LLM_REQUIRED, so no model stands between a resolved gap and
-#     the disk; an outage or an exhausted quota cannot drop it back to declining).
+#   * a conflicting region, twice: once with the retired gap-policy switch exported
+#     at its former OFF value and once with the environment clean. Both runs reach
+#     merge-pending-arbitration — the gap is contested, neither side is emitted, the
+#     base entry is held back and the local body survives — so the switch is inert
+#     and no model is consulted on either path.
 #
 # Split out of glass-atrium-update.bats rather than appended to it: CI runs one
 # GNU parallel job per *.bats file under a 240s per-file timeout, and that file
@@ -27,10 +23,9 @@
 # the LAST command's status, so a bare mid-body `[[ ]]` would be silently ignored.
 #
 # Hermetic: per-test mktemp sandbox with GA_ROOT / AUTOAGENT_REPORTS_DIR /
-# ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected into it; the
-# download is bypassed via ATRIUM_UPDATE_SRC_DIR, the confirm injected via
-# ATRIUM_UPDATE_CONFIRM_ANSWER and AUTOAGENT_CLAUDE_BIN pointed at a path that is
-# never created, so /dev/tty, gh and the claude CLI are never touched.
+# ATRIUM_UPDATE_STATE_DIR redirected into it; the
+# download is bypassed via ATRIUM_UPDATE_SRC_DIR and AUTOAGENT_CLAUDE_BIN points at
+# a path that is never created, so gh and the claude CLI are never touched.
 
 bats_require_minimum_version 1.5.0
 
@@ -46,7 +41,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t ga-update-idem.XXXXXX)" && pwd -P)"
   INSTALL="${WORK}/install" # sandbox GA_ROOT (the live install under test)
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
-  STATE="${WORK}/state"     # reports / pause / baseline sandbox
+  STATE="${WORK}/state"     # daemon-reports + update-state (baseline, base-agents) sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
 }
 
@@ -123,21 +118,18 @@ base goal
 ## Rules
 NEW vendor rules'
 
-# $1 = confirm answer · $2 = gap-policy kill switch (empty = the default policy).
-# The switch is passed EXPLICITLY rather than forwarded from the ambient environment:
-# a `${VAR:-}` forward reads as a hermeticity pin while actually letting an operator's
-# exported value decide which policy the run under test exercises.
+# $1 = the RETIRED gap-policy switch, exported for the tests that pin its inertness
+# (empty = a clean environment). It is passed EXPLICITLY rather than forwarded from
+# the ambient environment: a `${VAR:-}` forward reads as a hermeticity pin while
+# actually letting an operator's exported value into the run under test.
 run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
-    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${2-}" \
+    ATRIUM_UPDATE_MERGE_RESOLVE_GAPS="${1-}" \
     AUTOAGENT_CLAUDE_BIN="${WORK}/no-such-claude" \
     bash "${SKILL}"
 }
@@ -148,7 +140,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   local merged
   merged="$(cat "${INSTALL}/agents/dev-a.md")"
@@ -157,7 +149,7 @@ run_update() {
   # the base advanced to the RELEASE body — the anchor that makes run 2 a no-op
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_RELEASE}" ]] || return 1
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"no net change"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${merged}" ]] || return 1
@@ -169,51 +161,16 @@ run_update() {
   [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
 }
 
-@test "base-content capture survives a FATAL vendor sweep (ordering pin)" {
-  # update_sweep_removed_files hard-dies (update_die_code 13). With the capture
-  # sequenced AFTER it, that death strands a LANDED merge at the old base — the
-  # stale anchor that re-conflicts on the next same-release run. The capture must
-  # therefore run IMMEDIATELY after the merge, before any fatal step.
-  mkdir -p "${NEWSRC}/agents" "${STATE}/update-state/base-agents"
-  printf 'RELEASE body' >"${NEWSRC}/agents/dev-a.md"
-  printf 'BASE v0' >"${STATE}/update-state/base-agents/dev-a.md"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    bash -c '
-      source "'"${SKILL}"'"
-      source "'"${REAL_LIB_ROOT}"'/scripts/lib/apply-spine.sh"
-      # a merge that LANDED dev-a.md — the outcome ledger is the carrier the
-      # capture reads to decide which files may advance.
-      update_merge_agent_editable_regions() {
-        _update_agent_outcomes_file="'"${WORK}"'/agent-outcomes.ledger"
-        printf "dev-a.md\n" >"${_update_agent_outcomes_file}"
-      }
-      update_sweep_removed_files() { exit 13; }  # the fatal-sweep crash window
-      update_capture_baseline() { :; }
-      update_finalize_merge_and_anchors \
-        "'"${NEWSRC}"'" "/dev/null" "'"${INSTALL}"'" "/dev/null"
-    '
-
-  [ "$status" -eq 13 ] || return 1  # the sweep still hard-fails, loudly (unchanged)
-  # … yet the landed merge already advanced past the stale anchor.
-  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "RELEASE body" ]] || return 1
-}
-
-@test "with the gap policy OFF a conflict verdict declines durably, names the working repair pair, and NEVER writes markers into the live body" {
-  # The kill switch is what this test now buys: under the default policy this same
-  # input resolves to the release side and lands (the sibling test below), so the
-  # decline path is reachable only with the switch set. It still has to WORK when
-  # it is — a rollback of the gap policy must land on a decline that behaves, and
-  # an untested switch is a rollback nobody can take.
-  # Overlapping both-changed region: the merged candidate carries conflict markers,
-  # which in a live agent body is corruption. It must be reported + skipped, with
-  # the local body byte-identical and its base entry left at the prior anchor.
-  # The decline also has to OUTLIVE the run that produced it — the stderr line is
-  # gone the moment the deploy transcript scrolls — and it must not send the reader
-  # to the agent_lifecycle ceremony, whose subcommand set cannot reconcile a region.
+@test "the retired gap-policy switch is inert: the contested decline is durable, names the working repair pair, and NEVER writes markers into the live body" {
+  # Two properties in one run. First the retirement: the switch is exported at the
+  # value that used to select the marker-bearing report, and the run must decline
+  # under the contested verdict anyway — no environment reaches the mode, which is
+  # what keeps `plan` and the verify shell-out on one resolution.
+  # Then the decline itself, which the sibling test below does not cover: it must
+  # OUTLIVE the run that produced it — the stderr line is gone the moment the deploy
+  # transcript scrolls — with the local body byte-identical, its base entry left at
+  # the prior anchor, and no route to the agent_lifecycle ceremony, whose subcommand
+  # set cannot reconcile a region.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -233,15 +190,16 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y 0
+  run_update 0
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"CONFLICT (merge-conflict)"* ]] || return 1
+  [[ "$output" == *"CONFLICT (merge-pending-arbitration)"* ]] || return 1
+  [[ "$output" != *"merge-conflict"* ]] || return 1
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${conflict_local}" ]] || return 1
   [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
 
   # The emitted line names the repair that works and routes nobody to the ceremony.
   local conflict_line
-  conflict_line="$(printf '%s\n' "$output" | grep 'CONFLICT (merge-conflict)')"
+  conflict_line="$(printf '%s\n' "$output" | grep 'CONFLICT (merge-pending-arbitration)')"
   [[ "${conflict_line}" != *"ceremony"* ]] || return 1
   [[ "${conflict_line}" == *"capture a pre-change image"* ]] || return 1
   [[ "${conflict_line}" == *"sync the base store"* ]] || return 1
@@ -253,24 +211,21 @@ NEW vendor rules'
   [[ "$(wc -l <"${declines}" | tr -d ' ')" == "1" ]] || return 1
   local entry
   entry="$(cat "${declines}")"
-  [[ "${entry}" == *"merge-conflict"* ]] || return 1
+  [[ "${entry}" == *"merge-pending-arbitration"* ]] || return 1
   [[ "${entry}" == *"agents/dev-a.md"* ]] || return 1
   [[ "${entry}" == *"local-body-kept"* ]] || return 1
 }
 
-@test "with the gap policy ON the same conflicting body LANDS the release side with the Haiku gate unreachable" {
-  # The shell-side pin on the property the policy was chosen for. The input that
-  # declines above is the shape the stuck agents present every release; under the
-  # DEFAULT policy the resolver emits merge-resolved-release, the candidate joins
-  # the normal records queue, clears the confirm gate and lands.
+@test "with a clean environment the same conflicting body declines pending arbitration and keeps local" {
+  # The shell-side pin on the contested-gap routing. The input that declines above
+  # is the shape the stuck agents present every release; the resolver emits
+  # merge-pending-arbitration — neither side chosen — and the updater's verdict
+  # routing declines it rather than queueing a candidate.
   #
-  # It lands with the gate ABSENT. run_update points AUTOAGENT_CLAUDE_BIN at a
-  # path that does not exist, which is what CI and an offline deploy look like to
-  # fail-safe run_pre_verify. Were merge-resolved-release still LLM-required, that
-  # refusal would roll the body back and this test would red — so this is the
-  # assertion standing between the deterministic policy and a silent regression to
-  # the mediator's availability profile, where the feature lands NOTHING on a host
-  # that cannot reach the model while reporting success at plan time.
+  # This run and the one above differ ONLY in whether the retired switch is exported,
+  # and they agree on verdict, candidate shape and outcome. That agreement is the
+  # retirement: an environment value that once changed the verdict now changes
+  # nothing, and neither run writes a marker or consults a model.
   local conflict_local='# dev-a
 ## Goal
 <!-- EDITABLE:BEGIN -->
@@ -290,19 +245,18 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${conflict_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"CONFLICT (merge-pending-arbitration)"* ]] || return 1
   [[ "$output" != *"CONFLICT (merge-conflict)"* ]] || return 1
 
-  local landed
-  landed="$(cat "${INSTALL}/agents/dev-a.md")"
-  # The tripwire never had to fire: resolution replaces markers, it does not emit them.
-  [[ "${landed}" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
-  [[ "${landed}" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
-  # The conflicting region took the release side, and the vendor structure came with it.
-  [[ "${landed}" == *"VENDOR rewrite"* ]] || return 1
-  [[ "${landed}" == *"NEW vendor rules"* ]] || return 1
-  [[ "${landed}" != *"LOCAL rewrite"* ]] || return 1
+  local kept
+  kept="$(cat "${INSTALL}/agents/dev-a.md")"
+  # The candidate was never queued, so the live body is byte-identical to what the
+  # run found — including the vendor structure the release rewrote outside the region.
+  [[ "${kept}" == "${conflict_local}" ]] || return 1
+  [[ "${kept}" != *"<<<<<<< LOCAL (learned)"* ]] || return 1
+  [[ "${kept}" != *">>>>>>> RELEASE (vendor)"* ]] || return 1
 
   # The gate was never CONSULTED, not merely overruled. run_pre_verify resolves a
   # verifier model before it shells out, and that resolution is the only source of
@@ -311,13 +265,15 @@ NEW vendor rules'
   # that happened to agree". Only the former survives an outage.
   [[ "$output" != *"[daemon-cycle]"* ]] || return 1
 
-  # The base advanced to the landed body — the anchor that keeps the next same-release
-  # run a no-op instead of re-diffing against a stale base.
-  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${conflict_release}" ]] || return 1
+  # The base stayed at its prior entry. Advancing it would retire the contested gap
+  # without anyone judging it: the next run would diff against the release the gap
+  # never accepted and see nothing left to contest.
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-a.md")" == "${GOAL_BASE}" ]] || return 1
 
-  # Nothing declined, so no durable record should exist. Asserting absence of the FILE
-  # (not an empty one) keeps "no declines" distinguishable from "never recorded".
-  [[ ! -e "${INSTALL}/update-declines/conflict-declines.log" ]] || return 1
+  # The decline is durable, and it names the verdict that produced it.
+  local declines="${INSTALL}/update-declines/conflict-declines.log"
+  [[ -f "${declines}" ]] || return 1
+  [[ "$(cat "${declines}")" == *"merge-pending-arbitration"* ]] || return 1
 }
 
 @test "a declined body does not leak its conflict reason onto the NEXT mergeable body" {
@@ -350,7 +306,7 @@ NEW vendor rules'
   seed_file "${NEWSRC}" "agents/dev-b.md" "${GOAL_RELEASE//dev-a/dev-b}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "agents/dev-b.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"CONFLICT (gated-2way-present-both) in agents/dev-a.md"* ]] || return 1
 

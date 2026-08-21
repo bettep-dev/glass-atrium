@@ -3,20 +3,20 @@
 # resolution helpers (GA_ROOT / reports-dir / .apply-lock / release slug); .apply-lock
 # serialize — a mid-apply daemon is signalled by .apply-lock CONTENTION (the retired
 # update_head_is_wip / [WIP-AUTO]-HEAD detector is gone): a stale/dead lock is
-# reclaimed, a live one blocks; update_partition_sensitive — clean vs sensitive split,
-# fail-CLOSED on error; update_serialize_begin / update_cleanup — pause flag set + lock
-# acquired, contention loud-fails, stale lock reclaimed, trap unwinds both; end-to-end
-# run via the ATRIUM_UPDATE_SRC_DIR seam (verify → confirm → deterministic non-agent
-# sync → baseline; decline writes nothing); boundary asserts — NOT a merge engine
+# reclaimed, a live one blocks; the changed-file set — no path-pattern refusal holds a
+# row back from it; update_serialize_begin / update_cleanup — lock acquired,
+# contention loud-fails, stale lock reclaimed, trap releases it; end-to-end
+# run via the ATRIUM_UPDATE_SRC_DIR seam (verify → deterministic non-agent sync →
+# baseline — every changed file applies, the run asks nothing); boundary asserts — NOT a merge engine
 # (agent md excluded), and core.autoagent_proposals reachable through the single
 # sanctioned resolved-gap envelope channel only (no raw SQL, one emitter, one pipe).
 # git is deliberately NOT required — the flow is git-free end to end, proving it runs
 # on a git-less no-.git consumer host.
 # Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
-# AUTOAGENT_REPORTS_DIR / ATRIUM_PAUSE_STATE_DIR / ATRIUM_UPDATE_STATE_DIR redirected
-# into it; libs are sourced from the REAL install (REAL_LIB_ROOT). Confirmation
-# injected via ATRIUM_UPDATE_CONFIRM_ANSWER, download bypassed via ATRIUM_UPDATE_SRC_DIR
-# — /dev/tty and gh are never touched.
+# AUTOAGENT_REPORTS_DIR / ATRIUM_UPDATE_STATE_DIR redirected
+# into it; libs are sourced from the REAL install (REAL_LIB_ROOT). The download is
+# bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched, and
+# AUTOAGENT_CLAUDE_BIN points the arbiter's model seam at a failing stub.
 
 bats_require_minimum_version 1.5.0
 
@@ -37,8 +37,14 @@ setup() {
   WORK="$(cd -- "$(mktemp -d -t ga-update-bats.XXXXXX)" && pwd -P)"
   INSTALL="${WORK}/install" # sandbox GA_ROOT (the live install under test)
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
-  STATE="${WORK}/state"     # reports / pause / baseline sandbox
+  STATE="${WORK}/state"     # reports / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  # Model seam, stubbed suite-wide: the arbiter falls back to a PATH `claude`.
+  # A failing invocation is the unavailable arm — contested gaps land locally.
+  CLAUDE_STUB="${WORK}/claude-stub"
+  printf '#!/bin/sh\necho "arbiter model seam stubbed in bats" >&2\nexit 1\n' >"${CLAUDE_STUB}"
+  chmod +x "${CLAUDE_STUB}"
+  export AUTOAGENT_CLAUDE_BIN="${CLAUDE_STUB}"
 }
 
 teardown() {
@@ -73,6 +79,31 @@ write_manifest() {
     "${files%,}" "${hashes%,}" >"${out}"
 }
 
+# Seed the charter pair as the live tree carries it: a real file plus the link row
+# pointing at it. Args: $1 = root · $2 = charter content.
+seed_charter_pair() {
+  local root="$1" content="$2"
+  seed_file "${root}" "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "${content}"
+  mkdir -p -- "${root}/rules/glass-atrium"
+  ln -sfn "../../agents/GLASS_ATRIUM_GLOBAL_RULES.md" \
+    "${root}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
+}
+
+# write_manifest plus a modes map (644 per row, as the shipped manifest records a
+# link row too) — the mode reconciler's symlink arm needs a row to skip.
+write_manifest_with_modes() {
+  local out="$1"
+  shift
+  local p hashes="" files="" modes=""
+  for p in "$@"; do
+    files="${files}$(printf '%s' "${p}" | jq -R .),"
+    hashes="${hashes}$(printf '%s' "${p}" | jq -R .):$(sha256_of "${NEWSRC}/${p}" | jq -R .),"
+    modes="${modes}$(printf '%s' "${p}" | jq -R .):\"644\","
+  done
+  printf '{"version":"1.0.0","files":[%s],"hashes":{%s},"modes":{%s}}\n' \
+    "${files%,}" "${hashes%,}" "${modes%,}" >"${out}"
+}
+
 # Source the skill (functions only — the `if BASH_SOURCE==$0` guard prevents
 # update_main from running) then source its libs, under full strict mode.
 load_skill() {
@@ -80,22 +111,13 @@ load_skill() {
   IFS=$'\n\t'
   export GA_ROOT="${INSTALL}"
   export AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports"
-  export ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state"
-  # the sensitive helper lives in the REAL install (the sandbox GA_ROOT has none)
-  export ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py"
   # shellcheck source=/dev/null
   source "${SKILL}"
   # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/atrium-config.sh"
   # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/update-pause-flag.sh"
-  # shellcheck source=/dev/null
   source "${REAL_LIB_ROOT}/scripts/lib/apply-spine.sh"
-  # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/apply-gate.sh"
-  # shellcheck source=/dev/null
-  source "${REAL_LIB_ROOT}/scripts/lib/sensitive-refusal.sh"
   # The git-free serialize path (update_serialize_begin / update_cleanup) resolves
   # apply_lock_acquire / apply_lock_release from this lib; update_main sources it at
   # runtime, so the function-only test seam must source it here too.
@@ -126,70 +148,88 @@ load_skill() {
   [[ "$output" == "owner/repo" ]]
 }
 
-# sensitive partition (fail-closed)
+# changed-file set — no path-pattern refusal holds a row back
 
-@test "update_partition_sensitive splits clean vs sensitive, fail-closed" {
-  # Exercises the T09 partition MECHANISM (does it route each path to the right
-  # bucket per the shared helper's verdict). GLASS_ATRIUM_GLOBAL_RULES.md is the
-  # canonical sensitive fixture — it matches the compiled refusal pattern, so the
-  # split is asserted independently of any single pattern's coverage. The
-  # traversal spelling additionally pins the lexical-normalization gate (a `..`
-  # variant must not dodge the verdict). (The launchd-plist refusal contract is
-  # pinned separately below.)
-  run bash -c '
-    '"$(declare -f load_skill seed_file)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    printf "scripts/foo.sh\nagents/../GLASS_ATRIUM_GLOBAL_RULES.md\n" \
-      | update_partition_sensitive "'"${WORK}"'/clean" "'"${WORK}"'/sens"
-    echo "CLEAN:"; cat "'"${WORK}"'/clean"
-    echo "SENS:"; cat "'"${WORK}"'/sens"
-  '
+@test "a release changing every formerly-refused harness row lands all of them" {
+  # The rows the changed-file partition used to hold back: a credential example, a
+  # launchd plist, the charter and three rule files. Each is seeded old in the
+  # install and new in the release, and each must carry the release bytes after a
+  # driven run — an empty held-back set, observed through the apply rather than
+  # through a predicate.
+  local rel
+  local -a rows=(
+    "monitor/.env.example"
+    "launchd/com.glass-atrium.autoagent-cycle.plist"
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md"
+    "scoped/scope-security.md"
+    "rules/glass-atrium/core-security.md"
+    "rules/glass-atrium/core-learning-log.md"
+  )
+  for rel in "${rows[@]}"; do
+    seed_file "${INSTALL}" "${rel}" "old ${rel}"
+    seed_file "${NEWSRC}" "${rel}" "new ${rel}"
+  done
+  write_manifest "${WORK}/manifest.json" "${rows[@]}"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
   [ "$status" -eq 0 ]
-  # clean path lands in the clean bucket, sensitive path in the sensitive bucket
-  [[ "$output" == *"CLEAN:"*"scripts/foo.sh"* ]]
-  [[ "$output" == *"SENS:"*"GLASS_ATRIUM_GLOBAL_RULES.md"* ]]
+  for rel in "${rows[@]}"; do
+    [ "$(cat "${INSTALL}/${rel}")" = "new ${rel}" ] || return 1
+  done
+  [[ "$output" != *"REFUSED to auto-sync"* ]] || return 1
 }
 
-@test "update_partition_sensitive refuses a glass-atrium launchd plist (gate G7)" {
-  # SECURITY CONTRACT: the project's launchd plists (com.glass-atrium.*.plist —
-  # the live launchctl bootstrap surface) MUST be partitioned OUT of the auto-sync
-  # set. Enforced now that daemon_cycle.py _SAFETY_SENSITIVE_PATH_PATTERNS carries
-  # the additive com.glass-atrium.*.plist pattern alongside the legacy com.claude.*.
-  run bash -c '
-    '"$(declare -f load_skill seed_file)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    printf "scripts/foo.sh\nlaunchd/com.glass-atrium.autoagent-cycle.plist\n" \
-      | update_partition_sensitive "'"${WORK}"'/clean" "'"${WORK}"'/sens"
-    echo "CLEAN:"; cat "'"${WORK}"'/clean"
-    echo "SENS:"; cat "'"${WORK}"'/sens"
-  '
+@test "a full run syncs the charter and leaves the link row a link (preservation, not exemption)" {
+  # The charter ships as a real file plus a link row pointing at it. Both rows are
+  # replaced like any other; the link survives because staging and the swap
+  # reproduce a link as a link, so syncing the real file clears BOTH manifest rows.
+  seed_charter_pair "${INSTALL}" "old charter"
+  seed_charter_pair "${NEWSRC}" "new charter"
+  write_manifest_with_modes "${WORK}/manifest.json" \
+    "agents/GLASS_ATRIUM_GLOBAL_RULES.md" "rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"
+
+  [ -L "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md" ]
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"SENS:"*"plist"* ]]
+
+  [ "$(cat "${INSTALL}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" = "new charter" ] || return 1
+  [ -L "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md" ]
+  [ "$(cat "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md")" = "new charter" ] || return 1
+  # both manifest rows reconcile: the link resolves through the real file
+  [ "$(sha256_of "${INSTALL}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" \
+    = "$(jq -r '.hashes["agents/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
+  [ "$(sha256_of "${INSTALL}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md")" \
+    = "$(jq -r '.hashes["rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
 }
 
 # serialize begin + cleanup unwind
 
-@test "serialize_begin sets the pause flag + acquires the lock; cleanup unwinds both" {
+@test "serialize_begin acquires the apply-lock; cleanup releases it" {
   run bash -c '
     '"$(declare -f load_skill)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     update_serialize_begin
-    flag="$(update_pause_flag_path)"
     lock="$(update_apply_lock_dir)"
-    [[ -e "${flag}" ]] && echo "FLAG_SET"
     [[ -d "${lock}" ]] && echo "LOCK_HELD"
     update_cleanup
-    [[ ! -e "${flag}" ]] && echo "FLAG_CLEARED"
     [[ ! -d "${lock}" ]] && echo "LOCK_RELEASED"
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"FLAG_SET"* ]]
-  [[ "$output" == *"LOCK_HELD"* ]]
-  [[ "$output" == *"FLAG_CLEARED"* ]]
-  [[ "$output" == *"LOCK_RELEASED"* ]]
+  [[ "$output" == *"LOCK_HELD"* ]] && [[ "$output" == *"LOCK_RELEASED"* ]]
 }
 
 @test "serialize_begin loud-fails when the .apply-lock is already held" {
@@ -232,7 +272,7 @@ load_skill() {
 
 # end-to-end apply via the test seam
 
-@test "full run applies a non-agent change on confirm and captures a baseline" {
+@test "full run applies a non-agent change and captures a baseline" {
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -240,54 +280,24 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]
   # baseline anchor captured under the update-state dir
   [[ -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # pause flag + lock cleaned up by the trap
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
-}
-
-@test "full run writes NOTHING when the confirm gate is declined" {
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
-    bash "${SKILL}"
-
-  [ "$status" -ne 0 ]                                  # declined → non-zero
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] # unchanged
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # failure-trap (T09): BOTH the pause flag AND the daemon .apply-lock are
-  # released on the non-zero (declined) exit path so the launchd daemon resumes —
-  # the lock-release leg was previously unasserted on the failure path.
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  # lock cleaned up by the trap
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
 @test "full run is a clean no-op (rc0, trap unwound) when nothing changed" {
   # install == new release (identical content + matching manifest hashes) → the
-  # spine selects zero changed files → update_run returns 0 BEFORE the confirm
-  # gate, and the trap still releases the flag + lock. Pins the "already up to
-  # date" orchestration branch (previously untested).
+  # spine selects zero changed files → update_run returns 0 BEFORE the apply step,
+  # and the trap still releases the flag + lock. Pins the "already up to date"
+  # orchestration branch (previously untested).
   seed_file "${INSTALL}" "scripts/tool.sh" "same content"
   seed_file "${NEWSRC}" "scripts/tool.sh" "same content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -295,18 +305,14 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"already up to date"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "same content" ]]
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -320,12 +326,9 @@ load_skill() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -363,7 +366,7 @@ STUB
   chmod +x "${root}/glass-atrium"
 }
 
-@test "post-apply: update_run invokes 'glass-atrium wire-hooks' AFTER a confirmed apply + farm refresh (install parity)" {
+@test "post-apply: update_run invokes 'glass-atrium wire-hooks' AFTER the apply + farm refresh (install parity)" {
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
@@ -374,12 +377,9 @@ STUB
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${WORK}/facade" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -411,19 +411,15 @@ STUB
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${WORK}/facade" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 12 ]                                          # named loud-fail code
   [[ "$output" == *"hook-binding wiring failed"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]]  # files APPLIED, not rolled back
   # the trap still released the writer-serialization state on the failure path
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -495,11 +491,10 @@ seed_baseline() {
 }
 
 # Seed a prior-vendor baseline manifest with REAL hashes computed from the LIVE
-# install tree — the vendor-removal sweep (#14) needs a baseline hash to prove a
-# dropped file is still pristine (unmodified vs the vendor body). Unlike
-# seed_baseline (empty hashes; agent-only roster tests), this is for NON-agent
-# removals whose provenance check does a hash lookup. $1 = update-state dir, $2 =
-# install root, $3.. = relative paths (hashed from ${install}/<path>).
+# install tree, so a dropped file reads as still pristine (unmodified vs the vendor
+# body) to anything that hash-checks it. Unlike seed_baseline (empty hashes;
+# agent-only roster tests), this is for NON-agent drops. $1 = update-state dir, $2
+# = install root, $3.. = relative paths (hashed from ${install}/<path>).
 seed_baseline_hashed() {
   local statedir="$1" install_root="$2"
   shift 2
@@ -513,9 +508,10 @@ seed_baseline_hashed() {
     "${files%,}" "${hashes%,}" >"${statedir}/baseline-manifest.json"
 }
 
-@test "roster gate REFUSES an update that ADDS an agent (file-set signal)" {
+@test "roster gate PROCEEDS on an add-only release and the create path installs the body" {
   # The release introduces a brand-new agent file (dev-new) absent locally — a
-  # roster ADD. The gate must refuse/defer BEFORE any sync and write nothing.
+  # roster ADD. The add direction no longer aborts: the change is
+  # still reported, and the body lands in-band through the updater's create path.
   seed_file "${INSTALL}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
@@ -524,23 +520,214 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
-  [ "$status" -ne 0 ]                                # gated → non-zero
-  [[ "$output" == *"ROSTER CHANGE DETECTED"* ]]
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"ROSTER CHANGE DETECTED"* ]]      # still reported, never silent
   [[ "$output" == *"add dev-new"* ]]
-  [[ "$output" == *"agent_lifecycle"* ]]             # directs to the ceremony
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]          # nothing written
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # trap still unwinds the pause flag + lock on the refused exit
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  [[ "$output" == *"roster ADD only"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
+}
+
+@test "the ADD side splits on provenance: a locally deleted agent is NOT re-created" {
+  # Both directions of the split in ONE run. dev-gone is in the PRIOR-VENDOR
+  # baseline and absent from disk — this install deleted it through the
+  # agent_lifecycle ceremony, and the release still ships it, so re-creating it
+  # would reverse that deletion on every update. dev-new is in no baseline, so it
+  # is a genuine vendor ADD and must still land. Keyed on the same baseline the
+  # remove side reads, which is what makes the two sides answer one question.
+  seed_baseline "${STATE}/update-state" "agents/dev-keep.md" "agents/dev-gone.md"
+  seed_file "${INSTALL}" "agents/dev-keep.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-keep.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-gone.md" "the body this install removed"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" \
+    "agents/dev-keep.md" "agents/dev-gone.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  # The delta names the two by DIRECTION, never both as adds.
+  [[ "$output" == *"deleted-locally dev-gone"* ]] || return 1
+  [[ "$output" != *"add dev-gone"* ]] || return 1
+  [[ "$output" == *"add dev-new"* ]] || return 1
+  # The gate reports the split, and the create is where it is actually withheld.
+  [[ "$output" == *"roster deleted-locally"* ]] || return 1
+  [[ "$output" == *"roster ADD only"* ]] || return 1
+  [[ "$output" == *"NOT re-created"* ]] || return 1
+  [[ ! -f "${INSTALL}/agents/dev-gone.md" ]] || return 1
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]] || return 1
+}
+
+@test "roster gate still DIES on the remove of a release that both adds and removes" {
+  # The split is by DIRECTION, not by presence of an add: a release carrying any
+  # vendor removal dies on that removal even when it also ships a new agent, and
+  # the add it carried is not installed by the run that refused.
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md" "agents/dev-b.md"
+  seed_registry "${INSTALL}" "dev-a" "dev-b"
+  seed_registry "${NEWSRC}" "dev-a" "dev-new"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" "agent-registry.json" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"add dev-new"* ]]
+  [[ "$output" == *"remove dev-b"* ]]
+  [[ "$output" == *"agent_lifecycle"* ]]
+  [[ "$output" != *"roster ADD only"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
+}
+
+@test "a release-only body whose create verify FAILS leaves no body and reports the rollback" {
+  # The created file carries an updater-authored conflict marker, which the verify
+  # callback's tripwire backstop rejects. The create's rollback is a DELETE — the
+  # inverse a restore-from-before-image cannot express, there being no before-image.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+>>>>>>> RELEASE (vendor)"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create verify FAILED"* ]]
+  [[ "$output" == *"agents/dev-new.md"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]
+  # and no temp file was left behind by the rolled-back write
+  [ "$(find "${INSTALL}/agents" -name 'dev-new.md.create.*' | wc -l | tr -d ' ')" -eq 0 ]
+}
+
+# Multi-leg targeting of the agent stage
+#
+# Each probe below isolates ONE leg: the name it turns on is named by that leg and
+# by no other, so the drive fails if the union collapses to any single leg. The
+# last probe is the union's complement, which is what makes the gate observable at
+# all — every other release body reaches the stage exactly as it did before.
+
+@test "a registry key whose body is absent keeps the release's body a target" {
+  # The registry leg alone: dev-keyed is a live registry row with no body on disk,
+  # and the release ships the body without declaring it in the manifest.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing" "dev-keyed"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-keyed.md" "keyed body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create: installed release-only agents/dev-keyed.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-keyed.md")" == "keyed body" ]]
+  [[ "$output" != *"agents/dev-keyed.md is on no name leg"* ]]
+}
+
+@test "a body whose registry key is absent stays a target (the surviving objection)" {
+  # The on-disk leg alone: dev-loose is a live body the registry never names and
+  # the release manifest never declares, the half-registered shape a pure registry
+  # scope would freeze forever. It must still merge.
+  seed_file "${INSTALL}" "agents/dev-loose.md" "old agent"
+  seed_registry "${INSTALL}" "dev-other"
+  seed_file "${NEWSRC}" "agents/dev-loose.md" "new agent"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent merged + applied: agents/dev-loose.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-loose.md")" == "new agent" ]]
+  [[ "$output" != *"agents/dev-loose.md is on no name leg"* ]]
+}
+
+@test "a release-only name on neither live leg is a target that installs" {
+  # The release leg alone: the live registry exists and is silent about dev-new,
+  # and no body carries the name either.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md" "agents/dev-new.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create: installed release-only agents/dev-new.md"* ]]
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
+  [[ "$output" != *"agents/dev-new.md is on no name leg"* ]]
+}
+
+@test "a release body no leg names is reported and not installed" {
+  # The complement: dev-stray rides in the release tree undeclared by its manifest
+  # and registry, and is unknown to the install. The create path does not reach it.
+  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
+  seed_registry "${INSTALL}" "dev-existing"
+  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
+  seed_file "${NEWSRC}" "agents/dev-stray.md" "stray body"
+  write_manifest "${WORK}/manifest.json" "agents/dev-existing.md"
+
+  run env \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    bash "${SKILL}"
+
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agents/dev-stray.md is on no name leg"* ]]
+  [[ ! -f "${INSTALL}/agents/dev-stray.md" ]]
+}
+
+@test "the shared transaction library carries no create branch (its own probe, run here)" {
+  # The updater's create path exists BECAUSE the library must not gain one.
+  # Invoked here so the suite carrying the create path is the one pinning the library's shape.
+  run bats -f 'carries no create branch' \
+    "${BATS_TEST_DIRNAME}/../../autoagent/test/git-txn-gitfree.bats"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  # A filter matching nothing also exits 0, so pin that exactly one test ran.
+  [[ "$output" == *"1..1"* ]] || { echo "the named probe did not run: $output"; return 1; }
 }
 
 @test "roster gate REFUSES an update that REMOVES a VENDOR agent (registry signal)" {
@@ -557,12 +744,9 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -ne 0 ]
@@ -586,12 +770,9 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -624,12 +805,9 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -658,12 +836,9 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -ne 0 ]                                  # genuine vendor remove gates
@@ -687,12 +862,9 @@ seed_baseline_hashed() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
@@ -711,9 +883,10 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [[ "$output" == *"new vendor body"* ]]
 }
 
-@test "roster gate OVERRIDE (ATRIUM_UPDATE_ALLOW_ROSTER) proceeds past an add" {
-  # The explicit, non-silent opt-in downgrades the refusal to a warning and lets
-  # the update proceed (agent md still excluded from the deterministic sync).
+@test "roster gate OVERRIDE means NOTHING on the add direction (the add no longer dies)" {
+  # The override is now scoped to the remove direction: on an add-only release the
+  # gate returns before reading it, so the run neither announces the opt-in nor
+  # depends on it, and the outcome equals the un-set run's — the body installs.
   seed_file "${INSTALL}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
   seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
@@ -725,19 +898,17 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]
+  [[ "$output" != *"ATRIUM_UPDATE_ALLOW_ROSTER set"* ]]      # the add never reaches it
+  [[ "$output" == *"roster ADD only"* ]]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]  # non-agent synced
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]]                  # agent md still E4-excluded
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == "new agent body" ]]
 }
 
 @test "boundary: the only core.autoagent_proposals write is the sanctioned resolved-gap envelope" {
@@ -781,9 +952,20 @@ print(em.load_base_text("agents/dev-a.md", state_dir="'"${STATE}/update-state"'"
   [ "$(grep -cF 'python3 "${helper}"' "${SKILL}")" -eq 1 ]
 
   # Leg 3 — observe the write channels on a real INTERACTIVE run. All three anchors
-  # of the EDITABLE region differ, so the resolver takes the release side and the
-  # emitter fires; the dual-write CLI is replaced by a spy that records what it was
-  # piped. This is the leg a source grep structurally cannot supply.
+  # of the EDITABLE region differ, so the gap is contested; the dual-write CLI is
+  # replaced by a spy that records what it was piped. This is the leg a source grep
+  # structurally cannot supply.
+  #
+  # The observation is of SILENCE. The queue that feeds the emitter is gated on the
+  # verdict merge-arbiter-resolved (grepped for below, so the gate cannot move
+  # without this leg noticing), and an UNANSWERED contested gap emits
+  # merge-pending-arbitration instead, which the routing declines. So this run
+  # composes no envelope, and the leg pins that neither channel carries anything a
+  # declined body did not earn.
+  #
+  # The arbiter seam is stubbed to reach no answer, which is what makes the decline
+  # the leg observes a property of the code rather than of whether a model happened
+  # to be reachable from this machine.
   local gap_base gap_local gap_release
   gap_base='# dev-a
 ## Goal
@@ -816,43 +998,35 @@ with open(os.environ["ENVELOPE_LOG"], "a", encoding="utf-8") as fh:
     fh.write(sys.stdin.read())
 PY
   write_mock_psql "${WORK}/psql"
+  cat >"${WORK}/arbiter-stub" <<'SH'
+#!/bin/sh
+printf 'unparsable\n'
+SH
+  chmod +x "${WORK}/arbiter-stub"
+  export AUTOAGENT_CLAUDE_BIN="${WORK}/arbiter-stub"
   export ENVELOPE_LOG="${WORK}/envelopes.jsonl"
   export ATRIUM_UPDATE_PG_HELPER="${WORK}/spy-helper.py"
   export ATRIUM_UPDATE_PSQL="${WORK}/psql"
   export PSQL_LOG="${WORK}/psql.log"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # Explicit `return 1` rather than a bare `[[ ]]`: a mid-body `[[ ]]` does NOT fail
   # a bats test, so it would assert nothing here.
-  if [[ "$output" != *"resolved-gap discard recorded"* ]]; then
-    echo "the run recorded no resolved-gap discard: ${output}"
+  if [[ "$output" != *"CONFLICT (merge-pending-arbitration)"* ]]; then
+    echo "the contested body did not decline: ${output}"
     return 1
   fi
 
-  # Every observed envelope carries the sanctioned shape, including the properties
-  # the apply-ineligibility argument rests on (no LIKE ok% match; a repo-relative
-  # target_file, disjoint from the daemon's absolute-path namespace).
-  run python3 - "${ENVELOPE_LOG}" <<'PY'
-import json, sys
-
-rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
-assert rows, "no envelope observed on the helper channel"
-for r in rows:
-    assert r["op"] == "write_autoagent_proposal", r["op"]
-    a = r["args"]
-    assert a["pattern_label"] == "editable-region-resolved-release", a["pattern_label"]
-    assert a["approval_tier"] == "auto", a["approval_tier"]
-    assert a["status"] in ("applied", "rejected"), a["status"]
-    assert not a["haiku_status"].startswith("ok"), a["haiku_status"]
-    assert not a["target_file"].startswith("/"), a["target_file"]
-print(len(rows))
-PY
+  # The gate this leg's silence rests on, read from the source rather than assumed:
+  # the queue writes the resolved-record row only for merge-arbiter-resolved.
+  run grep -cF "== 'merge-arbiter-resolved' ]]" "${SKILL}"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
 
-  # The psql channel stayed shut on the interactive path, so no raw statement named
-  # the table at runtime either.
+  # Neither channel carried anything. Absence of the FILE, not an empty one, keeps
+  # "the spy was never piped" distinguishable from "the spy ran and wrote nothing".
+  [ ! -e "${ENVELOPE_LOG}" ]
   [ ! -s "${PSQL_LOG}" ]
 
   # Leg 4 — every DML statement in the file targets core.update_job. Extended to the
@@ -869,10 +1043,67 @@ PY
   done <<<"${output}"
 }
 
+@test "an unrecognised resolver verdict declines fail-closed and writes zero bytes" {
+  # The routing arm that has no fixture in the resolver: the verdicts that REACH
+  # the case are all named in it, so the only way to reach the final arm is to
+  # inject one. A library verdict absent from the arms is one the loop has already
+  # disposed of before the case is reached, so its absence is not a hole.
+  # ATRIUM_UPDATE_MERGE_LIB_DIR points the updater at a shim that
+  # delegates every subcommand to the real module and rewrites just the verdict
+  # token on the plan line, so the candidate, the diff and the exit code are the
+  # real ones and the verdict is the only injected thing.
+  #
+  # The fixture is the shape that LANDS — base region == release region, so the
+  # region keeps local and the body takes the new vendor structure (T19 above
+  # drives that landing on the same three anchors). Byte-identity is therefore the
+  # assertion with teeth here: a verdict the routing lets past reaches a queue that
+  # applies this candidate, so an unchanged body means it was never queued.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  # The dir is the updater's whole merge-library seam — it also sources git-txn.sh
+  # from here — so it is a symlink farm over the real one with a single file
+  # replaced.
+  mkdir -p "${WORK}/shimlib"
+  ln -s "${GA}"/autoagent/lib/* "${WORK}/shimlib/"
+  rm -f "${WORK}/shimlib/editable_merge.py"
+  cat >"${WORK}/shimlib/editable_merge.py" <<PY
+import io, runpy, sys, contextlib
+
+real = "${GA}/autoagent/lib/editable_merge.py"
+if sys.argv[1:2] != ["plan"]:
+    runpy.run_path(real, run_name="__main__")
+    raise SystemExit(0)
+buf = io.StringIO()
+rc = 0
+try:
+    with contextlib.redirect_stdout(buf):
+        runpy.run_path(real, run_name="__main__")
+except SystemExit as exc:
+    rc = exc.code or 0
+line = buf.getvalue()
+head, _, rest = line.partition(" ")
+sys.stdout.write("verdict=verdict-this-routing-never-named " + rest)
+raise SystemExit(rc)
+PY
+
+  export ATRIUM_UPDATE_MERGE_LIB_DIR="${WORK}/shimlib"
+  run_update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DECLINED unrecognised resolver verdict (verdict-this-routing-never-named)"* ]]
+
+  # Zero bytes: not merely "no markers" but the same body the run found.
+  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]]
+  # The decline is durable rather than a line that scrolled past.
+  [[ "$(cat "${INSTALL}/update-declines/conflict-declines.log")" == *"verdict-this-routing-never-named"* ]]
+}
+
 # agent EDITABLE-region merge (E4 / T19)
 #
 # These pin the LIVE merge integration: each changed agents/<name>.md flows through
-# editable_merge `plan` → the SAME T12 confirm gate → git_txn_apply. The transaction is
+# editable_merge `plan` → git_txn_apply. The transaction is
 # git-FREE (before-image copy → apply → verify → atomic restore on fail; no git repo, no
 # rev-parse — proven by autoagent/test/git-txn-gitfree.bats), so these fixtures run in a
 # NON-git INSTALL sandbox and the merge PROCEEDS whether or not a .git repo is present.
@@ -958,12 +1189,9 @@ run_update() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="${1:-y}" \
     bash "${SKILL}"
 }
 
@@ -976,7 +1204,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # local learned region kept, vendor Rules structure taken
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
@@ -997,7 +1225,7 @@ run_update() {
   seed_file "${NEWSRC}" "agents/dev-a.md" "${PIN_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"model: claude-opus-4-8"* ]] # pin kept
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]       # structure taken
@@ -1024,21 +1252,9 @@ old vendor rules'
   seed_file "${NEWSRC}" "agents/dev-a.md" "${pin_only_release}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${PIN_LOCAL}" ]] # byte-identical
-}
-
-@test "T19: a declined confirm leaves the agent file unmerged (zero writes)" {
-  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
-  seed_base_store "dev-a.md" "${GOAL_BASE}"
-  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
-  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
-
-  run_update n
-  [ "$status" -eq 0 ] # agent merge decline is non-fatal (non-agent path already done/none)
-  [[ "$output" == *"declined"* ]]
-  [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
 }
 
 @test "T19: STRUCTURAL region-count mismatch routes to the agent_lifecycle ceremony (not applied)" {
@@ -1059,7 +1275,7 @@ region one vendor
   seed_file "${NEWSRC}" "agents/dev-a.md" "${one_region}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" == *"STRUCTURAL"* ]]
   [[ "$output" == *"agent_lifecycle"* ]]
@@ -1082,7 +1298,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${danger_body}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" == *"REFUSED sensitive"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${local_body}" ]] # untouched
@@ -1098,7 +1314,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$output" != *"not a git repo"* ]]                                 # no SKIP path
   [[ "$output" != *"SKIPPED"* ]]
@@ -1107,7 +1323,7 @@ rm -rf /tmp/everything
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"NEW vendor rules"* ]]   # structure taken
 }
 
-@test "T19: agent merge coexists with the non-agent sync (both apply on one confirm)" {
+@test "T19: agent merge coexists with the non-agent sync (both apply in one run)" {
   # A non-agent file AND an agent file both change. The non-agent sync applies via
   # the spine; the agent merge applies via git_txn — both gated by the same y.
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
@@ -1117,7 +1333,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md" "scripts/tool.sh"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]]            # non-agent synced
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]] # region kept
@@ -1133,7 +1349,7 @@ rm -rf /tmp/everything
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ]
   # the merge applied — proof the verify PASSED while anchored on the agents-bak copy
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == *"local learned goal"* ]]
@@ -1146,22 +1362,36 @@ rm -rf /tmp/everything
   [[ "$(cat "${bak}")" == "${GOAL_LOCAL}" ]]
 }
 
-@test "T19: a failed per-file transaction summarizes as rolled-back/unapplied, NOT declined (rc-collision fix)" {
-  # A CONFIRMED run whose single agent transaction fails (read-only target → the
-  # apply cp cannot write → GIT_TXN_APPLY_FAIL) must surface the distinct rc-3
-  # summary. Before the fix the commit callback returned 1, colliding with the
-  # gate's own 1=declined — a confirmed-but-failed run was mislabeled "declined"
-  # and the rolled-back summary branch was unreachable.
+@test "the driven merge records each before-image against the target it belongs to" {
+  # The cycle's restore index is written from the path the transaction publishes, so a
+  # later --restore-agents rebuilds each file where the merge held it instead of where
+  # the agents/ convention guesses.
+  seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
+  seed_base_store "dev-a.md" "${GOAL_BASE}"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
+
+  run_update
+  [ "$status" -eq 0 ] || return 1
+  local index
+  index="$(printf '%s\n' "${INSTALL}/agents-bak/"*"_update-1.0.0/restore-index.tsv" | head -1)"
+  [[ -f "${index}" ]] || return 1
+  grep -qF "$(printf 'dev-a.md.bak\tagents/dev-a.md')" "${index}" || return 1
+}
+
+@test "T19: a failed per-file transaction summarizes as rolled-back/unapplied" {
+  # A run whose single agent transaction fails (read-only target → the apply cp
+  # cannot write → GIT_TXN_APPLY_FAIL) must reach the rolled-back summary branch
+  # rather than reporting the merge as applied.
   seed_file "${INSTALL}" "agents/dev-a.md" "${GOAL_LOCAL}"
   seed_base_store "dev-a.md" "${GOAL_BASE}"
   seed_file "${NEWSRC}" "agents/dev-a.md" "${GOAL_RELEASE}"
   write_manifest "${WORK}/manifest.json" "agents/dev-a.md"
   chmod a-w "${INSTALL}/agents/dev-a.md" # plan/diff still read it; the apply cp loud-fails
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] # the agent merge stays best-effort / non-fatal
   [[ "$output" == *"rolled-back or unapplied file(s)"* ]]
-  [[ "$output" != *"merge declined"* ]]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "${GOAL_LOCAL}" ]] # untouched
 }
 
@@ -1172,10 +1402,9 @@ rm -rf /tmp/everything
 #     via the ATRIUM_UPDATE_PSQL seam — a mock psql that logs argv+SQL and returns a
 #     RETURNING id, so NO live Postgres is touched
 #   * single-active enforcement (partial unique index violation → loud-fail exit 8)
-#   * heartbeat + pause-flag mtime refresh on a long-stage tick
+#   * the DB heartbeat on a long-stage tick
 #   * the EXIT-trap in-progress→failed marking (abort/crash recovery) + WHERE-guarded
 #     terminal writes (a stale-swept row is never resurrected)
-#   * confirm-seam fail-closed (a blank token declines, zero writes)
 #   * install-parity post-step (mock npm build + launchctl kickstart/bootstrap probe)
 #   * the decoupled one-shot launchd plist render
 #   * the claude -p precondition (resolve ok / unresolvable → exit 7 / plist PATH miss)
@@ -1345,7 +1574,7 @@ PLIST
   [[ ! -s "${WORK}/psql.log" ]] # no psql process was ever invoked
 }
 
-@test "P3 headless: update_heartbeat refreshes BOTH the pause-flag mtime and the DB heartbeat" {
+@test "P3 headless: update_heartbeat fires the DB heartbeat at a long-stage boundary" {
   write_mock_psql "${WORK}/psql"
   run bash -c '
     '"$(declare -f load_skill)"'
@@ -1354,20 +1583,108 @@ PLIST
     export PSQL_LOG="'"${WORK}"'/psql.log"
     export ATRIUM_UPDATE_PSQL="'"${WORK}"'/psql"
     _update_headless=1
-    update_serialize_begin # sets the pause flag (_update_pause_created=1) + lock
-    flag="$(update_pause_flag_path)"
+    update_serialize_begin
     _update_job_id=42
-    # backdate the flag past the 1800s TTL so a genuine refresh is observable
-    python3 -c "import os,sys,time; t=time.time()-3600; os.utime(sys.argv[1],(t,t))" "${flag}"
-    aged="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 0)"
-    update_heartbeat # long-stage tick: refresh flag mtime + DB heartbeat
-    fresh="$(update_pause_flag_age_secs "${flag}" 2>/dev/null || echo 999)"
-    if [[ "${aged}" -ge 1800 && "${fresh}" -lt 60 ]]; then echo "PAUSE_REFRESHED"; fi
+    update_heartbeat
     update_cleanup
   '
   [ "$status" -eq 0 ]
-  [[ "$output" == *"PAUSE_REFRESHED"* ]]           # mtime advanced from 3600s to near-0
-  grep -q "heartbeat_at = now()" "${WORK}/psql.log" # DB heartbeat fired on the same tick
+  grep -q "heartbeat_at = now()" "${WORK}/psql.log"
+}
+
+@test "P3 headless: the merge-span ticker heartbeats on a timer and outlives no run" {
+  # Stage boundaries cannot cover the merge span: one contested gap can spend more than
+  # the stale cutoff, and a row frozen past it is reclaimed under a LIVE updater. The
+  # interval is compressed here; what is pinned is that the timer ticks more than once
+  # without a stage boundary, and that the stop leaves no ticker behind.
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_job_heartbeat() { printf "tick\n" >>"'"${WORK}"'/ticks"; }
+    _update_headless=1
+    _UPDATE_TICKER_INTERVAL=1
+    update_ticker_start
+    ticker_pid="${_update_ticker_pid}"
+    [[ -n "${ticker_pid}" ]] || exit 3
+    sleep 3
+    update_ticker_stop
+    [[ -z "${_update_ticker_pid}" ]] || exit 4
+    kill -0 "${ticker_pid}" 2>/dev/null && exit 5
+    update_ticker_stop  # idempotent: a second stop is a clean no-op
+  '
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$(grep -c . "${WORK}/ticks")" -ge 2 ]] || return 1
+
+  # "outlives no run", GATED — the half the pid probe above cannot see. The interval
+  # sleep is a GRANDCHILD of this shell, so a stop that signals only the subshell pid
+  # leaves it orphaned onto init for the REST of the interval, still holding the run's
+  # stdout. bats captures `run` through a command substitution, which cannot return
+  # until every holder of that pipe closes it, so a survivor turns a finished test into
+  # an interval-long block — 300s at the production interval, past the CI per-file
+  # timeout. A distinctive fractional interval keeps the pgrep match unambiguous against
+  # the other suites running in parallel.
+  local t0 t1
+  t0="$(date +%s)"
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    _update_headless=1
+    _UPDATE_TICKER_INTERVAL=13.7
+    update_ticker_start
+    [[ -n "${_update_ticker_pid}" ]] || exit 3
+    sleep 1 # let the ticker reach its interval sleep — stopping it before the fork proves nothing
+    update_ticker_stop
+    command -v pgrep >/dev/null 2>&1 || exit 0
+    # Bounded poll to zero. The wait bounds a REGRESSION, it does not grant the stop
+    # time to finish: a stop that has returned owes no further teardown.
+    waited=0
+    while pgrep -xf "sleep 13.7" >/dev/null 2>&1; do
+      [[ "${waited}" -lt 30 ]] || exit 6
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+  '
+  t1="$(date +%s)"
+  [ "$status" -eq 0 ] || { echo "survivor gate: status=${status} ${output}"; return 1; }
+  # The capture itself is the second, pgrep-free reading of the same property: it
+  # closes only once no descendant holds the pipe, so it must come back far inside
+  # the 13.7s interval it would otherwise have to sit out.
+  [[ "$((t1 - t0))" -lt 5 ]] || { echo "capture blocked $((t1 - t0))s — a ticker descendant outlived the stop"; return 1; }
+}
+
+@test "P3 headless: the interactive path starts no ticker" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    _update_headless=0
+    update_ticker_start
+    [[ -z "${_update_ticker_pid}" ]] || exit 3
+  '
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "an interrupted run dies of its signal instead of walking on over torn-down state" {
+  # A handler that merely RETURNS resumes the script at the next statement — with the
+  # lock released, the workdir deleted and the row already marked failed. The re-raise is
+  # what makes the process die of the signal, so the parent reads 128+signum, and the
+  # disarm is what keeps the cleanup to exactly one run.
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_cleanup() { printf "cleaned\n" >>"'"${WORK}"'/signal.log"; }
+    trap update_cleanup EXIT
+    trap "update_on_signal TERM 15" TERM
+    kill -s TERM $$
+    printf "CONTINUED\n" >>"'"${WORK}"'/signal.log"
+  '
+  [ "$status" -eq 143 ] || { echo "status=${status} $output"; return 1; }
+  [[ "$(grep -c . "${WORK}/signal.log")" -eq 1 ]] || return 1
+  grep -q "cleaned" "${WORK}/signal.log" || return 1
+  ! grep -q "CONTINUED" "${WORK}/signal.log" || return 1
 }
 
 @test "P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)" {
@@ -1413,41 +1730,6 @@ PLIST
   [ "$output" -ge 2 ] # both terminal writes name the in-progress guard
 }
 
-@test "P3 headless: a blank confirm token is fail-closed (declines, writes nothing)" {
-  # The web commit injects ATRIUM_UPDATE_CONFIRM_ANSWER=yes; ANY other value — including
-  # the empty string that a missing token / no-TTY both resolve to — declines via the
-  # gate's `case "" ) …decline` branch. DB disabled + a stubbed claude keep the run
-  # hermetic; the assertion is that a headless apply with a blank token writes ZERO files.
-  local claude="${WORK}/claude"
-  write_mock_claude "${claude}"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_DB=off \
-    ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
-    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
-    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/nonexistent-oneshot.plist" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="" \
-    bash "${SKILL}" --headless
-
-  [ "$status" -ne 0 ] # declined → non-zero
-  [[ "$output" == *"declined"* ]]
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] # zero writes
-  [[ ! -f "${STATE}/update-state/baseline-manifest.json" ]]
-  # trap unwound the pause flag + lock on the fail-closed exit
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
-  [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
-}
-
 @test "P3 headless: a confirmed apply drives in-progress→completed and runs the install-parity post-step" {
   # Full headless success e2e with every external effect seamed to a mock: psql (DB
   # tracking), claude (precondition), npm (monitor rebuild), launchctl (launchd refresh).
@@ -1465,12 +1747,9 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="yes" \
     ATRIUM_UPDATE_PSQL="${WORK}/psql" \
     PSQL_LOG="${WORK}/psql.log" \
     ATRIUM_UPDATE_CLAUDE_BIN="${claude}" \
@@ -1494,7 +1773,6 @@ PLIST
   grep -q "kickstart -k" "${WORK}/launchctl.log"                     # loaded → kickstart -k
   [[ -f "${WORK}/oneshot.plist" ]]                                   # one-shot plist rendered
   grep -q "com.glass-atrium.update-oneshot" "${WORK}/oneshot.plist"  # correct decoupled label
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]            # trap unwound
 }
 
 @test "P3: install-parity post-step is idempotent (loaded→kickstart -k, unloaded→bootstrap; mock npm/launchctl)" {
@@ -1606,17 +1884,14 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "${cyc}"
 
   [ "$status" -eq 0 ]
   [[ "$(cat "${INSTALL}/agents/dev-a.md")" == "BEFORE IMAGE BODY" ]] # reverted to the before-image
   [[ "$output" == *"agents-bak restore complete"* ]]
-  # the restore serializes via the same pause+lock; the trap unwinds both
-  [[ ! -e "${STATE}/update-state/autoagent-pause.flag" ]]
+  # the restore serializes via the same apply-lock; the trap releases it
   [[ ! -d "${STATE}/daemon-reports/.apply-lock" ]]
 }
 
@@ -1624,9 +1899,7 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "../etc/evil"
   [ "$status" -eq 10 ] # SECURITY: request-supplied id cannot escape the base dir
@@ -1637,9 +1910,7 @@ PLIST
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     AUTOAGENT_BACKUP_DIR="${WORK}/agents-bak" \
     bash "${SKILL}" --restore-agents "2099-01-01_update-9.9.9"
   [ "$status" -eq 10 ]
@@ -1746,7 +2017,7 @@ rm -rf /tmp/everything
   write_manifest "${WORK}/manifest.json" \
     "agents/dev-a.md" "agents/dev-ref.md" "scripts/tool.sh"
 
-  run_update y
+  run_update
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"REFUSED sensitive"* ]] || return 1
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new" ]] || return 1            # non-agent applied
@@ -1757,27 +2028,25 @@ rm -rf /tmp/everything
   [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
 }
 
-# Same-release idempotency (second-run no-op · fatal-sweep capture ordering ·
-# conflict routing) lives in scripts/test/glass-atrium-update-idempotency.bats —
+# Same-release idempotency (second-run no-op · conflict routing) lives in
+# scripts/test/glass-atrium-update-idempotency.bats —
 # a separate file so it gets its own CI per-file parallel timeout slot.
 
 # ---------------------------------------------------------------------------
-# finding #8 — a rolled-back NON-agent commit must NOT collide with the confirm
-# gate's 1=declined verdict. gate_apply_confirmed propagates the callback's rc
-# VERBATIM; update_commit_callback now remaps ANY spine failure to rc 3 (disjoint
-# from the gate's 1/2), so update_run reports "apply failed — rolled back" instead
-# of the wrong "declined at the confirm gate — no files written".
+# finding #8 — a rolled-back NON-agent commit must reach the caller as a failure.
+# update_commit_callback returns non-zero on any spine failure, so update_run dies
+# with "apply failed — rolled back" and drops no clean-apply marker.
 # ---------------------------------------------------------------------------
 
-@test "finding#8: a rolled-back non-agent commit dies 'apply failed'/rolled-back, NOT 'declined'" {
-  # Force spine_commit_staged to fail on a CONFIRMED apply: the target's parent dir is
-  # read-only, so the atomic-swap sibling-temp write loud-fails → rollback (spine rc 1).
+@test "finding#8: a rolled-back non-agent commit dies 'apply failed'/rolled-back" {
+  # Force spine_commit_staged to fail: the target's parent dir is read-only, so the
+  # atomic-swap sibling-temp write loud-fails → rollback (spine rc 1).
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_file "${NEWSRC}" "scripts/tool.sh" "new"
   write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
   chmod a-w "${INSTALL}/scripts" # the swap's sibling-temp write into this dir loud-fails
 
-  run_update y
+  run_update
   chmod u+w "${INSTALL}/scripts" 2>/dev/null || true # restore BEFORE teardown rm -rf
 
   # NOTE: every assertion is `|| return 1` — bats-core only enforces the LAST command
@@ -1785,24 +2054,23 @@ rm -rf /tmp/everything
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"apply failed"* ]] || return 1
   [[ "$output" == *"rolled back"* ]] || return 1
-  [[ "$output" != *"declined at the confirm gate"* ]] || return 1 # the rc-collision mislabel is gone
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "old" ]] || return 1 # never left half-swapped
 }
 
-@test "finding#8: update_commit_callback remaps a spine rollback to rc 3 (disjoint from 1/2) + no .commit-ok" {
+@test "finding#8: update_commit_callback reports a spine rollback non-zero + no .commit-ok" {
   run bash -c '
     '"$(declare -f load_skill)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     work="'"${WORK}"'/wk"; mkdir -p "${work}/staging" "${work}/snapshot"
     _update_workdir="${work}"; _update_staging="${work}/staging"; _update_snapshot="${work}/snapshot"
-    _update_clean_paths="scripts/tool.sh" # NO staged src for it → spine_commit_staged rc 1
+    _update_apply_paths="scripts/tool.sh" # NO staged src for it → spine_commit_staged rc 1
     rc=0; update_commit_callback || rc=$?
     echo "RC=${rc}"
     [[ ! -f "${work}/.commit-ok" ]] && echo "NO_MARKER"
   '
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"RC=3"* ]] || return 1     # remapped, not the raw spine rc 1
+  [[ "$output" == *"RC=1"* ]] || return 1      # the spine failure reaches the caller
   [[ "$output" == *"NO_MARKER"* ]] || return 1 # a failed commit never drops the clean-apply marker
 }
 
@@ -1834,152 +2102,12 @@ rm -rf /tmp/everything
 }
 
 # ---------------------------------------------------------------------------
-# finding #14 — a long interactive confirm wait must NOT let the pause flag age past
-# its TTL and un-pause the daemon mid-update. A liveness-guarded background refresher
-# re-writes the flag every tick; update_cleanup kills it BEFORE removing the flag
-# (kill-before-remove closes the recreate-after-removal race).
-# ATRIUM_UPDATE_PAUSE_REFRESH_SECS shrinks the 600s tick for these tests.
-# ---------------------------------------------------------------------------
-
-@test "finding#14: the pause-flag refresher advances the flag mtime across a long wait (TTL not defeated)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    flag="$(update_pause_create)"
-    m0="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
-    update_pause_refresher_start
-    rpid="${_update_pause_refresher_pid}"
-    [[ -n "${rpid}" ]] && echo "STARTED"
-    sleep 3 # ~3 ticks
-    m1="$(python3 -c "import os,sys;print(os.stat(sys.argv[1]).st_mtime)" "${flag}")"
-    update_pause_refresher_stop
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "STOPPED"
-    python3 -c "import sys;sys.exit(0 if float(sys.argv[2])>float(sys.argv[1]) else 1)" "${m0}" "${m1}" \
-      && echo "MTIME_ADVANCED"
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"STARTED"* ]] || return 1
-  [[ "$output" == *"MTIME_ADVANCED"* ]] || return 1 # heartbeat keeps the flag fresh under the TTL
-  [[ "$output" == *"STOPPED"* ]] || return 1        # stop killed the refresher cleanly
-}
-
-@test "finding#14: the refresher exits within one tick after its watched updater dies (TTL guard regains authority)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    update_pause_create >/dev/null
-    ( sleep 30 ) & fake_updater=$! # stand-in updater the refresher watches
-    update_pause_refresher_start "${fake_updater}"
-    rpid="${_update_pause_refresher_pid}"
-    kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_ALIVE"
-    kill "${fake_updater}" 2>/dev/null || true # SIGKILL-equivalent updater death
-    wait "${fake_updater}" 2>/dev/null || true
-    sleep 3 # > one tick
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_EXITED"
-    kill "${rpid}" 2>/dev/null || true
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"REFRESHER_ALIVE"* ]] || return 1
-  [[ "$output" == *"REFRESHER_EXITED"* ]] || return 1 # parent-death guard → flag can age out (TTL recovery)
-}
-
-@test "finding#14: cleanup stops the refresher AND leaves no pause flag (no recreate-after-removal)" {
-  run bash -c '
-    '"$(declare -f load_skill)"'
-    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
-    load_skill
-    export ATRIUM_UPDATE_PAUSE_REFRESH_SECS=1
-    update_serialize_begin # sets flag + lock AND starts the refresher
-    flag="$(update_pause_flag_path)"
-    rpid="${_update_pause_refresher_pid}"
-    [[ -n "${rpid}" ]] && kill -0 "${rpid}" 2>/dev/null && echo "REFRESHER_RUNNING"
-    [[ -e "${flag}" ]] && echo "FLAG_SET"
-    update_cleanup
-    kill -0 "${rpid}" 2>/dev/null && echo "STILL_ALIVE" || echo "REFRESHER_STOPPED"
-    sleep 2 # a would-be zombie refresher gets >1 tick to (wrongly) recreate the flag
-    [[ ! -e "${flag}" ]] && echo "FLAG_STAYS_CLEARED"
-  '
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"REFRESHER_RUNNING"* ]] || return 1
-  [[ "$output" == *"FLAG_SET"* ]] || return 1
-  [[ "$output" == *"REFRESHER_STOPPED"* ]] || return 1
-  [[ "$output" == *"FLAG_STAYS_CLEARED"* ]] || return 1 # kill-before-remove: no recreate after removal
-}
-
-# ---------------------------------------------------------------------------
 # finding #16 — ATRIUM_UPDATE_ALLOW_ROSTER must NOT leave a half-applied roster. The
 # E4 merge SKIPS a release-only ADD's agents/<name>.md, so syncing the release
 # agent-registry.json alone would register an agent whose body never landed (masked
 # forever by the union-based local roster). Fail-closed: withhold the registry sync
 # while its referenced .md is absent, keeping files + registry consistent.
 # ---------------------------------------------------------------------------
-
-@test "finding#16: ALLOW_ROSTER WITHHOLDS agent-registry.json when the added agent body is not installed" {
-  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
-  seed_registry "${INSTALL}" "dev-existing"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
-  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
-  seed_file "${NEWSRC}" "agents/dev-new.md" "new agent body"
-  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
-  write_manifest "${WORK}/manifest.json" \
-    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json" "scripts/tool.sh"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
-    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"WITHHOLDING agent-registry.json"* ]] || return 1
-  [[ "$output" == *"dev-new"* ]] || return 1
-  [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new tool" ]] || return 1 # the legit non-agent file still synced
-  [[ ! -f "${INSTALL}/agents/dev-new.md" ]] || return 1                 # the added body is still absent
-  # the live registry did NOT gain the orphan dev-new key (files ∪ registry stays consistent)
-  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
-  [[ "$output" == "dev-existing" ]] || return 1
-}
-
-@test "finding#16: ALLOW_ROSTER SYNCS agent-registry.json normally when the added body IS present locally" {
-  # Guard against over-withholding: when every new-registry agent has a live .md
-  # (dev-new was installed out-of-band), the registry sync must proceed unchanged.
-  seed_file "${INSTALL}" "agents/dev-existing.md" "x"
-  seed_file "${INSTALL}" "agents/dev-new.md" "already here"
-  seed_registry "${INSTALL}" "dev-existing"
-  seed_file "${NEWSRC}" "agents/dev-existing.md" "x"
-  seed_file "${NEWSRC}" "agents/dev-new.md" "already here"
-  seed_registry "${NEWSRC}" "dev-existing" "dev-new"
-  write_manifest "${WORK}/manifest.json" \
-    "agents/dev-existing.md" "agents/dev-new.md" "agent-registry.json"
-
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
-    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
-    bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" != *"WITHHOLDING agent-registry.json"* ]] || return 1 # no orphan → no withhold
-  run jq -r '.agents | keys[]' "${INSTALL}/agent-registry.json"
-  [[ "$output" == *"dev-new"* ]] || return 1 # registry synced to include dev-new (its body is present)
-}
 
 @test "finding#16: ALLOW_ROSTER WARNS about a vendor-dropped agent whose .md lingers on disk" {
   # Symmetric REMOVE-direction orphan (the ADD guard's mirror). dev-b was a
@@ -1993,6 +2121,11 @@ rm -rf /tmp/everything
   seed_file "${INSTALL}" "agents/dev-a.md" "x"
   seed_file "${INSTALL}" "agents/dev-b.md" "dropped vendor body still here"
   seed_registry "${INSTALL}" "dev-a" "dev-b"
+  # The registry reaches the roster merge now, and a merge honours a release-side
+  # removal only against a base that CARRIED the dropped key: with no base entry the
+  # first run seeds one from the release, and dev-b then reads as a live-only key the
+  # merge must preserve. The prior-vendor registry is that base.
+  seed_registry "${STATE}/update-state/base-roster" "dev-a" "dev-b"
   seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
   seed_file "${NEWSRC}" "agents/dev-a.md" "x"
   seed_registry "${NEWSRC}" "dev-a"
@@ -2003,12 +2136,9 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
     ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
 
@@ -2022,20 +2152,15 @@ rm -rf /tmp/everything
   [[ "$output" != *"dev-b"* ]] || return 1
 }
 
-# vendor-removal sweep (#14)
-#
-# spine_find_removed_files (apply-spine.sh) already SELECTS the vendor-dropped,
-# provenance-clean files (unit-covered in apply-spine.bats); these pin the
-# caller-side REMOVAL half wired into update_run: the dropped file is previewed
-# through the SAME confirm gate and MOVED to a per-run Trash sink on confirm,
-# a user-edited drop is PRESERVED, a decline leaves it in place, and --preview
-# surfaces the impending deletion. ATRIUM_UPDATE_TRASH_DIR redirects the sink into
-# the sandbox so no real ~/.Trash is touched.
+# vendor drops (Rule 1: the release replaces, it never deletes)
 
-@test "#14 sweep: a provenance-clean dropped file is MOVED to Trash on confirm" {
+# A file the release stops shipping is LEFT IN PLACE. The prior code selected a
+# still-pristine dropped file and moved it to a Trash sink; that sweep is gone, so
+# the accepted residue is pinned here rather than discovered on a live install.
+@test "a vendor-dropped file is LEFT IN PLACE and no removal is reported" {
   # baseline (prior vendor) ships hooks/old.sh; the new release DROPS it while
-  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash → pristine →
-  # swept to the per-run Trash sink (mv, not rm), not left dangling in the install.
+  # changing scripts/tool.sh. hooks/old.sh live-hash == baseline-hash, which is
+  # exactly the provenance-clean case the removed sweep acted on.
   seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
   seed_file "${INSTALL}" "scripts/tool.sh" "old"
   seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
@@ -2045,102 +2170,399 @@ rm -rf /tmp/everything
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
     bash "${SKILL}"
 
   [ "$status" -eq 0 ] || return 1
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # sync still applied
-  [[ ! -e "${INSTALL}/hooks/old.sh" ]] || return 1                         # dropped file removed
-  [[ "$output" == *"vendor-dropped file removed"* ]] || return 1
-  # moved to the per-run Trash sink (recovery bundle), preserving its relative path
-  run bash -c 'cat "'"${WORK}"'/trash"/glass-atrium-update-removed-*/hooks/old.sh'
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == "vendor-body" ]] || return 1
+  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1    # dropped file untouched
+  [[ "$output" != *"vendor-dropped file removed"* ]] || return 1           # nothing reported
 }
 
-@test "#14 sweep: a USER-MODIFIED dropped file is PRESERVED (provenance guard)" {
-  # live hooks/old.sh diverges from the baseline (pristine) hash → a user edit →
-  # NEVER swept, even though the release dropped it. 100% user-edit preservation.
-  seed_file "${INSTALL}" "hooks/old.sh" "USER-EDITED"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_file "${WORK}" "pristine" "vendor-body"
-  local pristine_hash
-  pristine_hash="$(sha256_of "${WORK}/pristine")"
-  mkdir -p "${STATE}/update-state"
-  printf '{"version":"1.0.0","files":["hooks/old.sh"],"hashes":{"hooks/old.sh":"%s"}}\n' \
-    "${pristine_hash}" >"${STATE}/update-state/baseline-manifest.json"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+# ---------------------------------------------------------------------------
+# The roster base anchor. The four declared roster paths are captured into a SIBLING
+# store keyed by manifest-relative path, so a base exists for them before the merge
+# claim widens. The arm reads the same outcome ledger as the agent loop and keys on
+# the same manifest-relative path, so an anchor is written for a roster merge that
+# landed and for nothing else.
+# ---------------------------------------------------------------------------
 
+# Seed one roster path on both sides, the release body carrying the path itself so a
+# captured base entry is identifiable per path. $1 = manifest-relative roster path.
+seed_roster_pair() {
+  seed_file "${INSTALL}" "$1" "roster local"
+  seed_file "${NEWSRC}" "$1" "roster release $1"
+}
+
+# Seed a PRIOR roster base entry, so a kept path is observable as byte-identical
+# rather than as an absent file (which an unwritten path produces either way).
+seed_roster_base() {
+  mkdir -p -- "$(dirname -- "${STATE}/update-state/base-roster/$1")"
+  printf '%s' "roster prior base $1" >"${STATE}/update-state/base-roster/$1"
+}
+
+# Emit the declared roster paths by reading the ONE declaration, in a contained
+# subshell. A literal list here would be a second declaration of the fact the single
+# declaration exists to hold.
+roster_paths() {
+  bash -c 'source "$1"; spine_get_roster_paths' _ "${GA}/scripts/lib/apply-spine.sh"
+}
+
+# Drive update_capture_base_content directly against a FIXTURE ledger, in an
+# isolated strict-mode subshell. No producer can name a roster path until the merge
+# claim widens — all three write from the agent-directory loop — so a listed roster
+# path reaches the gate here and reaches it nowhere else.
+# $1 = ledger content (one manifest-relative path per line).
+run_capture_with_ledger() {
+  printf '%s' "$1" >"${WORK}/fixture.ledger"
+  run env GA_ROOT="${INSTALL}" ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      _update_agent_outcomes_file="$3"
+      update_capture_base_content "$4"
+    ' _ "${SKILL}" "${GA}/scripts/lib/apply-spine.sh" "${WORK}/fixture.ledger" "${NEWSRC}"
+}
+
+@test "the roster gate advances a LISTED path and keeps an OMITTED one byte-identical" {
+  # Both directions ride one drive: a probe phrased only as "this must not advance"
+  # is satisfied by any failure, a broken fixture included.
+  local rel rels=()
+  while IFS= read -r rel; do
+    rels+=("${rel}")
+    seed_roster_pair "${rel}"
+    seed_roster_base "${rel}"
+  done < <(roster_paths)
+  [ "${#rels[@]}" -eq 4 ] || return 1
+  local listed="${rels[0]}" omitted="${rels[1]}"
+
+  run_capture_with_ledger "${listed}
+"
+  [ "$status" -eq 0 ] || return 1
+  # the listed path advanced, under the SIBLING root at its full path — not
+  # flattened beside the basename-keyed agent entries
+  [[ "$(cat "${STATE}/update-state/base-roster/${listed}")" == "roster release ${listed}" ]] || return 1
+  [[ ! -e "${STATE}/update-state/base-agents/${listed##*/}" ]] || return 1
+  # the omitted path kept the entry a later merge would anchor on
+  [[ "$(cat "${STATE}/update-state/base-roster/${omitted}")" == "roster prior base ${omitted}" ]] || return 1
+}
+
+@test "an ACTIVE ledger naming no roster path keeps all four at their prior base" {
+  local rel rels=()
+  while IFS= read -r rel; do
+    rels+=("${rel}")
+    seed_roster_pair "${rel}"
+    seed_roster_base "${rel}"
+  done < <(roster_paths)
+  # A REFUSED agent merge makes the ledger active AND demonstrably gating: its prior
+  # base entry is kept, so an unchanged roster entry could not be blamed on an idle ledger.
+  local ref_local='# dev-ref
+<!-- EDITABLE:BEGIN -->
+safe local line
+<!-- EDITABLE:END -->'
+  local ref_release='# dev-ref
+<!-- EDITABLE:BEGIN -->
+rm -rf /tmp/everything
+<!-- EDITABLE:END -->'
+  seed_file "${INSTALL}" "agents/dev-ref.md" "${ref_local}"
+  seed_base_store "dev-ref.md" "REF PRIOR BASE"
+  seed_file "${NEWSRC}" "agents/dev-ref.md" "${ref_release}"
+  write_manifest "${WORK}/manifest.json" "agents/dev-ref.md" "${rels[@]}"
+
+  run_update
+  [ "$status" -eq 0 ] || return 1
+  # the ledger is active and gating — the refused agent kept its prior base …
+  [[ "$(cat "${STATE}/update-state/base-agents/dev-ref.md")" == "REF PRIOR BASE" ]] || return 1
+  # … and so did every roster path, none of which the ledger names. An end-to-end run
+  # cannot yet produce one that it does: the merge claim reaches agent bodies only.
+  for rel in "${rels[@]}"; do
+    [[ "$(cat "${STATE}/update-state/base-roster/${rel}")" == "roster prior base ${rel}" ]] || return 1
+  done
+}
+
+# === The roster dispatch, driven end-to-end ==================================
+# The claim widening's load-bearing probes. Everything below runs a REAL update
+# against a sandbox install whose four roster files each carry a live-only member,
+# so what is measured is the installed artifact rather than the merge library —
+# which has its own fixture suite at autoagent/test/test_roster_merge.py.
+#
+# One member name does duty as the live-only member in every shape: the closed
+# vocabulary admits a resolved member only if the release roster or an on-disk
+# agent body names it, so a live-only member needs a body on disk whatever shape
+# it sits in.
+
+# Seed the four declared roster paths under one root, each slot carrying $2.. as
+# its members. $1 = root. Shapes per the module's suffix map: .json registry,
+# .md brace list, .sh space-padded readonly array.
+seed_roster_quartet() {
+  local root="$1" marker="$2"
+  shift 2
+  local names="$*" objs="" k
+  for k in "$@"; do
+    objs="${objs}$(printf '%s' "${k}" | jq -R .):{\"scope\":\"DEV\",\"domains\":[$(printf '%s' "${marker}" | jq -R .)]},"
+  done
+  mkdir -p -- "${root}"
+  printf '{"version":"1.0.0","agents":{%s}}\n' "${objs%,}" >"${root}/agent-registry.json"
+  seed_file "${root}" "scoped/scope-dev.md" \
+    "# DEV scope (${marker})
+> Loading: Tier 2 — loads when agent_scope ∈ {${names// /, }}
+"
+  seed_file "${root}" "hooks/inject-scope-rules.sh" \
+    "#!/usr/bin/env bash
+# ${marker}
+readonly INJECT_AGENTS=\" ${names} \"
+"
+  seed_file "${root}" "hooks/lib/styleref-roster.sh" \
+    "#!/usr/bin/env bash
+# ${marker}
+readonly STYLEREF_AGENTS=\" ${names} \"
+"
+}
+
+roster_quartet_manifest_rows() {
+  printf '%s\n' 'agent-registry.json' 'scoped/scope-dev.md' \
+    'hooks/inject-scope-rules.sh' 'hooks/lib/styleref-roster.sh'
+}
+
+# CANDIDATES, when a test sets it, pins the dispatch's candidate dir so the
+# generated candidates survive the run and can be read against what was applied.
+run_roster_update() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="y" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
+    ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR="${CANDIDATES:-}" \
+    ATRIUM_UPDATE_ALLOW_ROSTER="1" \
     bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "USER-EDITED" ]] || return 1 # PRESERVED (not swept)
 }
 
-@test "#14 sweep: a drop-only release sweeps on the no-content-change path; decline leaves it" {
-  # No non-agent content change (scripts/tool.sh identical both sides) → update_run
-  # hits the "already up to date" early return, which STILL runs the sweep. Declining
-  # the removal gate leaves the dropped file untouched and the run stays rc 0.
-  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "same"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "same"
-  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh" # hooks/old.sh DROPPED
-
+# The same drive with the override UNSET — the path an add-only release takes now
+# that the gate splits by direction.
+run_roster_update_unoverridden() {
   run env \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    ATRIUM_UPDATE_CONFIRM_ANSWER="n" \
-    ATRIUM_UPDATE_TRASH_DIR="${WORK}/trash" \
+    ATRIUM_UPDATE_ROSTER_CANDIDATE_DIR="${CANDIDATES:-}" \
     bash "${SKILL}"
-
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"already up to date"* ]] || return 1                 # no content change → early return
-  [[ "$output" == *"declined"* ]] || return 1                           # removal gate declined
-  [[ "$(cat "${INSTALL}/hooks/old.sh")" == "vendor-body" ]] || return 1 # NOT removed
 }
 
-@test "#14 preview: --preview lists a vendor-dropped file as a would-be removal (zero writes)" {
-  seed_file "${INSTALL}" "hooks/old.sh" "vendor-body"
-  seed_file "${INSTALL}" "scripts/tool.sh" "old"
-  seed_baseline_hashed "${STATE}/update-state" "${INSTALL}" "hooks/old.sh" "scripts/tool.sh"
-  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
-  write_manifest "${WORK}/manifest.json" "scripts/tool.sh"
+@test "a release-shipped NEW agent lands as a vendor row: body, registry key, every roster" {
+  # The add path end to end. The release adds dev-new to all four roster shapes and
+  # ships its body; the run installs the body in the agent stage and the roster
+  # dispatch that follows carries the name into the registry and the other three.
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+brand new vendor agent"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
 
-  run env \
-    GA_ROOT="${INSTALL}" \
-    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
-    ATRIUM_PAUSE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
-    ATRIUM_SENSITIVE_HELPER="${REAL_LIB_ROOT}/autoagent/lib/sensitive_patterns.py" \
-    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
-    bash "${SKILL}" --preview
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 
-  [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"would be removed"* ]] || return 1
-  [[ "$output" == *"hooks/old.sh"* ]] || return 1
-  [[ -e "${INSTALL}/hooks/old.sh" ]] || return 1 # preview writes NOTHING
+  [[ "$(cat "${INSTALL}/agents/dev-new.md")" == *"brand new vendor agent"* ]] \
+    || { echo "$output"; return 1; }
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"dev-new"* ]] || { echo "$output"; return 1; }
+  local rel
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'dev-new' "${INSTALL}/${rel}" || { echo "the new name is missing from ${rel}"; return 1; }
+  done
+}
+
+# The three probes of the rebuilt withhold backstop. Its input is the agent stage's
+# create outcome, so each drive seeds a release-only body and decides whether that
+# body installs; the roster candidates carry the name either way.
+seed_failing_create_add() {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  # An updater-authored conflict marker, which the create's verify callback rejects:
+  # the create fails and its rollback DELETES the body it wrote.
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+>>>>>>> RELEASE (vendor)"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
+}
+
+assert_withheld_from_every_roster() {
+  local name="$1" rel
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" != *"${name}"* ]] || { echo "the registry carries ${name}: $output"; return 1; }
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    ! grep -q "${name}" "${INSTALL}/${rel}" || { echo "${rel} carries ${name}"; return 1; }
+  done
+}
+
+@test "the withhold backstop does not trip on a run whose new agent body installs" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a dev-new
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-new.md" "# dev-new
+brand new vendor agent"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) \
+    'agents/dev-a.md' 'agents/dev-new.md'
+
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" != *"roster withhold"* ]] || { echo "$output"; return 1; }
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"dev-new"* ]] || { echo "$output"; return 1; }
+}
+
+@test "a forced create failure withholds that name from the registry and every roster" {
+  CANDIDATES="${WORK}/candidates"
+  seed_failing_create_add
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"agent create verify FAILED"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster withhold: dropped dev-new from agent-registry.json"* ]] \
+    || { echo "$output"; return 1; }
+  [[ ! -f "${INSTALL}/agents/dev-new.md" ]] || { echo "the rolled-back body is on disk"; return 1; }
+
+  # The reading the two-point ordering makes observable: the candidate generated for
+  # the registry path carries the name BEFORE apply, and the artifact applied from it
+  # does not. Both files are read from the pinned candidate dir and the live install.
+  grep -q 'dev-new' "${CANDIDATES}/agent-registry.json.candidate" \
+    || { echo "the generated candidate never carried the name"; return 1; }
+  assert_withheld_from_every_roster dev-new
+  # Every path still applied — only the name was taken out of it. The registry's
+  # surviving row carries the release content, and each shape's non-slot prose
+  # carries the release marker.
+  run jq -r '.agents["dev-a"].domains[0]' "${INSTALL}/agent-registry.json"
+  [ "$output" = "vendor-new" ] || { cat "${INSTALL}/agent-registry.json"; return 1; }
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'vendor-new' "${INSTALL}/${rel}" || { cat "${INSTALL}/${rel}"; return 1; }
+  done
+}
+
+@test "the withhold backstop is reached with the roster override UNSET" {
+  # The de-gating, pinned: the predecessor's whole block sat inside the override
+  # condition, so this run reached no check at all.
+  seed_failing_create_add
+
+  run_roster_update_unoverridden
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster ADD only"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"roster withhold: dropped dev-new"* ]] || { echo "$output"; return 1; }
+  assert_withheld_from_every_roster dev-new
+}
+
+@test "OPERATOR ACCEPTANCE: a user-created registry row survives while vendor rows take the release" {
+  # The three anchors, one per root: base = the prior release, live = that plus a
+  # user-created member, release = the prior release with the vendor member's
+  # content changed and a second vendor member DROPPED — the added-member case is
+  # driven by its own test above, so this one exercises the removal direction.
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a legacy-y
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a legacy-y user-x
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a
+  # The vocabulary source for the live-only member, and the agent bodies the
+  # roster gate compares across the two sides.
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${INSTALL}" "agents/user-x.md" "mine"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) 'agents/dev-a.md'
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+
+  # The registry: the user-created row is present and the vendor row carries the
+  # release's content.
+  run jq -r '.agents | keys | join(",")' "${INSTALL}/agent-registry.json"
+  [[ "$output" == *"user-x"* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"legacy-y"* ]] || { echo "$output"; return 1; }
+  run jq -r '.agents["dev-a"].domains[0]' "${INSTALL}/agent-registry.json"
+  [ "$output" = "vendor-new" ] || { cat "${INSTALL}/agent-registry.json"; return 1; }
+
+  # The other three: each keeps its live-only member, honours the release-side
+  # removal, and carries the release's text outside the slot — so neither side
+  # was dropped for the other.
+  local rel
+  for rel in scoped/scope-dev.md hooks/inject-scope-rules.sh hooks/lib/styleref-roster.sh; do
+    grep -q 'user-x' "${INSTALL}/${rel}" || { echo "live-only member lost from ${rel}"; return 1; }
+    ! grep -q 'legacy-y' "${INSTALL}/${rel}" || { echo "release-side removal not honoured in ${rel}"; return 1; }
+    grep -q 'vendor-new' "${INSTALL}/${rel}" || { echo "release text outside the slot missing from ${rel}"; return 1; }
+  done
+
+  # A shell roster's slot is selected by the array NAME, so a second declaration
+  # of the same name is valid shell the reader cannot see; only a count catches it.
+  [ "$(grep -c '^readonly INJECT_AGENTS=' "${INSTALL}/hooks/inject-scope-rules.sh")" -eq 1 ] || return 1
+  [ "$(grep -c '^readonly STYLEREF_AGENTS=' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || return 1
+  # Each rewritten array stays ONE physical line however many members resolved.
+  [ "$(grep -c '^readonly STYLEREF_AGENTS=" dev-a user-x "$' "${INSTALL}/hooks/lib/styleref-roster.sh")" -eq 1 ] || {
+    cat "${INSTALL}/hooks/lib/styleref-roster.sh"
+    return 1
+  }
+}
+
+@test "a roster path whose shape does not read is DECLINED, left byte-identical, and named" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-new" dev-a
+  # A SECOND brace-delimited list makes the markdown slot ambiguous, which is the
+  # reader's refusal rather than a merge outcome — the one shape failure a live
+  # file can carry without being invalid markdown.
+  printf '\nAlso loads when agent_scope ∈ {DEV}\n' >>"${INSTALL}/scoped/scope-dev.md"
+  local before
+  before="$(cat "${INSTALL}/scoped/scope-dev.md")"
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows)
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"DECLINED scoped/scope-dev.md"* ]] || { echo "$output"; return 1; }
+  [ "$(cat "${INSTALL}/scoped/scope-dev.md")" = "${before}" ] || return 1
+  # The decline is per-path: the siblings still took the release.
+  grep -q 'vendor-new' "${INSTALL}/hooks/lib/styleref-roster.sh" || return 1
+}
+
+@test "a run changing none of the four roster paths touches none of them" {
+  seed_roster_quartet "${STATE}/update-state/base-roster" "vendor-old" dev-a
+  seed_roster_quartet "${INSTALL}" "vendor-old" dev-a
+  seed_roster_quartet "${NEWSRC}" "vendor-old" dev-a
+  seed_file "${INSTALL}" "agents/dev-a.md" "a"
+  seed_file "${NEWSRC}" "agents/dev-a.md" "a"
+  seed_file "${INSTALL}" "scripts/tool.sh" "old tool"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new tool"
+  seed_baseline "${STATE}/update-state" "agents/dev-a.md"
+  local rel before_all=""
+  while IFS= read -r rel; do
+    before_all="${before_all}${rel}:$(sha256_of "${INSTALL}/${rel}")"$'\n'
+  done < <(roster_quartet_manifest_rows)
+  write_manifest "${WORK}/manifest.json" $(roster_quartet_manifest_rows) 'scripts/tool.sh'
+
+  run_roster_update
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [ "$(cat "${INSTALL}/scripts/tool.sh")" = "new tool" ] || return 1
+  local after_all=""
+  while IFS= read -r rel; do
+    after_all="${after_all}${rel}:$(sha256_of "${INSTALL}/${rel}")"$'\n'
+  done < <(roster_quartet_manifest_rows)
+  [ "${before_all}" = "${after_all}" ] || { echo "a roster path moved on a no-change run"; return 1; }
+  [[ "$output" != *"roster merged + applied"* ]] || return 1
+  [[ "$output" != *"DECLINED"* ]] || return 1
 }

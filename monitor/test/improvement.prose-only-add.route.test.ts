@@ -34,7 +34,7 @@ const SUITE_MARKER = `impr-poa-${randomUUID().slice(0, 8)}`;
 const AGENT = `${SUITE_MARKER}-agent`;
 
 // The updater's own pattern label — a merge-resolution row, not a daemon proposal.
-const UPDATER_LABEL = "editable-region-resolved-release";
+const UPDATER_LABEL = "editable-region-arbiter-resolved";
 
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",

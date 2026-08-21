@@ -85,11 +85,39 @@ run_restore() {
     ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "${CYCLE}"
 }
 
+# Emit the declared roster paths by reading the ONE declaration, in a contained
+# subshell. A literal list here would be a second declaration of the fact the single
+# declaration exists to hold.
+roster_paths() {
+  bash -c '
+    set -Eeuo pipefail
+    # shellcheck source=/dev/null
+    source "$1"
+    spine_get_roster_paths
+  ' _ "${REAL_SPINE}"
+}
+
+# Drive update_restore_base_entry DIRECTLY, on a capture key rather than a live
+# target. The restore loop reaches Arm A only after a live body reverted, so the
+# direct form is what isolates one key's reversal from the revert that gates it.
+# $1 = key.
+run_restore_base_entry() {
+  run env GA_ROOT="${ROOT}" AUTOAGENT_BACKUP_DIR="${BAKBASE}" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}" bash -c '
+      set -Eeuo pipefail
+      # shellcheck source=/dev/null
+      source "$1"
+      # shellcheck source=/dev/null
+      source "$2"
+      update_restore_base_entry "$3" "$4" "$5"
+    ' _ "${REAL_UPDATE}" "${REAL_SPINE}" "$1" "${CYCLEDIR}" "${STORE}"
+}
+
 @test "capture snapshots the PRIOR base into <name>.md.base.bak before advancing" {
   printf 'BASE v0\n' >"${STORE}/dev-x.md"            # prior base entry
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"  # live before-image → file is restorable
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md" # release body → store advances to this
-  printf 'dev-x.md\n' >"${LEDGER}"                   # outcome ledger lists the landed merge
+  printf 'agents/dev-x.md\n' >"${LEDGER}"            # outcome ledger lists the landed merge
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -104,7 +132,7 @@ run_restore() {
   printf 'BASE v0\n' >"${STORE}/dev-y.md"            # prior base exists
   # NO ${CYCLEDIR}/dev-y.md.bak — a byte-identical / no-net-change advance is not restorable
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-y.md"
-  printf 'dev-y.md\n' >"${LEDGER}"
+  printf 'agents/dev-y.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -117,7 +145,7 @@ run_restore() {
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
   printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"  # the applied merge result restore reverts AWAY
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md"
-  printf 'dev-x.md\n' >"${LEDGER}"
+  printf 'agents/dev-x.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -136,7 +164,7 @@ run_restore() {
   printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
   printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"
   printf 'RELEASE v1\n' >"${NEWDIR}/agents/dev-x.md"
-  printf 'dev-x.md\n' >"${LEDGER}"
+  printf 'agents/dev-x.md\n' >"${LEDGER}"
 
   run_capture
   [[ "${status}" -eq 0 ]] || return 1
@@ -148,4 +176,118 @@ run_restore() {
   [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live reverted
   # THE FALLBACK: the poisoned RELEASE base entry is DELETED (load_base_text → None)
   [[ ! -e "${STORE}/dev-x.md" ]] || return 1
+}
+
+@test "Arm B restores every declared roster path to the target the index recorded" {
+  local rel bn index="${CYCLEDIR}/restore-index.tsv"
+  : >"${index}"
+  while IFS= read -r rel; do
+    bn="${rel##*/}"
+    case "${rel}" in */*) mkdir -p "${ROOT}/${rel%/*}" ;; *) ;; esac
+    printf 'MERGED %s\n' "${rel}" >"${ROOT}/${rel}"    # the applied body restore reverts AWAY
+    printf 'LOCAL %s\n' "${rel}" >"${CYCLEDIR}/${bn}.bak"
+    printf '%s\t%s\n' "${bn}.bak" "${rel}" >>"${index}"
+  done < <(roster_paths)
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  while IFS= read -r rel; do
+    [[ "$(cat "${ROOT}/${rel}")" == "LOCAL ${rel}" ]] || return 1
+  done < <(roster_paths)
+  # One declared roster path is a `.md` under a NON-agents directory, so the
+  # convention the index replaces would have rebuilt it under agents/ while the real
+  # file stayed unrestored. Its absence there is what the index bought.
+  [[ ! -e "${ROOT}/agents/scope-dev.md" ]] || return 1
+}
+
+@test "a cycle dir with NO index restores agent bodies exactly as the convention did" {
+  printf 'BASE RELEASE\n' >"${STORE}/dev-x.md"
+  printf 'PRIOR BASE\n' >"${CYCLEDIR}/dev-x.md.base.bak"
+  printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
+  printf 'MERGED body\n' >"${ROOT}/agents/dev-x.md"
+  [[ ! -e "${CYCLEDIR}/restore-index.tsv" ]] || return 1 # the fixture IS a pre-index cycle
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${ROOT}/agents/dev-x.md")" == "LOCAL orig" ]] || return 1 # live body, agents/ convention
+  [[ "$(cat "${STORE}/dev-x.md")" == "PRIOR BASE" ]] || return 1       # base reversed under the flat key
+}
+
+@test "an INDEXLESS roster image restores to its roster path, and a nameless one to nothing" {
+  # The before-image sink is one flat directory keyed by basename, so an image the index
+  # lost is recoverable only by asking the roster declaration. Two ways the old convention
+  # lost these: the three non-.md roster rows leave images the *.md.bak glob cannot even
+  # see, and scope-dev.md.bak is the one it CAN see and would have rebuilt under agents/
+  # while the real file stayed unrestored.
+  local rel bn
+  while IFS= read -r rel; do
+    bn="${rel##*/}"
+    case "${rel}" in */*) mkdir -p "${ROOT}/${rel%/*}" ;; *) ;; esac
+    printf 'MERGED %s\n' "${rel}" >"${ROOT}/${rel}"
+    printf 'LOCAL %s\n' "${rel}" >"${CYCLEDIR}/${bn}.bak"
+  done < <(roster_paths)
+  # Neither roster-owned nor markdown: no convention target exists for it, so it is left
+  # for an index rather than guessed into agents/.
+  printf 'LOCAL notes\n' >"${CYCLEDIR}/notes.txt.bak"
+  [[ ! -e "${CYCLEDIR}/restore-index.tsv" ]] || return 1 # the fixture IS an index-less cycle
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  while IFS= read -r rel; do
+    [[ "$(cat "${ROOT}/${rel}")" == "LOCAL ${rel}" ]] || return 1
+  done < <(roster_paths)
+  [[ ! -e "${ROOT}/agents/scope-dev.md" ]] || return 1
+  [[ ! -e "${ROOT}/agents/notes.txt" ]] || return 1
+}
+
+@test "a reused cycle dir restores the images its index does not name" {
+  # Two runs share ONE cycle dir: it is keyed by date + version and never cleared,
+  # while the index write truncates. Run 1's image survives in the dir carrying no
+  # row of its own, and only the union of index and directory reaches both.
+  printf 'LOCAL a\n' >"${CYCLEDIR}/dev-a.md.bak" # run 1 — no row survives for it
+  printf 'MERGED a\n' >"${ROOT}/agents/dev-a.md"
+  printf 'LOCAL b\n' >"${CYCLEDIR}/dev-b.md.bak" # run 2 — the row the index kept
+  printf 'MERGED b\n' >"${ROOT}/agents/dev-b.md"
+  printf '%s\t%s\n' 'dev-b.md.bak' 'agents/dev-b.md' >"${CYCLEDIR}/restore-index.tsv"
+
+  run_restore
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${ROOT}/agents/dev-b.md")" == "LOCAL b" ]] || return 1 # indexed → recorded path
+  [[ "$(cat "${ROOT}/agents/dev-a.md")" == "LOCAL a" ]] || return 1 # unindexed → convention
+  [[ "${output}" == *"restore complete: 2 file(s)"* ]] || return 1
+}
+
+@test "the restore refuses an index row naming a target outside the install root" {
+  printf 'LOCAL orig\n' >"${CYCLEDIR}/dev-x.md.bak"
+  printf '%s\t%s\n' 'dev-x.md.bak' '../escape.md' >"${CYCLEDIR}/restore-index.tsv"
+
+  run_restore
+  [[ "${status}" -ne 0 ]] || return 1
+  [[ "${output}" == *"outside the install root"* ]] || return 1
+  [[ ! -e "${SANDBOX}/escape.md" ]] || return 1
+}
+
+@test "Arm A reverses a ROSTER base entry against its PATH key, leaving the flat namespace alone" {
+  local rel='hooks/lib/styleref-roster.sh' bn='styleref-roster.sh'
+  local roster_store="${STATE}/base-roster"
+  mkdir -p "${roster_store}/hooks/lib"
+  printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
+  # The before-image sink is one flat directory, so the snapshot is keyed by basename
+  # while the store entry it reverses is keyed by path.
+  printf 'ROSTER BASE v0\n' >"${CYCLEDIR}/${bn}.base.bak"
+  # A flat entry under the same basename: a roster key must not reach it.
+  printf 'AGENT BASE\n' >"${STORE}/${bn}"
+
+  run_restore_base_entry "${rel}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ "$(cat "${roster_store}/${rel}")" == "ROSTER BASE v0" ]] || return 1
+  [[ "$(cat "${STORE}/${bn}")" == "AGENT BASE" ]] || return 1
+
+  # No snapshot → DELETE the entry (safe gated 2-way), still under the path key.
+  rm -f "${CYCLEDIR}/${bn}.base.bak"
+  printf 'ROSTER RELEASE\n' >"${roster_store}/${rel}"
+  run_restore_base_entry "${rel}"
+  [[ "${status}" -eq 0 ]] || return 1
+  [[ ! -e "${roster_store}/${rel}" ]] || return 1
+  [[ -f "${STORE}/${bn}" ]] || return 1
 }

@@ -17,8 +17,9 @@
 # is invoked through the facade with --dry-run, which is DB-free by design
 # (backlog_source_available returns false under dry-run → deterministic JSON
 # report fallback), skips the real lock acquisition, and logs only to /tmp.
-# A fake HOME makes the HOME-anchored pause-flag / auth-env libs miss (loud
-# WARN + proceed) so no real user state is ever read.
+# A fake HOME keeps the daemon's HOME-anchored paths — the reports dir, the
+# agents dir and the backfill script — inside the sandbox, so no real user
+# state is ever read.
 #
 # PRE-FIX behavior (this suite FAILS on it): dirname(BASH_SOURCE) =
 # facade/autoagent → APPLY_LOCK_LIB = facade/scripts/lib/apply-lock.sh

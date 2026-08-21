@@ -35,7 +35,11 @@ const SUITE_MARKER = `impr-rb-${randomUUID().slice(0, 8)}`;
 const AGENT = `${SUITE_MARKER}-agent`;
 
 // The updater's own pattern label — a merge-resolution row, not a daemon proposal.
-const UPDATER_LABEL = "editable-region-resolved-release";
+const UPDATER_LABEL = "editable-region-arbiter-resolved";
+
+// The label the same emitter wrote before the arbiter verdict renamed it. Rows under
+// it are already in the table, so the filter must still exclude them.
+const HISTORICAL_UPDATER_LABEL = "editable-region-resolved-release";
 
 // A full supersede rationale as daemon_cycle.py composes it (head + cross-day tail),
 // written verbatim here rather than imported: the route's own marker is the thing under
@@ -240,4 +244,20 @@ test("the three buckets partition the total and the window is echoed", async (t)
     "total is the buckets summed — a row in none of them would break this",
   );
   assert.strictEqual(typeof buckets.window_days, "number", "window echoed");
+});
+
+test("a row under the historical updater label stays excluded", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const start = await fetchBuckets();
+  await insertProposal({
+    tag: "updater-historical",
+    patternLabel: HISTORICAL_UPDATER_LABEL,
+    haikuStatus: null,
+  });
+  const moved = delta(await fetchBuckets(), start);
+  assert.deepStrictEqual(
+    [moved.infra_count, moved.quality_count, moved.lifecycle_count, moved.total],
+    [0, 0, 0, 0],
+    "renaming the emitted label must not recount its history as daemon activity",
+  );
 });

@@ -564,7 +564,7 @@ build_step_plan() {
       # fail-closed per DB (a failed/empty pre-drop pg_dump skips that DB's drop —
       # lib drop_databases) — reinstall recreates a fresh, consistent DB. empty-dir cleanup +
       # update-state teardown mirror run_uninstall's STEP4/T26 (rmdir-only empty
-      # skeletons + non-symlink pause-flag/baseline teardown) so the TUI matches the
+      # skeletons + non-symlink base@install baseline teardown) so the TUI matches the
       # CLI. The config purge is a SEPARATE confirmed step in dispatch_action (it
       # runs only after a second typed confirmation), so it is not in this base plan.
       # The three arrays below are a PARALLEL-array contract — keep them equal-length

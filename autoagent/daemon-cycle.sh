@@ -149,8 +149,8 @@ APPLY_SH="${SCRIPT_DIR}/daemon-apply.sh"
 # DEPRECATED: daemon-regression.sh archived. Variable kept for backward-compat
 # with --regression-only callers (now a no-op stub) so external references don't error.
 REGRESSION_SH="${SCRIPT_DIR}/archive/daemon-regression-deprecated-2026-05-02.sh"
-# Store-root form (same convention as CLAUDE_AUTH_ENV_LIB / PAUSE_FLAG_LIB): hooks
-# are consumed in place from the store — ~/.claude/hooks is no longer farmed.
+# Store-root form (same convention as CLAUDE_AUTH_ENV_LIB): hooks are consumed in
+# place from the store — ~/.claude/hooks is no longer farmed.
 AGGREGATOR_PY="${HOME}/.glass-atrium/hooks/learning-aggregator.py"
 # The harness entry point sits at the store root, one level above this driver's own dir. Resolved
 # from SCRIPT_DIR and NOT from HOME, so a driver running out of a fixture tree reaches that tree's
@@ -274,30 +274,6 @@ PYTHON_BIN="${AUTOAGENT_PYTHON_BIN:-python3}"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
     printf '[daemon-cycle] FATAL: %s not found on PATH\n' "${PYTHON_BIN}" >&2
     exit 3
-fi
-
-# -- Cooperative update pause-flag gate (T10) ------------------------------
-# An in-flight Glass Atrium update HOLDS a pause flag while it swaps files; the
-# daemon cooperatively SUSPENDS this /loop wakeup so a cycle write never races
-# the update's file swap. A STALE flag (crashed updater — SIGKILL/OOM/power-loss,
-# beyond trap coverage) is loud-fail cleared by the lib's TTL guard, so the
-# daemon + daily-restart instance can NEVER freeze indefinitely. A clean skip is
-# exit 0 (NOT a failure). The lib is resolved from ~/.glass-atrium/scripts/lib
-# (the canonical store) — daemon-cycle.sh's own dir has no shared lib.
-# DAEMON SAFETY: a missing lib degrades to a loud WARN + proceed (never break the
-# launchd-live daemon over an absent helper) — same posture as the auth-env lib.
-PAUSE_FLAG_LIB="${HOME}/.glass-atrium/scripts/lib/update-pause-flag.sh"
-if [[ -f "${PAUSE_FLAG_LIB}" ]]; then
-    # Runtime-resolved HOME-anchored path; the `-f` guard gates the source.
-    # shellcheck disable=SC1090,SC1091
-    . "${PAUSE_FLAG_LIB}"
-    if update_pause_is_active; then
-        printf '[daemon-cycle] update in progress (pause flag held) — skipping cycle (exit 0)\n' >&2
-        exit 0
-    fi
-else
-    printf '[daemon-cycle] WARN: pause-flag lib missing (%s) — proceeding without update-pause gate\n' \
-        "${PAUSE_FLAG_LIB}" >&2
 fi
 
 # -- Stage runners ---------------------------------------------------------

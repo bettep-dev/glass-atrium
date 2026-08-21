@@ -1,12 +1,13 @@
 #!/usr/bin/env bats
 # apply-spine.sh suite — pins the E3 safe-apply spine library contract:
 # T13 spine_find_changed_files — hash-diff selection, excluding the agents markdown
-# the E4 merge CLAIMS (top-level agents/<name>.md minus the charter) + *.local.md +
-# config.toml, with the missing-locally → changed rule.
+# the E4 merge CLAIMS (top-level agents/<name>.md minus the charter), with the
+# missing-locally → changed rule.
 # T11 spine_stage_and_verify (per-file SHA-256 verify; loud-fail on a hash mismatch
 # with ZERO install mutation) · spine_commit_staged (swap + rollback to pre-swap:
-# existing files restored, newly created files DELETED) · spine_apply (full
-# verify-then-commit transaction). T14 spine_set/get_baseline — capture + read the
+# existing files restored, newly created files DELETED), sequenced by each caller
+# the way the updater and the installer sequence them.
+# T14 spine_set/get_baseline — capture + read the
 # base@install anchor (absence → rc 1, the `get` contract).
 # Hermetic: baseline state dir pinned via ATRIUM_UPDATE_STATE_DIR so the live
 # ~/.claude/data/update tree is NEVER touched; the lib is sourced under
@@ -25,7 +26,7 @@ setup() {
   NEW="${WORK}/new"     # staged new-release tree
   LIVE="${WORK}/live"   # live install root
   STATE="${WORK}/state" # pinned baseline state dir
-  WORKDIR="${WORK}/wd"  # spine_apply staging/snapshot work dir
+  WORKDIR="${WORK}/wd"  # staging/ + snapshot/ work dir
   mkdir -p "${NEW}" "${LIVE}" "${STATE}" "${WORKDIR}"
   export ATRIUM_UPDATE_STATE_DIR="${STATE}"
 }
@@ -61,6 +62,15 @@ seed_file() {
   local root="$1" rel="$2" content="$3"
   mkdir -p -- "$(dirname -- "${root}/${rel}")"
   printf '%s' "${content}" >"${root}/${rel}"
+}
+
+# Create a symlink at $2 (relative) under root $1 holding the literal target
+# text $3, creating parent dirs. The target itself is a separate row and exists
+# only where a fixture seeds it, so a seeded link may be dangling by design.
+seed_link() {
+  local root="$1" rel="$2" target="$3"
+  mkdir -p -- "$(dirname -- "${root}/${rel}")"
+  ln -sfn -- "${target}" "${root}/${rel}"
 }
 
 # Build a manifest.json at $1 whose files[] + hashes map describe the files
@@ -145,7 +155,7 @@ spine() {
   [[ "${output}" == *"hooks/a.sh"* ]] || return 1
 }
 
-@test "T13: *.local.md overlay and config.toml are EXCLUDED" {
+@test "T13: a changed overlay and a changed runtime config are SELECTED like any other row" {
   seed_file "${NEW}" "rules/x.local.md" "vendor-overlay"
   seed_file "${LIVE}" "rules/x.local.md" "local-overlay"
   seed_file "${NEW}" "config.toml" "vendor-config"
@@ -155,8 +165,12 @@ spine() {
   build_manifest "${WORK}/manifest.json" "${NEW}" \
     "rules/x.local.md" "config.toml" "rules/real.md"
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "rules/real.md" ]]
+  # the closing member: the selection is the merge's complement and nothing else,
+  # so a row is withheld only by the merge claiming it
+  [[ "${status}" -eq 0 ]] \
+    && [[ "${output}" == *"rules/x.local.md"* ]] \
+    && [[ "${output}" == *"config.toml"* ]] \
+    && [[ "${output}" == *"rules/real.md"* ]]
 }
 
 @test "T13: loud-fail (rc 1) when a manifest path carries no hash" {
@@ -165,86 +179,6 @@ spine() {
   run spine spine_find_changed_files "${WORK}/manifest.json" "${LIVE}"
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"no hash for hooks/a.sh"* ]]
-}
-
-# #13 — spine_find_removed_files (vendor-removal provenance selection)
-
-@test "#13 removal: a pristine vendored file the new release dropped is selected" {
-  seed_file "${LIVE}" "hooks/old.sh" "vendor-body"
-  build_manifest "${WORK}/baseline.json" "${LIVE}" "hooks/old.sh"
-  seed_file "${NEW}" "hooks/keep.sh" "kept"
-  build_manifest "${WORK}/new.json" "${NEW}" "hooks/keep.sh"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ "${output}" == "hooks/old.sh" ]]
-}
-
-@test "#13 removal: a file still shipped by the new release is NOT selected" {
-  seed_file "${LIVE}" "hooks/keep.sh" "body"
-  build_manifest "${WORK}/baseline.json" "${LIVE}" "hooks/keep.sh"
-  seed_file "${NEW}" "hooks/keep.sh" "body"
-  build_manifest "${WORK}/new.json" "${NEW}" "hooks/keep.sh"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ -z "${output}" ]]
-}
-
-@test "#13 removal: a USER-MODIFIED dropped file is PRESERVED (live hash != baseline)" {
-  # baseline hash describes the pristine vendor body; the live file was edited.
-  seed_file "${WORK}" "pristine" "vendor-body"
-  local pristine_hash
-  pristine_hash="$(sha256_of "${WORK}/pristine")"
-  seed_file "${LIVE}" "hooks/old.sh" "USER-EDITED-body"
-  jq -n --arg h "${pristine_hash}" \
-    '{version:"1.0.0", files:["hooks/old.sh"], hashes:{"hooks/old.sh":$h}}' \
-    >"${WORK}/baseline.json"
-  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ -z "${output}" ]]
-}
-
-@test "#13 removal: agents/**/*.md + *.local.md + config.toml dropped paths are EXCLUDED" {
-  seed_file "${LIVE}" "agents/dev-x.md" "a"
-  seed_file "${LIVE}" "rules/y.local.md" "b"
-  seed_file "${LIVE}" "config.toml" "c"
-  seed_file "${LIVE}" "hooks/old.sh" "vendor"
-  build_manifest "${WORK}/baseline.json" "${LIVE}" \
-    "agents/dev-x.md" "rules/y.local.md" "config.toml" "hooks/old.sh"
-  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  # only the vendor-owned hook is swept; none of the excluded kinds appear
-  [[ "${output}" == "hooks/old.sh" ]]
-}
-
-@test "#13 removal: a dropped file already absent from the live install is a no-op" {
-  seed_file "${WORK}" "x" "vendor"
-  local h
-  h="$(sha256_of "${WORK}/x")"
-  jq -n --arg h "${h}" \
-    '{version:"1.0.0", files:["hooks/gone.sh"], hashes:{"hooks/gone.sh":$h}}' \
-    >"${WORK}/baseline.json"
-  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 0 ]]
-  [[ -z "${output}" ]]
-}
-
-@test "#13 removal: loud-fail (rc 1) when a dropped baseline path carries no hash" {
-  seed_file "${LIVE}" "hooks/old.sh" "vendor"
-  jq -n '{version:"1.0.0", files:["hooks/old.sh"], hashes:{}}' >"${WORK}/baseline.json"
-  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
-  run spine spine_find_removed_files "${WORK}/baseline.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 1 ]]
-  [[ "${output}" == *"baseline has no hash for hooks/old.sh"* ]]
-}
-
-@test "#13 removal: loud-fail when the baseline manifest is missing" {
-  jq -n '{version:"1.0.0", files:[], hashes:{}}' >"${WORK}/new.json"
-  run spine spine_find_removed_files "${WORK}/nope.json" "${WORK}/new.json" "${LIVE}"
-  [[ "${status}" -eq 1 ]]
-  [[ "${output}" == *"needs a baseline manifest"* ]]
 }
 
 # T11 — spine_stage_and_verify
@@ -295,6 +229,77 @@ spine() {
   ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
   [[ "${status}" -eq 1 ]]
   [[ "${output}" == *"staged source missing"* ]]
+}
+
+@test "T1 link: a link row whose target is NOT staged stages as a link and verifies" {
+  # The manifest records the TARGET's content hash for a link row, and a link
+  # preserved into staging is dangling there while its target stays out of the
+  # change set — so the row can only verify at its release-tree position.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  # One && chain: a bats verdict is its LAST command's status, so a mid-body
+  # bracket would pass silently. The trailing member is the danglingness inside
+  # the staging dir, which is why the hash is read at the source position.
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
+    && [[ ! -e "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
+}
+
+@test "T1 link: a staging copy that FAILS on a link row loud-fails the stage" {
+  # A link row is hash-verified at its release-tree position, so the hash cannot
+  # see a staged link that never landed — the copy's own status is the only
+  # signal, and the substitution below is a copy that fails on every row.
+  # The call carries the production caller's `|| rc=$?` form, which suspends
+  # errexit for the whole invocation: with the status unchecked the run reports
+  # a clean stage and the swap then finds nothing to move.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    spine_copy_entry() { return 1; }
+    rc=0
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3" || rc=$?
+    exit "${rc}"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  # One && chain: a bats verdict is its LAST command's status, so a mid-body
+  # bracket would pass silently.
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"staging copy failed"* ]] \
+    && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]]
+}
+
+@test "T1 link: with the link-preserving copy reverted the same fixture stages a REGULAR file" {
+  # The load-bearing check for the staging branch: substituting the pre-T1
+  # dereferencing copy on the identical fixture reproduces the loss, so the
+  # branch is what preserves the link rather than the fixture being trivial.
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-body"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    spine_copy_entry() { cp -p -- "$1" "$2"; }
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${WORKDIR}/staging"
+  [[ "${status}" -eq 0 ]] \
+    && [[ ! -L "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ -f "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(cat "${WORKDIR}/staging/rules/glass-atrium/CHARTER.md")" == "charter-body" ]]
 }
 
 # T11 — spine_commit_staged (swap success + rollback on failure)
@@ -350,6 +355,55 @@ spine() {
   ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
   [[ "${status}" -eq 1 ]]
   [[ ! -e "${LIVE}/scripts/created.sh" ]]
+}
+
+@test "T1 link: a driven apply lands the live row as a link holding the release's target text" {
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-old"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/OLD-CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    mkdir -p -- "$4/staging" "$4/snapshot"
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$4/staging"
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" \
+      | spine_commit_staged "$4/staging" "$3" "$4/snapshot"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
+  # the closing member: the row the link points at is a separate manifest row,
+  # untouched by this change set
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "$(readlink "${NEW}/rules/glass-atrium/CHARTER.md")" ]] \
+    && [[ "$(cat "${LIVE}/agents/CHARTER.md")" == "charter-old" ]]
+}
+
+@test "T1 link: an apply carrying BOTH the link row and its target row lands both" {
+  seed_file "${NEW}" "agents/CHARTER.md" "charter-new"
+  seed_link "${NEW}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-old"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/OLD-CHARTER.md"
+  build_manifest "${WORK}/manifest.json" "${NEW}" \
+    "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md"
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"; shift
+    mkdir -p -- "$4/staging" "$4/snapshot"
+    printf "%s\n" "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md" \
+      | spine_stage_and_verify "$1" "$2" "$4/staging"
+    printf "%s\n" "agents/CHARTER.md" "rules/glass-atrium/CHARTER.md" \
+      | spine_commit_staged "$4/staging" "$3" "$4/snapshot"
+  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
+  # the closing member: the two rows are one file again, so reading through the
+  # link reaches the target's new content
+  [[ "${status}" -eq 0 ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]] \
+    && [[ "$(cat "${LIVE}/agents/CHARTER.md")" == "charter-new" ]] \
+    && [[ "$(cat "${LIVE}/rules/glass-atrium/CHARTER.md")" == "charter-new" ]]
 }
 
 # #10 / #11 — atomic swap + atomic rollback restore (sibling temp + rename(2))
@@ -418,38 +472,47 @@ spine() {
   [[ -z "${output}" ]]
 }
 
-# T11 — spine_apply (full transaction)
-
-@test "T11 apply: verify-then-commit applies the whole change set" {
-  seed_file "${NEW}" "hooks/a.sh" "applied-a"
-  seed_file "${NEW}" "scripts/b.sh" "applied-b"
-  seed_file "${LIVE}" "hooks/a.sh" "old-a"
-  build_manifest "${WORK}/manifest.json" "${NEW}" "hooks/a.sh" "scripts/b.sh"
+@test "T1 link rollback: a failure AFTER the link row swapped restores it as a LINK with its original target" {
+  # The failure path reaches the same destruction as the success path: without a
+  # link-preserving snapshot the restore writes a regular file holding the OLD
+  # target's bytes over the link position.
+  seed_file "${LIVE}" "agents/CHARTER.md" "charter-live"
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/CHARTER.md"
+  seed_link "${WORKDIR}/staging" "rules/glass-atrium/CHARTER.md" "../../agents/NEW-CHARTER.md"
+  # scripts/z.sh has no staged source → the commit fails on the row AFTER the link
   run bash -c '
     set -Eeuo pipefail
     source "$1"; shift
-    printf "%s\n" "hooks/a.sh" "scripts/b.sh" \
-      | spine_apply "$1" "$2" "$3" "$4"
-  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
-  [[ "${status}" -eq 0 ]]
-  [[ "$(cat "${LIVE}/hooks/a.sh")" == "applied-a" ]]
-  [[ "$(cat "${LIVE}/scripts/b.sh")" == "applied-b" ]]
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" "scripts/z.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  # the failure-row member is load-bearing: it pins that the link row swapped
+  # and the run then failed on a LATER row, which is what reaches the rollback
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"commit FAILED at scripts/z.sh"* ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/CHARTER.md" ]]
 }
 
-@test "T11 apply: a verify failure aborts before the install is touched" {
-  seed_file "${NEW}" "hooks/a.sh" "tampered"
-  seed_file "${LIVE}" "hooks/a.sh" "live-original"
-  # manifest hash does NOT match the new-release file content
-  jq -n '{version:"1.0.0", files:["hooks/a.sh"],
-          hashes:{"hooks/a.sh":"0000000000000000000000000000000000000000000000000000000000000000"}}' \
-    >"${WORK}/manifest.json"
+@test "T1 link rollback: the same forced failure leaves the live link row PRESENT" {
+  # Separate guard on the remove-if-no-snapshot default: the snapshot entry for a
+  # link row is itself dangling inside the snapshot dir, and a dereferencing
+  # snapshot test reads it as absent and DELETES the live row. This fixture's
+  # live link points outside the install root, so -e is false for it and only
+  # link-ness can witness that the row survived at all.
+  seed_link "${LIVE}" "rules/glass-atrium/CHARTER.md" "../../agents/ABSENT-CHARTER.md"
+  seed_link "${WORKDIR}/staging" "rules/glass-atrium/CHARTER.md" "../../agents/NEW-CHARTER.md"
   run bash -c '
     set -Eeuo pipefail
     source "$1"; shift
-    printf "%s\n" "hooks/a.sh" | spine_apply "$1" "$2" "$3" "$4"
-  ' _ "${REAL_LIB}" "${NEW}" "${WORK}/manifest.json" "${LIVE}" "${WORKDIR}"
-  [[ "${status}" -eq 1 ]]
-  [[ "$(cat "${LIVE}/hooks/a.sh")" == "live-original" ]]
+    printf "%s\n" "rules/glass-atrium/CHARTER.md" "scripts/z.sh" \
+      | spine_commit_staged "$1" "$2" "$3"
+  ' _ "${REAL_LIB}" "${WORKDIR}/staging" "${LIVE}" "${WORKDIR}/snapshot"
+  [[ "${status}" -eq 1 ]] \
+    && [[ "${output}" == *"commit FAILED at scripts/z.sh"* ]] \
+    && [[ ! -e "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ -L "${LIVE}/rules/glass-atrium/CHARTER.md" ]] \
+    && [[ "$(readlink "${LIVE}/rules/glass-atrium/CHARTER.md")" == "../../agents/ABSENT-CHARTER.md" ]]
 }
 
 # T14 — baseline capture + read
@@ -613,4 +676,94 @@ t6_build_jqless_toolbin() {
   ' _ "${REAL_LIB}"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" == "/tmp/custom-update-state" ]]
+}
+
+# === The roster path declaration ============================================
+# The four roster paths are declared ONCE, as data beside the claim predicate, so the
+# capture that iterates them, the dispatch that merges them and the predicate that
+# claims them cannot drift into hand-agreed lists. These probes pin both halves —
+# that the declared paths are real manifest rows the claim now holds, and that the
+# claim is otherwise still decided by path shape, the four being the whole of the
+# difference.
+
+@test "the roster declaration holds exactly four merge-claimed manifest rows" {
+  local manifest="${GA}/manifest.json" rel n=0
+  [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
+  # shellcheck source=/dev/null
+  source "${REAL_LIB}"
+
+  while IFS= read -r rel; do
+    n=$((n + 1))
+    # A mistyped key would capture nothing and fail SILENTLY at the sink.
+    if ! jq -e --arg p "${rel}" '.files | index($p) != null' -- "${manifest}" >/dev/null; then
+      echo "declared roster path is not a manifest row: ${rel}"
+      return 1
+    fi
+    # The claim reads this declaration, so a declared path is claimed AND excluded
+    # from the byte-swap — the dispatch is what delivers it from here on.
+    if ! spine_is_merge_claimed_path "${rel}"; then
+      echo "declared roster path is NOT merge-claimed: ${rel}"
+      return 1
+    fi
+    if ! spine_is_excluded_path "${rel}"; then
+      echo "declared roster path is NOT excluded from the byte-swap: ${rel}"
+      return 1
+    fi
+  done < <(spine_get_roster_paths)
+  [ "${n}" -eq 4 ]
+}
+
+# The predecessor of this probe asserted the two predicates classify EVERY row by
+# path shape alone. The claim widening BREAKS that, and the break is declared here
+# rather than absorbed: the oracle gains the declared roster rows as its second arm,
+# and the rows on which the two arms disagree are asserted to be exactly those four,
+# so a fifth path slipping into either predicate still fails.
+@test "both predicates classify every manifest row by path shape or the declaration" {
+  local manifest="${GA}/manifest.json" path oracle shape_oracle claimed excluded
+  local mismatch="" widened="" n_widened=0
+  [[ -f "${manifest}" ]] || skip "manifest.json not found: ${manifest}"
+  # shellcheck source=/dev/null
+  source "${REAL_LIB}"
+
+  local declared
+  declared=$'\n'"$(spine_get_roster_paths)"$'\n'
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    # The rule recomputed from the path shape alone, so this oracle cannot agree
+    # with a drifted predicate.
+    shape_oracle=0
+    case "${path}" in
+      agents/*/* | agents/GLASS_ATRIUM_GLOBAL_RULES.md) ;;
+      agents/*.md) shape_oracle=1 ;;
+      *) ;;
+    esac
+    oracle="${shape_oracle}"
+    if [[ "${declared}" == *$'\n'"${path}"$'\n'* ]]; then
+      oracle=1
+    fi
+    if [[ "${oracle}" -ne "${shape_oracle}" ]]; then
+      widened="${widened}${path}"$'\n'
+      n_widened=$((n_widened + 1))
+    fi
+    claimed=0
+    if spine_is_merge_claimed_path "${path}"; then claimed=1; fi
+    excluded=0
+    if spine_is_excluded_path "${path}"; then excluded=1; fi
+    if [[ "${claimed}" -ne "${oracle}" || "${excluded}" -ne "${oracle}" ]]; then
+      mismatch="${mismatch}${path} (oracle=${oracle} claimed=${claimed} excluded=${excluded})"$'\n'
+    fi
+  done < <(jq -r '.files[]' -- "${manifest}")
+
+  if [[ -n "${mismatch}" ]]; then
+    echo "predicate classification disagrees with the path-shape rule:"
+    printf '%s' "${mismatch}"
+  fi
+  [ -z "${mismatch}" ]
+  # The whole of the widening, named: four rows the shape rule alone would not claim.
+  if [[ "${n_widened}" -ne 4 ]]; then
+    echo "rows claimed by the declaration rather than by shape (expected 4):"
+    printf '%s' "${widened}"
+  fi
+  [ "${n_widened}" -eq 4 ]
 }

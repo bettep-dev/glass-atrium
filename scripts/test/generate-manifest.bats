@@ -12,11 +12,9 @@ bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/scripts/generate-manifest.sh"
-REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 setup() {
   [[ -f "${REAL_SCRIPT}" ]] || skip "generate-manifest.sh not found: ${REAL_SCRIPT}"
-  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
   # pwd -P resolves /var -> /private/var so GA_ROOT (pwd -P inside the script)
   # matches the paths the test computes.
   WORK="$(cd -- "$(mktemp -d -t genman-bats.XXXXXX)" && pwd -P)"
@@ -24,9 +22,7 @@ setup() {
   MANIFEST="${WORK}/manifest.json"
   mkdir -p "${WORK}/scripts/lib" "${WORK}/agents" "${WORK}/rules"
   cp "${REAL_SCRIPT}" "${SCRIPT}"
-  # the generator sources this leaf for the vendor-region map (exit 7 without it).
-  cp "${REAL_VENDOR_LIB}" "${WORK}/scripts/lib/vendor-digest.sh"
-  seed_manifest_doc
+  seed_manifest
   printf '# agent alpha\n' >"${WORK}/agents/alpha.md"
   printf '# rule beta\n' >"${WORK}/rules/beta.md"
   git -C "${WORK}" init -q
@@ -40,11 +36,10 @@ teardown() {
   [[ -n "${WORK:-}" && -d "${WORK}" ]] && rm -rf -- "${WORK}" || true
 }
 
-# Seed a minimal manifest carrying ONLY the _doc_settings_json contract key the
-# generator refuses to regenerate without (files/hashes start empty).
-seed_manifest_doc() {
-  printf '{"_doc_settings_json":"sandbox settings.json contract doc","files":[],"hashes":{}}\n' \
-    >"${MANIFEST}"
+# Seed the minimal manifest the generator refuses to regenerate without
+# (files/hashes start empty).
+seed_manifest() {
+  printf '{"files":[],"hashes":{}}\n' >"${MANIFEST}"
 }
 
 @test "generate: stamps top-level version matching ATRIUM_VERSION" {
@@ -58,10 +53,10 @@ seed_manifest_doc() {
   [[ "$(jq -r '.version' "${MANIFEST}")" == "${expected}" ]]
 }
 
-@test "generate: top-level key order is version, _doc_settings_json, files, hashes, modes, vendor_hashes" {
+@test "generate: top-level key order is version, files, hashes, modes" {
   run "${SCRIPT}"
   [[ "${status}" -eq 0 ]]
-  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,_doc_settings_json,files,hashes,modes,vendor_hashes" ]]
+  [[ "$(jq -r 'keys_unsorted | join(",")' "${MANIFEST}")" == "version,files,hashes,modes" ]]
 }
 
 @test "generate: every files entry has a 64-hex sha256 (count parity + format)" {
@@ -200,8 +195,8 @@ seed_manifest_doc() {
   [[ "${output}" == *"EMPTY"* ]]
 }
 
-@test "generate: refuses without the _doc_settings_json contract key (exit 5)" {
-  printf '{"files":[],"hashes":{}}\n' >"${MANIFEST}"
+@test "generate: refuses without a tracked manifest (exit 5)" {
+  rm -f -- "${MANIFEST}"
   run "${SCRIPT}"
   [[ "${status}" -eq 5 ]]
 }

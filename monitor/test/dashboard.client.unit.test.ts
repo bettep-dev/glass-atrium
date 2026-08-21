@@ -35,10 +35,14 @@ interface DeriveArgs {
 }
 interface DashHelpers {
   deriveUpdateView: (args: DeriveArgs) => UpdateView;
+  getJobVersion: (job: unknown) => string | null;
+  mutationErrorMessage: (status: number, data: unknown) => string;
 }
 
 const dash = await buildScreenSandbox<DashHelpers>(DASH_SRC);
 assert.strictEqual(typeof dash.deriveUpdateView, "function", "deriveUpdateView must be reachable");
+assert.strictEqual(typeof dash.getJobVersion, "function", "getJobVersion must be reachable");
+assert.strictEqual(typeof dash.mutationErrorMessage, "function", "mutationErrorMessage must be reachable");
 
 const NOW = 1_700_000_000_000;
 const STALE_MS = 30 * 60 * 1000;
@@ -140,4 +144,48 @@ test("completed job is sticky over update-available availability → current (no
     derive({ job: jobAt("completed", STALE_MS + 1), availabilityData: { status: "update-available" } }).kind,
     "current",
   );
+});
+
+// --- job version label (getJobVersion) ---
+// The apply route reserves the row with the literal 'pending' placeholder and the decoupled
+// job overwrites it, so every apply is briefly polled back carrying it. Rendered as a version
+// it reads as a release named 'pending'; null instead makes the caller drop to its version-less
+// label. Mirrors routes/dashboard.ts PENDING_TARGET_VERSION.
+
+test("getJobVersion returns a real release version unchanged", () => {
+  assert.strictEqual(dash.getJobVersion(jobAt("in-progress", 0)), "v1.2.3");
+});
+
+test("getJobVersion maps the reservation placeholder to null (never rendered as a version)", () => {
+  assert.strictEqual(dash.getJobVersion(jobAt("in-progress", 0, { target_version: "pending" })), null);
+  assert.strictEqual(dash.getJobVersion(jobAt("completed", 0, { target_version: "pending" })), null);
+});
+
+test("getJobVersion maps an absent job or empty version to null", () => {
+  assert.strictEqual(dash.getJobVersion(null), null);
+  assert.strictEqual(dash.getJobVersion(jobAt("in-progress", 0, { target_version: "" })), null);
+});
+
+// --- mutation error taxonomy (mutationErrorMessage) ---
+// Mirrors types/dashboard.ts UpdateMutationErrorBody. A code the server no longer emits must
+// NOT keep a bespoke sentence here — it falls through to the server-supplied reason.
+
+test("mutationErrorMessage maps the codes the route still emits", () => {
+  assert.strictEqual(
+    dash.mutationErrorMessage(409, { error: "single_active", reason: "x" }),
+    "Another update is already in progress.",
+  );
+  assert.strictEqual(
+    dash.mutationErrorMessage(500, { error: "enqueue_failed", reason: "x" }),
+    "Couldn't start the update job.",
+  );
+  assert.strictEqual(
+    dash.mutationErrorMessage(503, { error: "claude_unresolved", reason: "x" }),
+    "The updater couldn't find the tool it needs on this host.",
+  );
+});
+
+test("mutationErrorMessage has no branch for the retired preview_failed code", () => {
+  assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed", reason: "boom" }), "boom");
+  assert.strictEqual(dash.mutationErrorMessage(500, { error: "preview_failed" }), "Request failed (HTTP 500).");
 });

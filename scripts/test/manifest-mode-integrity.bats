@@ -29,7 +29,6 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
-REAL_VENDOR_LIB="${GA}/scripts/lib/vendor-digest.sh"
 
 # Octal permission of a file — BSD stat (macOS) first, GNU coreutils fallback.
 # Output-validated: GNU `stat -f` is FILESYSTEM status (exit 0, "?p" garbage for
@@ -53,24 +52,18 @@ teardown() {
   [[ -n "${SANDBOX:-}" && -d "${SANDBOX:-}" ]] && rm -rf -- "${SANDBOX}"
 }
 
-# Throwaway git fixture holding a COPY of the generator + the vendor-digest leaf it
-# sources (GA_ROOT = the fixture), one 755 hook + one 644 agent file, and a seed
-# manifest carrying the required _doc_settings_json contract key. git index only —
-# ls-files needs no commit. The lib guard is PER-FIXTURE (not setup-wide) because
-# the install/update rows never run the generator and must keep running without it.
+# Throwaway git fixture holding a COPY of the generator (GA_ROOT = the fixture), one
+# 755 hook + one 644 agent file, and the seed manifest the generator refuses to
+# regenerate without. git index only — ls-files needs no commit.
 make_gen_fixture() {
-  [[ -f "${REAL_VENDOR_LIB}" ]] || skip "vendor-digest.sh not found: ${REAL_VENDOR_LIB}"
   FIX="${SANDBOX}/genfix"
   mkdir -p "${FIX}/scripts/lib" "${FIX}/hooks" "${FIX}/agents"
   cp -p -- "${GA}/scripts/generate-manifest.sh" "${FIX}/scripts/generate-manifest.sh"
-  # the generator sources this leaf for the vendor-region map — a sandbox without
-  # it exits 7 (loud-fail), so the copy is part of the generator's fixture.
-  cp -p -- "${REAL_VENDOR_LIB}" "${FIX}/scripts/lib/vendor-digest.sh"
   printf '#!/usr/bin/env bash\nprintf ok\n' >"${FIX}/hooks/probe.sh"
   chmod 755 "${FIX}/hooks/probe.sh"
   printf 'agent body\n' >"${FIX}/agents/a.md"
   chmod 644 "${FIX}/agents/a.md"
-  printf '{"version":"0.0.0","_doc_settings_json":"contract","files":["x"],"hashes":{}}\n' \
+  printf '{"version":"0.0.0","files":["x"],"hashes":{}}\n' \
     >"${FIX}/manifest.json"
   git -C "${FIX}" init -q
   git -C "${FIX}" add hooks agents scripts
@@ -78,9 +71,13 @@ make_gen_fixture() {
 
 # Local release bundle + manifest for the GA_INSTALL_SRC_* seams. The bundled
 # hook ships MODE-STRIPPED (644) while the manifest maps it 755 — the
-# post-extract enforcement must close that gap. $1 = with-modes|no-modes|bad-octal.
+# post-extract enforcement must close that gap. The `symlink` variant adds a
+# mode-stripped target plus a link row pointing at it, the shape the real
+# manifest carries: the link's own mode (macOS lrwxr-xr-x) can never equal the
+# target mode the map records, so an enforcement without the link skip aborts.
+# $1 = with-modes|no-modes|bad-octal|symlink.
 make_install_fixture() {
-  local variant="$1" h_probe h_launcher h_spine m_spine modes_json
+  local variant="$1" h_probe h_launcher h_spine m_spine modes_json h_charter
   BUNDLE_ROOT="${SANDBOX}/bundle-root"
   GA_DIR_FIX="${SANDBOX}/ga-home"
   mkdir -p "${BUNDLE_ROOT}/hooks" "${BUNDLE_ROOT}/scripts/lib"
@@ -93,6 +90,16 @@ make_install_fixture() {
   h_launcher="$(shasum -a 256 "${BUNDLE_ROOT}/glass-atrium" | awk '{print $1}')"
   h_spine="$(shasum -a 256 "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh" | awk '{print $1}')"
   m_spine="$(mode_of "${BUNDLE_ROOT}/scripts/lib/apply-spine.sh")"
+  h_charter=""
+  if [[ "${variant}" == "symlink" ]]; then
+    mkdir -p "${BUNDLE_ROOT}/agents" "${BUNDLE_ROOT}/rules"
+    printf 'charter body\n' >"${BUNDLE_ROOT}/agents/charter.md"
+    chmod 600 "${BUNDLE_ROOT}/agents/charter.md" # STRIPPED on purpose
+    ln -sfn ../agents/charter.md "${BUNDLE_ROOT}/rules/charter.md"
+    # shasum FOLLOWS the link, so both rows carry the target's content hash —
+    # the shape generate-manifest.sh emits for a link row.
+    h_charter="$(shasum -a 256 "${BUNDLE_ROOT}/agents/charter.md" | awk '{print $1}')"
+  fi
   case "${variant}" in
     with-modes)
       modes_json="{\"glass-atrium\":\"755\",\"hooks/probe.sh\":\"755\",\"scripts/lib/apply-spine.sh\":\"${m_spine}\"}"
@@ -103,20 +110,38 @@ make_install_fixture() {
     no-modes)
       modes_json=""
       ;;
+    symlink)
+      # the link row maps the TARGET's mode — what generate-manifest.sh's
+      # `stat -L` probe reads through the link
+      modes_json="{\"glass-atrium\":\"755\",\"hooks/probe.sh\":\"755\",\"scripts/lib/apply-spine.sh\":\"${m_spine}\",\"agents/charter.md\":\"644\",\"rules/charter.md\":\"644\"}"
+      ;;
   esac
   SRC_MANIFEST="${SANDBOX}/manifest.json"
   jq -n \
     --arg hp "${h_probe}" --arg hl "${h_launcher}" --arg hs "${h_spine}" \
-    '{version:"9.9.9", _doc_settings_json:"t",
+    '{version:"9.9.9",
       files:["glass-atrium","hooks/probe.sh","scripts/lib/apply-spine.sh"],
       hashes:{"glass-atrium":$hl,"hooks/probe.sh":$hp,"scripts/lib/apply-spine.sh":$hs}}' \
     >"${SRC_MANIFEST}"
+  if [[ -n "${h_charter}" ]]; then
+    # target first so the staged link resolves at its own row's position
+    jq --arg hc "${h_charter}" '
+      .files += ["agents/charter.md", "rules/charter.md"]
+      | .hashes += {"agents/charter.md": $hc, "rules/charter.md": $hc}' \
+      "${SRC_MANIFEST}" >"${SRC_MANIFEST}.tmp"
+    mv -f -- "${SRC_MANIFEST}.tmp" "${SRC_MANIFEST}"
+  fi
   if [[ -n "${modes_json}" ]]; then
     jq --argjson m "${modes_json}" '. + {modes:$m}' "${SRC_MANIFEST}" >"${SRC_MANIFEST}.tmp"
     mv -f -- "${SRC_MANIFEST}.tmp" "${SRC_MANIFEST}"
   fi
   SRC_BUNDLE="${SANDBOX}/bundle.tar.gz"
-  tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts
+  if [[ "${variant}" == "symlink" ]]; then
+    # no -h/-L: tar archives the link AS a link, the shape the release ships
+    tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts agents rules
+  else
+    tar -czf "${SRC_BUNDLE}" -C "${BUNDLE_ROOT}" glass-atrium hooks scripts
+  fi
 }
 
 # DRIVER command: source update.sh, clear the inherited ERR trap, assign the
@@ -126,6 +151,9 @@ make_update_driver() {
   cat >"${DRIVER}" <<DRV
 #!/usr/bin/env bash
 set -uo pipefail
+# update_main sources the spine at run time; a driver calling a single function
+# has to supply it, and the mode step reads spine_is_merge_claimed_path.
+source "${GA}/scripts/lib/apply-spine.sh"
 source "${GA}/scripts/update.sh"
 trap - ERR
 _update_agent_install_root="\${DRV_ROOT:-}"
@@ -159,7 +187,6 @@ DRV
   # old-consumer required-key gate (pinned pre-modes shape) — additive key inert
   jq -e '
     (.version | type == "string")
-    and (._doc_settings_json | type == "string")
     and (.files | type == "array" and length > 0)
     and (.hashes | type == "object")
     and ((.hashes | length) == (.files | length))
@@ -212,6 +239,23 @@ require_install_sh() {
   [ ! -x "${GA_DIR_FIX}/hooks/probe.sh" ] || return 1
 }
 
+@test "install: symlink mode row is skipped, link intact, target row converged" {
+  require_install_sh
+  [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
+  make_install_fixture symlink
+  run -0 env GA_DIR="${GA_DIR_FIX}" GA_NO_RUN=1 \
+    GA_INSTALL_SRC_MANIFEST="${SRC_MANIFEST}" GA_INSTALL_SRC_BUNDLE="${SRC_BUNDLE}" \
+    "${GA}/install.sh"
+  local install_out="${output}"
+  [[ "${install_out}" == *"mode row is a symlink (skipped, target reconciled on its own row): rules/charter.md"* ]] || return 1
+  [[ "${install_out}" != *"post-apply mode mismatch"* ]] || return 1
+  # the link survives as a link, and the row that carries the real mode converged
+  [ -L "${GA_DIR_FIX}/rules/charter.md" ] || return 1
+  [[ "${install_out}" == *"mode applied: agents/charter.md 600 -> 644"* ]] || return 1
+  [ "$(mode_of "${GA_DIR_FIX}/agents/charter.md")" = "644" ] || return 1
+  [ "$(cat "${GA_DIR_FIX}/rules/charter.md")" = "charter body" ] || return 1
+}
+
 @test "install: malformed octal in modes map is a loud named failure (exit 19)" {
   require_install_sh
   [[ "$(uname -s)" == "Darwin" ]] || skip "install.sh is macOS-only"
@@ -239,20 +283,49 @@ require_install_sh() {
   [ "$(mode_of "${root}/agents/a.md")" = "644" ] || return 1
 }
 
-@test "update: enforce fixes drift, logs delta, warn-skips missing targets" {
+@test "update: enforce fixes drift and logs the delta" {
   make_update_driver
-  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json" enf_out
+  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json"
   mkdir -p "${root}/hooks"
   printf '#!/usr/bin/env bash\nprintf u-ok\n' >"${root}/hooks/u.sh"
   chmod 644 "${root}/hooks/u.sh"
-  jq -n '{files:[], hashes:{}, modes:{"hooks/u.sh":"755","hooks/ghost.sh":"755"}}' >"${mm}"
+  jq -n '{files:[], hashes:{}, modes:{"hooks/u.sh":"755"}}' >"${mm}"
   run -0 "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
-  enf_out="${output}"
-  [[ "${enf_out}" == *"mode applied: hooks/u.sh 644 -> 755"* ]] || return 1
-  [[ "${enf_out}" == *"mode target missing"* ]] || return 1
+  [[ "${output}" == *"mode applied: hooks/u.sh 644 -> 755"* ]] || return 1
   [ "$(mode_of "${root}/hooks/u.sh")" = "755" ] || return 1
   run -0 "${root}/hooks/u.sh" # direct-command execution proof
   [ "${output}" = "u-ok" ] || return 1
+}
+
+@test "update: a byte-swap row with no file on disk is a loud failure" {
+  # A row the deterministic sync owns reaches disk or the apply failed, so its
+  # absence dies naming the row instead of warning past it.
+  make_update_driver
+  local root="${SANDBOX}/uroot" mm="${SANDBOX}/um.json"
+  mkdir -p "${root}/hooks"
+  jq -n '{files:[], hashes:{}, modes:{"hooks/ghost.sh":"755"}}' >"${mm}"
+  run "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
+  [ "$status" -ne 0 ] || return 1
+  [[ "$output" == *"mode target missing on disk: hooks/ghost.sh"* ]] || return 1
+}
+
+@test "update: a merge-claimed agent row with no file on disk warns and continues" {
+  # The merge declines a release-only agent ADD to the agent_lifecycle ceremony, so
+  # its mode row has nothing to reconcile. Dying here would strand the run between
+  # the swap and the version-of-record persist, and every later run would reach the
+  # same row from the up-to-date early return. The row after it still reconciles.
+  make_update_driver
+  local root="${SANDBOX}/aroot" mm="${SANDBOX}/am.json"
+  mkdir -p "${root}/agents" "${root}/hooks"
+  printf 'body\n' >"${root}/agents/kept.md"
+  chmod 600 "${root}/agents/kept.md"
+  jq -n '{files:[], hashes:{},
+          modes:{"agents/absent.md":"644","agents/kept.md":"644"}}' >"${mm}"
+  run -0 "${DRIVER}" update_enforce_manifest_modes "${mm}" "${root}"
+  [[ "${output}" == *"mode target missing on disk (the agent merge declined this body"* ]] || return 1
+  [[ "${output}" == *"agents/absent.md"* ]] || return 1
+  [[ "${output}" != *"FATAL"* ]] || return 1
+  [ "$(mode_of "${root}/agents/kept.md")" = "644" ] || return 1
 }
 
 @test "update: update_file_mode_octal survives the GNU stat -f trap (PATH shim)" {
@@ -294,10 +367,10 @@ SHIM
   [ "$(grep -c 'no modes map' <<<"${output}")" -eq 1 ] || return 1
 }
 
-@test "update: update_run wires post-landing enforcement on all three exit paths" {
+@test "update: update_run wires post-landing enforcement on both exit paths" {
   # wiring pin: one enforcement call after each update_finalize_merge_and_anchors
-  # site (already-up-to-date, sensitive-only, full-apply) — behavior rows above
-  # cover the function; this pins the call sites.
+  # site (already-up-to-date, full-apply) — behavior rows above cover the
+  # function; this pins the call sites.
   [ "$(grep -c 'update_enforce_manifest_modes "${manifest}" "${root}"' \
-    "${GA}/scripts/update.sh")" -eq 3 ] || return 1
+    "${GA}/scripts/update.sh")" -eq 2 ] || return 1
 }

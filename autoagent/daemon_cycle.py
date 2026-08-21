@@ -99,8 +99,8 @@ DEFAULT_OUTCOMES_DIR = ga_paths.get_data_root() / "outcomes"
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
-# shells out and imports it purely to reach the compiled refusal patterns) MUST
-# stay silent — the CliExitContract clean path asserts stderr == "". The PG helper
+# imports it purely to reach the compiled refusal patterns) MUST stay silent —
+# the CliExitContract clean path asserts stderr == "". The PG helper
 # itself writes a JSON `import_error` line to stderr AND re-raises on missing
 # psycopg, so the redirect_stderr below swallows THAT import-time line too; it is
 # scoped to this single import (stderr is restored on block exit — never globally
@@ -639,74 +639,69 @@ ApprovalTier = Literal["auto", "safety", ""]
 # Rationale per core-security.md "High-impact actions" + orchestrator-role.md
 # "Self-Improvement User-Approval Trigger":
 #   - GLOBAL_RULES / scope-security.md: absolute-rule weakening
-#   - KNOWN GAP: the `security.md` pattern is `(^|/)security\.md$`, so it matches
-#     a bare `security.md` only — it does NOT match `core-security.md`, which IS
-#     the real manifest row (rules/glass-atrium/core-security.md), and it matches
-#     ZERO rows of the shipped manifest. core-learning-log.md's Tier-2 trigger
-#     text names core-security.md, so that claim is currently half-untrue of this
-#     code. Widening the pattern is a Tier-2 governance change, deliberately NOT
-#     made here; the gap is stated so a reader is not misled by the list above.
 #   - .env: credential file (LLM02 Sensitive Information)
 #   - com.claude.*.plist / com.glass-atrium.*.plist: launchctl bootstrap
 #     surface (TCC / agent loop) — this project's live LaunchAgents are named
 #     com.glass-atrium.* (autoagent-daemon, monitor, daemon-daily-restart, ...)
+#
+# Consumer reach, which bounds what a row here can buy: both consumers pass an
+# agent BODY path — classify_safety_tier a target_file built as
+# <agents_dir>/<agent>.md, and editable_merge.build_merge_candidate the body it
+# merges — so a row whose basename no agent body can carry cannot fire through
+# either of them.
+#
+# That reach is what the tuple's membership is pinned against, and it is a
+# CONDITION rather than a property of the rows: rows naming a file no agent body
+# can be were dropped because no consumer could present one. A consumer that
+# passes arbitrary manifest relpaths puts them back in range, so adding one
+# obliges a re-read of this set before it ships.
 _SAFETY_SENSITIVE_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(^|/)GLASS_ATRIUM_GLOBAL_RULES\.md$"),
-    re.compile(r"(^|/)security\.md$"),
     re.compile(r"(^|/)scope-security\.md$"),
     re.compile(r"(^|/)\.env(\.|$)"),
     re.compile(r"(^|/)com\.claude\.[^/]+\.plist$"),
     re.compile(r"(^|/)com\.glass-atrium\.[^/]+\.plist$"),
 )
 
-# Sync-path exemptions — EXACT normalized manifest relpaths, never a regex. The
-# updater's changed-file partition normalizes with update_normalize_relpath
-# (which resolves `.`/`..` and fail-closes on anything it cannot normalize)
-# before shelling out, so an exact set cannot over-match the way the tuple's own
-# `security.md` pattern does.
-#
-# NARROW by design — this is the ONLY entry, and every other sensitive path stays
-# refused on every consumer. The charter is exempted because it is the one
-# sensitive row NO deploy path can reach: the updater is the sole live write
-# seam, its partition refuses the charter, and ga-doctor advertises that same
-# updater as the remedy for the drift the refusal causes — a warning the operator
-# cannot clear. Weighed against that, the charter's own refusal buys little: it
-# is vendor-owned prose with no EDITABLE region and no live-only frontmatter pin.
-#
-# The SYMLINK row (rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md -> the entry
-# below) is DELIBERATELY absent: the spine stages with a dereferencing `cp -p`
-# and commits by rename, so routing the link through the byte-swap would replace
-# it with a regular file and let the two manifest rows drift apart. Syncing the
-# real file alone clears BOTH rows, because the link resolves through it.
-_SYNC_EXEMPT_RELPATHS: frozenset[str] = frozenset(
-    {
-        "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
-    }
-)
-
 # Sensitive diff-body patterns (word-boundary regex — avoid `farm`/`confirm`
 # false positives that triggered the original 3-tier user-queue inflation).
 # Per core-security.md High-impact actions (file deletion / external network /
-# git push / chmod / TCC / launchctl bootstrap) + dev-db DROP TABLE.
+# git push / chmod / TCC / launchctl daemon lifecycle) + dev-db DROP TABLE.
 _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # File deletion — `rm -rf` / `rm -fr` (POSIX recursive force)
+    # File deletion — rm plus a short-flag cluster of only r/R/f/F
+    # a mixed cluster (`-rfv`, `-fq`) is an accepted gap the trailing `\b` denies
+    # Residual: the Tier-2 clause line in core-learning-log.md fires here — its
+    # own flag spelling precedes the DB row that also matches that same line
     re.compile(r"\brm\s+-[rRfF]+\b"),
     # Permission / ACL changes
     re.compile(r"\bchmod\b"),
     re.compile(r"\bchown\b"),
     # macOS TCC reset
     re.compile(r"\btccutil\b"),
-    # launchctl bootstrap / bootout — daemon lifecycle
-    re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart)\b"),
-    # git force-push
-    re.compile(r"\bgit\s+push\s+--force\b"),
-    re.compile(r"\bgit\s+push\s+-f\b"),
+    # launchctl daemon lifecycle — modern verbs + still-functional legacy load/unload
+    re.compile(r"\blaunchctl\s+(bootstrap|bootout|kickstart|load|unload)\b"),
+    # git force-push — a force flag STANDING ALONE after whitespace, anywhere
+    # later on a `git push` line; the `.*` spans the line, so a chained line's
+    # unrelated force flag fires too
+    # pair kept split so the loud WARN still names the matched flag
+    # bundled short-flag cluster (`-fq`) = accepted gap, the trailing `\b` denies it
+    # Residual: two non-fixture rule-prose lines fire here (git-workflow, learning-log)
+    # Pre-existing: the flag-adjacent form these rows widened fired on both too
+    # Reachable route targets agents/<name>.md, so the path axis reads that path
+    # → no rules-file path pattern backstops those fires; the diff axis routes them
+    re.compile(r"\bgit\s+push\b.*\s--force\b"),
+    re.compile(r"\bgit\s+push\b.*\s-f\b"),
     # DB drop
     re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE),
     re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE),
     # Dynamic-execution constructs (LLM05 Improper Output Handling)
     re.compile(r"\beval\s*\("),
-    re.compile(r"\bexec\s*\("),
+    # Optional `Sync` group → the bare and execSync call forms both fire
+    # Fail-closed cost, accepted: a live dev-nestjs guardrail bullet mentions it
+    # → a proposal re-adding that bullet routes to safety
+    # Cleaning that live copy is an operator follow-up, outside this branch
+    # execFile / execFileSync stay uncovered — named as a limit, not a claim
+    re.compile(r"\bexec(?:Sync)?\s*\("),
     # Inherited-tree baseline hazards (a body recipe prescribing a raw working-
     # tree reset). A bare `git stash` (incl. `git stash && ...`) discards the
     # tree onto a shared, session-crossing stash stack with no restore guarantee;
@@ -733,15 +728,26 @@ _SAFETY_SENSITIVE_DIFF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # `git clean -f` / `--force` (force flag in any short-flag cluster) deletes
     # untracked files irreversibly; a dry-run (`-n`, no `f`) stays clean.
     re.compile(r"\bgit\s+clean\s+(?:-\S+\s+)*(?:-[a-zA-Z]*f|--force\b)"),
+    # Published-history rewrite → backs the Tier-2 clause "rebase published branch"
+    # Fires on the two-token `git` + `rebase` spelling — whitespace between the
+    # tokens is required, so the hyphen-joined `git-rebase` form stays clean —
+    # with a bare operand, `-i`, or `--onto`
+    # Fail-closed over-escalation: `--abort` / `--continue` / `--skip` fire too
+    # A `rebase-<suffix>` token fires as well — a hyphen satisfies the trailing `\b`
+    # Accepted gaps: the `-c` / `-C` prefixed and aliased spellings split the pair
+    # Residual: the clause text stays narrower — "published" is not regex-decidable
+    re.compile(r"\bgit\s+rebase\b"),
 )
 
 
 # -- shared sensitive-match primitives (single compiled source) -------------
 # These two pure functions are the ONE matching implementation over the
-# compiled tuples above. classify_safety_tier (the daemon path) calls them, and
-# the update skill's python helper (lib/sensitive_patterns.py) imports them, so
-# the daemon and the shell updater refuse the SAME path/diff set with zero regex
-# re-implementation (T15 / gate G7 — a shell-ERE data file is forbidden).
+# compiled tuples above. classify_safety_tier calls them, and lib/sensitive_patterns.py
+# re-exports them so the pattern set is never re-expressed in a second regex
+# dialect — a shell-ERE data file in particular is forbidden. That re-export has
+# no non-test importer today, but the matchers themselves are reached from
+# editable_merge, which the updater shells at its merge stage — so the update
+# path consumes them too, not the daemon alone.
 
 
 def match_sensitive_path(path: str) -> str | None:
@@ -754,30 +760,6 @@ def match_sensitive_path(path: str) -> str | None:
         if pat.search(path or ""):
             return pat.pattern
     return None
-
-
-def match_sensitive_path_for_sync(path: str) -> str | None:
-    """``match_sensitive_path`` minus the ``_SYNC_EXEMPT_RELPATHS`` carve-out —
-    the matcher for ONE consumer: the updater's CHANGED-FILE partition
-    (``update_partition_sensitive_sync``, reached from the preview and apply
-    stages of scripts/update.sh via lib/sensitive_patterns.py's ``path-sync``
-    mode).
-
-    Every OTHER consumer keeps calling the bare ``match_sensitive_path`` and so
-    stays strict on the exempt set:
-      * the updater's VENDOR-REMOVAL sweep — a vendor-dropped harness file is
-        reported, never auto-Trashed, so its partition must not be relaxed;
-      * ``classify_safety_tier`` — the daemon's 2-tier approval routing;
-      * ``editable_merge.build_merge_candidate`` — the agent-body merge refusal,
-        which imports the bare matcher directly and never traverses this path.
-
-    The exemption is keyed on an EXACT normalized relpath, so a spelling the
-    caller could not normalize never reaches a match (the shell fails closed
-    upstream) and no near-miss basename is silently swept in.
-    """
-    if (path or "") in _SYNC_EXEMPT_RELPATHS:
-        return None
-    return match_sensitive_path(path)
 
 
 def match_sensitive_diff(diff: str) -> str | None:
@@ -5656,16 +5638,15 @@ def classify_safety_tier(patch: PatchProposal) -> str:
 
     Three triggers per core-security.md High-impact actions:
       1. target_file path matches a sensitive-file regex (GLOBAL_RULES,
-         scope-security.md, .env, com.claude.*.plist / com.glass-atrium.*.plist).
-         KNOWN GAP: the tuple's `security.md` pattern matches a BARE security.md
-         only — not `core-security.md`, the real manifest row — and hits zero
-         shipped rows; see the note on _SAFETY_SENSITIVE_PATH_PATTERNS. Widening
-         it is a separate Tier-2 governance change.
-         This tier ALWAYS calls the bare matcher, never the updater's
-         sync-exempt variant — the charter classifies safety-sensitive here.
-      2. proposed_diff body contains a sensitive-token regex (rm -rf, chmod,
-         tccutil, launchctl bootstrap/bootout, git push --force, DROP TABLE,
-         eval/exec)
+         scope-security.md, .env, com.claude.*.plist /
+         com.glass-atrium.*.plist). The tuple's own header states what the
+         agent-body reach of this call leaves such a row able to buy.
+      2. proposed_diff body contains a sensitive-token regex. The tuple
+         _SAFETY_SENSITIVE_DIFF_PATTERNS is the authority for the row set —
+         forced deletion, permission/ACL, TCC reset, launchctl lifecycle,
+         force-push, destructive-git recovery forms, published-history
+         rewrite, DB drop, dynamic execution — and each row carries its own
+         scope comment there.
       3. touched_frontmatter=True (name/tools/scope/etc. — identity surface)
 
     Empty diff → no safety classification (downstream classify_patch_area

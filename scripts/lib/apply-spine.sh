@@ -8,11 +8,10 @@
 # suite sources it under strict mode to prove that).
 #
 # Scope (E3 capabilities): spine_find_changed_files (T13, non-agent hash-diff
-# selection) · spine_find_removed_files (T13, vendor-removal provenance selection
-# — files the prior baseline shipped but the new release dropped) ·
-# spine_stage_and_verify + spine_commit_staged + spine_apply (T11, stage +
-# per-file SHA-256 verify, then atomic swap with rollback) · spine_set_baseline +
-# spine_get_baseline (T14, base@install anchor capture/read).
+# selection) · spine_stage_and_verify then spine_commit_staged (T11, stage +
+# per-file SHA-256 verify, then atomic swap with rollback — each caller sequences
+# the two phases itself) · spine_set_baseline + spine_get_baseline (T14,
+# base@install anchor capture/read).
 #
 # Manifest schema (from generate-manifest.sh, v1.0.0):
 #   { "version": "1.0.0", "files": ["agents/foo.md", …],
@@ -27,6 +26,12 @@
 # in-place cp would expose. NOT atomic is the CROSS-file set: the apply is STAGED
 # and ROLLBACK-GUARDED, and a mid-swap failure restores every already-swapped
 # file from a pre-swap snapshot. No cross-file all-or-nothing primitive exists.
+#
+# Symlink rows travel the same chain without being flattened into regular files:
+# the source test, the staged-file test and the snapshot test all read link-ness
+# first, the staging, snapshot and swap copies reproduce a link as a link, and a
+# link row is hash-verified at its release-tree position, where its target
+# resolves.
 #
 # Loud-fail contract (shared-self-improve-hygiene Precondition Loud-Fail): every
 # verify mismatch, missing source, or missing manifest hash returns non-zero +
@@ -67,6 +72,32 @@ spine_sha256_of() {
     return 1
   fi
   printf '%s\n' "${out%% *}"
+}
+
+# Link-aware existence test — the shared predicate for every path in the apply
+# chain that may be a symlink (the release source, the staged file, the live
+# destination, the snapshot entry). A dereferencing `-f` reads FALSE for a link
+# whose target is absent, and a staged or snapshotted link is dangling whenever
+# its target is not copied into the same directory, so link-ness is tested FIRST
+# and regular-file-ness second. Each caller's default on false is destructive in
+# a different way — abort the apply, skip the snapshot, delete the live row.
+spine_is_present_path() {
+  [[ -L "$1" ]] || [[ -f "$1" ]]
+}
+
+# Copy src to dst preserving link-ness: a symlink source is reproduced at dst as
+# a symlink carrying the same target text, never dereferenced into a regular
+# file; every other source takes the mode-preserving file copy. Every dst passed
+# here is a staging entry, a snapshot entry or an atomic swap's sibling temp —
+# never a live row — so the force flag replaces nothing an operator owns.
+spine_copy_entry() {
+  local src="$1" dst="$2" link_target
+  if [[ -L "${src}" ]]; then
+    link_target="$(readlink -- "${src}")" || return 1
+    ln -sfn -- "${link_target}" "${dst}"
+    return
+  fi
+  cp -p -- "${src}" "${dst}"
 }
 
 # NON-INTERACTIVE python3 runnability probe (bootstrap parity with install.sh's
@@ -121,19 +152,27 @@ PY
   python3 -c "${py_src}" "${path}" "${manifest}"
 }
 
-# Predicate: does the E4 agent three-anchor merge path CLAIM this manifest path?
-# Returns 0 (claimed) / 1 (not claimed). The merge iterates a NON-recursive
-# agents/*.md glob and skips the non-agent charter by basename before its lib is
-# ever invoked (update.sh update_merge_agent_editable_regions), so its claim is
-# exactly "a top-level agents/<name>.md that is not the charter".
+# Predicate: does a three-anchor merge path CLAIM this manifest path? Returns 0
+# (claimed) / 1 (not claimed). Two iteration sites answer to it, so the claim is a
+# union of two rules: the E4 agent merge walks a NON-recursive agents/*.md glob and
+# skips the non-agent charter by basename before its lib is ever invoked, and the
+# roster dispatch walks the declaration below by path identity (both in
+# update.sh — update_merge_agent_editable_regions, update_dispatch_roster_merge).
 #
-# SINGLE source of truth for both deploy consumers: the merge loop iterates
-# through this predicate and the spine's agents-markdown exclusion below is its
-# complement, so the two scopes cannot drift apart into a path claimed by neither
-# (which is how the charter, the reference documents and the templates were
-# excluded here AND unreachable there, hash-verified by no deploy path at all).
+# SINGLE source of truth for both deploy consumers: each merge loop iterates
+# through this predicate — the roster one through the very list this reads — and
+# the spine's agents-markdown exclusion below is its complement, so the two scopes
+# cannot drift apart into a path claimed by neither (which is how the charter, the
+# reference documents and the templates were excluded here AND unreachable there,
+# hash-verified by no deploy path at all).
 spine_is_merge_claimed_path() {
   local path="$1" rest
+  # The declaration is a constant, so it is read once per process: this predicate
+  # answers once per manifest row, and a fork per row would pay for the same list.
+  if [[ -z "${_SPINE_ROSTER_SET:-}" ]]; then
+    _SPINE_ROSTER_SET=$'\n'"$(spine_get_roster_paths)"$'\n'
+  fi
+  [[ "${_SPINE_ROSTER_SET}" == *$'\n'"${path}"$'\n'* ]] && return 0
   [[ "${path}" == agents/*.md ]] || return 1
   rest="${path#agents/}"
   [[ "${rest}" == */* ]] && return 1                            # below the non-recursive glob
@@ -141,34 +180,33 @@ spine_is_merge_claimed_path() {
   return 0
 }
 
-# Predicate: is this manifest path EXCLUDED from the deterministic non-agent
-# sync? Returns 0 (excluded) / 1 (included). THREE disjoint arms (T13 CRITICAL):
-#   * *.local.md   — learned local-overlay files (never vendor-owned)
-#   * config.toml  — rendered, git-ignored runtime config (user-owned)
-#   * agents-subtree markdown the E4 merge CLAIMS — resolved by that separate
-#     three-anchor merge path (base@install / vendor / local), never here
+# The ROSTER paths: manifest rows whose content is a union of vendor rows and
+# live-generated rows, so a plain replacement discards the live half. Emitted one
+# relative path per line.
 #
-# The two user-owned arms are UNCONDITIONAL and run FIRST: they are not part of
-# the merge's complement and must never be folded into it, because a user-owned
-# file routed into this hash-verified byte-swap is overwritten from the release
-# manifest — silent user-data destruction. Only the agents-markdown arm is the
-# merge's business, and there the exclusion is EXACTLY the merge's complement.
+# DATA, and load-bearing where it sits: the claim predicate above reads this list
+# for its membership arm and the roster dispatch iterates it, so both the claim and
+# the delivery of these rows move with one edit here. ONE declaration is the
+# invariant: a second list authored elsewhere would agree with this one by hand
+# rather than by construction, and drift silently the first time either moves.
+spine_get_roster_paths() {
+  printf '%s\n' \
+    'agent-registry.json' \
+    'scoped/scope-dev.md' \
+    'hooks/inject-scope-rules.sh' \
+    'hooks/lib/styleref-roster.sh'
+}
+
+# Predicate: is this manifest path EXCLUDED from the deterministic non-agent
+# sync? Returns 0 (excluded) / 1 (included). ONE arm, so the exclusion is the
+# merge's claim and nothing else: a claimed body is resolved by the separate
+# three-anchor merge path (base@install / vendor / local) rather than here. That
+# equality is what makes the two deploy consumers a partition of the manifest —
+# a second arm would carve a row out of both scopes and leave it hash-verified by
+# no deploy path at all. The name is kept because the two consumers ask opposite
+# questions of the same fact, and the spine's callers read better asking this one.
 spine_is_excluded_path() {
-  local path="$1"
-  if [[ "${path}" == *.local.md ]]; then
-    return 0
-  fi
-  case "${path}" in
-    config.toml | */config.toml) return 0 ;;
-  esac
-  if [[ "${path}" == agents/* && "${path}" == *.md ]]; then
-    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
-    if spine_is_merge_claimed_path "${path}"; then
-      return 0
-    fi
-    return 1
-  fi
-  return 1
+  spine_is_merge_claimed_path "$1"
 }
 
 # Emit (one relative path per line) every manifest path claimed by NEITHER deploy
@@ -176,14 +214,17 @@ spine_is_excluded_path() {
 # ever hash-verifies it and a deploy reports success without having considered it.
 # Detection only: the CALLER owns the loud line (same split as
 # spine_find_changed_files → update_commit_callback). Arg: $1 = manifest.json.
+#
+# While the spine's exclusion is exactly the merge's claim this emits NOTHING for
+# any input, which is the invariant rather than a defect: the two guards below are
+# the general definition, and they are what re-arms the scan the moment a second
+# exclusion arm makes the two predicates differ again.
 spine_find_uncovered_paths() {
   local manifest="$1" path
   spine_require_tools jq || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
-    # Exclusion first: a path the spine syncs is covered, and every non-agent path
-    # answers that without consulting the merge predicate at all. The conjunction
-    # is the same either way — both predicates are pure.
+    # Exclusion first: a path the spine syncs is covered whatever the merge says.
     # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
     if ! spine_is_excluded_path "${path}"; then
       continue
@@ -199,8 +240,8 @@ spine_find_uncovered_paths() {
 # T13 — non-agent hash-diff change selection
 
 # Emit (one relative path per line) the NON-AGENT files whose live content
-# differs from the staged new-release manifest, with the agent/overlay/config
-# exclusions applied. A path absent from the live install is reported as changed
+# differs from the staged new-release manifest, with the merge-claimed agent
+# exclusion applied. A path absent from the live install is reported as changed
 # (it must be installed). Args: $1 = new-release manifest.json · $2 = live
 # install root. Loud-fails (rc 1) on a manifest path that carries no hash.
 spine_find_changed_files() {
@@ -229,82 +270,26 @@ spine_find_changed_files() {
   done < <(jq -r '.files[]' -- "${manifest}")
 }
 
-# T13 — vendor-removal provenance selection
-
-# Emit (one relative path per line) the NON-AGENT files that the PRIOR-VENDOR
-# baseline shipped but the new release DROPPED, restricted to files still holding
-# their pristine vendor content — i.e. safe to sweep. A live file whose content
-# diverges from the baseline hash is a USER edit and is PRESERVED (never listed).
-# The agent/overlay/config exclusions apply (those paths are owned by the E4
-# merge / user, not the vendor sync). A path already absent locally is a no-op.
-# This is the detection half of the deletion pass; the CALLER wires the list into
-# the confirm-gate preview + the Trash removal (removal policy stays caller-side,
-# same split as spine_find_changed_files → update_commit_callback). Args: $1 =
-# prior-vendor baseline manifest.json · $2 = new-release manifest.json · $3 = live
-# install root. Loud-fails (rc 1) on a missing manifest or a baseline path that
-# carries no hash.
-spine_find_removed_files() {
-  local baseline_manifest="$1" new_manifest="$2" install_root="$3"
-  local path want live target new_files
-  spine_require_tools jq || return 1
-  if [[ ! -f "${baseline_manifest}" ]]; then
-    printf 'apply-spine: removal scan needs a baseline manifest: %s\n' \
-      "${baseline_manifest}" >&2
-    return 1
-  fi
-  if [[ ! -f "${new_manifest}" ]]; then
-    printf 'apply-spine: removal scan needs a new-release manifest: %s\n' \
-      "${new_manifest}" >&2
-    return 1
-  fi
-  # Materialise the new release's file set ONCE for a fork-free membership test.
-  new_files="$(jq -r '.files[]' -- "${new_manifest}")" || return 1
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] || continue
-    # agent/overlay/config paths are owned by other merge paths, never swept.
-    if spine_is_excluded_path "${path}"; then
-      continue
-    fi
-    # Still shipped by the new release → not a removal. Quoted pattern = literal.
-    case $'\n'"${new_files}"$'\n' in
-      *$'\n'"${path}"$'\n'*) continue ;;
-      *) ;; # dropped by the new release → fall through to the provenance check
-    esac
-    target="${install_root}/${path}"
-    # Already gone (or not a regular file we own) → nothing to remove.
-    [[ -f "${target}" ]] || continue
-    want="$(spine_get_manifest_hash "${baseline_manifest}" "${path}")"
-    if [[ -z "${want}" ]]; then
-      printf 'apply-spine: baseline has no hash for %s\n' "${path}" >&2
-      return 1
-    fi
-    live="$(spine_sha256_of "${target}")" || return 1
-    # User-modified vs the prior-vendor baseline → PRESERVE (never sweep an edit).
-    if [[ "${live}" != "${want}" ]]; then
-      continue
-    fi
-    printf '%s\n' "${path}"
-  done < <(jq -r '.files[]' -- "${baseline_manifest}")
-}
-
 # T11 — staged apply + rollback
 
 # Phase 1: copy each changed file from the new-release tree into a staging dir
-# and verify the staged copy's SHA-256 equals the manifest hashes[path]. Reads
-# the change set (one relative path per line) from STDIN. Touches ONLY the
-# staging dir — the live install is never modified here, so any mismatch is a
-# clean loud-fail (rc 1) with zero rollback needed. Args: $1 = new-release tree
-# root · $2 = manifest.json · $3 = staging dir.
+# and verify its SHA-256 equals the manifest hashes[path]. Reads the change set
+# (one relative path per line) from STDIN. Touches ONLY the staging dir — the
+# live install is never modified here, so any mismatch is a clean loud-fail
+# (rc 1) with zero rollback needed. A symlink row is staged as a symlink and
+# verified at its release-tree position (see the hash-subject branch below).
+# Args: $1 = new-release tree root · $2 = manifest.json · $3 = staging dir.
 spine_stage_and_verify() {
   local new_dir="$1" manifest="$2" staging="$3"
-  local path src dst want got
+  local path src dst want got verify_src
   # jq OR runnable python3 — the install.sh bootstrap verifies jq-less (pre-ga-deps).
   # shellcheck disable=SC2310
   spine_require_manifest_parser || return 1
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     src="${new_dir}/${path}"
-    if [[ ! -f "${src}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if ! spine_is_present_path "${src}"; then
       printf 'apply-spine: staged source missing: %s\n' "${src}" >&2
       return 1
     fi
@@ -315,8 +300,23 @@ spine_stage_and_verify() {
     fi
     dst="${staging}/${path}"
     mkdir -p -- "$(dirname -- "${dst}")"
-    cp -p -- "${src}" "${dst}"
-    got="$(spine_sha256_of "${dst}")" || return 1
+    # The copy's status is the ONLY detection a link row has: the hash below
+    # reads the release-tree source for a link, so a staged link that never
+    # landed still verifies clean and the swap would then find nothing to move.
+    # shellcheck disable=SC2310  # copy in a condition by design — verdict branched on
+    if ! spine_copy_entry "${src}" "${dst}"; then
+      printf 'apply-spine: staging copy failed: %s -> %s\n' "${src}" "${dst}" >&2
+      return 1
+    fi
+    # A staged link is dangling whenever its target is not co-staged, and hashing
+    # a dangling link fails, so a link row is hashed at its position in the
+    # release tree, where its target resolves. The manifest records the target's
+    # content hash either way, so the comparison itself is unchanged.
+    verify_src="${dst}"
+    if [[ -L "${src}" ]]; then
+      verify_src="${src}"
+    fi
+    got="$(spine_sha256_of "${verify_src}")" || return 1
     if [[ "${got}" != "${want}" ]]; then
       printf 'apply-spine: hash mismatch staging %s (want=%s got=%s)\n' \
         "${path}" "${want}" "${got}" >&2
@@ -333,10 +333,21 @@ spine_stage_and_verify() {
 # in-place cp would expose. On any failure the partial temp is removed and rc 1
 # returned; the CALLER owns the failure policy (warn-and-continue / break-and-
 # rollback / set -e abort). Args: $1 = src file · $2 = dst path.
+#
+# A symlink src is reproduced as a symlink at the temp and rename(2) moves the
+# link itself over dst, so the forward swap and the rollback restore both land a
+# link row as a link rather than as a regular file holding the target's bytes.
+#
+# Residue: the temp is a SIBLING of dst, so it sits inside the install root, while
+# the updater's cleanup tears down only its own work dir. A process killed between
+# the copy and the rename therefore leaves that temp behind. It carries no manifest
+# row, so the manifest-scoped stages (change selection, mode enforcement, the mirror
+# refresh) never reach it and the swap stays atomic — clearing it is a manual sweep.
 spine_atomic_swap() {
   local src="$1" dst="$2" tmp
   tmp="${dst}.tmp.$$"
-  if ! { cp -p -- "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
+  # shellcheck disable=SC2310  # copy in a condition by design — verdict branched on
+  if ! { spine_copy_entry "${src}" "${tmp}" && mv -f -- "${tmp}" "${dst}"; }; then
     rm -f -- "${tmp}"
     return 1
   fi
@@ -347,6 +358,11 @@ spine_atomic_swap() {
 # newly created by the swap → remove it. Args: $1 = install root · $2 = snapshot
 # dir · $3.. = touched relative paths. Best-effort: a failed restore is reported
 # but does not abort the remaining restores (partial-recovery beats no recovery).
+#
+# The "no snapshot → created by the swap" reading is safe only because the
+# snapshot test is link-aware: a snapshotted link is dangling inside the snapshot
+# dir whenever its target is not co-copied, and a dereferencing test would read
+# that entry as absent and DELETE the live row it was taken to protect.
 spine_rollback() {
   local install_root="$1" snapshot="$2"
   shift 2
@@ -355,7 +371,8 @@ spine_rollback() {
     [[ -n "${path}" ]] || continue
     snap="${snapshot}/${path}"
     dst="${install_root}/${path}"
-    if [[ -f "${snap}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if spine_is_present_path "${snap}"; then
       # Atomic restore via the shared swap (sibling temp + rename, never in-place).
       spine_atomic_swap "${snap}" "${dst}" \
         || printf 'apply-spine: rollback restore FAILED: %s\n' "${path}" >&2
@@ -373,6 +390,11 @@ spine_rollback() {
 # temp + rename). On the first failure, every touched file is rolled back to its
 # pre-swap state and rc 1 is returned. Args: $1 = staging dir · $2 = install root
 # · $3 = snapshot dir.
+#
+# A link row is carried through both steps as a link: the staged-source test is
+# link-aware (a staged link is dangling whenever its target is not co-staged),
+# and the snapshot copy preserves the live link's target text so the rollback
+# restores a link rather than a regular file holding the old target's bytes.
 spine_commit_staged() {
   local staging="$1" install_root="$2" snapshot="$3"
   local -a paths=() touched=()
@@ -385,15 +407,18 @@ spine_commit_staged() {
     src="${staging}/${path}"
     dst="${install_root}/${path}"
     snap="${snapshot}/${path}"
-    if [[ ! -f "${src}" ]]; then
+    # shellcheck disable=SC2310  # predicate in a condition by design — verdict branched on
+    if ! spine_is_present_path "${src}"; then
       failed="${path}"
       rc=1
       break
     fi
     # snapshot the pre-swap live file BEFORE marking touched / overwriting.
-    if [[ -f "${dst}" ]]; then
+    # shellcheck disable=SC2310
+    if spine_is_present_path "${dst}"; then
       mkdir -p -- "$(dirname -- "${snap}")"
-      if ! cp -p -- "${dst}" "${snap}"; then
+      # shellcheck disable=SC2310
+      if ! spine_copy_entry "${dst}" "${snap}"; then
         failed="${path}"
         rc=1
         break
@@ -416,30 +441,6 @@ spine_commit_staged() {
     spine_rollback "${install_root}" "${snapshot}" "${touched[@]:-}"
     return 1
   fi
-}
-
-# T11 transaction: verify the ENTIRE change set first (no install mutation),
-# then commit with rollback. Reads the change set (one relative path per line)
-# from STDIN. A staging/verify failure aborts before the install is touched at
-# all; a commit failure rolls back. Args: $1 = new-release tree root · $2 =
-# manifest.json · $3 = install root · $4 = work dir (staging/ + snapshot/ are
-# created beneath it). Returns 0 only when every changed file is committed.
-spine_apply() {
-  local new_dir="$1" manifest="$2" install_root="$3" work_dir="$4"
-  local staging="${work_dir}/staging" snapshot="${work_dir}/snapshot"
-  local -a paths=()
-  local path
-  spine_require_tools jq || return 1
-  mkdir -p -- "${staging}" "${snapshot}"
-  while IFS= read -r path; do
-    [[ -n "${path}" ]] && paths+=("${path}")
-  done
-  # Phase 1 — stage + verify ALL (loud-fail leaves the install untouched).
-  printf '%s\n' "${paths[@]:-}" \
-    | spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" || return 1
-  # Phase 2 — snapshot + swap with rollback on any mid-swap failure.
-  printf '%s\n' "${paths[@]:-}" \
-    | spine_commit_staged "${staging}" "${install_root}" "${snapshot}" || return 1
 }
 
 # T14 — baseline (base@install) anchor capture + read

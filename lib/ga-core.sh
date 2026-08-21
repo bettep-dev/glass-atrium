@@ -246,8 +246,9 @@ capture_install_baseline() {
 # the gated-2-way fallback (more human gating, never a silent corrupt). The updater
 # (scripts/update.sh update_capture_base_content) re-seeds the SAME store post-apply; install seeds first.
 # Source bodies come from ${GA_ROOT}/<rel> (the real release files the symlink farm points at), NOT the
-# installed target symlinks. Only agents/*.md carry EDITABLE regions (predicate mirrors
-# spine_is_excluded_path). ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
+# installed target symlinks. Only agent markdown carries EDITABLE regions; the loop's
+# predicate is deliberately broader than spine_is_excluded_path (see its note below).
+# ADVISORY + loud: every copy miss is WARNed + counted, never fatal.
 capture_base_agent_store() {
   local store rel src dst base copied=0 missing=0 refused=0
   store="$(spine_baseline_dir)/base-agents"
@@ -261,7 +262,10 @@ capture_base_agent_store() {
   # shellcheck disable=SC2312
   while IFS= read -r rel; do
     [[ -n "${rel}" ]] || continue
-    # canonical "agent markdown" predicate (mirrors spine_is_excluded_path).
+    # ANY agent markdown — strictly BROADER than spine_is_excluded_path, which claims
+    # only the top-level bodies other than the charter. The surplus (nested references
+    # and templates, the charter) seeds basename keys the merge never asks for, since
+    # load_base_text is called only for a body the merge claims: dead weight, not risk.
     [[ "${rel}" == agents/* && "${rel}" == *.md ]] || continue
     src="${GA_ROOT}/${rel}"
     if [[ ! -f "${src}" ]]; then
@@ -613,9 +617,9 @@ run_uninstall() {
   remove_empty_dirs
 
   # T26 — explicit NON-SYMLINK update-state teardown. remove_manifest_links +
-  # sweep_orphans only reach SYMLINKS, so the update system's plain-file runtime
-  # state (pause flag) + recovery state (base@install baseline) would fossilize
-  # after an uninstall unless torn down explicitly here.
+  # sweep_orphans only reach SYMLINKS, so the update system's plain-file recovery
+  # state (the base@install baseline) would fossilize after an uninstall unless
+  # torn down explicitly here.
   teardown_update_state
 
   # parity with install's additive wiring: un-wire ONLY the Atrium hook
@@ -641,28 +645,11 @@ run_uninstall() {
 # T26: non-symlink update-state teardown (uninstall)
 # remove_manifest_links/sweep_orphans only unlink SYMLINKS; the update system's runtime/recovery state
 # lives in PLAIN files they never reach, so this explicit step tears them down:
-#   * pause flag (GA_ROOT/.update-state/autoagent-pause.flag): ephemeral coordination state — ALWAYS
-#     removed (a residual flag could wrongly suspend a later reinstall's daemon; update_pause_force_remove
-#     removes unconditionally — no owner gate — so even foreign crashed-updater residue is cleared).
 #   * base@install baseline (the next update's diff base): RECOVERY state — KEPT by default (mirrors
 #     config.toml's keep-unless-`--purge-config`); moved to the Trash (never rm'd) ONLY under --purge-config.
 # Dry-run reports each action without performing it.
 teardown_update_state() {
-  # STEP A — pause flag (always; ephemeral coordination state).
-  local flag
-  # update_pause_flag_path is a stdout-only resolver (printf; always rc 0) — no
-  # side effect, no condition, so no SC2310 masking concern.
-  flag="$(update_pause_flag_path)"
-  if "${DRY_RUN}"; then
-    log "dry-run: would remove update pause flag (${flag})"
-  elif [[ -e "${flag}" ]]; then
-    update_pause_force_remove
-    log "uninstall: removed update pause flag (${flag})"
-  else
-    log "uninstall: no update pause flag to remove (${flag})"
-  fi
-
-  # STEP B — base@install baseline (recovery state; keep unless --purge-config).
+  # base@install baseline (recovery state; keep unless --purge-config).
   local baseline
   baseline="$(spine_baseline_path)"
   if ! "${PURGE_CONFIG}"; then
@@ -691,7 +678,7 @@ teardown_update_state() {
 # run_update — the `glass-atrium update` subcommand handler: DISPATCHES to the updater script
 # (scripts/update.sh) and propagates its exit code verbatim.
 # WHY a SUBPROCESS, never a source: the updater is its OWN entry point — it arms `set -Eeuo pipefail` +
-# `trap update_cleanup EXIT INT TERM` (T10 pause-flag + apply-lock unwind). Sourcing would re-arm those
+# `trap update_cleanup EXIT INT TERM` (apply-lock unwind). Sourcing would re-arm those
 # traps in OUR shell (its EXIT cleanup fires on the launcher's exit; a double-source re-runs readonly
 # assigns). A child keeps its strict mode + trap-cleanup isolated; its exit code is ours.
 # Args ("$@") pass through verbatim — the updater owns its argv parsing (`--help`), so the launcher MUST

@@ -440,6 +440,20 @@ enforce_manifest_modes() {
     # never a silent skip (the silent-inert class one level up)
     [[ "${mode}" =~ ^[0-7]{3,4}$ ]] \
       || die "${EXIT_MODE_FAILED}" "manifest.modes[${rel}] is not a valid octal mode: '${mode}'"
+    # A SYMLINK row has nothing of its own to reconcile, and reconciling it is
+    # not merely useless but impossible: the `-f` gate below and `chmod` both
+    # FOLLOW the link, while file_mode_octal's `stat -f '%Lp'` is BSD LSTAT and
+    # reads the LINK's own mode — so the re-read can never move and the verify
+    # aborts every fresh install. The manifest entry describes the TARGET
+    # (generate-manifest.sh probes with `stat -L`, i.e. FOLLOW), and that target
+    # is itself a files[] member reconciled on its own row, so skipping loses no
+    # coverage. Regular files keep the loud verify untouched.
+    # Ordered before the missing-target gate so a dangling link is skipped as a
+    # link row rather than read as an absent file by a dereferencing test.
+    if [[ -L "${GA_DIR}/${rel}" ]]; then
+      log "mode row is a symlink (skipped, target reconciled on its own row): ${rel}"
+      continue
+    fi
     [[ -f "${GA_DIR}/${rel}" ]] \
       || die "${EXIT_MODE_FAILED}" "mode target missing after install: ${rel}"
     actual="$(file_mode_octal "${GA_DIR}/${rel}")"

@@ -62,6 +62,9 @@ make_update_driver() {
   cat >"${DRIVER}" <<DRV
 #!/usr/bin/env bash
 set -uo pipefail
+# update_main sources the spine at run time; a driver calling a single function
+# has to supply it, and the mode step reads spine_is_merge_claimed_path.
+source "${GA}/scripts/lib/apply-spine.sh"
 source "${GA}/scripts/update.sh"
 trap - ERR
 "\$@"
@@ -184,19 +187,37 @@ make_regular_fixture() {
   [[ -f "${GA}/manifest.json" ]] || skip "manifest.json absent"
   jq -e '(.modes // empty) | type == "object"' "${GA}/manifest.json" >/dev/null \
     || skip "manifest carries no modes map"
-
   make_update_driver
-  local mirror="${SANDBOX}/mirror"
+  local mirror="${SANDBOX}/mirror" present="${SANDBOX}/present.txt" scoped="${SANDBOX}/scoped.json"
   mkdir -p "${mirror}"
-  # -T - reads the path list on stdin; symlinks are archived as symlinks
+  # Scope both the clone and the map to the rows the tree carries a path for. A
+  # listed row with no path is a manifest-freshness gap owned by
+  # generate-manifest.sh --check, and reading it here would turn a mode reading
+  # into a second freshness reading that skips whenever the manifest lags a commit.
   jq -r '.files[]' "${GA}/manifest.json" \
-    | (cd "${GA}" && tar -cf - -T -) \
+    | while IFS= read -r rel; do
+      [ -e "${GA}/${rel}" ] || [ -L "${GA}/${rel}" ] || continue
+      printf '%s\n' "${rel}"
+    done >"${present}"
+  jq --rawfile present "${present}" '
+      ($present | split("\n") | map(select(length > 0))
+        | map({key: ., value: true}) | from_entries) as $keep
+      | .files = (.files | map(select($keep[.])))
+      | .modes = (.modes | with_entries(select($keep[.key])))
+    ' "${GA}/manifest.json" >"${scoped}" || return 1
+  # non-vacuity — the scoped map is still the real one, symlink row included
+  [ "$(jq -r '.modes | length' "${scoped}")" -gt 100 ] || return 1
+  jq -e '.modes | has("rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md")' "${scoped}" >/dev/null \
+    || return 1
+
+  # -T - reads the path list on stdin; symlinks are archived as symlinks
+  (cd "${GA}" && tar -cf - -T -) <"${present}" \
     | (cd "${mirror}" && tar -xf -) || return 1
 
   # precondition — the mirror really does carry the live symlink shape
   [ -L "${mirror}/rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md" ] || return 1
 
-  run -0 "${DRIVER}" update_enforce_manifest_modes "${GA}/manifest.json" "${mirror}"
+  run -0 "${DRIVER}" update_enforce_manifest_modes "${scoped}" "${mirror}"
   [[ "${output}" != *"FATAL"* ]] || return 1
   [[ "${output}" != *"post-apply mode mismatch"* ]] || return 1
   [[ "${output}" == *"symlink (skipped"* ]] || return 1

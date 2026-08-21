@@ -31,11 +31,17 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _AUTOAGENT_DIR = _REPO_ROOT / "autoagent"
@@ -52,6 +58,94 @@ try:
 except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
     em = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
+
+
+_SUITE_ENV_RESTORE: dict[str, str | None] = {}
+_SUITE_CLAUDE_BIN_RESTORE: str | None = None
+_SUITE_KWDEFAULT_RESTORE: str | None = None
+_SUITE_SANDBOX_DIR: str | None = None
+
+
+def _pin_model_seam(stub: str) -> None:
+    """Point every in-process arbiter call at ``stub``, both bindings of it.
+
+    ``daemon_cycle.CLAUDE_BIN`` reads ``AUTOAGENT_CLAUDE_BIN`` once, at ITS import,
+    and ``gap_arbiter.get_decision`` copies that value into a keyword default at
+    ITS import. Discovery imports every module before the first setUpModule runs,
+    so a sibling module importing gap_arbiter freezes that copy at a bare
+    ``claude`` — which is why rebinding the constant alone leaves exactly one
+    PATH invocation in a whole-root run and none when this file runs alone.
+    """
+    global _SUITE_CLAUDE_BIN_RESTORE, _SUITE_KWDEFAULT_RESTORE
+    _SUITE_CLAUDE_BIN_RESTORE = em.dc.CLAUDE_BIN
+    em.dc.CLAUDE_BIN = stub
+    import gap_arbiter as ga  # noqa: PLC0415 — mirrors editable_merge's lazy seam load
+
+    kwdefaults = ga.get_decision.__kwdefaults__ or {}
+    if "claude_bin" in kwdefaults:
+        _SUITE_KWDEFAULT_RESTORE = kwdefaults["claude_bin"]
+        kwdefaults["claude_bin"] = stub
+
+
+def _unpin_model_seam() -> None:
+    if _SUITE_CLAUDE_BIN_RESTORE is not None:
+        em.dc.CLAUDE_BIN = _SUITE_CLAUDE_BIN_RESTORE
+    if _SUITE_KWDEFAULT_RESTORE is not None:
+        import gap_arbiter as ga  # noqa: PLC0415 — restore the binding pinned above
+
+        kwdefaults = ga.get_decision.__kwdefaults__ or {}
+        if "claude_bin" in kwdefaults:
+            kwdefaults["claude_bin"] = _SUITE_KWDEFAULT_RESTORE
+
+
+def setUpModule() -> None:
+    """Redirect the state root and the model seam into a module-scoped sandbox.
+
+    ``state_root`` falls back to ``$HOME/.claude/data/update`` whenever
+    ``ATRIUM_UPDATE_STATE_DIR`` is unset, so a test reaching the arbiter without
+    naming a state directory writes a decision record under the operator's real
+    state root. Pinning it HERE covers every test in the module, including one
+    added later whose fixture happens to route to the arbiter — which the
+    per-test ``--state-dir`` arguments, correct where they appear, cannot.
+
+    The model seam needs the export AND the two in-process bindings
+    ``_pin_model_seam`` covers: the export reaches the subprocess drives, the
+    rebindings reach the in-process ones. The stub exits non-zero — the arbiter's
+    unavailable arm, so contested gaps keep local and every decline this module
+    asserts is unchanged.
+    """
+    global _SUITE_SANDBOX_DIR
+    _SUITE_SANDBOX_DIR = tempfile.mkdtemp(prefix="ga-editable-merge-suite-")
+    root = Path(_SUITE_SANDBOX_DIR)
+    stub = root / "claude-stub"
+    stub.write_text(
+        '#!/bin/sh\necho "arbiter model seam stubbed in unittest" >&2\nexit 1\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    state = root / "state"
+    state.mkdir()
+    for key, value in (
+        ("ATRIUM_UPDATE_STATE_DIR", str(state)),
+        ("AUTOAGENT_CLAUDE_BIN", str(stub)),
+    ):
+        _SUITE_ENV_RESTORE[key] = os.environ.get(key)
+        os.environ[key] = value
+    if em is not None:
+        _pin_model_seam(str(stub))
+
+
+def tearDownModule() -> None:
+    if em is not None:
+        _unpin_model_seam()
+    for key, prior in _SUITE_ENV_RESTORE.items():
+        if prior is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prior
+    _SUITE_ENV_RESTORE.clear()
+    if _SUITE_SANDBOX_DIR:
+        shutil.rmtree(_SUITE_SANDBOX_DIR, ignore_errors=True)
 
 
 def _doc(*, top: str, region: str, bottom: str) -> str:
@@ -433,6 +527,85 @@ class BaseUnavailableFallbackTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class NoBaseArbitratedRegionTest(unittest.TestCase):
+    """A8 — the base-less differing region is judged, with the decline behind it.
+
+    Both arms drive the model seam as a stub: the live headless CLI is the one
+    thing a merge fixture must never reach.
+    """
+
+    _LOCAL = _doc(top="# A", region="local learned", bottom="z")
+    _RELEASE = _doc(top="# A", region="vendor variant", bottom="z")
+    _TARGET = "dev-rag.md"
+
+    def _build(self, seam) -> tuple[em.MergeCandidate, str]:
+        """Resolve the fixture with no base entry, deriving through ``seam``."""
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as state, contextlib.redirect_stderr(err):
+            with mock.patch.object(em.dc, "_invoke_haiku_cli", **seam):
+                cand = em.build_merge_candidate(
+                    self._TARGET,
+                    self._LOCAL,
+                    self._RELEASE,
+                    base_text=None,
+                    agent="dev-rag",
+                    arbiter_mode=em.ARBITER_PLAN,
+                    state_dir=state,
+                    verify_fn=_StubVerify(True),
+                )
+        return cand, err.getvalue()
+
+    @staticmethod
+    def _answer(text: str) -> dict:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=text, stderr=""
+        )
+        return {"return_value": (completed, None, None)}
+
+    def test_when_the_arbiter_answers_then_the_region_is_judged_not_declined(
+        self,
+    ) -> None:
+        cand, _rows = self._build(self._answer("CHOICE: RELEASE\nRATIONALE: fixture"))
+
+        res = cand.resolution
+        self.assertFalse(res.base_available)
+        self.assertEqual(res.regions[0].verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertFalse(res.has_conflict)
+        self.assertIn("vendor variant", res.candidate_text)
+        self.assertNotIn("local learned", res.candidate_text)
+
+    def test_when_an_interleave_drops_a_line_then_clause_four_reaches_it(self) -> None:
+        # The empty base slot is what makes this fail: no line of either side is
+        # base-present, so an answer naming only one of the two drops a novel line.
+        cand, rows = self._build(
+            self._answer("CHOICE: INTERLEAVE\nLINES: L1\nRATIONALE: fixture")
+        )
+
+        self.assertEqual(cand.resolution.regions[0].verdict, em.GATED_2WAY)
+        self.assertIn("clause=no-drop-of-novel", rows)
+
+    def test_when_the_arbiter_answers_nothing_then_the_present_both_decline_stands(
+        self,
+    ) -> None:
+        # A present CLI exiting non-zero — the live quota-exhausted shape.
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="quota"
+        )
+        cand, rows = self._build({"return_value": (completed, None, None)})
+
+        res = cand.resolution
+        self.assertEqual(res.regions[0].verdict, em.GATED_2WAY)
+        self.assertTrue(res.has_conflict)
+        self.assertIn("local learned", res.candidate_text)
+        self.assertIn("vendor variant", res.candidate_text)
+        self.assertIn("budget-exceeded", rows)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / self._TARGET
+            self.assertEqual(cand.apply(str(p)), em.APPLY_MALFORMED)
+            self.assertFalse(p.exists())
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class MergeCandidateGateTest(unittest.TestCase):
     """T18 — candidate apply/verify callbacks + Haiku gate + sensitive refusal."""
 
@@ -694,6 +867,23 @@ class MergeCandidateGateTest(unittest.TestCase):
             self.assertFalse(p.exists())
             self.assertEqual(cand.verify(str(p)), 1)
         self.assertEqual(stub.calls, 0)
+
+    def test_a_refused_path_never_crosses_the_model_seam(self) -> None:
+        """The refusal is a PATH verdict, so it is reached before the resolver that
+        would spend a call — and a retry — on a candidate thrown away regardless."""
+        local = _doc(top="# R", region="rule a local", bottom="z")
+        release = _doc(top="# R", region="rule a vendor", bottom="z")
+        with _stub_model("CHOICE: RELEASE\nRATIONALE: fixture") as seam:
+            cand = em.build_merge_candidate(
+                "agents/GLASS_ATRIUM_GLOBAL_RULES.md",
+                local,
+                release,
+                base_text=None,
+                verify_fn=_StubVerify(passed=True),
+                arbiter_mode=em.ARBITER_PLAN,
+            )
+        self.assertTrue(cand.refused)
+        self.assertEqual(seam.call_count, 0)
 
     def test_sensitive_path_glass_atrium_plist_refused(self) -> None:
         base = _doc(top="# P", region="cfg", bottom="z")
@@ -1149,7 +1339,7 @@ class ThreeWayMergePureFunctionTest(unittest.TestCase):
         base = ["x\n"]
         local = ["LOCAL\n"]
         release = ["RELEASE\n"]
-        # resolve_release stays OFF (the default) — the marker assertions below
+        # arbitrate stays OFF (the default) — the marker assertions below
         # only hold on the reporting path.
         merged, hunks = em.three_way_merge_hunks(base, local, release)
         self.assertTrue(hunks)
@@ -1216,6 +1406,7 @@ class CliPlanTest(unittest.TestCase):
                         "--local", local_p,
                         "--release", release_p,
                         "--out", out_p,
+                        "--state-dir", str(d / "state"),
                     ]
                 )
             self.assertEqual(rc, em.EXIT_REFUSED)
@@ -1235,14 +1426,14 @@ def _fm_doc(front: str, region: str) -> str:
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class GapPolicyTest(unittest.TestCase):
-    """Deterministic conflicting-gap resolution: the release side, marker-free."""
+    """Contested-gap routing: neither side emitted, marker-free, judgment pending."""
 
     _BASE = _doc(top="# A", region="same-old", bottom="z")
     _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
     _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
 
-    def _resolve(self, *, resolve_gaps: bool | None = None) -> em.FileResolution:
-        """The class fixtures under one policy setting; None leaves it env-driven."""
+    def _resolve(self, *, resolve_gaps: bool = True) -> em.FileResolution:
+        """The class fixtures under one mode setting; the default is the library's."""
         return em.resolve_file(
             "dev-android.md",
             self._LOCAL,
@@ -1251,15 +1442,29 @@ class GapPolicyTest(unittest.TestCase):
             resolve_conflicting_gaps=resolve_gaps,
         )
 
-    def test_when_policy_on_then_conflicting_gap_takes_release_marker_free(self) -> None:
+    def test_when_arbitration_on_then_contested_gap_keeps_local_marker_free(self) -> None:
         res = self._resolve(resolve_gaps=True)
 
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertFalse(res.has_conflict)
         self.assertFalse(res.regions[0].had_conflict)
         self.assertFalse(em.has_conflict_markers(res.candidate_text))
-        self.assertIn("VENDOR rewrite", res.candidate_text)
-        self.assertNotIn("LOCAL rewrite", res.candidate_text)
+        self.assertIn("LOCAL rewrite", res.candidate_text)
+        self.assertNotIn("VENDOR rewrite", res.candidate_text)
+
+    def test_when_the_candidate_equals_local_then_it_is_not_reported_as_a_no_op(
+        self,
+    ) -> None:
+        """A no-op lets the updater advance the base entry, retiring the gap unjudged.
+
+        This fixture's release differs from local only INSIDE the region, so the
+        emitted local gap makes the candidate byte-identical to the local body —
+        the shape that would otherwise take the no-op collapse.
+        """
+        res = self._resolve(resolve_gaps=True)
+
+        self.assertEqual(res.candidate_text, self._LOCAL)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
 
     def test_when_policy_on_then_region_carries_its_hunks_forward(self) -> None:
         res = self._resolve(resolve_gaps=True)
@@ -1283,29 +1488,34 @@ class GapPolicyTest(unittest.TestCase):
         self.assertTrue(res.has_conflict)
         self.assertTrue(em.has_conflict_markers(res.candidate_text))
         self.assertIn("LOCAL rewrite", res.candidate_text)
+        # Report-only asks for no judgment: the marker block IS the report.
+        self.assertEqual(res.regions[0].requests, ())
 
-    def test_when_kill_switch_set_then_the_default_reverts_to_reporting(self) -> None:
-        prior = os.environ.get(em._RESOLVE_GAPS_ENV)
+    def test_when_no_mode_named_then_the_default_arbitrates(self) -> None:
+        # The mode selector is the parameter alone. Nothing in the environment can
+        # reach it, so the retired switch is set here at its former OFF value and the
+        # default must still arbitrate — the pin on resolving the mode in-library.
+        prior = os.environ.get("ATRIUM_UPDATE_MERGE_RESOLVE_GAPS")
         try:
-            os.environ[em._RESOLVE_GAPS_ENV] = "0"
-            off = self._resolve()
-            os.environ.pop(em._RESOLVE_GAPS_ENV)
-            on = self._resolve()
+            os.environ["ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"] = "0"
+            defaulted = self._resolve()
         finally:
             if prior is None:
-                os.environ.pop(em._RESOLVE_GAPS_ENV, None)
+                os.environ.pop("ATRIUM_UPDATE_MERGE_RESOLVE_GAPS", None)
             else:
-                os.environ[em._RESOLVE_GAPS_ENV] = prior
+                os.environ["ATRIUM_UPDATE_MERGE_RESOLVE_GAPS"] = prior
 
-        self.assertEqual(off.verdict, em.MERGE_CONFLICT)
-        self.assertEqual(on.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(defaulted.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertEqual(self._resolve(resolve_gaps=False).verdict, em.MERGE_CONFLICT)
 
-    def test_when_policy_on_then_candidate_applies_and_verifies_without_the_gate(self) -> None:
-        # The stub FAILS and counts its calls: a resolved gap is deterministic, so
-        # the landing must not consult the model at all. Verifying green against a
-        # verifier that would refuse is what proves the gate is out of the path —
-        # a passing stub would leave "never called" and "called and agreed"
-        # indistinguishable, which is the whole property the policy rests on.
+    def test_when_arbitration_on_then_the_library_refuses_nothing_and_calls_no_gate(
+        self,
+    ) -> None:
+        # A pending candidate carries no marker, so no library-side guard stops it:
+        # the refusal is the updater's verdict routing and lives THERE alone, which
+        # is why apply reports a no-op rather than the pre-write refusal a
+        # marker-bearing candidate takes. The stub FAILS and counts its calls, so
+        # verifying green proves the gate was never reached rather than agreed with.
         stub = _StubVerify(passed=False)
         cand = em.build_merge_candidate(
             "dev-android.md",
@@ -1316,12 +1526,12 @@ class GapPolicyTest(unittest.TestCase):
             resolve_conflicting_gaps=True,
         )
 
-        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
-        self.assertFalse(cand.resolution.needs_llm)  # deterministic — no model gate
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertFalse(cand.resolution.needs_llm)  # no merged wording to screen
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "dev-android.md"
             target.write_text(self._LOCAL, encoding="utf-8")
-            self.assertEqual(cand.apply(str(target)), em.APPLY_OK)
+            self.assertEqual(cand.apply(str(target)), em.APPLY_NOOP)
             self.assertEqual(cand.verify(str(target)), 0)
             self.assertEqual(stub.calls, 0)  # the gate was never reached
             self.assertFalse(
@@ -1331,9 +1541,7 @@ class GapPolicyTest(unittest.TestCase):
     def test_when_gap_is_non_conflicting_then_no_hunk_and_release_lands(self) -> None:
         base, local, release = ["A\n"], ["A\n"], ["R\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
         self.assertEqual(hunks, [])
         self.assertEqual(merged, ["R\n"])
@@ -1343,11 +1551,9 @@ class GapPolicyTest(unittest.TestCase):
         local = ["LA\n", "s\n", "LB\n"]
         release = ["RA\n", "s\n", "RB\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
-        self.assertEqual(merged, ["RA\n", "s\n", "RB\n"])
+        self.assertEqual(merged, ["LA\n", "s\n", "LB\n"])
         self.assertEqual([h.local for h in hunks], [("LA\n",), ("LB\n",)])
         self.assertEqual([h.out_index for h in hunks], [0, 2])
 
@@ -1356,21 +1562,19 @@ class GapPolicyTest(unittest.TestCase):
         local = ["LOCAL1\n", "s\n", "B\n"]
         release = ["REL1\n", "s\n", "B-REL\n"]
 
-        merged, hunks = em.three_way_merge_hunks(
-            base, local, release, resolve_release=True
-        )
+        merged, hunks = em.three_way_merge_hunks(base, local, release, arbitrate=True)
 
         self.assertEqual(len(hunks), 1)
-        self.assertEqual(merged, ["REL1\n", "s\n", "B-REL\n"])
+        self.assertEqual(merged, ["LOCAL1\n", "s\n", "B-REL\n"])
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
 class ResolvedGapStatsTest(unittest.TestCase):
-    """The shape the recording caller reads back from a resolved file.
+    """The richer-local fixture: two local lines against one release line.
 
-    The row it writes is the only trace that daemon-authored content was
-    discarded, so the counts it reports have to come from the resolution rather
-    than from a re-derivation the caller could get wrong.
+    It is the shape that shows a whole-side rule discarding content, so it drives
+    both what a contested gap asks for and what the recording caller reads back
+    from a resolution that discarded nothing.
     """
 
     _BASE = _doc(top="# A", region="same-old", bottom="z")
@@ -1387,26 +1591,74 @@ class ResolvedGapStatsTest(unittest.TestCase):
             resolve_conflicting_gaps=True,
         )
 
-    def test_when_gap_resolved_then_stats_count_hunks_and_both_line_sides(self) -> None:
+    def test_when_the_gap_is_contested_then_one_request_names_it_and_no_side_wins(
+        self,
+    ) -> None:
+        res = self._resolve(self._RELEASE)
+
+        (request,) = res.regions[0].requests
+        self.assertEqual(request.region_index, 0)
+        self.assertEqual(request.gap.base, ("same-old\n",))
+        self.assertEqual(request.gap.local, ("LOCAL one\n", "LOCAL two\n"))
+        self.assertEqual(request.gap.release, ("VENDOR rewrite\n",))
+        # The judge reads the gap inside the region the candidate is assembled
+        # from, so the context is the release side's region content.
+        self.assertEqual(request.context, ("VENDOR rewrite\n",))
+        self.assertNotIn("VENDOR rewrite", res.candidate_text)
+
+    def test_when_the_gap_is_contested_then_no_gap_counts_as_resolved(self) -> None:
+        """The recording caller's counts describe a discard; a pending gap discards
+        nothing, so it contributes none."""
         res = self._resolve(self._RELEASE)
 
         stats = em.resolved_gap_stats(res)
+        self.assertEqual(stats["hunks"], 0)
+        self.assertEqual(stats["regions"], "")
+
+    def test_when_a_region_resolved_to_release_then_stats_count_both_line_sides(
+        self,
+    ) -> None:
+        """The counting shape itself, driven over a resolution built to carry it."""
+        hunk = em.ConflictHunk(
+            out_index=0,
+            base=("same-old\n",),
+            local=("LOCAL one\n", "LOCAL two\n"),
+            release=("VENDOR rewrite\n",),
+        )
+        resolution = em.FileResolution(
+            target_file="dev-android.md",
+            verdict=em.MERGE_ARBITER_RESOLVED,
+            candidate_text="",
+            local_text="",
+            regions=[
+                em.RegionResolution(
+                    0,
+                    em.MERGE_ARBITER_RESOLVED,
+                    list(hunk.release),
+                    hunks=(hunk,),
+                    decisions=(em.GapOutcome(hunk.release, "RELEASE", "fixture"),),
+                )
+            ],
+        )
+
+        stats = em.resolved_gap_stats(resolution)
         self.assertEqual(stats["hunks"], 1)
         self.assertEqual(stats["dropped_lines"], 2)
         self.assertEqual(stats["added_lines"], 1)
         self.assertEqual(stats["regions"], "0")
 
-    def test_when_a_clean_region_accompanies_a_resolved_gap_then_needs_llm_is_true(
+    def test_when_a_clean_region_accompanies_a_contested_gap_then_needs_llm_is_true(
         self,
     ) -> None:
-        """The mixed file: the resolved verdict does NOT imply a model-free landing.
+        """The mixed file: a contested gap does not suppress the file-level gate.
 
-        Every other resolved-gap fixture is single-region, so needs_llm is False
-        throughout and the recorded row's "no model call" claim reads as
-        universally true. A production body carries several EDITABLE regions: one
-        resolved gap beside one both-changed region reports the resolved verdict
-        while the Haiku improvement-verify gate DOES run, and a Haiku outage rolls
-        the landing back. The updater keys its provenance fields on this flag.
+        Every other contested-gap fixture is single-region, so needs_llm is False
+        throughout and a reader could take the pending verdict to mean the file
+        needs no model. A production body carries several EDITABLE regions: one
+        contested gap beside one both-changed region reports the pending verdict
+        for the file while the both-changed region still requires the Haiku
+        improvement-verify gate. The updater keys its provenance fields on this
+        flag, so the two facts are independent and both are read.
         """
         two_region = (
             "# T\n<!-- EDITABLE:BEGIN -->\n{r0}\n<!-- EDITABLE:END -->\n"
@@ -1428,9 +1680,9 @@ class ResolvedGapStatsTest(unittest.TestCase):
 
         self.assertEqual(
             [r.verdict for r in res.regions],
-            [em.MERGE_CLEAN, em.MERGE_RESOLVED_RELEASE],
+            [em.MERGE_CLEAN, em.MERGE_PENDING_ARBITRATION],
         )
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertTrue(res.needs_llm)
 
     def test_when_no_gap_resolved_then_stats_are_zero_and_regions_empty(self) -> None:
@@ -1443,15 +1695,18 @@ class ResolvedGapStatsTest(unittest.TestCase):
         # No resolved region, no index list — the updater's extractor reads an
         # empty value as empty now that it guards on the key being present.
         self.assertEqual(stats["regions"], "")
+        # An unchanged region asks for no judgment, so the arbitration channel is
+        # empty alongside the stats.
+        self.assertEqual([r.requests for r in res.regions], [()])
 
-    def test_when_plan_runs_then_the_line_carries_every_stat_field(self) -> None:
+    def test_when_plan_runs_on_a_contested_file_then_it_reports_no_drop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
             (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
             (root / "base.md").write_text(self._BASE, encoding="utf-8")
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with contextlib.redirect_stdout(buf), _stub_model():
                 rc = em.main(
                     [
                         "plan",
@@ -1467,34 +1722,44 @@ class ResolvedGapStatsTest(unittest.TestCase):
                         str(root / "cand.md"),
                         "--agent",
                         "dev-android",
+                        "--state-dir",
+                        str(root / "state"),
                     ]
                 )
 
-            # The sidecar carries the discarded local lines and NOTHING else —
-            # the recording caller's excerpt would otherwise quote vendor prose
-            # the release restructured and attribute it to the daemon.
-            dropped_text = (root / "cand.md.dropped").read_text(encoding="utf-8")
+            # The sidecar exists to hand the recording caller text that a gap
+            # discarded. This answer re-emits the local lines, so writing one
+            # would offer lines that are still in the body as if they were gone.
+            sidecar_written = (root / "cand.md.dropped").exists()
 
         self.assertEqual(rc, em.EXIT_OK)
-        self.assertEqual(dropped_text, "LOCAL one\nLOCAL two\n")
+        self.assertFalse(sidecar_written)
         line = buf.getvalue()
-        self.assertIn(f"verdict={em.MERGE_RESOLVED_RELEASE} ", line)
+        # The gap WAS answered, so the file is arbiter-resolved and counted —
+        # what the answer chose is what makes the two line counts zero.
+        self.assertIn(f"verdict={em.MERGE_ARBITER_RESOLVED} ", line)
         self.assertIn("resolved_hunks=1 ", line)
-        self.assertIn("resolved_dropped_lines=2 ", line)
-        self.assertIn("resolved_added_lines=1 ", line)
+        self.assertIn("resolved_dropped_lines=0 ", line)
+        self.assertIn("resolved_added_lines=0 ", line)
         self.assertIn("resolved_regions=0 ", line)
 
     def test_when_diff_out_given_then_it_holds_the_libs_own_diff(self) -> None:
         # The recording caller reads THIS file rather than shelling out to
         # `diff -u`: one diff implementation in the loop, and the text is the one
         # the candidate was validated against.
+        #
+        # The release also revises prose OUTSIDE the region, which is what makes
+        # the candidate differ from the local body at all: the contested gap keeps
+        # the local side, so a release confined to the region would diff to
+        # nothing and the comparison would hold vacuously.
+        release = _doc(top="# A", region="VENDOR rewrite", bottom="z revised")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "local.md").write_text(self._LOCAL, encoding="utf-8")
-            (root / "release.md").write_text(self._RELEASE, encoding="utf-8")
+            (root / "release.md").write_text(release, encoding="utf-8")
             (root / "base.md").write_text(self._BASE, encoding="utf-8")
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with contextlib.redirect_stdout(buf), _stub_model():
                 rc = em.main(
                     [
                         "plan",
@@ -1512,17 +1777,20 @@ class ResolvedGapStatsTest(unittest.TestCase):
                         str(root / "cand.diff"),
                         "--agent",
                         "dev-android",
+                        "--state-dir",
+                        str(root / "state"),
                     ]
                 )
             written = (root / "cand.diff").read_text(encoding="utf-8")
-
-        expected = em.build_merge_candidate(
-            "agents/dev-android.md",
-            self._LOCAL,
-            self._RELEASE,
-            base_text=self._BASE,
-            skip_pre_verify=True,
-        ).diff
+            expected = em.build_merge_candidate(
+                "agents/dev-android.md",
+                self._LOCAL,
+                release,
+                base_text=self._BASE,
+                skip_pre_verify=True,
+                arbiter_mode=em.ARBITER_REPLAY,
+                state_dir=str(root / "state"),
+            ).diff
 
         self.assertEqual(rc, em.EXIT_OK)
         self.assertEqual(written, expected)
@@ -1577,14 +1845,14 @@ class BaseAwareFrontmatterTest(unittest.TestCase):
 
 
 @unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
-class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
-    """The union behavior NEITHER phase has alone: a live pin on a LANDING conflict.
+class ContestedRegionKeepsLivePinsTest(unittest.TestCase):
+    """The union behavior NEITHER phase has alone: a live pin on a WRITABLE conflict.
 
-    Before the gap policy a conflicting file never reached apply, so the
-    frontmatter carry was dead code on exactly the bodies that needed it — the six
-    stuck agents conflicted every release and were declined. The gap policy is what
-    makes that carry reachable, so the two are only correct together and the
-    assertion that matters is a pin surviving all the way onto disk.
+    The frontmatter carry and the region resolution are separate steps, and the
+    carry is only proven once a pin survives the write rather than the assembly.
+    A contested region is what puts both in one candidate: it is marker-free, so
+    apply accepts it, and the pin has to ride the release skeleton's frontmatter
+    the whole way to disk.
     """
 
     _TOOLS = "name: glass-atrium-dev-python\ntools: Read, Write\n"
@@ -1610,7 +1878,7 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             self._body(release_fm, "VENDOR revised rule"),
         )
 
-    def test_both_pins_survive_a_resolved_release_landing_on_disk(self) -> None:
+    def test_both_pins_survive_a_pending_arbitration_write_on_disk(self) -> None:
         base, local, release = self._anchors(release_effort="max")
         stub = _StubVerify(passed=True)
 
@@ -1623,10 +1891,9 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             verify_fn=stub,
         )
 
-        # Phase 1 half: the conflicting region resolves marker-free, so it LANDS.
-        self.assertEqual(cand.resolution.verdict, em.MERGE_RESOLVED_RELEASE)
+        # Phase 1 half: the contested region emits no marker, so apply accepts it.
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertFalse(cand.resolution.has_conflict)
-        self.assertTrue(cand.resolution.is_changed)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "dev-python.md"
             self.assertEqual(cand.apply(str(path)), em.APPLY_OK)
@@ -1634,12 +1901,12 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             landed = path.read_text(encoding="utf-8")
 
         # Phase 0 half: read back from DISK, not from the in-memory candidate — the
-        # carry is only proven once it survives the write the gap policy unlocked.
+        # carry is only proven once it survives the write.
         self.assertIn("model: claude-opus-5\n", landed)  # live-only, live-wins
         self.assertIn("effort: xhigh\n", landed)  # base-aware pin, differs from base
         self.assertNotIn("effort: max\n", landed)  # the release value loses to the pin
-        self.assertIn("VENDOR revised rule", landed)  # the gap took the release side
-        self.assertNotIn("LOCAL daemon-learned rule", landed)
+        self.assertIn("LOCAL daemon-learned rule", landed)  # the gap chose no side
+        self.assertNotIn("VENDOR revised rule", landed)
 
     def test_a_release_without_effort_still_lands_the_pin_unnamed(self) -> None:
         # The advisory must consult BOTH allowlists: effort is absent from the
@@ -1649,17 +1916,17 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
 
         res = em.resolve_file("dev-python.md", local, release, base)
 
-        self.assertEqual(res.verdict, em.MERGE_RESOLVED_RELEASE)
+        self.assertEqual(res.verdict, em.MERGE_PENDING_ARBITRATION)
         self.assertIn("effort: xhigh\n", res.candidate_text)
         self.assertIn("model: claude-opus-5\n", res.candidate_text)
         self.assertEqual(
             em.dropped_local_frontmatter_keys(local, res.candidate_text), []
         )
 
-    def test_without_the_gap_policy_the_pin_path_is_unreachable(self) -> None:
-        # The control the union rests on: with the kill switch set, this same file
-        # is a marker-bearing report that apply refuses, so no pin can survive
-        # because nothing is written at all.
+    def test_in_report_only_mode_the_pin_path_is_unreachable(self) -> None:
+        # The control the union rests on: in report-only mode this same file is a
+        # marker-bearing report that apply refuses, so no pin can survive because
+        # nothing is written at all.
         base, local, release = self._anchors(release_effort="max")
 
         cand = em.build_merge_candidate(
@@ -1678,6 +1945,628 @@ class ResolvedReleaseKeepsLivePinsTest(unittest.TestCase):
             path = Path(d) / "dev-python.md"
             self.assertEqual(cand.apply(str(path)), em.APPLY_MALFORMED)
             self.assertFalse(path.exists())  # zero bytes written
+
+
+@contextlib.contextmanager
+def _stub_model(answer: str = "CHOICE: LOCAL\nRATIONALE: fixture"):
+    """Pin the model seam in-process, so no drive can reach the headless CLI."""
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=answer, stderr="")
+    with mock.patch.object(
+        em.dc, "_invoke_haiku_cli", return_value=(completed, None, None)
+    ) as seam:
+        yield seam
+
+
+# A stub whose SECOND arbiter invocation answers differently from its first: the
+# record is what must make that difference unobservable. One binary now serves
+# BOTH model seams — the arbiter and the compliance gate the resolved verdict
+# pulls in — so it routes on the answer format each prompt asks for and counts
+# them apart. A gate call answered with an arbiter answer would fail the axes and
+# veto the transaction, which is how a mis-routed prompt shows up.
+_TWO_ANSWER_STUB = """#!/bin/sh
+case "$*" in
+  *"CHOICE: LOCAL|RELEASE|INTERLEAVE"*)
+    n=0
+    if [ -s "$ARB_STUB_COUNT" ]; then n=$(wc -c < "$ARB_STUB_COUNT"); fi
+    printf 'x' >> "$ARB_STUB_COUNT"
+    if [ "$n" -eq 0 ]; then printf '%s\\n' "$ARB_STUB_ANSWER1"; else printf '%s\\n' "$ARB_STUB_ANSWER2"; fi
+    ;;
+  *)
+    printf 'x' >> "$ARB_STUB_GATE_COUNT"
+    printf 'C1: PASS\\nC2: PASS\\nC3: PASS\\nC4: PASS\\nVERDICT: verified\\nRATIONALE: stub\\n'
+    ;;
+esac
+"""
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ArbiterRecordReplayTest(unittest.TestCase):
+    """The per-gap decision is derived once, recorded, and replayed (A2b).
+
+    The contested fixture's two novel lines make an interleave the answer the
+    five clauses admit, so a replay that fell back to either whole side — or
+    re-derived through a stub that has changed its mind — is visible in the
+    candidate bytes rather than only in an internal flag.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+    _TARGET = "dev-android.md"
+    _INTERLEAVE = "CHOICE: INTERLEAVE\nLINES: L1, R1\nRATIONALE: independent edits"
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.state = self.root / "state"
+        store = em.base_store_dir(str(self.state))
+        store.mkdir(parents=True)
+        (store / self._TARGET).write_text(self._BASE, encoding="utf-8")
+        self.local_p = self.root / "local.md"
+        self.local_p.write_text(self._LOCAL, encoding="utf-8")
+        self.release_p = self.root / "release.md"
+        self.release_p.write_text(self._RELEASE, encoding="utf-8")
+        self.record_dir = em.arbiter_record_dir(str(self.state))
+        self.record_path = self.record_dir / em.build_gap_key(self._TARGET, 0, 0)
+
+    # -- helpers -------------------------------------------------------------
+
+    def _plan(self, answer: str = None) -> em.MergeCandidate:
+        """Derive in-process under the plan mode, with the seam stubbed."""
+        with _stub_model(answer or self._INTERLEAVE):
+            return em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN,
+                state_dir=str(self.state),
+            )
+
+    def _replay(self) -> tuple[em.MergeCandidate, str]:
+        """Replay in the default mode, with the model seam armed to fail loudly."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(
+            em.dc,
+            "_invoke_haiku_cli",
+            side_effect=AssertionError("the replay reached the model seam"),
+        ):
+            cand = em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                state_dir=str(self.state),
+            )
+        return cand, err.getvalue()
+
+    # -- the record ----------------------------------------------------------
+
+    def test_when_plan_derives_then_the_record_names_lines_and_carries_no_text(
+        self,
+    ) -> None:
+        self._plan()
+
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["choice"], "INTERLEAVE")
+        self.assertEqual(record["refs"], ["L1", "R1"])
+        self.assertEqual(set(record["fingerprints"]), {"base", "local", "release"})
+        body = self.record_path.read_text(encoding="utf-8")
+        for anchor in ("same-old", "LOCAL rewrite", "VENDOR rewrite"):
+            self.assertNotIn(anchor, body)
+
+    def test_when_the_gap_falls_to_the_ladder_then_its_class_is_recorded(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            cand = self._plan(answer="not an answer at all")
+
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        self.assertIsNone(record["choice"])
+        self.assertEqual(record["failure_class"], "unparseable-answer")
+        self.assertEqual(cand.resolution.candidate_text, self._LOCAL)
+
+    # -- the replay ----------------------------------------------------------
+
+    def test_when_replayed_then_the_candidate_is_the_derived_one_and_no_model_runs(
+        self,
+    ) -> None:
+        planned = self._plan()
+
+        replayed, rows = self._replay()
+
+        self.assertIn("LOCAL rewrite", planned.resolution.candidate_text)
+        self.assertIn("VENDOR rewrite", planned.resolution.candidate_text)
+        self.assertEqual(
+            replayed.resolution.candidate_text, planned.resolution.candidate_text
+        )
+        self.assertEqual(rows, "")
+
+    def test_when_the_record_is_gone_then_the_verify_refuses_the_bytes_on_disk(
+        self,
+    ) -> None:
+        """The plan's arbitrated wording is on disk and this side resolved pending,
+        so the two disagree about what the file should say — which is the one thing
+        the verify can still catch before the transaction is allowed to stand."""
+        planned = self._plan()
+        live = self.root / self._TARGET
+        live.write_text(self._LOCAL, encoding="utf-8")
+        self.assertEqual(planned.apply(str(live)), em.APPLY_OK)
+        self.record_path.unlink()
+
+        replayed, _rows = self._replay()
+
+        self.assertEqual(replayed.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertNotEqual(
+            live.read_text(encoding="utf-8"), replayed.resolution.candidate_text
+        )
+        self.assertEqual(replayed.verify(str(live)), 1)
+
+    def test_when_the_record_stands_then_the_replayed_verify_passes_those_bytes(
+        self,
+    ) -> None:
+        planned = self._plan()
+        live = self.root / self._TARGET
+        live.write_text(self._LOCAL, encoding="utf-8")
+        self.assertEqual(planned.apply(str(live)), em.APPLY_OK)
+
+        gate_calls: list[object] = []
+
+        def verify_fn(patch, pattern, skip_pre_verify=False):  # noqa: ARG001
+            gate_calls.append(patch)
+            return _StubVerify(passed=True)
+
+        with mock.patch.object(
+            em.dc,
+            "_invoke_haiku_cli",
+            side_effect=AssertionError("the replay reached the model seam"),
+        ):
+            replayed = em.build_merge_candidate(
+                self._TARGET,
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                verify_fn=verify_fn,
+                state_dir=str(self.state),
+            )
+        self.assertEqual(replayed.verify(str(live)), 0)
+        self.assertEqual(len(gate_calls), 1)
+
+    def test_when_a_fingerprint_is_corrupted_then_the_gap_falls_closed_to_local(
+        self,
+    ) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["fingerprints"]["local"] = "0" * 64
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-fingerprint-mismatch", rows)
+        self.assertIn("agent=dev-android", rows)
+
+    def test_when_no_record_exists_then_the_gap_keeps_local_with_a_named_row(
+        self,
+    ) -> None:
+        replayed, rows = self._replay()
+
+        self.assertFalse(self.record_path.exists())
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-absent", rows)
+
+    def test_when_the_reference_list_is_malformed_then_the_gap_keeps_local(
+        self,
+    ) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["refs"] = ["L1", "R9"]  # R9 resolves to no release line
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-malformed", rows)
+
+    # -- the two-process path ------------------------------------------------
+
+    def _write_two_answer_stub(self) -> dict[str, str]:
+        stub = self.root / "claude-stub"
+        stub.write_text(_TWO_ANSWER_STUB, encoding="utf-8")
+        stub.chmod(0o755)
+        return {
+            **os.environ,
+            # What the updater's own run exports: the plan option and the
+            # environment leg carry the SAME root, which is how the verify
+            # process — handed the state dir for the base store alone — reaches
+            # the record directory without a second argv slot.
+            em._STATE_DIR_ENV: str(self.state),
+            "AUTOAGENT_CLAUDE_BIN": str(stub),
+            "ARB_STUB_COUNT": str(self.root / "count"),
+            "ARB_STUB_GATE_COUNT": str(self.root / "gate-count"),
+            "ARB_STUB_ANSWER1": self._INTERLEAVE,
+            "ARB_STUB_ANSWER2": "CHOICE: RELEASE\nRATIONALE: a different mind",
+        }
+
+    def test_when_the_stub_changes_its_answer_then_the_verify_process_is_unmoved(
+        self,
+    ) -> None:
+        """The acceptance drive: two real processes, one invocation between them.
+
+        The verify process is launched with exactly the eight arguments the
+        updater's own callback passes — read out of ``scripts/update.sh`` rather
+        than paraphrased — so the candidate path it never receives cannot leak
+        in, and the scratch directory holding that candidate is removed before
+        it runs.
+        """
+        env = self._write_two_answer_stub()
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        candidate = scratch / "cand.md"
+
+        plan = subprocess.run(
+            [
+                sys.executable,
+                str(_REPO_ROOT / "autoagent" / "lib" / "editable_merge.py"),
+                "plan",
+                "--target", self._TARGET,
+                "--local", str(self.local_p),
+                "--release", str(self.release_p),
+                "--out", str(candidate),
+                "--agent", "dev-android",
+                "--state-dir", str(self.state),
+            ],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        self.assertEqual(plan.returncode, em.EXIT_OK, plan.stderr)
+        planned_text = candidate.read_text(encoding="utf-8")
+        live = self.root / self._TARGET
+        live.write_text(planned_text, encoding="utf-8")
+        shutil.rmtree(scratch)
+
+        verify = subprocess.run(
+            [
+                sys.executable, "-c", _get_verify_shell_out(),
+                str(_REPO_ROOT / "autoagent" / "lib"),
+                self._TARGET,
+                str(self.local_p),
+                str(self.release_p),
+                "",
+                "dev-android",
+                str(self.state),
+                str(live),
+            ],
+            capture_output=True, text=True, env=env, check=False,
+        )
+
+        self.assertIn("LOCAL rewrite", planned_text)
+        self.assertIn("VENDOR rewrite", planned_text)  # the first answer landed
+        self.assertTrue(self.record_path.is_file())  # outlived the scratch dir
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        self.assertEqual(
+            (self.root / "count").read_text(encoding="utf-8"),
+            "x",  # one ARBITER invocation across BOTH processes
+        )
+        # The verify process makes the one model call A6 adds: the compliance
+        # gate over the candidate. It is a different seam from the arbiter, so
+        # the two counters move independently.
+        self.assertEqual(
+            (self.root / "gate-count").read_text(encoding="utf-8"), "x"
+        )
+        self.assertNotIn("record-", verify.stderr)
+
+    # -- the seam the two modules share --------------------------------------
+
+    def test_when_two_targets_sanitise_alike_then_their_keys_still_differ(self) -> None:
+        collide = ("agents/dev-x.md", "agents_dev-x.md")
+
+        keys = [em.build_gap_key(target, 0, 0) for target in collide]
+
+        self.assertEqual(*(re.sub(r"-[0-9a-f]{12}\.", ".", key) for key in keys))
+        self.assertNotEqual(*keys)
+
+    def test_when_the_arbiter_is_unreachable_then_the_gap_keeps_local_with_a_row(
+        self,
+    ) -> None:
+        """Both unreachable arms: the import fails, and the judge itself raises."""
+        import gap_arbiter as ga
+
+        arms = (
+            mock.patch.dict(sys.modules, {"gap_arbiter": None}),
+            mock.patch.object(ga, "get_decision", side_effect=RuntimeError("judge")),
+        )
+        for arm in arms:
+            with self.subTest(arm=arm), arm:
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    cand = em.build_merge_candidate(
+                        self._TARGET,
+                        self._LOCAL,
+                        self._RELEASE,
+                        base_text=self._BASE,
+                        agent="dev-android",
+                        arbiter_mode=em.ARBITER_PLAN,
+                        state_dir=str(self.state),
+                    )
+
+                self.assertEqual(cand.resolution.candidate_text, self._LOCAL)
+                self.assertIn("arbiter-unreachable", err.getvalue())
+
+    def test_when_a_recorded_choice_is_unknown_then_the_gap_keeps_local(self) -> None:
+        self._plan()
+        record = json.loads(self.record_path.read_text(encoding="utf-8"))
+        record["choice"] = "BOTH"
+        self.record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        replayed, rows = self._replay()
+
+        self.assertEqual(replayed.resolution.candidate_text, self._LOCAL)
+        self.assertIn("record-malformed", rows)
+
+    def test_when_the_same_gap_is_derived_twice_then_one_record_holds_it(self) -> None:
+        self._plan()
+        self._plan()
+
+        self.assertEqual([p.name for p in self.record_dir.glob("*.json")],
+                         [self.record_path.name])
+
+    def test_when_a_region_holds_two_gaps_then_each_lands_where_it_was_recorded(
+        self,
+    ) -> None:
+        """The splice: two gaps in one region, resolved forward, spliced backward.
+
+        A back-to-front splice is what keeps the first gap's replacement from
+        moving the index the second one recorded, and the resolution order is
+        what decides which gap a per-run ceiling would cut.
+        """
+        import gap_arbiter as ga
+
+        base = _doc(top="# A", region="A\ns\nB", bottom="z")
+        local = _doc(top="# A", region="LA\ns\nLB", bottom="z")
+        release = _doc(top="# A", region="RA\ns\nRB", bottom="z")
+        seen: list[tuple[str, ...]] = []
+
+        def _interleave(request, **_kwargs):
+            seen.append(request.local_lines)
+            return ga.Decision(
+                lines=request.local_lines + request.release_lines,
+                choice="INTERLEAVE",
+                rationale="both edits stand",
+                failure_class=None,
+                clause=None,
+                discarded_novel=0,
+                rejected_stale=0,
+                row="",
+                refs=(ga.LineRef("L", 1), ga.LineRef("R", 1)),
+            )
+
+        with mock.patch.object(ga, "get_decision", side_effect=_interleave):
+            planned = em.build_merge_candidate(
+                self._TARGET, local, release,
+                base_text=base, agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN, state_dir=str(self.state),
+            )
+        with mock.patch.object(
+            ga, "get_decision", side_effect=AssertionError("replay derived again")
+        ):
+            replayed = em.build_merge_candidate(
+                self._TARGET, local, release,
+                base_text=base, agent="dev-android", state_dir=str(self.state),
+            )
+
+        self.assertEqual(seen, [("LA\n",), ("LB\n",)])  # document order
+        self.assertIn("LA\nRA\ns\nLB\nRB\n", planned.resolution.candidate_text)
+        self.assertEqual(
+            replayed.resolution.candidate_text, planned.resolution.candidate_text
+        )
+
+    def test_the_state_root_precedence_matches_the_spines(self) -> None:
+        """Argument, then environment, then the home default — the spine's order.
+
+        A plan process is handed the root as an argument and a verify process
+        derives it from the environment; they land on the same directory only
+        while this order is the one ``spine_baseline_dir`` uses.
+        """
+        with mock.patch.dict(os.environ, {em._STATE_DIR_ENV: "/env/root"}):
+            self.assertEqual(em.state_root("/arg/root"), "/arg/root")
+            self.assertEqual(em.state_root(), "/env/root")
+            self.assertEqual(
+                em.arbiter_record_dir(), Path("/env/root/arbiter-decisions")
+            )
+        with mock.patch.dict(os.environ, {em._STATE_DIR_ENV: ""}):
+            self.assertEqual(
+                em.state_root(), str(Path.home() / ".claude" / "data" / "update")
+            )
+        self.assertEqual(
+            em.arbiter_record_dir("/arg/root").parent,
+            em.base_store_dir("/arg/root").parent,
+        )
+
+    def test_the_replay_tokens_match_the_arbiter_answer_contract(self) -> None:
+        import gap_arbiter as ga
+
+        self.assertEqual(em._ARBITER_CHOICES, ga.CHOICES)
+
+    def test_the_verify_shell_out_reaches_no_arbiter_module(self) -> None:
+        shell_out = _get_verify_shell_out()
+
+        self.assertIn("build_merge_candidate", shell_out)
+        self.assertNotIn("gap_arbiter", shell_out)
+        self.assertNotIn("get_decision", shell_out)
+
+    def test_when_a_record_ages_past_retention_then_the_next_write_prunes_it(
+        self,
+    ) -> None:
+        self.record_dir.mkdir(parents=True)
+        stale = self.record_dir / "stale-000000000000.r0.g0.json"
+        stale.write_text("{}", encoding="utf-8")
+        aged = time.time() - (em._ARBITER_RETENTION_DAYS + 1) * 86400
+        os.utime(stale, (aged, aged))
+
+        self._plan()
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(self.record_path.is_file())
+
+
+@unittest.skipIf(em is None, f"editable_merge import failed: {_IMPORT_ERROR}")
+class ArbiterResolvedGateTest(unittest.TestCase):
+    """A6: the answered gap is the candidate class the compliance gate reads.
+
+    The two rungs below differ in ONE input — whether the arbiter reached an
+    answer — so the call counter reports the verdict's coupling rather than a
+    property of the fixture.
+    """
+
+    _BASE = _doc(top="# A", region="same-old", bottom="z")
+    _LOCAL = _doc(top="# A", region="LOCAL rewrite", bottom="z")
+    _RELEASE = _doc(top="# A", region="VENDOR rewrite", bottom="z")
+    _ANSWER = "CHOICE: RELEASE\nRATIONALE: fixture"
+
+    class _GateResult:
+        """The duck-typed shape the gate reads off its verifier."""
+
+        def __init__(self, passed: bool) -> None:
+            self.passed = passed
+            self.axes: dict[str, bool] = {}
+            self.status = "ok"
+            self.rationale = "fixture"
+
+    def _drive(self, answer: str, *, passed: bool = True):
+        """Resolve, apply and verify one contested file against a counting gate."""
+        calls: list[object] = []
+
+        def verify_fn(patch, pattern, skip_pre_verify=False):  # noqa: ARG001
+            calls.append(patch)
+            return self._GateResult(passed)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "dev-android.md"
+            live.write_text(self._LOCAL, encoding="utf-8")
+            with _stub_model(answer):
+                cand = em.build_merge_candidate(
+                    "agents/dev-android.md",
+                    self._LOCAL,
+                    self._RELEASE,
+                    base_text=self._BASE,
+                    agent="dev-android",
+                    verify_fn=verify_fn,
+                    arbiter_mode=em.ARBITER_PLAN,
+                    state_dir=str(root / "state"),
+                )
+            applied = cand.apply(str(live))
+            gate = cand.verify(str(live))
+            return cand, calls, applied, gate
+
+    def test_when_the_gap_is_answered_then_the_gate_runs_exactly_once(self) -> None:
+        cand, calls, applied, gate = self._drive(self._ANSWER)
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertTrue(cand.resolution.needs_llm)
+        self.assertEqual(applied, em.APPLY_OK)
+        self.assertEqual(gate, 0)
+        self.assertEqual(len(calls), 1)
+
+    def test_when_no_answer_is_reached_then_the_gate_never_runs(self) -> None:
+        """The arbiter-unavailable rung — the shape every contested file had
+        before A6, and the live one while the model CLI is exhausted."""
+        cand, calls, applied, gate = self._drive("not an answer")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertFalse(cand.resolution.needs_llm)
+        self.assertEqual(calls, [])
+
+    def test_when_the_gate_vetoes_then_the_candidate_fails_its_transaction(
+        self,
+    ) -> None:
+        """A veto is a transaction failure, which is what returns the target to
+        its before-image — the restore itself is driven over the real
+        transaction by "T19: a failed per-file transaction summarizes as
+        rolled-back/unapplied" in scripts/test/glass-atrium-update.bats."""
+        cand, calls, applied, gate = self._drive(self._ANSWER, passed=False)
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(gate, 1)
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
+class ArbiterPartialRegionTest(unittest.TestCase):
+    """A region holding TWO contested gaps, one of which the arbiter cannot answer.
+
+    Landing the region would retire both gaps — the next run's base equals this
+    release — so the unanswered one would be decided by the landing rather than by
+    a judge. The region declines instead, and the answered gap's wording stays out
+    of the candidate.
+    """
+
+    _BASE = _doc(top="# A", region="first old\nkeep me\nsecond old", bottom="z")
+    _LOCAL = _doc(top="# A", region="first LOCAL\nkeep me\nsecond LOCAL", bottom="z")
+    _RELEASE = _doc(
+        top="# A", region="first VENDOR\nkeep me\nsecond VENDOR", bottom="z"
+    )
+
+    def _drive(self, second_answer: str):
+        calls: list[int] = []
+
+        def seam(**_kwargs):
+            # The FIRST gap only: an unparseable answer spends a strict retry, so a
+            # fixed two-element script would answer the second gap on its retry.
+            calls.append(1)
+            payload = (
+                "CHOICE: RELEASE\nRATIONALE: fixture"
+                if len(calls) == 1
+                else second_answer
+            )
+            done = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=payload, stderr=""
+            )
+            return done, None, None
+
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(
+            io.StringIO()
+        ), mock.patch.object(em.dc, "_invoke_haiku_cli", side_effect=seam):
+            return em.build_merge_candidate(
+                "agents/dev-android.md",
+                self._LOCAL,
+                self._RELEASE,
+                base_text=self._BASE,
+                agent="dev-android",
+                arbiter_mode=em.ARBITER_PLAN,
+                state_dir=str(Path(tmp) / "state"),
+            )
+
+    def test_two_gaps_are_two_hunks_of_one_region(self) -> None:
+        _merged, hunks = em.three_way_merge_hunks(
+            self._BASE.splitlines(),
+            self._LOCAL.splitlines(),
+            self._RELEASE.splitlines(),
+            arbitrate=True,
+        )
+        self.assertEqual(len(hunks), 2)
+
+    def test_one_unanswered_gap_declines_the_whole_region(self) -> None:
+        cand = self._drive("not an answer at all")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_PENDING_ARBITRATION)
+        self.assertNotIn("first VENDOR", cand.resolution.candidate_text)
+
+    def test_both_answered_resolves_the_region(self) -> None:
+        cand = self._drive("CHOICE: LOCAL\nRATIONALE: fixture")
+
+        self.assertEqual(cand.resolution.verdict, em.MERGE_ARBITER_RESOLVED)
+        self.assertIn("first VENDOR", cand.resolution.candidate_text)
+        self.assertIn("second LOCAL", cand.resolution.candidate_text)
+
+
+def _get_verify_shell_out() -> str:
+    """Read the updater's verify shell-out source, the text the callback runs."""
+    text = (_REPO_ROOT / "scripts" / "update.sh").read_text(encoding="utf-8")
+    match = re.search(r"_UPDATE_VERIFY_PY='\n(.*?)\n'\n", text, re.DOTALL)
+    assert match is not None, "the verify shell-out constant moved"
+    return match.group(1)
 
 
 if __name__ == "__main__":

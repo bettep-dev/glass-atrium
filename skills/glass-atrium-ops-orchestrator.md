@@ -362,7 +362,7 @@ When a delegation copies files INTO a live install, three failure modes observed
 
 **Reach the destination through a sanctioned flow FIRST.** A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files — is BLOCKED agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review. Pick one:
 
-- **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`). The sanctioned default: the manifest gate, the confirm gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run.
+- **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`). The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run, and the apply is unattended — no prompt stands between the staged tree and the live install.
 - **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was LAUNCHED with. An in-session `export` via the Bash tool NEVER reaches the hook (hooks inherit the launch environment, not the session shell's children), so this is a session-start decision, not something a delegation can arrange for itself.
 - **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
 

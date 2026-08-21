@@ -14,11 +14,22 @@
 # per-file log read) rather than by restating its rule here, so the test cannot
 # agree with a drifted predicate.
 #
-# Three regression pins guard the scoping: the spine's exclusion has THREE
-# disjoint arms and only the agents-markdown arm is the merge's complement.
-# Folding the learned local-overlay arm or the rendered runtime-config arm into
-# that complement would route user-owned files into a hash-verified byte-swap
-# against the release manifest — silent user-data destruction on the next update.
+# Three regression pins guard the scoping: the spine's exclusion is EXACTLY the
+# merge's complement, so a learned local-overlay path and the rendered runtime
+# config are selected like any other row rather than carved out of both scopes.
+# A second exclusion arm would put a row back in the state this suite exists to
+# detect — reached by neither consumer and hash-verified by no deploy path.
+#
+# One invariant sits above those pins, scoped to the CHANGE SELECTION: the rows the
+# selection holds back are EXACTLY the rows a merge delivers — the agent bodies and
+# the declared roster paths — compared against an expectation spelled out in the test
+# rather than read from the predicate.
+#
+# The merge side has TWO iteration sites since the claim widened, the agents glob and
+# the roster dispatch, and both are measured behaviourally. That is what carries the
+# presence guard those roster rows were owed: a row the predicate claims that neither
+# loop reaches fails here, which is the claimed-and-undelivered state the widening
+# had to avoid.
 #
 # Hermetic: every fixture is built in a per-test mktemp sandbox; the repo
 # manifest is read read-only and the live install is never touched.
@@ -79,23 +90,28 @@ set_has() {
 # Which manifest paths does the MERGE consumer actually claim? Measured, not
 # restated: a release tree carrying every agents-subtree markdown path is handed
 # to the real merge loop against an EMPTY live install, so each path the loop
-# reaches is reported by its own "is release-only (ADD)" line and each path it
-# never reaches is silent. No python plan runs on this path, so the probe is
-# cheap and has no dependency beyond the loop itself.
+# reaches is reported by its own "agent create" line — the create path every
+# release-only body now takes — and each path it never reaches is silent. All
+# three create outcomes name the path the same way, so the reading counts a path
+# the loop reached whether or not the body it wrote survived its verify.
 merge_claimed_paths() {
   local new="${WORK}/oracle/new" live="${WORK}/oracle/live" log="${WORK}/oracle/log"
-  local path base claimed=""
+  local path base claimed="" files=""
   rm -rf -- "${WORK}/oracle"
   mkdir -p -- "${new}/agents" "${live}"
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     mkdir -p -- "$(dirname -- "${new}/${path}")"
     printf 'release %s\n' "${path}" >"${new}/${path}"
+    files="${files}$(printf '%s' "${path}" | jq -R .),"
   done < <(manifest_agent_md_paths)
-  printf '{"version":"oracle","files":[],"hashes":{}}\n' >"${new}/manifest.json"
+  # The stage targets through name legs, and this manifest is the release leg: a
+  # release declaring no body names no target, so the reading would report the
+  # whole domain as claimed by nobody. A real release declares every body it ships.
+  printf '{"version":"oracle","files":[%s],"hashes":{}}\n' "${files%,}" >"${new}/manifest.json"
   update_merge_agent_editable_regions "${new}" "${new}/manifest.json" "${live}" \
     >/dev/null 2>"${log}"
-  claimed="$(sed -n 's/^.*agent merge: \(.*\) is release-only.*$/\1/p' "${log}")"
+  claimed="$(sed -n 's#^.*agent create[^/]*agents/\([^ ]*\).*$#\1#p' "${log}")"
   # Map the reported basenames back to manifest paths. Basenames are asserted
   # unique across the domain (see the partition test), so the mapping is exact.
   while IFS= read -r path; do
@@ -105,6 +121,37 @@ merge_claimed_paths() {
       printf '%s\n' "${path}"
     fi
   done < <(manifest_agent_md_paths)
+  # The claim has TWO iteration sites, so a reading taken from one of them would
+  # report every row of the other as claimed-by-nobody.
+  roster_dispatched_paths
+}
+
+# Which manifest paths does the ROSTER dispatch actually reach? Measured the same
+# way and for the same reason: a release tree carrying every declared roster row is
+# handed to the real dispatch against an EMPTY live install, so each path the loop
+# reaches reports its own "installed" line and each path it never reaches is silent.
+# No python plan runs on this path either — an absent local file has no merge.
+roster_dispatched_paths() {
+  local new="${WORK}/roster/new" live="${WORK}/roster/live" log="${WORK}/roster/log"
+  local rel
+  rm -rf -- "${WORK}/roster"
+  mkdir -p -- "${new}" "${live}"
+  while IFS= read -r rel; do
+    [[ -n "${rel}" ]] || continue
+    mkdir -p -- "$(dirname -- "${new}/${rel}")"
+    printf 'release %s\n' "${rel}" >"${new}/${rel}"
+  done < <(spine_get_roster_paths)
+  printf '{"version":"oracle","files":[],"hashes":{}}\n' >"${new}/manifest.json"
+  update_dispatch_roster_merge "${new}" "${new}/manifest.json" "${live}" \
+    >/dev/null 2>"${log}"
+  sed -n 's/^.*roster merge: installed \([^ ]*\) (absent locally.*$/\1/p' "${log}"
+}
+
+# The domain in which the predicate and the loops can disagree at all: the agents
+# subtree the glob walks, plus the rows the declaration names.
+merge_domain_paths() {
+  manifest_agent_md_paths
+  spine_get_roster_paths
 }
 
 # Build a release tree + live install in which every path given differs from the
@@ -183,7 +230,12 @@ first_manifest_path_under() {
   [ -z "${output}" ]
 }
 
-@test "the shared predicate answers for the merge consumer exactly as the loop behaves" {
+# Both directions at once, over the union domain: a row the predicate claims that no
+# loop reaches is the claimed-and-undelivered state the widening exists to avoid, and
+# a row a loop reaches that the predicate does not claim is byte-swapped behind the
+# merge's back. A path added to the declaration and forgotten in the dispatch fails
+# HERE, which is what makes the two sites one edit rather than two.
+@test "the shared predicate answers for the merge consumer exactly as the loops behave" {
   local claimed_paths path expected actual mismatch=""
   claimed_paths="$(merge_claimed_paths)"
   while IFS= read -r path; do
@@ -195,12 +247,91 @@ first_manifest_path_under() {
     if [[ "${expected}" -ne "${actual}" ]]; then
       mismatch="${mismatch}${path} (loop=${expected} predicate=${actual})"$'\n'
     fi
-  done < <(manifest_agent_md_paths)
+  done < <(merge_domain_paths)
   if [[ -n "${mismatch}" ]]; then
     echo "shared predicate disagrees with the merge loop it speaks for:"
     printf '%s' "${mismatch}"
   fi
   [ -z "${mismatch}" ]
+}
+
+# The set of manifest rows the change selection holds back, pinned as an invariant
+# so a re-added exclusion cannot grow it silently. Held-back rows produced after
+# the selection are out of this reading, per the suite header.
+#
+# Observed side: the shipped change selection, run over the real manifest against
+# an EMPTY install root. Every row it does not name is a row some mechanism inside
+# the selection held back — measured through the real path rather than restated.
+# The empty root makes every present row differ, so nothing narrows the reading.
+#
+# Expected side: the manifest's own file list filtered by a glob spelled out
+# here. Deriving it from the exclusion predicate would compare that predicate
+# against itself: a wrong predicate moves both sides identically and the check
+# could not go red in either direction. Spelled out, a predicate change moves the
+# observed side alone and this list is what must then be re-spelled.
+#
+# The roster rows are the ONE part read rather than spelled: they are named by a
+# declaration and not by a rule, so there is no rule to restate, and a hand-copied
+# second list is the drift the single declaration exists to prevent. What a
+# re-spelling would have caught — the declaration itself growing — is pinned in
+# apply-spine.bats, where the declared set is asserted to hold exactly four rows.
+@test "the change selection holds back exactly the merge-delivered rows" {
+  local all_paths selected observed="" expected="" path rest declared
+  local extra="" missing="" mechanism
+  declared=$'\n'"$(spine_get_roster_paths)"$'\n'
+  all_paths="$(manifest_paths)"
+  mkdir -p -- "${WORK}/emptyroot"
+  selected="$(spine_find_changed_files "${MANIFEST}" "${WORK}/emptyroot")"
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${selected}" "${path}"; then
+      observed="${observed}${path}"$'\n'
+    fi
+    if [[ "${path}" == agents/*.md ]]; then
+      rest="${path#agents/}"
+      if [[ "${rest}" != */* && "${rest}" != 'GLASS_ATRIUM_GLOBAL_RULES.md' ]]; then
+        expected="${expected}${path}"$'\n'
+      fi
+    fi
+    if [[ "${declared}" == *$'\n'"${path}"$'\n'* ]]; then
+      expected="${expected}${path}"$'\n'
+    fi
+  done <<<"${all_paths}"
+
+  # Guards against a silently degrading derivation: an empty agent set or a
+  # renamed charter would shrink the expectation instead of failing.
+  [ -n "${expected}" ]
+  set_has "${all_paths}" 'agents/GLASS_ATRIUM_GLOBAL_RULES.md' || return 1
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${expected}" "${path}"; then
+      mechanism='a mechanism this suite does not name'
+      if spine_is_merge_claimed_path "${path}"; then
+        mechanism='the merge claim'
+      fi
+      extra="${extra}${path} (held back by ${mechanism})"$'\n'
+    fi
+  done <<<"${observed}"
+
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    if ! set_has "${observed}" "${path}"; then
+      missing="${missing}${path}"$'\n'
+    fi
+  done <<<"${expected}"
+
+  if [[ -n "${extra}" ]]; then
+    echo "manifest path(s) the change selection holds back that the merge does not deliver:"
+    printf '%s' "${extra}"
+  fi
+  if [[ -n "${missing}" ]]; then
+    echo "merge-delivered row(s) that reached plain replacement:"
+    printf '%s' "${missing}"
+  fi
+  [ -z "${extra}" ]
+  [ -z "${missing}" ]
 }
 
 # tests — the orphan class now reaches the deterministic sync
@@ -241,16 +372,19 @@ first_manifest_path_under() {
   [ -z "${output}" ]
 }
 
-@test "a learned local-overlay path stays excluded from the spine's selection" {
-  run selection_for 'agents/glass-atrium-dev-shell.local.md'
+# An overlay UNDER agents/ is claimed by the merge's own glob, so it is covered by
+# the merge-claimed test above; this one probes a spelling outside that glob,
+# where the selection is the sole consumer.
+@test "a learned local-overlay path outside the agents glob is SELECTED" {
+  run selection_for 'rules/glass-atrium/scope-dev.local.md'
   [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  [ "${output}" = 'rules/glass-atrium/scope-dev.local.md' ]
 }
 
-@test "the rendered runtime config path stays excluded from the spine's selection" {
+@test "the rendered runtime config path is SELECTED like any other unclaimed row" {
   run selection_for 'config.toml'
   [ "${status}" -eq 0 ]
-  [ -z "${output}" ]
+  [ "${output}" = 'config.toml' ]
 }
 
 # tests — the merge consumer, and the loud detection line
@@ -273,16 +407,19 @@ first_manifest_path_under() {
   [ "$(cat "${live}/agents/GLASS_ATRIUM_GLOBAL_RULES.md")" = 'local charter' ]
 }
 
-@test "a manifest path claimed by neither consumer produces a loud named line" {
-  local dir="${WORK}/orphan" synthetic='config.toml'
+# The scan is the tripwire for a re-added exclusion arm, driven on the two
+# spellings a second arm would carve out of both scopes: while the exclusion is
+# the merge's complement they are covered, and an arm re-added around either one
+# makes this test name it.
+@test "the paths a second exclusion arm would orphan are covered by a consumer" {
+  local dir="${WORK}/orphan" overlay='rules/glass-atrium/scope-dev.local.md' config='config.toml'
   mkdir -p -- "${dir}"
-  printf '{"version":"t","files":["%s"],"hashes":{"%s":"deadbeef"}}\n' \
-    "${synthetic}" "${synthetic}" >"${dir}/manifest.json"
+  printf '{"version":"t","files":["%s","%s"],"hashes":{"%s":"deadbeef","%s":"deadbeef"}}\n' \
+    "${overlay}" "${config}" "${overlay}" "${config}" >"${dir}/manifest.json"
   run spine_find_uncovered_paths "${dir}/manifest.json"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "${synthetic}" ]
+  [ -z "${output}" ]
   run update_report_uncovered_paths "${dir}/manifest.json"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *'deploy coverage gap'* ]] || return 1
-  [[ "${output}" == *"${synthetic}"* ]] || return 1
+  [[ "${output}" != *'deploy coverage gap'* ]] || return 1
 }
