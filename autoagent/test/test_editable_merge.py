@@ -60,6 +60,94 @@ except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
     _IMPORT_ERROR = exc
 
 
+_SUITE_ENV_RESTORE: dict[str, str | None] = {}
+_SUITE_CLAUDE_BIN_RESTORE: str | None = None
+_SUITE_KWDEFAULT_RESTORE: str | None = None
+_SUITE_SANDBOX_DIR: str | None = None
+
+
+def _pin_model_seam(stub: str) -> None:
+    """Point every in-process arbiter call at ``stub``, both bindings of it.
+
+    ``daemon_cycle.CLAUDE_BIN`` reads ``AUTOAGENT_CLAUDE_BIN`` once, at ITS import,
+    and ``gap_arbiter.get_decision`` copies that value into a keyword default at
+    ITS import. Discovery imports every module before the first setUpModule runs,
+    so a sibling module importing gap_arbiter freezes that copy at a bare
+    ``claude`` — which is why rebinding the constant alone leaves exactly one
+    PATH invocation in a whole-root run and none when this file runs alone.
+    """
+    global _SUITE_CLAUDE_BIN_RESTORE, _SUITE_KWDEFAULT_RESTORE
+    _SUITE_CLAUDE_BIN_RESTORE = em.dc.CLAUDE_BIN
+    em.dc.CLAUDE_BIN = stub
+    import gap_arbiter as ga  # noqa: PLC0415 — mirrors editable_merge's lazy seam load
+
+    kwdefaults = ga.get_decision.__kwdefaults__ or {}
+    if "claude_bin" in kwdefaults:
+        _SUITE_KWDEFAULT_RESTORE = kwdefaults["claude_bin"]
+        kwdefaults["claude_bin"] = stub
+
+
+def _unpin_model_seam() -> None:
+    if _SUITE_CLAUDE_BIN_RESTORE is not None:
+        em.dc.CLAUDE_BIN = _SUITE_CLAUDE_BIN_RESTORE
+    if _SUITE_KWDEFAULT_RESTORE is not None:
+        import gap_arbiter as ga  # noqa: PLC0415 — restore the binding pinned above
+
+        kwdefaults = ga.get_decision.__kwdefaults__ or {}
+        if "claude_bin" in kwdefaults:
+            kwdefaults["claude_bin"] = _SUITE_KWDEFAULT_RESTORE
+
+
+def setUpModule() -> None:
+    """Redirect the state root and the model seam into a module-scoped sandbox.
+
+    ``state_root`` falls back to ``$HOME/.claude/data/update`` whenever
+    ``ATRIUM_UPDATE_STATE_DIR`` is unset, so a test reaching the arbiter without
+    naming a state directory writes a decision record under the operator's real
+    state root. Pinning it HERE covers every test in the module, including one
+    added later whose fixture happens to route to the arbiter — which the
+    per-test ``--state-dir`` arguments, correct where they appear, cannot.
+
+    The model seam needs the export AND the two in-process bindings
+    ``_pin_model_seam`` covers: the export reaches the subprocess drives, the
+    rebindings reach the in-process ones. The stub exits non-zero — the arbiter's
+    unavailable arm, so contested gaps keep local and every decline this module
+    asserts is unchanged.
+    """
+    global _SUITE_SANDBOX_DIR
+    _SUITE_SANDBOX_DIR = tempfile.mkdtemp(prefix="ga-editable-merge-suite-")
+    root = Path(_SUITE_SANDBOX_DIR)
+    stub = root / "claude-stub"
+    stub.write_text(
+        '#!/bin/sh\necho "arbiter model seam stubbed in unittest" >&2\nexit 1\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    state = root / "state"
+    state.mkdir()
+    for key, value in (
+        ("ATRIUM_UPDATE_STATE_DIR", str(state)),
+        ("AUTOAGENT_CLAUDE_BIN", str(stub)),
+    ):
+        _SUITE_ENV_RESTORE[key] = os.environ.get(key)
+        os.environ[key] = value
+    if em is not None:
+        _pin_model_seam(str(stub))
+
+
+def tearDownModule() -> None:
+    if em is not None:
+        _unpin_model_seam()
+    for key, prior in _SUITE_ENV_RESTORE.items():
+        if prior is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prior
+    _SUITE_ENV_RESTORE.clear()
+    if _SUITE_SANDBOX_DIR:
+        shutil.rmtree(_SUITE_SANDBOX_DIR, ignore_errors=True)
+
+
 def _doc(*, top: str, region: str, bottom: str) -> str:
     """Build an agent .md body with a single EDITABLE region."""
     return (
@@ -1301,6 +1389,7 @@ class CliPlanTest(unittest.TestCase):
                         "--local", local_p,
                         "--release", release_p,
                         "--out", out_p,
+                        "--state-dir", str(d / "state"),
                     ]
                 )
             self.assertEqual(rc, em.EXIT_REFUSED)
