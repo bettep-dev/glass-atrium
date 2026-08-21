@@ -15,7 +15,8 @@
 # Hermetic: every test runs in a per-test mktemp sandbox with GA_ROOT /
 # AUTOAGENT_REPORTS_DIR / ATRIUM_UPDATE_STATE_DIR redirected
 # into it; libs are sourced from the REAL install (REAL_LIB_ROOT). The download is
-# bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched.
+# bypassed via ATRIUM_UPDATE_SRC_DIR — /dev/tty and gh are never touched, and
+# AUTOAGENT_CLAUDE_BIN points the arbiter's model seam at a failing stub.
 
 bats_require_minimum_version 1.5.0
 
@@ -38,6 +39,12 @@ setup() {
   NEWSRC="${WORK}/newsrc"   # the staged new-release tree (test seam source)
   STATE="${WORK}/state"     # reports / baseline sandbox
   mkdir -p "${INSTALL}" "${NEWSRC}" "${STATE}"
+  # Model seam, stubbed suite-wide: the arbiter falls back to a PATH `claude`.
+  # A failing invocation is the unavailable arm — contested gaps land locally.
+  CLAUDE_STUB="${WORK}/claude-stub"
+  printf '#!/bin/sh\necho "arbiter model seam stubbed in bats" >&2\nexit 1\n' >"${CLAUDE_STUB}"
+  chmod +x "${CLAUDE_STUB}"
+  export AUTOAGENT_CLAUDE_BIN="${CLAUDE_STUB}"
 }
 
 teardown() {
