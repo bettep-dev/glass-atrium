@@ -11,10 +11,11 @@ Covered behaviors:
     the unparseable classification and never a default choice, each of the three
     tokens parses, and a reference naming a base-present line parses here and is
     rejected by the assertion instead;
-  * the five provenance clauses -> a fixture breaking exactly one clause names
-    that clause, the driven adjacency interleave passes, both old concatenation
-    orders fail clause five on that same driven fixture, and both pass on the
-    both-insert control whose base gap is empty;
+  * the provenance clauses -> a fixture breaking exactly one clause names that
+    clause, the driven adjacency interleave passes, both old concatenation
+    orders fail the stale clause on that same driven fixture, both pass on the
+    both-insert control whose base gap is empty, and a line both sides added is
+    kept once rather than dropped or duplicated;
   * the failure ladder -> each of the six classes lands the local run with a
     distinct named row, a timeout spends one escalated retry, an unparseable
     answer spends one strict retry, the other four spend none, and an
@@ -114,6 +115,20 @@ def _both_insert_request() -> "ga.GapRequest":
         base_lines=hunk.base,
         local_lines=hunk.local,
         release_lines=hunk.release,
+    )
+
+
+def _both_sides_request() -> "ga.GapRequest":
+    """Build a gap whose two runs share one line — the shape the keep clauses read
+    by value rather than by position, and the only one that can duplicate."""
+    return ga.GapRequest(
+        agent="glass-atrium-dev-python",
+        region_index=1,
+        region_count=1,
+        region_context="surrounding prose",
+        base_lines=(),
+        local_lines=("- shared", "- local only"),
+        release_lines=("- shared", "- release only"),
     )
 
 
@@ -338,6 +353,11 @@ class ProvenanceAssertionTest(unittest.TestCase):
             ),
             (ga.CLAUSE_NO_DROP_OF_NOVEL, adjacency, (("L", 1),)),
             (ga.CLAUSE_NO_STALE, adjacency, (("L", 1), ("L", 2), ("R", 2))),
+            (
+                ga.CLAUSE_NO_DUPLICATE,
+                _both_sides_request(),
+                (("L", 1), ("R", 1), ("L", 2), ("R", 2)),
+            ),
         )
         for clause, request, refs in cases:
             with self.subTest(clause):
@@ -353,7 +373,7 @@ class ProvenanceAssertionTest(unittest.TestCase):
             ("- rule A improved", "- rule B generalised"),
         )
 
-    def test_both_old_concatenations_fail_clause_five_on_the_driven_adjacency_gap(self):
+    def test_both_old_concatenations_fail_the_stale_clause_on_the_driven_adjacency_gap(self):
         request = _adjacency_request()
         orders = {
             "local then release": (("L", 1), ("L", 2), ("R", 1), ("R", 2)),
@@ -377,6 +397,32 @@ class ProvenanceAssertionTest(unittest.TestCase):
                 self.assertIsNone(ga.find_clause_failure(request, answer))
                 self.assertEqual(len(ga.build_gap_lines(request, answer)), 2)
 
+    def test_a_line_both_sides_added_is_listed_once_and_lands_once(self):
+        request = _both_sides_request()
+        answer = _answer(ga.CHOICE_INTERLEAVE, (("L", 1), ("L", 2), ("R", 2)))
+        self.assertIsNone(ga.find_clause_failure(request, answer))
+        self.assertEqual(
+            ga.build_gap_lines(request, answer),
+            ("- shared", "- local only", "- release only"),
+        )
+
+    def test_a_line_repeated_within_one_run_must_be_kept_as_often_as_it_occurs(self):
+        request = ga.GapRequest(
+            agent="a",
+            region_index=1,
+            region_count=1,
+            region_context="c",
+            base_lines=(),
+            local_lines=("- twice", "- twice"),
+            release_lines=("- release only",),
+        )
+        short = _answer(ga.CHOICE_INTERLEAVE, (("L", 1), ("R", 1)))
+        self.assertEqual(
+            ga.find_clause_failure(request, short), ga.CLAUSE_NO_DROP_OF_NOVEL
+        )
+        full = _answer(ga.CHOICE_INTERLEAVE, (("L", 1), ("L", 2), ("R", 1)))
+        self.assertIsNone(ga.find_clause_failure(request, full))
+
     def test_a_dropped_novel_line_is_rejected_before_the_stale_clause_is_reached(self):
         request = _adjacency_request()
         answer = _answer(ga.CHOICE_INTERLEAVE, (("L", 1), ("L", 2)))
@@ -393,7 +439,7 @@ class ResidualCountTest(unittest.TestCase):
         self.assertEqual(ga.count_discarded_novel(request, ga.CHOICE_RELEASE), 1)
         self.assertEqual(ga.count_discarded_novel(request, ga.CHOICE_INTERLEAVE), 0)
 
-    def test_a_resolved_interleave_counts_the_base_present_lines_clause_five_rejects(self):
+    def test_a_resolved_interleave_counts_the_base_present_lines_the_stale_clause_rejects(self):
         self.assertEqual(ga.count_rejected_stale(_adjacency_request()), 2)
         self.assertEqual(ga.count_rejected_stale(_both_insert_request()), 0)
 

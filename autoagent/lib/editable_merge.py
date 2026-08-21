@@ -1195,7 +1195,7 @@ class GapArbiter:
         """Write one named row in the grammar the arbiter's own rows use."""
         sys.stderr.write(
             f"[arbiter] {failure_class} agent={self.agent} "
-            f"region={region_index}/{region_count} ceiling={detail}\n"
+            f"region={region_index}/{region_count} detail={detail}\n"
         )
 
 

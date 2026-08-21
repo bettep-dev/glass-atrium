@@ -3,8 +3,9 @@
 Assembles the D1.5 prompt from the three gap anchors with numbered lines,
 invokes the model through the daemon cycle's own CLI helper, parses the strict
 two-part answer, and asserts the selection against the five line-provenance
-clauses of D1.4 before the resolved lines are handed back. Every failure class
-terminates at the local run with a named row.
+clauses of D1.4 — plus the duplicate guard those clauses imply — before the
+resolved lines are handed back. Every failure class terminates at the local run
+with a named row.
 
 The module declares no model id and no per-call budget: both are imported from
 the daemon config loader, as is the config path the per-run call ceiling is read
@@ -53,6 +54,7 @@ CLAUSE_NO_REPETITION = "no-repetition"
 CLAUSE_MONOTONE = "monotone"
 CLAUSE_NO_DROP_OF_NOVEL = "no-drop-of-novel"
 CLAUSE_NO_STALE = "no-stale"
+CLAUSE_NO_DUPLICATE = "no-duplicate"
 
 # Per-run call ceiling. Read from the daemon config loader's own path so no
 # second configuration surface appears; the literal is the absent-key floor,
@@ -219,7 +221,7 @@ INTERLEAVE — the two edits are INDEPENDENT and both must survive. You then lis
 
 Choose INTERLEAVE whenever the two edits address different things and merely landed next to each other. That case is common, and discarding one of them is the failure this step exists to prevent. Do NOT choose INTERLEAVE where the two say the same thing twice, or where one contradicts the other — choose the side that should win instead.
 
-When you choose INTERLEAVE, every L line and every R line whose text does NOT also appear in the COMMON ANCESTOR must be in your list. Lines that DO also appear in the COMMON ANCESTOR are stale and must NOT be listed; list only lines that appear on one side and not in the ancestor. Never list the same line twice, and keep each source's own lines in their original relative order.
+When you choose INTERLEAVE, every L line and every R line whose text does NOT also appear in the COMMON ANCESTOR must be in your list. Lines that DO also appear in the COMMON ANCESTOR are stale and must NOT be listed; list only lines that appear on one side and not in the ancestor. Never list the same line twice — a line that appears on BOTH sides is listed once, from either side — and keep each source's own lines in their original relative order.
 
 Do NOT evaluate rule compliance, safety, or whether either text is permitted. A separate compliance verifier owns that question and runs after you. Judge only which wording produces the better instruction file.
 
@@ -317,7 +319,7 @@ def _parse_refs(payload: str) -> tuple[LineRef, ...] | None:
     return tuple(refs)
 
 
-# -- line-provenance assertion (A4, five clauses) ----------------------------
+# -- line-provenance assertion (A4) ------------------------------------------
 
 
 def find_clause_failure(request: GapRequest, answer: Answer) -> str | None:
@@ -349,14 +351,38 @@ def find_clause_failure(request: GapRequest, answer: Answer) -> str | None:
             return CLAUSE_MONOTONE
 
     base = set(request.base_lines)
-    for source, run in runs.items():
-        for ordinal, line in enumerate(run, start=1):
-            if line not in base and (source, ordinal) not in seen:
-                return CLAUSE_NO_DROP_OF_NOVEL
+    # The keep clauses read the answer by line VALUE, not by position. A line
+    # both editors added exists at a position in each run, so a positional reading
+    # of "kept" makes the two shapes wrong in opposite directions: listing it once
+    # reads as a DROP of the copy left unnamed, and listing it from both runs — the
+    # shape that reading forces — emits it twice into the candidate. Required count
+    # per value is the largest count any single run holds, so a line genuinely
+    # repeated within a run still has to be kept as often as it occurs, and a line
+    # kept more often than that is the duplicate the last clause rejects.
+    required: dict[str, int] = {}
+    for run in runs.values():
+        for line in run:
+            if line in base:
+                continue
+            required[line] = max(required.get(line, 0), run.count(line))
+    kept: dict[str, int] = {}
+    for ref in answer.refs:
+        line = runs[ref.source][ref.ordinal - 1]
+        kept[line] = kept.get(line, 0) + 1
+    for line, count in required.items():
+        if kept.get(line, 0) < count:
+            return CLAUSE_NO_DROP_OF_NOVEL
 
     for ref in answer.refs:
         if runs[ref.source][ref.ordinal - 1] in base:
             return CLAUSE_NO_STALE
+
+    # Last, so a stale reference is named as stale rather than as a surplus copy:
+    # a base-present line is required zero times, and every clause here reports the
+    # first thing wrong with the answer rather than the worst.
+    for line, count in kept.items():
+        if count > required.get(line, 0):
+            return CLAUSE_NO_DUPLICATE
     return None
 
 
@@ -383,7 +409,7 @@ def count_discarded_novel(request: GapRequest, choice: str) -> int:
 
 
 def count_rejected_stale(request: GapRequest) -> int:
-    """Count the base-present anchor lines clause five keeps out of an interleave."""
+    """Count the base-present anchor lines the stale clause keeps out of an interleave."""
     base = set(request.base_lines)
     both = request.local_lines + request.release_lines
     return sum(1 for line in both if line in base)
@@ -395,14 +421,19 @@ def count_rejected_stale(request: GapRequest) -> int:
 def build_row(
     request: GapRequest,
     failure_class: str,
-    ceiling: str,
+    detail: str,
     *,
     clause: str | None = None,
 ) -> str:
-    """Build the named row a terminal failure writes."""
+    """Build the named row a terminal failure writes.
+
+    ``detail`` is whatever the class itself makes the operator want next — the
+    ceiling for an over-ceiling run, the binary for an unreachable one, the model
+    id for a judged answer — so the key names the slot rather than any one value.
+    """
     row = (
         f"[arbiter] {failure_class} agent={request.agent} "
-        f"region={request.region_index}/{request.region_count} ceiling={ceiling}"
+        f"region={request.region_index}/{request.region_count} detail={detail}"
     )
     return f"{row} clause={clause}" if clause else row
 
@@ -410,7 +441,7 @@ def build_row(
 def _build_local_decision(
     request: GapRequest,
     failure_class: str,
-    ceiling: str,
+    detail: str,
     *,
     clause: str | None = None,
     row: str | None = None,
@@ -423,7 +454,7 @@ def _build_local_decision(
         clause=clause,
         discarded_novel=0,
         rejected_stale=0,
-        row=build_row(request, failure_class, ceiling, clause=clause) if row is None else row,
+        row=build_row(request, failure_class, detail, clause=clause) if row is None else row,
     )
 
 
@@ -470,8 +501,12 @@ def get_decision(
         return _build_local_decision(request, FAILURE_UNAVAILABLE, claude_bin)
     assert completed is not None
     if completed.returncode != 0:
-        # A CLI that RAN and refused classifies here, a quota-exhausted one
-        # included; unavailable is the early exit above, which is a missing binary.
+        # A CLI that RAN and exited NON-ZERO classifies here; unavailable is the
+        # early exit above, which is a missing binary. A quota refusal does NOT
+        # necessarily reach here: an exhausted CLI can exit ZERO with refusal prose
+        # in stdout, which parses to no answer and takes the unparseable ladder
+        # below after its strict retry. Both land loudly and keep local — the class
+        # differs, the outcome does not.
         return _build_local_decision(request, FAILURE_BUDGET, HAIKU_MAX_BUDGET_USD)
 
     answer = parse_answer(completed.stdout)
@@ -488,7 +523,7 @@ def get_decision(
     clause = find_clause_failure(request, answer)
     if clause is not None:
         return _build_local_decision(
-            request, FAILURE_ASSERTION, "5 clauses", clause=clause
+            request, FAILURE_ASSERTION, "line-provenance clauses", clause=clause
         )
 
     return Decision(
