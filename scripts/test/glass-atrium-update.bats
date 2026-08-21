@@ -1592,6 +1592,43 @@ PLIST
   grep -q "heartbeat_at = now()" "${WORK}/psql.log"
 }
 
+@test "P3 headless: the merge-span ticker heartbeats on a timer and outlives no run" {
+  # Stage boundaries cannot cover the merge span: one contested gap can spend more than
+  # the stale cutoff, and a row frozen past it is reclaimed under a LIVE updater. The
+  # interval is compressed here; what is pinned is that the timer ticks more than once
+  # without a stage boundary, and that the stop leaves no ticker behind.
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    update_job_heartbeat() { printf "tick\n" >>"'"${WORK}"'/ticks"; }
+    _update_headless=1
+    _UPDATE_TICKER_INTERVAL=1
+    update_ticker_start
+    ticker_pid="${_update_ticker_pid}"
+    [[ -n "${ticker_pid}" ]] || exit 3
+    sleep 3
+    update_ticker_stop
+    [[ -z "${_update_ticker_pid}" ]] || exit 4
+    kill -0 "${ticker_pid}" 2>/dev/null && exit 5
+    update_ticker_stop  # idempotent: a second stop is a clean no-op
+  '
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$(grep -c . "${WORK}/ticks")" -ge 2 ]] || return 1
+}
+
+@test "P3 headless: the interactive path starts no ticker" {
+  run bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    _update_headless=0
+    update_ticker_start
+    [[ -z "${_update_ticker_pid}" ]] || exit 3
+  '
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
 @test "P3 headless: the EXIT trap marks an unfinalized in-progress row 'failed' (abort/crash recovery)" {
   # A headless run that dies mid-flight (update_die, a declined gate, a crash caught by
   # the trap) leaves an in-progress row → update_cleanup marks it 'failed' with the exit

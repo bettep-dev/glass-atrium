@@ -268,6 +268,9 @@ _update_restore_index_rows=""
 # withhold backstop can read the set between the roster candidates being generated
 # and being applied. Reset per run with the outcome ledger.
 _update_agent_create_failures=""
+# The background heartbeat ticker's pid while the merge span holds the run (empty
+# when none is live). One at a time — the start is a no-op while it is set.
+_update_ticker_pid=""
 # The prior-vendor agent roster (newline-wrapped) resolved once per run beside the
 # roster gate. The agent stage reads it to tell a release-shipped NEW agent from one
 # this install deleted through the ceremony, which the release still ships.
@@ -593,6 +596,8 @@ update_warn_dropped_frontmatter() {
 # writer — daemon or updater — can take it.
 update_cleanup() {
   local exit_code=$?
+  # First, so no ticker outlives the run it was heartbeating for.
+  update_ticker_stop
   # Headless DB-job finalization: any exit that did NOT already mark the row
   # 'completed' (update_die, a crash caught by the trap)
   # leaves an in-progress row → mark it 'failed' with the exit code so the P3-T3
@@ -2100,6 +2105,40 @@ update_heartbeat() {
   update_job_heartbeat
 }
 
+# Ticker interval. The sweep reclaims an in-progress row whose heartbeat is older
+# than its cutoff (30 min by default, monitor-side), so the interval has to leave
+# room for a tick to be missed and the next one still land inside the window.
+_UPDATE_TICKER_INTERVAL=300
+
+# Start the background heartbeat ticker for the merge span. Stage-boundary ticks
+# cannot cover that span: one contested gap costs up to a 180s call, its 300s
+# escalation and a 180s strict retry, and the ceiling admits many of them between
+# two boundaries — a gap wider than the sweep cutoff, which flips the row to failed
+# under a live updater and lets the next enqueue boot out the running one-shot.
+# Headless-only (the interactive path opens no job row) and idempotent.
+update_ticker_start() {
+  [[ "${_update_headless}" -eq 1 ]] || return 0
+  [[ -z "${_update_ticker_pid}" ]] || return 0
+  (
+    # The parent's traps are not this subshell's business: it holds no lock, no
+    # workdir and no job row of its own, and dies by the kill below.
+    trap - EXIT INT TERM
+    while sleep "${_UPDATE_TICKER_INTERVAL}"; do
+      update_job_heartbeat
+    done
+  ) &
+  _update_ticker_pid=$!
+}
+
+# Stop the ticker. Idempotent, and safe on a pid that already exited — the run's
+# own cleanup calls it on every exit path so no ticker outlives the process.
+update_ticker_stop() {
+  [[ -n "${_update_ticker_pid}" ]] || return 0
+  kill "${_update_ticker_pid}" 2>/dev/null || true # GA-ABSORB[benign]: an already-exited ticker is a normal outcome, not a failure to report
+  wait "${_update_ticker_pid}" 2>/dev/null || true # GA-ABSORB[benign]: the killed child's non-zero wait status is the expected shape here
+  _update_ticker_pid=""
+}
+
 # ---------------------------------------------------------------------------
 # P3 — claude -p precondition (headless). The merge stage may invoke Haiku, and a
 # launchd job with a broken PATH/HOME would fail cryptically mid-merge. Verify the
@@ -2951,6 +2990,9 @@ update_report_uncovered_paths() {
 # update). Args: $1 = new-release tree · $2 = manifest · $3 = install root.
 update_finalize_merge_and_anchors() {
   local new_dir="$1" manifest="$2" root="$3"
+  # The whole span below sits between two stage-boundary ticks and can outlast the
+  # stale cutoff on its own, so it runs under the timer instead.
+  update_ticker_start
   update_merge_agent_editable_regions "${new_dir}" "${manifest}" "${root}"
   # Between the two: the roster dispatch shares the agent merge's outcome ledger and
   # its cycle dir, so it runs after the merge opens both and before the capture reads
@@ -2958,6 +3000,7 @@ update_finalize_merge_and_anchors() {
   update_dispatch_roster_merge "${new_dir}" "${manifest}" "${root}"
   update_capture_base_content "${new_dir}"
   update_capture_baseline "${manifest}"
+  update_ticker_stop
 }
 
 # post-landing mode enforcement (D6 R1: apply-then-verify)

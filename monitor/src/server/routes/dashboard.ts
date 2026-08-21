@@ -406,9 +406,11 @@ const ENQUEUE_TIMEOUT_MS = 20_000;
 const ENQUEUE_MAX_BUFFER = 1024 * 1024;
 
 // Default stale-sweep cutoff (30 min). update.sh heartbeats its update_job row at
-// long-stage boundaries rather than on a timer, so the cutoff must exceed the widest
-// gap between two ticks: a crashed decoupled updater (heartbeat frozen) is reclaimed
-// while a live one is never clobbered. Override: ATRIUM_UPDATE_STALE_MS (test seam).
+// long-stage boundaries, and across the merge span — whose model calls can spend more
+// than this cutoff between two boundaries — on a background timer, so the cutoff must
+// exceed the wider of the two gaps: a crashed decoupled updater (heartbeat frozen) is
+// reclaimed while a live one is never clobbered. Override: ATRIUM_UPDATE_STALE_MS
+// (test seam).
 const DEFAULT_STALE_MS = 30 * 60 * 1000;
 
 // Row-reservation placeholder: the route resolves no release version before enqueue.
