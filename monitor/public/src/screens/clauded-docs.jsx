@@ -810,7 +810,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<style>{`
         @keyframes skelPulseCD { 0%,100%{opacity:.7} 50%{opacity:.35} }
         @keyframes docSpinCD { to { transform: rotate(360deg); } }
-        /* 내려받기 in-flight 회전자 — 라벨 없는 아이콘 바에서 ~20s 렌더의 1차 진행 신호. */
+        /* 내려받기 in-flight 회전자 — 라벨 없는 아이콘 바의 1차 진행 신호. */
         .doc-action-spinner { animation: docSpinCD 900ms linear infinite; transform-origin: 50% 50%; }
         @media (prefers-reduced-motion: reduce) { .doc-action-spinner { animation: none; } }
         .doc-row { transition: background 100ms; }
@@ -820,7 +820,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
         .title-cell .doc-title-row { display: flex; align-items: center; gap: 6px; }
         .doc-title-lead { flex: 0 0 20px; width: 20px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
-        /* nowrap — 제목 뒤 잔여 칩(+N)이 접히며 제목을 2줄로 밀어내지 못하게. */
         .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
@@ -829,7 +828,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
         .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
-        /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다 (agent-only+html+rev = 202.2px 실측).
+        /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
@@ -1069,16 +1068,15 @@ function ScreenClaudedDocs(/* { onNav } */) {
 }
 
 // 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
-//   제목 셀 inline 배치 시 flex-wrap 이 제목을 2·3줄로 밀어내던 원인 제거.
 function DocTagsCellCD({ audience, format, supersedesId }) {
 	const { Badge } = window.UI;
 	return (
 		<td className="doc-tags-cell">
-			{/* nowrap — 칩이 2줄로 접히면 행 높이가 다시 튄다. */}
+			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
-				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json 철자). */}
+				{/* format = 서술 속성 → neutral metadata pill. */}
 				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
 				{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'). */}
 				{supersedesId != null && (
@@ -1091,8 +1089,7 @@ function DocTagsCellCD({ audience, format, supersedesId }) {
 	);
 }
 
-// 작성자 셀 — 1줄 클램프. 120px 힌트 컬럼에서 'glass-atrium-intel-planner' 가 하이픈에서
-//   줄바꿈되던 것을 말줄임으로 대체, 전체 값은 title= 툴팁.
+// 작성자 셀 — 1줄 클램프. 전체 값은 title= 툴팁이 운반.
 function DocAuthorCellCD({ author }) {
 	return (
 		<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
@@ -1339,14 +1336,14 @@ function DocListCardCD({
                     목록 모드 비-제목 합 613px → 제목이 나머지 397px(본문 상자 343px).
                     width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
                     min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
-								{/* 135px — 최장 라벨 "In progress" 배지(mono 11px + padding)의 실측 폭 134.6px. */}
+								{/* 135px — 최장 라벨 "In progress" 배지가 들어가는 컬럼 하한. */}
 								<th style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
                     ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
                     그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
 								<th style={{ width: 72, minWidth: 72 }}>ID</th>
 								<th style={{ minWidth: 394 }}>Title</th>
-								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리 (제목 1줄 보장). */}
+								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
 								<th style={{ width: 152, minWidth: 152 }}>Tags</th>
 								<th style={{ width: 110, minWidth: 110 }}>Author</th>
 								<th style={{ width: 100, minWidth: 100 }}>Created</th>
@@ -1474,7 +1471,6 @@ function DocListCardCD({
 														)}
 													</span>
 													<span className="doc-title-main">
-														{/* 제목 — 1줄 클램프. 전체 제목은 title= 툴팁과 상세 뷰가 운반. */}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
 														</span>
@@ -1941,7 +1937,6 @@ function GroupMembersRowsCD({
 							)}
 						</span>
 						<span className="doc-title-main">
-							{/* 제목 — 1줄 클램프. 전체 제목은 title= 툴팁과 상세 뷰가 운반. */}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
 							</span>
@@ -2065,11 +2060,11 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	const { Icon } = window.UI;
 	const isPending = pendingDelete && pendingDelete.id === doc.id;
 	const [isExporting, setIsExporting] = useStateCD(false);
-	// 단일 문서 HTML 내려받기 — headless chromium 렌더 ~20s 소요 → fetch→blob 흐름으로 in-flight 피드백 확보.
+	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
-	//   · 처리 중 신호: 버튼 disabled + 회전 스피너 글리프 + title/aria-label 교체가 1차 (~20s 전 구간 커버)
-	//     · info toast 는 보조 — 3.2s 뒤 자동 소멸해 대기 구간 대부분을 덮지 못한다.
+	//   · 처리 중 신호: 버튼 disabled + 회전 스피너 글리프 + title/aria-label 교체가 1차.
+	//     · info toast 는 보조 — 3.2s 뒤 자동 소멸한다.
 	const handleHtmlExport = useCallbackCD(async () => {
 		if (isExporting) return; // 중복 클릭 차단 — in-flight 중 재진입 무시.
 		setIsExporting(true);
@@ -2109,7 +2104,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	return (
 		<div className="flex items-center gap-2 flex-wrap">
 			{/* 삭제 = 2단계 확인. 무장 상태는 글리프 교체(trash→triangle-alert) + danger 클래스 2중 인코딩 —
-			    라벨이 없는 바에서 색 하나만으로 severity 를 운반하면 DESIGN.md §8(기호+색) 위반. */}
+			    라벨이 없는 바에서 색 하나만으로 severity 를 운반하면 DESIGN.md §2 원칙 8(기호+색) 위반. */}
 			<button
 				type="button"
 				className={`btn sm icon ${isPending ? "danger" : "ghost"}`}
@@ -2488,7 +2483,6 @@ function DocMetaPanelCD({
 					{formatDateTimeCD(doc.created_at)}
 				</span>
 			</div>
-			{/* 배지 행 — 라벨 메타 목록 아래. */}
 			<div className="flex items-center gap-2 mt-2 flex-wrap">
 				{/* doc_status dual-encoded badge (workflow lifecycle 진행중/완료).
 				    onStatusToggle 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
@@ -2507,7 +2501,7 @@ function DocMetaPanelCD({
 					}
 					isToggling={togglingIds?.has(doc.id) ?? false}
 				/>
-				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json/txt 철자).
+				{/* format = 서술 속성 → neutral metadata pill.
 				    · 미지정 format 은 배지 미출력 (거짓 주장 방지). */}
 				{DOC_FORMAT_BADGE_CD[doc.format] && (
 					<Badge role="metadata">{doc.format}</Badge>

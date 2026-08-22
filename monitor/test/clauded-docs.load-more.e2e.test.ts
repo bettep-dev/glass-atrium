@@ -881,8 +881,9 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
   }
 });
 
-// helper — 지정 제목 행의 제목 본문 상자 폭(px) · 렌더 줄 수 · 카드 본문 client 폭.
-//   줄 수는 clamp(-webkit-line-clamp:1) 가 접힘을 감추므로 높이/line-height 로 환산해 확인한다.
+// helper — 지정 제목 행의 제목 본문 상자 폭(px) · 카드 본문 client 폭.
+//   ponytail: lines 는 clamp(-webkit-line-clamp:1) 가 높이를 1줄로 고정해 항상 1 → 아래 lines 단언은 접힘을 잡지 못한다.
+//   실효화 경로 — scrollHeight 를 lineHeight 와 비교.
 async function measureTitleBox(
   page: Page,
   titleFragment: string,
@@ -906,9 +907,7 @@ async function measureTitleBox(
 }
 
 // column-width: 카드 폭 바닥에서 제목 본문 상자의 하한 고정.
-//   · 목록 모드 컬럼 합이 카드 본문 폭 1010px 를 여유 0 으로 채운다 — 하한을 실제로 지키는 것은 Title th 의 min-width 다.
-//   · 340px = 실측 하한 (목록 343px · 검색 340px · id 6자리 환경의 목록 340px).
-//   · min-width 394 를 360 으로 낮추면 336.6px 로 떨어져 이 단언이 깨진다 — 하한을 지키는 대상이 그 값임을 뮤테이션으로 확인.
+//   · 목록 모드 컬럼 합이 카드 본문 폭 1010px 를 여유 0 으로 채운다.
 
 test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·검색 모드 모두 ≥340px + 1줄", async () => {
   // 'widthpin' = 이 테스트 전용 검색 토큰 — 앞뒤 공백으로 끊겨 tsvector 단어 하나로 잡힌다.
@@ -935,7 +934,7 @@ test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·�
       assert.ok(listBox.width >= 340, `목록 모드 제목 본문 상자 ≥340px (got ${listBox.width})`);
       assert.strictEqual(listBox.lines, 1, `목록 모드 제목 1줄 (got ${listBox.lines})`);
 
-      // 검색 모드 — Order 컬럼(width 56px · 실측 66.4px)이 붙어 제목이 가장 좁아지는 경우.
+      // 검색 모드 — Order 컬럼(width 56px)이 붙어 제목이 가장 좁아지는 경우.
       // Order 헤더 등장 = 모드 전환 완료 신호.
       await page.locator("input.doc-search-input").fill("widthpin");
       await page.getByRole("columnheader", { name: "Order" }).waitFor({ state: "visible" });
