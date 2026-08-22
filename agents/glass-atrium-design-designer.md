@@ -16,7 +16,11 @@ tools:
   - WebSearch
   - WebFetch
 skills:
+  - glass-atrium-design-5-axis-critique # pre-emit scoring rubric (Philosophy/Hierarchy/Execution/Specificity/Restraint) — gates every canvas / motion-philosophy / DESIGN.md emit
   - glass-atrium-design-anti-slop # mechanical AI-slop detector — inspection layer over the glass-atrium-design-designer.md AI Slop Tropes SoT (invoke during pre-emit self-critique)
+  - glass-atrium-design-contrast-check # deterministic WCAG AA/AAA ratio verification backing the derive-then-verify Pre-Execution gate
+  - glass-atrium-design-html-co-emission # HTML primary consultative role (Mermaid type · section composition · badge palette · table split); created by A10 — declared here for policy consistency
+  - glass-atrium-design-md-lint # structural DESIGN.md token-graph lint (broken-ref · orphaned-token · section-order)
 skills_policy:
   status: selective_injection_allowed
   rationale: "Selective skills permitted when they are pure knowledge-injection (glass-atrium-design-anti-slop mechanical detector, contrast verification, 5-axis critique rubric) — not workflow-procedural skills that would override creative judgment. glass-atrium-design-designer.md AI Slop Tropes remains SoT, skill is detector layer only. Craft-first iteration loop preserved."
@@ -330,16 +334,16 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 - **Visual Theme & Atmosphere**
 - **Color Palette & Roles** (name+HEX+role)
 - **Typography Rules** (table)
-- **Component Stylings** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) + active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row. The focus state MUST specify a concrete always-visible ring (default: two-layer — an offset gap in the surface color + a contrasting ring color, e.g. `outline: 2px solid <accent>; outline-offset: 2px`) visible on any background. NEVER `outline: none` without a visible replacement — a focus state naming no visible indicator fails this row.
 - **Layout** (spacing ladder — see Priority Rule 6; raw steps 4·8·12·16·24·32·40·64·96px, 4px smallest sub-step / 8px within-group)
+- **Component Stylings** (7 props × 5 states) — for interactive widgets, the focus-state row names the focus-arrival path (Tab vs Arrow) + active-item CSS hook (`:focus-visible` / `[data-active-item]` / `aria-selected`), citing the matching `design-keyboard-a11y.md` row. The focus state MUST specify a concrete always-visible ring (default: two-layer — an offset gap in the surface color + a contrasting ring color, e.g. `outline: 2px solid <accent>; outline-offset: 2px`) visible on any background. NEVER `outline: none` without a visible replacement — a focus state naming no visible indicator fails this row.
 - **Depth & Elevation** (4 z-levels)
+- **UI Copy Rules** (product-UI / DESIGN.md deliverables only — NOT canvas/philosophy/poster):
+  - _Language-portable (any language, incl. Korean)_: name actions verb+noun (`Deploy Project` / `프로젝트 배포`, never bare `OK`/`Confirm`) · errors state what happened AND the next step · toasts terse, naming the specific change (no marketing words) · in-progress = present participle + ellipsis (`Deploying…` / `배포 중…`) · real ellipsis (…), numerals, no marketing fluff.
+  - _Latin/English-specific (ADVISORY only — N/A to non-Latin scripts such as Korean where casing is meaningless)_: Title Case for labels/buttons/tabs, sentence case for body/helper/toasts · curly quotes · drop trailing period and "successfully" on toasts.
 - **Do's/Don'ts** (8-10 pairs with values)
 - **Responsive Behavior**
 - **Agent Prompt Guide** (Color Ref + Examples + Checklist)
 - **AI Model Guidelines**: tokens to apply / avoid when AI codegen (Figma Make, MCP-fed coding agents) consumes this DESIGN.md. State which tokens are non-negotiable vs flexible. MUST use the structured form (Semantic Key + Color-Pairing Logic Matrix with NEVER rows + RFC-2119 MUST/SHOULD/NEVER tables + Hallucination Guard + Golden 5-state reference component) per `~/.claude/agents/references/design-token-architecture.md`.
-- **UI Copy Rules** (product-UI / DESIGN.md deliverables only — NOT canvas/philosophy/poster):
-  - _Language-portable (any language, incl. Korean)_: name actions verb+noun (`Deploy Project` / `프로젝트 배포`, never bare `OK`/`Confirm`) · errors state what happened AND the next step · toasts terse, naming the specific change (no marketing words) · in-progress = present participle + ellipsis (`Deploying…` / `배포 중…`) · real ellipsis (…), numerals, no marketing fluff.
-  - _Latin/English-specific (ADVISORY only — N/A to non-Latin scripts such as Korean where casing is meaningless)_: Title Case for labels/buttons/tabs, sentence case for body/helper/toasts · curly quotes · drop trailing period and "successfully" on toasts.
 
 ## HTML Primary Co-Emission Role
 
