@@ -809,6 +809,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			<TypeScaleStyle />
 			<style>{`
         @keyframes skelPulseCD { 0%,100%{opacity:.7} 50%{opacity:.35} }
+        @keyframes docSpinCD { to { transform: rotate(360deg); } }
+        /* 내려받기 in-flight 회전자 — 라벨 없는 아이콘 바에서 ~20s 렌더의 1차 진행 신호. */
+        .doc-action-spinner { animation: docSpinCD 900ms linear infinite; transform-origin: 50% 50%; }
+        @media (prefers-reduced-motion: reduce) { .doc-action-spinner { animation: none; } }
         .doc-row { transition: background 100ms; }
         .doc-row:hover { background: rgb(var(--accent) / 0.06); }
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
@@ -2054,7 +2058,8 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 ~20s 소요 → fetch→blob 흐름으로 in-flight 피드백 확보.
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
-	//   · 처리 중 신호: 버튼 disabled + 'Generating…' 라벨이 1차 (~20s 전 구간 커버) · info toast 는 보조 (자동 소멸 가능).
+	//   · 처리 중 신호: 버튼 disabled + 회전 스피너 글리프 + title/aria-label 교체가 1차 (~20s 전 구간 커버)
+//     · info toast 는 보조 — 3.2s 뒤 자동 소멸해 대기 구간 대부분을 덮지 못한다.
 	const handleHtmlExport = useCallbackCD(async () => {
 		if (isExporting) return; // 중복 클릭 차단 — in-flight 중 재진입 무시.
 		setIsExporting(true);
@@ -2090,43 +2095,45 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	}, [doc.id, doc.title, isExporting, showToast]);
 
 	// 삭제 + HTML 내려받기 + 닫기. 닫기 = fullscreen 종료 (selectedId 해제) = 키보드 F 단축키 동일 동작.
+	//   · 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
 	return (
 		<div className="flex items-center gap-2 flex-wrap">
+			{/* 삭제 = 2단계 확인. 무장 상태는 글리프 교체(trash→triangle-alert) + danger 클래스 2중 인코딩 —
+			    라벨이 없는 바에서 색 하나만으로 severity 를 운반하면 DESIGN.md §8(기호+색) 위반. */}
 			<button
 				type="button"
-				className={`btn sm ${isPending ? "danger" : "ghost"}`}
+				className={`btn sm icon ${isPending ? "danger" : "ghost"}`}
 				onClick={() => onDelete(doc.id)}
-				aria-label={
-					isPending ? "Confirm delete" : "Delete document"
-				}
+				aria-label={isPending ? "Confirm delete" : "Delete document"}
+				title={isPending ? "Confirm delete" : "Delete document"}
 			>
-				<Icon name="x" size={13} />
-				{isPending ? "Confirm" : "Delete"}
+				<Icon name={isPending ? "triangle-alert" : "trash"} size={14} />
 			</button>
 			<button
 				type="button"
-				className="btn ghost sm"
+				className="btn ghost sm icon"
 				onClick={handleHtmlExport}
 				disabled={isExporting}
 				aria-busy={isExporting ? "true" : undefined}
-				aria-label={
-					isExporting
-						? "Generating HTML file…"
-						: "Download as HTML"
-				}
+				aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
+				title={isExporting ? "Generating HTML… this can take ~20s" : "Download HTML"}
 				style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
 			>
-				<Icon name="download" size={13} />
-				{isExporting ? "Generating HTML…" : "Download HTML"}
+				<Icon
+					name={isExporting ? "loader" : "download"}
+					size={14}
+					className={isExporting ? "doc-action-spinner" : ""}
+				/>
 			</button>
 			{onClose && (
 				<button
 					type="button"
-					className="btn ghost sm"
+					className="btn ghost sm icon"
 					onClick={onClose}
 					aria-label="Close viewer"
+					title="Close viewer"
 				>
-					<Icon name="x" size={13} />
+					<Icon name="x" size={14} />
 				</button>
 			)}
 		</div>
@@ -2456,10 +2463,26 @@ function DocMetaPanelCD({
 	const { Badge } = window.UI;
 	return (
 		<div className="flex flex-col gap-2">
-			<div className="flex items-center gap-2 mb-2 flex-wrap">
+			{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">ID</span>
+				<span className="doc-meta-value font-mono">#{doc.id}</span>
+			</div>
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Author</span>
+				<span className="doc-meta-value">{doc.author}</span>
+			</div>
+			<div className="doc-meta-row">
+				<span className="doc-meta-label">Created</span>
+				<span className="doc-meta-value font-mono">
+					{formatDateTimeCD(doc.created_at)}
+				</span>
+			</div>
+			{/* 배지 행 — 라벨 메타 목록 아래. */}
+			<div className="flex items-center gap-2 mt-2 flex-wrap">
 				{/* doc_status dual-encoded badge (workflow lifecycle 진행중/완료).
-            onStatusToggle 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
-            cachedRow=doc — viewer state 가 body + content_hash + format 보유 → GET 스킵 (네트워크 절감). */}
+				    onStatusToggle 옵셔널 주입 (legacy 호출 호환 — toggle 없으면 read-only span).
+				    cachedRow=doc — viewer state 가 body + content_hash + format 보유 → GET 스킵 (네트워크 절감). */}
 				<DocStatusBadgeCD
 					docStatus={optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status}
 					onToggle={
@@ -2474,33 +2497,17 @@ function DocMetaPanelCD({
 					}
 					isToggling={togglingIds?.has(doc.id) ?? false}
 				/>
-				<span
-					className="fs-meta font-mono"
-					style={{ color: "rgb(var(--dim))" }}
-				>
-					#{doc.id}
-				</span>
-				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json/txt 철자, 색·square glyph 폐기).
-            · doc.format 바인딩 · 미지정 format 은 배지 미출력 (거짓 주장 방지). */}
+				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json/txt 철자).
+				    · 미지정 format 은 배지 미출력 (거짓 주장 방지). */}
 				{DOC_FORMAT_BADGE_CD[doc.format] && (
 					<span>
 						<Badge role="metadata">{doc.format}</Badge>
 					</span>
 				)}
 			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Author</span>
-				<span className="doc-meta-value">{doc.author}</span>
-			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Created</span>
-				<span className="doc-meta-value font-mono">
-					{formatDateTimeCD(doc.created_at)}
-				</span>
-			</div>
 			{/* supersedes chain predecessor.
-          · supersedes_id != null 시 predecessor 단일 fetch + meta drawer 섹션 surface
-          · successor 는 ViewerPanelCD 상단 배너 (superseded_by_id) 가 담당 — 양방향 1-hop 네비게이션 (F34) */}
+			    · supersedes_id != null 시 predecessor 단일 fetch + meta drawer 섹션 surface
+			    · successor 는 ViewerPanelCD 상단 배너 (superseded_by_id) 가 담당 — 양방향 1-hop 네비게이션 (F34) */}
 			{doc.supersedes_id != null && (
 				<PredecessorPanelCD
 					predecessorId={doc.supersedes_id}
