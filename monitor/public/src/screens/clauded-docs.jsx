@@ -1064,8 +1064,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	);
 }
 
-// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
-// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 // 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
 //   제목 셀 inline 배치 시 flex-wrap 이 제목을 2·3줄로 밀어내던 원인 제거.
 function DocTagsCellCD({ audience, format, supersedesId }) {
@@ -1101,6 +1099,8 @@ function DocAuthorCellCD({ author }) {
 	);
 }
 
+// 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
+// .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
 function DocListCardCD({
 	state,
 	rows,
