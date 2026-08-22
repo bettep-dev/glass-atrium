@@ -1,4 +1,4 @@
-// E2E Playwright test — Load More pagination + doc_status chip + folder grouping + cascade on screens/clauded-docs.jsx.
+// E2E Playwright test — Load More pagination + doc_status chip + folder grouping + cascade + column width floor on screens/clauded-docs.jsx.
 // Runner: npx tsx --test test/clauded-docs.load-more.e2e.test.ts
 //
 // DB: real Postgres — every seeded row tagged `load-more-test-${uuid}` 마커, after() 가 LIKE 일괄 cleanup.
@@ -878,5 +878,76 @@ test("cascade-toast: 3-doc group 생성 → 'Grouped 3' toast 가시 + TOAST_DUR
     }
   } finally {
     for (const id of ids) await deleteDoc(id);
+  }
+});
+
+// helper — 지정 제목 행의 제목 본문 상자 폭(px) · 렌더 줄 수 · 카드 본문 client 폭.
+//   줄 수는 clamp(-webkit-line-clamp:1) 가 접힘을 감추므로 높이/line-height 로 환산해 확인한다.
+async function measureTitleBox(
+  page: Page,
+  titleFragment: string,
+): Promise<{ width: number; lines: number; cardClient: number }> {
+  return await page.evaluate((fragment) => {
+    const row = Array.from(document.querySelectorAll("tr.doc-row")).find((r) =>
+      (r.textContent ?? "").includes(fragment),
+    );
+    if (!row) throw new Error(`doc-row not found for fragment: ${fragment}`);
+    const titleEl = row.querySelector(".doc-title-text") as HTMLElement | null;
+    if (!titleEl) throw new Error("`.doc-title-text` missing in matched row");
+    const cardBody = document.querySelector(".card-body") as HTMLElement | null;
+    if (!cardBody) throw new Error("`.card-body` missing");
+    const box = titleEl.getBoundingClientRect();
+    return {
+      width: Number(box.width.toFixed(1)),
+      lines: Math.round(box.height / parseFloat(getComputedStyle(titleEl).lineHeight)),
+      cardClient: cardBody.clientWidth,
+    };
+  }, titleFragment);
+}
+
+// column-width: 카드 폭 바닥에서 제목 본문 상자의 하한 고정.
+//   · 목록 모드 컬럼 합이 카드 본문 폭 1010px 를 여유 0 으로 채운다 — 하한을 실제로 지키는 것은 Title th 의 min-width 다.
+//   · 340px = 실측 하한 (목록 343px · 검색 340px · id 6자리 환경의 목록 340px).
+//   · min-width 394 를 360 으로 낮추면 336.6px 로 떨어져 이 단언이 깨진다 — 하한을 지키는 대상이 그 값임을 뮤테이션으로 확인.
+
+test("column-width: 1010px 카드 바닥에서 제목 본문 상자가 목록·검색 모드 모두 ≥340px + 1줄", async () => {
+  // 'widthpin' = 이 테스트 전용 검색 토큰 — 앞뒤 공백으로 끊겨 tsvector 단어 하나로 잡힌다.
+  const wideTitle = `${SUITE_MARKER} widthpin ${"W".repeat(78)}`;
+  const wide = await postCreate({
+    title: wideTitle,
+    author: "load-more-tester",
+    html_body: makeHtmlBody(wideTitle),
+  });
+  try {
+    // 1280px 이하 뷰포트에서 카드가 셸 min-width 바닥에 닿는다 — 그 바닥이 측정 기준점.
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await page.locator("tr.doc-row", { hasText: "widthpin" }).first().waitFor({ state: "visible" });
+
+      const listBox = await measureTitleBox(page, "widthpin");
+      assert.strictEqual(
+        listBox.cardClient,
+        1010,
+        `카드 본문 폭 바닥 1010px — 기준점이 바뀌면 아래 하한도 다시 실측해야 한다 (got ${listBox.cardClient})`,
+      );
+      assert.ok(listBox.width >= 340, `목록 모드 제목 본문 상자 ≥340px (got ${listBox.width})`);
+      assert.strictEqual(listBox.lines, 1, `목록 모드 제목 1줄 (got ${listBox.lines})`);
+
+      // 검색 모드 — Order 컬럼(width 56px · 실측 66.4px)이 붙어 제목이 가장 좁아지는 경우.
+      // Order 헤더 등장 = 모드 전환 완료 신호.
+      await page.locator("input.doc-search-input").fill("widthpin");
+      await page.getByRole("columnheader", { name: "Order" }).waitFor({ state: "visible" });
+      await page.locator("tr.doc-row", { hasText: "widthpin" }).first().waitFor({ state: "visible" });
+
+      const searchBox = await measureTitleBox(page, "widthpin");
+      assert.ok(searchBox.width >= 340, `검색 모드 제목 본문 상자 ≥340px (got ${searchBox.width})`);
+      assert.strictEqual(searchBox.lines, 1, `검색 모드 제목 1줄 (got ${searchBox.lines})`);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    await deleteDoc(wide.id);
   }
 });

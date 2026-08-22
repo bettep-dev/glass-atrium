@@ -829,9 +829,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
         .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
-        /* 태그 셀 폭 상한 — 칩 nowrap 합이 셀 min-content 를 189px 로 키워 제목 폭을 빼앗는다.
-           위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정.
-           상한 + 클리핑으로 컬럼을 152px 에 묶는다. 잘린 칩의 전체 값은 각 칩 title= 이 운반. */
+        /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다 (agent-only+html+rev = 202.2px 실측).
+           위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
+           124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* 선택 행 강조 — 2px 좌측 border accent only (S5: full-row flood 금지 · bg fill 제거).
            대비 보조 = 좌측 막대 폭을 3→4px 로 굵혀 fill 제거에 따른 식별성 손실 보상. */
@@ -1342,8 +1342,8 @@ function DocListCardCD({
 								{/* 135px — 최장 라벨 "In progress" 배지(mono 11px + padding)의 실측 폭 134.6px. */}
 								<th style={{ width: 135, minWidth: 135 }}>Status</th>
 								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
-                    ponytail: 72px 는 5자리(#12659, 실측 71.2px) 기준.
-                    6자리(78.4px)면 min-content 가 이겨 제목이 6.4px 준다 — 그때 Tags 를 줄인다. */}
+                    ponytail: 72px 는 5자리 기준 — 6자리면 min-content 가 이겨 셀이 78.4px 로 벌어진다.
+                    그때 제목 본문 상자가 343→340px 로 줄고 나머지는 가로 스크롤로 나간다 — Tags 를 줄여 되돌린다. */}
 								<th style={{ width: 72, minWidth: 72 }}>ID</th>
 								<th style={{ minWidth: 394 }}>Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리 (제목 1줄 보장). */}
