@@ -1182,7 +1182,7 @@
     "monitor/public/src/data/pricing.js": "6f4512ac582e9d0121b7c69b40489dff1a13f168be86294412ccaa4ba4eac23f",
     "monitor/public/src/screens/agents.jsx": "85b5c97938619024758149c0edfdf3a258af79a1f21c8493c98af63399d66564",
     "monitor/public/src/screens/architecture.jsx": "ef76fc71292b818e1255f1f7ddc430cb08cca99c231bb6e6557e25e0893afbc1",
-    "monitor/public/src/screens/clauded-docs.jsx": "bb17a24b859a4ecefc5effaed2e8183ad223a3ed855ade638fe4b80481d79fab",
+    "monitor/public/src/screens/clauded-docs.jsx": "c1fe4501f254d7490808b6fca735a077b9abb88af0fe471764c758661843ad72",
     "monitor/public/src/screens/cost.jsx": "e67936538c5642c12e8a9443060ece4d54f8ee219e5fb74acb369bfe170894e4",
     "monitor/public/src/screens/dashboard.jsx": "59fe17987477cd4c3471f114fe1614b44d640f26f778b95c6c190ed426201261",
     "monitor/public/src/screens/health.jsx": "f435eacae518bb5a34fdcf57b5e50d8019307d3b4a507eb17ce422d673bfd4e4",

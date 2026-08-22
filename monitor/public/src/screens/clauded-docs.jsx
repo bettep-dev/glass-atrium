@@ -829,6 +829,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
         .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
+        /* 태그 셀 폭 상한 — 칩 nowrap 합이 셀 min-content 를 189px 로 키워 제목 폭을 빼앗는다.
+           위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정.
+           상한 + 클리핑으로 컬럼을 152px 에 묶는다. 잘린 칩의 전체 값은 각 칩 title= 이 운반. */
+        .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* 선택 행 강조 — 2px 좌측 border accent only (S5: full-row flood 금지 · bg fill 제거).
            대비 보조 = 좌측 막대 폭을 3→4px 로 굵혀 fill 제거에 따른 식별성 손실 보상. */
         .doc-row.is-selected { box-shadow: inset 4px 0 0 rgb(var(--accent)); }
@@ -1069,7 +1073,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 function DocTagsCellCD({ audience, format, supersedesId }) {
 	const { Badge } = window.UI;
 	return (
-		<td>
+		<td className="doc-tags-cell">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 다시 튄다. */}
 			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
@@ -1293,7 +1297,8 @@ function DocListCardCD({
 					flex: "1 1 auto",
 					minHeight: 0,
 					overflowY: "auto",
-					// 컬럼 2개 추가 → 좁은 폭에서 압축 대신 가로 스크롤로 탈출 (셀 뭉개짐 차단).
+					// 카드 폭은 셸 min-width 에 막혀 1010px 아래로 내려가지 않는다.
+					// 컬럼 min-width 합이 그 폭을 넘을 때 발동 — 검색 모드의 Order 컬럼이 그 경우(1073px).
 					overflowX: "auto",
 				}}
 			>
@@ -1330,17 +1335,23 @@ function DocListCardCD({
 									/>
 								</th>
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
-								{/* column 120px — 최장 라벨 "In progress" 배지 (mono 11px + padding) wrap 차단 + 여유. */}
-								<th style={{ width: 120 }}>Status</th>
-								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
-								<th style={{ width: 76 }}>ID</th>
-								<th>Title</th>
+								{/* 폭 예산 — 카드 폭은 셸 min-width 에 막혀 1010px 아래로 내려가지 않는다.
+                    목록 모드 비-제목 합 613px → 제목이 나머지 397px(본문 상자 343px).
+                    width 는 표가 넘칠 때 min-content 까지 눌려 바닥 구실을 못 한다.
+                    min-width 를 같이 줘야 눌림이 제목 한 컬럼에 몰리지 않는다. */}
+								{/* 135px — 최장 라벨 "In progress" 배지(mono 11px + padding)의 실측 폭 134.6px. */}
+								<th style={{ width: 135, minWidth: 135 }}>Status</th>
+								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호).
+                    ponytail: 72px 는 5자리(#12659, 실측 71.2px) 기준.
+                    6자리(78.4px)면 min-content 가 이겨 제목이 6.4px 준다 — 그때 Tags 를 줄인다. */}
+								<th style={{ width: 72, minWidth: 72 }}>ID</th>
+								<th style={{ minWidth: 394 }}>Title</th>
 								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리 (제목 1줄 보장). */}
-								<th style={{ width: 180 }}>Tags</th>
-								<th style={{ width: 120 }}>Author</th>
-								<th style={{ width: 100 }}>Created</th>
+								<th style={{ width: 152, minWidth: 152 }}>Tags</th>
+								<th style={{ width: 110, minWidth: 110 }}>Author</th>
+								<th style={{ width: 100, minWidth: 100 }}>Created</th>
 								{isSearchMode && (
-									<th style={{ width: 56 }} className="num">
+									<th style={{ width: 56, minWidth: 56 }} className="num">
 										Order
 									</th>
 								)}
@@ -2058,7 +2069,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
 	//   · 처리 중 신호: 버튼 disabled + 회전 스피너 글리프 + title/aria-label 교체가 1차 (~20s 전 구간 커버)
-//     · info toast 는 보조 — 3.2s 뒤 자동 소멸해 대기 구간 대부분을 덮지 못한다.
+	//     · info toast 는 보조 — 3.2s 뒤 자동 소멸해 대기 구간 대부분을 덮지 못한다.
 	const handleHtmlExport = useCallbackCD(async () => {
 		if (isExporting) return; // 중복 클릭 차단 — in-flight 중 재진입 무시.
 		setIsExporting(true);
