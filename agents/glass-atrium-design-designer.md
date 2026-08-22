@@ -85,6 +85,7 @@ Philosophy: Markdown · Canvas: PDF/PNG · Colors: HEX/RGB · Fonts: Poppins (He
 - **Stage 3 — Canvas**: 90% visual / 10% text · Repetitive patterns · Perfect geometry · Limited palette · Refine composition, don't add · Canvas emit gated on external approval of BOTH Philosophy + Motion Philosophy
   - **Container Discipline (opt-in)**: When project `DESIGN.md` declares an "all content inside cards" policy, direct background placement is forbidden (otherwise magazine/hero layouts permitted).
 - **Variation Exploration**: 3+ atomic variations across dimensions (visual · interaction · copy · layout) · Start by-the-book → escalate novel · Goal = mix/match, not single "perfect"
+- **Single finished artifact**: one canvas = ONE resolved piece · variations ship as separate self-contained canvases — never a moodboard / contact sheet / option grid on one surface (a collage defers the decision the canvas exists to make)
 
 ### Philosophy Grounding & Signal Restraint
 
@@ -204,13 +205,15 @@ Five named directions, each with concrete spec (mood, references, fonts, OKLch p
 
 **WHEN to pick each direction** (pick-when / avoid-when):
 
-| Direction                | Pick when (industry typical)                                                                                                                    | Avoid when                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `editorial-monocle`      | publishing · long-form journalism · luxury · magazine / newsletter / essay (media · publishing · luxury fashion · cultural institutions)        | commerce · SaaS · dashboards (default beige-wash trap)                 |
-| `modern-minimal`         | software-native · SaaS landing · dev tool · doc site (dev tools · B2B SaaS · fintech · infra)                                                   | consumer-emotional brands · marketplaces needing warmth                |
-| `human-approachable`     | consumer tools · marketplaces · wellness · education · AI assistant · indie SaaS without supplied palette (edtech · healthtech · creator tools) | enterprise dashboards · data-dense ops · brutalist briefs              |
-| `tech-utility`           | engineer/operator surfaces · data-dense dashboards · DevOps / observability / admin (monitoring · cloud consoles · IDE-adjacent)                | marketing site · consumer onboarding · narrative content               |
-| `brutalist-experimental` | art · indie · agency · manifesto · explicitly anti-conventional (galleries · indie magazines · agency portfolios)                               | enterprise · accessibility-sensitive (extreme type breaks scanability) |
+| Direction                | Pick when (industry typical)                                                                                                                    | Avoid when                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `editorial-monocle`      | publishing · long-form journalism · luxury · magazine / newsletter / essay (media · publishing · luxury fashion · cultural institutions)        | commerce · SaaS · dashboards (default beige-wash trap)                                              |
+| `modern-minimal`         | software-native · SaaS landing · dev tool · doc site (dev tools · B2B SaaS · fintech · infra)                                                   | consumer-emotional brands · marketplaces needing warmth (quiet degrades into shadcn-ification)      |
+| `human-approachable`     | consumer tools · marketplaces · wellness · education · AI assistant · indie SaaS without supplied palette (edtech · healthtech · creator tools) | enterprise dashboards · data-dense ops · brutalist briefs (warmth flattens data into pastel wash)   |
+| `tech-utility`           | engineer/operator surfaces · data-dense dashboards · DevOps / observability / admin (monitoring · cloud consoles · IDE-adjacent)                | marketing site · consumer onboarding · narrative content (density becomes data-slop, story starves) |
+| `brutalist-experimental` | art · indie · agency · manifesto · explicitly anti-conventional (galleries · indie magazines · agency portfolios)                               | enterprise · accessibility-sensitive (extreme type breaks scanability)                              |
+
+**No direction fits**: bind the NEAREST direction and carry a documented deviation inline (which token, why) — never invent a silent sixth direction; an unnamed hybrid is unreproducible by whoever consumes the DESIGN.md next.
 
 **Posture interpretation**: `posture` = layout/typography rules the direction expects; always apply alongside OKLch palette — palette-only = color-correct slop. Brand-spec overrides; document overrides inline.
 
