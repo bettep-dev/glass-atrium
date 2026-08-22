@@ -482,6 +482,14 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
     return result; // structured result may still be null → caller .filter(Boolean)s it out; the text-mode fallback salvages the RECORD, not the join value
   }
 
+  // Standing-question literals, quoted VERBATIM from the actors' own canonicals: FIRST_LINK_Q from
+  // scoped/scope-dev.md → Plan Direction Verification Gate; PREMISE_AUDIT_Q from BOTH that file and
+  // scoped/scope-qa.md, one byte-identical home per actor. Only FIRST_LINK_Q is read by a raw-script
+  // presence scan (hooks/enforce-workflow-verify-stage.sh), so a paraphrase of THAT one breaks the
+  // match; PREMISE_AUDIT_Q is read by nothing and a paraphrase drifts it from two canonicals at once.
+  const PREMISE_AUDIT_Q = 'Attack each registered premise FROM THE CODE, never from the list';
+  const FIRST_LINK_Q = 'name the earliest decision in the chain, state how many current tasks survive its replacement, give the cheaper replacement if one exists';
+
   // complex-plan workflow — verify stage gates DEV implementation. Every stage goes through
   // robustAgent (never bare agent()) so a truncated schema-mode spawn self-recovers instead of
   // returning an unsalvageable null.
@@ -489,8 +497,8 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
     robustAgent('glass-atrium-intel-planner', { goal: 'author plan', /* ...delegation fields... */ }),
     // verify stage: glass-atrium-qa-code-reviewer + primary-domain DEV in parallel (independent verdicts)
     parallel(
-      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation-feasibility + test-feasibility → pass|revise' }),
-      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity + approach soundness → feasible|infeasible' }),
+      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation-feasibility + test-feasibility → pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE.' }),
+      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity + approach soundness → feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
     ),
     // implementation stage runs ONLY when reviewer=pass AND DEV=feasible;
     // any revise/infeasible → glass-atrium-intel-planner revision (max 1) then re-verify, else escalate
@@ -500,14 +508,19 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
 
   The DEV `agentType` in both the verify and implementation stages is the plan's primary-domain DEV (selection rule per `orchestrator-role.md`); `glass-atrium-dev-nestjs` above is illustrative.
 
-  **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage, but real sprints often need Discovery/Design analysis FIRST. Under the declaration contract a Discovery/Design `dev-*` spawn is a declared-impl-type token like any other (greedy-earliest binding reserves only the FIRST token of the declared verify-dev type as the verify slot) — so a Discovery `dev-*` that textually precedes every reviewer fires `BLOCK_ORDER` (`min(rev_starts) < min(impl positions)`). Two LAWFUL ways to do pre-verify Discovery/Design: **(a)** use a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) for the analysis (shown below); **(b)** front-load a GENUINE reviewer-first `{qa,dev}` "Contract" verify phase (a real verify, NOT a lone reviewer placed only to satisfy ordering) BEFORE any Discovery `dev-*`, so every later `dev-*` is preceded by a reviewer. Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`. The skeleton reuses the `robustAgent` helper from the 2-phase skeleton above and carries the `[AGENT-COMPOSITION]` declaration + BOTH the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its PASS is EARNED by an honest declaration + correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
+  **Standing-question literals in the verify-stage goal text — and the schema-key option that was WITHDRAWN**: the two literals carry the Stage-2 standing jobs into the delegation text, quoted verbatim from the actors' own canonical (`scoped/scope-dev.md` → `## Plan Direction Verification Gate [DEV+QA]`; the reviewer's half of the premise audit is canonical in `scoped/scope-qa.md`) — one source, cross-read at review, no list maintained here. `PREMISE_AUDIT_Q` goes to BOTH verify members; `FIRST_LINK_Q` goes to the DEV member only and only on a revision cycle, because it is answered in the `feasible`/`infeasible` verdict the DEV emits. **This adds NO schema field, and none is proposed.** The earlier shape put both questions on the verify stage's output schema as required keys; that option is WITHDRAWN, and the reason sits here because this is where a future author would otherwise re-propose it: the canonical verify stage declares no schema BY DESIGN (a verify stage returns a prose verdict, and its printed `[COMPLETION]` is recorded on the SubagentStop channel as a WRITER-emitted row — `hook-input`; synthesis is the fallback for an ABSENT block, not the capture path for a printed one), so there is no required array to attach a key to — and converting the stage to schema mode purely to carry one would invert that design decision and drag in the completion-channel reservation duty the text-mode stage is exempt from. **Honest strength delta, named because it is a DOWNGRADE rather than a swap of equals**: a required key would have forced an ANSWER into the emitted payload; a goal-string literal forces only the QUESTION into the delegation text, and whether the actor answers it — or answers it honestly — is honor-system. What remains mechanical is narrower than the pair: `FIRST_LINK_Q`'s PRESENCE on the raw-script surface, the same observable the sibling attestation tokens already use. Nothing scans `PREMISE_AUDIT_Q` — its whole strength is that the audit runs from a different actor than the premise's author.
+
+  **3-phase Discovery+Design variant (no `dev-*` before the reviewer — keeps a pre-verify Discovery phase lawful under the ordering check)**: the 2-phase skeleton above starts AT the verify stage, but real sprints often need Discovery/Design analysis FIRST. Under the declaration contract a Discovery/Design `dev-*` spawn is a declared-impl-type token like any other (greedy-earliest binding reserves only the FIRST token of the declared verify-dev type as the verify slot) — so a Discovery `dev-*` that textually precedes every reviewer fires `BLOCK_ORDER` (`min(rev_starts) < min(impl positions)`). Two LAWFUL ways to do pre-verify Discovery/Design: **(a)** use a NON-DEV agent (`glass-atrium-intel-researcher` / `glass-atrium-intel-planner` / `Explore`) for the analysis (shown below); **(b)** front-load a GENUINE reviewer-first `{qa,dev}` "Contract" verify phase (a real verify, NOT a lone reviewer placed only to satisfy ordering) BEFORE any Discovery `dev-*`, so every later `dev-*` is preceded by a reviewer. Rule SoT: `orchestrator-role.md` → `### Plan Direction Verification (Stage-2 gate)`. The skeleton reuses the `robustAgent` helper and the two standing-question literals from the 2-phase skeleton above and carries the `[AGENT-COMPOSITION]` declaration + BOTH the entry (`plan-ref`) and `[SIZE-EST]` tokens, so its PASS is EARNED by an honest declaration + correct ordering — not a masked `BLOCK_NODECL` / `BLOCK_ENTRY` / `BLOCK_SIZEEST`:
 
   ```js
   // 3-PHASE variant: Discovery/Design -> verify(parallel(qa, dev)) -> implement.
   // NO dev-* token precedes the reviewer (Discovery/Design uses NON-DEV agents), so BLOCK_ORDER
   // cannot fire. Reuses the robustAgent helper from the 2-phase skeleton above (### Resilient
-  // Workflow Authoring): every schema-mode agent() stays retry-once-on-null / isolated-failure, and
-  // every stage reserves a completion_block schema field + instructs the agent to fill it. The explicit agentType: literal
+  // Workflow Authoring) plus its two standing-question literals: every schema-mode agent() stays
+  // retry-once-on-null / isolated-failure, and any stage you convert to schema mode reserves a
+  // completion_block field + instructs the agent to fill it.
+  // TEXT-MODE BY DESIGN: the stages below declare NO schema, so that reservation does not apply to
+  // them — do not add a schema here just to carry it. The explicit agentType: literal
   // in each verify/impl opts is the static spawn-position token the declaration is checked against
   // (keep BOTH literals identical). Escape hatch (a) is shown; hatch (b) = replace Phase 1 with a
   // reviewer-first {qa,dev} Contract verify placed before any dev-*.
@@ -523,8 +536,8 @@ Verify prior output acceptance criteria before stage entry. If unmet, request re
     robustAgent('glass-atrium-intel-planner',    { goal: 'design the implementation approach -> plan' }),
     // Phase 2 — verify: reviewer + primary-domain DEV in ONE parallel() (independent verdicts).
     parallel(
-      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation/test-feasibility -> pass|revise' }),
-      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity/approach -> feasible|infeasible' }),
+      robustAgent('glass-atrium-qa-code-reviewer', { agentType: 'glass-atrium-qa-code-reviewer', goal: 'judge implementation/test-feasibility -> pass|revise. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE.' }),
+      robustAgent('glass-atrium-dev-nestjs',       { agentType: 'glass-atrium-dev-nestjs', goal: 'judge technical validity/approach -> feasible|infeasible. ' + PREMISE_AUDIT_Q + ', reporting each registered premise by handle as CONFIRMED|REFUTED|UNVERIFIABLE. On a revision cycle (a chain root exists above this plan): ' + FIRST_LINK_Q + '.' }),
     ),
     // Phase 3 — implement: runs ONLY on pass+feasible. This first impl dev-* is preceded by the reviewer.
     robustAgent('glass-atrium-dev-nestjs', { agentType: 'glass-atrium-dev-nestjs', goal: 'implement per verified plan' /* gated on pass+feasible */ }),
