@@ -786,7 +786,7 @@
   "hashes": {
     "agent-registry.json": "e37021b3661cf44f9f864b10fa570ff2c58a564c95d2b4f5e17ea42999a46d70",
     "agents/GLASS_ATRIUM_GLOBAL_RULES.md": "e8045ca224958415b3e5afd6a2d66c63c82962f0f2b6568957552e60e1bd473c",
-    "agents/glass-atrium-design-designer.md": "a6a7058497427df933c3f84b3cbeaeb05c32ee82ac96db291a5d31c7a58d4945",
+    "agents/glass-atrium-design-designer.md": "d2cbe38c104ae9d0c7c8e1c6554f84718d23628a19cf03bdf23d10ed3d37405d",
     "agents/glass-atrium-dev-android.md": "0e74f9aba4bbb4dab48d8a6b6a7091863bffebf4de8911fe7b1062f63e568044",
     "agents/glass-atrium-dev-angular.md": "66c7a17a6b5ae44c6e63ff3facf367cc9ef907d5d3b41df83d483091281300ee",
     "agents/glass-atrium-dev-animator.md": "a2fda1e17cdcf9c6cd9bd5fa8253ed9459f6e2bbecbabf4afb72f9f274af1704",

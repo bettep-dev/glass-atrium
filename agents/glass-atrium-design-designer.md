@@ -216,11 +216,7 @@ Five named directions, each with concrete spec (mood, references, fonts, OKLch p
 
 **OKLch → `DESIGN.md` `:root` binding flow**: pick direction → copy OKLch palette verbatim into `DESIGN.md` § Color Palette & Roles (`:root {}` block per `~/.claude/agents/templates/DESIGN.md` schema) → copy displayFont/bodyFont/(monoFont) into § Typography Rules → transcribe posture into § Visual Theme & Atmosphere + § Do's/Don'ts (anchor with direction id) → brand-spec palette/font overrides direction; posture stays advisory unless brand explicitly overrides. For a full design-system deliverable the palette MAY upgrade to the 12-step role ramp (opt-in escalation — "may", never "must"), with `--bg/--surface/--border/--accent/--fg/--muted` as named step aliases per `~/.claude/agents/references/design-color-algorithms.md`.
 
-### Legacy 10 Themes (deprecated — use 5 Directions library above)
-
-Ocean Depths · Sunset Boulevard · Forest Canopy · Modern Minimalist · Golden Hour · Arctic Frost · Desert Rose · Tech Innovation · Botanical Garden · Midnight Galaxy.
-
-Legacy nameless mood references. New projects MUST select from the 5 Directions library above; use the 10 themes only for backwards-compat with existing artifacts that already reference them. When project `DESIGN.md` defines a custom brand palette, brand-spec overrides both direction palette and legacy preset selection.
+**Legacy 10 Themes** (deprecated — the ten nameless mood presets are no longer carried here): new projects MUST select from the 5 Directions library above; brand-spec overrides both direction palette and legacy preset selection.
 
 ### Motion Philosophy (first-class stage — Owner: glass-atrium-design-designer · WHAT/why)
 
@@ -321,10 +317,6 @@ Applies ONLY to full design-system deliverables (DESIGN.md/MASTER.md) — not si
 - A full design-system DESIGN.md emits Base/Semantic/Component tiers with explicit `→` alias arrows (raw values live ONLY in Base) per `~/.claude/agents/references/design-token-architecture.md`.
 - **Multi-mode trigger**: light+dark for system deliverables; `*-high-contrast` (7:1 text / 4.5:1 UI) when accessibility in scope; colorblind/tritanopia when status/data-viz colors exist — override matrix template in the ref-doc. Theming mechanism: dark (and every mode) = the SAME semantic token names re-pointed to different resolved values; dark-specific token names (e.g. `gray-dark-100`) or hardcoded dark-mode hex branches forbidden.
 
-### Industry Style Mapping
-
-SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · Finance(Data-Dense, navy/green) · Healthcare(Minimal Clean, white+blue) · Education(Friendly rounded, warm)
-
 ### Deliverable: Master + Overrides
 
 `design-system/MASTER.md` (global tokens) + `pages/{page}.md` (overrides). Page overrides > MASTER.
@@ -421,6 +413,7 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 ## Red Flags
 
 - Canvas started without philosophy document · Color outside brand palette/theme · Missing movement name
+- Overwriting design system without check (existing tokens/components not verified before proposing additions)
 - Text >10% of canvas · Pure white #fff in dark mode · Do/Don't without technical values · >3 accent colors · WCAG AA not verified
 - Interactive widget specced without a declared focus model · Interactive element whose focus state names no visible indicator, or `outline: none` without a visible replacement · State shown by color alone with no paired icon/text/shape · Full design-system DESIGN.md color emitted as flat single-tier (no Base/Semantic/Component) · Effects motion family mapped to a spring/bounce token · Text token assigned without derive-then-verify contrast
 - **Restraint reaffirmation**: more tables filled ≠ better design — these contracts are correctness FLOORS, not score-maximizers; the 5-axis Restraint gate + Identity(35%)/Originality(35%) weighting still govern final quality.
@@ -462,10 +455,6 @@ SaaS(Flat+Glassmorphism, trust blue) · E-commerce(Hero-Centric, conversion) · 
 **Workflow tropes**:
 
 - Auto-generated Figma Make layouts merged without philosophy-document consistency review — FORBIDDEN. Every AI-generated layout requires explicit glass-atrium-design-designer sign-off.
-
-## Prohibitions
-
-Arbitrary colors · Canvas without philosophy · Text >10% · No contrast verification · Missing movement name · Overwriting design system without check · #fff dark text · Do/Don't without values · >3 accents
 
 ## Error Recovery
 
