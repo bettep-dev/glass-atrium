@@ -813,17 +813,17 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-row:hover { background: rgb(var(--accent) / 0.06); }
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
-           모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거.
-           2줄분 min-height 를 행에 예약(텍스트 요소 아님) + align-items:center →
-           1줄 제목도 예약 높이 내 수직 중앙 정렬(타 셀과 baseline 일치, 상단 부유 제거). */
-        .title-cell .doc-title-row { display: flex; align-items: center; gap: 6px; min-height: calc(var(--fs-title) * 1.4 * 2); }
+           모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
+        .title-cell .doc-title-row { display: flex; align-items: center; gap: 6px; }
         .doc-title-lead { flex: 0 0 20px; width: 20px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
-        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px; }
-        /* 제목 텍스트 — line-clamp-2 클램프.
-           사유 — 2줄 초과 시 말줄임. 높이 예약은 행(.doc-title-row)으로 이관 →
-           텍스트는 콘텐츠 높이만 차지(1줄=1줄 높이), 점프 방지는 행 min-height 가 담당.
-           break-word 로 긴 식별자도 안전 래핑. */
-        .doc-title-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+        /* nowrap — 제목 뒤 잔여 칩(+N)이 접히며 제목을 2줄로 밀어내지 못하게. */
+        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; }
+        /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
+           white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
+           문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
+        .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+        /* 태그 칩 열 — 제목 셀에서 분리. nowrap 으로 칩 2줄 접힘(행 높이 변동) 차단. */
+        .doc-tags { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
         .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
@@ -1064,6 +1064,40 @@ function ScreenClaudedDocs(/* { onNav } */) {
 
 // 중앙 목록 카드 — Sticky Header Integrated (검색 + facet + 건수 2-row).
 // .card-body 인라인 maxHeight:'none' 으로 base.css `max-height: 70vh` override → 카드 viewport full-height + 카드 내부 스크롤.
+// 서술 태그 전용 셀 — audience/format/체인 관계 칩을 제목 컬럼 밖에서 렌더.
+//   제목 셀 inline 배치 시 flex-wrap 이 제목을 2·3줄로 밀어내던 원인 제거.
+function DocTagsCellCD({ audience, format, supersedesId }) {
+	const { Badge } = window.UI;
+	return (
+		<td>
+			<span className="doc-tags">
+				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
+				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
+				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json 철자). */}
+				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
+				{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'). */}
+				{supersedesId != null && (
+					<span title={`Replaces #${supersedesId}`}>
+						<Badge role="metadata">rev</Badge>
+					</span>
+				)}
+			</span>
+		</td>
+	);
+}
+
+// 작성자 셀 — 1줄 클램프. 120px 힌트 컬럼에서 'glass-atrium-intel-planner' 가 하이픈에서
+//   줄바꿈되던 것을 말줄임으로 대체, 전체 값은 title= 툴팁.
+function DocAuthorCellCD({ author }) {
+	return (
+		<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
+			<span className="doc-cell-clamp" title={author}>
+				{author}
+			</span>
+		</td>
+	);
+}
+
 function DocListCardCD({
 	state,
 	rows,
@@ -1256,6 +1290,8 @@ function DocListCardCD({
 					flex: "1 1 auto",
 					minHeight: 0,
 					overflowY: "auto",
+					// 컬럼 2개 추가 → 좁은 폭에서 압축 대신 가로 스크롤로 탈출 (셀 뭉개짐 차단).
+					overflowX: "auto",
 				}}
 			>
 				{state.status === "loading" && <DocListSkeletonCD />}
@@ -1293,7 +1329,11 @@ function DocListCardCD({
 								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
 								{/* column 120px — 최장 라벨 "In progress" 배지 (mono 11px + padding) wrap 차단 + 여유. */}
 								<th style={{ width: 120 }}>Status</th>
+								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
+								<th style={{ width: 76 }}>ID</th>
 								<th>Title</th>
+								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리 (제목 1줄 보장). */}
+								<th style={{ width: 180 }}>Tags</th>
 								<th style={{ width: 120 }}>Author</th>
 								<th style={{ width: 100 }}>Created</th>
 								{isSearchMode && (
@@ -1389,6 +1429,9 @@ function DocListCardCD({
 													</span>
 												)}
 											</td>
+											<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
+												#{row.id}
+											</td>
 											<td className="title-cell">
 												<div
 													className="doc-title-row font-medium fs-title"
@@ -1417,39 +1460,16 @@ function DocListCardCD({
 														)}
 													</span>
 													<span className="doc-title-main">
-														{/* 제목 — line-clamp-2 + reserved 높이 (1↔2줄 행높이 점프 차단). full 은 title= 툴팁. */}
+														{/* 제목 — 1줄 클램프. 전체 제목은 title= 툴팁과 상세 뷰가 운반. */}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
 														</span>
-														{/* +N 멤버수 = 순수 수량 → count pill (neutral). leading slot 폭 가변 회피 위해 제목 뒤 trailing 배치. */}
+														{/* +N 멤버수 = 순수 수량 → count pill (neutral). 서술 태그가 아니므로 Tags 컬럼이 아닌
+														    제목 뒤 trailing 유지 — 세는 대상이 이 행의 제목이다. */}
 														{/* data-doc-member-count → e2e 가 group-root 멤버수 배지를 다른 count pill 과 구분해 anchor 하는 안정 hook. */}
 														{isGroupRoot && (
 															<span data-doc-member-count>
-																<Badge role="count">
-																	+{memberCount - 1}
-																</Badge>
-															</span>
-														)}
-														{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
-														{row.audience === "hidden" && (
-															<span>
-																<Badge role="metadata">agent-only</Badge>
-															</span>
-														)}
-														{/* format = 서술 속성 → neutral metadata pill (md/yaml/json 철자, 색·square chip 폐기). */}
-														{DOC_FORMAT_BADGE_CD[row.format] && (
-															<span>
-																<Badge role="metadata">
-																	{row.format}
-																</Badge>
-															</span>
-														)}
-														{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'), ↻ 장식 폐기 (F34). */}
-														{row.supersedes_id != null && (
-															<span
-																title={`Replaces #${row.supersedes_id}`}
-															>
-																<Badge role="metadata">rev</Badge>
+																<Badge role="count">+{memberCount - 1}</Badge>
 															</span>
 														)}
 													</span>
@@ -1463,12 +1483,12 @@ function DocListCardCD({
 													</div>
 												)}
 											</td>
-											<td
-												className="doc-meta-text"
-												style={{ color: "rgb(var(--dim))" }}
-											>
-												{row.author}
-											</td>
+											<DocTagsCellCD
+												audience={row.audience}
+												format={row.format}
+												supersedesId={row.supersedes_id}
+											/>
+											<DocAuthorCellCD author={row.author} />
 											<td
 												className="doc-meta-text-mono"
 												style={{ color: "rgb(var(--dim))" }}
@@ -1636,7 +1656,7 @@ function GroupMembersRowsCD({
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
-	const { Badge, Icon } = window.UI;
+	const { Icon } = window.UI;
 	const [memberState, setMemberState] = useStateCD({
 		status: "loading",
 		data: null,
@@ -1724,8 +1744,8 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	// column 구성: checkbox + status + title + author + created_at (+ rank if search) = 5 or 6.
-	const colSpan = isSearchMode ? 6 : 5;
+	// column 구성: checkbox + status + id + title + tags + author + created_at (+ rank if search) = 7 or 8.
+	const colSpan = isSearchMode ? 8 : 7;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -1885,6 +1905,9 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</td>
+				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
+					#{member.id}
+				</td>
 				<td className="title-cell">
 					<div
 						className="doc-title-row font-medium fs-title"
@@ -1904,28 +1927,16 @@ function GroupMembersRowsCD({
 							)}
 						</span>
 						<span className="doc-title-main">
+							{/* 제목 — 1줄 클램프. 전체 제목은 title= 툴팁과 상세 뷰가 운반. */}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
 							</span>
-							{member.audience === "hidden" && (
-								<span>
-									<Badge role="metadata">agent-only</Badge>
-								</span>
-							)}
-							{/* format = 서술 속성 → neutral metadata pill (md/yaml/json 철자).
-                · /api/clauded-docs?folder_id=X member row 가 format 보유 (list row 동일 shape). */}
-							{DOC_FORMAT_BADGE_CD[member.format] && (
-								<span>
-									<Badge role="metadata">{member.format}</Badge>
-								</span>
-							)}
-							{/* 멤버 재정렬 = 네이티브 drag-and-drop 단일 수단 (사용자 요청) — grab affordance 는 행 leading 의 ⠿ drag handle + 행 자체 draggable. */}
 						</span>
 					</div>
 				</td>
-				<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
-					{member.author}
-				</td>
+				{/* 멤버 행 태그 — 서술 속성만. 체인(rev)은 그룹 루트 행이 표시한다. */}
+				<DocTagsCellCD audience={member.audience} format={member.format} />
+				<DocAuthorCellCD author={member.author} />
 				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
 					{formatDateCD(member.created_at)}
 				</td>
