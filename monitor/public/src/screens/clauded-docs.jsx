@@ -826,8 +826,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
         .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
-        /* 태그 칩 열 — 제목 셀에서 분리. nowrap 으로 칩 2줄 접힘(행 높이 변동) 차단. */
-        .doc-tags { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
         /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
         .doc-meta-text { font-size: var(--fs-meta); }
         .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
@@ -1074,16 +1072,17 @@ function DocTagsCellCD({ audience, format, supersedesId }) {
 	const { Badge } = window.UI;
 	return (
 		<td>
-			<span className="doc-tags">
+			{/* nowrap — 칩이 2줄로 접히면 행 높이가 다시 튄다. */}
+			<span className="inline-flex items-center gap-1 whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{audience === "hidden" && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json 철자). */}
 				{DOC_FORMAT_BADGE_CD[format] && <Badge role="metadata">{format}</Badge>}
 				{/* revision-chain = 관계 속성 → neutral metadata pill ('rev'). */}
 				{supersedesId != null && (
-					<span title={`Replaces #${supersedesId}`}>
-						<Badge role="metadata">rev</Badge>
-					</span>
+					<Badge role="metadata" title={`Replaces #${supersedesId}`}>
+						rev
+					</Badge>
 				)}
 			</span>
 		</td>
@@ -2500,9 +2499,7 @@ function DocMetaPanelCD({
 				{/* format = 서술 속성 → neutral metadata pill (md/yaml/json/txt 철자).
 				    · 미지정 format 은 배지 미출력 (거짓 주장 방지). */}
 				{DOC_FORMAT_BADGE_CD[doc.format] && (
-					<span>
-						<Badge role="metadata">{doc.format}</Badge>
-					</span>
+					<Badge role="metadata">{doc.format}</Badge>
 				)}
 			</div>
 			{/* supersedes chain predecessor.
