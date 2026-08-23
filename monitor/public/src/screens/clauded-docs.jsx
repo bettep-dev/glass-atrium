@@ -2068,7 +2068,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 	const handleHtmlExport = useCallbackCD(async () => {
 		if (isExporting) return; // 중복 클릭 차단 — in-flight 중 재진입 무시.
 		setIsExporting(true);
-		showToast("info", "Generating HTML… this can take ~20s");
+		showToast("info", "Generating HTML…");
 		try {
 			const res = await fetch(`/api/clauded-docs/${doc.id}/html-export`);
 			if (!res.ok) {
@@ -2121,7 +2121,7 @@ function ViewerActionsCD({ doc, pendingDelete, onDelete, onClose, showToast }) {
 				disabled={isExporting}
 				aria-busy={isExporting ? "true" : undefined}
 				aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
-				title={isExporting ? "Generating HTML… this can take ~20s" : "Download HTML"}
+				title={isExporting ? "Generating HTML…" : "Download HTML"}
 				style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
 			>
 				<Icon
