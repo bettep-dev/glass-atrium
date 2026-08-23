@@ -358,7 +358,7 @@ const findings = results.filter(Boolean); // dropped nulls = surfaced-incomplete
 
 When a delegation copies files INTO a live install, three failure modes observed this session are a NAMED ANTI-PATTERN — design them out with the sanctioned idiom below (advisory reference for shell-authoring delegations; NOT a gate).
 
-**WHEN in the cycle this deploy runs — pointer, not a restatement**: by DEFAULT it is PRE-MERGE — the cycle's combined unmerged tree is deployed and empirically verified on the live install BEFORE the PR is opened, and post-merge deploy is narrowly retained (release flow · no pre-merge deploy possible). Order SoT: `orchestrator-role.md` → `## Document-Driven Workflow` step 6. This section covers only HOW the copy reaches its destination safely.
+**WHEN in the cycle this deploy runs — pointer, not a restatement**: by DEFAULT it is PRE-MERGE — the cycle's combined unmerged tree is deployed and empirically verified on the live install BEFORE the PR is opened, and post-merge deploy is narrowly retained (release flow · no pre-merge deploy possible). Order SoT: `orchestrator-role.md` → `## Document-Driven Workflow` step 6, which also names the live-suite verification instrument and its exit-0 threshold — read them there, not here. This section covers only HOW the copy reaches its destination safely.
 
 **Reach the destination through a sanctioned flow FIRST.** A direct write into the live harness surface — `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files — is BLOCKED agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review. Pick one:
 
